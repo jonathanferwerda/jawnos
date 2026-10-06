@@ -1,0 +1,71 @@
+<span>
+	<% 
+		use Mojo::JSON qw/decode_json/;
+		my @model = grep { $_->{'uuid'} eq $app->{'model'} } @{$models};
+		my $model = $model[0];
+	%>
+	<% if ($app->{'movement'} ne 'transfer') { %>
+		<% my $add = $app->{'data'}->{$app->{'movement'}}; %>
+		<% if ( scalar keys %{$add} == 0 ) { 
+			$add = {
+				&subs::random_string_creator(7) => $app
+			};
+		} %>
+		<% foreach my $adder ( keys %{$add} ) { %>
+			<% next if $adder eq 'totals'; %>
+			<% my $ad = $add->{$adder}; %>
+			<div style="width:99%;border:solid;border-radius:5px;">
+				<span><b>Movement:</b> <%= &subs::format_name($app->{'movement'}) %><br>
+				<span><b>Account:</b> <%= &subs::format_name($app->{'account'}) %><br
+				<% if ($ad->{'item'}) { %>
+					<span><b>Item:</b> <%= &subs::format_name($model->{'name'} || $ad->{'item'}) %></span></br>
+				<% } %>
+				<% if ($ad->{'manufacturer'}) { %>
+					<span><b>Manufacturer:</b> <%= &subs::format_name($ad->{'manufacturer'}) %></span><br>
+				<% } %>
+				<% if ($app->{'vendor'}) { %>
+					<span><b>Vendor:</b> <%= &subs::format_name($app->{'vendor'}) %></span><br>
+				<% } %>
+				<% if ($ad->{'packaging'}) { %>
+
+					
+
+
+					<span><b>Packaging: </b> <%= &subs::format_name($ad->{'packaging'}) %></span><br>
+				<% } %>
+				<span><b>State: </b> <%= &subs::format_name($ad->{'state'}) %></span><br>
+				<span><b>Quantity:</b> <%= $ad->{'quantity'} %></span><br>
+				<% if ($ad->{'unit'} ne $ad->{'app'}) { %>
+					<span><b>Unit:</b> <%= $ad->{'unit'} %></span><br>
+				<% } %>
+				<span><b>Tax:</b> <%= &subs::price_formatter($ad->{'tax'} || 0.00) %></span><br>
+				<% if ($ad->{'aux'} && $ad->{'aux'} != 0) { %>
+					<span><b>Aux:</b> <%= &subs::price_formatter($ad->{'aux'} || 0.00) %></span><br>
+					<span><b>Aux Desc:</b> <%= $ad->{'aux_description'} %></span><br>
+				<% } %>
+				<% if ($ad->{'quantity'} > 1) { %>
+					<span>
+						<table style="width:100%;border:solid;border-width:1px;">
+							<thead>
+								<th>Amount</th><th>Tax</th><th>Aux</th><th>Total</th>
+							</thead>
+							<tbody>
+								<td><%= &subs::price_formatter($ad->{'amount'} / $ad->{'quantity'}) %></td>
+								<td><%= &subs::price_formatter($ad->{'tax'} / $ad->{'quantity'}) %></td>
+								<td><%= &subs::price_formatter($ad->{'aux'} / $ad->{'quantity'}) %></td>
+								<td><%= &subs::price_formatter($ad->{'total'} / $ad->{'quantity'}) %></td>
+							</tbody>
+						</table>
+					</span>
+				<% } %>
+
+				<span><b>Amount:</b> <%= &subs::price_formatter($ad->{'amount'}) %></span><br>
+				<span><b>Total</b> <%= &subs::price_formatter($ad->{'total'} || 0.00) %></span><br>
+
+			</div>
+		<% } %>
+		<% if ($app->{'documentation'}) { %>
+			<span><b>Note:</b> <%= $app->{'documentation'} %></span><br>
+		<% } %>
+	<% } %>
+</span>

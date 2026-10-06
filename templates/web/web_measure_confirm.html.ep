@@ -1,0 +1,21 @@
+<img class="little_thumb hover" id="alert_cancel" src="/images/make believe/cancel_button.png">
+<div id="web_measure_confirm" style="background-color:white;">
+	<h2><%= &subs::format_name($app) %> - <%= &subs::format_name($measure) %></h2>
+	<b id="web_measure_confirm_selector"><%= $selector %></b><br>
+	<table style="width:100%;">
+		<thead>
+			<th>#</th><th>Prev</th><th>Text</th><th>Next</th>
+		</thead>
+		<tbody style="overflow:scroll;height:60%;">
+			<% foreach my $p ( @{$possibilities} ) { %>
+				<tr class="web_measure_confirm_row" count="<%= $p->{'count'} %>" measure="<%= $measure %>" app="<%= $app %>">
+					<td><%= $p->{'count'} %></td>
+					<td class="web_measure_confirm_item hover" type="prev" count="<%= $p->{'count'} %>" text="<%= $p->{'prev'}->{'text'} %>"><%= $p->{'prev'}->{'formatted'} %></td>
+					<td class="web_measure_confirm_item hover" type="exact" count="<%= $p->{'count'} %>" text="<%= $p->{'text'} %>"><%= $p->{'formatted'} %></td>
+					<td class="web_measure_confirm_item hover" type="next" count="<%= $p->{'count'} %>" text="<%= $p->{'next'}->{'text'} %>"><%= $p->{'next'}->{'formatted'} %></td>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+	<img class="little_thumb hover" id="web_measure_confirm_save" src="/images/decipherable/diskette.png">
+</div>

@@ -1,0 +1,79 @@
+% title $title;
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<div id="alert" style="display:none;">
+	<h1>ALERT!!!!</h1>
+	<h4 id="alert_message"></h4>
+	<input type="text" style="display:none;" id="alert_input">
+	<span id="alert_buttons">
+	</span>
+</div>
+
+<span id="header"></span>
+<canvas class="background" id="background"></canvas>
+<canvas class="background" id="leaderboard" style="height: 100vh;"></canvas>
+<canvas class="background" id="timeline"></canvas>
+<canvas class="background" id="clockface"></canvas>
+<canvas class="background" id="continent"></canvas>
+<canvas class="background" id="calendar"></canvas>
+<canvas class="background" id="narrator"></canvas>
+
+
+<img id="mouse_pointer" style="display:none;" style="z-index:6000;" height="40" width="30" src="/images/make believe/pointer.png" >
+<div id="remote_managers"></div>
+<%= $bar %>
+
+<div id="browser">
+	<div id="editormaster">
+		<img id="grapple" src="/images/make believe/bullseye.png" style="z-index:10000;display:none;" class="draggable medium_thumb">
+	</div>
+	<div id="ticketmaster">
+		<img id="ticket_sales" class="medium_thumb draggable lock" style="right:0px;z-index:10000;display:none;" src="/images/make believe/key.png">
+	</div>
+	<div id="ide_sidebar_container" onmouseover="ideSidebarShower();" style="display:none;z-index:9000;padding-bottom:20px;padding-top:20px;position:fixed;bottom:60px;background-color:<%= $config->{$device}->{'ide_sidebar_container'}->{'background_colour'} || 'white' %>;left:0px;width:35%;height:80%;max-height:80%;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
+	</div>
+	<div id="keyboard_container"></div>
+</div>
+
+<div id="top_right_buttons">
+	<img src="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover" id="assistant">
+	<div id="assistant_view" style="position:fixed;height:320px;width:300px;display:none;background-color:white;border:solid;border-radius:5px;">
+		<div id="assistant_header" style="position:absolute;top:0px;width:100%;">
+			<span style="float:right;">
+				<img id="assistant_close" class="little_thumb hover" style="float:right;" src="/images/make believe/cancel_button.png">
+			</span>
+			<span style="float:left;">
+				<img src="/icons/lymeboard/automate everything.png" class="little_thumb" id="assistant_anchor" style="">
+				<img src="/images/make believe/left arrow.png" class="little_thumb assistant_previous hover">
+				<img src="/images/make believe/right arrow.png" class="little_thumb assistant_next hover">
+			</span>
+	
+		</div>
+		<div class="assistant_contents" style="text-align:center;overflow:scroll;top:45px;height:280px;position:absolute;font-size:20px;">
+			<span style="width:100%;display: flex;justify-content: center;"><img id="assistant_image" class="assistant_image huge_thumb" style="display:none;"></span>
+			<span style="width:100%;display: flex;justify-content: center;"><audio id="assistant_audio" class="assistant_audio" style="display:none;"></audio></span>
+			<div class="assistant_content" style="text-align:center;padding-bottom:4px;"></div>
+		</div>
+	</div>
+	<img src="/images/decipherable/now.png" presence="unknown" id="now_toggle" style="background-color:black;border-width:3px;border-color: green;" class="little_thumb now jonathan">
+	<img class="jonathan little_thumb fuck_you" src="images/decipherable/the bird.png" ></img>
+	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
+	<img id="lock_session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="/images/decipherable/padlock.png"></img>
+
+
+	<img id="start_menu_toggle" class="jonathan little_thumb start" src="/images/jbuttons/logo2.png">
+	<%= include 'start_menu/start_menu', parking_lot => {} %>
+	<div id="start_menu_backlog"></div>
+
+</div>
+<div id="bottom_left_buttons">
+
+</div>
+<div id="bottom_right_buttons">
+
+</div>
+
+<div id="secret_workspace" style="display:none;">
+</div>
+<div id="temporary_workspace"></div>
+<div id="dialog_boxes"></div>
+<div id="app_switcher" style="z-index:50000;display:none;background-color:lightblue;border:4px;border-radius:3%;padding:20px;position:fixed;top: 50%;left: 50%; transform: translate(-50%, -50%);">I am the app switcher</div>

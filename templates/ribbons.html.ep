@@ -1,0 +1,13 @@
+<div id="bottom_ribbon"  style="font-size:30px;">
+	<% unless ($c->session('privilege') eq 'guest') { %>
+		<input type="text" id="customer_search" style="width:300px;height:30px;font-size:26px;position:absolute;bottom:2px;right:60px;">
+
+		<img src="/images/make believe/cancel_button.png" id="customer_cancel" class="little_thumb hover" style="display:none;position:absolute;right:10px;">
+		<span id="customer_search_results" class="search_results" style="font-size:22px;width:300px;display:none;position:absolute;bottom:45px;right:63px;background-color:white;border:solid;border-width:2px;border-radius:3px;">Results</span>
+		<span id="customer" style="position:absolute;left:1px;width:90%;"></span>
+	<% } %>
+	
+	<div id="dock" style="max-height:100%;max-width:85%;float:left;"></div>
+
+</div>
+

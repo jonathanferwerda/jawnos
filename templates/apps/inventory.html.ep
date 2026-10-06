@@ -1,0 +1,144 @@
+<br>
+Total Occurences: <%= $returner->{'total_occurences'} %><br>
+Average Duration: <%= &subs::duration_sayer($returner->{'average_duration'} / 1000) %><br>
+Total Duration: <%= &subs::duration_sayer($returner->{'total_duration'} / 1000) %><br>
+Average Between: <%= &subs::duration_sayer($returner->{'between_average'} / 1000) %><br>
+Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %><br>
+<% my @cols = @{$time_lengths}; #qw/minute hour day week month year/; %>
+<% my @rows = @{$time_scopes}; %>
+<% my $s_display = $settings->{'s_display'}; %>
+<% my $s_calc = $settings->{'s_calc'}; %>
+<% my $s_visual = $settings->{'s_visual'}; %>
+<% my $s_lock = $settings->{'s_lock'}; %>
+<% my $s_count = $settings->{'s_scope_count'}; %>
+<% my $s_movement = $settings->{'s_movement'}; %>
+<select multiple class="statistic_movement" style="height:100px;vertical-align:bottom;">
+	<% foreach my $m ( @{$movements} ) { %>
+		<option value="<%= $m %>" <% if (grep { $_ eq $m } @{$s_movement}) { %>selected<% } %>><%= &subs::format_name($m) %></option>
+	<% } %>
+</select>
+<span style="width:30%;">
+	<select class="statistic_visual" style="vertical-align:bottom;">
+		<% foreach my $v ( qw/historical allocation/ ) { %>
+			<option value="<%= $v %>" <% if ($s_visual eq $v) { %>selected<% } %>><%= &subs::format_name($v) %></option>
+		<% } %>
+	</select>
+	<select class="statistic_calc" style="vertical-align:bottom;">
+		<% foreach my $cal ( qw/sum average high low/ ) { %>
+			<option value="<%= $cal %>" <% if ($s_calc eq $cal) { %>selected<% } %>><%= &subs::format_name($cal) %></option>
+		<% } %>
+	</select>
+	<img src="/images/make believe/key.png" class="statistic_lock little_thumb hover" app="<%= $app %>" locked="<%= $s_lock %>">
+	<select class="statistic_display" style="vertical-align:bottom;">
+		<% foreach my $o (@{$display_options}) { %>
+			<option value="<%= $o->{'name'} %>" <% if ($o->{'name'} eq $s_display) { %>selected<% } %>><%= $o->{'formatted_name'} %></option>
+		<% } %>
+	</select>
+	<select class="statistic_scope_count" app="<%= $app %>" style="vertical-align:bottom;">
+		<% foreach my $count (1..30) { %>
+			<option value="<%= $count %>" <% if ($count == $s_count) { %>selected<% } %>><%= $count %></option>
+		<% } %>
+	</select>
+
+</span>
+<img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="/images/decipherable/calculator.png" style="vertical-align:bottom;">
+<% if (scalar @{$appts} > 0) { %>
+	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
+		<% foreach my $col ( @cols ) { %>
+			<span id="<%= $app %>_<%= $col %>_statistic_graph_span">
+				<%= &subs::format_name($col) %>
+				<canvas id="<%= $app %>_<%= $col %>_statistic_graph" scope="<%= $col %>" class="statistic_graph" style="width:100%;height:250px;"></canvas>
+			</span>
+		<% } %>
+	</div>
+	<table id="<%= $app %>_inventory_table" style="overflow-x:scroll;width:100%;">
+		<thead>
+			<th></th>
+			<% foreach my $ty ( @cols ) { %>
+				<th><%= &subs::format_name($ty) %></th>
+			<% } %>
+
+		</thead>
+		<tbody>
+			<% foreach my $rw ( @rows ) { %>
+				<tr>
+					<td><%= &subs::format_name($rw) %></td>
+					<% foreach my $ry ( @cols ) { %>
+						<td>
+							<% if ($returner->{$rw}->{$ry}) {
+								<% if ( $returner->{$rw}->{$ry} =~ /[A-Za-z0-9]/gi ) { %>
+									<span class="statistic_entry hover" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $returner->{$rw}->{$ry}->{'end_timestamp'} %>"
+										timestamp="<%= $returner->{$rw}->{$ry}->{'timestamp'} %>" zone="<%= $rw %>" scope="<%= $ry %>"
+										style="
+										<% if ($returner->{$rw}->{$ry}->{'budget'}) { %>
+											background-color:
+											<%= $returner->{$rw}->{$ry}->{'budget'}->{'colour'} %>;
+											% if ($returner->{$rw}->{$ry}->{'budget'}->{'text-colour'}) {
+												color:<%= $returner->{$rw}->{$ry}->{'budget'}->{'text-colour'} %>;
+											% }
+										<% } %>
+										<% if ($returner->{$rw}->{$ry}->{'budget'}->{'is_scope'} && $returner->{$rw}->{$ry}->{'budget'}->{'is_scope'} eq 'yes') { %>
+											border:solid;border-radius:2px;
+										<% } %>
+										"
+										>
+										<% if ($s_display eq 'occurences') { %>
+											<%= $returner->{$rw}->{$ry}->{$s_display} %>
+										<% } elsif ($s_display eq 'duration') { %>
+											<%= &subs::duration_sayer($returner->{$rw}->{$ry}->{$s_display} / 1000) %>
+										<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
+											<%= &subs::price_formatter($returner->{$rw}->{$ry}->{$s_display}) %>
+										<% } else { %>
+											<%= $returner->{$rw}->{$ry}->{$s_display} %>
+										<% } %>
+									<% } elsif ($rw eq 'average' || $rw eq 'total') { %>
+										<% if ($s_display eq 'occurences') { %>
+											<%= $returner->{$rw}->{$ry} %>
+										<% } elsif ($s_display eq 'duration') { %>
+											<%= &subs::duration_sayer($returner->{$rw}->{$ry} / 1000) %>
+										<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
+											<%= &subs::price_formatter($returner->{$rw}->{$ry}) %>
+										<% } else { %>
+											<%= $returner->{$rw}->{$ry} %>
+										<% } %>
+									</span>
+								<% } %>
+
+							</td>
+						<% } %>
+					<% } %>
+				</tr>
+			<% } %>
+			<tr>
+
+			</tr>
+		</tbody>
+	</table>
+	<br>
+	<% if (keys %{$returner->{'budgets'}}) { %>
+		<% foreach my $b (keys %{$returner->{'budgets'}}) { %>
+			<b><%= &subs::format_name($b) %>:</b> <%= $returner->{'budgets'}->{$b} %><br>
+		<% } %>
+	<% } %>
+	<%= include 'apps/evaluation', evaluation => $evaluation, app => $app %>
+	<% my @statistics = qw/first_seen last_seen first_recorded last_recorded shortest longest shortest_between longest_between/; %>
+	<table>
+		<thead>
+			<th>Stat</th><th>Dur</th><th>T</th><th>ST</th>
+		</thead>
+		<tbody>
+			<% foreach my $s (@statistics) { %>
+				<tr>
+					<td><%= &subs::format_name($s) %></td>
+					<td><%= &subs::duration_sayer($returner->{$s}->{'duration'} / 1000 ) %></td>
+					<td><span class="time" timestamp="<%= $returner->{$s}->{'timestamp'} %>"></span></td>
+					<td><span class="time" timestamp="<%= $returner->{$s}->{'server_time'} %>"></span></td>
+			<% } %>
+		</tbody>	
+	</table>
+	<br>
+	<span class="statistic_information_container" app="<%= $app %>"></span>
+<% } else { %>
+	<h4>None</h4>
+<% } %>
+

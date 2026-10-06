@@ -1,0 +1,15 @@
+<%
+	use Mojo::JSON qw/decode_json/;
+	my $categories = &subs::db_query('select * from settings where setting=? and value = ?', 'pos','category')->hashes;
+	my $selected_formats = eval { return decode_json $appts->{$a}->{'setting'}->{'format'} } || [];
+%>
+
+
+<br>
+<select class="format_selector appointment_setting" multiple style="height:100px;" app="<%= $a %>" setting="format">
+	<option value="">Unknown</option>
+	<% foreach my $fs ( keys %{$gb::pos->{'media'}->{'formats'}} ) { %>
+		<option value="<%= &subs::unformat_name($fs) %>" <% if (grep { $_ eq $fs } @{$selected_formats}) { %>selected<% } %>><%= &subs::format_name($fs) %></option>
+	<% } %>
+</select>
+

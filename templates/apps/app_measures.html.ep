@@ -1,0 +1,109 @@
+<% use Mojo::JSON qw(decode_json encode_json); %>
+<% no warnings 'uninitialized'; %>
+<% my $am = eval { return decode_json $settings->{'app_measures'} } || $settings->{'app_measures'} || {}; %>
+% my $gbm = $gb::pos->{$settings->{'pos'}}->{'app_measures'};
+<% if ($gb::pos->{$settings->{'mab'}}->{'app_measures'}) { %>
+	<% foreach my $mb ( keys %{$gb::pos->{$settings->{'mab'}}->{'app_measures'} }) {
+		$gbm->{$mb} = $gb::pos->{$settings->{'mab'}}->{'app_measures'}->{$mb} unless $gbm->{$mb};
+	} %> 
+<% } %>
+<% my $gb_measures; %>
+<% if ($gb::pos->{$settings->{'pos'}}->{'app_measures'} || $gb::pos->{$settings->{'mab'}}->{'app_measures'} || $am ) { %>
+	<% 
+		if ($gbm) {
+			my %gb_measures = %{$gbm};
+			$gb_measures = \%gb_measures;
+			foreach my $g ( keys %{$gb_measures} ) {
+				unless ($am->{$g}) {
+					$am->{$g} = $gb_measures->{$g};
+				}
+			}
+		}
+		foreach my $ameas ( keys %{$am} ) {
+			unless ($gb_measures->{$ameas}) {
+				$gb_measures->{$ameas} = {};
+			}
+		}
+	%>
+	<% foreach my $meas ( sort keys %{$am}) { %>
+
+		<% $am->{$meas} = {} unless eval { keys %{$am->{$meas}} }; %>
+		<% my $m = $am->{$meas} || $gb::pos->{$settings->{'pos'}}->{'app_measures'}->{$meas}; %>
+		<% next if $m->{'type'} eq 'none'; %>
+		<b><%= &subs::format_name($meas) %></b><br>
+		<% if ($m->{'type'} eq 'select') { %>
+			<select class="app_measure" measure="<%= $meas %>" value="<%= $am->{$meas}->{'value'} %>" unit="<%= $am->{$meas}->{'unit'} %>" style="width:100%;">
+				<option value=""></option>
+				<% foreach my $me ( sort @{$m->{'options'}} ) { %>
+					<option <% if ($me eq $am->{$meas}) { %>selected <% } %> value="<%= $me %>"><%= &subs::format_name($me) %></option>
+				<% } %>
+			</select>
+		<% } elsif ($m->{'type'} eq 'multiple_select') { %>
+			% $am->{$meas}->{'value'} = eval { return decode_json $am->{$meas}->{'value'} } || [];
+			<select class="app_measure" multiple measure="<%= $meas %>" value="<%= $am->{$meas}->{'value'} %>" unit="<%= $am->{$meas}->{'unit'} %>" style="width:100%;height:100px;">
+				<option value=""></option>
+				<% foreach my $me ( sort @{$m->{'options'}} ) { %>
+					<option <% if (grep { $me eq $_ } @{$am->{$meas}->{'value'}} ) { %>selected <% } %> value="<%= $me %>"><%= &subs::format_name($me) %></option>
+				<% } %>
+			</select>
+		<% } elsif ($m->{'type'} eq 'range') { %>
+			<input type="range" class="app_measure" measure="<%= $meas %>" min="<%= $m->{'min'} || 0 %>" max="<%= $m->{'max'} || 100 %>" value="<%= $am->{$meas}->{'value'} %>" unit="<%= $m->{'unit'} %>" style="width:80%;">
+			<span class="app_measure_display"measure="<%= $meas %>"><%= $am->{$meas}->{'value'} %></span>
+		<% } elsif ($m->{'type'} eq 'text') { %>
+			<input class="app_measure" measure="<%= $meas %>" value="<%= &subs::format_name($am->{$meas}->{'value'}) %>" placeholder="<%= &subs::format_name($meas) %>" unit="<%= $m->{'unit'} %>" style="width:98%;text-align:center;">
+		<% } else { %>
+			<input class="app_measure" measure="<%= $meas %>" value="<%= $am->{$meas}->{'value'} %>" placeholder="<%= &subs::format_name($meas) %>" unit="<%= $m->{'unit'} %>" style="width:98%;text-align:center;">
+		<% } %><br>
+		<table style="width:100%;">
+		<%
+		my $o = {};
+		my $ia = $appts->{$a}->{'settings'}->{'ia'};
+		foreach my $chip ( keys %{$ia} ) {
+			foreach my $i ( keys %{$ia->{$chip}} ) {
+				
+				if ($ia->{$chip}->{$i}->{'measure'} eq $meas) {
+					if ($ia->{$chip}->{$i}->{'threshold'}) {
+
+						%>
+						<tr>
+							<td>
+								<% if ($ia->{$chip}->{$i}->{'name'}) { %><b><%= &subs::format_name($ia->{$chip}->{$i}->{'name'}) %></b> <% } %>
+							</td>
+							<td>
+								<%= &subs::format_name($ia->{$chip}->{$i}->{'component'}) %>
+							</td>
+							<td>
+								<% if ($m->{'type'} eq 'text') { %>
+									<select value="<%= $ia->{$chip}->{$i}->{'named_measure'} %>" style="text-align:center;" chip_id="<%= $chip %>" edt="<%= $ia->{$chip}->{$i}->{'edt'} %>"
+										class="watch_setting" setting="named_measure" numero="<%= $i %>" component="<%= $ia->{$chip}->{$i}->{'component'} %>">
+										<% my $sm = eval { return decode_json $settings->{'seen_measures'} } || []; %>
+										<option value=""></option>
+										<% foreach my $tm ( @{$sm}) { %>
+											<option value="<%= $tm %>" <% if ($tm eq $ia->{$chip}->{$i}->{'named_measure'}) { %>selected<% } %>><%= &subs::format_name($tm) %></option>
+										<% } %>
+									</select>
+								<% } else { %>
+									<select value="<%= $ia->{$chip}->{$i}->{'comparison'} %>" style="text-align:center;" chip_id="<%= $chip %>" edt="<%= $ia->{$chip}->{$i}->{'edt'} %>" class="watch_setting"
+										setting="comparison" numero="<%= $i %>" component="<%= $ia->{$chip}->{$i}->{'component'} %>">
+										<% foreach my $cmp ( qw/< <= == >= >/ ) { %>
+											<option value="<%= $cmp %>" <% if ($cmp eq $ia->{$chip}->{$i}->{'comparison'}) { %>selected<% } %>><%= $cmp %></option>
+										<% } %>
+									</select>
+									<input type="number" min="<%= $m->{'min'} || 0 %>" max="<%= $m->{'max'} || 100 %>" step=".1" value="<%= $ia->{$chip}->{$i}->{'threshold'} %>" style="text-align:center;" chip_id="<%= $chip %>" edt="<%= $ia->{$chip}->{$i}->{'edt'} %>"
+									class="watch_setting" setting="threshold" numero="<%= $i %>" component="<%= $ia->{$chip}->{$i}->{'component'} %>">
+								<% } %>
+							</td>
+						</tr>
+						<br>
+						<%
+					}
+				}
+			}
+		} %>
+		</table>
+		<br>
+	<% } %>
+
+<% } %>
+
+<img src="/images/decipherable/diskette.png" class="little_thumb app_measure_save hover" style="vertical-align:bottom;" app="<%= $a %>">

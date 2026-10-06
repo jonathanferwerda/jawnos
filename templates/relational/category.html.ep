@@ -1,0 +1,48 @@
+
+<% my $constructs = []; %>
+<% if ($category_search) { %>
+	<% $constructs = &subs::db_query('select distinct(app),* from settings where (setting=? or setting=?) and device=? and app like ?','pos', 'mab', &subs::device_setter(), '%' . $category_search . '%')->hashes; %>
+<% } else { %>
+	<% $constructs = &subs::db_query('select distinct(app),* from settings where (setting=? or setting=?) and value=? and device=?','pos','mab',$sc->{'sing'}, &subs::device_setter())->hashes;  %>
+<% } %>
+
+<% my $c = &subs::controller_builder();	%>
+<% my $cd = &subs::cache_get({ app => 'relational', context => 'bubbles' });
+<% if (scalar @{$constructs} > 0) { %>
+	<div class="relational_space" construct="<%= $sc->{'sing'} %>">
+		<% if ($category_search ne '') { %> <h4><%= &subs::format_name($sc->{'sing'}) %></h4> <% } %>
+		<% if (scalar @{$pconstructs->{'list'}} > 0) { %>
+			<select class="relational_select" construct="<%= $pconstructs->{'sing'} %>">
+				<% foreach my $const ( @{$pconstructs->{'list'}} ) { %>
+					<option value="<%= $const->{'app'} %>"><%= &subs::format_name($const->{'app'}) %></option>
+				<% } %>
+			</select>
+			<br>
+		<% } %>
+		<% $pconstructs = $sc; %>
+		<% my $new_count = 0; %>
+		<% foreach my $const ( sort { $a->{'app'} cmp $b->{'app'} } @{$constructs} ) { %>
+			<% if ($cd->{$const->{'app'}}) { %>
+				<%== $cd->{$const->{'app'}} %>
+			<% } else { 
+				$new_count++;
+				$cd->{$const->{'app'}} = $c->render_to_string(
+					template => 'relational/bubble',
+					const => $const,
+					all_settings => $all_settings,
+					settings => $settings,
+					sc => $sc
+				);
+			%>
+			<%= $cd->{$const->{'app'}} %>
+						
+
+
+		
+		<% } %>
+		<% &subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y' }, $cd) if $new_count > 0; %>
+			
+		<% } %>
+		<input class="relational_adder" construct="<%= $sc->{'sing'} %>">
+	</div>
+<% } %>

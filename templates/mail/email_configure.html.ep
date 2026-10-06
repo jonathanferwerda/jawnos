@@ -1,0 +1,162 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<div id="email_configure" style="overflow:scroll;">
+	<% my $settings = &subs::settings_grabber({ app => 'mailbox' }); %>
+	<% my $signatorial = &subs::signatorial_designer(); %>
+	<% foreach my $screen ( qw/servers templates/ ) { %>
+		<button class="email_config_screen_toggle" screen="<%= $screen %>" <% if ($screen eq $settings->{'email_config_screen'}) { %>style="background-color:lightgreen;"<% } %>><%= &subs::format_name($screen) %></button>
+	<% } %>
+	<% if ($settings->{'email_config_screen'} eq 'templates') { %>
+		<span class="email_template_configuration">
+			<% my $email_templates = eval { return decode_json $settings->{'email_templates'} } || []; %>
+			<% my @selected_templates = grep { $_->{'uuid'} eq $settings->{'email_template_config_select'} } @{$email_templates}; %>
+			<% my $st = $selected_templates[0]; %>
+			<% $settings->{'email_template_config_select'} = "new" unless grep { $_->{'uuid'} eq $settings->{'email_template_config_select'} } @{$email_templates}; %>
+			<% unshift @{$email_templates}, { name => 'new' }; %>
+			<select class="email_template_config_select" value="<%= $settings->{'email_template_config_select'} %>">
+				<% foreach my $et ( @{$email_templates} ) { %>
+					<% $et->{'uuid'} = $et->{'uuid'} ? $et->{'uuid'} : 'new'; %>
+					<option value="<%= $et->{'uuid'} %>" <% if ($et->{'uuid'} eq $settings->{'email_template_config_select'} || scalar @{$email_templates} == 1) { %>selected <% } %>><%= &subs::format_name($et->{'name'}) %></option>
+				<% } %>
+			</select>
+			<img class="little_thumb email_template_save hover" style="vertical-align:bottom;" src="/images/decipherable/diskette.png">
+			<% if ($settings->{'email_template_config_select'} ne 'new') { %>
+				<img src="/icons/trash.png" class="little_thumb email_config_template_delete hover" style="vertical-align:bottom;" uuid="<%= $settings->{'email_template_config_select'} %>">
+			<% } %>
+			<br>
+			<b>Template Purpose</b><br>
+			<select class="email_template_field" field="purpose" style="width:100%;" value="<%= $st->{'purpose'} %>">
+				<option value=""></option>
+				<% foreach my $p ( qw/quote invoice payment receipt/ ) { %>
+					<option value="<%= $p %>" <% if ($st->{'purpose'} eq $p) { %>selected<% } %>><%= &subs::format_name($p) %></option>
+				<% } %>
+			</select>
+			<b>Template Name</b><br>
+			<input class="email_template_field" field="name" style="width:100%;" value="<%= &subs::format_name($st->{'name'}) %>"><br>
+			<b>Subject</b><br>
+			<input class="email_template_field" field="subject" style="width:100%;" value="<%= $st->{'subject'} %>"><br>
+			<b>Body</b><br>
+			<textarea class="email_template_field" field="body" style="width:100%;height:60%;" upgradeable="yes"><%= $st->{'body'} %></textarea>
+		</span>
+		<span class="template_variables">
+			<b>Variables</b>
+		</span>
+	<% } else { %>
+		<% my $email_server = eval { return decode_json $settings->{'email_config'} } || [{}]; %>
+		<button id="email_receive">Receive</button>
+
+		<select onchange="settingSetter({ 'app': 'mailbox', 'setting': 'email_auto_receive', 'value': this.value })" value="<%= $settings->{'email_auto_receive'} %>">
+			<option value="" <% if (!$settings->{'email_auto_receive'} || $settings->{'email_auto_receive'} eq '') { %>selected<% } %>>None</option>
+			<% foreach my $d ( $signatorial, @gb::device_types  ) { %>
+
+				<% my $name = $d eq $signatorial ? 'Me' : &subs::format_name($d); %>
+				<option value="<%= $d %>" <% if ($d eq $settings->{'email_auto_receive'}) { %>selected<% } %>><%= $name %></option>
+			<% } %>
+			<% foreach my $d ( @{&subs::db_select('remote_machines', [ 'ip','signatorial' ], { connection => 'active' })->hashes} ) { %>
+				<option value="<%= $d->{'signatorial'} %>" <% if ($d->{'signatorial'} eq $settings->{'email_auto_receive'}) { %>selected<% } %>><%= $d->{'ip'} %></option>
+			<% } %>
+		</select>
+		<% foreach my $es ( @{$email_server} ) { %>
+			<span class="email_server_config" uuid="<%= $es->{'uuid'} %>">
+				<% $es->{'uuid'} = $es->{'uuid'} ? $es->{'uuid'} : 'new'; %>
+				<% if ($es->{'uuid'} ne 'new') { %>
+					<span class="time" timestamp="<%= $es->{'last_login'} %>"></span>
+				<% } %>
+				<table style="width:100%;max-width:100%;border:solid;border-width:3px;" class="email_server_settings" uuid="<%= $es->{'uuid'} %>">
+					<thead>
+						<th></th><th></th><th></th>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Active</td>
+							<td>
+								<input type="checkbox" class="email_server_setting" setting="active" uuid="<%= $es->{'uuid'} %>" <% if ($es->{'active'} eq 'on') { %>checked="checked"<% } %>>
+							</td>
+							<td style="text-align:right;">
+								<img src="/icons/trash.png" class="little_thumb email_config_server_delete hover" uuid="<%= $es->{'uuid'} %>">
+							</td>
+						</tr>
+						<tr>
+							<td>Outgoing Name</td>
+							<td>
+								<input type="text" class="email_server_setting" setting="name" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'name'} %>">
+							</td>
+						</tr>
+						<tr>
+							<td>Email</td>
+							<td>
+								<input type="email" class="email_server_setting" setting="email" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'email'} %>">
+							</td>
+						</tr>
+						<tr>
+							<td>Password</td>
+							<td>
+								<input type="password" class="email_server_setting" setting="password" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'password'} %>">
+							</td>
+						</tr>
+						<tr>
+							<td>IMAP Server</td>
+							<td>
+								<input type="text" class="email_server_setting" setting="imap_server" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'imap_server'} %>">
+							</td>
+							<td>
+								<select class="email_server_setting" setting="imap_port" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'imap_port'} %>">
+									<% foreach my $port ( qw/143 993/ ) { %>
+										<option value="<%= $port %>" <% if ($port eq $es->{'imap_port'}) { %>selected<% } %>><%= $port %></option>
+									<% } %>
+								</select>
+								<select class="email_server_setting" setting="imap_encryption" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'imap_encryption'} %>">
+									<% foreach my $enc ( qw/none STARTTLS SSL/ ) { %>
+										<option value="<%= $enc %>" <% if ($enc eq $es->{'imap_encryption'}) { %>selected<% } %>><%= $enc %></option>
+									<% } %>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<td>SMTP Server</td>
+							<td>
+								<input type="text" class="email_server_setting" setting="smtp_server" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'smtp_server'} %>">
+							</td>
+							<td>
+								<select class="email_server_setting" setting="smtp_port" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'smtp_port'} %>">
+									<% foreach my $port ( qw/25 465 587/ ) { %>
+										<option value="<%= $port %>" <% if ($port eq $es->{'smtp_port'}) { %>selected<% } %>><%= $port %></option>
+									<% } %>
+								</select>
+								<select class="email_server_setting" setting="smtp_encryption" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'smtp_encryption'} %>">
+									<% foreach my $enc ( qw/none STARTTLS SSL/ ) { %>
+										<option value="<%= $enc %>" <% if ($enc eq $es->{'smtp_encryption'}) { %>selected<% } %>><%= $enc %></option>
+									<% } %>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<td colspan="3">
+								<% if ($es->{'folders'}) { %>
+									<h4 class="email_config_folder_view_toggle hover" style="text-align:center;" uuid="<%= $es->{'uuid'} %>">Show <%= scalar keys %{$es->{'folders'}} %> Folders</h4>
+									<table style="width:100%;text-align:left;display:none;" class="email_config_folder_view" uuid="<%= $es->{'uuid'} %>">
+										<thead><th>Folder</th><th>Retrieve</th></thead>
+										<tbody>
+											<% foreach my $f ( keys %{$es->{'folders'}} ) { %>
+												<tr>
+													<td><%= $f %></td>
+													<td>
+														<input type="checkbox" class="email_server_setting" uuid="<%= $es->{'uuid'} %>" setting="folder" subsetting="retrieve" 
+															folder="<%= $f %>" <% if ($es->{'folders'}->{$f}->{'retrieve'} eq 'on') { %>checked<% } %>>
+													</td>
+												</tr>
+											<% } %>
+										</tbody>
+									</table>
+								<% } %>
+							</td>
+						</tr>
+
+
+
+					</tbody>
+				</table>
+			</span>
+		<% } %>
+		<button class="email_config_server_add hover little_thumb" style="text-align:center;">Add Server</button>
+	<% } %>
+</div>

@@ -1,0 +1,89 @@
+<% no warnings 'uninitialized'; %>
+<div id="homepage" style="background-color:<%= $config->{$device}->{'homepage'}->{'background_colour'} %>;text-align:center;height:100%;width:100%;overflow:scroll;">
+	<span id="category_selected" class="hover" category="<%= $c->param('category') || 'promo' %>"></span>
+	<div id="navigation" style="font-size:20px;height:36px;max-width:100%">
+		<span class="homepage_category" category="promo">Promo</span>
+		<% foreach my $cat ( @{$magazine_categories} ) { %>
+			<% unless ($cat->{'app'} eq 'promo') { %>
+				<span class="hover homepage_category" category="<%= $cat->{'app'} %>"><%= &subs::format_name($cat->{'app'}) %></span>
+			<% } %>
+		<% } %>
+	</div>
+
+	<div id="homepage_content" style="background-color:<%= $config->{$device}->{'homepage_content'}->{'background_colour'} %>;">
+		<% if ($title) { %><h1><%= $title %></h1><% } %>
+		<% if (my $mugshot = &subs::setting_grabber({ app => 'me', setting => 'mugshot' })) { %><img style="background-color:grey;height:20%;width:20%;border-radius:50%;border:solid;border-width:5px;" src="<%= $mugshot %>"><% } %>
+		<% if ($config->{'email'}) { %><br><a href="mailto:<%= $config->{'email'} %>"><%= $config->{'email'} %><br></a><% } %>
+		<% if (my $information = &subs::setting_grabber({ app => 'me', setting => 'information' })) { %>
+			<% $information =~ s/\n/<br>/gi; %>
+			<p><%== $information %></p><br>
+		<% } %>
+		<% if ($c->session('authentication') eq 'approved') { %>
+
+			<div id="mail_centre" style="float:right;">
+				<div id="mail" style="position:fixed;z-index:1000;right:5px;top:86px;height:50%;width:100%;display:none;background-color:white;border:solid;border-width:4px;border-radius:10px"></div>
+				<script>var mail_ws_url = '<%= $mail_ws_url %>';</script>
+				<script>var paperboy_url = '<%= $paperboy_url %>';</script>
+			</div>
+
+
+			<div id="content_area" style="overflow:scroll;text-align:center;">
+				<% foreach my $art ( @{$articles} ) { %>
+					<%= include 'article', art => $art %>
+				<% } %>
+			</div>
+		<% } else { %>
+			<button id="ticket_request">Request Ticket</button>
+			<div id="ticket_request_viewer"></div>
+			<div id="content_area" style="text-align:center;">
+				<% foreach my $art ( @{$articles} ) { %>
+					<% if ($art->{'public'} eq 'on') { %>
+						<%= include 'article', art => $art %>
+					<% } else { %>
+						<%= include 'guest_layouts/article', art => $art %>
+					<% } %>
+				<% } %>
+			</div>
+		<% } %>
+	</div>
+	<div style="text-align:center;">
+		President is an entertainment, organization, and automation tool <br> <button id="download_program">Download</button>
+		<span>Last Update: <span class="time" timestamp="<%= &subs::newest_folder_checker() %>"></span></span>
+		<br>
+		<b>DISCLAIMER:</b> You need to know how to use a computer to install and operate this program.
+		<br>You need to be an expert with Linux to be sure this software won't delete all your personal files.
+		<br>On the other hand, your life is probably lacking purpose and hope without my code.
+		<br>Regardless, I accept no liability whatsoever!
+	</div>
+</div>
+
+<script>
+	$(document).ready(function() {
+		var category = $('#category_selected').attr('category');
+		$('.homepage_category[category="' + category + '"]').css({ 'font-size': '33px' });
+	});
+	$(document).on('click', '.homepage_category', function() {
+		var category = $(this).attr('category');
+		console.log(category);
+		if (category == 'promo') {
+			window.location = '/';
+		}
+		else {
+			window.location = '/?category=' + category;
+		}
+	});
+	appointment_chron();
+</script>
+<style>
+	input { text-align:left; height: 28px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }	
+	button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }
+	#homepage_content {
+		width: 100%;
+		max-width:1000px;
+		left: @media screen / 2;
+		display:inline-block;
+		border:solid;
+		border-width: 4px;
+		border-radius: 3px;
+	}
+</style>

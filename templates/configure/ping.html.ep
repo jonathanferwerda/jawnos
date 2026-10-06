@@ -1,0 +1,7 @@
+<% foreach my $p ( keys %{$ping} ) { %>
+	<% if ($ping->{$p}->{'result'} =~ /ttl/gi) {
+		<% unless ($p =~ /127\.0\.0/gi && $p ne '127.0.0.1') { %>
+			<div><%= $p %></div><button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $p %>">Scan</button><br>
+		<% } %>
+	<% }
+<% } %>

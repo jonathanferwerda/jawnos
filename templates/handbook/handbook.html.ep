@@ -1,0 +1,66 @@
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<% my $favourites = eval { return decode_json &subs::setting_grabber({ app => 'handbook', setting => 'favourites' }) } || {}; %>
+<div id="handbook" style="text-align:center;width:100%;height:100%;background-color:white;overflow:scroll;" class="appointment">
+	<h2>
+		<img src="/images/decipherable/home.png" class="little_thumb hover handbook_link" style="float:right;" chapter="handbook">
+	</h2>
+	<% if ($chapter eq 'handbook') { %>
+		<% foreach my $h ( sort grep { $favourites->{$_} eq 'enabled' } keys %{$favourites} ) { %>
+			<% my $main_image = &subs::main_icon_maker({ app => $h, timestamp => &subs::rightNow(), size => 'large', onclick => 'none' }); %>
+			<h4 class="handbook_link hover" type="app" chapter="<%= $h %>"><%== $main_image %> <%= &subs::format_name($h) %></h4>
+		<% } %>
+		<% foreach my $h ( sort grep { $windows->{$_}->{'type'} eq 'window' && $_ ne 'handbook' } keys %{$windows} ) { %>
+			<% unless ($favourites->{$h} eq 'enabled') { %>
+				<% my $main_image = &subs::main_icon_maker({ app => $h, timestamp => &subs::rightNow(), size => 'large', onclick => 'none' }); %>
+				<h4 class="handbook_link hover" type="app" chapter="<%= $h %>"><%== $main_image %> <%= &subs::format_name($h) %></h4>
+			<% } %>
+		<% } %>
+		<% foreach my $h ( sort grep { $_ ne 'handbook.html.ep' } split /\n/, `ls templates/handbook` ) { %>
+			<% $h =~ s/\.html\.ep//gi; %>
+			<h4 class="handbook_link hover" type="template" chapter="<%= $h %>"><%= &subs::format_name($h) %></h4>
+		<% } %>
+	<% } else { %>
+		<% if ($type eq 'template') { %>
+			<%= include 'handbook/' . $chapter %>
+		<% } else { %>
+			<% my $bookmark = &subs::cache_get({ app => $chapter, context => 'handbook' }); %>
+			<% my $settings = &subs::settings_grabber({ app => $chapter }); %>
+			<img src="/images/make believe/explosion.png" class="little_thumb hover handbook_setting" app="<%= $chapter %>" setting="favourites" value="<%= $favourites->{$chapter} %>" style="float:right;">
+			<h1>
+				<% my $main_image = &subs::main_icon_maker({ app => $chapter, timestamp => &subs::rightNow(), size => 'medium', onclick => 'none' }); %>
+				<%== $main_image %>
+				<%= &subs::format_name($chapter) %>
+			</h1>
+			<% my $apps = &subs::db_query('select * from appointments where app=? order by timestamp limit 50', $chapter)->hashes; %>
+			<% foreach my $app ( @{$apps} ) { %>
+			<% my @p = grep { $_->{'name'} eq $app->{'type'} } @{$pseudonyms};
+				$app->{'pseudonym'} = $p[0]; %>
+				<% if ($app->{'pseudonym'}->{'icon'}) { %>
+					<img class="little_thumb" src="<%= $app->{'pseudonym'}->{'icon'} %>">
+				<% } else { %>
+					<%= &subs::format_name($app->{'type'}) %>
+				<% } %>	
+				<span class="time" mode="fixed" timestamp="<%= $app->{'timestamp'} %>"></span> <%= &subs::duration_sayer($app->{'duration'} / 1000) %><br>
+				<% if ($app->{'start_notes'} || $app->{'notes'} || $app->{'end_notes'}) { %>
+					<%== &subs::note_retriever($app->{'app'}, $app->{'uuid'}) %>
+				<% } %>
+				<% if ($app->{'measures'}) { %>
+					<% $app->{'measures'} = eval { return decode_json $app->{'measures'} } || {}; %>
+					<%= include 'apps/app_measure_details', l => $app %>
+				<% } %>
+				<% if ($app->{'file'}) { %>
+					<% $app->{'file'} = eval { return decode_json $app->{'file'} } || []; %>
+					<% foreach my $file (@{$app->{'file'}}) {
+						push @{$app->{'files'}}, &subs::log_reader_file_preparer($file);
+					} %>
+					
+					<%= include 'apps/app_file', l => $app, settings => $settings %>
+				<% } %>
+				<br>
+			<% } %>
+		<% } %>
+	<% } %>
+</div>
+<script>
+	localStorage.setItem('handbook_chapter', '<%= $chapter %>');
+</script>

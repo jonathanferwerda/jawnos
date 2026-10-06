@@ -1,0 +1,631 @@
+<div class="media_window" app="<%= $id %>">
+
+	<% my $miss = $misses->{$id} || &subs::random_string_creator(25,"Aa"); %>
+	<% my $app = $c->param('app_name'); %>
+	<% my $timestamp = &subs::rightNow(); %>
+	<div id="neighbour_media"></div>
+	<style>
+		#<%= $miss %>_speed {
+			position:absolute;
+			appearance: none;
+			height: 30px;
+			width: 130px;
+			bottom: 1px;
+			left: 65px;
+			border: solid;
+			border-radius: 5px;
+			border-width: 3px;
+			background-color:transparent;
+			color: black;
+			outline: none;
+			vertical-align: middle;
+			background-image: url('/images/studio/ruler.png');
+		}
+		#<%= $miss %>_position {
+			position:absolute;
+			bottom:95px;
+			left: 0px;
+			width:98%;
+			height:20px;
+		}
+		#<%= $miss %>_loop_start {
+			position:absolute;
+			bottom:1px;
+			left: 220px;
+		}
+		#<%= $miss %>_loop_end {
+			position:absolute;
+			bottom:1px;
+			left: 270px;
+		}
+		#<%= $miss %>_snapshot {
+			position:absolute;
+			bottom: 1px;
+			left: 1px;
+		}
+		#<%= $miss %>_back {
+			position: absolute;
+			left: 220px;
+			bottom: 55px;
+		}
+		#<%= $miss %>_forward {
+			position: absolute;
+			left: 270px;
+			bottom: 55px;
+		}
+		#<%= $miss %>_full_screen {
+			position:absolute;
+			left: 60px;
+			bottom: 55px;
+		}
+		#music_list_view {
+			position:absolute;
+			left: 95px;
+			bottom: 55px;
+		}
+		#music_shuffle {
+			bottom:  1px;
+			left: 320px;
+			position:absolute;
+		}
+		#music_repeat {
+			left: 320px;
+			bottom:55px;
+			position:absolute;
+		}
+		#<%= $miss %>_add {
+			position:absolute;
+			left: 1px;
+			bottom: 55px;
+		}
+		#<%= $miss %>_jog_wheel_frame {
+			position:absolute;
+			right: 10px;
+			bottom: 0px;
+			height: 90px;
+			width: 90px;
+		}
+		#<%= $miss %>_jog_wheel {
+			width: 100%;
+			height: 100%;
+		}
+		#<%= $id %>_full_title {
+			right: 130px;
+			bottom: 1px;
+			font-size: 16px;
+			position:absolute;
+			color: yellow;
+			width: 20%;
+			height: 100px;
+			vertical-align:center;
+		}
+		#<%= $id %>_time_display {
+			position:absolute;
+			left: 145px;
+			bottom:70px;
+			font-size: 24px;
+			color: yellow;
+		}
+		#<%= $id %>_media_information {
+			position:absolute;
+			left: 85px;
+			bottom: 30px;
+			font-size: 20px;
+			color: yellow;
+		}
+		#<%= $id %>_mark_information {
+			position:absolute;
+			left: 150px;
+			bottom: 30px;
+			font-size: 20px;
+			color:yellow;
+		}
+		#<%= $id %>_subtitle_toggle {
+			bottom: 55px;
+			left: 140px;
+			position: absolute;
+		}
+	</style>
+
+	<div id="<%= $miss %>_container" class="<%= $id %>_container" style="width:100%;background-color: black;display:block;">
+		<% if ($c->param('contents')) { %>
+			<%== $c->param('contents') %>
+			<script> $('#<%= $id %>').addClass('<%= $miss %>');</script>
+		<% } else { %>
+			<video autoplay class="media_out <%= $miss %>" id="<%= $id %>" miss="<%= $miss %>" <% if ($source ne 'music') { %> muted <% } %> thumb_style="border:solid;border-radius:7px;border-width:5px;width:30%;right:10px;bottom:120px;position:absolute;" 
+				big_style="max-height:100%;height:100%;width:100%;object-fit:contain;<% if ($source eq 'music') { %>top:10px;position:absolute;<% } %>" style="max-height:100%;width:100%;<% if ($source eq 'music') { %>top:103px;position:absolute;<% } %>"
+				>
+				<track src="" id="<%= $id %>_subtitles" kind="subtitles" onerror="this.onerror=null;" srclang="en" label="English" status="<%= $crate->{'settings'}->{'subtitles'} %>" default  />
+			</video>
+		<% } %>
+		<img style="display:none;width:80%;height:80%;top:10%;left:10%;;left:10%;position:absolute;" id="music_album_cover">
+		<div class="media_controls" id="<%= $miss %>_controls" style="background-color:black;opacity:1;position:absolute;bottom:0px;height:110px;width:100%;">
+			<% if ($source eq 'music') { %>
+
+			<% } %>
+			<input id="<%= $miss %>_speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1" width="100%" height="50">
+			<input id="<%= $miss %>_position" class="<%= $miss %> hover" value="0" type="range" step=".1" min="0" max="100" width="100%">
+			<img id="<%= $miss %>_snapshot" src="/images/decipherable/gallery.png" class="little_thumb <%= $miss %> hover">
+			<img id="<%= $miss %>_full_screen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="/images/studio/green screen.png">
+			<img id="<%= $miss %>_back" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="/images/studio/back.png">
+			<img id="<%= $miss %>_forward" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="/images/studio/forward.png">
+			<img id="<%= $miss %>_add" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="/images/studio/plus.png">
+			<img id="<%= $miss %>_loop_start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="/images/make believe/start.png">
+			<img id="<%= $miss %>_loop_end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="/images/make believe/end.png">
+			<img id="<%= $miss %>_position_preview" style="display:none;" class="huge_thumb">
+			<img id="<%= $id %>_subtitle_toggle" style="" class="little_thumb hover" src="/images/decipherable/love letter.png">
+			<span id="<%= $miss %>_position_preview_info" style="display:none;" class=""></span> 
+			<span id="<%= $miss %>_jog_wheel_frame" style="" class=" hover">
+				<img id="<%= $miss %>_jog_wheel" class="<%= $miss %> jog_wheel" src="/images/studio/jog wheel.png">
+				<span id="<%= $miss %>_jog_wheel_centre" style="width:1px; height: 1px;" ></span>
+			</span>
+			<span id="<%= $id %>_time_display" style="display:none;">
+				0:00
+			</span>
+			<span id="<%= $id %>_mark_information">
+
+			</span>
+			<span id="<%= $id %>_media_information">
+
+			</span>
+			<span id="<%= $id %>_full_title"></span>
+			<% if ($source eq 'music') { %>
+				<img src="/images/decipherable/list.png" class="little_thumb hover" id="music_list_view">
+				<img src="/images/studio/shuffle.png" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
+				<img src="/images/studio/repeat.png" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
+			<% } %>
+		</div>
+	</div>
+	<script>
+
+	</script>
+	<script>
+		var v = document.getElementById('<%= $id %>');
+		v.lastPositionPreview = Date.now();
+
+		if (misses['<%= $id %>'] != '<%= $miss %>') {
+			console.log(misses);
+			misses['<%= $id %>'] = '<%= $miss %>';
+			$('#<%= $id %>_script').attr('loaded', 'yes');
+
+
+
+			$(document).on('change mousemove touchmove', '#<%= $miss %>_speed', function() {
+				var speed = numeral($(this).val()).value();
+				var v = document.getElementById('<%= $id %>');
+				v.playbackRate = speed;
+			});
+			$(document).on('dblclick', '#<%= $miss %>_speed', function() {
+				$(this).val(1);
+				var v = document.getElementById('<%= $id %>');
+				v.playbackRate = 1;
+			});
+			<%= $miss %>VideoInterval();
+			function <%= $miss %>VideoInterval() {
+				var <%= $id %>_interval;
+				var v = document.getElementById('<%= $id %>');
+				if (windowPhoneChecker()) {
+					$('#<%= $miss %>_jog_wheel_frame').hide();
+				}
+				clearInterval(vidControls['<%= $id %>_video_interval']);
+				v.fps = { average: 0, instances: [], measure: 3, quality: { instant: 0 } };
+				clearInterval(vidControls['<%= $id %>_video_interval']);
+				vidControls['<%= $id %>_video_interval'] = setInterval(function() {
+					if ($('#<%= $id %>').length == 0) { //!$('.<%= $miss %>_container').closest('.wind').is(':visible')) {
+						clearInterval(vidControls['<%= $id %>_video_interval']);
+						misses['<%= $id %>'] = null;
+					}
+					var v = document.getElementById('<%= $id %>');
+					if (v.state == 1) {
+						var speed = numeral($('#<%= $miss %>_speed').val()).value();
+						var fps = v.fps.quality;
+						v.fps.quality = v.getVideoPlaybackQuality();
+						v.fps.quality.instant = Date.now();
+						var vid = $('#<%= $id %>');
+						if (fps.instant != 0) {
+							if (v.fps.quality.totalVideoFrames == 0) {
+								<% if ($source eq 'music') { %>
+								//	$('#music_theatre').hide();
+								<% } else { %>
+									$('#<%= $id %>').closest('.wind').hide();
+								<% } %>
+							}
+							else {
+								var creation = v.fps.quality.instant - fps.instant;
+								var frames = v.fps.quality.totalVideoFrames - fps.totalVideoFrames;
+								v.fps.instances.unshift(numeral(frames / creation * 1000 / speed).value());
+								var fps_total = 0;
+
+								$.each(v.fps.instances, function(i,v) {
+									fps_total = v + fps_total;
+								});
+								if (v.fps.instances.length > v.fps.measure) {
+									v.fps.average = numeral(fps_total / v.fps.instances.length).format('0.00');
+									$('#<%= $id %>_media_information').html(v.fps.average);
+									
+									v.fps.instances.pop();
+								}
+								$('#<%= $id %>').closest('.wind').show();
+							}
+						}
+						if (vid.length == 0) {
+							console.log('clearing');
+							clearInterval(vidControls['<%= $id %>_video_interval']);
+						}
+						if (vidControls['<%= $id %>']) {
+							var markPosition = 0;
+						//	console.log(vidControls['<%= $id %>']);
+							$.each(vidControls['<%= $id %>'], function(i,vr) {
+						//		console.log(i + ' ' + v.currentTime + ' ' + vr);
+								if (v.currentTime >= vr) {
+									markPosition = i + 1;
+								}
+							});
+							$('#<%= $id %>_mark_information').html(markPosition + '/' + vidControls['<%= $id %>'].length);
+						}
+						if (v.currentTime > vid.attr('loop_end')) {
+							v.currentTime = vid.attr('loop_start') || 0;
+						}
+						$('#<%= $miss %>_position').val(v.currentTime / v.duration * 100);
+						$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
+						if ($('#music').width() > 640) {
+							var width = Math.abs(numeral($('#<%= $miss %>_jog_wheel').css('left')).value() - numeral($('#<%= $miss %>_forward').css('left') ).value() + 60);
+							console.log(width);
+							$('#<%= $id %>_full_title').text($('.playing').find('.full_title').text()).css({ 
+								'width': width,
+								'font-size': ($('#music').width() / 50),
+							//	'left': numeral($('#<%= $miss %>_forward').css('left') + 60).value()
+							}).show();
+						}
+						else {
+							$('#<%= $id %>_full_title').hide();
+						}
+					}
+				}, 1000);
+			}
+			var <%= $miss %>Tools = { toolbarTimeout: 0, lastX: 0, lastY: 0 };
+			$(document).on('mousemove, mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_controls', function() {
+
+				$('#<%= $miss %>_controls').fadeIn();
+				<% if ($source eq 'music') { %>
+					$('#interface').css({ 'z-index': ($('.wind[app="music"]').css('z-index') + 1) }).fadeIn();
+				<% } %>
+
+				$('#<%= $id %>').css({'cursor': 'auto'});
+				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+				<%= $miss %>Tools['toolbarTimeout'] =setInterval(function() {
+					if ($('#<%= $id %>').attr('theatre_mode') == 'on' || '<%= $id %>' != 'video') {
+						var mouse = mouse_position();
+						var el = document.elementsFromPoint(mouse.x,mouse.y);	
+						var seen = 0;
+						$('#<%= $id %>').css({'cursor': 'none'});
+						$.each(el, function(i,v) {
+							if (<% if ($id eq 'video') { %> $(v).attr('id') == 'interface' || <% } %> $(v).attr('id') == '<%= $miss %>_controls') {
+								seen = 1;
+							}
+							else if ($(v).attr('id') == '<%= $id %>' && seen == 0) {
+								if (mouse.lastX == mouse.x && mouse.lastY == mouse.y &&  $(v).attr('id') != '<%= $miss %>_controls') {
+									seen = 0;
+									$('#<%= $id %>').css({'cursor': 'none'});
+								}
+								else {
+									seen = 1;
+								}
+							}
+						});
+						if (seen == 0) {
+							$('#<%= $miss %>_controls').fadeOut();
+							<% if ($id == 'video') { %>
+								$('#interface').fadeOut('slow'); 
+							<% } %>
+							clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+						}
+					}
+					else {
+						clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+					}
+				},3000);
+			});
+
+			$(document).on('click', '#<%= $miss %>_snapshot', function() {
+				var timestamp = Date.now();
+				var v = document.getElementById('<%= $id %>');
+				var canvas = document.createElement('canvas');
+				var height = $('#<%= $id %>').height();
+				var width = $('#<%= $id %>').width();
+				canvas.height = height;
+				canvas.width = width;
+				canvas.getContext('2d').drawImage(v, 0, 0, width, height);
+				var snapshot = canvas.toDataURL('image/png');
+
+				var apper = $('.wind')[$('.wind').length - 1];
+				var window_app = topWindow('<%= $app || 'video' %>') || $('#search').val();
+				console.log(window_app + ' <%= $app %>');
+				var app_name = window_app || <% if ($c->param('app') eq 'video') { %>musicTitleMaker()<% } else { %>"<%= $app %>"<% } %>;
+
+				$.ajax({
+					url: '/manager/snapshot_save',
+					type: 'POST',
+					data: { 
+						timestamp: timestamp,
+						snapshot: snapshot,
+						app: app_name
+					},
+					success:function(response) {
+						console.log(response);
+					}
+				});
+			});
+			if (!windowPhoneChecker()) {
+				var <%= $miss %>_jw_deg =  0;
+				var <%= $miss %>_last = 'out';
+				$(document).on('touchmove mousemove', '#<%= $miss %>_jog_wheel', function(e) {
+					e.preventDefault();			e.preventDefault();
+					var j = $(this);
+
+				//	var jc = $('<%= $miss %>_jog_wheel_centre');
+					var jc = j.closest('.jog_wheel_frame').find('.jog_wheel_centre');
+					if (e.which === 1 || e.originalEvent.type == 'touchmove') {
+						var x = e.originalEvent.clientX;
+						var y = e.originalEvent.clientY;
+						if (e.originalEvent.targetTouches) {
+							x = e.originalEvent.targetTouches[0].clientX;
+							y = e.originalEvent.targetTouches[0].clientY;
+						}
+						var middle_x = numeral(jc.offset().left + (jc.width() / 2)).value();
+						var middle_y = numeral(jc.offset().top + (jc.height() / 2)).value();
+						var deltaX = middle_x - x;
+						var deltaY = middle_y - y;
+						var rad = Math.atan2(deltaY, deltaX); 
+						var deg = rad * (180 / Math.PI) - 90;
+						var diff = 0;
+						if (<%= $miss %>_last == 'in') {
+							diff = (deg - <%= $miss %>_jw_deg);
+							
+						}
+						<%= $miss %>_jw_deg = (<%= $miss %>_jw_deg + diff);
+
+						$('#<%= $miss %>_jog_wheel').css({'rotate': <%= $miss %>_jw_deg + 'deg' });
+
+						var v = document.getElementById('<%= $id %>');
+						v.currentTime = v.currentTime + diff / 10 * $('#<%= $miss %>_speed').val();
+
+					$('<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
+						<%= $miss %>_last = 'in';
+					}
+				});
+				$(document).on('mouseout touchend mouseup', '#<%= $miss %>_jog_wheel,#<%= $id %>', function() {
+					<%= $miss %>_last = 'out';
+				});
+				$(document).on('mousewheel', '#<%= $miss %>_jog_wheel,#<%= $id %>', function(e) {
+					var j = $('#<%= $miss %>_jog_wheel');
+					var mvmt = numeral(e.originalEvent.wheelDelta).value();
+
+					var diff = numeral(mvmt / 30).value() ;
+					<%= $miss %>_jw_deg = (<%= $miss %>_jw_deg + diff);
+
+					$('#<%= $miss %>_jog_wheel').css({'rotate': <%= $miss %>_jw_deg + 'deg' });
+
+					var v = document.getElementById('<%= $id %>');
+					var currentTime = v.currentTime + diff / 10 * $(this).closest('.wind').find('.speed').val();
+					console.log(currentTime);
+					v.currentTime = currentTime;
+					$('<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
+				});
+				$(document).on('click', '#<%= $miss %>_jog_wheel, #<%= $id %>', function() {
+					var v = document.getElementById('<%= $id %>');
+					if (v.state == 0) {
+						v.play();
+						v.state = 1;
+						$('#play_logo').attr('src', '/icons/pause.jpg');
+					}
+					else {
+						v.pause();
+						v.state = 0;
+						$('#play_logo').attr('src', '/icons/play.jpg');
+					}
+				});
+			}
+			$(document).on('dblclick', '#<%= $id %>', function() {
+				var v = document.getElementById('<%= $id %>');
+				v.requestFullscreen();
+			});
+
+			$(document).on('click', '.loop_control', function() {
+				var a = $(this);
+				var loop_control = a.attr('loop_control');
+				var v = document.getElementById('<%= $id %>');
+				var vid = $('#' + '<%= $id %>');
+				var timestamp = Date.now();
+				if (a.attr('timestamp') < timestamp - 100) {
+					a.attr('timestamp', timestamp);
+					if (a.attr('armed') == 'yes') {
+						a.attr('armed','no');
+						a.css({'background-color': ''});
+						vid.removeAttr('loop_' + loop_control);
+					}
+					else {
+						a.attr('armed', 'yes');
+						a.css({'background-color': 'yellow'});
+						vid.attr('loop_' + loop_control, v.currentTime);
+					}
+				}
+			});
+
+			$(document).on('click','#<%= $miss %>_add', function() {
+				var v = document.getElementById('<%= $id %>');
+				if(!vidControls['<%= $id %>']) { vidControls['<%= $id %>'] = [] };
+				var seen = 0;
+				$.each(vidControls['<%= $id %>'], function(ir,vr) {
+					if (v.currentTime == vr) {
+						seen = ir;
+					}
+				})
+				if (seen == 0) {
+					vidControls['<%= $id %>'].push(v.currentTime);
+				}
+				else {
+					vidControls['<%= $id %>'].splice(seen,1);
+				}
+				vidControls['<%= $id %>'] = vidControls['<%= $id %>'].sort(function(a,b) {
+					return a - b;
+				});
+			});
+
+			$(document).on('click', '#<%= $miss %>_back, #<%= $id %>_back', function() {
+				var a = $('#<%= $miss %>_back');
+				console.log(a);
+				var v = document.getElementById('<%= $id %>');
+				var timestamp = Date.now();
+				var bestMatch = 0;
+				var bestMark = 0;
+				if (a.attr('timestamp') < timestamp - 100) {
+					a.attr('timestamp',timestamp);
+					console.log(timestamp);
+					var seen = 0;
+					console.log('<%= $id %>' + ' ' + v.currentTime);
+					$.each(vidControls['<%= $id %>'], function(i,vr) {
+						vr = numeral(vr).value();
+						if (v.currentTime >= (vr + 1.01)) {
+							if (vr >= bestMatch) {
+								bestMatch = vr;
+								bestMark = i;
+								seen = 1;
+							}
+
+						}
+					});
+					if (vidControls['<%= $id %>'] && bestMatch >= 0) {
+						v.currentTime = bestMatch;
+						bestMark = 0;
+					}
+					else if (seen == 0) {
+						v.currentTime = 0;
+
+					}
+				}
+				console.log(bestMatch + ' ' + bestMark);
+				$('#<%= $id %>_mark_information').html(bestMark + '/' + vidControls['<%= $id %>'].length);
+			});
+
+			$(document).on('click', '#<%= $miss %>_forward, <%= $id %>_forward', function() {
+				var a = $('#<%= $miss %>_forward');
+				var v = document.getElementById('<%= $id %>');
+				var timestamp = Date.now();
+				var seen = 0;
+				var bestMatch = v.duration;
+				var bestMark = vidControls['<%= $id %>'].length;
+				if (a.attr('timestamp') < timestamp - 100) {
+					a.attr('timestamp', timestamp);
+					console.log('<%= $id %>' + ' ' + v.currentTime);
+					$.each(vidControls['<%= $id %>'], function(i,vr) {
+						vr = numeral(vr).value();
+						if (v.currentTime <= (vr - .01)) {
+							if (vr <= bestMatch) {
+								bestMatch = vr;
+								bestMark = i;
+							}
+						}
+					});
+					if (vidControls['<%= $id %>'] && bestMatch < v.duration) {
+						v.currentTime = bestMatch;
+
+					}
+				}
+				$('#<%= $id %>_mark_information').html(bestMark + '/' + vidControls['<%= $id %>'].length);
+			});
+
+			$(document).on('click', '#<%= $miss %>_full_screen', function() {
+				var a = $(this);
+				$('#<%= $id %>').show();
+				var v = document.getElementById('<%= $id %>');
+				var timestamp = Date.now();
+				if (a.attr('timestamp') < timestamp - 100) {
+					v.requestFullscreen();
+				}
+			});
+
+			$(document).on('change mousedown mouseup touchmove click', '#<%= $miss %>_position', function(e) {
+				var movable = 1;
+				if (e.type == 'mousemove' && e.buttons == 0) {
+					movable = 0;
+				}
+				if (movable == 1) {
+					var val = $(this).val();
+					var v = document.getElementById('<%= $id %>');
+					v.currentTime = (v.duration * (val / 100));
+				}
+			});
+			$(document).on('hover mousemove mouseover touchmove', '#<%= $miss %>_position', function(e) {
+				var vid = $('#<%= $id %>');
+				console.log(e);
+				var width = $(this).width();
+				var val = $(this).val();
+				var x = e.originalEvent.offsetX;
+				var allowedTime = Date.now();
+				allowedTime = allowedTime - 200;
+				var h = $('#<%= $miss %>_position_preview').height();
+				var w = $('#<%= $miss %>_position_preview').width();
+				var wl = numeral($(this).closest('.wind').css('left')).value();
+				var wr = ($(window).width() - numeral($(this).closest('.wind').css('right')).value());
+				var m = mouse_position();
+				var left = (m['x'] - (w / 2));
+				if ((m['x'] + (w / 2)) > wr) {
+					left = (wr - w);
+				}
+				if ((left) < wl) {
+					left = (wl);
+				}
+				var top = m['y'] - h - 10;
+				
+				var v = document.getElementById('<%= $id %>');
+				clearTimeout(v.positionPreviewHiderTimeout);
+				clearTimeout(v.positionPreviewTimeout);
+				$('#<%= $miss %>_position_preview').css({ 'position': 'fixed', 'left': left, 'top': top, opacity: 3 });
+				$('#<%= $miss %>_position_preview_info').css({ 'position': 'fixed', 'height': '23px', 'background-color':'black', 'color': 'yellow', 'left': left, 'top': (top - 20), opacity: 3 });
+				if (vid.attr('type') == 'video') {
+					if (v.lastPositionPreview <= allowedTime) {
+						v.lastPositionPreview = Date.now();
+						var time = (v.duration * (x / width));
+						console.log(v.duration);
+						var src = v.src + '&thumb=ya&position=' + time;
+						$('#<%= $miss %>_position_preview').attr('src', src).show();
+						$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
+					}
+					v.positionPreviewTimeout = setTimeout(function() {
+						var time = (v.duration * (x / width));
+						var src = v.src + '&thumb=ya&position=' + time;
+						$('#<%= $miss %>_position_preview').attr('src', src).show();
+						$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
+					},100);
+				}
+			});
+			$(document).on('mouseout', '#<%= $miss %>_position', function(e) {
+				clearInterval(v.positionPreviewTimeout);
+				$('#<%= $miss %>_position_preview').hide();
+				$('#<%= $miss %>_position_preview_info').hide();
+			});
+			<% if ( $id eq 'video' ) { %>
+
+			<% } %>
+		}
+		else {
+			<%= $miss %>VideoInterval();
+		}
+	</script>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

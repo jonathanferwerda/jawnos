@@ -1,0 +1,82 @@
+<br>
+Anchor <input type="checkbox" class="anchor_all_settings" setting_type="me">
+<br>
+<% use Mojo::JSON qw/decode_json/; %>
+<% foreach my $d ( @gb::device_types ) { %>
+
+	<span style="width:<%= ((100 / scalar @gb::device_types) - 2) %> %;float:left;">
+		<h3><%= $d %></h3>
+		<% foreach my $m ( sort keys %{$me->{$d}} ) { %>
+			<% unless ( $m eq 'pos' || $m eq 'gallery_appts' || $m eq 'currency' || $m eq 'unit' || $m eq 'budget_alarm' || $m eq 'log_me' || $m eq 'advertise_watching' || $m eq 'mugshot' || $m eq 'home_plate' || $m eq 'information' ) { %>
+				<label><%= &subs::format_name($m) %></label>
+				<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>"><br>
+			<% } elsif ( $m eq 'unit' ) { %>
+				<label><%= &subs::format_name($m) %></label>
+				<select name="unit" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
+					<% foreach my $u ( sort keys %{$gb::measures} ) { %>
+						<option value="<%= $u %>" <% if ($me->{$d}->{$m} eq $u) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+					<% } %>
+				</select>
+			<% } elsif ( $m eq 'currency' ) { %>
+				<label><%= &subs::format_name($m) %></label>
+				<select name="currency" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
+					<% foreach my $dolla ( keys %{$gb::measures} ) { %>
+						<% if (grep { $_ eq $m } @{$gb::measures->{$dolla}->{'types'}}) { %>
+							<option value="<%= $dolla %>" <% if ($me->{$d}->{$m} eq $dolla) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$dolla}->{'name'}) %></option>
+						<% } %>
+					<% } %>
+				</select>
+			<% } elsif ( $m eq 'log_me' || $m eq 'gallery_appts' || $m eq 'budget_alarm' ) { %>
+				<label><%= &subs::format_name($m) %>
+				<input type="checkbox" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" 
+					<% if ( $me->{$d}->{$m} eq 'on' ) { %>checked <% } %> value="<%= $me->{$d}->{$m} %>"><br>					
+			<% } elsif ( $m eq 'advertise_watching') { %>
+				<label><%= &subs::format_name($m) %></label>
+				<input type="checkbox" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" 
+					<% if ( $me->{$d}->{$m} eq 'on' ) { %>checked <% } %> value="<%= $me->{$d}->{$m} %>"><br>
+				<script>
+					$(document).on('change', '.me_setting[device="<%= $device %>"][setting="advertise_watching"]', function() {
+						if ($(this).is(':checked')) {
+							advertise_watching = 'on';
+						}
+						else {
+							advertise_watching = 'off';
+						}
+					});
+				</script>
+			<% } elsif ( $m eq 'mugshot') { %>
+				<label><%= &subs::format_name($m) %></label><br>
+				<img src="<%= $me->{$d}->{$m} || '/images/make believe/face.png' %>" class="large_thumb me_setting mugshot_upload_button"
+					device="<%= $d %>" setting="<%= $m %>">
+				<div class="mugshot_upload_container" device="<%= $d %>">
+					<form class="mugshot_upload" device="<%= $d %>" setting="<%= $m %>" style="display:none;">
+						<input class="mugshot_upload_input" device="<%= $d %>" setting="<%= $m %>" type="file" name="fileupload" />
+						<input type="submit" />
+					</form>
+				</div>
+			<% } elsif ( $m eq 'home_plate' ) { %>
+				<label><%= &subs::format_name($m) %></label><br>
+				<img <% if ($me->{$d}->{$m}) { %> style="background-color:lightgreen;" <% } %> src="/images/make believe/gps.png" device="<%= $d %>" setting="<%= $m %>" class="medium_thumb home_plate_record">
+				<% if ($me->{$d}->{$m}) { %>
+					<br>
+					<% my $location = eval { return decode_json $me->{$d}->{$m} } || {}; %>
+					lat: <input type="text" class="manual_home_plate" app="me" setting="latitude" value="<%= $location->{'latitude'} %>" device="<%= $d %>"><br>
+					long: <input type="text" class="manual_home_plate" app="me" setting="longitude" value="<%= $location->{'longitude'} %>" device="<%= $d %>">
+				<% } %>
+
+			<% } elsif ( $m eq 'information' ) { %>
+				<label><%= &subs::format_name($m) %></label><br>
+				<textarea class="me_setting" setting="information" device="<%= $d %>"><%= $me->{$d}->{$m} %></textarea>
+			<% } else { %>
+				<label>Part of Speech</label>
+				<select name="pos" class="me_setting" setting="pos" device="<%= $d %>" value="<%= $me->{$d}->{$m} %>">
+					<% foreach my $p ( keys %{$pos_list} ) { %>
+						<option <% if ($p eq $me->{$d}->{$m}) { %>selected<% } %> value="<%= $p %>"><%= &subs::format_name($p) %></option>
+					<% } %>
+				</select>
+			<% } %>
+			<br>
+		<% } %>
+	</span>
+	
+<% } %>

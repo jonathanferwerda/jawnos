@@ -1,0 +1,75 @@
+<% 
+	use Mojo::JSON qw/decode_json encode_json/;
+	my $attachments = eval { return decode_json $m->{'attachments'} } || $m->{'attachments'} || [];
+	$m->{'body'} = &subs::note_decrypter(&subs::suds_grabber(), $m->{'body'});
+	$m->{'subject'} = &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'});
+	my $es = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+	my ($email_server) = grep { $_->{'uuid'} eq $m->{'from_email'} } @{$es};
+%>
+<div class="email_message_action_buttons" style="float:right;">
+	<% my ($to,$from) = ($email_server->{'email'},$m->{'email'}); %>
+
+	<% if ($m->{'status'} eq 'outbox') { %>
+		<% my $tf = $from; $from = $to; $to = $tf; %>
+		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="/icons/edit.png">
+	<% } elsif ($m->{'status'} eq 'inbox') { %>
+		<% ($email_server) = grep { $_->{'uuid'} eq $m->{'email_server'} } @{$es};
+			$to = $email_server->{'email'}; %>
+				
+
+
+	<% } elsif ($m->{'status'} eq 'sent') { %>
+		<% my $tf = $from; $from = $to; $to = $tf; %>
+
+
+
+	<% } elsif ($m->{'status'} eq 'draft') { %>
+		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="/icons/edit.png">
+	<% } %>
+	<img src="/icons/trash.png" class="little_thumb email_deleter hover" uuid="<%= $m->{'uuid'} %>">
+</div>
+<table style="width:100%;max-width:100%;">
+	<thead>
+	
+	</thead>
+	<tbody>
+		<% if ($m->{'sender'}) { %>
+			<tr>
+				<td><b>Device: </b></td>
+				<td><%= &subs::format_name($m->{'sender'} || $m->{'device'}) %></td>
+			</tr>
+		<% } %>
+		<tr>
+			<td><b>From</b></td>
+			<td><%= $from %></td>
+		</tr>
+		<tr>
+			<td><b>To:</b></td>
+			<td><%= $to %></td>
+		</tr>
+		<tr>
+			<td><b>Time:</b></td>
+			<td class="time" timestamp="<%= $m->{'timestamp'} %>"></td>
+		</tr>
+		<tr>
+			<td><b>Subject:</b></td>
+			<td><%= $m->{'subject'} %></td>
+		</tr>
+		<% if (scalar @{$attachments} > 0) { %>
+			<tr>
+				<td><b>Attachments:</b></td>
+				<td>
+					<% foreach my $a ( @{$attachments} ) { %>
+						<%= $a->{'of'} %><br>
+					<% } %>
+				</td>
+			</tr>
+		<% } %>
+		<tr>
+			<td colspan="2">
+				<br>
+				<%== $m->{'body'} %>
+			</td>
+		</tr>
+	</tbody>
+</table>

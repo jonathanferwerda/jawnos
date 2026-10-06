@@ -1,0 +1,4 @@
+<% if ($toggle eq 'remote_control') { %>
+	This is remote config on <%= &subs::device_setter() %>
+<% } %>
+

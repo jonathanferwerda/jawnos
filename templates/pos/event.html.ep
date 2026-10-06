@@ -1,0 +1,29 @@
+<%
+	my $q = &subs::db_query('select * from settings where setting=? and value=?','pos','category');
+	my $categories = $q->hashes;
+	my $selected_category = &subs::setting_grabber({ app => $a, setting => 'category' });
+%>
+<div app="<%= $a %>"><br>
+	<select app="<%= $a %>" setting="category" class="configure_input" onchange="configurationReloader('<%= $a %>')">
+		<% foreach my $cat ( @{$categories}) { %>
+			<option value="<%= $cat->{'app'} %>" <% if ($cat->{'app'} eq $selected_category) { %>selected<% } %>><%= &subs::format_name($cat->{'app'}) %></option>
+		<% } %>
+	</select>
+
+	<%
+		my $subcategories = &subs::db_query('select * from subcategory where app=?', $selected_category)->hashes;
+		my $selected_subcategory = &subs::setting_grabber({ app => $a, setting => 'subcategory' });
+	%>
+	<%= $selected_category %>
+	<select app="<%= $a %>" setting="subcategory" class="configure_input">
+		<% foreach my $sub ( @{$subcategories} ) { %>
+			<option <% if ($sub->{'name'} eq $selected_subcategory) { %>selected<% } %> value="<%= $sub->{'name'} %>"><%= &subs::format_name($sub->{'name'}) %></option>
+		<% } %>
+
+	</select>
+	<label>Discount</label>
+	<input class="appointment_setting" setting="discount" placeholder="Discount">
+	<label>Markup</label>
+	<input class="appointment_setting" setting="markup" placeholder="Markup">
+</div>
+

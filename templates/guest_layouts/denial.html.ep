@@ -1,0 +1,15 @@
+<% use MIME::Base64; use File::Slurp; %>
+<% my $denial = 'data:png;base64,' . encode_base64(read_file('./public/images/jbuttons/ne pas.png'),''); %>
+<img src="<%= $denial %>" style="max-height:100%;vertical-align:center;">
+
+
+<style>
+
+
+
+html {
+	background-color:#<%= &subs::random_colour_grabber() %>;
+	text-align:center;
+	vertical-align:center;
+}
+</style>

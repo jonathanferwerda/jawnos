@@ -1,0 +1,9 @@
+<div class="proxy_view">
+	Start: <span class="time" timestamp="<%= $start_time %>"></span> - End: <span class="time" timestamp="<%= $end_time %>"></span><br>
+	<%= scalar @{$proxies->{'near'}} %><br>
+	<% foreach my $n ( @{$proxies->{'near'}}) { %>
+		<span class="proxy" uuid="<%= $n->{'uuid'} %>">
+			<b style="color:<%= $n->{'settings'}->{'colour'} %>;"><%= &subs::format_name($n->{'app'}) %></b> <%= $n->{'distance'} %>m <%= $n->{'direction'} %> <span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'ago'} %></span><br>
+		</span>
+	<% } %>
+</div>

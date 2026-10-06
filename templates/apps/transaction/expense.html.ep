@@ -1,0 +1,106 @@
+<%
+	use Mojo::JSON qw/decode_json encode_json/;
+	my $purchases = &subs::db_query('select * from appointments where type=? and app = ? order by timestamp', 'purchase', $a)->hashes;
+	@{$purchases} = grep { $_->{'status'} eq 'delivered' } @{$purchases};
+	my $informations = $purchases;
+	no warnings 'uninitialized';
+%>
+<input  type="text" name="vendor" attribute="vendor" style="vertical-align:bottom;width:81.28%" class="vendor purchase_input" placeholder="Vendor"
+	value="<%= &subs::format_name($app->{'vendor'} || $appts->{$a}->{'last_transaction'}->{'vendor'}) %>">
+<input type="checkbox" class="record_vendor purchase_input" app="<%= $a %>" attribute="record_vendor" name="record_vendor"
+	<% if ($appts->{$a}->{'setting'}->{'record_vendor'} eq 'on') { %>checked<% } %>><br>
+<span class="appointment_model_selector_container" attribute="vendor" app="<%= $a %>"></span>
+<span class="appointment_option_selector_container" attribute="vendor" app="<%= $a %>"></span>
+
+<select style="<% if (scalar @{$informations} == 0) { %>display:none;<% } %>" class="transaction_information purchase_input" attribute="information" app="<%= $a %>">
+	<option value="none">None</option>
+	<% foreach my $i ( @{$informations} ) { %>
+		<option value="<%= $i->{'uuid'} %>"><%= $i->{'data'}->{'id'} %> - <%= &subs::price_formatter($i->{'data'}->{'numbers'}->{'total'}) %></option>
+	<% } %>
+</select>
+<span style="width:100%;display:none;" class="transaction_information_viewer" app="<%= $a %>"></span>
+<input type="text" name="manufacturer" attribute="manufacturer" style="vertical-align:bottom;width:81.28%" class="manufacturer purchase_input" placeholder="Manufacturer"
+	value="<%= &subs::format_name($app->{'manufacturer'} || $appts->{$a}->{'last_transaction'}->{'manufacturer'}) %>">
+	<input type="checkbox" class="record_manufacturer purchase_input" app="<%= $a %>" attribute="record_manufacturer" name="record_manufacturer"
+		<% if ($appts->{$a}->{'setting'}->{'record_manufacturer'} eq 'on') { %>checked<% } %>>
+
+<span class="appointment_model_selector_container" attribute="manufacturer" app="<%= $a %>">
+	<% if (scalar @{$appts->{$a}->{'model'}} == 0) { %>
+		<span class="appointment_model_selector_container" attribute="manufacturer" app="<%= $a %>">
+			<% if ($appts->{$a}->{'models'} != undef) { %>
+				<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
+					<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
+						<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
+					<% } %>
+				</select>
+			<% } %>
+			<input  type="text" name="quantity" attribute="quantity" style="width: 12.56%" class="quantity purchase_input" placeholder="#"
+				value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
+			<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
+				<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
+				<% foreach my $u ( sort keys %{$gb::measures} ) { %>
+					<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+				<% } %>
+			</select>
+		</span>
+	<% } else { %>
+		
+	<% } %>
+</span>
+<span class="appointment_option_selector_container" attribute="manufacturer" app="<%= $a %>">
+
+</span>
+
+
+<input  type="text" name="item" attribute="item" style="vertical-align:bottom;width: 81.28%" class="purchase_input" placeholder="Item" 
+	value="<%= &subs::format_name($app->{'item'} || $appts->{$a}->{'last_transaction'}->{'item'}) %>"></input>
+<input type="checkbox" class="record_item purchase_input" app="<%= $a %>" attribute="record_item" name="record_item"
+	<% if ($appts->{$a}->{'setting'}->{'record_input'} eq 'on') { %>checked<% } %>>
+<br>
+
+<span class="appointment_model_selector_container" attribute="item" app="<%= $a %>">
+	<% if (scalar @{$appts->{$a}->{'model'}} == 0) { %>
+
+		<% if ($appts->{$a}->{'models'} != undef) { %>
+			<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
+				<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
+					<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
+				<% } %>
+			</select>
+		<% } %>
+		<input  type="text" name="quantity" attribute="quantity" style="width: 12.56%" class="quantity purchase_input" placeholder="#"
+			value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
+		<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
+			<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
+			<% foreach my $u ( sort keys %{$gb::measures} ) { %>
+				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+			<% } %>
+		</select>
+
+	<% } else { %>
+		<%= include 'apps/transaction/models', 
+			settings => &subs::settings_grabber({ app => $a }), 
+			models => &subs::db_select('model', undef, { app => $a})->hashes, 
+			l => $appts->{$a}->{'list'}->[0], 
+			source => 'transaction' 
+		%><br>		
+	<% } %>
+</span>
+
+<span class="appointment_option_selector_container" attribute="item" app="<%= $a %>"></span>
+<select class="state purchase_config app_setting" app="<%= $a %>" attribute="state" name="state">
+	<% foreach my $state ( @{$gb::inventory_states} ) { %>
+		<option value="<%= $state %>" <% if (($app->{'state'} || $appts->{$a}->{'setting'}->{'state'}) eq $state) { %>selected<% } %>><%= &subs::format_name($state) %></option>
+	<% } %>
+</select>
+<br><br>
+
+<input  type="text" name="amount" attribute="amount" style="width: 31.28%" value="<%= $app->{'amount'} %>" class="purchase_input amount" placeholder="amount"></input>
+<input  type="text" name="tax" attribute="tax" style="width: 31.28%" value="<%= $app->{'tax'} %>" class="purchase_input tax" placeholder="Tax"></input><br>
+<input  type="text" name="aux" attribute="aux" style="width: 31.28%" value="<%= $app->{'aux'} %>" class="purchase_input aux" placeholder="Aux"></input>
+<input  type="text" name="aux_description" attribute="aux_description" style="width: 100%;display:none;" value="<%= $app->{'aux_description'} %>" class="purchase_input aux" placeholder="Aux Description"></input>
+<input  type="text" name="total" attribute="total" style="width: 31.28%" value="<%= $app->{'total'} %>" class="purchase_input total" placeholder="total"></input><br>
+<button class="purchase_config" attribute="has_totes" config="totes" <% if (($app->{'has_totes'} || $appts->{$a}->{'setting'}->{'has_totes'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>>Totes</button>
+<button class="purchase_config" attribute="has_tax" config="tax" <% if (($app->{'has_tax'} || $appts->{$a}->{'setting'}->{'has_tax'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>>Tax</button>
+<button class="plusminus">+/-</button>
+

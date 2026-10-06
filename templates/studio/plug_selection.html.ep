@@ -1,0 +1,50 @@
+<div id="studio_plug_select" channel="<%= $channel %>" direction="<%= $direction %>">
+
+	<h3>Channel <%= $channel %> <%= &subs::format_name($direction) %>s <span style="float:right;"><img src="/images/make believe/cancel_button.png" class="hover little_thumb close_plug_select"></h2>
+	<table>
+		<thead>
+			<th></th><th></th>
+		</thead>
+		<tbody>
+			<% foreach my $av ( @{$constraints->{'all'}} ) {
+				if (($direction eq 'input' && $av->{'kind'} =~ /input/gi) || ($direction eq 'output' && $av->{'kind'} =~ /output/gi)) {
+					if ($av->{'kind'} eq 'audioinput') {
+						$av->{'icon'} = 'microphone';
+						$av->{'av'} = 'a';
+					}
+					elsif ($av->{'kind'} eq 'videoinput') {
+						$av->{'av'} = 'av';
+						if ($av->{'label'} =~ /front/gi) {
+							$av->{'icon'} = 'camera front';
+						}
+						else {
+							$av->{'icon'} = 'camera back';
+						}
+						
+					}
+					elsif ($av->{'kind'} eq 'audiooutput') {
+						$av->{'icon'} = 'speaker';
+						$av->{'av'} = 'a';
+					}
+				%>
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
+						<td><img class="little_thumb" src="/images/decipherable/<%= $av->{'icon'} %>.png"></td>
+						<td style="font-size:20px;vertical-align:top;"><%= $av->{'label'} %></td>
+					</tr>
+				<% } 
+				} %>
+				<% foreach my $app ( grep { $_->{'direction'} eq $direction || !$_->{'direction'} } @{$apps} ) {
+					my $main_image = &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow, size => 'little' });
+				%>
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="app" sid="<%= $app->{'id'} %>" app="<%= $app->{'app'} %>" av="<%= $app->{'av'} %>">
+						<td><%== $main_image %></td><td style="font-size:20px;vertical-align:top;"><%= &subs::format_name($app->{'app'}) %></td>
+					</tr>
+				<% } %>
+				% if ($screen_share && $direction eq 'input') {
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="screen_share" av="av" sid="" app=""> 
+						<td><img src="/images/make believe/monitor.png" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
+					</tr>
+				% }
+			</tbody>
+		</table>
+</div>

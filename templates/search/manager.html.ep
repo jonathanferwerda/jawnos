@@ -1,0 +1,5 @@
+<div id="manager_search_results">
+	<% foreach my $r ( @{$results} ) { %>
+		<div class="hover manager_search_result"><%= &subs::format_name($r->{'app'}) %></div>
+	<% } %>
+</div>

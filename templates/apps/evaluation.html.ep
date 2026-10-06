@@ -1,0 +1,13 @@
+<button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
+<br>
+<table id="timeslot_counter">
+	<% foreach my $e ( keys %{$evaluation->{'timeslots'}} ) { %>
+		<b><%= $e %></b>&nbsp;
+		<% foreach my $ed ( keys %{$evaluation->{'timeslots'}->{$e}} ) { %>
+			<%= $ed . ' ' . $evaluation->{'timeslots'}->{$e}->{$ed} %>
+		<% } %>
+
+		<br>
+	<% } %>
+</table>
+<br>

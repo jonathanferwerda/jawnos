@@ -1,0 +1,20 @@
+<% no warnings 'uninitialized'; %>
+<table class="gallery_home_album hover" app="<%= $app %>" style="display:inline-block;border:solid;">
+	<thead><th><%= &subs::format_name($app) %> - <%= scalar @{$ghome->{$app}} %></th></thead>
+	<tbody>
+		<tr><td>
+			<% my $main_img = $aset->{'main_image'}; %>
+				<% my ($destination,$asset) = &subs::file_device_renamer({ file => $main_img, app => $app, type => 'image' }); 								
+					my $main_image = $destination . $asset; %>
+			<% if ($main_img && -e $main_image) { %>
+				<img src="/file_open?file=<%= $main_image %>&app=<%= $app %>" class="gigantic_thumb">
+			<% } elsif ($ghome->{$app}->[-1]->{'type'} eq 'image') { %>
+				<img src="/file_open?file=<%= $ghome->{$app}->[-1]->{'f'} %>&thumb=ya&app_uuid=<%= $ghome->{$app}->[-1]->{'app_uuid'} %>&timestamp=<%= $ghome->{$app}->[-1]->{'server_time'} %>&app=<%= $app %>" class="gigantic_thumb">
+			<% } else { %>
+				<% my $brother = &subs::random_string_creator(); %>
+				<img src="/file_open?file=<%= $ghome->{$app}->[-1]->{'f'} %>&thumb=ya&app_uuid=<%= $ghome->{$app}->[-1]->{'app_uuid'} %>&timestamp=<%= $ghome->{$app}->[-1]->{'timestamp'} %>&app=<%= $app %>" id="<%= &subs::random_string_creator(20) %>" file_uuid="<%= $ghome->{$app}->[-1]->{'uuid'} %>" type="<%= $ghome->{$app}->[-1]->{'type'} %>" isa="img" class="video_preview_thumb gigantic_thumb" style="border-color:yellow;" brother="<%= $brother %>"></img>
+				<video autoplay loop muted potential_src="/file_open?file=<%= $ghome->{$app}->[-1]->{'f'} %>&timestamp=<%= $ghome->{$app}->[-1]->{'app_timestamp'} %>&app=<%= $app %>&app_uuid=<%= $ghome->{$app}->[-1]->{'app_uuid'} %>"  duration="<%= $ghome->{$app}->[-1]->{'info'}->{'duration'} %>" id="<%= &subs::random_string_creator(20) %>" id="<%= &subs::random_string_creator(20) %>" file_uuid="<%= $ghome->{$app}->[-1]->{'uuid'} %>" isa="video" brother="<%= $brother %>" type="<%= $ghome->{$app}->[-1]->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;display:none;"></video>
+			<% } %>
+		</td></tr>
+	</tbody>
+</table>

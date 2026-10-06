@@ -1,0 +1,39 @@
+<% my $accounts = &subs::db_select('settings', undef, { setting => 't_account', device => &subs::device_setter(), value => $a }, { order_by => ($appts->{$a}->{'setting'}->{'m_account_sort'} || 'app') })->hashes; %>
+
+<table style="width:100%;">
+	<thead>
+		<th>App</th>
+		<th>Count</th>
+		<th>
+			<select class="app_setting" attribute="m_account_sort" onChange="appointmentGrabber('<%= $a %>','','onchange');">
+				<% foreach my $s ( qw/app ost server_time timestamp/ ) { %>
+					<option value="<%= $s %>" <% if ($s eq $appts->{$a}->{'setting'}->{'m_account_sort'}) { %> selected <% } %>><%= &subs::format_name($s) %></option>
+				<% } %>
+			</select>
+		</th>
+			
+	</thead>
+	<tbody style="border:solid;border-width:4px;border-radius:5px;">
+		<% foreach my $proj ( @{$accounts} ) { %>
+			<% my $p_appts = &subs::db_select('appointments', undef, { app => $proj->{'app'} })->hashes; %>
+			<tr>
+				<td onclick="appointmentGrabber('<%= $proj->{'app'} %>');"><b><%= &subs::format_name($proj->{'app'}) %></td>
+				<td><%= scalar @{$p_appts} %></td>
+				<td>
+					<select class="app_setting" attribute="t_account" style="max-width=50%;">
+						<option selected="selected" value="<%= $a %>"><%= $appts->{$a}->{'formatted_name'} %></option>
+						<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
+							<option 
+								value="<%= $ap->{'app'} %>"
+								<% if ($a eq $ap->{'app'}) { %>
+									selected
+								<% } %>>
+								<%= $ap->{'formatted_name'} %>
+							</option>
+						<% } %>
+					</select>
+				</td>
+			</tr>
+		<% } %>
+	</tbody>
+</table>

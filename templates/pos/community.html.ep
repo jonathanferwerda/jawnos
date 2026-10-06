@@ -1,0 +1,8 @@
+<% use Mojo::JSON qw(decode_json encode_json); %>
+
+<button class="create_environment_qr" app="<%= $a %>" pos="<%= $appts->{$a}->{'setting'}->{'pos'} %>">Create QR</button>
+<% my $comm_qr = eval { return decode_json &subs::setting_grabber({ app => $a, setting => $appts->{$a}->{'setting'}->{'pos'} . 'environment' }) } || []; %>
+<% foreach my $qr ( @{$comm_qr} ) { %>
+	<%= $qr %>
+<% } %>
+<br>

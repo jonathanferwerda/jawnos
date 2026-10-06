@@ -1,0 +1,55 @@
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<% no warnings 'uninitialized'; %>
+<% my $signatorial = &subs::signatorial_designer(); %>
+
+<% my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {}; %>
+<% if (scalar keys %{$controls} == 0) { %>
+	Never seen this<br>
+	<% foreach my $dt ( ( $signatorial, @gb::device_types ) ) { %>
+		writing for <%= $dt %><br>
+		<% $controls->{$dt} = $gb::timeouts; %>
+	<% } %>
+<% } %>
+
+
+<table style="width:100%;" id="utility_controls">
+	<thead>
+		<th></th>
+		<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
+			<th><%= &subs::format_name($t) %></th>
+		<% } %>
+	</thead>
+	<tbody>
+
+		<% foreach my $dt ( ( $signatorial, @gb::device_types ) ) { %>
+			<tr>
+				<td><b><%= $signatorial eq $dt ? 'Me' : $dt %></b></td>
+				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
+					% next unless $controls->{$dt}->{$t}; 
+					<td style="border:solid;border-radius:3px;">
+						<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>><br>
+						<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" style="width:70px;" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>"><br>
+						<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
+							<img class="good_status little_thumb circular_thumb" src="/images/make believe/good.png"><br>
+						<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
+							<img class="good_status little_thumb circular_thumb" src="/images/make believe/bad.png"><br>
+						<% } else { %>
+
+						<% } %>
+						<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
+							<span class="time" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
+						<% } else { %><span>&nbsp;</span><% } %><br>
+						<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
+							Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>><br>
+						<% } %>
+					</td>
+				<% } %>
+			</tr>
+		<% } %>
+	</tbody>
+</table>
+
+% my $subtree = &subs::subprocess_tree_viewer();
+% if ($subtree->{'html'}) {
+	<%== $subtree->{'html'} %>
+% }

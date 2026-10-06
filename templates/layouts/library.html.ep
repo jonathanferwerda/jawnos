@@ -1,0 +1,21 @@
+<html>
+	<head>
+	</head>
+<body>
+	<div id="handbook" style="background-color:white;overflow:scroll;width:100%;">
+		<div id="handbook_header">
+			<b>
+				<span style="float:right;">
+					<%= $page %>
+				</span>
+				<span style="float:left;">
+					<i>
+						<%= &subs::format_name($chapter) %>
+					</i>
+				</span>
+			</b>
+		</div><br><br>
+		<%= content %>
+
+	</div>
+</body>

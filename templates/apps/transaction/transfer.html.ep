@@ -1,0 +1,16 @@
+<span class="transferable_transaction" attribute="movement">
+	<label>To</label>
+	<select class="to_account app_setting purchase_input" app="<%= $a %>" attribute="to_account" name="account" style="max-width=40%;">
+		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
+			<option 
+				value="<%= $ap->{'app'} %>"
+				<% if (($appts->{$a}->{'setting'}->{'to_account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
+					selected
+				<% } %>>
+				<%= $ap->{'formatted_name'} %>
+			</option>
+		<% } %>
+	</select>
+	<label>Amount</label>
+	<input type="number" attribute="transfer_amount" name="amount" app="<%= $a %>" class="purchase_input transfer_amount"><br>
+</span><br>

@@ -1,0 +1,12 @@
+App: <input attribute="app" value="<%= &subs::format_name($app->{'app'}) %>"><br>
+Timestamp: <input attribute="timestamp" class="time" timestamp="<%= $app->{'timestamp'} %>"><br>
+Duration: <input attribute="duration" value="<% if ($app->{'duration'} < 0) { %>-<% } %><%= &subs::duration_sayer($app->{'duration'} / 1000) %>"><br>
+Warranty: <input attribute="warranty" class="time" timestamp="<%= $app->{'warranty'} %>"><br>
+<img src="/images/decipherable/diskette.png" class="medium_thumb edit_app_submit hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>">
+<%= include 'apps/app_details', appts => $appts, a => $a, app => $app %>
+<br>
+<% foreach my $note_type ( qw/start_notes notes end_notes/ ) { %>
+	<%= &subs::format_name($note_type) %><br>
+	<textarea attribute="<%= $note_type %>"><%= $app->{$note_type} %></textarea><br>
+<% } %><br>
+

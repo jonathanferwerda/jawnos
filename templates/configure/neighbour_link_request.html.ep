@@ -1,0 +1,18 @@
+<h1>Request from <%= &subs::format_name($my_name) %>@<%= $remote_address %></h1>
+<table class="neighbour_link_request" remote_address="<%= $remote_address %>" local_address="<%= $local_address %>" my_name="<%= $my_name %>"
+	credential="<%= $signatorial %>"
+	style="width:100%;">
+	<thead>
+		<th>Blacklist</th><th>Guest</th><th>Resident</th><th>Citizen</th>
+	</thead>
+	<tbody>
+		<tr>
+			<% foreach my $p ( qw/blacklisted guest resident citizen/ ) { %>
+				<td>
+					<img class="hover large_thumb neighbour_link_credential" privilege="<%= $p %>" src="<%= $gb::known_appts->{$p}->{'icon'} %>">
+				</td>
+			<% } %>
+		</tr>
+	</tbody>
+</table>
+<button id="alert_cancel">Cancel</button>

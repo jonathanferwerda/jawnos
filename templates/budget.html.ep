@@ -1,0 +1,336 @@
+<% no warnings 'uninitialized'; %>
+<div id="budget_<%= $timestamp %>" style="width: 100%; height:100%;background-color:white;overflow:scroll;">
+	<div id="budget_header" style="vertical-align:top;">
+		<select class="budget_config" config="display" style="vertical-align:top;">
+			<% foreach my $bd (qw/statement budgets invoices daily_sheet/) { %>
+				<option value="<%= $bd %>" <% if ($bd eq $display) { %>selected<% } %>><%= &subs::format_name($bd) %></option>
+			<% } %>
+		</select>
+		<img src="/images/decipherable/gear.png" class="little_thumb hover" id="budget_settings_toggle">
+		<% if ($display eq 'statement') { %>
+			<% if ( scalar keys %{$settings->{$display . '_displays'}} > 0) { %>
+				<select id="budget_display" class="budget_config" budget_display="<%= $display %>" config="<%= $display %>_display" style="vertical-align:top;">
+					<option value="" <% if ($settings->{$display . '_display'} eq '') { %>selected<% } %>></option>
+					<% foreach my $sd ( sort keys %{$settings->{$display . '_displays'}} ) { %>
+						<option value="<%= $sd %>" <% if ($sd eq $settings->{$display . '_display'}) { %>selected<% } %>><%= &subs::format_name($sd) %></option>
+					<% } %>
+				</select>
+			<% } %>
+		<% } %>
+	</div>
+	<div id="budget_settings" style="display:none;">
+		<span style="float:left;width:30%;" >
+			<input placeholder="Graph Increments" class="budget_config" config="increments" value="<%= $settings->{'increments'} || 30 %>" style="width:120px;">
+			<select class="budget_config" config="scope" style="">
+				<% foreach my $sc ( sort qw/hour day week month year/ ) { %>
+					<option value="<%= $sc %>" <% if ($sc eq $scope) { %>selected<% } %>><%= &subs::format_name($sc) %></option>
+				<% } %>
+			</select>
+			<div>
+				<input class="time budget_time" setting="start_time" timestamp="<%= $start %>" style="width:120px;">
+				<input class="time budget_time" setting="end_time" timestamp="<%= $end %>" style="width:120px;">
+				<img src="/images/make believe/key.png" class="statistic_lock little_thumb hover <% if ($settings->{'s_lock'} eq 'on') { %>selected<% } %>" app="budget" locked="<%= $settings->{'s_lock'} %>">
+				<select class="budget_config" config="when_multiplier" style="vertical-align:bottom;">
+					<% foreach my $count (1..30) { %>
+						<option value="<%= $count %>" <% if ($count == $settings->{'when_multiplier'}) { %>selected<% } %>><%= $count %></option>
+					<% } %>
+				</select>
+				<select class="budget_config" config="time_when" style="vertical-align:bottom;">
+					<% foreach my $when ( @{$time_scopes} ) { %>
+						<option value="<%= $when %>" <% if ($when eq $settings->{'time_when'}) { %>selected<% } %>><%= &subs::format_name($when) %></option>
+					<% } %>
+				</select>
+			</div>
+		</span>
+		<span>
+			<select class="budget_config" multiple config="columns" style="height:100px; vertical-align:bottom;">
+				<option value="all" <% if (grep { $_ eq 'all' } @{$columns}) { %>selected<% } %>><%= &subs::format_name('all') %></option>
+				<% foreach my $col ( @{$all_columns} ) { %>
+					<option value="<%= $col %>" <% if (grep { $_ eq $col } @{$columns}) { %>selected<% } %>><%= &subs::format_name($col) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" multiple config="accounts" style="height:100px; vertical-align:bottom;">
+				<% foreach my $ac ( @{$all_accounts} ) { %>
+					<option value="<%= $ac->{'app'} %>" <% if (grep {$ac->{'app'} eq $_ } @{$account}) { %>selected<% } %>><%= &subs::format_name($ac->{'app'}) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" multiple config="projects" style="height:100px;vertical-align:bottom;">
+				<% foreach my $pr ( @{$all_projects} ) { %>
+					<option value="<%= $pr->{'app'} %>" <% if (grep { $pr->{'app'} eq $_ } @{$project}) { %>selected<% } %>><%= &subs::format_name($pr->{'app'}) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" config="movement" multiple style="height:100px;vertical-align:bottom;">
+				<% foreach my $sc ( sort @gb::movements ) { %>
+					<option value="<%= $sc %>" <% if (grep { $_ eq $sc } @{$movement}) { %>selected<% } %>><%= &subs::format_name($sc) %></option>
+				<% } %>
+			</select>
+			<% if ($display eq 'statement') { %>
+				<input id="budget_display_name" display_type="statement" placeholder="name" style="width:20%;vertical-align:top;" value="<%= $settings->{$display . '_display'} %>">
+				<select id="budget_display_categorization" class="budget_config" config="display_categorization" value="<%= $settings->{'display_categorization'} %>">
+					<% foreach my $bdc ( qw/app category project account/) { %>
+						<option value="<%= $bdc %>" <% if ($bdc eq $settings->{'display_categorization'}) { %>selected<% } %>><%= &subs::format_name($bdc) %></option>
+					<% } %>
+				</select>
+				<img src="/images/decipherable/diskette.png" class="little_thumb hover" id="budget_display_save">
+				<img src="/icons/trash.png" class="little_thumb hover" id="budget_display_delete">
+			<% } %>
+			<img class="little_thumb hover" id="budget_refresh" src="/images/make believe/renew.png">
+		</span>
+	</div>
+	<div>
+		<% my ($total_minimum,$total_delta,$total_balance,$total_available); %>
+		<b>Count: <%= scalar @{$transactions} %></b>
+		<table style="width:100%;border:groove;">
+			<thead style="text-align:left;font-size:20px;">
+				<th><u>Account</u></th><th><u>Balance</u></th><th><u>Avail</u></th><th><u>Minimum</u></th><th><u>Delta</u></th>
+			</thead>
+			<tbody>
+				<% foreach my $account ( sort keys %{$accounts} ) { %>
+					% next if $accounts->{$account}->{'balance'} == 0;
+					% $accounts->{$account}->{'settings'}->{'minimum'} = 0 unless $accounts->{$account}->{'settings'}->{'minimum'};
+					<% $total_balance = $total_balance + $accounts->{$account}->{'balance'}; %>
+					<% $total_minimum = $total_minimum + $accounts->{$account}->{'settings'}->{'minimum'}; %>
+					<% my $available = ($accounts->{$account}->{'balance'} - ($accounts->{$account}->{'settings'}->{'minimum'} || 0));
+					<% $total_available = $total_available + $available; %>
+					<tr>
+						<td><b style="color:<%= $accounts->{$account}->{'settings'}->{'colour'} %>;" colour="<%= $accounts->{$account}->{'settings'}->{'colour'} %>" class="hover budget_account" account="<%= $accounts->{$account}->{'app'} %>"><%= &subs::format_name($accounts->{$account}->{'app'}) %></b></td>
+						<td><%= &subs::price_formatter($accounts->{$account}->{'balance'}) %></td>
+						<td><%= &subs::price_formatter($available) %></td>
+						<td><%= &subs::price_formatter($accounts->{$account}->{'settings'}->{'minimum'} || 0) %></td>
+						<td><%= &subs::price_formatter($accounts->{$account}->{'delta'} || 0) %></td>
+					</tr>
+				<% } %>
+				<tr style="font-size:18px;">
+					<td><b><u class="hover budget_account" account="total" colour="black">Total</u></b></td>
+					<td><u><%= &subs::price_formatter($total_balance) %></u></td>
+					<td><u><%= &subs::price_formatter($total_available) %></u></td>
+					<td><u><%= &subs::price_formatter($total_minimum) %></td>
+					<td><u><%= &subs::price_formatter($total_delta) %></td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+	<% if ($accounts) { %>
+		<canvas style="width:98%;height:200px;display:none;" id="budget_account_canvas"></canvas>
+		<div id="budget_account_information" style="display:none;position:fixed;background-color:white;border:solid;border-radius:5px;"></div>
+		<div id="budget_json_data" style="display:none;"></div>
+	<% } %>
+	<% if ($display eq 'statement') { %>
+		<table style="width:100%;border:groove;">
+			<% foreach my $d (qw/income expense transfer/) { %>
+				<thead>
+					<tr></tr>
+					<tr><th colspan=<%= @{$columns} %> style="text-align:center;font-size:26px;"><%= &subs::format_name($d) %></th></tr>
+					<% foreach my $col ( @{$columns} ) { %>
+						<% unless ($col eq 'all') { %>
+							<th><%= &subs::format_name($col) %></th>
+						<% } %>
+					<% } %>
+				</thead>
+				<tbody>
+					<% foreach my $app ( sort keys %{$tally} ) { %>
+						<% if (eval {scalar @{$tally->{$app}->{$d}}} > 0) { %>
+							<tr class="budget_row" movement="<%= $d %>" status="closed" app="<%= $app %>" style="font-size:20px;background-color:<%= $tally->{$app}->{'settings'}->{'colour'} %>;"></u>
+								<% if (grep { $_ eq 'app' } @{$columns}) { %>
+									<td class="hover"><u><%= &subs::format_name($app) %></u></td>
+								<% } %>
+								<% if (grep { $_ eq 'when' } @{$columns}) { %>
+									<td><span class="time" timestamp="<%= $tally->{$app}->{$d}->[0]->{'timestamp'} %>"></span></td>
+								<% } %>
+								<% if (grep { $_ eq 'occurences' } @{$columns}) { %>
+									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'occurences'}->{'colour'} %>"><span><%= $tally->{$app}->{'totals'}->{'occurences'} %></span></td>
+								<% } %>
+								<% if (grep { $_ eq 'occurence_budget' } @{$columns}) { %>
+									<td><%= $tally->{$app}->{'budget'}->{'occurences'}->{'formatted_budget'} %></td>
+								<% } %>
+								<% if (grep { $_ eq 'duration' } @{$columns}) { %>
+									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'duration'}->{'colour'} %>" ><%= &subs::duration_sayer($tally->{$app}->{'totals'}->{'duration'} / 1000) %></td>
+								<% } %>
+								<% if (grep { $_ eq 'duration_budget' } @{$columns}) { %>
+									<td><%= $tally->{$app}->{'budget'}->{'duration'}->{'formatted_budget'} %></td>
+								<% } %>
+								<% if (grep { $_ eq 'duration_percent' } @{$columns}) { %>
+									<td><%= abs &subs::percent_formatter($tally->{$app}->{'totals'}->{$d}->{'duration'} / $total_duration) %></td>
+								<% } %>
+								<% if (grep { $_ eq 'total_budget' } @{$columns}) { %>
+									<td><%= $tally->{$app}->{'budget'}->{'total'}->{'formatted_budget'} %></td>
+								<% } %>
+								<% if (grep { $_ eq 'manufacturer' } @{$columns}) { %>
+									<td><%= &subs::format_name($tally->{$app}->{'budget'}->{'total'}->{$d}->{'manufacturer'}) %></td>
+								<% } %>
+								<% if (grep { $_ eq 'item' } @{$columns}) { %>
+									<td><%= &subs::format_name($tally->{$app}->{'budget'}->{'total'}->{$d}->{'item'}) %></td>
+								<% } %>
+								<% if (grep { $_ eq 'vendor' } @{$columns}) { %>
+									<td><%= &subs::format_name($tally->{$app}->{'budget'}->{'total'}->{$d}->{'vendor'}) %></td>
+								<% } %>
+								<% if (grep { $_ eq 'account' } @{$columns}) { %>
+									<td></td>
+								<% } %>
+								<% if (grep { $_ eq 'project' } @{$columns}) { %>
+									<td></td>
+								<% } %>
+								<% foreach my $cash ( @{$dollas} ) { %>
+									<% if (grep { $_ eq $cash } @{$columns}) { %>
+										<td  style="background-color:<%= $tally->{$app}->{'budget'}->{'total'}->{'colour'} %>"><%= &subs::price_formatter($tally->{$app}->{'totals'}->{$d}->{$cash}) %></td>
+									<% } %>
+								<% } %>
+							</tr>
+							<% foreach my $t ( @{$tally->{$app}->{$d}} ) { %>
+								<tr class="budget_detail_row" filter="<%= $t->{'type'} %>" timestamp="<%= $t->{'timestamp'} %>" server_time="<%= $t->{'server_time'} %>"
+									movement="<%= $d %>" app="<%= $app %>" style="display:none;font-size:18px;background-color:<%= $tally->{$t->{'app'}}->{'settings'}->{'colour'} %>;">
+									<% if (grep { $_ eq 'app' } @{$columns}) { %>
+										<td class="budget_app hover" app="<%= $app %>"><%= &subs::format_name($t->{'app'}) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'when' } @{$columns}) { %>
+										<td><span class="time" timestamp="<%= $t->{'timestamp'} %>"></span></td>
+									<% } %>
+									<% if (grep { $_ eq 'occurences' } @{$columns}) { %>
+										<td><span><%= $t->{'occurences'} %></span></td>
+									<% } %>
+									<% if (grep { $_ eq 'occurence_budget' } @{$columns}) { %>
+										<td></td>
+									<% } %>
+									<% if (grep { $_ eq 'duration' } @{$columns}) { %>
+										<td><%= &subs::duration_sayer($t->{'duration'} / 1000) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'duration_budget' } @{$columns}) { %>
+										<td></td>
+									<% } %>
+									<% if (grep { $_ eq 'duration_percent' } @{$columns}) { %>
+										<td><%= abs &subs::percent_formatter($t->{'duration'} / $total_duration) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'total_budget' } @{$columns}) { %>
+										<td></td>
+									<% } %>
+									<% if (grep { $_ eq 'manufacturer' } @{$columns}) { %>
+										<td><%= &subs::format_name($t->{'manufacturer'}) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'item' } @{$columns}) { %>
+										<td><%= &subs::format_name($t->{'item'}) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'vendor' } @{$columns}) { %>
+										<td><%= &subs::format_name($t->{'vendor'}) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'account' } @{$columns}) { %>
+										<td><%= &subs::format_name($t->{'account'}) %></td>
+									<% } %>
+									<% if (grep { $_ eq 'project' } @{$columns}) { %>
+										<td><%= &subs::format_name($t->{'project'}) %></td>
+									<% } %>
+									<% foreach my $cash (@{$dollas}) { %>
+										<% if (grep { $_ eq $cash } @{$columns}) { %>
+											<td><%= &subs::price_formatter($t->{$cash}) %></td>
+										<% } %>
+									<% } %>
+								</tr>
+							<% } %>
+						<% } %>
+					<% } %>
+					<tr style="font-size:24px;">
+						<td><b>Total <%= &subs::format_name($d) %></u></b></td>
+						<% foreach my $col ( @{$columns} ) { %>
+							<% unless ($col eq 'app') { %>
+								<td><b><u>
+									<% if (grep { $_ eq $col } @{$dollas}) { %>
+										<%= &subs::price_formatter($totals->{$d}->{$col}) %>
+									<% } else { %>
+										<%= $totals->{$d}->{$col} %>
+									<% } %>
+								</u></b></td>
+							<% } %>
+						<% } %>
+					</tr>
+				</tbody>
+				<% } %>
+					<tr style="font-size:26px;">
+						<td><b>Total</u></b></td>
+						<% foreach my $col ( @{$columns} ) { %>
+							<% unless ($col eq 'app') { %>
+								<td style="border-bottom: 3px double;">
+									<b>
+										<% if (grep { $_ eq $col } @{$dollas}) { %>
+											<u><%= &subs::price_formatter($totals->{'total'}->{$col}) %></u>
+										<% } elsif (grep { $_ eq $col } qw/duration/) { %>
+											<%= &subs::duration_sayer($totals->{'total'}->{$col} / 1000) %>
+										<% } else { %>
+											<%= $totals->{'total'}->{$col} %>
+										<% } %>
+									</b>
+								</td>
+							<% } %>
+						<% } %>
+					</tr>
+				</tbody>
+		</table>
+
+	<% } elsif ($display eq 'budgets') { %>
+		<table id="budget_budgets" style="width:100%;">
+			<thead>
+				<th>App</th>
+				<% foreach my $dr ( sort keys %{$gb::budget_modes} ) { %>
+					<th><%= &subs::format_name($dr) %></th>
+				<% } %>
+			</thead>
+			<tbody>
+				<% foreach my $b ( sort keys %{$tally} ) { %>
+					<tr>
+						<td><%= &subs::format_name($b) %></td>
+						<% foreach my $dr ( sort keys %{$gb::budget_modes} ) { %>
+							<td>
+								<input style="width:77%;" class="budget_edit_input" app="<%= $b %>" circumstance="<%= $dr %>" value="<%= $tally->{$b}->{'budget'}->{$dr}->{'budget'} %>">
+								<img class="tiny_thumb budget_autocalc" app="<%= $b %>" circumstance="<%= $dr %>" src="/images/decipherable/calculator.png" style="vertical-align:bottom;">
+							</td>
+						<% } %>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } elsif ($display eq 'daily_sheet') { %>
+		<table style="width:100%;">
+			<thead><th>Cat</th><th>App</th><% foreach my $d ( @{$dollas} ) { %><th><%= &subs::format_name($d) %></th><% } %></thead>
+			<tbody>
+				<% my $starter = {}; %>
+				<% foreach my $cat ( sort { $a cmp $b } keys %{$categories} ) { %>
+					<% foreach my $ca ( grep { $_ ne 'info' } keys %{$categories->{$cat}} ) { %>
+						<tr>
+							<td>
+								<% for (my $count = 0; $count < $categories->{$cat}->{$ca}->{'ca'} || 0; $count++ ) { %>&nbsp;&nbsp;<% } %>
+								<%= $cat %> <%= $ca %>
+							</td>
+							<td></td>
+							<% foreach my $d ( @{$dollas} ) { %>
+								<td><%= &subs::price_formatter($categories->{$cat}->{$ca}->{$d}) %></td>
+							<% } %>
+						</tr>
+						<% foreach my $l ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$categories->{$cat}->{$ca}->{'list'}} ) { %>
+							<% unless ($starter->{$l->{'app'}}) { $starter->{$l->{'app'}} = $start; } %>
+							<% my $current_appts = &subs::db_query('select * from appointments where app=? and ( type=? or type = ? or type = ? or type = ? ) and timestamp >= ? and timestamp <= ?', $l->{'app'}, 'stop', 'start', 'record','usual', $starter->{$l->{'app'}}, $l->{'timestamp'})->hashes; %> 
+
+							<tr>
+								<td><span class="time" timestamp="<%= $starter->{$l->{'app'}} %>"></span> -- <span class="time" timestamp="<%= $l->{'timestamp'} %>"></span>  <%= scalar @{$current_appts} %></td>
+								<td><%= &subs::format_name($l->{'app'}) %></td>
+								<td><%= $l->{'quantity'} || -1 %></td>
+								<td><%= $l->{'unit'} || '' %></td>
+								<td><%= $l->{'type'} %></td>
+								<td><span class="time" timestamp="<%= $l->{'timestamp'} %>"></span></td>
+								<% $starter->{$l->{'app'}} = $l->{'timestamp'}; %>
+							</tr>
+
+						<% } %>
+					<% } %>
+			
+				<% } %>
+			</tbody>
+		</table>
+	<% } elsif ($display eq 'invoices') { %>
+		<% foreach my $d ( qw/income expense inventory transfer/ ) { %>
+			<% foreach my $app ( sort keys %{$tally} ) { %>
+				<% if (eval {scalar @{$tally->{$app}->{$d}}} > 0) { %>
+					<%= $d %> <%= $app %>
+				<% } %>
+			<% } %>
+		<% } %>
+	<% } %>
+</div>
+<script>appointment_chron()</script>

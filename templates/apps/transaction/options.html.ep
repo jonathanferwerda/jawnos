@@ -1,0 +1,42 @@
+<% no warnings 'uninitialized'; %>
+<% if (scalar @{$options}) { %><br>
+	<% my $leftovers = [];
+	<% push @{$option_categories}, { uuid => 'uncategorized', name => 'uncategorized' }; %>
+	<% if ( scalar @{$option_categories} > 1) { %>
+
+
+		<% foreach my $oc ( @{$option_categories}) { 
+
+			my @os = grep { $oc->{'uuid'} eq $_->{'option_category'} } @{$options};
+
+			if ( scalar @os ) { %>
+
+				<label><b style="font-size:26px;"><%= &subs::format_name($oc->{'name'}) %></b></label>
+
+				<% foreach my $os ( @os ) { %>
+					<% my @sos = grep { $_->{'uuid'} eq $os->{'uuid'} } @{$l->{'options'}}; %>
+					<span class="appointment_option" source="<%= $source %>" name="<%= $os->{'name'} %>" appt_uuid="<%= $l->{'uuid'} %>" uuid="<%= $os->{'uuid'} %>" <% if ($sos[0]->{'uuid'}) { %> select="on"<% } %>>
+
+						<table style="width:100%;">
+							<tbody>
+								<tr columns="5">
+									<td class="appointment_option_name hover" style="background-color:white;opacity:80%;" onclick="appointmentGrabber('<%= $os->{'name'} %>')" colspan="3"><b><%= &subs::format_name($os->{'name'}) %></b></td>
+									<td colspan="1"><input class="appointment_option_quantity" style="float:right;vertical-align:bottom;width:50px;" uuid="<%= $os->{'uuid'} %>" value="<%= $sos[0]->{'quantity'} %>"></td>
+									<td style="border:solid;float:right;">
+										<select class="appointment_option_unit" uuid="<%= $os->{'uuid'} %>" style="vertical-align:bottom;" value="<%= $sos[0]->{'unit'} || $l->{'app'} %>">
+											<option value="<%= $l->{'app'} %>" <% if ($sos[0]->{'unit'} eq $l->{'app'}) { %>selected<% } %>><%= &subs::format_name($l->{'app'}) %></option>
+											<option value="<%= $os->{'name'} %>" <% if ($sos[0]->{'unit'} eq $os->{'name'}) { %>selected<% } %>><%= &subs::format_name($os->{'name'}) %></option>
+											<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
+												<option value="<%= $meas %>" <% if ($meas eq $sos[0]->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$meas}->{'name'} || $meas) %></option>
+											<% } %>
+										</select>
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</span>
+				<% } %>
+			<% } %>
+		<% } %>
+	<% } %>
+<% } %>

@@ -1,0 +1,30 @@
+<br>
+Anchor <input type="checkbox" class="anchor_all_settings" setting_type="me">
+<br>
+
+<% foreach my $d ( @gb::device_types ) { %>
+	<span style="width:<%= ((100 / scalar @gb::device_types) - 2) %> %;float:left;">
+		<h3><%= $d %></h3>
+		<% foreach my $m ( sort keys %{$store->{$d}} ) { %>
+
+			<% unless ($m eq 'logo' || $m eq 'doc_notes' ) { %>
+				<label><%= &subs::format_name($m) %></label>
+				<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $store->{$d}->{$m} %>"><br>
+			<% } elsif ( $m eq 'doc_notes' ) { %>
+				<label><%= &subs::format_name($m) %></label>
+				<textarea type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>"><%= $store->{$d}->{$m} %></textarea><br>
+			<% } elsif ( $m eq 'logo') { %>
+				<label><%= &subs::format_name($m) %></label><br>
+				<img src="<%= $store->{$d}->{$m} || '/images/make believe/poppy.png' %>" class="large_thumb me_setting logo_upload_button"
+					device="<%= $d %>" setting="<%= $m %>">
+				<div class="logo_upload_container" device="<%= $d %>">
+					<form class="logo_upload" device="<%= $d %>" setting="<%= $m %>" style="display:none;">
+						<input class="logo_upload_input" device="<%= $d %>" setting="<%= $m %>" type="file" name="fileupload" />
+						<input type="submit" />
+					</form>
+				</div>
+			<% } %>
+
+		<% } %>
+	</span>
+<% } %>

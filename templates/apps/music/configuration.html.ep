@@ -1,0 +1,49 @@
+<% my $remote_machines = &subs::remote_machine_lister(); %>
+<div id="music_folders" style="background-color:#D5E4F6">
+	<% foreach my $f ( keys %{$folders->{$device}} ) { %>
+		<% if ($f =~ /location$/gi) { %>
+			<%	my $n = $f;
+				$n =~ s/_location//gi;
+			%>
+			<%	my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $f }); %>
+			<button type="button" style="<% if ($status eq 'on') { %>background-color:lightblue;<% } %>"
+				location="<%= $f %>" status="<%= $status %>" class="button music_folder_toggle hover"><%= &subs::shorthand_name($n, 4) %></button>
+		<% } %>
+	<% } %>
+</div>
+<div id="music_audio_output" style="background-color:#C5F4D6">
+	<% foreach my $ma ( qw/me srv/ ) { %>
+		<button class="music_audio_output_select hover" state="<%= $mao->{$ma} %>" value="<%= $ma %>"><%= &subs::format_name($ma) %></button>
+	<% } %>
+	<% foreach my $rm ( @{$remote_machines}) { %>
+		<button class="music_audio_output_select hover" state="<%= $mao->{$rm->{'fqdn'} || $rm->{'ip'}} %>" value="<%= $rm->{'fqdn'} || $rm->{'ip'} %>"><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></button>
+	<% } %>
+</div>
+<select id="music_layout_select" value="<%= $crate->{'settings'}->{'layout'} %>">
+	<% foreach my $lay ( qw/list icons/ ) { %>
+		<option value="<%= $lay %>" <% if ($lay eq $crate->{'settings'}->{'layout'}) { %>selected<% } %>><%= &subs::format_name($lay) %></option>
+	<% } %>
+</select>
+
+<select id="music_library_select" value="<%= $crate->{'settings'}->{'library'} || 'local' %>">
+	<% if ($crate->{'remote_uuid'}) { %>
+		<option value="<%= $crate->{'remote_uuid'} %>"><%= $crate->{'remote_uuid'} %></option>
+	<% } %>
+	<option value="none">None</option>
+	<option value="local" <% if ($crate->{'settings'}->{'library'} eq 'local' || $crate->{'settings'}->{'library'} eq '') { %>selected<% } %>>Local</option>
+	<% foreach my $rm ( @{$remote_machines} ) { %>
+		<option value="<%= $rm->{'uuid'} %>" <% if ($crate->{'settings'}->{'library'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
+	<% } %>
+</select>
+<script>
+	volumeChecker();
+	clearInterval(volumeInterval);
+	volumeInterval = setInterval(function() {
+		if ($('#device_volume_control').is(':visible')) {
+			volumeChecker();
+		}
+	},15000);
+
+
+</script><br>
+<span id="device_volume_control"></span>

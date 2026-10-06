@@ -1,0 +1,51 @@
+
+<div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:lightgrey;" uuid="<%= $uuid %>">
+	<% my $contexts = {
+		file => [
+			{ 'open' => {} }, 
+			{ 'open_with' => {} },
+			{ 'archive' => {} },
+			{ 'cut' => {} },
+			{ 'copy' => {} },
+			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 'yes' : 'no' } },
+			{ 'delete' => {} },
+			{ 'shred' => {} },
+			{ 'select_all' => {} },
+			{ 'rename' => {} },
+			{ 'properties' => {} }
+		],
+		folder => [
+			{ 'open' => {} },
+			{ 'archive' => {} },
+			{ 'cut' => {} },
+			{ 'copy' => {} },
+			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
+			{ 'delete' => {} },
+			{ 'shred' => {} },
+			{ 'select_all' => {} },
+			{ 'rename' => {} },
+			{ 'properties' => {} }
+		],
+		folder_background => [
+			{ 'new_file' => {} },
+			{ 'new_folder' => {} },
+			{ 'archive' => {} },
+			{ 'select_all' => {} },
+			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
+			{ 'properties' => {} }
+		]
+	}; %>
+	<% foreach my $co ( @{$contexts->{$context}} ) { %>
+		<% foreach my $o ( keys %{$co} ) { %>
+			% unless ($co->{$o}->{'visible'} eq 'no') {
+				<div class="folders_context_selection hover_showing" command="<%= $o %>">
+					<% if ($gb::known_icons->{$o}) { %>
+						<img src="<%= $gb::known_icons->{$o} %>" class="miniscule_thumb">
+					<% } %>
+					<span style="vertical-align:top;"><%= &subs::format_name($o) %></span>
+				</div>
+			% }
+		% }
+	% }
+
+</div>

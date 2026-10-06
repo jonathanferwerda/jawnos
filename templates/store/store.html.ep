@@ -1,0 +1,49 @@
+<% if ($window_maker ne 'yes') { %>
+	<div>
+		<title><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></title>
+
+		<div id="mail_centre" style="float:right;">
+			<div id="mail" style="position:fixed;z-index:1000;right:5px;top:86px;height:50%;width:100%;display:none;background-color:white;border:solid;border-width:4px;border-radius:10px"></div>
+			<script>var mail_ws_url = '<%= $mail_ws_url %>';</script>
+		</div>
+
+		<div id="main_header" style="background-color:<%= $config->{$device}->{'store_header'}->{'background_colour'} %>">
+			<h1><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %><h1>
+			<h4><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'slogan' })) %></h4>
+		</div>
+	</div>
+<% } %>
+<%= include 'ribbons', settings => $settings %>
+<div id="main_window">
+	<div style="background-color:<%= $config->{$device}->{'store_header'}->{'background_colour'} %>">
+		<input type="text" id="store_search" placeholder="Search">
+		<% foreach my $t ( @gb::store_types ) { %>
+			<button class="store_item_type" type="<%= $t %>"><%= &subs::format_name($t) %></button>
+		<% } %>
+		<select class="store_movement" value="<%= $settings->{'store_movement'} %>">
+			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
+				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::format_name($m) %></option>
+			<% } %>
+		</select>
+	</div>
+	<span id="category_view" style="max-height:80%">
+		<b>Categories</b>
+		<% foreach my $p ( @{$categories} ) { %>
+			<span class="store_category hover" status="closed" category="<%= $p->{'app'} %>" style="border:solid 2px;border-radius:7px;background-color:<%= $p->{'settings'}->{'colour'} %>">
+				<span class="category_name"><h2><%= &subs::format_name($p->{'app'}) %></h2></span>
+				<% if ($p->{'settings'}->{'main_image'}) { %>
+					<img class="huge_thumb" src="/file_open?file=<%= $p->{'settings'}->{'main_image'} %>">
+				<% } %>
+			</span>
+			<span class="store_subcategories" style="left:20px;" category="<%= $p->{'app'} %>" style="display:none;"></span>
+		<% } %>
+	</span>
+	<span id="items_view" style="width:45%;height:80%;">
+		<b>Items</b>
+	</span>
+	<span id="item_view" style=""></span>
+</div>
+
+<div id="image_viewer"></div>
+<div id="main_viewer"></div>
+

@@ -1,0 +1,27 @@
+<select id="ticket_request_team" class="ticket_request_allocater" name="team">
+	<% if ($privilege eq 'guest') { %>
+		<% foreach my $t ( qw/customer observer /) { %>
+			<option value="<%= $t %>"><%= &subs::format_name($t) %></option>
+		<% } %>
+	<% } %>
+	<% if ($privilege eq 'citizen' || $privilege eq 'resident') { %>
+		<% foreach my $t ( @{$gb::master_plan} ) { %>
+			<option value="<%= $t->{'team'} %>" <% if ($t->{'team'} eq $team) { %>selected<% } %>><%= &subs::format_name($t->{'team'}) %></option>
+		<% } %>
+	<% } %>
+</select>
+<% if ($team && $privilege eq 'citizen' || $privilege eq 'resident') { %>
+	<select id="ticket_request_club" class="ticket_request_allocater" name="club">
+		<% my @t = grep { $_->{'team'} eq $team } @{$gb::master_plan}; %>
+		<% if (scalar @t > 0) { %>
+			<% foreach my $cl ( @{$t[0]->{'clubs'}} ) { %>
+				<% if ($cl->{'team'}) { %>
+					<option value="<%= $cl->{'team'} %>" <% if ($cl->{'team'} eq $club) { %>selected<% } %>><%= &subs::format_name($cl->{'team'}) %></option>
+				<% } %>
+			<% } %>
+		</select>
+	<% } %>
+<% } %>
+<% if ($community) { %>
+
+<% } %>

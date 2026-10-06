@@ -1,0 +1,25 @@
+<img src="/images/make believe/cancel_button.png" style="position:absolute;top:0px;right:0px;" class="little_thumb" id="ticket_request_cancel">
+<h1>Ticket Request</h1>
+<h3>Welcome to <%= &subs::setting_grabber({ app => 'me', setting => 'store_name' }) %>!</h3>
+<p>First off, cookies and localStorage are used to verify your identity and offer products and services.
+	No third party cookies are used, and we don't sell your information or share it with anyone except as required
+	by law in criminal investigation proceedings and whatnot, but we will probably talk about you
+	as a group amongst ourselves. You can request to have your data deleted at any time.
+</p>
+Name: <input class="ticket_request_input" name="name"><br>
+Email: <input class="ticket_request_input" name="email" type="email"><br>
+Phone: <input class="ticket_request_input" name="phone" type="phone"><br>
+Describe yourself<br>
+<textarea class="ticket_request_input" name="description"></textarea><br>
+Privilege:
+	<select class="ticket_request_input ticket_request_allocater" id="ticket_request_privilege" name="privilege">
+		<% foreach my $p ( qw/guest resident citizen/ ) { %>
+			<option value="<%= $p %>"><%= &subs::format_name($p) %></option>
+		<% } %>
+	</select>
+
+<span id="ticket_request_role_container"></span>
+<br>
+<input type="hidden" name="approval_rating" value="<%= 1 %>">
+<button id="ticket_request_submit">Submit</button>
+<button id="ticket_request_clear">Clear</button>

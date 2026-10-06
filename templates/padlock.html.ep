@@ -1,0 +1,100 @@
+<div class="padlock_frame" mode="<%= $mode %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
+	<% if ($mode ne 'security') { %>
+		<h1 id="padlock_taunts"></h1>
+	<% } %>
+	<img class="padlock padlock_lock" src="/images/jbuttons/padlock lock.png">
+	<img class="padlock padlock_unlock" src="/images/jbuttons/padlock unlock.png">
+	<span class="padlock_jog_wheel_frame">
+		<img class="padlock_jog_wheel jog_wheel" mode="<%= $mode %>" src="/images/jbuttons/padlock dial.png">
+			<span class="padlock_jog_wheel_centre"></span>
+		</img>
+	</span>
+
+	
+	<% foreach my $light ( qw/yellow blue green red/ ) { %>
+		<img style="display:none;" class="little_thumb padlock_light <%= $light %>" src="/images/palette/<%= $light %>.png">
+		<span style="display:none;" class="padlock_digit <%= $light %>"></span>
+	<% } %>
+
+	<style>
+		.padlock_frame {
+			width: 300px;
+			bottom: 20%;
+			position:absolute;
+		}
+		.padlock_unlock {
+			display:none;
+		}
+		.padlock_light {
+			position:fixed;
+			left: 0px;
+			height: 30px;
+			top: 100px;
+		}
+		.padlock_light.yellow {
+			top: 100px;
+			position:fixed;
+			left: 0px;
+		}
+		.padlock_light.red {
+			top:130px;
+			position:fixed;
+			left: 0px;
+		}
+		.padlock_light.green {
+			top: 160px;
+			position:fixed;
+			left: 0px;
+		}
+		.padlock_light.blue {
+			top: 190px;
+			position:fixed;
+			left: 0px;
+		}
+		.padlock_digit {
+			position:fixed;
+			left: 40px;
+			height: 30px;
+			font-size: 20px;
+		}
+		.padlock_digit.red {
+			top:130px;
+			background-color:pink;
+			position:fixed;
+			left: 40px;
+		}
+		.padlock_digit.green {
+			top: 160px;
+			background-color:lightgreen;
+			position:fixed;
+			left: 40px;
+		}
+		.padlock_digit.blue {
+			top: 190px;
+			background-color:lightblue;
+			position:fixed;
+			left: 40px;
+		}
+		.padlock_jog_wheel_frame {
+			position:absolute;
+			bottom: -3px;
+			width: 100%;
+		}
+		.padlock_jog_wheel {
+			width: 100%;
+		}
+		.padlock {
+			position:absolute;
+			bottom: 0px;
+			width: 100%;
+		}
+		.padlock_jog_wheel_centre {
+			width: 1px;
+			height: 1px;
+			position:absolute;
+			left: 50%;
+			bottom: 50%;
+		}
+	</style>
+
+</div>

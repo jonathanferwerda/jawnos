@@ -1,0 +1,44 @@
+<div id="travel" style="background-color:white;width:100%;overflow:scroll;">
+	<img src="/images/decipherable/gear.png" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
+	<div id="travel_config" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } %>" status="<%= $settings->{'config_toggle'} %>">
+		<button id="travel_home_plate" status="<%= $home_plate_enabled %>"  style="vertical-align:top;">Home Plate</button>
+		<button id="travel_update" style="vertical-align:top;">Update</button>
+		<img class="little_thumb hover travel_now" src="/images/decipherable/now.png" style="vertical-align:top;"><br>
+
+		<input type="text" id="travel_scope" name="scope" value="<%= $travel_scope %>"><br>
+
+		<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>" style="vertical-align:top;">
+			<option value="">None</option>
+			<% foreach my $map ( @{$settings->{'maps'}} ) { %>
+				<% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} }); 
+					$map->{'f'} = $destination . $asset;
+				%>
+				<% if ($map->{'home_plate'} && $map->{'scale'}) { %>
+					<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
+				<% } %>
+			<% } %>
+		</select>
+		<img src="/icons/trash.png" class="little_thumb delete_travel_map">
+		<br>
+		<b>Search</b>
+		<input id="travel_search" value="<%= $settings->{'search'} %>">
+		<br>
+		<b>Start Time</b>
+		<input class="time travel_time" setting="start_time" app="travel" timestamp="<%= $settings->{'start_time'} %>" id="travel_start_time"><br>
+		<b>End Time</b>
+		<input class="time travel_time" setting="end_time" app="travel" timestamp="<%= $settings->{'end_time'} %>" id="travel_end_time">
+
+	</div>
+
+	<% if ($settings->{'view'}) { %>
+
+	<% } else { %>
+		<input style="width: 90%" type="range" id="travel_distance_range" value="<%= $settings->{'campus_zoom'} || 1 %>" step=".1" min=".1" max="2" /><br>
+		<canvas id="travel_campus" style="display:none;zoom:<%= $settings->{'campus_zoom'} || 1 %>;"></canvas>
+	<% } %>
+
+
+	<div id="travel_proxy_view">travel proxy view</div>
+
+</div>
+

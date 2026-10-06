@@ -1,0 +1,288 @@
+<div id="studio" uuid="<%= $last_song->{'uuid'} %>" name="<%= $last_song->{'name'} %>">
+	<audio id="metronome" autoplay style="display:none;"></audio>
+	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
+	<div id="pedalboard" style="display:none;">
+		<% my $count = 0; %>
+		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
+			<span id="pedal_<%= $p->{'name'} %>" class="pedal" style="left:<%= $count * 175 %>px;">
+				<% my $ch = $p->{'name'}; %>
+				<img class="pedal_background" src="/images/studio/<%= $p->{'image'} %>.png">
+				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
+					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;height:<%= $k->{'width'} || '60px' %>;width:<%= $k->{'width'} || '60px'; %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+
+				<% } %>
+				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
+					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" src="/images/studio/button_depressed_<%= $b->{'colour'} %>.png">
+				<% } %>
+			</span>
+			<% $count++; %>
+		<% } %>
+	</div>
+	<% my $channel_count = $settings->{'channel_count'} || 4; %>
+	<div id="studio_viewer" style="height:200px;" channel_count="<%= $channel_count %>">
+		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
+			<canvas style="width:95%;height:calc(90% / <%= $channel_count + 1 %>);border:solid;" class="track track_<%= $ch %>" id="track_view_<%= $ch %>">track name <%= $ch %></canvas>
+		<% } %>
+	</div>
+	<div id="studio_mixer">
+		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
+			<span class="channel channel_<%= $ch %>">
+				<img class="tiny_thumb jack studio_jack hover" src="/images/studio/jack.png" channel="<%= $ch %>">
+				<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
+
+				<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
+					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+					<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+					<span class="to_sound" channel="<%= $ch %>" >
+						<img class="cord draggable" style="display:none;" control="input" channel="<%= $ch %>" src="/images/studio/cord.png">
+					</span>
+				<% } %>
+				<img class="tiny_thumb jack studio_cord hover" src="/images/studio/cord.png" channel="<%= $ch %>">
+				<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
+				<button class="armed" channel="<%= $ch %>" control="armed" state="off">O</button>
+				<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
+				<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" class="channel_volume channel_volume_<%= $ch %>" value="1">
+
+			</span>
+		<% } %>
+		<span id="studio_controls">
+			<span style="left:2px;top:50px;position:absolute;">
+
+				<img class="little_thumb record hover" id="studio_record" src="/images/make believe/record.png">
+				<img class="little_thumb play hover" id="studio_play" src="/images/make believe/play.png">
+				<img class="little_thumb stop hover" id="studio_stop" src="/images/make believe/stop.png">
+				<img class="little_thumb prev hover" id="studio_prev" src="/images/make believe/left arrow.png">
+				<img class="little_thumb next hover" id="studio_next" src="/images/make believe/right arrow.png">
+
+			</span>
+			<span style="left:2px;top:95px;position:absolute;">
+				<img class="little_thumb mark hover" id="studio_mark" src="/images/studio/plus.png">
+				<img class="little_thumb metronome hover" id="studio_metronome" src="/images/studio/metronome.png">
+				<input style="width:50px;vertical-align:top;" id="studio_bpm" value="120">
+				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
+				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
+					<input channel="metronome" type="range" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;height:<%= $k->{'width'} || '60px' %>;width:<%= $k->{'width'} || '60px'; %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+				<% } %>
+			</span>
+			<span style="left:2px;top:140px;position:absolute;">
+
+			</span>
+			<span style="left:2px;top:190px;position:absolute;">
+				<img class="little_thumb hover video_toggle" id="studio_video_toggle" src="/images/make believe/camera.png">
+				<img class="little_thumb hover" src="/images/make believe/burger.png" id="pedalboard_hamburger">
+				<img class="little_thumb hover" src="/images/decipherable/gear.png" id="studio_config_toggle">
+				<img src="/images/studio/repeat.png" class="little_thumb hover" id="studio_loop">
+			</span>
+			<span style="left:2px;top:240px;position:absolute;">
+				<span id="studio_time_display">
+					0:00
+				</span><br>
+				<span id="studio_time_duration">
+					0:00
+				</span>
+
+			</span>
+			<span id="studio_video_monitors" style="position:absolute;height:110px;top:300px;width:100%;">
+				<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
+					<video id="studio_video_monitor_<%= $ch %>" style="display:none;height:100%;" muted autoplay class=""></video>
+				<% } %>
+			</div>
+			<video id="studio_video_monitor" style="position:absolute;left:510px;top:311px;width:350px;" muted autoplay style="width:200px;" class=""></video>
+
+
+		</span>
+		<span class="jog_wheel_frame">
+			<img class="jog_wheel" id="studio_jog_wheel" src="/images/studio/jog wheel tye dye.png">
+			<span class="jog_wheel_centre" style="width:5px;height:5px;"
+		</span>
+	</div>
+	<div id="studio_track_container"></div>
+	<div id="studio_config" style="display:none; width:100%;background-color:white;">
+		<h1>Configure</h1>
+
+		<div id="song_controls" style="">
+			<img id="studio_new" style="vertical-align:top;" class="little_thumb hover" src="/images/decipherable/file.png">
+			<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
+			<img id="studio_save" style="vertical-align:top;" class="little_thumb hover" src="/images/decipherable/diskette.png">
+			<img id="studio_delete" style="vertical-align:top;" class="little_thumb hover" src="/icons/trash.png">
+			<img class="little_thumb hover" src="/images/decipherable/gear.png" id="studio_config_toggle"><br>
+			<input type="hidden" id="studio_name">
+		</div>
+		<div>
+			<table style="width:98%;">
+				<thead>
+					<th>Setting</th>
+					<th>Value</th>
+				</thead>
+				<tbody>
+					<tr>
+						<td>Channels</td>
+						<td><input class="studio_config" setting="channel_count" value="<%= $settings->{'channel_count'} || 4 %>" restart="yes"></td>
+					</tr>
+				</tbody>
+			</table>
+						
+		</div>
+	</div>
+</div>
+
+<style>
+	.pedal {
+		width: 160px;
+		max-height: 187px;
+		display: inline-block;
+		position: absolute;
+		border: solid;
+		border-width: 5px;
+		border-radius: 10px;
+		background: brown;
+	}
+	.pedal_background {
+		width: 100%;
+	}
+	#studio_pedalboard_toggle {
+		right: 0px;
+		bottom:60px;
+		position:fixed;
+	}
+	#studio_controls {
+		position:absolute;
+		padding-left:5px;
+	}
+	#studio_track_container {
+		position:absolute;
+		right: -130px;
+		width: 130px;
+		overflow:scroll;
+		top:0px;
+		height: 100%;
+	}
+	.track {
+		width: 100%;
+		height: calc(100% / <%= $channel_count %>);
+	}
+	.knob {
+		height: 30px;
+		width: 30px;
+		padding-left:5px;
+		transform: rotate(180deg);
+	}
+	.knob_control {
+		appearance:none;
+		width: 30px;
+		height: 100px;
+
+		writing-mode: vertical-lr;
+	  direction: rtl;
+	  vertical-align: middle;
+	}
+	.armed {
+		height: 30px;
+		width: 20px;
+	}
+	.armed[state=off] {
+		background:grey;
+	}
+	.armed[state=rec] {
+		background:red;
+	}
+	.armed[state=play] {
+		background:green;
+	}
+	.armed[state=loop] {
+		background:blue;
+	}
+	.cord {
+		width:40px;
+	}
+	.jack {
+		width:40px;
+	}
+
+	.channel_volume {
+		position:absolute;
+		appearance: none;
+		height: 118px;
+		width: 34px;
+		top: 550px;
+		border: solid;
+		border-radius: 5px;
+		border-width: .1px;
+		background-color:transparent;
+		color: black;
+		outline: none;
+	  writing-mode: vertical-lr;
+	  direction: rtl;
+	  vertical-align: middle;
+		background-image: url('/images/studio/slider2.png');
+	}
+	.channel_volume_metre {
+		position:absolute;
+		height: 118px;
+
+		width: 30px;
+		bottom: 1px;
+		color: black;
+		outline: none;
+	  vertical-align: middle;
+
+	}
+	.channel {
+		border: solid;
+		border-width: 2px;
+		border-radius: 5px;
+		width: 40px;
+		height: 100%;
+		display:inline-block;
+		padding-top:10px;
+
+	}
+	<% for (my $ch = 0; $ch <= $channel_count; $ch++) { %>
+		.channel_<%= $ch %> {
+
+		}
+		.knob_control[channel=<%= $ch %>] {
+			left: <%= 45 * $ch %>px;
+		}
+
+		.channel_volume_<%= $ch %> {
+			left: <%= -49 + 48 * ($ch) %>px;
+			z-index: calc(10000);
+		}	
+		.channel_volume_metre_<%= $ch %> {
+			left: <%= -46 + 48 * ($ch) %>px;
+		}	
+	<% } %>
+	#studio {
+		height:100%;
+		width:100%;
+		border-width: 10px;
+		border-radius: 10px;
+		border: solid;
+	}
+	#studio_viewer {
+		height: 30%;
+		width: 100%;
+		background-color: lightblue;
+	}
+	#studio_mixer {
+		height: 70%;
+		width: 100%;
+		background-color: tan;
+	}	
+	#studio_controls {
+		width: 100%;
+	}
+	#studio_jog_wheel {
+		right: 40px;
+		position:absolute;
+		bottom: 10px;
+		height: 110px;
+		width: 110px;
+	}
+	#studio_time_display {
+		font-size: 32px;
+	}
+</style>

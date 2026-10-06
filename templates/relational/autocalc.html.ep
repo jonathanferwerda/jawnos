@@ -1,0 +1,15 @@
+
+<% foreach my $d ( keys %{$returner} ) { %>
+	<% if (scalar @{$returner->{$d}} > 0) { %>
+		<h1><input type="checkbox" class="relational_autocalc_header_checkbox" checked style="height:30px;width:30px;" category="<%= $d %>"><%= &subs::format_name($d) %> (<%= scalar @{$returner->{$d}} %>)</h1>
+		<% foreach my $b ( @{$returner->{$d}} ) { %>
+			<div class="relational_autocalc_item" uuid="<%= $b->{'uuid'} %>" b_uuid="<%= $uuid %>" construct="<%= $b->{'settings'}->{'pos'} %>" b_construct="<%= $construct %>">
+				<input type="checkbox" checked class="relational_autocalc_checkbox" category="<%= $d %>"> <%= &subs::format_name($b->{'app'}) %>
+			</div>
+
+		<% } %>
+	<% } %>
+<% } %>
+
+<img src="/images/decipherable/checkmark.png" id="relational_autocalc_confirm" style="position:absolute;top:2px;right:60px;" class="little_thumb hover">
+<img src="/images/make believe/cancel_button.png" id="alert_cancel" class="little_thumb hover">

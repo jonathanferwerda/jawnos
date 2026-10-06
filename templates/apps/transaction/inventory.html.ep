@@ -1,0 +1,19 @@
+<span class="inventory_transaction" attribute="movement"><br>
+	<label>Measure</label>
+	<select class="transaction unit app_setting" app="<%= $a %>" attribute="t_unit" name=">
+		<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'t_unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'t_unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
+		<% foreach my $u ( keys %{$gb::measures} ) { %>
+			<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'t_unit'})) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+		<% } %>
+	</select>
+	<% if ($appts->{$a}->{'models'} != undef) { %>
+		<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
+			<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
+				<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
+			<% } %>
+		</select>
+	<% } %><br>
+	<label>Amount</label>
+	<input  type="text" name="amount" attribute="amount" name="amount" style="width: 31.28%" value="<%= $app->{'amount'} %>" class="purchase_input amount" placeholder="amount"></input>
+	<br>
+</span>

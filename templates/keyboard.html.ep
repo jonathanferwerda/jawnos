@@ -1,0 +1,390 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<span class="typewriter" style="">
+
+	<% if ($toggle eq 'keyboard') { %>
+		<br>
+		<span class="keyboard bc" id="keyboard" style="background-color:<%= $config->{$device}->{'keyboard'}->{'background_colour'} %>;">
+			<canvas id="keyboard_screen" style="height:70px;width:350px;background-color:#bbd47b;"></canvas><br>
+			<div id="calculator_walkman" style="overflow-x:scroll;width:400px;height:70px">
+				<% foreach my $p (@{$pseudonyms}) { %>
+					<button class="medium_thumb" style="width:60px">
+						<img class="return_key special keyboard_button little_thumb hover" style="vertical-align:bottom;width:50px;background-color:<%= $config->{$device}->{'pseudonym'}->{'background_colour'} %>;" src="<%= $p->{'icon'} %>" key="<%= $p->{'name'} %>" type="<%= $p->{'type'} %>">
+					</button>
+				<% } %>
+			</div>
+			<span class="magic_wands keyboard_cauldron" style="width:100%">
+				<% foreach my $w ( keys %{$gb::ws->{'server'}} ) { %>
+					<% if ($w ne $browser_tab_id) { %>
+						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb hover" style="background-color:navy;" src="/images/make believe/key.png">
+					<% } %>
+				<% } %>
+			</span>
+			<br>
+			<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0 backspace/) { %>
+				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+			<% } %>
+
+			<br>
+
+			<% foreach my $k (qw/q w e r t y u i o p/) { %>
+				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+			<% } %>
+			<button class="keyboard_button" key="clear">C</button>
+			<br>
+			&nbsp;		&nbsp;
+			<% foreach my $k (qw/a s d f g h j k l ; '/) { %>
+				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+			<% } %>
+			<br>
+			<button class="shift_key keyboard_button" key="shift">Sh</button>
+			<% foreach my $k (qw#z x c v b n m#) { %>
+				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+			<% } %>
+			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{','} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{','} %>" type="image/png"></img>
+			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{'.'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{'.'} %>" type="image/png"></img>
+			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{'/'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{'/'} %>" type="image/png"></img>
+			<br>
+
+			<button class="ctrl_key keyboard_button hover" key="ctrl">ctrl</button>
+			<button class="special keyboard_button hover" key="fn">fn</button>
+			<button class="space_bar keyboard_button hover" key="<%= $keys->{' '} %>">&nbsp; Space &nbsp;</button><br>
+			<script id="keyboard_legend"><%== encode_json $keys %></script>
+		</span>
+	<% } %>
+	<% if ($toggle eq 'calculator') { %>
+		<span class="keyboard bc" id="calculator" style="background-color:<%= $config->{$device}->{'calculator'}->{'background_colour'} %>;">
+			<canvas id="calculator_screen" style="width:370px;height:70px;background-color:#bbd47b;"></canvas><br>
+			<img class="magic_wand tiny_thumb" src="/images/make believe/key.png">
+			<span class="magic_wands keyboard_cauldron">
+				<% foreach my $w ( keys %{$gb::ws->{'server'}} ) { %>
+					<% if ($w ne $browser_tab_id) { %>
+						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb" style="background-color:navy;" src="/images/make believe/key.png">
+					<% } %>
+				<% } %>
+			</span>
+			<br>
+			<div id="calculator_keyboard" style="float:left;width:50%">  
+				<button class="keyboard_button calculator_button" key="clear">C</button>
+				<% foreach my $k (qw# ( ) #) { %>
+					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key=" <%= $keys->{$k} %> " type="image/png"></img>
+				<% } %>
+				<button class="operator keyboard_button calculator_button" key=" plmi ">&#177;</button>
+				<br>
+				<button class="keyboard_button calculator_button" key="<%= $keys->{'/'} %>" cushion=" ">	&#247 	</button>
+				<% foreach my $k (qw#7 8 9#) { %>
+					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<% } %>
+				<br>
+				<button class="keyboard_button calculator_button" key="<%= $keys->{'*'} %>" cushion=" ">	&#215; 	</button>
+				<% foreach my $k (qw# 4 5 6#) { %>
+					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<% } %>
+				<br>
+				<button class="keyboard_button calculator_button" key="<%= $keys->{'-'} %>" cushion=" ">-</button>
+				<% foreach my $k (qw#1 2 3#) { %>
+					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<% } %>
+				<br>
+				<button class="keyboard_button calculator_button" key="<%= $keys->{'+'} %>" cushion=" ">+</button>
+				<% foreach my $k (qw# 0 . #) { %>
+					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<% } %>
+				<button class="keyboard_button calculator_button" type="calc" key="calc">=</button>
+				<br>
+				<button class="keyboard_button calculator_button" type="calc" key=" to ">To</button>
+				<img src="/manager/keyboard_alias?toggle=calculator&key=<%= $keys->{'backspace'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{'backspace'} %>" type="image/png"></img>
+			</div>
+			<div id="calculator_calculations" style="overflow:scroll;width:48%;height:120px;float:right;">
+
+			</div>
+			<div id="calculator_measures" style="width:48%;height:160px;overflow:scroll;float:right;">
+				<% foreach my $k ( sort keys %{$measures} ) { %>
+					<button class="measure keyboard_button calculator_button" key="<%= $keys->{$k} %>">
+						<%= $k %>
+					</button>
+					<%= $measures->{$k}->{'name'} %>
+					<br>
+				<% } %>
+			</div>
+			<script id="calculator_legend"><%== encode_json $keys %></script>
+		</span>
+	<% } %>
+	<% if ($toggle eq 'remote_control') { %>
+		<span class="keyboard bc" id="remote_control" style="background-color:<%= $config->{$device}->{'remote_control'}->{'background_colour'} %>">
+			<% $remote_control = $remote_control || &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
+			<% $remote_machines = $remote_machines ? decode_json $remote_machines : &subs::remote_machine_lister(); %>
+
+			<select id="remote_control_machine_select" value="<%= $remote_control %>" onchange="settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': this.value });keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: this.value })" style="vertical-align:top;">
+				<option value="" <% if ( $remote_control eq '' || !$remote_control || !grep { $_->{'ip'} eq $remote_control } @{$remote_machines}) { %>selected<% } %>>Me</option>
+				<% foreach my $rm ( @{$remote_machines} ) { %>
+					<option value="<%= $rm->{'uuid'} %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
+				<% } %>
+			</select>
+			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="/images/decipherable/wrench.png"></img>
+			<br>
+			<div id="remote_control_view" class="keyboard_content">
+				<% if ($remote_control eq '' || !$remote_control || !grep { $_->{'uuid'} eq $remote_control } @{$remote_machines}) { %>
+					<% $remote_control = undef; %>
+					ME!<br>
+					<%= &subs::device_setter() %>
+				<% } else { %>
+					<% my ($rm) = grep { $_->{'uuid'} eq $remote_control } @{$remote_machines}; %>
+					<%= $rm->{'ip'} %><br>
+					<%= &subs::device_setter() %><br>
+					<%= $remote_control %>
+				<% } %>
+
+				<br><span id="manager_file" style=""><%= $manager_file %></span>
+			</div>
+			<div toggle="<%= $toggle %>" class="keyboard_config remote_control_configuration" style="display:none;width:100%;" remote_uuid="<%= $remote_control %>">
+				Keyboard Config
+			</div>
+		</span>
+
+	<% } %>
+	<% if ($toggle eq 'controller') { %>
+		<span class="keyboard bc" id="controller" style="height:400px;width:550px;max-width:100%;overflow:scroll;background-color:<%= $config->{$device}->{'controller'}->{'background_colour'} %>">
+			<table style="background-color:yellow;border:solid 3px;" id="websocket_list">
+				<thead>
+					<th>App</th><th>Neighbours</th><th>Close</th>
+
+				</thead>
+				<tbody>
+					<% my @everything; %>
+					<% foreach my $sock ( @{$websockets} ) { %>
+						<% unless ($sock->{'app'} eq 'music' || $sock->{'app'} eq 'tab' || $sock->{'app'} eq 'server') { 
+							push @everything, $sock;
+							next;
+						} %>
+						<tr style="border:solid 2px;">
+							<td><%= $sock->{'app'} %></td>
+							<td style="max-width:400px;border: 2px;">		
+								<%= &subs::formatted_time($sock->{'connected'}) %>			
+								<span class="neighbours" style="max-width:350px;" app="<%= $sock->{'app'} %>"></span><br>
+							</td>
+							<td><button class="heartbeating" app="<%= $sock->{'app'} %>" onClick="websocketStop('<%= $sock->{'app'} %>');">Stop</button></td>
+						</tr>
+					<% } %>
+					<tr>
+						<td>Everything</td>
+						<td id="everything_socket" style="width:100%;border: 2px;">		
+
+						</td>
+						<td></td>
+					</tr>
+				<tbody>
+			</table>
+		</span>
+	<% } %>
+	<% if ($toggle eq 'delorean') { %>
+
+		<span class="keyboard bc" id="delorean" style="width: 250px;background-color:<%= $config->{$device}->{'delorean'}->{'background_colour'} %>">
+			<button id="i" class="now">now</button>
+			<button id="calculate_it">M</button>
+			<button id="appt_view_toggle">V</button>
+			<input style="width:60%" class="time_machine" id="time_machine" placeholder="Time Machine"></input><br>
+
+			<!-- here, because these templates will be linked to user's keyboards which are encoded in their pictures -->
+			<script>
+				var ago_time;
+				$(document).on('change', '#time_machine', function() {
+					var time_machine = $(this).val();
+					var timestamp = Date.now();
+					clearTimeout(ago_time);
+					ago_time = setTimeout(function() {
+						var ago = $(this).val();
+						$.ajax({
+							url: '/manager/ago',
+							type: 'GET',
+							data: { time_machine: time_machine, timestamp: timestamp },
+							success: function(response) {
+								localStorage.setItem('time_machine', time_machine );
+							}
+						});
+					});
+				});
+				var appt_view_toggle = sessionStorage.getItem('appt_view_toggle');
+				if (appt_view_toggle == 'on') { $('#appt_view_toggle').css({ 'background-color': 'green' }) }
+			</script>
+			<select id="update_frequency">
+				<option value="no">NOPE!</option>
+				<option value="1000">1s</option>
+				<option value="3000" selected>3s</option>
+				<option value="5000">5s</option>
+				<option value="10000">10s</option>
+				<option value="20000">20s</option>
+				<option value="30000">30s</option>
+				<option value="40000">40s</option>
+				<option value="50000">50s</option>
+				<option value="60000">60s</option>
+				<option value="70000">70s</option>
+				<option value="300000">5m</option>
+				<option value="600000">10m</option>
+				<option value="1200000">20m</option>
+			</select>
+
+			<select name="layout" id="layout">
+				<option value="leaderboard">Leaderboard</option>
+				<option value="clockface">Clockface</option>
+				<option value="timeline">Timeline</option>
+				<option value="calendar">Calendar</option>
+				<option value="continent">Continent</option>
+				<option value="narrator">Narrator</option>
+			</select>
+			<select name="sorts" id="sorts">
+				<option value="alphabetical">Alphabetical</option>
+				<option value="duration">Duration</option>
+				<option value="occurrences">Occurrences</option>
+				<option value="amount">Dollars</option>
+				<option value="timestamp">Timestamp</option>
+				<option value="server_time">Server Time</option>
+			</select>
+			<br>
+			<input style="max-width: 90%" type="range" id="timeshift" step=1 max=20 min=-20 /><br>
+			<span id="timeshift_viewer"></span><br>
+			<select name="scope" id="scope">
+				<option value="second">1s</option>
+				<option value="15second">15s</option>
+				<option value="30second">30s</option>
+				<option value="45second">45s</option>
+				<option value="minute">1m</option>
+				<option value="fiveminute">5 Mins</option>
+				<option value="tenminute">10 Mins</option>
+				<option value="fifteenminute">15 Mins</option>
+				<option value="thirtyminute">30 Mins</option>
+				<option value="fortyfiveminute">45 Mins</option>
+				<option value="hour">Hour</option>
+				<option value="twohour">2 Hours</option>
+				<option value="threehour">3 Hours</option>
+				<option value="sixhour">6 Hours</option>
+				<option value="ninehour">9 Hours</option>
+				<option value="twelvehour">12 Hours</option>
+				<option value="fifteenhour">15 Hours</option>
+				<option value="eighteenhour">18 Hours</option>
+				<option value="twentyonehour">21 Hours</option>
+				<option value="day">Day</option>
+				<option value="twoday">2 Days</option>
+				<option value="threeday">3 Days</option>
+				<option value="fourday">4 Days</option>
+				<option value="fiveday">5 Days</option>
+				<option value="sixday">6 Days</option>
+				<option value="week">Week</option>
+				<option value="twoweeks">2 Weeks</option>
+				<option value="threeweeks">3 Weeks</option>
+				<option value="moon">Moon</option>
+				<option value="month">Month</option>
+				<option value="quarter">Quarter</option>
+				<option value="season">Season</option>
+				<option value="sixmonth">6 Months</option>
+				<option value="ninemonth">9 Months</option>
+				<option value="year">Year</option>
+				<option value="decade">Decade</option>
+				<option value="century">Century</option>
+				<option value="millenium">Millenium</option>
+				<option value="era">Era</option>
+			</select>
+			<select id="timeshift_scope" name="timeshift_scope">
+				<option value="Mill">Millenium</option>
+				<option value="C">Century</option>
+				<option value="D">Decades</option>
+				<option value="y">Years</option>
+				<option value="M">Months</option>
+				<option value="w">Weeks</option>
+				<option value="d">Days</option>
+				<option value="h">Hours</option>
+				<option value="m" selected>Minutes</option>
+				<option value="s">Seconds</option>
+				<option value="0">No Shift</option>
+			</select>
+			<select name="filter" id="filter">
+				<% foreach my $m ( @gb::movements ) { %>
+					<option value="<%= $m %>"><%= ucfirst($m) %></option>
+				<% } %>
+			</select>
+			<br>
+			<select id="accounts" style="max-width: 50%;">
+				<option value="all" selected>All</option>
+				<% foreach my $a ( @{$accounts} ) { %>
+					<option value="<%= $a->{'app'} %>"><%= $a->{'formatted_name'} %></option>
+				<% } %>
+			</select>
+			<select id="projects" style="max-width: 50%">
+				<option value="all" selected>All</option>
+				<% foreach my $a ( @{$projects} ) { %>
+					<option value="<%= $a->{'app'} %>"><%= $a->{'formatted_name'} %></option>
+				<% } %>
+			</select>
+			<br>
+			<input type="checkbox" id="background_images">Background
+			<input type="range" id="background_images_opacity" min="0" max="1" step=".05">Opacity
+			<br>
+			<span timestamp="<%= $c->session('warranty') %>" class="time"></span>
+		</span>
+	<% } %>
+	<% if ($toggle eq 'walkboy') { %>
+		<span class="keyboard bc" id="walkboy">
+			<table style="background-color:<%= $config->{$device}->{'walkboy'}->{'background_colour'} %>;" id="websocket_list">
+				<thead>
+					<th></th><th>A.V.</th>
+				</thead>
+				<tbody>
+					<% foreach my $av ( @{$av_data} ) { %>
+						<% if ($av->{'deviceId'} ne 'default') { %>
+							<tr>
+								<td><% if ($av->{'icon'}) { %><img class="medium_thumb media_picker" device_id="<%= $av->{'deviceId'} %>" kind="<%= $av->{'kind'} %>" type="<%= $av->{'icon'} %>" status="off" src="/images/decipherable/<%= $av->{'icon'} %>.png"> <% } %></td>
+								<td><%= $av->{'label'} %></td>
+							</tr>
+						<% } %>
+					<% } %>
+				</tbody>
+			</table>
+		</span>
+		<script>
+			$('.media_picker').each(function(i,vd) {
+				var v = $(vd);
+				var type = v.attr('type');
+				var kind = v.attr('kind');
+				var device_id = v.attr('device_id');
+				var mp = localStorage.getItem(kind + device_id);
+				if (mp == 'on') { v.attr('status', 'on'); }
+			});
+		</script>
+	<% } %>
+	<% if ($toggle eq 'console') { %>
+		<span class="keyboard" id="console" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
+			<span class="room">
+
+				<img class="past_life medium_thumb" direction="rew" src="/icons/prev.jpg"></img>
+				<img class="past_life medium_thumb" direction="load" src="/icons/play.jpg"></img>
+				<img class="past_life medium_thumb" direction="ff" src="/icons/next.jpg"></img>&nbsp;
+				<img type="button" id="new_room" class="medium_thumb" src="/icons/lymeboard/add.png">
+				<img class="life_direction medium_thumb" style="font-size:10px;" src="/icons/lymeboard/backspace.png" direction="forget">
+				<span id="life" height="56px" style="font-size:26px;" width="56px"></span>
+				<br>
+				Draw <input type="checkbox" class="" id="drawings_check">
+				Named <input type="checkbox" class="" id="room_check">
+				Wiper <input type="checkbox" class="" id="windshield_wiper">
+				<br>
+				<input type="text" class="timed_input add_something" type="room" style="width:300px;" placeholder="Room Name" id="room_name"><br>
+				<span id="playbook"></span><br>
+			</span>
+		</span>
+	<% } %>
+	<% if ($toggle eq 'notifications') { %>
+		<span class="keyboard bc" id="notifications" style="overflow:scroll; height: 50%; width: 50%; max-width: 100%; border:solid 4px; background-color:<%= $config->{$device}->{'notifications'}->{'background_colour'} %>;">
+			<input id="notification_search" value="<%= $notifications->{'settings'}->{'search'} %>" style="width:40%">
+			<select id="notification_app_select" value="<%= $notifications->{'settings'}->{'filter'} %>" style="width:40%;">
+				<option value="all" <% if ($notifications->{'settings'}->{'filter'} eq 'all' || $notifications->{'settings'}->{'filter'} eq '') { %>selected <% } %>>All</option>
+				<% foreach my $app ( sort @{$notifications->{'apps'}} ) { %>
+					<option value="<%= $app %>" <% if ( $app eq $notifications->{'settings'}->{'filter'} ) { %>selected <% } %>><%= &subs::format_name($app) %></option>
+				<% } %>
+			</select>
+			<button style="float:right;" class="notification_remove" scope="all" uuid="">X</button>
+			<span id="notifications_content"> 
+				<%== $notifications->{'content'} %>
+			</span>
+		</span>
+
+	<% } %>
+</span>
+

@@ -1,0 +1,25 @@
+<div style="width:100%; height: 100%; text-align: center; background-color:<%= $config->{$device}->{'configure'}->{'background_colour'} || "#619cfa" %>; border: solid; border-radius:2px;overflow-x:scroll;overflow:scroll;" id="configure">
+	<button type="button" class="configure_toggle" id="me_settings">Me</button>
+	<button type="button" class="configure_toggle"  name="backup" id="restore_list">Enc</button>
+	<button type="button" class="configure_toggle"  name="system" id="system_setting_lister">Sys</button>
+	<button type="button" class="configure_toggle"  id="misc_setting">Misc</button>
+	<button type="button" class="configure_toggle"  id="appointment_list_grabber">App</button>
+	<button type="button" class="configure_toggle"  id="device_lister" load_type="list">Dev</button>
+	<button type="button" class="configure_toggle"  id="tunnel_lister">Tun</button>
+	<button type="button" class="configure_toggle"  id="pseudonym_setting_lister">Pseud</button>
+	<button type="button" class="configure_toggle"  id="store_setting_lister">Store</button>
+	<br>
+
+	<div style="display:none;" id="me_setting_list"></div>
+	<div style="display:none;" id="device_list"></div>
+	<div style="display:none;" id="tunnel_list"></div>
+	<div style="display:none;" id="backup_list"></div>
+	<div style="display:none;" id="system_list"></div>
+	<div style="display:none;" id="configure_appointment_list"></div>
+	<div style="display:none;" id="misc_setting_list"></div>
+	<div style="display:none;" id="pseudonym_list"></div>
+	<div style="display:none;" id="store_list"></div>
+	
+</div>
+
+

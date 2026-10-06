@@ -1,0 +1,102 @@
+<% no warnings 'uninitialized'; %>
+<div class="task_list" app="<%= $app %>" style="<% if ($parent > 0) { %>padding-left:<%= 20 x $parent %>px;<% } %>">
+	<% foreach my $task ( @{$tasks} ) { %>
+		<div class="task_item" app="<%= $task->{'task'} %>" uuid="<%= $task->{'uuid'} %>" style="padding-top:10px;width:100%;height:<% if ($task->{'uuid'} eq 'new') { %>100px<% } else { %>45px<% } %>;border:solid;border-width:3px;background-color:<%= $task->{'colour'} %>;">
+			<input type="checkbox" <% if ($task->{'completed'} eq 'on') { %> checked<% } %> class="task_input task_checkbox" name="completed" style="float:left;vertical-align:top;">
+
+			<% if ($task->{'uuid'} ne 'new') { %>
+				<span class="hover" onclick="appointmentGrabber('<%= $task->{'task'} %>')" style="vertical-align:bottom;background-color:white;opacity:80%;float:left;width:75%;font-size:20px;"><%= &subs::format_name(&subs::shorthand_name($task->{'task'},50)) %></span>
+			<% } else { %>
+				<input class="task_text task_input" placeholder="Task" name="task" style="width:80%;vertical-align:top;" value="<%= &subs::format_name($task->{'task'}) %>">
+			<% } %>
+			<% unless ($task->{'uuid'} eq 'new') { %><img src="/images/decipherable/gear.png" uuid="<%= $task->{'uuid'} %>" style="vertical-align:top;" class="little_thumb task_settings_hider"><% } %><br>
+
+			<span class="task_settings" uuid="<%= $task->{'uuid'} %>" style="vertical-align:bottom;display:none;">
+				<% if ($task->{'uuid'} ne 'new') { %>
+					<input class="task_text task_input" placeholder="Task" name="task" style="width:60%;vertical-align:top;" value="<%= &subs::format_name($task->{'task'}) %>">
+				<% } %>
+				<span style="float:right;">
+					<% if ($task->{'last_completed'}) { %>
+						<span class="time" timestamp="<%= $task->{'last_completed'} %>"></span>
+					<% } %>
+					<span class="time" timestamp="<%= $task->{'timestamp'} %>"></span>
+				</span>
+				<br>
+				<table style="width:90%;">
+					<thead>
+						<th>Colour</th><th>Priority</th><th>Appt</th><th>Delete</th>
+					</thead>
+					<tbody>
+						<td>
+							<input type="color" class="task_input task_colour" name="colour" value="<%= $task->{'colour'} %>" style="vertical-align:bottom;">
+						</td>
+
+						<td><input style="max-width: 50%" type="range" class="task_input" name="priority" step=1 max=20 min=-20 value="<%= $task->{'priority'} %>" /></td>
+						<td><input type="checkbox" <% if ($task->{'appt'} eq 'on') { %> checked <% } %> class="task_input" name="appt"></td>
+						<td>
+							<img src="/icons/trash.png" class="little_thumb delete_task">
+						</td>
+					</tbody>
+					
+				</table>
+
+				<br>
+				<table style="width:99%;vertical-align:bottom;padding-right:10px;background-color:white;opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+					<thead>
+						<th style="width:28%">Renew</th>
+						<% foreach my $bm ( grep { $_ ne 'total' } sort keys %{$gb::budget_modes} ) { %>
+							<th style="width:28%"><%= &subs::format_name($bm) %></th>
+						<% } %>
+					</thead>
+					<tbody>
+						<tr>
+							<td style="width:28%;"><input class="task_input" name="renew_freq" value="<%= $task->{'renew_freq'} %>" style="width:100%;"></td>
+							<% foreach my $bm ( grep { $_ ne 'total' } sort keys %{$gb::budget_modes} ) { %>
+								<td style="width:28%;"><input style="width:100%" type="text" value="<%= $task->{$bm} %>" name="<%= $bm %>" class="task_input task_budget"></td>
+							<% } %>
+						</tr>
+					</tbody>
+				</table>
+
+			</span>
+
+			<% if ($task->{'uuid'} eq 'new' && $parent == 0) { %>
+				<table style="width: 99%;vertical-align:bottom;padding-right:10px;background-color:white;opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+					<thead>
+						<th>Sort</th>
+						<th>Filter</th>
+						<% foreach my $totes ( sort keys %{$totals} ) { %>
+							<th><%= &subs::format_name($totes) %></th>
+						<% } %>
+
+					</thead>
+					<tbody>
+						<tr>
+							<td>
+								<select class="task_admin_input" setting="sort">
+									<% foreach my $o ( qw/old new chk rchk low high az za/ ) { %>
+										<option value="<%= $o %>" <% if ($o eq $settings->{'tasks_sort'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+									<% } %>
+								</select>
+							</td>
+							<td>
+								<select class="task_admin_input" setting="filter">
+									<% foreach my $o ( qw/all open done/ ) { %>
+										<option value="<%= $o %>" <% if ($o eq $settings->{'tasks_filter'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+									<% } %> 
+								</select>
+							</td>
+							<% foreach my $totes ( sort keys %{$totals} ) { %>
+								<td><%= $totals->{$totes} %></td>
+							<% } %>
+						</tr>
+					</tbody>
+				</table>
+			<% } %>
+		</div>
+		<% if ($task->{'subsidiaries'}) { %>
+			<b><%= &subs::format_name($task->{'task'}) %>
+			<%= $task->{'subsidiaries'}->{'html'} %>
+		<% } %>
+	<% } %>
+</div>

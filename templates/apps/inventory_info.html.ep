@@ -1,0 +1,15 @@
+<% my $string = &subs::random_string_creator(25); %>
+
+<span class="statistic_info" id="<%= $string %>" style="position:fixed;left:<%= $x - 200 %>px;top:<%= $y + 20 %>px;width:400px;max-height:700px;border:solid;background-color:white;border-radius:5px;">
+	<img class="close_statistic_info little_thumb hover" style="float:right;" app="<%= $app %>" scope="<%= $scope %>" timestamp="<%= $timestamp %>" src="/images/make believe/cancel_button.png">	
+	<img class="statistic_appointments little_thumb"  timestamp="<%= $timestamp %>" scope="<%= $scope %>" src="/images/decipherable/home.png" class="medium_thumb">
+
+	<span class="time" mode="fixed" timestamp="<%= $start_timestamp %>"></span><br>
+	<span class="time" mode="fixed" timestamp="<%= $end_timestamp %>"></span><br>
+	<%= &subs::format_name($scope) %>
+
+	<canvas id="<%= $string %>_canvas">
+
+	</canvas>
+	<h1>This is statistic information</h1>
+</span>

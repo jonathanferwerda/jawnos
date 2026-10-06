@@ -1,0 +1,14 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<% my $type = $att->{'printer'} ? 'printer' : 'file'; %>
+<td style="border:solid;border-radius:5%;vertical-align:top;" class="email_attachment" uuid="<%= $att->{'uuid'} %>" type="<%= $type %>">
+	<% if ($att->{'printer'}) { %>
+		<img class="little_thumb" src="/images/decipherable/feeder.png"><span style="vertical-align:top;"><%= $att->{'printer'}->{'id'} %></span>
+	<% } else { %>
+		<img class="little_thumb" src="<%= $att->{'src'} %>">
+	<% } %>
+	<div style="display:none;" class="email_attachment_data" uuid="<%= $att->{'uuid'} %>" type="<%= $type %>">
+		<% my $attachment = \%{$att}; %>
+		<%= encode_json $attachment %>
+	</div>
+	<img src="/images/make believe/cancel_button.png" class="tiny_thumb delete_email_attachment hover" type="<%= $type %>" uuid="<%= $att->{'uuid'} %>"> 
+</td>

@@ -1,0 +1,25 @@
+<html>
+	<style>
+		html {
+			<% my $background_colour; if ($ticket->{'privilege'} eq 'citizen') { $background_colour = 'red'; } elsif ($ticket->{'privilege'} eq 'resident') { $background_colour = 'yellow'; } else { $background_colour = 'green'; } %>
+			background-color:<%= $background_colour %>;
+			text-align:center;
+			vertical-align:center;
+		}
+	</style>
+	<img src="<%= $image %>" style="text-align:center; max-height:600px; height: 100%;">
+	<div id="box_office_stash" style="display:none;">
+		<%= $js %>
+	</div>
+	<div id="box_office_dump">
+	</div>
+	<script>
+			var js = $('#box_office_stash').text();
+			var jso = JSON.parse(js);
+			console.log(jso);
+			var jss = JSON.stringify(jso);
+
+			gateKeeper(jso);
+			window.location = jso['redirector'];
+	</script>
+</html>

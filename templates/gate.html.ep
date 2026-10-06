@@ -1,0 +1,82 @@
+
+% title 'Gate';
+<style>
+	body { text-align:center; background-color: <%= &subs::setting_grabber({ app => 'misc', setting => 'gate_background_colour' }) || '#DEDFD0'%> }
+	#welcome_logo { height: 180px; top:1px; border-radius: 5px; }
+	.destination { height: 50%; background-color:black;}
+	.heading { text-align:center; height:32px; font-size: 28px; }
+	button { text-align:center; height: 32px; min-width: 30px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }
+	input { text-align:left; height: 28px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }	
+	h1 { text-align: center; }
+	#ticket { 
+		text-align: center;
+	}
+	.ticket_input { 
+		font-size: 23px; 
+		text-align:center; 
+		width: 30px; 
+		height: 30px; 
+		border-width 2px; 
+		border: solid; 
+		border-radius: 3px;
+ 	}
+	@media screen and (max-width:600px) {
+		#ticket { width: 100% }
+	}
+	input::-webkit-outer-spin-button,
+	input::-webkit-inner-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+	input[type=number] {
+		-moz-appearance: textfield;
+	}
+	#results_grabber { text-align:center; height: 52px; min-width: 30px; font-size: 24px; display:inline-block;width:500px;}
+	.selected { background-color: yellow }
+	#president { height: 30px; width: 220px; border-radius: 7%; border:solid; }
+	#payment_form {
+		position:fixed;
+		bottom: 0%;
+	}
+</style>
+
+<img id="welcome_logo" src="/icons/logos/WelcomeLogo.png" >
+
+<br><br>
+<img style="vertical-align:bottom;display:inline-block;width:40px;height:40px;border:solid;border-width:4px;border-radius:10px;" id="signatorial_upload_button" src="/images/make believe/up.png" />
+<input type="input" style="vertical-align:bottom;" id="president" value="<%= $start_dir %>" placeholder="President" />
+<br><br>
+<div id="ticket">
+	<% foreach my $n (1..8) { %>
+		<% if ($n == 4) { %>
+			&nbsp;-&nbsp;
+		<% } %>
+		<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>">
+	<% } %>
+</div>
+<br>
+<div id="results_grabber" class="results_grabber">
+	<% if (scalar @{$restore_list} > 0) { %>
+		<% foreach my $b ( @{$restore_list} ) { %>
+			<% if ($b->{'archive'} eq 'current') { %>
+				<button class="button select_database <%= $b->{'class'} %>" filename="<%= $b->{'filename'} %>"><% if ($b->{'status'} eq 'open') { %>* <% } %><%= $b->{'filename'} %></button>
+			<% } %>
+		<% } %>
+
+		<button style="background-color:green;" type="button" onClick="var arr = $('#archive_restore_results'); arr.is(':visible') ? arr.hide() : arr.show()">Archive</button>
+		<div id="archive_restore_results" style="display:none;padding:30px;background-color:yellow;border:solid;border-radius:10px;z-index:1000;">
+			<% foreach my $b ( @{$restore_list} ) { %>
+				<% if ($b->{'archive'} eq 'archive') { %>
+					<span ><%= $b->{'created'} %></span><button class="button select_database <%= $b->{'class'} %>" filename="<%= $b->{'filename'} %>"><% if ($b->{'status'} eq 'open') { %>* <% } %><%= $b->{'filename'} %></button><br>
+				<% } %>
+			<% } %>
+		</div>
+	<% } %>
+</div>
+
+<div id="signatorial_upload_container">
+	<form id="signatorial_upload" style="display:none;">
+		<input id="signatorial_upload_input" type="file" name="fileupload" />
+		<input type="submit" />
+	</form>
+</div>

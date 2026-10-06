@@ -1,0 +1,9 @@
+<div tabindex="0" class="text_editor_container" source_id="<%= $id %>">
+	<div class="text_editor_toolbox" style="display:none;" source_id="<%= $id %>" t_id="<%= $p_id %>">
+		<button class="teb_style hover" tag="b">b</button>
+		<button class="teb_style hover" tag="i">i</button>
+		<button class="teb_style hover" tag="u">u</button>
+		<img src="/images/make believe/eat.png" class="tiny_thumb hover teb_style" utility="magic_wand" style="vertical-align:bottom;">
+	</div>
+	<div class="text_editor" contenteditable="true" id="<%= $p_id %>" source_id="<%= $id %>" placeholder="<%= $placeholder %>"><%== $contents %></div>
+</div>

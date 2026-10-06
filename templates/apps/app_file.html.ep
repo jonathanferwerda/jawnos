@@ -1,0 +1,83 @@
+<% foreach my $f (@{$l->{'files'}}) { %>
+
+	<% unless ( -e $f->{'file'} || $l->{'type'} eq 'snapshot' ) {
+		next;
+	} %>
+	<span class="app_file_toolbox" style="display:none;" uuid="<%= $f->{'uuid'} %>">
+		<img style="float:left;" src="/icons/trash.png" class="little_thumb delete delete_file hover" timestamp="<%= $l->{'timestamp'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>">
+		<img src="/images/icons/download.png" class="little_thumb download hover" timestamp="<%= $l->{'timestamp'} %>" uuid="<%= $l->{'uuid'} %>" server_time="<%= $l->{'server_time'} %>" app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>">
+		<img src="/icons/lymeboard/I.png" class="tiny_thumb file_information_grabber hover" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>" app="<%= $l->{'app'} %>">						
+		<% if ($f->{'file_type'} eq 'snd' || $l->{'type'} eq 'audio') { %>
+			</span>
+		<!--	<button class="file_toggle" timestamp="<%= $l->{'timestamp'} %>" file="<%= $l->{'file'} %>?action=start"><%= $l->{'type'} %> <%= $f->{'file_type'} %></button><br> -->
+			<br><%= $f->{'file'} %><br>
+			<audio controls src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>"></audio>
+		<% }  elsif ($f->{'file_type'} eq 'img') { %>
+				<select class="image_function_selection" uuid="<%= $f->{'uuid'} %>" value="<%= $f->{'function'} %>" style="vertical-align:top;">
+					<% foreach my $func ( qw/image background diagram map receipt signatorial/ ) { %>
+						<option value="<%= $func %>" <% if ($func eq $f->{'function'}) { %>selected<% } %>><%= &subs::format_name($func) %></option>
+					<% } %>
+				</select>
+				<img style="float:right;" class="little_thumb main_image_selector hover" 
+					<% if ($settings->{'main_image'} eq $f->{'file'}) { %>
+						main_image="yes"
+					<% } else { %>
+						main_image="no"
+					<% } %>
+
+					app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>" src="/images/make believe/explosion.png"
+					style="<% if ($settings->{'main_image'} eq $f->{'file'}) { %>border-color:orange;border-width:6px;<% } %>"
+				>
+				<% if ($f->{'file'} !~ /;base64/gi) { %>
+					<img class="little_thumb palette_toggle hover" src="/images/decipherable/palette.png" file="<%= $f->{'file'} %>">
+					<div class="palette" style="border:solid;border-width:3px;border-radius:5px;display:none;" uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>">
+						<input class="palette_input" style="width:50px;vertical-align:top;" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="fill" src="/images/palette/fill.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="rotate" src="/images/make believe/renew.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="crop" src="/images/palette/crop.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="modulate" src="/images/palette/brightness.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="level" src="/images/palette/contrast.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="black-threshold" src="/images/palette/black level.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="gaussian-blur" src="/images/palette/blur.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="sharpen" src="/images/palette/sharpen.png" file="<%= $f->{'file'} %>">
+
+						<img class="little_thumb palette_duty" duty="copy" src="/images/palette/duplicate.png" file="<%= $f->{'file'} %>">
+
+						<img class="little_thumb palette_duty" src="/images/decipherable/diskette.png" duty="save" file="<%= $f->{'file'} %>" style="display:none;">
+						<img class="little_thumb palette_duty" src="/images/decipherable/stop sign.png" duty="clear" file="<%= $f->{'file'} %>" style="display:none;">
+
+					</div>
+				<% } %>
+				<canvas style="display:none;" app="<%= $l->{'app'} %>" file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $l->{'uuid'} %>" id="<%= $l->{'uuid'} %>_<%= $f->{'uuid'} %>_canvas"></canvas>
+				<%= include 'apps/image_functions/' . $f->{'function'}, file => $f, appt => $l %>
+				<input class="image_name_input" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" app="<%= $l->{'app'} %>" value="<%= &subs::format_name($f->{'name'}) %>" placeholder="Name" style="width:150px;vertical-align:top;">
+			</span>
+			<img class="detail_image" 
+				<% if ($l->{'file'} =~ /;base64/gi) { %>
+					src="<%= $l->{'file'} %>" type="snapshot"
+				<% } else { %>
+					file="<%= $f->{'file'} %>"
+					src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>"
+				<% } %> timestamp="<%= $l->{'server_time'} %>" 
+				style="height:90%;width:95%" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= $l->{'uuid'} %>_<%= $f->{'uuid'} %>"
+					
+			/>
+	<% } elsif ($f->{'file_type'} eq 'vid') { %>
+		</span>
+		<video controls loop src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>" style="height:90%;width:95%;"></video>
+	<% } elsif ($f->{'file_type'} eq 'pdf') { %>
+		</span>
+		<% my $embed_string = &subs::random_string_creator(25); %>
+		<iframe class="resizable" type="application/pdf" src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>" style="height:500px;width:95%;" id="<%= $embed_string %>">
+
+		</iframe>
+	<% } %>
+	<br>
+	<% if ($device eq 'mobile' && $l->{'data'} eq '') { %>
+		<img src="/icons/edit.png" class="little_thumb share" type="edit" file="<%= $f->{'file'} %>">
+		<img src="/icons/view.png" class="little_thumb share" type="view" file="<%= $f->{'file'} %>">
+		<img src="/icons/share.png" class="little_thumb share" type="send" file="<%= $f->{'file'} %>">
+	<% } %>
+
+<% } %>
+<br>

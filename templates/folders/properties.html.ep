@@ -1,0 +1,1 @@
+<%= scalar @{$files} %> <%= $total_size %><br>

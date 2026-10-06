@@ -1,0 +1,198 @@
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<% 	no warnings 'uninitialized'; %>
+<div id="mail" style="width:100%;background-color:pink;">
+	<img src="/images/make believe/burger.png" class="little_thumb hover" id="mail_hamburger">
+	<% if ($settings->{'subsection'} eq 'email') { %>
+		<img src="/images/decipherable/file.png" class="little_thumb hover" id="email_compose" style="">
+		<img src="/images/decipherable/gear.png" class="little_thumb email_config_toggle hover" style="">
+	<% } %>
+	<span style="font-size:20px;"><%= $main_title %></span>
+	<div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
+		<div id="mailbox_realtime_controls" style="display:none;">
+			<img id="mailbox_audio" src="/images/make believe/microphone.png" class="little_thumb">
+			<img id="mailbox_video" src="/images/make believe/camera.png" class="little_thumb">
+			<img id="mailbox_screen" src="/images/make believe/monitor.png" class="little_thumb">
+			<img id="mailbox_marker" src="/images/decipherable/marker.png" class="little_thumb">
+			<div id="mailbox_video_container" style="position:absolute;width:100%;bottom:30px;left:0px;">
+				<video id="mailbox_video_monitor" mute autoplay></video>
+			</div>
+		</div>
+
+		<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:white;border:solid;border-color:black;border-radius:20px;">
+
+			<% foreach my $m ( sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$mail} ) { %>
+				<%= include 'mail/message', m => $m %>
+			<% } %>
+
+		</div>
+		<div id="just_hit_send" style="text-align:center;">
+			<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
+			<button id="send_it" style="width:12%;vertical-align:top;">></button>
+		</div>
+	</div>
+	<% if ($c->session('privilege') eq 'citizen') { %>
+		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'white' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
+			<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
+				<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+			<% } %>
+			<img src="/images/make believe/telephone line.png" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+			<br><br><br>
+
+			<% if ($settings->{'subsection'} eq 'sms') { %>
+				<% my $phone_numbers = &subs::db_select('settings', undef, { setting => 'phone', device => &subs::device_setter() })->hashes; %>
+				<div id="mail_phone_picker mail_list_picker">
+					<table style="font-size:20px;width:100%;text-align:center;">
+						<thead>
+							<th></th>
+						</thead>
+						<tbody>
+							<% foreach my $phone ( sort { $a->{'app'} cmp $b->{'app'} } @{$phone_numbers} ) { %>
+								<% $phone->{'value'} =~ s/\S\d(?=\d{10})//; %>
+								<tr type="phone" phone="<%= $phone->{'value'} %>" class="mail_phone hover <% if ($mail_phone eq $phone->{'value'}) { %>active <% } %>">
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'app'}) %></td>
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'value'}) %></td>
+								</tr>
+							<% } %>
+						</tbody>
+					</table>
+				</div>
+			<% } elsif ($settings->{'subsection'} eq 'email') { %>
+
+				<div id="email_main_buttons">
+					<% foreach my $b ( qw/contacts inbox drafts outbox sent/ ) { %>
+						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"
+							onclick="settingSetter({ 'app': 'mail', 'setting': 'email_folder_selection', 'value': '<%= $b %>' });setTimeout(function() { mailMaker(); },50);"><%= &subs::format_name($b) %></button>
+					<% } %>
+				</div>
+				<% if (!$settings->{'email_folder_selection'} || $settings->{'email_folder_selection'} eq 'contacts') { %>
+					<% my $email_addresses = &subs::db_select('settings', undef, { setting => 'email', device => &subs::device_setter() })->hashes; %>
+					<div id="mail_email_picker mail_list_picker">
+						<table style="font-size:20px;width:100%;text-align:center;">
+							<thead>
+								<th></th>
+							</thead>
+							<tbody>
+								<% foreach my $email ( sort { $a->{'app'} cmp $b->{'app'} } @{$email_addresses} ) { %>
+									<% $email->{'value'} =~ s/\S\d(?=\d{10})//; %>
+									<tr type="email" email="<%= $email->{'value'} %>" class="mail_email hover <% if ($mail_email eq $email->{'value'}) { %>active <% } %>">
+										<td class="" colspan="3"><%= &subs::format_name($email->{'app'}) %></td>
+										<td class="" colspan="3"><%= $email->{'value'} %></td>
+									</tr>
+								<% } %>
+							</tbody>
+						</table>
+					</div>
+				<% } else { %>
+					<%= include 'mail/email_folder', settings => $settings %>
+				<% } %>
+			<% } elsif ($settings->{'subsection'} eq 'pen') { %>
+				% my $conversations = eval { return decode_json $settings->{'chatbot_conversations' } } || {};
+				% my $new_uuid = &subs::random_string_creator(35);
+				% unshift @{$chatbot_models}, {};
+				% $conversations->{$new_uuid} = { uuid => $new_uuid, model => $settings->{'chatbot_model'}, system_message => $settings->{'chatbot_system_message'}, server_time => &subs::rightNow() };
+				<% foreach my $uuid ( sort { $conversations->{$a}{'chatbot_conversation_name'} cmp $conversations->{$b}{'chatbot_conversation_name'} } keys %{$conversations} ) { %>
+					% next unless $conversations->{$uuid};
+					% my $con = $conversations->{$uuid};
+
+					<div class="chatbot_configure <% if ($uuid eq $settings->{'chatbot_conversation'}) { %> selected<% }%>" uuid="<%= $uuid %>">
+						<input class="pen_settings" setting="chatbot_conversation_name" value="<%= &subs::format_name($con->{'chatbot_conversation_name'}) %>">
+						<% if ($uuid ne $new_uuid) { %>
+							<input class="chatbot_conversation_select" type="checkbox" <% if ($uuid eq $settings->{'chatbot_conversation'}) { %>checked="checked"<% } %> style="vertical-align:bottom;">
+							<img src="/icons/trash.png" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
+						<% } %>
+				    <select class="pen_settings" setting="chatbot_model" value="<%= $con->{'chatbot_model'} %>">
+				      <% foreach my $cm ( @{$chatbot_models}) { %>
+				        <option value="<%= $cm->{'model'} %>" <% if ($con->{'chatbot_model'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %><% if ($cm->{'price'}) { %> <%= $cm->{'price'} %><% } %></option>
+				      <% } %>
+				    </select>
+						<br>
+						<textarea style="width:98%;" class="pen_settings" setting="chatbot_system_message"><%= $con->{'chatbot_system_message'} %></textarea>
+					</div>
+				<% } %>
+				<div id="pen_chatbot_data" style="display:none;"><%= $settings->{'chatbot_conversations'} || '{}' %></div>
+				<div id="pen_assistant_model_selection" style="width:100%;border:solid;border-radius:2%;">
+					<% my $assistants = [qw/visual_assistant text_to_image_assistant/]; %>
+					<% my $ass_settings = &subs::settings_grabber({ app => 'mail', settings => $assistants }); %>
+
+					<%= &subs::format_name('visual_assistant') %>
+					<select class="configure_input" app="mail" setting="visual_assistant" value="<%= $ass_settings->{'visual_assistant'} %>">
+			      <% foreach my $cm ( @{$chatbot_models}) { %>
+			        <option value="<%= $cm->{'model'} %>" <% if ($ass_settings->{'visual_assistant'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %></option>
+			      <% } %>
+			    </select>
+					<br>
+					<label>Text-to-Image</label>
+					<select class="configure_input" app="mail" setting="text_to_image_assistant" value="<%= $ass_settings->{'text_to_image_assistant'} %>">
+			      <% foreach my $cm ( @{$chatbot_models}) { %>
+							% next unless $cm->{'task'}->{'name'} eq 'Text-to-Image';
+			        <option value="<%= $cm->{'name'} %>" <% if ($ass_settings->{'text_to_image_assistant'} eq $cm->{'name'}) { %>selected<% } %>><%= $cm->{'name'} %></option>
+			      <% } %>
+			    </select>
+				</div>
+				<label>Ollama Key</label>
+				<input type="password" value="<%= $settings->{'ollama_key'} %>" class="configure_input" app="mail" setting="ollama_key"><br>
+				<button>Refresh Ollama List</button><br>
+				<label>Cloudflare Account</label>
+				<input type="text" value="<%= $settings->{'cloudflare_account'} %>" class="configure_input" app="mail" setting="cloudflare_account"><br>
+				<label>Clouflare Key</label>
+				<input type="password" value="<%= $settings->{'cloudflare_token'} %>" class="configure_input" app="mail" setting="cloudflare_token"><br>
+				<button>Refresh Cloudflare List</button><br>
+
+			<% } elsif ($settings->{'subsection'} eq 'tickets') { %>
+				<div id="mail_contacts_list" style="height:100px;font-size:20px;max-height:100px;text-align:center;">
+					<% foreach my $contact ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$contacts} ) { %>
+						<div class="<% if ($mail_contact eq $contact->{'uuid'}) {%>active <% } %>mail_contact hover" uuid="<%= $contact->{'uuid'} %>"
+							name="<%= &subs::unformat_name($contact->{'name'}) %>"
+							contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><%= $contact->{'contact_name'} %></div>
+					<% } %>
+
+				</div>
+			<% } elsif ($settings->{'subsection'} eq 'dial') { %>
+				<button id="mail_picker_default" style="float:right;">Default</button><br>
+				<% foreach my $group ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
+					<b><%= &subs::format_name($group->{'name'}) %></b><br>
+					<% if (scalar @{$group->{'list'}} >= 0) { %>
+						<select class="mail_picker" group="<%= $group->{'name'} %>" id="mail_<%= $group->{'sing'} %>_picker">
+							<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::format_name($group->{'def'}) %></option>
+							<% foreach my $list ( @{$group->{'list'}} ) { %>
+								<% if ($list->{'app'} ne $group->{'def'}) { %>
+									<option value="<%= $list->{'app'} %>" <% if ($group->{'value'} eq $list->{'app'}) { %>selected<% } %>><%= &subs::format_name($list->{'app'}) %></option>
+								<% } %>
+							<% } %>
+						</select><br>
+					<% } %>
+				<% } %>
+			<% } elsif ($settings->{'subsection'} eq 'list') { %>
+				<div class="mail_list_picker" style="width:100%;">
+					<table style="width:100%;text-align:center;">
+						<thead>
+							<th></th>
+							<% foreach my $sc ( sort keys %{$sc} ) { %>
+								<th><%= &subs::format_name($sc) %></th>
+							<% } %>
+						</thead>
+						<tbody>
+							<% foreach my $ls ( @{$list} ) { %>
+								<% my $uuid = $ls->{'uuid'}; %>
+								<tr class="mail_list hover  <% if ($uuid eq $settings->{'mail_list'}) { %>active " chosen="yes<% } %>" uuid="<%= $uuid %>">
+									<td><img src="/images/decipherable/gear.png" class="tiny_thumb mail_config_toggle hover" uuid="<%= $uuid %>"></td>
+									<% if ($ls->{'config'}->{'room'}) { %>
+										<td class="mail_list_selection" type="room" colspan="6" uuid="<%= $uuid %>"><%= &subs::format_name($ls->{'config'}->{'room'}) %></td>
+									<% } else { %>
+										<% foreach my $sc ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
+											<td class="mail_list_selection" type="ticket" uuid="<%= $uuid %>" group="<%= $sc->{'name'} %>" sc="<%= $ls->{$sc->{'sing'}} %>" ><%= &subs::format_name($ls->{$sc->{'sing'}}) %></td>
+										<% } %>
+									<% } %>
+								</tr>
+								<tr style="display:none;"><td colspan="7" class="mail_config_container" uuid="<%= $uuid %>"></td></tr>
+							<% } %>
+						</tbody>
+					</table>
+				</div>
+			<% } %>
+		</div>
+	<% } %>
+</div>
+<script>
+	last_mail_message = Date.now();
+</script>

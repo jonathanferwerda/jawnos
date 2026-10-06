@@ -1,0 +1,8 @@
+<% foreach my $e ( @{$factory->{'equipment'}} ) { %>
+	<div>
+		<h1><%= &subs::format_name($e->{'app'}) %></h1>
+		<button class="equipment_start" app="<%= $e->{'app'} %>">Start</button>
+		<button class="equipment_stop" app="<%= $e->{'app'} %>">Stop</button>
+		<div class="factory_serial_view" app="<%= $e->{'app'} %>"></div>
+	</div>
+<% } %>

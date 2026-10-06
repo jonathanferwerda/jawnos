@@ -1,0 +1,14 @@
+<b>Room</b>
+<input type="text" class="mail_config" setting="room" value="<%= $configure->{'room'} %>"><br>
+<input type="checkbox" class="mail_config" setting="public" <% if ($configure->{'public'} eq 'true') { %>checked<% } %>> Public
+
+<input type="checkbox" class="mail_config" setting="favourite" <% if ($configure->{'favourite'} eq 'true') { %>checked<% } %>>
+Favourite
+<button class="mail_qr_generator" uuid="<%= $uuid %>" style="vertical-align:top;">Make QR</button>
+<% if ($configure->{'qr_image'}) { %>
+	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" src="<%= $configure->{'qr_image'} %>">
+<% } else { %>
+	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" style="display:none;" src="">
+<% } %>
+<img class="little_thumb delete_mail_conversation hover" uuid="<%= $uuid %>" src="/icons/trash.png">
+<br>

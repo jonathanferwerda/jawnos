@@ -1,0 +1,81 @@
+<% my @cols = qw/cost subtotal tax aux total balance/; %>
+<% my @mcols = qw/cost price tax aux total/; %>
+<% if ($app->{'data'}) { %>
+	<% my $d = $app->{'data'}; %>
+
+	<h4><%= &subs::format_name($d->{'item'}) %></h4>
+	<b><%= &subs::format_name($d->{'movement'}) %></b>
+	<table style="width:100%;">
+		<thead>
+			<th>Name</th>
+			<% foreach my $col ( @cols ) { %>
+				<th><%= &subs::format_name($col) %></th>
+			<% } %>
+		</thead>
+		<tbody>
+			<tr>
+				<td><%= &subs::format_name($d->{'model'}->{'name'}) %></td>
+				<% foreach my $col ( @mcols) { %>
+					<td>
+						<% if ($col eq 'total' && $d->{'model'}->{$col} == 0) { %>
+							<%= &subs::price_formatter($d->{'model'}->{'price'} + $d->{'model'}->{'tax'} + $d->{'model'}->{'aux'}) %>
+						<% } else { %>
+							<%= &subs::price_formatter($d->{'model'}->{$col}) %>
+						<% } %>
+					</td>
+				<% } %>
+			</tr>
+
+			<% foreach my $oc ( keys %{$d->{'options'}} ) { %>
+				<tr>
+					<% foreach my $o ( @{$d->{'options'}->{$oc}} ) { %>
+						<td><%= &subs::format_name($o->{'name'}) %>
+						<% foreach my $col ( @mcols ) { %>
+							<td>
+								<% if ($col eq 'total' && $o->{$col} == 0) { %>
+									<%= &subs::price_formatter($o->{'price'} + $o->{'tax'} + $o->{'aux'}) %>
+								<% } else { %>
+									<%= &subs::price_formatter($o->{$col}) %>
+								<% } %>
+							</td>
+						<% } %>
+					<% } %>
+				</tr>
+			<% } %>
+
+			<tr>
+				<td><b><%= $d->{'id'} %></b></td>
+				<% foreach my $col ( @cols ) { %>
+					<td><u><%= &subs::price_formatter($d->{'numbers'}->{$col}) %></u></td>
+				<% } %>
+			</tr>
+		</tbody>
+	</table>
+
+	<% if ($d->{'payments'}) { %>
+		<b>Payments:</b>
+		<table style="width:100%;">
+			<thead>
+				<th>Account</th><th>Time</th><th>Amount</th>
+			</thead>
+			<tbody>
+				<% foreach my $p ( @{$d->{'payments'}} ) { %>
+					<tr>
+						<td><%= &subs::format_name($p->{'account'}) %></td>
+						<td class="time" timestamp="<%= $p->{'timestamp'} %>"></td>
+						<td><%= &subs::price_formatter($p->{'amount'}) %></td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } %>
+
+<% } %>
+<% if ($app->{'type'} eq 'invoice') { %>
+	<select class="appointment_status_selector" app="<%= $app->{'app'} %>" uuid="<%= $app->{'uuid'} %>">
+		<% foreach my $ts ( @{$gb::transaction_states} ) { %>
+			<option value="<%= $ts %>" <% if ($ts eq $app->{'status'}) { %>selected<% } %>><%= &subs::format_name($ts) %></option>
+		<% } %>
+	</select>
+<% } %>
+<img src="/images/jbuttons/shop.png" class="medium_thumb open_in_store" style="vertical-align:bottom;" uuid="<%= $app->{'uuid'} %>">

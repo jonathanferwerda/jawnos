@@ -1,0 +1,171 @@
+% my $signatorial = &subs::signatorial_designer();
+% my $navigation_information = &subs::navigation_information({ cache => 'yes', signatorial => $signatorial });
+<div id="start_menu" style="display:none;max-width:100%;overflow:scroll;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
+	<span style="float:right;width:20%;position:absolute;right:0px;top:0px;">
+
+		<% my $images = {
+			app => '/images/jbuttons/logo3.png',
+			run => '/images/make believe/new sun.png',
+			up => '/images/make believe/road ahead.png',
+			exp => '/images/make believe/nonsense.png',
+			view => '/images/make believe/water.png'
+		}; %>
+
+
+
+		<% foreach my $b ( qw/app run up exp view/ ) { %>
+			<img src="<%= $images->{$b} %>" class="medium_thumb start_menu_menu hover <% if ($menu eq $b) { %>selected<% } %>" menu="<%= $b %>">
+		<% } %>
+		<img id="main_logo" class="jonathan little_thumb configuration"  src="/images/decipherable/wrench.png"></img>
+
+		<!--
+
+			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/"><img class="jonathan" src="<%= $gb::known_appts->{'guest'}->{'icon'} %>"></a>
+			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/manager"><img class="jonathan" src="<%= $gb::known_appts->{'citizen'}->{'icon'} %>"></a>
+			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/store"><img class="jonathan" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>"></a>
+		-->
+	</span>
+	<span style="float:left;width:82%;overflow:scroll;height:80%;">
+		<% if ($menu eq 'view') { %>
+			<!--
+			<img src="/images/make believe/eye.png" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
+			-->
+			<%= include 'start_menu/htop', cache => &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }) %>
+
+			<div id="parking_lot" style="position:absolute;width:100%;bottom:0px;">
+				<% foreach my $pl ( sort keys %{$parking_lot} ) { %>
+					<span class="past_life hover" direction="load" start_menu="yes" timestamp="<%= $parking_lot->{$pl}->{'timestamp'} %>"><h4><%= &subs::format_name($pl) %></h4></span>
+				<% } %>
+			</div>
+		<% } elsif ($menu eq 'app') { %>
+			<span class="start_menu_main_display">
+				<img class="jonathan" src="/images/decipherable/folder.png" id="folders_toggle"></img>
+				<img class="jonathan" src="/images/decipherable/chart.png" id="budget" style="background-color:orange;"></img>
+				<img id="travel_toggle" src="/images/decipherable/aeroplane.png" class="jonathan gps"></img>
+				<img id="relational_toggle" src="/images/make believe/strawbeery.png" class="jonathan relational">
+				<img id="mailbox_toggle" src="/images/decipherable/envelope.png" class="jonathan mail">
+				<br>
+
+
+				<img id="music_toggle" src="/images/make believe/music.png" class="jonathan music"></img>
+				<img id="embedded_toggle" src="/images/decipherable/microchip.png" class="jonathan embedded"></img>
+				<span><img id="ticketmaker" class="jonathan little_thumb" src="/images/decipherable/ticket.png"></span>
+				<img id="cards_toggle" src="/images/decipherable/cards.png" class="jonathan cards">
+				<img class="jonathan" src="/images/make believe/web_button.png" id="web_toggle"></img>
+				<br>
+				<img class="jonathan" id="backup_now" src="/images/decipherable/diskette.png" ></img>
+				<img id="security_toggle" src="/images/make believe/badge.png" class="jonathan security"></img>
+				<img id="terminal_toggle" src="/images/decipherable/code.png" class="jonathan terminal"></img>
+				<img id="ide_toggle" class="jonathan ide" src="/images/make believe/monitor.png"></img>
+				<img class="jonathan little_thumb" id="upload" src="/images/make believe/up.png" />
+				<br>
+				<img id="image_toggle" src="/images/decipherable/gallery.png" class="jonathan gallery"></img>
+				<img id="synth_toggle" src="/images/decipherable/piano.png" class="jonathan synth"></img>
+				<img id="editor_toggle" src="/images/decipherable/love letter.png" class="jonathan editor"></img>
+				<img id="marker_toggle" class="jonathan marker" src="/images/decipherable/marker.png"></img>
+
+				<br>
+
+				<img class="jonathan" src="/images/decipherable/stop sign.png" id="stop_all"></img>
+				<img id="twirl_toggle" class="jonathan twirl" src="/images/decipherable/tetris.png"></img>
+				<img id="studio_toggle" src="/images/decipherable/mixer.png" class="jonathan mixer"></img>
+				<img class="handbook medium_thumb jonathan" id="handbook_toggle" src="/images/decipherable/handbook.png">
+				<img class="home medium_thumb jonathan" id="home_toggle" src="<%= $gb::known_appts->{'guest'}->{'icon'} %>">
+				<br>
+
+				<img class="voice_prompt medium_thumb jonathan" src="/images/decipherable/speech to text.png" />
+		
+				<% if ($device eq 'mobile') { %>
+					<img class="little_thumb hover nfc_benign_reader" src="/images/make believe/water.png">
+
+					<img class="jonathan torch_toggle" src="/images/decipherable/nightlight.png"></img>
+					<img class="jonathan" src="/images/make believe/phone_sms.png" id="sms_list_check"></img>
+				<% } %>
+				<img style="" class="little_thumb permission_asker hover" src="/images/make believe/good.png">
+				<br>
+				<img class="medium_thumb jonathan" id="store_toggle" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>">
+				<img class="jonathan measures_toggle" src="/images/decipherable/measures.png">
+				<img class="jonathan market_toggle" src="/icons/pos/vendor.png">
+				<img class="jonathan warehouse_toggle" src="/icons/pos/manufacturer.png">
+				<div class="nfc_read_status" style="width:100%;"></div>
+				<script>
+					var search = $('#search').val();
+					$('.take_on_me').each(function(i,v) {
+						console.log(v);
+						var link = $(v).attr('href');
+						var route = link.split('?');
+
+						var route = route[0] + '?search=' + search
+						console.log(route);
+						$(v).attr('href', route);
+					});
+				</script>
+
+			</span>
+			<img class="jonathan little_thumb leave" src="images/decipherable/exit.png" style="position:absolute;top:0px;left:0px;"></img>
+			<img class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" 
+				src="<%= $gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'} %>" style="position:absolute;top:50px;left:0px;
+				<% if ($navigation_information->{$signatorial}->{'site_source'} eq 'manual') { %>border-solid;border-color:red;border-width:8px;
+				<% } elsif ($navigation_information->{$signatorial}->{'site_source'} eq 'lost') { %>border-solid;border-color:black;border-width:8px;
+				<% } %>"></img>
+
+			<% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>
+				<div class="site_type_manual_changer_options" style="float:right;">
+					<button site="reset" class="hover site_type_manual_changer">
+						Reset
+					</button><br>
+					<% foreach my $site ( sort { $gb::site_types->{$a}->{'rating'} <=> $gb::site_types->{$b}->{'rating'} } keys %{$gb::site_types} ) { %>
+						<% if ($gb::site_types->{$site}->{'rating'} && $navigation_information->{$signatorial}->{'site_rating'} <= $gb::site_types->{$site}->{'rating'}) { %>
+							<span site="<%= $site %>" class="hover site_type_manual_changer">
+								<img class="little_thumb" src="<%= $gb::site_types->{$site}->{'icon'} %>" style=""></img>
+								<%= &subs::format_name($site) %>
+								<%= $gb::site_types->{$site}->{'rating'} %>
+							</span><br>
+						<% } %>
+					<% } %>
+				</div>
+			<% } %>
+
+		<% } elsif ($menu eq 'run' || $menu eq 'up' || $menu eq 'exp') { %>
+
+			<div id="running_start">
+				<table style="overflow:scroll;width:100%;text-align:left;">
+					<thead>
+						<th></th><th>App</th><th>Time</th>
+					</thead>
+					<tbody>
+						<% my $query; 
+						if ($menu eq 'run') {
+							$query = &subs::db_query('select * from appointments where (type=? or type=?) and timestamp <= ? order by timestamp desc', 'start','record', &subs::rightNow())->hashes;
+						} elsif ($menu eq 'exp') {
+							$query = &subs::db_query('select * from appointments where warranty >= ? order by warranty asc limit 20', &subs::rightNow())->hashes;
+						} else { 
+							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
+						} %>
+						<% foreach my $app ( @{$query} ) { %>
+							<% my @title = split '', &subs::format_name($app->{'app'}); %>
+							<tr>
+								<td><%== &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow(), size => 'little' }) %></td>
+								<td>
+									<span class="start_menu_list hover" onClick="appointmentGrabber('<%= $app->{'app'} %>','<%= &subs::rightNow() %>')">
+										<% foreach my $t ( @title ) { %>
+											<% my $style; %>
+											<% if ($t eq ' ') { $t = 'blank'; $style= "opacity:0;" } elsif ($t eq '.') { $t = 'dot'; } else {  } %>
+											<% if ($t =~ /[A-Z]/) { %>
+												<img src="/icons/uppercase/<%= $t %>.png" style="height:24px;<%= $style %>">
+											<% } else { %>
+												<img src="/icons/lettering/<%= $t %>.png" style="height:24px;<%= $style %>">
+											<% } %>
+										<% } %>
+									</span>
+								</td>
+								<td class="time" timestamp="<%= $menu eq 'exp' ? $app->{'warranty'} : $app->{'timestamp'} %>"></td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		<% } %>
+	</span>
+	<div id="start_apps" style="position:absolute;bottom:0%;width:100%;overflow-x:scroll;height:50px;max-height:50px;"></div>
+</div>

@@ -1,0 +1,12 @@
+<div class="proxy_view">
+	<%= scalar @{$proxies->{'near'}} %><br>
+	<% foreach my $n ( @{$proxies->{'near'}}) { %>
+		<span class="proxy" uuid="<%= $n->{'uuid'} %>">
+			<%= $n->{'operator'} %> <%= $n->{'distance'} %>m <span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'ago'} %></span>
+			<button class="watch_proxy_load">Load</button>
+			<button class="watch_proxy_save">Save</button>
+			<button class="watch_proxy_here">Here</button>
+			<button class="watch_proxy_delete">Delete</button><br>
+		</span>
+	<% } %>
+</div>

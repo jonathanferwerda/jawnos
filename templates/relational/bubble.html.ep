@@ -1,0 +1,3 @@
+<% $all_settings->{$const->{'app'}} = &subs::settings_grabber({ app => $const->{'app'} }) unless $all_settings->{$const->{'app'}}; %>
+<% my $csettings = $all_settings->{$const->{'app'}}; %>
+<span construct="<%= $sc->{'sing'} %>" onclick="appointmentGrabber('<%= $const->{'app'} %>')" class="hover draggable bubble" uuid="<%= $csettings->{'uuid'} %>" id="<%= $csettings->{'uuid'} %>_bubble" style="background-color:<%= $csettings->{'colour'} %>;" value="<%= $const->{'app'} %>"><%= &subs::format_name($const->{'app'}) %></span><br>

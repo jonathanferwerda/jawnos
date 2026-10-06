@@ -1,0 +1,89 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<% my $settings = &subs::settings_grabber({ app => 'mailbox' }); %>
+<div class="email_compose_form" uuid="<%= $draft->{'uuid'} %>">
+	<% my $email_servers = eval { return decode_json $settings->{'email_config'} } || []; %>
+	<% @{$email_servers} = grep { $_->{'active'} eq 'on' } @{$email_servers}; %>
+	<% if (scalar @{$email_servers} > 0) { %>
+
+
+		<img src="/images/decipherable/envelope.png" class="email_send medium_thumb hover" style="float:right;">
+		<img src="/images/make believe/cancel_button.png" class="email_discard medium_thumb hover" style="float:right;">
+		<% if (scalar @{$drafts} > 1) { %>
+			<img src="/images/make believe/right arrow.png" class="email_draft_change medium_thumb hover" direction="next" style="float:right;">
+			<img src="/images/make believe/left arrow.png" class="email_draft_change medium_thumb hover" direction="prev" style="float:right;">
+		<% } %>
+		<br>
+		<table style="width:100%;">
+			<tr>
+				<td>Sender: </td>
+				<td>
+					<select class="email_compose_input email_compose_sender" value="<%= $draft->{'sender'} %>" id="email_compose_sender" style="width:80%;vertical-align:bottom;">
+						<% foreach my $s ( qw/mobile computer server/ ) { %>
+							<option value="<%= $s %>" <% if ($s eq $draft->{'sender'} || ($s eq &subs::device_setter() && !$draft->{'sender'})) { %>selected<% } %>><%= &subs::format_name($s) %></option>
+						<% } %>
+					</select>
+				</td>
+			</tr>
+			<tr>
+				<td><b>From: </b></td>
+				<td>
+					<select class="email_compose_input email_compose_from" value="<%= $draft->{'from_email'} %>" id="email_compose_from" style="width:80%;vertical-align:bottom;">
+						<% foreach my $es ( @{$email_servers} ) { %>
+							<option value="<%= $es->{'uuid'} %>" <% if ($es->{'email'} eq $draft->{'from_email'}) { %>selected<% } %>><%= $es->{'email'} %></option>
+						<% } %>
+					</select>
+				</td>
+				<td>
+
+				</td>
+			</tr>
+			<tr>
+				<% my $email_templates = eval { return decode_json $settings->{'email_templates'} } || []; %>
+				<% if (scalar @{$email_templates} > 0) { %>
+					<select class="email_template_select">
+						<option value=""></option>
+						<% foreach my $et ( @{$email_templates} ) { %>
+							<option value="<%= $et->{'uuid'} %>"><%= &subs::format_name($et->{'name'}) %></option>
+						<% } %>
+					</select>
+				<% } %>
+			</tr>
+			<tr>
+				<td><b>Timestamp: </b></td>
+				<td><input timestamp="<%= $timestamp %>" id="email_compose_timestamp" style="width:80%;" class="email_compose_input email_compose_timestamp time"></td>
+			</tr>
+			<tr>
+				<td><b>To: </b></td><td><input type="email" value="<%= $email %>" id="email_compose_to" style="width:80%;" class="email_compose_input email_compose_to"></td>
+				<input type="hidden" value="<%= $draft->{'uuid'} %>" id="email_compose_uuid" class="email_compose_input email_compose_uuid">
+			</tr>
+			<tr>
+				<td><b>Subject: </b></td><td><input type="text" id="email_compose_subject" style="width:80%;" class="email_compose_input email_compose_subject" value="<%= $draft->{'subject'} %>"></td>
+			</tr>
+			<tr>
+				<td><b>Attachments: </b></td>
+				<td>
+					<table class="email_attachments"><tbody><tr>
+					<% my @seen; %>
+					<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>
+						<% next if grep { $att->{'uuid'} eq $_ } @seen; %>
+						<% push @seen, $att->{'uuid'}; %>
+						<%= include 'mail/email_attachment_preparer', att => $att %>
+					<% } %>
+					<button class="email_attachment_toggle">Add</button>
+					<div style="display:none;width:100%;max-width:100%;overflow-x:scroll;" class="email_attachment_dialog"></div>
+					</tr></tbody></table>
+				</td>
+			</tr>
+		</table>
+		<textarea id="email_compose_body" style="height:80%;width:100%;" placeholder="Body" class="email_compose_input email_compose_body" upgradeable="yes"><%= $draft->{'body'} %></textarea>
+		<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>
+			<% if ($att->{'html'}) { %>
+				<div class="email_attachment_embed" uuid="<%= $att->{'uuid'} %>">
+					<embed style="width:200px;height:300px;">
+						<%== $att->{'html'} %>
+					</embed>
+				</div>
+			<% } %>
+		<% } %>
+	<% } else { %>no servers<% } %>
+</div>

@@ -1,0 +1,598 @@
+html, body {
+  overscroll-behavior: none;
+}
+
+.focused_input { 	
+	background-image: url('/images/make believe/lock.png');
+  background-color: white;
+	background-size: 20px 20px;
+  background-position: 10px 10px; 
+  background-repeat: no-repeat;
+  padding: 12px 20px 12px 40px;
+}
+
+.active {
+	transform: transform 0.2s ease scale(1.2);
+	-webkit-transform:scale(1.02);
+}
+.selected {
+	background-color: lightblue;
+	border-radius:3%;
+	border:solid;
+}
+.start_menu_menu.selected {
+	border-width: 7px;
+	border-color: yellow;
+}
+
+.jonathan { 
+	height: 40px;
+	width: 46px;
+	z-index: 50000;
+	background-color:lightgrey;
+	border-width 1px; border: solid; border-radius: 5px;
+ }
+.jonathan:active, .save_appointment:active, button:active {
+	transform:transform 0.25s ease scale(1.5);
+	-webkit-transform:scale(1.4);
+	border-radius: 10px;
+	border-width:3px;
+	border-color:yellow;
+}
+.superactive {
+	transform:transform 0.25s ease scale(2.1);
+	-webkit-transform:scale(1.7);
+}
+.jonathan_fixed { 
+	height: 40px;
+	width: 46px;
+	z-index: 50000; 
+	position:fixed;
+	transform:transform 0.25s ease;
+	border-width 1px; border: solid; border-radius: 5px;
+ }
+.jonathan_fixed:active {
+	transform:transform 0.25s ease scale(1.7);
+	-webkit-transform:scale(1.7);
+	border-radius: 10px;
+	border-width:3px;
+	border-color:yellow;
+}
+.pseudonym { 
+	height: 60px;
+	width: 60px;
+	z-index: 40000; 
+	position:fixed;
+	background-color: lightgrey;
+}
+#pseudonym_home {
+	height: 120px;
+	position:fixed;
+	bottom: 0px;
+	left: 50%;
+	background-color:grey;
+	border: solid;
+	border-radius: 10px;
+	border-width:4px;
+	border-color:black;
+	padding-right: 30px;
+	padding-left: 30px;
+	z-index: 39999;
+	max-width: 100%;
+
+}
+#pseudonym_bar {
+	width: 100%;
+	overflow-x:scroll;
+}
+
+#ticketmaster {
+	position:fixed;
+	right:5px;
+	top:30px;
+	z-index:1000;
+}
+
+.ide_tab {
+	border: solid;
+	border-color: black;
+	border-radius: 3px;
+	height: 70px;
+	background-color:white;
+}
+
+.ide_tab.active {
+	background-color:yellow;
+}
+
+.mail_contact.active {
+	background-color:yellow;
+	border-radius: 5px;
+	border:solid;
+	border-color: black;
+	border-width: 3px;
+}
+
+.mail_list.active {
+	background-color:yellow;
+	border-radius: 5px;
+	border:solid;
+	border-width: 3px;
+	border-color: black;
+}
+
+.mail_subsection.active {
+	background-color: yellow;
+}
+
+.mail_phone.active {
+	background-color:yellow;
+}
+
+.mail_email.active {
+	background-color:yellow;
+}
+
+.neighbour_link.active {
+	border-width: 7px;
+	border-color: red;
+}
+
+.neighbour_connection {
+	display:none;
+}
+
+.neighbour_connection[connection=active] {
+	border: solid;
+	border-color: green;
+	border-width: 5px;
+	border-radius: 5px;
+	display:block;
+}
+
+
+#mouse_pointer {
+	height: 70px;
+	width: 40px;
+	z-index: 40001;
+	position:fixed;
+}
+.appointment { display:inline-block; float:right; width: 100%; vertical-align: top; }
+.register_model {
+	background-color: pink;
+	border-width: 3px;
+	border-radius: 3px;
+	border: solid;
+	width: 100%;
+}
+.register_option {
+	background-color: lightgreen;
+	border-width: 3px;
+	border-radius: 3px;
+	border: solid;
+	width: 100%;
+}
+.register_option_category {
+	background-color: lightblue;
+	border-width: 3px;
+	border-radius: 3px;
+	border: solid;
+	width: 100%;
+}
+.subcategory {
+	background-color: red;
+	border-width: 3px;
+	border-radius: 3px;
+	border: solid;
+	width: 100%;
+}
+.shuffle[enabled=on] {
+	background-color: lightgreen;
+}
+.repeat[enabled=on] {
+	background-color:lightgreen;
+}
+.attribute_characteristic {
+	border: dotted;
+	border-width: 1px;
+	border-radius: 3px;
+}
+.detail_area { overflow: scroll;}
+#appointment_wrapper { bottom: 0px; position: fixed; overflow:scroll; width: 100%; right: 0px;} 
+.appointment_name { background-color: white;font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-radius: 5px;}
+.appointment_header { vertical-align:top; text-align: left; float: left; border-width 1px; border: solid; border-radius: 5px; }
+.walkman_controls { height: 60px; }
+.editorial_controls { height: 50px;}
+.window_view {
+	z-index: 101; position:fixed; top: 60px; overflow:scroll; }
+}
+#left_view {  left: 0; bottom: 0; z-index: 5001; }
+#centre_view { right:0%; z-index: 5005; bottom: 0; width: 100%; position:fixed; overflow:scroll; }
+#right_view { right:0%; top: 110px;}
+#close_centre_view { right: 0px; padding-right: 5px; position:fixed; }
+#header { padding-left: 4px; padding-top: 1px; z-index:3; position:fixed;left: 0px; top: 0px; width:100%; font-size: 20px; }
+#taskbar { padding-left: 4px; padding-top: 1px; z-index:3; position:fixed;left: 300px; top: 0px; width:100%; font-size: 20px; height: 40px;}
+#timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
+#clockface { z-index: 2; overscroll-behavior: contain; position:absolute; right: 0px; top: 0px; width: 100% }
+#leaderboard { z-index: 2; position:absolute; left:0px; width: 100%;}
+#narrator { z-index: 2; position:absolute; left:0px; width: 100%;}
+#background { z-index: 1; position:fixed; left:0px; width: 100%;}
+.documentation { width: 97%; height: 150px; }
+.ap_settings_button { right: 0px; top: 0px, position: relative, display:block; }
+#search {	
+	height: 35px;
+	width:70%;
+	border-radius: 10px;
+	transition-duration: 1s;
+	font-size: 20px;
+	text-align:center;
+	border: solid;
+	border-width: 3px;
+	padding-top:-25px;
+	z-index:6000;
+}
+#top_right_buttons {
+	height: 30px;
+	width: 320px;
+	text-align:right;
+	position:fixed;
+	right:0px;
+	top:2px;
+	z-index:6000;
+}
+#bottom_left_buttons {
+	left:0px;
+	bottom:0px;
+	height:60px;
+	position:fixed;
+	z-index:6000;
+	width: 60px;
+	vertical-align: bottom;
+}
+#bottom_right_buttons {
+	right:0px;
+	bottom:0px;
+	height:60px;
+	position:fixed;
+	z-index:6000;
+	vertical-align: bottom;
+}
+
+#travel_home_plate[status="enabled"] {
+	background-color:lightgreen;
+}
+.neighbour_status[status="mirror"] { background-color: red }
+.neighbour_tunnel[status="active"] { background-color: yellow; }
+
+
+input[type="checkbox"] {
+	width: 30px;
+	height: 30px;
+	color: lightgreen;
+}
+input[type="checkbox"]:hover {
+	cursor: pointer;
+}
+
+.save_appointment {
+	cursor: pointer;
+}
+
+.time_jump {
+	cursor: pointer;
+}
+
+.app_act {
+	cursor: pointer;
+}
+
+.enabler {
+	cursor: pointer;
+}
+
+.jonathan {
+	cursor: pointer;
+}
+.app_notes { overflow: scroll; }
+.notes { width:100%; }
+canvas { overflow: scroll; z-index: 99; }
+#music_player { overflow: scroll; }
+#browser { z-index: 101; position:fixed;}
+.little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
+.window_icon { vertical-align:top; border:solid; border-radius:2px; border-width:2px; font-size:26px; }
+#mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
+#keyboard_container { z-index: 9100; }
+.keyboard { z-index: 9100; border:solid;border-radius:10px;border-width:3px; }
+#ticket { 
+	width: 95%; 
+	text-align: center;
+}
+.editor_content_component.grapple_active {
+	border: 4px solid yellow;
+}
+
+.grapple_capable {
+	border: 4px solid red;
+}
+.configure_toggle[status=active] {
+	background-color:lightgreen;
+	border-width: 3px;
+}
+.ticket_input { 
+	font-size: 23px; 
+	text-align:center; 
+	width: 30px; 
+	height: 30px; 
+	border-width: 2px; 
+	border: solid; 
+	border-radius: 3px;
+}
+@media screen and (max-width:600px) {
+	#header { font-size: 16px; padding-top:6px; }
+	#ticket { width: 100% }
+	.window_view { width: 100%; }
+	.appointment { width: 100%; }
+	#music_player { width: 100%; }
+	.pseudonym { 
+		z-index: 40000; 
+	}
+	#pseudonym_home {
+		height: 120px;
+		position:fixed;
+		bottom: 0px;
+		left: 50%;
+
+		background-color:yellow;
+		border: solid;
+		border-radius: 10px;
+		border-width:3px;
+		border-color:black;
+		padding-right: 30px;
+		padding-left: 30px;
+		z-index: 39999;
+	}
+	.pseudonym { 
+		height: 50px;
+		width: 50px;
+
+	}
+}
+@media (min-width: 600px) {
+	.window_view { width: 100%; }
+}
+
+#timeshift_viewer {
+	background-color: white;
+	font-size: 26px;
+}
+#timeshift {
+	width: 100%;
+}
+
+#track_title {
+	height: 46px;
+	font-size: 32px;
+  vertical-align: middle;
+	opacity: 80%;
+	border-radius: 1%;
+	width: 100%;
+	background-image: linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,1));
+	background-color: #0f0a4aED;
+	color: yellow;
+  vertical-align: middle;
+	opacity: 80%;
+	border-radius: 1%;
+}
+
+
+.close_appointment { right: 0px;}
+.adopt_file[adopted="yes"] {
+	border-color: red;
+	border-width: 5px;
+}
+
+.media_picker {
+	background-color: lightgrey;
+}
+
+.media_picker[status=on] {
+	background-color: lightgreen;
+}
+
+.cards_mode {
+	background-color: lightgrey;
+}
+
+.cards_mode[status=enabled] {
+	background-color: lightgreen;
+}
+
+#start_menu {
+	width: 400px;
+	height: 400px;
+	position:fixed;
+	right: 0px;
+	top: 48px;
+	border: solid;
+	border-width: 4px;
+	border-radius: 5px;
+}
+
+.appointment_option {
+	height: 50px;
+	width: 100%;
+	border: solid;
+	border-width: 2px;
+	border-radius: 3px;
+	display:inline-flex;
+	position:relative;
+}
+
+.appointment_option[select=on] {
+	background-color: lightblue;
+}
+#terminal-container {
+
+
+}
+#terminal_interactive {
+	background-color: #0d0e15; /* Midnight Void */
+	color: #ffffff;
+	padding: 12px;
+	font-family: 'Courier New', Courier, monospace;
+	font-size: 16px;
+	line-height: 20px; /* Force an exact line height */
+	letter-spacing: 0px;
+	overflow: scroll;
+	box-shadow: inset 0 0 10px rgba(0, 255, 102, 0.05); /* Subtle cyber glow */
+}
+.term-row {
+    display: flex;
+    height: 20px; /* Matches line-height */
+}
+.term-cell {
+    width: 9.6px; /* Example monospace character width (adjust to match font) */
+    white-space: pre;
+    text-align: center;
+}
+/* Foreground colors (Bright, high-contrast neon palette) */
+.ansi-30 { color: #1e1e24; } /* Rich Charcoal Deep Black */
+.ansi-31 { color: #ff3366; } /* Hot Neon Pinkish-Red */
+.ansi-32 { color: #00ff66; } /* Electric Cyber Green */
+.ansi-33 { color: #ffcc00; } /* Laser Yellow */
+.ansi-34 { color: #3399ff; } /* Vivid Electric Blue */
+.ansi-35 { color: #cc33ff; } /* Psycho Magenta / Purple */
+.ansi-36 { color: #00ffff; } /* Pure Laser Cyan */
+.ansi-37 { color: #ffffff; } /* Crisp Pure White */
+.ansi-bold { font-weight: bold; }
+
+/* Background colors (Matched to the poppy foregrounds) */
+.ansi-40 { background-color: #1e1e24; }
+.ansi-41 { background-color: #ff3366; }
+.ansi-42 { background-color: #00ff66; }
+.ansi-43 { background-color: #ffcc00; }
+.ansi-44 { background-color: #3399ff; }
+.ansi-45 { background-color: #cc33ff; }
+.ansi-46 { background-color: #00ffff; }
+.ansi-47 { background-color: #ffffff; }
+
+
+.terminal_view_select[selected] {
+	background-color: lightgreen;
+}
+
+#studio_video_toggle[toggled=on] {
+	background-color: red;
+}
+
+.studio_video {
+	width: 100%;
+}
+
+.bubble {
+	border: solid;
+	border-radius: 8px;
+	border-width: 3px;
+	font-size: 26px;
+}
+
+.bucket {
+	border: solid;
+	border-radius: 5px;
+	border-width: 4px;
+	font-size: 26px;
+}
+
+#mailbox_lora_toggle[toggle=on] {
+	border-color: yellow;
+	background-color: yellow;
+}
+
+.gallery_home_toggle[toggled=on] {
+	background-color:lightgreen;
+}
+
+.purchase_config[enabled=on] {
+	background-color:lightgreen;
+}
+
+.enabler.toggle[status=on] {
+	background-color: yellow;
+}
+.enabler.toggle[status=off] {
+	background-color: darkgrey;
+}
+
+.handbook_setting[value=enabled] {
+	background-color: yellow;
+}
+
+#web_measure_toggle[toggle=on] {
+	background-color: 'yellow';
+}
+
+.email_attachment_probability {
+	border: solid;
+	border-radius: 10%;
+	border-color: yellow;
+  animation: flash-smooth .5s infinite linear;
+}
+
+.smooth-flash {
+  border: 4px solid #ccc; /* Initial border style and color */
+
+}
+
+.active_background {
+	animation: background-flash .5s infinite linear;
+}
+
+@keyframes flash-smooth {
+  0%, 100% {
+    border-color: #ccc; /* Default color */
+  }
+  50% {
+    border-color: yellow; /* Flash color (e.g., Red) */
+  }
+}
+
+@keyframes background-flash {
+  0%, 100% {
+    background-color: red; /* Default color */
+  }
+  50% {
+    background-color: yellow; /* Flash color (e.g., Red) */
+  }
+}
+
+.nfc_benign_reader[enabled=on] {
+	background-color: red;
+}
+
+.marker_stylus_toggle[toggle=on] {
+	background-color: yellow;
+}
+
+.marker_colour[status=active] {
+	background_colour: yellow;
+}
+
+.number_badge {
+  position: absolute;
+  right: -3px;    /* Slightly offsets it past the bottom border */
+  top: -3px;     /* Slightly offsets it past the right border */
+  background-color: #ff0000;
+  color: #ffffff;
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  font-weight: bold;
+  line-height: 24px;
+  text-align: center;
+  min-width: 20px;
+  height: 26px;
+  padding: 0 4px;
+  border-radius: 50%; /* Makes it a circle */
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+  z-index: 1000000;  /* Ensures it sits on top of the clone itself */
+  box-sizing: border-box;
+}

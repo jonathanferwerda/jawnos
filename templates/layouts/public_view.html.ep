@@ -1,0 +1,25 @@
+<html>
+	<% my $string = &subs::random_string_creator(25); %>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="initial-scale=1.0">
+		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+			<link rel='icon' type='image/png' href="<%= $logo %>">
+		<% } else { %>
+		  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+		<% } %>
+		<script src="/js/jquery.js"></script>
+		<script src="/js/jquery-ui.js"></script>
+		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
+	</head>
+	<body>
+	<div id="everything" style="background-color:white;">
+		<%= content %>
+	</div>
+	<script></script>
+	</body>
+</html>
+

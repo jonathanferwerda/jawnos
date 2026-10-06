@@ -1,0 +1,142 @@
+<% no warnings 'uninitialized'; %>
+<% if (scalar @{$item->{'models'}} > 0) { %>
+	<br>
+	<h2 style="vertical-align:top;">Models
+		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="model" src="/images/studio/plus.png"><% } %>
+	</h2>
+	<% if ($c->session('privilege') eq 'citizen') { %>
+		<div class="custom_item_selection" style="width:100%;display:none;" item="<%= $item->{'app'} %>" type="model"></div>
+	<% } %>
+	<%
+	my $def_selected = 0;
+	foreach my $model ( @{$item->{'models'}} ) {
+		if ($model->{'def'} eq 'on' && &subs::default_attribute_time_checker($model,&subs::rightNow()) eq 'yes') {
+			$model->{'def'} = $model->{'def'};
+			last;
+		}
+		else {
+			$model->{'def'} = 'off';
+		}
+	} %>
+	<% foreach my $model ( @{$item->{'models'}} ) { %>
+
+		<span class="item_model hover"
+			<% if ( grep { $_->{'def'} eq 'on' } @{$item->{'models'}} ) { %>
+				select="<%= $model->{'def'} %>"
+			<% } else { %>
+				select="<%= $model->{'select'} %>" 
+			<% } %>
+			name="<%= $model->{'name'} %>" uuid="<%= $model->{'uuid'} %>" original_price="<%= $model->{'price'} %>" original_discount="<%= $model->{'discount'} %>" discount="<%= $model->{'discount'} %>" price="<%= $model->{'price'} %>"
+			<% if ($c->session('privilege') eq 'citizen') { %>cost="<%= $model->{'cost'} %>"<% } %>
+		>
+			<div><h2><%= &subs::format_name($model->{'name'}) %></h2></div>
+			<h3>
+				<span class="original_price_display pricing" contenteditable="true" style="<% unless ($model->{'discount'}) { %>display:none;<% } %>" uuid="<%= $model->{'uuid'} %>"><%= &subs::price_formatter(&subs::numeric_formatter($model->{'price'})) %></span>
+				<span uuid="<%= $model->{'uuid'} %>" style="<% if ($model->{'discount'}) { %>color:red;<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter(&subs::numeric_formatter($model->{'price'}) + &subs::numeric_formatter($model->{'discount'})) %></span>
+			</h3>
+
+			<% if ($model->{'file'}) { %>
+
+				<img style="display:none;" class="store_image" >
+				<video autoplay controls class="store_video" style="display:none;"></video><br>
+
+				<% foreach my $fi ( @{$model->{'file'}} ) { %>
+					<img type="<%= $fi->{'type'} %>" pre_src="/file_open?file=<%= $fi->{'f'} %>&app=<%= $item->{'app'} %>&timestamp=<%= $fi->{'server_time'} %>" src="/file_open?file=<%= $fi->{'f'} %>&thumb=ya&app=<%= $item->{'app'} %>&timestamp=<%= $fi->{'server_time'} %>" class="little_thumb">
+				<% } %>
+				<br>
+			<% } %>
+
+
+			<% if ($model->{'inventory'}) { %>
+				<div><%= $model->{'inventory'} %></div>
+			<% } %>
+			<% if (scalar @{$model->{'characteristics'}} > 0) { %>
+				<div class="characteristics">
+					<% foreach my $char ( @{$model->{'characteristics'}} ) { %>
+						<%== '<b>' . &subs::format_name($char->{'name'}) . ':</b> ' . &subs::format_name($char->{'quantity'}) %><% if ($char->{'unit'} ne 'each') { %><%= $char->{'unit'} %><% } %><br>
+					<% } %>
+				</div>
+			<% } %>
+
+			<div class="description model_description" contenteditable="true" style="border-style:groove;"><%= $model->{'description'} %></div>
+
+			<span class="model_quantities">
+				<input type="text" style="text-align:center;width:70px;height:36px;" class="quantity" value="<%= $model->{'quantity'} || 1 %>" uuid="<%= $model->{'uuid'} %>">
+				<select class="unit" uuid="<%= $model->{'uuid'} %>" value="<%= $model->{'unit'} || $model->{'name'} %>">
+					<option value="<%= $model->{'app'} %>" <% if ($model->{'unit'} eq $model->{'app'}) { %>selected<% } %>><%= &subs::format_name($model->{'app'}) %></option>
+					<option value="<%= $model->{'name'} %>" <% if (($model->{'unit'} eq $model->{'name'}) || !$model->{'unit'}) { %>selected<% } %>><%= &subs::format_name($model->{'name'}) %></option>
+					<% foreach my $u ( sort keys %{$gb::measures} ) { %>
+						<% my $types = $gb::measures->{$u}->{'types'}; %>
+						<% foreach my $t ( @{$types} ) { %>
+
+							<% if (grep { $_ eq $t } @{$gb::measures->{$model->{'unit'}}->{'types'}}) { %>
+								<option value="<%= $u %>" <% if ($u eq $model->{'unit'}) { %>selected<% } %>><%= $u %></option>
+								<% last; %>
+							<% } %>
+						<% } %>
+					<% } %>
+				</select>
+			</span>
+		</span>
+	<% } %>
+<% } %>
+<% if (scalar @{$item->{'options'}} > 0 ) { %>
+	<br>
+	<h2 style="vertical-align:top;">Options
+		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="option" src="/images/studio/plus.png"><% } %>
+	</h2>
+	<% if ($c->session('privilege') eq 'citizen') { %>
+		<div class="custom_item_selection" style="width:100%;display:none;" item="<%= $item->{'app'} %>" type="option"></div>
+	<% } %>
+	<% foreach my $o ( sort keys %{$option_categories} ) { %>
+		<span class="item_option_category" option_category="<%= $o %>" grouping="<%= $item->{'option_categories'}->{$o}->{'option_grouping'} %>">
+			<% if ($o) { %><h3><%= &subs::format_name($o) %></h3><% } %>
+			<% if ($item->{'option_categories'}->{$o}->{'file'}) { %>
+				<% foreach my $fi ( @{$item->{'option_categories'}->{$o}->{'file'}} ) { %>
+					<img src="/file_open?file=<%= $fi->{'f'} %>&app=<%= $item->{'app'} %>&timestamp=<%= $fi->{'server_time'} %>" class="little_thumb">
+				<% } %>
+				<br>
+			<% } %>
+			<% foreach my $option ( @{$option_categories->{$o}} ) { %>
+				<span class="item_option hover" select="<%= $option->{'def'} %>"	option_category="<%= $o %>" name="<%= $option->{'name'} %>" uuid="<%= $option->{'uuid'} %>" original_price="<%= $option->{'price'} %>" original_discount="<%= $option->{'discount'} %>" discount="<%= $option->{'discount'} %>" price="<%= $option->{'price'} || $item->{'option_categories'}->{$o}->{'price'} %>"
+					<% if ($c->session('privilege') eq 'citizen') { %>cost="<%= $option->{'cost'} || $item->{'option_categories'}->{$o}->{'cost'} %>"<% } %>
+				>
+					<div><h3><%= &subs::format_name($option->{'name'}) %></h3></div>
+					<h4>
+						<span class="original_price_display pricing" contenteditable="true" style="<% unless ($option->{'discount'}) { %>display:none;<% } %>" uuid="<%= $option->{'uuid'} %>"><%= &subs::price_formatter($option->{'price'} || $item->{'option_categories'}->{$o}->{'price'})  %></span>
+						<span uuid="<%= $option->{'uuid'} %>" style="<% if ($option->{'discount'}) { %>color:red;<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter($option->{'price'} || $item->{'option_categories'}->{$o}->{'price'} + &subs::numeric_formatter($option->{'discount'})) %></span>
+					</h4>
+					<% if ($option->{'file'}) { %>
+						<% foreach my $fi ( @{$option->{'file'}} ) { %>
+							<img type="<%= $fi->{'type'} %>" src="/file_open?file=<%= $fi->{'f'} %>&app=<%= $item->{'app'} %>&timestamp=<%= $fi->{'server_time'} %>&thumb=ya" class="little_thumb">
+						<% } %>
+						<br>
+					<% } %>
+					<% if ($option->{'inventory'}) { %>
+						<div><%= $option->{'inventory'} %></div>
+					<% } %>
+					<% if (scalar @{$option->{'characteristics'}} > 0) { %>
+						<div class="characteristics">
+							<% foreach my $char ( @{$option->{'characteristics'}} ) { %>
+								<%== '<b>' . &subs::format_name($char->{'name'}) . ':</b> ' . &subs::format_name($char->{'quantity'}) %><% if ($char->{'unit'}) { %><%= $char->{'unit'} %><% } %><br>
+							<% } %>
+						</div>
+					<% } %>
+
+					<div class="description option_description" contenteditable="true" style="border-style:groove;"><%= $option->{'description'} %></div>
+
+					<span class="option_quantities">
+						<input type="text" style="text-align:center;width:70px;height:36px;" class="quantity" value="<%= $option->{'quantity'} || 1 %>" uuid="<%= $option->{'uuid'} %>">
+						<select class="unit" uuid="<%= $option->{'uuid'} %>" value="<%= $option->{'unit'} || $option->{'name'} %>">
+							<option value="<%= $option->{'app'} %>" <% if ($option->{'unit'} eq $option->{'app'}) { %>selected<% } %>><%= &subs::format_name($option->{'app'}) %></option>
+							<option value="<%= $option->{'name'} %>" <% if (($option->{'unit'} eq $option->{'name'}) || !$option->{'unit'}) { %>selected<% } %>><%= &subs::format_name($option->{'name'}) %></option>
+							<% foreach my $u ( sort keys %{$gb::measures} ) { %>
+								<option value="<%= $u %>" <% if ($u eq $option->{'unit'} && $option->{'unit'}) { %>selected<% } %>><%= $u %></option>
+							<% } %>
+						</select>
+					</span>
+				</span>
+			</span>
+		<% } %>
+	<% } %>
+<% } %>

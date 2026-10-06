@@ -1,0 +1,21 @@
+
+<div id="notification_<%= $n->{'timestamp'} %>" tag="<%= $n->{'tag'} %>" app="<%= $n->{'app'} %>" uuid="<%= $n->{'uuid'} %>" server_time="<%= $n->{'server_time'} %>" class="notification">
+	<span class="hover" onclick="appointmentGrabber('<%= $n->{'app'} %>');" style="float:left;border:solid;border-radius:2px;border-width:3px;">
+		<% if ($n->{'image'}) { %><img class="little_thumb" src="<%= $n->{'image'} %>">
+		<% } else { %><%== &subs::main_icon_maker({ app => &subs::unformat_name($n->{'app'} || $n->{'title'}), timestamp => &subs::rightNow(), size => 'medium' }) %>
+		<% } %>
+	</span>
+
+	<% if ($n->{'key'} && $n->{'key'} =~ /com\.termux\.api/) { %> 
+		<button style="float:right;" id="notification_<%= $n->{'tag'} %>_remove" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>" tag="<%= $n->{'tag'} %>">X</button>
+	<% }  else { %>
+		<button style="float:right;" id="notification_<%= $n->{'timestamp'} %>_remove" scope="single" uuid="<%= $n->{'uuid'} %>" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>">X</button>
+	<% } %>
+	<b><%= $n->{'title'} %></b><br>
+
+	<%= $n->{'message'} || $n->{'tag'} %><br>
+
+	<span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'timestamp'} %></span><br>
+	<br>
+</div>
+

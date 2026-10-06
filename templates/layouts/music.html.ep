@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+	  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+    <title><%= title %></title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<script src="/js/jquery.js"></script>
+		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<script src="/js/jquery-ui.js"></script>
+		<script src="/js/numeral.min.js"></script>
+		<% if ($window_maker ne 'yes') { %>
+			<script src="/js/manager.js"></script>
+			<link rel="stylesheet" href="/css/manager.css" />
+
+		<% } %>
+			
+
+
+
+  </head>
+  <body>
+		<%= content %>
+		<div id="red_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+		<div id="yellow_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+		<div id="green_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+	</body>
+</html>

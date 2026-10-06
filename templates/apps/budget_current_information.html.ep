@@ -1,0 +1,10 @@
+<b>Status:</b> <%= &subs::format_name($budget->{'status'}) %><br>
+<span style="background-color:%= $budget->{'colour'} %>;"><b>This <%= &subs::format_name($budget->{'scope_name'}) %>:</b> <%= $budget->{'formatted_value'} %></span><br>
+<b>Budgeted:</b> <%= $budget->{'formatted_budgeted'} %><br>
+<b>Calc:</b> <%= $autocalc->{$budget->{'scope_name'}}->{'formatted_result'} %><br>
+<b><%= &subs::format_name($budget->{'scope_name'}) %> Diff:</b> <%= eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($improvement->{'difference'}) } || sprintf("%.3f", $improvement->{'difference'}) %><br>
+<b>Improvement: </b> <%= $improvement->{'overall'} %><br>
+<b>Overall Improvement %: </b> <%= $improvement->{'overall_percentage'} %><br>
+<b><%= &subs::format_name($budget->{'scope_name'}) %> Improvement %: </b> <%= $improvement->{'percentage'} %><br>
+<b>Last Autocalc: </b> <span class="time" timestamp="<%= $autocalc->{'data'}->{'timestamp'} %>"></span><br>
+<b>Last Budget: </b> <span class="time" timestamp="<%= $budget->{'timestamp'} %>"></span><br>

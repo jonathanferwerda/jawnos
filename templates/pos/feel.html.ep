@@ -1,0 +1,1 @@
+<% my @emotions = split /\n/, `ls public/images/emotions`; %>

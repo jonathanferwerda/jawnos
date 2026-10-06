@@ -1,0 +1,12 @@
+<% 
+	use Mojo::JSON qw/decode_json/;
+	my $categories = &subs::db_query('select * from settings where setting=? and value = ?', 'pos','category')->hashes;
+	my $selected_categories = eval { return decode_json $appts->{$a}->{'setting'}->{'categories'} } || [];
+%>
+<br>
+<label>Categories</label>
+<select class="category_selector appointment_setting" multiple style="height:100px;" app="<%= $a %>" setting="categories">
+	<% foreach my $cat ( @{$categories} ) { %>
+		<option value="<%= $cat->{'app'} %>" <% if (grep { $_ eq $cat->{'app'} } @{$selected_categories}) { %>selected<% } %>><%= &subs::format_name($cat->{'app'}) %></option>
+	<% } %>
+</select>

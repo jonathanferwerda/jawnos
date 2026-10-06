@@ -1,0 +1,112 @@
+
+<div id="embedded_device" style="overflow:scroll;text-align:center;background-color:white;height:100%;width:100%;">
+	<select id="embedded_device_picker">
+		<% foreach my $dt ( qw/watch teletype/ ) { %>
+			<option value="<%= $dt %>"><%= &subs::format_name($dt) %></option>
+		<% } %>
+	</select>
+	<canvas id="campus" style="display:none;"></canvas>
+	<h3>IP: <%= $watch->{'ip'} %><br>Mac: <%= $watch->{'mac'} %></h3>
+	<input type=text" value="<%= $watch_scope %>" id="watch_scope" style="width:90px">
+	<button id="watch_list_proxy">List Proxy</button>
+	<button id="watch_set_proxy">Set Proxy</button><br>
+	<div id="watch_proxy_view"></div><br>
+	<button ip="<%= $watch->{'ip'} %>" mac="<%= $watch->{'mac'} %>" class="watch_now_me">Now Me</button>
+	<br><br>
+	<div id="watch_buttons">
+		<% for (my $n = 1; $n <= $room_max * $room_count; $n++) { %>
+			<span class="watch_button_container" numero="<%= $n %>">
+				<button id="watch_button<%= $n %>" onclick="appointmentGrabber('<%= $settings->{$n}->{'app'} %>)" numero="<%= $n %>" class="centre_view watch_button" app="<%= $settings->{$n}->{'app'} %>"><%= $settings->{$n}->{'formatted_name'} || $n %></button>
+				<span id="watch_configure<%= $n %>" style="display:none;"><br>
+					<input id="watch_input<%= $n %>" type="text" app="" numero="<%= $n %>" class="watch_input" style="width:110px;">
+					<select id="watch_movement<%= $n %>" class="watch_movement" numero="<%= $n %>">
+						<% foreach my $mov ( keys %{$movements} ) { %>
+							<option 
+								<% if ( $movements->{$mov}->{'mov'} eq $settings->{$n}->{'movement'}) { %>selected<% } %>
+								value="<%= $movements->{$mov}->{'mov'} %>"><%= $movements->{$mov}->{'formatted_name'} %></option>
+						<% } %>
+					</select><br><br>
+				</span>
+			</span>
+			<% if ($n % 3 == 0) { %>
+				<br>
+			<% } %>
+			<% if ($n % 6 == 0) { %>
+				<br>
+			<% } %>
+		<% } %>
+	</div>
+	<br>
+	<div id="teletype" style="text-align:center;background-color:white;">
+		<h2>IP: <%= $teletype->{'ip'} %><br>Mac: <%= $teletype->{'mac'} %></h2>
+		<div id="teletype_homebase" style="background-color:orange">
+			<input type="text" id="teletype_authorization" value="<%= $tauthorization %>"><br>
+			<button id="tty_enabled" status="<%= $tty_enabled %>"><% unless ($tty_enabled == 1) { %>Enable <% } else { %>Disable<% } %></button>
+			<button ip="<%= $teletype->{'ip'} %>" mac="<%= $teletype->{'mac'} %>" class="teletype_now_me">Now Me</button><br><br>
+		</div>
+		<div id="teletype_appearance" style="background-color:green">
+			<% foreach my $f (qw/typewriter_text_colour typewriter_background_colour chat_text_colour chat_background_colour/) { %>
+				<input value="<%= $operator_door->{'__specs'}->{$f} %>" type="color" class="teletype_appearance" field="<%= $f %>" id="teletype_<%= $f %>">
+			<% } %>
+		</div>
+		<div id="teletype_wifi" style="background-color:blue">
+			<b>AP SSID</b>
+			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid"><br>
+			<b>AP Password</b>
+			<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="<%= $wifi->{'ap_password'} %>" field="ap_password"><br>
+		</div>
+		<div id="teletype_router" style="background-color:red">
+			<b>SSID</b>
+			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
+			<b>Password</b>
+			<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="<%= $wifi->{'password'} %>" field="password"></br>
+		</div>
+		<button id="teletype_wifi_update">Update</button>
+	</div>
+</div>
+
+<script>
+
+	function mapCampus(timestamp,response) {
+		console.log(response);
+		var canvas = document.getElementById('campus');
+		var win = $('#campus').closest('.wind');
+		canvas.height = win.width();
+		canvas.width = win.width();
+		console.log(canvas.height + ' ' + canvas.width + 'hwy');
+		var ctx = canvas.getContext('2d');
+		var h = response['here'];
+		ctx.arc(canvas.width / 2, canvas.height /2, 7, 0, (Math.PI * 2), true);
+
+
+		ctx.fillText(h['longitude'] + ' ' + h['latitude'], canvas.width / 2 + 10, canvas.height / 2);		
+		ctx.stroke();
+		ctx.fill();
+
+		ctx.strokeStyle = 'black';
+		var count = 0;
+		console.log(response);
+		$.each(response['near'], function(i,v) {
+
+			console.log(v.longitude + ' ' + v.latitude);
+			var lat = Math.abs((v['latitude'] + 180) / 360);
+			var long = Math.abs((v['longitude'] + 180) / 360);
+			console.log(long + ' ' + lat);
+
+			lat = (lat * canvas.height);
+			long = (long * canvas.width);
+			console.log(long + ' ' + lat);
+
+			ctx.arc(long, lat, 7, 0, (Math.PI * 2), true);
+
+			ctx.fillText(v['longitude'] + ' ' + v['latitude'], long + 10, lat);
+			ctx.fillText(long + ' ' + lat, long + 10, lat + 10);		
+			ctx.stroke();
+			ctx.fill();
+			count++;
+			console.log(count);
+		});
+		
+	}
+
+</script>

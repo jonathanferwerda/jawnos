@@ -1,0 +1,95 @@
+<% my $am = $settings->{'app_measures'}; %>
+<% my $jam = join ',', keys %{$am}; %>
+% my $gbm = $gb::pos->{$settings->{'pos'}}->{'app_measures'};
+<% if ($gb::pos->{$settings->{'mab'}}->{'app_measures'}) { %>
+	<% foreach my $mb ( keys %{$gb::pos->{$settings->{'mab'}}->{'app_measures'} }) {
+		$gbm->{$mb} = $gb::pos->{$settings->{'mab'}}->{'app_measures'}->{$mb} unless $gbm->{$mb};
+	} %> 
+<% } %>
+<% my $gb_measures; %>
+<% if ($gb::pos->{$settings->{'pos'}}->{'app_measures'} || $gb::pos->{$settings->{'pos'}}->{'app_measures'} || $am ) { %>
+	<% 
+		if ($gbm) {
+			my %gb_measures = %{$gbm};
+			$gb_measures = \%gb_measures;
+			foreach my $g ( keys %{$gb_measures} ) {
+				unless ($am->{$g}) {
+					$am->{$g} = $gb_measures->{$g};
+				}
+				else {
+					foreach my $k ( keys %{$gb_measures->{$g}}) {
+						unless ($am->{$g}->{$k}) {
+							$am->{$g}->{$k} = $gb_measures->{$g}->{$k};
+						}
+					}
+				}
+			}
+		}
+		foreach my $ameas ( keys %{$am} ) {
+			unless ($gb_measures->{$ameas}) {
+				$gb_measures->{$ameas} = {};
+			}
+		}
+	%>
+<% } %>
+<textarea app="<%= $a %>" setting="measures" class="configure_input"  style="height: 60px; width: 99%;" type="text" value="<%= $jam %>" placeholder="Measures"><%= $jam %></textarea>
+
+<img class="medium_thumb app_measure_configuration_adder" src="/images/make believe/add.png" app="<%= $a %>">
+<br>
+<% foreach my $m ( keys %{$am} ) { %>
+	<% next unless $am; %>
+	<% $am->{$m} = {} unless eval { keys %{$am->{$m}} }; %>
+	<% $am->{$m}->{'options'} = [] unless $am->{$m}->{'options'}; %>
+	<b style="font-size:26px;" class="app_measure_configuration_name hover" name="<%= $m %>"><%= &subs::format_name($m) %></b><br>
+	<input value="<%= &subs::format_name($m) %>" oldvalue="<%= $m %>" class="app_measure_configuration" setting="measure" style="display:none;">
+	<div class="app_measure_configuration_container" measure="<%= $m %>" app="<%= $a %>">
+		<select class="app_measure_configuration" setting="type" oldvalue="<%= $am->{$m}->{'type'} %>">
+			<option <% if ($am->{$m}->{'type'} eq 'none') { %>selected <% } %> value="none">None</option>
+			<% foreach my $t ( qw/select multiple_select range text number/ ) { %>
+				<option <% if ($am->{$m}->{'type'} eq $t) { %>selected <% } %> value="<%= $t %>"><%= &subs::format_name($t) %></option>
+			<% } %>
+		</select>
+		<% if ($am->{$m}->{'type'} eq 'range' || $am->{$m}->{'type'} eq 'number') { %>
+			<br>
+			Min:<input type="number" value="<%= $am->{$m}->{'min'} %>" class="app_measure_configuration" setting="min" oldvalue="<%= $am->{$m}->{'min'} %>"><br>
+			Max:<input type="number" value="<%= $am->{$m}->{'max'} %>" class="app_measure_configuration" setting="max" oldvalue="<%= $am->{$m}->{'max'} %>">
+			<br>
+		<% } if ($am->{$m}->{'type'} eq 'select') { %> 
+			<br>Options:<br>
+			<textarea style="width: 90%;" class="app_measure_configuration" setting="options" oldvalue="<%= join ',', sort @{$am->{$m}->{'options'}} || () %>"><% if ($am->{$m}->{'options'}) { %><%= join ',', sort @{$am->{$m}->{'options'}} %><% } %></textarea>
+			<br>
+		<% } elsif ($am->{$m}->{'type'} eq 'multiple_select') { %>
+			<br>Options:<br>
+			<textarea style="width: 90%;" class="app_measure_configuration" setting="options" oldvalue="<%= join ',', sort @{$am->{$m}->{'options'}} || () %>"><% if ($am->{$m}->{'options'}) { %><%= join ',', sort @{$am->{$m}->{'options'}} %><% } %></textarea>
+			<br>
+		<% } %>
+		<select class="app_measure_configuration" setting="unit" oldvalue="<%= $am->{$m}->{'unit'} %>">
+			<option <% if ($am->{$m}->{'unit'} eq 'none') { %>selected <% } %> value="none">None</option>
+			<% foreach my $con ( sort keys %{$gb::measures} ) { %>
+				<option value="<%= $con %>" <% if ($con eq $am->{$m}->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$con}->{'name'}) %></option>
+			<% } %>
+		</select>
+
+		<% my $amcm = $am->{$m}->{'cm'} || []; %>
+		<% push @{$amcm}, { uuid => 'new' }; %>
+		<% foreach my $cm ( @{$amcm} ) { %>
+			<br>
+			<div class="app_measure_configuration_matcher_container" app="<%= $a %>" uuid="<%= $cm->{'uuid'} %>" measure="<%= $m %>">
+				<select class="app_measure_configuration_matcher" value="<%= $cm->{'type'} %>" setting="type">
+					<% foreach my $o ( (''), qw/< <= == >= > eq match/ ) { %>
+						<option value="<%= $o %>" <% if ($o eq $cm->{'type'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+					<% } %>
+				</select>
+				<input class="app_measure_configuration_matcher" placeholder="match" value="<%= $cm->{'match'} %>" setting="match">
+				<input class="app_measure_configuration_matcher" placeholder="app" value="<%= &subs::format_name($cm->{'app'}) %>" setting="app">
+				<select class="app_measure_configuration_matcher" value="<%= $cm->{'action'} %>" setting="action">
+					<% foreach my $s ( (''), sort qw/start toggle usual record/ ) { %>
+						<option value="<%= $s %>" <% if ($cm->{'action'} eq $s) { %>selected<% } %>><%= &subs::format_name($s) %></option>
+					<% } %>
+				</select>
+			</div>
+		<% } %>
+
+	</div>
+	<br>
+<% } %>

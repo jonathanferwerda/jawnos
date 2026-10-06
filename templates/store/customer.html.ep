@@ -1,0 +1,7 @@
+<div id="cx" style="vertical-align:bottom;bottom:0px;">
+	<img src="/images/decipherable/list.png" class="little_thumb customer_list hover" type="quotes">
+	<img src="/images/decipherable/register.png" class="little_thumb customer_list hover" type="invoice"> 
+	<img src="/images/decipherable/cash.png" class="little_thumb customer_list hover" type="sale">
+	<img src="/images/decipherable/envelope.png" class="little_thumb customer_list hover" id="mail_toggle" type="correspondance">
+	<span style="vertical-align:top;padding-top:0px;top:20px;font-size:20px;max-width:200px;" class="customer_name hover"></span>
+</div>

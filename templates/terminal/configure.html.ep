@@ -1,0 +1,3 @@
+<div id="terminal_configure" style="width:100%;height:30%;position:absolute;bottom:40px;left:0px;display:none;width:100%;height:100%;background-color:<%= $settings->{'colour'} %>;">
+	This is the configuration menu
+</div>

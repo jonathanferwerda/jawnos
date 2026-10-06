@@ -1,0 +1,43 @@
+<div id="relational_contents" style="float:right;width:48%;max-height:100%;overflow:scroll;"">
+	<div id="relational_contents_header" style="position:absolute;width:48%;height:85px;padding-bottom;85px;">
+		<select id="relational_contents_select" value="<%= $settings->{'construct'} %>" style="vertical-align:bottom;">
+			<% foreach my $sc ( sort { $a->{'name'} cmp $b->{'name'} } values %{$gb::relationals} ) { %>
+				<option value="<%= $sc->{'sing'} %>" <% if ($sc->{'sing'} eq $settings->{'construct'}) { %>selected <% } %>><%= &subs::format_name($sc->{'name'}) %></option>
+			<% } %>
+		</select>
+		<input class="relational_search" search_tool="contents" style="width:150px;" value="<%= &subs::format_name($settings->{'contents_search'}) %>">
+
+	</div>
+	<div id="relational_contents_contents" style="padding-top:85px;">
+		<% my $constructs; %>
+		<% if ($contents_search) { %>
+			<% $constructs = &subs::db_query('select distinct(app) as app,* from settings where (setting = ? or setting=?) and device=? and app like ?','pos', 'mab', &subs::device_setter(), '%' . $contents_search . '%')->hashes; %>
+		<% } else { %>
+			<% $constructs = &subs::db_query('select distinct(app) as app,* from settings where (setting = ? or setting=?) and value=? and device=?','pos', 'mab', $settings->{'construct'}, &subs::device_setter())->hashes;  %>
+		<% } %>
+		<% my $cd = &subs::cache_get({ app => 'relational', context => 'buckets' });
+		<% my $c = &subs::controller_builder();	%>
+		<% my $new_count = 0; %>
+		<% my $seen = []; %>
+		<% foreach my $const ( sort { $a->{'app'} cmp $b->{'app'} } @{$constructs} ) { %>
+			<% next if grep { $const->{'app'} eq $_ } @{$seen}; push @{$seen}, $const->{'app'}; %>
+			<% if ($cd->{$const->{'app'}}) { %>
+				<%== $cd->{$const->{'app'}} %>
+			<% } else { 
+				$new_count++;
+				$cd->{$const->{'app'}} = $c->render_to_string(
+					template => 'relational/bucket',
+					const => $const,
+					all_settings => $all_settings,
+					settings => $settings
+				);
+			%>
+			<%= $cd->{$const->{'app'}} %>
+						
+
+			<% } %>
+		
+		<% } %>
+		<% &subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $cd) if $new_count > 0; %>
+	</div>
+</div>

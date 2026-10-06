@@ -1,0 +1,33 @@
+<% 
+	use Mojo::JSON qw/decode_json encode_json/;
+	my $emails = [];
+	if ($settings->{'email_folder_selection'} eq 'outbox') {
+		$emails = &subs::db_query('select * from mailbox where status = ?', 'outbox')->hashes;
+	} elsif ($settings->{'email_folder_selection'} eq 'drafts') {
+		$emails = &subs::db_query('select * from mailbox where status = ?', 'draft')->hashes;
+	} elsif ($settings->{'email_folder_selection'} eq 'inbox') {
+		$emails = &subs::db_query('select * from mailbox where status = ? and email is not null', 'inbox')->hashes;
+	} elsif ($settings->{'email_folder_selection'} eq 'sent') {
+		$emails = &subs::db_query('select * from mailbox where status = ? and email is not null', 'sent')->hashes;
+	}
+	$settings->{'email_server'} = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+
+%>
+<table style="width:100%;background-color:white;">
+	<thead>
+		<th>Time</th><th>To</th><th>Subject</th><th>Rm</th>
+	</thead>
+	<tbody style="text-align:center;">
+		<% foreach my $m ( @{$emails} ) {
+			my ($email_server) = grep { $_->{'uuid'} eq $m->{'from_email'} } @{$settings->{'email_server'}};
+		%>
+			<tr class="hover email_message" uuid="<%= $m->{'uuid'} %>">
+				<td class="time" timestamp="<%= $m->{'timestamp'} %>"></td>
+				<td><%= $m->{'email'} %></td>
+				<td><%= &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'}) %></td>
+				<td><img class="tiny_thumb email_deleter" src="/icons/trash.png" uuid="<%= $m->{'uuid'} %>">
+			</tr>
+		<% } %>
+	</tbody>
+</table>
+

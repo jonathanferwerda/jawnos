@@ -1,0 +1,104 @@
+<% no warnings 'uninitialized'; %>
+<% my $signatorial = &subs::signatorial_designer(); %>
+<div style="width:100%;height:100%;">
+	<input type="text" value="<%= $ping %>" class="ping_host"><button class="ping">Ping</button>
+	<button class="device_scan" load_type="scan">Scan</button><br>
+	<span id="ping_results"></span>
+	<div id="device_listings" style="width: 100%; border: 4px solid black;">
+
+
+
+
+
+		<% foreach my $d ( reverse @{$devices} ) { %>
+			<span class="device" style="width:100%;" uuid="<%= $d->{'uuid'} %>" timestamp="<%= $d->{'timestamp'} %>" address="<%= $d->{'address'} %>" device="<%= $d->{'hostname'} %>"
+				device="<%= $d->{'hostname'} %>" value="<%= $d->{'domain'} %>" uuid="<%= $d->{'uuid'} %>"><br>
+				<input type="text" name="device_domain" uuid="<%= $d->{'uuid'} %>" value="<%= $d->{'domain'} %>" class="device_domain" timestamp="<%= $d->{'timestamp'} %>" >
+				<button type="button" class="delete_device" timestamp="<%= $d->{'timestamp'} %>"
+					device="<%= $d->{'hostname'} %>" uuid="<%= $d->{'uuid'} %>">X</button><br>
+				<%= $d->{'formatted_time'} %>
+				<% foreach my $ad ( keys %{$d->{'address'}} ) { %>
+					<% my $a = $d->{'address'}->{$ad}; %>
+					<div remote_address="<%= $a->{'ip'} %>" nic="<%= $a->{'nic'} %>" class="network_interface bordered section" style="border:solid 1px;">
+						<span class="device_control" ip="<%= $a->{'ip'} %>" mac="<%= $a->{'mac'} %>">
+							<%= $a->{'nic'} %>: <span class="clip remote_ip"><%= $a->{'ip'} %></span> <%= $a->{'mac'} %></span><br>
+							<% if (scalar keys @{$d->{'address'}->{$ad}->{'neigh'}} > 0) { %>
+								<table style="width:100%;">
+									<thead>
+										<th>net</th>
+										<th>manager</th>
+										<th>purpose</th>
+									</thead>
+									<tbody>
+									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$d->{'address'}->{$ad}->{'neigh'}} ) { %>
+										<% my $rm = &subs::db_query('select uuid,buttons from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<% if ($n->{'mac'}) { %>
+											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+												<td>
+													<% if ($n->{'name'}) { %><%= $n->{'name'} %><br><% } %>
+													<% if ($n->{'fqdn'}) { %><%= $n->{'fqdn'} %><br><% } %>
+													<%= $n->{'ip'} %><br><%= $n->{'mac'} %>
+													<% if ($n->{'chip_id'}) { %>
+														<br><%= $n->{'chip_id'} %>
+													<% } %>
+													<% if ($n->{'model'}) { %>
+														<br><%= $n->{'model'} %>
+													<% } %>
+													<% if ($n->{'tunnel'}) { %>
+														<br>Tunnel
+													<% } %>
+												</td>
+												<td class="remote_manager" id="<%= $a->{'nic'} %>_<%= $d->{'timestamp'} %>">
+													<% if ( $n->{'restore_list'} ) { %>
+														<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $a->{'nic'} %>_<%= $d->{'timestamp'} %>">
+															<%= $n->{'restore_list'} %>
+														</span>
+														<br>
+														<span class="remote_machine_buttons">
+
+															<%== $rm->{'buttons'} %>
+														</span>
+													<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
+														Lost																
+													<% } %>
+													<% if ($n->{'purpose'} eq 'teletype') { %>
+														<button class="teletype_backup" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>">Backup</button>
+													<% } %>
+													<% if ($n->{'purpose'} eq 'printer') { %>
+														<select id="printer_brand_select">
+															<% foreach my $pr ( keys %{$gb::printer_brands}) { %>
+																<option value="<%= $pr %>"><%= &subs::format_name($pr) %></option>
+															<% } %>
+														</select>
+													<% } %>
+												</td>
+												<td>
+													<select class="device_purpose">
+														<% foreach my $o (@gb::all_device_types) { %>
+															<option <% if ($n->{'purpose'} eq $o) { %>selected<% } %> value="<%= $o %>"><%= &subs::format_name($o) %></option>
+														<% } %>
+													</select>
+													<br>
+													<% if ($n->{'locked'} eq 'yes') { %>
+														<img src="/images/jbuttons/padlock lock.png" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
+													<% } else { %>
+														<img src="/images/jbuttons/padlock unlock.png" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
+													<% } %>
+													<% if ($n->{'purpose'} eq 'server') { %>
+														<img src="/images/decipherable/mirror.png" class="little_thumb hover neighbour_tunnel" nic="<%= $a->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $d->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
+													<% } %>
+													<button class="delete_neighbour_device" style="vertical-align:top;" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
+													<button class="device_scan ping_scan" style="vertical-align:top;" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>'<br>
+												</td>
+											</tr>
+										<% } %>
+									<% } %>
+								</tbody>
+							</table>
+						<% } %>
+					</div>
+				<% } %>
+			</span>
+		<% } %>
+	</div>
+</div>

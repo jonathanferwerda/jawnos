@@ -1,0 +1,40 @@
+<% my $pseudonyms = &Manager::pseudonym_maker('viewer',$a); %>
+<% my $now = &subs::rightNow(); %>
+<% no warnings 'uninitialized'; %>
+<div class="appointment_header_background" last_update="<%= $timestamp %>" style="">
+	<% if ( ref $appts->{$a}->{'list'} ) { %>
+		<% foreach my $n (@{$appts->{$a}->{'list'}}) { %>
+			<%
+				$n->{'timestamp'} = $n->{'type'} eq 'stop' && $n->{'stop_timestamp'} && $n->{'stop_timestamp'} < $now ? $n->{'stop_timestamp'} : $n->{'timestamp'};
+				if ($n->{'timestamp'} > $now && $n->{'type'} eq 'usual') {
+					$n->{'timestamp'} = $n->{'timestamp'} - $n->{'duration'} > $now ? $n->{'timestamp'} - $n->{'duration'} : $n->{'timestamp'};
+				}
+				my $ts = $n->{'timestamp'}; 
+				next unless $n->{'server_time'} =~ /[0-9]/;
+				my @icon = grep { $_->{'name' } eq $n->{'type'} } @{$pseudonyms};
+				my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" class="tiny_thumb">' : '';
+				
+			%>
+			<span class="appointment_header" style="height:30px;float:left;left:0;"><%== $icon %><span style="vertical-align:top;" timestamp="<%= $n->{'timestamp'} %>" class="time" app="<%= $a %>" id="<%= $appts->{$a}->{'html_name'} %>_time">
+			</span></span>
+		<% } %>
+	<% } %>
+	<% 
+		my @icon = grep { $_->{'name' } eq $appts->{$a}->{'setting'}->{'status'} } @{$pseudonyms};
+		my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" class="tiny_thumb">' : '';
+	%>
+
+	<span class="appointment_status"><%== $icon %><b  style="vertical-align:top;"> <%= $appts->{$a}->{'setting'}->{'status'} %></b>
+	</span>
+
+	<span class="">
+		<% foreach my $br ( sort keys %{$appts->{$a}->{'budget'}} ) { %>
+			<% if ($appts->{$appointments->[0]}->{'budget'}->{$br}) { %>
+				<span class="budget_light hover" circumstance="<%= $br %>" app="<%= $a %>" style="float:right;font-size:25px;border:solid;border-radius:20px;width:28px;height:28px;background-color:<%= $appts->{$appointments->[0]}->{'budget'}->{$br}->{'colour'} %>;">
+					<%= &subs::format_name(substr($br, 0, 1)) %>
+				</span>
+			<% } %>
+		<% } %>
+	</span>
+
+</div>

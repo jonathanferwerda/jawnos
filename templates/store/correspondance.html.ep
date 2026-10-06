@@ -1,0 +1,3 @@
+<img src="/images/make believe/cancel_button.png" class="main_viewer_cancel_button little_thumb" style="float:right;">
+<h1>Correspondance</h1>
+<h3><%= &subs::format_name($customer->{'app'}) %></h3>

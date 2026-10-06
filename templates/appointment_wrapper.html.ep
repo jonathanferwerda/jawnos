@@ -1,0 +1,190 @@
+<% if ($from =~ 'search') { %>
+	<% my $search = $c->param('search') || $c->param('s'); %>
+	% title 'Manager Search: ' . $search;
+	<div id="search_entanglement" style="background-color:white;display:block;">
+		<% foreach my $se ( @{$config->{'search_engines'}} ) { %>
+			<button type="button" class="search_engine_grabber" search="<%= $search %>" view="<%= $se->{'view'} %>" name="<%= $se->{'name'} %>" url="<%= $se->{'url'} %>"><%= $se->{'name'} %></button>
+		<% } %>
+		<div id="search_engines"></div>
+		<% if (@{$appointments} == 0) { %>
+			<h2>No Results</h2><button type="button" class="appointment_adder">Add</button>
+		<% } %>
+	</div>
+
+<% } %>
+<% no warnings 'uninitialized'; %>
+<% my $pseudonyms; %>
+
+<span timestamp="<%= $timestamp %>" id="<%= $timestamp %>" class="appointment_contents" app="<%= $appointments->[0] %>" style="overflow:scroll; background-color:white;">
+	<% foreach my $a (@{$appointments}) { %>
+		<% if ($from eq 'store') { %>
+			<% $pseudonyms = &Manager::pseudonym_maker('store',$a); %>
+		<% } else { %>
+			<% $pseudonyms = &Manager::pseudonym_maker('viewer',$a); %>
+		<% } %>
+		<div class="appointment" formatted_name="<%= $appts->{$a}->{'formatted_name'} %>" warranty="<%= $appts->{$a}->{'warranty'} %>" app="<%= $a %>" last="<%= $appts->{$a}->{'last_event'} %>" 
+			id="app_<%= $appts->{$a}->{'html_name'} %>" style="text-align:center;" navigation="<%= &subs::time_abbrev_translator($appts->{$a}->{'setting'}->{'navigation'}) %>">
+			<% if ($appts->{'__stash'}->{'header'} eq 'yes') { %>
+				<span style="" class="appointment_cell" id="<%= $appts->{$a}->{'html_name'} %>_cell" app="<%= $a %>">
+					<div style="font-size: 20px; background-color:<%= $appts->{$a}->{'setting'}->{'colour'} %>;" 
+						class="appointment_name" app="<%= $a %>" >
+						<span class="name_text" app="<%= $a %>" style="border-radius: 7%; border-width: 3px; border: solid; padding: 7px; background-color:<%= $appts->{$a}->{'setting'}->{'colour'} || 'yellow' %>;"><%= $appts->{$a}->{'formatted_name'} %></span>
+					</div>
+				</span>
+			<% } %>
+
+			<%== $header || $appts->{$a}->{'header'}  %>
+			<div class="budget_current_information" app="<%= $a %>" circumstance="<%= $appts->{$a}->{'setting'}->{'ci'} %>" style="border:solid;border-radius:5px;border-width:3px;width:100%;display:none;">
+
+			</div>
+			<br>
+			<span class="walkman_controls">
+				<video src="" class="video_monitor" style="display:none;"></video>					
+				<% foreach my $p ( @{$pseudonyms} ) { %>
+					<% if ($p->{'classmates'}) { %>
+						<% if ($p->{'place'} eq 'top') { %>
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
+							></img>
+						<% } %>
+
+					<% } %>
+
+				<% } %>
+
+			</span><br>
+			<img app="<%= $a %>" class="app_act measures little_thumb" src="/images/decipherable/measures.png" />
+			<img app="<%= $a %>" class="app_act tasks little_thumb" src="/images/decipherable/checkmark.png" />
+			<img app="<%= $a %>" class="app_act little_thumb reset" src="/images/decipherable/cash.png" />
+			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="/images/decipherable/gear.png" />
+			<img app="<%= $a %>" class="app_act little_thumb inventory" src="/images/decipherable/spreadsheet.png" />
+			<img app="<%= $a %>" class="app_act det little_thumb" src="/images/decipherable/list.png" />
+			<img app="<%= $a %>" class="app_act little_thumb register" src="/images/decipherable/register.png" />
+
+
+			<br>
+			<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="width:16%;" />
+			<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" style="width:16%;" />
+			<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity" style="width:16%;">
+			<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="schedule" style="width:16%;" />
+			<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" style="width:16%;" />
+			<br>
+			<textarea  class="timed_input notes" rows="3" app="<%= $a %>" text="notes" style="width:99%" placeholder="notes" upgradeable="yes"></textarea>
+			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
+				<%= include 'apps/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>
+			</div>
+
+
+			<% my $template = $gb::pos->{$appts->{$a}->{'setting'}->{'pos'}}->{'app_template'}; %>
+			<% if ($template) { %>
+				<%= include $template, appts => $appts, a => $a %>
+			<% } else { %>
+			<% } %>
+			<span class="re_tasks" app="<%= $a %>" style="display:none;width:100%;"></span>
+			<span class="re_register" app="<%= $a %>" style="display:none;width:100%;">
+			</span>
+			<span class="re_details" app="<%= $a %>" style="display:none;">
+				<div class="detail_area" app="<%= $a %>" style="overflow:scroll;">
+					<span style="display:none;" class="detail_json" app="<%= $a %>">{}</span>
+				</div>
+			</span>
+			<span class="inventory_details" style="display:none;">
+				<b>Loading Inventory Details...</b><br>
+			</span>
+			<%= include 'apps/app_details', appts => $appts, a => $a, app => {} %>
+			<div app="<%= $a %>" style="display:none;" class="appointment_details"></div>
+			<span class="media_out vid"></span>
+			<span class="media_out snd" style="width:100%;"><audio autoplay="true" controls style="width:100%;display:none;" id="<%= $a %>_snd"></audio></span>
+			<span class="media_out scr"><video autoplay="true" controls id="<%= $a %>_scr" style="display:none;"></video></span><br>
+			<% if ($from ne 'store') { %>
+				<% foreach my $p ( @{$pseudonyms} ) { %>
+					<% if ($p->{'classmates'}) { %>
+						<% if ($p->{'place'} eq 'mid') { %>
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+						<% } %>
+					<% } %>
+				<% } %>
+				<% foreach my $p ( @{$pseudonyms} ) { %>
+					<% if ($p->{'classmates'}) { %>
+						<% if ($p->{'colour'} eq 'bottom') { %>
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
+							></img>
+						<% } %>
+					<% } %>
+				<% } %>
+				<% if ($appts->{$a}->{'setting'}->{'command'}) { %>
+					<img app="<%= $a %>" type="command" class="little_thumb app_act save_appointment run_command shell" src="/images/decipherable/code.png" />
+				<% } %>
+				<% if ($appts->{$a}->{'setting'}->{'kill'}) { %>
+					<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="/images/make believe/Scarapy.png" />
+				<% } %>			
+				
+				<img app="<%= $a %>" type="web" web="<%= $appts->{$a}->{'setting'}->{'web'} %>" class="medium_thumb web app_act" src="/images/make believe/web_button.png" 
+					style="<% if (!$appts->{$a}->{'setting'}->{'web'}) { %>display:none;<% } %>"/>
+
+				<% my $remote_machines = &subs::db_query('select device from remote_machines where connection = ?', 'active')->hashes; %>
+				<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="/images/make believe/wiki.png" />
+				<% if ($appts->{$a}->{'setting'}->{'phone'} && ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) ) { %>
+					<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment medium_thumb sms" src="/images/make believe/phone_sms.png">
+				<% } %>
+				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
+					<br>
+					<img class="medium_thumb save_appointment" camera="0" type="camera" app="<%= $a %>" src="/images/decipherable/camera back.png">
+					<img class="medium_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="/images/decipherable/camera front.png">
+				<% } %>
+				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
+					<img class="little_thumb save_appointment" type="scan" feed="flatbed" app="<%= $a %>" src="/images/decipherable/flatbed.png">
+					<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="/images/decipherable/feeder.png">
+					<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="/images/make believe/eye.png">
+				<% } %>
+
+				&nbsp;
+				<canvas id="visualizer_<%= $a %>" class="visualizer" app="<%= $a %>" style="display:none;"></canvas><br>
+				<span class="enablers">
+					<img class="public_button tiny_thumb enabler" type="public" app="<%= $a %>" off_colour="black" on_colour="green" 
+						<% if ( $appts->{$a}->{'setting'}->{'public'} eq 'on' ) { %>status="on" style="background-color:green"<% } else { %>
+							status="off" style="background-color:black;" <% } %>
+						src="/icons/public.png"
+					/>
+					<img class="enc_button tiny_thumb enabler" type="enc" app="<%= $a %>" off_colour="black" on_colour="red" 
+						<% if ( $appts->{$a}->{'setting'}->{'enc'} eq 'on' ) { %>status="on" style="background-color:red"<% } else { %>
+							status="off" style="background-color:black;" <% } %>
+						src="/icons/enc_button.png"
+					/>
+					<img app="<%= $a %>" class="app_act medium_thumb enabler" type="notification" off_colour="black" on_colour="yellow" 
+						<% if ( $appts->{$a}->{'setting'}->{'notification'} eq 'on' ) { %>status="on" style="background-color:yellow"<% } else { %>
+							status="off" style="background-color:darkgrey" <% } %>
+						 src="/images/decipherable/bell.png" />
+
+					<img app="<%= $a %>" class="app_act medium_thumb enabler toggle" type="toggle" off_colour="black" on_colour="yellow" 
+						<% if ( $appts->{$a}->{'setting'}->{'toggle'} eq 'on' ) { %>src="/images/decipherable/on.png" status="on" style="background-color:yellow"<% } else { %>
+							status="off" <% } %>
+						 src="/images/decipherable/off.png" />
+					<img src="/images/make believe/burger.png" class="tiny_thumb appointment_locking_mechanism">
+				</span><br>
+			<% } %>
+		</div>
+	<% } %>
+</span>
+<style>
+	.model {
+		background-color: pink;
+		border-width: 3px;
+		border-radius: 3px;
+		border: solid;
+		width: 100%;
+	}
+	.option {
+		background-color: lightgreen;
+		border-width: 3px;
+		border-radius: 3px;
+		border: solid;
+		width: 100%;
+	}
+	.option_category {
+		background-color: lightblue;
+		border-width: 3px;
+		border-radius: 3px;
+		border: solid;
+		width: 100%;
+	}
+</style>

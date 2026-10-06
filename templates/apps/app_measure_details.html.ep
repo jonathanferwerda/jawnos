@@ -1,0 +1,54 @@
+<% my $mtotals = {}; %>
+<% my $maverage = {}; %>
+<% if (eval { scalar @{$l->{'measures'}} } ) { %>
+	<table style="width:100%;text-align:center;">
+	<% foreach my $me ( @{$l->{'measures'}} ) { %>
+			<% foreach my $m ( sort keys %{$me} ) { %>
+
+				<% if ($m eq 'uuid') { next; } %>
+				<tr class="app_measure_instance" uuid="<%= $me->{'uuid'} %>">
+					<td><%= &subs::format_name($m) %></td> 
+					<% if (grep { $_ eq $m } qw/timestamp server_time ts ost st/) { %>
+						<td class="time" timestamp="<%= $me->{$m} %>"></td>
+
+					<% } else { %>
+					<% if ($me->{$m} =~ /[a-zA-Z]/) { %>
+						<td><%= &subs::format_name($me->{$m}) %></td>
+					<% } else { %>
+						<td><%= $me->{$m} %></td>
+					<% } %>
+					<% if ($me->{$m} =~ /[0-9]/gi) { 
+						$me->{$m} =~ s/[^0-9.]//gi;
+						$mtotals->{$m} += $me->{$m};
+						$maverage->{$m}->{'count'} += 1;
+						$maverage->{$m}->{'av'} = $mtotals->{$m} / $maverage->{$m}->{'count'};
+					} %>
+				</tr>
+			<% } %>
+
+		<% } %>
+		<td><img src="/icons/trash.png" class="tiny_thumb app_measure_delete hover" uuid="<%= $me->{'uuid'} %>"></td>
+		<br>
+	<% } %>
+<% } %>
+<% if (scalar keys %{$mtotals}) { %>
+	<br>
+	<% foreach my $mt (sort keys %{$mtotals}) { %>
+		<table style="width:100%;text-align:center;">
+			<thead>
+				<th>Meas</th>
+				<th>Total</th>
+				<th>Average</th>
+			</thead>
+			<tbody>
+				<tr>
+					<td><%= &subs::format_name($mt) %></td>
+					<td><%= $mtotals->{$mt} %></td>
+					<td><%= sprintf("%.2f", $maverage->{$mt}->{'av'}) %></td>
+				</tr>
+			</tbody>
+		</table>
+
+		<br>
+	<% } %>
+<% } %>

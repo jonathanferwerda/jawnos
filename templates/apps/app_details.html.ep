@@ -1,0 +1,78 @@
+<% my $random_string = &subs::random_string_creator(10); %>
+<% no warnings 'uninitialized'; %>
+<span class="app_details" uuid="<%= $random_string %>" app="<%= $a %>" <% unless ($app->{'timestamp'}) { %>style="display:none;" <% } %>><br>
+
+	<label>Type</label>
+	<select class="transaction movement app_setting" app="<%= $a %>" attribute="movement">
+		<% foreach my $mov (keys %{$gb::transaction_types}) { %>
+			<option value="<%= $mov %>" <% if ($mov eq ($app->{'movement'} || $appts->{$a}->{'setting'}->{'movement'})) { %>selected<%}%>><%= &subs::format_name($mov) %></option>
+		<% } %>
+	</select>
+	<select class="transaction currency app_setting" app="<%= $a %>" attribute="currency">
+		<% foreach my $cur (@{$gb::abilities->{'currency'}->{'options'}}) { %>
+			<option value="<%= $cur %>" <% if ($cur eq $appts->{$a}->{'setting'}->{'currency'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$cur}->{'name'}) %></option>
+		<% } %>
+	</select>
+	<br>
+	<label>Project</label>
+	<select class="transaction project app_setting" attribute="project" style="max-width=50%;">
+		<option selected="selected" value="<%= $a %>"><%= $appts->{$a}->{'formatted_name'} %></option>
+		<% foreach my $ap (@{$appts->{'__projects'}}) { %>
+			<option 
+				value="<%= $ap->{'app'} %>"
+				<% if (($app->{'project'} || $appts->{$a}->{'setting'}->{'project'} || $appts->{$a}->{'last_project'}) eq $ap->{'app'}) { %>
+					selected
+				<% } %>>
+				<%= $ap->{'formatted_name'} %>
+			</option>
+		<% } %>
+	</select>
+	<br>
+	<br>
+	<label>From</label>
+	<select class="transaction account app_setting" app="<%= $a %>" attribute="account" style="max-width=40%;">
+		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
+			<option 
+				value="<%= $ap->{'app'} %>"
+				<% if (($app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
+					selected
+				<% } %>>
+				<%= $ap->{'formatted_name'} %>
+			</option>
+		<% } %>
+	</select>
+
+
+
+	<span style="display:none;position:fixed;background-color:white;border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
+	<span class="transaction_movement_container" app="<%= $a %>">
+		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style=""><br><br>
+			<%= include 'apps/transaction/' . $appts->{$a}->{'setting'}->{'movement'}, appts => $appts, a => $a, app => {}, source => 'transaction' %>
+		</span>
+	</span>
+	<table style="position:absolute;height:60px;width:100%;bottom:0px;background-color:white;">
+		<thead>
+			<% my @th = qw/amount tax aux total/; %>
+			<% foreach my $th ( @th ) { %>
+				<th><%= &subs::format_name(&subs::shorthand_name($th,3)) %></th>
+			<% } %>
+		</thead>
+		<tbody>
+			<tr>
+				<% foreach my $td ( @th ) { %>
+					<td class="transaction_total" style="font-size:22px;" attribute="<%= $td %>"><%= &subs::price_formatter(0) %></td>
+				<% } %>
+			</tr>
+		</tbody>
+	</table>
+	<br>
+
+	<img src="/images/decipherable/windows.png" timestamp="" app="<%= $a %>" class="little_thumb transaction_history_retriever hover" style="vertical-align:bottom;">
+	<img src="/images/make believe/add.png" class="little_thumb add_transaction_item hover" style="vertical-align:bottom;float:right;">
+	<img src="/images/decipherable/the bird.png" class="little_thumb cancel_transaction hover" style="vertical-align:bottom;float:left;" app="<%= $a %>">
+	<% unless ($app->{'timestamp'}) { %>
+		<img src="/images/decipherable/diskette.png" type="button" name="record_purchase" class="hover record_purchase little_thumb" style="vertical-align:bottom;float:right;">
+	<% } %>
+	<br>
+</span>
+<span class="appointment_display" style="display:none;" app="<%= $a %>"></span>

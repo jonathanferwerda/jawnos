@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= $title %></title>
+		<link rel="manifest" type="application/json" href="/manifest.json">
+
+		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+			<link rel='icon' type='image/png' href="<%= $logo %>">
+		<% } else { %>
+		  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+		<% } %>
+		<meta charset="utf-8">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=0">
+
+		<script src="/js/jquery.js"></script>
+		<script>
+			var bti = sessionStorage.getItem('browser_tab_id'); 
+			if (bti == null) { 
+				console.log('bti is null');
+				bti = '<%= $browser_tab_id %>';
+				sessionStorage.setItem('browser_tab_id', '<%= $browser_tab_id %>');
+			}
+			var bt = localStorage.getItem('browser_tab');
+			if (!bt) { 
+				localStorage.setItem('browser_tab', '<%= $browser_tab %>');
+			}
+			var device = "<%= $device %>";
+			var signatorial = "<%= $signatorial %>";
+			var paperboy_url = '<%= $paperboy_url %>';
+			var ws_url = '<%= $ws_url %>';
+			var mail_ws_url = '<%= $mail_ws_url %>';
+			var my_name = '<%= $my_name %>';
+			var advertise_watching = '<%= $advertise_watching %>';
+			var volumeInterval;
+			<% if ($c->session('ticket_uuid')) { %>
+				$.ajax({
+					url: '/manager/debrief_grabber',
+					type: 'GET',
+					success: function(deb) {
+						$.each(deb,function(i,v) {
+							localStorage.setItem(i,v);
+						});
+			
+					}
+				});
+			<% } %>
+			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
+			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+		</script>
+		<script src="/js/universal.js"></script>
+		<script src="/js/jquery-ui.js"></script>
+		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script src="/js/numeral.min.js"></script>
+		<script src="/js/moment.js"></script>
+		<script src="/js/manager/keyboard.js?string=<%= $string %>"></script>
+		<link rel="stylesheet" href="/css/keyboard.css?string=<%= $string %>" />
+		<script src="/js/manager/clothesline.js?string=<%= $string %>"></script>
+		<script src="/js/manager/manager.js?string=<%= $string %>"></script>
+		<link rel="stylesheet" href="/css/music.css?string=<%= $string %>" />
+		<script src="/js/music.js?string=<%= $string %>"></script>
+		<script src="/js/images.js?string=<%= $string %>"></script>
+		<script src="/js/manager/configure.js?string=<%= $string %>"></script>
+		<script src="/js/manager/windows.js?string=<%= $string %>"></script>
+		<script src="/js/manager/editor.js?string=<%= $string %>"></script>
+		<script src="/js/manager/ide.js?string=<%= $string %>"></script>
+		<script src="/js/mailbox.js?string=<%= $string %>"></script>
+		<script src="/js/manager/clockfaceprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/leaderboardprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/calendarprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/continentprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/timelineprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/backgroundprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/narratorprinter.js?string=<%= $string %>"></script>
+		<script src="/js/manager/marker.js?string=<%= $string %>"></script>
+		<script src="/js/pm.js?string=<%= $string %>"></script>
+		<script src="/js/manager/terminal.js?string=<%= $string %>"></script>
+		<script src="/js/manager/budget.js?string=<%= $string %>"></script>
+		<script src="/js/manager/embedded.js?string=<%= $string %>"></script>
+		<script src="/js/manager/travel.js?string=<%= $string %>"></script>
+		<script src="/js/manager/studio.js?string=<%= $string %>"></script>
+		<script src="/js/manager/synth.js?string=<%= $string %>"></script>
+		<script src="/js/manager/attributes.js?string=<%= $string %>"></script>
+		<script src="/js/manager/inventory.js?string=<%= $string %>"></script>
+		<script src="/js/manager/security.js?string=<%= $string %>"></script>
+		<script src="/js/manager/tasks.js?string=<%= $string %>"></script>
+		<script src="/js/store.js?string=<%= $string %>"></script>
+		<script src="/js/manager/twirl.js?string=<%= $string %>"></script>
+		<script src="/js/manager/transaction.js?string=<%= $string %>"></script>
+		<script src="/js/manager/relational.js?string=<%= $string %>"></script>
+		<script src="/js/manager/warehouse.js?string=<%= $string %>"></script>
+		<script src="/js/manager/market.js?string=<%= $string %>"></script>
+		<script src="/js/manager/measures.js?string=<%= $string %>"></script>
+		<script src="/js/manager/folders.js?string=<%= $string %>"></script>
+	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
+		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/manager.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
+  </head>
+  <body style="background-color:<%= $config->{&subs::signatorial_designer()}->{'manager'}->{'background_colour'} %>">
+		<div id="everything">
+			<%= content %>
+			<div id="red_dot" class="circular_thumb dot">
+				<span class="dot_info"><span>
+			</div>
+			<div id="yellow_dot" class="circular_thumb dot">
+				<span class="dot_info"><span>
+			</div>
+			<div id="green_dot" class="circular_thumb dot">
+				<span class="dot_info"><span>
+			</div>
+		</div>
+		<div style="display:none;width:100%;height:100%;" id="padlock_frame">
+
+		</div>
+		<div style="display:none;" id="preload"><%= $website %></div>
+		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() { windowMaker(preload,timestamp); });</script>
+	</body>
+	<script src="/js/manager/websocket.js?string=<%= $string %>"></script>
+	<script src="/js/manager/jp.js?string=<%= $string %>"></script>
+	<div id="printer_view" style="display:none;"></div>
+</html>

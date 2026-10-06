@@ -1,0 +1,43 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<% no warnings 'uninitialized'; %>
+<% my $class_list = ''; %>
+<% my $packaging = eval { return decode_json $settings->{'packaging'} } || {}; %>
+<% if ($source eq 'transaction') { %>
+	<% $class_list = 'purchase_input'; %>
+<% } %>
+
+
+<% if (scalar @{$models}) { %>
+	<% if ( scalar keys %{$packaging} > 0 ) { %>
+		<select class="appointment_model_packaging <%= $class_list %>" attribute="packaging" name="app_packaging" value="<%= $l->{'model'}->{'quantity'} %>">
+			<option value="1">Single</option>
+			<% foreach my $p ( keys %{$packaging} ) { %>
+				<option value="<%= $p %>" uuid="<%= $p %>"
+					<% foreach my $pc ( qw/quantity each length width height weight/ ) { %>
+						<%= $pc %>="<%= $packaging->{$p}->{$pc} %>"
+					<% } %>
+				><%= &subs::format_name($packaging->{$p}->{'name'}) %></option>
+			<% } %>
+		</select>
+	<% } %>
+	<select class="appointment_model_selector <%= $class_list %>" attribute="model" name="model" style="width:50%;">
+		<option value="">Main</option>
+		<% foreach my $m (@{$models}) { %>
+			<option <% if ($l->{'model'}->{'uuid'} eq $m->{'uuid'} || $m->{'uuid'} eq $l->{'data'}->{'model'}->{'uuid'}  || $l->{'data'}->{'model'}->{'def'} eq 'on' ) { %>selected<% } %> value="<%= $m->{'uuid'} %>"><%= &subs::format_name($m->{'name'}) %></option>
+		<% } %>
+	</select>
+	<input class="appointment_model_quantity <%= $class_list %>" attribute="quantity" name="quantity" value="<%= $l->{'quantity'} || $l->{'model'}->{'quantity'} || 1 %>" style="width:10%;">
+	<select class="appointment_model_unit <%= $class_list %>" attribute="unit" name="unit" value="<%= $l->{'unit'} || $l->{'model'}->{'unit'} || $l->{'app'} %>" style="width:28%;">
+		<option value="<%= $l->{'app'} %>"><%= &subs::format_name($l->{'app'}) %></option>
+		<% if ($settings->{'source_app'}) { %>
+			<option value="<%= $settings->{'source_app'} %>"><%= &subs::format_name($settings->{'source_app'}) %></option>
+		<% } %>
+		<% foreach my $mo ( @{$models} ) { %>
+			<option value="<%= $mo->{'name'} %>"><%= &subs::format_name($mo->{'name'}) %></option>
+		<% } %>
+		<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
+			<option value="<%= $meas %>" <% if ($meas eq $l->{'model'}->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$meas}->{'name'} || $meas) %></option>
+		<% } %>
+	</select>
+
+<% } %>

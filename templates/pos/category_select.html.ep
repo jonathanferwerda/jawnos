@@ -1,0 +1,11 @@
+<%
+	my $q = &subs::db_query('select * from settings where setting=? and value=? and device=?','pos','category',&subs::device_setter());
+	my $categories = $q->hashes;
+	my $settings = &subs::settings_grabber({ app => $a });
+%>
+<select app="<%= $a %>" setting="category" class="configure_input" onchange="configurationReloader('<%= $a %>')">
+	<option value="none" <% if ($settings->{'category'} eq '') { %>selected<% } %>><%= &subs::format_name('none') %></option>
+	<% foreach my $cat ( @{$categories}) { %>
+		<option value="<%= $cat->{'app'} %>" <% if ($cat->{'app'} eq $settings->{'category'}) { %>selected<% } %>><%= &subs::format_name($cat->{'app'}) %></option>
+	<% } %>
+</select>

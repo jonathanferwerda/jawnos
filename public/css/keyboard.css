@@ -1,0 +1,160 @@
+
+
+@media screen and (max-width:600px) {
+	.typewriter { text-align: center;}
+	#numberpad {
+		position: fixed;
+		z-index: 9100;
+		display:none;
+	}
+	#keyboard {
+		position: fixed;
+		display:none;
+		z-index: 9100;
+		white-space: nowrap;
+	}
+	#controller {
+		position: fixed;
+		left: 0px;
+		z-index: 9100;
+		max-width: 100%;
+		white-space: nowrap;
+		display:none;
+	}
+	#remote_control {
+		position: fixed;
+		left: 0px;
+		z-index: 9100;
+		max-width: 100%;
+		white-space: nowrap;
+		display:none;
+	}
+	#walkboy {
+		position: fixed;
+		left: 0px;
+		z-index: 9100;
+
+		white-space: nowrap;
+		display:none;
+	}
+	.keyboard_button {
+		height: 35px;
+		background-color: white;
+
+		border: solid;
+		border-radius: 8px;
+		text-align: center;
+		vertical-align: bottom;
+	}
+	.letter_key.keyboard_button {
+		background-color: white;
+		width: 23px;
+		vertical-align: bottom;
+
+	}
+	.space_bar.keyboard_button {
+		width: 160px;
+		vertical-align: bottom;
+	}
+	.return_key.keyboard_button {
+		width: 20px;
+		vertical-align: bottom;
+	}
+	.shift_key.keyboard_button {
+		width: 23px;
+		vertical-align: bottom;
+	}
+	.ctrl_key.keyboard_button {
+		width: 22px;
+		vertical-align: bottom;
+	}
+	.calculator_button {
+		height: 50px;
+		width: 50px;
+	}
+}
+@media screen and (min-width:600px) {
+	.typewriter { text-align: center;}
+	#numberpad {
+		position: fixed;
+		z-index: 9100;
+	}
+	#keyboard {
+		position: fixed;
+		text-align: center;
+		z-index: 9100;
+		white-space: nowrap;
+		padding-bottom: 5px;
+		display:none;
+	}
+	#controller {
+		position: fixed;
+		text-align: center;
+		z-index: 9100;
+		max-width: 80%;
+		white-space: nowrap;
+		display:none;
+		padding-bottom: 5px;
+	}
+	#remote_control {
+		position: fixed;
+		text-align: center;
+		z-index: 9100;
+		max-width: 100%;
+		white-space: nowrap;
+		display:none;
+		padding-bottom: 5px;
+	}
+	#walkboy {
+		position: fixed;
+		left: 0px;
+		z-index: 9100;
+		white-space: nowrap;
+		display:none;
+	}
+	.letter_key.keyboard_button {
+		background-color: white;
+		width: 20px;
+		vertical-align: bottom;
+	}
+	.space_bar.keyboard_button {
+		width: 180px;
+		vertical-align: bottom;
+	}
+	.return_key.keyboard_button {
+		width: 37px;
+		vertical-align: bottom;
+	}
+	.shift_key.keyboard_button {
+		vertical-align: bottom;
+	}
+	.ctrl_key.keyboard_button {
+		width: 57px;
+		vertical-align: bottom;
+	}
+	.keyboard_button {
+		height: 35px;
+		background-color: white;
+		vertical-align: bottom;
+		border: solid;
+		border-radius: 8px;
+		text-align: center;
+	}
+	.calculator_button {
+		height: 35px;
+		min-width: 35px;
+	}
+}
+#test_input {
+	position:fixed;
+	top: 30px;
+	background-color: white;
+	width: 80%;
+	font-size: 22px;
+	height: 30px;
+	vertical-align: bottom;
+}
+
+.teb_style[status="on"] {
+	background-color: yellow;
+}

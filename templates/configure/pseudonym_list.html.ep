@@ -1,0 +1,36 @@
+<table>
+	<thead>
+		<th>Status</th><th>Name</th><th>Colour</th><th>Icon</th><th>Place</th><th>Speech</th><th>Class</th><th>onClick</th><th>Default</th>
+	</thead>
+	<tbody>
+		<% foreach my $p ( @{$pseudonyms} ) { %>
+			<tr pseudonym_name="<%= $p->{'name'} %>">
+				<td>
+					<select setting="status" class="pseudonym_setting pseudonym_state_set">
+						<% foreach my $state (qw/on off button none/) { %>
+							<option value="<%= $state %>" <% if ($state eq $p->{'status'}) { %>selected<% } %>><%= $state %></option>
+						<% } %>
+					</select>
+				</td>
+				<td><%= $p->{'name'} %></td>
+				<td><input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set"></td>
+				<td>
+					<img class="ps little_thumb pseudonym_icon_set" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
+				</td>
+				<td>
+					<select setting="place" class="pseudonym_setting pseudonym_place_set">
+						<% foreach my $place (qw/top mid bottom/) { %>
+							<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= $place %></option>
+						<% } %>
+					</select>
+				</td>
+				<td><input value="<%= $p->{'speech'} %>" setting="speech" class="pseudonym_setting pseudonym_speech_set"></td>
+				<td><input value="<%= $p->{'classmates'} %>" setting="classmates" class="pseudonym_setting psedonym_classmate_set"></td>
+
+				<td><input value="<%= $p->{'click'} %>" setting="click" class="pseudonym_setting pseudonym_onclick_set"></td>
+
+				<td><button class="pseudonym_defaulter" name="<%= $p->{'name'} %>">Default</button></td>
+			</tr>
+		<% } %>
+	</tbody>
+</table>

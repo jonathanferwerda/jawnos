@@ -1,0 +1,30 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<% 	no warnings 'uninitialized'; %>
+<% if ($m->{'email'}) { %>
+		<% my $attachments = eval { return decode_json $m->{'attachments'} } || []; %>
+		<% if ($m->{'status'} eq 'inbox') { %>
+			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;" class="hover email_message" uuid="<%= $m->{'uuid'} %>">
+				<span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'email'} %></b><br>
+				<span style="float:left;padding-left:5px;"><%= $m->{'subject'} %></span><% if (scalar @{$attachments} > 0) { %><span style="float:right;">att: <%= scalar @{$attachments} %></span><% } %>
+			</span>
+		<% } elsif ($m->{'status'} eq 'sent') { %>
+			<span style="float:right;border:solid;border-radius:5px;background-color:lightgreen;width:80%;overflow-wrap:break-word;" class="hover email_message" uuid="<%= $m->{'uuid'} %>">
+				<span style="float:right;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b></span><br>
+				<span style="float:right;padding-right:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%= $m->{'subject'} %></span><% if (scalar @{$attachments} > 0) { %><span style="float:left;">att: <%= scalar @{$attachments} %></span><% } %>
+			</span>
+		<% } %>
+<% } else { %>
+	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" uuid="<%= $m->{'uuid'} %>" class="mailbox_message" style="font-size:20px;width:60%;" timestamp="<%= $m->{'timestamp'} %>">
+		<% if ($me ne $m->{'manager_file'}) { %>
+			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b><br>
+				<span style="float:left;padding-left:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>
+			</span>
+		<% } else { %>
+			<span style="float:right;border:solid;border-radius:5px;background-color:lightgreen;width:80%;overflow-wrap:break-word;">
+				<span style="float:right;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b></span><br>
+				<span style="float:right;padding-right:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>
+			</span>
+		<% } %>
+		<br>
+	</span>
+<% } %>

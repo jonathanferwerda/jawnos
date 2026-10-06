@@ -1,0 +1,58 @@
+<div id="measures" style="width:100%;height:100%;overflow:scroll;background-color:white;">
+	<div id="measures_toolbar" style="width:100%;">
+		<img class="little_thumb hover measure_edit_toggle" uuid="new" src="/images/studio/plus.png">
+	</div>
+	<div class="measure_editor_container" uuid="new" style="width:100;display:none;">
+		<%= include 'measures/edit', measure => { uuid => 'new' } %>
+	</div>
+	<table style="width:100%;">
+		<thead style="font-size:24px;">
+			<th class="hover">M</th>
+			<th class="hover">Name</th>
+			<th class="hover">Types</th>
+			<th class="hover">Formulas</th>
+			<th class="hover">App</th>
+			<th class="hover">PV</th>
+		</thead>
+		<tbody>
+
+			<% foreach my $m (sort keys %{$measures} ) { %>
+				% $measures->{$m}->{'m'} = $m unless $measures->{$m}->{'m'};
+				<tr class="measure" measure="<%= $m %>" name="<%= $measures->{$m}->{'name'} %>" uuid="<%= $measures->{$m}->{'uuid'} %>">
+					<td><b><img class="little_thumb hover measure_edit_toggle" uuid="<%= $measures->{$m}->{'uuid'} %>" src="/icons/edit.png"> <span style="vertical-align:middle;"><%= $m %></span></b></td>
+					<td><b><%= &subs::format_name($measures->{$m}->{'name'}) || $m %></b></td>
+					<td>
+						<% if (eval {scalar @{$measures->{$m}->{'types'}} > 0 }) { %>
+							<table>
+								<% foreach my $t ( @{$measures->{$m}->{'types'}} ) { %>
+									<tr><td><%= &subs::format_name($t) %></td></tr>
+								<% } %>
+							</table>
+						<% } %>
+					</td>
+					<td>
+						<% if (eval { scalar @{$measures->{$m}->{'formulas'}} > 0 }) { %>
+							<table>
+								<% foreach my $f ( @{$measures->{$m}->{'formulas'}} ) { %>
+									<tr><td><%= $f %></td></tr>
+								<% } %>
+							</table>
+						<% } %>
+					</td>
+					<td>
+						<% if ($measures->{$m}->{'app'}) { %>
+							<%= &subs::format_name($measures->{$m}->{'app'}) %><br>
+							<%= &subs::format_name($measures->{$m}->{'app_measure'}) %>
+						<% } %>
+					<td class="measures_pv hover" app="<%= $measures->{$m}->{'app'} %>" measure="<%= $measures->{$m}->{'app_measure'} %>"><%= $measures->{$m}->{'pv'} || 'PV' %></td>
+				</tr>
+				<tr>
+					<td colspan="6" class="measure_editor_container" uuid="<%= $measures->{$m}->{'uuid'} %>" style="display:none;"><%= include 'measures/edit', measure => $measures->{$m} %></td>
+				</tr>
+			<% } %>
+		<tbody>
+	</table>
+
+
+
+</div>

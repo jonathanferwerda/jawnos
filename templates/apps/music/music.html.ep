@@ -1,0 +1,87 @@
+% title 'Music Player';
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
+	@{$padlock_sighting} = grep { $_ eq 'music' } @{$padlock_sighting};
+%>
+<% my $background_colour = &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour'}); %>
+<div id="music" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
+	<div id="music_player_data" style="display:none;">
+		<%= eval { return encode_json &subs::cache_get({ app => 'music', context => 'player' }) } || {} %>
+	</div>
+	<div id="interface" style="position:absolute;top:0px;height:60px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
+
+		<div id="audio_controls">
+			<span id="prev" class="hover control"><img id="prev_logo" class="medium_thumb" src="/icons/prev.jpg" /></span>
+			<span id="play" class="hover control"><img id="play_logo" class="medium_thumb" src="/icons/play.jpg" /></span>
+			<span id="next" class="hover control"><img id="next_logo" class="medium_thumb" src="/icons/next.jpg" /></span>
+			<input id="music_search" value="<%= $search %>" style="width:40%;position:absolute;top:3px;">
+			<span class="medium" style="padding-top:4px;word-wrap: break-word;font-size: 22px;">
+				<span id="elapsed_progress"></span>/<span id="total_progress"></span>
+			</span>
+
+
+			<span style="display:none;">
+				<span style="float:left;width:70%;">
+					<progress value="0" id="progress_bar" data-label="Progress"></progress>
+					<progress id="volume_control" value="1" data-label="Volume"></progress>
+				</span>
+			</span>
+
+		</div>
+		<% if (scalar @{$padlock_sighting} > 0) { %>
+			<img src="/images/jbuttons/padlock unlock.png" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="position:absolute;top:0px;right:60px;<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+		<% } %>
+		<image src="/images/decipherable/gear.png" class="little_thumb hover" id="music_configuration_toggle" style="position:absolute;top:0px;right:4px;">
+	</div>
+	<div id="music_library">
+		<div id="music_artists" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:white;">
+			<button id="all_music_artists" class="all_music" library="artists" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_artists'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
+			<% foreach my $art ( sort keys %{$crate->{'artists'}} ) { %>
+				<% if ($crate->{'artists'}->{$art}->{'path'}) { %>
+					<span class="hover music_artist" path="<%= $crate->{'artists'}->{$art}->{'path'} %>" artist="<%= $art %>" active="<% if ( grep { $_->{'artist'} eq $art } @{$crate->{'artist'}} ) { %>yes<% } else { %>no<% } %>"> 
+						<%= &subs::format_name($art) %>
+					</span>
+					<br>
+				<% } %>
+			<% } %>
+		</div>
+		<div id="music_albums" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:50%;background-color:white;">
+			<button id="all_music_albums" class="all_music" library="albums" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_albums'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
+			<% foreach my $alb ( sort keys %{$crate->{'albums'}} ) { %>
+				<% if ($crate->{'albums'}->{$alb}->{'path'}) { %>
+					<span class="hover music_album" path="<%= $crate->{'albums'}->{$alb}->{'path'} %>" album="<%= $alb %>" active="<% if ( grep { $_->{'album'} eq $alb } @{$crate->{'album'}} ) { %>yes<% } else { %>no<% } %>">
+						<%= &subs::format_name($alb) %>
+					</span>
+					<br>
+				<% } %>
+			<% } %>
+		</div>
+
+		<div id="music_files" style="width:100%;bottom:110px;top:210px;position:absolute;overflow:scroll;">
+			%= include 'apps/music/files'
+		</div>
+
+	</div>
+	<div id="music_configuration" remote_uuid="<%= $crate->{'remote_uuid'} %>" style="position:absolute;width:300px;top:90px;display:none;border-solid;border-radius:5px;width:50%;right:0px;background-color:#<%= &subs::random_colour_grabber() %>;">
+		<%= include 'apps/music/configuration' %>
+	</div>
+
+	<div id="music_theatre" style="bottom:0px;">
+	 <%= include 'apps/video',
+			id => 'video',
+			source => 'music',
+			crate => $crate,
+			misses => $misses
+	 %>
+	</div>
+
+</div>
+<div id="music_padlock" style="display:none;width:100%;background-color:black;height:100%;max-height:100%;top:60px;object-fit:contain;">
+	<img src="/images/make believe/cancel_button.png" class="little_thumb" id="music_cancel_padlock" style="position:absolute;top:35px;right:5px;">
+	<%= include 'padlock', mode => 'music' %>
+</div>
+
+<script>
+	mao = JSON.parse('<%== $jmao %>');
+</script>
+

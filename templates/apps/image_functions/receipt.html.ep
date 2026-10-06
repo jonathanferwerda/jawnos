@@ -1,0 +1,6 @@
+
+
+
+<button class="image_function_tool" tool="amount" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" style="vertical-align:top;">Amount</button>
+<button class="image_function_tool" tool="tax" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" style="vertical-align:top;">Tax</button>
+<button class="image_function_tool" tool="total" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" style="vertical-align:top;">Total</button>

@@ -1,0 +1,39 @@
+<table style="width:100%;">
+	<tbody>
+		<tr>
+			<td><b>Name</b></td>
+			<td>
+				<input class="custom_item_attribute" att="name" placeholder="Name">
+			</td>
+		</tr>
+		<tr>
+			<td><b>Cost</b></td>
+			<td><input class="custom_item_attribute" att="cost" placeholder="Cost"></td>
+		</tr>
+		<tr>
+			<td><b>Price</b></td>
+			<td><input class="custom_item_attribute" att="price" placeholder="Price"></td>
+		</tr>
+		<% if ($type eq 'option') { %>
+			<tr>
+				<td><b>Category</b></td>
+				<td>
+					<select class="custom_item_attribute" att="category">
+						<option value=""></option>
+						<% foreach my $cat ( @{$item_categories} ) { %>
+							<option value="<%= $cat->{'uuid'} %>"><%= &subs::format_name($cat->{'name'}) %></option>
+						<% } %>
+					</select>
+				</td>
+			</tr>
+		<% } %>
+		<tr>
+			<td><b>Description</b></td>
+			<td><textarea class="custom_item_attribute" att="description"></textarea></td>
+		</tr>
+		<tr>
+			<td><b>Save To Item</b></td>
+			<td><input type="checkbox" class="custom_item_attribute" att="save_to_item"></td>
+	</tbody>
+</table>
+<img src="/images/decipherable/diskette.png" class="little_thumb hover custom_item_selection_save">

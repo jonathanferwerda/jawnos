@@ -1,0 +1,31 @@
+
+
+<span id="web_toolbar" style="width:100%; position:absolute;top:40px;height:50px;background-color:white;">
+	<img class="little_thumb hover web_toggle" src="/images/decipherable/home.png">
+
+	<span style="font-size:30px;vertical-align:top;" id="website_title"><%= &subs::format_name($app) %></span>
+	<span style="font-size:20px;vertical-align:top;" id="website_time" class="time"></span>
+	<img id="web_measure_toggle" class="little_thumb hover" style="display:none;" src="/images/decipherable/measures.png">
+	<select id="web_measure_selector" style="display:none;vertical-align:top;"></select>
+</span>
+
+
+<% my $websites = &subs::db_query('select * from websites order by timestamp desc')->hashes; %>
+
+<span id="web" style="background-color:white;width:100%;height:calc(100% - 50px);position:absolute;top:90px;overflow:scroll;">
+	<table>
+		<thead>
+			<th>App</th><th>Address</th><th>Time</th><th></th>
+		</thead>
+		<tbody>
+			<% foreach my $web ( @{$websites} ) { %>
+				<tr class="web_history">
+					<td class="hover"><span onclick="appointmentGrabber('<%= $web->{'app'} %>');"><%= &subs::format_name($web->{'app'}) %></span></td>
+					<td class="hover web_address web" uuid="<%= $web->{'uuid'} %>" app="<%= $web->{'app'} %>" web="<%= $web->{'url'} %>"><%= $web->{'url'} %></td>
+					<td class="time" timestamp="<%= $web->{'timestamp'} %>"></td>
+					<td><img class="tiny_thumb web_delete hover" uuid="<%= $web->{'uuid'} %>" app="<%= $web->{'app'} %>" src="/icons/trash.png"></td>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+</span>

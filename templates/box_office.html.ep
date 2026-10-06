@@ -1,0 +1,98 @@
+
+<span id="box_office" style="overflow-x:scroll;width:100%;height:100%;background-color:<%= $config->{$device}->{'box_office'}->{'background_colour'} %>">
+	<select id="box_office_view">
+		<% foreach my $v ( qw/tickets requests/ ) { %>
+			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
+		<% } %>
+
+	</select>
+	<span id="ticket_network_ip"><%= $addresses->{$nic}->{'ip'} %></span>
+	<% if ($view eq 'tickets') { %>
+		<table>
+			<thead><th>Name</th><th>Privilege</th><th>Project</th><th>Warranty</th><th>NIC</th></thead>
+			<tbody>
+				<tr>
+					<td>
+						<select id="ticket_name">
+							<% foreach my $p ( @{$people} ) { %>
+								<option value="<%= $p->{'app'} %>" <% if (&subs::unformat_name($p->{'app'}) eq &subs::unformat_name($name)) { %>selected<% } %>><%= &subs::format_name($p->{'app'}) %></option>
+							<% } %>
+						</select>
+					</td>
+					<td>
+						<select id="ticket_privilege" value="<%= $privilege %>">
+							<% foreach my $p ( keys %{$gb::chairs} ) { %>
+								<option <% if ($privilege eq $p) { %>selected <% } %> value="<%= $p %>"><%= &subs::format_name($p) %></option>
+							<% } %>
+						</select>
+					</td>
+					<td>
+						<select id="ticket_project">
+							<% foreach my $proj ( @{$projects} ) { %>
+								<option value="<%= $proj->{'app'} %>"><%= &subs::format_name($proj->{'app'}) %></option>
+							<% } %>
+						</select>
+					</td>
+					<td><input type="text" id="ticket_warranty" value="<%= $warranty %>" style="width:120px;"></td>
+					<td>
+						<select id="ticket_network_device" style="width:120px;">
+							<% if ($config->{'domain'}) { %>
+								<option ip="<%= $config->{'domain'} %>" value="<%= $config->{'domain'} %>" <% if ($nic eq $config->{'domain'}) { %>selected<% } %>><%= $config->{'domain'} %></option>
+							<% } %>
+							<% foreach my $nd ( keys %{$addresses} ) { %>
+								<% if ( $addresses->{$nd}->{'ip'} ) { %>
+									<option ip="<%= $addresses->{$nd}->{'ip'} %>" value="<%= $nd %>" <% if ($nic eq $nd) { %>selected<% } %>><%= $nd %></option>
+								<% } %>
+							<% } %>
+						</select>
+					</td>			
+				</tr>
+			</tbody>
+		</table>
+		<table id="ticket_list" style="width:100%;max-width:100%;">
+			<thead>
+				<th>QR</th><th>App</th><th>Name</th><th>Status</th><th>Privilege</th><th>Project</th><th>Init</th><th>Duration</th><th>Warranty</th><th>Log</th><th>Delete</th>
+			</thead>
+			<tbody id="ticket_list_body">
+				<% foreach my $t ( grep { $_->{'status'} ne 'request' } @{$tickets} ) { %>
+					<tr class="ticket_holder" uuid="<%= $t->{'uuid'} %>" style="background-color:<% if ($t->{'status'} eq 'active' ) { %>yellow<% } elsif ($t->{'status'} eq 'suspended') { %>red<% } else { %>grey<% } %>;">
+						<td><img class="little_thumb ticket" src="<%= $t->{'image'} %>"><br>
+				<a target="_blank" class="take_on_me" href="<%= $t->{'url'} %>">Link</a>
+						</td>
+						<td><span class="ticket_app" app="<%= $t->{'app'} %>"><%= &subs::format_name($t->{'app'}) %></span></td>
+						<td><span class="ticket_name"><%= &subs::format_name($t->{'name'}) %></span></td>
+						<td><span class="ticket_status"><%= $t->{'status'} %></span></td>
+						<td><span class="ticket_privilege"><%= $t->{'privilege'} %></span</td>
+						<td><span class="ticket_project"><%= &subs::format_name($t->{'project'}) %></span</td>
+						<td><span class="ticket_timestamp time" timestamp="<%= $t->{'timestamp'} %>"><%= $t->{'timestamp'} %></span></td>
+						<td><span class="ticket_duration duration" timestamp="<%= $t->{'duration'} %>"><%= &subs::duration_sayer($t->{'duration'} / 1000) %></span></td>
+						<td><span class="ticket_warranty time" timestamp="<%= $t->{'warranty'} %>"><%= $t->{'warranty'} %></span></td>
+						<td>
+							<% foreach my $al ( sort { $b->{'server_time'} <=> $a->{'server_time'} } @{$t->{'access_log'}} ) { %>
+								<%= $al->{'ip'} %> <span class="time" timestamp="<%= $al->{'server_time'} %>"></span><br>
+							<% } %>
+						</td>
+						<td>
+							<% if ($t->{'status'} eq 'active') { %>
+								<span><button class="suspend_ticket" uuid="<%= $t->{'uuid'} %>">Suspend</button></span>
+							<% } %>
+							<% if ($t->{'status'} eq 'suspended') { %>
+								<span><button class="reinstate_ticket" uuid="<%= $t->{'uuid'} %>">Reinstate</button></span>
+							<% } %>
+							<% if ($t->{'status'} ne 'suspended' ) { %>
+								<span><button class="renew_ticket" uuid="<%= $t->{'uuid'} %>">Renew</button></span>
+							<% } %>
+							<span><button class="delete_ticket" uuid="<%= $t->{'uuid'} %>">Delete</button></span>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } %>
+</span>
+
+<style>
+	#ticket_network_ip {
+		font-size: 20px;
+	}
+</style>

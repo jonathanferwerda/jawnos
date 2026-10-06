@@ -1,0 +1,32 @@
+<div id="terminal">
+	<div class="terminal_view" view="terminal" id="terminal_view" style="<% if ($settings->{'view'} ne 'terminal') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;opacity:.9;height: 85%;width:100%; max-height:100%;">
+		<span style="color:black;background-color:yellow;">President: </span>Commands get processed by the server and the browser. Handle with care.<br>
+	</div>
+
+	<div class="terminal_view" view="errors" id="terminal_error_view" style="<% if ($settings->{'view'} ne 'errors') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;opacity:.9;height: 85%;width:100%; max-height:100%;">
+		<span style="color:black;background-color:yellow;">President: </span>Error log
+		<button style="float:right;" class="terminal_clear">Clear</button>
+		<br>
+
+		<% foreach my $err ( @{$settings->{'errors'}} ) { %>
+			<%= include 'terminal/error', err => $err %>
+		<% } %>
+	</div>
+	<div class="terminal_view" view="log" id="terminal_log_view" style="<% if ($settings->{'view'} ne 'log') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;opacity:.9;height: 85%;width:100%; max-height:100%;">
+		<span style="color:black;background-color:yellow;">President: </span>Log
+		<button style="float:right;" class="terminal_clear">Clear</button>
+		<br>
+
+		<% foreach my $log ( @{$settings->{'log'}} ) { %>
+			<%= include 'terminal/log', 'log' => $log %>
+		<% } %>
+	</div>
+
+	<br>
+	<div id="terminal_input" style="text-align:left;width:100%; bottom:0px; position:absolute; background-color:black;">
+		<input class="" style="font-size:22px;text-align:left;" id="terminal_console" placeholder="<%= $whoami . '@' . $hostname %>"></input>
+		<img src="/images/decipherable/code.png" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
+		<img src="/images/make believe/explosion.png" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
+		<img src="/images/decipherable/list.png" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
+	</div>
+</div>

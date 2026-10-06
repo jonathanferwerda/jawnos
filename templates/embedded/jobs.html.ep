@@ -1,0 +1,19 @@
+Jobs
+<table style="width:100%;">
+	<thead>
+		<th>App</th><th>Timestamp</th><th>Component</th><th>State</th><th>Delete</th>
+	</thead>
+	<tbody>
+		<% foreach my $j ( keys %{$jobs} ) { %>
+			<tr class="embedded_job" uuid="<%= $j %>">
+				<% my $appt = &subs::db_select('appointments', undef, { uuid => $jobs->{$j}->{'appt_uuid'} })->hashes->[0]; %>
+				<td><%= &subs::format_name($appt->{'app'}) %></td>
+				<td><span class="time" timestamp="<%= $jobs->{$j}->{'timestamp'} %>"></span></td>
+				<td><%= $jobs->{$j}->{'component'} %></td>
+				<td><%= $jobs->{$j}->{'pin'} %></td>
+				<td><%= $jobs->{$j}->{'state'} %></td>
+				<td><img class="little_thumb delete_embedded_job hover" src="/icons/trash.png" uuid="<%= $j %>" appt_uuid="<%= $jobs->{$j}->{'appt_uuid'} %>"></td>
+			</tr>
+		<% } %>
+	</tbody>
+</table>

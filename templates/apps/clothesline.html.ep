@@ -1,0 +1,53 @@
+<h3>Schedule</h3>
+<input class="clothes" app="<%= $app %>" setting="schedule" style="width:100%" value="<%= $cl->{'schedule'} %>">
+<h3>Budgets</h3>
+<% foreach my $bm ( keys %{$gb::budget_modes} ) { %>
+	<span style="display:inline-block;max-width:30%;">
+		<label><%= &subs::format_name($bm) %></label>
+		<select class="clothes" app="<%= $app %>" multiple setting="<%= $bm %>_budget" style="height:100px;">
+			<% my @bs = keys %{$gb::budget_statuses}; %>
+			<% unshift @bs, 'none'; %>
+			<% foreach my $bs ( @bs ) { %>
+				<option value="<%= $bs %>" <% if (grep {$_ eq $bs} @{$cl->{$bm . '_budget'}}){ %>selected<% } %> ><%= &subs::format_name($bs) %></option>
+			<% } %>
+		</select>
+	</span>
+<% } %>
+<h3>Time Slots</h3>
+<table style="width:100%;">
+	<thead>
+		<% foreach my $td ( @{$time_plinkos} ) { %>
+			<th>
+				<%= &subs::format_name($td->{'name'}) %>
+			</th>
+		<% }%>
+	</thead>
+	<tbody>
+		<% foreach my $td ( @{$time_plinkos} ) { %>
+
+			<td style="vertical-align:top;">
+				<span class="clothes_picker" td="<%= $td->{'name'} %>" span="<%= $td->{'span'} %>" re="all" app="<%= $app %>"
+					<% if (grep { $_ eq 'all' } @{$cl->{'time_plinko'}->{$td->{'name'}}}) { %>
+						wearing="on"
+					<% } %>
+				><b>All</b></span><br>
+				<% foreach my $re ( sort { $a cmp $b } keys %{$td->{'reoccuring'}} ) { %>
+					<span class="clothes_picker" td="<%= $td->{'name'} %>" span="<%= $td->{'span'} %>" re="<%= $re %>" app="<%= $app %>"
+						<% if (grep { $_ eq $re } @{$cl->{'time_plinko'}->{$td->{'name'}}}) { %>
+							wearing="on"
+						<% } %>
+					>
+						<b><%= $re %></b>: <%= scalar @{$td->{'reoccuring'}->{$re}} %><br>
+					</span>
+				<% } %>
+			</td>
+		<% } %>
+	</tbody>
+</table>
+<img src="/images/make believe/cancel_button.png" id="alert_cancel" class="medium_thumb">
+
+<style>
+	.clothes_picker[wearing=on] {
+		background-color:lightgreen;
+	}
+</style>

@@ -1,0 +1,16 @@
+% use Mojo::JSON qw/encode_json decode_json/;
+% my $site_type = $appts->{$a}->{'setting'}->{'site_type'};
+% my $navigation_information = &subs::navigation_information({ signatorial => &subs::signatorial_designer(), cache => 'yes' });
+% if ($navigation_information->{&subs::signatorial_designer()}->{'site_rating'} <= 1) {
+	<div>
+		Site:
+		<select class="place_site_type configure_input" app="<%= $a %>" setting="site_type">
+			<% foreach my $site ( sort { $gb::site_types->{$a}->{'rating'} <=> $gb::site_types->{$b}->{'rating'} } keys %{$gb::site_types} ) { %>
+				<option value="<%= $site %>" <% if ( $site_type eq $site) { %>selected<% } %>><%= &subs::format_name($site) %></option>
+			<% } %>
+		</select>
+
+
+
+	</div>
+% }

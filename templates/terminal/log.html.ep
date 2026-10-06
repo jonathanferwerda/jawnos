@@ -1,0 +1,1 @@
+<span style="color:green" class="terminal_log"><span class="time" timestamp="<%= $log->{'timestamp'} %>"></span><%= $whoami %>@<%= $hostname %>: <%= $log->{'code'} %>: <%= $log->{'msg'} %></span><br>

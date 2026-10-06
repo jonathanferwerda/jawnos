@@ -1,0 +1,48 @@
+<div id="stats">
+	<% foreach my $s ( @{$stats} ) { %>
+		<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
+	<% } %>
+</div>
+<% if ($c->stash('pl_time')) { %><b>PL TIME:</b> <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span><% } %><br>
+<b>Uptime:</b> <span class="time" timestamp="<%= $last_restart %>"></span><br><br>
+<div id="utility_controls_container">
+	<%= include 'configure/utility_controller' %>
+</div>
+<br><br>
+
+<% foreach my $b ( qw/none localstorage cache eval/ ) { %>
+	<button class="sys_setting_option" onclick="settingSetter({'app': '__president', 'setting': 'system_settings_list_view', 'value': '<%= $b %>' });" 
+		option="<%= $b %>" style="<% if ($b eq $settings->{$device}->{'system_settings_list_view'}) { %>background-color:yellow;<% } %>"><%= &subs::format_name($b) %></button>
+<% } %>
+<br>
+<% if ($settings->{$device}->{'system_settings_list_view'} eq 'localstorage') { %>
+	<table style="width:100%;max-width:100%;">
+		<thead>
+			<th>Cxl</th>
+			<th>Key</th>
+			<th>Value</th>
+		</thead>
+		<tbody>
+			<% foreach my $ls ( sort keys %{$local_storage} ) { %>
+				<tr class="system_localstorage" key="<%= $ls %>">
+					<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="/images/make believe/cancel_button.png"></td>
+					<td><b><%= $ls %></b></td>
+					<td style="text-align:left;"><%= $local_storage->{$ls} %></td>
+				</tr>
+			<% } %>
+		</tbody>
+	</div>
+<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
+
+	<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
+<% } elsif ($settings->{$device}->{'settings_list_view'} eq 'cache') { %>
+
+	Anchor <input type="checkbox" class="anchor_all_settings" setting_type="sys">
+	<% foreach my $dt ( @gb::device_types ) { %>
+		<h3><%= $dt %></h3>
+
+		<h4>Cache Folders</h4>
+		<textarea style="width:100%;" class="sys_setting" setting="cache_folders" device="<%= $dt %>"><%= $settings->{$dt}->{'cache_folders'} %></textarea>
+
+	<% } %>
+<% } %>

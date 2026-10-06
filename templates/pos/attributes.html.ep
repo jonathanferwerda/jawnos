@@ -1,0 +1,166 @@
+<div class="<%= $att %>_list <%= $att %>_attributes">
+	<h4><%= &subs::format_name($att) %></h4>
+	<% 
+		use Mojo::JSON qw/decode_json/;
+		my $settings = &subs::settings_grabber({ app => $a });
+		my $category = $settings->{'category' };
+		my $manufacturer = $settings->{'manufacturer' };
+		my $option_categories = &subs::db_query('select * from option_category where app = ? or app = ? or app = ?', $category, $a, $manufacturer)->hashes;
+		my $manufact = &subs::db_query('select * from settings where setting=? and value like ?','categories','%' . $category . '%')->hashes;
+		my $manufacturers = [];
+		foreach my $man ( @{$manufact} ) {
+			my $m = eval { return decode_json $man->{'value'} } || [];
+			if (grep { $_ eq $category } @{$m}) {
+				push @{$manufacturers}, $man->{'app'};
+			}
+		}
+		my $atts = &subs::db_select($att, undef, { app => $a }, { '-asc' => 'name' })->hashes;
+		if ($manufacturer ne '') { 
+	#		@{$atts} = grep { $_->{'manufacturer'} eq $manufacturer } @{$atts};
+		}
+	#	@{$atts} = sort { $a->{'name'} cmp $b->{'name'} } @{$atts};
+		unshift @{$atts}, { uuid => 'new' }; 
+		foreach my $a ( @{$atts} ) {
+			my $chars = eval { return decode_json $a->{'characteristics'} } || [];
+			my @option_category = grep { $_->{'name'} eq 'option_category' } @{$chars};
+			my @option_grouping = grep { $_->{'name'} eq 'option_grouping' } @{$chars};
+			@{$chars} = grep { $_->{'name'} ne 'option_category' && $_->{'name'} ne 'option_grouping' } @{$chars};
+		#	@{$chars} = sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$chars};
+			@{$chars} = sort { $a->{'name'} cmp $b->{'name'} } @{$chars};
+			unshift @{$chars}, { uuid => 'new' };
+
+		%>
+		<div class="attribute <%= $att %> register_<%= $att %>" att="<%= $att %>" app="<%= $a->{'app'} || $settings->{'app'} %>" uuid="<%= $a->{'uuid'} %>">
+			<% if ($a->{'uuid'} ne 'new') { %>
+				<span style="width:80%;font-size:24px;" class="attribute_header hover" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>"><%= &subs::format_name($a->{'name'} || 'new') %></span>
+					<img src="/images/decipherable/home.png" class="miniscule_thumb" onclick="appointmentGrabber('<%= $a->{'name'} %>')" style="float:left;">
+			<% } %>
+			<div class="attribute_contents <%= $att %>" app="<%= $a->{'app'} %>" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" style="<% if ($a->{'uuid'} ne 'new') { %>display:none;<% } %>">
+				<input class="att name" type="text" name="name" value="<%= &subs::format_name($a->{'name'}) %>" placeholder="Name">
+				<% if ($a->{'uuid'} ne 'new') { %>
+					<img src="/images/make believe/cancel_button.png" class="tiny_thumb delete_attribute" style="float:right;" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>">
+					<input style="vertical-align:bottom;" type="checkbox" name="def" class="att def" <% if ( $a->{'def'} eq 'on' ) { %>checked="true"<% } %>><label>Default</label>
+					<% if ($a->{'def'} eq 'on') { %>
+						<br>
+						<select multiple class="def_month att" name="def_month" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>" value="<%= $a->{'def_month'} %>" style="width:22%;height:100px;">
+							<% my $dm = eval { return decode_json $a->{'def_month'} } || []; %>
+							<% foreach my $m ( qw/none all jan feb mar apr may jun jul aug sep oct nov dec/ ) { %>
+								<option value="<%= $m %>" <% if ((grep { $m eq $_ } @{$dm}) || ($m eq 'all' && scalar @{$dm} == 0)) { %>selected<% } %>><%= &subs::format_name($m) %></option>
+							<% } %>
+						</select>
+						<select multiple class="def_day att" name="def_day" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>" value="<%= $a->{'def_day'} %>" style="width:22%;height:100px;">
+							<% my $dd = eval { return decode_json $a->{'def_day'} } || []; %>
+							<% foreach my $d ( qw/none all/, 1..31 ) { %>
+								<option value="<%= $d %>" <% if ((grep { $d eq $_ } @{$dd}) || ($d eq 'all' && scalar @{$dd} == 0)) { %>selected<% } %>><%= &subs::format_name($d) %></option>
+							<% } %>
+						</select>
+						<select multiple class="def_wday att" name="def_wday" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>" value="<%= $a->{'def_wday'} %>" style="width:22%;height:100px;">
+							<% my $dd = eval { return decode_json $a->{'def_wday'} } || []; %>
+							<% foreach my $d ( qw/none all sun mon tue wed thu fri sat/ ) { %>
+								<option value="<%= $d %>" <% if ((grep { $d eq $_ } @{$dd}) || ($d eq 'all' && scalar @{$dd} == 0)) { %>selected<% } %>><%= &subs::format_name($d) %></option>
+							<% } %>
+						</select>
+						<select multiple class="def_hour att" name="def_hour" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>" value="<%= $a->{'def_hour'} %>" style="width:22%; height:100px;">
+							<% my $dh = eval { return decode_json $a->{'def_hour'} } || []; %>
+							<% foreach my $h ( qw/none all 12am 1am 2am 3am 4am 5am 6am 7am 8am 9am 10am 11am 12pm 1pm 2pm 3pm 4pm 5pm 6pm 7pm 8pm 9pm 10pm 11pm/ ) { %>
+								<option value="<%= $h %>" <% if ((grep { $h eq $_ } @{$dh}) || ($h eq 'all' && scalar @{$dh} == 0)) { %>selected<% } %>><%= &subs::format_name($h) %></option>
+							<% } %>
+						</select>
+					<% } %>
+
+					<br>
+
+					<% if (scalar @{$option_categories} > 0 && $att eq 'option') { %>
+						<span class="attribute_characteristic" uuid="<%= $option_category[0]->{'uuid'} || 'new' %>" att="<%= $att %>" att_uuid="<%= $a->{'uuid'} %>">
+							<select class="char" char_input="option_category" type="select">
+								<option value="">None</option>
+								<% foreach my $oc (@{$option_categories}) { %>
+									<option value="<%= $oc->{'uuid'} %>" <% if ($option_category[0]->{'value'} eq $oc->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($oc->{'name'}) %></option>
+								<% } %>
+							</select>
+						</span>
+					<% } %>
+					<input type="text" class="att delay_start" name="delay_start" style="width:20%;" placeholder="Delay Start" value="<%= $a->{'delay_start'} %>">
+					<input type="text" class="att delay_stop" name="delay_stop" style="width:20%;" placeholder="Delay Stop" value="<%= $a->{'delay_stop'} %>">
+					<textarea class="att description" name="description" style="width:85%;" placeholder="Description"><%= $a->{'description'} %></textarea>
+					<% if ($att eq 'option_category') { %>
+						<span class="attribute_characteristic" uuid="<%= $option_grouping[0]->{'uuid'} || 'new' %>" att="<%= $att %>" att_uuid="<%= $a->{'uuid'} %>">
+							<select class="char" char_input="option_grouping" type="select">
+								<option value="1" <% if ($option_grouping[0]->{'value'} == 1) { %>selected<% } %>>Single</option>
+								<option value="5000" <% if ($option_grouping[0]->{'value'} == 5000) { %>selected<% } %>>Multi</option>
+								<% for (my $n = 2; $n <= 20; $n++) { %>
+									<option value="<%= $n %>" <% if ($option_grouping[0]->{'value'} eq $n) { %>selected<% } %>><%= $n %></option>
+								<% } %>
+							</select>
+						</span>
+					<% } %>
+					<select class="att manufacturer">
+						<option value="" <% if ($a->{'manufacturer'} eq '') { %>selected<% } %>>None</option>
+						<% foreach my $man ( @{$manufacturers} ) { %>
+							<option value="<%= $man %>" <% if ($a->{'manufacturer'} eq $man) { %>selected<% } %>><%= &subs::format_name($man) %></option>
+						<% } %>
+					</select>
+					<input class="att cost" type="text" name="cost" style="width:40%;" value="<%= $a->{'cost'} %>" placeholder="Cost">
+					<input class="att discount" type="text" name="discount" style="width:30%;" value="<%= $a->{'discount'} %>" placeholder="Discount"><br>
+					<input class="att price" type="text" name="price" style="width:40%;" value="<%= $a->{'price'} %>" placeholder="Price">
+					<input class="att markup" type="text" name="markup" style="width:30%;" value="<%= $a->{'markup'} %>" placeholder="Markup"><br>
+					<input class="att quantity" type="text" name="quantity" style="width:30%;" value="<%= $a->{'quantity'} %>" placeholder="Quantity">
+					<select class="att unit" name="unit" style="width:60%;" value="<%= $a->{'unit'} %>">
+						<option value="<%= $a->{'app'} %>" <% if ($a->{'unit'} eq $a->{'app'}) { %>selected<% } %>><%= &subs::format_name($a->{'app'}) %></option>
+						<option value="<%= $a->{'name'} %>" <% if ($a->{'unit'} eq $a->{'name'}) { %>selected<% } %>><%= &subs::format_name($a->{'name'}) %></option>
+						<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
+							<option value="<%= $meas %>" <% if ($meas eq $a->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$meas}->{'name'} || $meas) %></option>
+						<% } %>
+					</select>
+					<br>
+
+					<% foreach my $char ( @{$chars} ) { %>
+						<div class="attribute_characteristic" style="border:solid;border-radius:3px;width:95%;opacity:80%;background-color:white;" uuid="<%= $char->{'uuid'} %>" att="<%= $att %>" att_uuid="<%= $a->{'uuid'} %>">
+							<input class="char" char_input="name" uuid="<%= $char->{'uuid'} %>" style="width:40%" type="text" value="<%= $char->{'name'} %>" placeholder="Characteristic">
+							<% if ($char->{'uuid'} ne 'new') { %>
+								<input class="char" char_input="value" style="width:40%" type="text" value="<%= $char->{'value'} %>" placeholder="Value">
+								<select class="char unit" char_input="unit" name="unit" style="width:60%;" value="<%= $a->{'unit'} %>">
+									<option value="<%= $a->{'app'} %>" <% if ($char->{'unit'} eq $char->{'name'}) { %>selected<% } %>><%= &subs::format_name($char->{'name'}) %></option>
+									<option value="<%= $a->{'app'} %>" <% if ($a->{'unit'} eq $a->{'app'}) { %>selected<% } %>><%= &subs::format_name($a->{'app'}) %></option>
+									<option value="<%= $a->{'name'} %>" <% if ($a->{'unit'} eq $a->{'name'}) { %>selected<% } %>><%= &subs::format_name($a->{'name'}) %></option>
+									<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
+										<option value="<%= $meas %>" <% if ($meas eq $char->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$meas}->{'name'} || $meas) %></option>
+									<% } %>
+								</select>
+								<input class="char" type="checkbox" char_input="save_appt" value="<%= $char->{'save_appt'} %>"
+									<% if ($char->{'save_appt'} eq 'on') { %>checked <% } %>>
+								<img src="/images/make believe/cancel_button.png" uuid="<%= $char->{'uuid'} %>" class="tiny_thumb delete_characteristic" uuid="<%= $char->{'uuid'} %>">
+							<% } %>
+						</div><br>
+
+					<% } %>
+					<select class="appointment_model_migration" value="<%= $att %>" att="<%= $att %>">
+						<% foreach my $matt ( qw/model option option_category subcategory/ ) { %>
+							<option value="<%= $matt %>" <% if ($matt eq $att) { %>selected<% } %>><%= &subs::format_name($matt) %></option>
+						<% } %>
+						
+					</select>
+					<input type="checkbox" class="att save_app" name="save_app" <% if ($a->{'save_app'} eq 'on') { %>checked="true"<% } %>><label>Save Appt</label>
+					<br>
+					<img class="jonathan little_thumb attribute_copy" src="/icons/pos/supplier.png">
+					<span class="attribute_copy_selection_container" style="display:none;" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>">
+						<input class="attribute_copy_app">
+						<img src="/images/decipherable/diskette.png" class="little_thumb attribute_copy_app_save">
+					</span>
+
+					<img class="jonathan little_thumb attribute_upload_button" app="<%= $a->{'app'} %>" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" src="/images/make believe/up.png" />
+					<div class="attribute_upload_container" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>">
+						<form class="attribute_upload" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>" style="display:none;">
+							<input class="attribute_upload_input" multiple att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>" type="file" name="fileupload" />
+							<input type="submit" />
+						</form>
+						<% my $files = eval { return decode_json $a->{'file'} } || []; %>
+						<% foreach my $fi ( @{$files} ) { %>
+							<img src="/file_open?file=<%= $fi->{'f'} %>&app=<%= $a->{'app'} %>&timestamp=<%= $fi->{'server_time'} %>" class="little_thumb">
+						<% } %>
+					</div>
+				<% } %>
+			</div>
+		</div>
+	<% } %>
+</div>

@@ -1,0 +1,46 @@
+<% no warnings 'uninitialized'; %>
+
+<div id="ide" style="width:100%;background-color:<%= $background_colour || 'white' %>;max-height:100%;height:100%">
+	<div id="ide_navbar" style="float:top;height:65px;overflow:scroll;vertical-align:top;width:100%;">
+		<img id="ide_hamburger" class="little_thumb hover" src="/images/make believe/burger.png">
+		<img class="little_thumb hover" src="/images/decipherable/file.png" id="ide_new">
+		<img class="little_thumb hover" src="/images/decipherable/diskette.png" id="ide_save">
+		<span id="ide_open_tabs" style="vertical-align:top;">
+			<% foreach my $t ( keys %{$tabs}) { %>
+				<%== $tabs->{$t}->{'tab'} %>
+			<% } %>
+		</span>
+	</div>
+	<div id="ide_list" style="font-size:20px;height:80%;overflow:scroll;display:none;">
+		<select id="ide_folder_selector" value="<%= $settings->{'folder_selector'} %>">
+			<option value="./">President</option>
+			<% foreach my $f ( sort grep { $_ =~ /location/gi } keys %{$misc_settings->{$device}} ) { %>
+				<option value="<%= &subs::home($misc_settings->{$device}->{$f}) %>" <% if ($settings->{'folder_selector'} eq &subs::home($misc_settings->{$device}->{$f})) { %>selected<% } %>><%= &subs::format_name($f) %></option>
+			<% } %>
+		</select>
+		<input id="ide_search" value="<%= $search %>" placeholder="Search">
+		<div id="ide_files">
+			<% foreach my $f ( sort { lc $a->{'file'} cmp lc $b->{'file'} } @{$files}) { %>
+				<div class="hover ide_file" type="<%= $f->{'type'} %>" status="closed" location="<%= $f->{'location'} %>" 
+					style="<% if (($search eq '' && $f->{'location'} ne '' && $f->{'location'} ne $settings->{'folder_selector'})) { %>display:none;<% } %>" file="<%= $f->{'file'} %>">
+					<% if ($f->{'type'} eq 'folder') { %>
+						<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><b style="width:70%;"><img src="/images/decipherable/folder.png" class="tiny_thumb"><%= $f->{'short_name'} %></b>
+					<% } else { %>
+						<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><span style="width:70%;" ><img src="/images/decipherable/file.png" class="tiny_thumb"> <%= $f->{'short_name'} %></span>
+					<% } %>
+					<img src="/icons/trash.png" class="tiny_thumb ide_file_delete hover" style="float:right;" type="<%= $f->{'type'} %>" file="<%= $f->{'file'} %>">
+				</div>
+			<% } %>
+		</div>
+	</div>
+	<div id="ide_main_window" style="width:100%;height:100%;border:solid;border-width:3px;">
+		<textarea id="ide_content" style="font-size:20px;width:99%;height:88%;max-height:700px;tab-size:2;background-color:white;" upgradeable="no"></textarea>
+	</div>
+</div>
+<script>
+	var idecwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
+	var ideocwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
+
+	var windHeight = $('#ide').closest('.wind').height();
+	$('#ide').height(windHeight);
+</script>

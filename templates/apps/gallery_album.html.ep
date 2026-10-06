@@ -1,0 +1,83 @@
+<% my $ghome = {}; my $processed_files = []; %>
+
+<% foreach my $a ( @{$apps} ) { 
+	if ($settings->{'search'}) {
+		push @{$appts}, @{&subs::db_query('select * from appointments where (app like ? or file like ?)  order by timestamp ' . ($settings->{'scroll_direction'} || 'desc') . '',
+			'%' . $settings->{'search'} . '%', '%' . $settings->{'search'} . '%')->hashes};
+	} else {
+		push @{$appts}, @{&subs::db_query('select * from appointments where app=? and file is not null order by timestamp ' . ($settings->{'scroll_direction'} || 'desc') . '',$a)->hashes};
+	}
+<% } %>
+<% my $count = 0; my $gallery_count = $gb::gallery_thumbnails; %>
+<% if ($load eq 'all' && $pre_count > 0) {
+	$pre_count -= 39;
+	#$gallery_count = 60;
+} %>
+<% no warnings 'uninitialized'; %>
+<% foreach my $appt ( @{$appts} ) {
+	if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } 
+	my $files = eval { return decode_json $appt->{'file'} } || [];
+	if ($settings->{'search'}) {
+		my $search = $settings->{'search'};
+		unless ($appt->{'app'} =~ /\Q$search/gi) {
+			@{$files} = grep { $_->{'name'} =~ /\Q$search/gi } @{$files};
+		}
+	}
+	if ($settings->{'scroll_direction'} eq 'asc') {
+		@{$files} = sort { $a->{'server_time'} cmp $b->{'server_time'} } @{$files};
+	}
+	else {
+		@{$files} = sort { $b->{'server_time'} cmp $a->{'server_time'} } @{$files};
+	}
+	my $temp_files = [];
+	foreach my $f ( @{$files} ) {
+		$f->{'type'} = $appt->{'type'} unless $f->{'type'};
+		$f->{'app'} = $appt->{'app'};
+		$f->{'app_timestamp'} = $appt->{'timestamp'};
+		$f->{'app_uuid'} = $appt->{'uuid'};
+		$f->{'info'} = {} unless $f->{'info'};
+		if ((!$f->{'info'}->{'duration'} || $f->{'info'}->{'duration'} =~ /[A-Za-z]/gi) && $f->{'type'} eq 'video') {
+			$f->{'info'}->{'duration'} = $appt->{'duration'} / 1000;
+		}
+		$f->{'count'} = $count; $count++;
+		push @{$temp_files}, $f;
+		last if $count >= ($pre_count + $gallery_count);
+	}
+	$files = $temp_files;
+	if ($count <= $first_count && $count >= ($first_count - $gallery_count) && $first_count > 0 && $load eq 'top') {
+		push @{$ghome->{$appt->{'app'}}}, @{$files};
+	}
+	if ($load ne 'top' && ($count > $pre_count || $load eq 'all')) {
+		if ($load eq 'all') {
+			@{$files} = grep { $_->{'count'} >= $pre_count } @{$files};
+		}
+		else {
+			@{$files} = grep { $_->{'count'} > $pre_count } @{$files};
+		}
+		push @{$ghome->{$appt->{'app'}}}, @{$files};
+	}
+	last if $count >= ($pre_count + $gallery_count);
+} %>
+<% 	my $subtractors = 0;
+	foreach my $app ( sort keys %{$ghome} ) { %>
+
+	<% foreach my $a ( keys %{$ghome} ) {
+		<% foreach my $f ( @{$ghome->{$a}} ) { %>
+			<% my $aset = $asettings->{$f->{'app'}} || &subs::settings_grabber({ app => $f->{'app'}, settings => ['main_image','visible'] }); %>
+			<% next if $aset->{'visible'} ne 'checked' && $permissive == 0; %>
+			<% unless (-e $f->{'f'}){ $subtractors++; next; } %>
+			<% next if grep { $_->{'uuid'} eq $f->{'uuid'} } @{$processed_files};	push @{$processed_files}, $f; %>
+			<table class="gallery_home_preview hover" app="<%= $app %>" file="<%= $f->{'f'} %>" id="<%= $f->{'uuid'} %>_album_thumb %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" count="<%= $f->{'count'} - $subtractors %>" timestamp="<%= $f->{'app_timestamp'} %>" uuid="<%= $f->{'uuid'} %>" type="<%= $f->{'type'} %>" style="min-width:110px;display:<% if ($f->{'f'} eq 'template') { %>none;<% } else { %>inline-block<% } %>;border:solid;">
+				<tbody><tr><td>
+					<% if ($f->{'type'} eq 'image') { %>
+						<img src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&app_uuid=<%= $f->{'app_uuid'} %>&thumb=ya&app=<%= $f->{'app'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" class="gigantic_thumb" type="<%= $f->{'type'} %>" style="">
+					<% } else { %>
+						<% my $brother = &subs::random_string_creator(); %>
+						<img src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&thumb=ya&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= &subs::random_string_creator() %>" isa="img" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;" brother="<%= $brother %>"></img>
+						<video autoplay loop muted potential_src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" id="<%= &subs::random_string_creator(20) %>" file_uuid="<%= $f->{'uuid'} %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" brother="<%= $brother %>" style="min-width:110px;border-color:yellow;display:none;"></video>
+					<% } %>
+				</td></tr></tbody>
+			</table>
+		<% } %>
+	<% } %>
+<% } %>

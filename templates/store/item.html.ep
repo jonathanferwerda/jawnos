@@ -1,0 +1,65 @@
+<% 
+	use Mojo::JSON qw/decode_json/;
+	no warnings 'uninitialized';
+%>
+
+<div class="item" id="item" item="<%= $item->{'app'} %>" price="<%= $item->{'price'} %>" quote_id="<%= $item->{'quote'}->{'id'} %>" quote_uuid="<%= $item->{'quote'}->{'uuid'} || 'new' %>"
+	formatted_name="<%= &subs::format_name($item->{'app'}) %>" main_image="<%= $item->{'settings'}->{'main_image'} %>">
+	<span class="top_left_corner">
+		<img src="/images/decipherable/diskette.png" class="save_quote little_thumb hover" style="display:none;">
+	</span>
+	<span class="top_right_corner">
+		<select class="store_movement" value="<%= $settings->{'store_movement'} %>" style="vertical-align:top;">
+			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
+				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::format_name($m) %></option>
+			<% } %>
+		</select>
+		<img src="/images/make believe/cancel_button.png" class="store_item_cancel_button little_thumb hover">
+	</span><br>
+	<span class="hover item_title" onclick="appointmentGrabber('<%= $item->{'app'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item->{'app'}) %></span><br>
+
+	<img id="store_main_image" class="store_main_image" style="<% if (!$item->{'settings'}->{'main_image'} || ! -e $item->{'settings'}->{'main_image'}) { %>display:none;<% } %>" style="display:none;" src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>">
+	<video id="store_main_video" autoplay controls class="store_main_video" style="display:none;" src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>"></video><br>
+	<% foreach my $file ( @{$item->{'files'}} ) { %>
+		% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $file->{'f'}, app => $file->{'app'}, type => $file->{'type'} });
+		% $file->{'f'} = $destination . $asset;
+		% next unless -e $file->{'f'};
+		<img class="little_thumb item_image_thumb hover" type="<%= $file->{'type'} %>" pre_src="/file_open?file=<%= $file->{'f'} %>" src="/file_open?file=<%= $file->{'f'} %>&thumb=ya">
+	<% } %>
+	<br>
+	<h2 class="display_price centered_display_price" item="<%= $item->{'app'} %>"><%= &subs::price_formatter($item->{'price'}) %></h2>
+	<% if ($item->{'settings'}->{'description'}) { %>
+		<button id="specs_toggle" style="display:none;">Specs</button>
+		<div id="specs_balloon" style="display:none;"><div id="specs"></div></div>
+		<br>
+	<% } %>
+	<span id="item_description" style="max-width:71.28%;"><%== $item->{'settings'}->{'description'} %></span>
+	<% if (scalar @{$manufacturers} > 0) { %>
+		<br>
+		<select id="item_manufacturer_select">
+			<option value="">Any</option>
+			<% foreach my $man ( @{$manufacturers} ) { %>
+				<option value="<%= $man %>"><%= &subs::format_name($man) %></option>
+			<% } %>
+		</select>
+	<% } %>
+	<div class="item_selections" item="<%= $item->{'app'} %>">
+		<%= include 'store/item_selection', item => $item, c => $c %>
+	</div>
+	<div id="price_information" style="">
+		<% if ($c->session('privilege') eq 'citizen') { %>
+			<span class="pi display_cost" id="pi_cost" angle="cost"><%= &subs::price_formatter($item->{'cost'}) %></span>
+			<input type="number" class="pi display_cost" style="display:none;" id="pi_cost_edit" angle="cost"><br>
+			<span class="pi display_markup id="pi_markup" angle="markup"><%= ($markup - 1) * 100 . "%" %></span>
+			<input type="number" class="pi display_markup" style="display:none;" id="pi_markup_edit" angle="markup"><br>
+		<% } %>
+		<u><span class="pi display_price" id="pi_price" angle="price"><%= &subs::price_formatter($item->{'price'}) %></span></u>
+		<input type="number" class="pi display_price" style="display:none;" id="pi_price_edit" angle="price"><br>
+		<u><span class="pi display_discount" id="pi_discount" angle="discount"><%= &subs::price_formatter($item->{'discount'}) %></span></u>
+		<input type="number" class="pi display_discount" style="display:none;" id="pi_discount_edit" angle="discount"><br>
+		<u><span class="pi display_tax" id="pi_tax" angle="tax"><%= &subs::price_formatter($item->{'tax'}) %></span></u>
+		<input type="number" class="pi display_tax" style="display:none;" id="pi_tax_edit" angle="tax"><br>
+		<u><span class="pi display_total" id="pi_total" angle="total"><%= &subs::price_formatter($item->{'price'}) %></span></u>
+		<input type="number" class="pi display_total" style="display:none;" id="pi_total_edit" angle="total"><br>
+	</div>
+</div>

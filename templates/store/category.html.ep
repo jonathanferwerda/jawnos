@@ -1,0 +1,13 @@
+<span style="max-height:80%">
+	<% foreach my $i ( @{$items} ) { %>
+		<div class="store_item hover" item="<%= $i->{'app'} %>" category="<%= $i->{'app'} %>" style="width:100%;border:solid;border-width: 2px;border-radius:7px;background-color:<%= $i->{'settings'}->{'colour'} %>">
+			<span class="store_item_name"><h2><%= &subs::format_name($i->{'app'}) %></h2></span>
+			<% if ($i->{'settings'}->{'main_image'} && -e $i->{'settings'}->{'main_image'}) { %>
+				<img class="huge_thumb" src="/file_open?file=<%= $i->{'settings'}->{'main_image'} %>">
+			<% } else { %>
+				<img class="huge_thumb" src="/icons/pos/<%= $i->{'settings'}->{'pos'} %>.png">
+			<% } %>
+			<h4><%= &subs::price_formatter($i->{'price'}) %></h4>
+		</div>
+	<% } %>
+</span>

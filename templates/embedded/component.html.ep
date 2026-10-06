@@ -1,0 +1,93 @@
+<%	my $syl_count = 10;
+
+$syl_count = 1 unless $device_type eq 'microcontroller';
+my $syl = &subs::shorthand_name($component,$syl_count); %>
+
+<span class="watch_<%= $component %>_container embedded_container" numero="<%= $n %>">
+	<button id="watch_<%= $component %><%= $n %>" numero="<%= $n %>" class="centre_view watch_component watch_<%= $component %>" component="<%= $component %>"
+		app="<%= $settings->{$syl . $n}->{'app'} %>"><%= $settings->{$syl . $n}->{'formatted_name'} || $pin || $n %></button>
+	<div id="watch_configure_<%= $component %>_<%= $n %>" style="background-color:<%= $settings->{$syl . $n}->{'settings'}->{'colour'} || 'white' %>;<% if ($source eq 'gpio') { %>display:none;border:solid;width:95%;border-radius:2%;<% } %>">
+		<span style="align:center;width:100%;background-color:white;"><b>Pin <%= $pin %> <%= $component %></b></span><br>
+		<input placeholder="app" id="watch_input_<%= $component %>_<%= $n %>" style="width:90%;" ip="<%= $embedded->{'ip'} %>" pre_value="<%= $settings->{$syl . $n}->{'app'} %>" edt="<%= $device_type %>" component="<%= $component %>" type="text" app="<%= $settings->{$syl . $n}->{'app'} %>" numero="<%= $n %>" class="watch_input" style="width:110px;" value="<%= &subs::format_name($settings->{$syl . $n}->{'app'}) %>"><br>
+		<input type="text" value="<%= &subs::format_name($settings->{$syl . $n}->{'name'}) %>"
+			class="watch_setting" setting="name" numero="<%= $n %>" component="<%= $component %>"
+		>
+		<% if ($components->{$component}->{'state'}) { %>
+			<% if ($components->{$component}->{'direction'} eq 'output') { %>
+				<input class="watch_toggle" edt="<%= $device_type %>" ip="<%= $embedded->{'ip'} %>" app="<%= $settings->{$syl . $n}->{'app'} %>" component="<%= $component %>" pin="<%= $n %>" value="<%= $settings->{$syl . $n}->{'toggle'} %>" style="width:60px;">
+			<% } %>
+<!--
+			<select class="watch_measures" value="<%= $settings->{$syl . $n}->{'measure'} %>" edt="<%= $device_type %>" ip="<%= $embedded->{'ip'} %>" app="<%= $settings->{$syl . $n}->{'app'} %>" component="<%= $component %>" pin="<%= $n %>" style="width:110px;">
+				<option value=""></option>
+				<% foreach my $meas ( keys %{$settings->{$syl . $n}->{'settings'}->{'measures'}} ) { %>
+					<option value="<%= $meas %>" <% if ($settings->{$syl . $n}->{'measure'} eq $meas) { %>selected<% } %>><%= &subs::format_name($meas) %></option>
+				<% } %>
+			</select>
+-->
+		<% } if ($components->{$component}->{'direction'} eq 'input') { %>
+			<% if ($settings->{$syl . $n}->{'app'}) { %>
+				<select id="watch_movement_<%= $component %>_<%= $n %>" component="<%= $component %>" class="watch_movement watch_setting" setting="movement" numero="<%= $n %>">
+					<option value=""></option>
+					<% foreach my $mov ( sort keys %{$movements} ) { %>
+						<option 
+							<% if ( $movements->{$mov}->{'mov'} eq $settings->{$syl . $n}->{'movement'}) { %>selected<% } %>
+							value="<%= $movements->{$mov}->{'mov'} %>"><%= $movements->{$mov}->{'formatted_name'} %></option>
+					<% } %>
+				</select>
+			<% } %>
+		<% } elsif ($components->{$component}->{'direction'} eq 'output') { %>
+			<% if ($settings->{$syl . $n}->{'app'}) { %>
+				<button class="watch_toggle" edt="<%= $device_type %>" ip="<%= $embedded->{'ip'} %>" app="<%= $settings->{$syl . $n}->{'app'} %>" component="<%= $component %>" pin="<%= $n %>" state="<%= $settings->{$syl . $n}->{'toggle'} %>"><%= $settings->{$syl . $n}->{'toggle'} == 1 ? 'On' : 'Off' %></button>
+
+				<select id="watch_movement_<%= $component %>_<%= $n %>" component="<%= $component %>" class="watch_movement watch_setting" setting="movement" numero="<%= $n %>">
+					<option value=""></option>
+					<% foreach my $mov ( qw/record start measure command/ ) { %>
+						<option 
+							<% if ( $movements->{$mov}->{'mov'} eq $settings->{$syl . $n}->{'movement'}) { %>selected<% } %>
+							value="<%= $movements->{$mov}->{'mov'} %>"><%= $movements->{$mov}->{'formatted_name'} %>
+						</option>
+					<% } %>
+				</select>
+				<% if ($settings->{$syl . $n}->{'movement'} eq 'measure') { %>
+					<% my $selected_measure = {}; %>
+					<select class="watch_measures" value="<%= $settings->{$syl . $n}->{'measure'} %>" edt="<%= $device_type %>" ip="<%= $embedded->{'ip'} %>" app="<%= $settings->{$syl . $n}->{'app'} %>" component="<%= $component %>" pin="<%= $n %>" style="width:110px;">
+						<option value=""></option>
+						<% foreach my $meas ( keys %{$settings->{$syl . $n}->{'settings'}->{'measures'}} ) { %>
+							<option value="<%= $meas %>" <% if ($settings->{$syl . $n}->{'measure'} eq $meas) { 
+								$selected_measure = $settings->{$syl . $n}->{'settings'}->{'measures'}->{$meas}; 
+							%>selected<% } %>><%= &subs::format_name($meas) %></option>
+						<% } %>
+					</select>
+					<%= $selected_measure->{'type'} %>
+					<% if ($selected_measure->{'type'} eq 'range' || $selected_measure->{'type'} eq 'number') { %>
+						Threshold:
+						<input type="range" min="<%= $selected_measure->{'min'} %>" step=".1" max="<%= $selected_measure->{'max'} %>" value="<%= $settings->{$syl . $n}->{'threshold'} %>"
+							class="watch_setting" setting="threshold" numero="<%= $n %>" component="<%= $component %>"
+						>
+						<select value="<%= $settings->{$syl . $n}->{'comparison'} %>" class="watch_setting" setting="comparison" numero="<%= $n %>" component="<%= $component %>">
+							<% foreach my $cmp ( qw/< <= = >= >/ ) { %>
+								<option value="<%= $cmp %>" <% if ($settings->{$syl . $n}->{'comparison'} eq $cmp ) { %>selected<% } %>><%= $cmp %></option>
+							<% } %>
+						</select>
+						<input type="number" value="<%= $settings->{$syl . $n}->{'threshold'} %>" class="watch_setting" setting="threshold" numero="<%= $n %>" component="<%= $component %>">
+						<span class="watch_setting_view" setting="threshold" component="<%= $component %>" numero="<%= $n %>"><%= $settings->{$syl . $n}->{'threshold'} %></span>
+					<% } elsif ($selected_measure->{'type'} eq 'text') { %>
+						<% if ( $settings->{$syl . $n}->{'settings'}->{'seen_measures'} > 0) { %>
+							<select class="watch_setting" setting="named_measure" numero="<%= $n %>" component="<%= $component %>" value="<%= $settings->{$syl . $n}->{'named_measure'} %>">
+								<% my $sm = $settings->{$syl . $n}->{'settings'}->{'seen_measures'}; %>
+								<option value=""></option>
+								<% foreach my $tm ( @{$sm} ) { %>
+									<option value="<%= $tm %>" <% if ($tm eq $settings->{$syl . $n}->{'named_measure'}) { %>selected<% } %>><%= &subs::format_name($tm) %></option>
+								<% } %>
+							</select>
+						<% } %>
+					<% } %>
+				<% } %>
+
+
+				<input type="checkbox" class="watch_inverted watch_setting" setting="inverted" edt="<%= $device_type %>" ip="<%= $embedded->{'ip'} %>" app="<%= $settings->{$syl . $n}->{'app'} %>" component="<%= $component %>" numero="<%= $n %>" <%= $settings->{$syl . $n}->{'inverted'} == 1 ? 'checked' : '' %>>Inverted
+			<% } %>
+		<% } %>
+		<br><br>
+	</div>
+</span>

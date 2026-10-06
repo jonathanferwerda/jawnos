@@ -1,0 +1,107 @@
+<img src="/images/make believe/cancel_button.png" class="main_viewer_cancel_button little_thumb hover" style="position:absolute;top:0px;right: 10px;height:30px;width:30px;">
+<span style="font-size:28px;"><b><%= &subs::format_name($customer->{'app'}) %></b></span> - 
+<span style="font-size:26px;"><%= &subs::format_name($type) %>s</span>
+
+<div style="overflow:scroll;height:80%;">
+	<% foreach my $quote ( @{$list} ) { %>
+		<% my $q = $quote->{$type}; %>
+		<div class="quote list_item" server_time="<%= $quote->{'server_time'} %>" style="width:100%;background-color:white;opacity:.8;padding-bottom:50px;">
+			<span style="float:left;">
+				<span class="quote_title hover" uuid="<%= $quote->{'uuid'} %>" style="font-size:28px;" colspan="6"><b><%= &subs::format_name($q->{'item'}) %></b></span>
+			</span>
+			<span style="float:right;">
+				<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/feeder.png" class="medium_thumb print hover">
+				<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/envelope.png" class="medium_thumb email hover">
+				<% if ($type eq 'quote') { %>
+					<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/register.png" class="medium_thumb quote_move hover">
+				<% } %>
+				<% if ($type eq 'invoice') { %>
+					<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/list.png" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/cash.png" class="medium_thumb quote_move hover">
+				<% } %>
+				<img cx_uuid="<%= $customer->{'value'} %>" doc_type="<%= $type %>" uuid="<%= $quote->{'uuid'} %>" src="/icons/trash.png" class="medium_thumb delete_quote hover">
+			</span>
+			<table class="quote_table">
+				<thead>
+					<th>Item</th><th>Name</th><th>Quantity</th><th>Unit</th><th>Cost</th><th>Markup</th><th>Price</th><th>Tax</th><th>Total</th>
+				</thead>
+				<tbody>
+					<tr>
+						<td>Model</td>
+						<td><%= &subs::format_name($q->{'model'}->{'name'}) %></td>
+						<td><%= $q->{'model'}->{'quantity'} || 1 %></td>
+						<td><%= $q->{'model'}->{'unit'} %></td>
+						<td><%= &subs::price_formatter($q->{'model'}->{'cost'}) %></td>
+						<td><% if ($q->{'model'}->{'cost'} && $q->{'model'}->{'price'}) { %><%= &subs::percent_formatter(($q->{'model'}->{'price'} / $q->{'model'}->{'cost'}) / 10) %><% } %></td>
+						<td><%= &subs::price_formatter($q->{'model'}->{'price'}) %></td>
+						<td><%= &subs::price_formatter($q->{'model'}->{'tax'}) %></td>
+						<td><% if ($q->{'model'}->{'price'} && $q->{'numbers'}->{'tax_rate'}) { %>
+							<%= &subs::price_formatter($q->{'model'}->{'price'} + $q->{'model'}->{'tax'}) %>
+						<% } else { %>
+							<%= $q->{'model'}->{'price'} %>
+						<% } %></td>
+					</tr>
+					<thead>
+						<% foreach my $oc ( keys %{$q->{'options'}} ) { %>
+							<% if (scalar @{$q->{'options'}->{$oc}} > 0) { %>
+								<thead><th style="font-size:22px;" colspan="6"><%= &subs::format_name($oc) %></th></thead>
+								<thead><th>Item</th><th>Name</th><th>Cost</th><th>Markup</th><th>Price</th><th>Tax</th><th>Total</th></thead>
+								<% foreach my $o ( @{$q->{'options'}->{$oc}} ) { %>
+									<tr>
+										<td>Option</td>
+										<td><%= &subs::format_name($o->{'name'}) %></td>
+										<td><%= $o->{'quantity'} %></td>
+										<td><%= $o->{'unit'} %></td>
+										<td><%= &subs::price_formatter($o->{'cost'}) %></td>
+										<td><% if ($o->{'cost'} && $o->{'price'}) { %><%= &subs::percent_formatter(($o->{'price'} / $o->{'cost'}) / 10) %><% } %></td>
+										<td><%= &subs::price_formatter($o->{'price'}) %></td>
+										<td><%= &subs::price_formatter($o->{'tax'}) %></td>
+										<td><% if ($o->{'price'} && $q->{'numbers'}->{'tax_rate'}) { %>
+											<%= &subs::price_formatter($o->{'price'} * $q->{'numbers'}->{'tax_rate'}) %>
+											<% } else { %>
+												<%= $o->{'price'} %>
+											<% } %>
+										</td>
+									</tr>
+								<% } %>
+							<% } %>
+						<% } %>
+					</thead>
+					<thead style="font-size:20px;">
+						<th colspan="2" class="time" timestamp="<%= $quote->{'timestamp'} %>"></th>
+						<th><%= &subs::price_formatter($q->{'numbers'}->{'cost'}) %></th>
+						<th><%= &subs::percent_formatter($q->{'numbers'}->{'markup'}) %></th>
+						<th><%= &subs::price_formatter($q->{'numbers'}->{'subtotal'}) %></th>
+						<th><%= &subs::price_formatter($q->{'numbers'}->{'tax'}) %></th>
+						<th><u><%= &subs::price_formatter($q->{'numbers'}->{'total'}) %></u></th>
+						<th><u><%= &subs::price_formatter($q->{'numbers'}->{'balance'}) %></u></th>
+					</thead>
+				</tbody>
+			</table>
+
+		</div>
+	<% } %>
+</div>
+<div class="store_quote_totals">
+	<table style="position:absolute;;bottom:0px;width:100%;background-color:white;opacity:.9;text-align:center;font-size:20px;">
+		<thead>
+			<% foreach my $number ( sort keys %{$totals} ) { %>
+				<th><%= &subs::format_name($number) %></th>
+			<% } %>
+			<th></th>
+		</thead>
+		<tbody>
+			<tr>
+				<% foreach my $number ( sort keys %{$totals} ) { %>
+					<td><%= sprintf("%.2f", $totals->{$number}) %></td>
+				<% } %>
+				<td><img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="all" src="/images/decipherable/feeder.png" class="medium_thumb print hover"></td>
+			</tr>
+		</tbody>
+	</table>
+</div>
+
+
+
+
+

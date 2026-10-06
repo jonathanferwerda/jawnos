@@ -1,0 +1,15 @@
+<% my $packages = $settings->{'app_packaging'}; %>
+<% $packages->{'new'} = { name => '', quantity => '', each => '', uuid => &subs::random_string_creator(20) }; %>
+
+<% foreach my $p ( keys %{$packages} ) { %>
+	<% my $packaging = $packages->{$p}; %>
+	<div class="packaging_config_container" uuid="<%= $packaging->{'uuid'} || $p %>">
+		<input class="packaging_config" uuid="<%= $p %>" name="name" value="<%= $packaging->{'name'} %>" style="width:40%;" placeholder="Name">
+		<% foreach my $pc ( qw/quantity each length width height weight/ ) { %>
+			<input class="packaging_config" uuid="<%= $p %>" name="<%= $pc %>" value="<%= $packaging->{$pc} %>" style="width:20%;" placeholder="<%= &subs::format_name($pc) %>">
+		<% } %>
+		<% if ($p ne 'new') { %>
+			<img src="/images/make believe/cancel_button.png" class="delete_packaging little_thumb" uuid="<%= $p %>" style="vertical-align:bottom;">
+		<% } %>
+	</div>
+<% } %>

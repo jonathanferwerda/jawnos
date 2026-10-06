@@ -1,0 +1,80 @@
+
+<table style="width:100%;background-color:white;border:solid;border-radius:10px;">
+	<thead>
+		<th></th><th></th>
+	</thead>
+	<tbody>
+		<% foreach my $k ( sort keys %{$query} ) { %>
+			<tr>
+				<td style="text-align:left;"><b><%= &subs::format_name($k) %></b></td>
+				<td>
+					<% if (ref($query->{$k}) eq 'ARRAY' ) { %>
+						<% if (scalar @{$query->{$k}} > 0) { %>
+							<table style="width:100%;border:solid;border-radius:5px;">
+								% my $count = 0;
+								<% foreach my $a ( @{$query->{$k}} ) { %>
+									% $count++;
+									% my $t_uuid = &subs::random_string_creator(21);
+									<% if (eval { keys %{$a} } ) { %>
+										<% foreach my $ka ( keys %{$a} ) { %>
+											% next if $ka eq 'data';
+											<tr t_uuid="<%= $t_uuid %>">
+												<td><b><%= &subs::format_name($ka) %></b></td>
+												<% if ($ka eq 'timestamp' || $ka eq 'ts' || $ka eq 'server_time') { %>
+													<td class="time" timestamp="<%= $a->{$ka} * 1000 %>"></td>
+												<% } else { %>
+													<td><%= $a->{$ka} %></td>
+												<% } %>
+											</tr>
+
+										<% } %>
+									<% } else { %>
+										<td><b><%= $count %></b></td>
+										<td><%= $a %></td>
+									<% } %>
+									<% if ($k eq 'files') { %>
+
+										<tr style="text-align:center;align:center;" t_uuid="<%= $t_uuid %>">
+											%	my $params = {
+											%		file => $a->{'directory'} eq '/' ? '/' . $a->{'name'} : $a->{'directory'} . '/' . $a->{'name'},
+											%		authorization => $op_d->{'__specs'}->{'authorization'}
+											%	};
+											<% if ($a->{'type'} =~ /audio/) { %>
+												<td>
+													<audio src="data:<%= $a->{'type'} %>;base64,<%= $a->{'data'} %>" controls></audio>
+												</td>
+											<% } %>
+		
+											<td>
+												<img class="little_thumb hover delete_embedded_file" src="/icons/trash.png"
+													file="<%= $params->{'file'} %>" directory="<%= $a->{'directory'} %>" name="<%= $a->{'name'} %>"
+													edt="<%= $edt %>" chip_id="<%= $chip_id %>">
+											</td>
+										</tr>
+									<% } %>
+								<% } %>
+							</table>
+						<% } %>
+					<% } elsif (ref($query->{$k}) eq 'HASH' ) { %>
+						<table style="width:100%;border:solid;border-radius:5px;">
+							<% foreach my $kh ( sort keys %{$query->{$k}} ) { %>
+								% next if $kh eq 'data';
+								<tr>
+									<td style="text-align:left;"><b><%= &subs::format_name($kh) %></b></td>
+									<% if ($kh eq 'timestamp' || $kh eq 'ts' || $kh eq 'server_time') { %>
+										<td class="time" timestamp="<%= $query->{$k}->{$kh} * 1000 %>"></td>
+									<% } else { %>
+										<td><%= $query->{$k}->{$kh} %></td>
+									<% } %>
+								</tr>
+							<% } %>
+						</table>
+					<% } else { %>
+						<%= $query->{$k} %>
+					<% } %>
+				</td>
+			</tr>
+		<% } %>
+
+	</tbody>
+</table>

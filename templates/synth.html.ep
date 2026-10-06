@@ -1,0 +1,42 @@
+<div id="synth" style="background-color:pink;">
+
+	<% foreach my $k ( @{$piano} ) { %>
+		<% if ($k->{'note'}) { %>
+			<div class="piano_key <%= $k->{'colour'} %>" freq="<%= $k->{'freq'} %>" note="<%= $k->{'note'} %>"><%= $k->{'note'} %></div>
+		<% } %>
+	<% } %>
+	<select id="synth_waveform" class="appointment_settings" setting="waveform" value="<%= $settings->{'waveform'} %>">
+		<% foreach my $w ( ('sine', 'square', 'triangle', 'sawtooth', 'trapezium',  'exp',
+              'whitenoise',   'tpdfnoise',   'pinknoise',  'brownnoise',  'pluck') ) { %>
+			<option value="<%= $w %>" <% if ($w eq $settings->{'waveform'}) { %>selected <% } %>><%= &subs::format_name($w) %>
+		<% } %>
+	</select>
+	<input type="range" id="synth_length" min="0.01" step=".1" max="5" class="appointment_setting" setting="length" value="<%= $settings->{'length'} %>">
+	<select id="synth_destination" class="appointment_setting" setting="destination" value="<%= $settings->{'destination'} %>">
+		<% foreach my $sd ( qw/browser sox ws/ ) { %>
+			<option value="<%= $sd %>" <% if ($sd eq $settings->{'destination'}) { %>selected <% } %>><%= &subs::format_name($sd) %></option>
+		<% } %>
+	</select>
+	<audio id="synthesizer" autoplay ></audio>
+</div>
+
+<style>
+	.piano_key.white {
+		background-color: white;
+		height: 100px;
+		width: 20px;
+		border: solid;
+		border-width: 2px;
+		float: left;
+	}
+	.piano_key.black {
+		background-color: black;
+		color: white;
+		height: 80px;
+		width: 20px;
+		border: solid;
+		border-width: 2px;
+		float: left;
+	}
+	
+</style>

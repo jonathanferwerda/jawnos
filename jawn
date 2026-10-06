@@ -1,0 +1,347 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Mojo::IOLoop::ReadWriteFork;
+use File::Slurp;
+use Mojo::File 'path';
+use Mojo::Log;
+use Mojo::JSON qw/decode_json encode_json/;
+use Data::Dumper;
+use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
+use Sereal::Decoder qw(decode_sereal);
+use feature 'current_sub';
+my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 });
+my $decoder = Sereal::Decoder->new();
+no warnings 'uninitialized';
+my $dump_dir = &home('~/.president');
+`rm -R $dump_dir/*` if -e $dump_dir;
+`mkdir $dump_dir` unless -e $dump_dir;
+my $subprocesses = {};
+my @all_subprocesses;
+our $logfile = &home('~/manager.log');
+
+`touch $logfile` if not -e $logfile;
+our $log = Mojo::Log->new(path => $logfile);
+my $tmp_dir = '/tmp';
+unless ( -d $tmp_dir ) {
+	$tmp_dir = &home('~/.president/');
+}
+`mkdir $tmp_dir/ws` unless -e $tmp_dir . '/ws';
+
+if (-l $0) {
+  print "The script was executed via a symbolic link!\n";
+  my $path = readlink($0);
+	print $path . "\n";
+	my @dir = split '/', $path;
+	pop @dir;
+	$path = join '/', @dir;
+	chdir($path);
+}
+$| = 1;
+my $fork = Mojo::IOLoop::ReadWriteFork->new;
+
+$SIG{INT} = sub {
+	&shut_down();
+	exit 0;
+};
+
+$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+
+my $status = 'off';
+
+my @printless = (
+	'Permission denied',
+	'cannot open /proc/net',
+	'Cannot bind netlink'
+);
+
+
+my ($master_timer,$master_timer_paused);
+&master_time_looper();
+sub master_time_looper() {
+	$master_timer = Mojo::IOLoop->recurring(2 => sub {
+		my ($loop, $timer_id) = @_;
+		$master_timer = $timer_id;
+		my $status_file = &home('~/.president/status');
+		my $f_status = -e $status_file ? read_file($status_file) : '';
+		if ($status eq 'frozen' || $f_status eq 'restart') {
+		  Mojo::IOLoop->remove($master_timer);
+		  return if $master_timer_paused == 1;
+			$master_timer_paused = 1;
+			&shut_down();
+			$status = 'dead';
+		}
+		if ($status eq 'dead') {
+
+			$status = 'restarting';
+			print "restarting president in 3";
+			sleep 1;
+			print "... 2";
+			sleep 1;
+			print "... 1";
+			sleep 1;
+			$fork = undef;
+
+			$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+		  &master_time_looper();
+		}
+	});
+}
+
+
+
+my $process_watch;
+my $process_watch_file = &home('~/.process_watch');
+my %buffers;
+
+$process_watch = &process_watch();
+Mojo::IOLoop->recurring(2 => sub {
+
+	my $is_running = defined Mojo::IOLoop->acceptor($process_watch) ? 1 : 0;
+	if (!$is_running) {
+		Mojo::IOLoop->remove($process_watch);
+		$process_watch = &process_watch();
+	}
+	else {
+
+	}
+
+});
+
+sub shut_down() {
+	print "pres Ctrl+C! Closing...\n";
+	$fork->write("\x03");
+	`./scripts/manager_killer.pl`;
+	my $ps = `ps -e`;
+	my @ps = split /\n/, $ps;
+	foreach my $s ( keys %{$subprocesses} ) {
+		if (eval { keys %{$subprocesses->{$s}->{'subprocesses'}} }) {
+			foreach my $pid ( keys %{$subprocesses->{$s}->{'subprocesses'}} ) {
+				if (grep { $_ =~ /\Q$pid/ } @ps) {
+					kill 'INT', $pid;
+					print "Manual Kill " . $pid . "\n";
+					`kill -9 $pid`;
+				}
+			}
+		}
+		my $pid = $s;
+		unless ($pid =~ /[a-zA-Z]/) {
+			if (grep { $_ =~ /\Q$pid/ } @ps) {
+				kill 'INT', $pid;
+				print "Manual PKill " . $pid . "\n";
+				`kill -9 $pid`;
+			}
+		}
+	}
+	$fork->close;
+	my $pid = $fork->pid;
+	if ($pid != 0) {
+		if (grep { $_ =~ /\Q$pid/ } @ps) {
+			kill 'INT', $fork->pid;
+			print "Manual TKill " . $pid . "\n";
+			`kill -9 $pid`;
+		}
+	}
+	$subprocesses = {};
+	@all_subprocesses;
+	sleep .1;
+
+}
+
+sub process_watch() {
+	eval {
+
+		my $server = Mojo::IOLoop->server({ path => $process_watch_file } => sub {
+			my ($loop,$stream,$id) = @_;
+			$stream->handle->autoflush(1);
+			$stream->high_water_mark(8 * 1024 * 1024);
+
+			$buffers{$id} = '';
+			$stream->on(read => sub () {
+
+				my ($stream, $bytes) = @_;
+
+				$buffers{$id} .= $bytes;
+
+				while (1) {
+					last if length($buffers{$id}) < 4;
+
+	        my $payload_length = unpack('N', substr($buffers{$id}, 0, 4));
+
+	        # If we don't have the full payload yet, wait for next event loop tick
+	        last if length($buffers{$id}) < (4 + $payload_length);
+
+	        # Extract header and data cleanly using 4-argument substr for speed
+	        substr($buffers{$id}, 0, 4, '');
+	        my $sereal_blob = substr($buffers{$id}, 0, $payload_length, '');
+
+					my $process = eval { $decoder->decode($sereal_blob) };
+					if ($@) {
+						warn "Worker $$: Failed to parse Sereal: $@";
+						next;
+					}
+
+					if ($process->{'query'}) {
+						my $q = $process->{'query'};
+						my $data = {};
+						if ($q eq 'subprocesses') {
+							$data = $subprocesses;
+						}
+						eval {
+
+							$subprocesses->{'status'} = 'report';
+							my $jwsm = $encoder->encode($data);
+							my $payload_length = length($jwsm);
+							my $packet = pack('N', $payload_length) . $jwsm;
+
+
+							$stream->write($packet);
+						};
+						if ($@) { warn "Worker $$: Failed to send 'stop' state: $@" }
+					}
+					elsif ($process->{'status'} eq 'report') {
+						$log->info('i see the report');
+					}
+					else {
+					#	$subprocesses->{$process->{'pid'}} = $process;
+
+						my $cpu_worker = $subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}}->{'cpu_worker'} || [];
+
+						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;
+
+						my $cpu = $process->{'htop'};
+						if (scalar @{$cpu_worker} > 0) {
+							my $count = scalar @{$cpu_worker} - 1;
+							foreach my $t ( qw/user system total/) {
+								$cpu->{'c_' . $t} = $cpu->{$t} - $cpu_worker->[$count]->{$t};
+								my $percentage = 0;
+								if (defined $cpu_worker->[$count]->{'timestamp'} && defined $cpu->{'c_' . $t} && $cpu->{'c_' . $t} > 0) {
+									eval {
+										$percentage = sprintf("%.3f", $cpu->{'c_' . $t} / (($cpu->{'timestamp'} - $cpu_worker->[$count]->{'timestamp'}) / 1000) * 100);
+									};
+								}
+								$cpu->{'p_' . $t} = $percentage;
+							}
+							splice @{$cpu_worker}, 2;
+
+						}
+						push @{$cpu_worker}, $cpu;
+						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}}->{'cpu_worker'} = $cpu_worker;
+						$process->{'htop'} = $cpu;
+						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;
+				#		$log->info(Dumper $cpu);
+
+
+
+
+						if ($process->{'status'} eq 'stop') {
+							delete $subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}};
+						#	foreach my $k ( keys %{$subprocesses} ) {
+						#		unless (scalar keys %{$subprocesses->{$k}->{'subprocesses'}}) {
+						#			delete $subprocesses->{$k};
+						#		}
+						#	}
+						}
+
+						$stream->write($process->{'uuid'}) if defined $process->{'uuid'} && $process->{'uuid'};
+					}
+
+
+
+
+
+				}
+			});
+			$stream->on(close => sub {
+				delete $buffers{$id};
+			});
+		});
+		return $server;
+	}
+}
+Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
+
+
+
+Mojo::IOLoop->start;
+sub terminal_pty_runner() {
+	return $fork if $status eq 'starting';
+	$status = 'starting';
+	my $data = shift;
+	if (!$fork) {
+		$fork = Mojo::IOLoop::ReadWriteFork->new;
+	}
+	print 'starting fork' . "\n";
+
+	$fork->conduit({raw => 1, type => "pty"});
+
+  $fork->on(read => sub () {
+		my ($fork, $bytes) = @_;
+
+		if ($bytes =~ /Address already in use/) {
+			print "already in use!!!! AAAAAAAAAH!\n";
+			$status = 'frozen';
+		}
+		elsif ($bytes =~ /they dead/ || $bytes =~ /President Died/ || $bytes =~ /core dumped/) {
+			print "See it's dead\n";
+			$status = 'frozen';
+		}
+		elsif ($bytes =~ /Broken Pipe/) {
+
+		}
+		unless (grep { $bytes =~ /\Q$_\E/ } @printless) {
+			print $bytes;
+		}
+  });
+
+  $fork->on(close => sub () {
+		my ($fork, $exit_code) = @_;
+		print "closing fork";
+  });
+
+	$fork->on(drain => sub () {
+		my ($fork,$drain) = @_;
+		print "drain\n";
+	});
+
+	$fork->on(spawn => sub() {
+		my ($fork) = @_;
+		print "fork started " . $data->{'program'} . " k\n";
+		if ($data->{'program'}) {
+			print "Starting " . $data->{'program'} . "\n";
+			Mojo::IOLoop->timer(0.1 => sub {
+				$fork->write($data->{'program'} . "\n");
+			});
+		}
+		$status = 'started';
+
+	});
+
+	$fork->start({
+		program => "bash",
+		program_args => [ "-i" ],
+		env          => {
+	    %ENV,
+	    INPUTRC => '/dev/null',
+	    PROMPT_COMMAND => '',
+	    TERM => 'dumb'
+		}
+	});
+
+
+	return $fork;
+}
+
+no warnings 'uninitialized';
+
+sub home() {
+	my ($inhabitant) = @_;
+	my $com = 'echo $HOME';
+	my $cwd = `$com`;
+	chomp $cwd;
+	$inhabitant =~ s/~/$cwd/;
+	return $inhabitant;
+}
+
+1;

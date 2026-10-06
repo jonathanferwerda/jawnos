@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+			<link rel='icon' type='image/png' href="<%= $logo %>">
+		<% } else { %>
+		  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+		<% } %>
+
+    <title><%= title %></title>
+
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<script src="/js/jquery.js"></script>
+		<script src="/js/gate.js"></script>
+
+  </head>
+  <body><%= content %></body>
+
+	<script>
+		var bti = sessionStorage.getItem('browser_tab_id'); 
+		if (bti == null) { 
+			console.log('bti is null');
+			bti = '<%= $browser_tab_id %>';
+			sessionStorage.setItem('browser_tab_id', '<%= $browser_tab_id %>'); 
+		}
+		var bt = localStorage.getItem('browser_tab');
+		if (!bt) { 
+			localStorage.setItem('browser_tab', '<%= $browser_tab %>');
+		}
+	</script>
+	<script src="/js/numeral.min.js"></script>
+	<script src="/js/universal.js"></script>
+</html>

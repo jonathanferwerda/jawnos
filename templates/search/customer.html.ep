@@ -1,0 +1,3 @@
+<% foreach my $cx ( @{$results} ) { %>
+	<div class="hover cx_result" cx="<%= $cx->{'uuid'} %>"><%= &subs::format_name($cx->{'app'}) %></div>
+<% } %>

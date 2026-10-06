@@ -1,0 +1,80 @@
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+
+<div id="security" style="background-color:white;width:100%;height:100%;overflow:scroll;">
+	<div style="position:absolute;width:200px;text-align:right;;right:0px;background-color:white;">
+		<button class="security_view_select" view="padlock" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
+		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
+		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>
+	</div>
+	<br><br><br><br>
+	<div class="security_view" view="padlock" style="width:100%;position:absolute;bottom:0px;<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
+		<% my $padlock = &subs::db_query('select * from security where level=? limit 1', 'padlock')->hashes->[0]; %>
+		<%= include 'padlock', mode => 'security' %>
+		<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
+		<select id="padlock_contexts" multiple value="<%= join ',', @{$selected_contexts} %>" style="position:absolute;right:0px;bottom:40px;height:100px;">
+			<% foreach my $context ( qw/general gallery music/ ) { %>
+				<option value="<%= $context %>" <% if (grep { $_ eq $context } @{$selected_contexts}) { %>selected<% } %>><%= &subs::format_name($context) %></option>
+			<% } %>
+		</select>
+		<span id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>"></span>
+		<img src="/icons/trash.png" class="little_thumb" id="padlock_delete" 
+			style="position:absolute;right:0px;bottom:0px;<% unless ($padlock) { %>display:none;<% } %>">
+	</div>
+
+	<div class="security_view" view="neighbour_link" style="<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">
+		<table style="width:100%;text-align:center;"
+			<thead>
+				<th>Initiator</th><th>Initiated</th><th>Privilege</th><th>Accepted</th><th>Updated</th><th>Cxl</th>
+			</thead>
+			<tbody>
+				
+				<% foreach my $nl ( @{$neighbour_link}) { %>
+					<tr class="neighbour_link" uuid="<%= $nl->{'uuid'} %>">
+						<td><%= $nl->{'initiator'} %></td>
+						<td><%= $nl->{'initiated'} %></td>
+						<td><img class="neighbour_link_updater large_thumb" src="<%= $gb::known_appts->{$nl->{'status'}}->{'icon'} %>"><br><%= &subs::format_name($nl->{'status'}) %></td>
+						<td class="time" timestamp="<%= $nl->{'ost'} %>"</td>
+						<td class="time" timestamp="<%= $nl->{'server_time'} %>"</td>
+						<td><img src="/images/make believe/cancel_button.png" class="neighbour_link_delete medium_thumb"></td>
+					</tr>
+					<tr style="display:none;" class="neighbour_link_updater_selection" uuid="<%= $nl->{'uuid'} %>">
+						<td colspan="6">
+							<% foreach my $chair ( keys %{$gb::chairs} ) { %>
+								<img class="neighbour_link_privilege_change large_thumb" privilege="<%= $chair %>" src="<%= $gb::known_appts->{$chair}->{'icon'} %>">
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	</div>
+	<div class="security_view" view="signatorial" style="<% unless ($president->{'security_view'} eq 'signatorial') { %>display:none;<% } %>">
+		<% my $signatorials = eval { return decode_json &subs::setting_grabber({ app => 'customs', setting => 'signatorials'}) } || []; %>
+		<% 
+
+		%>
+		<% foreach my $r ( @{$signatorials} ) { 
+			my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $r->{'f'}, app => $r->{'app'}, type => $r->{'type'} });
+			my $file = $destination . $asset;
+			%>
+			<% if (-e $file) { %>
+				<img class="signatorial_selection gigantic_thumb" file="<%= $file %>" src="/file_open?file=<%= $file %>&timestamp=<%= $r->{'server_time'} %>&app=<%= $r->{'app'} %>"
+					<% if ($file eq $config->{'signatorial'}) { %>
+						style="border-width:5px;border-color:yellow;"
+					<% } %>>
+			<% } else { %>
+				@{$signatorials} = grep { $_->{'uuid'} ne $r->{'uuid'} } @{$signatorials};
+				my $jsignatorials = encode_json $signatorials;
+				&subs::setting_setter({ app => 'customs', setting => 'signatorials', value => $jsignatorials });
+			<% } %>
+		<% } %>
+		<% if (scalar @{$signatorials} == 0) { %>
+			No signatorials
+		<% } %>
+
+
+
+
+
+	</div>
+</div>

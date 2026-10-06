@@ -1,0 +1,1 @@
+<span style="color:yellow" class="terminal_error"><span class="time" timestamp="<%= $err->{'timestamp'} %>"> </span><%= $whoami %>@<%= $hostname %> <%= $err->{'code'} %>: <%= $err->{'msg'} %></span><br>

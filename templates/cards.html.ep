@@ -1,0 +1,23 @@
+<div id="cards" style="background-color:pink;width:100%;height:120%;">
+	<span id="cards_mode" style="height:10%">
+		<% foreach my $mod ( qw/free cycle day week month year spread all/ ) { %>
+			<button class="cards_mode" mode="<%= $mod %>" <% if ($mode eq $mod) { %>status="enabled"<% } %>><%= &subs::shorthand_name(&subs::format_name($mod), 3) %></button>
+		<% } %>
+	</span>
+	<img id="deck_card" class="card hover" style="align:center;width:70%;height:80%;float:left;" src="/images/cards/title.png">
+	<span id="deck_history" style="float:right;width:30%;height:90%;overflow:scroll;">
+		<% foreach my $his ( @{$history} ) { %>
+			<% my $rn = &subs::random_string_creator(10); %>
+			<img class="huge_thumb card history hover" rn="<%= $rn %>" title="<%= &subs::format_name($his->{'title'}) %>" style="width:100%;" src="<% if ($his->{'stream'}) { %><%= $his->{'stream'} %><% } else { %>/images/cards/<%= $his->{'title'} %>.png<% } %>">
+			<br><span class="time" style="text-align:center;" timestamp="<%= $his->{'timestamp'} %>"></span>
+			<% if ($his->{'description'}) { %>
+				<img class="tiny_thumb card_description_icon" src="/images/make believe/Pillow.png">
+				<span class="card_history_description" rn="<%= $rn %>" style="display:none;"><%= $his->{'description'} %></span>
+			<% } %>
+			<br>
+		<% } %>
+	</span>
+	<p style="font-size:36px;" id="card_title">Deck of Jawn!</p>
+	<p style="display:none;" id="card_description"></p>
+
+</div>

@@ -1,0 +1,21 @@
+<div>
+	<% foreach my $reg ( @{$registers} ) { %>
+		<% my $data = $reg->{'data'}; %>
+		<span>
+			<span style="float:left;">
+				<b style="font-size:22px;"><%= &subs::format_name($data->{'model'}->{'name'}) %></b><br>
+				<% foreach my $oc ( keys %{$data->{'options'}}) { %>
+					<% foreach my $o ( @{$data->{'options'}->{$oc}}) { %>
+						<span><%= $o->{'name'} %></span><br>
+					<% } %>
+				<% } %>
+			</span>
+				<span style="float:right;bottom:0px;text-align:right;">
+					<% foreach my $q ( qw/subtotal tax aux total balance/ ) { %>
+						<b><%= &subs::format_name($q) %>: </b><%= &subs::price_formatter($data->{'numbers'}->{$q}) %><br>
+					<% } %>
+				</span>
+		</span>
+	<% } %>
+
+</div>

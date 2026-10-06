@@ -1,0 +1,67 @@
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="initial-scale=1.0">
+		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+			<link rel='icon' type='image/png' href="<%= $logo %>">
+		<% } else { %>
+		  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+		<% } %>
+		<script src="/js/jquery.js"></script>
+		<script src="/js/jquery-ui.js"></script>
+		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script>
+
+			var bti = sessionStorage.getItem('browser_tab_id'); 
+			if (bti == null) { 
+				console.log('bti is null');
+				bti = '<%= $browser_tab_id %>';
+				sessionStorage.setItem('browser_tab_id', '<%= $browser_tab_id %>');
+			}
+			var bt = localStorage.getItem('browser_tab');
+			if (!bt) { 
+				localStorage.setItem('browser_tab', '<%= $browser_tab %>');
+			}
+			var device = "<%= $device %>";
+
+			var ws_url = '<%= $ws_url %>';
+			var mail_ws_url = '<%= $mail_ws_url %>';
+			var paperboy_url = '<%= $paperboy_url %>';
+			var my_name = '<%= $my_name %>';
+			var advertise_watching = '<%= $advertise_watching %>';
+			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
+			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+		</script>
+		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<script src="/js/mailbox.js?string=<%= $string %>"></script>
+		<script src="/js/numeral.min.js"></script>
+		<script src="/js/moment.js"></script>
+		<script src="/js/paperboy.js?string=<%= $string %>"></script>
+		<script src="/js/music.js?string=<%= $string %>"></script>
+		<script src="/js/images.js?string=<%= $string %>"></script>
+		<script src="/js/store.js?string=<%= $string %>"></script>
+		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
+
+
+
+
+	</head>
+	<body style="background-color:<%= $config->{$device}->{'store'}->{'background_colour'} %>">
+	<div id="everything" style="background-color:<%= $config->{$device}->{'store'}->{'background_colour'} %>">
+		<%= content %>
+		<div id="red_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+		<div id="yellow_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+		<div id="green_dot" class="circular_thumb dot">
+			<span class="dot_info"><span>
+		</div>
+	</div>
+	<div id="printer_view" style="display:none;"></div>
+	</body>
+</html>
+

@@ -1,0 +1,227 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<% my $server_time = &subs::rightNow(); %>
+<% no warnings 'uninitialized'; %>
+<div class="detail_area" app="<%= $a %>" style="overflow:scroll;">
+	<span style="display:none;" class="detail_json" app="<%= $a %>">
+		<%= $appts->{'__specs'}->{'data'} %>
+	</span>
+	<b><span class="detail_quantity" app="<%= $a %>"><%= scalar @{$details} %></span> app<% unless (scalar @{$details} == 1) { %>s<% } %></b>
+	<% if ($appts->{$a}->{'total_amount'}) { %>
+		<span><u>Amount:</u> <%= $appts->{$a}->{'total_amount'} %></span><br>
+	<% } %>
+	<% if ($appts->{$a}->{'total_quantity'}) { %>
+		<span><u>Quantity:</u> <%= $appts->{$a}->{'total_quantity'} %></span><br>
+	<% } %>
+	<% my ($db,$database,$sql) = &subs::database_grabber(); %>
+	<% foreach my $l ( reverse @{$details} ) { %>
+		<div style="border:solid;" last_update="<%= $l->{'server_time'} %>" class="appointment_detail" uuid="<%= $l->{'uuid'} %>" app="<%= $l->{'app'} %>" id="app_<%= $l->{'app'} %>_<%= $l->{'timestamp'} %>">
+			<table style="width:100%;">
+				<thead>
+					<th>Type</th>
+					<th>Edit</th>
+					<th>TS</th>
+					<th>Dur</th>
+					<% if ($l->{'stop_timestamp'}) { %>
+						<th>Stop</td>
+					<% } %>
+					<th>Warr</th>
+					<th>OST</th>
+
+				</thead>
+				<tbody>
+					<tr>
+						<% if ($l->{'pseudonym'}->{'icon'}) { %>
+						<td><img style="left:0px;"><img class="little_thumb
+							<% if ($l->{'type'} eq 'studio') { %>
+								hover" onclick="studioInit({ last_song: '<%= $l->{'uuid'} %>' })
+							<% } %>
+							" src="<%= $l->{'pseudonym'}->{'icon'} %>"
+						></td>
+						<% } else { %>
+							<td><%= $l->{'formatted_type'} %></td>
+						<% } %>
+
+						<td><img src="/icons/edit.png" uuid="<%= $l->{'uuid'} %>" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
+							class="little_thumb edit_app hover"	server_time="<%= $l->{'server_time'} %>">
+						</td>
+
+
+
+
+						<td class="time" style="font-size:16px;" timestamp="<%= $l->{'timestamp'} %>"></td>
+						<td><%= $l->{'formatted_duration'} %></td>
+						<% if ($l->{'stop_timestamp'}) { %><td class="time" timestamp="<%= $l->{'stop_timestamp'} %>"></td><% } %>
+						<td class="time" timestamp="<%= $l->{'warranty'} %>"></td>
+						<td class="time" timestamp="<%= $l->{'ost'} %>"></td>
+					</tr>
+				</tbody>
+			</table>
+			<div class="appointment_edit_area" app="<%= $l->{'app'} %>" uuid="<%= $l->{'uuid'} %>" style="display:none;">
+				EDITOR!
+			</div>
+			<div class="appointment_details_buttons">
+				<td><img src="/icons/trash.png" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
+					class="delete_app little_thumb hover" formatted_name="<%= $appts->{$a}->{'formatted_name'} %>" 
+					formatted_time="<%= $l->{'formatted_time'} %>"
+					app_type="<%= $l->{'type'} %>"
+					server_time="<%= $l->{'server_time'} %>"
+					formatted_duration="<%= $l->{'formatted_duration'} %>" 
+					uuid="<%= $l->{'uuid'} %>" />
+				</td>
+				<td><img class="little_thumb upload_file app_upload hover" src="/images/make believe/up.png"></td>
+
+				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
+					<td>
+						<img class="little_thumb take_picture hover" camera="0" type="camera" app="<%= $a %>" src="/images/decipherable/camera back.png">
+					</td>
+					<td>
+						<img class="little_thumb take_picture hover" camera="1" type="camera" app="<%= $a %>" src="/images/decipherable/camera front.png">
+					</td>
+				<% } %>
+				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
+					<td>
+						<img class="little_thumb scan_document hover" type="scan" feed="flatbed" app="<%= $a %>" src="/images/decipherable/flatbed.png">
+					</td>
+					<td>
+						<img class="little_thumb scan_document hover" type="scan" feed="adf" app="<%= $a %>" src="/images/decipherable/feeder.png">
+					</td>
+					<td>
+						<img class="little_thumb take_picture hover" camera="webcam" type="camera" app="<%= $a %>" src="/images/make believe/eye.png">
+					</td>
+					<br>
+				<% } %>
+				<% if ($l->{'start_notes'} eq 'redacted' || $l->{'notes'} eq 'redacted' || $l->{'end_notes'} eq 'redacted') { %>
+					<img src="/icons/note_button.png" server_time="<%= $l->{'server_time'} %>" uuid="<%= $l->{'uuid'} %>" class="little_thumb notes_toggle hover" app="<%= $l->{'app'} %>" timestamp="<%= $l->{'timestamp'} %>">
+					<span class="notespace"></span>
+				<% } %>
+				
+				<% if ($l->{'type'} eq 'web') { %>
+					<div><iframe class="web" src="<%= $l->{'content'} %>"><%= $l->{'data'} %></iframe></div>					
+				<% } elsif ($l->{'type'} eq 'msg') { %> 
+					<div><%= $l->{'data'} %></div>
+				<% } %>
+				<% if ($l->{'file'}) { %>
+					<%= include 'apps/app_file', l => $l %>
+				<% } %>
+			</div>
+
+			<table style="align:center;width:100%;">
+				<thead>
+					<th>Proj</th>
+					<% if ($l->{'subtype'}) { %><th>Sub</th><% } %>
+					<% if ($l->{'src'}) { %><th>Src</th><% } %>
+					<% if ($l->{'manufacturer'}) { %><th>Man</th><% } %>
+					<th>POS</th>
+					<% if ($l->{'quantity'}) { %><th>Quantity</th><% } %>
+					<% if ($l->{'distance'}) { %><th><button class="appointment_list_toggle hover" list="distance">Dist</button></th><% } %>
+					<% if ($l->{'duties'}) { %>
+						<% if (scalar @{$l->{'duties'}} > 0) { %>
+							<th><button class="appointment_list_toggle hover" list="duties">Duties</button></th>
+						<% } %>
+					<% } %>
+					<% if ($l->{'measures'}) { %>
+						<% if (scalar @{$l->{'measures'}} > 0) { %>
+							<th><button class="appointment_list_toggle hover" list="measures">Measures</button</th>
+						<% } %>
+					<% } %>
+					<% if ($l->{'type'} eq 'record') { %>
+						<th>Rec</th>
+					<% } %>
+				</thead>
+				<tbody>
+					<tr>
+						<td><%= $l->{'formatted_project'}  %></td>
+						<% if ($l->{'subtype'}) { %><td><%= &subs::format_name($l->{'subtype'}) %></td><% } %>
+						<% if ($l->{'src'}) { %><td class="hover" onclick="appointmentGrabber('<%= $l->{'src'}->{'app'} %>')"><%= &subs::format_name($l->{'src'}->{'app'}) %></td><% } %>
+						<% if ($l->{'manufacturer'}) { %><td><%= &subs::format_name($l->{'manufacturer'}) %></td><% } %>
+						
+						<td class="appointment_pos"><%= &subs::format_name($l->{'pos'}) %></td>
+						<% if ($l->{'quantity'}) { %><td><%= $l->{'quantity'} %><%= $l->{'unit'} %></td><% } %>
+						<% if ($l->{'distance'}) { %><td><%= $l->{'total_distance'} %>km<%= $l->{'speed'} ? '@' . $l->{'speed'} . 'km/h' : '' %> </td><% } %>
+						<% if ($l->{'duties'}) { %>
+							<% if (scalar @{$l->{'duties'}} > 0) { %>
+								<td></td>
+							<% } %>
+						<% } %>
+						<% if ($l->{'measures'}) { %>
+							<% if (scalar @{$l->{'measures'}} > 0) { %>
+								<td></td>
+							<% } %>
+						<% } %>
+						<% if ($l->{'type'} eq 'record') { %>
+							<td><%= &subs::format_name($l->{'data'}->{'recorder'}) %></td>
+						<% } %>
+					</tr>
+				</tbody>
+			</table>
+			<% if ($l->{'measures'}) { %>
+				<span class="appointment_list" list="measures" style="display:none;">
+					<%= include 'apps/app_measure_details', l => $l %>
+				</span>
+			<% } %>
+			<% if ($l->{'duties'}) { %>
+				<span class="appointment_list" list="duties" style="display:none;">
+					<% foreach my $d ( @{$l->{'duties'}} ) { %>
+						<span class="appointment_duty_container" duuid="<%= $d->{'duuid'} %>">
+							<img class="little_thumb"
+								<% if ($d->{'camera'}) { %>
+									<% if ($d->{'camera'} eq '0') { %>
+										src="/images/decipherable/camera back.png"
+									<% } elsif ($d->{'camera'} eq '1') { %>
+										src="/images/decipherable/camera front.png"
+									<% } elsif ($d->{'camera'} eq 'webcam') { %>
+										src="/images/make believe/eye.png"
+									<% } %>
+								<% } elsif ($d->{'feed'}) { %>
+									<% if ($d->{'feed'} eq 'flatbed') { %>
+										src="/images/decipherable/flatbed.png"
+									<% } elsif ($d->{'feed'} eq 'adf') { %>
+										src="/images/decipherable/feeder.png"
+									<% } %>
+								<% } %>
+							>
+							<span class="time" timestamp="<%= $d->{'timestamp'} %>"></span>
+							<img class="tiny_thumb delete_duty hover" server_time="<%= $server_time %>" duuid="<%= $d->{'duuid'} %>" src="/icons/trash.png"><br>
+						</span>
+					<% } %>
+				</span>
+			<% } %>
+			<% if ($l->{'distance'}) { %>
+				<table class="appointment_list" list="distance" style="display:none;width:100%;">
+					<thead>
+						<th>Home Dist</th><th>Dist</th><th>Inc</th><th>Speed</th><th>Time</th><th>Del</th>
+					</thead>
+					<tbody>
+						<% foreach my $d ( @{$l->{'distance'}} ) { %>
+							<tr class="appointment_distance_container" uuid="<%= $d->{'uuid'} %>" server_time="<%= $d->{'server_time'} %>">
+								<td class=""><%= sprintf("%.3F", $d->{'home_distance'}) %>km</td>
+								<td class="appointment_distance hover" app="<%= $a %>" app_uuid="<%= $l->{'uuid'} %>" uuid="<%= $d->{'uuid'} %>">
+									<%= sprintf("%.3F", $d->{'distance'}) %>km
+								</td>
+								<td><%= $d->{'increment_distance'} %>km</td>
+								<td><%= $d->{'increment_speed'} %>km/h</td>
+								<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
+								<td>
+									<img class="tiny_thumb delete_location hover" server_time="<%= $server_time %>" uuid="<%= $d->{'uuid'} %>" src="/icons/trash.png"><br>
+								</td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			<% } %>
+			<span class="appointment_model_selector_container" attribute="<%= $settings->{'pos'} %>">
+				<%= include 'apps/transaction/models', settings => $settings, models => $models, l => $l, source => 'list' %>
+			</span>
+			<%= include 'apps/transaction/options', settings => $settings, options => $options, l => $l, source => 'list' %>
+
+
+			<% if ($l->{'type'} eq 'transaction' || $l->{'type'} eq 'purchase' ) { %>
+				<%= include 'apps/app_transaction', app => $l %>
+				<br>
+			<% } elsif ($l->{'type'} eq 'invoice' || $l->{'type'} eq 'quote') { %>
+				<%= include 'apps/information', app => $l %>
+			<% } %>
+		</div>
+	<% } %>
+<div>
+

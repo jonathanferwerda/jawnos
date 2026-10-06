@@ -1,0 +1,155 @@
+#music_player {
+	height: 85%; 
+	width: 60%;
+}
+.medium-logo { height: 10%; }
+.large-logo { height: 16%; }
+.tiny { height: 2.5%; }
+.small { height: 5%; }
+.medium { height: 10%; }
+.large { height: 23%; }
+.xlarge { height: 38% }
+#interface { 
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	height: 120px;
+}
+
+html, body {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+#progress_bar { 
+	width: 300px; 
+	left: 210px;
+	bottom: 2px;
+	height: 20px;
+	border-radius: 5px;
+	border: solid;
+	border-width: 3px;
+	
+}
+#volume_control {
+	width: 300px;
+	height: 20px;
+	bottom:25px;
+	border-radius: 5px;
+	border: solid;
+	border-width: 3px;
+
+}
+.playing { border: solid; border-radius:2%; z-index:1100; background-color: yellow }
+.hidden { display: none }
+#timer { position:absolute; top: 20px; left: 450%; top: 55%; z-index: 1200;}
+.lettering { z-index: 3100; padding-top: 5px; padding-bottom: 5px; height: 28px; border-radius: 10px; text-align: center; }
+.uppercase { z-index: 3100; padding-top: 5px; padding-bottom: 5px; height: 28px; border-radius: 5px; text-align: center;}
+#search_bar { 
+	position:fixed;
+	left: 0px;
+	top: 73px;
+	width: 100%;
+}
+
+::placeholder { font-size: 20px; text-align: center; }
+#image_controls { 
+	right: 1px;
+	bottom: 1px;
+	z-index: 800;
+}
+#image_toggle {	
+	height: 45px;
+	font-size: 18px;
+	width: 65px;
+	border-radius: 23%;
+	z-index: 600;
+	background-color: lightblue;
+	border: solid;
+	border-width: 3px;
+	bottom: 5px;
+	right: 0px;
+}
+#blackground { 
+	display:none;
+	background-color: black;
+	width:100%;
+	height:100%;
+	z-index: 598;
+}
+#files { 
+	top: 0px;
+	width:100%;
+	text-align: left;
+	font-size: 16px;
+	left: 0;
+	padding-bottom: 50px;
+	border: solid;
+	border-width:3px;
+	border-radius: 4px;
+}
+.track_description { font-size: 16px; }
+
+
+@media screen and (max-width:800px) {
+	#files {
+		width: 100%;
+		bottom: 40%;
+		text-align: center;
+		border: solid;
+		border-width:3px;
+		border-radius: 4px;
+	}
+}
+@media screen and (min-width:800px) {
+	#the_bars {
+		width: 200px;
+	}
+}
+
+#disclaimer {
+	position:fixed;
+	background-color: white;
+	border-radius: 1px;
+	top: 2px;
+	font-size: 12px;
+	text-align: center;
+	right: 0px;
+	width: 221px;
+	font-size: 10px;
+	height: 81px;
+	z-index: 2000;
+}
+.description_notifier {
+	right: 10%;
+	position: absolute;
+}
+.music_audio_output_select[state=on] {
+	background-color: lightgreen;
+}
+
+.music_album[active=yes] {
+	background-color: yellow;
+}
+
+.music_artist[active=yes] {
+	background-color: yellow;
+}
+
+#music_files {
+	border-top: solid;
+	border-top-width: 5px;
+}
+
+#music_albums {
+	border-left: solid;
+	border-left-width: 5px;
+}
+
+.all_music[enabled=yes] {
+	background-color: lightgreen;
+}
+
+#video_subtitle_toggle[status=showing] {
+	background-color: lightgreen;
+}

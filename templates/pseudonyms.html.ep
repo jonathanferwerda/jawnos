@@ -1,0 +1,21 @@
+<div id="pseudonym_home" style="background-color:<%= $config->{$device}->{'pseudonym_home'}->{'background_colour'} %>">
+	<div id="search_entanglement" style="display:inline-block;top:-10px;" >
+		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:white;border:solid;border-width:2px;border-radius:3px;"></div>
+		<input id="search"  style="vertical-align:top;min-width:200px;" entry="text" autocomplete="off" class="add_something timed_input search" id="search" placeholder="anything?" >
+		<img id="search_toggle" class="little_thumb search_toggle hover" style="vertical-align:top;" src="images/make believe/mirror.png"></img><br>
+		<div id="main_upload_container">
+			<form id="main_upload" style="display:none;">
+				<input id="main_upload_input" type="file" name="fileupload" multiple />
+				<input type="submit" />
+			</form>
+		</div>
+	</div>
+	<span id="pseudonym_bar">
+		<% foreach my $p ( grep { $_->{'status'} eq 'on' } @{$pseudonyms} ) { %>
+			<div class="draggable_icon" style="">
+				<img name="<%= $p->{'name'} %>" class="ps bar pseudonym keyboard hover" style="background-color:<%= $p->{'colour'} || $config->{$device}->{'pseudonym'}->{'background_colour'} %>;<%= $p->{'style'} %>" toggle="<%= $p->{'name'} %>" id="<%= $p->{'name'} %>_toggle" src="<%= $p->{'icon'} %>"></img>
+			</div>
+		<% } %>
+	</span>
+
+</div>

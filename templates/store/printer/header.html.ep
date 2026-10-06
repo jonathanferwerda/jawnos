@@ -1,0 +1,152 @@
+<span id="printer_title" style="<% if ($visibility ne 'show') { %>display:none;<% } %>"><%= &subs::format_name($cx->{'app'}) %> <%== $id %></span>
+<div>
+	<% if ($totals->{'balance'} <= 0 && ($type eq 'invoice' || $type eq 'receipt')) { %>
+		<span style="position:absolute;width:100%;top:50px;">
+			<h1 style="font-size:60px;opacity:.6;top:50px;color:red;text-align:center;">PAID</h1>
+		</span>
+	<% } %>
+	<span style="float:right;">
+
+		<% if ($qr_img) { %>
+			<img src="<%= $qr_img %>" class="huge_thumb">
+		<% } else { %>
+			<%= $qr_code %>
+		<% } %>
+		<br>
+
+
+		<b style="position:absolute;right:60px;text-align:right;"><%== $id %></b><br>
+
+	</span>
+
+	<span style="float:left;padding-right:15px;">
+		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+			<img src="<%= $logo %>" class="huge_thumb">
+			<br>
+		<% } %>
+	</span
+	<span style="float:right;padding-left:15px;">
+		<b style="font-size:34px;"><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></b><br>
+		<% foreach my $info ( qw/address phone email slogan/ ) { %>
+			<% if (my $i = &subs::setting_grabber({ app => 'me', setting => $info })) { %>
+				<%= $i %><br>
+			<% } %>
+		<% } %>
+	</span>
+
+</div>
+<div>
+	<br><br><br><br>
+	<span style="float:right;text-align:right;"><b>Date:</b> <%= $print_date %>
+		<% if ($due_date) { %>
+			<br>
+			<b>Due:</b> <%= $due_date %>
+		<% } %>
+	</span>
+	<br><br>
+	<b style="font-size:22px;"><%= &subs::format_name($cx->{'app'}) %></b><br>
+	<% foreach my $info (qw/address phone email/) { %>
+		<% if ($cx->{$info}) { %>
+			<%= $cx->{$info} %><br>
+		<% } %>
+	<% } %>
+</div>
+<h1 style="text-align:center;"><%= &subs::format_name($type) %></h1>
+
+
+
+<div style="">
+	<% foreach my $reg ( @{$registers} ) { %>
+		<% my $data = $reg->{'data'}; %>
+
+		<table style="text-align:right;width:100%;border:solid;border-radius:5px;border-width:3px;">
+			<thead style="vertical-align:top;">
+				<th style="width:50%;text-align:left;">		<h2>
+			<%= &subs::format_name($data->{'item'}) %>
+		</h2></th><th>Quantity</th><th>Price</th><th>Discount</th><th>Subtotal</th>
+			</thead>
+			<tbody>
+				<tr>
+					<% my $model = &subs::db_select('model', undef, { app => $data->{'item'}, uuid => $data->{'model'}->{'uuid'} })->hashes->[0]; %>
+					<td style="width:50%;text-align:left;font-size:22px;"><%= &subs::format_name($data->{'model'}->{'name'}) %><br>
+						<span style="float:right;width:95%;font-size:16px;"><%== $data->{'model'}->{'description'} || $model->{'description'} %></span></td>
+					<td><%= $model->{'quantity'} || 1 %></td>
+					<td><%= &subs::price_formatter($model->{'price'}) %></td>
+					<td><%= &subs::price_formatter($data->{'model'}->{'discount'}) %></td>
+					<td><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
+				</tr>
+				<% foreach my $oc ( keys %{$data->{'options'}}) { %>
+					<tr></tr>
+					<% foreach my $o ( @{$data->{'options'}->{$oc}}) { %>
+						<tr>
+							<% my $option = &subs::db_select('option', undef, { app => $data->{'item'}, uuid => $o->{'uuid'} })->hashes->[0]; %>
+							<td style="width:50%;text-align:left;font-size:20px;">&nbsp;<%= &subs::format_name($o->{'name'}) %><br>
+								<span style="float:right;width:95%;font-size:16px;"><%== $o->{'description'} || $option->{'description'} %></span></td>
+							<td><%= $o->{'quantity'} || 1 %></td>
+							<td><%= &subs::price_formatter($option->{'price'} * ($o->{'quantity'} || 1)) %></td>
+							<td><%= &subs::price_formatter($o->{'discount'} * ($o->{'quantity'} || 1)) %></td>
+							<td><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
+						</tr>
+					<% } %>
+				<% } %>
+			</tbody>
+		</table>
+
+		<% if ($reg->{'data'}->{'payments'}) { %>
+			<span style="width:100%;font-size:20px;border-solid;border-radius:2px;text-align:center;">
+				<h2 style="text-align:center;font-size:24px;">Payments</h2>
+				<table style="width:100%;font-size:20px;border:solid;border-radius:2px;text-align:center;">
+					<thead>
+						<th style="text-align:left;">Date</th>
+						<th style="text-align:right;">Amount</th>
+					</thead>
+					<tbody>
+						<% foreach my $p ( @{$reg->{'data'}->{'payments'}}) { %>
+							<tr>
+								<td style="text-align:left;" class="time" mode="fixed" timestamp="<%= $p->{'timestamp'} %>"></td>
+								<td style="text-align:right;"><%= &subs::price_formatter($p->{'amount'}) %></td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			</span>
+		<% } %>
+	<% } %>
+	
+	<span style="float:right;right:60px;bottom:50px;font-size:20px;"><br>
+		<table>
+			<tbody>
+				<% foreach my $q ( qw/discount subtotal tax aux total balance/ ) { %>
+					<tr><td>
+					<b><%= &subs::format_name($q) %>: </b>
+					</td><td style="text-align:right;">
+					<% if ($q eq 'total') { %>
+						<u><%= &subs::price_formatter($totals->{$q}) %></u><br>
+					<% } else { %>
+						<%= &subs::price_formatter($totals->{$q}) %><br>
+					<% } %>
+					</td></tr>
+				<% } %>
+			</tbody>
+		</table>
+	</span>
+
+	<span style="float:left;left:60px;bottom:50px;text-align:left;">
+		<% if (my $tax_number = &subs::setting_grabber({ app => 'me', 'setting' => 'tax_number' })) { %>
+			<br><b>Tax:</b> <%= $tax_number %><br>
+		<% } %>
+		<% if (my $doc_notes = &subs::setting_grabber({ app => 'me', 'setting' => 'doc_notes' })) { %>
+			<br><b>Note: </b><%= $doc_notes %><br>
+		<% } %>
+	</span>
+
+
+</div>
+
+<style>
+	@page { margin: 0; }
+	@media print {
+		@page { margin: 0; }
+		body { margin: 1.6cm; }
+	}
+</style>

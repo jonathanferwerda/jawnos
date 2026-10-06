@@ -1,0 +1,37 @@
+<% 
+	use Mojo::JSON qw/decode_json/;
+	use Data::Dumper;
+	my $device = &subs::device_setter(); 
+	my $groupies = [ [ 'community', 'club', 'team', 'project' ], [ 'government', 'institution', 'corporation' ]];
+
+%>
+<% foreach my $inf (@{$groupies}) { %>
+	<% my @groupies = @{$inf}; %>
+	<table>
+		<thead>
+			<% foreach my $group ( @groupies ) { %>
+				<th><%= &subs::format_name($group) %></th>
+			<% } %>
+		</thead>
+		<tbody>
+
+			<tr>
+				<% foreach my $group ( @groupies ) { %>
+					<td>
+						<% my $groups = &subs::db_query('select * from settings where device=? and setting=? and value=? order by app', $device, 'pos', $group)->hashes; %>
+						<% my $sc = &subs::setting_grabber({ app => $a, setting => 'sc_' . $group }); %>
+						<% my $sc_group = eval { return decode_json $sc } || []; %>
+						<select multiple app="<%= $a %>" class="configure_input" setting="sc_<%= $group %>" style="height:100px;">
+							<option value="all" <% if ( grep { $_ eq 'all' } @{$sc_group}) { %>selected<% } %>>All</option>
+							<% foreach my $g ( @{$groups} ) { %>
+								<% my $g_uuid = &subs::setting_grabber({ app => $g->{'app'}, setting => 'uuid' }); %>
+								<option value="<%= $g_uuid %>" <% if ( grep { $_ eq $g_uuid } @{$sc_group}) { %>selected<% } %>><%= &subs::format_name($g->{'app'}) %></option>
+							<% } %>
+						</select>
+					</td>
+				<% } %>
+			</tr>
+		</tbody>
+	</table>
+<% } %>
+

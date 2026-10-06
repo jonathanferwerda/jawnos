@@ -1,0 +1,191 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
+<% no warnings 'uninitialized'; %>
+<div id="configuration_container" style="overflow-x:auto;">
+	<% &subs::manufacturer_grabber(); %>
+	<% my $signatorial = &subs::signatorial_designer(); %>
+	<% foreach my $a (sort keys %{$appts}) { %>
+		<% if ($appts->{$a}->{'formatted_name'}) { %>
+			<a href="/manager?app=<%= $a %>&timestamp=<%= $timestamp %>" target="_blank" timestamp="<%= $timestamp %>"><img src="/images/decipherable/windows.png" class="medium_thumb" app="<%= $a %>"></a>
+			<span class="navbar_buttons" style="right:7px;">
+			<img src="/images/decipherable/vacuum.png" class="vacuum_app medium_thumb" app="<%= $a %>">
+			<img src="/images/decipherable/adopt.png" class="adopt_app medium_thumb" app="<%= $a %>">
+			<img src="/images/decipherable/home.png" class="medium_thumb" onClick="appointmentGrabber('<%= $a %>','<%= $timestamp %>')">
+			<img src="/images/decipherable/clothesline.png" class="medium_thumb clothesline" app="<%= $a %>">
+			<% my $template = $gb::pos->{$appts->{$a}->{'setting'}->{'pos'}}->{'template'}; %>
+			<% if ($template) { %>
+				<%= include $template, appts => $appts, a => $a %>
+			<% } else { %>
+
+			<% } %>
+			<% my $mab_template = $gb::pos->{$appts->{$a}->{'setting'}->{'mab'}}->{'template'}; %>
+			<% if ($mab_template) { %>
+				<%= include $mab_template, appts => $appts, a => $a %>
+			<% } else { %>
+
+			<% } %>
+			<div>
+				<br>
+				<span app="<%= $a %>"><input setting="name_change" class="name_change timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'formatted_name'} %>"></span>
+				<span app="<%= $a %>"><input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>"></span><br>
+				<% foreach my $check_set ( qw/visible unique permanent/ ) { %>
+					<span>
+						<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
+							<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>"></input> <%= &subs::format_name($check_set) %>
+					</span>
+				<% } %>
+
+
+				<br><br>
+				<span>
+					<select class='pos' app='<%= $a %>' id="<%= $a %>_pos" setting="pos">
+						<% foreach my $o (sort keys %{$gb::pos}) { %>
+							<option <% if ( $appts->{$a}->{'setting'}->{'pos'} eq $o ){ %>selected="selected"<% } %>
+							value="<%= $o %>"><%= &subs::format_name($o) %></option>
+						<% } %>
+					</select>
+				</span>
+				<span>
+					<select class='mab' app='<%= $a %>' id="<%= $a %>_pos" setting="mab">
+						<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq '' ){ %>selected="selected"<% } %>
+						<% foreach my $o (sort keys %{$gb::pos}) { %>
+							<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq $o ){ %>selected="selected"<% } %>
+							value="<%= $o %>"><%= &subs::format_name($o) %></option>
+						<% } %>
+					</select>
+				</span>
+				<% if ($appts->{$a}->{'setting'}->{'main_image'}) { %>
+					<span class="main_image_config" app="<%= $a %>">
+						<% my $main_image = &subs::main_icon_maker({ app => $a, timestamp => $timestamp, settings => $appts->{$a}->{'setting'}, size => 'huge' }); %>
+						<br>
+						<%== $main_image %>
+						<img src="/icons/trash.png" class="little_thumb" onClick="settingDeleter({ 'app': '<%= $a %>', 'setting': 'main_image' });$('.main_image_config[app=<%= $a %>]').remove()"
+					</span>
+				<% } %>
+				<br>
+				<span style="width:100%;">
+					<% foreach my $b (sort keys %{$abilities}) { %>
+						<span class="configuration_ability_container" setting="<%= $b %>">
+							<button style="width:95%;" app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %></button>
+							<div style="display:none;" class="app_configure_input" setting="<%= $b %>" app="<%= $a %>">
+								<% if ($b eq 'notifications') { %>
+									<div class="app_notification_configurator" app="<%= $a %>">
+										<% foreach my $when ( ('','start_','stop_','budget_')) { %>
+											<h4><%= &subs::format_name($when || 'default') %></h4>
+											<select class="app_notification_sound_selector configure_input" setting="<%= $when %>notification_sound" when="<%= $when %>" app="<%= $a %>">
+												<% foreach my $sound ( split /\n/, `ls ./public/sounds/notifications/*.mp3` ) { %>
+													<% 
+														my @fs = split '/', $sound;
+														my @t = split '\.', $fs[-1];
+													%>
+													<option value="<%= $sound %>" <% if ($sound eq $appts->{$a}->{'setting'}->{$when . 'notification_sound'}) { %>selected<% } %>><%= &subs::format_name($t[0]) %></option>
+												<% } %>
+											</select>
+
+											<textarea app="<%= $a %>" setting="<%= $when %>notification_text" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %>" placeholder="<%= &subs::format_name($when . 'text') %>"><%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %></textarea>
+										<% } %>
+									</div>
+								<% } elsif ($b eq 'measures') { %>
+									<div class="app_measures_configurator" app="<%= $a %>">
+										<%= include 'configure/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>
+									</div>
+								<% } elsif ($b eq 'packaging') { %>
+									<div class="app_packaging_configurator" app="<%= $a %>">
+										<%= include 'configure/packaging', settings => $appts->{$a}->{'setting'}, a => $a %>
+									</div>
+								<% } elsif ($b eq 'web') { %>
+									<b>URL</b>
+									<textarea app="<%= $a %>" setting="<%= $b %>" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$b} %>" placeholder="<%= $b %>"><%= $appts->{$a}->{'setting'}->{$b} %></textarea>
+									<b>Format</b>
+									<select app="<%= $a %>" setting="<%= $b %>_format" class="configure_input" value="<%= $appts->{$a}->{'setting'}->{'web_format'} %>">
+										<% if ($appts->{$a}->{'setting'}->{'web_format'} eq '' || !$appts->{$a}->{'setting'}->{'web_format'}) { $appts->{$a}->{'setting'}->{'web_format'} = 'html'; } %>
+										<% foreach my $f ( qw/html json/ ) { %>
+											<option value="<%= $f %>" <% if ( $appts->{$a}->{'setting'}->{'web_format'} eq $f ) { %>selected<% } %>><%= $f %></option>
+										<% } %>
+									</select>
+									<b>Recurring</b>
+									<input app="<%= $a %>" setting="web_recurring" class="configure_input" value="<%= $appts->{$a}->{'setting'}->{'web_recurring'} %>"><br>
+									<b>Archives</b>
+									<select app="<%= $a %>" setting="web_archives" class="configure_input" value="<%= $appts->{$a}->{'setting'}->{'web_archives'} %>">
+										<option value="1" <% if (!$appts->{$a}->{'setting'}->{'web_archives'} || $appts->{$a}->{'setting'}->{'web_archives'} == 1) { %>selected<% } %>>1</option>
+										<% for ( my $n = 2; $n <= 100; $n++ ) { %>
+											<option value="<%= $n %>" <% if ($appts->{$a}->{'setting'}->{'web_archives'} == $n) { %>selected<% } %>><%= $n %></option>
+										<% } %>	
+									</select>
+									<b>Device</b>
+									<select app="<%= $a %>" setting="web_headless_device" value="<%= $appts->{$a}->{'setting'}->{'web_headless_device'} %>" class="configure_input">
+										<% foreach my $d (qw/none all mobile computer server/) { %>
+											<option value="<%= $d %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $d) { %>selected<% } %>><%= &subs::format_name($d) %></option>
+										<% } %>
+										<option value="<%= $signatorial %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $signatorial) { %>selected<% } %>>Me</option>
+										<% foreach my $rc ( @{&subs::remote_machine_lister()} ) { %>
+											<option value="<%= $rc->{'signatorial'} %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $rc->{'signatorial'}) { %>selected<% } %>><%= $rc->{'ip'} %></option>
+										<% } %>
+									</select>
+									<% my $web_measures = &subs::db_query('select * from settings where app = ? and setting = ? and device = ?', $a, 'web_measure_data', &subs::device_setter())->hashes; %>
+									<% if (scalar @{$web_measures} > 0) { %>
+										<table style="width:100%;">
+											<thead>
+												<th>Meas</th><th>Sel</th><th>Count</th><th>Del</th>
+											</thead>
+											<tbody>
+												<% foreach my $wm ( @{$web_measures} ) { %>
+													<% my $wd = eval { return decode_json $wm->{'value'} } || {}; %>
+													<tr>
+														<td><%= &subs::format_name($wd->{'measure'}) %></td>
+														<td><%= $wd->{'selector'} %></td>
+														<td><%= $wd->{'count'} %></td>
+														<td><img class="little_thumb hover web_measure_delete" app="<%= $a %>" measure="<%= $wd->{'measure'} %>" src="/icons/trash.png">
+													</tr>											
+												<% } %>
+											</tbody>
+										</table>
+									<% } %>
+								<% } elsif ($b eq 'home_plate') { %>
+									<div class="home_plate_configuration" app="<%= $a %>">
+										<%= include 'configure/home_plate', settings => $appts->{$a}->{'setting'}, app => $a %>
+									</div>
+								<% } elsif ($b eq 'nfc') { %>
+									<% 
+										my $nfc = eval { return decode_json $appts->{$a}->{'setting'}->{'nfc'} } || [];
+										my $new_uuid = &subs::random_string_creator(100);
+										push @{$nfc}, { uuid => $new_uuid };
+										foreach my $n ( @{$nfc} ) { %>
+											<div class="nfc_settings" uuid="<%= $n->{'uuid'} %>" app="<%= $a %>" style="width:100%;border:solid;">
+												<label>Control</label>
+												<select class="nfc_setting" setting="control" value="<%= $n->{'control'} %>">
+													<option value="" <% if ($n->{'control'} || $n->{'control'} eq '') { %>selected<% } %>></option>
+													<% foreach my $control ( sort qw/start record command usual/ ) { %>
+														<option value="<%= $control %>" <% if ($n->{'control'} eq $control) { %>selected<% } %>><%= &subs::format_name($control) %></option>
+													<% } %>
+												</select>
+												<% if (&subs::device_setter() eq 'mobile' && $n->{'uuid'} ne $new_uuid) { %>
+													<img src="/images/decipherable/diskette.png" class="little_thumb nfc_appt_writer hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
+												<% } %>
+												<% if ($n->{'uuid'} ne $new_uuid) { %>
+													<img src="/icons/trash.png" class="little_thumb nfc_deleter hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
+												<% } %>
+												<% if ($n->{'uuid'} ne $new_uuid) { %>
+													<br><label>Taps: </label> <%= $n->{'taps'} || 0 %>
+
+												<% } %>
+											</div>
+										<% } %>
+								<% } elsif ($gb::abilities->{$b}->{'config'} eq 'select') { %>
+									<select app="<%= $a %>" setting="<%= $b %>" class="configure_input" style="height: 33px; width: 99%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$b} %>" placeholder="<%= $b %>">
+										<% foreach my $o ( @{$gb::abilities->{$b}->{'options'}}) { %>
+											<option <% if ($o eq $appts->{$a}->{'setting'}->{$b}) { %>selected <% } %> value="<%= $o %>"><% if ($gb::abilities->{$b}->{'formatted'} eq 'yes') { %><%= &subs::format_name($o) %><% } else { %><%= $o %><% } %></option>
+										<% } %>
+									</select>
+
+								<% } else { %>									
+									<textarea app="<%= $a %>" setting="<%= $b %>" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$b} %>" placeholder="<%= $b %>"><%= $appts->{$a}->{'setting'}->{$b} %></textarea>
+								<% } %>
+							</div>
+						</span>
+					<% } %>
+				</span>
+			</div>
+		<% } %>
+	<% } %>				
+
+</div>

@@ -1,0 +1,41 @@
+<% no warnings 'uninitialized'; %>
+
+Lat:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="latitude" value="<%= $settings->{'app_home_plate'}->{'latitude'} %>"><br>
+Long:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="longitude" value="<%= $settings->{'app_home_plate'}->{'longitude'} %>"><br>
+
+
+% my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
+% my $signatorial = &subs::signatorial_designer();
+% my $uuid = &subs::random_string_creator(12);
+% push @{$home_plate_duties}, { uuid => $uuid, timestamp => &subs::rightNow() };
+<% foreach my $hpd ( sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @{$home_plate_duties} ) { %>
+	<div class="home_plate_setting_container" uuid="<%= $hpd->{'uuid'} %>">
+		<select class="home_plate_setting" setting="placement" value="<%= $hpd->{'placement'} %>" uuid="<%= $hpd->{'uuid'} %>">
+			<% foreach my $dir ( qw/within without/ ) { %>
+				<option value="<%= $dir %>" <% if ($hpd->{'placement'} eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
+			<% } %>
+		</select>
+		<input class="home_plate_setting" setting="distance" value="<%= $hpd->{'distance'} %>" placeholder="(km)" uuid="<%= $hpd->{'uuid'} %>" style="width:50px;">
+		<input class="home_plate_setting" setting="self" <% if ($hpd->{'self'} eq 'on') { %>checked<% } %> type="checkbox" uuid="<%= $hpd->{'uuid'} %>">Self 
+
+		<input class="home_plate_setting" setting="app" value="<%= &subs::format_name($hpd->{'app'}) %>" placeholder="app" uuid="<%= $hpd->{'uuid'} %>" style="width:200px; <% if ($hpd->{'self'} eq 'on') { %>display:none; <% } %>">
+		<select class="home_plate_setting" setting="action" value="<%= $hpd->{'action'} %>" uuid="<%= $hpd->{'uuid'} %>">
+			<% foreach my $o ( qw/none start record stop command kill/ ) { %>
+				<option value="<%= $o %>" <% if ($o eq $hpd->{'action'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+			<% } %>
+		</select>
+
+		<select class="home_plate_setting" setting="device" value="<%= $hpd->{'device'} %>" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>">
+			% my $devices = &subs::remote_machine_lister();
+			<option value="">None</option>
+			<% foreach my $d ( @{$devices} ) { %>
+				<option value="<%= $d->{'signatorial'} %>" <% if ($hpd->{'device'} eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+			<% } %>
+		</select>
+		<img src="/images/decipherable/diskette.png" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+		<% if ($hpd->{'uuid'} ne $uuid) { %>
+			<img src="/icons/trash.png" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+		<% } %>
+		<br><br>
+	</div>
+<% } %>

@@ -1,0 +1,6 @@
+<% foreach my $a (@{$appts}) { %>
+	<span class="appointment_configuration_cell appointment" app="<%= $a->{'app'} %>">
+		<button class="appointment_configuration_grabber" type="button" app="<%= $a->{'app'} %>"><%= $a->{'formatted_name'} %></button> 
+		<span class="appointment_display" style="display:none;" app="<%= $a->{'app'} %>"></span>
+	</span>
+<% } %>

@@ -1,0 +1,59 @@
+<% $all_settings->{$const->{'app'}} = &subs::settings_grabber({ app => $const->{'app'} }) unless $all_settings->{$const->{'app'}}; %>
+<% my $csettings = $all_settings->{$const->{'app'}}; %>
+
+<div class="bucket droppable" uuid="<%= $csettings->{'uuid'} %>" construct="<%= $settings->{'construct'} %>" id="<%= $csettings->{'uuid'} %>_bucket" app="<%= $const->{'app'} %>" style="background-color:<%= $csettings->{'colour'} %>;">
+
+	<div class="relational_bucket_header hover" uuid="<%= $csettings->{'uuid'} %>" style="width:100%;text-align:center;font-size:26px;"><b><u><%= &subs::format_name($const->{'app'}) %></u></b></div>
+	<table class="relational_bucket_table" uuid="<%= $csettings->{'uuid'} %>" style="display:none;">
+		<thead>
+			<th>POS
+				<select class="configure_input" setting="pos" app="<%= $const->{'app'} %>" value="<%= $csettings->{'pos'} %>" style="vertical-align:bottom;">
+					<% foreach my $pos ( sort keys %{$gb::relationals} ) { %>
+						<option value="<%= $pos %>" <% if ($pos eq $csettings->{'pos'}) { %>selected<% } %>><%= &subs::format_name($pos) %></option>
+					<% } %>
+				</select>
+				MAB
+				<select class="configure_input" setting="mab" app="<%= $const->{'app'} %>" value="<%= $csettings->{'mab'} %>">
+					<option value="" <% if ($csettings->{'mab'} eq '') { %>selected<% } %>></option>
+					<% foreach my $pos ( sort keys %{$gb::relationals} ) { %>
+						<option value="<%= $pos %>" <% if ($pos eq $csettings->{'mab'}) { %>selected<% } %>><%= &subs::format_name($pos) %></option>
+					<% } %>
+				</select>
+				<img src="/images/make believe/christmas.png" class="little_thumb relational_tree_select hover" uuid="<%= $csettings->{'uuid'} %>" style="vertical-align:bottom;">
+				<img src="/images/decipherable/calculator.png" class="little_thumb relational_autocalc hover" style="vertical-align:bottom;" uuid="<%= $csettings->{'uuid'} %>" construct="<%= $settings->{'construct'} %>">
+			</th>
+		</thead>
+		<tbody>
+			<% foreach my $sc ( values %{$gb::relationals} ) { %>
+				<% my $jsc = eval { return decode_json $all_settings->{$const->{'app'}}->{'sc_' . $sc->{'sing'}} } || []; %>
+				<% if (scalar @{$jsc} > 0) { %>
+					<% my $seen_jsc; %>
+					<tr>
+						<td><%= &subs::format_name($sc->{'name'}) %></td>
+					</tr>
+					<tr>
+						<td>
+							<% foreach my $js ( @{$jsc} ) { %>
+								<% if ($js eq 'all') {  %>
+									<%	my $jsms = &subs::db_select('settings', undef, { setting => 'pos', value => $sc->{'sing'}, device => &subs::device_setter() })->hashes; %>
+									<% foreach my $jsm ( @{$jsms} ) { %>
+										<% next if grep { $_ eq  $all_settings->{$jsm->{'app'}}->{'uuid'} } @{$seen_jsc}; %>
+										<% push @{$seen_jsc}, $all_settings->{$jsm->{'app'}}->{'uuid'}; %>
+										<span onclick="appointmentGrabber('<%= $jsm->{'app'} %>')" class="hover draggable bubble" uuid="<%= $all_settings->{$jsm->{'app'}}->{'uuid'} %>" construct="<%= $all_settings->{$jsm->{'app'}}->{'pos'} %>" id="<%= $all_settings->{$jsm->{'app'}}->{'uuid'} %>_bucket_contents" style="background-color:<%= $all_settings->{$jsm->{'app'}}->{'colour'} %>;" value="<%= $jsm->{'app'} %>"><%= &subs::format_name($jsm->{'app'}) %></span>
+									<% } %>
+								<% } else { %>
+									<% next if grep { $_ eq  $js } @{$seen_jsc}; %>
+									<% my $ts = &subs::settings_grabber({ uuid => $js }); $all_settings->{$ts->{'app'}} = $ts; %>
+									<% push @{$seen_jsc}, $all_settings->{$ts->{'uuid'}}->{'uuid'}; %>
+									<% if ($ts->{'app'}) { %>
+										<span onclick="appointmentGrabber('<%= $ts->{'app'} %>')" class="hover draggable bubble" uuid="<%= $ts->{'uuid'} %>" construct="<%= $ts->{'pos'} %>" id="<%= $all_settings->{$ts->{'app'}}->{'uuid'} %>_bucket_contents" style="background-color:<%= $all_settings->{$ts->{'app'}}->{'colour'} %>;" value="<%= $js %>"><%= &subs::format_name($ts->{'app'}) %></span>
+									<% } %>
+								<% } %>
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			<% } %>
+		</tbody>
+	</table>
+</div>

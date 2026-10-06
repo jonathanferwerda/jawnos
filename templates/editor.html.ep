@@ -1,0 +1,42 @@
+<div id="editor" style="background-color:white;overflow:scroll;">
+	<% my @article = grep { $_->{'uuid'} eq $uuid } @{$articles}; %>
+	<select id="editor_article_picker">
+		<% foreach my $a ( @{$articles } ) { %>
+			<option <% if ($a->{'uuid'} eq $uuid ) { %>selected <% } %> value="<%= $a->{'uuid'} %>"><%= $a->{'title'} %></option>
+		<% } %>
+	</select>
+	<img id="editor_new" class="little_thumb" src="/images/decipherable/file.png" style="vertical-align:bottom;">
+	<img id="editor_save" class="little_thumb" src="/images/decipherable/diskette.png" style="vertical-align:bottom;">
+	<img id="editor_delete" class="little_thumb" src="/images/make believe/cancel_button.png" style="vertical-align:bottom;">
+	<br>
+	<% foreach my $b ( qw/h1 h2 h3 h4 a p audio video img canvas/ ) { %>
+		<button type="text" content_type="<%= $b %>" class="editor_content_adder" id="editor_<%= $b %>"><%= $b %></button>
+	<% } %>
+	<br>
+	<% foreach my $color ( qw/text background/ ) { %>
+		<input value="<%= $article[0]->{$color . '_colour'} %>" type="color" class="editor_colour_picker" id="editor_<%= $color %>_colour">
+	<% } %>
+	<select id="editor_category_picker">
+		<option <% if ($article[0]->{'category'} eq "promo") { %>selected<% } %> value="promo">Promo</option>
+		<% foreach my $cat ( @{$magazine_categories} ) { %>
+			<option <% if ($article[0]->{'category'} eq $cat->{'app'}) { %>selected<% } %> value="<%= lc $cat->{'app'} %>"><%= &subs::format_name($cat->{'app'}) %></option>
+		<% } %>
+	</select>
+	<select id="editor_status_picker">
+		<% foreach my $status ( qw/draft review publish recanted/) { %>
+			<option <% if ($article[0]->{'status'} eq $status) { %>selected<% } %> value="<%= $status %>"><%= &subs::format_name($status) %></option>
+		<% } %>
+	</select>
+	<br>t: <input type="text" id="editor_timestamp" class="time" timestamp="<%= $article[0]->{'timestamp'} || (time() * 1000) %>" value="<%= $article[0]->{'timestamp'} %>">
+	<br>w: <input type="text" id="editor_warranty" class="time" timestamp="<%= $article[0]->{'warranty'} || (time() * 1000) %>" value="<%= $article[0]->{'warranty'} %>">
+	
+	<div id="editor_content_parent" style="text-align:center">
+
+		<% if ($uuid ne 'none') { %>
+			<%= $article[0]->{'content'} %>
+		<% } else { %>
+
+		<% } %>
+	</div>
+
+</div>

@@ -1,0 +1,15 @@
+<div class="article" uuid="<%= $art->{'uuid'} %>" timestamp="<%= $art->{'timestamp'} %>" warranty="<%= $art->{'warranty'} %>" style="background-color:<%= $art->{'background_colour'} %>;border:solid;border-color:black;border-width:4px;border-radius:10px">
+	<span style="float:left;">
+		<b>Pub:</b> <span class="time article_timestamp" timestamp="<%= $art->{'timestamp'} %>"></span>
+		<b>Exp:</b> <span class="time article_warranty" timestamp="<%= $art->{'warranty'} %>"></span>
+	</span>
+	<span class="manager_file" style="float:right;"><%= $art->{'manager_file'} %></span>
+	<span class="magazine_category" style="font-size:20px;"><%= &subs::format_name($art->{'category'}) %></span>
+
+	<div class="article_content">
+		<h2 style="text-color:yellow;"><%= $art->{'title'} %></h2>
+		<img src="<%= $art->{'image'} %>">
+		<p><%= $art->{'teaser'} %></p>
+	</div>
+	<br>
+</div>

@@ -1,0 +1,157 @@
+
+
+#newsstand {
+	position:fixed;
+	bottom: 0px;
+	left:0px;
+	height: 46px;
+	z-index: 300;
+	color: black;
+	font-size: 32px;
+  vertical-align: middle;
+	opacity: 80%;
+	border-radius: 1%;
+	width: 100%;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+input[type=number] {
+	-moz-appearance: textfield;
+}
+.miniscule_thumb { max-width: 75px; height: 20px; border: solid; border-radius: 2px; background-color: lightgrey; }
+.tiny_thumb { max-width: 125px; height: 32px; border: solid; border-radius: 3px; background-color: lightgrey;}
+.little_thumb {  object-fit: cover; max-width: 240px; height: 40px; border: solid; border-radius: 6px; background-color: lightgrey;}
+.petite_thumb {  object-fit: cover; max-width: 240px; height: 30px; border: solid; border-radius: 6px; background-color: lightgrey;}
+.medium_thumb {  object-fit: cover; max-width: 250px; height: 50px; border: solid; border-radius: 9px; background-color: lightgrey;}
+.large_thumb {  object-fit: cover; max-width: 300px; height: 80px; border: solid; border-radius: 12px; background-color: lightgrey;}
+.huge_thumb {  object-fit: cover; max-width: 400px; height: 120px; border: solid; border-radius: 12px; background-color: lightgrey;}
+.massive_thumb {  object-fit: cover; max-width: 400px; height: 160px; border: solid; border-radius: 12px; background-color: lightgrey;}
+.gigantic_thumb {  object-fit: cover; max-width: 600px; height: 200px; border: solid; border-radius: 12px; background-color: lightgrey;}
+.circular_thumb { border-radius: 50%; }
+#alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
+#alert_cancel { position:absolute; right: 2px; top: 2px; }
+body { background-color: white; }
+select { text-align:center; height: 36px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }
+button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }
+button.active { background-color: green; }
+input { text-align:left; height: 28px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }	
+textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }
+.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-radius: 5px; width: 100%; }
+.text_editor:hover { cursor: text; }
+.text_editor:empty:not(:focus):before {
+  content: attr(placeholder);
+	opacity: .6;
+	display: flex; 
+	justify-content: center; 
+	align-items: center; 
+}
+#ticket_request_viewer {
+	position: fixed;
+	width: calc(100% - 25px);
+	left: 10px;
+	height: calc(100% - 25px);
+	top: 10px;
+	background-color: lightgreen;
+	border:solid;
+	border-radius: 5px;
+	border-width: 5px;
+	display:none;
+}
+#red_dot {
+	position: fixed;
+	display: none;
+	left: 10px;
+	bottom: 10px;
+	height: 60px;
+	width: 60px;
+	background-color: red;
+	border: solid;
+	border-width: 3px;
+	z-index: 90000;
+	cursor: pointer;
+}
+#yellow_dot {
+	position: fixed;
+	display: none;
+	left: 20px;
+	bottom: 20px;
+	height: 40px;
+	width: 40px;
+	background-color: yellow;
+	border: solid;
+	border-width: 3px;
+	z-index: 90001;
+	cursor: pointer;
+}
+#green_dot {
+	position: fixed;
+	display: none;
+	left: 30px;
+	bottom: 30px;
+	height: 20px;
+	width: 20px;
+	background-color: green;
+	border: solid;
+	border-width: 3px;
+	z-index: 90002;
+	cursor: pointer;
+}
+.dot_info {
+	position: fixed;
+	display:none;
+	width: 70%;
+	height: 80px;
+	bottom: 1px;
+	left: 70px;
+	background-color:white;
+	display:none;
+}
+
+.hover:hover {
+	cursor: pointer;
+}
+
+.manager_search_result:hover {
+	background-color: lightblue;
+}
+
+.hover_showing:hover {
+	cursor: pointer;
+	background-color:lightblue;
+}
+
+.time:hover {
+	cursor: pointer;
+}
+
+.window_action {
+	cursor: pointer;
+}
+
+button {
+	cursor: pointer;
+}
+
+select {
+	cursor: pointer;
+}
+
+*, *::before, *::after {
+  /* Hides scrollbars in Firefox */
+  scrollbar-width: none; 
+}
+
+/* Hides scrollbars in Chrome, Safari, and Edge */
+*::-webkit-scrollbar {
+  display: none;
+}
+
+.disabled {
+	pointer-events: 'none';
+	opacity: '0.5';
+	filter: 'grayscale(1);
+}

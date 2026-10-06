@@ -1,0 +1,28 @@
+<% use Mojo::JSON qw/encode_json decode_json/; %>
+<div style="max-width:20%;width:20%;height:90%;float:left;object-fit:contain;overflow:scroll;">
+	<% foreach my $o ( sort keys %{$op_d} ) { %>
+		<% if ($op_d->{$o}->{'app'}) { %>
+			<table style="border:solid;border-radius:3px;" id="<%= &subs::random_string_creator() %>" uuid="<%= $op_d->{$o}->{'uuid'} %>" class="hover embedded_diagram_component embedded_diagram_draggable">
+				<% my $aset = &subs::settings_grabber({ app => $op_d->{$o}->{'app'} }); %>
+				<th class="component_name"><%= &subs::format_name($op_d->{$o}->{'app'}) %></th>
+				<tr>
+					<td>
+						<%== &subs::main_icon_maker({ app => $aset->{'app'}, timestamp => &subs::rightNow(), settings => $aset, size => 'large' }) %>
+					</td>
+				</tr><tr>
+					<td class="component_type">
+						<%= &subs::format_name($op_d->{$o}->{'component'}) %>
+					</td>
+				</tr>
+			</table>
+		<% } %>
+
+	<% } %>
+
+</div>
+<div style="max-width:80%;width:80%;height:90%;float:right;object-fit:contain;">
+	<img src="/file_open?file=<%= $d->{'f'} %>&app=<%= $d->{'app'} %>&timestamp=<%= $d->{'server_time'} %>" uuid="<%= $d->{'uuid'} %>" 
+		style="max-height:100%;max-width:100%;" class="embedded_diagram" id="embedded_diagram_image">
+	<div style="display:none;" id="embedded_diagram_info"><%= eval { return encode_json $d } || '{}' %></div>
+	<canvas style="max-height:100%;max-width:100%;display:none;" id="embedded_diagram_canvas"></canvas>
+</div>

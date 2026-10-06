@@ -1,0 +1,6 @@
+<br>
+<button class="image_function_tool" tool="scale" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" style="vertical-align:top;">Scale</button>
+<input class="image_function_input" id="<%= $appt->{'uuid'} %>_<%= $file->{'uuid'} %>_legend" placeholder="Legend" style="width:150px;vertical-align:top;">
+<span class="image_function_info" id="<%= $appt->{'uuid'} %>_<%= $file->{'uuid'} %>_info"></span>
+<img src="/images/make believe/gps.png" class="little_thumb image_function_tool" tool="home_plate" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>">
+<br>

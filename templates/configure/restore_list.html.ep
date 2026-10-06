@@ -1,0 +1,55 @@
+
+<input id="president" placeholder="President" />
+<input type="password" id="credential" placeholder="Credential" />
+<button type="button" id="new_database">New</button>
+<br><br>
+
+<div id="signatorial_upload_container">
+	<form id="signatorial_upload" style="display:none;">
+		<input id="signatorial_upload_input" type="file" name="fileupload" />
+		<input type="submit" />
+	</form>
+</div>
+
+<div id="ticket" class="ticket_form">
+	<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="/images/make believe/up.png" />
+	<% foreach my $n (0..7) { %>
+		<% if ($n == 4) { %>
+			&nbsp;-&nbsp;
+		<% } %>
+		<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>" style="vertical-align:bottom;">
+	<% } %>
+	<button type="button" id="password_clear">Clear</button>
+</div>
+
+
+<br><br>
+<table style="width: 100%; border: 1px solid black;">
+	<thead>
+		<th>Rm</th>
+		<th>Status</th>
+		<th colspan="2">Utils</th>
+		<th>Filename</th>
+	</thead>
+	<tbody>
+		<% foreach my $b ( @{$backups } ) { %>
+			<tr class="backup">
+				<td>
+					<button class="delete_backup" filename="<%= $b->{'filename'} %>">X</button>
+				</td>
+				<td><%= $b->{'status'} %></td>
+				<td colspan="2">
+					<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
+					<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button><br>
+				</td>
+				<td style=" border: 1px solid black;">
+					<%= $b->{'filename'} %><br>
+					<%= $b->{'size'} %> ( <%= $b->{'blocks'} %> )<br>
+					<%= $b->{'created'} %><br>
+				</td>
+			</tr>
+		<% } %>
+	</tbody
+</table>
+<img src="/images/decipherable/vacuum.png" class="large_thumb" id="database_vacuum">
+<img src="/images/jbuttons/doctor.png" class="large_thumb" id="database_doctor">

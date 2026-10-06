@@ -1,0 +1,60 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<img id="pointer" style="position:fixed;" height="26" width="26" src="/images/make believe/start.png">
+<div id="marker">
+	<canvas id="whiteboard"></canvas>
+	<div id="marker_toolbox" class="marker_toolbox" style="overflow:scroll; position:absolute;right:0px; float:right; top: 35px; height:100%; width: 85px; border: 2px; border-radius: 7px; background-color: green;">
+
+		<button class="button marker_init" onclick="markerInit()">Init</button>
+		<img src="/images/decipherable/marker.png" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
+		<br>
+		<input type="text" id="flipbook_interval" class="flipbook_interval" style="width: 80px;" value="60"><br>
+		<button movement="back" class="button flipbook"><-</button>
+		<button movement="forward" class="button flipbook">-></button><br>
+		<img id="marker_pause" class="little_thumb pause_marker" style="display:none;" src="/images/make believe/pause.png">
+		<img id="marker_record" class="medium_thumb record_marker" movement="forward" src="/images/make believe/record.png">
+		<img class="tiny_thumb play_marker" movement="back" style="transform: rotate(180deg);" src="/images/make believe/play.png">
+		<img class="tiny_thumb play_marker" movement="forward" src="/images/make believe/play.png">
+
+		<button class="button marker_tool" tool="marker">Marker</button><br>
+		<button class="button marker_tool" tool="eraser">Eraser</button><br>
+		<button class="button marker_tool" tool="kb">KB</button><br>
+		<button class="button marker_tool" tool="sample">Sample</button><br>
+		<button class="button save_marker">Save</button>
+		<div id="marker_kit">
+			<% 
+				my $colours = eval { return decode_json $settings->{'colours'} } || [];
+				if (scalar @{$colours} > 0) { %>
+					<% foreach my $colour ( @{$colours} ) { %>
+						<input type="color" style="width:45%;" uuid="<%= $colour->{'uuid'} %>" id="marker_colour" class="marker_colour" value="<%= $colour->{'colour'} %>" />
+						<button class="marker_colour_remove" uuid="<%= $colour->{'uuid'} %>">-</button><br>
+					<% } %>
+				<% } else { %>
+					<% my $uuid = &subs::random_string_creator(10); %>
+					<input type="color" style="width:45%;" uuid="<%= $uuid %>" id="marker_colour" class="marker_colour" value="#000000" />
+					<button class="marker_colour_remove" uuid="<%= $uuid %>">-</button><br>
+				<% } %>
+				<script>
+
+				</script>
+		</div>
+		<button id="marker_colour_add">+</button>
+
+		<div class="kit">
+			<input class="slider_bar" style="width: 89%" type="range" id="marker_size" step=1 max=40 min=1 />
+			<input class="slider_bar" style="width: 89%" type="range" id="marker_transparency" step=.02 max=1 min=0 />
+		</div>
+		<img src="/images/decipherable/gallery.png" class="little_thumb" id="marker_gallery">
+	</div>
+
+	<div id="portfolio" style="max-width:100%; overflow:scroll;">
+		<% foreach my $d ( @{$drawings} ) { %>
+			<% my $files = eval { return decode_json $d->{'file'} } || []; %>
+
+			<% foreach my $fi ( grep { $_->{'type'} eq 'image' } @{$files} ) { %>
+				<button class="marker_delete" timestamp="<%= $d->{timestamp} %>" app="<%= $d->{'app'} %>" app_uuid="<%= $d->{'uuid'} %>" file_uuid="<%= $fi->{uuid} %>">D</button>
+				<img class="paper" timestamp="<%= $d->{timestamp} %>" app="<%= $d->{'app'} %>" app_uuid="<%= $d->{'uuid'} %>" file_uuid="<%= $fi->{uuid} %>" src="/file_open?file=<%= $fi->{'f'} %>&timestamp=<%= $fi->{'server_time'} %>" style="width:40px;height:60px"></img>
+			<% } %>
+		<% } %>
+	</div>
+	<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="images/make believe/bullseye.png">
+</div>
