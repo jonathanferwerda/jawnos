@@ -111,7 +111,7 @@ function makeSvg(colour, glyph) {
 \t\t\t<stop offset="1" stop-color="${base}"/>
 \t\t</linearGradient>
 \t</defs>
-\t<rect x="48" y="48" width="416" height="416" rx="102" fill="url(#bg)"/>
+	<rect x="48" y="48" width="416" height="416" rx="102" fill="url(#bg)" stroke="#000000" stroke-opacity="0.18" stroke-width="4"/>
 \t<g transform="translate(148,148) scale(9)" fill="#ffffff">${glyph}</g>
 </svg>
 `;
