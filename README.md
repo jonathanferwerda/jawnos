@@ -126,7 +126,7 @@ adb shell settings put global max_phantom_processes 2147483647
 ```
 
 ```
-cd president
+cd jawnos
 
 chmod +x President.pl
 
@@ -195,7 +195,7 @@ sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 sudo systemctl restart systemd-resolved
 ```
 
-Tell dnsmasq to look in the `president/server/hosts` directory:
+Tell dnsmasq to look in the `jawnos/server/hosts` directory:
 
 ```
 sudo mkdir -p /etc/dnsmasq.d/hosts/
@@ -224,7 +224,7 @@ Put the folder location in the config:
 ```
 
 ```
-cd president
+cd jawnos
 ./President.pl
 ```
 
@@ -278,7 +278,7 @@ In `config.json`, change `signatorial` to a file on your computer that won't cha
 that file when the program starts, generate an MD5, and use it to encrypt the cookies.
 
 ```
-cd president
+cd jawnos
 ./President.pl
 ```
 
