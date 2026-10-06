@@ -37,7 +37,8 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 ## How it's built
 
 - **Backend:** Perl, using [Mojolicious::Lite](https://mojolicious.org) as the web framework.
-  `President.pl` is the entry point and boots the HTTP/WebSocket server, background workers
+  `jawn` is the launcher — it runs `President.pl` in a PTY and restarts it if it dies — and
+  `President.pl` is the Mojolicious app that boots the HTTP/WebSocket server, background workers
   ([Minion](https://metacpan.org/pod/Minion)), and the rest of the machinery.
 - **Data:** SQLite (via `Mojo::SQLite` / `SQL::Abstract`). Most internal message passing between
   processes is [Sereal](https://metacpan.org/pod/Sereal)-encoded over Unix sockets.
@@ -51,8 +52,8 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 
 | Path | What it is |
 | --- | --- |
-| `President.pl` | Entry point — boots the Mojolicious app, workers and sockets |
-| `jawn` | Supervisor — runs `President.pl` in a PTY and restarts it if it dies |
+| `jawn` | Launcher/supervisor — starts `President.pl` in a PTY and restarts it on crash |
+| `President.pl` | The Mojolicious app — HTTP/WebSocket server, workers and sockets |
 | `Manager.pl` | The main application: routes and the bulk of the features |
 | `gb.pl` | Global state shared across the app |
 | `subroutines.pl` | Shared helper library |
@@ -128,11 +129,11 @@ adb shell settings put global max_phantom_processes 2147483647
 ```
 cd jawnos
 
-chmod +x President.pl
+chmod +x jawn President.pl
 
 To run
 
-./President.pl
+./jawn
 ```
 
 ### Debian
@@ -225,7 +226,7 @@ Put the folder location in the config:
 
 ```
 cd jawnos
-./President.pl
+./jawn
 ```
 
 ### Manjaro
@@ -279,7 +280,7 @@ that file when the program starts, generate an MD5, and use it to encrypt the co
 
 ```
 cd jawnos
-./President.pl
+./jawn
 ```
 
 Your default browser should automatically open with the database highlighted.
