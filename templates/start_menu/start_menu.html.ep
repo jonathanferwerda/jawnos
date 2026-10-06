@@ -40,7 +40,7 @@
 		<% } elsif ($menu eq 'app') { %>
 			<span class="start_menu_main_display">
 				<img class="jonathan" src="/images/decipherable/folder.png" id="folders_toggle"></img>
-				<img class="jonathan" src="/images/decipherable/chart.png" id="budget" style="background-color:orange;"></img>
+				<img class="jonathan" src="/images/decipherable/chart.png" id="budget"></img>
 				<img id="travel_toggle" src="/images/decipherable/aeroplane.png" class="jonathan gps"></img>
 				<img id="relational_toggle" src="/images/make believe/strawbeery.png" class="jonathan relational">
 				<img id="mailbox_toggle" src="/images/decipherable/envelope.png" class="jonathan mail">
@@ -81,7 +81,7 @@
 					<img class="jonathan torch_toggle" src="/images/decipherable/nightlight.png"></img>
 					<img class="jonathan" src="/images/make believe/phone_sms.png" id="sms_list_check"></img>
 				<% } %>
-				<img style="" class="little_thumb permission_asker hover" src="/images/make believe/good.png">
+				<img style="" class="little_thumb permission_asker hover jonathan" src="/images/make believe/good.png">
 				<br>
 				<img class="medium_thumb jonathan" id="store_toggle" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>">
 				<img class="jonathan measures_toggle" src="/images/decipherable/measures.png">

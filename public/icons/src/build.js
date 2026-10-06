@@ -18,18 +18,18 @@ const DIR = __dirname;
 const PUBLIC = path.resolve(DIR, '..', '..');
 const SIZE = 256;
 
-// --- palette (base, lighter top for the gradient) -------------------------------
+// --- palette (muted / grey-based; base and a lighter top for the gradient) ---
 const PALETTE = {
-	blue:   ['#3B82F6', '#6FA6FA'],
-	indigo: ['#6366F1', '#8E90F6'],
-	purple: ['#8B5CF6', '#B18CF8'],
-	pink:   ['#EC4899', '#F472B6'],
-	red:    ['#EF4444', '#F87171'],
-	orange: ['#F97316', '#FB9A5B'],
-	yellow: ['#F5B301', '#FBD34D'],
-	green:  ['#10B981', '#4AD1A8'],
-	teal:   ['#14B8A6', '#4FD1C5'],
-	slate:  ['#64748B', '#94A3B8'],
+	blue:   ['#5E7291', '#7E92B1'],
+	indigo: ['#6A6E92', '#8A8EB1'],
+	purple: ['#7A6E92', '#9A8EB1'],
+	pink:   ['#93707D', '#B1909C'],
+	red:    ['#946E6E', '#B38E8E'],
+	orange: ['#94795F', '#B3997F'],
+	yellow: ['#8F8A5F', '#ADA87F'],
+	green:  ['#6B8268', '#8BA288'],
+	teal:   ['#5F807E', '#7FA09E'],
+	slate:  ['#707A86', '#909AA6'],
 };
 
 // --- glyphs on a 24x24 grid -----------------------------------------------------
@@ -112,7 +112,7 @@ function makeSvg(colour, glyph) {
 \t\t</linearGradient>
 \t</defs>
 	<rect x="48" y="48" width="416" height="416" rx="102" fill="url(#bg)" stroke="#000000" stroke-opacity="0.18" stroke-width="4"/>
-\t<g transform="translate(148,148) scale(9)" fill="#ffffff">${glyph}</g>
+	<g transform="translate(124,124) scale(11)" fill="#ffffff">${glyph}</g>
 </svg>
 `;
 }

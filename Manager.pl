@@ -2800,6 +2800,14 @@ hook before_render => sub {
 	$database = '';
 };
 
+# Static files (icons, css, js) get an ETag/Last-Modified but no Cache-Control,
+# so browsers cached them heuristically and kept showing stale icons. Force a
+# revalidation on every request so changed files are picked up.
+hook after_static => sub {
+	my ($c) = @_;
+	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
+};
+
 sub password_maker($c) {
 	my $sacred = $c->param('numerics');
 	my @uploads = @{$c->req->uploads};
@@ -4621,15 +4629,19 @@ sub start_menu_maker($c) {
 	}
 	$fingerprint = 1;
 	if ($fingerprint == 1) {
-		$returner = {
-			html => $c->render_to_string(
-				template => 'start_menu/start_menu',
-				parking_lot => &parking_lot_grabber($c),
-				config => &subs::config_reader(),
-				padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
-				menu => $menu
-			)
-		};
+		my $html = $c->render_to_string(
+			template => 'start_menu/start_menu',
+			parking_lot => &parking_lot_grabber($c),
+			config => &subs::config_reader(),
+			padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
+			menu => $menu
+		);
+		# Static files carry no Cache-Control, so browsers cached the icons
+		# heuristically and kept showing stale ones. Version the local images
+		# so the start menu always pulls the current set.
+		my $v = &subs::rightNow();
+		$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
+		$returner = { html => $html };
 
 	}
 	else {
