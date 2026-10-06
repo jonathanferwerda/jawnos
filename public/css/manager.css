@@ -26,11 +26,11 @@ html, body {
 }
 
 .jonathan { 
-	height: 40px;
+	height: 46px;
 	width: 46px;
 	z-index: 50000;
-	background-color:lightgrey;
-	border-width 1px; border: solid; border-radius: 5px;
+	background-color:transparent;
+	border: 3px solid transparent; border-radius: 10px;
  }
 .jonathan:active, .save_appointment:active, button:active {
 	transform:transform 0.25s ease scale(1.5);
@@ -44,12 +44,12 @@ html, body {
 	-webkit-transform:scale(1.7);
 }
 .jonathan_fixed { 
-	height: 40px;
+	height: 46px;
 	width: 46px;
 	z-index: 50000; 
 	position:fixed;
 	transform:transform 0.25s ease;
-	border-width 1px; border: solid; border-radius: 5px;
+	border: 3px solid transparent; border-radius: 10px;
  }
 .jonathan_fixed:active {
 	transform:transform 0.25s ease scale(1.7);
