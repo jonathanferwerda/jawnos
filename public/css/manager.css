@@ -428,6 +428,23 @@ canvas { overflow: scroll; z-index: 99; }
 	max-width: 54px;
 }
 
+/* Leave + site-type sit in a strip across the top-left of the menu; keep them a
+   fixed square, side by side, and drop the app grid below them so nothing gets
+   covered. (The grid needs the full width for its five-per-row icons, so it
+   cannot be inset sideways.) */
+#start_menu .leave,
+#start_menu .site_type_manual_changer_toggle {
+	box-sizing: border-box;
+	height: 40px;
+	width: 40px;
+	max-width: 40px;
+	object-fit: contain;
+}
+.start_menu_main_display {
+	display: block;
+	padding-top: 44px;
+}
+
 .appointment_option {
 	height: 50px;
 	width: 100%;
