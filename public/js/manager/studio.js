@@ -260,7 +260,8 @@ function studioTakeNode(ch, take) {
 	if (!take.node) {
 		try {
 			take.node = ctx.createMediaElementSource(take.track);
-			take.node.connect(c.playBus);
+			take.playGain = ctx.createGain();
+			take.node.connect(take.playGain).connect(c.playBus);
 		} catch (e) {
 			console.log('studio: could not route take', e);
 			return null;
@@ -282,9 +283,64 @@ function studioPickMime(hasVideo) {
 
 // ---- transport helpers -----------------------------------------------------
 
+// Crossfade length in seconds (configurable; 50ms declick by default).
+function studioCrossfade() {
+	var raw = mixer['time']['crossfade'];
+	var v = (raw !== undefined && raw !== null && String(raw).length > 0) ? numeral(raw).value() : NaN;
+	if (v === null || v === undefined || isNaN(v)) { v = 0.05; }
+	return Math.max(0, v);
+}
+
+function studioChannelTakes(ch, includeRecording) {
+	var media = mixer[ch] && mixer[ch].media;
+	return ((media && media.out) || [])
+		.filter(function (t) { return t && (includeRecording || t.status != 'recording'); })
+		.slice()
+		.sort(function (a, b) { return a.startTime - b.startTime; });
+}
+
+// Waveform peaks per source URL, shared by both halves of a split.
+var studioWaveformCache = {};
+var studioWaveformLoading = {};
+
+function studioEnsureWaveform(ch, take) {
+	if (!take || !take.src || take.waveform) { return; }
+	if (studioWaveformCache[take.src] === 'failed') { return; }
+	if (studioWaveformCache[take.src]) { take.waveform = studioWaveformCache[take.src]; return; }
+	if (studioWaveformLoading[take.src]) { return; }
+	var ctx = studioContext();
+	if (!ctx) { return; }
+	studioWaveformLoading[take.src] = true;
+	fetch(take.src).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+		return ctx.decodeAudioData(buf);
+	}).then(function (audio) {
+		var buckets = 600;
+		var data = audio.getChannelData(0);
+		var peaks = new Float32Array(buckets);
+		var step = Math.max(1, Math.floor(data.length / buckets));
+		for (var b = 0; b < buckets; b++) {
+			var m = 0;
+			for (var i = b * step; i < (b + 1) * step && i < data.length; i++) {
+				var v = Math.abs(data[i]);
+				if (v > m) { m = v; }
+			}
+			peaks[b] = m;
+		}
+		studioWaveformCache[take.src] = peaks;
+		delete studioWaveformLoading[take.src];
+		take.waveform = peaks;
+		studioDrawChannel(ch);
+	}).catch(function (e) {
+		studioWaveformCache[take.src] = 'failed';
+		delete studioWaveformLoading[take.src];
+	});
+}
+
 // Keep every take aligned to the transport. A take maps timeline position to
 // its own source time as  source = (position - startTime) + offset, where
-// `offset` is the in-point after any left trim or split.
+// `offset` is the in-point after any left trim or split. Where a clip meets a
+// neighbour (butted or overlapping) each side ramps over half the crossfade
+// length into the other's territory, so the two gains sum to about one.
 function studioSyncTakes() {
 	var pos = mixer['time']['position'];
 	$.each(mixer, function (ch, m) {
@@ -298,21 +354,48 @@ function studioSyncTakes() {
 			c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
 		}
 
-		m.media.out.forEach(function (take) {
-			var el = take && take.track;
-			if (!el || !el.src || take.status == 'recording') { return; }
+		var xf = studioCrossfade();
+		var ordered = studioChannelTakes(ch);
+		ordered.forEach(function (take, i) {
+			var el = take.track;
+			if (!el || !el.src) { return; }
 			var offset = take.offset || 0;
-			var clipEnd = take.startTime + (take.duration || 0);
+			var start = take.startTime;
+			var end = start + (take.duration || 0);
+			var prev = ordered[i - 1];
+			var next = ordered[i + 1];
+
+			var fIn = 0, fOut = 0;
+			if (prev) {
+				var fi = Math.min(xf, prev.duration || 0, take.duration || 0) / 2;
+				if (fi > 0 && prev.src !== take.src && Math.abs(start - (prev.startTime + (prev.duration || 0))) <= fi * 2) { fIn = fi; }
+			}
+			if (next) {
+				var fo = Math.min(xf, take.duration || 0, next.duration || 0) / 2;
+				if (fo > 0 && next.src !== take.src && Math.abs(next.startTime - end) <= fo * 2) { fOut = fo; }
+			}
+
+			var winStart = start - fIn;
+			var winEnd = end + fOut;
 			var routed = !!studioTakeNode(ch, take);
 			if (!routed) { el.volume = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()); }
 
-			var inside = (pos >= take.startTime) && (pos < clipEnd);
-			if (!inside) {
+			if (pos < winStart || pos >= winEnd) {
 				if (!el.paused) { try { el.pause(); } catch (e) {} }
-				if (el.currentTime != offset) { try { el.currentTime = offset; } catch (e) {} }
+				var reset = offset - fIn;
+				if (reset < 0) { reset = 0; }
+				if (el.currentTime != reset) { try { el.currentTime = reset; } catch (e) {} }
+				if (take.playGain) { take.playGain.gain.value = 0; }
 				return;
 			}
-			var target = pos - take.startTime + offset;
+
+			var g = 1;
+			if (fIn > 0) { g *= Math.max(0, Math.min(1, (pos - winStart) / (2 * fIn))); }
+			if (fOut > 0) { g *= Math.max(0, Math.min(1, (winEnd - pos) / (2 * fOut))); }
+			if (take.playGain) { take.playGain.gain.value = g; }
+
+			var target = pos - start + offset;
+			if (target < 0) { target = 0; }
 			if (mixer['time']['status'] == 'scroll') { try { el.currentTime = target; } catch (e) {} return; }
 			if (el.paused) {
 				try { el.currentTime = target; } catch (e) {}
@@ -399,14 +482,60 @@ function studioDrawChannel(ch) {
 	}
 
 	if (m.media && m.media.out) {
-		m.media.out.forEach(function (take) {
+		var orderedDraw = studioChannelTakes(ch, true);
+		var xfDraw = studioCrossfade();
+		orderedDraw.forEach(function (take, tIndex) {
 			if (!take) { return; }
+			studioEnsureWaveform(ch, take);
 			var x = (take.startTime / duration) * w;
 			var tw = Math.max(2, ((take.duration || 0) / duration) * w);
 			var selected = studioSelectedTake && studioSelectedTake.take === take;
 			var isVideo = take.encoding && take.encoding.indexOf('video') !== -1;
 			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : 'rgba(20,90,190,0.5)');
 			ctx.fillRect(x, 3, tw, h - 6);
+
+			// waveform peaks
+			if (take.waveform && take.waveform.length) {
+				var peaks = take.waveform;
+				var mid = h / 2;
+				ctx.save();
+				ctx.beginPath();
+				ctx.rect(x, 3, tw, h - 6);
+				ctx.clip();
+				ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				for (var b = 0; b < tw; b++) {
+					var idx = Math.min(peaks.length - 1, Math.floor((b / tw) * peaks.length));
+					var amp = peaks[idx] * (h * 0.42);
+					ctx.moveTo(x + b, mid - amp);
+					ctx.lineTo(x + b, mid + amp);
+				}
+				ctx.stroke();
+				ctx.restore();
+			}
+
+			// crossfade shading at the junctions
+			if (xfDraw > 0 && take.duration) {
+				var endT = take.startTime + take.duration;
+				var prev = orderedDraw[tIndex - 1];
+				var next = orderedDraw[tIndex + 1];
+				var shade = function (from, to) {
+					var fx = (from / duration) * w;
+					var tx = (to / duration) * w;
+					ctx.fillStyle = 'rgba(255,220,40,0.30)';
+					ctx.fillRect(fx, 3, Math.max(1, tx - fx), h - 6);
+				};
+				if (prev && prev.src !== take.src) {
+					var fi = Math.min(xfDraw, prev.duration || 0, take.duration) / 2;
+					if (fi > 0 && Math.abs(take.startTime - (prev.startTime + (prev.duration || 0))) <= fi * 2) { shade(take.startTime - fi, take.startTime + fi); }
+				}
+				if (next && next.src !== take.src) {
+					var fo = Math.min(xfDraw, take.duration, next.duration || 0) / 2;
+					if (fo > 0 && Math.abs(next.startTime - endT) <= fo * 2) { shade(endT - fo, endT + fo); }
+				}
+			}
+
 			ctx.strokeStyle = selected ? '#ffd21e' : '#04325f';
 			ctx.lineWidth = selected ? 3 : 1;
 			ctx.strokeRect(x, 3, tw, h - 6);
@@ -459,8 +588,28 @@ function studioDrawTracks() {
 
 function studioUpdateFxBadges() {
 	$.each(studioAudio.channels, function (ch, c) {
-		var names = c.inserts.map(function (ins) { return ins.name; });
-		$('.channel_fx[channel="' + ch + '"]').text(names.join(', '));
+		var holder = $('.channel_fx[channel="' + ch + '"]');
+		holder.empty();
+		c.inserts.forEach(function (ins) {
+			var src = $('.pedal_background[hint="' + ins.name + '"]').attr('src') || '';
+			$('<img class="channel_fx_pedal">').attr('src', src).attr('hint', ins.name).appendTo(holder);
+		});
+	});
+}
+
+// Knob hints carry the knob's current value, since the artwork alone can't show it.
+function studioUpdateKnobHints() {
+	$('.knob').each(function () {
+		var knob = $(this);
+		var control = knob.attr('control');
+		if (!control) { return; }
+		var input = $('.knob_control[control="' + control + '"][channel="' + knob.attr('channel') + '"]');
+		if (!input.length) { return; }
+		var value = numeral(input.val()).value();
+		if (value === null || value === undefined || isNaN(value)) { value = input.val(); }
+		else if (Math.abs(value - Math.round(value)) < 0.05) { value = Math.round(value); }
+		else { value = numeral(value).format('0.0'); }
+		knob.attr('hint', String(control).replace(/_/g, ' ') + ': ' + value);
 	});
 }
 
@@ -796,6 +945,7 @@ function studioInit(data) {
 			});
 
 			studioRetriever();
+			studioUpdateKnobHints();
 			if ($('#studio').attr('uuid')) {
 				if (!data['uuid']) {
 					data['uuid'] = $('#studio').attr('uuid');
@@ -872,6 +1022,7 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 	knob.css({ 'transform': 'rotate(' + transform_value + 'deg)' });
 	if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
 	else { studioApplyPedals(); }
+	studioUpdateKnobHints();
 	studioSaver();
 });
 
@@ -1046,6 +1197,7 @@ function studioRetriever() {
 
 	mixer['settings'] = mixer['settings'] || {};
 	mixer['settings']['channel_count'] = $('#studio_viewer').attr('channel_count');
+	studioUpdateKnobHints();
 	return song;
 }
 
@@ -1727,6 +1879,7 @@ function studioLoad(uuid) {
 			mixer['admin']['video_toggle'] = admin['video_toggle'];
 			$('#studio_video_toggle').attr('toggled', admin['video_toggle']);
 			$('.studio_config[setting="record_offset"]').val(mixer['time']['record_offset'] || '');
+			$('.studio_config[setting="crossfade"]').val(mixer['time']['crossfade'] || '');
 			if (mixer['time']['loop'] == 'on') {
 				$('#studio_loop').attr('enabled','on').attr('obg', 'rgb(211, 211, 211)').css({'background-color':'red'});
 			}
@@ -1874,6 +2027,12 @@ $(document).on('change', '.studio_config', function() {
 	if (setting == 'record_offset') {
 		mixer['time']['record_offset'] = value;
 		studioSaver();
+		return;
+	}
+	if (setting == 'crossfade') {
+		mixer['time']['crossfade'] = value;
+		studioSaver();
+		studioDrawTracks();
 		return;
 	}
 	if (restart == 'yes') {

@@ -24,10 +24,10 @@
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
 			<span id="pedal_<%= $p->{'name'} %>" class="pedal" style="left:<%= $count * 175 %>px;">
 				<% my $ch = $p->{'name'}; %>
-				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
+				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="/images/studio/<%= $p->{'image'} %>.png">
 				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
 					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;height:<%= $k->{'width'} || '60px' %>;width:<%= $k->{'width'} || '60px'; %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 
 				<% } %>
 				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
@@ -82,7 +82,7 @@
 				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
 					<input channel="metronome" type="range" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;height:<%= $k->{'width'} || '60px' %>;width:<%= $k->{'width'} || '60px'; %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 				<% } %>
 			</span>
 			<span style="left:2px;top:140px;position:absolute;">
@@ -144,6 +144,10 @@
 						<td>Record offset (ms)<br><span style="font-size:12px;">shifts new takes earlier to cancel input latency</span></td>
 						<td><input class="studio_config" setting="record_offset" value="<%= $settings->{'record_offset'} || '' %>"></td>
 					</tr>
+					<tr>
+						<td>Crossfade (s)<br><span style="font-size:12px;">clips that meet ramp into each other</span></td>
+						<td><input class="studio_config" setting="crossfade" value="<%= $settings->{'crossfade'} || '' %>"></td>
+					</tr>
 				</tbody>
 			</table>
 						
@@ -197,11 +201,18 @@
 		color: #04325f;
 	}
 	.knob {
-		height: 30px;
 		width: 30px;
-		padding-left:5px;
+		aspect-ratio: 1 / 1;
+		box-sizing: border-box;
+		object-fit: contain;
 		transform: rotate(180deg);
 		border-radius: 50%;
+	}
+	.channel_fx_pedal {
+		display: block;
+		width: 100%;
+		margin-bottom: 2px;
+		border-radius: 3px;
 	}
 	.channel.selected_channel {
 		box-shadow: inset 0 0 0 3px #8ab4f8;
