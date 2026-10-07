@@ -95,6 +95,11 @@ const GLYPHS = {
 	button_on: '<rect x="3" y="6" width="18" height="12" rx="3" fill="{G}"/><rect x="6.5" y="9.5" width="11" height="5" rx="1.6" fill="{D}"/>',
 	button_off: '<rect x="3" y="6" width="18" height="12" rx="3" fill="{G}"/><circle cx="12" cy="12" r="3.2" fill="{D}"/>',
 	metronome: '<path d="M10 3h4l4 18H6z" fill="{G}"/><path d="M12 5.5 6.8 20" fill="none" stroke="{D}" stroke-width="1.4" stroke-linecap="round"/><rect x="8.5" y="2" width="7" height="2.2" rx="1.1" fill="{G}"/>',
+	wand: '<path d="M4.3 19.7 15.4 8.6l1.4 1.4L5.7 21.1z" fill="{G}"/><path d="M18.4 3.2l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" fill="{D}"/><path d="M13.2 3.6l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z" fill="{D}"/>',
+	live: '<circle cx="12" cy="12" r="8.4" fill="none" stroke="{G}" stroke-width="2"/><circle cx="12" cy="12" r="3.6" fill="{G}"/>',
+	bird: '<path d="M20.5 6.6c-.7.3-1.4.5-2.2.6.8-.5 1.4-1.2 1.7-2.1-.7.4-1.6.8-2.4.9a3.7 3.7 0 0 0-6.4 3.4A10.5 10.5 0 0 1 3.6 5.1a3.7 3.7 0 0 0 1.1 5c-.6 0-1.2-.2-1.7-.5a3.7 3.7 0 0 0 3 3.6c-.5.2-1.1.2-1.7.1a3.7 3.7 0 0 0 3.5 2.6A7.5 7.5 0 0 1 2.5 17.4a10.5 10.5 0 0 0 16.2-8.8c.7-.5 1.3-1.2 1.8-2z" fill="{G}"/>',
+	power: '<path d="M12 3.2v8.4" fill="none" stroke="{G}" stroke-width="2.3" stroke-linecap="round"/><path d="M7.7 6.6a7 7 0 1 0 8.6 0" fill="none" stroke="{G}" stroke-width="2.3" stroke-linecap="round"/>',
+	bullseye: '<circle cx="12" cy="12" r="9" fill="{G}"/><circle cx="12" cy="12" r="5.4" fill="{D}"/><circle cx="12" cy="12" r="2" fill="{G}"/>',
 	toggle_on: '<rect x="2.5" y="7" width="19" height="10" rx="5" fill="{G}"/><circle cx="16.5" cy="12" r="3.4" fill="{D}"/>',
 	toggle_off: '<rect x="2.5" y="7" width="19" height="10" rx="5" fill="{G}"/><circle cx="7.5" cy="12" r="3.4" fill="{D}"/>',
 	burger: '<g stroke="{G}" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g>',
@@ -240,6 +245,12 @@ const ICONS = {
 	'right arrow': 'next',
 	'file': 'note',
 	'metronome': 'metronome',
+	'automate everything': 'wand',
+	'now': 'live',
+	'the bird': 'bird',
+	'logo2': 'power',
+	'bullseye': 'bullseye',
+	'padlock': 'lock',
 };
 
 // --- styles --------------------------------------------------------------------

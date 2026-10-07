@@ -88,6 +88,7 @@
 		#<%= $miss %>_jog_wheel {
 			width: 100%;
 			height: 100%;
+			border-radius: 50%;
 		}
 		#<%= $id %>_full_title {
 			right: 130px;
@@ -143,20 +144,20 @@
 			<% if ($source eq 'music') { %>
 
 			<% } %>
-			<input id="<%= $miss %>_speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1" width="100%" height="50">
-			<input id="<%= $miss %>_position" class="<%= $miss %> hover" value="0" type="range" step=".1" min="0" max="100" width="100%">
-			<img id="<%= $miss %>_snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
-			<img id="<%= $miss %>_full_screen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
-			<img id="<%= $miss %>_back" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="<%= &subs::icon_for('/images/studio/back.png') %>">
-			<img id="<%= $miss %>_forward" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="<%= &subs::icon_for('/images/studio/forward.png') %>">
-			<img id="<%= $miss %>_add" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
-			<img id="<%= $miss %>_loop_start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="<%= &subs::icon_for('/images/make believe/start.png') %>">
-			<img id="<%= $miss %>_loop_end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
+			<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1" width="100%" height="50">
+			<input id="<%= $miss %>_position" hint="Seek" class="<%= $miss %> hover" value="0" type="range" step=".1" min="0" max="100" width="100%">
+			<img id="<%= $miss %>_snapshot" hint="Save a snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
+			<img id="<%= $miss %>_full_screen" hint="Fullscreen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
+			<img id="<%= $miss %>_back" hint="Previous chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="<%= &subs::icon_for('/images/studio/back.png') %>">
+			<img id="<%= $miss %>_forward" hint="Next chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="<%= &subs::icon_for('/images/studio/forward.png') %>">
+			<img id="<%= $miss %>_add" hint="Drop a mark" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
+			<img id="<%= $miss %>_loop_start" hint="Set loop start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="<%= &subs::icon_for('/images/make believe/start.png') %>">
+			<img id="<%= $miss %>_loop_end" hint="Set loop end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
 			<img id="<%= $miss %>_position_preview" style="display:none;" class="huge_thumb">
-			<img id="<%= $id %>_subtitle_toggle" style="" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
+			<img id="<%= $id %>_subtitle_toggle" hint="Subtitles" style="" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
 			<span id="<%= $miss %>_position_preview_info" style="display:none;" class=""></span> 
 			<span id="<%= $miss %>_jog_wheel_frame" style="" class=" hover">
-				<img id="<%= $miss %>_jog_wheel" class="<%= $miss %> jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel.png') %>">
+				<img id="<%= $miss %>_jog_wheel" hint="Jog wheel" class="<%= $miss %> jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel.png') %>">
 				<span id="<%= $miss %>_jog_wheel_centre" style="width:1px; height: 1px;" ></span>
 			</span>
 			<span id="<%= $id %>_time_display" style="display:none;">
@@ -170,9 +171,9 @@
 			</span>
 			<span id="<%= $id %>_full_title"></span>
 			<% if ($source eq 'music') { %>
-				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" class="little_thumb hover" id="music_list_view">
-				<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
-				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
+				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
+				<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
 			<% } %>
 		</div>
 	</div>

@@ -713,3 +713,82 @@ function jawnosReloadIcons() {
 		}
 	} catch (e) {}
 }
+
+// ---- icon hints: hover label on desktop, long-press label on touch ------------
+// Any element with a `hint="..."` attribute shows a small floating label when
+// hovered (pointer devices) or long-pressed (touch). Draggable elements are
+// skipped on touch so a long press can start a drag instead.
+var jawnos_hint_timer = null;
+var jawnos_touch_hint_active = false;
+function jawnosHintNode() {
+	var h = document.getElementById('jawnos_hint');
+	if (!h) {
+		h = document.createElement('div');
+		h.id = 'jawnos_hint';
+		h.style.cssText = 'position:fixed;display:none;z-index:90000;background:rgba(0,0,0,0.86);color:#fff;padding:3px 8px;border-radius:6px;font-size:13px;line-height:1.3;max-width:260px;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.4);white-space:nowrap;';
+		document.body.appendChild(h);
+	}
+	return h;
+}
+function jawnosHintShow(el, x, y) {
+	var text = $(el).attr('hint');
+	if (!text) { return; }
+	var h = jawnosHintNode();
+	h.textContent = text;
+	h.style.display = 'block';
+	var w = h.offsetWidth, hh = h.offsetHeight;
+	if (x == null) {
+		var o = $(el).offset() || { left: 0, top: 0 };
+		x = o.left + ($(el).width() / 2);
+		y = o.top;
+	}
+	var left = Math.max(4, Math.min(x - (w / 2), $(window).width() - w - 4));
+	var top = y - hh - 8;
+	if (top < 4) { top = y + 24; }
+	h.style.left = left + 'px';
+	h.style.top = top + 'px';
+}
+function jawnosHintHide() {
+	var h = document.getElementById('jawnos_hint');
+	if (h) { h.style.display = 'none'; }
+}
+function jawnosSuppressClick() {
+	var killer = function (e) { e.stopPropagation(); e.preventDefault(); document.removeEventListener('click', killer, true); };
+	document.addEventListener('click', killer, true);
+	setTimeout(function () { document.removeEventListener('click', killer, true); }, 700);
+}
+
+var jawnos_hover_capable = true;
+try { jawnos_hover_capable = window.matchMedia('(hover: hover)').matches; } catch (e) {}
+
+if (jawnos_hover_capable) {
+	$(document).on('mouseenter', '[hint]', function () {
+		if (jawnos_touch_hint_active) { return; }
+		jawnosHintShow(this, null, null);
+	});
+	$(document).on('mouseleave', '[hint]', function () { jawnosHintHide(); });
+	$(document).on('mousedown', function () { jawnosHintHide(); });
+}
+
+$(document).on('touchstart', '[hint]', function (e) {
+	var el = this;
+	if ($(el).hasClass('draggable') || $(el).closest('.draggable').length > 0) { return; }
+	var touch = e.originalEvent.touches && e.originalEvent.touches[0];
+	if (!touch) { return; }
+	var tx = touch.clientX, ty = touch.clientY;
+	clearTimeout(jawnos_hint_timer);
+	jawnos_hint_timer = setTimeout(function () {
+		jawnos_touch_hint_active = true;
+		jawnosHintShow(el, tx, ty);
+		jawnosSuppressClick();
+	}, 500);
+});
+$(document).on('touchend touchcancel', function () {
+	clearTimeout(jawnos_hint_timer);
+	if (jawnos_touch_hint_active) {
+		setTimeout(function () { jawnosHintHide(); jawnos_touch_hint_active = false; }, 1200);
+	}
+});
+$(document).on('touchmove', function () {
+	if (!jawnos_touch_hint_active) { clearTimeout(jawnos_hint_timer); }
+});

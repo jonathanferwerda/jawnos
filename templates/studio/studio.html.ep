@@ -67,16 +67,16 @@
 		<span id="studio_controls">
 			<span style="left:2px;top:50px;position:absolute;">
 
-				<img class="little_thumb record hover" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">
-				<img class="little_thumb play hover" id="studio_play" src="<%= &subs::icon_for('/images/make believe/play.png') %>">
-				<img class="little_thumb stop hover" id="studio_stop" src="<%= &subs::icon_for('/images/make believe/stop.png') %>">
-				<img class="little_thumb prev hover" id="studio_prev" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>">
-				<img class="little_thumb next hover" id="studio_next" src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>">
+				<img class="little_thumb record hover" hint="Record" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">
+				<img class="little_thumb play hover" hint="Play" id="studio_play" src="<%= &subs::icon_for('/images/make believe/play.png') %>">
+				<img class="little_thumb stop hover" hint="Stop" id="studio_stop" src="<%= &subs::icon_for('/images/make believe/stop.png') %>">
+				<img class="little_thumb prev hover" hint="Previous" id="studio_prev" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>">
+				<img class="little_thumb next hover" hint="Next" id="studio_next" src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>">
 
 			</span>
 			<span style="left:2px;top:95px;position:absolute;">
-				<img class="little_thumb mark hover" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
-				<img class="little_thumb metronome hover" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
+				<img class="little_thumb mark hover" hint="Drop a mark" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
+				<img class="little_thumb metronome hover" hint="Metronome" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
 				<input style="width:50px;vertical-align:top;" id="studio_bpm" value="120">
 				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
@@ -88,10 +88,10 @@
 
 			</span>
 			<span style="left:2px;top:190px;position:absolute;">
-				<img class="little_thumb hover video_toggle" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
-				<img class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
-				<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
-				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" class="little_thumb hover" id="studio_loop">
+				<img class="little_thumb hover video_toggle" hint="Camera" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
+				<img class="little_thumb hover" hint="Pedalboard" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
+				<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
 			</span>
 			<span style="left:2px;top:240px;position:absolute;">
 				<span id="studio_time_display">
@@ -112,7 +112,7 @@
 
 		</span>
 		<span class="jog_wheel_frame">
-			<img class="jog_wheel" id="studio_jog_wheel" src="/images/studio/jog wheel tye dye.png">
+			<img class="jog_wheel" hint="Jog wheel" id="studio_jog_wheel" src="/images/studio/jog wheel tye dye.png">
 			<span class="jog_wheel_centre" style="width:5px;height:5px;"
 		</span>
 	</div>
@@ -121,11 +121,11 @@
 		<h1>Configure</h1>
 
 		<div id="song_controls" style="">
-			<img id="studio_new" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
+			<img id="studio_new" hint="New song" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
 			<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
-			<img id="studio_save" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
-			<img id="studio_delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
-			<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle"><br>
+			<img id="studio_save" hint="Save" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
+			<img id="studio_delete" hint="Delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
+			<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle"><br>
 			<input type="hidden" id="studio_name">
 		</div>
 		<div>
@@ -299,6 +299,7 @@
 		bottom: 10px;
 		height: 110px;
 		width: 110px;
+		border-radius: 50%;
 	}
 	#studio_time_display {
 		font-size: 32px;
