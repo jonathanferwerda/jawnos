@@ -522,16 +522,16 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 5529, .adv_w = 196, .box_w = 8, .box_h = 29, .ofs_x = 2, .ofs_y = 0},/*(ID:11)*/
 };
 
-static const uint16_t unicode_list_0[] = {
-    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x003a
-};
-
 /*Store the cmap - does not ensure the glyph will be searched.*/
 static const lv_font_fmt_txt_cmap_t cmaps[] = {
+    /* 0-9 and the colon are one contiguous range, which is exactly what
+     * FORMAT0 is for: glyph id = codepoint - range_start + glyph_id_start.
+     * A sparse map would need unicode_list/list_length, and with a length of
+     * zero nothing is found and every digit comes out as a missing-glyph box. */
     {
         .range_start = 48, .range_length = 11, .glyph_id_start = 1,
-        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 0,
-        .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0,
+        .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     }
 };
 

@@ -35,7 +35,7 @@ LVGL_METRICS = {16: (19, 3), 20: (24, 4), 24: (26, 4), 48: (52, 9)}
 
 def load_clock_font(path):
     src = open(path).read()
-    body = re.search(r"glyph_bitmap\[\] = \{(.*?)\};", src, re.S).group(1)
+    body = re.search(r"glyph_bitmap\[\] = \{(.*?)\}\;", src, re.S).group(1)
     data = [int(b, 16) for b in re.findall(r"0x([0-9a-f]{2})", body)]
     entries = re.findall(
         r"\{\.bitmap_index = (\d+), \.adv_w = (\d+), \.box_w = (\d+), "
@@ -43,7 +43,26 @@ def load_clock_font(path):
     glyphs = [tuple(map(int, e)) for e in entries]
     line_height = int(re.search(r"\.line_height = (\d+)", src).group(1))
     base_line = int(re.search(r"\.base_line = (\d+)", src).group(1))
-    return data, glyphs, line_height, base_line
+    # the cmap, the way lvgl's get_glyph_dsc_id() reads it: only FORMAT0 is used
+    cmap = re.search(r"\.range_start = (\d+), \.range_length = (\d+), \.glyph_id_start = (\d+)",
+                     src)
+    map_type = re.search(r"\.type = (LV_FONT_FMT_TXT_CMAP_\w+)", src).group(1)
+    if map_type != "LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY":
+        raise SystemExit(f"the preview only understands FORMAT0 cmaps, got {map_type}")
+    first, length, gid_start = (int(g) for g in cmap.groups())
+    return data, glyphs, line_height, base_line, first, length, gid_start
+
+
+def glyph_of(ch, first, length, gid_start):
+    """lvgl's FORMAT0_TINY lookup: rcp + glyph_id_start, or 0 for a miss.
+
+    A miss matters: this lvgl draws a missing glyph as a box the height of the
+    line, which is what solid yellow rectangles on the clock turned out to be.
+    """
+    rcp = ord(ch) - first
+    if rcp >= length:
+        return 0
+    return gid_start + rcp
 
 
 def blend(draw, x, y, colour, alpha):
@@ -55,13 +74,19 @@ def blend(draw, x, y, colour, alpha):
     draw.point((x, y), (r, g, b))
 
 
-def draw_clock_text(draw, text, x, y, data, glyphs, line_height, base_line):
-    order = "0123456789:"
-    advances = [glyphs[order.index(c) + 1][1] / 16.0 for c in text]
+def draw_clock_text(draw, text, x, y, data, glyphs, line_height, base_line,
+                    first, length, gid_start):
+    ids = [glyph_of(c, first, length, gid_start) for c in text]
+    advances = [glyphs[i][1] / 16.0 if i else 0 for i in ids]
     pen = x - sum(advances) / 2
     baseline = y + line_height - base_line
-    for ch, adv in zip(text, advances):
-        bi, _, box_w, box_h, ofs_x, ofs_y = glyphs[order.index(ch) + 1]
+    for gid, adv in zip(ids, advances):
+        if not gid:
+            # a missing glyph is drawn as a filled box the height of the line
+            blend(draw, int(pen), y, YELLOW, 255)
+            pen += adv
+            continue
+        bi, _, box_w, box_h, ofs_x, ofs_y = glyphs[gid]
         gx = int(round(pen)) + ofs_x
         gy = baseline - ofs_y - box_h
         nibbles = []
@@ -105,8 +130,8 @@ def face(net_room=False, buttons=False, output="face_preview.png"):
     # clock
     draw_lvgl_label(draw, "Wed Oct 07 2026", 10, 26, 16, YELLOW, width=220)
 
-    data, glyphs, lh, bl = load_clock_font(CLOCK)
-    draw_clock_text(draw, "12:34", 120, 44, data, glyphs, lh, bl)
+    data, glyphs, lh, bl, first, length, gid_start = load_clock_font(CLOCK)
+    draw_clock_text(draw, "12:34", 120, 44, data, glyphs, lh, bl, first, length, gid_start)
 
     # seconds and steps share a line
     draw_lvgl_label(draw, "56", -38 + 120 - 40, 112, 24, YELLOW, width=80)

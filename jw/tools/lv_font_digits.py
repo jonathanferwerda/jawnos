@@ -166,6 +166,12 @@ def generate(size, out_path, symbol):
     ascent, descent = font_metrics(size)
     line_height = ascent + descent
 
+    # FORMAT0_TINY maps codepoints straight onto glyph ids, so the glyphs have
+    # to be one contiguous ascending run
+    codes = [ord(c) for c in GLYPHS]
+    if codes != list(range(codes[0], codes[0] + len(codes))):
+        raise SystemExit(f"glyphs must be contiguous and ascending: {GLYPHS!r}")
+
     bitmaps, descs = [], []
     index = 0
     for ch in GLYPHS:
@@ -215,15 +221,16 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
                      f".box_h = {bh}, .ofs_x = {ox}, .ofs_y = {oy}}},/*(ID:{n})*/\n")
         fh.write(f"""}};
 
-static const uint16_t unicode_list_0[] = {{
-    """)
-        fh.write(", ".join(f"0x{ord(c):04x}" for c in GLYPHS) + "\n};\n\n")
-        fh.write(f"""/*Store the cmap - does not ensure the glyph will be searched.*/
+/*Store the cmap - does not ensure the glyph will be searched.*/
 static const lv_font_fmt_txt_cmap_t cmaps[] = {{
+    /* 0-9 and the colon are one contiguous range, which is exactly what
+     * FORMAT0 is for: glyph id = codepoint - range_start + glyph_id_start.
+     * A sparse map would need unicode_list/list_length, and with a length of
+     * zero nothing is found and every digit comes out as a missing-glyph box. */
     {{
         .range_start = {ord(GLYPHS[0])}, .range_length = {len(GLYPHS)}, .glyph_id_start = 1,
-        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 0,
-        .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0,
+        .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     }}
 }};
 
