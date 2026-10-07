@@ -69,6 +69,10 @@ static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
 static bool bt_enabled = false;
+// Set when the saved config says BLE should be on. Starting the BLE stack from
+// setup() crashes the watch, so the start is deferred to loop() once the rest of
+// the boot (display, LVGL, WiFi) has settled.
+static bool btStartPending = false;
 JSONVar btMessages;
 char standby_en = 1;
 long DEFAULT_SCREEN_TIMEOUT = 60*1000;
@@ -894,6 +898,13 @@ void loop() {
   static uint32_t loopStarted = millis();
   char count = 0;
   watch.loop();   // pumps the PMU and motion sensor events into the callbacks
+
+  // BLE was asked for by the saved config: bring it up here, well away from
+  // setup(), where initialising the stack used to panic the watch
+  if (btStartPending && millis() > 2000) {
+    btStartPending = false;
+    start_ble_transfer();
+  }
 
   if (jw_room == "watch") {
     time_writer("loop");
@@ -3570,7 +3581,8 @@ void configRestore() {
     String bte = (const char *)conf["bt_enabled"];
     if (bte == "on") {
       if (bt_enabled == false) {
-        start_ble_transfer();
+        // loop() starts it; doing it here panicked the watch on boot
+        btStartPending = true;
       }
     }
     else {
