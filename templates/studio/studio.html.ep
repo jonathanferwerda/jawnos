@@ -1,3 +1,21 @@
+<% use Mojo::JSON qw/encode_json/; %>
+<%
+	# Footswitch artwork is colour-specific, so resolve every existing colour through
+	# the selected icon set here and hand the map to studio.js.
+	my %jawnos_button_icons;
+	foreach my $state (qw/pressed depressed/) {
+		foreach my $f (glob('public/images/studio/button_' . $state . '_*.png')) {
+			my ($colour) = $f =~ m{button_$state_(.+)\.png$};
+			$jawnos_button_icons{$state}->{$colour} = &subs::icon_for('/images/studio/button_' . $state . '_' . $colour . '.png');
+		}
+	}
+	my $button_icon = sub {
+		my ($state, $colour) = @_;
+		return $jawnos_button_icons{$state}->{$colour} if $jawnos_button_icons{$state}->{$colour};
+		return '/images/studio/button_' . $state . '_' . $colour . '.png';
+	};
+%>
+<script>window.jawnos_studio_button_icons = <%== encode_json \%jawnos_button_icons %>;</script>
 <div id="studio" uuid="<%= $last_song->{'uuid'} %>" name="<%= $last_song->{'name'} %>">
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
@@ -13,7 +31,7 @@
 
 				<% } %>
 				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
-					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" src="/images/studio/button_depressed_<%= $b->{'colour'} %>.png">
+					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
 				<% } %>
 			</span>
 			<% $count++; %>
@@ -49,16 +67,16 @@
 		<span id="studio_controls">
 			<span style="left:2px;top:50px;position:absolute;">
 
-				<img class="little_thumb record hover" id="studio_record" src="/images/make believe/record.png">
-				<img class="little_thumb play hover" id="studio_play" src="/images/make believe/play.png">
-				<img class="little_thumb stop hover" id="studio_stop" src="/images/make believe/stop.png">
-				<img class="little_thumb prev hover" id="studio_prev" src="/images/make believe/left arrow.png">
-				<img class="little_thumb next hover" id="studio_next" src="/images/make believe/right arrow.png">
+				<img class="little_thumb record hover" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">
+				<img class="little_thumb play hover" id="studio_play" src="<%= &subs::icon_for('/images/make believe/play.png') %>">
+				<img class="little_thumb stop hover" id="studio_stop" src="<%= &subs::icon_for('/images/make believe/stop.png') %>">
+				<img class="little_thumb prev hover" id="studio_prev" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>">
+				<img class="little_thumb next hover" id="studio_next" src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>">
 
 			</span>
 			<span style="left:2px;top:95px;position:absolute;">
-				<img class="little_thumb mark hover" id="studio_mark" src="/images/studio/plus.png">
-				<img class="little_thumb metronome hover" id="studio_metronome" src="/images/studio/metronome.png">
+				<img class="little_thumb mark hover" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
+				<img class="little_thumb metronome hover" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
 				<input style="width:50px;vertical-align:top;" id="studio_bpm" value="120">
 				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
@@ -70,10 +88,10 @@
 
 			</span>
 			<span style="left:2px;top:190px;position:absolute;">
-				<img class="little_thumb hover video_toggle" id="studio_video_toggle" src="/images/make believe/camera.png">
-				<img class="little_thumb hover" src="/images/make believe/burger.png" id="pedalboard_hamburger">
-				<img class="little_thumb hover" src="/images/decipherable/gear.png" id="studio_config_toggle">
-				<img src="/images/studio/repeat.png" class="little_thumb hover" id="studio_loop">
+				<img class="little_thumb hover video_toggle" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
+				<img class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
+				<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" class="little_thumb hover" id="studio_loop">
 			</span>
 			<span style="left:2px;top:240px;position:absolute;">
 				<span id="studio_time_display">
@@ -103,11 +121,11 @@
 		<h1>Configure</h1>
 
 		<div id="song_controls" style="">
-			<img id="studio_new" style="vertical-align:top;" class="little_thumb hover" src="/images/decipherable/file.png">
+			<img id="studio_new" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
 			<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
-			<img id="studio_save" style="vertical-align:top;" class="little_thumb hover" src="/images/decipherable/diskette.png">
-			<img id="studio_delete" style="vertical-align:top;" class="little_thumb hover" src="/icons/trash.png">
-			<img class="little_thumb hover" src="/images/decipherable/gear.png" id="studio_config_toggle"><br>
+			<img id="studio_save" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
+			<img id="studio_delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
+			<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle"><br>
 			<input type="hidden" id="studio_name">
 		</div>
 		<div>

@@ -1,6 +1,14 @@
 var mixer = {};
 var studio;
 
+// Button artwork follows the selected icon set; the studio window publishes a
+// server-resolved map (see studio/studio.html.ep), falling back to the PNG.
+function jawnosStudioButtonIcon(state, colour) {
+	var map = (window.jawnos_studio_button_icons || {})[state];
+	if (map && map[colour]) { return map[colour]; }
+	return '/images/studio/button_' + state + '_' + colour + '.png';
+}
+
 $(document).on('click', '#studio_new', function() {
 	$('#studio').attr('uuid','').attr('name','');
 	studioInit({ uuid: 'new', settings: [{ 'setting': 'last_song', 'value': 'new' }] });
@@ -153,11 +161,11 @@ $(document).on('click', '.button_control', function() {
 	var status = b.attr('status');
 	if (status == 'depressed') {
 		b.attr('status', 'pressed');
-		b.attr('src', '/images/studio/button_pressed_' + colour + '.png');
+		b.attr('src', jawnosStudioButtonIcon('pressed', colour));
 	}
 	else {
 		b.attr('status', 'depressed');
-		b.attr('src', '/images/studio/button_depressed_' + colour + '.png');
+		b.attr('src', jawnosStudioButtonIcon('depressed', colour));
 	}
 	studioSaver();
 });

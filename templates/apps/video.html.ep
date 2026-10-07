@@ -19,7 +19,7 @@
 			color: black;
 			outline: none;
 			vertical-align: middle;
-			background-image: url('/images/studio/ruler.png');
+			background-image: url('<%= &subs::icon_for('/images/studio/ruler.png') %>');
 		}
 		#<%= $miss %>_position {
 			position:absolute;
@@ -145,18 +145,18 @@
 			<% } %>
 			<input id="<%= $miss %>_speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1" width="100%" height="50">
 			<input id="<%= $miss %>_position" class="<%= $miss %> hover" value="0" type="range" step=".1" min="0" max="100" width="100%">
-			<img id="<%= $miss %>_snapshot" src="/images/decipherable/gallery.png" class="little_thumb <%= $miss %> hover">
-			<img id="<%= $miss %>_full_screen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="/images/studio/green screen.png">
-			<img id="<%= $miss %>_back" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="/images/studio/back.png">
-			<img id="<%= $miss %>_forward" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="/images/studio/forward.png">
-			<img id="<%= $miss %>_add" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="/images/studio/plus.png">
-			<img id="<%= $miss %>_loop_start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="/images/make believe/start.png">
-			<img id="<%= $miss %>_loop_end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="/images/make believe/end.png">
+			<img id="<%= $miss %>_snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
+			<img id="<%= $miss %>_full_screen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
+			<img id="<%= $miss %>_back" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="<%= &subs::icon_for('/images/studio/back.png') %>">
+			<img id="<%= $miss %>_forward" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="<%= &subs::icon_for('/images/studio/forward.png') %>">
+			<img id="<%= $miss %>_add" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
+			<img id="<%= $miss %>_loop_start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="<%= &subs::icon_for('/images/make believe/start.png') %>">
+			<img id="<%= $miss %>_loop_end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
 			<img id="<%= $miss %>_position_preview" style="display:none;" class="huge_thumb">
-			<img id="<%= $id %>_subtitle_toggle" style="" class="little_thumb hover" src="/images/decipherable/love letter.png">
+			<img id="<%= $id %>_subtitle_toggle" style="" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
 			<span id="<%= $miss %>_position_preview_info" style="display:none;" class=""></span> 
 			<span id="<%= $miss %>_jog_wheel_frame" style="" class=" hover">
-				<img id="<%= $miss %>_jog_wheel" class="<%= $miss %> jog_wheel" src="/images/studio/jog wheel.png">
+				<img id="<%= $miss %>_jog_wheel" class="<%= $miss %> jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel.png') %>">
 				<span id="<%= $miss %>_jog_wheel_centre" style="width:1px; height: 1px;" ></span>
 			</span>
 			<span id="<%= $id %>_time_display" style="display:none;">
@@ -184,18 +184,29 @@
 		v.lastPositionPreview = Date.now();
 
 		if (misses['<%= $id %>'] != '<%= $miss %>') {
-			console.log(misses);
 			misses['<%= $id %>'] = '<%= $miss %>';
+			// Drop the auto-hide timer from the previous render of this window.
+			if (window.jawnos_vid_tools && window.jawnos_vid_tools['<%= $id %>'] && window.jawnos_vid_tools['<%= $id %>'].toolbarTimeout) {
+				clearInterval(window.jawnos_vid_tools['<%= $id %>'].toolbarTimeout);
+			}
 			$('#<%= $id %>_script').attr('loaded', 'yes');
+			// A re-render (icon-set swap, reopen) must not stack document-level
+			// handlers, or every mousemove/tick multiplies work until the browser locks up.
+			var jawnos_vid_ns = '.jawnos_vid_<%= $id %>';
+			$(document).off(jawnos_vid_ns);
+			function vidOn(events, selector, handler) {
+				var namespaced = events.split(' ').map(function(e) { return e + jawnos_vid_ns; }).join(' ');
+				$(document).on(namespaced, selector, handler);
+			}
 
 
 
-			$(document).on('change mousemove touchmove', '#<%= $miss %>_speed', function() {
+			vidOn('change mousemove touchmove', '#<%= $miss %>_speed', function() {
 				var speed = numeral($(this).val()).value();
 				var v = document.getElementById('<%= $id %>');
 				v.playbackRate = speed;
 			});
-			$(document).on('dblclick', '#<%= $miss %>_speed', function() {
+			vidOn('dblclick', '#<%= $miss %>_speed', function() {
 				$(this).val(1);
 				var v = document.getElementById('<%= $id %>');
 				v.playbackRate = 1;
@@ -211,11 +222,15 @@
 				v.fps = { average: 0, instances: [], measure: 3, quality: { instant: 0 } };
 				clearInterval(vidControls['<%= $id %>_video_interval']);
 				vidControls['<%= $id %>_video_interval'] = setInterval(function() {
-					if ($('#<%= $id %>').length == 0) { //!$('.<%= $miss %>_container').closest('.wind').is(':visible')) {
+					var el = document.getElementById('<%= $id %>');
+					if (!el || $('#<%= $id %>').length == 0) { //!$('.<%= $miss %>_container').closest('.wind').is(':visible')) {
 						clearInterval(vidControls['<%= $id %>_video_interval']);
 						misses['<%= $id %>'] = null;
+						return;
 					}
-					var v = document.getElementById('<%= $id %>');
+					// Skip per-second DOM/layout work while the tab is backgrounded.
+					if (document.hidden) { return; }
+					var v = el;
 					if (v.state == 1) {
 						var speed = numeral($('#<%= $miss %>_speed').val()).value();
 						var fps = v.fps.quality;
@@ -245,11 +260,11 @@
 									
 									v.fps.instances.pop();
 								}
-								$('#<%= $id %>').closest('.wind').show();
+								var wind = $('#<%= $id %>').closest('.wind');
+								if (!wind.is(':visible')) { wind.show(); }
 							}
 						}
 						if (vid.length == 0) {
-							console.log('clearing');
 							clearInterval(vidControls['<%= $id %>_video_interval']);
 						}
 						if (vidControls['<%= $id %>']) {
@@ -268,32 +283,43 @@
 						}
 						$('#<%= $miss %>_position').val(v.currentTime / v.duration * 100);
 						$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
+						<% if ($source eq 'music') { %>
 						if ($('#music').width() > 640) {
 							var width = Math.abs(numeral($('#<%= $miss %>_jog_wheel').css('left')).value() - numeral($('#<%= $miss %>_forward').css('left') ).value() + 60);
-							console.log(width);
 							$('#<%= $id %>_full_title').text($('.playing').find('.full_title').text()).css({ 
 								'width': width,
 								'font-size': ($('#music').width() / 50),
-							//	'left': numeral($('#<%= $miss %>_forward').css('left') + 60).value()
 							}).show();
 						}
 						else {
 							$('#<%= $id %>_full_title').hide();
 						}
+						<% } %>
 					}
 				}, 1000);
 			}
-			var <%= $miss %>Tools = { toolbarTimeout: 0, lastX: 0, lastY: 0 };
-			$(document).on('mousemove, mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_controls', function() {
+			var <%= $miss %>Tools = { toolbarTimeout: 0, toolbarReset: 0, lastX: 0, lastY: 0 };
+			window.jawnos_vid_tools = window.jawnos_vid_tools || {};
+			window.jawnos_vid_tools['<%= $id %>'] = <%= $miss %>Tools;
+			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_controls', function() {
 
-				$('#<%= $miss %>_controls').fadeIn();
+				var controls = $('#<%= $miss %>_controls');
+				if (!controls.is(':visible')) { controls.fadeIn(); }
 				<% if ($source eq 'music') { %>
-					$('#interface').css({ 'z-index': ($('.wind[app="music"]').css('z-index') + 1) }).fadeIn();
+					var music_iface = $('#interface');
+					if (!music_iface.is(':visible')) {
+						music_iface.css({ 'z-index': ($('.wind[app="music"]').css('z-index') + 1) }).fadeIn();
+					}
 				<% } %>
 
 				$('#<%= $id %>').css({'cursor': 'auto'});
+				// Only rebuild the auto-hide timer a few times a second rather than
+				// on every mousemove event.
+				var jawnos_now = Date.now();
+				if (!<%= $miss %>Tools['toolbarReset'] || (jawnos_now - <%= $miss %>Tools['toolbarReset']) > 250) {
+				<%= $miss %>Tools['toolbarReset'] = jawnos_now;
 				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
-				<%= $miss %>Tools['toolbarTimeout'] =setInterval(function() {
+				<%= $miss %>Tools['toolbarTimeout'] = setInterval(function() {
 					if ($('#<%= $id %>').attr('theatre_mode') == 'on' || '<%= $id %>' != 'video') {
 						var mouse = mouse_position();
 						var el = document.elementsFromPoint(mouse.x,mouse.y);	
@@ -325,9 +351,10 @@
 						clearInterval(<%= $miss %>Tools['toolbarTimeout']);
 					}
 				},3000);
+				}
 			});
 
-			$(document).on('click', '#<%= $miss %>_snapshot', function() {
+			vidOn('click', '#<%= $miss %>_snapshot', function() {
 				var timestamp = Date.now();
 				var v = document.getElementById('<%= $id %>');
 				var canvas = document.createElement('canvas');
@@ -340,7 +367,6 @@
 
 				var apper = $('.wind')[$('.wind').length - 1];
 				var window_app = topWindow('<%= $app || 'video' %>') || $('#search').val();
-				console.log(window_app + ' <%= $app %>');
 				var app_name = window_app || <% if ($c->param('app') eq 'video') { %>musicTitleMaker()<% } else { %>"<%= $app %>"<% } %>;
 
 				$.ajax({
@@ -352,14 +378,13 @@
 						app: app_name
 					},
 					success:function(response) {
-						console.log(response);
 					}
 				});
 			});
 			if (!windowPhoneChecker()) {
 				var <%= $miss %>_jw_deg =  0;
 				var <%= $miss %>_last = 'out';
-				$(document).on('touchmove mousemove', '#<%= $miss %>_jog_wheel', function(e) {
+				vidOn('touchmove mousemove', '#<%= $miss %>_jog_wheel', function(e) {
 					e.preventDefault();			e.preventDefault();
 					var j = $(this);
 
@@ -394,10 +419,10 @@
 						<%= $miss %>_last = 'in';
 					}
 				});
-				$(document).on('mouseout touchend mouseup', '#<%= $miss %>_jog_wheel,#<%= $id %>', function() {
+				vidOn('mouseout touchend mouseup', '#<%= $miss %>_jog_wheel,#<%= $id %>', function() {
 					<%= $miss %>_last = 'out';
 				});
-				$(document).on('mousewheel', '#<%= $miss %>_jog_wheel,#<%= $id %>', function(e) {
+				vidOn('mousewheel', '#<%= $miss %>_jog_wheel,#<%= $id %>', function(e) {
 					var j = $('#<%= $miss %>_jog_wheel');
 					var mvmt = numeral(e.originalEvent.wheelDelta).value();
 
@@ -408,30 +433,29 @@
 
 					var v = document.getElementById('<%= $id %>');
 					var currentTime = v.currentTime + diff / 10 * $(this).closest('.wind').find('.speed').val();
-					console.log(currentTime);
 					v.currentTime = currentTime;
 					$('<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
 				});
-				$(document).on('click', '#<%= $miss %>_jog_wheel, #<%= $id %>', function() {
+				vidOn('click', '#<%= $miss %>_jog_wheel, #<%= $id %>', function() {
 					var v = document.getElementById('<%= $id %>');
 					if (v.state == 0) {
 						v.play();
 						v.state = 1;
-						$('#play_logo').attr('src', '/icons/pause.jpg');
+						$('#play_logo').attr('src', '<%= &subs::icon_path('pause', '/icons/pause.jpg') %>');
 					}
 					else {
 						v.pause();
 						v.state = 0;
-						$('#play_logo').attr('src', '/icons/play.jpg');
+						$('#play_logo').attr('src', '<%= &subs::icon_path('play', '/icons/play.jpg') %>');
 					}
 				});
 			}
-			$(document).on('dblclick', '#<%= $id %>', function() {
+			vidOn('dblclick', '#<%= $id %>', function() {
 				var v = document.getElementById('<%= $id %>');
 				v.requestFullscreen();
 			});
 
-			$(document).on('click', '.loop_control', function() {
+			vidOn('click', '.loop_control', function() {
 				var a = $(this);
 				var loop_control = a.attr('loop_control');
 				var v = document.getElementById('<%= $id %>');
@@ -452,7 +476,7 @@
 				}
 			});
 
-			$(document).on('click','#<%= $miss %>_add', function() {
+			vidOn('click','#<%= $miss %>_add', function() {
 				var v = document.getElementById('<%= $id %>');
 				if(!vidControls['<%= $id %>']) { vidControls['<%= $id %>'] = [] };
 				var seen = 0;
@@ -472,18 +496,15 @@
 				});
 			});
 
-			$(document).on('click', '#<%= $miss %>_back, #<%= $id %>_back', function() {
+			vidOn('click', '#<%= $miss %>_back, #<%= $id %>_back', function() {
 				var a = $('#<%= $miss %>_back');
-				console.log(a);
 				var v = document.getElementById('<%= $id %>');
 				var timestamp = Date.now();
 				var bestMatch = 0;
 				var bestMark = 0;
 				if (a.attr('timestamp') < timestamp - 100) {
 					a.attr('timestamp',timestamp);
-					console.log(timestamp);
 					var seen = 0;
-					console.log('<%= $id %>' + ' ' + v.currentTime);
 					$.each(vidControls['<%= $id %>'], function(i,vr) {
 						vr = numeral(vr).value();
 						if (v.currentTime >= (vr + 1.01)) {
@@ -504,11 +525,10 @@
 
 					}
 				}
-				console.log(bestMatch + ' ' + bestMark);
 				$('#<%= $id %>_mark_information').html(bestMark + '/' + vidControls['<%= $id %>'].length);
 			});
 
-			$(document).on('click', '#<%= $miss %>_forward, <%= $id %>_forward', function() {
+			vidOn('click', '#<%= $miss %>_forward, <%= $id %>_forward', function() {
 				var a = $('#<%= $miss %>_forward');
 				var v = document.getElementById('<%= $id %>');
 				var timestamp = Date.now();
@@ -517,7 +537,6 @@
 				var bestMark = vidControls['<%= $id %>'].length;
 				if (a.attr('timestamp') < timestamp - 100) {
 					a.attr('timestamp', timestamp);
-					console.log('<%= $id %>' + ' ' + v.currentTime);
 					$.each(vidControls['<%= $id %>'], function(i,vr) {
 						vr = numeral(vr).value();
 						if (v.currentTime <= (vr - .01)) {
@@ -535,7 +554,7 @@
 				$('#<%= $id %>_mark_information').html(bestMark + '/' + vidControls['<%= $id %>'].length);
 			});
 
-			$(document).on('click', '#<%= $miss %>_full_screen', function() {
+			vidOn('click', '#<%= $miss %>_full_screen', function() {
 				var a = $(this);
 				$('#<%= $id %>').show();
 				var v = document.getElementById('<%= $id %>');
@@ -545,7 +564,7 @@
 				}
 			});
 
-			$(document).on('change mousedown mouseup touchmove click', '#<%= $miss %>_position', function(e) {
+			vidOn('change mousedown mouseup touchmove click', '#<%= $miss %>_position', function(e) {
 				var movable = 1;
 				if (e.type == 'mousemove' && e.buttons == 0) {
 					movable = 0;
@@ -556,9 +575,8 @@
 					v.currentTime = (v.duration * (val / 100));
 				}
 			});
-			$(document).on('hover mousemove mouseover touchmove', '#<%= $miss %>_position', function(e) {
+			vidOn('hover mousemove mouseover touchmove', '#<%= $miss %>_position', function(e) {
 				var vid = $('#<%= $id %>');
-				console.log(e);
 				var width = $(this).width();
 				var val = $(this).val();
 				var x = e.originalEvent.offsetX;
@@ -587,7 +605,6 @@
 					if (v.lastPositionPreview <= allowedTime) {
 						v.lastPositionPreview = Date.now();
 						var time = (v.duration * (x / width));
-						console.log(v.duration);
 						var src = v.src + '&thumb=ya&position=' + time;
 						$('#<%= $miss %>_position_preview').attr('src', src).show();
 						$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
@@ -600,7 +617,7 @@
 					},100);
 				}
 			});
-			$(document).on('mouseout', '#<%= $miss %>_position', function(e) {
+			vidOn('mouseout', '#<%= $miss %>_position', function(e) {
 				clearInterval(v.positionPreviewTimeout);
 				$('#<%= $miss %>_position_preview').hide();
 				$('#<%= $miss %>_position_preview_info').hide();
