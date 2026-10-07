@@ -1255,6 +1255,33 @@ function textEditorProcessor(text) {
 }
 
 
+// Marker (paint board) shortcuts, kept here with the rest of the key
+// handling. Returns true when the key was used, so the keyboard app leaves it
+// alone.
+function markerShortcut(e) {
+	if (typeof markerUndo != 'function') { return false; }
+	if ($('#whiteboard').length == 0 || !$('#whiteboard').is(':visible')) { return false; }
+	if ($(e.target).is('input, textarea, select, [contenteditable], .text-editor')) { return false; }
+	var key = (e.key || '').toLowerCase();
+	if (e.ctrlKey || e.metaKey) {
+		if (e.altKey) { return false; }
+		if (key == 'z') {
+			if (e.shiftKey) { markerRedoStep(); } else { markerUndo(); }
+			e.preventDefault();
+			return true;
+		}
+		if (key == 'y') { markerRedoStep(); e.preventDefault(); return true; }
+		return false;
+	}
+	// the plain keys only act while the board is the window in front
+	var marker_app = $('#whiteboard').closest('.wind').attr('app') || 'marker';
+	if (topWindow() != marker_app) { return false; }
+	if (key == '+' || key == '=') { markerZoomCentre(1.25); e.preventDefault(); return true; }
+	if (key == '-' || key == '_') { markerZoomCentre(1 / 1.25); e.preventDefault(); return true; }
+	if (key == '0') { markerViewFit(); e.preventDefault(); return true; }
+	return false;
+}
+
 $(document).on('keydown', function(e) {
 	var timestamp = Date.now();
 	keysPressed[e.keyCode] = { key: e.key, timestamp: timestamp };
@@ -1263,6 +1290,7 @@ $(document).on('keydown', function(e) {
 	var win = $('.wind[app="' + app + '"]');
 
 	var movInc = 5;
+	if (markerShortcut(e)) { return; }
 	if (e.keyCode == 13) {
 		if ($('.dialog_box').length > 0) {
 			e.preventDefault();

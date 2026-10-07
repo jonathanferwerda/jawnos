@@ -4,6 +4,7 @@
 	<canvas id="whiteboard"></canvas>
 	<div id="marker_toolbox" class="marker_toolbox" style="overflow:scroll; position:absolute;right:0px; float:right; top: 35px; height:100%; width: 85px; border: 2px; border-radius: 7px; background-color: green;">
 
+		<button class="button" id="marker_toolbox_hide" hint="Hide the toolbox" style="width:100%;">&#187;</button>
 		<button class="button marker_init" onclick="markerInit()">Init</button>
 		<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Stylus (palm protection)" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
 		<br>
@@ -69,9 +70,7 @@
 			<input class="slider_bar" style="width: 89%" type="range" id="marker_transparency" step=.02 max=1 min=0 />
 		</div>
 		<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb" id="marker_gallery">
-	</div>
-
-	<div id="portfolio" style="max-width:100%; overflow:scroll;">
+		<div id="portfolio" style="max-width:100%; overflow:scroll;">
 		<% foreach my $d ( @{$drawings} ) { %>
 			<% my $files = eval { return decode_json $d->{'file'} } || []; %>
 
@@ -80,6 +79,8 @@
 				<img class="paper" timestamp="<%= $d->{timestamp} %>" app="<%= $d->{'app'} %>" app_uuid="<%= $d->{'uuid'} %>" file_uuid="<%= $fi->{uuid} %>" src="/file_open?file=<%= $fi->{'f'} %>&timestamp=<%= $fi->{'server_time'} %>" style="width:40px;height:60px"></img>
 			<% } %>
 		<% } %>
+		</div>
 	</div>
+	<button class="button" id="marker_toolbox_show" hint="Show the toolbox" style="position:absolute;right:0px;top:38px;display:none;z-index:30;">&#171;</button>
 	<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="<%= &subs::icon_for('/images/make believe/bullseye.png') %>" hint="Target">
 </div>

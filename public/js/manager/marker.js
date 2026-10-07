@@ -824,19 +824,92 @@ function markerDrawSegment(ctx, from, to, pressure) {
 	ctx.globalAlpha = 1;
 }
 
+// wheel deltas arrive as pixels, lines or pages depending on the device, so
+// everything is converted to pixels first
+function markerWheelAmount(value, mode) {
+	if (mode == 1) { return value * 16; }
+	if (mode == 2) { return value * 400; }
+	return value;
+}
+
 function markerWheel(e) {
 	e.preventDefault();
 	var canvas = document.getElementById('whiteboard');
 	var rect = canvas.getBoundingClientRect();
+	var delta = markerWheelAmount(e.deltaY, e.deltaMode);
 	if (e.ctrlKey || e.metaKey) {
-		// trackpad pinch also arrives here as a ctrl wheel
-		markerZoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.1 : 1 / 1.1);
+		// a trackpad pinch arrives as a ctrl (or cmd) wheel, as many small
+		// frequent deltas, so scale gently and proportionally to them
+		var factor = Math.max(0.5, Math.min(2, Math.pow(1.0015, -delta)));
+		markerZoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
 		return;
 	}
-	if (e.shiftKey) { markerView.x -= e.deltaY; }
-	else { markerView.x -= e.deltaX; markerView.y -= e.deltaY; }
+	if (e.shiftKey) { markerView.x -= delta; }
+	else {
+		markerView.x -= markerWheelAmount(e.deltaX, e.deltaMode);
+		markerView.y -= delta;
+	}
 	markerViewClamp();
 	markerCompose();
+}
+
+// Safari (and iPadOS) report pinch gestures as their own events with a scale
+// relative to the start of the gesture
+var markerGestureScale = 1;
+function markerGestureStart(e) {
+	e.preventDefault();
+	markerGestureScale = 1;
+}
+
+function markerGestureChange(e) {
+	e.preventDefault();
+	var canvas = document.getElementById('whiteboard');
+	var rect = canvas.getBoundingClientRect();
+	var scale = e.scale || 1;
+	var factor = scale / markerGestureScale;
+	markerGestureScale = scale;
+	markerZoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
+}
+
+function markerGestureEnd(e) {
+	e.preventDefault();
+	markerGestureScale = 1;
+}
+
+// ---- toolbox -----------------------------------------------------------
+
+function markerToolboxHidden() {
+	return localStorage.getItem('marker_toolbox_hidden') == 'on';
+}
+
+function markerToolboxApply() {
+	var hidden = markerToolboxHidden();
+	$('#marker_toolbox').toggle(!hidden);
+	$('#marker_toolbox_show').toggle(hidden);
+}
+
+// hiding the toolbox hands its width back to the board, and the layers keep
+// their size, so the extra room just shows more space around the drawing
+function markerCanvasResize() {
+	var canvas = document.getElementById('whiteboard');
+	if (!canvas) { return; }
+	var win = $(canvas).closest('.wind');
+	if (win.length == 0) { return; }
+	var toolbox_width = markerToolboxHidden() ? 0 : Math.round($('#marker_toolbox').outerWidth() || 0);
+	var width = Math.floor(win.width() - toolbox_width);
+	var height = Math.floor(win.height() - win.find('.top_navbar').height());
+	if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
+		canvas.width = width;
+		canvas.height = height;
+		markerViewClamp();
+		markerCompose();
+	}
+}
+
+function markerToolboxToggle(hidden) {
+	localStorage.setItem('marker_toolbox_hidden', hidden ? 'on' : 'off');
+	markerToolboxApply();
+	markerCanvasResize();
 }
 
 // palm protection: a finger or a resting palm must not draw when a stylus is
@@ -1047,6 +1120,9 @@ function markerBindCanvas(canvas) {
 	canvas.addEventListener('pointercancel', markerPointerUp);
 	canvas.addEventListener('pointerleave', markerPointerLeave);
 	canvas.addEventListener('wheel', markerWheel, { passive: false });
+	canvas.addEventListener('gesturestart', markerGestureStart, { passive: false });
+	canvas.addEventListener('gesturechange', markerGestureChange, { passive: false });
+	canvas.addEventListener('gestureend', markerGestureEnd, { passive: false });
 	canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 }
 
@@ -1057,9 +1133,6 @@ function markerInit(whiteboard) {
 	}
 	var canvas = document.getElementById(whiteboard);
 	if (!canvas) { return; }
-	var win = $(canvas).closest('.wind');
-	var width = Math.floor(win.width() - win.find('#marker_toolbox').width());
-	var height = Math.floor(win.height() - win.find('.top_navbar').height());
 	whiteboard_ctx = canvas.getContext('2d');
 
 	// a different canvas element means a brand new window, so start fresh
@@ -1074,12 +1147,11 @@ function markerInit(whiteboard) {
 		markerSessionRestored = false;
 		markerView = { scale: 1, x: 0, y: 0 };
 	}
-	// the visible canvas follows the window, but the layers are the document and
-	// keep their own size - resizing or zooming never resamples the art
-	if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
-		canvas.width = width;
-		canvas.height = height;
-	}
+	// the visible canvas follows the window (and the toolbox); the layers are the
+	// document and keep their own size, so resizing or zooming never resamples
+	// the art
+	markerToolboxApply();
+	markerCanvasResize();
 	if (markerLayers.length == 0) {
 		markerLayers.push(markerNewLayer('Layer 1'));
 		markerLayerActive = 0;
@@ -1268,22 +1340,6 @@ $(document).on('click', '.marker_layer_front', function() {
 $(document).on('click', '.marker_undo', function() { markerUndo(); });
 $(document).on('click', '.marker_redo', function() { markerRedoStep(); });
 
-$(document).on('keydown', function(e) {
-	if (!(e.ctrlKey || e.metaKey) || e.altKey) { return; }
-	if ($(e.target).is('input, textarea, select, [contenteditable]')) { return; }
-	if (!$('#whiteboard').is(':visible')) { return; }
-	var key = (e.key || '').toLowerCase();
-	if (key == 'z') {
-		if (e.shiftKey) { markerRedoStep(); }
-		else { markerUndo(); }
-		e.preventDefault();
-	}
-	else if (key == 'y') {
-		markerRedoStep();
-		e.preventDefault();
-	}
-});
-
 $(document).on('click', '.marker_new_board', function() {
 	if (!confirm('Start a new drawing?')) { return; }
 	markerLayers = [markerNewLayer('Layer 1')];
@@ -1298,6 +1354,8 @@ $(document).on('click', '.marker_new_board', function() {
 $(document).on('click', '.marker_zoom_in', function() { markerZoomCentre(1.25); });
 $(document).on('click', '.marker_zoom_out', function() { markerZoomCentre(1 / 1.25); });
 $(document).on('click', '.marker_zoom_fit', function() { markerViewFit(); });
+$(document).on('click', '#marker_toolbox_hide', function() { markerToolboxToggle(true); });
+$(document).on('click', '#marker_toolbox_show', function() { markerToolboxToggle(false); });
 
 $(document).on('click', '.marker_session_save', function() { markerSessionSave(); });
 $(document).on('click', '.marker_session', function() { markerSessionOpen($(this).attr('uuid')); });
