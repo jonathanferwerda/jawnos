@@ -17,6 +17,9 @@ our $log = Mojo::Log->new(path => $logfile);
 my $suds = &subs::suds_grabber();
 
 my $sql = Mojo::SQLite->new('sqlite:' . $database, sqlite_use_immediate_transaction => 0);
+# This process holds the file open for its whole life, so wait for whoever else is
+# writing instead of failing the moment they are.
+$sql->db->query('PRAGMA busy_timeout=15000;');
 my $ollama = WebService::Ollama->new(base_url => 'http://localhost:11434', model => 'qwen2.5-coder:7b');
 my $tally  = eval { return decode_json &subs::note_decrypter($suds,read_file(&subs::home('~/.president/pen'))) } || {};
 my $history = [];

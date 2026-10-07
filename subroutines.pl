@@ -4033,27 +4033,16 @@ our $database_holder;
 our $database;
 sub database_grabber() {
 	my $connection = shift || '';
-	my $server_time = &rightNow();
-	if ($gb::database_holder->{'pid'} eq $$) {
-		if ($gb::database_holder->{'server_time'} && $server_time <= $gb::database_holder->{'server_time'} + 700 && $connection ne 'new') {
-			$gb::database_holder->{'server_time'} = $server_time;
-			my $database = $gb::database_holder->{'database'};
-			# Reuse the open handle instead of dialling a fresh SQLite connection
-			# on every single query. If the file on disk was swapped out
-			# (backup/restore) its inode changes, so rebuild in that case.
-			# NOTE: connection tuning pragmas (busy_timeout and friends) belong on
-			# a database_grabber('new') handle - this one is shared by the whole
-			# process, so changing them here changes them everywhere.
-			if ($gb::database_holder->{'db'} && defined $database && -e $database) {
-				my $file_key = join(':', (stat($database))[0, 1]);
-				if ($gb::database_holder->{'file_key'} && $file_key eq $gb::database_holder->{'file_key'}) {
-					return ($gb::database_holder->{'db'}, $database, $gb::database_holder->{'sql'});
-				}
-			}
-		}
-	}
-	elsif (defined $gb::database_holder->{'pid'} && $gb::database_holder->{'pid'} != $$ && defined $gb::database_holder->{'sql'} ) {
-    $gb::database_holder->{'sql'}->db->dbh->{InactiveDestroy} = 1;
+	# One connection per call. A process-wide handle looked like a free win, but a
+	# single results object left unexhausted keeps that process's read snapshot
+	# open for the rest of its life: the WAL never gets checkpointed (it grew to
+	# the size of the database here) and later requests read stale pages. Dialling
+	# per call is what this file did for years, and it is what the other writers on
+	# this file (the mirror server, pen.pl, the device scripts) expect.
+	if (defined $gb::database_holder->{'pid'} && $gb::database_holder->{'pid'} != $$ && defined $gb::database_holder->{'sql'} ) {
+		# we are a fork of the process that owns the newest handle: detach it, or our
+		# exit would close a connection our parent is still using
+		$gb::database_holder->{'sql'}->db->dbh->{InactiveDestroy} = 1;
 	}
 	my $dir = &subs::home($config->{'start_dir'});
 	$dir =~ s{/+$}{};
@@ -4072,24 +4061,24 @@ sub database_grabber() {
 		my $sql = Mojo::SQLite->new('sqlite:' . $database, sqlite_use_immediate_transaction => 0);
 		$sql->options({AutoCommit => 1 });
 		my $db = $sql->db;
+		# Keep the newest handle on the holder only so a forked child can detach from
+		# it and hooks.pl can tell that a database is up.
 		$gb::database_holder = {
 			server_time => &subs::rightNow(),
 			database => $database,
 			db => $db,
 			sql => $sql,
-			pid => $$,
-			file_key => join(':', (stat($database))[0, 1])
+			pid => $$
 		};
 		# Wait for other writers before anything else. SQLite's default is not to
-		# wait at all, and switching journal modes needs a lock of its own, so
-		# doing that first is what turned ordinary contention into "database is
-		# locked". Each is eval'd because this handle now lives for the whole
-		# process - a transient lock must not take the request down with it.
+		# wait at all, so any contention surfaced as an immediate "database is locked",
+		# and even reading the journal mode below can meet a writer. Each is eval'd
+		# because a transient lock must not take the request down with it.
 		eval { $db->query('PRAGMA busy_timeout=15000;'); };
 		eval { $db->query('PRAGMA synchronous=NORMAL;'); };
-		# WAL is a property of the file rather than of the connection, so it only
-		# has to be set once - it is already on for an existing database, and
-		# re-issuing it every reconnect just took a write lock for nothing.
+		# WAL is a property of the file rather than of the connection, so it only has
+		# to be set once - it is already on for an existing database, and re-issuing
+		# it every dial just took a write lock for nothing.
 		eval {
 			my $row = $db->query('PRAGMA journal_mode;')->hashes->[0] || {};
 			$db->query('PRAGMA journal_mode=WAL;') if (($row->{'journal_mode'} || '') ne 'wal');

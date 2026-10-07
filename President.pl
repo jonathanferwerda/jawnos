@@ -390,6 +390,10 @@ sub get_internal_db {
         $sql_handle = Mojo::SQLite->new('sqlite:' . $database);
         $log->info('using ' . $database); # This will now fire ONLY when the file changes or drops!
         $db_handle  = $sql_handle->db;
+        # This handle lives as long as the process, sharing the file with the web
+        # process, pen.pl and the device scripts. Without this it fails the moment
+        # another writer is mid-transaction.
+        $db_handle->query('PRAGMA busy_timeout=15000;');
 
         # --- Instantiate Pristine In-Memory Database Environment ---
         $sql_memory    = Mojo::SQLite->new('sqlite::memory:');
