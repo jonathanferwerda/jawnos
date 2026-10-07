@@ -1,0 +1,29 @@
+% no warnings 'uninitialized';
+<div class="warehouse_journal_panel">
+	<span class="warehouse_journal_back hover" hint="Back" style="float:right;">
+		<img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="Back">
+	</span>
+	<h3><%= &subs::format_name($item) %> journal</h3>
+	<% if (scalar @{$rows} == 0) { %><i>No movements recorded.</i><% } %>
+	<table style="width:100%;text-align:left;">
+		<thead>
+			<th>When</th><th>Qty</th><th>Place</th><th>Reason</th><th>Source</th>
+		</thead>
+		<tbody>
+			<% foreach my $r ( @{$rows} ) { %>
+				% my $j = $r->{'journal'} || {};
+				<tr class="warehouse_journal_row">
+					<td class="time" timestamp="<%= $r->{'timestamp'} %>"></td>
+					<td><%= &subs::numeric_formatter($r->{'quantity'}) %><%= $r->{'unit'} %></td>
+					<td><%= &subs::format_name($r->{'place'}) %></td>
+					<td><%= &subs::format_name($j->{'reason'} || $r->{'type'}) %></td>
+					<td>
+						<% if ($j->{'source'}) { %>
+							<span class="hover" onclick="appointmentGrabber('<%= $j->{'source'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($j->{'source'}) %></span>
+						<% } %>
+					</td>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+</div>

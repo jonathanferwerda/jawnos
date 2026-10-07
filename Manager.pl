@@ -1430,85 +1430,6 @@ get '/manager/market' => sub($c) {
 	$c->render(json => { window => $window });
 };
 
-# Where are we right now? navigation_automation starts a place when GPS says
-# we are in it, which shows up as its 'toggle' being on. A device without GPS
-# (laptop/desktop) can't do that, so we fall back to whichever running place is
-# flagged with inventory ability.
-sub current_place() {
-	my $toggled = &subs::db_query('select app from settings where setting=? and value=?', 'toggle', 'on')->hashes;
-	my ($inventory, $fallback);
-	foreach my $t ( @{$toggled} ) {
-		my $app = $t->{'app'};
-		my $is_place = &subs::db_query('select app from settings where app=? and (setting=? or setting=?) and value=? limit 1', $app, 'pos', 'mab', 'place')->hashes->[0];
-		next unless $is_place;
-		$fallback = $app unless $fallback;
-		my $inv = &subs::setting_grabber({ app => $app, setting => 'inventory_ability' });
-		$inventory = $app if $inv && $inv eq 'on';
-	}
-	return $inventory || $fallback || '';
-}
-
-# Where does an item live? Most specific first: an explicit 'place' setting on
-# the item, a 'default_place' on the item's packaging, a 'place' setting on the
-# app, the app itself when it is a place (pos=place), and finally wherever we
-# currently are. Returns '' when nothing resolves, and callers treat that as
-# "do not touch stock".
-sub warehouse_place_for($app,$item) {
-	foreach my $subject ( $item, $app ) {
-		next unless $subject;
-		my $s = &subs::db_query('select value from settings where app=? and setting=? limit 1', $subject, 'place')->hashes->[0];
-		return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
-	}
-	if ($item) {
-		my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) } || {};
-		foreach my $p ( values %{$packaging} ) {
-			next unless ref $p eq 'HASH';
-			return $p->{'default_place'} if $p->{'default_place'} && $p->{'default_place'} ne '';
-		}
-	}
-	if ($app) {
-		my $pos = &subs::db_query('select value from settings where app=? and setting=? and value=? limit 1', $app, 'pos', 'place')->hashes->[0];
-		return $app if $pos;
-	}
-	return &current_place();
-}
-
-# The shelf life (e.g. '3w') declared on an item's packaging, if any.
-sub warehouse_item_expires($item) {
-	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) } || {};
-	foreach my $p ( values %{$packaging} ) {
-		next unless ref $p eq 'HASH';
-		my $exp = $p->{'expires'};
-		return $exp if $exp && $exp ne '';
-	}
-	return '';
-}
-
-# Record a stock movement. Positive quantity puts stock in, negative takes it
-# out. Only called once a place is known, so stock never lands unplaced.
-sub warehouse_movement($d) {
-	my $item = $d->{'item'};
-	my $quantity = &subs::numeric_formatter($d->{'quantity'}) + 0;
-	return unless $item && $quantity != 0;
-	my $wdata = {
-		timestamp => $d->{'timestamp'} || &subs::rightNow(),
-		server_time => &subs::rightNow(),
-		item => $item,
-		model => $d->{'model'},
-		options => $d->{'options'},
-		uuid => &subs::random_string_creator(40),
-		quantity => $quantity,
-		unit => $d->{'unit'} || 'each',
-		place => $d->{'place'},
-		type => $d->{'type'} || 'stock',
-		account => $d->{'account'},
-		project => $d->{'project'},
-		warranty => $d->{'warranty'},
-		app_uuid => $d->{'app_uuid'}
-	};
-	&subs::db_insert('warehouse', $wdata);
-	return $wdata;
-}
 
 # Group warehouse rows for the warehouse app. The warehouse holds both money
 # and stock: a money row is one that names an account (or is denominated in a
@@ -1547,7 +1468,7 @@ sub warehouse_grabber($opts) {
 			$warehouse->{'places'}->{$place}->{$item}->{$unit} = ($warehouse->{'places'}->{$place}->{$item}->{$unit} || 0) + $qty;
 			$warehouse->{'items'}->{$item}->{$place}->{$unit} = ($warehouse->{'items'}->{$item}->{$place}->{$unit} || 0) + $qty;
 			unless (defined $expires_cache{$item}) {
-				$expires_cache{$item} = &warehouse_item_expires($item);
+				$expires_cache{$item} = &subs::warehouse_item_expires($item);
 			}
 			if ($expires_cache{$item}) {
 				$warehouse->{'expires'}->{$item} = $expires_cache{$item};
@@ -1563,6 +1484,11 @@ get '/manager/warehouse' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $settings = &subs::settings_grabber({ app => 'warehouse' });
 	my $places = eval { return decode_json $settings->{'place'} } || ['all'];
+	# default the view to wherever we currently are
+	unless (grep { $_ ne 'all' } @{$places}) {
+		my $current = &subs::current_place();
+		$places = [ $current ] if $current;
+	}
 	$settings->{'place'} = $places;
 	my $warehouse = &warehouse_grabber({ places => $places });
 	my $contents = $c->render_to_string(
@@ -1594,6 +1520,21 @@ get '/manager/warehouse/listing' => sub($c) {
 		search => $search || ''
 	);
 	$c->render(json => { html => $html, search => $search });
+};
+
+get '/manager/warehouse/journal' => sub($c) {
+	my $item = &subs::unformat_name($c->param('item'));
+	my $q = &subs::db_query('select * from warehouse where item=? order by timestamp desc limit 200', $item);
+	my $rows = $q ? $q->hashes : [];
+	foreach my $r ( @{$rows} ) {
+		$r->{'journal'} = eval { return decode_json $r->{'data'} } || {};
+	}
+	my $html = $c->render_to_string(
+		template => 'warehouse/journal',
+		item => $item,
+		rows => $rows
+	);
+	$c->render(json => { html => $html, item => $item });
 };
 
 get '/store' => sub ($c) {
@@ -2083,13 +2024,13 @@ sub store_quote_stock($appt,$sign) {
 	my $q = eval { return decode_json $appt->{'data'} } || {};
 	return unless $q->{'item'};
 	return unless ($q->{'movement'} eq 'income' || $q->{'movement'} eq 'expense');
-	my $place = &warehouse_place_for($appt->{'app'}, $q->{'item'});
+	my $place = &subs::warehouse_place_for($appt->{'app'}, $q->{'item'});
 	return unless $place;
 	my $quantity = &subs::numeric_formatter($q->{'model'}->{'quantity'} || 1) + 0;
 	my $signed = ($q->{'movement'} eq 'income') ? -1 : 1;
 	foreach my $i ( split ',', $q->{'item'} ) {
 		next unless $i;
-		&warehouse_movement({
+		&subs::warehouse_movement({
 			item => $i,
 			quantity => $quantity * $signed * $sign,
 			unit => $q->{'model'}->{'unit'},
@@ -2097,7 +2038,10 @@ sub store_quote_stock($appt,$sign) {
 			model => $q->{'model'}->{'uuid'},
 			timestamp => $appt->{'timestamp'},
 			app_uuid => $appt->{'uuid'},
-			type => 'stock'
+			type => 'stock',
+			reason => ($sign > 0 ? $q->{'movement'} : $q->{'movement'} . '_reversed'),
+			source => $appt->{'app'},
+			source_uuid => $appt->{'uuid'}
 		});
 	}
 }
@@ -8110,13 +8054,13 @@ post '/manager/transaction/record' => sub($c) {
 		# move stock for the item(s) on this transaction: a sale (income) takes
 		# stock out, a purchase (expense) puts it in. Only when we know the place.
 		if ($item) {
-			my $place = &warehouse_place_for($app, $item);
+			my $place = &subs::warehouse_place_for($app, $item);
 			if ($place) {
 				my $signed = ($movement eq 'income') ? -1 : 1;
 				my $q = &subs::numeric_formatter($quantity) + 0;
 				foreach my $i ( split ',', $item ) {
 					next unless $i;
-					&warehouse_movement({
+					&subs::warehouse_movement({
 						item => $i,
 						quantity => $q * $signed,
 						unit => $unit,
@@ -8127,7 +8071,10 @@ post '/manager/transaction/record' => sub($c) {
 						warranty => $warranty,
 						timestamp => $timestamp,
 						app_uuid => $uuid,
-						type => 'stock'
+						type => 'stock',
+						reason => $movement,
+						source => $app,
+						source_uuid => $uuid
 					});
 				}
 			}

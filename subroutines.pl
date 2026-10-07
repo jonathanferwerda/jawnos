@@ -5227,6 +5227,169 @@ sub appt_toggle_checker() {
 	return $toggle;
 }
 
+# ---- warehouse / inventory helpers -----------------------------------------
+
+# Where are we right now? navigation_automation starts a place when GPS says we
+# are in it, which shows up as its 'toggle' being on. A device without GPS
+# (laptop/desktop) can't do that, so we fall back to whichever running place is
+# flagged with inventory ability.
+sub current_place() {
+	my $q = &db_query('select app from settings where setting=? and value=?', 'toggle', 'on');
+	my $toggled = $q ? $q->hashes : [];
+	my ($inventory, $fallback);
+	foreach my $t ( @{$toggled} ) {
+		my $app = $t->{'app'};
+		my $pin = &db_query('select app from settings where app=? and (setting=? or setting=?) and value=? limit 1', $app, 'pos', 'mab', 'place');
+		next unless ($pin && $pin->hashes->[0]);
+		$fallback = $app unless $fallback;
+		my $inv = &setting_grabber({ app => $app, setting => 'inventory_ability' });
+		$inventory = $app if $inv && $inv eq 'on';
+	}
+	return $inventory || $fallback || '';
+}
+
+# The shelf life (e.g. '3w') declared on an item's packaging, if any.
+sub warehouse_item_expires {
+	my $item = shift;
+	my $packaging = eval { return decode_json &setting_grabber({ app => $item, setting => 'packaging' }) } || {};
+	foreach my $p ( values %{$packaging} ) {
+		next unless ref $p eq 'HASH';
+		my $exp = $p->{'expires'};
+		return $exp if $exp && $exp ne '';
+	}
+	return '';
+}
+
+# Where does an item live? Most specific first: an explicit 'place' setting on
+# the item, a 'default_place' on the item's packaging, a 'place' setting on the
+# app, the app itself when it is a place (pos=place), and finally wherever we
+# currently are. Returns '' when nothing resolves, and callers treat that as
+# "do not touch stock".
+sub warehouse_place_for {
+	my ($app,$item) = @_;
+	foreach my $subject ( $item, $app ) {
+		next unless $subject;
+		my $q = &db_query('select value from settings where app=? and setting=? limit 1', $subject, 'place');
+		my $s = $q ? $q->hashes->[0] : undef;
+		return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
+	}
+	if ($item) {
+		my $packaging = eval { return decode_json &setting_grabber({ app => $item, setting => 'packaging' }) } || {};
+		foreach my $p ( values %{$packaging} ) {
+			next unless ref $p eq 'HASH';
+			return $p->{'default_place'} if $p->{'default_place'} && $p->{'default_place'} ne '';
+		}
+	}
+	if ($app) {
+		my $q = &db_query('select value from settings where app=? and setting=? and value=? limit 1', $app, 'pos', 'place');
+		return $app if ($q && $q->hashes->[0]);
+	}
+	return &current_place();
+}
+
+# The journal metadata stored in a warehouse row's data column: why the stock
+# moved, what app it came from, and the uuid of the document that caused it.
+sub warehouse_journal_entry {
+	my $d = shift;
+	return encode_json {
+		reason => $d->{'reason'},
+		source => $d->{'source'},
+		source_uuid => $d->{'source_uuid'}
+	};
+}
+
+# Record a stock movement. Positive quantity puts stock in, negative takes it
+# out. Only called once a place is known, so stock never lands unplaced.
+sub warehouse_movement {
+	my $d = shift;
+	my $item = $d->{'item'};
+	my $quantity = &numeric_formatter($d->{'quantity'}) + 0;
+	return unless $item && $quantity != 0;
+	my $wdata = {
+		timestamp => $d->{'timestamp'} || &rightNow(),
+		server_time => &rightNow(),
+		item => $item,
+		model => $d->{'model'},
+		options => $d->{'options'},
+		uuid => &random_string_creator(40),
+		quantity => $quantity,
+		unit => $d->{'unit'} || 'each',
+		place => $d->{'place'},
+		type => $d->{'type'} || 'stock',
+		account => $d->{'account'},
+		project => $d->{'project'},
+		warranty => $d->{'warranty'},
+		app_uuid => $d->{'app_uuid'},
+		data => &warehouse_journal_entry($d)
+	};
+	&db_insert('warehouse', $wdata);
+	return $wdata;
+}
+
+# FIFO-walk the stock and write off whatever has outlived its packaging shelf
+# life. Runs on a timer (see President.pl). Each write-off references the lot it
+# expired via app_uuid, and since the write-off is itself a negative movement,
+# the next pass consumes that lot and won't expire it twice.
+sub warehouse_expiry_sweep() {
+	my $now = &rightNow();
+	my $q = &db_query('select * from warehouse where item is not null and item != ? and place is not null and place != ? order by timestamp asc', '', '');
+	my $rows = $q ? $q->hashes : [];
+	my %lots;
+	foreach my $r ( @{$rows} ) {
+		my $unit = $r->{'unit'} || 'each';
+		my $types = $gb::measures->{$unit}->{'types'} || [];
+		next if ($r->{'account'} && $r->{'account'} ne '') || (grep { $_ eq 'currency' } @{$types});
+		my $qty = &numeric_formatter($r->{'quantity'}) + 0;
+		next if $qty == 0;
+		my $key = $r->{'place'} . "\0" . $r->{'item'};
+		my $queue = $lots{$key} ||= [];
+		if ($qty > 0) {
+			push @{$queue}, { uuid => $r->{'uuid'}, ts => &numeric_formatter($r->{'timestamp'}) + 0, remaining => $qty, row => $r };
+		}
+		else {
+			my $need = -$qty;
+			foreach my $lot ( @{$queue} ) {
+				last if $need <= 0;
+				next if $lot->{'remaining'} <= 0;
+				my $take = $lot->{'remaining'} < $need ? $lot->{'remaining'} : $need;
+				$lot->{'remaining'} -= $take;
+				$need -= $take;
+			}
+		}
+	}
+	my $written = 0;
+	foreach my $key ( keys %lots ) {
+		my ($place,$item) = split /\0/, $key;
+		my $expires = &warehouse_item_expires($item);
+		next unless $expires;
+		foreach my $lot ( @{$lots{$key}} ) {
+			next unless $lot->{'remaining'} > 0;
+			my $expiry = eval { &ago_calc('-' . $expires, $lot->{'ts'}) } || 0;
+			next unless $expiry && $now > $expiry;
+			my $src = $lot->{'row'};
+			&warehouse_movement({
+				item => $item,
+				quantity => $lot->{'remaining'} * -1,
+				unit => $src->{'unit'},
+				place => $place,
+				model => $src->{'model'},
+				account => $src->{'account'},
+				project => $src->{'project'},
+				warranty => $src->{'warranty'},
+				timestamp => $now,
+				app_uuid => $lot->{'uuid'},
+				type => 'expiry',
+				reason => 'expired',
+				source => $place,
+				source_uuid => $lot->{'uuid'}
+			});
+			$lot->{'remaining'} = 0;
+			$written++;
+		}
+	}
+	return $written;
+}
+
 sub task_checker() {
 	my $one_app = shift;
 	my $server_time = &subs::rightNow();

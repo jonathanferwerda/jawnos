@@ -10,6 +10,7 @@
 				<% my $expires = $warehouse->{'expires'}->{$item}; %>
 				<% my $expired = $expires && (&subs::rightNow() > &subs::ago_calc('-' . $expires, $warehouse->{'latest'}->{$item} || &subs::rightNow())); %>
 				<h3 class="warehouse_item hover<% if ($expired) { %> warehouse_expired<% } %>" item="<%= $item %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item) %><% if ($expired) { %> (expired)<% } %></h3>
+				<img class="warehouse_journal little_thumb hover" item="<%= $item %>" hint="Stock journal" src="<%= &subs::icon_for('/images/decipherable/list.png') %>">
 				<% foreach my $place ( sort keys %{$warehouse->{'items'}->{$item}} ) { %>
 					<span class="warehouse_search_place"><b><%= &subs::format_name($place) %>:</b>
 						<% foreach my $unit ( sort keys %{$warehouse->{'items'}->{$item}->{$place}} ) { %>
@@ -37,6 +38,7 @@
 						<% foreach my $unit ( sort keys %{$pitems->{$item}} ) { %>
 							<span class="warehouse_quantity"><%= &subs::numeric_formatter($pitems->{$item}->{$unit}) %><%= $unit %></span>
 						<% } %>
+						<img class="warehouse_journal little_thumb hover" item="<%= $item %>" hint="Stock journal" src="<%= &subs::icon_for('/images/decipherable/list.png') %>">
 					</span><br>
 				<% } %>
 			</div>
@@ -52,6 +54,7 @@
 					% my $amount = $warehouse->{'accounts'}->{$acct}->{$unit};
 					<span class="warehouse_quantity"><% if ($gb::measures->{$unit}->{'format'}) { %><%= &subs::price_formatter($amount) %><% } else { %><%= &subs::numeric_formatter($amount) %><%= $unit %><% } %></span>
 				<% } %>
+				<img class="warehouse_journal little_thumb hover" item="<%= $acct %>" hint="Journal" src="<%= &subs::icon_for('/images/decipherable/list.png') %>">
 			</span><br>
 		<% } %>
 	</div>

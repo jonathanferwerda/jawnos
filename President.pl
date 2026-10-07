@@ -679,6 +679,9 @@ sub utility_functions() {
 	print "Starting Alarm Clock\n";
 
 	require './Alarm.pl';
+	# Keep a pristine copy of the built-in utilities so newly added ones show up
+	# for installs that already have their utilities configured.
+	$gb::utility_defaults = clone $gb::timeouts unless $gb::utility_defaults;
 	$gb::alarm_running = 0;
 	$gb::budget_running = 0;
 	$gb::utility_running = 0;
@@ -705,6 +708,21 @@ sub utility_functions() {
 				$gb::timeouts = $controls->{$signatorial};
 			} 
 			else {
+				# pick up any utilities added since this install was configured
+				if ($gb::utility_defaults && $controls->{$signatorial}) {
+					my $added = 0;
+					foreach my $t ( keys %{$gb::utility_defaults} ) {
+						unless (exists $controls->{$signatorial}->{$t}) {
+							$controls->{$signatorial}->{$t} = clone $gb::utility_defaults->{$t};
+							$added = 1;
+						}
+					}
+					if ($added) {
+						$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+						my $jcontrols = encode_json $controls;
+						&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
+					}
+				}
 				if ($controls->{$signatorial}->{'__settings'}->{'last_change'} > $gb::timeouts->{'__settings'}->{'last_change'}) {
 
 					foreach my $t ( keys %{$gb::timeouts} ) {
@@ -1042,6 +1060,14 @@ sub utility_functions() {
 				$gb::housekeeping_running = 1;
 			#	$gb::housekeeping_running = &Alarm::housekeeping();
 			}
+		};
+		$gb::timeouts->{'warehouse_expiry'}->{'subroutine'} = sub {
+			eval {
+				if ($gb::warehouse_expiry_running == 0) {
+					$gb::warehouse_expiry_running = 1;
+					$gb::warehouse_expiry_running = &subs::warehouse_expiry_sweep() ? 0 : 1;
+				}
+			};
 		};
 		$gb::timeouts->{'navigation'}->{'subroutine'} = sub {
 			eval {

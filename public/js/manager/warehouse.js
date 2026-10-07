@@ -41,6 +41,23 @@ $(document).on('keyup click', '#warehouse_search', function() {
 	}, 300);
 });
 
+$(document).on('click', '.warehouse_journal', function(e) {
+	e.stopPropagation();
+	var item = $(this).attr('item');
+	$.ajax({
+		url: '/manager/warehouse/journal',
+		type: 'GET',
+		data: { item: item, timestamp: Date.now() },
+		success: function(response) {
+			$('#warehouse_results').html(response.html);
+		}
+	});
+});
+
+$(document).on('click', '.warehouse_journal_back', function() {
+	warehouseListingReload($('#warehouse_search').val());
+});
+
 async function warehouseConfigSetter(c) {
 	var config = c.attr('config');
 	var value = c.val();

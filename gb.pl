@@ -75,6 +75,7 @@ our $capabilities = {
 our $timeouts = {
 	'alarm_haircut' => { interval => 10 * 60, toggle => 'off', timeout => 30 },
 	'housekeeping' => { interval => 60 * 60, toggle => 'off', beaconable => 'yes', timeout => 30 },
+	'warehouse_expiry' => { interval => 6 * 60 * 60, toggle => 'on', beaconable => 'yes', timeout => 300 },
 	'budget' => { interval => 60 * 20, toggle => 'off', beaconable => 'yes', timeout => 180 },
 	'clothesline' => { interval => 5 * 60, toggle => 'off', beaconable => 'yes', timeout => 180 },
 	'tasks' => { interval => 5 * 60, toggle => 'off', beaconable => 'yes', timeout => 180 },
