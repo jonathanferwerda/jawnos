@@ -14,3 +14,7 @@
 
 	</div>
 % }
+<div class="place_inventory_ability" app="<%= $a %>">
+	<label>Inventory</label>
+	<input type="checkbox" class="configure_input" app="<%= $a %>" setting="inventory_ability" <% if ($appts->{$a}->{'setting'}->{'inventory_ability'} eq 'on') { %>checked<% } %>>
+</div>

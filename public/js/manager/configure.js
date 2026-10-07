@@ -200,6 +200,9 @@ $(document).on('change', '.configure_input', function(e) {
 	var app = e.attr('app');
 	var button = $('.app_configure_toggle[setting="' + setting + '"][app="' + app + '"]');
 	var value = e.val();
+	if (e.attr('type') == 'checkbox') {
+		value = e.prop('checked') ? 'on' : 'off';
+	}
 	var parent = e.closest('.appointment_configuration_cell');
 	var display = parent.find('.appointment_display');
 	var timestamp = Date.now();

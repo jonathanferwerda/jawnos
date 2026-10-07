@@ -1,5 +1,12 @@
+% no warnings 'uninitialized';
 <% my $packages = $settings->{'app_packaging'}; %>
 <% $packages->{'new'} = { name => '', quantity => '', each => '', uuid => &subs::random_string_creator(20) }; %>
+<% my $places = &subs::db_query('select app from settings where (setting = ? or setting = ?) and value = ? and device = ?', 'pos', 'mab', 'place', &subs::device_setter())->hashes; %>
+<datalist id="warehouse_place_options">
+	<% foreach my $pl ( sort { $a->{'app'} cmp $b->{'app'} } @{$places} ) { %>
+		<option value="<%= $pl->{'app'} %>"><%= &subs::format_name($pl->{'app'}) %></option>
+	<% } %>
+</datalist>
 
 <% foreach my $p ( keys %{$packages} ) { %>
 	<% my $packaging = $packages->{$p}; %>
@@ -8,6 +15,7 @@
 		<% foreach my $pc ( qw/quantity each length width height weight expires/ ) { %>
 			<input class="packaging_config" uuid="<%= $p %>" name="<%= $pc %>" value="<%= $packaging->{$pc} %>" style="width:20%;" placeholder="<%= &subs::format_name($pc) %>">
 		<% } %>
+		<input class="packaging_config" uuid="<%= $p %>" name="default_place" list="warehouse_place_options" value="<%= $packaging->{'default_place'} %>" style="width:20%;" placeholder="Default Place">
 		<% if ($p ne 'new') { %>
 			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="delete_packaging little_thumb" uuid="<%= $p %>" style="vertical-align:bottom;">
 		<% } %>

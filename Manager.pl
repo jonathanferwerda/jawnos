@@ -1430,21 +1430,47 @@ get '/manager/market' => sub($c) {
 	$c->render(json => { window => $window });
 };
 
-# Where does an item live? An explicit 'place' setting on the item wins, then
-# one on the app the transaction is being recorded in, then the app itself if
-# it is tagged as a place (pos=place). Returns '' when nothing resolves, and
-# callers treat that as "do not touch stock".
+# Where are we right now? navigation_automation starts a place when GPS says
+# we are in it, which shows up as its 'toggle' being on. A device without GPS
+# (laptop/desktop) can't do that, so we fall back to whichever running place is
+# flagged with inventory ability.
+sub current_place() {
+	my $toggled = &subs::db_query('select app from settings where setting=? and value=?', 'toggle', 'on')->hashes;
+	my ($inventory, $fallback);
+	foreach my $t ( @{$toggled} ) {
+		my $app = $t->{'app'};
+		my $is_place = &subs::db_query('select app from settings where app=? and (setting=? or setting=?) and value=? limit 1', $app, 'pos', 'mab', 'place')->hashes->[0];
+		next unless $is_place;
+		$fallback = $app unless $fallback;
+		my $inv = &subs::setting_grabber({ app => $app, setting => 'inventory_ability' });
+		$inventory = $app if $inv && $inv eq 'on';
+	}
+	return $inventory || $fallback || '';
+}
+
+# Where does an item live? Most specific first: an explicit 'place' setting on
+# the item, a 'default_place' on the item's packaging, a 'place' setting on the
+# app, the app itself when it is a place (pos=place), and finally wherever we
+# currently are. Returns '' when nothing resolves, and callers treat that as
+# "do not touch stock".
 sub warehouse_place_for($app,$item) {
 	foreach my $subject ( $item, $app ) {
 		next unless $subject;
 		my $s = &subs::db_query('select value from settings where app=? and setting=? limit 1', $subject, 'place')->hashes->[0];
 		return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
 	}
+	if ($item) {
+		my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) } || {};
+		foreach my $p ( values %{$packaging} ) {
+			next unless ref $p eq 'HASH';
+			return $p->{'default_place'} if $p->{'default_place'} && $p->{'default_place'} ne '';
+		}
+	}
 	if ($app) {
 		my $pos = &subs::db_query('select value from settings where app=? and setting=? and value=? limit 1', $app, 'pos', 'place')->hashes->[0];
 		return $app if $pos;
 	}
-	return '';
+	return &current_place();
 }
 
 # The shelf life (e.g. '3w') declared on an item's packaging, if any.
