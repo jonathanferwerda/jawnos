@@ -199,8 +199,19 @@ uint8_t     touchAddress = GT911_SLAVE_ADDRESS2;
 #define SerialGPS Serial1
 #endif
 TinyGPSPlus gps;
-static bool GPS_Recovery();
+static bool GPS_Recovery(uint32_t ackMs);
 uint8_t buffer[256];
+
+// The GPS is a bonus, not a boot prerequisite. The bring-up used to park in a
+// `while (1)` when the module did not answer, which froze the deck until the
+// task watchdog restarted it; now a failed attempt just means "try again
+// later", and every attempt is bounded so the UI never stalls for long.
+bool gpsReady = false;
+static uint8_t gpsAttempts = 0;
+static uint32_t gpsRetryAt = 0;
+#define GPS_RETRY_INTERVAL 30000
+#define GPS_MAX_ATTEMPTS   6
+static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint32_t ackMs);
 
 String textarea_content = "";
 TaskHandle_t    playHandle = NULL;
@@ -320,9 +331,6 @@ void setup() {
   digitalWrite(RADIO_CS_PIN, HIGH);
   digitalWrite(BOARD_TFT_CS, HIGH);
 
-  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
-  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI); //SD 
-  
   if (!FFat.begin()) {
     Serial.println("FFat Mount Failed");
     return;
@@ -336,16 +344,30 @@ void setup() {
 
   Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
 
-  Wire.requestFrom(LILYGO_KB_SLAVE_ADDRESS, 1);
-  if (Wire.read() == -1) {
-    while (1) {
-      //      Serial.println("No keyboard");
-      delay(1000);
+  // A keyboard that does not answer used to park the boot in a silent `while (1)`
+  // (the task watchdog restarts the deck a few seconds later, so it looks like
+  // "freezes then reboots"). Retry briefly and carry on without it instead.
+  kbDected = false;
+  for (int attempt = 0; attempt < 5 && !kbDected; attempt++) {
+    Wire.requestFrom(LILYGO_KB_SLAVE_ADDRESS, 1);
+    kbDected = Wire.read() != -1;
+    if (!kbDected) {
+      delay(200);
     }
+  }
+  if (!kbDected) {
+    Serial.println("[kb] no answer from the keyboard; booting anyway");
   }
 
   tft.init();
   tft.setRotation(1);
+
+  // TFT_eSPI brings the shared SPI bus up itself in init(). The sketch used to
+  // begin it first, and on arduino-esp32 3.x the display library then kept a bus
+  // object that was never started and crashed on the first command it sent. The
+  // SD card and radio share this same bus from here on.
+  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
+  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI); //SD + radio
 
   // Adjust backlight
 
@@ -379,19 +401,14 @@ void setup() {
 
   tft.fillCircle(80, 120, 20, TFT_RED);
   tft.drawCircle(80, 120, 20, TFT_BLACK);
-  if (!setupGPS()) {
-    // Set u-blox m10q gps baudrate 38400
-    SerialGPS.begin(38400, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
-    if (!GPS_Recovery()) {
-        SerialGPS.updateBaudRate(9600);
-        if (!GPS_Recovery()) {
-            while (1) {
-                Serial.println("GPS Connect failed~!");
-                delay(1000);
-            }
-        }
-        SerialGPS.updateBaudRate(38400);
-    }
+  // one short attempt at boot; if the module is quiet we carry on booting and
+  // let loop() retry, rather than holding the whole deck hostage to a GPS
+  gpsReady = gpsBringUp(1200, 300, 1, 300);
+  if (gpsReady) {
+    Serial.println("[gps] module ready");
+  } else {
+    Serial.println("[gps] no answer yet, booting on and retrying in the background");
+    gpsRetryAt = millis() + 15000;
   }
 
   // Serial.println(USER_SETUP_ID);
@@ -674,16 +691,16 @@ void setup() {
 //  audio.connecttoFS(SD, "ding.mp3");
 }
 
-bool setupGPS() {
+bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
   // L76K GPS USE 9600 BAUDRATE
   SerialGPS.begin(9600, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
   bool result = false;
   uint32_t startTimeout ;
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < tries; ++i) {
     SerialGPS.write("$PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0*02\r\n");
     delay(5);
     // Get version information
-    startTimeout = millis() + 3000;
+    startTimeout = millis() + stopWaitMs;
     Serial.print("Try to init L76K . Wait stop .");
     while (SerialGPS.available()) {
         Serial.print(".");
@@ -698,7 +715,7 @@ bool setupGPS() {
     delay(200);
 
     SerialGPS.write("$PCAS06,0*1B\r\n");
-    startTimeout = millis() + 500;
+    startTimeout = millis() + verWaitMs;
     String ver = "";
     while (!SerialGPS.available()) {
         if (millis() > startTimeout) {
@@ -725,29 +742,29 @@ bool setupGPS() {
   return result;
 }
 
-static bool GPS_Recovery()
+static bool GPS_Recovery(uint32_t ackMs)
 {
     uint8_t cfg_clear1[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x1C, 0xA2};
     uint8_t cfg_clear2[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1B, 0xA1};
     uint8_t cfg_clear3[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x03, 0x1D, 0xB3};
     SerialGPS.write(cfg_clear1, sizeof(cfg_clear1));
 
-    if (getAck(buffer, 256, 0x05, 0x01)) {
+    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
         Serial.println("Get ack successes!");
     }
     SerialGPS.write(cfg_clear2, sizeof(cfg_clear2));
-    if (getAck(buffer, 256, 0x05, 0x01)) {
+    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
         Serial.println("Get ack successes!");
     }
     SerialGPS.write(cfg_clear3, sizeof(cfg_clear3));
-    if (getAck(buffer, 256, 0x05, 0x01)) {
+    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
         Serial.println("Get ack successes!");
     }
 
     // UBX-CFG-RATE, Size 8, 'Navigation/measurement rate settings'
     uint8_t cfg_rate[] = {0xB5, 0x62, 0x06, 0x08, 0x00, 0x00, 0x0E, 0x30};
     SerialGPS.write(cfg_rate, sizeof(cfg_rate));
-    if (getAck(buffer, 256, 0x06, 0x08)) {
+    if (getAck(buffer, 256, 0x06, 0x08, ackMs)) {
         Serial.println("Get ack successes!");
     } else {
         return false;
@@ -755,15 +772,35 @@ static bool GPS_Recovery()
     return true;
 }
 
+// One bounded bring-up attempt: L76K first, then the u-blox M10Q that other
+// decks ship with. Returns as soon as a module answers, and gives up quickly
+// when none does.
+static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint32_t ackMs)
+{
+  if (setupGPS(stopWaitMs, verWaitMs, tries)) {
+    return true;
+  }
+  // maybe it is a u-blox M10Q at 38400 instead of an L76K at 9600
+  SerialGPS.begin(38400, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
+  if (GPS_Recovery(ackMs)) {
+    return true;
+  }
+  SerialGPS.updateBaudRate(9600);
+  if (GPS_Recovery(ackMs)) {
+    return true;
+  }
+  return false;
+}
 
-int getAck(uint8_t *buffer, uint16_t size, uint8_t requestedClass, uint8_t requestedID)
+
+int getAck(uint8_t *buffer, uint16_t size, uint8_t requestedClass, uint8_t requestedID, uint32_t timeoutMs)
 {
     uint16_t    ubxFrameCounter = 0;
     bool        ubxFrame = 0;
     uint32_t    startTime = millis();
     uint16_t    needRead;
 
-    while (millis() - startTime < 800) {
+    while (millis() - startTime < timeoutMs) {
         while (SerialGPS.available()) {
             int c = SerialGPS.read();
             switch (ubxFrameCounter) {
@@ -822,59 +859,29 @@ int getAck(uint8_t *buffer, uint16_t size, uint8_t requestedClass, uint8_t reque
 }
 
 void displayInfo()
-{  // Serial.print("Offset: ");
-   // Serial.println(rtc.offset);
-   // Serial.print(F("Location: "));
-    if (gps.location.isValid()) {
-     //   Serial.print(gps.location.lat(), 6);
-     //   Serial.print(F(","));
-     //   Serial.print(gps.location.lng(), 6);
-    } else {
-     //   Serial.print(F("INVALID"));
-    }
+{
+  // Keep the RTC on GPS time when the module has a date for us
+  if (gps.time.isValid() && gps.date.year() != 2000) {
+    rtc.setTime(gps.time.second(), gps.time.minute(), gps.time.hour(),
+                gps.date.day(), gps.date.month(), gps.date.year());
+    rtc.setTime(rtc.getEpoch());
+  }
 
-    //Serial.print(F("  Date/Time: "));
-    if (gps.date.isValid()) {
-      //  Serial.print(gps.date.month());
-      //  Serial.print(F("/"));
-      //  Serial.print(gps.date.day());
-      //  Serial.print(F("/"));
-      //  Serial.print(gps.date.year());
-    } else {
-      //  Serial.print(F("INVALID"));
-    }
-
-    // Serial.print(F(" "));
-    if (gps.time.isValid()) {
-        if (gps.time.hour() < 10) //Serial.print(F("0"));
-        if (gps.date.year() != 2000) {
-          rtc.setTime(gps.time.second(), gps.time.minute(), gps.time.hour(), gps.date.day(), gps.date.month(), gps.date.year());
-        //  if (rtc.offset == 0) {
-          
-            rtc.setTime(rtc.getEpoch());
-        //  }
-
-        }
-        //Serial.print(gps.time.hour());
-        //Serial.print(F(":"));
-        if (gps.time.minute() < 10) Serial.print(F("0"));
-        //Serial.print(gps.time.minute());
-        //Serial.print(F(":"));
-        if (gps.time.second() < 10) Serial.print(F("0"));
-        //Serial.print(gps.time.second());
-        //Serial.print(F("."));
-        if (gps.time.centisecond() < 10) Serial.print(F("0"));
-        //Serial.print(gps.time.centisecond());
-    } else {
-        Serial.print(F("INVALID"));
-    }
-
-    Serial.println();
-        Serial.print(F("ms Raw="));
-    Serial.print(gps.date.value());
-        Serial.print(F("TIME       Fix Age="));
-    Serial.print(gps.time.age());
-    Serial.println();
+  // one compact line every ten seconds, instead of a wall of half printed
+  // sentences for every NMEA burst the module sends
+  static uint32_t lastReport = 0;
+  if (millis() - lastReport < 10000) {
+    return;
+  }
+  lastReport = millis();
+  if (gps.location.isValid()) {
+    Serial.printf("[gps] sats %d  %.5f,%.5f  time age %u ms\n",
+                  (int)gps.satellites.value(), gps.location.lat(), gps.location.lng(),
+                  (unsigned)gps.time.age());
+  } else {
+    Serial.printf("[gps] no fix yet, sats %d, sentences %u\n",
+                  (int)gps.satellites.value(), (unsigned)gps.sentencesWithFix());
+  }
 }
 
 void chat_grabber(String s, String uuid) {
@@ -1199,6 +1206,20 @@ void loop() {
 
   server.handleClient();
   readRadio();
+    // the GPS bring-up retries in the background: bounded, and it stops trying
+    // after a few goes so a missing module costs nothing after that
+    if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt) {
+      gpsAttempts++;
+      gpsRetryAt = millis() + GPS_RETRY_INTERVAL;
+      Serial.printf("[gps] retry %u of %u\n", (unsigned)gpsAttempts, (unsigned)GPS_MAX_ATTEMPTS);
+      gpsReady = gpsBringUp(1000, 300, 1, 300);
+      if (gpsReady) {
+        Serial.println("[gps] module ready");
+      } else if (gpsAttempts >= GPS_MAX_ATTEMPTS) {
+        Serial.println("[gps] giving up on the module; the deck runs fine without it");
+      }
+    }
+
     while (Serial.available()) {
         SerialGPS.write(Serial.read());
     }
@@ -1242,7 +1263,15 @@ void loop() {
     }
   }
 
-
+  // A quiet heartbeat. The USB CDC only talks while a host is listening, and a
+  // periodic line makes "is the deck alive, and is the GPS up?" answerable
+  // without having to catch the boot output.
+  static uint32_t lastBeat = 0;
+  if (millis() - lastBeat > 30000) {
+    lastBeat = millis();
+    Serial.printf("[deck] alive heap=%u room=%s gps=%d\n",
+                  (unsigned)ESP.getFreeHeap(), jw_room.c_str(), (int)gpsReady);
+  }
 }
 
 void readRadio() {
