@@ -8,16 +8,11 @@
 			<% if (scalar @{$crate->{'songs'}} > 0) { %>
 				<% foreach my $f (@{$crate->{'songs'}}) { %>
 					<% next unless $f->{'filename'}; %>
-					<% my @title = split '', &subs::shorthand_name($f->{'formatted_name'} || $f->{'full_title'},45); %>
 					<% $n = $n + 1; %>
 					<table class=" hover" style="min-width:200px;max-width:290px;max-height:900px;display:inline-block;background-color:<%= $f->{'colour'} %>">
 						<thead>
 							<th>
-								<span class="full_title" style="float:left;text-align:left;background-color:purple;"><%
-									foreach my $t ( @title ) { %>
-										<% if ($t eq ' ') { $t = 'blank'; } elsif ($t eq '.') { $t = 'dot'; } else { $t = uc $t; } %>
-										<img src="/icons/lymeboard/<%= $t %>.png" style="height:26px;">
-									<% } %></span>
+								<span class="full_title title_font" style="float:left;text-align:left;background-color:purple;font-size:22px;"><%= &subs::shorthand_name($f->{'formatted_name'} || $f->{'full_title'},45) %></span>
 								<span class="file_duration" style="float:right;"><%= $f->{'info'}->{'duration'} %></span>
 							</th>
 						</thead>

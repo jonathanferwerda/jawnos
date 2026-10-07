@@ -1,107 +1,94 @@
 <br>
 Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 <br>
-<table>
-	<thead>
-		<th>Dev</th>
-		<th>Max Files</th>
-		<th>Photo Size</th>
-		<th>Scan Size</th>
-		<th>Thumb Size</th>
-		<th>Encryption Standard</th>
-		<th>Max Backups</div>
-	</thead>
-	<tbody>
-		<% my $signatorial = &subs::signatorial_designer(); %>
-		<% my $dev = &subs::device_setter(); %>
-		<% foreach my $dt ( ($signatorial, @gb::device_types ) ) { %>
-			<% my $device_name = $dt eq $signatorial ? 'Me' : $dt; %>
-			<tr>
-				<td><h1><%= $device_name %></h1></td>
-				<td>
-					<select id="max_files" class="misc_setting" device="<%= $dt %>" setting="max_files">
-						<% foreach my $n (0..5000) { %>
-							<option <% if ($settings->{$dt}->{'max_files'} eq $n) { %>selected="selected"<% } %>><%= $n %></option>
+
+<% my $signatorial = &subs::signatorial_designer(); %>
+<% my $dev = &subs::device_setter(); %>
+<% my @fonts = (
+	'system-ui, sans-serif',
+	'Arial, sans-serif',
+	'Helvetica, sans-serif',
+	'Georgia, serif',
+	'Times New Roman, serif',
+	'Courier New, monospace',
+	'Verdana, sans-serif',
+	'Trebuchet MS, sans-serif',
+	'Comic Sans MS, cursive',
+	'Impact, sans-serif'
+); %>
+
+<div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
+	<h1 style="margin:0;">Titles</h1>
+	<label style="display:flex;flex-direction:column;max-width:260px;">
+		<b>Font</b>
+		<select class="misc_setting" setting="title_font" device="<%= $dev %>">
+			<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
+			<% foreach my $f ( @fonts ) { %>
+				<option value="<%= $f %>" style="font-family:<%= $f %>;" <% if ($current_font eq $f) { %>selected="selected"<% } %>><%= $f %></option>
+			<% } %>
+		</select>
+	</label>
+</div>
+
+<% foreach my $dt ( ($signatorial, @gb::device_types ) ) { %>
+	<% my $device_name = $dt eq $signatorial ? 'Me' : $dt; %>
+	<div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
+		<h1 style="margin:0;"><%= $device_name %></h1>
+
+		<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+			<% my @general = (
+				[ 'max_files', 'Max Files', [ 0..5000 ] ],
+				[ 'photo_size', 'Photo Size', [ '', @{$photo_sizes} ] ],
+				[ 'scan_size', 'Scan Size', [ '', @{$photo_sizes} ] ],
+				[ 'thumbnail_size', 'Thumb Size', [ '', @{$thumbnail_sizes} ] ],
+				[ 'encryption_standard', 'Encryption Standard', [ '', @{$encryption_standards} ] ],
+				[ 'max_backups', 'Max Backups', [ 0..100 ] ],
+			); %>
+			<% foreach my $g ( @general ) { %>
+				<% my ($key, $label, $opts) = @{$g}; %>
+				<label style="display:flex;flex-direction:column;">
+					<b><%= $label %></b>
+					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
+						<% foreach my $o ( @{$opts} ) { %>
+							<option <% if ($settings->{$dt}->{$key} eq $o) { %>selected="selected"<% } %>><%= $o %></option>
 						<% } %>
 					</select>
-				</td>
-				<td>
-					<select id="photo_size" class="misc_setting" device="<%= $dt %>" setting="photo_size">
-						<% foreach my $size ( '', @{$photo_sizes}) { %>
-							<option <% if ($settings->{$dt}->{'photo_size'} eq $size ){ %>selected="selected"<% } %>><%= $size %></option>
+				</label>
+			<% } %>
+		</div>
+
+		<% my @locations = qw/download music photo document video scan rec/; %>
+		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
+		<h4>Locations</h4>
+		<div style="display:flex;flex-wrap:wrap;gap:10px;">
+			<% foreach my $l (@locations) { %>
+				<div style="display:flex;flex-direction:column;border:solid;border-radius:5px;padding:4px;min-width:180px;">
+					<b><%= &subs::format_name($l) %></b>
+					<select id="<%= $l %>_location" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_location">
+						<% foreach my $s ( '', @{$folders}) { %>
+							<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
 						<% } %>
 					</select>
-				</td>
-				<td>
-					<select id="scan_size" class="misc_setting" device="<%= $dt %>" setting="scan_size">
-						<% foreach my $size ( '', @{$photo_sizes}) { %>
-							<option <% if ($settings->{$dt}->{'scan_size'} eq $size ){ %>selected="selected"<% } %>><%= $size %></option>
+					<b style="font-size:11px;">Archive</b>
+					<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
+						<option value="">None</option>
+						<% foreach my $rm ( @{$remote_machines} ) { %>
+							<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $settings->{$dt}->{$l . '_archive'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
 						<% } %>
 					</select>
-				</td>
-				<td>
-					<select id="thumbnail_size" class="misc_setting" device="<%= $dt %>" setting="thumbnail_size">
-						<% foreach my $size ( '', @{$thumbnail_sizes}) { %>
-							<option <% if ($settings->{$dt}->{'thumbnail_size'} eq $size ){ %>selected="selected"<% } %>><%= $size %></option>
-						<% } %>
-					</select>
-				</td>
-				<td>
-					<select id="encryption_standard" class="misc_setting" device="<%= $dt %>" setting="encryption_standard">
-						<% foreach my $s ( '', @{$encryption_standards}) { %>
-							<option <% if ($settings->{$dt}->{'encryption_standard'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
-						<% } %>
-					</select>
-				</td>
-				<td>
-					<select id="max_backups" class="misc_setting" device="<%= $dt %>" setting="max_backups">
-						<% foreach my $s ( 0..100) { %>
-							<option <% if ($settings->{$dt}->{'max_backups'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
-						<% } %>
-					</select>
-				</td>
-			</tr>
-			% my @locations = qw/download music photo document video scan rec/;
-			% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' });
-			<tr>
-				<% foreach my $l (@locations) { %>
-					<th><%= &subs::format_name($l) %> Location</th>
-				<% } %>
-			</tr>
-			<tr>
-				<% foreach my $l (@locations) { %>
-					<td>
-						<select id="<%= $l %>_location" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_location">
-							<% foreach my $s ( '', @{$folders}) { %>
-								<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
-							<% } %>
-						</select>
-						<br>
-						<b>Archive</b>
-						<br>
-						<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
-							<option value="">None</option>
-							<% foreach my $rm ( @{$remote_machines} ) { %>
-								<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $settings->{$dt}->{$l . '_archive'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
-							<% } %>
-						</select>
-					</td>
-				<% } %>
-			</tr>
-				<tr>
-					<% my @colours = @gb::misc_settings; %>
-					<% foreach my $k ( @colours ) { %>
-						<th><%= $k %></th>
-					<% } %>
-				</tr>
-				<tr>
-					<% foreach my $k ( @colours ) { %>
-						<td>
-							<input type="color" object="<%= $k %>" id="<%= $k %>_background_colour" app="appearance" device="<%= $dt %>" class="misc_setting" setting="<%= $k %>_background_colour" value="<%= $config->{$dt}->{$k}->{'background_colour'} %>">
-						</td>
-					<% } %>
-				</tr>
-			</tr>
-		<% } %>
-	</tbody>
-</table>
+				</div>
+			<% } %>
+		</div>
+
+		<h4>Colours</h4>
+		<div style="display:flex;flex-wrap:wrap;gap:8px;">
+			<% my @colours = @gb::misc_settings; %>
+			<% foreach my $k ( @colours ) { %>
+				<label style="display:flex;flex-direction:column;align-items:center;width:96px;font-size:10px;text-align:center;">
+					<%= $k %>
+					<input type="color" object="<%= $k %>" id="<%= $k %>_background_colour" app="appearance" device="<%= $dt %>" class="misc_setting" setting="<%= $k %>_background_colour" value="<%= $config->{$dt}->{$k}->{'background_colour'} %>">
+				</label>
+			<% } %>
+		</div>
+	</div>
+<% } %>

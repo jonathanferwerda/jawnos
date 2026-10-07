@@ -69,12 +69,9 @@ function howlMaker() {
 	tree.sound.play();
 	$('#play_logo').attr('src', '/icons/pause.jpg');
 	tree.howls++;
-	$('.playing').find('.lettering').css({ 'height': '22px' });
-	$('.playing').find('.uppercase').css({ 'height': '20px' });
 	$('.playing').removeClass('playing');
 	var track_number = tree.past_songs.length + 1;
-	$('#track_' + track_number).parent().addClass('playing').find('.lettering').css({ 'height': '25px' });
-	$('#track_' + track_number).parent().addClass('playing').find('.uppercase').css({ 'height': '25px' });
+	$('#track_' + track_number).parent().addClass('playing');
 	
 }
 

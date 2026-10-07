@@ -21,28 +21,28 @@
 			</span>
 			<br>
 			<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0 backspace/) { %>
-				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{$k} %>"><%= $k eq 'backspace' ? '⌫' : $k %></button>
 			<% } %>
 
 			<br>
 
 			<% foreach my $k (qw/q w e r t y u i o p/) { %>
-				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{$k} %>"><%= uc $k %></button>
 			<% } %>
 			<button class="keyboard_button" key="clear">C</button>
 			<br>
 			&nbsp;		&nbsp;
 			<% foreach my $k (qw/a s d f g h j k l ; '/) { %>
-				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{$k} %>"><%= uc $k %></button>
 			<% } %>
 			<br>
 			<button class="shift_key keyboard_button" key="shift">Sh</button>
 			<% foreach my $k (qw#z x c v b n m#) { %>
-				<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+				<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{$k} %>"><%= uc $k %></button>
 			<% } %>
-			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{','} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{','} %>" type="image/png"></img>
-			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{'.'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{'.'} %>" type="image/png"></img>
-			<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{'/'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button hover" key="<%= $keys->{'/'} %>" type="image/png"></img>
+			<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{','} %>">,</button>
+			<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{'.'} %>">.</button>
+			<button class="letter_key keyboard_button hover title_font" key="<%= $keys->{'/'} %>">/</button>
 			<br>
 
 			<button class="ctrl_key keyboard_button hover" key="ctrl">ctrl</button>
@@ -66,33 +66,33 @@
 			<div id="calculator_keyboard" style="float:left;width:50%">  
 				<button class="keyboard_button calculator_button" key="clear">C</button>
 				<% foreach my $k (qw# ( ) #) { %>
-					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key=" <%= $keys->{$k} %> " type="image/png"></img>
+					<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{$k} %>"><%= $k %></button>
 				<% } %>
 				<button class="operator keyboard_button calculator_button" key=" plmi ">&#177;</button>
 				<br>
 				<button class="keyboard_button calculator_button" key="<%= $keys->{'/'} %>" cushion=" ">	&#247 	</button>
 				<% foreach my $k (qw#7 8 9#) { %>
-					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+					<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{$k} %>"><%= $k %></button>
 				<% } %>
 				<br>
 				<button class="keyboard_button calculator_button" key="<%= $keys->{'*'} %>" cushion=" ">	&#215; 	</button>
 				<% foreach my $k (qw# 4 5 6#) { %>
-					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+					<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{$k} %>"><%= $k %></button>
 				<% } %>
 				<br>
 				<button class="keyboard_button calculator_button" key="<%= $keys->{'-'} %>" cushion=" ">-</button>
 				<% foreach my $k (qw#1 2 3#) { %>
-					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+					<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{$k} %>"><%= $k %></button>
 				<% } %>
 				<br>
 				<button class="keyboard_button calculator_button" key="<%= $keys->{'+'} %>" cushion=" ">+</button>
 				<% foreach my $k (qw# 0 . #) { %>
-					<img src="/manager/keyboard_alias?toggle=<%= $toggle %>&key=<%= $keys->{$k} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{$k} %>" type="image/png"></img>
+					<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{$k} %>"><%= $k %></button>
 				<% } %>
 				<button class="keyboard_button calculator_button" type="calc" key="calc">=</button>
 				<br>
 				<button class="keyboard_button calculator_button" type="calc" key=" to ">To</button>
-				<img src="/manager/keyboard_alias?toggle=calculator&key=<%= $keys->{'backspace'} %>&browser_tab_id=<%= $browser_tab_id %>" class="letter_key keyboard_button calculator_button hover" key="<%= $keys->{'backspace'} %>" type="image/png"></img>
+				<button class="letter_key keyboard_button calculator_button hover title_font" key="<%= $keys->{'backspace'} %>">⌫</button>
 			</div>
 			<div id="calculator_calculations" style="overflow:scroll;width:48%;height:120px;float:right;">
 

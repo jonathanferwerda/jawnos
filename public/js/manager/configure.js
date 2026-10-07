@@ -945,6 +945,9 @@ $(document).on('change','.misc_setting', function() {
 				if (v.setting == 'configure_background_colour' && dev == v.device) {
 					$('#configure').css({'background-color': v.value});
 				}
+				if (v.setting == 'title_font' && dev == v.device) {
+					$('.title_font').css({'font-family': v.value});
+				}
 				if ($('#' + object)) {
 					$('#' + object).css({'background-color': value});
 				}

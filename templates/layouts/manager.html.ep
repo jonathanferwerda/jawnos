@@ -99,6 +99,10 @@
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
   </head>
   <body style="background-color:<%= $config->{&subs::signatorial_designer()}->{'manager'}->{'background_colour'} %>">
+  <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
+  <style>
+    .title_font { font-family: <%= $title_font %>; }
+  </style>
 		<div id="everything">
 			<%= content %>
 			<div id="red_dot" class="circular_thumb dot">

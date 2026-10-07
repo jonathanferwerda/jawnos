@@ -143,20 +143,11 @@
 							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
 						} %>
 						<% foreach my $app ( @{$query} ) { %>
-							<% my @title = split '', &subs::format_name($app->{'app'}); %>
 							<tr>
 								<td><%== &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow(), size => 'little' }) %></td>
 								<td>
-									<span class="start_menu_list hover" onClick="appointmentGrabber('<%= $app->{'app'} %>','<%= &subs::rightNow() %>')">
-										<% foreach my $t ( @title ) { %>
-											<% my $style; %>
-											<% if ($t eq ' ') { $t = 'blank'; $style= "opacity:0;" } elsif ($t eq '.') { $t = 'dot'; } else {  } %>
-											<% if ($t =~ /[A-Z]/) { %>
-												<img src="/icons/uppercase/<%= $t %>.png" style="height:24px;<%= $style %>">
-											<% } else { %>
-												<img src="/icons/lettering/<%= $t %>.png" style="height:24px;<%= $style %>">
-											<% } %>
-										<% } %>
+									<span class="start_menu_list hover title_font" style="font-size:20px;" onClick="appointmentGrabber('<%= $app->{'app'} %>','<%= &subs::rightNow() %>')">
+										<%= &subs::format_name($app->{'app'}) %>
 									</span>
 								</td>
 								<td class="time" timestamp="<%= $menu eq 'exp' ? $app->{'warranty'} : $app->{'timestamp'} %>"></td>
