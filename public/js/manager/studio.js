@@ -216,6 +216,7 @@ function studioSetInsert(ch, name, on) {
 	}
 	studioApplyPedals();
 	studioRebuildInserts(ch);
+	studioUpdateFxBadges();
 }
 
 function studioApplyChannel(ch) {
@@ -401,6 +402,106 @@ function studioDrawTracks() {
 	});
 }
 
+function studioUpdateFxBadges() {
+	$.each(studioAudio.channels, function (ch, c) {
+		var names = c.inserts.map(function (ins) { return ins.name; });
+		$('.channel_fx[channel="' + ch + '"]').text(names.join(', '));
+	});
+}
+
+// ---- take editing on the canvas --------------------------------------------
+
+// How far to pull a freshly recorded take back in time to cancel input latency.
+// An explicit record_offset (ms) in the song admin wins; otherwise use the
+// AudioContext's reported latencies.
+function studioRecordOffset() {
+	var raw = mixer['time']['record_offset'];
+	if (raw !== undefined && raw !== null && String(raw).length > 0) {
+		var n = numeral(raw).value();
+		if (n !== null && n !== undefined && !isNaN(n)) { return n / 1000; }
+	}
+	var ctx = studioAudio.ctx;
+	if (!ctx) { return 0; }
+	return (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+}
+
+var studioTakeDrag = null;
+
+function studioCanvasChannel(canvas) {
+	var m = (canvas && canvas.id || '').match(/^track_view_(\d+)$/);
+	return m ? m[1] : null;
+}
+
+function studioCanvasHit(canvas, clientX) {
+	var ch = studioCanvasChannel(canvas);
+	if (!ch) { return null; }
+	var rect = canvas.getBoundingClientRect();
+	if (!rect.width) { return null; }
+	var duration = mixer['time']['duration'] > 0 ? mixer['time']['duration'] : 1;
+	var x = clientX - rect.left;
+	var t = (x / rect.width) * duration;
+	var tpp = duration / rect.width;
+	var takes = (mixer[ch] && mixer[ch].media && mixer[ch].media.out) || [];
+	for (var i = takes.length - 1; i >= 0; i--) {
+		var take = takes[i];
+		if (!take) { continue; }
+		var end = take.startTime + (take.duration || 0);
+		if (t >= take.startTime && t <= end) {
+			var edge = ((end / duration) * rect.width) - x;
+			return { ch: ch, take: take, mode: (Math.abs(edge) < 8 && take.duration) ? 'trim' : 'move', tpp: tpp, x: clientX, startTime: take.startTime, startDur: take.duration || 0 };
+		}
+	}
+	return null;
+}
+
+function studioRemoveTake(ch, take) {
+	var media = mixer[ch] && mixer[ch].media;
+	if (!media || !media.out) { return; }
+	if (take.track) {
+		if (!take.track.paused) { try { take.track.pause(); } catch (e) {} }
+		if (take.track.parentNode) { take.track.parentNode.removeChild(take.track); }
+	}
+	media.out = media.out.filter(function (t) { return t !== take; });
+	// keep element ids matching the array positions the server stores by
+	media.out.forEach(function (t, i) { if (t && t.track) { t.track.id = 'studio_channel_' + ch + '_' + i; } });
+	studioDrawChannel(ch);
+	studioSaver();
+}
+
+$(document).on('pointerdown', '.track', function (e) {
+	var hit = studioCanvasHit(this, e.originalEvent.clientX);
+	if (!hit) { return; }
+	studioTakeDrag = hit;
+});
+
+$(document).on('pointermove', function (e) {
+	if (!studioTakeDrag) { return; }
+	var dt = (e.originalEvent.clientX - studioTakeDrag.x) * studioTakeDrag.tpp;
+	var take = studioTakeDrag.take;
+	if (studioTakeDrag.mode == 'move') {
+		take.startTime = Math.max(0, studioTakeDrag.startTime + dt);
+	}
+	else {
+		take.duration = Math.max(0.05, studioTakeDrag.startDur + dt);
+	}
+	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + (take.duration || 0));
+	studioDrawChannel(studioTakeDrag.ch);
+	e.preventDefault();
+});
+
+$(document).on('pointerup', function () {
+	if (!studioTakeDrag) { return; }
+	var ch = studioTakeDrag.ch;
+	studioTakeDrag = null;
+	studioDrawChannel(ch);
+	studioSaver();
+});
+
+$(document).on('dblclick', '.track', function (e) {
+	var hit = studioCanvasHit(this, e.originalEvent.clientX);
+	if (hit) { studioRemoveTake(hit.ch, hit.take); }
+});
+
 // ---- pedal / channel selection ---------------------------------------------
 
 $(document).on('click', '.channel', function (e) {
@@ -501,6 +602,23 @@ function studioInit(data) {
 				studioDrawChannel(ch);
 			}
 			studioApplyPedals();
+			studioUpdateFxBadges();
+
+			// pedals are dragged from the pedalboard onto a channel strip
+			$('.pedal_background').draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
+			$('.channel').droppable({
+				accept: '.pedal_background',
+				tolerance: 'pointer',
+				drop: function(event, ui) {
+					var name = ui.draggable.attr('hint');
+					var m = ($(this).attr('class') || '').match(/channel_(\d+)/);
+					if (!name || !m) { return; }
+					var ch = m[1];
+					var c = studioAudio.channels[ch];
+					studioSetInsert(ch, name, !(c && c.insertByName[name]));
+					studioSaver();
+				}
+			});
 
 			studioRetriever();
 			if ($('#studio').attr('uuid')) {
@@ -1038,7 +1156,7 @@ function studioStartTake(ch) {
 	el.style.display = 'none';
 	$('#studio_track_container').append(el);
 
-	var take = { startTime: mixer['time']['position'], duration: 0, status: 'recording', track: el };
+	var take = { startTime: Math.max(0, mixer['time']['position'] - studioRecordOffset()), duration: 0, status: 'recording', track: el };
 	media.out[ir] = take;
 
 	var mime = studioPickMime(!!media.video);
@@ -1431,6 +1549,7 @@ function studioLoad(uuid) {
 			mixer['admin'] = mixer['admin'] || {};
 			mixer['admin']['video_toggle'] = admin['video_toggle'];
 			$('#studio_video_toggle').attr('toggled', admin['video_toggle']);
+			$('.studio_config[setting="record_offset"]').val(mixer['time']['record_offset'] || '');
 			if (mixer['time']['loop'] == 'on') {
 				$('#studio_loop').attr('enabled','on').attr('obg', 'rgb(211, 211, 211)').css({'background-color':'red'});
 			}
@@ -1575,6 +1694,11 @@ $(document).on('change', '.studio_config', function() {
 	var setting = $(this).attr('setting');
 	var value = $(this).val();
 	var restart = $(this).attr('restart');
+	if (setting == 'record_offset') {
+		mixer['time']['record_offset'] = value;
+		studioSaver();
+		return;
+	}
 	if (restart == 'yes') {
 		setTimeout(function() {
 			studioInit({ 'settings': [{ 'setting': setting, 'value': value }] });
