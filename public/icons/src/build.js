@@ -64,6 +64,7 @@ const GLYPHS = {
 	ruler: '<path d="M3.6 16.4 16.4 3.6l4 4L7.6 20.4z"/><g stroke="#000000" stroke-opacity="0.18" stroke-width="0.7"><path d="M7.2 13.2l2 2M10.2 10.2l2 2M13.2 7.2l2 2"/></g>',
 	person: '<circle cx="12" cy="7.6" r="4.1"/><path d="M4 20.5c0-4.2 3.6-6.9 8-6.9s8 2.7 8 6.9z"/><path d="M12 13.6l1.7 2.3-1.7 4.6-1.7-4.6z" fill="#000000" fill-opacity="0.18"/>',
 	warehouse: '<path d="M3 20V9.6L12 4l9 5.6V20z"/><rect x="9.4" y="13.6" width="5.2" height="6.4" fill="#000000" fill-opacity="0.18"/>',
+	house: '<path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>',
 	exit: '<path d="M10.5 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20h4" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 12H20" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round"/><path d="M16 8.5 19.5 12 16 15.5" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
@@ -100,6 +101,8 @@ const ICONS = {
 	vendor:       { g: 'person',    c: 'orange', out: 'icons/pos/vendor.png' },
 	manufacturer: { g: 'warehouse', c: 'slate',  out: 'icons/pos/manufacturer.png' },
 	exit:         { g: 'exit',      c: 'red',    out: 'images/decipherable/exit.png' },
+	home:         { g: 'house',     c: 'slate',  out: 'images/decipherable/home.png' },
+	home_button:  { g: 'house',     c: 'slate',  out: 'images/jbuttons/home.png' },
 };
 
 function makeSvg(colour, glyph) {
