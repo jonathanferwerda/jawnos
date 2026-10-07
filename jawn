@@ -382,12 +382,18 @@ sub terminal_pty_runner() {
 
 no warnings 'uninitialized';
 
+# Resolve ~ once. The old version shelled out to `echo $HOME` on every call, and
+# the master loop below calls this every couple of seconds -- thousands of forks.
+my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
-	my $com = 'echo $HOME';
-	my $cwd = `$com`;
-	chomp $cwd;
-	$inhabitant =~ s/~/$cwd/;
+	unless (defined $home_dir) {
+		$home_dir = $ENV{HOME};
+		if (!defined $home_dir || $home_dir eq '') {
+			$home_dir = (getpwuid($<))[7] || '';
+		}
+	}
+	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;
 }
 

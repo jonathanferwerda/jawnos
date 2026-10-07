@@ -685,6 +685,10 @@ sub utility_functions() {
 	$gb::housekeeping_running = 0;
 	$gb::clothesline_running = 0;
 
+	# The last utility state we persisted, so idle ticks don't keep rewriting the
+	# setting and pinging every tab.
+	my $last_controls_json;
+
 	sub utility_controller() {
 		my $data = shift;
 		$data->{'send_beacon'} = 0;
@@ -773,8 +777,14 @@ sub utility_functions() {
 			}
 			if ($writable == 1) {
 				my $jcontrols = encode_json $controls;
-				&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
-				&Websocket::send('tab', { utility_controller => 'yes' });
+				# Only persist + broadcast when something actually changed. This used
+				# to rewrite the setting and message every tab several times a minute
+				# even when nothing had moved.
+				if (!defined $last_controls_json || $jcontrols ne $last_controls_json) {
+					$last_controls_json = $jcontrols;
+					&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
+					&Websocket::send('tab', { utility_controller => 'yes' });
+				}
 			}
 		}
 		else {
@@ -786,7 +796,7 @@ sub utility_functions() {
 
 	my $timer_id;
 
-	$timer_id = Mojo::IOLoop->recurring(3 => sub {
+	$timer_id = Mojo::IOLoop->recurring(5 => sub {
 
 
 			my $data = &utility_controller();
@@ -1048,12 +1058,17 @@ sub utility_functions() {
 
 
 
+# Resolve ~ once; this used to shell out to `echo $HOME` on every call.
+my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
-	my $com = 'echo $HOME';
-	my $cwd = `$com`;
-	chomp $cwd;
-	$inhabitant =~ s/~/$cwd/;
+	unless (defined $home_dir) {
+		$home_dir = $ENV{HOME};
+		if (!defined $home_dir || $home_dir eq '') {
+			$home_dir = (getpwuid($<))[7] || '';
+		}
+	}
+	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;
 }
 

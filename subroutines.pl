@@ -3427,7 +3427,6 @@ sub settings_grabber() {
 		$returner->{$s->{'setting'}} = $s->{'value'};
 	}
 	unless ($device_defined == 1 && $returner->{$settings->{'setting'}}) {
-		my $qe = &db_query('select * from settings where app=?', $app);
 		my $liste = $q->hashes;
 		foreach my $s (@{$liste}) {
 			unless ($returner->{$s->{'setting'}}) {
@@ -3964,12 +3963,19 @@ sub vacuum_app() {
 
 }
 
+# Resolve ~ once; this used to shell out to `echo $HOME` on every call. That
+# helper is hit constantly (every settings/cache/db path), so caching it avoids
+# a fork+exec per call.
+my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
-	my $com = 'echo $HOME';
-	my $cwd = `$com`;
-	chomp $cwd;
-	$inhabitant =~ s/~/$cwd/;
+	unless (defined $home_dir) {
+		$home_dir = $ENV{HOME};
+		if (!defined $home_dir || $home_dir eq '') {
+			$home_dir = (getpwuid($<))[7] || '';
+		}
+	}
+	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;
 }
 
@@ -4026,10 +4032,15 @@ sub database_grabber() {
 	if ($gb::database_holder->{'pid'} eq $$) {
 		if ($gb::database_holder->{'server_time'} && $server_time <= $gb::database_holder->{'server_time'} + 700 && $connection ne 'new') {
 			$gb::database_holder->{'server_time'} = $server_time;
-			if (-e $gb::database_holder->{'database'}) {
-				$gb::database_holder->{'sql'} = Mojo::SQLite->new('sqlite:' . $gb::database_holder->{'database'});
-				$gb::database_holder->{'db'} = $gb::database_holder->{'sql'}->db;
-				return ($gb::database_holder->{'db'}, $gb::database_holder->{'database'}, $gb::database_holder->{'sql'});
+			my $database = $gb::database_holder->{'database'};
+			# Reuse the open handle instead of dialling a fresh SQLite connection
+			# on every single query. If the file on disk was swapped out
+			# (backup/restore) its inode changes, so rebuild in that case.
+			if ($gb::database_holder->{'db'} && defined $database && -e $database) {
+				my $file_key = join(':', (stat($database))[0, 1]);
+				if ($gb::database_holder->{'file_key'} && $file_key eq $gb::database_holder->{'file_key'}) {
+					return ($gb::database_holder->{'db'}, $database, $gb::database_holder->{'sql'});
+				}
 			}
 		}
 	}
@@ -4037,13 +4048,14 @@ sub database_grabber() {
     $gb::database_holder->{'sql'}->db->dbh->{InactiveDestroy} = 1;
 	}
 	my $dir = &subs::home($config->{'start_dir'});
-	my $files = `ls -t $dir | grep .db`;
-	my @databases = split "\n", $files;
-	@databases = grep { $_ =~ /\.db$/gi } @databases;
-
-	foreach my $d ( @databases ) {
-		$d = &subs::home($config->{'start_dir'} . $d);
+	$dir =~ s{/+$}{};
+	my @databases;
+	if (opendir my $dh, $dir) {
+		@databases = map { "$dir/$_" } grep { /\.db$/i } readdir $dh;
+		closedir $dh;
 	}
+	# newest first, same order the old `ls -t` gave -- but with no child processes
+	@databases = sort { (-M $b) <=> (-M $a) } @databases;
 	@databases = grep { -s $_ > 5000 } @databases;
 	my $database = $databases[0];
 
@@ -4057,7 +4069,8 @@ sub database_grabber() {
 			database => $database,
 			db => $db,
 			sql => $sql,
-			pid => $$
+			pid => $$,
+			file_key => join(':', (stat($database))[0, 1])
 		};
     $gb::database_holder->{'db'}->query("PRAGMA journal_mode=WAL;");
     $gb::database_holder->{'db'}->query("PRAGMA synchronous=NORMAL;");
@@ -4363,10 +4376,18 @@ sub theme_colour_for_app() {
 	return &theme_colour_grabber({ app => $app, existing => $existing, device => $device });
 }
 
-# The currently selected pseudonym icon set ('' for the modern default).
+# The currently selected pseudonym icon set ('' for the modern default). Memoised
+# per process with a short TTL: icon_for() runs once per icon on every render and
+# each miss costs a config read (a DB query plus Sereal decode).
+my $icon_set_memo;
+my $icon_set_memo_time = 0;
 sub icon_set() {
+	my $now = &rightNow();
+	return $icon_set_memo if defined $icon_set_memo && $now - $icon_set_memo_time < 1000;
 	my $config = &config_reader();
-	return $config->{'icon_set'} || '';
+	$icon_set_memo = $config->{'icon_set'} || '';
+	$icon_set_memo_time = $now;
+	return $icon_set_memo;
 }
 
 # When the hand-drawn set is active, swap a public icon path for its original
