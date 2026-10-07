@@ -34,6 +34,7 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels);
 void listJsonDir(fs::FS &fs, const char * dirname, JSONVar &list);
 void saveFileToFolder(const char * folderPath, const char * fileName);
 String getContentType(String filename);
+String https_request_raw(String url, String method, String payloadData);
 
 // The current LilyGoLib keeps its board object in a global reference called
 // `instance` (LilyGoWatch2022 for the T-Watch S3). The rest of this sketch was
@@ -433,7 +434,9 @@ void setup() {
   lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), LV_PART_MAIN);
 
 
-  setCpuFrequencyMhz(80);
+  // the old fork dropped to 80 MHz here and only came back up after a sleep; 240
+  // is what the sleep handler restores anyway, so start there
+  setCpuFrequencyMhz(240);
   button_writer();
 
   settingPMU();
@@ -861,6 +864,7 @@ JSONVar printAllMacAddresses() {
 
 
 void loop() {
+  static uint32_t loopStarted = millis();
   char count = 0;
   watch.loop();   // pumps the PMU and motion sensor events into the callbacks
 
@@ -901,8 +905,8 @@ void loop() {
     lv_obj_set_style_text_color(face_volts, status_colour, LV_PART_MAIN);
     lv_label_set_text_fmt(face_battery, "%d", volts);
     lv_label_set_text(face_percent, "%");
-    // getBattVoltage() is in volts now, the old fork handed out millivolts
-    lv_label_set_text_fmt(face_volts, "%dmV", (int)(watch.getBattVoltage() * 1000));
+    // the library hands out volts; two decimals is plenty of precision
+    lv_label_set_text_fmt(face_volts, "%.2f", watch.getBattVoltage());
     if (computer_name != "") {
       lv_label_set_text(face_name, computer_name.c_str());
     }
@@ -940,9 +944,12 @@ void loop() {
   }
   awake_notifications();
 
-
-
-
+  // anything that blocks long enough to be felt gets a line in the log
+  uint32_t spent = millis() - loopStarted;
+  if (spent > 300) {
+    Serial.printf("[slow] loop %u ms (%s)\n", spent, jw_room.c_str());
+  }
+  loopStarted = millis();
 }
 
 void dualCoreTaskMaker(JSONVar task) {
@@ -1432,7 +1439,7 @@ void watch_face_maker()
   face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 30);
   face_percent = face_label_maker(42, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 14);
   face_name = face_label_maker(0, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 110, LV_ALIGN_TOP_MID);
-  face_volts = face_label_maker(-10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 70, LV_ALIGN_TOP_RIGHT);
+  face_volts = face_label_maker(-10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 45, LV_ALIGN_TOP_RIGHT);
 
   // the clock, centred under the status bar
   face_date = face_label_maker(0, 28, &lv_font_montserrat_16, lv_color_hex(0xFFE000), 220, LV_ALIGN_TOP_MID);
@@ -1643,6 +1650,13 @@ String url_maker(String url) {
 }
 
 String https_request(String url, String method, String payloadData) {
+  uint32_t started = millis();
+  String answer = https_request_raw(url, method, payloadData);
+  Serial.printf("[https] %u ms %s\n", millis() - started, url.c_str());
+  return answer;
+}
+
+String https_request_raw(String url, String method, String payloadData) {
   url = url_maker(url);
   Serial.println(url);
   WiFiClientSecure *connexion = new WiFiClientSecure;
@@ -1652,6 +1666,7 @@ String https_request(String url, String method, String payloadData) {
     // Serial.println ("there is a connection");
     {
       HTTPClient https;
+      https.setTimeout(4000);   // a slow homebase must not freeze the loop for long
       if (https.begin(*connexion, url)) {
          Serial.println("est connection");
         int httpCode = https.GET();
@@ -2972,13 +2987,10 @@ static void volume_event_cb(lv_event_t *e)
 
 
 void touch_watch() {
-  if (watch.getTouched()) {
+  // LVGL counts every press, hold and drag as input activity, so a long touch on
+  // a slider keeps the screen awake; the board's touch IRQ bit alone would not.
+  if (lv_display_get_inactive_time(NULL) < 1000) {
     buttonMillis = millis();
-    //    lv_point_t point;
-    //    lv_indev_t *indev = lv_indev_get_next(NULL);
-    //    lv_indev_get_point(indev, &point);
-    //    Serial.print(point.x); Serial.print(" "); Serial.println(point.y);
-
   }
 }
 
