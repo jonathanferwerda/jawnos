@@ -221,6 +221,7 @@ sub WIZARD_HTML {
 	.code { font-size: 32px; letter-spacing: 8px; font-weight: 700; color: #8ab4f8; }
 	.note { color: #b8c0cc; font-size: 14px; }
 	.msg { margin-top: 10px; font-size: 14px; }
+	pre.install { background: #0e1317; border: 1px solid #39414c; border-radius: 8px; padding: 12px; overflow: auto; max-height: 220px; font-size: 13px; white-space: pre; }
 </style>
 </head>
 <body>
@@ -293,6 +294,38 @@ sub WIZARD_HTML {
 function unlock(id) { document.getElementById(id).classList.remove('locked'); }
 function val(id) { return document.getElementById(id).value; }
 
+function installScript() {
+	var pre = document.getElementById('install-script');
+	return pre ? pre.textContent : '';
+}
+
+function installMsg(text) {
+	var m = document.getElementById('install-msg');
+	if (!m) { return; }
+	m.textContent = text;
+	setTimeout(function () { m.textContent = ''; }, 2000);
+}
+
+function copyInstall() {
+	var text = installScript();
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(function () { installMsg('Copied'); }, function () { installMsg('Copy failed'); });
+	} else {
+		installMsg('Copy not supported');
+	}
+}
+
+function downloadInstall() {
+	var blob = new Blob([installScript()], { type: 'text/x-shellscript' });
+	var a = document.createElement('a');
+	a.href = URL.createObjectURL(blob);
+	a.download = 'jawnos-deps.sh';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(a.href);
+}
+
 async function loadDeps() {
 	var body = document.getElementById('deps-body');
 	body.innerHTML = 'checking&hellip;';
@@ -309,9 +342,18 @@ async function loadDeps() {
 		if (d.ok) { html += '<tr><td class="ok">&#10003;</td><td colspan="2">All dependencies present</td></tr>'; }
 		html += '</table>';
 		if (!d.ok) {
-			html += '<p class="note">To install what is missing, stop this wizard (Ctrl+C in the terminal) and run:<br><code>perl scripts/jawnos_deps.pl</code></p>';
+			html += '<p class="note">Run this to install what is missing, then hit Re-check:</p>';
+			html += '<pre id="install-script" class="install"></pre>';
+			html += '<div class="row" style="margin-top:8px;">';
+			html += '<div><button onclick="copyInstall()">Copy</button> <button class="ghost" onclick="downloadInstall()">Download .sh</button> <span id="install-msg" class="note"></span></div>';
+			html += '</div>';
+			html += '<p class="note">Or stop this wizard (Ctrl+C in the terminal) and run <code>perl scripts/jawnos_deps.pl</code>.</p>';
 		} else { unlock('step-config'); }
 		body.innerHTML = html;
+		if (!d.ok) {
+			var pre = document.getElementById('install-script');
+			if (pre) { pre.textContent = d.install_script || '(no commands generated -- install by hand, see the README)'; }
+		}
 	} catch (e) { body.innerHTML = '<span class="bad">' + e + '</span>'; }
 }
 
@@ -376,7 +418,13 @@ get '/api/state' => sub {
 get '/api/deps' => sub {
 	my $c = shift;
 	my $out = `perl scripts/jawnos_deps.pl --json 2>/dev/null`;
-	my $data = eval { decode_json $out } || { ok => 0, error => 'could not run the dependency check' };
+	my $data = eval { decode_json $out };
+	if ( ref $data ne 'HASH' ) {
+		$data = { ok => 0, error => 'could not run the dependency check' };
+	}
+	elsif ( !$data->{'ok'} ) {
+		$data->{'install_script'} = `perl scripts/jawnos_deps.pl --sh 2>/dev/null`;
+	}
 	$c->render( json => $data );
 };
 
