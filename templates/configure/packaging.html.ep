@@ -1,9 +1,12 @@
 % no warnings 'uninitialized';
 <% my $packages = $settings->{'app_packaging'}; %>
 <% $packages->{'new'} = { name => '', quantity => '', each => '', uuid => &subs::random_string_creator(20) }; %>
+<!-- 'a' is the app name in this template's stash, and Mojo::Template extracts stash keys into lexicals,
+     so a sort { $a->{'app'} } block here would sort the app name instead of the rows. Sort the names instead. -->
 <% my $places = &subs::db_query('select app from settings where (setting = ? or setting = ?) and value = ? and device = ?', 'pos', 'mab', 'place', &subs::device_setter())->hashes; %>
+<% my %place_row = map { $_->{'app'} => $_ } @{$places}; %>
 <datalist id="warehouse_place_options">
-	<% foreach my $pl ( sort { $a->{'app'} cmp $b->{'app'} } @{$places} ) { %>
+	<% foreach my $pl ( map { $place_row{$_} } sort keys %place_row ) { %>
 		<option value="<%= $pl->{'app'} %>"><%= &subs::format_name($pl->{'app'}) %></option>
 	<% } %>
 </datalist>
