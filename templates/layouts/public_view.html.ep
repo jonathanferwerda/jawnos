@@ -15,7 +15,7 @@
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
 	</head>
-	<body>
+	<body style="<%= &subs::theme_panel_css() %>">
 	<div id="everything" style="background-color:var(--panel);">
 		<%= content %>
 	</div>

@@ -38,7 +38,7 @@
 			<script src="/js/paperboy.js?string=<%= $string %>"></script>
 		<% } %>
   </head>
-  <body>
+  <body style="<%= &subs::theme_panel_css($config->{$device}->{'homepage'}->{'background_colour'}) %>">
 		<%= content %>
 		<div id="red_dot" class="circular_thumb dot">
 			<span class="dot_info"><span>

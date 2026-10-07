@@ -1,5 +1,5 @@
 
-<div class="dialog_box" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="background-color:lightgrey;height:<%= $box->{'height'} || '180px' %>;width:400px;position:fixed;top: 50%;left: 50%;transform: translate(-50%, -50%);z-index: 9999;">
+<div class="dialog_box" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="background-color:var(--panel-2);height:<%= $box->{'height'} || '180px' %>;width:400px;position:fixed;top: 50%;left: 50%;transform: translate(-50%, -50%);z-index: 9999;">
 	<div class="header" style="background-color:navy;color:white;font-size:26px;position:absolute;top:0px;width:100%;">
 		<span style="float:right;"><button class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()">X</button></span>
 		<span style="float:left;"><%= $box->{'name'} || 'Dialog Box' %></span>

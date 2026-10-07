@@ -1,7 +1,7 @@
 <html>
 	<head>
 	</head>
-<body>
+<body style="<%= &subs::theme_panel_css() %>">
 	<div id="handbook" style="background-color:var(--panel);overflow:scroll;width:100%;">
 		<div id="handbook_header">
 			<b>

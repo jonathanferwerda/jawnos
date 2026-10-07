@@ -1,5 +1,5 @@
 <div id="folders" style="background-color:var(--panel);width:100%;height:100%;" folder="<%= $fo->{'folder'} %>">
-	<div id="folders_toolbar" style="height:35px;width:100%;border:solid;background-color:lightgrey;">
+	<div id="folders_toolbar" style="height:35px;width:100%;border:solid;background-color:var(--panel-2);">
 		<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="little_thumb hover folders_command" command="home">
 		<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" class="little_thumb hover folders_command" command="up">
 
@@ -21,7 +21,7 @@
 		</div>
 	</div>
 	% my $disk = $fo->{'disk'};
-	<div id="folders_bottom_bar" style="background-color:lightgrey;width:100%;height:25px;border:solid;font-size:24px;position:absolute;bottom:-5px;">
+	<div id="folders_bottom_bar" style="background-color:var(--panel-2);width:100%;height:25px;border:solid;font-size:24px;position:absolute;bottom:-5px;">
 		<span class="folders_selected_info"></span>
 		<% if ($disk->{'files'} > 0) { %>
 			<img src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" class="miniscule_thumb"><span style="vertical-align:top;"><%= $disk->{'files'} %> </span>

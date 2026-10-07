@@ -2,7 +2,7 @@
 <% no warnings 'uninitialized'; %>
 <% if (@{$tunnels} > 0) { %>
 	<h4>Tunnels:</h4>
-	<table style="background-color:lightgrey;width:100%;">
+	<table style="background-color:var(--panel-2);width:100%;">
 		<thead>
 			<th>F</th><th>Host</th><th>Dir</th><th>Name</th><th>IP</th><th>In</th><th>Out</th><th>Time</th><th>ST</th>
 		</thead>

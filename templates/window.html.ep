@@ -1,4 +1,4 @@
-<div class="wind" id="window_<%= $timestamp %>" style="background-color:<%= $c %>;position:fixed;bottom:0px;left:0px;width:400px;height:500px">
+<div class="wind" id="window_<%= $timestamp %>" style="background-color:var(--panel);position:fixed;bottom:0px;left:0px;width:400px;height:500px">
 	<div class="window_topbar" style="border:solid;background-color:<%= $c %>;position;fixed;" 
 		app="<%= $type->{'app'} %>'"><span class="appointment_name"><%= $formatted_name %>
 		<span style="float:right;">

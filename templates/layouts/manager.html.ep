@@ -98,7 +98,8 @@
 		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
   </head>
-  <body style="background-color:<%= $config->{&subs::signatorial_designer()}->{'manager'}->{'background_colour'} %>">
+<% my $manager_bg = $config->{&subs::signatorial_designer()}->{'manager'}->{'background_colour'}; %>
+  <body style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>">
   <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
     .title_font { font-family: <%= $title_font %>; }

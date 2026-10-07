@@ -44,7 +44,7 @@
 			<% } %>
 			<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_wigi hover">WIGI</button>
 			<button ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" class="embedded_device_query hover">Query</button>
-			<div class="embedded_device_info" style="width:100%;display:none;background-color:lightgrey;" chip_id="<%= $chip_id %>"></div>
+			<div class="embedded_device_info" style="width:100%;display:none;background-color:var(--panel-2);" chip_id="<%= $chip_id %>"></div>
 			<% if ($edt eq 'microcontroller') { %>
 				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_jobs">Jobs</button>
 				<div id="embedded_jobs_results" style="display:none;width:100%;"></div>

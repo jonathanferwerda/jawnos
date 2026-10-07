@@ -63,7 +63,7 @@ html, body {
 	width: 60px;
 	z-index: 40000; 
 	position:fixed;
-	background-color: lightgrey;
+	background-color: var(--panel-2);
 }
 #pseudonym_home {
 	height: 120px;
@@ -392,7 +392,7 @@ canvas { overflow: scroll; z-index: 99; }
 }
 
 .media_picker {
-	background-color: lightgrey;
+	background-color: var(--panel-2);
 }
 
 .media_picker[status=on] {
@@ -400,7 +400,7 @@ canvas { overflow: scroll; z-index: 99; }
 }
 
 .cards_mode {
-	background-color: lightgrey;
+	background-color: var(--panel-2);
 }
 
 .cards_mode[status=enabled] {

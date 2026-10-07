@@ -12469,7 +12469,7 @@ sub window_maker($type,$timestamp) {
 	}
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-colour:white;
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--panel);
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="max-height:50px;position:absolute;width:100%;border:solid;background-color:'. ($settings->{'colour'} || '#ffec1f') .
@@ -12495,8 +12495,8 @@ sub window_maker($type,$timestamp) {
 			</div>
 			<div id="window_drawer_' . $timestamp . '" class="window_drawer" style="position:absolute;top:34px;background-color:' . ($settings->{'colour'} || '#ffec1f') . ';width:100%;display:none;height:calc(100% - 34.8317px);overflow:scroll;">
 			<img src="/images/make believe/space.png" style="position:absolute;left:30%;height:24px;width:30%;" class="window_drawer_closer hover">
-			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:white;">' . $drawer . '</div></div>
-			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;height:calc(100% - 34.0317px);">' . $contents . '</div>
+			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--panel);">' . $drawer . '</div></div>
+			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--panel);height:calc(100% - 34.0317px);">' . $contents . '</div>
 
 		<script id="window_script_' . $timestamp .'">
 			jopen = \'' . $settings->{'jopen'} . '\';

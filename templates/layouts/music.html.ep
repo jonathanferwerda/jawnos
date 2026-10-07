@@ -19,7 +19,7 @@
 
 
   </head>
-  <body>
+  <body style="<%= &subs::theme_panel_css() %>">
 		<%= content %>
 		<div id="red_dot" class="circular_thumb dot">
 			<span class="dot_info"><span>

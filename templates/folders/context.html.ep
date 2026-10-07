@@ -1,5 +1,5 @@
 
-<div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:lightgrey;" uuid="<%= $uuid %>">
+<div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:var(--panel-2);" uuid="<%= $uuid %>">
 	<% my $contexts = {
 		file => [
 			{ 'open' => {} }, 

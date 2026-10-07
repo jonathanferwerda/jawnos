@@ -31,7 +31,7 @@
 		</div>
 	</div>
 	<% if ($c->session('privilege') eq 'citizen') { %>
-		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'white' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
+		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
 			<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
 				<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
 			<% } %>

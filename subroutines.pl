@@ -4173,6 +4173,75 @@ sub db_cache_updater() {
 	}
 }
 
+# ---- theme surfaces -----------------------------------------------------------
+# Windows and panels should read as a step away from the page background, in a
+# grey that still carries a hint of the theme's hue. These helpers turn a theme
+# background colour into the --panel/--panel-2/--ink values the CSS uses.
+sub _rgb_to_hsl {
+	my ($r, $g, $b) = map { $_ / 255 } @_;
+	my $max = $r > $g ? ( $r > $b ? $r : $b ) : ( $g > $b ? $g : $b );
+	my $min = $r < $g ? ( $r < $b ? $r : $b ) : ( $g < $b ? $g : $b );
+	my $l = ($max + $min) / 2;
+	my ($h, $s) = (0, 0);
+	if ($max != $min) {
+		my $d = $max - $min;
+		$s = $l > 0.5 ? $d / (2 - $max - $min) : $d / ($max + $min);
+		if ($max == $r) { $h = ($g - $b) / $d + ($g < $b ? 6 : 0); }
+		elsif ($max == $g) { $h = ($b - $r) / $d + 2; }
+		else { $h = ($r - $g) / $d + 4; }
+		$h *= 60;
+	}
+	return ($h, $s, $l);
+}
+
+sub _hsl_to_hex {
+	my ($h, $s, $l) = @_;
+	$h = (($h % 360) + 360) % 360;
+	my $c = (1 - abs(2 * $l - 1)) * $s;
+	my $x = $c * (1 - abs((($h / 60) % 2) - 1));
+	my $m = $l - $c / 2;
+	my ($r, $g, $b);
+	if ($h < 60) { ($r, $g, $b) = ($c, $x, 0); }
+	elsif ($h < 120) { ($r, $g, $b) = ($x, $c, 0); }
+	elsif ($h < 180) { ($r, $g, $b) = (0, $c, $x); }
+	elsif ($h < 240) { ($r, $g, $b) = (0, $x, $c); }
+	elsif ($h < 300) { ($r, $g, $b) = ($x, 0, $c); }
+	else { ($r, $g, $b) = ($c, 0, $x); }
+	return sprintf('#%02X%02X%02X', map { int(($_ + $m) * 255 + 0.5) } ($r, $g, $b));
+}
+
+# Render the CSS custom properties for a theme, given its background colour.
+# Light themes get a light grey, dark themes a dark grey; both keep a whisper of
+# the theme's hue. Returned as a declaration string so a layout can fold it into
+# an inline style attribute.
+sub theme_panel_css {
+	my ($bg) = @_;
+	my ($r, $g, $b);
+	if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
+		($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+	}
+	unless (defined $r) {
+		my @palette = &theme_palette();
+		if (scalar @palette && $palette[0] =~ /^\#([0-9a-fA-F]{6})$/) {
+			($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+		}
+	}
+	unless (defined $r) {
+		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;';
+	}
+	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
+	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
+	my $tint = $s < 0.18 ? $s : 0.18;
+	if ($lum < 0.5) {
+		my $panel = &_hsl_to_hex($h, $tint, 0.16);
+		my $panel2 = &_hsl_to_hex($h, $tint, 0.23);
+		return "--ink:#f2f2f2;--ink-muted:#cccccc;--panel:$panel;--panel-2:$panel2;";
+	}
+	my $panel = &_hsl_to_hex($h, $tint, 0.88);
+	my $panel2 = &_hsl_to_hex($h, $tint, 0.80);
+	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;";
+}
+
 # The colours the current theme is built from: the distinct *_background_colour
 # swatches for a device (falling back through the other devices if unset).
 sub theme_palette() {
