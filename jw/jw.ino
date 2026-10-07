@@ -128,7 +128,7 @@ String https_request(String url, String method = "GET", String payloadData = "")
 
 // Hardware settings matching the template parameters
 String WAV_FILE_PATH = "/rec.wav";
-#define AUDIO_BUFFER_CHUNK_SIZE 500
+#define AUDIO_BUFFER_CHUNK_SIZE 2048
 
 // The recording path still needs these two, they used to come from the old fork's header
 #define MIC_I2S_SAMPLE_RATE 16000
@@ -2142,7 +2142,11 @@ void micCaptureTask(void *pvParameters) {
             audio_file.write(tempBuf, got);
             bytes_written_total += got;
         }
-        vTaskDelay(pdMS_TO_TICKS(1)); // Yield to protect system core execution stability
+        else {
+            // the read blocks until the buffer is full, so this only runs when it
+            // came back with nothing; a short yield keeps the loop from spinning
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
 
     mic->close();
