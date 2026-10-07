@@ -13,10 +13,11 @@
 
 
 
+		<% my %menu_hints = ( app => 'Apps', run => 'Running', up => 'Upcoming', exp => 'Expiring', view => 'System' ); %>
 		<% foreach my $b ( qw/app run up exp view/ ) { %>
-			<img src="<%= $images->{$b} %>" class="medium_thumb start_menu_menu hover <% if ($menu eq $b) { %>selected<% } %>" menu="<%= $b %>">
+			<img src="<%= &subs::icon_for($images->{$b}) %>" hint="<%= $menu_hints{$b} %>" class="medium_thumb start_menu_menu hover <% if ($menu eq $b) { %>selected<% } %>" menu="<%= $b %>">
 		<% } %>
-		<img id="main_logo" class="jonathan little_thumb configuration"  src="/images/decipherable/wrench.png"></img>
+		<img id="main_logo" class="jonathan little_thumb configuration"  src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 
 		<!--
 
@@ -39,54 +40,54 @@
 			</div>
 		<% } elsif ($menu eq 'app') { %>
 			<span class="start_menu_main_display">
-				<img class="jonathan" src="/images/decipherable/folder.png" id="folders_toggle"></img>
-				<img class="jonathan" src="/images/decipherable/chart.png" id="budget"></img>
-				<img id="travel_toggle" src="/images/decipherable/aeroplane.png" class="jonathan gps"></img>
-				<img id="relational_toggle" src="/images/make believe/strawbeery.png" class="jonathan relational">
-				<img id="mailbox_toggle" src="/images/decipherable/envelope.png" class="jonathan mail">
+				<img class="jonathan" src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folders" id="folders_toggle"></img>
+				<img class="jonathan" src="<%= &subs::icon_for('/images/decipherable/chart.png') %>" hint="Budget" id="budget"></img>
+				<img id="travel_toggle" src="<%= &subs::icon_for('/images/decipherable/aeroplane.png') %>" hint="Travel" class="jonathan gps"></img>
+				<img id="relational_toggle" src="<%= &subs::icon_for('/images/make believe/strawbeery.png') %>" hint="Contacts" class="jonathan relational">
+				<img id="mailbox_toggle" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Mailbox" class="jonathan mail">
 				<br>
 
 
-				<img id="music_toggle" src="/images/make believe/music.png" class="jonathan music"></img>
-				<img id="embedded_toggle" src="/images/decipherable/microchip.png" class="jonathan embedded"></img>
-				<span><img id="ticketmaker" class="jonathan little_thumb" src="/images/decipherable/ticket.png"></span>
-				<img id="cards_toggle" src="/images/decipherable/cards.png" class="jonathan cards">
-				<img class="jonathan" src="/images/make believe/web_button.png" id="web_toggle"></img>
+				<img id="music_toggle" src="<%= &subs::icon_for('/images/make believe/music.png') %>" hint="Music" class="jonathan music"></img>
+				<img id="embedded_toggle" src="<%= &subs::icon_for('/images/decipherable/microchip.png') %>" hint="Embedded" class="jonathan embedded"></img>
+				<span><img id="ticketmaker" class="jonathan little_thumb" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Tickets"></span>
+				<img id="cards_toggle" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" hint="Cards" class="jonathan cards">
+				<img class="jonathan" src="<%= &subs::icon_for('/images/make believe/web_button.png') %>" hint="Web" id="web_toggle"></img>
 				<br>
-				<img class="jonathan" id="backup_now" src="/images/decipherable/diskette.png" ></img>
-				<img id="security_toggle" src="/images/make believe/badge.png" class="jonathan security"></img>
-				<img id="terminal_toggle" src="/images/decipherable/code.png" class="jonathan terminal"></img>
-				<img id="ide_toggle" class="jonathan ide" src="/images/make believe/monitor.png"></img>
-				<img class="jonathan little_thumb" id="upload" src="/images/make believe/up.png" />
+				<img class="jonathan" id="backup_now" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Backup now" ></img>
+				<img id="security_toggle" src="<%= &subs::icon_for('/images/make believe/badge.png') %>" hint="Security" class="jonathan security"></img>
+				<img id="terminal_toggle" src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Terminal" class="jonathan terminal"></img>
+				<img id="ide_toggle" class="jonathan ide" src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="IDE"></img>
+				<img class="jonathan little_thumb" id="upload" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Upload" />
 				<br>
-				<img id="image_toggle" src="/images/decipherable/gallery.png" class="jonathan gallery"></img>
-				<img id="synth_toggle" src="/images/decipherable/piano.png" class="jonathan synth"></img>
-				<img id="editor_toggle" src="/images/decipherable/love letter.png" class="jonathan editor"></img>
-				<img id="marker_toggle" class="jonathan marker" src="/images/decipherable/marker.png"></img>
+				<img id="image_toggle" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="jonathan gallery"></img>
+				<img id="synth_toggle" src="<%= &subs::icon_for('/images/decipherable/piano.png') %>" hint="Synth" class="jonathan synth"></img>
+				<img id="editor_toggle" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>" hint="Editor" class="jonathan editor"></img>
+				<img id="marker_toggle" class="jonathan marker" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker"></img>
 
 				<br>
 
-				<img class="jonathan" src="/images/decipherable/stop sign.png" id="stop_all"></img>
-				<img id="twirl_toggle" class="jonathan twirl" src="/images/decipherable/tetris.png"></img>
-				<img id="studio_toggle" src="/images/decipherable/mixer.png" class="jonathan mixer"></img>
-				<img class="handbook medium_thumb jonathan" id="handbook_toggle" src="/images/decipherable/handbook.png">
-				<img class="home medium_thumb jonathan" id="home_toggle" src="<%= $gb::known_appts->{'guest'}->{'icon'} %>">
+				<img class="jonathan" src="<%= &subs::icon_for('/images/decipherable/stop sign.png') %>" hint="Stop all" id="stop_all"></img>
+				<img id="twirl_toggle" class="jonathan twirl" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" hint="Twirl"></img>
+				<img id="studio_toggle" src="<%= &subs::icon_for('/images/decipherable/mixer.png') %>" hint="Studio" class="jonathan mixer"></img>
+				<img class="handbook medium_thumb jonathan" id="handbook_toggle" src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Handbook">
+				<img class="home medium_thumb jonathan" id="home_toggle" hint="Home" src="<%= &subs::icon_for($gb::known_appts->{'guest'}->{'icon'}) %>">
 				<br>
 
-				<img class="voice_prompt medium_thumb jonathan" src="/images/decipherable/speech to text.png" />
+				<img class="voice_prompt medium_thumb jonathan" src="<%= &subs::icon_for('/images/decipherable/speech to text.png') %>" hint="Voice prompt" />
 		
 				<% if ($device eq 'mobile') { %>
-					<img class="little_thumb hover nfc_benign_reader" src="/images/make believe/water.png">
+					<img class="little_thumb hover nfc_benign_reader" src="<%= &subs::icon_for('/images/make believe/water.png') %>" hint="Scan NFC">
 
-					<img class="jonathan torch_toggle" src="/images/decipherable/nightlight.png"></img>
-					<img class="jonathan" src="/images/make believe/phone_sms.png" id="sms_list_check"></img>
+					<img class="jonathan torch_toggle" src="<%= &subs::icon_for('/images/decipherable/nightlight.png') %>" hint="Torch"></img>
+					<img class="jonathan" src="<%= &subs::icon_for('/images/make believe/phone_sms.png') %>" hint="SMS" id="sms_list_check"></img>
 				<% } %>
-				<img style="" class="little_thumb permission_asker hover jonathan" src="/images/make believe/good.png">
+				<img style="" class="little_thumb permission_asker hover jonathan" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Permissions">
 				<br>
-				<img class="medium_thumb jonathan" id="store_toggle" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>">
-				<img class="jonathan measures_toggle" src="/images/decipherable/measures.png">
-				<img class="jonathan market_toggle" src="/icons/pos/vendor.png">
-				<img class="jonathan warehouse_toggle" src="/icons/pos/manufacturer.png">
+				<img class="medium_thumb jonathan" id="store_toggle" hint="Store" src="<%= &subs::icon_for($gb::known_appts->{'resident'}->{'icon'}) %>">
+				<img class="jonathan measures_toggle" src="<%= &subs::icon_for('/images/decipherable/measures.png') %>" hint="Measures">
+				<img class="jonathan market_toggle" src="<%= &subs::icon_for('/icons/pos/vendor.png') %>" hint="Market">
+				<img class="jonathan warehouse_toggle" src="<%= &subs::icon_for('/icons/pos/manufacturer.png') %>" hint="Warehouse">
 				<div class="nfc_read_status" style="width:100%;"></div>
 				<script>
 					var search = $('#search').val();
@@ -102,9 +103,9 @@
 				</script>
 
 			</span>
-			<img class="jonathan little_thumb leave" src="images/decipherable/exit.png" style="position:absolute;top:0px;left:0px;"></img>
-			<img class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" 
-				src="<%= $gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'} %>" style="position:absolute;top:50px;left:0px;
+			<img class="jonathan little_thumb leave" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="Leave" style="position:absolute;top:0px;left:0px;"></img>
+			<img class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" hint="Site type" 
+				src="<%= &subs::icon_for($gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'}) %>" hint="Site type" style="position:absolute;top:50px;left:0px;
 				<% if ($navigation_information->{$signatorial}->{'site_source'} eq 'manual') { %>border-solid;border-color:red;border-width:8px;
 				<% } elsif ($navigation_information->{$signatorial}->{'site_source'} eq 'lost') { %>border-solid;border-color:black;border-width:8px;
 				<% } %>"></img>
@@ -117,7 +118,7 @@
 					<% foreach my $site ( sort { $gb::site_types->{$a}->{'rating'} <=> $gb::site_types->{$b}->{'rating'} } keys %{$gb::site_types} ) { %>
 						<% if ($gb::site_types->{$site}->{'rating'} && $navigation_information->{$signatorial}->{'site_rating'} <= $gb::site_types->{$site}->{'rating'}) { %>
 							<span site="<%= $site %>" class="hover site_type_manual_changer">
-								<img class="little_thumb" src="<%= $gb::site_types->{$site}->{'icon'} %>" style=""></img>
+								<img class="little_thumb" hint="Set site type" src="<%= &subs::icon_for($gb::site_types->{$site}->{'icon'}) %>" style=""></img>
 								<%= &subs::format_name($site) %>
 								<%= $gb::site_types->{$site}->{'rating'} %>
 							</span><br>

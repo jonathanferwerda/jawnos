@@ -12,7 +12,7 @@
 				my $ts = $n->{'timestamp'}; 
 				next unless $n->{'server_time'} =~ /[0-9]/;
 				my @icon = grep { $_->{'name' } eq $n->{'type'} } @{$pseudonyms};
-				my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" class="tiny_thumb">' : '';
+				my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" hint="' . &subs::format_name($n->{'type'}) . '" class="tiny_thumb">' : '';
 				
 			%>
 			<span class="appointment_header" style="height:30px;float:left;left:0;"><%== $icon %><span style="vertical-align:top;" timestamp="<%= $n->{'timestamp'} %>" class="time" app="<%= $a %>" id="<%= $appts->{$a}->{'html_name'} %>_time">
@@ -21,7 +21,7 @@
 	<% } %>
 	<% 
 		my @icon = grep { $_->{'name' } eq $appts->{$a}->{'setting'}->{'status'} } @{$pseudonyms};
-		my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" class="tiny_thumb">' : '';
+		my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" hint="' . &subs::format_name($appts->{$a}->{'setting'}->{'status'}) . '" class="tiny_thumb">' : '';
 	%>
 
 	<span class="appointment_status"><%== $icon %><b  style="vertical-align:top;"> <%= $appts->{$a}->{'setting'}->{'status'} %></b>

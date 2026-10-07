@@ -730,9 +730,10 @@ function jawnosHintNode() {
 	}
 	return h;
 }
-function jawnosHintShow(el, x, y) {
+function jawnosHintShow(el, x, y, gap) {
 	var text = $(el).attr('hint');
 	if (!text) { return; }
+	if (gap == null) { gap = 12; }
 	var h = jawnosHintNode();
 	h.textContent = text;
 	h.style.display = 'block';
@@ -743,8 +744,8 @@ function jawnosHintShow(el, x, y) {
 		y = o.top;
 	}
 	var left = Math.max(4, Math.min(x - (w / 2), $(window).width() - w - 4));
-	var top = y - hh - 8;
-	if (top < 4) { top = y + 24; }
+	var top = y - hh - gap;
+	if (top < 4) { top = y + gap + 16; }
 	h.style.left = left + 'px';
 	h.style.top = top + 'px';
 }
@@ -764,10 +765,19 @@ try { jawnos_hover_capable = window.matchMedia('(hover: hover)').matches; } catc
 if (jawnos_hover_capable) {
 	$(document).on('mouseenter', '[hint]', function () {
 		if (jawnos_touch_hint_active) { return; }
-		jawnosHintShow(this, null, null);
+		var el = this;
+		clearTimeout(jawnos_hint_timer);
+		// wait before showing so the label doesn't flash on every pass
+		jawnos_hint_timer = setTimeout(function () {
+			var m = mouse_position();
+			jawnosHintShow(el, m.x, m.y);
+		}, 2000);
 	});
-	$(document).on('mouseleave', '[hint]', function () { jawnosHintHide(); });
-	$(document).on('mousedown', function () { jawnosHintHide(); });
+	$(document).on('mouseleave', '[hint]', function () {
+		clearTimeout(jawnos_hint_timer);
+		jawnosHintHide();
+	});
+	$(document).on('mousedown', function () { clearTimeout(jawnos_hint_timer); jawnosHintHide(); });
 }
 
 $(document).on('touchstart', '[hint]', function (e) {
@@ -779,7 +789,7 @@ $(document).on('touchstart', '[hint]', function (e) {
 	clearTimeout(jawnos_hint_timer);
 	jawnos_hint_timer = setTimeout(function () {
 		jawnos_touch_hint_active = true;
-		jawnosHintShow(el, tx, ty);
+		jawnosHintShow(el, tx, ty, 30);
 		jawnosSuppressClick();
 	}, 500);
 });

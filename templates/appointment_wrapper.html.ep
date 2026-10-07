@@ -43,7 +43,7 @@
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'place'} eq 'top') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
 							></img>
 						<% } %>
 
@@ -52,13 +52,13 @@
 				<% } %>
 
 			</span><br>
-			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" />
-			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" />
-			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" />
-			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" />
-			<img app="<%= $a %>" class="app_act little_thumb inventory" src="<%= &subs::icon_path('spreadsheet', '/images/decipherable/spreadsheet.png') %>" />
-			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" />
-			<img app="<%= $a %>" class="app_act little_thumb register" src="<%= &subs::icon_path('register', '/images/decipherable/register.png') %>" />
+			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
+			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
+			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />
+			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" />
+			<img app="<%= $a %>" class="app_act little_thumb inventory" src="<%= &subs::icon_path('spreadsheet', '/images/decipherable/spreadsheet.png') %>" hint="Inventory" />
+			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" hint="Details" />
+			<img app="<%= $a %>" class="app_act little_thumb register" src="<%= &subs::icon_path('register', '/images/decipherable/register.png') %>" hint="Register" />
 
 
 			<br>
@@ -99,42 +99,42 @@
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'place'} eq 'mid') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
 				<% } %>
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'colour'} eq 'bottom') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
 							></img>
 						<% } %>
 					<% } %>
 				<% } %>
 				<% if ($appts->{$a}->{'setting'}->{'command'}) { %>
-					<img app="<%= $a %>" type="command" class="little_thumb app_act save_appointment run_command shell" src="<%= &subs::icon_path('code', '/images/decipherable/code.png') %>" />
+					<img app="<%= $a %>" type="command" class="little_thumb app_act save_appointment run_command shell" src="<%= &subs::icon_path('code', '/images/decipherable/code.png') %>" hint="Run command" />
 				<% } %>
 				<% if ($appts->{$a}->{'setting'}->{'kill'}) { %>
-					<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="<%= &subs::icon_path('scraper', '/images/make believe/Scarapy.png') %>" />
+					<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="<%= &subs::icon_path('scraper', '/images/make believe/Scarapy.png') %>" hint="Kill" />
 				<% } %>			
 				
-				<img app="<%= $a %>" type="web" web="<%= $appts->{$a}->{'setting'}->{'web'} %>" class="medium_thumb web app_act" src="<%= &subs::icon_path('web_button', '/images/make believe/web_button.png') %>" 
+				<img app="<%= $a %>" type="web" web="<%= $appts->{$a}->{'setting'}->{'web'} %>" class="medium_thumb web app_act" src="<%= &subs::icon_path('web_button', '/images/make believe/web_button.png') %>" hint="Web" 
 					style="<% if (!$appts->{$a}->{'setting'}->{'web'}) { %>display:none;<% } %>"/>
 
 				<% my $remote_machines = &subs::db_query('select device from remote_machines where connection = ?', 'active')->hashes; %>
-				<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="<%= &subs::icon_path('wiki', '/images/make believe/wiki.png') %>" />
+				<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="<%= &subs::icon_path('wiki', '/images/make believe/wiki.png') %>" hint="Wiki" />
 				<% if ($appts->{$a}->{'setting'}->{'phone'} && ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) ) { %>
-					<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment medium_thumb sms" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>">
+					<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment medium_thumb sms" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>" hint="Send SMS">
 				<% } %>
 				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
 					<br>
-					<img class="medium_thumb save_appointment" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>">
-					<img class="medium_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>">
+					<img class="medium_thumb save_appointment" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
+					<img class="medium_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
 				<% } %>
 				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
-					<img class="little_thumb save_appointment" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>">
-					<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>">
-					<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>">
+					<img class="little_thumb save_appointment" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
+					<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
+					<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
 				<% } %>
 
 				&nbsp;
@@ -143,22 +143,22 @@
 					<img class="public_button tiny_thumb enabler" type="public" app="<%= $a %>" off_colour="black" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'public'} eq 'on' ) { %>status="on" style="background-color:green"<% } else { %>
 							status="off" style="background-color:black;" <% } %>
-						src="<%= &subs::icon_path('public', '/icons/public.png') %>"
+						src="<%= &subs::icon_path('public', '/icons/public.png') %>" hint="Public"
 					/>
 					<img class="enc_button tiny_thumb enabler" type="enc" app="<%= $a %>" off_colour="black" on_colour="red" 
 						<% if ( $appts->{$a}->{'setting'}->{'enc'} eq 'on' ) { %>status="on" style="background-color:red"<% } else { %>
 							status="off" style="background-color:black;" <% } %>
-						src="<%= &subs::icon_path('enc_button', '/icons/enc_button.png') %>"
+						src="<%= &subs::icon_path('enc_button', '/icons/enc_button.png') %>" hint="Encrypt"
 					/>
 					<img app="<%= $a %>" class="app_act medium_thumb enabler" type="notification" dim="yes" off_colour="#555555" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'notification'} eq 'on' ) { %>status="on" style="background-color:green;border-color:green;box-shadow:0 0 8px 2px green;"<% } else { %>
 							status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %>
-						 src="<%= &subs::icon_path('bell', '/images/decipherable/bell.png') %>" />
+						 src="<%= &subs::icon_path('bell', '/images/decipherable/bell.png') %>" hint="Notifications" />
 
 					<img app="<%= $a %>" class="app_act medium_thumb enabler toggle" type="toggle" dim="yes" off_colour="#555555" on_colour="green" 
-						<% if ( $appts->{$a}->{'setting'}->{'toggle'} eq 'on' ) { %>src="<%= &subs::icon_path('on', '/images/decipherable/on.png') %>" status="on" style="background-color:green;border-color:green;box-shadow:0 0 8px 2px green;"<% } else { %>
-							src="<%= &subs::icon_path('off', '/images/decipherable/off.png') %>" status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %> />
-					<img src="<%= &subs::icon_path('burger', '/images/make believe/burger.png') %>" class="tiny_thumb appointment_locking_mechanism">
+						<% if ( $appts->{$a}->{'setting'}->{'toggle'} eq 'on' ) { %>src="<%= &subs::icon_path('on', '/images/decipherable/on.png') %>" hint="Toggle" status="on" style="background-color:green;border-color:green;box-shadow:0 0 8px 2px green;"<% } else { %>
+							src="<%= &subs::icon_path('off', '/images/decipherable/off.png') %>" hint="Toggle" status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %> />
+					<img src="<%= &subs::icon_path('burger', '/images/make believe/burger.png') %>" hint="Lock" class="tiny_thumb appointment_locking_mechanism">
 				</span><br>
 			<% } %>
 		</div>

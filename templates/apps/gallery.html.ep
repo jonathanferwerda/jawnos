@@ -69,43 +69,43 @@
 				<% } %>
 			<% }, { name => 'gallery home' }); %>
 			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="/images/jbuttons/padlock unlock.png" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+				<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
 			<% } %>
-			<img src="/images/decipherable/home.png" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
+			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 		</div>
 	<% } elsif ($view eq 'album') { %>
 		<div id="gallery_album" style="display:inline-block;background-color:var(--panel);height:100%; width:100%;overflow:scroll;">
 			<%= include 'apps/gallery_album', appts => $appts, settings => $settings, asettings => $asettings, pre_count => $count, load => 'all', first_count => 0 %>
 			<% if ($settings->{'scroll_direction'} eq 'asc') { %>
-				<img src="/images/make believe/down.png" direction="asc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
+				<img src="<%= &subs::icon_for('/images/make believe/down.png') %>" hint="Ascending order" direction="asc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
 			<% } else { %>
-				<img src="/images/make believe/up.png" direction="desc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
+				<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Descending order" direction="desc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
 			<% } %>
 			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="/images/jbuttons/padlock unlock.png" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+				<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
 			<% } %>
-			<img src="/images/decipherable/home.png" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
+			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 		</div>
 	<% } elsif ($view eq 'photo') { %>
 		<img class="images" id="main_image" style="height:100%;max-height:100%;top:60px;object-fit:contain;"></img>
 		<video class="images" loop autoplay id="main_video" style="display:none;height:100%;max-height:100%;object-fit:contain;"></video>
-		<img src="/images/studio/back.png" class="hover tiny_thumb image_control" direction="prev" style="position:absolute;left:0px;top:35px;">
-		<img src="/images/studio/forward.png" class="hover tiny_thumb image_control" direction="next" style="position:absolute;left:40px;top:35px;">
-		<img src="/images/make believe/renew.png" class="hover tiny_thumb image_renew" style="position:absolute;top:35px;left:80px;">
-		<img src="/images/studio/repeat.png" class="hover tiny_thumb image_repeat repeat" style="position:absolute;top:35px;left:170px;">
-		<img src="/images/studio/shuffle.png" class="hover tiny_thumb image_shuffle shuffle" style="position:absolute;top:35px;left:125px;">
-		<img src="/icons/lymeboard/I.png" class="hover tiny_thumb gallery file_information_grabber" style="position:absolute;top:35px;left:220px;">
+		<img src="<%= &subs::icon_for('/images/studio/back.png') %>" hint="Previous" class="hover tiny_thumb image_control" direction="prev" style="position:absolute;left:0px;top:35px;">
+		<img src="<%= &subs::icon_for('/images/studio/forward.png') %>" hint="Next" class="hover tiny_thumb image_control" direction="next" style="position:absolute;left:40px;top:35px;">
+		<img src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh" class="hover tiny_thumb image_renew" style="position:absolute;top:35px;left:80px;">
+		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" class="hover tiny_thumb image_repeat repeat" style="position:absolute;top:35px;left:170px;">
+		<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" class="hover tiny_thumb image_shuffle shuffle" style="position:absolute;top:35px;left:125px;">
+		<img src="<%= &subs::icon_path('info', '/icons/lymeboard/I.png') %>" hint="File information" class="hover tiny_thumb gallery file_information_grabber" style="position:absolute;top:35px;left:220px;">
 
-		<img class="hover little_thumb gallery main_image_selector"	app="" file="" style="position:absolute;top:35px;left:255px;" src="/images/make believe/explosion.png">
-		<img src="/images/decipherable/handbook.png" class="hover tiny_thumb gallery gallery_home_album" style="position:absolute;top:35px;right:40px;">
+		<img class="hover little_thumb gallery main_image_selector"	app="" file="" style="position:absolute;top:35px;left:255px;" src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Set as main image">
+		<img src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Albums" class="hover tiny_thumb gallery gallery_home_album" style="position:absolute;top:35px;right:40px;">
 		<% if (scalar @{$padlock_sighting} > 0) { %>
-			<img src="/images/jbuttons/padlock unlock.png" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+			<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
 		<% } %>
 
-		<img src="/images/decipherable/home.png" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
+		<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 	<% } elsif ($view eq 'padlock') { %>
 		<div id="gallery_padlock" style="width:100%;height:100%;max-height:100%;top:60px;object-fit:contain;">
-			<img src="/images/make believe/cancel_button.png" class="little_thumb" id="gallery_cancel_padlock" style="position:absolute;top:35px;right:5px;">
+			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb" id="gallery_cancel_padlock" style="position:absolute;top:35px;right:5px;">
 			<%= include 'padlock', mode => 'gallery' %>
 		</div>
 	<% } %>
