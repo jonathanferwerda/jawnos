@@ -29,12 +29,23 @@ function clotheslineHanger(clothes) {
 		ctx = canvas.getContext('2d');
 		// the rail hangs over whatever is behind it - a background picture, a
 		// window - so the themed ink is laid over a contrasting halo instead of
-		// being trusted to show up on its own. (Guard the helper: a browser
-		// holding an older universal.js must not lose the whole clothesline.)
+		// being trusted to show up on its own. Only worth it over a picture: on the
+		// page itself the halo reads as a white (or black) fringe around the rail.
+		// (Guard the helper: a browser holding an older universal.js must not lose
+		// the whole clothesline.)
 		var ink = jawnosInk();
-		var halo = (typeof jawnosInkHalo == 'function') ? jawnosInkHalo(ink) : 'rgba(0,0,0,0.6)';
-		ctx.strokeStyle = halo;
-		ctx.lineWidth = clothesLinePos['bordersize'] + 3;
+		var halo = undefined;
+		if (localStorage.getItem('background_images') == 'on' && typeof jawnosInkHalo == 'function') {
+			halo = jawnosInkHalo(ink);
+		}
+		if (halo) {
+			ctx.strokeStyle = halo;
+			ctx.lineWidth = clothesLinePos['bordersize'] + 3;
+		}
+		else {
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = clothesLinePos['bordersize'];
+		}
 		ctx.beginPath();
 
 		var minHeight = headerHeight;
@@ -80,9 +91,11 @@ function clotheslineHanger(clothes) {
 			// outlined, so the name reads over any garment colour or picture
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((maxWidth - textMeasure) / 2) + startW;
-			ctx.lineWidth = 3;
-			ctx.strokeStyle = halo;
-			ctx.strokeText(v.formatted_name, textPos, maxHeight - (clothesLineHeight / 3));
+			if (halo) {
+				ctx.lineWidth = 3;
+				ctx.strokeStyle = halo;
+				ctx.strokeText(v.formatted_name, textPos, maxHeight - (clothesLineHeight / 3));
+			}
 			ctx.fillStyle = ink;
 			ctx.fillText(v.formatted_name,  textPos ,  maxHeight - (clothesLineHeight / 3));
 			ctx.lineWidth = clothesLinePos['bordersize'];
@@ -200,22 +213,26 @@ function clotheslineScroller(x,y,diff,source) {
 		clothesLinePos['x'] = clothesLinePos['x'] + diff;
 		clotheslineHanger(wardrobe);
 		if (source != 'smoothScroll' && source != 'mousewheel') {
-			// Glide to a stop on requestAnimationFrame instead of a 5ms interval:
-			// rAF is capped at the screen refresh rate and pauses while the tab is
-			// hidden. The decay is time-compensated so the glide feels the same at
-			// any frame rate.
+			// Glide to a stop on requestAnimationFrame instead of a 5ms interval: rAF
+			// is capped at the screen refresh rate and pauses while the tab is hidden.
+			// Keep the old timer's reach -- it moved `diff` and then decayed it by .97
+			// every 5ms, so a flick travels 0.97/0.03 (~32x) its distance -- and only
+			// spread that over however many frames the screen actually gives us.
 			cancelAnimationFrame(clothesLinePos['smoothScrolling']);
 			var last = undefined;
+			var reach = .97 / .03;
 			var glide = function(now) {
 				if (Math.abs(diff) <= 0.09) {
 					clothesLinePos['smoothScrolling'] = undefined;
 					return;
 				}
 				if (last == undefined) { last = now; }
-				diff = diff * Math.pow(.97, (now - last) / 5);
+				var decay = Math.pow(.97, (now - last) / 5);
 				last = now;
+				var step = diff * reach * (1 - decay);
+				diff = diff * decay;
 				clothesLinePos['smoothScrolling'] = requestAnimationFrame(glide);
-				clotheslineScroller(x,y,diff,'smoothScroll');
+				clotheslineScroller(x,y,step,'smoothScroll');
 			};
 			clothesLinePos['smoothScrolling'] = requestAnimationFrame(glide);
 		}
