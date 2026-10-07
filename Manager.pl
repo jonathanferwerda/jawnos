@@ -18202,11 +18202,13 @@ sub update_database($data) {
 		foreach my $command (@{$commands}) {
 			eval { &subs::db_query($command) };
 		}
-		$db->query('PRAGMA cache_size = -200000');
-		$db->query('PRAGMA synchronous = NORMAL');
-		$db->query('PRAGMA mmap_size=0');
-		$db->query('PRAGMA temp_store=0');
-		$db->query('PRAGMA busy_timeout = 0');
+		# Deliberately no pragma tuning here. The handle is shared by the whole
+		# process for its lifetime now, and the tuning that used to live here
+		# (no busy timeout, no mmap, a 200MB page cache) ran after the commands
+		# anyway - it could not have sped the migration up, it just left the
+		# process failing every later contended write with "database is locked".
+		# A one-off migration that wants its own settings should open its own
+		# Mojo::SQLite, not borrow this one.
 	}
 
 	if (1 == 0) {

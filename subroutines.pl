@@ -4041,6 +4041,9 @@ sub database_grabber() {
 			# Reuse the open handle instead of dialling a fresh SQLite connection
 			# on every single query. If the file on disk was swapped out
 			# (backup/restore) its inode changes, so rebuild in that case.
+			# NOTE: connection tuning pragmas (busy_timeout and friends) belong on
+			# a database_grabber('new') handle - this one is shared by the whole
+			# process, so changing them here changes them everywhere.
 			if ($gb::database_holder->{'db'} && defined $database && -e $database) {
 				my $file_key = join(':', (stat($database))[0, 1]);
 				if ($gb::database_holder->{'file_key'} && $file_key eq $gb::database_holder->{'file_key'}) {
@@ -4077,9 +4080,20 @@ sub database_grabber() {
 			pid => $$,
 			file_key => join(':', (stat($database))[0, 1])
 		};
-    $gb::database_holder->{'db'}->query("PRAGMA journal_mode=WAL;");
-    $gb::database_holder->{'db'}->query("PRAGMA synchronous=NORMAL;");
-    $gb::database_holder->{'db'}->query("PRAGMA busy_timeout=15000;");
+		# Wait for other writers before anything else. SQLite's default is not to
+		# wait at all, and switching journal modes needs a lock of its own, so
+		# doing that first is what turned ordinary contention into "database is
+		# locked". Each is eval'd because this handle now lives for the whole
+		# process - a transient lock must not take the request down with it.
+		eval { $db->query('PRAGMA busy_timeout=15000;'); };
+		eval { $db->query('PRAGMA synchronous=NORMAL;'); };
+		# WAL is a property of the file rather than of the connection, so it only
+		# has to be set once - it is already on for an existing database, and
+		# re-issuing it every reconnect just took a write lock for nothing.
+		eval {
+			my $row = $db->query('PRAGMA journal_mode;')->hashes->[0] || {};
+			$db->query('PRAGMA journal_mode=WAL;') if (($row->{'journal_mode'} || '') ne 'wal');
+		};
 		return ($db,$database,$sql);
 	}
 	$gb::database_holder = {};
