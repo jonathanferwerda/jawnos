@@ -4640,8 +4640,9 @@ sub start_menu_maker($c) {
 		# heuristically and kept showing stale ones. Version the local images
 		# so the start menu always pulls the current set.
 		my $v = &subs::rightNow();
-		if (&subs::icon_set() eq 'handdrawn') {
-			$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_original($1) . '"'}ge;
+		my $set = &subs::icon_set();
+		if ($set) {
+			$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_for($1, $set) . '"'}ge;
 		}
 		$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
 		$returner = { html => $html };

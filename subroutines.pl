@@ -1858,10 +1858,10 @@ sub main_icon_maker() {
 	}
 	unless (-e $destination . $asset) {
 		if ($gb::known_appts->{$unformatted_name}) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_original($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_for($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
 		}
 		elsif (-e 'public/icons/pos/' . $settings->{'pos'} . '.png') {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_original('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
 		}
 	}
 	return $main_image
@@ -4287,6 +4287,21 @@ sub icon_path() {
 		return $path if -e "public" . $path;
 	}
 	return $fallback;
+}
+
+# Resolve an app icon given its normal public path: hand-drawn originals for the
+# hand-drawn set, or the matching /icons/sets/<set>/<basename>.svg when present.
+sub icon_for() {
+	my ($path, $set) = @_;
+	return $path unless defined $path && $path =~ m{^/};
+	$set = &icon_set() unless defined $set;
+	return &icon_original($path) if $set eq 'handdrawn';
+	return $path unless $set;
+	my ($base) = $path =~ m{([^/]+)$};
+	$base =~ s/\.[A-Za-z0-9]+$//;
+	my $candidate = "/icons/sets/$set/$base.svg";
+	return $candidate if -e "public" . $candidate;
+	return $path;
 }
 
 # A fingerprint of everything that gets baked into cached window/header HTML:

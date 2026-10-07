@@ -602,3 +602,9 @@ img[src*="/icons/original/"] {
   border: 2px solid var(--ink, #000);
   border-radius: 2%;
 }
+
+/* start-menu hand-drawn icons: rounder frame to match the surrounding buttons */
+.jonathan[src*="/icons/original/"],
+.jonathan_fixed[src*="/icons/original/"] {
+  border-radius: 10px;
+}
