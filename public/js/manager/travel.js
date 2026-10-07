@@ -26,95 +26,109 @@ function travelToggle() {
 }
 
 
-function mapCampus(timestamp,response,campus) {
-	console.log(response);
+// Draw the appointments onto the map image at their true geographic positions.
+//
+// The map is georeferenced by two things recorded when it was measured:
+//   * home_plate: a pixel {x, y} plus the latitude/longitude it represents
+//   * scale: two pixel points (first/last) and `legend`, the ground distance in
+//     metres between them
+// So pixels-per-metre comes from the scale bar, and every point is projected
+// from (latitude, longitude) relative to the home plate. North is up.
+function mapCampus(timestamp, response, campus) {
 	var canvas = document.getElementById(campus);
-	var win = $('#' + campus).closest('.wind');
-	canvas.height = win.width();
-	canvas.width = win.width();
-
+	if (!canvas) { return; }
 	var ctx = canvas.getContext('2d');
-	var h = response['here'];
-	ctx.arc(canvas.width / 2, canvas.height /2, 7, 0, (Math.PI * 2), true);
-	var zoom = numeral($('#travel_distance_range').val()).value();
+	var zoom = numeral($('#travel_distance_range').val()).value() || 1;
 	var map_file = $('.travel_map_selector').find('option[selected]').attr('file');
+	var current_map = response ? response['current_map'] : null;
 
-	var image = new Image();
-	var image_drawn = 0;
-	image.onload=function(){
+	function numberOrNull(value) {
+		var n = numeral(value).value();
+		return (n === null || n === undefined || isNaN(n)) ? null : n;
+	}
 
-		canvas.width = image.width;
-		canvas.height = image.height;
-		ctx.drawImage(image,0,0,image.width, image.height);
+	function drawMap(map) {
+		var plate = map['home_plate'];
+		var scale = map['scale'] || {};
 
-		image_drawn = 1;
-	};
-	image.src = map_file;
-	var tries = 0;
-	var map_loaded = setInterval(function() {
-		tries++;
-		if (tries > 5) { clearInterval(map_loaded); tries = 0; }
-		if (!map_file || ( map_file && image_drawn == 1 ) ) {
-			clearInterval(map_loaded);
-			var home_x = response['current_map']['home_plate']['x'] * (canvas.width / response['current_map']['home_plate']['width']);
-			var home_y = response['current_map']['home_plate']['y'] * (canvas.height / response['current_map']['home_plate']['height'] );
-			
-			var original_scale = (response['current_map']['scale']['last']['x'] - response['current_map']['scale']['first']['x']);
-			var original_width = (response['current_map']['home_plate']['width']);
-			var legend = response['current_map']['scale']['legend'];
-			var ppm = response['current_map']['ppm'] * (canvas.width / response['current_map']['home_plate']['width']);
-			var mpp = response['current_map']['mpp'] * (canvas.width / response['current_map']['home_plate']['width']);
-			console.log(ppm + ' ' + mpp);
-			var scale_legend = legend / original_scale / (canvas.width / response['current_map']['home_plate']['width']);
-			
-			var dist = (legend /  original_scale) * (canvas.width / original_width);
-			console.log(dist + ' - ' + legend + ' - ' + original_scale);
-			ctx.font = "400 " + ( 28 / zoom ) + "px Arial";
+		// Pixel coordinates were recorded against the image size shown when the
+		// map was measured; rescale them to the canvas (the image's natural size).
+		var sx = (plate['width'] > 0 && canvas.width > 0) ? canvas.width / plate['width'] : 1;
+		var sy = (plate['height'] > 0 && canvas.height > 0) ? canvas.height / plate['height'] : 1;
 
-			ctx.arc(home_x, home_y, 10, 0, (Math.PI * 2), true);
-			ctx.fillText(response['current_map']['home_plate']['formatted_legend'], home_x + 10, home_y + 10);		
-			ctx.stroke();
-			ctx.fill();
+		var reference_x = numberOrNull(plate['x']) * sx;
+		var reference_y = numberOrNull(plate['y']) * sy;
+		var reference_latitude = numberOrNull(plate['latitude']);
+		var reference_longitude = numberOrNull(plate['longitude']);
 
-			ctx.strokeStyle = 'black';
-			var count = 0;
-			ctx.translate(home_x, home_y);
-			$.each(response['near'], function(i,v) {
-				var point = response['near'][i];
-				if (point['direction']) {
-					var lat = Math.abs((v['latitude'] + 180) / 360);
-					var long = Math.abs((v['longitude'] + 180) / 360);
-					ctx.fillStyle = point['settings']['colour'];
-					lat = (lat * canvas.height);
-					long = (long * canvas.width);
-					ctx.closePath();
-					ctx.beginPath();
-
-					ctx.save('ok');
- 					var deg = (point['direction']);//((Math.PI / 2) * -1) * (180 / Math.PI) - 90));
-
-					ctx.rotate(deg);
-
-					var new_dist = ((numeral(point['distance']).value() / scale_legend) ) ;
-
-					ctx.translate(0, new_dist);
-
-					ctx.rotate(-deg);
-					ctx.fillText(v['app'], 0 + 15, new_dist);
-					ctx.arc(0, new_dist, 7, 0, (Math.PI * 2), true);
-
-					ctx.stroke();
-					ctx.fill();
-
-					ctx.restore('ok');
-				}
-				count++;
-			}); 
-			ctx.stroke();
-			ctx.fill();
+		// pixels-per-metre, measured from the drawn scale bar
+		var px_per_metre = 0;
+		if (scale['first'] && scale['last'] && numberOrNull(scale['legend']) > 0) {
+			var dx = (numberOrNull(scale['last']['x']) - numberOrNull(scale['first']['x'])) * sx;
+			var dy = (numberOrNull(scale['last']['y']) - numberOrNull(scale['first']['y'])) * sy;
+			var bar_px = Math.sqrt((dx * dx) + (dy * dy));
+			if (bar_px > 0) { px_per_metre = bar_px / numberOrNull(scale['legend']); }
 		}
-	},200);
-	appointment_chron();
+
+		var metres_per_degree = 6372800 * (Math.PI / 180);
+		var metres_per_degree_longitude = metres_per_degree * Math.cos(reference_latitude * (Math.PI / 180));
+
+		ctx.font = "400 " + (28 / zoom) + "px Arial";
+		ctx.strokeStyle = 'black';
+		ctx.textBaseline = 'middle';
+
+		// the home plate, straight from its recorded pixel position
+		ctx.beginPath();
+		ctx.fillStyle = 'black';
+		ctx.arc(reference_x, reference_y, 10, 0, (Math.PI * 2), true);
+		ctx.stroke();
+		ctx.fill();
+		ctx.fillText(plate['formatted_legend'] || plate['legend'] || '', reference_x + 14, reference_y);
+
+		if (!px_per_metre || reference_latitude === null || reference_longitude === null) { return; }
+
+		$.each(response['near'] || [], function(i, point) {
+			// the home plate is in this list too, but carries no settings
+			if (!point || !point['settings']) { return; }
+			var latitude = numberOrNull(point['latitude']);
+			var longitude = numberOrNull(point['longitude']);
+			if (latitude === null || longitude === null) { return; }
+
+			var east = (longitude - reference_longitude) * metres_per_degree_longitude;
+			var north = (latitude - reference_latitude) * metres_per_degree;
+			var x = reference_x + (east * px_per_metre);
+			var y = reference_y - (north * px_per_metre);
+
+			ctx.beginPath();
+			ctx.fillStyle = point['settings']['colour'] || 'black';
+			ctx.arc(x, y, 7, 0, (Math.PI * 2), true);
+			ctx.stroke();
+			ctx.fill();
+			ctx.fillStyle = 'black';
+			ctx.fillText(point['app'] || '', x + 14, y);
+		});
+	}
+
+	function render(image) {
+		if (image) {
+			canvas.width = image.width;
+			canvas.height = image.height;
+			ctx.drawImage(image, 0, 0, image.width, image.height);
+		}
+		if (current_map && current_map['home_plate']) {
+			drawMap(current_map);
+		}
+		appointment_chron();
+	}
+
+	if (map_file) {
+		var image = new Image();
+		image.onload = function() { render(image); };
+		image.src = map_file;
+	}
+	else {
+		render(null);
+	}
 }
 
 function travelViewer(data) {
