@@ -30,11 +30,19 @@ function appointment_chron() {
 	clearInterval(appointment_chronicler);
 	time_updater();
 	appointment_chronicler = setInterval(function(){
+		// no point repainting clocks while the page isn't on screen
+		if (document.hidden) { return; }
 		time_updater();
 	},1000);
 	function time_updater() {
+		var now = Date.now();
 		$('.since, .time').each( function() {
 			var header = $(this);
+			// Most of these are old timestamps whose text only changes every
+			// minute/hour/day, so remember when each one is next worth looking at
+			// instead of recomputing and repainting every element every second.
+			var next_check = numeral(header.attr('next_check')).value();
+			if (next_check && next_check > now) { return; }
 			var timestamp = $(this).attr('timestamp');
 			var app = $(this).attr('app');
 			var mode = $(this).attr('mode');
@@ -52,19 +60,29 @@ function appointment_chron() {
 				else {
 					header.text(header.attr('formatted_time'));
 				}
+				// fixed times never change
+				header.attr('next_check', now + 3600000);
 			}
 			else {
 
 				if (header.is('input') && !header.hasClass('editing')) {
-					header.val(quality_inventory(timestamp)).css({'background-color': '#ffffff'});
+					var value = quality_inventory(timestamp);
+					if (header.val() != value) { header.val(value).css({'background-color': '#ffffff'}); }
 				}
 				else if (header.hasClass('editing')) {
 					header.css({'background-color': '#ffffff'});
+					header.attr('mode', 'dynamic');
+					// while typing, keep repainting so it settles as soon as they stop
+					return;
 				}
 				else {
-					header.text(quality_inventory(timestamp));
+					var text = quality_inventory(timestamp);
+					if (header.text() != text) { header.text(text); }
 				}
 				header.attr('mode', 'dynamic');
+				// anything showing seconds needs a 1s cadence, coarser strings can wait
+				var shown = (header.is('input') ? header.val() : header.text()) || '';
+				header.attr('next_check', now + (shown.indexOf('s') > -1 ? 1000 : 15000));
 
 			}
 

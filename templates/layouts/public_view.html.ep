@@ -11,6 +11,7 @@
 		<script src="/js/jquery.js"></script>
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script src="/js/numeral.min.js"></script>
 		<script src="/js/universal.js?string=<%= $string %>"></script>
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
