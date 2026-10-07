@@ -941,6 +941,7 @@ $(document).on('change','.misc_setting', function() {
 			$.each(response, function(i,v) {
 				if (v.setting == 'manager_background_colour' && dev == v.device) {
 					$('body').css({'background-color':v.value});
+					if (typeof jawnosApplyInk == 'function') { jawnosApplyInk(); }
 				}
 				if (v.setting == 'configure_background_colour' && dev == v.device) {
 					$('#configure').css({'background-color': v.value});

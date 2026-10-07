@@ -133,7 +133,7 @@ function clockfacePrinter(appts) {
 	var scope = localStorage.getItem('scope');
 	var canvas = document.getElementById('clockface');
 	ctx = canvas.getContext('2d');
-	ctx.strokeStyle = 'black';
+	ctx.strokeStyle = jawnosInk();
 	canvas.width = $('#background').width() ;
 	canvas.height = $(window).height();
 
@@ -230,14 +230,14 @@ function clockfacePrinter(appts) {
 			if (new_arr.length > 0) {
 				ctx.save('z');
 				ctx.beginPath();
-				ctx.strokeStyle = 'black';
+				ctx.strokeStyle = jawnosInk();
 				ctx.lineWidth = 2;
 				ctx.font = "700 22px Arial";
 				ctx.fill();
 				ctx.closePath();
 				ctx.beginPath();
 				$.each(new_arr,function(i,v) {
-					ctx.fillStyle = new_arr[i].colour || 'black';
+					ctx.fillStyle = new_arr[i].colour || jawnosInk();
 					ctx.globalAlpha = 1;
 					ctx.arc(0, 0, 30, (Math.PI * 2),.5, true);
 					ctx.fill();

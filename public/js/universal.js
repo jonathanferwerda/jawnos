@@ -666,3 +666,25 @@ $(document).on('click', '#download_program', function() {
 });
 
 var vidControls = {};
+
+// ---- theme ink: light text/icons when the background is dark -------------------
+function jawnosInk() {
+	var c = '';
+	try { c = getComputedStyle(document.body).getPropertyValue('--ink'); } catch (e) { c = ''; }
+	return (c && c.trim()) || '#000000';
+}
+function jawnosApplyInk() {
+	var bg = '';
+	try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) { bg = ''; }
+	var dark = false;
+	var m = bg.match(/rgba?\(([^)]+)\)/);
+	if (m) {
+		var parts = m[1].split(',').map(function (x) { return parseFloat(x); });
+		if (parts.length >= 3) {
+			var lum = (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255;
+			dark = lum < 0.5;
+		}
+	}
+	document.body.classList.toggle('dark_theme', dark);
+}
+$(function () { jawnosApplyInk(); });

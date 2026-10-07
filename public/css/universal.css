@@ -34,7 +34,14 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-body { background-color: white; }
+:root { --ink: #000000; --ink-muted: #333333; }
+body { background-color: white; color: var(--ink); }
+body.dark_theme { --ink: #f2f2f2; --ink-muted: #cccccc; }
+body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
+body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .huge_thumb,
+body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
+	background-color: #3a3a3a;
+}
 select { text-align:center; height: 36px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }
 button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }
 button.active { background-color: green; }

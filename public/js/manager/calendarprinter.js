@@ -6,7 +6,7 @@ function calendarPrinter(appts,sort) {
 
 	ctx.beginPath();
 	ctx.moveTo(0, canvas.height * .9);
-	ctx.strokeStyle = 'black';
+	ctx.strokeStyle = jawnosInk();
 	canvas.width = $(window).width() ;
 	canvas.height = $(window).height();
 	headerPrinter(ctx,appts,'Calendar');

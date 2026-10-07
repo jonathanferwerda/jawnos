@@ -4,7 +4,7 @@ function headerPrinter(ctx,appts,title) {
 	ctx.font = "400 24px arial";
 	var canvas = document.getElementById(title.toLowerCase());
 	$('#' + title.toLowerCase()).show();
-	ctx.fillStyle = 'black';
+	ctx.fillStyle = jawnosInk();
 	var sorts = localStorage.getItem('sorts');
 	var scope = localStorage.getItem('scope');
 
@@ -24,9 +24,9 @@ function headerPrinter(ctx,appts,title) {
 	if (appts['__stash']) {
 	/*
 		ctx.save('stash');
-		ctx.fillStyle = 'black';
+		ctx.fillStyle = jawnosInk();
 		ctx.fillRect(-10, canvas.height * .98, canvas.width, canvas.height * .98);
-		ctx.fillStyle = 'black';
+		ctx.fillStyle = jawnosInk();
 		var vertical = 105;
 		ctx.fillText('d: ' + numeral(appts['__stash']['day_total_' + sorts]).format('0,0.00'), 5 , vertical );
 		ctx.fillText('w: ' + numeral(appts['__stash']['week_total_' + sorts]).format('0,0.00'), 5 + 160 , vertical );
@@ -110,10 +110,10 @@ function leaderboardPrinter(appts) {
 	for (i = 0; i <= appt_store.length; i++) {
 		if (appt_store[i] == undefined) { continue; }
 		if (appt_store[i]['timestamp'] < presently && nowWatch != 'completed') {
-//			ctx.fillStyle = 'black';
+//			ctx.fillStyle = jawnosInk();
 				ctx.beginPath();
-				ctx.fillStyle = appt_store[i].setting.colour || 'black';
-				ctx.strokeStyle = 'black';
+				ctx.fillStyle = appt_store[i].setting.colour || jawnosInk();
+				ctx.strokeStyle = jawnosInk();
 				ctx.globalAlpha = 1;
 				ctx.arc(canvas.width - 17, 0, 33, (Math.PI * 2),.5, true);
 				ctx.fill();
@@ -127,22 +127,22 @@ function leaderboardPrinter(appts) {
 
 		if (appt_store[i] != undefined) {
 			var point = appt_store[i][filter];
-			ctx.fillStyle = appt_store[i].setting.colour || 'black';
+			ctx.fillStyle = appt_store[i].setting.colour || jawnosInk();
 			ctx.save('u');
 			if (appt_store[i].setting.status == 'record') {
 				ctx.globalAlpha = 1;
 				ctx.fillRect(-10, 0, canvas.width, lineHeight * 1.1);
-				ctx.fillStyle = 'black';
+				ctx.fillStyle = jawnosInk();
 			}
 			else if (appt_store[i].setting.status == 'start') {
 				ctx.globalAlpha = 1;
 				ctx.fillRect(-10, 0, canvas.width, lineHeight * 1.1);
-				ctx.fillStyle = 'black';
+				ctx.fillStyle = jawnosInk();
 			}
 			else if (appt_store[i].setting.status == 'pause') {
 				ctx.globalAlpha = 1;
 				ctx.fillRect(30, 0, $('#background').width() - 330, lineHeight * 1.1);
-				ctx.fillStyle = 'black';
+				ctx.fillStyle = jawnosInk();
 			}
 			else {
 				ctx.globalAlpha = 0.03
@@ -213,8 +213,8 @@ $(document).on('click', '.background', function (e) {
 			var timestamp = Date.now();
 			var canvas = document.getElementById(printer);
 			var ctx = canvas.getContext('2d');
-			ctx.fillStyle = 'black';
-			ctx.strokeStyle = 'black';
+			ctx.fillStyle = jawnosInk();
+			ctx.strokeStyle = jawnosInk();
 			ctx.globalAlpha = 1;
 
 			// at the point

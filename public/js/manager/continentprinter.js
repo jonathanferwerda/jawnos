@@ -7,7 +7,7 @@ function continentPrinter(appts,sort) {
 	canvas.height = $(window).height();
 	ctx.beginPath();
 	ctx.fillStyle = 'red';
-	ctx.strokeStyle = 'black';
+	ctx.strokeStyle = jawnosInk();
 	$.each(appts['__continent'], function(i,v) {
 
 		var lon = ((v.longitude + 82)) + (canvas.width / 2);
@@ -18,7 +18,7 @@ function continentPrinter(appts,sort) {
 	});
 
 	ctx.moveTo(0, canvas.height * .8);
-	ctx.strokeStyle = 'black';
+	ctx.strokeStyle = jawnosInk();
 
 	ctx.save('j');
 	headerPrinter(ctx,appts,'Continent');

@@ -19,36 +19,46 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	'Impact, sans-serif'
 ); %>
 
-<%# ---- colour schemes: 20 base hues, each expanded to 6 light tints -------------- %>
-<% my $tint = sub {
-	my ($hex, $f) = @_;
-	my ($r, $g, $b) = map { hex } ($hex =~ /^#?([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$/);
-	my @o = map { int($_ * $f + 255 * (1 - $f) + 0.5) } ($r, $g, $b);
-	return sprintf('#%02X%02X%02X', @o);
+<%# ---- colour schemes: 20 light + 10 dark, each with hue drift + a lightness ramp -- %>
+<% my $hsl = sub {
+	my ($h, $s, $l) = @_;
+	$h = (($h % 360) + 360) % 360;
+	my $c = (1 - abs(2 * $l - 1)) * $s;
+	my $x = $c * (1 - abs((($h / 60) % 2) - 1));
+	my $m = $l - $c / 2;
+	my ($r, $g, $b);
+	if ($h < 60) { ($r, $g, $b) = ($c, $x, 0); }
+	elsif ($h < 120) { ($r, $g, $b) = ($x, $c, 0); }
+	elsif ($h < 180) { ($r, $g, $b) = (0, $c, $x); }
+	elsif ($h < 240) { ($r, $g, $b) = (0, $x, $c); }
+	elsif ($h < 300) { ($r, $g, $b) = ($x, 0, $c); }
+	else { ($r, $g, $b) = ($c, 0, $x); }
+	return sprintf('#%02X%02X%02X', map { int(($_ + $m) * 255 + 0.5) } ($r, $g, $b));
 }; %>
-<% my @scheme_bases = (
-	[ 'Rose',    '#E57373' ],
-	[ 'Coral',   '#F28B82' ],
-	[ 'Amber',   '#FFB74D' ],
-	[ 'Gold',    '#FDD835' ],
-	[ 'Lime',    '#AED581' ],
-	[ 'Green',   '#81C784' ],
-	[ 'Emerald', '#4DB6AC' ],
-	[ 'Teal',    '#4DD0E1' ],
-	[ 'Cyan',    '#4FC3F7' ],
-	[ 'Sky',     '#64B5F6' ],
-	[ 'Blue',    '#7E9FF5' ],
-	[ 'Indigo',  '#7986CB' ],
-	[ 'Violet',  '#9575CD' ],
-	[ 'Purple',  '#BA68C8' ],
-	[ 'Magenta', '#E066C8' ],
-	[ 'Pink',    '#F06292' ],
-	[ 'Clay',    '#A1887F' ],
-	[ 'Sand',    '#D7C4A3' ],
-	[ 'Slate',   '#90A4AE' ],
-	[ 'Graphite','#B0BEC5' ]
+<% my @hues = (
+	[ 0, 'Red' ], [ 18, 'Vermilion' ], [ 36, 'Orange' ], [ 54, 'Amber' ], [ 72, 'Yellow' ],
+	[ 90, 'Lime' ], [ 108, 'Green' ], [ 126, 'Emerald' ], [ 144, 'Teal' ], [ 162, 'Cyan' ],
+	[ 180, 'Azure' ], [ 198, 'Sky' ], [ 216, 'Blue' ], [ 234, 'Indigo' ], [ 252, 'Violet' ],
+	[ 270, 'Purple' ], [ 288, 'Magenta' ], [ 306, 'Pink' ], [ 324, 'Rose' ], [ 342, 'Crimson' ]
 ); %>
-<% my %schemes; foreach my $b (@scheme_bases) { $schemes{$b->[0]} = [ map { $tint->($b->[1], $_) } (0.16, 0.26, 0.36, 0.46, 0.56, 0.66) ]; } %>
+<% my @light_h = (-18, -6, 0, 10, 20, 30); %>
+<% my @light_l = (0.86, 0.78, 0.70, 0.60, 0.50, 0.42); %>
+<% my @light_s = (0.62, 0.58, 0.55, 0.52, 0.50, 0.50); %>
+<% my @dark_h = (-14, -4, 4, 12, 20, 28); %>
+<% my @dark_l = (0.34, 0.28, 0.23, 0.19, 0.15, 0.12); %>
+<% my @dark_s = (0.52, 0.50, 0.48, 0.46, 0.45, 0.45); %>
+<% my %schemes; my @scheme_order; %>
+<% my %has_dark = map { $_ => 1 } qw/Red Orange Yellow Green Teal Azure Blue Violet Magenta Rose/; %>
+<% foreach my $hu (@hues) {
+	my ($h, $name) = @{$hu};
+	push @scheme_order, $name;
+	$schemes{$name} = [ map { $hsl->($h + $light_h[$_], $light_s[$_], $light_l[$_]) } (0 .. 5) ];
+	if ($has_dark{$name}) {
+		my $dname = $name . ' Dark';
+		push @scheme_order, $dname;
+		$schemes{$dname} = [ map { $hsl->($h + $dark_h[$_], $dark_s[$_], $dark_l[$_]) } (0 .. 5) ];
+	}
+} %>
 
 <style>
 	.misc_device_tab { padding:4px 12px; cursor:pointer; border-radius:6px; border:solid 1px; background:transparent; font-size:14px; }
@@ -67,8 +77,8 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		<b>Colour Scheme</b>
 		<select id="colour_scheme">
 			<option value="">&mdash; choose &mdash;</option>
-			<% foreach my $b (@scheme_bases) { %>
-				<option value="<%= $b->[0] %>"><%= $b->[0] %></option>
+			<% foreach my $name (@scheme_order) { %>
+				<option value="<%= $name %>"><%= $name %></option>
 			<% } %>
 		</select>
 	</span>
@@ -161,9 +171,12 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			$('.misc_device_block[device="' + dev + '"]').show();
 		}
 		$(document).on('click', '.misc_device_tab', function () {
-			showDevice($(this).attr('device'));
+			var picked = $(this).attr('device');
+			localStorage.setItem('misc_device', picked);
+			showDevice(picked);
 		});
-		var initial = $('.misc_device_tab[device="<%= $dev %>"]').length ? '<%= $dev %>' : $('.misc_device_tab').first().attr('device');
+		var remembered = localStorage.getItem('misc_device');
+		var initial = (remembered && $('.misc_device_tab[device="' + remembered + '"]').length) ? remembered : $('.misc_device_tab').first().attr('device');
 		if (initial) { showDevice(initial); }
 
 		$(document).on('change', '#colour_scheme', function () {

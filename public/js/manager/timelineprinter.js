@@ -27,7 +27,7 @@ function timelinePrinter(appts,sort,offset) {
 		$('#timeline').height(canvas.height);
 	}
 	ctx = canvas.getContext('2d');
-	ctx.strokeStyle = 'black';
+	ctx.strokeStyle = jawnosInk();
 	ctx.clearRect(0,clothesLineHeight,canvas.width,canvas.height);
 	ctx.fill();
 	ctx.beginPath();
@@ -51,8 +51,8 @@ function timelinePrinter(appts,sort,offset) {
 
 		if ( i.match(/^__/) ) { return true; }
 		if ( !v.setting ) { return true; }
-		ctx.strokeStyle = 'black';
-		ctx.fillStyle = v.setting.colour || 'black';
+		ctx.strokeStyle = jawnosInk();
+		ctx.fillStyle = v.setting.colour || jawnosInk();
 		if (!v.list) { return true; }
 		var ln = v.list.length;
 		ctx.moveTo(0, canvas.height * .8);
@@ -85,7 +85,7 @@ function timelinePrinter(appts,sort,offset) {
 			ctx.arc(position, verticalPosition, 10, 0, (Math.PI*2), true);
 
 			appPosition.push([position - 40, verticalPosition - 10, position + 10, verticalPosition + 10, v]);
-			ctx.fillStyle = 'black';
+			ctx.fillStyle = jawnosInk();
 			if (l['total'] || l['amount']) {
 				ctx.font = "400 14px Arial";
 				var fillText = l['total'] ? '$' + l['total'] : '$' + l['amount'];
@@ -97,7 +97,7 @@ function timelinePrinter(appts,sort,offset) {
 			appPosition.push([position , verticalPosition - 26, position + ctx.measureText(l['formatted_name']).width, verticalPosition +10, v]);
 			ctx.fill();
 			ctx.stroke();
-			ctx.strokeStyle = v.setting.colour || 'black';
+			ctx.strokeStyle = v.setting.colour || jawnosInk();
 			ctx.arc(position, verticalPosition, 9, 0, (Math.PI*2), true);
 			var now = Date.now();
 			if (clothesLinePos['moving'] + 300 < now) {
@@ -117,7 +117,7 @@ function timelinePrinter(appts,sort,offset) {
 
 				ctx.lineWidth = 10;
 				ctx.lineTo(startPosition, verticalPosition);
-				ctx.strokeStyle = v.setting.colour || 'black';
+				ctx.strokeStyle = v.setting.colour || jawnosInk();
 
 				ctx.stroke();
 				ctx.lineWidth = 2;

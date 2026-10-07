@@ -23,7 +23,7 @@ function clotheslineHanger(clothes) {
 		var layout = localStorage.getItem('layout');
 		var canvas = document.getElementById(layout);
 		ctx = canvas.getContext('2d');
-		ctx.strokeStyle = 'black';
+		ctx.strokeStyle = jawnosInk();
 		ctx.lineWidth = clothesLinePos['bordersize'];
 		ctx.beginPath();
 
@@ -62,7 +62,7 @@ function clotheslineHanger(clothes) {
 			ctx.strokeRect(startW,minHeight,maxWidth,clothesLineHeight);
 			ctx.fillRect(startW,minHeight,maxWidth,clothesLineHeight);
 			ctx.fill();
-			ctx.fillStyle = 'black';
+			ctx.fillStyle = jawnosInk();
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((maxWidth - textMeasure) / 2) + startW;
 			ctx.fillText(v.formatted_name,  textPos ,  maxHeight - (clothesLineHeight / 3));
