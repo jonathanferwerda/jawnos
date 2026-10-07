@@ -3076,12 +3076,15 @@ $(document).on('click','.enabler', function() {
 	var status = strawbeery.attr('status');
 	var on_colour = strawbeery.attr('on_colour');
 	var off_colour = strawbeery.attr('off_colour');
+	var dim = strawbeery.attr('dim');
 	if (status == 'on') {
 		strawbeery.css({ 'background-color': off_colour });
+		if (dim) { strawbeery.css({ 'border-color': off_colour, 'opacity': '0.45', 'filter': 'grayscale(1)', 'box-shadow': 'none' }); }
 		status = 'off';
 	}
 	else {
 		strawbeery.css({ 'background-color': on_colour });
+		if (dim) { strawbeery.css({ 'border-color': on_colour, 'opacity': '1', 'filter': 'none', 'box-shadow': '0 0 8px 2px ' + on_colour }); }
 		status = 'on';
 	}
 

@@ -535,10 +535,21 @@ function appWindowLoader(i,v) {
 	var json_storage = storage || sessionStorage.getItem('window_storage');
 	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
 	if (!v) { v = storage[i] };
+	appWindowOpener(i, Date.now(), v);
+}
+
+// Load (or reload) a window the right way for its app: some apps have bespoke
+// openers, everything else falls back to the centre view. Shared by
+// windowRetriever (restoring saved windows) and the icon-set refresh.
+function appWindowOpener(i,timestamp,v) {
+	if (!i) {
+		return;
+	}
+	v = v || {};
+	timestamp = timestamp || Date.now();
 	var window_w = $(window).width();
 	var window_h = $(window).height();
 	var app = JSON.stringify({ name: i });
-	var timestamp = Date.now();
 	if (i == 'budget' || i == 'folders' || i == 'relational' || i == 'warehouse' || i == 'measures' || i == 'market' || i == 'music' || i == 'web' || i == 'handbook' || i == 'video' || i == 'security' || i == 'library' || i == 'gallery' || i == 'twirl' || i == 'store' || i == 'studio' || i == 'marker' || i == 'ide' || i == 'terminal' || i == 'travel' || i == 'mailbox' || i == 'editor' || i == 'tetris' || i == 'synth' || i == 'cards' || i == 'embedded' || i == 'terminal' || i == 'configure' || i == 'box_office' ) {
 //				var preload = sessionStorage.getItem('preload_' + i);
 		var scope = localStorage.getItem('scope');

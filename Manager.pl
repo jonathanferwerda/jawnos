@@ -86,6 +86,9 @@ my $main_process = $$;
 my $device = &subs::device_setter();
 my $user_agent = $gb::user_agent;
 
+# memo for the selected pseudonym icon set; cleared by setting_setter on change
+our $icon_set_memo;
+
 if ($device eq 'mobile' && `ps -e | grep sshd` eq '') {
 	`sshd`;
 }
@@ -4640,6 +4643,9 @@ sub start_menu_maker($c) {
 		# heuristically and kept showing stale ones. Version the local images
 		# so the start menu always pulls the current set.
 		my $v = &subs::rightNow();
+		if (&subs::icon_set() eq 'handdrawn') {
+			$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_original($1) . '"'}ge;
+		}
 		$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
 		$returner = { html => $html };
 
@@ -4709,7 +4715,9 @@ sub website_preloader($c) {
 
 
 sub pseudonym_maker($context,$app) {
-	if (my $ps = &subs::cache_get({ app => 'me', context => 'pseudonyms', subcontext => $context })) {
+	my $icon_set = &subs::icon_set();
+	my $set_key = $context . '.' . $icon_set;
+	if (my $ps = &subs::cache_get({ app => 'me', context => 'pseudonyms', subcontext => $set_key })) {
 		return $ps;
 	}
 	my $pseudonyms = [
@@ -4792,29 +4800,28 @@ sub pseudonym_maker($context,$app) {
 		}
 		unless ( $custom_pseudonyms->{$p->{'name'}}->{'icon'} ) {
 			my $i = $p->{'icon'};
-			$p->{'icon'} = "/images/decipherable/" . $i . ".png";
-			unless (-e "public/" . $p->{'icon'}) {
-				$p->{'icon'} = "/images/studio/" . $i . ".png";
-				unless (-e "public/" . $p->{'icon'}) {
-					$p->{'icon'} = "/images/make believe/" . $i . ".png";
-					unless (-e "public/" . $p->{'icon'}) {
-						$p->{'icon'} = "/icons/" . $i . ".png";
-						unless (-e "public/" . $p->{'icon'}) {
-							$p->{'icon'} = "/icons/" . $i . ".jpg";
-							unless (-e "public/" . $p->{'icon'}) {
-								$p->{'icon'} = "/images/icons/" . $i . ".png";
-								unless (-e "public/" . $p->{'icon'}) {
-									$p->{'icon'} = "/images/jonathans/" . $i . ".png";
-								}
-							}
-						}
-					}
+			my @candidates = (
+				($icon_set ? "/icons/sets/" . $icon_set . "/" . $i . ".svg" : ()),
+				"/images/decipherable/" . $i . ".png",
+				"/images/studio/" . $i . ".png",
+				"/images/make believe/" . $i . ".png",
+				"/icons/" . $i . ".png",
+				"/icons/" . $i . ".jpg",
+				"/images/icons/" . $i . ".png",
+				"/images/jonathans/" . $i . ".png",
+			);
+			$p->{'icon'} = $candidates[-1];
+			foreach my $candidate ( @candidates ) {
+				if (-e "public" . $candidate) {
+					$p->{'icon'} = $candidate;
+					last;
 				}
 			}
+			$p->{'icon'} = &subs::icon_original($p->{'icon'});
 		}
 	}
 
-	&subs::cache_set({ app => 'me', context => 'pseudonyms', subcontext => $context }, $pseudonyms);
+	&subs::cache_set({ app => 'me', context => 'pseudonyms', subcontext => $set_key }, $pseudonyms);
 	return $pseudonyms;
 };
 
@@ -5595,6 +5602,9 @@ sub log_reader {
 		$a->{'app'} = &subs::unformat_name($a->{'app'});
 		my @a_settings = grep { $_->{'app'} eq $a->{'app'} } @{$settings};
 		foreach my $s (grep { $_->{'app'} eq $a->{'app'} } @{$settings}) {
+			if ($s->{'setting'} eq 'colour') {
+				$s->{'value'} = &subs::theme_colour_for_app($s->{'app'}, $s->{'value'}, $s->{'device'});
+			}
 			$appts->{$a->{'app'}}->{'setting'}->{$s->{'setting'}} = $s->{'value'};
 			foreach my $oi ( ($scope) ) {
 				if ($s->{'setting'} =~ /warranty|duration/gi) {
@@ -11859,8 +11869,9 @@ sub centre_view_grabber($data) {
 
 	if ($app) {
 		my $appointments = [ $app ];
+		my $signature = &subs::render_signature();
 		if (my $cache_data = &subs::cache_get({ context => 'template', app => $app })) {
-			if ($data->{'cached'} ne 'no' || $cache_data->{'timestamp'} + 200 > $server_time) {
+			if (($cache_data->{'signature'} || '') eq $signature && ($data->{'cached'} ne 'no' || $cache_data->{'timestamp'} + 200 > $server_time)) {
 				my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $cache_data->{'contents'} }, $timestamp);
 				return $window;
 			}
@@ -11878,7 +11889,7 @@ sub centre_view_grabber($data) {
 			my $header = $data->{'header'};
 			unless ($header || $data->{'resetting'} eq 'yes' || $data->{'cached'} eq 'no') {
 				my $hc = &subs::cache_get({ app => $app, context => 'header' });
-				$header = $hc->{'header'};
+				$header = $hc->{'header'} if ($hc->{'signature'} || '') eq $signature;
 			}
 			unless ($header) {
 				$header = &subs::appt_header_printer({ appts => $appts, app => $app, timestamp => $timestamp, source => 'centre_view_grabber' });
@@ -11899,7 +11910,7 @@ sub centre_view_grabber($data) {
 		}
 		my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $string, source => 'centre_view_grabber', settings => $appts->{$app}->{'setting'} }, $timestamp);
 		&subs::subprocessor(sub {
-			&subs::cache_set({app => $app, context => 'template', warranty => '-10d' }, { contents => $string, settings => $window->{'settings'} });
+			&subs::cache_set({app => $app, context => 'template', warranty => '-10d' }, { contents => $string, settings => $window->{'settings'}, signature => $signature });
 		}, { name => 'centre view cache set' });
 		return $window->{'window'};
 	}

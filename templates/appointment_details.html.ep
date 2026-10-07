@@ -41,7 +41,7 @@
 							<td><%= $l->{'formatted_type'} %></td>
 						<% } %>
 
-						<td><img src="/icons/edit.png" uuid="<%= $l->{'uuid'} %>" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
+						<td><img src="<%= &subs::icon_path('edit', '/icons/edit.png') %>" uuid="<%= $l->{'uuid'} %>" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
 							class="little_thumb edit_app hover"	server_time="<%= $l->{'server_time'} %>">
 						</td>
 
@@ -60,7 +60,7 @@
 				EDITOR!
 			</div>
 			<div class="appointment_details_buttons">
-				<td><img src="/icons/trash.png" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
+				<td><img src="<%= &subs::icon_path('trash', '/icons/trash.png') %>" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
 					class="delete_app little_thumb hover" formatted_name="<%= $appts->{$a}->{'formatted_name'} %>" 
 					formatted_time="<%= $l->{'formatted_time'} %>"
 					app_type="<%= $l->{'type'} %>"
@@ -68,30 +68,30 @@
 					formatted_duration="<%= $l->{'formatted_duration'} %>" 
 					uuid="<%= $l->{'uuid'} %>" />
 				</td>
-				<td><img class="little_thumb upload_file app_upload hover" src="/images/make believe/up.png"></td>
+				<td><img class="little_thumb upload_file app_upload hover" src="<%= &subs::icon_path('upload', '/images/make believe/up.png') %>"></td>
 
 				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
 					<td>
-						<img class="little_thumb take_picture hover" camera="0" type="camera" app="<%= $a %>" src="/images/decipherable/camera back.png">
+						<img class="little_thumb take_picture hover" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>">
 					</td>
 					<td>
-						<img class="little_thumb take_picture hover" camera="1" type="camera" app="<%= $a %>" src="/images/decipherable/camera front.png">
+						<img class="little_thumb take_picture hover" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>">
 					</td>
 				<% } %>
 				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
 					<td>
-						<img class="little_thumb scan_document hover" type="scan" feed="flatbed" app="<%= $a %>" src="/images/decipherable/flatbed.png">
+						<img class="little_thumb scan_document hover" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>">
 					</td>
 					<td>
-						<img class="little_thumb scan_document hover" type="scan" feed="adf" app="<%= $a %>" src="/images/decipherable/feeder.png">
+						<img class="little_thumb scan_document hover" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>">
 					</td>
 					<td>
-						<img class="little_thumb take_picture hover" camera="webcam" type="camera" app="<%= $a %>" src="/images/make believe/eye.png">
+						<img class="little_thumb take_picture hover" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>">
 					</td>
 					<br>
 				<% } %>
 				<% if ($l->{'start_notes'} eq 'redacted' || $l->{'notes'} eq 'redacted' || $l->{'end_notes'} eq 'redacted') { %>
-					<img src="/icons/note_button.png" server_time="<%= $l->{'server_time'} %>" uuid="<%= $l->{'uuid'} %>" class="little_thumb notes_toggle hover" app="<%= $l->{'app'} %>" timestamp="<%= $l->{'timestamp'} %>">
+					<img src="<%= &subs::icon_path('note', '/icons/note_button.png') %>" server_time="<%= $l->{'server_time'} %>" uuid="<%= $l->{'uuid'} %>" class="little_thumb notes_toggle hover" app="<%= $l->{'app'} %>" timestamp="<%= $l->{'timestamp'} %>">
 					<span class="notespace"></span>
 				<% } %>
 				
@@ -166,22 +166,22 @@
 							<img class="little_thumb"
 								<% if ($d->{'camera'}) { %>
 									<% if ($d->{'camera'} eq '0') { %>
-										src="/images/decipherable/camera back.png"
+										src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>"
 									<% } elsif ($d->{'camera'} eq '1') { %>
-										src="/images/decipherable/camera front.png"
+										src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>"
 									<% } elsif ($d->{'camera'} eq 'webcam') { %>
-										src="/images/make believe/eye.png"
+										src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>"
 									<% } %>
 								<% } elsif ($d->{'feed'}) { %>
 									<% if ($d->{'feed'} eq 'flatbed') { %>
-										src="/images/decipherable/flatbed.png"
+										src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>"
 									<% } elsif ($d->{'feed'} eq 'adf') { %>
-										src="/images/decipherable/feeder.png"
+										src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>"
 									<% } %>
 								<% } %>
 							>
 							<span class="time" timestamp="<%= $d->{'timestamp'} %>"></span>
-							<img class="tiny_thumb delete_duty hover" server_time="<%= $server_time %>" duuid="<%= $d->{'duuid'} %>" src="/icons/trash.png"><br>
+							<img class="tiny_thumb delete_duty hover" server_time="<%= $server_time %>" duuid="<%= $d->{'duuid'} %>" src="<%= &subs::icon_path('trash', '/icons/trash.png') %>"><br>
 						</span>
 					<% } %>
 				</span>
@@ -202,7 +202,7 @@
 								<td><%= $d->{'increment_speed'} %>km/h</td>
 								<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
 								<td>
-									<img class="tiny_thumb delete_location hover" server_time="<%= $server_time %>" uuid="<%= $d->{'uuid'} %>" src="/icons/trash.png"><br>
+									<img class="tiny_thumb delete_location hover" server_time="<%= $server_time %>" uuid="<%= $d->{'uuid'} %>" src="<%= &subs::icon_path('trash', '/icons/trash.png') %>"><br>
 								</td>
 							</tr>
 						<% } %>

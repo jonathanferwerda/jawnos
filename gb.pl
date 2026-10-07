@@ -135,6 +135,23 @@ our @protected = qw/me misc __president music_folder_toggle __DEBRIEFING__ telet
 
 our @misc_settings = qw/homepage homepage_content manager start_menu gate configure store store_header soundroom_sidebar_container mail_sidebar_container ide_sidebar_container pseudonym pseudonym_home box_office notifications console keyboard calculator walkboy delorean controller remote_control /;
 
+# selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg
+# 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
+our @icon_sets = qw/handdrawn squircle flat cartoon professional dark light outline neon pastel mono/;
+our %icon_set_labels = (
+	handdrawn   => 'Hand-drawn (original)',
+	squircle     => 'Squircle',
+	flat         => 'Flat',
+	cartoon      => 'Cartoon',
+	professional => 'Professional',
+	dark         => 'Dark',
+	light        => 'Light',
+	outline      => 'Outline',
+	neon         => 'Neon',
+	pastel       => 'Pastel',
+	mono         => 'Mono',
+);
+
 our $pos = {
 	idea => {},
 	person => {

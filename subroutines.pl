@@ -40,6 +40,9 @@ no warnings 'once';
 require "./gb.pl";
 require "./Websocket.pl";
 
+# Per-process memo of the active theme palette, flushed with the config cache.
+our %theme_palette_memo;
+
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
@@ -466,7 +469,7 @@ sub appt_header_printer() {
 	my $c = &subs::controller_builder();
 	my $header = $c->render_to_string(template => 'apps/appointment_header', timestamp => $server_time, appts => $appts, appointments => [ $app ], a => $app );
 
-	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header }) };
+	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
 	&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
@@ -1858,10 +1861,10 @@ sub main_icon_maker() {
 	}
 	unless (-e $destination . $asset) {
 		if ($gb::known_appts->{$unformatted_name}) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . $gb::known_appts->{$unformatted_name}->{'icon'} . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_original($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
 		}
 		elsif (-e 'public/icons/pos/' . $settings->{'pos'} . '.png') {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . '/icons/pos/' . $settings->{'pos'} . '.png' . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" src="' . &icon_original('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
 		}
 	}
 	return $main_image
@@ -3307,7 +3310,19 @@ sub setting_setter() {
 		subsetting => $subsetting
 	});
 	if ($setting eq 'colour') {
-		&Websocket::send('server', { console => '$(\'.top_navbar[app="' . $app . '"]\').css({\'background-color\':\'' . $value . '\'});' });
+		unless ($settings->{'silent'} eq 'yes') {
+			&Websocket::send('server', { console => '$(\'.top_navbar[app="' . $app . '"]\').css({\'background-color\':\'' . $value . '\'});' });
+			# refresh the stored clothesline so the manager view picks up the new colour
+			&hang_to_dry();
+		}
+	}
+	elsif ($setting eq 'icon_set') {
+		$Manager::icon_set_memo = undef;
+		# drop the caches that embed icons so the next render picks up the new set
+		&cache_delete({ app => 'me', context => 'pseudonyms' });
+		&cache_delete({ context => 'template' });
+		&cache_delete({ context => 'header' });
+		&Websocket::send('server', { console => 'jawnosReloadIcons();' });
 	}
 	elsif ($setting eq 'tasks') {
 		&subs::task_checker($app);
@@ -3337,6 +3352,9 @@ sub setting_grabber() {
 		else {
 			$returner = $list->[0]->{'value'};
 		}
+	}
+	if (defined $settings->{'setting'} && $settings->{'setting'} eq 'colour' && !$settings->{'benign'}) {
+		$returner = &theme_colour_for_app($app, $returner, $settings->{'device'});
 	}
 	return $returner;
 }
@@ -3401,6 +3419,9 @@ sub settings_grabber() {
 			$returner->{'uuid'} = $uuid;
 			&setting_setter({ app => $app, setting => 'uuid', subsetting => $settings->{'subsetting'}, value => $uuid });
 		}
+	}
+	if (exists $returner->{'colour'} && !$settings->{'benign'}) {
+		$returner->{'colour'} = &theme_colour_for_app($app, $returner->{'colour'}, $settings->{'device'});
 	}
 	return $returner;
 }
@@ -3663,6 +3684,9 @@ sub cache_set() {
 
 sub cache_delete() {
 	my ($params) = @_;
+	if ($params->{'context'} && $params->{'context'} eq 'config') {
+		%theme_palette_memo = ();
+	}
 	$params->{'device'} = $device;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $result = &db_delete('cache', $params);
@@ -4151,19 +4175,136 @@ sub db_cache_updater() {
 	}
 }
 
+# The colours the current theme is built from: the distinct *_background_colour
+# swatches for a device (falling back through the other devices if unset).
+sub theme_palette() {
+	my $device = shift || &subs::device_setter();
+	return @{$theme_palette_memo{$device}} if exists $theme_palette_memo{$device};
+	my $config = &subs::config_reader();
+	my @devices = ( $device, @gb::device_types, &subs::signatorial_designer() );
+	my %tried;
+	foreach my $dt ( @devices ) {
+		next if $tried{$dt}++;
+		next unless $config->{$dt};
+		my %seen;
+		my @palette;
+		foreach my $k ( @gb::misc_settings ) {
+			my $c = $config->{$dt}->{$k}->{'background_colour'};
+			next unless $c;
+			$c = '#' . $c unless $c =~ /^#/;
+			next unless $c =~ /^#[0-9a-fA-F]{6}$/;
+			$c = lc $c;
+			push @palette, $c unless $seen{$c}++;
+		}
+		$theme_palette_memo{$device} = \@palette;
+		return @palette if scalar @palette;
+	}
+	$theme_palette_memo{$device} = [];
+	return ();
+}
+
 sub random_colour_grabber() {
+	my @palette = &theme_palette();
+	if (scalar @palette > 0) {
+		my $pick = $palette[ int(rand(scalar @palette)) ];
+		$pick =~ s/^#//;
+		return $pick;
+	}
+
 	my $col = [ 0, 0, 0 ];
 	foreach my $co ( @{$col} ) {
 		until ($co > 130) {
 			$co = rand(255);
 		}
 	}
+	return join "", map { sprintf "%02x", $col->[$_] } (0..2);
+}
 
+# Snap an app's colour into the theme. If the existing colour is already one of
+# the theme's colours it is left alone; otherwise a stable theme colour is chosen
+# for that app and saved. With no theme colours configured, the value is returned
+# unchanged.
+sub theme_colour_grabber() {
+	my $data = ( ref $_[0] eq 'HASH' ) ? $_[0] : { app => $_[0] };
+	my $app = $data->{'app'};
+	return $data->{'existing'} unless $app;
+	my $device = $data->{'device'} || &subs::device_setter();
 
-	my @colours = map {
-		join "", map { sprintf "%02x", $col->[$_] } (0..2)
-	} (60..65);
-	return $colours[0];
+	my $existing = $data->{'existing'};
+	unless (defined $existing) {
+		my $q = &db_select('settings', ['value'], { app => $app, setting => 'colour', device => $device })->hashes;
+		$q = &db_select('settings', ['value'], { app => $app, setting => 'colour' })->hashes unless scalar @{$q};
+		$existing = $q->[-1]->{'value'} if scalar @{$q};
+	}
+
+	my @palette = &theme_palette($device);
+	return $existing unless scalar @palette;
+
+	my $normalized = defined $existing ? lc $existing : '';
+	$normalized = '#' . $normalized if $normalized =~ /^[0-9a-f]{6}$/;
+	if (grep { $_ eq $normalized } @palette) {
+		return $existing;
+	}
+
+	my $sum = 1;
+	$sum += ord for split //, $app;
+	my $colour = $palette[ $sum % scalar @palette ];
+
+	&setting_setter({ app => $app, setting => 'colour', value => $colour, device => $device, silent => 'yes' });
+	return $colour;
+}
+
+# Wrapper used by the getters: skips the built-in apps and blank names.
+sub theme_colour_for_app() {
+	my ($app, $existing, $device) = @_;
+	return $existing unless $app;
+	foreach my $p ( @gb::protected ) {
+		return $existing if lc($p) eq lc($app);
+	}
+	return &theme_colour_grabber({ app => $app, existing => $existing, device => $device });
+}
+
+# The currently selected pseudonym icon set ('' for the modern default).
+sub icon_set() {
+	$Manager::icon_set_memo = &setting_grabber({ app => 'misc', setting => 'icon_set' }) unless defined $Manager::icon_set_memo;
+	return $Manager::icon_set_memo || '';
+}
+
+# When the hand-drawn set is active, swap a public icon path for its original
+# hand-drawn PNG (kept in public/icons/original/) if one exists.
+sub icon_original() {
+	my $path = shift;
+	return $path unless defined $path && $path =~ m{^/};
+	return $path unless &icon_set() eq 'handdrawn';
+	my $candidate = "/icons/original" . $path;
+	return -e "public" . $candidate ? $candidate : $path;
+}
+
+# Resolve a button icon through the selected set, falling back to the given path.
+sub icon_path() {
+	my ($name, $fallback) = @_;
+	my $set = &icon_set();
+	if ($set eq 'handdrawn') {
+		return &icon_original($fallback);
+	}
+	if ($set) {
+		my $path = "/icons/sets/" . $set . "/" . $name . ".svg";
+		return $path if -e "public" . $path;
+	}
+	return $fallback;
+}
+
+# A fingerprint of everything that gets baked into cached window/header HTML:
+# the icon set and the device's theme colours. Cached renders whose signature no
+# longer matches are discarded, so closed windows don't come back looking stale.
+sub render_signature() {
+	my $device = &device_setter();
+	my $config = &config_reader();
+	my @parts = ( &icon_set() || '' );
+	foreach my $k ( @gb::misc_settings ) {
+		push @parts, $k . '=' . ($config->{$device}->{$k}->{'background_colour'} || '');
+	}
+	return join '|', @parts;
 }
 
 

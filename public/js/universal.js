@@ -688,3 +688,28 @@ function jawnosApplyInk() {
 	document.body.classList.toggle('dark_theme', dark);
 }
 $(function () { jawnosApplyInk(); });
+
+// ---- icon set swap: refresh the icons currently on screen ----------------------
+// Called over the websocket after the pseudonym icon set changes; re-renders any
+// open appointment windows and rebuilds the start-menu dock from their icons.
+function jawnosReloadIcons() {
+	try {
+		$('.wind').each(function () {
+			var app = $(this).attr('app');
+			if (!app) { return; }
+			if (typeof appWindowOpener === 'function') {
+				appWindowOpener(app, Date.now(), { visible: 'yes' });
+			}
+			else if (typeof appointmentGrabber === 'function') {
+				appointmentGrabber(app);
+			}
+		});
+		// refresh an open start menu (passing `source` skips the close branch)
+		if (typeof startMenuToggle === 'function' && $('#start_menu').is(':visible')) {
+			startMenuToggle({ source: 'icon_refresh' });
+		}
+		if (typeof taskbarDisplayer === 'function') {
+			setTimeout(function () { taskbarDisplayer(); }, 1200);
+		}
+	} catch (e) {}
+}

@@ -61,40 +61,53 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 } %>
 
 <style>
-	.misc_device_tab { padding:4px 12px; cursor:pointer; border-radius:6px; border:solid 1px; background:transparent; font-size:14px; }
+	.misc_device_tab { padding:10px 24px; cursor:pointer; border-radius:8px; border:solid 2px; background:transparent; font-size:22px; }
 	.misc_device_tab.selected { background:yellow; font-weight:bold; }
 	.misc_device_block { display:none; }
 	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:104px; font-size:13px; text-align:center; }
 	.misc_colour_chip input[type=color] { width:96px; height:30px; }
 </style>
 
-<div class="misc_device_tabs" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0;">
+<div class="misc_device_tabs" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:10px 0;">
 	<% foreach my $dt (@devices) { %>
 		<% my $name = $dt eq $signatorial ? 'Me' : &subs::format_name($dt); %>
 		<button class="misc_device_tab" device="<%= $dt %>"><%= $name %></button>
 	<% } %>
-	<span style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-		<b>Colour Scheme</b>
-		<select id="colour_scheme">
-			<option value="">&mdash; choose &mdash;</option>
-			<% foreach my $name (@scheme_order) { %>
-				<option value="<%= $name %>"><%= $name %></option>
-			<% } %>
-		</select>
-	</span>
 </div>
 
 <div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
-	<h1 style="margin:0;">Titles</h1>
-	<label style="display:flex;flex-direction:column;max-width:260px;">
-		<b>Font</b>
-		<select class="misc_setting" setting="title_font" device="<%= $dev %>">
-			<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
-			<% foreach my $f ( @fonts ) { %>
-				<option value="<%= $f %>" style="font-family:<%= $f %>;" <% if ($current_font eq $f) { %>selected="selected"<% } %>><%= $f %></option>
-			<% } %>
-		</select>
-	</label>
+	<h1 style="margin:0;">Appearance</h1>
+	<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin-top:6px;">
+		<label style="display:flex;flex-direction:column;max-width:260px;">
+			<b>Font</b>
+			<select class="misc_setting" setting="title_font" device="<%= $dev %>">
+				<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
+				<% foreach my $f ( @fonts ) { %>
+					<option value="<%= $f %>" style="font-family:<%= $f %>;" <% if ($current_font eq $f) { %>selected="selected"<% } %>><%= $f %></option>
+				<% } %>
+			</select>
+		</label>
+		<label style="display:flex;flex-direction:column;">
+			<b>Colour Scheme</b>
+			<select id="colour_scheme">
+				<option value="">&mdash; choose &mdash;</option>
+				<% foreach my $name (@scheme_order) { %>
+					<option value="<%= $name %>"><%= $name %></option>
+				<% } %>
+			</select>
+		</label>
+		<label style="display:flex;flex-direction:column;max-width:260px;">
+			<b>Icon Set</b>
+			<% my $current_icon_set = &subs::setting_grabber({ app => 'misc', setting => 'icon_set', device => $dev }) || ''; %>
+			<select class="misc_setting" setting="icon_set" device="<%= $dev %>">
+				<option value="" <% if (!$current_icon_set) { %>selected="selected"<% } %>>Default</option>
+				<% foreach my $s ( @gb::icon_sets ) { %>
+					<option value="<%= $s %>" <% if ($current_icon_set eq $s) { %>selected="selected"<% } %>><%= $gb::icon_set_labels{$s} %></option>
+				<% } %>
+			</select>
+		</label>
+		<div class="icon_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+	</div>
 </div>
 
 <% foreach my $dt (@devices) { %>
@@ -164,11 +177,43 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	var jawnos_colour_schemes = <%== encode_json \%schemes %>;
 	var jawnos_colour_keys = <%== encode_json \@gb::misc_settings %>;
 	(function () {
+		var applying_scheme = false;
+
+		function currentDevice() {
+			return $('.misc_device_tab.selected').attr('device');
+		}
+		function deviceColours(device) {
+			return $.map(jawnos_colour_keys, function (k) {
+				var v = $('.misc_setting[setting="' + k + '_background_colour"][device="' + device + '"]').val();
+				return ('' + (v === undefined ? '' : v)).toLowerCase();
+			});
+		}
+		// Which scheme, if any, do these colours correspond to? Blank once hand-edited.
+		function detectScheme(device) {
+			var colours = deviceColours(device);
+			var found = '';
+			$.each(jawnos_colour_schemes, function (name, palette) {
+				var matches = true;
+				for (var i = 0; i < colours.length; i++) {
+					if (colours[i] !== palette[i % palette.length].toLowerCase()) { matches = false; break; }
+				}
+				if (matches) { found = name; return false; }
+			});
+			return found;
+		}
+		function syncSchemeDropdown() {
+			if (applying_scheme) { return; }
+			var device = currentDevice();
+			if (!device) { return; }
+			$('#colour_scheme').val(detectScheme(device));
+		}
+
 		function showDevice(dev) {
 			$('.misc_device_tab').removeClass('selected');
 			$('.misc_device_tab[device="' + dev + '"]').addClass('selected');
 			$('.misc_device_block').hide();
 			$('.misc_device_block[device="' + dev + '"]').show();
+			syncSchemeDropdown();
 		}
 		$(document).on('click', '.misc_device_tab', function () {
 			var picked = $(this).attr('device');
@@ -179,20 +224,61 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		var initial = (remembered && $('.misc_device_tab[device="' + remembered + '"]').length) ? remembered : $('.misc_device_tab').first().attr('device');
 		if (initial) { showDevice(initial); }
 
+		// A hand-edit to any colour swatch drops the scheme name if it no longer lines up.
+		$(document).on('change', '.misc_colour_chip .misc_setting', function () {
+			if ($(this).attr('device') == currentDevice()) { syncSchemeDropdown(); }
+		});
+
 		$(document).on('change', '#colour_scheme', function () {
-			var palette = jawnos_colour_schemes[$(this).val()];
+			var name = $(this).val();
+			var palette = jawnos_colour_schemes[name];
 			if (!palette) { return; }
-			var device = $('.misc_device_tab.selected').attr('device');
+			var device = currentDevice();
 			if (!device) { return; }
 			// don't let the "Anchor" toggle copy the scheme to every device
 			var anchor = $('.anchor_all_settings[setting_type="misc"]');
 			var anchor_was = anchor.prop('checked');
 			anchor.prop('checked', false);
+			applying_scheme = true;
 			$.each(jawnos_colour_keys, function (i, k) {
 				var colour = palette[i % palette.length];
 				$('.misc_setting[setting="' + k + '_background_colour"][device="' + device + '"]').val(colour).trigger('change');
 			});
+			applying_scheme = false;
 			anchor.prop('checked', anchor_was);
+			$('#colour_scheme').val(name);
 		});
 	})();
+
+	// Icon set preview
+	var jawnos_icon_preview = ['record', 'play', 'camera', 'bell', 'key', 'heart', 'envelope', 'marker'];
+	var jawnos_handdrawn_preview = [
+		'/icons/original/images/decipherable/folder.png',
+		'/icons/original/images/decipherable/chart.png',
+		'/icons/original/images/make believe/music.png',
+		'/icons/original/images/decipherable/gallery.png',
+		'/icons/original/images/decipherable/marker.png',
+		'/icons/original/images/decipherable/measures.png',
+		'/icons/original/images/decipherable/wrench.png',
+		'/icons/original/images/decipherable/envelope.png'
+	];
+	function jawnosPreviewIcons(set) {
+		var box = $('.icon_set_preview').empty();
+		var urls = [];
+		if (set == 'handdrawn') {
+			urls = jawnos_handdrawn_preview;
+		}
+		else if (set) {
+			$.each(jawnos_icon_preview, function (i, n) { urls.push('/icons/sets/' + set + '/' + n + '.svg'); });
+		}
+		else {
+			box.html('<i>Using the default icons.</i>');
+			return;
+		}
+		$.each(urls, function (i, u) {
+			$('<img>').attr('src', u).css({ width: '40px', height: '40px' }).appendTo(box);
+		});
+	}
+	jawnosPreviewIcons($('.misc_setting[setting="icon_set"]').val());
+	$(document).on('change', '.misc_setting[setting="icon_set"]', function () { jawnosPreviewIcons($(this).val()); });
 </script>
