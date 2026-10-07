@@ -95,16 +95,23 @@ sub master_time_looper() {
 
 
 
+# A config.json is usable once it exists and names a signatorial (the file the
+# cookie signing key is derived from). read_file has to be evaluated in scalar
+# context -- otherwise it returns a list of lines and we only ever decode the
+# first one.
+sub config_is_usable() {
+	return 0 unless -e './config.json';
+	my $json = read_file('./config.json');
+	my $config = eval { decode_json $json };
+	return ( ref $config eq 'HASH' && $config->{'signatorial'} ) ? 1 : 0;
+}
+
 # First-run experience: install dependencies (terminal) and then run the web
 # setup wizard for config.json + the encrypted database. Returns once a usable
 # config.json exists, or exits if setup was abandoned.
 sub first_run_setup() {
 	my $force = grep { $_ eq '--setup' } @ARGV;
-	my $config_ok = 0;
-	if ( -e './config.json' ) {
-		my $j = eval { decode_json read_file('./config.json') };
-		$config_ok = ( ref $j eq 'HASH' && $j->{'signatorial'} ) ? 1 : 0;
-	}
+	my $config_ok = config_is_usable();
 	return if $config_ok && !$force;
 
 	print "\n";
@@ -121,12 +128,7 @@ sub first_run_setup() {
 	# 2. web wizard for config.json and the database
 	system( 'perl', 'scripts/jawnos_setup.pl' ) if -e 'scripts/jawnos_setup.pl';
 
-	my $ok = 0;
-	if ( -e './config.json' ) {
-		my $j = eval { decode_json read_file('./config.json') };
-		$ok = ( ref $j eq 'HASH' && $j->{'signatorial'} ) ? 1 : 0;
-	}
-	unless ($ok) {
+	unless ( config_is_usable() ) {
 		print "\nSetup was not completed. Re-run ./jawn to try again.\n";
 		exit 1;
 	}
