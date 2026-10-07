@@ -34,6 +34,9 @@
 				<br>
 				<button class="button marker_undo hover" hint="Undo">&#8630;</button>
 				<button class="button marker_redo hover" hint="Redo">&#8631;</button>
+				<button class="button marker_zoom_out hover" hint="Zoom out">-</button>
+				<button class="button marker_zoom_in hover" hint="Zoom in (or pinch)">+</button>
+				<button class="button marker_zoom_fit hover" hint="Fit the drawing">Fit</button>
 				<button class="button marker_new_board hover" hint="New drawing">New</button>
 				<button class="button marker_session_save hover" hint="Save this drawing as a session">Session</button>
 			</div>

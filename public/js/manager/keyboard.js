@@ -861,8 +861,10 @@ $(document).on('click', '.keyboard_button', function() {
 						var new_y = Number(whiteboard_position['y']);
 						localStorage.setItem('whiteboard_position', '{"x": "' + new_x + '", "y": "' + new_y + '"}' );
 						var wb = $('#whiteboard').offset();
-						new_x = wb['left'] + new_x;
-						$('#pointer').css({'left': new_x });
+						// the board can be zoomed and panned, so convert the document
+						// position to screen position for the pointer icon
+						var pointer_screen = markerDocToScreen(Number(new_x), Number(new_y));
+						$('#pointer').css({ 'left': wb['left'] + pointer_screen.x, 'top': wb['top'] + pointer_screen.y - 12 });
 					}
 					else {
 						if (led[toggle]['image']) {

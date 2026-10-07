@@ -524,7 +524,14 @@ $(document).on('click', '#pseudonym_icon_change_submit',function() {
 	var timestamp = Date.now();
 	if ($('#whiteboard').is(':visible')) {
 		var canvas = document.getElementById('whiteboard');
-		var img = canvas.toDataURL('image/png');
+		// the marker zooms now, so take the drawing itself, not the zoomed view
+		var img;
+		if (typeof markerFlatten == 'function' && typeof markerLayers != 'undefined' && markerLayers.length > 0) {
+			img = markerFlatten().toDataURL('image/png');
+		}
+		else {
+			img = canvas.toDataURL('image/png');
+		}
 		var name = submit.attr('pseudonym_name');
 		var prev_img = $('.pseudonym_icon_set[name="' + name + '"]').attr('src');
 		$.ajax({
