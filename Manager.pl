@@ -17208,6 +17208,34 @@ post '/manager/embedded/ota_uploader' => sub($c) {
 
 };
 
+# the esp32 boards have no build path baked into the manager the way the pico
+# does: the panel hands over whatever .bin was picked, we stream it to the
+# board's own /update and the board flashes itself and reboots.
+post '/manager/embedded/ota_uploader_wifi' => sub($c) {
+	my $timestamp = $c->param('timestamp');
+	my $ip = $c->param('ip');
+	my $firmware = $c->req->upload('firmware');
+
+	if (!$ip || !$firmware) {
+		return $c->render(json => { success => 0, result => 'needs a board ip and a .bin' });
+	}
+
+	my $image = $firmware->slurp;
+	my $boundary = '----jawnos' . int(rand(1000000000));
+	my $body =
+		"--$boundary\r\n" .
+		"Content-Disposition: form-data; name=\"firmware\"; filename=\"" . ($firmware->filename || 'firmware.bin') . "\"\r\n" .
+		"Content-Type: application/octet-stream\r\n\r\n" .
+		$image . "\r\n--$boundary--\r\n";
+
+	my $ua = Mojo::UserAgent->new();
+	$ua->inactivity_timeout(180000);
+	my $res = $ua->post('http://' . $ip . '/update' => { 'Content-Type' => "multipart/form-data; boundary=$boundary" } => $body)->result;
+	my $result = $res->is_success ? $res->body : ($res->error ? $res->error->{message} : 'board said ' . $res->code);
+
+	$c->render(json => { success => $res->is_success ? 1 : 0, code => $res->code, result => $result });
+};
+
 get '/manager/embedded/teletype_backup' => sub($c) {
 	my $ip = $c->param('ip');
 	my $mac = $c->param('mac');

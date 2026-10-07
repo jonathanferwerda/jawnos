@@ -275,6 +275,33 @@ void stop_ble_transfer() {
   BLEDevice::deinit(false); 
 }
 
+// ---- over the air updates -----------------------------------------------------
+// The embedded panel posts a compiled .bin here over the LAN and the board reboots
+// into it. The board has to have this in it once (flashed over USB); after that the
+// panel can replace the firmware whenever there is a new build.
+void ota_upload() {
+  HTTPUpload &upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.println("ota: " + upload.filename);
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  }
+  else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  }
+  else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.println("ota written");
+    }
+    else {
+      Update.printError(Serial);
+    }
+  }
+}
+
 void setup() {
   Serial.begin(921600);
 
@@ -551,6 +578,13 @@ void setup() {
       server.send(404, "text/plain", "File Not Found");
     }
   });
+
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", Update.hasError() ? "failed" : "ok");
+    delay(500);
+    ESP.restart();
+  }, ota_upload);
 
   server.on("/wigi", []() {
     String rauth = server.arg("authorization");

@@ -695,6 +695,75 @@ $(document).on('click', '#embedded_ota_uploader', function() {
 		},2000);
 	}
 });
+
+// the esp32 boards: first press arms, second press opens the file picker, the
+// .bin goes to the manager and the manager pushes it to the board's own /update
+$(document).on('click', '#embedded_ota_uploader_wifi', function() {
+	var a = $(this);
+	if (a.attr('armed') == 'yes') {
+		a.css({'background-color': bgcolor });
+		a.attr('armed', 'no');
+		$('#embedded_ota_file').val('').trigger('click');
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({'background-color': 'red' });
+		setTimeout(function() {
+			a.css({'background-color': bgcolor });
+			a.attr('armed', 'no');
+		},2000);
+	}
+});
+
+$(document).on('change', '#embedded_ota_file', function() {
+	var file = this.files[0];
+	if (!file) {
+		return;
+	}
+	var ip = $('#embedded_ota_uploader_wifi').attr('ip');
+	var timestamp = Date.now();
+	var data = new FormData();
+	data.append('firmware', file);
+	data.append('ip', ip);
+	data.append('timestamp', timestamp);
+	$('#embedded_ota_uploader_wait').show();
+	$('#embedded_ota_uploader_fail, #embedded_ota_uploader_success').hide();
+	$('#embedded_ota_uploader_percentage').text('0%');
+	$.ajax({
+		url: '/manager/embedded/ota_uploader_wifi',
+		type: 'POST',
+		data: data,
+		processData: false,
+		contentType: false,
+		xhr: function() {
+			var xhr = new window.XMLHttpRequest();
+			xhr.upload.addEventListener('progress', function(e) {
+				if (e.lengthComputable) {
+					var percent = Math.round(e.loaded / e.total * 100);
+					$('#embedded_ota_uploader_percentage').text(percent + '%');
+				}
+			}, false);
+			return xhr;
+		},
+		success: function(response) {
+			$('#embedded_ota_uploader_wait').hide();
+			if (response['success'] == 1) {
+				$('#embedded_ota_uploader_percentage').text('100%');
+				$('#embedded_ota_uploader_success').show();
+			}
+			else {
+				$('#embedded_ota_uploader_percentage').text('');
+				$('#embedded_ota_uploader_fail').show();
+			}
+		},
+		error: function() {
+			$('#embedded_ota_uploader_wait').hide();
+			$('#embedded_ota_uploader_percentage').text('');
+			$('#embedded_ota_uploader_fail').show();
+		}
+	});
+});
 $(document).on('change', '#teletype_authorization', function() {
 	var tauthorization = $(this).val();
 	var timestamp = Date.now();
