@@ -50,7 +50,7 @@
 		<% if ($c->session('privilege') eq 'citizen') { %>
 			<span class="pi display_cost" id="pi_cost" angle="cost"><%= &subs::price_formatter($item->{'cost'}) %></span>
 			<input type="number" class="pi display_cost" style="display:none;" id="pi_cost_edit" angle="cost"><br>
-			<span class="pi display_markup id="pi_markup" angle="markup"><%= ($markup - 1) * 100 . "%" %></span>
+			<span class="pi display_markup" id="pi_markup" angle="markup"><%= ($markup - 1) * 100 . "%" %></span>
 			<input type="number" class="pi display_markup" style="display:none;" id="pi_markup_edit" angle="markup"><br>
 		<% } %>
 		<u><span class="pi display_price" id="pi_price" angle="price"><%= &subs::price_formatter($item->{'price'}) %></span></u>

@@ -195,7 +195,12 @@ sub percent_formatter() {
 
 sub numeric_formatter() {
 	my $number = shift;
-	$number =~ s/^[0-9.]//gi;
+	$number = '' unless defined $number;
+	# Strip currency symbols, spaces, thousands separators, etc. -- everything
+	# that isn't part of the number itself. The old pattern stripped the first
+	# *digit*, turning 70 into 0 and 4700 into 700.
+	$number =~ s/[^0-9.\-]//gi;
+	$number = '' if $number eq '' || $number eq '-' || $number eq '.' || $number eq '-.';
 	if (!$number) { $number = 0; }
 	return $number
 }
