@@ -15,9 +15,30 @@ function warehouseInitializer() {
 	});
 }
 
-$(document).on('change', '.warehouse_config', function() {
+$(document).on('change', '.warehouse_config', async function() {
 	var c = $(this);
-	warehouseConfigSetter(c);
+	await warehouseConfigSetter(c);
+	warehouseListingReload();
+});
+
+function warehouseListingReload(search) {
+	$.ajax({
+		url: '/manager/warehouse/listing',
+		type: 'GET',
+		data: { search: search || '', timestamp: Date.now() },
+		success: function(response) {
+			$('#warehouse_results').html(response.html);
+		}
+	});
+}
+
+var warehouseSearchInterval;
+$(document).on('keyup click', '#warehouse_search', function() {
+	var search = $(this).val();
+	clearTimeout(warehouseSearchInterval);
+	warehouseSearchInterval = setTimeout(function() {
+		warehouseListingReload(search);
+	}, 300);
 });
 
 async function warehouseConfigSetter(c) {

@@ -1,0 +1,54 @@
+% no warnings 'uninitialized';
+% my $search = $search || '';
+<% if ($search ne '') { %>
+	<div class="warehouse_search_results" search="<%= $search %>">
+		<% if (scalar keys %{$warehouse->{'items'}} == 0) { %>
+			<i>No items matching "<%= &subs::format_name($search) %>".</i>
+		<% } %>
+		<% foreach my $item ( sort keys %{$warehouse->{'items'}} ) { %>
+			<div class="warehouse_search_item" item="<%= $item %>">
+				<h3 class="warehouse_item hover" item="<%= $item %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item) %></h3>
+				<% foreach my $place ( sort keys %{$warehouse->{'items'}->{$item}} ) { %>
+					<span class="warehouse_search_place"><b><%= &subs::format_name($place) %>:</b>
+						<% foreach my $unit ( sort keys %{$warehouse->{'items'}->{$item}->{$place}} ) { %>
+							<%= &subs::numeric_formatter($warehouse->{'items'}->{$item}->{$place}->{$unit}) %><%= $unit %>
+						<% } %>
+					</span><br>
+				<% } %>
+			</div>
+		<% } %>
+	</div>
+<% } else { %>
+	% my $show_all = (grep { $_ eq 'all' } @{$places}) ? 1 : 0;
+	% my @show = $show_all ? ( sort keys %{$warehouse->{'places'}} ) : ( sort grep { $_ ne 'all' } @{$places} );
+	<div class="warehouse_places">
+		<% foreach my $place ( @show ) { %>
+			% my $pitems = $warehouse->{'places'}->{$place} || {};
+			<div class="warehouse_place_block" place="<%= $place %>">
+				<h3><%= &subs::format_name($place) %></h3>
+				<% if (scalar keys %{$pitems} == 0) { %><i>(empty)</i><br><% } %>
+				<% foreach my $item ( sort keys %{$pitems} ) { %>
+					<span class="warehouse_item hover" item="<%= $item %>" place="<%= $place %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)">
+						<b><%= &subs::format_name($item) %></b>:
+						<% foreach my $unit ( sort keys %{$pitems->{$item}} ) { %>
+							<span class="warehouse_quantity"><%= &subs::numeric_formatter($pitems->{$item}->{$unit}) %><%= $unit %></span>
+						<% } %>
+					</span><br>
+				<% } %>
+			</div>
+		<% } %>
+	</div>
+	<div class="warehouse_accounts">
+		<h3>Accounts</h3>
+		<% if (scalar keys %{$warehouse->{'accounts'}} == 0) { %><i>(none)</i><br><% } %>
+		<% foreach my $acct ( sort keys %{$warehouse->{'accounts'}} ) { %>
+			<span class="warehouse_account hover" account="<%= $acct %>" onclick="appointmentGrabber('<%= $acct %>',<%= &subs::rightNow() %>)">
+				<b><%= &subs::format_name($acct) %></b>:
+				<% foreach my $unit ( sort keys %{$warehouse->{'accounts'}->{$acct}} ) { %>
+					% my $amount = $warehouse->{'accounts'}->{$acct}->{$unit};
+					<span class="warehouse_quantity"><% if ($gb::measures->{$unit}->{'format'}) { %><%= &subs::price_formatter($amount) %><% } else { %><%= &subs::numeric_formatter($amount) %><%= $unit %><% } %></span>
+				<% } %>
+			</span><br>
+		<% } %>
+	</div>
+<% } %>

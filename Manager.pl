@@ -1430,16 +1430,81 @@ get '/manager/market' => sub($c) {
 	$c->render(json => { window => $window });
 };
 
+# Group warehouse rows for the warehouse app. The warehouse holds both money
+# and stock: a money row is one that names an account (or is denominated in a
+# currency measure), everything else is stock grouped by place, then item,
+# then unit. Used for the place view and for item search.
+sub warehouse_grabber($opts) {
+	my $search = $opts->{'search'};
+	my $places = $opts->{'places'} || [];
+	my $rows;
+	if (defined $search && $search ne '') {
+		$rows = &subs::db_query('select * from warehouse where item like ? order by timestamp asc', '%' . $search . '%')->hashes;
+	}
+	elsif (scalar grep { $_ ne 'all' } @{$places}) {
+		my @ps = grep { $_ ne 'all' } @{$places};
+		my $in = join ',', map { '?' } @ps;
+		# money rows carry no place, so keep them in view alongside the picked places
+		$rows = &subs::db_query("select * from warehouse where place in ($in) or place is null or place = '' order by timestamp asc", @ps)->hashes;
+	}
+	else {
+		$rows = &subs::db_select('warehouse')->hashes;
+	}
+	my $warehouse = { places => {}, accounts => {}, items => {} };
+	foreach my $r ( @{$rows} ) {
+		my $unit = $r->{'unit'} || 'each';
+		my $qty = &subs::numeric_formatter($r->{'quantity'}) + 0;
+		my $types = $gb::measures->{$unit}->{'types'} || [];
+		my $is_money = ($r->{'account'} && $r->{'account'} ne '') || (grep { $_ eq 'currency' } @{$types});
+		if ($is_money) {
+			my $acct = $r->{'account'} || $r->{'item'} || 'cash';
+			$warehouse->{'accounts'}->{$acct}->{$unit} = ($warehouse->{'accounts'}->{$acct}->{$unit} || 0) + $qty;
+		}
+		elsif ($r->{'item'}) {
+			my $item = $r->{'item'};
+			my $place = ($r->{'place'} && $r->{'place'} ne '') ? $r->{'place'} : 'unplaced';
+			$warehouse->{'places'}->{$place}->{$item}->{$unit} = ($warehouse->{'places'}->{$place}->{$item}->{$unit} || 0) + $qty;
+			$warehouse->{'items'}->{$item}->{$place}->{$unit} = ($warehouse->{'items'}->{$item}->{$place}->{$unit} || 0) + $qty;
+		}
+	}
+	return $warehouse;
+}
+
 get '/manager/warehouse' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $settings = &subs::settings_grabber({ app => 'warehouse' });
+	my $places = eval { return decode_json $settings->{'place'} } || ['all'];
+	$settings->{'place'} = $places;
+	my $warehouse = &warehouse_grabber({ places => $places });
 	my $contents = $c->render_to_string(
 		template => 'warehouse/warehouse',
 		timestamp => $timestamp,
-		settings => $settings
+		settings => $settings,
+		warehouse => $warehouse,
+		search => ''
 	);
 	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'warehouse', contents => $contents }, $timestamp);
 	$c->render(json => { window => $window });
+};
+
+get '/manager/warehouse/listing' => sub($c) {
+	my $search = &subs::unformat_name($c->param('search'));
+	my $settings = &subs::settings_grabber({ app => 'warehouse' });
+	my $places = eval { return decode_json $settings->{'place'} } || ['all'];
+	my $warehouse;
+	if (defined $search && $search ne '') {
+		$warehouse = &warehouse_grabber({ search => $search });
+	}
+	else {
+		$warehouse = &warehouse_grabber({ places => $places });
+	}
+	my $html = $c->render_to_string(
+		template => 'warehouse/listing',
+		warehouse => $warehouse,
+		places => $places,
+		search => $search || ''
+	);
+	$c->render(json => { html => $html, search => $search });
 };
 
 get '/store' => sub ($c) {
