@@ -7,7 +7,7 @@ my $syl = &subs::shorthand_name($component,$syl_count); %>
 	<button id="watch_<%= $component %><%= $n %>" numero="<%= $n %>" class="centre_view watch_component watch_<%= $component %>" component="<%= $component %>"
 		app="<%= $settings->{$syl . $n}->{'app'} %>"><%= $settings->{$syl . $n}->{'formatted_name'} || $pin || $n %></button>
 	<div id="watch_configure_<%= $component %>_<%= $n %>" style="background-color:<%= $settings->{$syl . $n}->{'settings'}->{'colour'} || 'white' %>;<% if ($source eq 'gpio') { %>display:none;border:solid;width:95%;border-radius:2%;<% } %>">
-		<span style="align:center;width:100%;background-color:white;"><b>Pin <%= $pin %> <%= $component %></b></span><br>
+		<span style="align:center;width:100%;background-color:var(--panel);"><b>Pin <%= $pin %> <%= $component %></b></span><br>
 		<input placeholder="app" id="watch_input_<%= $component %>_<%= $n %>" style="width:90%;" ip="<%= $embedded->{'ip'} %>" pre_value="<%= $settings->{$syl . $n}->{'app'} %>" edt="<%= $device_type %>" component="<%= $component %>" type="text" app="<%= $settings->{$syl . $n}->{'app'} %>" numero="<%= $n %>" class="watch_input" style="width:110px;" value="<%= &subs::format_name($settings->{$syl . $n}->{'app'}) %>"><br>
 		<input type="text" value="<%= &subs::format_name($settings->{$syl . $n}->{'name'}) %>"
 			class="watch_setting" setting="name" numero="<%= $n %>" component="<%= $component %>"

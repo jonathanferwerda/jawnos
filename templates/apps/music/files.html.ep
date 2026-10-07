@@ -1,6 +1,6 @@
 <% use Mojo::Util qw/term_escape html_unescape url_unescape url_escape/; %>
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<div id="files" style="overflow: scroll; background-color:white; width:100%; text-align:center; max-width:100%;" >
+<div id="files" style="overflow: scroll; background-color:var(--panel); width:100%; text-align:center; max-width:100%;" >
 	<% my $n = 0; %>
 	<% if ($crate->{'settings'}->{'layout'} eq 'icons') { %>
 		<div style="max-height:100%;display:block;max-width:100%;">

@@ -115,7 +115,7 @@
 					<br>
 
 					<% foreach my $char ( @{$chars} ) { %>
-						<div class="attribute_characteristic" style="border:solid;border-radius:3px;width:95%;opacity:80%;background-color:white;" uuid="<%= $char->{'uuid'} %>" att="<%= $att %>" att_uuid="<%= $a->{'uuid'} %>">
+						<div class="attribute_characteristic" style="border:solid;border-radius:3px;width:95%;opacity:80%;background-color:var(--panel);" uuid="<%= $char->{'uuid'} %>" att="<%= $att %>" att_uuid="<%= $a->{'uuid'} %>">
 							<input class="char" char_input="name" uuid="<%= $char->{'uuid'} %>" style="width:40%" type="text" value="<%= $char->{'name'} %>" placeholder="Characteristic">
 							<% if ($char->{'uuid'} ne 'new') { %>
 								<input class="char" char_input="value" style="width:40%" type="text" value="<%= $char->{'value'} %>" placeholder="Value">

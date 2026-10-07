@@ -4,7 +4,7 @@ html, body {
 
 .focused_input { 	
 	background-image: url('/images/make believe/lock.png');
-  background-color: white;
+  background-color: var(--panel);
 	background-size: 20px 20px;
   background-position: 10px 10px; 
   background-repeat: no-repeat;
@@ -98,7 +98,7 @@ html, body {
 	border-color: black;
 	border-radius: 3px;
 	height: 70px;
-	background-color:white;
+	background-color:var(--panel);
 }
 
 .ide_tab.active {
@@ -199,7 +199,7 @@ html, body {
 }
 .detail_area { overflow: scroll;}
 #appointment_wrapper { bottom: 0px; position: fixed; overflow:scroll; width: 100%; right: 0px;} 
-.appointment_name { background-color: white;font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-radius: 5px;}
+.appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-radius: 5px;}
 .appointment_header { vertical-align:top; text-align: left; float: left; border-width 1px; border: solid; border-radius: 5px; }
 .walkman_controls { height: 60px; }
 .editorial_controls { height: 50px;}
@@ -362,7 +362,7 @@ canvas { overflow: scroll; z-index: 99; }
 }
 
 #timeshift_viewer {
-	background-color: white;
+	background-color: var(--panel);
 	font-size: 26px;
 }
 #timeshift {

@@ -28,7 +28,7 @@
 	<% } %>
 
 	<% if ($view eq 'home') { %>
-		<div id="gallery_home" style="background-color:white;height: 100%; width:100%;overflow:scroll;">
+		<div id="gallery_home" style="background-color:var(--panel);height: 100%; width:100%;overflow:scroll;">
 			<% &subs::subprocessor(sub { %>
 				<% foreach my $appt ( @{$appts} ) {
 					if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } else {  }
@@ -74,7 +74,7 @@
 			<img src="/images/decipherable/home.png" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 		</div>
 	<% } elsif ($view eq 'album') { %>
-		<div id="gallery_album" style="display:inline-block;background-color:white;height:100%; width:100%;overflow:scroll;">
+		<div id="gallery_album" style="display:inline-block;background-color:var(--panel);height:100%; width:100%;overflow:scroll;">
 			<%= include 'apps/gallery_album', appts => $appts, settings => $settings, asettings => $asettings, pre_count => $count, load => 'all', first_count => 0 %>
 			<% if ($settings->{'scroll_direction'} eq 'asc') { %>
 				<img src="/images/make believe/down.png" direction="asc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">

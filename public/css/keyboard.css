@@ -39,7 +39,7 @@
 	}
 	.keyboard_button {
 		height: 35px;
-		background-color: white;
+		background-color: var(--panel);
 
 		border: solid;
 		border-radius: 8px;
@@ -47,7 +47,7 @@
 		vertical-align: bottom;
 	}
 	.letter_key.keyboard_button {
-		background-color: white;
+		background-color: var(--panel);
 		width: 23px;
 		vertical-align: bottom;
 
@@ -113,7 +113,7 @@
 		display:none;
 	}
 	.letter_key.keyboard_button {
-		background-color: white;
+		background-color: var(--panel);
 		width: 20px;
 		vertical-align: bottom;
 	}
@@ -134,7 +134,7 @@
 	}
 	.keyboard_button {
 		height: 35px;
-		background-color: white;
+		background-color: var(--panel);
 		vertical-align: bottom;
 		border: solid;
 		border-radius: 8px;
@@ -148,7 +148,7 @@
 #test_input {
 	position:fixed;
 	top: 30px;
-	background-color: white;
+	background-color: var(--panel);
 	width: 80%;
 	font-size: 22px;
 	height: 30px;

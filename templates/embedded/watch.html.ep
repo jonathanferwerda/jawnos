@@ -1,5 +1,5 @@
 
-<div id="embedded_device" style="overflow:scroll;text-align:center;background-color:white;height:100%;width:100%;">
+<div id="embedded_device" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
 	<select id="embedded_device_picker">
 		<% foreach my $dt ( qw/watch teletype/ ) { %>
 			<option value="<%= $dt %>"><%= &subs::format_name($dt) %></option>
@@ -37,7 +37,7 @@
 		<% } %>
 	</div>
 	<br>
-	<div id="teletype" style="text-align:center;background-color:white;">
+	<div id="teletype" style="text-align:center;background-color:var(--panel);">
 		<h2>IP: <%= $teletype->{'ip'} %><br>Mac: <%= $teletype->{'mac'} %></h2>
 		<div id="teletype_homebase" style="background-color:orange">
 			<input type="text" id="teletype_authorization" value="<%= $tauthorization %>"><br>

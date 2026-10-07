@@ -21,7 +21,7 @@
 		<% if ($c->session('authentication') eq 'approved') { %>
 
 			<div id="mail_centre" style="float:right;">
-				<div id="mail" style="position:fixed;z-index:1000;right:5px;top:86px;height:50%;width:100%;display:none;background-color:white;border:solid;border-width:4px;border-radius:10px"></div>
+				<div id="mail" style="position:fixed;z-index:1000;right:5px;top:86px;height:50%;width:100%;display:none;background-color:var(--panel);border:solid;border-width:4px;border-radius:10px"></div>
 				<script>var mail_ws_url = '<%= $mail_ws_url %>';</script>
 				<script>var paperboy_url = '<%= $paperboy_url %>';</script>
 			</div>

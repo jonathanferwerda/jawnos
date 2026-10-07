@@ -1,4 +1,4 @@
-<div id="measures" style="width:100%;height:100%;overflow:scroll;background-color:white;">
+<div id="measures" style="width:100%;height:100%;overflow:scroll;background-color:var(--panel);">
 	<div id="measures_toolbar" style="width:100%;">
 		<img class="little_thumb hover measure_edit_toggle" uuid="new" src="/images/studio/plus.png">
 	</div>

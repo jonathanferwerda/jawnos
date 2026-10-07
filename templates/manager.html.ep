@@ -36,7 +36,7 @@
 
 <div id="top_right_buttons">
 	<img src="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover" id="assistant">
-	<div id="assistant_view" style="position:fixed;height:320px;width:300px;display:none;background-color:white;border:solid;border-radius:5px;">
+	<div id="assistant_view" style="position:fixed;height:320px;width:300px;display:none;background-color:var(--panel);border:solid;border-radius:5px;">
 		<div id="assistant_header" style="position:absolute;top:0px;width:100%;">
 			<span style="float:right;">
 				<img id="assistant_close" class="little_thumb hover" style="float:right;" src="/images/make believe/cancel_button.png">

@@ -16,7 +16,7 @@
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
 	</head>
 	<body>
-	<div id="everything" style="background-color:white;">
+	<div id="everything" style="background-color:var(--panel);">
 		<%= content %>
 	</div>
 	<script></script>

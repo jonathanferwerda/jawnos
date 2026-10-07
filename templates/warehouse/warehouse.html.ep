@@ -2,7 +2,7 @@
 % use Mojo::JSON qw/decode_json encode_json/;
 % $settings->{'place'} = eval { return decode_json $settings->{'place'} } || ['all'];
 
-<div id="warehouse" style="width:100%;height:100%;background-color:white;">
+<div id="warehouse" style="width:100%;height:100%;background-color:var(--panel);">
 	<select id="warehouse_place" class="warehouse_config" config="place" multiple style="height:100px;">
 		<option value="all" <% if (grep { $_ eq 'all' } @{$settings->{'place'}}) { %>selected<% } %>>All</option>
 		<% foreach my $p ( sort { $a->{'app'} cmp $b->{'app'} } @{$places} ) { %>

@@ -1,5 +1,5 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
-<div id="embedded" style="overflow:scroll;text-align:center;background-color:white;height:100%;width:100%;">
+<div id="embedded" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
 	<select id="embedded_view"> value="<%= $view %>">
 		<% foreach my $v ( qw/gpio pins diagrams/ ) { %>
 			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
@@ -89,7 +89,7 @@
 			</div>
 			<br>
 
-			<div id="teletype" style="text-align:center;background-color:white;">
+			<div id="teletype" style="text-align:center;background-color:var(--panel);">
 				<div id="teletype_wifi" style="background-color:blue">
 					<b>AP SSID</b>
 					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid"><br>

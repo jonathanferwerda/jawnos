@@ -1,6 +1,6 @@
 
 
-<span id="web_toolbar" style="width:100%; position:absolute;top:40px;height:50px;background-color:white;">
+<span id="web_toolbar" style="width:100%; position:absolute;top:40px;height:50px;background-color:var(--panel);">
 	<img class="little_thumb hover web_toggle" src="/images/decipherable/home.png">
 
 	<span style="font-size:30px;vertical-align:top;" id="website_title"><%= &subs::format_name($app) %></span>
@@ -12,7 +12,7 @@
 
 <% my $websites = &subs::db_query('select * from websites order by timestamp desc')->hashes; %>
 
-<span id="web" style="background-color:white;width:100%;height:calc(100% - 50px);position:absolute;top:90px;overflow:scroll;">
+<span id="web" style="background-color:var(--panel);width:100%;height:calc(100% - 50px);position:absolute;top:90px;overflow:scroll;">
 	<table>
 		<thead>
 			<th>App</th><th>Address</th><th>Time</th><th></th>

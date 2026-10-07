@@ -1,7 +1,7 @@
 <% if ($from =~ 'search') { %>
 	<% my $search = $c->param('search') || $c->param('s'); %>
 	% title 'Manager Search: ' . $search;
-	<div id="search_entanglement" style="background-color:white;display:block;">
+	<div id="search_entanglement" style="background-color:var(--panel);display:block;">
 		<% foreach my $se ( @{$config->{'search_engines'}} ) { %>
 			<button type="button" class="search_engine_grabber" search="<%= $search %>" view="<%= $se->{'view'} %>" name="<%= $se->{'name'} %>" url="<%= $se->{'url'} %>"><%= $se->{'name'} %></button>
 		<% } %>
@@ -15,7 +15,7 @@
 <% no warnings 'uninitialized'; %>
 <% my $pseudonyms; %>
 
-<span timestamp="<%= $timestamp %>" id="<%= $timestamp %>" class="appointment_contents" app="<%= $appointments->[0] %>" style="overflow:scroll; background-color:white;">
+<span timestamp="<%= $timestamp %>" id="<%= $timestamp %>" class="appointment_contents" app="<%= $appointments->[0] %>" style="overflow:scroll; background-color:var(--panel);">
 	<% foreach my $a (@{$appointments}) { %>
 		<% if ($from eq 'store') { %>
 			<% $pseudonyms = &Manager::pseudonym_maker('store',$a); %>

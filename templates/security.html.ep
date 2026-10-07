@@ -1,7 +1,7 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
 
-<div id="security" style="background-color:white;width:100%;height:100%;overflow:scroll;">
-	<div style="position:absolute;width:200px;text-align:right;;right:0px;background-color:white;">
+<div id="security" style="background-color:var(--panel);width:100%;height:100%;overflow:scroll;">
+	<div style="position:absolute;width:200px;text-align:right;;right:0px;background-color:var(--panel);">
 		<button class="security_view_select" view="padlock" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
 		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
 		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>

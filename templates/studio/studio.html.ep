@@ -99,7 +99,7 @@
 		</span>
 	</div>
 	<div id="studio_track_container"></div>
-	<div id="studio_config" style="display:none; width:100%;background-color:white;">
+	<div id="studio_config" style="display:none; width:100%;background-color:var(--panel);">
 		<h1>Configure</h1>
 
 		<div id="song_controls" style="">

@@ -1,4 +1,4 @@
-<div id="file_information_<%= $uuid %>" class="file_information" file="<%= $file->{'f'} %>" app="<%= $appt->{'app'} %>" app_uuid="<%= $appt->{'uuid'} %>" file_uuid="<%= $file->{'uuid'} %>" style="border:solid;border-radius:4px;border-width:3px;position:fixed;width:300px;height:250px;overflow:scroll;top:<%= $mouse->{'y'} %>px;left:<%= $mouse->{'x'} %>px;background-color:white;">
+<div id="file_information_<%= $uuid %>" class="file_information" file="<%= $file->{'f'} %>" app="<%= $appt->{'app'} %>" app_uuid="<%= $appt->{'uuid'} %>" file_uuid="<%= $file->{'uuid'} %>" style="border:solid;border-radius:4px;border-width:3px;position:fixed;width:300px;height:250px;overflow:scroll;top:<%= $mouse->{'y'} %>px;left:<%= $mouse->{'x'} %>px;background-color:var(--panel);">
 	<img src="/images/make believe/cancel_button.png" class="little_thumb" style="position:absolute;right:0px;" onclick="$('#file_information_<%= $uuid %>').remove()">
 	<img src="/icons/trash.png" class="little_thumb delete_file" app="<%= $appt->{'app'} %>" app_uuid="<%= $appt->{'uuid'} %>" file_uuid="<%= $file->{'uuid'} %>">
 	<h2>

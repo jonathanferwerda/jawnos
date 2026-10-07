@@ -34,7 +34,7 @@
 		</div>
 	</div>
 	<div id="ide_main_window" style="width:100%;height:100%;border:solid;border-width:3px;">
-		<textarea id="ide_content" style="font-size:20px;width:99%;height:88%;max-height:700px;tab-size:2;background-color:white;" upgradeable="no"></textarea>
+		<textarea id="ide_content" style="font-size:20px;width:99%;height:88%;max-height:700px;tab-size:2;background-color:var(--panel);" upgradeable="no"></textarea>
 	</div>
 </div>
 <script>

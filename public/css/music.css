@@ -109,7 +109,7 @@ html, body {
 
 #disclaimer {
 	position:fixed;
-	background-color: white;
+	background-color: var(--panel);
 	border-radius: 1px;
 	top: 2px;
 	font-size: 12px;

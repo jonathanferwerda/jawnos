@@ -34,7 +34,7 @@
 		<image src="/images/decipherable/gear.png" class="little_thumb hover" id="music_configuration_toggle" style="position:absolute;top:0px;right:4px;">
 	</div>
 	<div id="music_library">
-		<div id="music_artists" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:white;">
+		<div id="music_artists" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:var(--panel);">
 			<button id="all_music_artists" class="all_music" library="artists" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_artists'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
 			<% foreach my $art ( sort keys %{$crate->{'artists'}} ) { %>
 				<% if ($crate->{'artists'}->{$art}->{'path'}) { %>
@@ -45,7 +45,7 @@
 				<% } %>
 			<% } %>
 		</div>
-		<div id="music_albums" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:50%;background-color:white;">
+		<div id="music_albums" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:50%;background-color:var(--panel);">
 			<button id="all_music_albums" class="all_music" library="albums" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_albums'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
 			<% foreach my $alb ( sort keys %{$crate->{'albums'}} ) { %>
 				<% if ($crate->{'albums'}->{$alb}->{'path'}) { %>

@@ -2,7 +2,7 @@
 	<head>
 	</head>
 <body>
-	<div id="handbook" style="background-color:white;overflow:scroll;width:100%;">
+	<div id="handbook" style="background-color:var(--panel);overflow:scroll;width:100%;">
 		<div id="handbook_header">
 			<b>
 				<span style="float:right;">

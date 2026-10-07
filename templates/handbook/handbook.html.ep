@@ -1,6 +1,6 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
 <% my $favourites = eval { return decode_json &subs::setting_grabber({ app => 'handbook', setting => 'favourites' }) } || {}; %>
-<div id="handbook" style="text-align:center;width:100%;height:100%;background-color:white;overflow:scroll;" class="appointment">
+<div id="handbook" style="text-align:center;width:100%;height:100%;background-color:var(--panel);overflow:scroll;" class="appointment">
 	<h2>
 		<img src="/images/decipherable/home.png" class="little_thumb hover handbook_link" style="float:right;" chapter="handbook">
 	</h2>

@@ -1,4 +1,4 @@
-<div id="travel" style="background-color:white;width:100%;overflow:scroll;">
+<div id="travel" style="background-color:var(--panel);width:100%;overflow:scroll;">
 	<img src="/images/decipherable/gear.png" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
 	<div id="travel_config" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } %>" status="<%= $settings->{'config_toggle'} %>">
 		<button id="travel_home_plate" status="<%= $home_plate_enabled %>"  style="vertical-align:top;">Home Plate</button>

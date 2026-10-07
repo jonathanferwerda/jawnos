@@ -34,9 +34,9 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; }
-body { background-color: white; color: var(--ink); }
-body.dark_theme { --ink: #f2f2f2; --ink-muted: #cccccc; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; }
+body { background-color: var(--panel); color: var(--ink); }
+body.dark_theme { --ink: #f2f2f2; --ink-muted: #cccccc; --panel: #1e1e1e; }
 body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
 body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .huge_thumb,
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
@@ -114,7 +114,7 @@ textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; bo
 	height: 80px;
 	bottom: 1px;
 	left: 70px;
-	background-color:white;
+	background-color:var(--panel);
 	display:none;
 }
 

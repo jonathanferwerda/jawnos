@@ -1,5 +1,5 @@
 
-<table style="width:100%;background-color:white;border:solid;border-radius:10px;">
+<table style="width:100%;background-color:var(--panel);border:solid;border-radius:10px;">
 	<thead>
 		<th></th><th></th>
 	</thead>

@@ -18,7 +18,7 @@
 			</div>
 		</div>
 
-		<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:white;border:solid;border-color:black;border-radius:20px;">
+		<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:var(--panel);border:solid;border-color:black;border-radius:20px;">
 
 			<% foreach my $m ( sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$mail} ) { %>
 				<%= include 'mail/message', m => $m %>

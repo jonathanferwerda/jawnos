@@ -5,7 +5,7 @@
 			<input type="checkbox" <% if ($task->{'completed'} eq 'on') { %> checked<% } %> class="task_input task_checkbox" name="completed" style="float:left;vertical-align:top;">
 
 			<% if ($task->{'uuid'} ne 'new') { %>
-				<span class="hover" onclick="appointmentGrabber('<%= $task->{'task'} %>')" style="vertical-align:bottom;background-color:white;opacity:80%;float:left;width:75%;font-size:20px;"><%= &subs::format_name(&subs::shorthand_name($task->{'task'},50)) %></span>
+				<span class="hover" onclick="appointmentGrabber('<%= $task->{'task'} %>')" style="vertical-align:bottom;background-color:var(--panel);opacity:80%;float:left;width:75%;font-size:20px;"><%= &subs::format_name(&subs::shorthand_name($task->{'task'},50)) %></span>
 			<% } else { %>
 				<input class="task_text task_input" placeholder="Task" name="task" style="width:80%;vertical-align:top;" value="<%= &subs::format_name($task->{'task'}) %>">
 			<% } %>
@@ -41,7 +41,7 @@
 				</table>
 
 				<br>
-				<table style="width:99%;vertical-align:bottom;padding-right:10px;background-color:white;opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+				<table style="width:99%;vertical-align:bottom;padding-right:10px;background-color:var(--panel);opacity:80%;border:solid;border-width:3px;border-radius:5px;">
 					<thead>
 						<th style="width:28%">Renew</th>
 						<% foreach my $bm ( grep { $_ ne 'total' } sort keys %{$gb::budget_modes} ) { %>
@@ -61,7 +61,7 @@
 			</span>
 
 			<% if ($task->{'uuid'} eq 'new' && $parent == 0) { %>
-				<table style="width: 99%;vertical-align:bottom;padding-right:10px;background-color:white;opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+				<table style="width: 99%;vertical-align:bottom;padding-right:10px;background-color:var(--panel);opacity:80%;border:solid;border-width:3px;border-radius:5px;">
 					<thead>
 						<th>Sort</th>
 						<th>Filter</th>

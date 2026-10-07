@@ -1,6 +1,6 @@
 <div id="pseudonym_home" style="background-color:<%= $config->{$device}->{'pseudonym_home'}->{'background_colour'} %>">
 	<div id="search_entanglement" style="display:inline-block;top:-10px;" >
-		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:white;border:solid;border-width:2px;border-radius:3px;"></div>
+		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:var(--panel);border:solid;border-width:2px;border-radius:3px;"></div>
 		<input id="search"  style="vertical-align:top;min-width:200px;" entry="text" autocomplete="off" class="add_something timed_input search" id="search" placeholder="anything?" >
 		<img id="search_toggle" class="little_thumb search_toggle hover" style="vertical-align:top;" src="images/make believe/mirror.png"></img><br>
 		<div id="main_upload_container">

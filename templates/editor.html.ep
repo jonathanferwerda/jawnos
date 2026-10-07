@@ -1,4 +1,4 @@
-<div id="editor" style="background-color:white;overflow:scroll;">
+<div id="editor" style="background-color:var(--panel);overflow:scroll;">
 	<% my @article = grep { $_->{'uuid'} eq $uuid } @{$articles}; %>
 	<select id="editor_article_picker">
 		<% foreach my $a ( @{$articles } ) { %>

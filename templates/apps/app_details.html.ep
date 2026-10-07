@@ -44,13 +44,13 @@
 
 
 
-	<span style="display:none;position:fixed;background-color:white;border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
+	<span style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
 	<span class="transaction_movement_container" app="<%= $a %>">
 		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style=""><br><br>
 			<%= include 'apps/transaction/' . $appts->{$a}->{'setting'}->{'movement'}, appts => $appts, a => $a, app => {}, source => 'transaction' %>
 		</span>
 	</span>
-	<table style="position:absolute;height:60px;width:100%;bottom:0px;background-color:white;">
+	<table style="position:absolute;height:60px;width:100%;bottom:0px;background-color:var(--panel);">
 		<thead>
 			<% my @th = qw/amount tax aux total/; %>
 			<% foreach my $th ( @th ) { %>

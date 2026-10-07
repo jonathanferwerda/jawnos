@@ -167,7 +167,7 @@ $(document).on('click', '.editor_content_adder', function() {
 		content = '<' + type + ' type="' + type + '" class="editor_content_component grapple_inactive" href="">' + type + ' type</' + type + '>';
 	}
 	else if (type == 'img') {
-		content = '<' + type + ' type="' + type + '" style="background-color:white;" class="medium_thumb editor_content_component grapple_inactive" src="/images/make believe/camera.png"></' + type + '>';
+		content = '<' + type + ' type="' + type + '" style="background-color:var(--panel);" class="medium_thumb editor_content_component grapple_inactive" src="/images/make believe/camera.png"></' + type + '>';
 	}
 
 	if ($('.grapple_active').length > 0) {
