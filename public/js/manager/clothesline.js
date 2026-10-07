@@ -17,14 +17,23 @@ function clotheslineHanger(clothes) {
 
 	if (hangingClothes == 0) {
 		hangingClothes = 1;
+		// a missing list must not throw here - the caller dies with it and then
+		// nothing else on the canvas gets printed either
+		if (!clothes) { clothes = []; }
 		wardrobe = clothes;
 		var maxWidth = 140;
 		var totalWidth = maxWidth * clothes.length;
 		var layout = localStorage.getItem('layout');
-		var canvas = document.getElementById(layout);
+		var canvas = layout ? document.getElementById(layout) : undefined;
+		if (!canvas) { hangingClothes = 0; return; }
 		ctx = canvas.getContext('2d');
-		ctx.strokeStyle = jawnosInk();
-		ctx.lineWidth = clothesLinePos['bordersize'];
+		// the rail hangs over whatever is behind it - a background picture, a
+		// window - so the themed ink is laid over a contrasting halo instead of
+		// being trusted to show up on its own
+		var ink = jawnosInk();
+		var halo = jawnosInkHalo(ink);
+		ctx.strokeStyle = halo;
+		ctx.lineWidth = clothesLinePos['bordersize'] + 3;
 		ctx.beginPath();
 
 		var minHeight = headerHeight;
@@ -37,10 +46,15 @@ function clotheslineHanger(clothes) {
 			ctx.moveTo(0,minHeight);
 			ctx.lineTo(canvas.width, minHeight);
 			ctx.moveTo(0,minHeight + clothesLineHeight);
-			ctx.lineTo(canvas.width,minHeight + clothesLineHeight);
+			ctx.lineTo(canvas.width, minHeight + clothesLineHeight);
+			ctx.stroke();
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = clothesLinePos['bordersize'];
 			ctx.stroke();
 		}
 
+		ctx.strokeStyle = ink;
+		ctx.lineWidth = clothesLinePos['bordersize'];
 		ctx.font = "400 20px Times New Roman";
 
 		$.each(clothes, function(i,v) {
@@ -62,10 +76,15 @@ function clotheslineHanger(clothes) {
 			ctx.strokeRect(startW,minHeight,maxWidth,clothesLineHeight);
 			ctx.fillRect(startW,minHeight,maxWidth,clothesLineHeight);
 			ctx.fill();
-			ctx.fillStyle = jawnosInk();
+			// outlined, so the name reads over any garment colour or picture
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((maxWidth - textMeasure) / 2) + startW;
+			ctx.lineWidth = 3;
+			ctx.strokeStyle = halo;
+			ctx.strokeText(v.formatted_name, textPos, maxHeight - (clothesLineHeight / 3));
+			ctx.fillStyle = ink;
 			ctx.fillText(v.formatted_name,  textPos ,  maxHeight - (clothesLineHeight / 3));
+			ctx.lineWidth = clothesLinePos['bordersize'];
 			ctx.fill();
 			ctx.stroke();
 

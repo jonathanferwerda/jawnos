@@ -691,6 +691,18 @@ function jawnosInk() {
 	try { c = getComputedStyle(document.body).getPropertyValue('--ink'); } catch (e) { c = ''; }
 	return (c && c.trim()) || '#000000';
 }
+// A colour that contrasts with the ink. Canvas art that is drawn over a user's
+// background picture cannot trust the themed ink alone (a dark scheme gives
+// near-white ink, which vanishes on a light photo), so it gets outlined with
+// this instead.
+function jawnosInkHalo(ink) {
+	var hex = (ink || '#000000').replace('#', '');
+	if (hex.length == 3) { hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]; }
+	var n = parseInt(hex, 16);
+	if (isNaN(n)) { n = 0; }
+	var lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+	return lum > 0.5 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
+}
 function jawnosRgbToHsl(r, g, b) {
 	r /= 255; g /= 255; b /= 255;
 	var max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -729,6 +741,9 @@ function jawnosApplyInk() {
 	if (!m) { return; }
 	var parts = m[1].split(',').map(function (x) { return parseFloat(x); });
 	if (parts.length < 3) { return; }
+	// a transparent body has no scheme colour to derive from; deriving one from
+	// black would flip the ink to white and hide the canvas art
+	if (parts.length >= 4 && parts[3] === 0) { return; }
 	var r = parts[0], g = parts[1], b = parts[2];
 	var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 	var hsl = jawnosRgbToHsl(r, g, b);
