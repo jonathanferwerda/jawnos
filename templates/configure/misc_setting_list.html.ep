@@ -1,9 +1,11 @@
+<% use Mojo::JSON qw/encode_json/; %>
 <br>
 Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 <br>
 
 <% my $signatorial = &subs::signatorial_designer(); %>
 <% my $dev = &subs::device_setter(); %>
+<% my @devices = ( $signatorial, @gb::device_types ); %>
 <% my @fonts = (
 	'system-ui, sans-serif',
 	'Arial, sans-serif',
@@ -16,6 +18,61 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	'Comic Sans MS, cursive',
 	'Impact, sans-serif'
 ); %>
+
+<%# ---- colour schemes: 20 base hues, each expanded to 6 light tints -------------- %>
+<% my $tint = sub {
+	my ($hex, $f) = @_;
+	my ($r, $g, $b) = map { hex } ($hex =~ /^#?([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$/);
+	my @o = map { int($_ * $f + 255 * (1 - $f) + 0.5) } ($r, $g, $b);
+	return sprintf('#%02X%02X%02X', @o);
+}; %>
+<% my @scheme_bases = (
+	[ 'Rose',    '#E57373' ],
+	[ 'Coral',   '#F28B82' ],
+	[ 'Amber',   '#FFB74D' ],
+	[ 'Gold',    '#FDD835' ],
+	[ 'Lime',    '#AED581' ],
+	[ 'Green',   '#81C784' ],
+	[ 'Emerald', '#4DB6AC' ],
+	[ 'Teal',    '#4DD0E1' ],
+	[ 'Cyan',    '#4FC3F7' ],
+	[ 'Sky',     '#64B5F6' ],
+	[ 'Blue',    '#7E9FF5' ],
+	[ 'Indigo',  '#7986CB' ],
+	[ 'Violet',  '#9575CD' ],
+	[ 'Purple',  '#BA68C8' ],
+	[ 'Magenta', '#E066C8' ],
+	[ 'Pink',    '#F06292' ],
+	[ 'Clay',    '#A1887F' ],
+	[ 'Sand',    '#D7C4A3' ],
+	[ 'Slate',   '#90A4AE' ],
+	[ 'Graphite','#B0BEC5' ]
+); %>
+<% my %schemes; foreach my $b (@scheme_bases) { $schemes{$b->[0]} = [ map { $tint->($b->[1], $_) } (0.16, 0.26, 0.36, 0.46, 0.56, 0.66) ]; } %>
+
+<style>
+	.misc_device_tab { padding:4px 12px; cursor:pointer; border-radius:6px; border:solid 1px; background:transparent; font-size:14px; }
+	.misc_device_tab.selected { background:yellow; font-weight:bold; }
+	.misc_device_block { display:none; }
+	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:104px; font-size:13px; text-align:center; }
+	.misc_colour_chip input[type=color] { width:96px; height:30px; }
+</style>
+
+<div class="misc_device_tabs" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0;">
+	<% foreach my $dt (@devices) { %>
+		<% my $name = $dt eq $signatorial ? 'Me' : &subs::format_name($dt); %>
+		<button class="misc_device_tab" device="<%= $dt %>"><%= $name %></button>
+	<% } %>
+	<span style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+		<b>Colour Scheme</b>
+		<select id="colour_scheme">
+			<option value="">&mdash; choose &mdash;</option>
+			<% foreach my $b (@scheme_bases) { %>
+				<option value="<%= $b->[0] %>"><%= $b->[0] %></option>
+			<% } %>
+		</select>
+	</span>
+</div>
 
 <div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
 	<h1 style="margin:0;">Titles</h1>
@@ -30,9 +87,9 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	</label>
 </div>
 
-<% foreach my $dt ( ($signatorial, @gb::device_types ) ) { %>
-	<% my $device_name = $dt eq $signatorial ? 'Me' : $dt; %>
-	<div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
+<% foreach my $dt (@devices) { %>
+	<% my $device_name = $dt eq $signatorial ? 'Me' : &subs::format_name($dt); %>
+	<div class="misc_section misc_device_block" device="<%= $dt %>" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
 		<h1 style="margin:0;"><%= $device_name %></h1>
 
 		<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
@@ -69,7 +126,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 							<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
 						<% } %>
 					</select>
-					<b style="font-size:11px;">Archive</b>
+					<b style="font-size:13px;">Archive</b>
 					<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
 						<option value="">None</option>
 						<% foreach my $rm ( @{$remote_machines} ) { %>
@@ -84,7 +141,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		<div style="display:flex;flex-wrap:wrap;gap:8px;">
 			<% my @colours = @gb::misc_settings; %>
 			<% foreach my $k ( @colours ) { %>
-				<label style="display:flex;flex-direction:column;align-items:center;width:96px;font-size:10px;text-align:center;">
+				<label class="misc_colour_chip">
 					<%= $k %>
 					<input type="color" object="<%= $k %>" id="<%= $k %>_background_colour" app="appearance" device="<%= $dt %>" class="misc_setting" setting="<%= $k %>_background_colour" value="<%= $config->{$dt}->{$k}->{'background_colour'} %>">
 				</label>
@@ -92,3 +149,37 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		</div>
 	</div>
 <% } %>
+
+<script>
+	var jawnos_colour_schemes = <%== encode_json \%schemes %>;
+	var jawnos_colour_keys = <%== encode_json \@gb::misc_settings %>;
+	(function () {
+		function showDevice(dev) {
+			$('.misc_device_tab').removeClass('selected');
+			$('.misc_device_tab[device="' + dev + '"]').addClass('selected');
+			$('.misc_device_block').hide();
+			$('.misc_device_block[device="' + dev + '"]').show();
+		}
+		$(document).on('click', '.misc_device_tab', function () {
+			showDevice($(this).attr('device'));
+		});
+		var initial = $('.misc_device_tab[device="<%= $dev %>"]').length ? '<%= $dev %>' : $('.misc_device_tab').first().attr('device');
+		if (initial) { showDevice(initial); }
+
+		$(document).on('change', '#colour_scheme', function () {
+			var palette = jawnos_colour_schemes[$(this).val()];
+			if (!palette) { return; }
+			var device = $('.misc_device_tab.selected').attr('device');
+			if (!device) { return; }
+			// don't let the "Anchor" toggle copy the scheme to every device
+			var anchor = $('.anchor_all_settings[setting_type="misc"]');
+			var anchor_was = anchor.prop('checked');
+			anchor.prop('checked', false);
+			$.each(jawnos_colour_keys, function (i, k) {
+				var colour = palette[i % palette.length];
+				$('.misc_setting[setting="' + k + '_background_colour"][device="' + device + '"]').val(colour).trigger('change');
+			});
+			anchor.prop('checked', anchor_was);
+		});
+	})();
+</script>
