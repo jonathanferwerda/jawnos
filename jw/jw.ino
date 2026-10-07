@@ -6,7 +6,6 @@
 #include <WebServer.h>
 
 
-TFT_eSPI tft;
 #include <UrlEncode.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -23,6 +22,12 @@ TFT_eSPI tft;
 #include <BLE2902.h>
 #include "FS.h"
 #include "FFat.h"
+
+// The current LilyGoLib keeps its board object in a global reference called
+// `instance` (LilyGoWatch2022 for the T-Watch S3). The rest of this sketch was
+// written against the old fork, which called it `watch`.
+#define watch instance
+
 ESP32Time rtc;
 
 int screenRotation = 2;
@@ -96,7 +101,6 @@ bool stepCounter = true;
 uint32_t steps;
 uint32_t stepSampleMillis = 0;
 JSONVar stepped;
-#include <driver/i2s.h>
 #include <driver/gpio.h>
 
 /// Include the official playback engine libraries from the template
@@ -110,9 +114,60 @@ String https_request(String url, String method = "GET", String payloadData = "")
 String WAV_FILE_PATH = "/rec.wav";
 #define AUDIO_BUFFER_CHUNK_SIZE 500
 
+// The recording path still needs these two, they used to come from the old fork's header
+#define MIC_I2S_SAMPLE_RATE 16000
+#define MIC_I2S_BITS_PER_SAMPLE 16
+
+// ESP8266Audio normally drives the I2S DAC itself with AudioOutputI2S; the LilyGo
+// library owns the codec now, so this hands the generator's samples to it instead.
+class LilyGoAudioSink : public AudioOutput
+{
+  public:
+    LilyGoAudioSink(AudioOutputIf *codec) : codec(codec) {}
+    bool begin() override {
+      if (!codec) {
+        return false;
+      }
+      return codec->open(16, (uint8_t)channels, (uint32_t)hertz);
+    }
+    bool ConsumeSample(int16_t sample[2]) override {
+      if (!codec) {
+        return false;
+      }
+      MakeSampleStereo16(sample);
+      int16_t frame[2] = { sample[LEFTCHANNEL], sample[RIGHTCHANNEL] };
+      return codec->write((const uint8_t *)frame, sizeof(frame)) == (int)sizeof(frame);
+    }
+    bool stop() override {
+      if (codec) {
+        codec->close();
+      }
+      return true;
+    }
+  private:
+    AudioOutputIf *codec;
+};
+
 AudioGeneratorWAV       *wav = nullptr;
 AudioFileSourceFATFS    *file_source = nullptr;
-AudioOutputI2S          *out_hardware = nullptr;
+LilyGoAudioSink         *out_hardware = nullptr;
+
+// The watch face labels (see watch_face_maker); declared up here because loop()
+// refreshes the status bar before they are defined further down the file.
+static lv_obj_t *face_date = nullptr;
+static lv_obj_t *face_time = nullptr;
+static lv_obj_t *face_sec = nullptr;
+static lv_obj_t *face_steps = nullptr;
+static lv_obj_t *face_battery = nullptr;
+static lv_obj_t *face_percent = nullptr;
+static lv_obj_t *face_volts = nullptr;
+static lv_obj_t *face_name = nullptr;
+static lv_obj_t *face_ip = nullptr;
+static lv_obj_t *face_gw = nullptr;
+static lv_obj_t *face_ap = nullptr;
+static lv_obj_t *face_apgw = nullptr;
+static lv_obj_t *face_presidente = nullptr;
+static lv_obj_t *notification_lines[4] = { nullptr, nullptr, nullptr, nullptr };
 
 // Tracking operation status flags across threads
 volatile bool isRecording = false;
@@ -120,7 +175,7 @@ volatile bool isPlaying = false;
 
 #define FORMAT_FFAT true
 
-SX1262 radio = newModule();
+// `radio` is now the global SX1262 that LilyGoLib creates for this board
 volatile bool operationDone = false;
 bool transmitFlag = false;
 void setFlag(void) {
@@ -360,13 +415,10 @@ void setup() {
   
 
 
-  beginLvglHelper();
+  beginLvglHelper(instance);
   lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), LV_PART_MAIN);
 
 
-  // Set the interrupt handler of the PMU
-  watch.attachPMU(setPMUFlag);
-  watch.setSysPowerDownVoltage(2600);
   setCpuFrequencyMhz(80);
   button_writer();
 
@@ -605,7 +657,7 @@ void setup() {
       String resetter = "[]";
       wigi = JSON.parse(resetter);
       stepped = JSON.parse(resetter);
-      watch.resetPedometer();
+      watch.resetStepCounter();
       // the counter starts again from zero, so start the next batch there too
       // instead of recording the reset as a step
       steps = 0;
@@ -648,7 +700,7 @@ void setup() {
     server.send(200, "text/plain", "homebase ip is now " + homebaseIP);
   });
 //  wifi_server();
-  watch.enableSystemVoltageMeasure();
+  // battery/system voltage measurement is part of the library's PMU setup now
   readFile(FFat, "/bootreport.txt");
   if (returner == "success") {
     configRestore();
@@ -707,13 +759,13 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
 // for tilt alone, which quietly dropped the pedometer's interrupt after a few days.
 void step_writer() {
   if (sportsIrq) {
-    watch.readBMA();          // clear the latched interrupt status
+    watch.loopSensor();       // the library reads and clears the latched interrupt
     sportsIrq = false;
   }
   if (stepCounter != true || jw_room != "watch") {
     return;
   }
-  uint32_t counter = watch.getPedometerCounter();
+  uint32_t counter = watch.getStepCounter();
   if (counter == steps) {
     return;                   // no steps since the last sample, nothing to add
   }
@@ -795,8 +847,8 @@ JSONVar printAllMacAddresses() {
 
 
 void loop() {
-  char count = 0;;
-//  watch.attachPMU(setPMUFlag);
+  char count = 0;
+  watch.loop();   // pumps the PMU and motion sensor events into the callbacks
 
   if (jw_room == "watch") {
     time_writer("loop");
@@ -818,25 +870,31 @@ void loop() {
     }
     delay(60);
   }
-  watch.setTextFont(2);
   int volts = watch.getBatteryPercent();
-  if (volts < 20) {
-    watch.setTextColor(TFT_RED, TFT_BLACK);
-  }
-  else if (volts < 40) {
-    watch.setTextColor(TFT_YELLOW, TFT_BLACK);
-  }
-  else {
-    watch.setTextColor(TFT_GREEN, TFT_BLACK);
-  }
-  watch.drawNumber(watch.getBattVoltage(), 214, 5 );
-  watch.drawNumber(watch.getBatteryPercent(), 15, 5);
-  watch.drawString("%", 29, 5);
-  if (computer_name != "") {
-    watch.drawString(computer_name, 120, 5);
-  }
-  else {
-   watch.drawString(homebaseIP, 120, 5);
+  if (face_battery) {
+    lv_color_t status_colour;
+    if (volts < 20) {
+      status_colour = lv_color_hex(0xFF0000);
+    }
+    else if (volts < 40) {
+      status_colour = lv_color_hex(0xFFFF00);
+    }
+    else {
+      status_colour = lv_color_hex(0x00FF00);
+    }
+    lv_obj_set_style_text_color(face_battery, status_colour, LV_PART_MAIN);
+    lv_obj_set_style_text_color(face_percent, status_colour, LV_PART_MAIN);
+    lv_obj_set_style_text_color(face_volts, status_colour, LV_PART_MAIN);
+    lv_label_set_text_fmt(face_battery, "%d", volts);
+    lv_label_set_text(face_percent, "%");
+    // getBattVoltage() is in volts now, the old fork handed out millivolts
+    lv_label_set_text_fmt(face_volts, "%dmV", (int)(watch.getBattVoltage() * 1000));
+    if (computer_name != "") {
+      lv_label_set_text(face_name, computer_name.c_str());
+    }
+    else {
+      lv_label_set_text(face_name, homebaseIP.c_str());
+    }
   }
   touch_watch();
   if (buttonMillis == 0 && sportsIrq == 0) {
@@ -1274,7 +1332,9 @@ void notification_display(String title, String notification) {
     title.toCharArray(t, t_length);
     notification.toCharArray(n, n_length);
 
-    lv_obj_t * mb = lv_msgbox_create(lv_scr_act(), t, n, btns, true);
+    lv_obj_t * mb = lv_msgbox_create(lv_scr_act());
+    lv_msgbox_add_title(mb, t);
+    lv_msgbox_add_text(mb, n);
 
 
     //  lv_obj_center(mb);
@@ -1287,35 +1347,80 @@ void notification_display(String title, String notification) {
 
 void wakeup() {
   // Serial.println("Wakeup");
-  watch.configreFeatureInterrupt(
-    SensorBMA423::INT_STEP_CNTR |   // Pedometer interrupt
-    SensorBMA423::INT_ACTIVITY |    // Activity interruption
-    SensorBMA423::INT_TILT |        // Tilt interrupt
-    // SensorBMA423::INT_WAKEUP |      // DoubleTap interrupt
-    SensorBMA423::INT_ANY_NO_MOTION,// Any  motion / no motion interrupt
-    true);
   watch.incrementalBrightness(brightnessLevel);
   //display_exit();
   buttonMillis = millis();
   lastMillis = millis();
   pmuIrq = false;
-  watch.setWaveform(0, vibrateLevel);  // play effect
-  // play the effect!
-  watch.run();
+  watch.setHapticEffects(vibrateLevel);
+  watch.vibrator();
 
   
+}
+
+// ---- the watch face ----------------------------------------------------------
+// The old fork drew this text straight onto the panel with TFT_eSPI; LVGL owns the
+// screen now, so the same lines are labels that get refreshed in place.
+static lv_obj_t *face_label_maker(int x, int y, const lv_font_t *font, lv_color_t colour)
+{
+  lv_obj_t *label = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(label, x, y);
+  lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(label, colour, LV_PART_MAIN);
+  lv_label_set_text(label, "");
+  return label;
+}
+
+static void face_forget()
+{
+  face_date = nullptr;
+  face_time = nullptr;
+  face_sec = nullptr;
+  face_steps = nullptr;
+  face_battery = nullptr;
+  face_percent = nullptr;
+  face_volts = nullptr;
+  face_name = nullptr;
+  face_ip = nullptr;
+  face_gw = nullptr;
+  face_ap = nullptr;
+  face_apgw = nullptr;
+  face_presidente = nullptr;
+  for (int i = 0; i < 4; i++) {
+    notification_lines[i] = nullptr;
+  }
+}
+
+void watch_face_maker()
+{
+  if (face_time) {
+    return;                     // already on this screen
+  }
+  face_date = face_label_maker(10, 12, &lv_font_montserrat_16, lv_color_hex(0xFFE000));
+  face_time = face_label_maker(10, 34, &lv_font_montserrat_48, lv_color_hex(0xFFE000));
+  face_sec = face_label_maker(10, 88, &lv_font_montserrat_24, lv_color_hex(0xFFE000));
+  face_steps = face_label_maker(10, 118, &lv_font_montserrat_16, lv_color_hex(0x5afcdd));
+  face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
+  face_percent = face_label_maker(36, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
+  face_volts = face_label_maker(200, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
+  face_name = face_label_maker(70, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
+  face_ip = face_label_maker(20, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+  face_gw = face_label_maker(130, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+  face_ap = face_label_maker(20, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+  face_apgw = face_label_maker(130, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
 }
 
 void display_exit( void ) {
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
+  face_forget();
   button_writer();
 //  time_writer("now");
 }
 
 long timestamp_maker() {
   struct tm timeinfo;
-  watch.getDateTime(&timeinfo);
+  watch.rtc.getDateTime(&timeinfo);
 
   time_t timestamp = mktime(&timeinfo);
   long ts = (long)timestamp;
@@ -1326,62 +1431,55 @@ long timestamp_maker() {
 }
 
 void time_writer(char * situation) {
-  if (situation == "now") {
-    tft.fillScreen(TFT_BLACK);
-  }
   if (millis() - lastMillis > 1000 || situation == "now") {
     lastMillis = millis();
     if (notification_viewing == 1) {
       notification_review();
     }
     else {
-
       struct tm timeinfo;
       // Get the time C library structure
-      watch.getDateTime(&timeinfo);
+      watch.rtc.getDateTime(&timeinfo);
       size_t written_date = strftime(bufdate, 64, "%a %b %d %Y", &timeinfo);
       size_t written_time = strftime(buftime, 64, "%H:%M", &timeinfo);
       size_t written_sec = strftime(bufsec, 64, "%S", &timeinfo);
-      watch.setTextFont(2);
-      watch.setTextColor(TFT_YELLOW, TFT_BLACK);
-      if (written_date != 0) {
-
-        watch.drawString(bufdate, 120, 20);
+      if (face_date && written_date != 0) {
+        lv_label_set_text(face_date, bufdate);
       }
-      if (written_time != 0) {
-        watch.setTextFont(8);
-        watch.drawString(buftime, 120, 70);
+      if (face_time && written_time != 0) {
+        lv_label_set_text(face_time, buftime);
       }
-      if (written_sec != 0) {
-        watch.setTextFont(4);
-        watch.drawString(bufsec, 120, 130);
+      if (face_sec && written_sec != 0) {
+        lv_label_set_text(face_sec, bufsec);
       }
-      if (stepCounter == true) {
-        watch.setCursor(10,120);
-        watch.print(steps);
+      if (face_steps && stepCounter == true) {
+        lv_label_set_text_fmt(face_steps, "%u", (unsigned)steps);
       }
     }
   }
 }
 
 void ip_writer() {
-  watch.setTextFont(2);
+  if (!face_ip) {
+    return;
+  }
   IPAddress ip = WiFi.localIP();
   sprintf(bufIP, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-  watch.setTextColor(TFT_BLACK, TFT_WHITE);
   IPAddress gw_ip = WiFi.gatewayIP();
   sprintf(bufgwIP, "%d.%d.%d.%d", gw_ip[0], gw_ip[1], gw_ip[2], gw_ip[3]);
-  watch.drawString(bufIP, 50, 130);
-  watch.drawString(bufgwIP, 190, 130);
+  lv_label_set_text(face_ip, bufIP);
+  lv_label_set_text(face_gw, bufgwIP);
   if (wifi_ap_enabled) {
     apIP = WiFi.softAPIP();
     sprintf(bufapIP, "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3] );
-    watch.drawString(bufapIP, 50, 150);
-    watch.drawString(bufapgwIP, 190, 150);
+    lv_label_set_text(face_ap, bufapIP);
+    lv_label_set_text(face_apgw, bufapgwIP);
   }  
 }
 
 void button_writer() {
+  watch_face_maker();
+
   btn1 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(btn1, touch_button1, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(btn1, 65, 190 );
@@ -1572,9 +1670,20 @@ void call_the_president() {
       int32_t minute = result["__specs"]["time"]["min"];
       int32_t second = result["__specs"]["time"]["sec"];
     
-      watch.setDateTime(year, month, day, hour, minute, second);
+      struct tm set_time = {};
+      set_time.tm_year = year - 1900;
+      set_time.tm_mon = month - 1;
+      set_time.tm_mday = day;
+      set_time.tm_hour = hour;
+      set_time.tm_min = minute;
+      set_time.tm_sec = second;
+      watch.rtc.setDateTime(RTC_DateTime(set_time));
       // Reading time synchronization from RTC to system time
-      watch.hwClockRead();
+      struct tm rtc_time = {};
+      watch.rtc.getDateTime(&rtc_time);
+      time_t sync_time = mktime(&rtc_time);
+      struct timeval now_tv = { .tv_sec = sync_time, .tv_usec = 0 };
+      settimeofday(&now_tv, NULL);
       buttonMillis = millis();
       lastMillis = millis();
   
@@ -1604,7 +1713,10 @@ void presidents_buttons() {
   lv_obj_set_style_text_color(led2, lv_palette_main(LV_PALETTE_GREEN), LV_PART_MAIN);
 
   if (!buttoned_before) {
-    watch.drawString("Ne pas Presidente", 80, 80);
+    if (!face_presidente) {
+      face_presidente = face_label_maker(60, 80, &lv_font_montserrat_20, lv_color_hex(0xFFFFFF));
+    }
+    lv_label_set_text(face_presidente, "Ne pas Presidente");
     lv_led_off(led1);
     return;
   }
@@ -1795,7 +1907,6 @@ static void touch_button1(lv_event_t *e) {
 void remote_room() {
   jw_room = "room";
   display_exit();
-  watch.fillScreen(TFT_BLACK);
   call_the_president();
   presidents_buttons();
   button_writer();
@@ -1813,7 +1924,7 @@ unsigned long getTime() {
 }
 static void audio_button(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t * btn = lv_event_get_target(e);
+    lv_obj_t * btn = lv_event_get_target_obj(e);
     lv_obj_t * btn_label = lv_obj_get_child(btn, 0);
 
     if (btn == recbtn1) {
@@ -1849,8 +1960,7 @@ static void audio_button(lv_event_t * e) {
                 lv_label_set_text(btn_label, "Playing...");
 
                 // Initialize template playback structure elements dynamically
-                out_hardware = new AudioOutputI2S(1, AudioOutputI2S::EXTERNAL_I2S);
-                out_hardware->SetPinout(BOARD_DAC_IIS_BCK, BOARD_DAC_IIS_WS, BOARD_DAC_IIS_DOUT);
+                out_hardware = new LilyGoAudioSink(watch.getAudioOutput());
                 file_source = new AudioFileSourceFATFS(WAV_FILE_PATH.c_str());
                 wav = new AudioGeneratorWAV();
                 wav->begin(file_source, out_hardware);
@@ -1934,16 +2044,14 @@ void micCaptureTask(void *pvParameters) {
 
     uint8_t *tempBuf = (uint8_t *)malloc(AUDIO_BUFFER_CHUNK_SIZE);
     uint32_t bytes_written_total = 0;
-    size_t system_bytes = 0;
 
     Serial.println("[Recorder] Flash append loop initialized.");
 
     while (isRecording) {
-        if (watch.readMicrophone((char *)tempBuf, AUDIO_BUFFER_CHUNK_SIZE, &system_bytes)) {
-            if (system_bytes > 0) {
-                audio_file.write(tempBuf, system_bytes);
-                bytes_written_total += system_bytes;
-            }
+        int got = watch.getAudioInput()->read(tempBuf, AUDIO_BUFFER_CHUNK_SIZE);
+        if (got > 0) {
+            audio_file.write(tempBuf, got);
+            bytes_written_total += got;
         }
         vTaskDelay(pdMS_TO_TICKS(1)); // Yield to protect system core execution stability
     }
@@ -1959,7 +2067,7 @@ void micCaptureTask(void *pvParameters) {
 // Background monitoring frame calculation handler for playback
 void audio_playback_loop_task(void *pvParameters) {
     Serial.println("[Player] Playback track active.");
-    out_hardware->SetGain((float)volumeLevel / 100.0f);
+    watch.getAudioOutput()->setVolume(volumeLevel);
 
     while (isPlaying) {
         if (wav->isRunning()) {
@@ -2085,7 +2193,7 @@ void mb1(lv_event_t *e) {
   
   b1_toggle = result["toggle"];
   
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b1_toggle == 1) {
@@ -2126,7 +2234,7 @@ void mb2(lv_event_t *e) {
   b2_toggle = result["toggle"];
   lv_color_t c;
   lv_color_t t;
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   if (b2_toggle == 1) {
    c = lv_color_make(255, 255, 0);
    t = lv_color_make(0,0,0);  
@@ -2162,7 +2270,7 @@ void mb3(lv_event_t *e) {
   JSONVar result = JSON.parse(https);
   b3_toggle = result["toggle"];
   // Serial.println(b3_toggle);
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b3_toggle == 1) {
@@ -2202,7 +2310,7 @@ void mb4(lv_event_t *e) {
   b4_toggle = result["toggle"];
   lv_color_t c;
   lv_color_t t;
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   if (b4_toggle == 1) {
    c = lv_color_make(255, 255, 0);
    t = lv_color_make(0,0,0);
@@ -2237,7 +2345,7 @@ void mb5(lv_event_t *e) {
     return;
   }
   JSONVar result = JSON.parse(https);
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b5_toggle == 1) {
@@ -2275,7 +2383,7 @@ void mb6(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b6_toggle = result["toggle"];
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b6_toggle == 1) {
@@ -2392,22 +2500,24 @@ void notification_review() {
   int notification_count = notifications.length();
   if (notification_count > 0 && notification_viewing == 1) {
     JSONVar notification = notifications[notification_view];
-    watch.setTextFont(4);
-    uint16_t watchColor = watch.color565(notification["rgb"][0], notification["rgb"][1], notification["rgb"][2]);
-    watch.setTextColor(watchColor);
+    if (!notification_lines[0]) {
+      notification_lines[0] = face_label_maker(20, 24, &lv_font_montserrat_20, lv_color_hex(0xFFFFFF));
+      notification_lines[1] = face_label_maker(20, 60, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+      notification_lines[2] = face_label_maker(20, 90, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+      notification_lines[3] = face_label_maker(20, 112, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+    }
     String noti = "Notification " + String((notification_view + 1)) + "/" + String(notification_count);
-    watch.drawString(noti, 90, 30);
-    watch.setTextFont(2);
+    lv_label_set_text(notification_lines[0], noti.c_str());
+    lv_obj_set_style_text_color(notification_lines[0],
+      lv_color_make((uint8_t)notification["rgb"][0], (uint8_t)notification["rgb"][1], (uint8_t)notification["rgb"][2]), LV_PART_MAIN);
 
     String f_time = notification["formatted_time"];
-    watch.drawString(f_time, 90,70);
+    lv_label_set_text(notification_lines[1], f_time.c_str());
 
     String n_title = notification["title"];
-    watch.drawString(n_title, 90,100);
+    lv_label_set_text(notification_lines[2], n_title.c_str());
     String n = notification["notification"];
-    watch.setTextFont(2);
-
-    watch.drawString(n, 90,120);
+    lv_label_set_text(notification_lines[3], n.c_str());
   }
 }
 
@@ -2589,26 +2699,20 @@ void setting_room() {
 }
 
 static void step_control(lv_event_t *e) {
-  lv_obj_t * pd_button = lv_event_get_target(e);
+  lv_obj_t * pd_button = lv_event_get_target_obj(e);
 
   if (stepCounter == true) {
     lv_obj_set_style_bg_color(pd_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-    stepCounter = false;
-    watch.disablePedometer();
-    watch.disablePedometerIRQ();
-
+    stepCounter = false;    // the pedometer keeps counting, samples just stop
   }
   else {
     lv_obj_set_style_bg_color(pd_button, lv_color_hex(0x5afcdd), LV_PART_MAIN);
     stepCounter = true;
-    watch.enablePedometer();
-    watch.enablePedometerIRQ();
-
   }
 }
 
 static void lightSleep_toggle(lv_event_t *e) {
-  lv_obj_t * sleep_button = lv_event_get_target(e);  
+  lv_obj_t * sleep_button = lv_event_get_target_obj(e);  
 
   if (lightSleep == true) {
     lv_obj_set_style_bg_color(sleep_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
@@ -2648,7 +2752,7 @@ static void screenRotate(lv_event_t *e) {
 }
 
 static void loraBroadcastToggle(lv_event_t *e) {
-  lv_obj_t * lora_button = lv_event_get_target(e);  
+  lv_obj_t * lora_button = lv_event_get_target_obj(e);  
   if (loraChatBroadcaster == false) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0x53ff24), LV_PART_MAIN);
     loraChatBroadcaster = true;
@@ -2662,7 +2766,7 @@ static void loraBroadcastToggle(lv_event_t *e) {
 }
 
 static void loraReceiveToggle(lv_event_t *e) {
-  lv_obj_t * lora_button = lv_event_get_target(e);  
+  lv_obj_t * lora_button = lv_event_get_target_obj(e);  
   if (loraChatReceiver == false) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0x53ff24), LV_PART_MAIN);
     loraChatReceiver = true;
@@ -2695,7 +2799,7 @@ static void wifi_lora_send(lv_event_t *e) {
 }
 
 static void bt_control(lv_event_t *e) {
-  lv_obj_t * bt_button = lv_event_get_target(e);
+  lv_obj_t * bt_button = lv_event_get_target_obj(e);
   if (bt_enabled == true) {
     stop_ble_transfer();
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
@@ -2708,7 +2812,7 @@ static void bt_control(lv_event_t *e) {
 }
 
 static void wifi_ap_control(lv_event_t *e) {
-  lv_obj_t * wifi_ap_button = lv_event_get_target(e);
+  lv_obj_t * wifi_ap_button = lv_event_get_target_obj(e);
   if (wifi_ap_enabled == true) {
     accesspoint_stop();
     lv_obj_set_style_bg_color(wifi_ap_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
@@ -2755,7 +2859,7 @@ void accesspoint_stop() {
 
 
 static void wifi_control(lv_event_t *e) {
-  lv_obj_t * wifi_button = lv_event_get_target(e);
+  lv_obj_t * wifi_button = lv_event_get_target_obj(e);
   if (wifi_enabled == true) {
     lv_obj_set_style_bg_color(wifi_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
     WiFi.disconnect();
@@ -2787,7 +2891,7 @@ static void wifi_control(lv_event_t *e) {
 
 static void brightness_event_cb(lv_event_t *e)
 {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
@@ -2798,19 +2902,18 @@ static void brightness_event_cb(lv_event_t *e)
 
 static void vibrate_event_cb(lv_event_t *e)
 {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
   vibrateLevel = level;
-  watch.setWaveform(0, vibrateLevel);  // play effect
-  // play the effect!
-  watch.run();
+  watch.setHapticEffects(vibrateLevel);
+  watch.vibrator();
 }
 
 static void volume_event_cb(lv_event_t *e)
 {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
@@ -2837,16 +2940,6 @@ void lowPowerEnergyHandler()
   brightnessLevel = watch.getBrightness();
   watch.decrementBrightness(0);
 
-  watch.clearPMU();
-
-  watch.configreFeatureInterrupt(
-    SensorBMA423::INT_STEP_CNTR |   // Pedometer interrupt
-    SensorBMA423::INT_ACTIVITY |    // Activity interruption
-    SensorBMA423::INT_TILT |        // Tilt interrupt
-    SensorBMA423::INT_WAKEUP |      // DoubleTap interrupt
-    SensorBMA423::INT_ANY_NO_MOTION,// Any  motion / no motion interrupt
-    false);
-
   sportsIrq = false;
   pmuIrq = false;
   if (WiFi.status() == WL_CONNECTED && buttoned_before) {
@@ -2866,12 +2959,12 @@ void lowPowerEnergyHandler()
   //TODO: Low power consumption not debugged
   configSave();
  // Serial.flush(); 
-  watch.writecommand(0x10);
+  watch.sleepDisplay();
 
   if (lightSleep) {
     
     Serial.println("right before sleep");
-    uint64_t wakeup_pin = _BV(BOARD_PMU_INT);
+    uint64_t wakeup_pin = _BV(PMU_INT);
     esp_sleep_enable_ext1_wakeup((wakeup_pin), ESP_EXT1_WAKEUP_ALL_LOW);
  //   esp_sleep_enable_ext0_wakeup((gpio_num_t)_BV(BMA423_TILT_INT), 1); // 0 = LOW
  //   gpio_wakeup_enable ((gpio_num_t)BMA423_TILT_INT, GPIO_INTR_HIGH_LEVEL);
@@ -2932,6 +3025,7 @@ void lowPowerEnergyHandler()
       if (webserver_enabled == true) {
         server.handleClient();
       }
+      watch.loop();             // the PMU and sensor events arrive through here
       awake_notifications();
       readRadio();
       delay(500);
@@ -2945,23 +3039,12 @@ void lowPowerEnergyHandler()
   if (brightnessLevel <= 1) {
     brightnessLevel = 20;
   }
-  watch.writecommand(0x11);
+  watch.wakeupDisplay();
 
   watch.incrementalBrightness(brightnessLevel);
   Serial.println("just before frequency");
   setCpuFrequencyMhz(240);
   step_writer();
-  // Clear Interrupts in Loop
-  // watch.readBMA();
-  // watch.clearPMU();
-
-  watch.configreFeatureInterrupt(
-  //  SensorBMA423::INT_STEP_CNTR |   // Pedometer interrupt
- //   SensorBMA423::INT_ACTIVITY,     // Activity interruption
-    SensorBMA423::INT_TILT,         // Tilt interrupt
- //   SensorBMA423::INT_WAKEUP,       // DoubleTap interrupt
-   // SensorBMA423::INT_ANY_NO_MOTION,// Any  motion / no motion interrupt
-  true);
   //JSONVar dct;
   //dct["task"] = "homebasePing";
   //dualCoreTaskMaker(dct);
@@ -2970,31 +3053,23 @@ void lowPowerEnergyHandler()
 
 void settingSensor()
 {
-  //Default 4G ,200HZ
-  watch.configAccelerometer();
-
-  watch.enableAccelerometer();
-
-  watch.enablePedometer();
-
-  watch.configInterrupt();
-
-  watch.enableFeature(
-    SensorBMA423::FEATURE_STEP_CNTR |
-    SensorBMA423::FEATURE_ANY_MOTION |
-    SensorBMA423::FEATURE_NO_MOTION |
-    SensorBMA423::FEATURE_ACTIVITY |
-    SensorBMA423::FEATURE_TILT |
-    SensorBMA423::FEATURE_WAKEUP,
-    true);
-
-  watch.enablePedometerIRQ();
-  watch.enableTiltIRQ();
-  watch.enableWakeupIRQ();
-  watch.enableAnyNoMotionIRQ();
-  watch.enableActivityIRQ();
-
-  watch.attachBMA(setSportsFlag);
+  // The library configures the BMA423 (accelerometer, pedometer and its
+  // interrupts) itself now; this subscribes the sketch to the events it sends.
+  watch.onEvent(SENSOR_EVENT, [](const DeviceEvent &event, void *user_data) {
+    switch (watch.getSensorEventType(event)) {
+      case SENSOR_STEP_DETECTED:
+      case SENSOR_STEPS_UPDATED:
+      case SENSOR_TILT_DETECTED:
+      case SENSOR_ACTIVITY_DETECTED:
+      case SENSOR_ANY_MOTION_DETECTED:
+      case SENSOR_DOUBLE_TAP_DETECTED:
+      case SENSOR_SINGLE_TAP_DETECTED:
+        sportsIrq = true;
+        break;
+      default:
+        break;
+    }
+  });
 }
 
 void setSportsFlag()
@@ -3009,18 +3084,11 @@ void setPMUFlag()
 
 void settingPMU()
 {
-  watch.clearPMU();
-
-  watch.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
-  // Enable the required interrupt function
-  watch.enableIRQ(
-    // XPOWERS_AXP2101_BAT_INSERT_IRQ    | XPOWERS_AXP2101_BAT_REMOVE_IRQ      |   //BATTERY
-    XPOWERS_AXP2101_VBUS_INSERT_IRQ   | XPOWERS_AXP2101_VBUS_REMOVE_IRQ     |   //VBUS
-    XPOWERS_AXP2101_PKEY_SHORT_IRQ    | XPOWERS_AXP2101_PKEY_LONG_IRQ       |  //POWER KEY
-    XPOWERS_AXP2101_BAT_CHG_DONE_IRQ  | XPOWERS_AXP2101_BAT_CHG_START_IRQ       //CHARGE
-    // XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ | XPOWERS_AXP2101_PKEY_POSITIVE_IRQ   |   //POWER KEY
-  );
-  watch.attachPMU(setPMUFlag);
+  // Power events (crown clicks, VBUS, charge state) come through the event loop
+  // too; any of them counts as a reason to light the screen back up.
+  watch.onEvent(POWER_EVENT, [](const DeviceEvent &event, void *user_data) {
+    pmuIrq = true;
+  });
 }
 
 

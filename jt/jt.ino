@@ -5,10 +5,15 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <WiFiAP.h>
+// WebServer.h wants FS (and <functional>) declared before it sees them
+#include "FS.h"
+#include "FFat.h"
+// TFT_eSPI defines FS_NO_GLOBALS before FS.h, so the global FS alias is gone
+using fs::FS;
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
-#include <driver/i2s.h>
+#include <driver/i2s_tdm.h>
 #include "es7210.h"
 #include <Audio.h>
 #include "utilities.h"
@@ -168,7 +173,7 @@ static lv_obj_t *vad_btn_label;
 static uint32_t vad_detected_counter = 0;
 static TaskHandle_t vadTaskHandler;
 bool        transmissionFlag = true;
-bool        enableInterrupt = true;
+bool        radioInterrupt = true;
 int         transmissionState;
 bool        hasRadio = false;
 bool        touchDected = false;
@@ -923,7 +928,9 @@ void notification_display(String title, String notification) {
   title.toCharArray(t, t_length);
   notification.toCharArray(n, n_length);
 
-  lv_obj_t * mb = lv_msgbox_create(lv_scr_act(), t, n, btns, true);
+  lv_obj_t * mb = lv_msgbox_create(lv_scr_act());
+  lv_msgbox_add_title(mb, t);
+  lv_msgbox_add_text(mb, n);
 
 
   //  lv_obj_center(mb);
@@ -1351,7 +1358,6 @@ void time_writer(char * situation) {
 
 void setupLvgl()
 {
-  static lv_disp_draw_buf_t draw_buf;
   static lv_color_t *buf = (lv_color_t *)ps_malloc(LVGL_BUFFER_SIZE);
   if (!buf) {
     // Serial.println("menory alloc failed!");
@@ -1359,46 +1365,30 @@ void setupLvgl()
     assert(buf);
   }
   lv_init();
+  lv_tick_set_cb(millis);
 
   lv_group_set_default(lv_group_create());
 
-  lv_disp_draw_buf_init( &draw_buf, buf, NULL, LVGL_BUFFER_SIZE );
-
   /*Initialize the display*/
-  static lv_disp_drv_t disp_drv;
-  lv_disp_drv_init( &disp_drv );
-
-  /*Change the following line to your display resolution*/
-  disp_drv.hor_res = TFT_HEIGHT;
-  disp_drv.ver_res = TFT_WIDTH;
-  disp_drv.flush_cb = disp_flush;
-  disp_drv.draw_buf = &draw_buf;
-  disp_drv.full_refresh = 1;
-  lv_disp_drv_register( &disp_drv );
+  lv_display_t *disp = lv_display_create(TFT_HEIGHT, TFT_WIDTH);
+  lv_display_set_flush_cb(disp, disp_flush);
+  lv_display_set_buffers(disp, buf, NULL, LVGL_BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
 
   /*Initialize the  input device driver*/
   /*Register a touchscreen input device*/
   if (touchDected) {
-    static lv_indev_drv_t indev_touchpad;
-    lv_indev_drv_init( &indev_touchpad );
-    indev_touchpad.type = LV_INDEV_TYPE_POINTER;
-
-    indev_touchpad.read_cb = touchpad_read;
-
-    touch_indev = lv_indev_drv_register( &indev_touchpad );
+    touch_indev = lv_indev_create();
+    lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch_indev, touchpad_read);
   }
   if (kbDected) {
     Serial.println("Keyboard registered!!");
     /*Register a keypad input device*/
-    static lv_indev_drv_t indev_keypad;
-    lv_indev_drv_init(&indev_keypad);
-    indev_keypad.type = LV_INDEV_TYPE_KEYPAD;
-    indev_keypad.read_cb = keypad_read;
-    kb_indev = lv_indev_drv_register(&indev_keypad);
+    kb_indev = lv_indev_create();
+    lv_indev_set_type(kb_indev, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_read_cb(kb_indev, keypad_read);
     lv_indev_set_group(kb_indev, lv_group_get_default());
   }
-
-
 }
 
 // Read key value from esp32c3
@@ -1441,7 +1431,7 @@ void fontUnloader() {
   }
 }
 /*Will be called by the library to read the mouse*/
-static void keypad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
+static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
 {
   static uint32_t last_key = 0;
   char keyValue;
@@ -1816,16 +1806,16 @@ void setBrightness(uint8_t value)
   level = value;
 }
 
-static void disp_flush( lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p )
+static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
   uint32_t w = ( area->x2 - area->x1 + 1 );
   uint32_t h = ( area->y2 - area->y1 + 1 );
   if ( xSemaphoreTake( xSemaphore, portMAX_DELAY ) == pdTRUE ) {
     tft.startWrite();
     tft.setAddrWindow( area->x1, area->y1, w, h );
-    tft.pushColors( ( uint16_t * )&color_p->full, w * h, false );
+    tft.pushColors( ( uint16_t * )px_map, w * h, false );
     tft.endWrite();
-    lv_disp_flush_ready( disp );
+    lv_display_flush_ready( disp );
     xSemaphoreGive( xSemaphore );
   }
 }
@@ -1861,7 +1851,7 @@ static bool getTouch(int16_t &x, int16_t &y)
   return true;
 }
 
-static void mouse_read(lv_indev_drv_t *indev, lv_indev_data_t *data)
+static void mouse_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
   // Serial.println("mouse read");
   static  int16_t last_x;
@@ -1885,10 +1875,12 @@ static void mouse_read(lv_indev_drv_t *indev, lv_indev_data_t *data)
 
 }
 /*Read the touchpad*/
-static void touchpad_read( lv_indev_drv_t *indev_driver, lv_indev_data_t *data )
+static void touchpad_read( lv_indev_t *indev_driver, lv_indev_data_t *data )
 {
   if (troom == "home") {
-    data->state = getTouch(data->point.x, data->point.y) ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
+    int16_t x = data->point.x;
+    int16_t y = data->point.y;
+    data->state = getTouch(x, y) ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
   }
 }
 
@@ -2393,7 +2385,7 @@ void mb1(lv_event_t *e) {
   JSONVar result = JSON.parse(https);
   b1_toggle = result["toggle"];
 
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b1_toggle == 1) {
@@ -2435,7 +2427,7 @@ void mb2(lv_event_t *e) {
   b2_toggle = result["toggle"];
   lv_color_t c;
   lv_color_t t;
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   if (b2_toggle == 1) {
     c = lv_color_make(255, 255, 0);
     t = lv_color_make(0, 0, 0);
@@ -2472,7 +2464,7 @@ void mb3(lv_event_t *e) {
   JSONVar result = JSON.parse(https);
   b3_toggle = result["toggle"];
   //Serial.println(b3_toggle);
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b3_toggle == 1) {
@@ -2513,7 +2505,7 @@ void mb4(lv_event_t *e) {
   b4_toggle = result["toggle"];
   lv_color_t c;
   lv_color_t t;
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   if (b4_toggle == 1) {
     c = lv_color_make(255, 255, 0);
     t = lv_color_make(0, 0, 0);
@@ -2549,7 +2541,7 @@ void mb5(lv_event_t *e) {
     return;
   }
   JSONVar result = JSON.parse(https);
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b5_toggle == 1) {
@@ -2587,7 +2579,7 @@ void mb6(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b6_toggle = result["toggle"];
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b6_toggle == 1) {
@@ -2625,7 +2617,7 @@ void mb7(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b7_toggle = result["toggle"];
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b7_toggle == 1) {
@@ -2663,7 +2655,7 @@ void mb8(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b8_toggle = result["toggle"];
-  lv_obj_t * b = lv_event_get_target(e);
+  lv_obj_t * b = lv_event_get_target_obj(e);
   lv_color_t c;
   lv_color_t t;
   if (b8_toggle == 1) {
@@ -2871,7 +2863,7 @@ void setting_room() {
 }
 
 static void mouse_move_relativity(lv_event_t *e) {
-  lv_obj_t * mmrb = lv_event_get_target(e);
+  lv_obj_t * mmrb = lv_event_get_target_obj(e);
   String b = (const char * )authorization_json[auth_watch];
   JSONVar bm = JSON.parse(b);
   if (mouse_move_relative == "on") {
@@ -2906,7 +2898,7 @@ static void configDeleteButton(lv_event_t *e) {
 }
 
 static void loraBroadcastToggle(lv_event_t *e) {
-  lv_obj_t * lora_button = lv_event_get_target(e);
+  lv_obj_t * lora_button = lv_event_get_target_obj(e);
   if (loraChatBroadcaster == false) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0x53ff24), LV_PART_MAIN);
     loraChatBroadcaster = true;
@@ -2918,7 +2910,7 @@ static void loraBroadcastToggle(lv_event_t *e) {
 }
 
 static void loraReceiveToggle(lv_event_t *e) {
-  lv_obj_t * lora_button = lv_event_get_target(e);
+  lv_obj_t * lora_button = lv_event_get_target_obj(e);
   if (loraChatReceiver == false) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0x53ff24), LV_PART_MAIN);
     loraChatReceiver = true;
@@ -3036,7 +3028,7 @@ static void authorization_deleter(lv_event_t *e) {
   tauthorization = "";
   if (auth_watch >= 1) {
     for (int n = 1; n <= auth_count; n++) {
-      if ((const char *)authorization_json[auth_watch] == undefined) {
+      if (authorization_json[auth_watch] == undefined) {
         // authorization_json[auth_watch] = undefined;
       }
     }
@@ -3150,7 +3142,7 @@ void tauthorization_pusher(String tauth) {
 }
 
 static void tauthToggleButton(lv_event_t *e) {
-  lv_obj_t * remb = lv_event_get_target(e);
+  lv_obj_t * remb = lv_event_get_target_obj(e);
   String b = (const char *)authorization_json[auth_watch];
   JSONVar bm = JSON.parse(b);
   if (tauth_remote_enabled == "on") {
@@ -3314,7 +3306,7 @@ static void touch_button4(lv_event_t *e) {
 
 static void community_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3326,7 +3318,7 @@ static void community_room_select(lv_event_t *e) {
 
 static void club_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3339,7 +3331,7 @@ static void club_room_select(lv_event_t *e) {
 
 static void team_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3351,7 +3343,7 @@ static void team_room_select(lv_event_t *e) {
 
 static void project_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3362,7 +3354,7 @@ static void project_room_select(lv_event_t *e) {
 }
 static void account_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3373,7 +3365,7 @@ static void account_room_select(lv_event_t *e) {
 }
 static void person_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3385,7 +3377,7 @@ static void person_room_select(lv_event_t *e) {
 
 static void contact_room_select(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3409,7 +3401,7 @@ void pen_room() {
 static void fontPicker(lv_event_t *e) {
   Serial.println("font change");
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t * obj = lv_event_get_target(e);
+  lv_obj_t * obj = lv_event_get_target_obj(e);
   if (code == LV_EVENT_VALUE_CHANGED) {
     char buf[32];
     lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
@@ -3419,7 +3411,7 @@ static void fontPicker(lv_event_t *e) {
 }
 
 static void fontSizeChanger(lv_event_t *e) {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
@@ -3548,7 +3540,7 @@ void ip_writer() {
 }
 
 static void wifi_ap_control(lv_event_t *e) {
-  lv_obj_t * wifi_ap_button = lv_event_get_target(e);
+  lv_obj_t * wifi_ap_button = lv_event_get_target_obj(e);
   if (wifi_ap_enabled == true) {
     wifi_ap_enabled = false;
     accesspoint_stop();
@@ -3592,7 +3584,7 @@ void accesspoint_stop() {
 
 
 static void wifi_control(lv_event_t *e) {
-  lv_obj_t * wifi_button = lv_event_get_target(e);
+  lv_obj_t * wifi_button = lv_event_get_target_obj(e);
   if (wifi_enabled == true) {
     lv_obj_set_style_bg_color(wifi_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
     WiFi.disconnect();
@@ -3625,7 +3617,7 @@ static void wifi_control(lv_event_t *e) {
 
 static void brightness_event_cb(lv_event_t *e)
 {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
@@ -3636,7 +3628,7 @@ static void brightness_event_cb(lv_event_t *e)
 
 static void volume_event_cb(lv_event_t *e)
 {
-  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *slider = lv_event_get_target_obj(e);
   char buf[8];
   lv_snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(slider));
   uint8_t level = (uint8_t)lv_slider_get_value(slider);
@@ -3992,35 +3984,40 @@ void deleteFile(fs::FS &fs, const char * path) {
   }
 }
 
+// The mic array is an ES7210 wired for TDM; core 3.x dropped the old
+// i2s_driver_install() API, so this is the same setup through i2s_tdm.
+i2s_chan_handle_t mic_rx_handle = NULL;
+
 void setupMicrophoneI2S(i2s_port_t  i2s_ch)
 {
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = MIC_I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ALL_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 8,
-    .dma_buf_len = 64,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0,
-    .mclk_multiple = I2S_MCLK_MULTIPLE_256,
-    .bits_per_chan = I2S_BITS_PER_CHAN_16BIT,
-    .chan_mask = (i2s_channel_t)(I2S_TDM_ACTIVE_CH0 | I2S_TDM_ACTIVE_CH1 |
-    I2S_TDM_ACTIVE_CH2 | I2S_TDM_ACTIVE_CH3),
-    .total_chan = 4,
-  };
-  i2s_pin_config_t pin_config = {0};
-  pin_config.data_in_num = BOARD_ES7210_DIN;
-  pin_config.mck_io_num = BOARD_ES7210_MCLK;
-  pin_config.bck_io_num = BOARD_ES7210_SCK;
-  pin_config.ws_io_num = BOARD_ES7210_LRCK;
-  pin_config.data_out_num = -1;
-  i2s_driver_install(i2s_ch, &i2s_config, 0, NULL);
-  i2s_set_pin(i2s_ch, &pin_config);
-  i2s_zero_dma_buffer(i2s_ch);
+  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(i2s_ch, I2S_ROLE_MASTER);
+  chan_cfg.dma_desc_num = 8;
+  chan_cfg.dma_frame_num = 64;
+
+  if (i2s_new_channel(&chan_cfg, NULL, &mic_rx_handle) != ESP_OK) {
+    Serial.println("mic i2s channel failed");
+    return;
+  }
+
+  i2s_tdm_config_t tdm_cfg = {};
+  tdm_cfg.clk_cfg = I2S_TDM_CLK_DEFAULT_CONFIG(MIC_I2S_SAMPLE_RATE);
+  tdm_cfg.slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                     I2S_SLOT_MODE_STEREO,
+                     (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3));
+  tdm_cfg.gpio_cfg.mclk = (gpio_num_t)BOARD_ES7210_MCLK;
+  tdm_cfg.gpio_cfg.bclk = (gpio_num_t)BOARD_ES7210_SCK;
+  tdm_cfg.gpio_cfg.ws = (gpio_num_t)BOARD_ES7210_LRCK;
+  tdm_cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;
+  tdm_cfg.gpio_cfg.din = (gpio_num_t)BOARD_ES7210_DIN;
+  tdm_cfg.gpio_cfg.invert_flags.mclk_inv = false;
+  tdm_cfg.gpio_cfg.invert_flags.bclk_inv = false;
+  tdm_cfg.gpio_cfg.invert_flags.ws_inv = false;
+
+  if (i2s_channel_init_tdm_mode(mic_rx_handle, &tdm_cfg) != ESP_OK) {
+    Serial.println("mic i2s tdm mode failed");
+    return;
+  }
+  i2s_channel_enable(mic_rx_handle);
 
 #ifdef USE_ESP_VAD
   // Initialize esp-sr vad detected
