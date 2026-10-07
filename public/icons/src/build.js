@@ -65,6 +65,17 @@ const GLYPHS = {
 	person: '<circle cx="12" cy="7.6" r="4.1"/><path d="M4 20.5c0-4.2 3.6-6.9 8-6.9s8 2.7 8 6.9z"/><path d="M12 13.6l1.7 2.3-1.7 4.6-1.7-4.6z" fill="#000000" fill-opacity="0.18"/>',
 	warehouse: '<path d="M3 20V9.6L12 4l9 5.6V20z"/><rect x="9.4" y="13.6" width="5.2" height="6.4" fill="#000000" fill-opacity="0.18"/>',
 	house: '<path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>',
+	apps: '<rect x="3" y="3" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="3" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="13.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="13.4" width="7.6" height="7.6" rx="1.6"/>',
+	clock: '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>',
+	up: '<path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/>',
+	hourglass: '<path d="M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-4-.01-.01H18V2H6z"/>',
+	pulse: '<path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>',
+	wrench: '<path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.4-.4.4-1 0-1.4z"/>',
+	camera: '<path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>',
+	receipt: '<path d="M18 17H6v-2h12v2zm0-4H6v-2h12v2zm0-4H6V7h12v2zM3 22l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2l-1.5 1.5L18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2v20z"/>',
+	calendar: '<path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/>',
+	shop: '<path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/>',
+	blocked: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/>',
 	exit: '<path d="M10.5 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20h4" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 12H20" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round"/><path d="M16 8.5 19.5 12 16 15.5" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
@@ -103,6 +114,17 @@ const ICONS = {
 	exit:         { g: 'exit',      c: 'red',    out: 'images/decipherable/exit.png' },
 	home:         { g: 'house',     c: 'slate',  out: 'images/decipherable/home.png' },
 	home_button:  { g: 'house',     c: 'slate',  out: 'images/jbuttons/home.png' },
+	apps:         { g: 'apps',      c: 'blue',   out: 'images/jbuttons/logo3.png' },
+	run:          { g: 'clock',     c: 'teal',   out: 'images/make believe/new sun.png' },
+	upcoming:     { g: 'up',        c: 'green',  out: 'images/make believe/road ahead.png' },
+	expiry:       { g: 'hourglass', c: 'yellow', out: 'images/make believe/nonsense.png' },
+	view:         { g: 'pulse',     c: 'purple', out: 'images/make believe/water.png' },
+	configure:    { g: 'wrench',    c: 'slate',  out: 'images/decipherable/wrench.png' },
+	video:        { g: 'camera',    c: 'pink',   out: 'images/make believe/camera.png' },
+	store:        { g: 'receipt',   c: 'orange', out: 'images/decipherable/register.png' },
+	citizen:      { g: 'calendar',  c: 'indigo', out: 'images/jbuttons/appts.png' },
+	resident:     { g: 'shop',      c: 'slate',  out: 'images/jbuttons/shop.png' },
+	blacklisted:  { g: 'blocked',   c: 'red',    out: 'images/jbuttons/ne pas.png' },
 };
 
 function makeSvg(colour, glyph) {
