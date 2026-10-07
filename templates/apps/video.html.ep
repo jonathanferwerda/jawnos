@@ -170,9 +170,9 @@
 			</span>
 			<span id="<%= $id %>_full_title"></span>
 			<% if ($source eq 'music') { %>
-				<img src="/images/decipherable/list.png" class="little_thumb hover" id="music_list_view">
-				<img src="/images/studio/shuffle.png" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
-				<img src="/images/studio/repeat.png" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
+				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" class="little_thumb hover" id="music_list_view">
+				<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
 			<% } %>
 		</div>
 	</div>

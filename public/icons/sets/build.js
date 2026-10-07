@@ -85,6 +85,8 @@ const GLYPHS = {
 	pillow: '<path d="M4 8.5C4 6.6 6.6 4 8.5 4h7C17.4 4 20 6.6 20 8.5v7c0 1.9-2.6 4.5-4.5 4.5h-7C6.6 20 4 17.4 4 15.5z" fill="{G}"/><path d="M8.5 8.5c1.6 1.6 5.4 1.6 7 0M8.5 15.5c1.6-1.6 5.4-1.6 7 0" fill="none" stroke="{D}" stroke-width="1.4" stroke-linecap="round"/>',
 	disc: '<circle cx="12" cy="12" r="9" fill="{G}"/><circle cx="12" cy="12" r="2.2" fill="{D}"/><path d="M12 3a9 9 0 0 1 8.6 6.4" fill="none" stroke="{D}" stroke-width="1.7" stroke-linecap="round"/>',
 	info: '<circle cx="12" cy="12" r="9" fill="{G}"/><circle cx="12" cy="7.6" r="1.4" fill="{D}"/><rect x="10.9" y="10.2" width="2.2" height="7" rx="1.1" fill="{D}"/>',
+	shuffle: '<path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" fill="{G}"/>',
+	repeat: '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" fill="{G}"/>',
 	toggle_on: '<rect x="2.5" y="7" width="19" height="10" rx="5" fill="{G}"/><circle cx="16.5" cy="12" r="3.4" fill="{D}"/>',
 	toggle_off: '<rect x="2.5" y="7" width="19" height="10" rx="5" fill="{G}"/><circle cx="7.5" cy="12" r="3.4" fill="{D}"/>',
 	burger: '<g stroke="{G}" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g>',
@@ -214,6 +216,8 @@ const ICONS = {
 	'Pillow': 'pillow',
 	'cdrom': 'disc',
 	'information': 'info',
+	'shuffle': 'shuffle',
+	'repeat': 'repeat',
 };
 
 // --- styles --------------------------------------------------------------------
