@@ -18062,7 +18062,30 @@ sub update_database($data) {
 		'CREATE INDEX idx1_backups on backups (recipient,signatorial,ost)',
 		'CREATE INDEX idx2_backups on backups (recipient,signatorial)',
 		'CREATE INDEX idx3_backups on backups (recipient,signatorial,ost,reason)',
-		'CREATE INDEX idx4_backups on backups (recipient,signatorial,reason)'
+		'CREATE INDEX idx4_backups on backups (recipient,signatorial,reason)',
+		# warehouse: stock/money lookups by item, place, source document and account
+		'CREATE INDEX IF NOT EXISTS idx1_warehouse on warehouse (item)',
+		'CREATE INDEX IF NOT EXISTS idx2_warehouse on warehouse (place)',
+		'CREATE INDEX IF NOT EXISTS idx3_warehouse on warehouse (app_uuid)',
+		'CREATE INDEX IF NOT EXISTS idx4_warehouse on warehouse (account)',
+		'CREATE INDEX IF NOT EXISTS idx5_warehouse on warehouse (place,item)',
+		# item catalog lookups are all "where app = ?"
+		'CREATE INDEX IF NOT EXISTS idx1_model on model (app)',
+		'CREATE INDEX IF NOT EXISTS idx1_option on option (app)',
+		'CREATE INDEX IF NOT EXISTS idx1_option_category on option_category (app)',
+		'CREATE INDEX IF NOT EXISTS idx1_subcategory on subcategory (app)',
+		# settings_grabber reads by (app,device); setters read by (app,setting)
+		'CREATE INDEX IF NOT EXISTS idx5_settings on settings (app,device)',
+		'CREATE INDEX IF NOT EXISTS idx6_settings on settings (app,setting)',
+		# transactions pull their documents by (type,app)
+		'CREATE INDEX IF NOT EXISTS idx12_appts on appointments (type,app)',
+		# remote machines are looked up by connection state and ip
+		'CREATE INDEX IF NOT EXISTS idx1_remote_machines on remote_machines (connection)',
+		'CREATE INDEX IF NOT EXISTS idx2_remote_machines on remote_machines (ip)',
+		# mailbox reads by uuid, by (email,status), and by pen conversations
+		'CREATE INDEX IF NOT EXISTS idx3_mailbox on mailbox (uuid)',
+		'CREATE INDEX IF NOT EXISTS idx4_mailbox on mailbox (email,status)',
+		'CREATE INDEX IF NOT EXISTS idx5_mailbox on mailbox (contact,conversation_uuid)'
 	];
 	foreach my $t ( qw/model option option_category subcategory/) {
 		foreach my $h ( qw/month day hour wday/ ) {
