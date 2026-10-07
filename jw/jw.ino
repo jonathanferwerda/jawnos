@@ -662,25 +662,32 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
   }
 }
 
-// The pedometer holds a running total, so each sample is the whole story since the
-// last one the server collected. Samples only happened when the BMA's interrupt
-// fired, and once that stopped being delivered the count went quiet until the next
-// reboot -- the wake cycle re-arms the sensor for tilt alone. A timer takes a
-// sample as well now, which cannot go silent, and reading the same counter twice
-// costs nothing.
+// A sample is what the server collects as a step measure, so they are kept rare on
+// purpose: only while the clock room is the room on screen, only when the counter
+// has actually moved, and at most one a minute. A sample a minute regardless (or
+// one per step) would leave thousands of measures for /inventory to wade through.
+//
+// The pedometer counts cumulatively, so one sample per visit still carries every
+// step taken since the last collection, and taking it from a timer rather than the
+// BMA interrupt is what keeps the count alive: the wake cycle re-arms the sensor
+// for tilt alone, which quietly dropped the pedometer's interrupt after a few days.
 void step_writer() {
-  if (stepCounter != true) {
-    return;
-  }
   if (sportsIrq) {
     watch.readBMA();          // clear the latched interrupt status
     sportsIrq = false;
   }
-  else if (millis() - stepSampleMillis < 60000) {
+  if (stepCounter != true || jw_room != "watch") {
+    return;
+  }
+  uint32_t counter = watch.getPedometerCounter();
+  if (counter == steps) {
+    return;                   // no steps since the last sample, nothing to add
+  }
+  if (millis() - stepSampleMillis < 60000) {
     return;
   }
   stepSampleMillis = millis();
-  steps = watch.getPedometerCounter();
+  steps = counter;
   if (!JSON.stringify(stepped).startsWith("[")) {
     stepped = JSON.parse("[]");         // a damaged config must not stop the count
   }
