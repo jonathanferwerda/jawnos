@@ -550,6 +550,22 @@ function appWindowOpener(i,timestamp,v) {
 	var window_w = $(window).width();
 	var window_h = $(window).height();
 	var app = JSON.stringify({ name: i });
+	// Preserve whatever sub-panels the window already has open, so a re-render
+	// (e.g. an icon-set swap) reopens the same sections instead of collapsing them.
+	// Only when the window is already on screen; a fresh restore is handled by the
+	// server-emitted `jopen` script inside windowMaker.
+	var refresh_jopen = null;
+	if (!v.jopen) {
+		var existing_window = $('.wind[app="' + i + '"]');
+		if (existing_window.length > 0) {
+			try {
+				var live_jopen = windowjOpenSaver(existing_window);
+				if (live_jopen[i] && live_jopen[i].containers && live_jopen[i].containers.length > 0) {
+					refresh_jopen = live_jopen;
+				}
+			} catch (e) {}
+		}
+	}
 	if (i == 'budget' || i == 'folders' || i == 'relational' || i == 'warehouse' || i == 'measures' || i == 'market' || i == 'music' || i == 'web' || i == 'handbook' || i == 'video' || i == 'security' || i == 'library' || i == 'gallery' || i == 'twirl' || i == 'store' || i == 'studio' || i == 'marker' || i == 'ide' || i == 'terminal' || i == 'travel' || i == 'mailbox' || i == 'editor' || i == 'tetris' || i == 'synth' || i == 'cards' || i == 'embedded' || i == 'terminal' || i == 'configure' || i == 'box_office' ) {
 //				var preload = sessionStorage.getItem('preload_' + i);
 		var scope = localStorage.getItem('scope');
@@ -612,6 +628,7 @@ function appWindowOpener(i,timestamp,v) {
 
 					var id = $(response).attr('id');
 					var window = $('#' + id);
+					if (window.length == 0) { window = $('.wind[app="' + i + '"]'); }
 
 					if (i == 'travel') {
 						travelViewer({ timestamp: timestamp });
@@ -641,7 +658,9 @@ function appWindowOpener(i,timestamp,v) {
 					else if (i == 'relational') {
 						relationalInit(response);
 					}
-				//	windowjOpener(window,v);
+					if (refresh_jopen) {
+						windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });
+					}
 					if (v.visible != 'yes') {
 						window.hide();
 					}
@@ -666,12 +685,15 @@ function appWindowOpener(i,timestamp,v) {
 				centreViewWriter(response);
 				var id = $(response).attr('id');
 				var window = $('#' + id);
+				if (window.length == 0) { window = $('.wind[app="' + i + '"]'); }
 
 				if (v.top > 0 && v.left < window_w && v.top < window_h && v.left > 0) {
 					window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 				}
 
-			//	windowjOpener(window,v);
+				if (refresh_jopen) {
+					windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });
+				}
 				if (v.current_information) {
 					budgetLight(v.app,v['current_information'],'open');
 				}
@@ -728,55 +750,68 @@ function windowjOpenSaver(window) {
 	return jopen;
 }
 
-var windowjOpenerStatus = [];
+var windowjOpenerStatus = {};
+var windowjOpenerTimers = {};
 function windowjOpener(window,v) {
 	var app = window.attr('app');
+	if (!v || !v.jopen || !v.jopen[app]) { return; }
 
-	if (windowjOpenerStatus[app] != 'running') {
-		if (v.jopen[app]['containers'].length > 0) {
-			$.each(v.jopen[app]['containers'], function(no,noc) {
+	if (windowjOpenerTimers[app]) {
+		clearInterval(windowjOpenerTimers[app]);
+		windowjOpenerTimers[app] = null;
+	}
+	windowjOpenerStatus[app] = 'running';
 
-				if (noc == 're_details' && v.jopen[app]['re_details']['app']) {
-					var jdata = JSON.stringify(v.jopen[app]['re_details']);
-					$('.detail_json[app="' + app + '"]').text(jdata);
-					$('.re_details[app="' + app + '"]').show();
-					appointmentDetailsUpdater(app);
+	var state = v.jopen[app];
+	var containers = state.containers || [];
+
+	if (containers.length > 0) {
+		$.each(containers, function(no,noc) {
+
+			if (noc == 're_details' && state.re_details && state.re_details['app']) {
+				var jdata = JSON.stringify(state.re_details);
+				$('.detail_json[app="' + app + '"]').text(jdata);
+				$('.re_details[app="' + app + '"]').show();
+				appointmentDetailsUpdater(app);
+			}
+			else {
+				if (app == 'configure') {
+					var c = window.find('#' + config_appt_containers[noc]);
+					c.attr('original_text', c.text());
+					c.trigger('click');
+
 				}
 				else {
-					if (window.attr('app') == 'configure') {
-						var c = window.find('#' + config_appt_containers[noc]);
-						c.attr('original_text', c.text());
-						c.trigger('click');
-						
-					}
-					else {
-						window.find('.' + appt_containers[noc]).trigger('click');
-					}
+					window.find('.' + appt_containers[noc]).trigger('click');
 				}
-			});
-		}
-		var jopenInterval = setInterval(function() {
-			var jopenSuccess = 0;
-			$.each(v.jopen[app]['containers'], function(no,noc) {
-				var selector = '.' + noc;
-				if (window.attr('app') == 'configure') {
-					selector = '#' + noc;
-				}
-				if (window.find(selector).is(':visible')) {
-					jopenSuccess++;
-				}
-			});
-			if (jopenSuccess == v.jopen[app]['containers'].length) {
-				$.each(v.jopen[app]['configure'], function(i, v) {
-					$('.app_configure_input[app="' + app + '"][setting="' + v + '"]').show();
+			}
+		});
+	}
+
+	var attempts = 0;
+	windowjOpenerTimers[app] = setInterval(function() {
+		attempts++;
+		var jopenSuccess = 0;
+		$.each(containers, function(no,noc) {
+			var selector = (app == 'configure' ? '#' : '.') + noc;
+			if (window.find(selector).is(':visible')) {
+				jopenSuccess++;
+			}
+		});
+		var complete = (jopenSuccess == containers.length);
+		// give up after a while so a container that never loads can't leak an interval
+		if (complete || attempts >= 20) {
+			if (complete) {
+				$.each(state.configure || [], function(i, s) {
+					$('.app_configure_input[app="' + app + '"][setting="' + s + '"]').show();
 				});
-				$.each(v.jopen[app]['attribute'], function(i, v) {
-					$('.attribute_contents[app="' + app + '"][uuid="' + v + '"]').show();
+				$.each(state.attribute || [], function(i, s) {
+					$('.attribute_contents[app="' + app + '"][uuid="' + s + '"]').show();
 					if (!openAttributes[app]) { openAttributes[app] = {}; }
-					openAttributes[app][v] = 'open';
+					openAttributes[app][s] = 'open';
 				});
-				$.each(v.jopen[app]['lists'], function(i,v) {
-					$('.appointment_detail[uuid="' + v.uuid + '"]').find('.appointment_list[list="' + v.list + '"]').show();
+				$.each(state.lists || [], function(i, s) {
+					$('.appointment_detail[uuid="' + s.uuid + '"]').find('.appointment_list[list="' + s.list + '"]').show();
 				});
 				if (window.attr('scrollTop') != undefined) {
 					var scrollTop = window.attr('scrollTop');
@@ -786,12 +821,12 @@ function windowjOpener(window,v) {
 					$('#' + (window.attr('timestamp') || 'hey')).scrollTop(v.scrollTop);
 				}
 				windowSaver();
-				clearInterval(jopenInterval);
-				windowjOpenerStatus = 'done';
 			}
-		},700);
-		
-	}
+			clearInterval(windowjOpenerTimers[app]);
+			windowjOpenerTimers[app] = null;
+			windowjOpenerStatus[app] = 'done';
+		}
+	}, 300);
 }
 
 

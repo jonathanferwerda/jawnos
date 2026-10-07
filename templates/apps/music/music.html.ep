@@ -11,9 +11,9 @@
 	<div id="interface" style="position:absolute;top:0px;height:60px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">
-			<span id="prev" class="hover control"><img id="prev_logo" class="medium_thumb" src="/icons/prev.jpg" /></span>
-			<span id="play" class="hover control"><img id="play_logo" class="medium_thumb" src="/icons/play.jpg" /></span>
-			<span id="next" class="hover control"><img id="next_logo" class="medium_thumb" src="/icons/next.jpg" /></span>
+			<span id="prev" class="hover control"><img id="prev_logo" class="medium_thumb" src="<%= &subs::icon_path('prev', '/icons/prev.jpg') %>" /></span>
+			<span id="play" class="hover control"><img id="play_logo" play_icon="<%= &subs::icon_path('play', '/icons/play.jpg') %>" pause_icon="<%= &subs::icon_path('pause', '/icons/pause.jpg') %>" class="medium_thumb" src="<%= &subs::icon_path('play', '/icons/play.jpg') %>" /></span>
+			<span id="next" class="hover control"><img id="next_logo" class="medium_thumb" src="<%= &subs::icon_path('next', '/icons/next.jpg') %>" /></span>
 			<input id="music_search" value="<%= $search %>" style="width:40%;position:absolute;top:3px;">
 			<span class="medium" style="padding-top:4px;word-wrap: break-word;font-size: 22px;">
 				<span id="elapsed_progress"></span>/<span id="total_progress"></span>
@@ -29,9 +29,9 @@
 
 		</div>
 		<% if (scalar @{$padlock_sighting} > 0) { %>
-			<img src="/images/jbuttons/padlock unlock.png" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="position:absolute;top:0px;right:60px;<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+			<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="position:absolute;top:0px;right:60px;<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
 		<% } %>
-		<image src="/images/decipherable/gear.png" class="little_thumb hover" id="music_configuration_toggle" style="position:absolute;top:0px;right:4px;">
+		<image src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" class="little_thumb hover" id="music_configuration_toggle" style="position:absolute;top:0px;right:4px;">
 	</div>
 	<div id="music_library">
 		<div id="music_artists" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:var(--panel);">
@@ -77,7 +77,7 @@
 
 </div>
 <div id="music_padlock" style="display:none;width:100%;background-color:black;height:100%;max-height:100%;top:60px;object-fit:contain;">
-	<img src="/images/make believe/cancel_button.png" class="little_thumb" id="music_cancel_padlock" style="position:absolute;top:35px;right:5px;">
+	<img src="<%= &subs::icon_path('cancel_button', '/images/make believe/cancel_button.png') %>" class="little_thumb" id="music_cancel_padlock" style="position:absolute;top:35px;right:5px;">
 	<%= include 'padlock', mode => 'music' %>
 </div>
 

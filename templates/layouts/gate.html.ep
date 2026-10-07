@@ -4,7 +4,7 @@
 		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
 			<link rel='icon' type='image/png' href="<%= $logo %>">
 		<% } else { %>
-		  <link rel='icon' type='image/png' href='/images/make believe/Pillow.png'/>
+		  <link rel='icon' href="<%= &subs::icon_for('/images/make believe/Pillow.png') %>"/>
 		<% } %>
 
     <title><%= title %></title>

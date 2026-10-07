@@ -1,5 +1,9 @@
 var mao = {};
 var misses = {};
+// Play/pause glyphs follow the selected icon set; the music window stashes the
+// resolved paths on #play_logo (see apps/music/music.html.ep).
+function jawnosPlayIcon() { var s = $('#play_logo').attr('play_icon'); return s || '/icons/play.jpg'; }
+function jawnosPauseIcon() { var s = $('#play_logo').attr('pause_icon'); return s || '/icons/pause.jpg'; }
 $(document).on('ready', function() { 
 	treeMaker();
 	mao = settingGrabber({ 'app': 'music', 'setting': 'mao' });
@@ -196,10 +200,10 @@ function treeMaker() {
 	if (tree.sound) {
 		tree.sound.onstatechange = function(i) {
 			if (tree.sound.state == 1) {
-				$('#play_logo').attr('src', '/icons/play.jpg');
+				$('#play_logo').attr('src', jawnosPlayIcon());
 			}
 			else {
-				$('#play_logo').attr('src', '/icons/pause.jpg');
+				$('#play_logo').attr('src', jawnosPauseIcon());
 			}
 		};
 	}
@@ -268,7 +272,7 @@ function mediaMaker(data) {
 
 			tree.sound = document.getElementById('video');
 			if (data['state'] != 0) {
-				$('#play_logo').attr('src', '/icons/pause.jpg');
+				$('#play_logo').attr('src', jawnosPauseIcon());
 			}
 			if (method != 'benign') {
 
@@ -406,13 +410,13 @@ function mediaMaker(data) {
 						}
 					}, 1000);
 					
-					$('#play_logo').attr('src', '/icons/pause.jpg');
+					$('#play_logo').attr('src', jawnosPauseIcon());
 					
 				};
 				tree.sound.onpause = function() {
 					clearInterval(interval);
 			
-					$('#play_logo').attr('src', '/icons/play.jpg');
+					$('#play_logo').attr('src', jawnosPlayIcon());
 			
 				};
 				tree.sound.onerror = function() {
@@ -630,7 +634,7 @@ $(document).on('click', '#play', function() {
 	else if (tree.sound.state == 0) {
 		tree.sound.play();
 		tree.sound.state = 1;
-		$('#play_logo').attr('src', '/icons/pause.jpg');
+		$('#play_logo').attr('src', jawnosPauseIcon());
 		remoteTrackToggle({
 			file: tree.songs[0].file,
 			toggle: 'on',
@@ -640,7 +644,7 @@ $(document).on('click', '#play', function() {
 	else {
 		tree.sound.pause();
 		tree.sound.state = 0;
-		$('#play_logo').attr('src', '/icons/play.jpg');
+		$('#play_logo').attr('src', jawnosPlayIcon());
 		remoteTrackToggle({
 			file: tree.songs[0].file,
 			toggle: 'off',

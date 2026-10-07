@@ -67,7 +67,7 @@ function howlMaker() {
 		},
 	});
 	tree.sound.play();
-	$('#play_logo').attr('src', '/icons/pause.jpg');
+	$('#play_logo').attr('src', '<%= &subs::icon_path('pause', '/icons/pause.jpg') %>');
 	tree.howls++;
 	$('.playing').removeClass('playing');
 	var track_number = tree.past_songs.length + 1;
@@ -81,11 +81,11 @@ $(document).on('click', '#play', function() {
 	}
 	else if (tree.howls > 0 && tree.sound.playing() == false) {
 		tree.sound.play();
-		$('#play_logo').attr('src', '/icons/pause.jpg');
+		$('#play_logo').attr('src', '<%= &subs::icon_path('pause', '/icons/pause.jpg') %>');
 	}
 	else {
 		tree.sound.pause();
-		$('#play_logo').attr('src', '/icons/play.jpg');
+		$('#play_logo').attr('src', '<%= &subs::icon_path('play', '/icons/play.jpg') %>');
 	}
 });
 
