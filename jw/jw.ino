@@ -140,7 +140,9 @@ class LilyGoAudioSink : public AudioOutput
       if (!codec) {
         return false;
       }
-      return codec->open(16, (uint8_t)channels, (uint32_t)hertz);
+      bool ok = codec->open(16, (uint8_t)channels, (uint32_t)hertz);
+      Serial.printf("[Player] codec open %s at %d Hz, %d ch\n", ok ? "ok" : "failed", hertz, channels);
+      return ok;
     }
     bool ConsumeSample(int16_t sample[2]) override {
       if (!codec) {
@@ -1376,10 +1378,22 @@ void wakeup() {
 // ---- the watch face ----------------------------------------------------------
 // The old fork drew this text straight onto the panel with TFT_eSPI; LVGL owns the
 // screen now, so the same lines are labels that get refreshed in place.
-static lv_obj_t *face_label_maker(int x, int y, const lv_font_t *font, lv_color_t colour)
+static lv_obj_t *face_label_maker(int x, int y, const lv_font_t *font, lv_color_t colour,
+                                  int width = 0, lv_align_t align = LV_ALIGN_TOP_LEFT)
 {
   lv_obj_t *label = lv_label_create(lv_scr_act());
-  lv_obj_set_pos(label, x, y);
+  if (width > 0) {
+    lv_obj_set_width(label, width);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);  // text never runs off the panel
+  }
+  if (align == LV_ALIGN_TOP_LEFT) {
+    lv_obj_set_pos(label, x, y);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+  }
+  else {
+    lv_obj_align(label, align, x, y);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  }
   lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
   lv_obj_set_style_text_color(label, colour, LV_PART_MAIN);
   lv_label_set_text(label, "");
@@ -1411,18 +1425,28 @@ void watch_face_maker()
   if (face_time) {
     return;                     // already on this screen
   }
-  face_date = face_label_maker(10, 12, &lv_font_montserrat_16, lv_color_hex(0xFFE000));
-  face_time = face_label_maker(10, 34, &lv_font_montserrat_48, lv_color_hex(0xFFE000));
-  face_sec = face_label_maker(10, 88, &lv_font_montserrat_24, lv_color_hex(0xFFE000));
-  face_steps = face_label_maker(10, 118, &lv_font_montserrat_16, lv_color_hex(0x5afcdd));
-  face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
-  face_percent = face_label_maker(36, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
-  face_volts = face_label_maker(200, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
-  face_name = face_label_maker(70, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
-  face_ip = face_label_maker(20, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
-  face_gw = face_label_maker(130, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
-  face_ap = face_label_maker(20, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
-  face_apgw = face_label_maker(130, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF));
+  // the panel only scrolls up and down, sideways nothing is allowed to stick out
+  lv_obj_set_scroll_dir(lv_scr_act(), LV_DIR_VER);
+
+  // status bar along the top
+  face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 30);
+  face_percent = face_label_maker(42, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 14);
+  face_name = face_label_maker(0, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 110, LV_ALIGN_TOP_MID);
+  face_volts = face_label_maker(-10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 70, LV_ALIGN_TOP_RIGHT);
+
+  // the clock, centred under the status bar
+  face_date = face_label_maker(0, 28, &lv_font_montserrat_16, lv_color_hex(0xFFE000), 220, LV_ALIGN_TOP_MID);
+  face_time = face_label_maker(0, 50, &lv_font_montserrat_48, lv_color_hex(0xFFE000), 220, LV_ALIGN_TOP_MID);
+
+  // seconds and steps share a line
+  face_sec = face_label_maker(-38, 106, &lv_font_montserrat_24, lv_color_hex(0xFFE000), 80, LV_ALIGN_TOP_MID);
+  face_steps = face_label_maker(38, 106, &lv_font_montserrat_24, lv_color_hex(0x5afcdd), 80, LV_ALIGN_TOP_MID);
+
+  // the net room
+  face_ip = face_label_maker(20, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
+  face_gw = face_label_maker(130, 130, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
+  face_ap = face_label_maker(20, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
+  face_apgw = face_label_maker(130, 150, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
 }
 
 void display_exit( void ) {
@@ -2046,6 +2070,13 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
 
 // FreeRTOS background task handling the microphone pipeline data stream
 void micCaptureTask(void *pvParameters) {
+    AudioInputIf *mic = watch.getAudioInput();
+    if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
+        Serial.println("[Recorder] microphone open failed");
+        isRecording = false;
+        vTaskDelete(NULL);
+    }
+
     if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
         isRecording = false;
         vTaskDelete(NULL);
@@ -2063,7 +2094,7 @@ void micCaptureTask(void *pvParameters) {
     Serial.println("[Recorder] Flash append loop initialized.");
 
     while (isRecording) {
-        int got = watch.getAudioInput()->read(tempBuf, AUDIO_BUFFER_CHUNK_SIZE);
+        int got = mic->read(tempBuf, AUDIO_BUFFER_CHUNK_SIZE);
         if (got > 0) {
             audio_file.write(tempBuf, got);
             bytes_written_total += got;
@@ -2071,8 +2102,10 @@ void micCaptureTask(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(1)); // Yield to protect system core execution stability
     }
 
+    mic->close();
     audio_file.close();
     free(tempBuf);
+    Serial.printf("[Recorder] captured %u bytes\n", bytes_written_total);
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
     finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total);
@@ -3028,7 +3061,8 @@ void lowPowerEnergyHandler()
     //my_print("=========esp_light_sleep_start=========\n");
     char count = 0;
 
-    while (!pmuIrq && !sportsIrq) {// && !watch.getTouched()) {
+    while (!pmuIrq) {
+      sportsIrq = false;      // movement must not light the screen back up either
       if (jw_room == "message") {
         if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && count > 58) {
           lowPowerEnergyHandler();
@@ -3116,7 +3150,12 @@ void settingPMU()
   // Power events (crown clicks, VBUS, charge state) come through the event loop
   // too; any of them counts as a reason to light the screen back up.
   watch.onEvent(POWER_EVENT, [](const DeviceEvent &event, void *user_data) {
-    pmuIrq = true;
+    PMUEventType_t kind = watch.getPMUEventType(event);
+    // only the crown is a screen button; charge and VBUS chatter must not light
+    // the screen back up on their own
+    if (kind == PMU_EVENT_KEY_CLICKED || kind == PMU_EVENT_KEY_LONG_PRESSED) {
+      pmuIrq = true;
+    }
   });
 }
 
