@@ -42,7 +42,7 @@ String getContentType(String filename);
 
 ESP32Time rtc;
 
-int screenRotation = 2;
+int screenRotation = 0;
 // Flag used to indicate whether to use light sleep, currently unavailable
 static bool lightSleep = false;
 double wakeup_time = 0;
@@ -917,15 +917,18 @@ void loop() {
   }
 
 
-  if (!pmuIrq) {
+  // the crown is the screen button now: light the screen and stay lit until the
+  // inactivity timeout, instead of dropping straight into the sleep handler
+  if (pmuIrq) {
+    pmuIrq = false;
+    wakeup();
+  }
+  else {
     lv_task_handler();
     if (webserver_enabled == true) {
       server.handleClient();
     }
     delay(5);
-  }
-  else {
-    lowPowerEnergyHandler();
   }
   if (loraChatReceiver) {
     readRadio();
@@ -2756,6 +2759,8 @@ static void screenRotate(lv_event_t *e) {
   } else {
     screenRotation++;
   }
+  // the board rotation is decided when beginLvglHelper() ran, so tell LVGL too
+  lv_display_set_rotation(lv_display_get_default(), (lv_display_rotation_t)screenRotation);
   watch.decrementBrightness(0);
   configSave();
   configRestore();
@@ -3057,6 +3062,8 @@ void lowPowerEnergyHandler()
   Serial.println("just before frequency");
   setCpuFrequencyMhz(240);
   step_writer();
+  // the event that woke us is spent, loop() would only re-run wakeup() for it
+  pmuIrq = false;
   //JSONVar dct;
   //dct["task"] = "homebasePing";
   //dualCoreTaskMaker(dct);
@@ -3065,6 +3072,11 @@ void lowPowerEnergyHandler()
 
 void settingSensor()
 {
+  static bool registered = false;
+  if (registered) {
+    return;
+  }
+  registered = true;
   // The library configures the BMA423 (accelerometer, pedometer and its
   // interrupts) itself now; this subscribes the sketch to the events it sends.
   watch.onEvent(SENSOR_EVENT, [](const DeviceEvent &event, void *user_data) {
@@ -3096,6 +3108,11 @@ void setPMUFlag()
 
 void settingPMU()
 {
+  static bool registered = false;
+  if (registered) {
+    return;
+  }
+  registered = true;
   // Power events (crown clicks, VBUS, charge state) come through the event loop
   // too; any of them counts as a reason to light the screen back up.
   watch.onEvent(POWER_EVENT, [](const DeviceEvent &event, void *user_data) {
@@ -3296,7 +3313,7 @@ void configDelete() {
   wigi = JSON.parse("[]");
   notifications = JSON.parse("[]");
   DEFAULT_SCREEN_TIMEOUT = 20*1000;
-  screenRotation = 2;
+  screenRotation = 0;
   watch.setRotation(screenRotation);
 }
 void configRestore() {
