@@ -29,9 +29,10 @@ function clotheslineHanger(clothes) {
 		ctx = canvas.getContext('2d');
 		// the rail hangs over whatever is behind it - a background picture, a
 		// window - so the themed ink is laid over a contrasting halo instead of
-		// being trusted to show up on its own
+		// being trusted to show up on its own. (Guard the helper: a browser
+		// holding an older universal.js must not lose the whole clothesline.)
 		var ink = jawnosInk();
-		var halo = jawnosInkHalo(ink);
+		var halo = (typeof jawnosInkHalo == 'function') ? jawnosInkHalo(ink) : 'rgba(0,0,0,0.6)';
 		ctx.strokeStyle = halo;
 		ctx.lineWidth = clothesLinePos['bordersize'] + 3;
 		ctx.beginPath();

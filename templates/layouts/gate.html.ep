@@ -30,5 +30,5 @@
 		}
 	</script>
 	<script src="/js/numeral.min.js"></script>
-	<script src="/js/universal.js"></script>
+	<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
 </html>

@@ -31,7 +31,7 @@
 			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.13 %>;
 		</script>
 
-		<script src="/js/universal.js"></script>
+		<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/aframe-master.min.js"></script>
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
