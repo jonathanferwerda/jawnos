@@ -764,6 +764,95 @@ $(document).on('change', '#embedded_ota_file', function() {
 		}
 	});
 });
+
+// the esp32 boards are plugged into the homebase machine: the USB button has the
+// manager run the PlatformIO upload and this just polls the log for progress
+$(document).on('click', '#embedded_usb_uploader', function() {
+	var a = $(this);
+	if (a.attr('armed') == 'yes') {
+		a.css({'background-color': bgcolor });
+		a.attr('armed', 'no');
+		usb_flash();
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({'background-color': 'red' });
+		setTimeout(function() {
+			a.css({'background-color': bgcolor });
+			a.attr('armed', 'no');
+		},2000);
+	}
+});
+
+function usb_flash() {
+	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var port = $('#embedded_usb_port').val() || '';
+	$('#embedded_ota_uploader_wait').show();
+	$('#embedded_ota_uploader_fail, #embedded_ota_uploader_success').hide();
+	$('#embedded_ota_uploader_percentage').text('');
+	$.ajax({
+		url: '/manager/embedded/usb_upload',
+		type: 'POST',
+		data: { edt: edt, chip_id: chip_id, port: port, timestamp: Date.now() },
+		success: function(response) {
+			if (response['ports']) {
+				var sel = $('#embedded_usb_port').empty();
+				$.each(response['ports'], function(i, p) {
+					sel.append($('<option>').attr('value', p['path']).text(p['label']));
+				});
+				sel.show();
+			}
+			if (response['started'] == 1) {
+				$('#embedded_usb_port').hide();
+				$('#embedded_ota_uploader_percentage').text(response['port']);
+				usb_flash_poll(0);
+			}
+			else {
+				$('#embedded_ota_uploader_wait').hide();
+				$('#embedded_ota_uploader_fail').show();
+				$('#embedded_ota_uploader_percentage').text(response['result'] || '');
+			}
+		},
+		error: function() {
+			$('#embedded_ota_uploader_wait').hide();
+			$('#embedded_ota_uploader_fail').show();
+		}
+	});
+}
+
+function usb_flash_poll(count) {
+	if (count > 300) {
+		$('#embedded_ota_uploader_wait').hide();
+		$('#embedded_ota_uploader_fail').show();
+		return;
+	}
+	$.ajax({
+		url: '/manager/embedded/usb_upload_status',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			if (response['percent']) {
+				$('#embedded_ota_uploader_percentage').text(response['percent'] + '%');
+			}
+			if (response['running'] == 1) {
+				setTimeout(function() { usb_flash_poll(count + 1); }, 1200);
+			}
+			else {
+				$('#embedded_ota_uploader_wait').hide();
+				if (response['success'] == 1) {
+					$('#embedded_ota_uploader_percentage').text('100%');
+					$('#embedded_ota_uploader_success').show();
+				}
+				else {
+					$('#embedded_ota_uploader_percentage').text(response['tail'] || '');
+					$('#embedded_ota_uploader_fail').show();
+				}
+			}
+		}
+	});
+}
 $(document).on('change', '#teletype_authorization', function() {
 	var tauthorization = $(this).val();
 	var timestamp = Date.now();

@@ -17236,6 +17236,93 @@ post '/manager/embedded/ota_uploader_wifi' => sub($c) {
 	$c->render(json => { success => $res->is_success ? 1 : 0, code => $res->code, result => $result });
 };
 
+# ---- USB flashing -----------------------------------------------------------
+# The esp32 boards are plugged into this machine, so the panel cannot flash them
+# itself: it asks the manager, which runs the PlatformIO upload and then polls the
+# log for esptool's percentage lines.
+
+sub usb_ports_grabber {
+	my %by_id;
+	foreach my $link ( glob('/dev/serial/by-id/*') ) {
+		my $target = readlink($link);
+		next unless $target;
+		$target =~ s{.*/}{};
+		my $label = $link;
+		$label =~ s{.*/}{};
+		$label =~ s{-if\d+.*$}{};
+		$label =~ s{[_-]}{ }g;
+		$by_id{'/dev/' . $target} = &subs::format_name($label);
+	}
+	my @ports;
+	foreach my $path ( glob('/dev/ttyACM*'), glob('/dev/ttyUSB*') ) {
+		push @ports, {
+			path => $path,
+			label => $by_id{$path} || $path,
+			acm => ($path =~ /ttyACM/) ? 1 : 0
+		};
+	}
+	return \@ports;
+}
+
+get '/manager/embedded/usb_ports' => sub($c) {
+	$c->render(json => { ports => &usb_ports_grabber() });
+};
+
+post '/manager/embedded/usb_upload' => sub($c) {
+	my $edt = $c->param('edt') || 'watch';
+	my $chip_id = $c->param('chip_id');
+	my $port = $c->param('port');
+
+	my ($project, $environment, $prefer_acm) = $edt eq 'teletype' ? ('./jt', 'deck', 0) : ('./jw', 'watch', 1);
+
+	if ($port && $port !~ m{^/dev/(ttyACM|ttyUSB)\d+$}) {
+		return $c->render(json => { started => 0, result => 'that port does not look right' });
+	}
+
+	# the watch speaks native USB (ttyACM), the deck sits behind its bridge (ttyUSB);
+	# auto-pick when there is exactly one candidate of the right kind
+	my $ports = &usb_ports_grabber();
+	if (!$port) {
+		my @preferred = grep { $_->{'acm'} == $prefer_acm } @{$ports};
+		if (@preferred == 1) {
+			$port = $preferred[0]->{'path'};
+		}
+		elsif (scalar @{$ports} == 1) {
+			$port = $ports->[0]->{'path'};
+		}
+	}
+	if (!$port) {
+		return $c->render(json => { started => 0, result => (scalar @{$ports} ? 'pick a port' : 'no board is plugged in'), ports => $ports });
+	}
+
+	my $pio = (-x &subs::home('~/.platformio/penv/bin/pio')) ? &subs::home('~/.platformio/penv/bin/pio') : 'pio';
+	my $log = &subs::home('~/.jawnos_usb_upload.log');
+	my $project_path = Mojo::File->new($project)->to_abs_path;
+	Mojo::File->new($log)->spurt("usb upload to $port starting...\n");
+	my $command = 'cd ' . $project_path . ' && exec ' . $pio . ' run -e ' . $environment . ' -t upload --upload-port ' . $port;
+	system("nohup sh -c '" . $command . "' > " . $log . " 2>&1 &");
+
+	$c->render(json => { started => 1, port => $port, project => $project });
+};
+
+get '/manager/embedded/usb_upload_status' => sub($c) {
+	my $log = &subs::home('~/.jawnos_usb_upload.log');
+	my $text = -e $log ? read_file($log) : '';
+	$text = substr($text, -6000) if length($text) > 6000;
+	my @percent = ($text =~ m{\((\d+(?:\.\d+)?) %\)}g);
+	@percent = ($text =~ m{(\d+(?:\.\d+)?)%}g) unless @percent;
+	my $success = ($text =~ m{\[SUCCESS\]}) ? 1 : 0;
+	my $failed = (!$success && $text =~ m{\[FAILED\]|error:}) ? 1 : 0;
+	my @lines = grep { /\S/ } map { my $l = $_; $l =~ s/^\s+//; $l =~ s/\s+$//; $l } split m{\n}, $text;
+	$c->render(json => {
+		running => ($success || $failed) ? 0 : 1,
+		success => $success,
+		failed => $failed,
+		percent => (@percent ? $percent[-1] : ''),
+		tail => (@lines ? $lines[-1] : '')
+	});
+};
+
 get '/manager/embedded/teletype_backup' => sub($c) {
 	my $ip = $c->param('ip');
 	my $mac = $c->param('mac');

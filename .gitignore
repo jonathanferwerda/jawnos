@@ -1,5 +1,6 @@
 # --- Firmware build artifacts (Arduino / PlatformIO / ESP32 / RP2040) ---
 build/
+.pio/
 *.ino.elf
 *.ino.map
 *.ino.bin
