@@ -22,7 +22,9 @@ var markerBoundCanvas = null;
 var markerSprites = {};
 var markerComposePending = false;
 var markerThumbTimeout;
-var markerStroke = { drawing: false, saved: false, spraying: false, pressure: 1, x: 0, y: 0, tool: 'pencil', erase: false, size: 20, colour: 'black', alpha: 1 };
+var markerStroke = { drawing: false, saved: false, spraying: false, pressure: 1, x: 0, y: 0, tool: 'pencil', erase: false, size: 20, colour: 'black', alpha: 1, pointer_id: undefined };
+var markerPenSeen = 0;
+var markerPenDown = false;
 var markerHistory = [];
 var markerRedo = [];
 var markerHistoryLimit = 40;
@@ -601,6 +603,30 @@ function markerWidth(pressure) {
 	return markerStroke.size * 2 * (0.3 + 0.7 * pressure);
 }
 
+// palm protection: a finger or a resting palm must not draw when a stylus is
+// in play. The stylus toggle is the explicit switch, and a pen touching or
+// hovering (palms usually land before the nib does) is enough on its own.
+function markerPalm(e) {
+	if (e.pointerType != 'touch') { return false; }
+	if ($('.marker_stylus_toggle').attr('toggle') == 'on') { return true; }
+	if (markerPenDown) { return true; }
+	if (markerPenSeen && Date.now() - markerPenSeen < 3000) { return true; }
+	return false;
+}
+
+function markerStylusDisplay() {
+	var toggle = $('.marker_stylus_toggle');
+	if (toggle.length == 0) { return; }
+	if (toggle.attr('toggle') == 'on') {
+		toggle.attr('hint', 'Stylus (palm protection on)');
+		toggle.css({'background-color': 'rgba(255,255,255,0.4)', 'border-radius': '7px'});
+	}
+	else {
+		toggle.attr('hint', 'Stylus (finger drawing, no palm protection)');
+		toggle.css('background-color', '');
+	}
+}
+
 function markerKeyboardPointer(pos) {
 	localStorage.setItem('whiteboard_position', '{ "x": "' + pos.x + '", "y": "' + pos.y + '"}');
 	var wb = $('#whiteboard').offset();
@@ -713,6 +739,7 @@ function markerPointerMove(pos) {
 
 function markerEndStroke() {
 	if (markerStroke.spraying) { cancelAnimationFrame(markerStroke.spraying); markerStroke.spraying = false; }
+	markerStroke.pointer_id = undefined;
 	if (!markerStroke.drawing) { return; }
 	markerStroke.drawing = false;
 	if (markerStroke.saved) {
@@ -724,23 +751,32 @@ function markerEndStroke() {
 }
 
 function markerMouseDown(e) {
+	if (e.pointerType == 'pen') { markerPenSeen = Date.now(); markerPenDown = true; }
 	if (e.pointerType == 'mouse' && e.button !== 0) { return; }
+	if (markerPalm(e)) { return; }
+	if (markerStroke.drawing) { return; }
 	e.preventDefault();
 	var canvas = document.getElementById('whiteboard');
 	if (canvas.setPointerCapture) {
 		try { canvas.setPointerCapture(e.pointerId); markerPointerCaptured = true; }
 		catch (err) { markerPointerCaptured = false; }
 	}
+	markerStroke.pointer_id = e.pointerId;
 	markerPointerDown(markerPointerEvent(e));
 }
 
 function markerMouseMove(e) {
+	if (e.pointerType == 'pen') { markerPenSeen = Date.now(); }
 	window.mouse = e;
 	if (markerStroke.drawing) { markerPointerMove(markerPointerEvent(e)); }
 	else if (localStorage.getItem('marker_tool') == 'kb') { markerKeyboardPointer(markerPointerEvent(e)); }
 }
 
 function markerPointerUp(e) {
+	if (e.pointerType == 'pen') { markerPenDown = false; markerPenSeen = Date.now(); }
+	// a second finger lifting must not end the stroke that is being drawn
+	if (markerStroke.pointer_id != undefined && e.pointerId != markerStroke.pointer_id) { return; }
+	markerStroke.pointer_id = undefined;
 	markerPointerCaptured = false;
 	markerEndStroke();
 }
@@ -748,6 +784,7 @@ function markerPointerUp(e) {
 function markerPointerLeave(e) {
 	// a captured stroke keeps drawing outside the canvas; otherwise let go
 	if (markerPointerCaptured) { return; }
+	if (markerStroke.pointer_id != undefined && e.pointerId != markerStroke.pointer_id) { return; }
 	markerEndStroke();
 }
 
@@ -821,6 +858,7 @@ $(document).on('click', '.marker_stylus_toggle', function() {
 		toggle = 'on';
 	}
 	$(this).attr('toggle', toggle);
+	markerStylusDisplay();
 	settingSetter({ 'app': 'marker', 'setting': 'stylus_toggle', 'value': toggle });
 });
 
@@ -875,6 +913,7 @@ function markerToolSetup() {
 	$('.marker_tool[tool]').removeClass('selected');
 	$('.marker_tool[tool="' + tool + '"]').addClass('selected');
 	markerToolEraseDisplay(erase);
+	markerStylusDisplay();
 }
 
 function markerToolEraseDisplay(erase) {

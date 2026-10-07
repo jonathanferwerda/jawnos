@@ -5,7 +5,7 @@
 	<div id="marker_toolbox" class="marker_toolbox" style="overflow:scroll; position:absolute;right:0px; float:right; top: 35px; height:100%; width: 85px; border: 2px; border-radius: 7px; background-color: green;">
 
 		<button class="button marker_init" onclick="markerInit()">Init</button>
-		<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
+		<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Stylus (palm protection)" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
 		<br>
 		<input type="text" id="flipbook_interval" class="flipbook_interval" style="width: 80px;" value="60"><br>
 		<button movement="back" class="button flipbook"><-</button>
