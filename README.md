@@ -19,9 +19,20 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 
 - **Files & media** — browse folders, play video and audio, and view photos through an
   on-the-fly thumbnailer with a disk cache.
+- **Music & studio** — a multitrack studio with takes, crossfades, waveform clips and a
+  pedalboard routed onto channels, alongside the synth and the music player.
 - **Appointments & scheduling** — a full calendaring system with alarms, recurring
   appointments, reminders, and calendar export.
-- **Money** — budgeting, invoicing, and day-to-day accounting helpers.
+- **Money** — budgeting, invoicing and quotes, day-to-day accounting helpers, and a store
+  with items, models and options that each carry their own prices.
+- **Warehouse & stock** — money and goods tracked per place: what's where and how much of it,
+  packaging that carries real quantities (a carton of twelve, a box of nails by weight) and
+  shelf life, so expired stock is swept up on its own, and a journal of every stock movement
+  and the reason for it — shown inline on both warehouse items and appointments.
+- **Drawing (the marker)** — a layered paint board with pencil, paintbrush, spray, fill and
+  matching erase tools, undo/redo, zoom and pan (pinch, ctrl + scroll, or scroll-to-zoom) and
+  a toolbox that folds away. It reads stylus pressure and ignores your palm on a tablet, and
+  the board autosaves, so a refresh doesn't lose a painting.
 - **Location & activity** — location logging, travel history, distance/speed calculations,
   and a "father time" activity clock.
 - **Notes & documents** — note-taking, document scanning, OCR (Tesseract), barcode/QR
@@ -272,7 +283,8 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 ## Status
 
 JawnOS is a work in progress. It ships with ten selectable icon sets and hover/long-press hints
-throughout the interface; the original hand-drawn icons are still the default.
+throughout the interface; the original hand-drawn icons are still the default. The warehouse and
+the marker have had most of the attention lately, along with battery use on phones.
 
 ## License
 
