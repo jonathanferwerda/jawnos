@@ -108,7 +108,12 @@ sub first_run_setup() {
 	return if $config_ok && !$force;
 
 	print "\n";
-	print "Looks like this is a first run. Let's get you set up.\n\n";
+	if ($force && $config_ok) {
+		print "Re-running JawnOS setup at your request.\n\n";
+	}
+	else {
+		print "Looks like this is a first run. Let's get you set up.\n\n";
+	}
 
 	# 1. dependencies (core-perl checker; works before anything is installed)
 	system( 'perl', 'scripts/jawnos_deps.pl' ) if -e 'scripts/jawnos_deps.pl';
