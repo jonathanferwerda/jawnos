@@ -452,16 +452,17 @@ canvas { overflow: scroll; z-index: 99; }
 	padding-top: 44px;
 }
 
-/* The app menu is a list: one icon and its name per row, instead of rows of icons
-   broken up with <br>. startMenuListify() in manager.js builds the rows, so these
-   rules only have to lay them out. */
+/* The app menu is a list: one name and its icon per row, instead of rows of icons
+   broken up with <br>. startMenuListify() in manager.js builds and orders the rows,
+   so these rules only shape them: right-aligned, name first, icons in a column. */
 #start_menu .start_menu_item {
 	display: flex;
 	align-items: center;
+	justify-content: flex-end;
 	gap: 10px;
 	padding: 2px 8px;
 	cursor: pointer;
-	text-align: left;
+	text-align: right;
 }
 #start_menu .start_menu_item:hover {
 	background-color: rgba(0,0,0,0.08);
@@ -474,6 +475,7 @@ canvas { overflow: scroll; z-index: 99; }
 }
 .start_menu_item_text {
 	font-size: 22px;
+	text-align: right;
 }
 
 .appointment_option {

@@ -1076,8 +1076,9 @@ function startMenuToggle(data) {
 
 // The app menu ships as a wall of icons separated by <br>. Turn it into a list:
 // each icon keeps its id and classes (the click handlers hang off those) and gains
-// a text label from its hint, and the breaks in between go away. Runs on every
-// render of the menu, so it is safe to call again on the same markup.
+// a text label from its hint, and the breaks in between go away. The rows are kept
+// in alphabetical order and read right-aligned, name first so the icons line up in
+// a column against the right edge. Safe to call again on the same markup.
 function startMenuListify() {
 	var main = $('.start_menu_main_display');
 	if (main.length == 0) { return; }
@@ -1092,11 +1093,24 @@ function startMenuListify() {
 		// start_menu_list is what the other menus use for a row that closes the menu
 		var item = $('<span class="start_menu_item start_menu_list"></span>');
 		img.before(item);
-		item.append(img);
 		if (label) {
 			item.append($('<span class="start_menu_item_text"></span>').text(label));
 		}
+		item.append(img);
 	});
+	startMenuSort(main);
+}
+
+function startMenuSort(main) {
+	var items = main.children('.start_menu_item').get();
+	if (items.length < 2) { return; }
+	items.sort(function (a, b) {
+		var at = ($(a).text() || '').trim().toLowerCase();
+		var bt = ($(b).text() || '').trim().toLowerCase();
+		if (at == bt) { return 0; }
+		return at < bt ? -1 : 1;
+	});
+	$(items).appendTo(main);
 }
 // the name is part of the button: pressing it presses the icon next to it
 $(document).on('click', '.start_menu_item_text', function () {
