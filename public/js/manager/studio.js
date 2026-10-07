@@ -9,6 +9,419 @@ function jawnosStudioButtonIcon(state, colour) {
 	return '/images/studio/button_' + state + '_' + colour + '.png';
 }
 
+// ===========================================================================
+// Audio engine
+// ===========================================================================
+// A single AudioContext drives the whole studio. Each channel owns one
+// persistent graph that survives record/play cycles:
+//
+//   live input -> trim -> bass -> mid -> treble -> [inserts] -> recGain -> recDest
+//                                                              -> recAnalyser
+//   take element -> takeGain -> takePan -> master -> speakers
+//
+// Takes are captured *after* the inserts, so pedals are printed into the
+// recording (a guitar tracks through its pedals). Playback runs through the
+// channel volume/pan only, so nothing is processed twice. The live input is
+// never routed to the speakers, which keeps monitoring from feeding back.
+
+var studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {} };
+var studioSelectedChannel = 1;
+
+function studioContext() {
+	if (!studioAudio.ctx) {
+		var Ctor = window.AudioContext || window.webkitAudioContext;
+		if (!Ctor) { return null; }
+		var ctx = new Ctor({ latencyHint: 'interactive' });
+		studioAudio.ctx = ctx;
+		studioAudio.master = ctx.createGain();
+		studioAudio.masterAnalyser = ctx.createAnalyser();
+		studioAudio.masterAnalyser.fftSize = 2048;
+		studioAudio.master.connect(studioAudio.masterAnalyser);
+		studioAudio.masterAnalyser.connect(ctx.destination);
+	}
+	if (studioAudio.ctx.state == 'suspended') { studioAudio.ctx.resume(); }
+	return studioAudio.ctx;
+}
+
+function studioKnobNumber(value, fallback) {
+	var n = numeral(value).value();
+	return (n === null || n === undefined || isNaN(n)) ? fallback : n;
+}
+
+// The channel fader is nominally 0..100, but the template ships value="1", so
+// treat values at or below 1 as an already-normalised fraction.
+function studioVolumeFraction(value) {
+	var v = studioKnobNumber(value, 1);
+	if (v > 1) { v = v / 100; }
+	return Math.max(0, Math.min(1, v));
+}
+
+// ---- effect factories ------------------------------------------------------
+
+function studioDistortionCurve(amount) {
+	var n = 44100;
+	var curve = new Float32Array(n);
+	var deg = Math.PI / 180;
+	for (var i = 0; i < n; i++) {
+		var x = (i * 2) / n - 1;
+		curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + (amount * Math.abs(x)));
+	}
+	return curve;
+}
+
+function studioImpulse(ctx, seconds, decay) {
+	var rate = ctx.sampleRate;
+	var length = Math.max(1, Math.floor(rate * seconds));
+	var impulse = ctx.createBuffer(2, length, rate);
+	for (var c = 0; c < 2; c++) {
+		var data = impulse.getChannelData(c);
+		for (var i = 0; i < length; i++) {
+			data[i] = (Math.random() * 2 - 1) * Math.pow(1 - (i / length), decay);
+		}
+	}
+	return impulse;
+}
+
+// Returns { name, input, output, set(control, rawValue) }. Raw values are the
+// 0..100 knob slider values.
+function studioInsert(ctx, name) {
+	var input = ctx.createGain();
+	var output = ctx.createGain();
+	var setters = {};
+	var api = { name: name, input: input, output: output, set: function (control, value) {
+		if (setters[control]) { setters[control](studioKnobNumber(value, 50)); }
+	} };
+
+	if (name == 'CompressionX') {
+		var comp = ctx.createDynamicsCompressor();
+		var wet = ctx.createGain();
+		var dry = ctx.createGain();
+		input.connect(comp).connect(wet).connect(output);
+		input.connect(dry).connect(output);
+		setters['thresh'] = function (v) { comp.threshold.value = -v / 2; };
+		setters['attack'] = function (v) { comp.attack.value = Math.max(0.001, v / 500); };
+		setters['mix'] = function (v) { wet.gain.value = v / 100; dry.gain.value = 1 - (v / 100); };
+	}
+	else if (name == 'Distorjawn') {
+		var shaper = ctx.createWaveShaper();
+		var lp = ctx.createBiquadFilter();
+		lp.type = 'lowpass';
+		lp.frequency.value = 4500;
+		input.connect(shaper).connect(lp).connect(output);
+		setters['gain'] = function (v) { shaper.curve = studioDistortionCurve((v / 100) * 100); shaper.oversample = '4x'; };
+	}
+	else if (name == 'Delayed') {
+		var delay = ctx.createDelay(2.0);
+		var feedback = ctx.createGain();
+		var dwet = ctx.createGain();
+		var ddry = ctx.createGain();
+		input.connect(ddry).connect(output);
+		input.connect(delay).connect(dwet).connect(output);
+		delay.connect(feedback).connect(delay);
+		ddry.gain.value = 0.7;
+		setters['time'] = function (v) { delay.delayTime.value = (v / 100) * 1.5; };
+		setters['feedback'] = function (v) { feedback.gain.value = (v / 100) * 0.9; };
+		setters['vol'] = function (v) { dwet.gain.value = v / 100; };
+		setters['time'](35); setters['feedback'](30); setters['vol'](40);
+	}
+	else if (name == 'reverb2') {
+		var convolver = ctx.createConvolver();
+		convolver.buffer = studioImpulse(ctx, 2.4, 2.6);
+		var rwet = ctx.createGain();
+		var rdry = ctx.createGain();
+		input.connect(rdry).connect(output);
+		input.connect(convolver).connect(rwet).connect(output);
+		rdry.gain.value = 0.8;
+		setters['mix'] = function (v) { rwet.gain.value = (v / 100) * 0.9; rdry.gain.value = 1 - (v / 100) * 0.4; };
+		setters['volume'] = function (v) { rwet.gain.value = (v / 100) * 0.9; };
+		setters['mix'](35);
+	}
+	else {
+		input.connect(output);
+	}
+
+	return api;
+}
+
+function studioChannelEngine(ch) {
+	var ctx = studioContext();
+	if (!ctx) { return null; }
+	if (studioAudio.channels[ch]) { return studioAudio.channels[ch]; }
+	var c = {
+		trim: ctx.createGain(),
+		bass: ctx.createBiquadFilter(),
+		mid: ctx.createBiquadFilter(),
+		treble: ctx.createBiquadFilter(),
+		recGain: ctx.createGain(),
+		recAnalyser: ctx.createAnalyser(),
+		recDest: ctx.createMediaStreamDestination(),
+		playBus: ctx.createGain(),
+		playPan: ctx.createStereoPanner(),
+		inserts: [],
+		insertByName: {},
+		source: null
+	};
+	c.bass.type = 'lowshelf'; c.bass.frequency.value = 220;
+	c.mid.type = 'peaking'; c.mid.frequency.value = 1000; c.mid.Q.value = 1;
+	c.treble.type = 'highshelf'; c.treble.frequency.value = 3500;
+	c.recAnalyser.fftSize = 2048;
+	c.recData = new Float32Array(c.recAnalyser.fftSize);
+	c.trim.connect(c.bass).connect(c.mid).connect(c.treble);
+	c.recGain.connect(c.recAnalyser);
+	c.recGain.connect(c.recDest);
+	// takes play through the channel fader + pan into the master bus
+	c.playBus.connect(c.playPan).connect(studioAudio.master);
+	studioAudio.channels[ch] = c;
+	return c;
+}
+
+function studioRebuildInserts(ch) {
+	var c = studioAudio.channels[ch];
+	if (!c) { return; }
+	try { c.trim.disconnect(); } catch (e) {}
+	try { c.treble.disconnect(); } catch (e) {}
+	c.trim.connect(c.bass);
+	var node = c.treble;
+	c.inserts.forEach(function (insert) {
+		node.connect(insert.input);
+		node = insert.output;
+	});
+	node.connect(c.recGain);
+}
+
+function studioApplyPedals() {
+	$('.knob_control').each(function (i, v) {
+		var channel = $(v).attr('channel');
+		var control = $(v).attr('control');
+		if (/^[0-9]+$/.test(channel)) { return; }
+		$.each(studioAudio.channels, function (ch, c) {
+			if (c.insertByName[channel]) { c.insertByName[channel].set(control, $(v).val()); }
+		});
+	});
+}
+
+function studioSetInsert(ch, name, on) {
+	var c = studioChannelEngine(ch);
+	if (!c) { return; }
+	var at = -1;
+	c.inserts.forEach(function (ins, i) { if (ins.name == name) { at = i; } });
+	if (on && at == -1) {
+		var ins = studioInsert(studioContext(), name);
+		c.inserts.push(ins);
+		c.insertByName[name] = ins;
+	}
+	else if (!on && at != -1) {
+		c.inserts.splice(at, 1);
+		delete c.insertByName[name];
+	}
+	studioApplyPedals();
+	studioRebuildInserts(ch);
+}
+
+function studioApplyChannel(ch) {
+	var c = studioChannelEngine(ch);
+	if (!c) { return; }
+	var raw = function (control, fallback) {
+		return studioKnobNumber($('.knob_control[channel="' + ch + '"][control="' + control + '"]').val(), fallback);
+	};
+	c.trim.gain.value = raw('gain', 50) / 50;
+	c.bass.gain.value = (raw('bass', 50) - 50) / 50 * 12;
+	c.mid.gain.value = (raw('mid', 50) - 50) / 50 * 12;
+	c.treble.gain.value = (raw('treble', 50) - 50) / 50 * 12;
+}
+
+// Feed a live MediaStream (mic / camera / screen) into a channel and return its
+// processed recording stream.
+function studioAttachInput(ch, stream) {
+	var ctx = studioContext();
+	var c = studioChannelEngine(ch);
+	if (!ctx || !c) { return null; }
+	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+	c.source = ctx.createMediaStreamSource(stream);
+	c.source.connect(c.trim);
+	studioApplyChannel(ch);
+	studioRebuildInserts(ch);
+	return c.recDest.stream;
+}
+
+function studioDetachInput(ch) {
+	var c = studioAudio.channels[ch];
+	if (!c) { return; }
+	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+}
+
+// Route a take's media element through the channel's playback bus. A media
+// element can only be captured once, so the node is cached on the take.
+function studioTakeNode(ch, take) {
+	var ctx = studioContext();
+	var c = studioChannelEngine(ch);
+	if (!ctx || !c || !take || !take.track) { return null; }
+	if (!take.node) {
+		try {
+			take.node = ctx.createMediaElementSource(take.track);
+			take.node.connect(c.playBus);
+		} catch (e) {
+			console.log('studio: could not route take', e);
+			return null;
+		}
+	}
+	return take.node;
+}
+
+function studioPickMime(hasVideo) {
+	if (!window.MediaRecorder) { return ''; }
+	var options = hasVideo
+		? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+		: ['audio/webm;codecs=opus', 'audio/webm'];
+	for (var i = 0; i < options.length; i++) {
+		if (MediaRecorder.isTypeSupported(options[i])) { return options[i]; }
+	}
+	return '';
+}
+
+// ---- transport helpers -----------------------------------------------------
+
+// Keep every take aligned to the transport: each take is fed its own local
+// time (transport position minus its start offset).
+function studioSyncTakes() {
+	var pos = mixer['time']['position'];
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
+		if (!armed) { return; }
+
+		var c = studioAudio.channels[ch];
+		if (c) {
+			c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val());
+			c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+		}
+
+		m.media.out.forEach(function (take) {
+			var el = take && take.track;
+			if (!el || !el.src || take.status == 'recording') { return; }
+			var routed = !!studioTakeNode(ch, take);
+			if (!routed) { el.volume = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()); }
+			var target = pos - take.startTime;
+			if (target < 0) { if (!el.paused) { el.pause(); } return; }
+			if (mixer['time']['status'] == 'scroll') { try { el.currentTime = target; } catch (e) {} return; }
+			if (el.paused) {
+				try { el.currentTime = target; } catch (e) {}
+				var p = el.play();
+				if (p && p.catch) { p.catch(function () {}); }
+			}
+			else if (Math.abs(el.currentTime - target) > 0.3) {
+				try { el.currentTime = target; } catch (e) {}
+			}
+		});
+	});
+}
+
+// ---- canvas -----------------------------------------------------------------
+
+function studioFitCanvas(canvas) {
+	if (!canvas) { return; }
+	var w = canvas.clientWidth || canvas.width || 300;
+	var h = canvas.clientHeight || canvas.height || 60;
+	if (canvas.width != w) { canvas.width = w; }
+	if (canvas.height != h) { canvas.height = h; }
+}
+
+function studioDrawChannel(ch) {
+	var canvas = document.getElementById('track_view_' + ch);
+	if (!canvas) { return; }
+	studioFitCanvas(canvas);
+	var ctx = canvas.getContext('2d');
+	var w = canvas.width, h = canvas.height;
+	ctx.clearRect(0, 0, w, h);
+	ctx.fillStyle = 'rgba(255,255,255,0.18)';
+	ctx.fillRect(0, 0, w, h);
+
+	var duration = mixer['time']['duration'] > 0 ? mixer['time']['duration'] : 1;
+	var m = mixer[ch] || {};
+	var co = studioAudio.channels[ch];
+
+	if (co && co.source) {
+		co.recAnalyser.getFloatTimeDomainData(co.recData);
+		ctx.strokeStyle = '#0a8a3a';
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		for (var i = 0; i < w; i++) {
+			var v = co.recData[Math.floor(i / w * co.recData.length)] || 0;
+			var y = (h / 2) + (v * h * 0.45);
+			if (i === 0) { ctx.moveTo(i, y); } else { ctx.lineTo(i, y); }
+		}
+		ctx.stroke();
+	}
+
+	if (m.media && m.media.out) {
+		m.media.out.forEach(function (take) {
+			if (!take) { return; }
+			var x = (take.startTime / duration) * w;
+			var tw = ((take.duration || 0) / duration) * w;
+			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : 'rgba(20,90,190,0.5)';
+			ctx.fillRect(x, 3, Math.max(2, tw), h - 6);
+			ctx.strokeStyle = '#04325f';
+			ctx.lineWidth = 1;
+			ctx.strokeRect(x, 3, Math.max(2, tw), h - 6);
+		});
+	}
+
+	if (mixer['time']['position'] > 0) {
+		var px = (mixer['time']['position'] / duration) * w;
+		ctx.strokeStyle = 'black';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(px, 0);
+		ctx.lineTo(px, h);
+		ctx.stroke();
+	}
+}
+
+function studioDrawMetre(ch) {
+	var canvas = document.getElementById('channel_volume_metre_' + ch);
+	var co = studioAudio.channels[ch];
+	if (!canvas || !co || !co.source) { return; }
+	studioFitCanvas(canvas);
+	var ctx = canvas.getContext('2d');
+	var w = canvas.width, h = canvas.height;
+	ctx.clearRect(0, 0, w, h);
+	co.recAnalyser.getFloatTimeDomainData(co.recData);
+	var sum = 0;
+	for (var i = 0; i < co.recData.length; i++) { sum += co.recData[i] * co.recData[i]; }
+	var level = Math.min(1, Math.sqrt(sum / co.recData.length) * 3);
+	ctx.fillStyle = 'green';
+	ctx.fillRect(0, h - (level * h), w, level * h);
+}
+
+function studioDrawTracks() {
+	$.each(mixer, function (ch) {
+		if (!/^[0-9]+$/.test(ch)) { return; }
+		studioDrawChannel(ch);
+		studioDrawMetre(ch);
+	});
+}
+
+// ---- pedal / channel selection ---------------------------------------------
+
+$(document).on('click', '.channel', function (e) {
+	if ($(e.target).is('input, button, img, canvas, video, .armed')) { return; }
+	$('.channel').removeClass('selected_channel');
+	$(this).addClass('selected_channel');
+	var ch = ($(this).attr('class') || '').match(/channel_(\d+)/);
+	if (ch) { studioSelectedChannel = ch[1]; }
+});
+
+$(document).on('click', '.pedal_background', function () {
+	var name = $(this).attr('hint');
+	if (!name) { return; }
+	var ch = studioSelectedChannel;
+	var c = studioAudio.channels[ch];
+	var on = !(c && c.insertByName[name]);
+	studioSetInsert(ch, name, on);
+	$(this).css({ opacity: on ? 1 : 0.45 });
+	studioSaver();
+});
+
 $(document).on('click', '#studio_new', function() {
 	$('#studio').attr('uuid','').attr('name','');
 	studioInit({ uuid: 'new', settings: [{ 'setting': 'last_song', 'value': 'new' }] });
@@ -46,11 +459,13 @@ function studioInit(data) {
 		success: function(response) {
 			windowMaker(response.html);
 			mixer = {
-				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0 },
+				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: 0 },
 				buttons: { record: { obg: '', bg: 'red', interval: '' }, stop: { obg: '', bg: 'lightgreen', interval: '' }, play: { obg: '', bg: 'yellow', interval: '' } },
 				settings: response.settings,
 				automations: {}
 			};
+			// fresh channel graphs, but keep the shared AudioContext
+			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {} };
 			$('#studio_track_container').html('');
 
 			var pd = $('#pedalboard');
@@ -78,6 +493,15 @@ function studioInit(data) {
 					});
 				});
 			}
+
+			var channel_count = numeral(response.settings['channel_count']).value() || 4;
+			for (var ch = 1; ch <= channel_count; ch++) {
+				studioChannelEngine(ch);
+				studioApplyChannel(ch);
+				studioDrawChannel(ch);
+			}
+			studioApplyPedals();
+
 			studioRetriever();
 			if ($('#studio').attr('uuid')) {
 				if (!data['uuid']) {
@@ -151,6 +575,8 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 		transform_value = (flip - numeral((360 / 100) * (current_value * range)).value());
 	}
 	knob.css({ 'transform': 'rotate(' + transform_value + 'deg)' });
+	if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
+	else { studioApplyPedals(); }
 	studioSaver();
 });
 
@@ -207,121 +633,125 @@ $(document).on('click', '#studio_loop', function() {
 });
 
 function studioSaver() {
-	var studio = {};
+	var song = {};
 	var name = $('#studio').attr('name');
 	var uuid = $('#studio').attr('uuid');
-	$('.knob_control, .channel_volume').each(function(i,v) {
 
+	$('.knob_control, .channel_volume').each(function(i,v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
 		var value = $(v).val();
-
 		if (control == 'pan') {
 			value = (value - 0) / (100 - 0) * ( 1 - -1) + -1;
 		}
-
-		if (studio[channel] == undefined) {
-			studio[channel] = {};
-		}
-		if (!studio[channel]['plugs']) {
-			studio[channel]['plugs'] = {
-				input: {},
-				output: {}
-			};
-		}
-		studio[channel][control] = value;
-		if (mixer[channel]) {
-			mixer[channel][control] = value;
-		}
+		if (song[channel] == undefined) { song[channel] = {}; }
+		if (!song[channel]['plugs']) { song[channel]['plugs'] = { input: {}, output: {} }; }
+		song[channel][control] = value;
 	});
 	$('.armed').each(function(i,v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
-		var state = $(v).attr('state');
-		var text = $(v).text();
-		studio[channel][control] = { state: state, text: text };
+		if (song[channel] == undefined) { song[channel] = {}; }
+		song[channel][control] = { state: $(v).attr('state'), text: $(v).text() };
 	});
 	$('.studio_channel_information').each(function(inf,sci) {
 		var text = $(sci).text();
 		if (isJson(text)) {
 			var info = JSON.parse(text);
-			studio[info['channel']]['plugs'][info['direction']] = info;
+			if (song[info['channel']] == undefined) { song[info['channel']] = {}; }
+			if (!song[info['channel']]['plugs']) { song[info['channel']]['plugs'] = { input: {}, output: {} }; }
+			song[info['channel']]['plugs'][info['direction']] = info;
 		}
+	});
+
+	// per-channel insert rack (which pedals are in the chain, in order)
+	$.each(studioAudio.channels, function(ch, c) {
+		if (song[ch] == undefined) { song[ch] = {}; }
+		song[ch]['fx'] = c.inserts.map(function(ins) { return ins.name; });
+	});
+
+	// recorded takes: metadata only, the audio blobs are uploaded by studioSave
+	$.each(mixer, function(i,v) {
+		if (!/^[0-9]+$/.test(i) || !mixer[i].media || !mixer[i].media.out) { return; }
+		if (song[i] == undefined) { song[i] = {}; }
+		song[i]['mixer'] = { out: [] };
+		mixer[i].media.out.forEach(function(take, ir) {
+			if (!take) { return; }
+			song[i]['mixer'].out[ir] = {
+				uuid: take.uuid, startTime: take.startTime, duration: take.duration,
+				encoding: take.encoding, src: take.src
+			};
+		});
 	});
 
 	var sl = $('#studio_loop').attr('enabled');
 	var video_toggle = $('#studio_video_toggle').attr('toggled');
-	studio['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle };
-	var jstudio = JSON.stringify(studio);
-	localStorage.setItem('studio', jstudio);
-	return studio;
+	song['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle,
+		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'] };
+	localStorage.setItem('studio', JSON.stringify(song));
+	return song;
 }
 
 function studioRetriever() {
-	var studio = localStorage.getItem('studio') || "{}";
-	studio = JSON.parse(studio);
-	$.each(studio, function(i,v) {
-		if (!mixer[i]) { mixer[i] = {}; }
-		$.each(studio[i], function(n,w) {
-			mixer[i][n] = w;
-			$.each(mixer[i], function(ir,vr) {
-				studio[i]['mixer'] = vr;
-			});
-			if (n == 'armed') {
-				$('[channel="' + i + '"][control="' + n + '"]').attr('state', w.state);
-				$('[channel="' + i + '"][control="' + n + '"]').text(w.text);
-				if (w.state == 'rec') {
-		//			mixer['admin']['video_toggle'] = 'on';
-					studioInputStreamGrabber(i,w.state);
-				}
-			}
-			else {
+	var song = JSON.parse(localStorage.getItem('studio') || '{}');
 
-				if (n == 'pan') {
-					w = (w - -1) / (1 - -1) * ( 100 - 0) + 0;
-				}
-				if (n == 'gain' && !w) {
-					w = 10;
-				}
-				$('[channel="' + i + '"][control="' + n + '"]').val(w).trigger('change');
-			}
-		});
-	});
-	studio['admin']['metronome'] = mixer['time']['metronome'];
-	studio['admin']['channel_count'] = $('#studio_viewer').attr('channel_count');
-	mixer['settings']['channel_count'] = studio['admin']['channel_count'];
-	var met = $('#studio_metronome');
-	if (mixer['time']['metronome'] == 'yes') {
-		met.attr('armed', 'yes');
-		if (met.attr('obg') != 'red') {
-			met.attr('obg', met.css('background-color'));
+	$.each(song, function(i,v) {
+		if (i == 'admin') {
+			$.each(v, function(n,w) { mixer['admin'] = mixer['admin'] || {}; mixer['admin'][n] = w; });
+			return;
 		}
-		met.css({'background-color': 'red'});
-	} else {
-		met.attr('armed','no');
-		met.css({'background-color': met.attr('obg')});
-	}
-	var bpm = $('#studio_bpm').val();
-	if (mixer['time']['bpm']) {
-		studio['admin']['bpm'] = mixer['time']['bpm'];
-	} else {
-		studio['admin']['bpm'] = bpm;
-		mixer['time']['bpm'] = bpm;
-	}
-	$('#studio_bpm').val(studio['admin']['bpm']);
-	var sig = $('#studio_sig').val();
-	if (mixer['time']['sig']) {
-		studio['admin']['sig'] = mixer['time']['sig'];
-	} else {
-		studio['admin']['sig'] = sig;
-		mixer['time']['sig'] = sig;
-	}
-	$('#studio_sig').val(studio['admin']['bpm']);
+		if (!/^[0-9]+$/.test(i)) {
+			// a pedal's knobs live under its own name
+			$.each(v, function(n,w) {
+				if (n == 'armed' || n == 'plugs' || n == 'mixer' || n == 'fx') { return; }
+				$('[channel="' + i + '"][control="' + n + '"]').val(w);
+			});
+			return;
+		}
 
+		if (!mixer[i]) { mixer[i] = {}; }
+		if (!mixer[i].armed) { mixer[i].armed = { state: 'off', text: 'O' }; }
+		$.each(v, function(n,w) {
+			if (n == 'plugs' || n == 'mixer' || n == 'fx') { return; }
+			mixer[i][n] = w;
+			if (n == 'armed') {
+				$('[channel="' + i + '"][control="armed"]').attr('state', w.state).text(w.text);
+				if (w.state == 'rec') { studioInputStreamGrabber(i, 'rec'); }
+				return;
+			}
+			if (n == 'pan') { w = (w - -1) / (1 - -1) * (100 - 0) + 0; }
+			$('[channel="' + i + '"][control="' + n + '"]').val(w);
+		});
 
-	mixer['time']['loop'] = studio['admin']['loop'];
-	studio['admin']['settings'] = mixer['settings'];
-	return studio;
+		// rebuild this channel's insert rack
+		var c = studioChannelEngine(i);
+		if (c) {
+			c.inserts.slice().forEach(function(ins) { studioSetInsert(i, ins.name, false); });
+			(v['fx'] || []).forEach(function(name) { studioSetInsert(i, name, true); });
+		}
+		studioApplyChannel(i);
+	});
+
+	studioApplyPedals();
+
+	var met = $('#studio_metronome');
+	if (mixer['time'] && mixer['time']['metronome'] == 'yes') {
+		met.attr('armed', 'yes');
+		if (met.attr('obg') != 'red') { met.attr('obg', met.css('background-color')); }
+		met.css({ 'background-color': 'red' });
+	} else {
+		met.attr('armed', 'no');
+		met.css({ 'background-color': met.attr('obg') || 'rgb(211, 211, 211)' });
+	}
+	if (mixer['time']) {
+		if (mixer['time']['bpm']) { $('#studio_bpm').val(mixer['time']['bpm']); }
+		if (mixer['time']['sig']) { $('#studio_signature').val(mixer['time']['sig']); }
+		if (mixer['time']['loop']) { mixer['time']['loop'] = mixer['time']['loop']; }
+	}
+
+	mixer['settings'] = mixer['settings'] || {};
+	mixer['settings']['channel_count'] = $('#studio_viewer').attr('channel_count');
+	return song;
 }
 
 var studio_jw_deg =  0;
@@ -519,243 +949,147 @@ $(document).on('click', '.studio_plug_selection', function() {
 });
 
 async function studioInputStreamGrabber(channel,state) {
-	if (mixer[channel]['media'] && state == 'rec') {
-		if (mixer[channel]['media']['in']) {
-			if (mixer[channel]['media']['in']['active'] == true) {
-				return;
-			}
-		}
-	}
-	type = 'usermedia';
-	var monitor_id = 'studio_video_monitor_' + channel;
-	var inputStream;
-	var video = true;
+	var ch = channel;
+	if (!mixer[ch]) { mixer[ch] = {}; }
+	if (!mixer[ch].media) { mixer[ch].media = {}; }
+	if (!mixer[ch].media.out) { mixer[ch].media.out = []; }
+	if (!mixer[ch].media.rec) { mixer[ch].media.rec = []; }
 
-/*
-	if (mixer['admin']['video_toggle'] == 'on') {
-		video = true;
-	}
-*/
-	console.log(state);
 	if (state != 'rec') {
-		mixer[channel]['media']['inRaw'].getTracks().forEach(function(track) {
-			track.stop();
-		});
-		mixer[channel]['media']['in'] = { active: false };
-		mixer[channel]['media']['inRaw'] = undefined;
-		clearInterval(mixer[channel]['media']['in_analyzer_timeout']);
-		$('#' + monitor_id).hide();
+		if (mixer[ch].media.inRaw) {
+			mixer[ch].media.inRaw.getTracks().forEach(function(track) { track.stop(); });
+		}
+		mixer[ch].media.inRaw = undefined;
+		mixer[ch].media.in = null;
+		mixer[ch].media.active = false;
+		studioDetachInput(ch);
+		clearInterval(mixer[ch].media.in_analyzer_timeout);
+		$('#studio_video_monitor_' + ch).hide();
 		return;
 	}
-	mixer[channel]['media']['in'] = { active: true };
-	var constraints = { 
+
+	if (mixer[ch].media.active) { return; }
+
+	// If the channel has an input plug selected, honour its audio/video kind.
+	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]');
+	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
+	var video = (plug['av'] != 'a');
+
+	var constraints = {
 		audio: {
 			echoCancellation: false,  // Disables echo suppression
 			noiseSuppression: false,  // Disables background noise dampening
 			autoGainControl: false,   // Prevents the browser from auto-adjusting volume
-			sampleRate: 44100,        // Requests 48 kHz studio quality
-			channelCount: 2           // Requests stereo sound
+			sampleRate: 44100,
+			channelCount: 2
 		}
 	};
+	if (video) { constraints['video'] = true; }
 
-
-	if (Object.keys(mixer[channel]['plugs']['input']).length > 0) {
-		if (type == 'app') {
-
-		} else if (type == 'usermedia') {
-
-		} else if (type == 'screen_share') {
-
-		} else {
-			constraints['video'] = true;
-		}
-
-	}
-	else {
-		constraints['video'] = true;
-		inputStream = await navigator.mediaDevices.getUserMedia(constraints);
-	}
-	var studio = studioRetriever();
-	console.log('preinputstream');
-	if (inputStream) {
-		console.log('postinputstream');
-		// 2. Set up an Audio Context to intercept the hardware signal
-		const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-		const source = audioCtx.createMediaStreamSource(inputStream);
-		const destination = audioCtx.createMediaStreamDestination();
-
-		// 3. Create a Splitter to isolate the UR22 channels and a Merger to combine them
-		const splitter = audioCtx.createChannelSplitter(2);
-		const merger = audioCtx.createChannelMerger(2);
-
-
-		source.connect(splitter);
-
-		// 4. THE FIX: Grab Channel 0 (Input 1 / Left) and plug it into BOTH Left and Right channels
-		splitter.connect(merger, 0, 0); // Hardware Left Input -> Stereo Left Output
-		splitter.connect(merger, 0, 1); // Hardware Left Input -> Stereo Right Output (Forces both ears)
-		var masterStream = new MediaStream();
-		merger.connect(destination);
-		const fixedAudioTrack = destination.stream.getAudioTracks()[0];
-		masterStream.addTrack(fixedAudioTrack);
-		if (video == true) {
-			const rawVideoTrack = inputStream.getVideoTracks()[0];
-			masterStream.addTrack(rawVideoTrack);
-		}
-		if(!mixer[channel]['media']) { mixer[channel]['media'] = {}; }
-		mixer[channel]['media']['in'] = masterStream;
-		mixer[channel]['media']['inRaw'] = inputStream;
-		i = channel;
-		var count = 0;
-		if (!mixer[i]['media']['rec']) {
-			mixer[i]['media']['rec'] = [];
-			mixer[i]['media']['rec'][count] = { ready: 'ready' };
-		}
-		else {
-			for (var n = 0; n < mixer[i]['media']['rec'].length; n++) { 
-				if (mixer[i]['media']['rec'][n]) {
-					if (mixer[i]['media']['rec'][n]['ready']) {
-						count = n;
-						break;
-					}
-				}
-			}
-
-			mixer[i]['media']['rec'][count] = { ready: 'ready' };
-
-		}
-		console.log(mixer[i]['media']['rec']);
-		console.log(i + ' ' + count);
-		if (!mixer[i]['media']['out']) { mixer[i]['media']['out'] = []; }
-		mixer[i]['media']['out'][count] = {};
-		if (!mixer[i]['media']['actx']) { mixer[i]['media']['actx'] = []; }
-		mixer[i]['media']['actx'][count] = {};
-		mixer[i]['media']['actx'][count]['ctx'] = { 'state': 'uninitialized', pcmData: [] }; 
-		mixer[i]['media']['actx'][count]['ctx'] = new AudioContext();
-		var c = mixer[i]['media']['actx'][count]['ctx'];
-		mixer[i]['media']['actx'][count]['track'] = c.createMediaStreamSource(destination.stream);
-//		mixer[i]['media']['actx'][ir]['track'].connect(c.destination);
-		mixer[i]['media']['actx'][count]['panner'] = new StereoPannerNode(c, { pan: mixer[i]['pan']});
-		mixer[i]['media']['actx'][count]['gain'] = mixer[i]['media']['actx'][count]['ctx'].createGain();
-		mixer[i]['media']['actx'][count]['gain'].gain = mixer[i]['gain'] / 10;
-
-		mixer[i]['media']['actx'][count]['analyser'] = c.createAnalyser();
-		mixer[i]['media']['actx'][count]['track'].connect(mixer[i]['media']['actx'][count]['gain'] ).connect(mixer[i]['media']['actx'][count]['analyser']).connect(mixer[i]['media']['actx'][count]['panner']);
-		const pcmData = new Float32Array(mixer[i]['media']['actx'][count]['analyser'].fftSize);
-		mixer[i]['media']['actx'][count]['pcmData'] = pcmData;
-
-		var canvas = document.getElementById('track_view_' + i);
-		var metreCanvas = document.getElementById('channel_volume_metre_' + i);
-		var mctx = metreCanvas.getContext('2d');
-		var ctx = canvas.getContext('2d');
-		clearInterval(mixer[channel]['media']['in_analyzer_timeout']);
-		mixer[i]['media']['in_analyzer_timeout'] = setInterval(function() {
-				var vr = mixer[i]['media']['in'];
-
-				if (mixer[i]['media']['in'].active == true) {
-					let sum = 0.0;
-					if (eval(typeof mixer[i]['media']['actx'][count]['analyser'].getFloatTimeDomainData == 'function')) {
-						mixer[i]['media']['actx'][count]['analyser'].getFloatTimeDomainData(mixer[i]['media']['actx'][count]['pcmData']);
-						for (const amplitude of mixer[i]['media']['actx'][count]['pcmData']) {
-							sum += amplitude * amplitude;
-						}
-						var metreValue = Math.sqrt(sum / mixer[i]['media']['actx'][count]['pcmData'].length) * 3;
-						mctx.beginPath();
-
-						mctx.clearRect(0,0,metreCanvas.width,metreCanvas.height);
-						mctx.fill();
-						mixer[i]['media']['actx'][count]['lastClear'] = Date.now();
-
-						mctx.fillStyle = "green";
-						mctx.fillRect(0, Math.abs((metreValue * metreCanvas.height) - metreCanvas.height), metreCanvas.width,  metreCanvas.height);
-						mctx.fill();
-					}
-				}
-
-		},1);
-
-		var monitor_id = 'studio_video_monitor_' + channel;
-		$('#' + monitor_id).show();
-		var v = document.getElementById(monitor_id);
-		v.srcObject = mixer[channel]['media']['in'];
-		v.muted = true;
-		return masterStream;
+	var stream;
+	try {
+		stream = await navigator.mediaDevices.getUserMedia(constraints);
+	} catch (e) {
+		console.log('studio: could not open input for channel ' + ch, e);
+		mixer[ch].media.active = false;
+		return;
 	}
 
+	mixer[ch].media.inRaw = stream;
+	mixer[ch].media.active = true;
+
+	// Push the raw input through the channel's tone stack + pedals and take the
+	// processed result as our recording source.
+	var processed = studioAttachInput(ch, stream);
+	var combined = new MediaStream();
+	if (processed) { combined.addTrack(processed.getAudioTracks()[0]); }
+	if (stream.getVideoTracks()[0]) { combined.addTrack(stream.getVideoTracks()[0]); }
+	mixer[ch].media.in = combined;
+	mixer[ch].media.video = !!stream.getVideoTracks()[0];
+
+	clearInterval(mixer[ch].media.in_analyzer_timeout);
+	mixer[ch].media.in_analyzer_timeout = setInterval(function() {
+		studioDrawChannel(ch);
+		studioDrawMetre(ch);
+	}, 40);
+
+	var monitor = document.getElementById('studio_video_monitor_' + ch);
+	if (monitor) {
+		monitor.srcObject = combined;
+		monitor.muted = true;
+		if (mixer[ch].media.video) { $(monitor).show(); }
+	}
+	return combined;
+}
+
+function studioStartTake(ch) {
+	var media = mixer[ch] && mixer[ch].media;
+	if (!media || !media.in) {
+		console.log('studio: channel ' + ch + ' is armed to record but has no input');
+		return;
+	}
+	if (!media.out) { media.out = []; }
+	if (!media.rec) { media.rec = []; }
+	var ir = media.out.length;
+
+	var el = document.createElement('video');
+	el.className = 'studio_video';
+	el.id = 'studio_channel_' + ch + '_' + ir;
+	el.style.display = 'none';
+	$('#studio_track_container').append(el);
+
+	var take = { startTime: mixer['time']['position'], duration: 0, status: 'recording', track: el };
+	media.out[ir] = take;
+
+	var mime = studioPickMime(!!media.video);
+	var recorder;
+	try {
+		recorder = mime ? new MediaRecorder(media.in, { mimeType: mime, audioBitsPerSecond: 256000 }) : new MediaRecorder(media.in);
+	} catch (e) {
+		console.log('studio: MediaRecorder could not start', e);
+		return;
+	}
+	recorder.ondataavailable = function(event) {
+		if (!event.data || !event.data.size) { return; }
+		take.data = event.data;
+		take.encoding = event.data.type;
+		take.status = 'stop';
+		if (take.src) { try { URL.revokeObjectURL(take.src); } catch (e) {} }
+		take.src = URL.createObjectURL(event.data);
+		take.track.src = take.src;
+	};
+	media.rec[ir] = recorder;
+	recorder.start();
+	console.log('studio: recording channel ' + ch + ' take ' + ir + ' at ' + take.startTime.toFixed(3) + 's');
+}
+
+function studioStopTake(ch, ir) {
+	var media = mixer[ch] && mixer[ch].media;
+	if (!media) { return; }
+	var take = media.out && media.out[ir];
+	var recorder = media.rec && media.rec[ir];
+	if (recorder && recorder.state && recorder.state != 'inactive') { recorder.stop(); }
+	if (take && take.status == 'recording') {
+		take.status = 'stop';
+		take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
+		mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+	}
+	if (media.rec) { media.rec[ir] = null; }
 }
 
 async function studioRecord() {
+	if (mixer['time']['status'] == 'record') { return; }
 	mixer['time']['status'] = 'record';
-	var studio = studioRetriever();
 	studioTime('start');
-	$.each(studio, function(i,v) {
-		if (v.armed) {
-			if (v.armed.state == 'rec') {
-				if (!mixer[i]['media']) { mixer[i]['media'] = {}; }
-				var rec = { startTime: mixer['time']['position'] };
-				const options = {
-					mimeType: 'video/webm;codecs=opus', // Standard high-quality web codec
-					audioBitsPerSecond: 256000          // Force 128 kbps (or use 256000 for 256 kbps)
-				};
-				rec['track'] = new MediaRecorder(mixer[i]['media']['in'], options);
-				var count = 0;
-				for (var n = 0; n <= mixer[i]['media']['rec'].length; n++) { 
-					if (mixer[i]['media']['rec'][n]) {
-						if (mixer[i]['media']['rec'][n]['ready'] == 'ready') {
-							mixer[i]['media']['rec'][n] = rec;
-							count = n;
-							break;
-						}
-					}
-				}
-				console.log('recording ' + i + ' ' + count);
 
-
-				if (mixer['admin']['video_toggle'] == 'on') {
-
-					var v = document.getElementById('studio_video_monitor');
-					v.srcObject = rec['track'].stream;
-					v.muted = true;
-				} else {
-
-				}
-				var trackContainer = $('#studio_track_container');
-				trackContainer.append('<video class="studio_video" startTime="' + mixer['time']['position'] + '" channel="' + i + '" id="studio_channel_' + i + '_' + count + '"></video>');
-				mixer[i]['media']['out'][count]['track'] = document.getElementById('studio_channel_' + i + '_' + count);
-
-				rec['track'].audioBitsPerSecond = 192000
-				mixer[i]['media']['rec'][count]['track'].ondataavailable = (event) => { 
-					var data = event.data;
-					if (!mixer[i]['media']['aud']) { mixer[i]['media']['aud'] = []; }
-					if (!mixer[i]['media']['aud'][count]) { mixer[i]['media']['aud'][count] = {}; }
-					mixer[i]['media']['out'][count]['data'] = data;
-					mixer[i]['media']['out'][count]['encoding'] = data['type'];
-					mixer[i]['media']['out'][count]['size'] = data['size'];
-					mixer[i]['media']['aud'][count]['track'] = new Audio;
-					var audioUrl = URL.createObjectURL(data);
-					mixer[i]['media']['out'][count]['track'].src = audioUrl;
-					mixer[i]['media']['out'][count]['status'] = 'stop';
-
-					console.log('appending ' + audioUrl);
-
-
-				};
-
-				mixer[i]['media']['rec'][count]['track'].start();
-				mixer[i]['media']['rec'][count]['track'].onstart = (event) => {
-					var now = Date.now();
-					mixer['time']['position'] = ((now - mixer['time']['startTime']) / 1000);
-					mixer[i]['media']['out'][count]['startTime'] = mixer['time']['position'];
-				};
-				mixer[i]['media']['out'][count]['startTime'] = mixer['time']['position'];//  - (mixer[i]['media']['actx'][count]['ctx'].outputLatency + mixer[i]['media']['actx'][count]['ctx'].baseLatency);
-				mixer[i]['media']['rec'][count]['track'].onstart = (event) => {
-
-				};
-				
-			}
-		}
+	var song = studioSaver();
+	$.each(song, function(i,v) {
+		if (!/^[0-9]+$/.test(i) || !v['armed'] || v['armed']['state'] != 'rec') { return; }
+		if (!mixer[i]) { mixer[i] = {}; }
+		if (!mixer[i].media) { mixer[i].media = {}; }
+		studioStartTake(i);
 	});
-	studioPlay('rec');
+	studioSyncTakes();
 }
 
 $(document).on('click', '#studio_play', function() {
@@ -766,28 +1100,9 @@ $(document).on('click', '#studio_play', function() {
 });
 
 async function studioPlay(mode) {
-	var playTracks = [];
-
-	if (mode != 'rec') {
-		studioTime('start');
-	}
-	var studio = studioRetriever();
-	$.each(studio, function(i,v) {
-		if (v.armed) {
-			if ((v.armed.state == 'rec' && mode == 'play') || v.armed.state == 'play') {
-
-				if (mixer[i]['media']) { 
-					if (mixer[i]['media']['out']) {
-						$.each(mixer[i]['media']['out'],function(ir,vr) {
-							vr['track'].currentTime = mixer['time']['position'];
-							//vr['track'].play();
-							vr['track'].volume = (studio[i]['volume'] / 100);
-						});
-					}
-				}
-			}
-		}
-	});
+	mixer['time']['status'] = (mode == 'rec') ? 'record' : 'play';
+	if (mode != 'rec') { studioTime('start'); }
+	studioSyncTakes();
 }
 
 $(document).on('click', '#studio_stop', function() {
@@ -796,280 +1111,46 @@ $(document).on('click', '#studio_stop', function() {
 });
 
 async function studioStop() {
-	var playTracks = [];
+	var wasRecording = (mixer['time']['status'] == 'record');
 
-	if (mixer['time']['status'] == 'stop') {
-		mixer['time']['position'] = 0;
-	}
-
-	studioTime('stop');
-
-	var studio = studioRetriever();
-	$.each(studio, function(i,v) {
-
-		if (v.armed) {
-			if (mixer[i]['media']) {
-				if (mixer[i]['media']['rec'] && mixer['time']['status'] == 'record') {
-					$.each(mixer[i]['media']['rec'], function(ir,vr) {
-						if (vr['track'].state == 'recording') {
-							vr['track'].stop();
-							mixer[i]['media']['in'].getTracks().forEach(function(track) { track.stop(); });
-						}
-						vr['status'] = 'stop';
-						mixer[i]['media']['out'][ir]['status'] = 'stop';
-						mixer[i]['media']['out'][ir]['duration'] = mixer['time']['position'] - mixer[i]['media']['out'][ir]['startTime'] ;
-					});
-
-				}
-				if (mixer[i]['media']['out']) {
-					$.each(mixer[i]['media']['out'], function(ir,vr) {
-
-						vr['status'] = 'stop';
-						vr['track'].pause();
-					//	vr['track'].play();
-						if (mixer[i]['media']['actx'][ir]) {
-						//	mixer[i]['media']['actx'][ir] = null;
-						}
-					});
-				}
-
-			}
+	$.each(mixer, function(i,v) {
+		if (!/^[0-9]+$/.test(i) || !mixer[i].media) { return; }
+		if (wasRecording && mixer[i].media.rec) {
+			$.each(mixer[i].media.rec, function(ir) { studioStopTake(i, ir); });
+		}
+		if (mixer[i].media.out) {
+			mixer[i].media.out.forEach(function(take) {
+				if (take && take.track && !take.track.paused) { take.track.pause(); }
+			});
 		}
 	});
+
+	if (mixer['time']['status'] == 'stop') { mixer['time']['position'] = 0; }
+	studioTime('stop');
 	mixer['time']['status'] = 'stop';
 }
 
 function studioTime(command) {
 	var svm = document.getElementById('studio_video_monitor');
-	$('#studio_video_monitor').show();
-	if (command == 'start' || command == 'scroll') {
-		console.log('this is a ' + command);
+	if (svm) { $(svm).show(); }
+
+	if (command == 'start') {
 		mixer['time']['lastMetronome'] = 0;
-		var piano = new AudioContext;
-		const gainNode = piano.createGain();
-		var metronome = document.getElementById('metronome');
-		mixer['metronome']['gain'] = gainNode;
-		mixer['metronome']['out'] = metronome;
-		mixer['metronome']['ctx'] = piano;
-
-
-		mixer['time']['startTime'] = Date.now();
-
-		mixer['time']['startTime'] = (mixer['time']['startTime'] - (mixer['time']['position'] * 1000));
-		dealWithIt();
-		mixer['time']['interval'] = setInterval(function() {
-			var s = Date.now();
-			dealWithIt();
-			var e = Date.now();
-			if (e - s > 3) {
-				console.log(e - s);
-			}
-		},1)
-		function dealWithIt() {
-			var now = Date.now();
-			mixer['time']['position'] = ((now - mixer['time']['startTime']) / 1000);
-			var tdisplay = studioTimeDisplay();
-
-			if (mixer['time']['status'] == 'record' && mixer['time']['position'] > mixer['time']['duration']) {
-				mixer['time']['duration'] = mixer['time']['position'];
-				$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
-			}
-			else if ((mixer['time']['status'] == 'play' || command == 'scroll') && mixer['time']['position'] > mixer['time']['duration']) {
-				if (mixer['time']['loop'] == 'on') {
-					studioStop();
-					clearInterval(mixer['time']['interval']);
-					mixer['time']['status'] = 'stop';
-					studioStop();
-					return;
-				}
-				else if (mixer['time']['loop'] == 'ongoing') {
-					studioStop();
-					mixer['time']['position'] = 0;
-					studioPlay();
-					mixer['time']['status'] = 'play';
-
-				}
-				else {
-
-				}
-			}
-			$.each(mixer, function(i,v) {
-				var now = Date.now();
-				mixer['time']['position'] = ((now - mixer['time']['startTime']) / 1000);
-
-				if (mixer[i]['media'] && mixer[i]['armed']['state'] != 'off' && document.getElementById('channel_volume_metre_' + i)) {
-					var canvas = document.getElementById('track_view_' + i);
-					var metreCanvas = document.getElementById('channel_volume_metre_' + i);
-					var mctx = metreCanvas.getContext('2d');
-					var ctx = canvas.getContext('2d');
-					$.each(mixer[i]['media']['out'], function(ir,vr) {
-
-						if (mixer[i]['media']['in'].active == true) {
-							let sum = 0.0;
-							if (eval(typeof mixer[i]['media']['actx'][ir]['analyser'].getFloatTimeDomainData == 'function')) {
-								mixer[i]['media']['actx'][ir]['analyser'].getFloatTimeDomainData(mixer[i]['media']['actx'][ir]['pcmData']);
-								for (const amplitude of mixer[i]['media']['actx'][ir]['pcmData']) {
-									sum += amplitude * amplitude;
-								}
-								var metreValue = Math.sqrt(sum / mixer[i]['media']['actx'][ir]['pcmData'].length) * 3;
-								mctx.beginPath();
-							//	if (mixer[i]['media']['actx'][ir]['lastClear'] + 500 <= now) {
-									mctx.clearRect(0,0,metreCanvas.width,metreCanvas.height);
-									mctx.fill();
-									mixer[i]['media']['actx'][ir]['lastClear'] = now;
-							//	}
-								mctx.fillStyle = "green";
-								mctx.fillRect(0, Math.abs((metreValue * metreCanvas.height) - metreCanvas.height), metreCanvas.width,  metreCanvas.height);
-								mctx.fill();
-								if (mixer[i]['media']['actx'][ir]['panner']['pan']) {
-									mixer[i]['media']['actx'][ir]['panner'].pan.value = mixer[i]['pan'];
-								}
-								if (mixer[i]['media']['actx'][ir]['gain']) {
-							//	  mixer[i]['media']['actx'][ir]['gain'].gain.value = mixer[i]['gain'] / 10; 
-								}
-							}
-						}
-						else if (vr['startTime'] <= mixer['time']['position'] && (vr['status'] != 'record' && vr['status'] != 'play')) {
-							console.log('play_mode');
-							
-							if (!mixer[i]['media']['actx'] && vr['status']) { mixer[i]['media']['actx'] = []; }
-							if (!mixer[i]['media']['actx'][ir]) { mixer[i]['media']['actx'][ir] = {}; }
-							if (!mixer[i]['media']['actx'][ir]['ctx']) { mixer[i]['media']['actx'][ir]['ctx'] = { state: 'uninitialized' }; }
-							if (mixer[i]['media']['actx'][ir]['ctx'].state == 'uninitialized') {
-								vr['init'] = true;
-								mixer[i]['media']['actx'][ir]['ctx'] = new AudioContext();
-								var c = mixer[i]['media']['actx'][ir]['ctx'];
-								mixer[i]['media']['actx'][ir]['track'] = c.createMediaElementSource(vr['track']);
-								mixer[i]['media']['actx'][ir]['track'].connect(c.destination);
-								mixer[i]['media']['actx'][ir]['panner'] = new StereoPannerNode(c, { pan: mixer[i]['pan']});
-								mixer[i]['media']['actx'][ir]['analyser'] = c.createAnalyser();
-								const pcmData = new Float32Array(mixer[i]['media']['actx'][ir]['analyser'].fftSize);
-								mixer[i]['media']['actx'][ir]['pcmData'] = pcmData;
-						//		mixer[i]['media']['actx'][ir]['track'].connect(mixer[i]['media']['actx'][ir]['gain']).connect(mixer[i]['media']['actx'][ir]['panner']).connect(mixer[i]['media']['actx'][ir]['analyser']).connect(c.destination);
-								var now = Date.now();
-								mixer['time']['position'] = ((now - mixer['time']['startTime']) / 1000);
-								mixer[i]['media']['actx'][ir]['lastClear'] = now;
-							}
-
-
-
-
-							console.log('here we are ' + ir);
-							if (svm.src != vr['track'].src) {
-								svm.src = vr['track'].src;
-							}
-							console.log('svm ' + vr['track'].src);
-							vr['track'].currentTime = mixer['time']['position'] - vr['startTime'] + (mixer[i]['media']['actx'][ir]['ctx'].outputLatency + mixer[i]['media']['actx'][ir]['ctx'].baseLatency);
-							svm.currentTime = vr['track'].currentTime;
-							if (command != 'scroll') {
-								vr['status'] = 'play';
-								svm.play();
-
-								vr['track'].play();
-							}
-							vr['track'].addEventListener('loadedmetadata', function() {
-								vr['track'].currentTime = mixer['time']['position'] - vr['startTime'] + (mixer[i]['media']['actx'][ir]['ctx'].outputLatency + mixer[i]['media']['actx'][ir]['ctx'].baseLatency);
-							});
-
-						}
-					//	else { vr['init'] = false; }
-
-						if (mixer[i]['media']['actx'][ir] && vr['status'] != 'record') {
-							if (vr['init'] == true) {
-								if (vr['track']) {
-									vr['track'].volume = (mixer[i]['volume'] / 100);
-									
-									if (mixer[i]['media']['actx'][ir]['panner']['pan']) {
-										mixer[i]['media']['actx'][ir]['panner'].pan.value = mixer[i]['pan'];
-									}
-									let sum = 0.0;
-									if (typeof mixer[i]['media']['actx'][ir]['analyser'].getFloatTimeDomainData == 'function') {
-										mixer[i]['media']['actx'][ir]['analyser'].getFloatTimeDomainData(mixer[i]['media']['actx'][ir]['pcmData']);
-										for (const amplitude of mixer[i]['media']['actx'][ir]['pcmData']) {
-											sum += amplitude * amplitude;
-										}
-										var metreValue = Math.sqrt(sum / mixer[i]['media']['actx'][ir]['pcmData'].length) * 3;
-										mctx.beginPath();
-									//	if (mixer[i]['media']['actx'][ir]['lastClear'] + 500 <= now) {
-											mctx.clearRect(0,0,metreCanvas.width,metreCanvas.height);
-											mctx.fill();
-											mixer[i]['media']['actx'][ir]['lastClear'] = now;
-									//	}
-										mctx.fillStyle = "green";
-										mctx.fillRect(0, Math.abs((metreValue * metreCanvas.height) - metreCanvas.height), metreCanvas.width,  metreCanvas.height);
-										mctx.fill();
-									}
-								}
-							}
-						}
-						else if (mixer[i]['media']['actx'][ir] && vr['status'] == 'record') {
-							if (mixer[i]['media']['actx'][ir]['gain']) {
-							  mixer[i]['media']['actx'][ir]['gain'].gain.value = mixer[i]['gain'] / 10; 
-							}
-							if (mixer[i]['media']['actx'][ir]['panner']['pan']) {
-								mixer[i]['media']['actx'][ir]['panner'].pan.value = mixer[i]['pan'];
-							}
-						}
-						ctx.beginPath();
-
-						ctx.fillStyle = 'red';
-						ctx.fillRect((vr['startTime'] / mixer['time']['duration'] * canvas.width), 0, ((vr['duration'] / mixer['time']['duration'] * canvas.width )), canvas.height);
-						ctx.lineWidth = 10;
-						var positionLine = (mixer['time']['position'] / mixer['time']['duration'] * canvas.width);
-						ctx.moveTo(positionLine, 0);
-						ctx.lineTo(positionLine, canvas.height);
-						ctx.strokeStyle = 'black';
-						ctx.stroke();
-						ctx.fill();
-					});	
-				}
-			});
-
-			if (mixer['time']['metronome'] == 'yes' && mixer['time']['bpm']) {
-
-				if (tdisplay['beat'] > mixer['time']['lastMetronome']) {
-
-					if (mixer['time']['lastMetronome']) {
-						var oscillator = piano.createOscillator();
-						mixer['osc'] = oscillator;
-						mixer['piano'] = piano;
-						if (tdisplay['beat'] % tdisplay['signature'][0]) {
-							oscillator.frequency.value = 900;	
-						} else {
-							oscillator.frequency.value = 1100;
-						}
-						oscillator.type = 'triangle';
-						oscillator.connect(gainNode);
-						gainNode.connect(piano.destination);
-						gainNode.gain.value  =  (mixer['metronome']['volume'] || 50) / 100; 
-						oscillator.start();
-						setTimeout(function() {
-							oscillator.stop();
-						},20);
-					}
-					mixer['time']['lastMetronome'] = tdisplay['beat'];
-				}
-			}
-
-		}
-
+		mixer['time']['startTime'] = Date.now() - (mixer['time']['position'] * 1000);
+		clearInterval(mixer['time']['interval']);
+		mixer['time']['interval'] = setInterval(studioTransportTick, 25);
+		studioTransportTick();
 	}
 	else if (command == 'stop') {
-
 		clearInterval(mixer['time']['interval']);
+		mixer['time']['interval'] = 0;
 		studioTimeDisplay();
-		svm.pause();
 	}
 	else {
-		studioTimeDisplay()
-	}
-	if (command == 'scroll') {
-		console.log('stopping scroll');
-
-		clearInterval(mixer['time']['interval']);
 		studioTimeDisplay();
-		svm.pause();
+		studioDrawTracks();
 	}
+
 	if (!mixer['time']['status']) { mixer['time']['status'] = 'stop'; }
 	var button = $('#studio_' + mixer['time']['status'] );
 
@@ -1088,21 +1169,70 @@ function studioTime(command) {
 	},1000);
 }
 
-function studioTimeDisplay() {
-	var asdf = mixer['time']['bpm'] / 60;
-	var time = mixer['time']['position'];
-	if (mixer['piano']) {
-		time = (mixer['time']['position'] + mixer['piano'].outputLatency + mixer['piano'].baseLatency )
+function studioTransportTick() {
+	var now = Date.now();
+	mixer['time']['position'] = (now - mixer['time']['startTime']) / 1000;
+	var status = mixer['time']['status'];
+	var end = mixer['time']['duration'] || 0;
+
+	if (status == 'record') {
+		if (mixer['time']['position'] > end) {
+			mixer['time']['duration'] = mixer['time']['position'];
+			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
+		}
 	}
+	else if (status == 'play' && end > 0 && mixer['time']['position'] >= end) {
+		if (mixer['time']['loop'] == 'ongoing') {
+			mixer['time']['position'] = 0;
+			mixer['time']['startTime'] = Date.now();
+		}
+		else if (mixer['time']['loop'] == 'on') {
+			studioStop();
+			return;
+		}
+	}
+
+	studioTimeDisplay();
+	studioSyncTakes();
+	studioDrawTracks();
+	studioMetronomeTick();
+}
+
+function studioMetronomeTick() {
+	if (mixer['time']['metronome'] != 'yes' || !mixer['time']['bpm']) { return; }
+	var tdisplay = studioTimeDisplay();
+	if (tdisplay['beat'] <= mixer['time']['lastMetronome']) { return; }
+	if (!mixer['time']['lastMetronome']) { mixer['time']['lastMetronome'] = tdisplay['beat']; return; }
+	var ctx = studioContext();
+	if (!ctx) { return; }
+	var oscillator = ctx.createOscillator();
+	var gainNode = ctx.createGain();
+	var beats = studioKnobNumber(tdisplay['signature'][0], 4) || 4;
+	var accent = (tdisplay['beat'] % beats) ? 0 : 1;
+	oscillator.frequency.value = accent ? 1100 : 900;
+	oscillator.type = 'triangle';
+	gainNode.gain.value = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50) / 100;
+	oscillator.connect(gainNode).connect(ctx.destination);
+	oscillator.start();
+	setTimeout(function() {
+		oscillator.stop();
+	},20);
+	mixer['time']['lastMetronome'] = tdisplay['beat'];
+}
+
+function studioTimeDisplay() {
+	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
+	var asdf = bpm / 60;
+	var time = mixer['time']['position'];
 	var tick = Math.floor(time * asdf);
 	if (!mixer['time']['sig']) {
-		mixer['time']['sig'] = $('#studio_signature').val();
+		mixer['time']['sig'] = $('#studio_signature').val() || '4/4';
 	}
-	var tsig = mixer['time']['sig'].split('/');
+	var tsig = String(mixer['time']['sig']).split('/');
+	var beats = studioKnobNumber(tsig[0], 4) || 4;
 	mixer['time']['beat'] = tick;
-	mixer['time']['bar'] = Math.floor(tick / tsig[0]);
-	var beat = mixer['time']['beat'] - (mixer['time']['bar'] * tsig[0]) + 1;
-
+	mixer['time']['bar'] = Math.floor(tick / beats);
+	var beat = mixer['time']['beat'] - (mixer['time']['bar'] * beats) + 1;
 
 	if (mixer['time']['display'] == 'beats') {
 		$('#studio_time_display').html(numeral(mixer['time']['position']).format('00.000'));
@@ -1186,58 +1316,65 @@ $(document).on('click', '#studio_save', function() {
 
 
 function studioSave() {
-var app = 'studio';
+	var app = 'studio';
 	var now = Date.now();
 	var name = $('#studio').attr('name');
 	var uuid = $('#studio').attr('uuid');
-	if (name) {
+	if (!name) {
+		$('#studio_name').attr('type','text').focus();
+		return;
+	}
 
-		var formData = new FormData();
-		var studio = studioRetriever();
-		formData.append('app', name);
-		formData.append('name', name);
-		formData.append('duration', mixer['time']['duration']);
-		formData.append('timestamp', now);
-		formData.append('type', 'studio');
-		formData.append('uuid', uuid );
+	var song = studioSaver();
+	var formData = new FormData();
+	formData.append('app', name);
+	formData.append('name', name);
+	formData.append('duration', mixer['time']['duration']);
+	formData.append('timestamp', now);
+	formData.append('type', 'studio');
+	formData.append('uuid', uuid);
 
-		$.each(mixer, function(i,v) {
-
-			if (mixer[i]['media']) {
-				$.each(mixer[i]['media']['out'], function(ir,vr) {
-					var filename = app + '_' + now + '_' + i + '_' + ir + '.webm';
-
-					if (vr.data && vr.data.size && vr.data.type) {
-						formData.append('blob', vr.data, filename);
-					}
-
-				});
+	// Only freshly recorded takes (those without a server uuid yet) are
+	// uploaded, so re-saving a loaded song never duplicates its files.
+	var uploads = 0;
+	$.each(mixer, function(i,v) {
+		if (!/^[0-9]+$/.test(i) || !mixer[i].media || !mixer[i].media.out) { return; }
+		mixer[i].media.out.forEach(function(take, ir) {
+			if (take && take.data && take.data.size && !take.uuid) {
+				formData.append('blob', take.data, app + '_' + now + '_' + i + '_' + ir + '.webm');
+				uploads++;
 			}
 		});
-		var jStudio = JSON.stringify(studio);
-		formData.append('studio', jStudio);
-		$.ajax({
-			url: '/manager/studio/save',
-			type: 'POST',
-			data: formData,
-			success: function (response) {
-				$('#studio').attr('uuid', response.uuid);
-				$('#studio').attr('name', response.app);
-				var studio = JSON.stringify(response.studio);
-				localStorage.setItem('studio', studio);
-				continent_record({'uuid':response['uuid'], 'app':response['app'],'timestamp':response['timestamp']});
-				studioRetriever();
-				$('#studio_song_select').replaceWith(response.song_select);
-				appointment_chron();
-			},
-			cache: false,
-			contentType: false,
-			processData: false
-		});
-	}
-	else {
-		$('#studio_name').attr('type','text').focus();
-	}
+	});
+	console.log('studio: saving ' + uploads + ' take(s)');
+
+	formData.append('studio', JSON.stringify(song));
+	$.ajax({
+		url: '/manager/studio/save',
+		type: 'POST',
+		data: formData,
+		success: function (response) {
+			$('#studio').attr('uuid', response.uuid);
+			$('#studio').attr('name', response.app);
+			// adopt the uuids the server assigned to the takes we just uploaded
+			$.each(response.studio || {}, function(i, v) {
+				if (!/^[0-9]+$/.test(i) || !v.mixer || !v.mixer.out) { return; }
+				if (!mixer[i] || !mixer[i].media || !mixer[i].media.out) { return; }
+				v.mixer.out.forEach(function(take, ir) {
+					if (take && take.uuid && mixer[i].media.out[ir]) {
+						mixer[i].media.out[ir].uuid = take.uuid;
+					}
+				});
+			});
+			localStorage.setItem('studio', JSON.stringify(response.studio));
+			continent_record({'uuid':response['uuid'], 'app':response['app'],'timestamp':response['timestamp']});
+			$('#studio_song_select').replaceWith(response.song_select);
+			appointment_chron();
+		},
+		cache: false,
+		contentType: false,
+		processData: false
+	});
 }
 
 $(document).on('click', '#studio_delete', function() {
@@ -1282,15 +1419,18 @@ function studioLoad(uuid) {
 		type: 'GET',
 		data: { uuid: uuid },
 		success: function(response) {
-			console.log(response);
+			var admin = response.studio['admin'] || {};
 			$('#studio_song_select').val(response['uuid']);
-			mixer['time'] = response.studio['admin']['time'];
-			mixer['time']['metronome'] = response.studio['admin']['metronome'];
-			mixer['time']['bpm'] = response.studio['admin']['bpm'];
-			mixer['time']['sig'] = response.studio['admin']['sig'] || '4/4';
-			$('#studio_signature').val(mixer['time']['sig']);
+			mixer['time'] = admin['time'] || mixer['time'];
+			mixer['time']['metronome'] = admin['metronome'] || 'no';
+			mixer['time']['bpm'] = admin['bpm'] || 120;
+			mixer['time']['sig'] = admin['sig'] || '4/4';
 			mixer['time']['status'] = 'stop';
-			$('#studio_video_toggle').attr('toggled', mixer['admin']['video_toggle']);
+			$('#studio_signature').val(mixer['time']['sig']);
+			$('#studio_bpm').val(mixer['time']['bpm']);
+			mixer['admin'] = mixer['admin'] || {};
+			mixer['admin']['video_toggle'] = admin['video_toggle'];
+			$('#studio_video_toggle').attr('toggled', admin['video_toggle']);
 			if (mixer['time']['loop'] == 'on') {
 				$('#studio_loop').attr('enabled','on').attr('obg', 'rgb(211, 211, 211)').css({'background-color':'red'});
 			}
@@ -1302,40 +1442,70 @@ function studioLoad(uuid) {
 			}
 			$('#studio').attr('name', response['app']);
 			$('#studio').attr('uuid', response['uuid']);
-			studioTimeDisplay()
+
+			mixer['time']['duration'] = studioKnobNumber(response.song && response.song.duration, 0) || 0;
+
+			// Rebuild each channel's takes from the saved metadata so they play
+			// back and can be re-saved.
 			$.each(response.studio, function(i,v) {
-				if (v['mixer']) {
-					if (!i.match('[a-zA-Z]')) {
-						mixer[i]['media'] = v['mixer'];
-					}
-					$.each(v['mixer']['out'], function(ir, vr) {
-						var trackContainer = $('#studio_track_container');
-
-						trackContainer.append('<video class="studio_video" startTime="' + vr['startTime'] + '" type="' + vr['encoding'] + '" channel="' + i + '" id="studio_channel_' + i + '_' + ir + '"></video>');
-						$('#studio_channel_' + i + '_' + ir).attr('src', vr['src']);
-						if (!mixer[i]['media']['aud']) { mixer[i]['media']['aud'] = []; }
-						if (!mixer[i]['media']['aud'][ir]) { mixer[i]['media']['aud'][ir] = {}; }
-						mixer[i]['media']['actx'][ir]['ctx'] = { 'state': 'uninitialized', pcmData: [] } ; 
-						mixer[i]['media']['aud'][ir]['track'] = new Audio;
-
-						mixer[i]['media']['out'][ir]['track'] = document.getElementById('studio_channel_' + i + '_' + ir);
-					});
-				}
+				if (!/^[0-9]+$/.test(i) || !v['mixer'] || !v['mixer']['out']) { return; }
+				if (!mixer[i]) { mixer[i] = {}; }
+				if (!mixer[i].media) { mixer[i].media = {}; }
+				mixer[i].media.out = [];
+				mixer[i].media.rec = [];
+				$.each(v['mixer']['out'], function(ir, vr) {
+					if (!vr) { return; }
+					var id = 'studio_channel_' + i + '_' + ir;
+					$('#' + id).remove();
+					var el = document.createElement('video');
+					el.className = 'studio_video';
+					el.id = id;
+					el.style.display = 'none';
+					if (vr['src']) { el.src = vr['src']; }
+					$('#studio_track_container').append(el);
+					var startTime = studioKnobNumber(vr['startTime'], 0);
+					var duration = studioKnobNumber(vr['duration'], 0);
+					mixer[i].media.out[ir] = {
+						uuid: vr['uuid'], startTime: startTime, duration: duration,
+						encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el
+					};
+					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);
+				});
 			});
-			var studio = JSON.stringify(response.studio);
-			localStorage.setItem('studio', studio);
+
+			localStorage.setItem('studio', JSON.stringify(response.studio));
 			studioRetriever();
 			mixer['buttons'] = buttons;
+			studioTimeDisplay();
+			studioDrawTracks();
 		}
 	});
 }
 
 function studioImport(files) {
-
-
-
-
-
+	// Bring audio/video files in as takes on the selected channel.
+	var ch = studioSelectedChannel;
+	if (!mixer[ch]) { mixer[ch] = {}; }
+	if (!mixer[ch].media) { mixer[ch].media = {}; }
+	if (!mixer[ch].media.out) { mixer[ch].media.out = []; }
+	$.each(files, function(i, file) {
+		var ir = mixer[ch].media.out.length;
+		var id = 'studio_channel_' + ch + '_' + ir;
+		var el = document.createElement('video');
+		el.className = 'studio_video';
+		el.id = id;
+		el.style.display = 'none';
+		el.src = URL.createObjectURL(file);
+		$('#studio_track_container').append(el);
+		var take = { uuid: null, startTime: mixer['time']['position'] || 0, duration: 0, status: 'stop', track: el, data: file, encoding: file.type };
+		el.addEventListener('loadedmetadata', function() {
+			take.duration = el.duration || 0;
+			mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+			studioDrawTracks();
+		});
+		mixer[ch].media.out[ir] = take;
+	});
+	studioDrawTracks();
 }
 
 $(document).on('change', '#studio_name', function() {
