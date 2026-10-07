@@ -15,10 +15,27 @@
 		<img class="tiny_thumb play_marker" movement="back" style="transform: rotate(180deg);" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
 		<img class="tiny_thumb play_marker" movement="forward" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
 
-		<button class="button marker_tool" tool="marker">Marker</button><br>
-		<button class="button marker_tool" tool="eraser">Eraser</button><br>
+		<button class="button marker_tool" tool="pencil">Pencil</button><br>
+		<button class="button marker_tool" tool="brush">Brush</button><br>
+		<button class="button marker_tool" tool="spray">Spray</button><br>
+		<button class="button marker_tool" tool="fill">Fill</button><br>
+		<button class="button marker_erase_toggle" erase="off" hint="Erase with the current brush">Erase</button><br>
 		<button class="button marker_tool" tool="kb">KB</button><br>
 		<button class="button marker_tool" tool="sample">Sample</button><br>
+
+		<button class="button" id="marker_layers_toggle">Layers</button><br>
+		<div id="marker_layers" style="display:none;">
+			<div id="marker_layer_tools">
+				<button class="button marker_layer_add hover" hint="New layer">+</button>
+				<button class="button marker_layer_up hover" hint="Raise layer">&#9650;</button>
+				<button class="button marker_layer_down hover" hint="Lower layer">&#9660;</button>
+				<button class="button marker_layer_front hover" hint="Bring to front">&#10514;</button>
+				<button class="button marker_layer_delete hover" hint="Delete layer">&#10005;</button>
+			</div>
+			<div id="marker_layer_list"></div>
+		</div>
+		<script>var marker_layer_eye = '<%= &subs::icon_for('/images/make believe/eye.png') %>';</script>
+
 		<button class="button save_marker">Save</button>
 		<div id="marker_kit">
 			<% 

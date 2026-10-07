@@ -850,10 +850,12 @@ $(document).on('click', '.keyboard_button', function() {
 						var whiteboard_position = JSON.parse(json_pos || '{}' );
 						var font_size = marker.selected_marker_size * 2;
 						var marker_transparency = marker.selected_marker_transparency * 20;
-						whiteboard_ctx.font = marker_transparency + " " + font_size + "px arial";
-						whiteboard_ctx.fillStyle = marker.selected_marker_colour;
-						whiteboard_ctx.fillText(response['key'], whiteboard_position['x'], whiteboard_position['y']);
-						var char_size = whiteboard_ctx.measureText(response['key']).width;
+						var wb_ctx = markerActiveContext();
+						wb_ctx.font = marker_transparency + " " + font_size + "px arial";
+						wb_ctx.fillStyle = marker.selected_marker_colour;
+						wb_ctx.fillText(response['key'], whiteboard_position['x'], whiteboard_position['y']);
+						var char_size = wb_ctx.measureText(response['key']).width;
+						markerCompose();
 
 						var new_x = Number(whiteboard_position['x']) + (Number(char_size) + 2);
 						var new_y = Number(whiteboard_position['y']);
