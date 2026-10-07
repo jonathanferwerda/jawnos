@@ -166,6 +166,7 @@ function markerSwapLayers(a, b) {
 	markerLayerActive = b;
 	markerLayerList();
 	markerCompose();
+	markerAutosaveSoon();
 }
 
 // ---- view (zoom and pan) -----------------------------------------------
@@ -451,12 +452,25 @@ function markerApp() {
 	return app || 'marker';
 }
 
+function markerWorkingUuid() {
+	return 'working_' + markerApp();
+}
+
 function markerSessionSave() {
 	var canvas = document.getElementById('whiteboard');
 	if (!canvas || markerLayers.length == 0) { return; }
 	var name = prompt('Session name', markerSessionName || ('Session ' + new Date().toLocaleString()));
 	if (!name) { return; }
 	markerSessionName = name;
+	markerSessionUpload({
+		name: name,
+		session_uuid: markerSessionUuid,
+		origin_uuid: markerSessionUuid,
+		origin_name: name
+	});
+}
+
+function markerSessionUpload(options) {
 	var layers = [];
 	$.each(markerLayers, function(i, layer) {
 		layers.push({ name: layer.name, visible: layer.visible, image: layer.canvas.toDataURL('image/png') });
@@ -469,7 +483,8 @@ function markerSessionSave() {
 	// the server drops request bodies over MOJO_MAX_MESSAGE_SIZE (16MB) without
 	// a useful error, so fail loudly here rather than silently losing the art
 	if (payload.length > 12000000) {
-		alert('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.');
+		if (options.silent) { say_it('drawing too big to autosave!'); }
+		else { alert('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.'); }
 		return;
 	}
 	$.ajax({
@@ -477,16 +492,23 @@ function markerSessionSave() {
 		type: 'POST',
 		data: {
 			app: markerApp(),
-			name: name,
-			session_uuid: markerSessionUuid,
+			name: options.name,
+			session_uuid: options.session_uuid,
+			working: options.working ? 1 : 0,
+			origin_uuid: options.origin_uuid || '',
+			origin_name: options.origin_name || '',
 			layers: payload,
 			thumbnail: thumb.toDataURL('image/png'),
 			timestamp: Date.now()
 		},
 		success: function(response) {
+			if (options.silent) { return; }
 			if (response && response.uuid) { markerSessionUuid = response.uuid; }
 			markerSessionPanel(response ? response.sessions : undefined);
 			say_it('session saved!');
+			// let the working copy remember which named session it came from
+			markerAutosaveDirty = true;
+			markerAutosaveNow();
 		}
 	});
 }
@@ -497,6 +519,8 @@ function markerSessionApply(layers) {
 	markerHistoryClear();
 	markerLastPoint = undefined;
 	markerPreview = undefined;
+	markerSessionLoading = false;
+	markerAutosaveDirty = false;
 	var canvas = document.getElementById('whiteboard');
 	var size = markerDocSize();
 	// a session drawn on a bigger screen than this one gets fitted to view
@@ -506,22 +530,37 @@ function markerSessionApply(layers) {
 	markerCompose();
 }
 
-function markerSessionLoad(session_uuid) {
+function markerSessionLoad(session_uuid, options) {
+	options = options || {};
+	markerSessionLoading = true;
 	$.ajax({
 		url: '/manager/marker/session/load',
 		type: 'GET',
 		data: { session_uuid: session_uuid },
 		success: function(session) {
-			if (!session || !session.layers || session.layers.length == 0) { return; }
+			if (!session || !session.layers || session.layers.length == 0) { markerSessionLoading = false; return; }
 			var canvas = document.getElementById('whiteboard');
-			if (!canvas || !whiteboard_ctx) { return; }
-			markerSessionUuid = session.uuid || session_uuid;
-			markerSessionName = session.name;
+			if (!canvas || !whiteboard_ctx) { markerSessionLoading = false; return; }
+			if (options.working) {
+				// a working copy is not a session of its own: remember where it was
+				// saved from, so the Session button still updates that session
+				markerSessionUuid = session.origin_uuid || undefined;
+				markerSessionName = session.origin_name || session.name;
+			}
+			else {
+				markerSessionUuid = session.uuid || session_uuid;
+				markerSessionName = session.name;
+			}
 			var pending = session.layers.length;
 			var built = [];
 			var done = function() {
 				pending--;
-				if (pending <= 0) { markerSessionApply(built); }
+				if (pending <= 0) {
+					// an automatic restore must not wipe strokes made while it was
+					// still loading
+					if (options.auto && markerHistory.length > 0) { markerSessionLoading = false; return; }
+					markerSessionApply(built);
+				}
 			};
 			$.each(session.layers, function(i, l) {
 				var layer = markerNewLayer(l.name);
@@ -543,23 +582,74 @@ function markerSessionLoad(session_uuid) {
 	});
 }
 
-// reopen the last saved drawing, so layers are not just a session thing -
-// nothing is restored if the board already has work on it
+// reopen the board in progress, so nothing painted is lost to a refresh -
+// the working copy first, then the newest named session. Nothing is restored
+// if the board already has work on it.
 function markerSessionRestoreLast() {
 	if (markerSessionRestored) { return; }
 	if (markerHistory.length > 0) { return; }
 	markerSessionRestored = true;
+	var working = markerWorkingUuid();
 	$.ajax({
-		url: '/manager/marker/session/list',
+		url: '/manager/marker/session/load',
 		type: 'GET',
-		data: { app: markerApp() },
-		success: function(response) {
-			if (response && response.sessions && response.sessions.length > 0) {
-				markerSessionLoad(response.sessions[0].uuid);
+		data: { session_uuid: working },
+		success: function(session) {
+			if (session && session.layers && session.layers.length > 0) {
+				markerSessionLoad(working, { working: true, auto: true });
+				return;
 			}
+			$.ajax({
+				url: '/manager/marker/session/list',
+				type: 'GET',
+				data: { app: markerApp() },
+				success: function(response) {
+					if (response && response.sessions && response.sessions.length > 0) {
+						markerSessionLoad(response.sessions[0].uuid, { auto: true });
+					}
+				}
+			});
 		}
 	});
 }
+
+// ---- autosave ----------------------------------------------------------
+
+var markerAutosaveTimeout;
+var markerAutosaveDirty = false;
+var markerSessionLoading = false;
+var markerAutosaveDelay = 5000;
+
+function markerAutosaveSoon() {
+	markerAutosaveDirty = true;
+	if (markerAutosaveTimeout) { clearTimeout(markerAutosaveTimeout); }
+	markerAutosaveTimeout = setTimeout(markerAutosaveNow, markerAutosaveDelay);
+}
+
+function markerAutosaveNow() {
+	if (markerAutosaveTimeout) { clearTimeout(markerAutosaveTimeout); }
+	markerAutosaveTimeout = undefined;
+	if (!markerAutosaveDirty) { return; }
+	if (markerSessionLoading) { return; }
+	var canvas = document.getElementById('whiteboard');
+	if (!canvas || markerLayers.length == 0) { return; }
+	markerAutosaveDirty = false;
+	markerSessionUpload({
+		name: markerSessionName || 'working',
+		session_uuid: markerWorkingUuid(),
+		working: true,
+		origin_uuid: markerSessionUuid,
+		origin_name: markerSessionName,
+		silent: true
+	});
+}
+
+// leaving the tab is the moment worth catching, so a save is not waiting on
+// the debounce when the page goes away
+$(document).on('visibilitychange', function() {
+	if (document.hidden) { markerAutosaveNow(); }
+});
+$(window).on('pagehide', function() { markerAutosaveNow(); });
 
 function markerSessionPanel(sessions) {
 	var panel = $('#marker_sessions');
@@ -993,6 +1083,7 @@ function markerPointerDown(pos, straight_line) {
 		var filled = markerFloodFill(pos.x, pos.y);
 		if (filled) { markerSnapshotDirty(filled.x0, filled.y0, filled.x1 - filled.x0, filled.y1 - filled.y0); }
 		markerSnapshotCommit();
+		markerAutosaveSoon();
 		return;
 	}
 	markerStroke.pressure = pos.pressure;
@@ -1059,6 +1150,7 @@ function markerEndStroke() {
 	markerPreview = undefined;
 	markerSnapshotCommit();
 	markerCompose();
+	markerAutosaveSoon();
 }
 
 function markerMouseDown(e) {
@@ -1174,6 +1266,7 @@ function markerInit(whiteboard) {
 		markerSessionName = undefined;
 		markerSessionRestored = false;
 		markerView = { scale: 1, x: 0, y: 0 };
+		markerAutosaveDirty = false;
 	}
 	// the visible canvas follows the window (and the toolbox); the layers are the
 	// document and keep their own size, so resizing or zooming never resamples
@@ -1313,6 +1406,7 @@ $(document).on('click', '.marker_layer_eye', function(e) {
 	layer.visible = !layer.visible;
 	markerLayerList();
 	markerCompose();
+	markerAutosaveSoon();
 });
 
 $(document).on('dblclick', '.marker_layer_name', function(e) {
@@ -1330,6 +1424,7 @@ $(document).on('click', '.marker_layer_add', function() {
 	markerLayerActive = markerLayers.length - 1;
 	markerLayerList();
 	markerCompose();
+	markerAutosaveSoon();
 });
 
 $(document).on('click', '.marker_layer_delete', function() {
@@ -1341,6 +1436,7 @@ $(document).on('click', '.marker_layer_delete', function() {
 	markerLayerActive = Math.min(markerLayerActive, markerLayers.length - 1);
 	markerLayerList();
 	markerCompose();
+	markerAutosaveSoon();
 });
 
 $(document).on('click', '.marker_layer_up', function() {
@@ -1363,6 +1459,7 @@ $(document).on('click', '.marker_layer_front', function() {
 	markerLayerActive = markerLayers.length - 1;
 	markerLayerList();
 	markerCompose();
+	markerAutosaveSoon();
 });
 
 // ---- undo / redo / sessions -------------------------------------------
@@ -1379,6 +1476,9 @@ $(document).on('click', '.marker_new_board', function() {
 	markerHistoryClear();
 	markerLayerList();
 	markerCompose();
+	// a new board should not come back from the working copy either
+	markerAutosaveDirty = true;
+	markerAutosaveNow();
 });
 
 $(document).on('click', '.marker_zoom_in', function() { markerZoomCentre(1.25); });
@@ -1484,11 +1584,13 @@ $(document).on('click', '.paper', function() {
 	var image = new Image();
 	image.onload=function(){
 		markerHistoryWholeLayer();
+		var size = markerDocSize();
 		ctx.save();
 		ctx.globalAlpha = numeral($('#marker_transparency').val() || 1).value();
-		ctx.drawImage(image,0,0,canvas.width,canvas.height);
+		ctx.drawImage(image, 0, 0, size.w || canvas.width, size.h || canvas.height);
 		ctx.restore();
 		markerCompose();
+		markerAutosaveSoon();
 	};
 	image.src = $(this).attr('src');
 });
@@ -1543,11 +1645,13 @@ $(document).on('click', '.flipbook', function() {
 	}
 	image.onload=function(){
 		markerHistoryWholeLayer();
+		var size = markerDocSize();
 		ctx.save();
 		ctx.globalAlpha = numeral($('#marker_transparency').val() || 1).value();
-		ctx.drawImage(image,0,0,canvas.width,canvas.height);
+		ctx.drawImage(image, 0, 0, size.w || canvas.width, size.h || canvas.height);
 		ctx.restore();
 		markerCompose();
+		markerAutosaveSoon();
 	};
 	if (p[selected_image]) {
 		image.src = p[selected_image].src;
@@ -1628,7 +1732,8 @@ function markerDragger(id,status) {
 						// don't draw offscreen while the tab is hidden
 						if (!document.body.contains(v) || !document.body.contains(wb[0])) { clearInterval(markerVideoInterval); return; }
 						if (document.hidden) { return; }
-						markerActiveContext().drawImage(v, 0, 0, white['width'], white['height']);
+						var doc = markerDocSize();
+						markerActiveContext().drawImage(v, 0, 0, doc.w, doc.h);
 						markerComposeSoon();
 					}, 1000 / fps);
 				}
@@ -1636,8 +1741,10 @@ function markerDragger(id,status) {
 					var image = new Image();
 					image.onload=function(){
 						markerHistoryWholeLayer();
-						markerActiveContext().drawImage(image,0,0,white['width'], white['height']);
+						var doc = markerDocSize();
+						markerActiveContext().drawImage(image, 0, 0, doc.w, doc.h);
 						markerCompose();
+						markerAutosaveSoon();
 					};
 					image.src = $(v).attr('src');
 				}
@@ -1648,8 +1755,10 @@ function markerDragger(id,status) {
 					var image = new Image();
 					image.onload=function(){
 						markerHistoryWholeLayer();
-						markerActiveContext().drawImage(image,0,0,white['width'], white['height']);
+						var doc = markerDocSize();
+						markerActiveContext().drawImage(image, 0, 0, doc.w, doc.h);
 						markerCompose();
+						markerAutosaveSoon();
 					};
 					image.src = img;
 				}

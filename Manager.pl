@@ -17960,6 +17960,8 @@ sub marker_sessions($app) {
 		my $session = eval { return decode_sereal $row->{'data'} } || {};
 		next unless $session->{'uuid'};
 		next unless $session->{'layers'};
+		# the working copy autosaves the board in progress; it is not a session
+		next if $session->{'working'};
 		my $session_app = $session->{'app'} || 'marker';
 		next if ($filter && $session_app ne $filter);
 		push @sessions, {
@@ -18003,6 +18005,9 @@ post '/manager/marker/session/save' => sub ($c) {
 		uuid => $c->param('session_uuid') || &subs::random_string_creator(20),
 		name => $c->param('name') || 'session',
 		app => $app,
+		working => $c->param('working') ? 1 : 0,
+		origin_uuid => $c->param('origin_uuid'),
+		origin_name => $c->param('origin_name'),
 		thumbnail => $c->param('thumbnail'),
 		timestamp => $c->param('timestamp') || &subs::rightNow(),
 		layers => $layers

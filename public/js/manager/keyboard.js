@@ -856,6 +856,7 @@ $(document).on('click', '.keyboard_button', function() {
 						wb_ctx.fillText(response['key'], whiteboard_position['x'], whiteboard_position['y']);
 						var char_size = wb_ctx.measureText(response['key']).width;
 						markerCompose();
+						markerAutosaveSoon();
 
 						var new_x = Number(whiteboard_position['x']) + (Number(char_size) + 2);
 						var new_y = Number(whiteboard_position['y']);
