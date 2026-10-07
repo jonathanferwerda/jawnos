@@ -18,7 +18,7 @@
 <canvas class="background" id="narrator"></canvas>
 
 
-<img id="mouse_pointer" style="display:none;" style="z-index:6000;" height="40" width="30" src="/images/make believe/pointer.png" >
+<img id="mouse_pointer" height="40" width="30" src="<%= &subs::icon_for('/images/make believe/pointer.png') %>" style="display:none;z-index:6000;object-fit:contain;">
 <div id="remote_managers"></div>
 <%= $bar %>
 
