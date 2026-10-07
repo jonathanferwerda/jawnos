@@ -553,6 +553,20 @@ canvas { overflow: scroll; z-index: 99; }
 	padding: 4px;
 }
 
+.warehouse_journal_panel {
+	border: solid 2px;
+	border-radius: 7px;
+	padding: 4px;
+	margin: 4px 0 4px 20px;
+	background-color: var(--panel-2, var(--panel, transparent));
+	font-size: 14px;
+}
+
+.warehouse_journal_close {
+	font-size: 18px;
+	padding: 0 6px;
+}
+
 .enabler.toggle[status=on] {
 	background-color: yellow;
 }

@@ -221,6 +221,12 @@
 			<% } elsif ($l->{'type'} eq 'invoice' || $l->{'type'} eq 'quote') { %>
 				<%= include 'apps/information', app => $l %>
 			<% } %>
+			<% if ( grep { $l->{'type'} eq $_ } qw/transaction purchase invoice quote/ ) { %>
+				<div class="warehouse_journal_source_block" style="width:100%;">
+					<img class="little_thumb warehouse_journal_source_toggle hover" source_uuid="<%= $l->{'uuid'} %>" hint="Stock journal" src="<%= &subs::icon_for('/images/decipherable/list.png') %>">
+					<span class="warehouse_journal_source_panel" style="display:block;width:100%;"></span>
+				</div>
+			<% } %>
 		</div>
 	<% } %>
 <div>

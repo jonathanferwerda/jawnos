@@ -43,19 +43,43 @@ $(document).on('keyup click', '#warehouse_search', function() {
 
 $(document).on('click', '.warehouse_journal', function(e) {
 	e.stopPropagation();
-	var item = $(this).attr('item');
+	var img = $(this);
+	var host = img.closest('.warehouse_item, .warehouse_account, .warehouse_search_item');
+	if (host.next('.warehouse_journal_panel').length) {
+		host.next('.warehouse_journal_panel').remove();
+		return;
+	}
 	$.ajax({
 		url: '/manager/warehouse/journal',
 		type: 'GET',
-		data: { item: item, timestamp: Date.now() },
+		data: { item: img.attr('item'), timestamp: Date.now() },
 		success: function(response) {
-			$('#warehouse_results').html(response.html);
+			host.after(response.html);
 		}
 	});
 });
 
-$(document).on('click', '.warehouse_journal_back', function() {
-	warehouseListingReload($('#warehouse_search').val());
+$(document).on('click', '.warehouse_journal_close', function(e) {
+	e.stopPropagation();
+	$(this).closest('.warehouse_journal_panel').remove();
+});
+
+$(document).on('click', '.warehouse_journal_source_toggle', function(e) {
+	e.stopPropagation();
+	var img = $(this);
+	var panel = img.closest('.warehouse_journal_source_block').find('.warehouse_journal_source_panel');
+	if (panel.children().length) {
+		panel.empty();
+		return;
+	}
+	$.ajax({
+		url: '/manager/warehouse/journal',
+		type: 'GET',
+		data: { source_uuid: img.attr('source_uuid'), timestamp: Date.now() },
+		success: function(response) {
+			panel.html(response.html);
+		}
+	});
 });
 
 async function warehouseConfigSetter(c) {

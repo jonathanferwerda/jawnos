@@ -1524,8 +1524,17 @@ get '/manager/warehouse/listing' => sub($c) {
 
 get '/manager/warehouse/journal' => sub($c) {
 	my $item = &subs::unformat_name($c->param('item'));
-	my $q = &subs::db_query('select * from warehouse where item=? order by timestamp desc limit 200', $item);
-	my $rows = $q ? $q->hashes : [];
+	my $source_uuid = $c->param('source_uuid');
+	my ($q,$rows);
+	if ($source_uuid) {
+		# movements caused by a particular document (transaction/invoice)
+		$item = '';
+		$q = &subs::db_query('select * from warehouse where app_uuid=? order by timestamp desc limit 200', $source_uuid);
+	}
+	else {
+		$q = &subs::db_query('select * from warehouse where item=? order by timestamp desc limit 200', $item);
+	}
+	$rows = $q ? $q->hashes : [];
 	foreach my $r ( @{$rows} ) {
 		$r->{'journal'} = eval { return decode_json $r->{'data'} } || {};
 	}
@@ -1534,7 +1543,7 @@ get '/manager/warehouse/journal' => sub($c) {
 		item => $item,
 		rows => $rows
 	);
-	$c->render(json => { html => $html, item => $item });
+	$c->render(json => { html => $html, item => $item, count => scalar @{$rows} });
 };
 
 get '/store' => sub ($c) {
