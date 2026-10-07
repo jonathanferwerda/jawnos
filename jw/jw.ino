@@ -94,6 +94,7 @@ bool loraChatBroadcaster = false;
 bool loraChatReceiver = false;
 bool stepCounter = true;
 uint32_t steps;
+uint32_t stepSampleMillis = 0;
 JSONVar stepped;
 #include <driver/i2s.h>
 #include <driver/gpio.h>
@@ -570,8 +571,12 @@ void setup() {
       String resetter = "[]";
       wigi = JSON.parse(resetter);
       stepped = JSON.parse(resetter);
-      watch.resetPedometer();    
-      step_writer();
+      watch.resetPedometer();
+      // the counter starts again from zero, so start the next batch there too
+      // instead of recording the reset as a step
+      steps = 0;
+      sportsIrq = false;
+      stepSampleMillis = millis();
     }
     else {
       server.send(200,"text/plain", "{}");
@@ -657,23 +662,45 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
   }
 }
 
+// The pedometer holds a running total, so each sample is the whole story since the
+// last one the server collected. Samples only happened when the BMA's interrupt
+// fired, and once that stopped being delivered the count went quiet until the next
+// reboot -- the wake cycle re-arms the sensor for tilt alone. A timer takes a
+// sample as well now, which cannot go silent, and reading the same counter twice
+// costs nothing.
 void step_writer() {
-  if (sportsIrq && stepCounter == true) {
-    uint16_t status =   watch.readBMA();
-    Serial.println("activity " + status);
-    steps = watch.getPedometerCounter();
-    JSONVar last_step;
-    long timestamp = timestamp_maker();
-
-    int l = stepped.length();
-    last_step["timestamp"] = timestamp;
-    last_step["steps"] = steps;
-    stepped[l] = last_step;
+  if (stepCounter != true) {
+    return;
+  }
+  if (sportsIrq) {
+    watch.readBMA();          // clear the latched interrupt status
     sportsIrq = false;
-    String stepper = JSON.stringify(stepped);
-    Serial.println(stepper);
-
-  } 
+  }
+  else if (millis() - stepSampleMillis < 60000) {
+    return;
+  }
+  stepSampleMillis = millis();
+  steps = watch.getPedometerCounter();
+  if (!JSON.stringify(stepped).startsWith("[")) {
+    stepped = JSON.parse("[]");         // a damaged config must not stop the count
+  }
+  // bounded: this lives in RAM and in the saved config
+  while (stepped.length() > 240) {
+    JSONVar trimmed = JSON.parse("[]");
+    for (int n = 1; n < stepped.length(); n++) {
+      trimmed[trimmed.length()] = stepped[n];
+    }
+    stepped = trimmed;
+  }
+  JSONVar last_step;
+  last_step["timestamp"] = timestamp_maker();
+  last_step["steps"] = steps;
+  stepped[stepped.length()] = last_step;
+  Serial.print("steps ");
+  Serial.print((int)steps);
+  Serial.print(" across ");
+  Serial.print((int)stepped.length());
+  Serial.println(" samples");
 }
 
 #include "esp_mac.h" // Handles direct low-level chip hardware queries
@@ -3095,6 +3122,9 @@ void configSave() {
   conf["wigi"] = wigi_wah;
   String notifications_list = JSON.stringify(notifications);
   conf["notifications"] = notifications_list;
+  // the step samples are the watch's own record of what it has not sent yet, so
+  // keep them with the rest of the config rather than losing them to a restart
+  conf["steps"] = JSON.stringify(stepped);
   conf["authorization"] = authorization;
   conf["ssid"] = ssid;
   conf["password"] = password;
@@ -3268,6 +3298,12 @@ void configRestore() {
     wigi = JSON.parse(wigi_wah);
     String notifications_list = conf["notifications"];
     notifications = JSON.parse(notifications_list);   
+    if (conf.hasOwnProperty("steps")) {
+      String step_list = (const char *)conf["steps"];
+      if (step_list.startsWith("[")) {
+        stepped = JSON.parse(step_list);
+      }
+    }
   }
 }
 
