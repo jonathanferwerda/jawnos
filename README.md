@@ -160,7 +160,7 @@ sudo apt install net-tools lib32z1-dev cpanminus \
 ssh espeak build-essential zip openssl libssl-dev \
 perl tesseract-ocr imagemagick sqlite3 sshpass \
 ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
-tmux weasyprint autossh net-tools dnsmasq ollama
+tmux weasyprint autossh net-tools ollama
 
 sudo cpanm --notest --force Mojolicious::Lite \
  WWW::Mechanize Time::Piece Time::Duration \
@@ -183,7 +183,6 @@ Edit `/etc/ssh/sshd_config`:
 
 ```
 MaxSessions 1000000
-GatewayPorts yes
 ```
 
 Make swap (if not already created):
@@ -195,49 +194,6 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-Edit sudoers to allow dnsmasq to be restarted:
-
-```
-jawn ALL=(ALL) NOPASSWD: /usr/bin/pkill -HUP dnsmasq
-```
-
-Free up port 53 by stopping systemd-resolve:
-
-```
-sudo nano /etc/systemd/resolved.conf
-DNSStubListener=no
-sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-sudo systemctl restart systemd-resolved
-```
-
-Tell dnsmasq to look in the `jawnos/server/hosts` directory:
-
-```
-sudo mkdir -p /etc/dnsmasq.d/hosts/
-```
-
-Add this line to `/etc/dnsmasq.conf`:
-
-```
-addn-hosts=/etc/dnsmasq.d/hosts/
-```
-
-```
-sudo systemctl restart dnsmasq
-```
-
-Own the folder:
-
-```
-sudo chown -R $USER:$USER /etc/dnsmasq.d/hosts/
-```
-
-Put the folder location in the config:
-
-```
-"dnsmasq_location": "/etc/dnsmasq.d/hosts/"
 ```
 
 ```
