@@ -4864,6 +4864,15 @@ sub pseudonym_maker($context,$app) {
 	my $icon_set = &subs::icon_set();
 	my $set_key = $context . '.' . $icon_set;
 	if (my $ps = &subs::cache_get({ app => 'me', context => 'pseudonyms', subcontext => $set_key })) {
+		# the console panel is now called sessions - migrate older cached lists
+		my $renamed = 0;
+		foreach my $p ( @{$ps} ) {
+			if ($p->{'name'} && $p->{'name'} eq 'console') {
+				$p->{'name'} = 'sessions';
+				$renamed = 1;
+			}
+		}
+		if ($renamed) { &subs::cache_set({ app => 'me', context => 'pseudonyms', subcontext => $set_key }, $ps); }
 		return $ps;
 	}
 	my $pseudonyms = [
@@ -4873,7 +4882,7 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'on', name => "keyboard", icon => "keyboard", speech => 'typewriter' },
 		{ status => 'on', name => "calculator", icon => "calculator", speech => 'calculator' },
 		{ status => 'on', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
-		{ status => 'on', name => "console", icon => "windows", speech => 'i watch the baytch' },
+		{ status => 'on', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
 		{ status => 'on', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
 		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'text', icon => 'love letter', colour => '#ffec1f', place => 'top' },
@@ -16078,7 +16087,7 @@ sub keyboard_maker($c) {
 		}
 	}
 	my $websockets;
-	if ($toggle eq 'console' || $toggle eq 'controller') {
+	if ($toggle eq 'sessions' || $toggle eq 'controller') {
 		my $web_query = &subs::db_query('select * from websockets where browser_tab_id = ?',$browser_tab_id);
 		$websockets = $web_query->hashes;
 	}
@@ -17936,6 +17945,91 @@ get '/manager/marker/gallery' => sub ($c) {
 	}
 	$returner->{'html'} .= '</div>';
 	$c->render(json => $returner);
+};
+
+# ---- marker sessions ---------------------------------------------------
+# A session is one cache row (context 'sessions', subcontext = the session
+# id) holding every marker layer as a PNG data URL, so a drawing outlives the
+# window and can be recalled from the sessions panel. The cache table lives in
+# the encrypted database, so nothing here needs the network or the filesystem.
+sub marker_sessions($app) {
+	my $filter = $app || '';
+	my @sessions;
+	my $q = &subs::db_query('select * from cache where app = ? and context = ? order by server_time desc', 'marker', 'sessions');
+	foreach my $row ( @{$q->hashes} ) {
+		my $session = eval { return decode_sereal $row->{'data'} } || {};
+		next unless $session->{'uuid'};
+		next unless $session->{'layers'};
+		my $session_app = $session->{'app'} || 'marker';
+		next if ($filter && $session_app ne $filter);
+		push @sessions, {
+			uuid => $session->{'uuid'},
+			name => $session->{'name'},
+			app => $session_app,
+			layers => scalar @{$session->{'layers'}},
+			server_time => $row->{'server_time'},
+			thumbnail => $session->{'thumbnail'}
+		};
+	}
+	return \@sessions;
+}
+
+sub marker_session_store($session) {
+	my $timestamp = &subs::rightNow();
+	&subs::db_delete('cache', { app => 'marker', context => 'sessions', subcontext => $session->{'uuid'} });
+	&subs::db_insert('cache', {
+		app => 'marker',
+		context => 'sessions',
+		subcontext => $session->{'uuid'},
+		data => encode_sereal $session,
+		timestamp => $timestamp,
+		server_time => $timestamp,
+		warranty => &subs::ago_calc('-5y', $timestamp),
+		device => '',
+		uuid => $session->{'uuid'}
+	});
+}
+
+post '/manager/marker/session/save' => sub ($c) {
+	my $app = $c->param('app');
+	$app = &subs::unformat_name($app) if $app;
+	$app = 'marker' unless $app;
+	my $layers = eval { return decode_json $c->param('layers') } || [];
+	if (scalar @{$layers} == 0) {
+		$c->render(json => { success => 0 });
+		return;
+	}
+	my $session = {
+		uuid => $c->param('session_uuid') || &subs::random_string_creator(20),
+		name => $c->param('name') || 'session',
+		app => $app,
+		thumbnail => $c->param('thumbnail'),
+		timestamp => $c->param('timestamp') || &subs::rightNow(),
+		layers => $layers
+	};
+	&marker_session_store($session);
+	$c->render(json => { success => 1, uuid => $session->{'uuid'}, sessions => &marker_sessions($app) });
+};
+
+get '/manager/marker/session/list' => sub ($c) {
+	my $app = $c->param('app');
+	$app = &subs::unformat_name($app) if $app;
+	$c->render(json => { sessions => &marker_sessions($app) });
+};
+
+get '/manager/marker/session/load' => sub ($c) {
+	my $session_uuid = $c->param('session_uuid');
+	my $q = &subs::db_query('select * from cache where app = ? and context = ? and subcontext = ?', 'marker', 'sessions', $session_uuid);
+	my $session = eval { return decode_sereal $q->hashes->[0]->{'data'} } || {};
+	$c->render(json => $session);
+};
+
+post '/manager/marker/session/delete' => sub ($c) {
+	my $session_uuid = $c->param('session_uuid');
+	my $app = $c->param('app');
+	$app = &subs::unformat_name($app) if $app;
+	&subs::db_delete('cache', { app => 'marker', context => 'sessions', subcontext => $session_uuid });
+	$c->render(json => { success => 1, sessions => &marker_sessions($app) });
 };
 
 post '/manager/room_namer' => sub ($c) {

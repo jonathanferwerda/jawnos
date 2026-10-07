@@ -22,7 +22,14 @@ var markerBoundCanvas = null;
 var markerSprites = {};
 var markerComposePending = false;
 var markerThumbTimeout;
-var markerStroke = { drawing: false, saved: false, spraying: false, x: 0, y: 0, tool: 'pencil', erase: false, size: 20, colour: 'black', alpha: 1 };
+var markerStroke = { drawing: false, saved: false, spraying: false, pressure: 1, x: 0, y: 0, tool: 'pencil', erase: false, size: 20, colour: 'black', alpha: 1 };
+var markerHistory = [];
+var markerRedo = [];
+var markerHistoryLimit = 40;
+var markerSessionUuid;
+var markerSessionName;
+var markerSessionRestored = false;
+var markerPointerCaptured = false;
 
 function markerUuid() {
 	if (window.crypto && crypto.randomUUID) { return crypto.randomUUID(); }
@@ -141,6 +148,309 @@ function markerSwapLayers(a, b) {
 	markerCompose();
 }
 
+// ---- history -----------------------------------------------------------
+
+function markerHistoryClear() {
+	markerHistory = [];
+	markerRedo = [];
+}
+
+function markerHistoryPush(record) {
+	if (!record) { return; }
+	markerHistory.push(record);
+	if (markerHistory.length > markerHistoryLimit) { markerHistory.shift(); }
+	markerRedo = [];
+}
+
+// structural changes (add/delete/reorder/show-hide) only need the layer
+// objects plus their order, names and visibility - the pixels stay where they
+// are, including for layers that are temporarily removed
+function markerStructureRecord() {
+	var structure = [];
+	$.each(markerLayers, function(i, layer) {
+		structure.push({ layer: layer, name: layer.name, visible: layer.visible });
+	});
+	return { kind: 'doc', structure: structure, active: markerLayerActive };
+}
+
+function markerApplyStructure(record) {
+	markerLayers = [];
+	$.each(record.structure, function(i, entry) {
+		entry.layer.name = entry.name;
+		entry.layer.visible = entry.visible;
+		markerLayers.push(entry.layer);
+	});
+	markerLayerActive = Math.min(record.active, markerLayers.length - 1);
+	if (markerLayerActive < 0) { markerLayerActive = 0; }
+}
+
+// a paint action remembers the pixels it covered: grab the whole layer when it
+// starts (one fast copy), then crop to the dirty rectangle when it ends
+function markerSnapshotStart() {
+	var layer = markerActiveLayer();
+	if (!layer) { return; }
+	markerStroke.before = {
+		uuid: layer.uuid,
+		image: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height),
+		width: layer.canvas.width,
+		height: layer.canvas.height,
+		rect: undefined
+	};
+}
+
+function markerSnapshotDirty(x, y, w, h) {
+	var before = markerStroke.before;
+	if (!before) { return; }
+	var rect = before.rect || { x0: x, y0: y, x1: x + w, y1: y + h };
+	rect.x0 = Math.min(rect.x0, x);
+	rect.y0 = Math.min(rect.y0, y);
+	rect.x1 = Math.max(rect.x1, x + w);
+	rect.y1 = Math.max(rect.y1, y + h);
+	before.rect = rect;
+}
+
+function markerImageDataCrop(image, width, x, y, w, h) {
+	var crop = new ImageData(w, h);
+	for (var row = 0; row < h; row++) {
+		var from = ((y + row) * width + x) * 4;
+		crop.data.set(image.data.subarray(from, from + w * 4), row * w * 4);
+	}
+	return crop;
+}
+
+function markerSnapshotCommit() {
+	var before = markerStroke.before;
+	markerStroke.before = undefined;
+	if (!before || !before.rect) { return; }
+	if (!markerLayerByUuid(before.uuid)) { return; }
+	var rect = before.rect;
+	var x = Math.max(0, Math.floor(rect.x0));
+	var y = Math.max(0, Math.floor(rect.y0));
+	var w = Math.min(before.width - x, Math.ceil(rect.x1) - x);
+	var h = Math.min(before.height - y, Math.ceil(rect.y1) - y);
+	if (w <= 0 || h <= 0) { return; }
+	markerHistoryPush({
+		kind: 'rect',
+		layers: [{ uuid: before.uuid, x: x, y: y, w: w, h: h, data: markerImageDataCrop(before.image, before.width, x, y, w, h) }]
+	});
+}
+
+// whole-layer history, for actions that can touch anywhere (loading a paper,
+// dropping an image or a canvas in)
+function markerHistoryWholeLayer() {
+	var layer = markerActiveLayer();
+	if (!layer) { return; }
+	markerHistoryPush({
+		kind: 'rect',
+		layers: [{
+			uuid: layer.uuid,
+			x: 0,
+			y: 0,
+			w: layer.canvas.width,
+			h: layer.canvas.height,
+			data: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+		}]
+	});
+}
+
+// apply a record and hand back the record that would undo this application
+function markerApplyRecord(record) {
+	if (record.kind == 'rect') {
+		var inverse = [];
+		$.each(record.layers, function(i, crop) {
+			var layer = markerLayerByUuid(crop.uuid);
+			if (!layer) { return; }
+			var current = layer.ctx.getImageData(crop.x, crop.y, crop.w, crop.h);
+			layer.ctx.putImageData(crop.data, crop.x, crop.y);
+			inverse.push({ uuid: crop.uuid, x: crop.x, y: crop.y, w: crop.w, h: crop.h, data: current });
+		});
+		if (inverse.length == 0) { return undefined; }
+		return { kind: 'rect', layers: inverse };
+	}
+	var current = markerStructureRecord();
+	markerApplyStructure(record);
+	return current;
+}
+
+function markerUndo() {
+	var record = markerHistory.pop();
+	if (!record) { return; }
+	var inverse = markerApplyRecord(record);
+	if (inverse) { markerRedo.push(inverse); }
+	markerLayerList();
+	markerCompose();
+}
+
+function markerRedoStep() {
+	var record = markerRedo.pop();
+	if (!record) { return; }
+	var inverse = markerApplyRecord(record);
+	if (inverse) { markerHistory.push(inverse); }
+	markerLayerList();
+	markerCompose();
+}
+
+// ---- sessions ----------------------------------------------------------
+
+function markerApp() {
+	var app = $('#whiteboard').closest('.wind').attr('app');
+	if (!app) { app = topWindow('marker'); }
+	return app || 'marker';
+}
+
+function markerSessionSave() {
+	var canvas = document.getElementById('whiteboard');
+	if (!canvas || markerLayers.length == 0) { return; }
+	var name = prompt('Session name', markerSessionName || ('Session ' + new Date().toLocaleString()));
+	if (!name) { return; }
+	markerSessionName = name;
+	var layers = [];
+	$.each(markerLayers, function(i, layer) {
+		layers.push({ name: layer.name, visible: layer.visible, image: layer.canvas.toDataURL('image/png') });
+	});
+	var thumb = document.createElement('canvas');
+	thumb.width = 96;
+	thumb.height = 64;
+	thumb.getContext('2d').drawImage(canvas, 0, 0, thumb.width, thumb.height);
+	var payload = JSON.stringify(layers);
+	// the server drops request bodies over MOJO_MAX_MESSAGE_SIZE (16MB) without
+	// a useful error, so fail loudly here rather than silently losing the art
+	if (payload.length > 12000000) {
+		alert('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.');
+		return;
+	}
+	$.ajax({
+		url: '/manager/marker/session/save',
+		type: 'POST',
+		data: {
+			app: markerApp(),
+			name: name,
+			session_uuid: markerSessionUuid,
+			layers: payload,
+			thumbnail: thumb.toDataURL('image/png'),
+			timestamp: Date.now()
+		},
+		success: function(response) {
+			if (response && response.uuid) { markerSessionUuid = response.uuid; }
+			markerSessionPanel(response ? response.sessions : undefined);
+			say_it('session saved!');
+		}
+	});
+}
+
+function markerSessionApply(layers) {
+	markerLayers = layers;
+	markerLayerActive = layers.length - 1;
+	markerHistoryClear();
+	markerLayerList();
+	markerCompose();
+}
+
+function markerSessionLoad(session_uuid) {
+	$.ajax({
+		url: '/manager/marker/session/load',
+		type: 'GET',
+		data: { session_uuid: session_uuid },
+		success: function(session) {
+			if (!session || !session.layers || session.layers.length == 0) { return; }
+			var canvas = document.getElementById('whiteboard');
+			if (!canvas || !whiteboard_ctx) { return; }
+			markerSessionUuid = session.uuid || session_uuid;
+			markerSessionName = session.name;
+			var pending = session.layers.length;
+			var built = [];
+			var done = function() {
+				pending--;
+				if (pending <= 0) { markerSessionApply(built); }
+			};
+			$.each(session.layers, function(i, l) {
+				var layer = markerNewLayer(l.name);
+				layer.visible = l.visible != false;
+				built.push(layer);
+				var image = new Image();
+				image.onload = function() {
+					layer.ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+					done();
+				};
+				image.onerror = done;
+				image.src = l.image;
+			});
+		}
+	});
+}
+
+// reopen the last saved drawing, so layers are not just a session thing -
+// nothing is restored if the board already has work on it
+function markerSessionRestoreLast() {
+	if (markerSessionRestored) { return; }
+	if (markerHistory.length > 0) { return; }
+	markerSessionRestored = true;
+	$.ajax({
+		url: '/manager/marker/session/list',
+		type: 'GET',
+		data: { app: markerApp() },
+		success: function(response) {
+			if (response && response.sessions && response.sessions.length > 0) {
+				markerSessionLoad(response.sessions[0].uuid);
+			}
+		}
+	});
+}
+
+function markerSessionPanel(sessions) {
+	var panel = $('#marker_sessions');
+	if (panel.length == 0) { return; }
+	if (sessions == undefined) {
+		$.ajax({
+			url: '/manager/marker/session/list',
+			type: 'GET',
+			data: { app: '' },
+			success: function(response) { markerSessionPanel((response && response.sessions) || []); }
+		});
+		return;
+	}
+	panel.html('');
+	if (sessions.length == 0) { panel.html('<i>no saved sessions</i>'); return; }
+	$.each(sessions, function(i, s) {
+		var row = $('<span class="marker_session hover" hint="Load this drawing in the marker"></span>').attr('uuid', s.uuid).attr('app', s.app);
+		if (s.thumbnail) { row.append($('<img class="little_thumb">').attr('src', s.thumbnail)); }
+		row.append($('<b></b>').text(s.name || 'session'));
+		row.append($('<span style="font-size:10px;"></span>').text(' ' + (s.layers || 0) + ' layers '));
+		row.append($('<img class="tiny_thumb marker_session_delete hover" hint="Delete">').attr('src', '/images/make believe/cancel_button.png'));
+		panel.append(row);
+		panel.append('<br>');
+	});
+}
+
+function markerSessionOpen(session_uuid) {
+	markerSessionRestored = true;
+	if ($('#whiteboard').length > 0) {
+		var wind = $('#whiteboard').closest('.wind');
+		if (wind.length > 0) { wind.show(); topLevelNow(wind); }
+		markerSessionLoad(session_uuid);
+		return;
+	}
+	$.ajax({
+		url: '/manager/marker',
+		type: 'GET',
+		data: { window_maker: 'yes', app: 'marker', timestamp: Date.now(), browser_tab_id: bti },
+		success: function(response) {
+			windowMaker(response);
+			markerInit();
+			markerSessionWait(session_uuid, 0);
+		}
+	});
+}
+
+function markerSessionWait(session_uuid, attempts) {
+	if (attempts > 24) { return; }
+	if ($('#whiteboard').length > 0 && $('#whiteboard').is(':visible')) {
+		markerSessionLoad(session_uuid);
+		return;
+	}
+	setTimeout(function() { markerSessionWait(session_uuid, attempts + 1); }, 250);
+}
+
 // ---- brushes -----------------------------------------------------------
 
 function markerRgba(hex, alpha) {
@@ -180,7 +490,7 @@ function markerBrushSprite(size, colour, alpha, hardness) {
 // spray is a scatter of tiny dots; erasing version is the same dots drawn
 // with destination-out, which removes alpha instead of adding colour
 function markerSprayBurst(ctx, x, y) {
-	var count = Math.max(1, Math.round(markerStroke.size * 0.8));
+	var count = Math.max(1, Math.round(markerStroke.size * 0.8 * (markerStroke.pressure || 1)));
 	ctx.fillStyle = markerRgbaString(markerStroke.colour, markerStroke.alpha * 0.12);
 	for (var i = 0; i < count; i++) {
 		var angle = Math.random() * Math.PI * 2;
@@ -224,6 +534,7 @@ function markerFloodFill(x, y) {
 	if (Math.abs(tr - fr) < 2 && Math.abs(tg - fg) < 2 && Math.abs(tb - fb) < 2 && Math.abs(ta - fa) < 2) { return; }
 	var tolerance = 32;
 	var visited = new Uint8Array(w * h);
+	var min_x = x, min_y = y, max_x = x, max_y = y;
 	// the stack holds packed pixel indexes - pushing x and y separately is
 	// easy to get backwards when popping
 	var stack = [y * w + x];
@@ -237,6 +548,8 @@ function markerFloodFill(x, y) {
 		var right = px;
 		while (right < w - 1 && !visited[row + right + 1] && markerFillMatch(data, (row + right + 1) * 4, tr, tg, tb, ta, tolerance)) { right++; }
 		for (var i = left; i <= right; i++) {
+			if (i < min_x) { min_x = i; }
+			if (i > max_x) { max_x = i; }
 			visited[row + i] = 1;
 			var offset = (row + i) * 4;
 			data[offset] = fr;
@@ -246,9 +559,12 @@ function markerFloodFill(x, y) {
 			if (py > 0 && !visited[(py - 1) * w + i] && markerFillMatch(data, ((py - 1) * w + i) * 4, tr, tg, tb, ta, tolerance)) { stack.push((py - 1) * w + i); }
 			if (py < h - 1 && !visited[(py + 1) * w + i] && markerFillMatch(data, ((py + 1) * w + i) * 4, tr, tg, tb, ta, tolerance)) { stack.push((py + 1) * w + i); }
 		}
+		if (py < min_y) { min_y = py; }
+		if (py > max_y) { max_y = py; }
 	}
 	layer.ctx.putImageData(image, 0, 0);
 	markerCompose();
+	return { x0: min_x, y0: min_y, x1: max_x + 1, y1: max_y + 1 };
 }
 
 // ---- stroke input ------------------------------------------------------
@@ -267,13 +583,22 @@ function markerPointerEvent(e) {
 	var canvas = document.getElementById('whiteboard');
 	var rect = canvas.getBoundingClientRect();
 	var x = e.clientX, y = e.clientY;
-	if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
-	else if (e.changedTouches && e.changedTouches.length > 0) { x = e.changedTouches[0].clientX; y = e.changedTouches[0].clientY; }
 	x = x - rect.left;
 	y = y - rect.top;
 	if (rect.width > 0 && rect.width != canvas.width) { x = x * (canvas.width / rect.width); }
 	if (rect.height > 0 && rect.height != canvas.height) { y = y * (canvas.height / rect.height); }
-	return { x: x, y: y };
+	// a pen reports how hard it is pressing; the stylus toggle decides whether
+	// that changes the brush width
+	var pressure = 1;
+	if (e.pointerType == 'pen' && $('.marker_stylus_toggle').attr('toggle') == 'on' && e.pressure > 0) {
+		pressure = Math.max(0.15, Math.min(1, e.pressure));
+	}
+	return { x: x, y: y, pressure: pressure };
+}
+
+function markerWidth(pressure) {
+	if (pressure == undefined) { pressure = 1; }
+	return markerStroke.size * 2 * (0.3 + 0.7 * pressure);
 }
 
 function markerKeyboardPointer(pos) {
@@ -299,14 +624,22 @@ function markerPointerDown(pos) {
 	var tool = markerStroke.tool;
 	if (tool == 'kb') { markerKeyboardPointer(pos); return; }
 	if (tool == 'sample') { markerSampleColour(pos); return; }
-	if (tool == 'fill') { markerFloodFill(pos.x, pos.y); return; }
+	if (tool == 'fill') {
+		markerSnapshotStart();
+		var filled = markerFloodFill(pos.x, pos.y);
+		if (filled) { markerSnapshotDirty(filled.x0, filled.y0, filled.x1 - filled.x0, filled.y1 - filled.y0); }
+		markerSnapshotCommit();
+		return;
+	}
+	markerStroke.pressure = pos.pressure;
+	markerSnapshotStart();
 	var ctx = markerActiveContext();
 	ctx.save();
 	markerStroke.saved = true;
 	ctx.globalAlpha = markerStroke.alpha;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
-	ctx.lineWidth = markerStroke.size * 2;
+	ctx.lineWidth = markerWidth(markerStroke.pressure);
 	if (markerStroke.erase) {
 		ctx.globalCompositeOperation = 'destination-out';
 		ctx.strokeStyle = markerRgbaString('#000000', 1);
@@ -320,6 +653,8 @@ function markerPointerDown(pos) {
 	markerStroke.drawing = true;
 	markerStroke.x = pos.x;
 	markerStroke.y = pos.y;
+	var size = markerStroke.size + 2;
+	markerSnapshotDirty(pos.x - size, pos.y - size, size * 2, size * 2);
 	if (tool == 'pencil') {
 		// a dot, so a single click still leaves a mark
 		ctx.beginPath();
@@ -328,7 +663,8 @@ function markerPointerDown(pos) {
 		ctx.stroke();
 	}
 	else if (tool == 'brush') {
-		var sprite = markerBrushSprite(markerStroke.size, markerStroke.colour, markerStroke.alpha, 0.35);
+		var brush_size = Math.max(1, Math.round(markerStroke.size * (0.3 + 0.7 * markerStroke.pressure)));
+		var sprite = markerBrushSprite(brush_size, markerStroke.colour, markerStroke.alpha, 0.35);
 		ctx.drawImage(sprite, pos.x - sprite.width / 2, pos.y - sprite.height / 2);
 	}
 	else if (tool == 'spray') {
@@ -344,14 +680,19 @@ function markerPointerMove(pos) {
 	var ctx = markerActiveContext();
 	var tool = markerStroke.tool;
 	var x0 = markerStroke.x, y0 = markerStroke.y;
+	var size = markerStroke.size + 2;
+	markerStroke.pressure = pos.pressure;
 	if (tool == 'pencil') {
+		ctx.lineWidth = markerWidth(pos.pressure);
 		ctx.beginPath();
 		ctx.moveTo(x0, y0);
 		ctx.lineTo(pos.x, pos.y);
 		ctx.stroke();
+		markerSnapshotDirty(Math.min(x0, pos.x) - size, Math.min(y0, pos.y) - size, Math.abs(pos.x - x0) + size * 2, Math.abs(pos.y - y0) + size * 2);
 	}
 	else if (tool == 'brush') {
-		var sprite = markerBrushSprite(markerStroke.size, markerStroke.colour, markerStroke.alpha, 0.35);
+		var brush_size = Math.max(1, Math.round(markerStroke.size * (0.3 + 0.7 * pos.pressure)));
+		var sprite = markerBrushSprite(brush_size, markerStroke.colour, markerStroke.alpha, 0.35);
 		var distance = Math.sqrt((pos.x - x0) * (pos.x - x0) + (pos.y - y0) * (pos.y - y0));
 		var spacing = Math.max(1, markerStroke.size / 4);
 		var steps = Math.min(200, Math.floor(distance / spacing) + 1);
@@ -359,9 +700,11 @@ function markerPointerMove(pos) {
 			var t = i / steps;
 			ctx.drawImage(sprite, x0 + (pos.x - x0) * t - sprite.width / 2, y0 + (pos.y - y0) * t - sprite.height / 2);
 		}
+		markerSnapshotDirty(Math.min(x0, pos.x) - size, Math.min(y0, pos.y) - size, Math.abs(pos.x - x0) + size * 2, Math.abs(pos.y - y0) + size * 2);
 	}
 	else if (tool == 'spray') {
 		markerSprayBurst(ctx, pos.x, pos.y);
+		markerSnapshotDirty(pos.x - size, pos.y - size, size * 2, size * 2);
 	}
 	markerStroke.x = pos.x;
 	markerStroke.y = pos.y;
@@ -376,12 +719,18 @@ function markerEndStroke() {
 		markerActiveContext().restore();
 		markerStroke.saved = false;
 	}
+	markerSnapshotCommit();
 	markerCompose();
 }
 
 function markerMouseDown(e) {
-	if (e.button !== 0) { return; }
+	if (e.pointerType == 'mouse' && e.button !== 0) { return; }
 	e.preventDefault();
+	var canvas = document.getElementById('whiteboard');
+	if (canvas.setPointerCapture) {
+		try { canvas.setPointerCapture(e.pointerId); markerPointerCaptured = true; }
+		catch (err) { markerPointerCaptured = false; }
+	}
 	markerPointerDown(markerPointerEvent(e));
 }
 
@@ -391,34 +740,29 @@ function markerMouseMove(e) {
 	else if (localStorage.getItem('marker_tool') == 'kb') { markerKeyboardPointer(markerPointerEvent(e)); }
 }
 
-function markerTouchStart(e) {
-	e.preventDefault();
-	markerPointerDown(markerPointerEvent(e));
-}
-
-function markerTouchMove(e) {
-	e.preventDefault();
-	markerPointerMove(markerPointerEvent(e));
-}
-
-function markerTouchEnd(e) {
-	e.preventDefault();
+function markerPointerUp(e) {
+	markerPointerCaptured = false;
 	markerEndStroke();
 }
 
-// native listeners (rather than delegated ones) so touch can be non-passive
-// and preventDefault actually stops the page scrolling while drawing
+function markerPointerLeave(e) {
+	// a captured stroke keeps drawing outside the canvas; otherwise let go
+	if (markerPointerCaptured) { return; }
+	markerEndStroke();
+}
+
+// pointer events cover mouse, finger and stylus in one place (and let the pen
+// report pressure). touch-action none stops the page scrolling or zooming
+// when a stroke starts on the canvas.
 function markerBindCanvas(canvas) {
 	if (markerBoundCanvas === canvas) { return; }
 	markerBoundCanvas = canvas;
-	canvas.addEventListener('mousedown', markerMouseDown);
-	canvas.addEventListener('mousemove', markerMouseMove);
-	canvas.addEventListener('mouseup', markerEndStroke);
-	canvas.addEventListener('mouseleave', markerEndStroke);
-	canvas.addEventListener('touchstart', markerTouchStart, { passive: false });
-	canvas.addEventListener('touchmove', markerTouchMove, { passive: false });
-	canvas.addEventListener('touchend', markerTouchEnd, { passive: false });
-	canvas.addEventListener('touchcancel', markerTouchEnd, { passive: false });
+	canvas.style.touchAction = 'none';
+	canvas.addEventListener('pointerdown', markerMouseDown);
+	canvas.addEventListener('pointermove', markerMouseMove);
+	canvas.addEventListener('pointerup', markerPointerUp);
+	canvas.addEventListener('pointercancel', markerPointerUp);
+	canvas.addEventListener('pointerleave', markerPointerLeave);
 	canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 }
 
@@ -447,6 +791,10 @@ function markerInit(whiteboard) {
 		markerLayers = [];
 		markerLayerActive = 0;
 		markerSprites = {};
+		markerHistoryClear();
+		markerSessionUuid = undefined;
+		markerSessionName = undefined;
+		markerSessionRestored = false;
 	}
 	if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
 		canvas.width = width;
@@ -462,6 +810,7 @@ function markerInit(whiteboard) {
 	markerBindCanvas(canvas);
 	markerLayerList();
 	markerCompose();
+	markerSessionRestoreLast();
 }
 
 $(document).on('click', '.marker_stylus_toggle', function() {
@@ -573,6 +922,7 @@ $(document).on('click', '.marker_layer_eye', function(e) {
 	var row = $(this).closest('.marker_layer_row');
 	var layer = markerLayerByUuid(row.attr('uuid'));
 	if (!layer) { return; }
+	markerHistoryPush(markerStructureRecord());
 	layer.visible = !layer.visible;
 	markerLayerList();
 	markerCompose();
@@ -588,6 +938,7 @@ $(document).on('dblclick', '.marker_layer_name', function(e) {
 });
 
 $(document).on('click', '.marker_layer_add', function() {
+	markerHistoryPush(markerStructureRecord());
 	markerLayers.push(markerNewLayer());
 	markerLayerActive = markerLayers.length - 1;
 	markerLayerList();
@@ -598,6 +949,7 @@ $(document).on('click', '.marker_layer_delete', function() {
 	var layer = markerActiveLayer();
 	if (markerLayers.length <= 1 || !layer) { return; }
 	if (!confirm('Delete layer: ' + layer.name + '?')) { return; }
+	markerHistoryPush(markerStructureRecord());
 	markerLayers.splice(markerLayerActive, 1);
 	markerLayerActive = Math.min(markerLayerActive, markerLayers.length - 1);
 	markerLayerList();
@@ -606,22 +958,81 @@ $(document).on('click', '.marker_layer_delete', function() {
 
 $(document).on('click', '.marker_layer_up', function() {
 	if (markerLayerActive >= markerLayers.length - 1) { return; }
+	markerHistoryPush(markerStructureRecord());
 	markerSwapLayers(markerLayerActive, markerLayerActive + 1);
 });
 
 $(document).on('click', '.marker_layer_down', function() {
 	if (markerLayerActive <= 0) { return; }
+	markerHistoryPush(markerStructureRecord());
 	markerSwapLayers(markerLayerActive, markerLayerActive - 1);
 });
 
 $(document).on('click', '.marker_layer_front', function() {
 	if (markerLayerActive >= markerLayers.length - 1) { return; }
+	markerHistoryPush(markerStructureRecord());
 	var layer = markerLayers.splice(markerLayerActive, 1)[0];
 	markerLayers.push(layer);
 	markerLayerActive = markerLayers.length - 1;
 	markerLayerList();
 	markerCompose();
 });
+
+// ---- undo / redo / sessions -------------------------------------------
+
+$(document).on('click', '.marker_undo', function() { markerUndo(); });
+$(document).on('click', '.marker_redo', function() { markerRedoStep(); });
+
+$(document).on('keydown', function(e) {
+	if (!(e.ctrlKey || e.metaKey) || e.altKey) { return; }
+	if ($(e.target).is('input, textarea, select, [contenteditable]')) { return; }
+	if (!$('#whiteboard').is(':visible')) { return; }
+	var key = (e.key || '').toLowerCase();
+	if (key == 'z') {
+		if (e.shiftKey) { markerRedoStep(); }
+		else { markerUndo(); }
+		e.preventDefault();
+	}
+	else if (key == 'y') {
+		markerRedoStep();
+		e.preventDefault();
+	}
+});
+
+$(document).on('click', '.marker_new_board', function() {
+	if (!confirm('Start a new drawing?')) { return; }
+	markerLayers = [markerNewLayer('Layer 1')];
+	markerLayerActive = 0;
+	markerSessionUuid = undefined;
+	markerSessionName = undefined;
+	markerHistoryClear();
+	markerLayerList();
+	markerCompose();
+});
+
+$(document).on('click', '.marker_session_save', function() { markerSessionSave(); });
+$(document).on('click', '.marker_session', function() { markerSessionOpen($(this).attr('uuid')); });
+
+$(document).on('click', '.marker_session_delete', function(e) {
+	e.stopPropagation();
+	var row = $(this).closest('.marker_session');
+	$.ajax({
+		url: '/manager/marker/session/delete',
+		type: 'POST',
+		data: { session_uuid: row.attr('uuid'), app: '' },
+		success: function(response) { markerSessionPanel((response && response.sessions) || []); }
+	});
+});
+
+$(document).on('click', '.keyboard_button[key="sessions"], .return_key[key="sessions"]', function() { markerSessionPanelWait(0); });
+
+// the sessions panel is fetched from the server when its key is pressed, so
+// wait for its container to appear before filling it
+function markerSessionPanelWait(attempts) {
+	if (attempts > 20) { return; }
+	if ($('#marker_sessions').length > 0) { markerSessionPanel(); return; }
+	setTimeout(function() { markerSessionPanelWait(attempts + 1); }, 250);
+}
 
 var record_marker;
 $(document).on('click', '.record_marker', function() {
@@ -690,6 +1101,7 @@ $(document).on('click', '.paper', function() {
 	var ctx = markerActiveContext();
 	var image = new Image();
 	image.onload=function(){
+		markerHistoryWholeLayer();
 		ctx.save();
 		ctx.globalAlpha = numeral($('#marker_transparency').val() || 1).value();
 		ctx.drawImage(image,0,0,canvas.width,canvas.height);
@@ -748,6 +1160,7 @@ $(document).on('click', '.flipbook', function() {
 
 	}
 	image.onload=function(){
+		markerHistoryWholeLayer();
 		ctx.save();
 		ctx.globalAlpha = numeral($('#marker_transparency').val() || 1).value();
 		ctx.drawImage(image,0,0,canvas.width,canvas.height);
@@ -840,6 +1253,7 @@ function markerDragger(id,status) {
 				else if (($(v).is('img') && $(v).is(':visible')) && ($(v).attr('id') == 'video' || $(v).hasClass('detail_image') || $(v).attr('id') == 'main_image') ) {
 					var image = new Image();
 					image.onload=function(){
+						markerHistoryWholeLayer();
 						markerActiveContext().drawImage(image,0,0,white['width'], white['height']);
 						markerCompose();
 					};
@@ -851,6 +1265,7 @@ function markerDragger(id,status) {
 					var img = cv.toDataURL('image/png');
 					var image = new Image();
 					image.onload=function(){
+						markerHistoryWholeLayer();
 						markerActiveContext().drawImage(image,0,0,white['width'], white['height']);
 						markerCompose();
 					};

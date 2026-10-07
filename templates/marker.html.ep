@@ -31,6 +31,11 @@
 				<button class="button marker_layer_down hover" hint="Lower layer">&#9660;</button>
 				<button class="button marker_layer_front hover" hint="Bring to front">&#10514;</button>
 				<button class="button marker_layer_delete hover" hint="Delete layer">&#10005;</button>
+				<br>
+				<button class="button marker_undo hover" hint="Undo">&#8630;</button>
+				<button class="button marker_redo hover" hint="Redo">&#8631;</button>
+				<button class="button marker_new_board hover" hint="New drawing">New</button>
+				<button class="button marker_session_save hover" hint="Save this drawing as a session">Session</button>
 			</div>
 			<div id="marker_layer_list"></div>
 		</div>

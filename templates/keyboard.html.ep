@@ -350,8 +350,8 @@
 			});
 		</script>
 	<% } %>
-	<% if ($toggle eq 'console') { %>
-		<span class="keyboard" id="console" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
+	<% if ($toggle eq 'sessions') { %>
+		<span class="keyboard" id="sessions" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
 			<span class="room">
 
 				<img class="past_life medium_thumb" direction="rew" src="<%= &subs::icon_for('/icons/prev.jpg') %>" hint="Previous"></img>
@@ -367,6 +367,8 @@
 				<br>
 				<input type="text" class="timed_input add_something" type="room" style="width:300px;" placeholder="Room Name" id="room_name"><br>
 				<span id="playbook"></span><br>
+				<b>Marker Sessions</b><br>
+				<span id="marker_sessions"></span>
 			</span>
 		</span>
 	<% } %>
