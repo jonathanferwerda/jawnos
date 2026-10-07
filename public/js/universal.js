@@ -38,16 +38,15 @@ function appointment_chron() {
 		var now = Date.now();
 		$('.since, .time').each( function() {
 			var header = $(this);
-			// Most of these are old timestamps whose text only changes every
-			// minute/hour/day, so remember when each one is next worth looking at
-			// instead of recomputing and repainting every element every second.
-			var next_check = numeral(header.attr('next_check')).value();
-			if (next_check && next_check > now) { return; }
-			var timestamp = $(this).attr('timestamp');
-			var app = $(this).attr('app');
 			var mode = $(this).attr('mode');
+			var timestamp = $(this).attr('timestamp');
 
 			if (mode == 'fixed') {
+				// Fixed times never change, so paint one and skip the element for a
+				// while. Clicking the element drops next_check, so the toggle back to
+				// fixed paints straight away instead of waiting out this hour.
+				var next_check = numeral(header.attr('next_check')).value();
+				if (next_check && next_check > now) { return; }
 				if (!header.attr('formatted_time')) {
 					header.attr('formatted_time', fixedTimeString(numeral(timestamp).value()));
 				}
@@ -60,11 +59,11 @@ function appointment_chron() {
 				else {
 					header.text(header.attr('formatted_time'));
 				}
-				// fixed times never change
 				header.attr('next_check', now + 3600000);
 			}
 			else {
-
+				// Dynamic times read "in 3m 12s" or "3d 4h ago", so they are worked out
+				// every second -- the DOM is only touched when the text really changed.
 				if (header.is('input') && !header.hasClass('editing')) {
 					var value = quality_inventory(timestamp);
 					if (header.val() != value) { header.val(value).css({'background-color': '#ffffff'}); }
@@ -80,10 +79,6 @@ function appointment_chron() {
 					if (header.text() != text) { header.text(text); }
 				}
 				header.attr('mode', 'dynamic');
-				// anything showing seconds needs a 1s cadence, coarser strings can wait
-				var shown = (header.is('input') ? header.val() : header.text()) || '';
-				header.attr('next_check', now + (shown.indexOf('s') > -1 ? 1000 : 15000));
-
 			}
 
 		});
@@ -231,6 +226,8 @@ $(document).on('dblclick', '.time', function() {
 $(document).on('click', '.time, .appointment_header, .since', function() {
 	var header = $(this);
 	if (!header.is('input')) {
+		// drop the fixed-mode repaint gate so the switch shows up right away
+		header.removeAttr('next_check');
 		if (header.attr('mode') == 'fixed') {
 			header.attr('mode', 'dynamic');
 		}
