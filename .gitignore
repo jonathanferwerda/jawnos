@@ -26,3 +26,7 @@ server/fullchain.pem
 Thumbs.db
 *.swp
 *~
+
+# --- Python tooling (font + face preview generator) ---
+__pycache__/
+*.pyc
