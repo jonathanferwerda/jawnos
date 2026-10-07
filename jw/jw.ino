@@ -53,6 +53,8 @@ static bool sportsIrq = false;
 static bool recordFlag = false;
 // Flag used for PMU interrupt trigger status
 static bool pmuIrq = false;
+// Set when the crown is held down: the user wants the watch to sleep now
+static bool sleepRequested = false;
 static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
@@ -115,6 +117,7 @@ uint32_t steps;
 uint32_t stepSampleMillis = 0;
 JSONVar stepped;
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
 
 /// Include the official playback engine libraries from the template
 #include <AudioOutputI2S.h>
@@ -150,6 +153,14 @@ class LilyGoAudioSink : public AudioOutput
         return false;
       }
       MakeSampleStereo16(sample);
+      // The sink was opened with the file's own channel count, so a mono file is
+      // being pushed into a mono stream: one 16-bit sample per frame period.
+      // Writing both halves of the frame hands the hardware two samples per file
+      // sample, which plays everything back at half speed and an octave low.
+      if (channels == 1) {
+        int16_t mono = sample[LEFTCHANNEL];
+        return codec->write((const uint8_t *)&mono, sizeof(mono)) == (int)sizeof(mono);
+      }
       int16_t frame[2] = { sample[LEFTCHANNEL], sample[RIGHTCHANNEL] };
       return codec->write((const uint8_t *)frame, sizeof(frame)) == (int)sizeof(frame);
     }
@@ -888,6 +899,10 @@ void loop() {
     }
     delay(60);
   }
+  // The IP row lives on the face, and the face is the floor every room is drawn
+  // over, so keep it fresh wherever we are: that way turning the AP on shows its
+  // address on the screen right away instead of only while standing in net room.
+  ip_writer();
   int volts = watch.getBatteryPercent();
   if (face_battery) {
     lv_color_t status_colour;
@@ -935,6 +950,12 @@ void loop() {
       server.handleClient();
     }
     delay(5);
+  }
+  if (sleepRequested) {
+    // the crown was held down, so sleep now instead of waiting out the timeout
+    sleepRequested = false;
+    lowPowerEnergyHandler();
+    return;
   }
   if (loraChatReceiver) {
     readRadio();
@@ -1517,10 +1538,16 @@ void ip_writer() {
   lv_label_set_text(face_gw, bufgwIP);
   if (wifi_ap_enabled) {
     apIP = WiFi.softAPIP();
+    // the soft AP is its own gateway on this little subnet
     sprintf(bufapIP, "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3] );
+    sprintf(bufapgwIP, "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3] );
     lv_label_set_text(face_ap, bufapIP);
     lv_label_set_text(face_apgw, bufapgwIP);
-  }  
+  }
+  else {
+    lv_label_set_text(face_ap, "");
+    lv_label_set_text(face_apgw, "");
+  }
 }
 
 void button_writer() {
@@ -2107,6 +2134,7 @@ void micCaptureTask(void *pvParameters) {
     uint32_t bytes_written_total = 0;
 
     Serial.println("[Recorder] Flash append loop initialized.");
+    uint32_t started_ms = millis();
 
     while (isRecording) {
         int got = mic->read(tempBuf, AUDIO_BUFFER_CHUNK_SIZE);
@@ -2120,7 +2148,12 @@ void micCaptureTask(void *pvParameters) {
     mic->close();
     audio_file.close();
     free(tempBuf);
-    Serial.printf("[Recorder] captured %u bytes\n", bytes_written_total);
+    uint32_t spent = millis() - started_ms;
+    // the bytes-per-second figure says whether the microphone really produced the
+    // 16 kHz the WAV header claims (16 kHz mono 16-bit is ~32000 B/s)
+    Serial.printf("[Recorder] captured %u bytes in %u ms (%u B/s, expect ~32000)\n",
+                  bytes_written_total, spent,
+                  spent ? (unsigned)((uint64_t)bytes_written_total * 1000 / spent) : 0);
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
     finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total);
@@ -2131,6 +2164,8 @@ void micCaptureTask(void *pvParameters) {
 void audio_playback_loop_task(void *pvParameters) {
     Serial.println("[Player] Playback track active.");
     watch.getAudioOutput()->setVolume(volumeLevel);
+    uint32_t started_ms = millis();
+    size_t pcm_bytes = file_source ? (size_t)file_source->getSize() : 0;
 
     while (isPlaying) {
         if (wav->isRunning()) {
@@ -2142,6 +2177,15 @@ void audio_playback_loop_task(void *pvParameters) {
             isPlaying = false;
         }
         vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+    uint32_t spent = millis() - started_ms;
+    if (pcm_bytes && spent) {
+      // 16 kHz mono 16-bit is ~32000 B/s; a very different number means the sink
+      // is being clocked at the wrong rate
+      Serial.printf("[Player] played %u PCM bytes in %u ms (%u B/s, expect ~32000)\n",
+                    (unsigned)pcm_bytes, spent,
+                    (unsigned)((uint64_t)pcm_bytes * 1000 / spent));
     }
 
     // Safely clean memory resources upon completion
@@ -2899,8 +2943,10 @@ void accesspoint_start() {
       ap_ssid = (const char *)wifi["ap_ssid"];
       ap_password = (const char *)wifi["ap_password"];
     }
+    // the config has to be in place before the AP comes up, otherwise the AP
+    // hands out the default 192.168.4.1 instead of our subnet
+    WiFi.softAPConfig(ip, gw_ip, subnet);
     if (WiFi.softAP(ap_ssid, ap_password)) {
-      WiFi.softAPConfig(ip, gw_ip, subnet); //, IPAddress dhcp_lease_start = (uint32_t)0, IPAddress dns = (uint32_t)0);
       server.begin();
       webserver_enabled = true;
       wifi_ap_enabled = true;
@@ -2994,10 +3040,20 @@ void touch_watch() {
   }
 }
 
+// Reads (and clears) the PMU interrupt status registers; true when one of the
+// latched events wants the crown. Used as a fallback for the interrupt path.
+static bool crown_irq_pending() {
+  uint64_t status = watch.pmic.irq().readStatus();
+  return watch.pmic.irq().isPekeyShortPress(status) ||
+         watch.pmic.irq().isPekeyLongPress(status);
+}
+
 static void doze_until_crown() {
   setCpuFrequencyMhz(80);
   //my_print("=========esp_light_sleep_start=========\n");
   char count = 0;
+  uint32_t started_ms = millis();
+  Serial.println("[doze] enter");
 
   while (!pmuIrq) {
     sportsIrq = false;      // movement must not light the screen back up either
@@ -3015,6 +3071,12 @@ static void doze_until_crown() {
       server.handleClient();
     }
     watch.loop();             // the PMU and sensor events arrive through here
+    if (!pmuIrq && crown_irq_pending()) {
+      // the AXP2101 latches crown presses in its IRQ status registers; reading
+      // them here catches a press even if the interrupt path missed it
+      Serial.println("[doze] crown caught by the status poll");
+      pmuIrq = true;
+    }
     awake_notifications();
     readRadio();
     delay(500);
@@ -3022,6 +3084,7 @@ static void doze_until_crown() {
     // esp_sleep_enable_timer_wakeup(3 * 1000);
     // esp_light_sleep_start();
   }
+  Serial.printf("[doze] exit after %u ms\n", millis() - started_ms);
   //my_print("=========esp_light_sleep_end=========\n");
 }
 
@@ -3054,9 +3117,15 @@ void lowPowerEnergyHandler()
  // Serial.flush(); 
   watch.sleepDisplay();
 
-  if (lightSleep) {
+  if (lightSleep && !watch.isUsbIn()) {
     
     Serial.println("right before sleep");
+    // a latched PMU event keeps PMU_INT pulled low, and EXT1 would read that as
+    // "the crown is being held" and bounce straight back out of the sleep
+    watch.pmic.irq().readStatus();
+    // the pin is pulled up in the digital domain, but the RTC pad has its own
+    // pull state that has to be set for the wake to be seen
+    rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
     uint64_t wakeup_pin = _BV(PMU_INT);
     esp_sleep_enable_ext1_wakeup((wakeup_pin), ESP_EXT1_WAKEUP_ALL_LOW);
  //   esp_sleep_enable_ext0_wakeup((gpio_num_t)_BV(BMA423_TILT_INT), 1); // 0 = LOW
@@ -3106,6 +3175,11 @@ void lowPowerEnergyHandler()
 
 
   } else {
+    if (lightSleep) {
+      // an attached USB serial both refuses the light sleep and wakes the chip
+      // straight out of it, so doze properly until the cable is out
+      Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
+    }
     doze_until_crown();
   }
   if (brightnessLevel <= 1) {
@@ -3172,10 +3246,15 @@ void settingPMU()
   // too; any of them counts as a reason to light the screen back up.
   watch.onEvent(POWER_EVENT, [](const DeviceEvent &event, void *user_data) {
     PMUEventType_t kind = watch.getPMUEventType(event);
+    Serial.printf("[pmu] event %d\n", (int)kind);
     // only the crown is a screen button; charge and VBUS chatter must not light
     // the screen back up on their own
     if (kind == PMU_EVENT_KEY_CLICKED || kind == PMU_EVENT_KEY_LONG_PRESSED) {
       pmuIrq = true;
+    }
+    if (kind == PMU_EVENT_KEY_LONG_PRESSED) {
+      // holding the crown down is the "sleep now" gesture, the click only wakes
+      sleepRequested = true;
     }
   });
 }
@@ -3372,7 +3451,7 @@ void configDelete() {
   stepCounter = true;
   wigi = JSON.parse("[]");
   notifications = JSON.parse("[]");
-  DEFAULT_SCREEN_TIMEOUT = 20*1000;
+  DEFAULT_SCREEN_TIMEOUT = 30*1000;
   screenRotation = 0;
   watch.setRotation(screenRotation);
 }
@@ -3403,8 +3482,8 @@ void configRestore() {
     vibrateLevel = conf["vibrate"];
     volumeLevel = conf["volume"];
     DEFAULT_SCREEN_TIMEOUT = conf["screen_timeout"];
-    if (DEFAULT_SCREEN_TIMEOUT < 5000) {
-      DEFAULT_SCREEN_TIMEOUT = 5000;
+    if (DEFAULT_SCREEN_TIMEOUT < 30000) {
+      DEFAULT_SCREEN_TIMEOUT = 30000;
     }
     room_count = conf["room_count"];
     screenRotation = conf["screenRotation"];
