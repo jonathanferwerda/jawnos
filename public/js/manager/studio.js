@@ -853,14 +853,16 @@ $(document).on('click', '#studio_new', function() {
 
 $(document).on('click', '#pedalboard_hamburger', function() {
 	var pd = $('#pedalboard');
-	var z = $('#studio_viewer').closest('.wind').css('z-index');
 
 	if (pd.is(':visible')) {
 		pd.hide();
 	}
 	else {
 		pd.show();
-		pd.css({ 'z-index': (z + 10) });
+		// keep the tray above the mixer (the old code did string maths on the
+		// window's z-index, which produced values like "auto10")
+		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
+		pd.css({ 'z-index': (z + 100) });
 	}
 });
 

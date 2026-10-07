@@ -157,7 +157,7 @@
 			<img id="<%= $id %>_subtitle_toggle" hint="Subtitles" style="" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
 			<span id="<%= $miss %>_position_preview_info" style="display:none;" class=""></span> 
 			<span id="<%= $miss %>_jog_wheel_frame" style="" class=" hover">
-				<img id="<%= $miss %>_jog_wheel" hint="Jog wheel" class="<%= $miss %> jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel.png') %>">
+				<img id="<%= $miss %>_jog_wheel" hint="Jog wheel" class="<%= $miss %> jog_wheel" src="/images/studio/jog wheel.png">
 				<span id="<%= $miss %>_jog_wheel_centre" style="width:1px; height: 1px;" ></span>
 			</span>
 			<span id="<%= $id %>_time_display" style="display:none;">
