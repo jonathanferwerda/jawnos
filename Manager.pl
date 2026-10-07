@@ -5757,7 +5757,9 @@ sub log_reader {
 		$a->{'app'} = &subs::unformat_name($a->{'app'});
 		my @a_settings = grep { $_->{'app'} eq $a->{'app'} } @{$settings};
 		foreach my $s (grep { $_->{'app'} eq $a->{'app'} } @{$settings}) {
-			if ($s->{'setting'} eq 'colour') {
+			if ($s->{'setting'} eq 'colour' && !length $s->{'value'}) {
+				# blank only - an appointment keeps the colour it was given until the
+				# user re-themes them from configure/misc_setting_list
 				$s->{'value'} = &subs::theme_colour_for_app($s->{'app'}, $s->{'value'}, $s->{'device'});
 			}
 			$appts->{$a->{'app'}}->{'setting'}->{$s->{'setting'}} = $s->{'value'};
@@ -9361,6 +9363,25 @@ sub father_time($data) {
 	return ($bt,$temp_timestamp);
 }
 
+
+post '/manager/configure/colour_update' => sub($c) {
+	# The theme stopped repainting appointments on its own, so this is the
+	# deliberate version of it, per device: colours that are no longer part of the
+	# theme get a stable theme colour for that app, the rest are left alone.
+	my $device = $c->param('device') || &subs::device_setter();
+	my $rows = &subs::db_query('select distinct app, value from settings where setting = ? and device = ?', 'colour', $device)->hashes;
+	my $updated = 0;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		next unless $app;
+		next if grep { lc($_) eq lc($app) } @gb::protected;
+		my $colour = &subs::theme_colour_grabber({ app => $app, existing => $row->{'value'}, device => $device });
+		$updated++ if defined $colour && lc($colour) ne lc($row->{'value'} || '');
+	}
+	# the desktop paints from a copy of its own, so ask it to read the colours again
+	&Websocket::send('server', { console => 'if (typeof calculator === "function") { calculator(); }' }) if $updated;
+	$c->render(json => { updated => $updated, device => $device });
+};
 
 get '/manager/configure/appointment_list' => sub($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();

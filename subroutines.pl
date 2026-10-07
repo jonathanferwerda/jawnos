@@ -3381,7 +3381,10 @@ sub setting_grabber() {
 		}
 	}
 	if (defined $settings->{'setting'} && $settings->{'setting'} eq 'colour' && !$settings->{'benign'}) {
-		$returner = &theme_colour_for_app($app, $returner, $settings->{'device'});
+		# Only fill in a colour that was never set. Re-picking one that is already
+		# there is what repainted every appointment whenever the theme changed;
+		# the button in configure/misc_setting_list does that on purpose instead.
+		$returner = &theme_colour_for_app($app, $returner, $settings->{'device'}) unless (length $returner);
 	}
 	return $returner;
 }
@@ -3447,7 +3450,9 @@ sub settings_grabber() {
 		}
 	}
 	if (exists $returner->{'colour'} && !$settings->{'benign'}) {
-		$returner->{'colour'} = &theme_colour_for_app($app, $returner->{'colour'}, $settings->{'device'});
+		# a blank colour gets one; an existing colour is left alone so a theme
+		# change does not repaint the appointments behind the user's back
+		$returner->{'colour'} = &theme_colour_for_app($app, $returner->{'colour'}, $settings->{'device'}) unless (length $returner->{'colour'});
 	}
 	return $returner;
 }

@@ -107,6 +107,11 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			</select>
 		</label>
 		<div class="icon_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+		<label style="display:flex;flex-direction:column;">
+			<b>Appointment Colours</b>
+			<button id="appt_colour_update" class="hover">Re-theme appointments</button>
+			<span id="appt_colour_update_status" style="font-size:13px;"></span>
+		</label>
 	</div>
 </div>
 
@@ -247,6 +252,25 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			applying_scheme = false;
 			anchor.prop('checked', anchor_was);
 			$('#colour_scheme').val(name);
+		});
+
+		// Changing the scheme leaves the appointments alone now; this is how they are
+		// brought into line with it, on purpose.
+		$(document).on('click', '#appt_colour_update', function () {
+			var device = currentDevice();
+			if (!device) { return; }
+			$('#appt_colour_update_status').text('Re-theming...');
+			$.ajax({
+				url: '/manager/configure/colour_update',
+				type: 'POST',
+				data: { device: device },
+				success: function (response) {
+					$('#appt_colour_update_status').text(response.updated + ' appointment colour' + (response.updated == 1 ? '' : 's') + ' changed');
+				},
+				error: function () {
+					$('#appt_colour_update_status').text('Could not update the colours');
+				}
+			});
 		});
 	})();
 
