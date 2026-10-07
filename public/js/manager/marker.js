@@ -208,6 +208,7 @@ function markerZoomAt(screen_x, screen_y, factor) {
 	markerView.y = screen_y - (screen_y - markerView.y) * (scale / markerView.scale);
 	markerView.scale = scale;
 	markerViewClamp();
+	markerZoomDisplay();
 	markerCompose();
 }
 
@@ -225,6 +226,7 @@ function markerViewFit() {
 	markerView.scale = Math.min(1, scale * 0.98);
 	markerView.x = (canvas.width - size.w * markerView.scale) / 2;
 	markerView.y = (canvas.height - size.h * markerView.scale) / 2;
+	markerZoomDisplay();
 	markerCompose();
 }
 
@@ -235,6 +237,7 @@ function markerViewReset() {
 	markerView.scale = 1;
 	markerView.x = (canvas.width - size.w) / 2;
 	markerView.y = (canvas.height - size.h) / 2;
+	markerZoomDisplay();
 	markerCompose();
 }
 
@@ -832,14 +835,39 @@ function markerWheelAmount(value, mode) {
 	return value;
 }
 
+function markerWheelZoomMode() {
+	return localStorage.getItem('marker_wheel_zoom') == 'on';
+}
+
+function markerWheelModeApply() {
+	var button = $('#marker_wheel_mode');
+	if (button.length == 0) { return; }
+	if (markerWheelZoomMode()) {
+		button.attr('hint', 'Two finger scroll zooms; shift + scroll pans. Click for scroll = pan');
+		button.css({'background-color': 'rgba(255,255,255,0.4)', 'border-radius': '7px'});
+	}
+	else {
+		button.attr('hint', 'Two finger scroll pans, ctrl + scroll zooms. Click for scroll = zoom');
+		button.css('background-color', '');
+	}
+}
+
+function markerZoomDisplay() {
+	var button = $('#marker_zoom_fit');
+	if (button.length == 0) { return; }
+	var percent = Math.round(markerView.scale * 100) + '%';
+	if (button.text() != percent) { button.text(percent); }
+}
+
 function markerWheel(e) {
 	e.preventDefault();
 	var canvas = document.getElementById('whiteboard');
 	var rect = canvas.getBoundingClientRect();
 	var delta = markerWheelAmount(e.deltaY, e.deltaMode);
-	if (e.ctrlKey || e.metaKey) {
-		// a trackpad pinch arrives as a ctrl (or cmd) wheel, as many small
-		// frequent deltas, so scale gently and proportionally to them
+	if (e.ctrlKey || e.metaKey || (markerWheelZoomMode() && !e.shiftKey)) {
+		// ctrl + scroll is the zoom everywhere; a trackpad pinch arrives as a
+		// ctrl wheel on the platforms that report it at all, and scroll = zoom
+		// mode exists for the ones that do not (Linux trackpads never send it)
 		var factor = Math.max(0.5, Math.min(2, Math.pow(1.0015, -delta)));
 		markerZoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
 		return;
@@ -1151,6 +1179,8 @@ function markerInit(whiteboard) {
 	// document and keep their own size, so resizing or zooming never resamples
 	// the art
 	markerToolboxApply();
+	markerWheelModeApply();
+	markerZoomDisplay();
 	markerCanvasResize();
 	if (markerLayers.length == 0) {
 		markerLayers.push(markerNewLayer('Layer 1'));
@@ -1356,6 +1386,10 @@ $(document).on('click', '.marker_zoom_out', function() { markerZoomCentre(1 / 1.
 $(document).on('click', '.marker_zoom_fit', function() { markerViewFit(); });
 $(document).on('click', '#marker_toolbox_hide', function() { markerToolboxToggle(true); });
 $(document).on('click', '#marker_toolbox_show', function() { markerToolboxToggle(false); });
+$(document).on('click', '#marker_wheel_mode', function() {
+	localStorage.setItem('marker_wheel_zoom', markerWheelZoomMode() ? 'off' : 'on');
+	markerWheelModeApply();
+});
 
 $(document).on('click', '.marker_session_save', function() { markerSessionSave(); });
 $(document).on('click', '.marker_session', function() { markerSessionOpen($(this).attr('uuid')); });
