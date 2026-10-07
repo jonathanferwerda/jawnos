@@ -60,10 +60,10 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 | `Websocket.pl` | WebSocket server and live updates |
 | `Alarm.pl`, `Music.pl`, `pen.pl`, `teletype.pl`, `watch.pl`, `hooks.pl` | Feature modules (alarms, music, notes, terminals, smartwatch, device hooks) |
 | `templates/` | Embedded-Perl page templates |
-| `public/` | Front-end JavaScript, CSS, hand-drawn icons and images |
+| `public/` | Front-end JavaScript, CSS and images (including the icon sets in `public/icons/sets/`) |
 | `jp/`, `jt/`, `jw/` | Device firmware (Pico 2W, T-Deck, T-Watch) |
-| `scripts/` | Supporting scripts |
-| `database/` | Starting (encrypted) database |
+| `scripts/` | Supporting scripts — the dependency checker and the first-run setup wizard |
+| `database/` | `schema.sql` (used to build a fresh database) and a starting encrypted database |
 
 ## Requirements
 
@@ -72,7 +72,23 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 - A handful of command-line tools: `ffmpeg`, `imagemagick`, `tesseract`, `sqlite3`, `qrencode`,
   `zbar`, `espeak`, `curl`, `rsync`, `openssl`, `sshpass` and `autossh` (see below).
 
+You don't have to install any of that by hand. The first time you run `./jawn` it checks for
+every dependency and offers to install whatever is missing. The per-platform sections below are
+the do-it-yourself fallback.
+
 ## Installation
+
+The first run of `./jawn` drives the whole install: it gets missing dependencies, then opens a
+web wizard that writes `config.json` and builds you an encrypted database (see
+[First run](#first-run)). If you'd rather do the dependency install yourself first, the
+per-platform instructions below will do it — the wizard still handles the config and database.
+
+To check (and optionally install) dependencies on their own:
+
+```
+perl scripts/jawnos_deps.pl           # report, then offer to install
+perl scripts/jawnos_deps.pl --report  # report only; exits non-zero if anything is missing
+```
 
 ### Android (Termux)
 
@@ -263,33 +279,43 @@ sudo cpanm --notest --force Mojolicious::Lite \
  WebService::Ollama
 ```
 
-## Post-install
+## First run
 
-To access the database, move or copy `database/initial.enc` to your home directory.
-Then copy the `config.json.example` file to `config.json`:
-
-```
-cp -v database/initial.enc ~/initial.enc
-cp -v config.json.example config.json
-```
-
-Or just modify the existing `config.json`.
-
-In `config.json`, change `signatorial` to a file on your computer that won't change. It'll read
-that file when the program starts, generate an MD5, and use it to encrypt the cookies.
+From the `jawnos` directory:
 
 ```
-cd jawnos
+chmod +x jawn President.pl
 ./jawn
 ```
 
-Your default browser should automatically open with the database highlighted.
-Password: `password`
+On the first run — or any time `config.json` is missing — JawnOS walks you through setup:
+
+1. **Dependencies.** `scripts/jawnos_deps.pl` checks for the required command-line tools and
+   Perl modules and offers to install anything that's missing (using `apt`, `pacman` or Termux's
+   `pkg`, plus `cpanm`).
+2. **`config.json`.** A web wizard opens at <http://127.0.0.1:3210/wizard> where you fill in your
+   name, device, start directory, port and media folders; it writes `config.json` for you. The
+   `signatorial` is a file that won't change — JawnOS reads it at start-up, hashes it and uses it
+   to encrypt cookies. Leave that field blank and the wizard generates one for you.
+3. **Database.** The wizard builds a brand-new database from `database/schema.sql` and encrypts
+   it with a numeric unlock code you choose (it can generate one). Write that code down — you
+   type it at the gate screen to unlock JawnOS.
+
+When setup finishes the wizard closes and JawnOS boots. Your browser opens at the gate with the
+new database listed; enter your unlock code to get in.
+
+To re-run the wizard later, start with `./jawn --setup`. To run just the wizard:
+
+```
+perl scripts/jawnos_setup.pl              # opens at http://127.0.0.1:3210/wizard
+perl scripts/jawnos_setup.pl --port 4000  # use a different port
+perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
+```
 
 ## Status
 
-JawnOS is a work in progress. A more sophisticated icon set is on the roadmap — the current
-icons are hand-drawn.
+JawnOS is a work in progress. It ships with ten selectable icon sets and hover/long-press hints
+throughout the interface; the original hand-drawn icons are still the default.
 
 ## License
 

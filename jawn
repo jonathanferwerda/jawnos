@@ -39,6 +39,10 @@ if (-l $0) {
 	chdir($path);
 }
 $| = 1;
+
+# ---- first run: install dependencies, then run the setup wizard -------------
+&first_run_setup();
+
 my $fork = Mojo::IOLoop::ReadWriteFork->new;
 
 $SIG{INT} = sub {
@@ -90,6 +94,39 @@ sub master_time_looper() {
 }
 
 
+
+# First-run experience: install dependencies (terminal) and then run the web
+# setup wizard for config.json + the encrypted database. Returns once a usable
+# config.json exists, or exits if setup was abandoned.
+sub first_run_setup() {
+	my $force = grep { $_ eq '--setup' } @ARGV;
+	my $config_ok = 0;
+	if ( -e './config.json' ) {
+		my $j = eval { decode_json read_file('./config.json') };
+		$config_ok = ( ref $j eq 'HASH' && $j->{'signatorial'} ) ? 1 : 0;
+	}
+	return if $config_ok && !$force;
+
+	print "\n";
+	print "Looks like this is a first run. Let's get you set up.\n\n";
+
+	# 1. dependencies (core-perl checker; works before anything is installed)
+	system( 'perl', 'scripts/jawnos_deps.pl' ) if -e 'scripts/jawnos_deps.pl';
+
+	# 2. web wizard for config.json and the database
+	system( 'perl', 'scripts/jawnos_setup.pl' ) if -e 'scripts/jawnos_setup.pl';
+
+	my $ok = 0;
+	if ( -e './config.json' ) {
+		my $j = eval { decode_json read_file('./config.json') };
+		$ok = ( ref $j eq 'HASH' && $j->{'signatorial'} ) ? 1 : 0;
+	}
+	unless ($ok) {
+		print "\nSetup was not completed. Re-run ./jawn to try again.\n";
+		exit 1;
+	}
+	print "\nSetup complete. Starting JawnOS...\n\n";
+}
 
 my $process_watch;
 my $process_watch_file = &home('~/.process_watch');
