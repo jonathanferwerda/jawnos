@@ -1,11 +1,11 @@
 
 
 <span id="web_toolbar" style="width:100%; position:absolute;top:40px;height:50px;background-color:var(--panel);">
-	<img class="little_thumb hover web_toggle" src="/images/decipherable/home.png">
+	<img class="little_thumb hover web_toggle" src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home">
 
 	<span style="font-size:30px;vertical-align:top;" id="website_title"><%= &subs::format_name($app) %></span>
 	<span style="font-size:20px;vertical-align:top;" id="website_time" class="time"></span>
-	<img id="web_measure_toggle" class="little_thumb hover" style="display:none;" src="/images/decipherable/measures.png">
+	<img id="web_measure_toggle" class="little_thumb hover" style="display:none;" src="<%= &subs::icon_for('/images/decipherable/measures.png') %>" hint="Measures">
 	<select id="web_measure_selector" style="display:none;vertical-align:top;"></select>
 </span>
 
@@ -23,7 +23,7 @@
 					<td class="hover"><span onclick="appointmentGrabber('<%= $web->{'app'} %>');"><%= &subs::format_name($web->{'app'}) %></span></td>
 					<td class="hover web_address web" uuid="<%= $web->{'uuid'} %>" app="<%= $web->{'app'} %>" web="<%= $web->{'url'} %>"><%= $web->{'url'} %></td>
 					<td class="time" timestamp="<%= $web->{'timestamp'} %>"></td>
-					<td><img class="tiny_thumb web_delete hover" uuid="<%= $web->{'uuid'} %>" app="<%= $web->{'app'} %>" src="/icons/trash.png"></td>
+					<td><img class="tiny_thumb web_delete hover" uuid="<%= $web->{'uuid'} %>" app="<%= $web->{'app'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete"></td>
 				</tr>
 			<% } %>
 		</tbody>

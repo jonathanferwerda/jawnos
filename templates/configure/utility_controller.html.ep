@@ -30,9 +30,9 @@
 						<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>><br>
 						<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" style="width:70px;" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>"><br>
 						<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
-							<img class="good_status little_thumb circular_thumb" src="/images/make believe/good.png"><br>
+							<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good"><br>
 						<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
-							<img class="good_status little_thumb circular_thumb" src="/images/make believe/bad.png"><br>
+							<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad"><br>
 						<% } else { %>
 
 						<% } %>

@@ -15,7 +15,7 @@
 				<td><%= $p->{'name'} %></td>
 				<td><input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set"></td>
 				<td>
-					<img class="ps little_thumb pseudonym_icon_set" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
+					<img class="ps little_thumb pseudonym_icon_set" hint="<%= &subs::format_name($p->{'name'}) %>" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
 				</td>
 				<td>
 					<select setting="place" class="pseudonym_setting pseudonym_place_set">

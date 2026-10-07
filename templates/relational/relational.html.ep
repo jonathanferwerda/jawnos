@@ -9,7 +9,7 @@
 					<option value="<%= $sc->{'name'} %>" <% if ($sc->{'name'} eq $settings->{'category'}) { %>selected <% } %>><%= &subs::format_name($sc->{'name'}) %></option>
 				<% } %>
 			</select>
-			<img src="/icons/trash.png" class="medium_thumb bucket garbage droppable" style="float:right;vertical-align:bottom;">
+			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="medium_thumb bucket garbage droppable" style="float:right;vertical-align:bottom;">
 		</div>
 		<% my $pconstructs = { list => [] }; %>
 		<div id="relational_categories" style="float:left;width:48%;max-width:48%;padding-top:85px;max-height:80%;overflow:scroll;">

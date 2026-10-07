@@ -1,6 +1,6 @@
 <div id="studio_plug_select" channel="<%= $channel %>" direction="<%= $direction %>">
 
-	<h3>Channel <%= $channel %> <%= &subs::format_name($direction) %>s <span style="float:right;"><img src="/images/make believe/cancel_button.png" class="hover little_thumb close_plug_select"></h2>
+	<h3>Channel <%= $channel %> <%= &subs::format_name($direction) %>s <span style="float:right;"><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="hover little_thumb close_plug_select"></h2>
 	<table>
 		<thead>
 			<th></th><th></th>
@@ -28,7 +28,7 @@
 					}
 				%>
 					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
-						<td><img class="little_thumb" src="/images/decipherable/<%= $av->{'icon'} %>.png"></td>
+						<td><img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/' . $av->{'icon'} . '.png') %>" hint="<%= &subs::format_name($av->{'icon'}) %>"></td>
 						<td style="font-size:20px;vertical-align:top;"><%= $av->{'label'} %></td>
 					</tr>
 				<% } 
@@ -42,7 +42,7 @@
 				<% } %>
 				% if ($screen_share && $direction eq 'input') {
 					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="screen_share" av="av" sid="" app=""> 
-						<td><img src="/images/make believe/monitor.png" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
+						<td><img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
 					</tr>
 				% }
 			</tbody>

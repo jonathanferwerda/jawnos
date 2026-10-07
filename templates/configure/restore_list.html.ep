@@ -12,7 +12,7 @@
 </div>
 
 <div id="ticket" class="ticket_form">
-	<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="/images/make believe/up.png" />
+	<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
 	<% foreach my $n (0..7) { %>
 		<% if ($n == 4) { %>
 			&nbsp;-&nbsp;
@@ -51,5 +51,5 @@
 		<% } %>
 	</tbody
 </table>
-<img src="/images/decipherable/vacuum.png" class="large_thumb" id="database_vacuum">
-<img src="/images/jbuttons/doctor.png" class="large_thumb" id="database_doctor">
+<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="large_thumb" id="database_vacuum">
+<img src="<%= &subs::icon_for('/images/jbuttons/doctor.png') %>" hint="Doctor" class="large_thumb" id="database_doctor">

@@ -33,12 +33,12 @@
 		<div class="attribute <%= $att %> register_<%= $att %>" att="<%= $att %>" app="<%= $a->{'app'} || $settings->{'app'} %>" uuid="<%= $a->{'uuid'} %>">
 			<% if ($a->{'uuid'} ne 'new') { %>
 				<span style="width:80%;font-size:24px;" class="attribute_header hover" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>"><%= &subs::format_name($a->{'name'} || 'new') %></span>
-					<img src="/images/decipherable/home.png" class="miniscule_thumb" onclick="appointmentGrabber('<%= $a->{'name'} %>')" style="float:left;">
+					<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="miniscule_thumb" onclick="appointmentGrabber('<%= $a->{'name'} %>')" style="float:left;">
 			<% } %>
 			<div class="attribute_contents <%= $att %>" app="<%= $a->{'app'} %>" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" style="<% if ($a->{'uuid'} ne 'new') { %>display:none;<% } %>">
 				<input class="att name" type="text" name="name" value="<%= &subs::format_name($a->{'name'}) %>" placeholder="Name">
 				<% if ($a->{'uuid'} ne 'new') { %>
-					<img src="/images/make believe/cancel_button.png" class="tiny_thumb delete_attribute" style="float:right;" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>">
+					<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="tiny_thumb delete_attribute" style="float:right;" uuid="<%= $a->{'uuid'} %>" att="<%= $att %>">
 					<input style="vertical-align:bottom;" type="checkbox" name="def" class="att def" <% if ( $a->{'def'} eq 'on' ) { %>checked="true"<% } %>><label>Default</label>
 					<% if ($a->{'def'} eq 'on') { %>
 						<br>
@@ -129,7 +129,7 @@
 								</select>
 								<input class="char" type="checkbox" char_input="save_appt" value="<%= $char->{'save_appt'} %>"
 									<% if ($char->{'save_appt'} eq 'on') { %>checked <% } %>>
-								<img src="/images/make believe/cancel_button.png" uuid="<%= $char->{'uuid'} %>" class="tiny_thumb delete_characteristic" uuid="<%= $char->{'uuid'} %>">
+								<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" uuid="<%= $char->{'uuid'} %>" class="tiny_thumb delete_characteristic" uuid="<%= $char->{'uuid'} %>">
 							<% } %>
 						</div><br>
 
@@ -142,13 +142,13 @@
 					</select>
 					<input type="checkbox" class="att save_app" name="save_app" <% if ($a->{'save_app'} eq 'on') { %>checked="true"<% } %>><label>Save Appt</label>
 					<br>
-					<img class="jonathan little_thumb attribute_copy" src="/icons/pos/supplier.png">
+					<img class="jonathan little_thumb attribute_copy" src="<%= &subs::icon_for('/icons/pos/supplier.png') %>" hint="Supplier">
 					<span class="attribute_copy_selection_container" style="display:none;" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>">
 						<input class="attribute_copy_app">
-						<img src="/images/decipherable/diskette.png" class="little_thumb attribute_copy_app_save">
+						<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb attribute_copy_app_save">
 					</span>
 
-					<img class="jonathan little_thumb attribute_upload_button" app="<%= $a->{'app'} %>" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" src="/images/make believe/up.png" />
+					<img class="jonathan little_thumb attribute_upload_button" app="<%= $a->{'app'} %>" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
 					<div class="attribute_upload_container" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>">
 						<form class="attribute_upload" att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>" style="display:none;">
 							<input class="attribute_upload_input" multiple att="<%= $att %>" uuid="<%= $a->{'uuid'} %>" app="<%= $a->{'app'} %>" type="file" name="fileupload" />

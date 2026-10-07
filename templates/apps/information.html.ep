@@ -78,4 +78,4 @@
 		<% } %>
 	</select>
 <% } %>
-<img src="/images/jbuttons/shop.png" class="medium_thumb open_in_store" style="vertical-align:bottom;" uuid="<%= $app->{'uuid'} %>">
+<img src="<%= &subs::icon_for('/images/jbuttons/shop.png') %>" hint="Shop" class="medium_thumb open_in_store" style="vertical-align:bottom;" uuid="<%= $app->{'uuid'} %>">

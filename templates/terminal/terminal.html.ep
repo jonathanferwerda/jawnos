@@ -28,11 +28,11 @@
 	<br>
 	<div id="terminal_input" style="text-align:left;width:100%; bottom:0px; position:absolute; background-color:black;">
 		<input class="" style="font-size:22px;text-align:left;" id="terminal_console" placeholder="<%= $whoami . '@' . $hostname %>"></input>
-		<img src="/images/make believe/monitor.png" <% if($settings->{'view'} eq 'interactive_terminal') { %>selected<% } %> class="little_thumb terminal_view_select hover" view="interactive_terminal">
-		<img src="/images/decipherable/code.png" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
-		<img src="/images/make believe/explosion.png" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
-		<img src="/images/decipherable/list.png" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
-		<img src="/images/decipherable/server.png" class="little_thumb hover" id="terminal_configure_toggle">
+		<img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Interactive" <% if($settings->{'view'} eq 'interactive_terminal') { %>selected<% } %> class="little_thumb terminal_view_select hover" view="interactive_terminal">
+		<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Terminal" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
+		<img src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Errors" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
+		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Log" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
+		<img src="<%= &subs::icon_for('/images/decipherable/server.png') %>" hint="Server" class="little_thumb hover" id="terminal_configure_toggle">
 	</div>
 	<div id="terminal_configure_container" style="width:100%;height:30%;position:absolute;bottom:40px;left:0px;">
 		<%= include 'terminal/configure', settings => $settings %>

@@ -4,9 +4,9 @@
 		next;
 	} %>
 	<span class="app_file_toolbox" style="display:none;" uuid="<%= $f->{'uuid'} %>">
-		<img style="float:left;" src="/icons/trash.png" class="little_thumb delete delete_file hover" timestamp="<%= $l->{'timestamp'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>">
-		<img src="/images/icons/download.png" class="little_thumb download hover" timestamp="<%= $l->{'timestamp'} %>" uuid="<%= $l->{'uuid'} %>" server_time="<%= $l->{'server_time'} %>" app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>">
-		<img src="/icons/lymeboard/I.png" class="tiny_thumb file_information_grabber hover" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>" app="<%= $l->{'app'} %>">						
+		<img style="float:left;" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete delete_file hover" timestamp="<%= $l->{'timestamp'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>">
+		<img src="<%= &subs::icon_for('/images/icons/download.png') %>" hint="Download" class="little_thumb download hover" timestamp="<%= $l->{'timestamp'} %>" uuid="<%= $l->{'uuid'} %>" server_time="<%= $l->{'server_time'} %>" app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>">
+		<img src="<%= &subs::icon_for('/icons/lymeboard/I.png') %>" hint="Information" class="tiny_thumb file_information_grabber hover" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>" app="<%= $l->{'app'} %>">						
 		<% if ($f->{'file_type'} eq 'snd' || $l->{'type'} eq 'audio') { %>
 			</span>
 		<!--	<button class="file_toggle" timestamp="<%= $l->{'timestamp'} %>" file="<%= $l->{'file'} %>?action=start"><%= $l->{'type'} %> <%= $f->{'file_type'} %></button><br> -->
@@ -25,26 +25,26 @@
 						main_image="no"
 					<% } %>
 
-					app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>" src="/images/make believe/explosion.png"
+					app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>" src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Explode"
 					style="<% if ($settings->{'main_image'} eq $f->{'file'}) { %>border-color:orange;border-width:6px;<% } %>"
 				>
 				<% if ($f->{'file'} !~ /;base64/gi) { %>
-					<img class="little_thumb palette_toggle hover" src="/images/decipherable/palette.png" file="<%= $f->{'file'} %>">
+					<img class="little_thumb palette_toggle hover" src="<%= &subs::icon_for('/images/decipherable/palette.png') %>" hint="Palette" file="<%= $f->{'file'} %>">
 					<div class="palette" style="border:solid;border-width:3px;border-radius:5px;display:none;" uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>">
 						<input class="palette_input" style="width:50px;vertical-align:top;" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="fill" src="/images/palette/fill.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="rotate" src="/images/make believe/renew.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="crop" src="/images/palette/crop.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="modulate" src="/images/palette/brightness.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="level" src="/images/palette/contrast.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="black-threshold" src="/images/palette/black level.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="gaussian-blur" src="/images/palette/blur.png" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="sharpen" src="/images/palette/sharpen.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="fill" src="<%= &subs::icon_for('/images/palette/fill.png') %>" hint="Fill" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="crop" src="<%= &subs::icon_for('/images/palette/crop.png') %>" hint="Crop" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="modulate" src="<%= &subs::icon_for('/images/palette/brightness.png') %>" hint="Brightness" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="level" src="<%= &subs::icon_for('/images/palette/contrast.png') %>" hint="Contrast" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="black-threshold" src="<%= &subs::icon_for('/images/palette/black level.png') %>" hint="Black level" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="gaussian-blur" src="<%= &subs::icon_for('/images/palette/blur.png') %>" hint="Blur" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="sharpen" src="<%= &subs::icon_for('/images/palette/sharpen.png') %>" hint="Sharpen" file="<%= $f->{'file'} %>">
 
-						<img class="little_thumb palette_duty" duty="copy" src="/images/palette/duplicate.png" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="copy" src="<%= &subs::icon_for('/images/palette/duplicate.png') %>" hint="Duplicate" file="<%= $f->{'file'} %>">
 
-						<img class="little_thumb palette_duty" src="/images/decipherable/diskette.png" duty="save" file="<%= $f->{'file'} %>" style="display:none;">
-						<img class="little_thumb palette_duty" src="/images/decipherable/stop sign.png" duty="clear" file="<%= $f->{'file'} %>" style="display:none;">
+						<img class="little_thumb palette_duty" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" duty="save" file="<%= $f->{'file'} %>" style="display:none;">
+						<img class="little_thumb palette_duty" src="<%= &subs::icon_for('/images/decipherable/stop sign.png') %>" hint="Stop" duty="clear" file="<%= $f->{'file'} %>" style="display:none;">
 
 					</div>
 				<% } %>
@@ -74,9 +74,9 @@
 	<% } %>
 	<br>
 	<% if ($device eq 'mobile' && $l->{'data'} eq '') { %>
-		<img src="/icons/edit.png" class="little_thumb share" type="edit" file="<%= $f->{'file'} %>">
-		<img src="/icons/view.png" class="little_thumb share" type="view" file="<%= $f->{'file'} %>">
-		<img src="/icons/share.png" class="little_thumb share" type="send" file="<%= $f->{'file'} %>">
+		<img src="<%= &subs::icon_for('/icons/edit.png') %>" hint="Edit" class="little_thumb share" type="edit" file="<%= $f->{'file'} %>">
+		<img src="<%= &subs::icon_for('/icons/view.png') %>" hint="View" class="little_thumb share" type="view" file="<%= $f->{'file'} %>">
+		<img src="<%= &subs::icon_for('/icons/share.png') %>" hint="Share" class="little_thumb share" type="send" file="<%= $f->{'file'} %>">
 	<% } %>
 
 <% } %>

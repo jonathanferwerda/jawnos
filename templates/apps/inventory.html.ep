@@ -28,7 +28,7 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 			<option value="<%= $cal %>" <% if ($s_calc eq $cal) { %>selected<% } %>><%= &subs::format_name($cal) %></option>
 		<% } %>
 	</select>
-	<img src="/images/make believe/key.png" class="statistic_lock little_thumb hover" app="<%= $app %>" locked="<%= $s_lock %>">
+	<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Lock" class="statistic_lock little_thumb hover" app="<%= $app %>" locked="<%= $s_lock %>">
 	<select class="statistic_display" style="vertical-align:bottom;">
 		<% foreach my $o (@{$display_options}) { %>
 			<option value="<%= $o->{'name'} %>" <% if ($o->{'name'} eq $s_display) { %>selected<% } %>><%= $o->{'formatted_name'} %></option>
@@ -41,7 +41,7 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 	</select>
 
 </span>
-<img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="/images/decipherable/calculator.png" style="vertical-align:bottom;">
+<img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" style="vertical-align:bottom;">
 <% if (scalar @{$appts} > 0) { %>
 	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
 		<% foreach my $col ( @cols ) { %>

@@ -6,7 +6,7 @@
 				<option value="<%= $bd %>" <% if ($bd eq $display) { %>selected<% } %>><%= &subs::format_name($bd) %></option>
 			<% } %>
 		</select>
-		<img src="/images/decipherable/gear.png" class="little_thumb hover" id="budget_settings_toggle">
+		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="budget_settings_toggle">
 		<% if ($display eq 'statement') { %>
 			<% if ( scalar keys %{$settings->{$display . '_displays'}} > 0) { %>
 				<select id="budget_display" class="budget_config" budget_display="<%= $display %>" config="<%= $display %>_display" style="vertical-align:top;">
@@ -29,7 +29,7 @@
 			<div>
 				<input class="time budget_time" setting="start_time" timestamp="<%= $start %>" style="width:120px;">
 				<input class="time budget_time" setting="end_time" timestamp="<%= $end %>" style="width:120px;">
-				<img src="/images/make believe/key.png" class="statistic_lock little_thumb hover <% if ($settings->{'s_lock'} eq 'on') { %>selected<% } %>" app="budget" locked="<%= $settings->{'s_lock'} %>">
+				<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Lock" class="statistic_lock little_thumb hover <% if ($settings->{'s_lock'} eq 'on') { %>selected<% } %>" app="budget" locked="<%= $settings->{'s_lock'} %>">
 				<select class="budget_config" config="when_multiplier" style="vertical-align:bottom;">
 					<% foreach my $count (1..30) { %>
 						<option value="<%= $count %>" <% if ($count == $settings->{'when_multiplier'}) { %>selected<% } %>><%= $count %></option>
@@ -71,10 +71,10 @@
 						<option value="<%= $bdc %>" <% if ($bdc eq $settings->{'display_categorization'}) { %>selected<% } %>><%= &subs::format_name($bdc) %></option>
 					<% } %>
 				</select>
-				<img src="/images/decipherable/diskette.png" class="little_thumb hover" id="budget_display_save">
-				<img src="/icons/trash.png" class="little_thumb hover" id="budget_display_delete">
+				<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb hover" id="budget_display_save">
+				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover" id="budget_display_delete">
 			<% } %>
-			<img class="little_thumb hover" id="budget_refresh" src="/images/make believe/renew.png">
+			<img class="little_thumb hover" id="budget_refresh" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh">
 		</span>
 	</div>
 	<div>
@@ -279,7 +279,7 @@
 						<% foreach my $dr ( sort keys %{$gb::budget_modes} ) { %>
 							<td>
 								<input style="width:77%;" class="budget_edit_input" app="<%= $b %>" circumstance="<%= $dr %>" value="<%= $tally->{$b}->{'budget'}->{$dr}->{'budget'} %>">
-								<img class="tiny_thumb budget_autocalc" app="<%= $b %>" circumstance="<%= $dr %>" src="/images/decipherable/calculator.png" style="vertical-align:bottom;">
+								<img class="tiny_thumb budget_autocalc" app="<%= $b %>" circumstance="<%= $dr %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" style="vertical-align:bottom;">
 							</td>
 						<% } %>
 					</tr>

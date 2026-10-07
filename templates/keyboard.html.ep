@@ -8,14 +8,14 @@
 			<div id="calculator_walkman" style="overflow-x:scroll;width:400px;height:70px">
 				<% foreach my $p (@{$pseudonyms}) { %>
 					<button class="medium_thumb" style="width:60px">
-						<img class="return_key special keyboard_button little_thumb hover" style="vertical-align:bottom;width:50px;background-color:<%= $config->{$device}->{'pseudonym'}->{'background_colour'} %>;" src="<%= $p->{'icon'} %>" key="<%= $p->{'name'} %>" type="<%= $p->{'type'} %>">
+						<img class="return_key special keyboard_button little_thumb hover" hint="<%= &subs::format_name($p->{'name'}) %>" style="vertical-align:bottom;width:50px;background-color:<%= $config->{$device}->{'pseudonym'}->{'background_colour'} %>;" src="<%= $p->{'icon'} %>" key="<%= $p->{'name'} %>" type="<%= $p->{'type'} %>">
 					</button>
 				<% } %>
 			</div>
 			<span class="magic_wands keyboard_cauldron" style="width:100%">
 				<% foreach my $w ( keys %{$gb::ws->{'server'}} ) { %>
 					<% if ($w ne $browser_tab_id) { %>
-						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb hover" style="background-color:navy;" src="/images/make believe/key.png">
+						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb hover" style="background-color:navy;" src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Magic wand">
 					<% } %>
 				<% } %>
 			</span>
@@ -54,11 +54,11 @@
 	<% if ($toggle eq 'calculator') { %>
 		<span class="keyboard bc" id="calculator" style="background-color:<%= $config->{$device}->{'calculator'}->{'background_colour'} %>;">
 			<canvas id="calculator_screen" style="width:370px;height:70px;background-color:#bbd47b;"></canvas><br>
-			<img class="magic_wand tiny_thumb" src="/images/make believe/key.png">
+			<img class="magic_wand tiny_thumb" src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Magic wand">
 			<span class="magic_wands keyboard_cauldron">
 				<% foreach my $w ( keys %{$gb::ws->{'server'}} ) { %>
 					<% if ($w ne $browser_tab_id) { %>
-						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb" style="background-color:navy;" src="/images/make believe/key.png">
+						<img destination="<%= $w %>" class="keyboard_destination magic_wand tiny_thumb" style="background-color:navy;" src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Magic wand">
 					<% } %>
 				<% } %>
 			</span>
@@ -120,7 +120,7 @@
 					<option value="<%= $rm->{'uuid'} %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
 				<% } %>
 			</select>
-			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="/images/decipherable/wrench.png"></img>
+			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>
 			<div id="remote_control_view" class="keyboard_content">
 				<% if ($remote_control eq '' || !$remote_control || !grep { $_->{'uuid'} eq $remote_control } @{$remote_machines}) { %>
@@ -331,7 +331,7 @@
 					<% foreach my $av ( @{$av_data} ) { %>
 						<% if ($av->{'deviceId'} ne 'default') { %>
 							<tr>
-								<td><% if ($av->{'icon'}) { %><img class="medium_thumb media_picker" device_id="<%= $av->{'deviceId'} %>" kind="<%= $av->{'kind'} %>" type="<%= $av->{'icon'} %>" status="off" src="/images/decipherable/<%= $av->{'icon'} %>.png"> <% } %></td>
+								<td><% if ($av->{'icon'}) { %><img class="medium_thumb media_picker" device_id="<%= $av->{'deviceId'} %>" kind="<%= $av->{'kind'} %>" type="<%= $av->{'icon'} %>" status="off" src="<%= &subs::icon_for('/images/decipherable/' . $av->{'icon'} . '.png') %>" hint="<%= &subs::format_name($av->{'icon'}) %>"> <% } %></td>
 								<td><%= $av->{'label'} %></td>
 							</tr>
 						<% } %>
@@ -354,11 +354,11 @@
 		<span class="keyboard" id="console" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
 			<span class="room">
 
-				<img class="past_life medium_thumb" direction="rew" src="/icons/prev.jpg"></img>
-				<img class="past_life medium_thumb" direction="load" src="/icons/play.jpg"></img>
-				<img class="past_life medium_thumb" direction="ff" src="/icons/next.jpg"></img>&nbsp;
-				<img type="button" id="new_room" class="medium_thumb" src="/icons/lymeboard/add.png">
-				<img class="life_direction medium_thumb" style="font-size:10px;" src="/icons/lymeboard/backspace.png" direction="forget">
+				<img class="past_life medium_thumb" direction="rew" src="<%= &subs::icon_for('/icons/prev.jpg') %>" hint="Previous"></img>
+				<img class="past_life medium_thumb" direction="load" src="<%= &subs::icon_for('/icons/play.jpg') %>" hint="Play"></img>
+				<img class="past_life medium_thumb" direction="ff" src="<%= &subs::icon_for('/icons/next.jpg') %>" hint="Next"></img>&nbsp;
+				<img type="button" id="new_room" class="medium_thumb" src="<%= &subs::icon_for('/icons/lymeboard/add.png') %>" hint="Add">
+				<img class="life_direction medium_thumb" style="font-size:10px;" src="<%= &subs::icon_for('/icons/lymeboard/backspace.png') %>" hint="Backspace" direction="forget">
 				<span id="life" height="56px" style="font-size:26px;" width="56px"></span>
 				<br>
 				Draw <input type="checkbox" class="" id="drawings_check">

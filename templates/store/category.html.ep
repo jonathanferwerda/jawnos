@@ -5,7 +5,7 @@
 			<% if ($i->{'settings'}->{'main_image'} && -e $i->{'settings'}->{'main_image'}) { %>
 				<img class="huge_thumb" src="/file_open?file=<%= $i->{'settings'}->{'main_image'} %>">
 			<% } else { %>
-				<img class="huge_thumb" src="/icons/pos/<%= $i->{'settings'}->{'pos'} %>.png">
+				<img class="huge_thumb" src="<%= &subs::icon_for('/icons/pos/' . $i->{'settings'}->{'pos'} . '.png') %>" hint="<%= &subs::format_name($i->{'settings'}->{'pos'}) %>">
 			<% } %>
 			<h4><%= &subs::price_formatter($i->{'price'}) %></h4>
 		</div>

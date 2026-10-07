@@ -25,8 +25,8 @@
 	<br>
 	<div id="terminal_input" style="text-align:left;width:100%; bottom:0px; position:absolute; background-color:black;">
 		<input class="" style="font-size:22px;text-align:left;" id="terminal_console" placeholder="<%= $whoami . '@' . $hostname %>"></input>
-		<img src="/images/decipherable/code.png" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
-		<img src="/images/make believe/explosion.png" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
-		<img src="/images/decipherable/list.png" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
+		<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Run command" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
+		<img src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Explode" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
+		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="List" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
 	</div>
 </div>

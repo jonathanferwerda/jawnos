@@ -4,7 +4,7 @@
 		<span style="" status="active" class="server_neighbour neighbour" app="<%= $ws->{'app'} %>" browser_tab_id="<%= $ws->{'browser_tab_id'} %>"><br>
 			<span style="font-size:16px;"><b><u><%= $rm->{'ip'} %></u><br><%= $rm->{'data'}->{'manager_file'} %></b></span>
 			<span class="neighbour_connection"  connection="<%= $rm->{'connection'} %>">
-				<img class="tiny_thumb" src="/images/decipherable/checkmark.png">
+				<img class="tiny_thumb" src="<%= &subs::icon_for('/images/decipherable/checkmark.png') %>" hint="Done">
 				<button class="neighbour_status" status="<%= $rm->{'status'} %>" ip="<%= $rm->{'ip'} %>">Live</button>
 				<button class="neighbour_publish" uuid="<%= $rm->{'uuid'} %>" ip="<%= $rm->{'ip'} %>" browser_tab_id="<%= $ws->{'browser_tab_id'} %>">Publish</button>
 				<%== $rm->{'buttons'} %>

@@ -18,9 +18,9 @@
 					<option value="<%= $et->{'uuid'} %>" <% if ($et->{'uuid'} eq $settings->{'email_template_config_select'} || scalar @{$email_templates} == 1) { %>selected <% } %>><%= &subs::format_name($et->{'name'}) %></option>
 				<% } %>
 			</select>
-			<img class="little_thumb email_template_save hover" style="vertical-align:bottom;" src="/images/decipherable/diskette.png">
+			<img class="little_thumb email_template_save hover" style="vertical-align:bottom;" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save">
 			<% if ($settings->{'email_template_config_select'} ne 'new') { %>
-				<img src="/icons/trash.png" class="little_thumb email_config_template_delete hover" style="vertical-align:bottom;" uuid="<%= $settings->{'email_template_config_select'} %>">
+				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb email_config_template_delete hover" style="vertical-align:bottom;" uuid="<%= $settings->{'email_template_config_select'} %>">
 			<% } %>
 			<br>
 			<b>Template Purpose</b><br>
@@ -72,7 +72,7 @@
 								<input type="checkbox" class="email_server_setting" setting="active" uuid="<%= $es->{'uuid'} %>" <% if ($es->{'active'} eq 'on') { %>checked="checked"<% } %>>
 							</td>
 							<td style="text-align:right;">
-								<img src="/icons/trash.png" class="little_thumb email_config_server_delete hover" uuid="<%= $es->{'uuid'} %>">
+								<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb email_config_server_delete hover" uuid="<%= $es->{'uuid'} %>">
 							</td>
 						</tr>
 						<tr>

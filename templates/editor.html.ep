@@ -5,9 +5,9 @@
 			<option <% if ($a->{'uuid'} eq $uuid ) { %>selected <% } %> value="<%= $a->{'uuid'} %>"><%= $a->{'title'} %></option>
 		<% } %>
 	</select>
-	<img id="editor_new" class="little_thumb" src="/images/decipherable/file.png" style="vertical-align:bottom;">
-	<img id="editor_save" class="little_thumb" src="/images/decipherable/diskette.png" style="vertical-align:bottom;">
-	<img id="editor_delete" class="little_thumb" src="/images/make believe/cancel_button.png" style="vertical-align:bottom;">
+	<img id="editor_new" class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" style="vertical-align:bottom;">
+	<img id="editor_save" class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" style="vertical-align:bottom;">
+	<img id="editor_delete" class="little_thumb" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" style="vertical-align:bottom;">
 	<br>
 	<% foreach my $b ( qw/h1 h2 h3 h4 a p audio video img canvas/ ) { %>
 		<button type="text" content_type="<%= $b %>" class="editor_content_adder" id="editor_<%= $b %>"><%= $b %></button>

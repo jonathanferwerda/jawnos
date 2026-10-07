@@ -2,7 +2,7 @@
 <% my $type = $att->{'printer'} ? 'printer' : 'file'; %>
 <td style="border:solid;border-radius:5%;vertical-align:top;" class="email_attachment" uuid="<%= $att->{'uuid'} %>" type="<%= $type %>">
 	<% if ($att->{'printer'}) { %>
-		<img class="little_thumb" src="/images/decipherable/feeder.png"><span style="vertical-align:top;"><%= $att->{'printer'}->{'id'} %></span>
+		<img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="Scan (feeder)"><span style="vertical-align:top;"><%= $att->{'printer'}->{'id'} %></span>
 	<% } else { %>
 		<img class="little_thumb" src="<%= $att->{'src'} %>">
 	<% } %>
@@ -10,5 +10,5 @@
 		<% my $attachment = \%{$att}; %>
 		<%= encode_json $attachment %>
 	</div>
-	<img src="/images/make believe/cancel_button.png" class="tiny_thumb delete_email_attachment hover" type="<%= $type %>" uuid="<%= $att->{'uuid'} %>"> 
+	<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="tiny_thumb delete_email_attachment hover" type="<%= $type %>" uuid="<%= $att->{'uuid'} %>"> 
 </td>

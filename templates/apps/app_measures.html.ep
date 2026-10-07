@@ -106,4 +106,4 @@
 
 <% } %>
 
-<img src="/images/decipherable/diskette.png" class="little_thumb app_measure_save hover" style="vertical-align:bottom;" app="<%= $a %>">
+<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb app_measure_save hover" style="vertical-align:bottom;" app="<%= $a %>">

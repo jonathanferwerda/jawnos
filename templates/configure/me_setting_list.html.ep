@@ -56,7 +56,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="me">
 				</div>
 			<% } elsif ( $m eq 'home_plate' ) { %>
 				<label><%= &subs::format_name($m) %></label><br>
-				<img <% if ($me->{$d}->{$m}) { %> style="background-color:lightgreen;" <% } %> src="/images/make believe/gps.png" device="<%= $d %>" setting="<%= $m %>" class="medium_thumb home_plate_record">
+				<img <% if ($me->{$d}->{$m}) { %> style="background-color:lightgreen;" <% } %> src="<%= &subs::icon_for('/images/make believe/gps.png') %>" hint="Location" device="<%= $d %>" setting="<%= $m %>" class="medium_thumb home_plate_record">
 				<% if ($me->{$d}->{$m}) { %>
 					<br>
 					<% my $location = eval { return decode_json $me->{$d}->{$m} } || {}; %>

@@ -10,5 +10,5 @@ Favourite
 <% } else { %>
 	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" style="display:none;" src="">
 <% } %>
-<img class="little_thumb delete_mail_conversation hover" uuid="<%= $uuid %>" src="/icons/trash.png">
+<img class="little_thumb delete_mail_conversation hover" uuid="<%= $uuid %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete">
 <br>

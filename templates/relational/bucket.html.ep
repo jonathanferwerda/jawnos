@@ -19,8 +19,8 @@
 						<option value="<%= $pos %>" <% if ($pos eq $csettings->{'mab'}) { %>selected<% } %>><%= &subs::format_name($pos) %></option>
 					<% } %>
 				</select>
-				<img src="/images/make believe/christmas.png" class="little_thumb relational_tree_select hover" uuid="<%= $csettings->{'uuid'} %>" style="vertical-align:bottom;">
-				<img src="/images/decipherable/calculator.png" class="little_thumb relational_autocalc hover" style="vertical-align:bottom;" uuid="<%= $csettings->{'uuid'} %>" construct="<%= $settings->{'construct'} %>">
+				<img src="<%= &subs::icon_for('/images/make believe/christmas.png') %>" hint="Christmas" class="little_thumb relational_tree_select hover" uuid="<%= $csettings->{'uuid'} %>" style="vertical-align:bottom;">
+				<img src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" class="little_thumb relational_autocalc hover" style="vertical-align:bottom;" uuid="<%= $csettings->{'uuid'} %>" construct="<%= $settings->{'construct'} %>">
 			</th>
 		</thead>
 		<tbody>

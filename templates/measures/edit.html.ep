@@ -5,9 +5,9 @@
 <input class="measures_input" name="m" placeholder="M" value="<%= $measure->{'m'} %>">
 <input class="measures_input" name="name" placeholder="Name" value="<%= &subs::format_name($measure->{'name'}) %>">
 <input class="measures_input" name="pv", placeholder="Present Value" value="<%= $measure->{'pv'} %>">
-<img class="medium_thumb global_measures_save hover" src="/images/decipherable/diskette.png" uuid="<%= $measure->{'uuid'} %>" style="vertical-align:bottom;">
+<img class="medium_thumb global_measures_save hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" uuid="<%= $measure->{'uuid'} %>" style="vertical-align:bottom;">
 <% unless ( $measure->{'uuid'} eq 'new' ) { %>
-	<img class="medium_thumb global_measures_delete hover" src="/icons/trash.png" uuid="<%= $measure->{'uuid'} %>" style="vertical-align:bottom;">
+	<img class="medium_thumb global_measures_delete hover" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" uuid="<%= $measure->{'uuid'} %>" style="vertical-align:bottom;">
 <% } %>
 <input class="measures_input" name="types" placeholder="Types" value="<%= join ',', @{$measure->{'types'}} %>" style="width:98%;"><br>
 <input class="measures_input" name="formulas", placeholder="Formulas" value="<%= join ',', @{$measure->{'formulas'}} %>" style="width:98%;"><br>

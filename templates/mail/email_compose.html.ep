@@ -6,11 +6,11 @@
 	<% if (scalar @{$email_servers} > 0) { %>
 
 
-		<img src="/images/decipherable/envelope.png" class="email_send medium_thumb hover" style="float:right;">
-		<img src="/images/make believe/cancel_button.png" class="email_discard medium_thumb hover" style="float:right;">
+		<img src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Mail" class="email_send medium_thumb hover" style="float:right;">
+		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="email_discard medium_thumb hover" style="float:right;">
 		<% if (scalar @{$drafts} > 1) { %>
-			<img src="/images/make believe/right arrow.png" class="email_draft_change medium_thumb hover" direction="next" style="float:right;">
-			<img src="/images/make believe/left arrow.png" class="email_draft_change medium_thumb hover" direction="prev" style="float:right;">
+			<img src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>" hint="Next" class="email_draft_change medium_thumb hover" direction="next" style="float:right;">
+			<img src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" hint="Previous" class="email_draft_change medium_thumb hover" direction="prev" style="float:right;">
 		<% } %>
 		<br>
 		<table style="width:100%;">

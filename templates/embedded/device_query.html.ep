@@ -46,7 +46,7 @@
 											<% } %>
 		
 											<td>
-												<img class="little_thumb hover delete_embedded_file" src="/icons/trash.png"
+												<img class="little_thumb hover delete_embedded_file" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete"
 													file="<%= $params->{'file'} %>" directory="<%= $a->{'directory'} %>" name="<%= $a->{'name'} %>"
 													edt="<%= $edt %>" chip_id="<%= $chip_id %>">
 											</td>

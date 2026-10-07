@@ -17,7 +17,7 @@
 			<% } %>
 		</select>
 		<span id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>"></span>
-		<img src="/icons/trash.png" class="little_thumb" id="padlock_delete" 
+		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" id="padlock_delete" 
 			style="position:absolute;right:0px;bottom:0px;<% unless ($padlock) { %>display:none;<% } %>">
 	</div>
 
@@ -32,15 +32,15 @@
 					<tr class="neighbour_link" uuid="<%= $nl->{'uuid'} %>">
 						<td><%= $nl->{'initiator'} %></td>
 						<td><%= $nl->{'initiated'} %></td>
-						<td><img class="neighbour_link_updater large_thumb" src="<%= $gb::known_appts->{$nl->{'status'}}->{'icon'} %>"><br><%= &subs::format_name($nl->{'status'}) %></td>
+						<td><img class="neighbour_link_updater large_thumb" hint="<%= &subs::format_name($nl->{'status'}) %>" src="<%= &subs::icon_for($gb::known_appts->{$nl->{'status'}}->{'icon'}) %>"><br><%= &subs::format_name($nl->{'status'}) %></td>
 						<td class="time" timestamp="<%= $nl->{'ost'} %>"</td>
 						<td class="time" timestamp="<%= $nl->{'server_time'} %>"</td>
-						<td><img src="/images/make believe/cancel_button.png" class="neighbour_link_delete medium_thumb"></td>
+						<td><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="neighbour_link_delete medium_thumb"></td>
 					</tr>
 					<tr style="display:none;" class="neighbour_link_updater_selection" uuid="<%= $nl->{'uuid'} %>">
 						<td colspan="6">
 							<% foreach my $chair ( keys %{$gb::chairs} ) { %>
-								<img class="neighbour_link_privilege_change large_thumb" privilege="<%= $chair %>" src="<%= $gb::known_appts->{$chair}->{'icon'} %>">
+								<img class="neighbour_link_privilege_change large_thumb" privilege="<%= $chair %>" hint="<%= &subs::format_name($chair) %>" src="<%= &subs::icon_for($gb::known_appts->{$chair}->{'icon'}) %>">
 							<% } %>
 						</td>
 					</tr>

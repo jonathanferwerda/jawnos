@@ -771,7 +771,7 @@ if (jawnos_hover_capable) {
 		jawnos_hint_timer = setTimeout(function () {
 			var m = mouse_position();
 			jawnosHintShow(el, m.x, m.y);
-		}, 2000);
+		}, 1000);
 	});
 	$(document).on('mouseleave', '[hint]', function () {
 		clearTimeout(jawnos_hint_timer);

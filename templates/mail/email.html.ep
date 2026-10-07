@@ -11,7 +11,7 @@
 
 	<% if ($m->{'status'} eq 'outbox') { %>
 		<% my $tf = $from; $from = $to; $to = $tf; %>
-		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="/icons/edit.png">
+		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="<%= &subs::icon_for('/icons/edit.png') %>" hint="Edit">
 	<% } elsif ($m->{'status'} eq 'inbox') { %>
 		<% ($email_server) = grep { $_->{'uuid'} eq $m->{'email_server'} } @{$es};
 			$to = $email_server->{'email'}; %>
@@ -24,9 +24,9 @@
 
 
 	<% } elsif ($m->{'status'} eq 'draft') { %>
-		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="/icons/edit.png">
+		<img class="little_thumb edit_email hover" uuid="<%= $m->{'uuid'} %>" onclick="emailCompose('mailbox','<%= $m->{'uuid'} %>');" src="<%= &subs::icon_for('/icons/edit.png') %>" hint="Edit">
 	<% } %>
-	<img src="/icons/trash.png" class="little_thumb email_deleter hover" uuid="<%= $m->{'uuid'} %>">
+	<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb email_deleter hover" uuid="<%= $m->{'uuid'} %>">
 </div>
 <table style="width:100%;max-width:100%;">
 	<thead>

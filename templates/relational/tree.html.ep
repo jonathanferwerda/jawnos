@@ -1,4 +1,4 @@
-<img class="little_thumb hover" id="relational_tree_cancel" src="/images/make believe/cancel_button.png" onclick="$('#relational_matcher').show();$('#relational_tree_container').hide();" style="float:right;">
+<img class="little_thumb hover" id="relational_tree_cancel" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" onclick="$('#relational_matcher').show();$('#relational_tree_container').hide();" style="float:right;">
 
 <canvas id="relational_tree" style="width:100%;height:100%;"></canvas>
 <div id="relational_tree_data"></div>

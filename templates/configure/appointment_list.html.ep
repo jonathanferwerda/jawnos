@@ -5,12 +5,12 @@
 	<% my $signatorial = &subs::signatorial_designer(); %>
 	<% foreach my $a (sort keys %{$appts}) { %>
 		<% if ($appts->{$a}->{'formatted_name'}) { %>
-			<a href="/manager?app=<%= $a %>&timestamp=<%= $timestamp %>" target="_blank" timestamp="<%= $timestamp %>"><img src="/images/decipherable/windows.png" class="medium_thumb" app="<%= $a %>"></a>
+			<a href="/manager?app=<%= $a %>&timestamp=<%= $timestamp %>" target="_blank" timestamp="<%= $timestamp %>"><img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" hint="Window" class="medium_thumb" app="<%= $a %>"></a>
 			<span class="navbar_buttons" style="right:7px;">
-			<img src="/images/decipherable/vacuum.png" class="vacuum_app medium_thumb" app="<%= $a %>">
-			<img src="/images/decipherable/adopt.png" class="adopt_app medium_thumb" app="<%= $a %>">
-			<img src="/images/decipherable/home.png" class="medium_thumb" onClick="appointmentGrabber('<%= $a %>','<%= $timestamp %>')">
-			<img src="/images/decipherable/clothesline.png" class="medium_thumb clothesline" app="<%= $a %>">
+			<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="vacuum_app medium_thumb" app="<%= $a %>">
+			<img src="<%= &subs::icon_for('/images/decipherable/adopt.png') %>" hint="Adopt" class="adopt_app medium_thumb" app="<%= $a %>">
+			<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="medium_thumb" onClick="appointmentGrabber('<%= $a %>','<%= $timestamp %>')">
+			<img src="<%= &subs::icon_for('/images/decipherable/clothesline.png') %>" hint="Clothesline" class="medium_thumb clothesline" app="<%= $a %>">
 			<% my $template = $gb::pos->{$appts->{$a}->{'setting'}->{'pos'}}->{'template'}; %>
 			<% if ($template) { %>
 				<%= include $template, appts => $appts, a => $a %>
@@ -58,7 +58,7 @@
 						<% my $main_image = &subs::main_icon_maker({ app => $a, timestamp => $timestamp, settings => $appts->{$a}->{'setting'}, size => 'huge' }); %>
 						<br>
 						<%== $main_image %>
-						<img src="/icons/trash.png" class="little_thumb" onClick="settingDeleter({ 'app': '<%= $a %>', 'setting': 'main_image' });$('.main_image_config[app=<%= $a %>]').remove()"
+						<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" onClick="settingDeleter({ 'app': '<%= $a %>', 'setting': 'main_image' });$('.main_image_config[app=<%= $a %>]').remove()"
 					</span>
 				<% } %>
 				<br>
@@ -134,7 +134,7 @@
 														<td><%= &subs::format_name($wd->{'measure'}) %></td>
 														<td><%= $wd->{'selector'} %></td>
 														<td><%= $wd->{'count'} %></td>
-														<td><img class="little_thumb hover web_measure_delete" app="<%= $a %>" measure="<%= $wd->{'measure'} %>" src="/icons/trash.png">
+														<td><img class="little_thumb hover web_measure_delete" app="<%= $a %>" measure="<%= $wd->{'measure'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete">
 													</tr>											
 												<% } %>
 											</tbody>
@@ -159,10 +159,10 @@
 													<% } %>
 												</select>
 												<% if (&subs::device_setter() eq 'mobile' && $n->{'uuid'} ne $new_uuid) { %>
-													<img src="/images/decipherable/diskette.png" class="little_thumb nfc_appt_writer hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
+													<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb nfc_appt_writer hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
 												<% } %>
 												<% if ($n->{'uuid'} ne $new_uuid) { %>
-													<img src="/icons/trash.png" class="little_thumb nfc_deleter hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
+													<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb nfc_deleter hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
 												<% } %>
 												<% if ($n->{'uuid'} ne $new_uuid) { %>
 													<br><label>Taps: </label> <%= $n->{'taps'} || 0 %>

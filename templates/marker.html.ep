@@ -1,19 +1,19 @@
 <% use Mojo::JSON qw/decode_json/; %>
-<img id="pointer" style="position:fixed;" height="26" width="26" src="/images/make believe/start.png">
+<img id="pointer" style="position:fixed;" height="26" width="26" src="<%= &subs::icon_for('/images/make believe/start.png') %>" hint="Start">
 <div id="marker">
 	<canvas id="whiteboard"></canvas>
 	<div id="marker_toolbox" class="marker_toolbox" style="overflow:scroll; position:absolute;right:0px; float:right; top: 35px; height:100%; width: 85px; border: 2px; border-radius: 7px; background-color: green;">
 
 		<button class="button marker_init" onclick="markerInit()">Init</button>
-		<img src="/images/decipherable/marker.png" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
+		<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
 		<br>
 		<input type="text" id="flipbook_interval" class="flipbook_interval" style="width: 80px;" value="60"><br>
 		<button movement="back" class="button flipbook"><-</button>
 		<button movement="forward" class="button flipbook">-></button><br>
-		<img id="marker_pause" class="little_thumb pause_marker" style="display:none;" src="/images/make believe/pause.png">
-		<img id="marker_record" class="medium_thumb record_marker" movement="forward" src="/images/make believe/record.png">
-		<img class="tiny_thumb play_marker" movement="back" style="transform: rotate(180deg);" src="/images/make believe/play.png">
-		<img class="tiny_thumb play_marker" movement="forward" src="/images/make believe/play.png">
+		<img id="marker_pause" class="little_thumb pause_marker" style="display:none;" src="<%= &subs::icon_for('/images/make believe/pause.png') %>" hint="Pause">
+		<img id="marker_record" class="medium_thumb record_marker" movement="forward" src="<%= &subs::icon_for('/images/make believe/record.png') %>" hint="Record">
+		<img class="tiny_thumb play_marker" movement="back" style="transform: rotate(180deg);" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
+		<img class="tiny_thumb play_marker" movement="forward" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
 
 		<button class="button marker_tool" tool="marker">Marker</button><br>
 		<button class="button marker_tool" tool="eraser">Eraser</button><br>
@@ -43,7 +43,7 @@
 			<input class="slider_bar" style="width: 89%" type="range" id="marker_size" step=1 max=40 min=1 />
 			<input class="slider_bar" style="width: 89%" type="range" id="marker_transparency" step=.02 max=1 min=0 />
 		</div>
-		<img src="/images/decipherable/gallery.png" class="little_thumb" id="marker_gallery">
+		<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb" id="marker_gallery">
 	</div>
 
 	<div id="portfolio" style="max-width:100%; overflow:scroll;">
@@ -56,5 +56,5 @@
 			<% } %>
 		<% } %>
 	</div>
-	<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="images/make believe/bullseye.png">
+	<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="<%= &subs::icon_for('/images/make believe/bullseye.png') %>" hint="Target">
 </div>

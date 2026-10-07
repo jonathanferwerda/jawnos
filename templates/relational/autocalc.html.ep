@@ -11,5 +11,5 @@
 	<% } %>
 <% } %>
 
-<img src="/images/decipherable/checkmark.png" id="relational_autocalc_confirm" style="position:absolute;top:2px;right:60px;" class="little_thumb hover">
-<img src="/images/make believe/cancel_button.png" id="alert_cancel" class="little_thumb hover">
+<img src="<%= &subs::icon_for('/images/decipherable/checkmark.png') %>" hint="Done" id="relational_autocalc_confirm" style="position:absolute;top:2px;right:60px;" class="little_thumb hover">
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" id="alert_cancel" class="little_thumb hover">

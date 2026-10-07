@@ -9,7 +9,7 @@
 		<tr>
 			<% foreach my $p ( qw/blacklisted guest resident citizen/ ) { %>
 				<td>
-					<img class="hover large_thumb neighbour_link_credential" privilege="<%= $p %>" src="<%= $gb::known_appts->{$p}->{'icon'} %>">
+					<img class="hover large_thumb neighbour_link_credential" privilege="<%= $p %>" hint="<%= &subs::format_name($p) %>" src="<%= &subs::icon_for($gb::known_appts->{$p}->{'icon'}) %>">
 				</td>
 			<% } %>
 		</tr>

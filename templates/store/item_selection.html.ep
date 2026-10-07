@@ -2,7 +2,7 @@
 <% if (scalar @{$item->{'models'}} > 0) { %>
 	<br>
 	<h2 style="vertical-align:top;">Models
-		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="model" src="/images/studio/plus.png"><% } %>
+		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="model" src="<%= &subs::icon_for('/images/studio/plus.png') %>" hint="Add"><% } %>
 	</h2>
 	<% if ($c->session('privilege') eq 'citizen') { %>
 		<div class="custom_item_selection" style="width:100%;display:none;" item="<%= $item->{'app'} %>" type="model"></div>
@@ -83,7 +83,7 @@
 <% if (scalar @{$item->{'options'}} > 0 ) { %>
 	<br>
 	<h2 style="vertical-align:top;">Options
-		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="option" src="/images/studio/plus.png"><% } %>
+		<% if ($c->session('privilege') eq 'citizen') { %><img class="tiny_thumb hover custom_item_selection_add_toggle" type="option" src="<%= &subs::icon_for('/images/studio/plus.png') %>" hint="Add"><% } %>
 	</h2>
 	<% if ($c->session('privilege') eq 'citizen') { %>
 		<div class="custom_item_selection" style="width:100%;display:none;" item="<%= $item->{'app'} %>" type="option"></div>

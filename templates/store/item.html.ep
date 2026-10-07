@@ -6,7 +6,7 @@
 <div class="item" id="item" item="<%= $item->{'app'} %>" price="<%= $item->{'price'} %>" quote_id="<%= $item->{'quote'}->{'id'} %>" quote_uuid="<%= $item->{'quote'}->{'uuid'} || 'new' %>"
 	formatted_name="<%= &subs::format_name($item->{'app'}) %>" main_image="<%= $item->{'settings'}->{'main_image'} %>">
 	<span class="top_left_corner">
-		<img src="/images/decipherable/diskette.png" class="save_quote little_thumb hover" style="display:none;">
+		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="save_quote little_thumb hover" style="display:none;">
 	</span>
 	<span class="top_right_corner">
 		<select class="store_movement" value="<%= $settings->{'store_movement'} %>" style="vertical-align:top;">
@@ -14,7 +14,7 @@
 				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::format_name($m) %></option>
 			<% } %>
 		</select>
-		<img src="/images/make believe/cancel_button.png" class="store_item_cancel_button little_thumb hover">
+		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="store_item_cancel_button little_thumb hover">
 	</span><br>
 	<span class="hover item_title" onclick="appointmentGrabber('<%= $item->{'app'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item->{'app'}) %></span><br>
 

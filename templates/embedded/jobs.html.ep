@@ -12,7 +12,7 @@ Jobs
 				<td><%= $jobs->{$j}->{'component'} %></td>
 				<td><%= $jobs->{$j}->{'pin'} %></td>
 				<td><%= $jobs->{$j}->{'state'} %></td>
-				<td><img class="little_thumb delete_embedded_job hover" src="/icons/trash.png" uuid="<%= $j %>" appt_uuid="<%= $jobs->{$j}->{'appt_uuid'} %>"></td>
+				<td><img class="little_thumb delete_embedded_job hover" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" uuid="<%= $j %>" appt_uuid="<%= $jobs->{$j}->{'appt_uuid'} %>"></td>
 			</tr>
 		<% } %>
 	</tbody>

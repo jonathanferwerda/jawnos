@@ -40,10 +40,10 @@
 	}
 </style>
 
-<img id="welcome_logo" src="/icons/logos/WelcomeLogo.png" >
+<img id="welcome_logo" src="<%= &subs::icon_for('/icons/logos/WelcomeLogo.png') %>" hint="Welcome" >
 
 <br><br>
-<img style="vertical-align:bottom;display:inline-block;width:40px;height:40px;border:solid;border-width:4px;border-radius:10px;" id="signatorial_upload_button" src="/images/make believe/up.png" />
+<img style="vertical-align:bottom;display:inline-block;width:40px;height:40px;border:solid;border-width:4px;border-radius:10px;" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
 <input type="input" style="vertical-align:bottom;" id="president" value="<%= $start_dir %>" placeholder="President" />
 <br><br>
 <div id="ticket">

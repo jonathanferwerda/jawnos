@@ -1,18 +1,18 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
 <% 	no warnings 'uninitialized'; %>
 <div id="mail" style="width:100%;background-color:pink;">
-	<img src="/images/make believe/burger.png" class="little_thumb hover" id="mail_hamburger">
+	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
 	<% if ($settings->{'subsection'} eq 'email') { %>
-		<img src="/images/decipherable/file.png" class="little_thumb hover" id="email_compose" style="">
-		<img src="/images/decipherable/gear.png" class="little_thumb email_config_toggle hover" style="">
+		<img src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" class="little_thumb hover" id="email_compose" style="">
+		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb email_config_toggle hover" style="">
 	<% } %>
 	<span style="font-size:20px;"><%= $main_title %></span>
 	<div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
 		<div id="mailbox_realtime_controls" style="display:none;">
-			<img id="mailbox_audio" src="/images/make believe/microphone.png" class="little_thumb">
-			<img id="mailbox_video" src="/images/make believe/camera.png" class="little_thumb">
-			<img id="mailbox_screen" src="/images/make believe/monitor.png" class="little_thumb">
-			<img id="mailbox_marker" src="/images/decipherable/marker.png" class="little_thumb">
+			<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
+			<img id="mailbox_video" src="<%= &subs::icon_for('/images/make believe/camera.png') %>" hint="Camera" class="little_thumb">
+			<img id="mailbox_screen" src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb">
+			<img id="mailbox_marker" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker" class="little_thumb">
 			<div id="mailbox_video_container" style="position:absolute;width:100%;bottom:30px;left:0px;">
 				<video id="mailbox_video_monitor" mute autoplay></video>
 			</div>
@@ -35,7 +35,7 @@
 			<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
 				<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
 			<% } %>
-			<img src="/images/make believe/telephone line.png" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+			<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
 			<br><br><br>
 
 			<% if ($settings->{'subsection'} eq 'sms') { %>
@@ -98,7 +98,7 @@
 						<input class="pen_settings" setting="chatbot_conversation_name" value="<%= &subs::format_name($con->{'chatbot_conversation_name'}) %>">
 						<% if ($uuid ne $new_uuid) { %>
 							<input class="chatbot_conversation_select" type="checkbox" <% if ($uuid eq $settings->{'chatbot_conversation'}) { %>checked="checked"<% } %> style="vertical-align:bottom;">
-							<img src="/icons/trash.png" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
+							<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
 						<% } %>
 				    <select class="pen_settings" setting="chatbot_model" value="<%= $con->{'chatbot_model'} %>">
 				      <% foreach my $cm ( @{$chatbot_models}) { %>
@@ -175,7 +175,7 @@
 							<% foreach my $ls ( @{$list} ) { %>
 								<% my $uuid = $ls->{'uuid'}; %>
 								<tr class="mail_list hover  <% if ($uuid eq $settings->{'mail_list'}) { %>active " chosen="yes<% } %>" uuid="<%= $uuid %>">
-									<td><img src="/images/decipherable/gear.png" class="tiny_thumb mail_config_toggle hover" uuid="<%= $uuid %>"></td>
+									<td><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="tiny_thumb mail_config_toggle hover" uuid="<%= $uuid %>"></td>
 									<% if ($ls->{'config'}->{'room'}) { %>
 										<td class="mail_list_selection" type="room" colspan="6" uuid="<%= $uuid %>"><%= &subs::format_name($ls->{'config'}->{'room'}) %></td>
 									<% } else { %>

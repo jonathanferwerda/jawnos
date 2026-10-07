@@ -34,7 +34,7 @@
 <% } %>
 <textarea app="<%= $a %>" setting="measures" class="configure_input"  style="height: 60px; width: 99%;" type="text" value="<%= $jam %>" placeholder="Measures"><%= $jam %></textarea>
 
-<img class="medium_thumb app_measure_configuration_adder" src="/images/make believe/add.png" app="<%= $a %>">
+<img class="medium_thumb app_measure_configuration_adder" src="<%= &subs::icon_for('/images/make believe/add.png') %>" hint="Add" app="<%= $a %>">
 <br>
 <% foreach my $m ( keys %{$am} ) { %>
 	<% next unless $am; %>

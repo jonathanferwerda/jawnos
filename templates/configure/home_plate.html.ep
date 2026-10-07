@@ -32,9 +32,9 @@ Long:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="lon
 				<option value="<%= $d->{'signatorial'} %>" <% if ($hpd->{'device'} eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
 			<% } %>
 		</select>
-		<img src="/images/decipherable/diskette.png" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
 		<% if ($hpd->{'uuid'} ne $uuid) { %>
-			<img src="/icons/trash.png" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
 		<% } %>
 		<br><br>
 	</div>

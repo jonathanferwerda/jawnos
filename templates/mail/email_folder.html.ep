@@ -25,7 +25,7 @@
 				<td class="time" timestamp="<%= $m->{'timestamp'} %>"></td>
 				<td><%= $m->{'email'} %></td>
 				<td><%= &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'}) %></td>
-				<td><img class="tiny_thumb email_deleter" src="/icons/trash.png" uuid="<%= $m->{'uuid'} %>">
+				<td><img class="tiny_thumb email_deleter" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" uuid="<%= $m->{'uuid'} %>">
 			</tr>
 		<% } %>
 	</tbody>

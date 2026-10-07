@@ -25,7 +25,7 @@
 		<tbody>
 			<% foreach my $ls ( sort keys %{$local_storage} ) { %>
 				<tr class="system_localstorage" key="<%= $ls %>">
-					<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="/images/make believe/cancel_button.png"></td>
+					<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close"></td>
 					<td><b><%= $ls %></b></td>
 					<td style="text-align:left;"><%= $local_storage->{$ls} %></td>
 				</tr>

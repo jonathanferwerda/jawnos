@@ -2,10 +2,10 @@
 	<% if ($mode ne 'security') { %>
 		<h1 id="padlock_taunts"></h1>
 	<% } %>
-	<img class="padlock padlock_lock" src="/images/jbuttons/padlock lock.png">
-	<img class="padlock padlock_unlock" src="/images/jbuttons/padlock unlock.png">
+	<img class="padlock padlock_lock" src="<%= &subs::icon_for('/images/jbuttons/padlock lock.png') %>" hint="Lock">
+	<img class="padlock padlock_unlock" src="<%= &subs::icon_for('/images/jbuttons/padlock unlock.png') %>" hint="Unlock">
 	<span class="padlock_jog_wheel_frame">
-		<img class="padlock_jog_wheel jog_wheel" mode="<%= $mode %>" src="/images/jbuttons/padlock dial.png">
+		<img class="padlock_jog_wheel jog_wheel" mode="<%= $mode %>" src="<%= &subs::icon_for('/images/jbuttons/padlock dial.png') %>" hint="Lock">
 			<span class="padlock_jog_wheel_centre"></span>
 		</img>
 	</span>

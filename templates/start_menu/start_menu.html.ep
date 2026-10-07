@@ -29,7 +29,7 @@
 	<span style="float:left;width:82%;overflow:scroll;height:80%;">
 		<% if ($menu eq 'view') { %>
 			<!--
-			<img src="/images/make believe/eye.png" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
+			<img src="<%= &subs::icon_for('/images/make believe/eye.png') %>" hint="Webcam" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
 			-->
 			<%= include 'start_menu/htop', cache => &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }) %>
 

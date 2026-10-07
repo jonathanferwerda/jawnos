@@ -1,4 +1,4 @@
-<img src="/images/make believe/cancel_button.png" class="main_viewer_cancel_button little_thumb hover" style="position:absolute;top:0px;right: 10px;height:30px;width:30px;">
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="main_viewer_cancel_button little_thumb hover" style="position:absolute;top:0px;right: 10px;height:30px;width:30px;">
 <span style="font-size:28px;"><b><%= &subs::format_name($customer->{'app'}) %></b></span> - 
 <span style="font-size:26px;"><%= &subs::format_name($type) %>s</span>
 
@@ -10,16 +10,16 @@
 				<span class="quote_title hover" uuid="<%= $quote->{'uuid'} %>" style="font-size:28px;" colspan="6"><b><%= &subs::format_name($q->{'item'}) %></b></span>
 			</span>
 			<span style="float:right;">
-				<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/feeder.png" class="medium_thumb print hover">
-				<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/envelope.png" class="medium_thumb email hover">
+				<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="Print" class="medium_thumb print hover">
+				<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Email" class="medium_thumb email hover">
 				<% if ($type eq 'quote') { %>
-					<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/register.png" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/register.png') %>" hint="Invoice" class="medium_thumb quote_move hover">
 				<% } %>
 				<% if ($type eq 'invoice') { %>
-					<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/list.png" class="medium_thumb quote_move hover">
-					<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="/images/decipherable/cash.png" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Quote" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" hint="Sale" class="medium_thumb quote_move hover">
 				<% } %>
-				<img cx_uuid="<%= $customer->{'value'} %>" doc_type="<%= $type %>" uuid="<%= $quote->{'uuid'} %>" src="/icons/trash.png" class="medium_thumb delete_quote hover">
+				<img cx_uuid="<%= $customer->{'value'} %>" doc_type="<%= $type %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="medium_thumb delete_quote hover">
 			</span>
 			<table class="quote_table">
 				<thead>
@@ -95,7 +95,7 @@
 				<% foreach my $number ( sort keys %{$totals} ) { %>
 					<td><%= sprintf("%.2f", $totals->{$number}) %></td>
 				<% } %>
-				<td><img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="all" src="/images/decipherable/feeder.png" class="medium_thumb print hover"></td>
+				<td><img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="all" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="Print" class="medium_thumb print hover"></td>
 			</tr>
 		</tbody>
 	</table>

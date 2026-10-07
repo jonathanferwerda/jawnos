@@ -1,6 +1,6 @@
 <div id="measures" style="width:100%;height:100%;overflow:scroll;background-color:var(--panel);">
 	<div id="measures_toolbar" style="width:100%;">
-		<img class="little_thumb hover measure_edit_toggle" uuid="new" src="/images/studio/plus.png">
+		<img class="little_thumb hover measure_edit_toggle" uuid="new" src="<%= &subs::icon_for('/images/studio/plus.png') %>" hint="Add">
 	</div>
 	<div class="measure_editor_container" uuid="new" style="width:100;display:none;">
 		<%= include 'measures/edit', measure => { uuid => 'new' } %>
@@ -19,7 +19,7 @@
 			<% foreach my $m (sort keys %{$measures} ) { %>
 				% $measures->{$m}->{'m'} = $m unless $measures->{$m}->{'m'};
 				<tr class="measure" measure="<%= $m %>" name="<%= $measures->{$m}->{'name'} %>" uuid="<%= $measures->{$m}->{'uuid'} %>">
-					<td><b><img class="little_thumb hover measure_edit_toggle" uuid="<%= $measures->{$m}->{'uuid'} %>" src="/icons/edit.png"> <span style="vertical-align:middle;"><%= $m %></span></b></td>
+					<td><b><img class="little_thumb hover measure_edit_toggle" uuid="<%= $measures->{$m}->{'uuid'} %>" src="<%= &subs::icon_for('/icons/edit.png') %>" hint="Edit"> <span style="vertical-align:middle;"><%= $m %></span></b></td>
 					<td><b><%= &subs::format_name($measures->{$m}->{'name'}) || $m %></b></td>
 					<td>
 						<% if (eval {scalar @{$measures->{$m}->{'types'}} > 0 }) { %>

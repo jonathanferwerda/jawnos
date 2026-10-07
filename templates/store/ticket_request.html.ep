@@ -1,4 +1,4 @@
-<img src="/images/make believe/cancel_button.png" style="position:absolute;top:0px;right:0px;" class="little_thumb" id="ticket_request_cancel">
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" style="position:absolute;top:0px;right:0px;" class="little_thumb" id="ticket_request_cancel">
 <h1>Ticket Request</h1>
 <h3>Welcome to <%= &subs::setting_grabber({ app => 'me', setting => 'store_name' }) %>!</h3>
 <p>First off, cookies and localStorage are used to verify your identity and offer products and services.

@@ -9,7 +9,7 @@
 			<% } else { %>
 				<input class="task_text task_input" placeholder="Task" name="task" style="width:80%;vertical-align:top;" value="<%= &subs::format_name($task->{'task'}) %>">
 			<% } %>
-			<% unless ($task->{'uuid'} eq 'new') { %><img src="/images/decipherable/gear.png" uuid="<%= $task->{'uuid'} %>" style="vertical-align:top;" class="little_thumb task_settings_hider"><% } %><br>
+			<% unless ($task->{'uuid'} eq 'new') { %><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" uuid="<%= $task->{'uuid'} %>" style="vertical-align:top;" class="little_thumb task_settings_hider"><% } %><br>
 
 			<span class="task_settings" uuid="<%= $task->{'uuid'} %>" style="vertical-align:bottom;display:none;">
 				<% if ($task->{'uuid'} ne 'new') { %>
@@ -34,7 +34,7 @@
 						<td><input style="max-width: 50%" type="range" class="task_input" name="priority" step=1 max=20 min=-20 value="<%= $task->{'priority'} %>" /></td>
 						<td><input type="checkbox" <% if ($task->{'appt'} eq 'on') { %> checked <% } %> class="task_input" name="appt"></td>
 						<td>
-							<img src="/icons/trash.png" class="little_thumb delete_task">
+							<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_task">
 						</td>
 					</tbody>
 					

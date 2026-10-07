@@ -1,9 +1,9 @@
 <div id="travel" style="background-color:var(--panel);width:100%;overflow:scroll;">
-	<img src="/images/decipherable/gear.png" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
+	<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
 	<div id="travel_config" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } %>" status="<%= $settings->{'config_toggle'} %>">
 		<button id="travel_home_plate" status="<%= $home_plate_enabled %>"  style="vertical-align:top;">Home Plate</button>
 		<button id="travel_update" style="vertical-align:top;">Update</button>
-		<img class="little_thumb hover travel_now" src="/images/decipherable/now.png" style="vertical-align:top;"><br>
+		<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now" style="vertical-align:top;"><br>
 
 		<input type="text" id="travel_scope" name="scope" value="<%= $travel_scope %>"><br>
 
@@ -18,7 +18,7 @@
 				<% } %>
 			<% } %>
 		</select>
-		<img src="/icons/trash.png" class="little_thumb delete_travel_map">
+		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_travel_map">
 		<br>
 		<b>Search</b>
 		<input id="travel_search" value="<%= $settings->{'search'} %>">

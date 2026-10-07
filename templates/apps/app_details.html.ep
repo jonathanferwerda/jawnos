@@ -67,11 +67,11 @@
 	</table>
 	<br>
 
-	<img src="/images/decipherable/windows.png" timestamp="" app="<%= $a %>" class="little_thumb transaction_history_retriever hover" style="vertical-align:bottom;">
-	<img src="/images/make believe/add.png" class="little_thumb add_transaction_item hover" style="vertical-align:bottom;float:right;">
-	<img src="/images/decipherable/the bird.png" class="little_thumb cancel_transaction hover" style="vertical-align:bottom;float:left;" app="<%= $a %>">
+	<img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" hint="Window" timestamp="" app="<%= $a %>" class="little_thumb transaction_history_retriever hover" style="vertical-align:bottom;">
+	<img src="<%= &subs::icon_for('/images/make believe/add.png') %>" hint="Add" class="little_thumb add_transaction_item hover" style="vertical-align:bottom;float:right;">
+	<img src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" hint="Flip the bird" class="little_thumb cancel_transaction hover" style="vertical-align:bottom;float:left;" app="<%= $a %>">
 	<% unless ($app->{'timestamp'}) { %>
-		<img src="/images/decipherable/diskette.png" type="button" name="record_purchase" class="hover record_purchase little_thumb" style="vertical-align:bottom;float:right;">
+		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" type="button" name="record_purchase" class="hover record_purchase little_thumb" style="vertical-align:bottom;float:right;">
 	<% } %>
 	<br>
 </span>
