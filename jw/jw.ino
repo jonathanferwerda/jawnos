@@ -2994,6 +2994,37 @@ void touch_watch() {
   }
 }
 
+static void doze_until_crown() {
+  setCpuFrequencyMhz(80);
+  //my_print("=========esp_light_sleep_start=========\n");
+  char count = 0;
+
+  while (!pmuIrq) {
+    sportsIrq = false;      // movement must not light the screen back up either
+    if (jw_room == "message") {
+      if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && count > 58) {
+        lowPowerEnergyHandler();
+        count = 0;
+      }
+
+      else {
+        count++;
+      }
+    }
+    if (webserver_enabled == true) {
+      server.handleClient();
+    }
+    watch.loop();             // the PMU and sensor events arrive through here
+    awake_notifications();
+    readRadio();
+    delay(500);
+    // gpio_wakeup_enable ((gpio_num_t)BOARD_TOUCH_INT, GPIO_INTR_LOW_LEVEL);
+    // esp_sleep_enable_timer_wakeup(3 * 1000);
+    // esp_light_sleep_start();
+  }
+  //my_print("=========esp_light_sleep_end=========\n");
+}
+
 void lowPowerEnergyHandler()
 {
   Serial.println("Enter light sleep mode!");
@@ -3065,39 +3096,17 @@ void lowPowerEnergyHandler()
     } else {
         // Returns ESP_SLEEP_WAKEUP_UNDEFINED (0) if it was a normal power-on or hard reset
         Serial.printf("Wakeup was not from sleep. Code: %d\n", wakeup_reason);
+        if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
+          // the chip refused the light sleep (an attached USB serial does that), so the
+          // "sleep" returned at once; doze properly instead of bouncing the screen
+          // off and on again every few seconds
+          doze_until_crown();
+        }
     }
 
 
   } else {
-    setCpuFrequencyMhz(80);
-    //my_print("=========esp_light_sleep_start=========\n");
-    char count = 0;
-
-    while (!pmuIrq) {
-      sportsIrq = false;      // movement must not light the screen back up either
-      if (jw_room == "message") {
-        if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && count > 58) {
-          lowPowerEnergyHandler();
-          count = 0;
-        }
-
-        else {
-          count++;
-        }
-      }
-      if (webserver_enabled == true) {
-        server.handleClient();
-      }
-      watch.loop();             // the PMU and sensor events arrive through here
-      awake_notifications();
-      readRadio();
-      delay(500);
-      // gpio_wakeup_enable ((gpio_num_t)BOARD_TOUCH_INT, GPIO_INTR_LOW_LEVEL);
-      // esp_sleep_enable_timer_wakeup(3 * 1000);
-      // esp_light_sleep_start();
-    }
-    //my_print("=========esp_light_sleep_end=========\n");
-
+    doze_until_crown();
   }
   if (brightnessLevel <= 1) {
     brightnessLevel = 20;
