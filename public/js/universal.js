@@ -673,19 +673,65 @@ function jawnosInk() {
 	try { c = getComputedStyle(document.body).getPropertyValue('--ink'); } catch (e) { c = ''; }
 	return (c && c.trim()) || '#000000';
 }
+function jawnosRgbToHsl(r, g, b) {
+	r /= 255; g /= 255; b /= 255;
+	var max = Math.max(r, g, b), min = Math.min(r, g, b);
+	var h = 0, s = 0, l = (max + min) / 2, d = max - min;
+	if (d) {
+		s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+		if (max === r) { h = (g - b) / d + (g < b ? 6 : 0); }
+		else if (max === g) { h = (b - r) / d + 2; }
+		else { h = (r - g) / d + 4; }
+		h *= 60;
+	}
+	return [h, s, l];
+}
+function jawnosHslToHex(h, s, l) {
+	h = ((h % 360) + 360) % 360;
+	var c = (1 - Math.abs(2 * l - 1)) * s;
+	var x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+	var m = l - c / 2;
+	var r = 0, g = 0, b = 0;
+	if (h < 60) { r = c; g = x; }
+	else if (h < 120) { r = x; g = c; }
+	else if (h < 180) { g = c; b = x; }
+	else if (h < 240) { g = x; b = c; }
+	else if (h < 300) { r = x; b = c; }
+	else { r = c; b = x; }
+	var part = function (v) { var p = Math.round((v + m) * 255).toString(16); return p.length < 2 ? '0' + p : p; };
+	return '#' + part(r) + part(g) + part(b);
+}
+// Recompute the panel and ink variables from the page background so windows and
+// text follow the active colour scheme. configure.js updates the body colour on a
+// live scheme change and then calls this, so windows re-theme without a reload.
 function jawnosApplyInk() {
 	var bg = '';
 	try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) { bg = ''; }
-	var dark = false;
 	var m = bg.match(/rgba?\(([^)]+)\)/);
-	if (m) {
-		var parts = m[1].split(',').map(function (x) { return parseFloat(x); });
-		if (parts.length >= 3) {
-			var lum = (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255;
-			dark = lum < 0.5;
-		}
+	if (!m) { return; }
+	var parts = m[1].split(',').map(function (x) { return parseFloat(x); });
+	if (parts.length < 3) { return; }
+	var r = parts[0], g = parts[1], b = parts[2];
+	var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+	var hsl = jawnosRgbToHsl(r, g, b);
+	var tint = hsl[1] < 0.18 ? hsl[1] : 0.18;
+	var panel, panel2, ink, ink_muted;
+	if (lum < 0.5) {
+		panel = jawnosHslToHex(hsl[0], tint, 0.16);
+		panel2 = jawnosHslToHex(hsl[0], tint, 0.23);
+		ink = '#f2f2f2'; ink_muted = '#cccccc';
 	}
-	document.body.classList.toggle('dark_theme', dark);
+	else {
+		panel = jawnosHslToHex(hsl[0], tint, 0.88);
+		panel2 = jawnosHslToHex(hsl[0], tint, 0.80);
+		ink = '#000000'; ink_muted = '#333333';
+	}
+	var style = document.body.style;
+	style.setProperty('--panel', panel);
+	style.setProperty('--panel-2', panel2);
+	style.setProperty('--ink', ink);
+	style.setProperty('--ink-muted', ink_muted);
+	document.body.classList.toggle('dark_theme', lum < 0.5);
 }
 $(function () { jawnosApplyInk(); });
 
