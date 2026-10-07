@@ -1092,7 +1092,11 @@ function startMenuListify() {
 		var label = img.attr('hint') || '';
 		// start_menu_list is what the other menus use for a row that closes the menu
 		var item = $('<span class="start_menu_item start_menu_list"></span>');
-		img.before(item);
+		// The row goes at the top level of the list even when the template wrapped the
+		// icon in something else (the tickets button sits in a bare <span>). Left in
+		// that wrapper it is not a child of the list, so the sort never sees it and it
+		// ends up stranded above the rows that were sorted.
+		main.append(item);
 		if (label) {
 			item.append($('<span class="start_menu_item_text"></span>').text(label));
 		}
