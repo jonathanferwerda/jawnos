@@ -2,6 +2,12 @@ var ws = {};
 var remote_ws = {};
 var heartbeat = {};
 var stayingAliveInterval = 2000;
+// The tab socket re-sends the (relatively costly) window layout on this cadence
+// even when nothing moved, and the localStorage debrief far more rarely.
+var windowResendInterval = 60000;
+var debrieferInterval = 300000;
+var windowWsWindows = '';
+var windowWsDebriefer = 0;
 var windowVisible = 1;
 var dotTimeout = {};
 var seenWsMessages = [];
@@ -9,36 +15,48 @@ $(document).ready(function() {
 	websocketStart();
 });
 
-setInterval(function() {
+function wsStatusChecker() {
+	var timestamp = Date.now();
 	$.each(ws, function(i,v) {
-		var timestamp = Date.now();
-		if (windowVisible == 1 && (ws[i]['status'] == 'alive' )) {
+		if (windowVisible == 1 && ( ws[i]['status'] == 'alive' || ws[i]['status'] == 'connect' || ws[i]['status'] == 'open' )) {
 			if (ws[i]['stayingAlive'] && timestamp > (ws[i]['stayingAlive'] + (stayingAliveInterval * 2))) {
 				clearInterval(heartbeat[i]);
-				//if (ws[i].readyState != 1) {
-					websocketStop(i);
-				//}
-			}
-		}
-		else if (windowVisible == 1 && (ws[i]['status'] == 'connect')) {
-			if (ws[i]['stayingAlive'] && (timestamp) > (ws[i]['stayingAlive'] + (stayingAliveInterval * 2))) {
-				clearInterval(heartbeat[i]);
-				//if (ws[i].readyState != 1) {
 				websocketStop(i);
-				//}
 			}
 		}
-		else if (windowVisible == 1 && (ws[i]['status'] == 'open')) {
-			if (ws[i]['stayingAlive'] && (timestamp) > (ws[i]['stayingAlive'] + (stayingAliveInterval * 2))) {
-				clearInterval(heartbeat[i]);
-				//if (ws[i].readyState != 1) {
-				websocketStop(i);
-				//}
-			}
-		}
-
 	});
-},3000);
+}
+
+var wsStatusInterval = setInterval(wsStatusChecker, 3000);
+
+// Timers are what chew through phone batteries. When the page isn't visible
+// there is nothing to animate or report, so stop the heartbeats and the status
+// check entirely and only restart them once we're back.
+document.addEventListener('visibilitychange', function() {
+	if (document.hidden) {
+		windowVisible = 0;
+		clearInterval(wsStatusInterval);
+		wsStatusInterval = null;
+		Object.keys(heartbeat).forEach(function(app) {
+			clearInterval(heartbeat[app]);
+			delete heartbeat[app];
+		});
+		Object.keys(heartbeating).forEach(function(app) {
+			clearInterval(heartbeating[app]);
+			delete heartbeating[app];
+		});
+		clearTimeout(heartbeater);
+	}
+	else {
+		windowVisible = 1;
+		if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, 3000); }
+		$.each(ws, function(app, socket) {
+			if (socket && ( socket.readyState == 1 || socket['status'] == 'alive' || socket['status'] == 'open' )) {
+				heartbeatStart(app);
+			}
+		});
+	}
+});
 
 function websocketStart(appt,address) {
 
@@ -106,17 +124,26 @@ function wsOpener(event,app,origin) {
 	}
 	var closer = $('.close_appointment[app="' + app + '"]');
 	closer.css({'background-color':'green'});
+	heartbeatStart(app);
+}
+
+// (Re)start the liveness heartbeat for one socket. Called when a socket opens
+// and again when the page becomes visible after being hidden.
+function heartbeatStart(app) {
 	clearInterval(heartbeat[app]);
 	heartbeat[app] = window.setInterval(function () {
 		var apper = app.split('@')[0];
 		var now = Date.now();
+		var browser_tab_id = sessionStorage.getItem('browser_tab_id') || '';
+		var browser_tab = localStorage.getItem('browser_tab') || '';
+		var uA = navigator.userAgent;
 		if (!ws[app]) { clearInterval(heartbeat[app]); websocketStop(app); return; }
 		ws[app]['status'] = 'alive';
 		if (!document.hidden) {
-			var data = { 
+			var data = {
 				browser_tab_id: browser_tab_id,
 				browser_tab: browser_tab,
-				timestamp: Date.now(),
+				timestamp: now,
 				app: app,
 				from: uA,
 				type: 'stayingAlive',
@@ -126,10 +153,19 @@ function wsOpener(event,app,origin) {
 
 			if (app == 'tab' || apper == 'tab') {
 				var mm = mouse_position();
-				if ((mm['x'] != windowWsMouseMove['x'] && mm['y'] != windowWsMouseMove['y']) || ( mm['lastTs'] < now - 20000)) {
-					data['windows'] = windowSaver();
-					data['debriefer'] = JSON.stringify(localStorage);
+				if ((mm['x'] != windowWsMouseMove['x'] && mm['y'] != windowWsMouseMove['y']) || ( mm['lastTs'] < now - windowResendInterval)) {
+					var windows_json = windowSaver();
+					// only ship the layout when it actually changed
+					if (windows_json != windowWsWindows) {
+						windowWsWindows = windows_json;
+						data['windows'] = windows_json;
+					}
 					windowWsMouseMove = mm;
+				}
+				// the localStorage debrief is for auditing, not for liveness
+				if (now - windowWsDebriefer > debrieferInterval) {
+					windowWsDebriefer = now;
+					data['debriefer'] = JSON.stringify(localStorage);
 				}
 			}
 			else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
@@ -163,10 +199,10 @@ function wsOpener(event,app,origin) {
 			if (ws[app] && ws[app] != null && ws[app]['readyState'] == 1) {
 				ws[app].send(json_data);
 			}
-			else { 
-				websocketStop(app); 
-				delete heartbeat[app]; 
-				websocketStart(); 
+			else {
+				websocketStop(app);
+				delete heartbeat[app];
+				websocketStart();
 			}
 		}
 	}, stayingAliveInterval);
@@ -579,13 +615,16 @@ function stayingAlive(data) {
 	var closer = $('.close_appointment[app="' + data.app + '"]');
 	var neighbours = $('.neighbours[app="' + data.app + '"]');
 	neighbours.find('.neighbour').each((i,n) => { n.remove() });
-	clearInterval(heartbeater);
+	clearTimeout(heartbeater);
 	clearInterval(heartbeating[data.app]);
 	$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
 	$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
-	heartbeater = setInterval(function() {
+	// this was a 200ms interval that kept running until the next heartbeat (or
+	// forever if heartbeats stopped) - a single timeout is all the pulse needs
+	heartbeater = setTimeout(function() {
 		$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
-	},200);
+		$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
+	},250);
 	data.neighbours = data.neighbours.sort((a, b) => a.browser_tab_id.localeCompare(b.browser_tab_id));
 	if ($('#controller').is(':visible')) {
 		$.each(data.neighbours, function(i,n) {
@@ -710,11 +749,16 @@ function stayingAlive(data) {
 		});
 
 		heartbeating[data.app] = setInterval(function() {
-			$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
+			var beating = $('.heartbeating[app="' + data.app + '"]');
+			// nothing left to animate - stop ticking
+			if (beating.length == 0) { clearInterval(heartbeating[data.app]); delete heartbeating[data.app]; return; }
+			beating.css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
 			var now = Date.now();
-			if ($('.everything.heartbeating[app="' + data.app + '"]').attr('timestamp') < (now - (stayingAliveInterval * 5))) {
-				$('.everything.heartbeating[app="' + data.app + '"]').remove();
-			}
+			$('.everything.heartbeating[app="' + data.app + '"]').each(function(i,v) {
+				if ($(v).attr('timestamp') < (now - (stayingAliveInterval * 5))) {
+					$(v).remove();
+				}
+			});
 		},200);
 		$('.heartbeating').each(function(i,v) {
 			if ($(v).attr('timestamp') < ( now - stayingAliveInterval * 7) ) {

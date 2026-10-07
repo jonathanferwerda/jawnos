@@ -422,15 +422,9 @@ function windowSaver() {
 			browser_tab_id: bti,
 			data: data,
 		};
-		if (app == 'budget' || app == 'folders' || app == 'music' || app == 'web' || app == 'handbook' || app == 'relational' || app == 'video' || app == 'twirl' || app == 'library' || app == 'security' || app == 'gallery' || app == 'store' || app == 'studio' || app == 'marker' || app == 'ide' || app == 'terminal' || app == 'travel' || app == 'mailbox' || app == 'editor' || app == 'tetris' || app == 'synth' || app == 'embedded' || app == 'terminal' || app == 'configure' || app == 'cards' || app == 'box_office' ) {
-			var html = $('#browser').html();
-			$(html).find('.wind').each(function(w,wi) {
-				if ($(wi).attr('app') != app) {
-					$(wi).remove();
-				}
-			});
-		//	sessionStorage.setItem('preload_' + app, html );
-		}
+		// NOTE: this used to serialise the whole #browser to HTML (and re-parse it)
+		// once per window, then throw the result away. That is very expensive and
+		// runs on every heartbeat windowSaver() call, so it was removed.
 	});
 	$('.keyboard.bc').each(function(i,v) {
 		var left = $(v).css('left');

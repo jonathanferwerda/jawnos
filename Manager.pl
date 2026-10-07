@@ -19248,19 +19248,22 @@ websocket '/manager/ws' => sub ($c) {
 					}
 				}
 			}
-			&subs::db_update('websockets', {
+			# Only touch the heavy columns when the client actually sent them, so a
+			# light heartbeat doesn't blank out the last known layout.
+			my $ws_update = {
 				timestamp => $timestamp,
 				server_time => $server_time,
 				type => $data->{'type'},
 				connection_id => $connection_id,
 				local_address => $local_address,
 				remote_address => $remote_address,
-				windows => $data->{'windows'},
-				music_data => $data->{'music_data'},
-				jp_data => $data->{'jp_data'},
 				href => $data->{'href'},
 				pathname => $data->{'pathname'}
-			}, {
+			};
+			foreach my $optional ( qw/windows music_data jp_data/ ) {
+				$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
+			}
+			&subs::db_update('websockets', $ws_update, {
 				browser_tab_id => $browser_tab_id,
 				app => $data->{'app'}
 			});
