@@ -40,9 +40,6 @@ no warnings 'once';
 require "./gb.pl";
 require "./Websocket.pl";
 
-# Per-process memo of the active theme palette, flushed with the config cache.
-our %theme_palette_memo;
-
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
@@ -3317,8 +3314,8 @@ sub setting_setter() {
 		}
 	}
 	elsif ($setting eq 'icon_set') {
-		$Manager::icon_set_memo = undef;
-		# drop the caches that embed icons so the next render picks up the new set
+		# invalidate the shared caches across all workers
+		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ app => 'me', context => 'pseudonyms' });
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
@@ -3631,6 +3628,10 @@ sub config_reader() {
 		}
 	}
 	$config->{'device'} = &device_setter();
+	# the selected icon set for the current device; stored in the shared config
+	# cache (invalidated on configure changes) so every prefork worker agrees
+	my $is = &db_query('select value from settings where setting = ? and app = ? and device = ?', 'icon_set', 'misc', $device)->hashes;
+	$config->{'icon_set'} = $is->[0]->{'value'} if scalar @{$is};
 	my $environment = $config->{'environment'};
 	if ($environment =~ /^dev/) {
 		$config->{'environment'} = 'development';
@@ -3684,9 +3685,6 @@ sub cache_set() {
 
 sub cache_delete() {
 	my ($params) = @_;
-	if ($params->{'context'} && $params->{'context'} eq 'config') {
-		%theme_palette_memo = ();
-	}
 	$params->{'device'} = $device;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $result = &db_delete('cache', $params);
@@ -4179,7 +4177,6 @@ sub db_cache_updater() {
 # swatches for a device (falling back through the other devices if unset).
 sub theme_palette() {
 	my $device = shift || &subs::device_setter();
-	return @{$theme_palette_memo{$device}} if exists $theme_palette_memo{$device};
 	my $config = &subs::config_reader();
 	my @devices = ( $device, @gb::device_types, &subs::signatorial_designer() );
 	my %tried;
@@ -4196,10 +4193,8 @@ sub theme_palette() {
 			$c = lc $c;
 			push @palette, $c unless $seen{$c}++;
 		}
-		$theme_palette_memo{$device} = \@palette;
 		return @palette if scalar @palette;
 	}
-	$theme_palette_memo{$device} = [];
 	return ();
 }
 
@@ -4266,8 +4261,8 @@ sub theme_colour_for_app() {
 
 # The currently selected pseudonym icon set ('' for the modern default).
 sub icon_set() {
-	$Manager::icon_set_memo = &setting_grabber({ app => 'misc', setting => 'icon_set' }) unless defined $Manager::icon_set_memo;
-	return $Manager::icon_set_memo || '';
+	my $config = &config_reader();
+	return $config->{'icon_set'} || '';
 }
 
 # When the hand-drawn set is active, swap a public icon path for its original

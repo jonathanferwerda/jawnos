@@ -86,9 +86,6 @@ my $main_process = $$;
 my $device = &subs::device_setter();
 my $user_agent = $gb::user_agent;
 
-# memo for the selected pseudonym icon set; cleared by setting_setter on change
-our $icon_set_memo;
-
 if ($device eq 'mobile' && `ps -e | grep sshd` eq '') {
 	`sshd`;
 }

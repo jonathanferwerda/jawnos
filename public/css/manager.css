@@ -596,3 +596,9 @@ canvas { overflow: scroll; z-index: 99; }
   z-index: 1000000;  /* Ensures it sits on top of the clone itself */
   box-sizing: border-box;
 }
+
+/* hand-drawn icon set: give the original hand-drawn art a light frame */
+img[src*="/icons/original/"] {
+  border: 2px solid var(--ink, #000);
+  border-radius: 2%;
+}
