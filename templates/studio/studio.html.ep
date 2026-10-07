@@ -40,7 +40,7 @@
 	<% my $channel_count = $settings->{'channel_count'} || 4; %>
 	<div id="studio_viewer" style="height:200px;" channel_count="<%= $channel_count %>">
 		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
-			<canvas style="width:95%;height:calc(90% / <%= $channel_count + 1 %>);border:solid;" class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="Drag a take to move it, drag its right edge to trim, double-click to remove">track name <%= $ch %></canvas>
+			<canvas style="width:95%;height:calc(90% / <%= $channel_count + 1 %>);border:solid;" class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove">track name <%= $ch %></canvas>
 		<% } %>
 	</div>
 	<div id="studio_mixer">

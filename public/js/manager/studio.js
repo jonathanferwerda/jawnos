@@ -282,8 +282,9 @@ function studioPickMime(hasVideo) {
 
 // ---- transport helpers -----------------------------------------------------
 
-// Keep every take aligned to the transport: each take is fed its own local
-// time (transport position minus its start offset).
+// Keep every take aligned to the transport. A take maps timeline position to
+// its own source time as  source = (position - startTime) + offset, where
+// `offset` is the in-point after any left trim or split.
 function studioSyncTakes() {
 	var pos = mixer['time']['position'];
 	$.each(mixer, function (ch, m) {
@@ -300,10 +301,18 @@ function studioSyncTakes() {
 		m.media.out.forEach(function (take) {
 			var el = take && take.track;
 			if (!el || !el.src || take.status == 'recording') { return; }
+			var offset = take.offset || 0;
+			var clipEnd = take.startTime + (take.duration || 0);
 			var routed = !!studioTakeNode(ch, take);
 			if (!routed) { el.volume = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()); }
-			var target = pos - take.startTime;
-			if (target < 0) { if (!el.paused) { el.pause(); } return; }
+
+			var inside = (pos >= take.startTime) && (pos < clipEnd);
+			if (!inside) {
+				if (!el.paused) { try { el.pause(); } catch (e) {} }
+				if (el.currentTime != offset) { try { el.currentTime = offset; } catch (e) {} }
+				return;
+			}
+			var target = pos - take.startTime + offset;
 			if (mixer['time']['status'] == 'scroll') { try { el.currentTime = target; } catch (e) {} return; }
 			if (el.paused) {
 				try { el.currentTime = target; } catch (e) {}
@@ -315,6 +324,41 @@ function studioSyncTakes() {
 			}
 		});
 	});
+	studioVideoPreview(pos);
+}
+
+// Mirror the clip currently under the playhead to the main video monitor, so you
+// can see what you're cutting (the selected channel wins).
+function studioVideoPreview(pos) {
+	var monitor = document.getElementById('studio_video_monitor');
+	if (!monitor) { return; }
+	var status = mixer['time']['status'];
+	if (status != 'play' && status != 'record' && status != 'scroll') { return; }
+	var channels = Object.keys(mixer).filter(function (k) { return /^[0-9]+$/.test(k); });
+	channels.sort(function (a, b) {
+		return (b == studioSelectedChannel ? 1 : 0) - (a == studioSelectedChannel ? 1 : 0);
+	});
+	var found = null;
+	for (var i = 0; i < channels.length && !found; i++) {
+		var takes = (mixer[channels[i]].media && mixer[channels[i]].media.out) || [];
+		for (var n = 0; n < takes.length; n++) {
+			var take = takes[n];
+			if (!take || !take.src || take.status == 'recording') { continue; }
+			if (take.encoding && take.encoding.indexOf('video') === -1) { continue; }
+			if (pos >= take.startTime && pos < take.startTime + (take.duration || 0)) { found = take; break; }
+		}
+	}
+	if (!found) { return; }
+	if (monitor.getAttribute('data-take-src') != found.src) {
+		monitor.setAttribute('data-take-src', found.src);
+		monitor.src = found.src;
+		monitor.muted = true;
+	}
+	var t = pos - found.startTime + (found.offset || 0);
+	if (Math.abs((monitor.currentTime || 0) - t) > 0.2) {
+		try { monitor.currentTime = t; } catch (e) {}
+	}
+	monitor.style.display = '';
 }
 
 // ---- canvas -----------------------------------------------------------------
@@ -358,12 +402,23 @@ function studioDrawChannel(ch) {
 		m.media.out.forEach(function (take) {
 			if (!take) { return; }
 			var x = (take.startTime / duration) * w;
-			var tw = ((take.duration || 0) / duration) * w;
-			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : 'rgba(20,90,190,0.5)';
-			ctx.fillRect(x, 3, Math.max(2, tw), h - 6);
-			ctx.strokeStyle = '#04325f';
-			ctx.lineWidth = 1;
-			ctx.strokeRect(x, 3, Math.max(2, tw), h - 6);
+			var tw = Math.max(2, ((take.duration || 0) / duration) * w);
+			var selected = studioSelectedTake && studioSelectedTake.take === take;
+			var isVideo = take.encoding && take.encoding.indexOf('video') !== -1;
+			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : 'rgba(20,90,190,0.5)');
+			ctx.fillRect(x, 3, tw, h - 6);
+			ctx.strokeStyle = selected ? '#ffd21e' : '#04325f';
+			ctx.lineWidth = selected ? 3 : 1;
+			ctx.strokeRect(x, 3, tw, h - 6);
+			// grab handles
+			ctx.fillStyle = '#04325f';
+			ctx.fillRect(x, 3, 3, h - 6);
+			ctx.fillRect(x + tw - 3, 3, 3, h - 6);
+			// a paler bar marks a trimmed/split in-point
+			if (take.offset > 0 && tw > 6) {
+				ctx.fillStyle = '#ffe9a8';
+				ctx.fillRect(x + 3, 3, 3, h - 6);
+			}
 		});
 	}
 
@@ -426,10 +481,37 @@ function studioRecordOffset() {
 }
 
 var studioTakeDrag = null;
+var studioSelectedTake = null;
 
 function studioCanvasChannel(canvas) {
 	var m = (canvas && canvas.id || '').match(/^track_view_(\d+)$/);
 	return m ? m[1] : null;
+}
+
+// Everything a clip edge can snap to: the playhead, the ends of the song, and
+// every other clip's edges across all channels.
+function studioSnapTargets(ch, exclude) {
+	var targets = [0, mixer['time']['position']];
+	if (mixer['time']['duration']) { targets.push(mixer['time']['duration']); }
+	$.each(mixer, function (c, m) {
+		if (!/^[0-9]+$/.test(c) || !m.media || !m.media.out) { return; }
+		m.media.out.forEach(function (take) {
+			if (!take || take === exclude) { return; }
+			targets.push(take.startTime);
+			targets.push(take.startTime + (take.duration || 0));
+		});
+	});
+	return targets;
+}
+
+function studioSnap(value, targets, threshold) {
+	var best = value;
+	var bestd = threshold;
+	targets.forEach(function (t) {
+		var d = Math.abs(t - value);
+		if (d < bestd) { bestd = d; best = t; }
+	});
+	return best;
 }
 
 function studioCanvasHit(canvas, clientX) {
@@ -444,11 +526,16 @@ function studioCanvasHit(canvas, clientX) {
 	var takes = (mixer[ch] && mixer[ch].media && mixer[ch].media.out) || [];
 	for (var i = takes.length - 1; i >= 0; i--) {
 		var take = takes[i];
-		if (!take) { continue; }
+		if (!take || take.status == 'recording') { continue; }
 		var end = take.startTime + (take.duration || 0);
-		if (t >= take.startTime && t <= end) {
-			var edge = ((end / duration) * rect.width) - x;
-			return { ch: ch, take: take, mode: (Math.abs(edge) < 8 && take.duration) ? 'trim' : 'move', tpp: tpp, x: clientX, startTime: take.startTime, startDur: take.duration || 0 };
+		if (t >= take.startTime - (6 * tpp) && t <= end + (6 * tpp)) {
+			var mode = 'move';
+			if (take.duration) {
+				if (Math.abs(x - (take.startTime / duration) * rect.width) < 8) { mode = 'trim-start'; }
+				else if (Math.abs(x - (end / duration) * rect.width) < 8) { mode = 'trim-end'; }
+			}
+			return { ch: ch, take: take, mode: mode, tpp: tpp, x: clientX, t: t,
+				startTime: take.startTime, startDur: take.duration || 0, startOffset: take.offset || 0 };
 		}
 	}
 	return null;
@@ -462,30 +549,94 @@ function studioRemoveTake(ch, take) {
 		if (take.track.parentNode) { take.track.parentNode.removeChild(take.track); }
 	}
 	media.out = media.out.filter(function (t) { return t !== take; });
-	// keep element ids matching the array positions the server stores by
-	media.out.forEach(function (t, i) { if (t && t.track) { t.track.id = 'studio_channel_' + ch + '_' + i; } });
+	studioReindexTakes(ch);
+	if (studioSelectedTake && studioSelectedTake.take === take) { studioSelectedTake = null; }
 	studioDrawChannel(ch);
 	studioSaver();
 }
 
+function studioReindexTakes(ch) {
+	var media = mixer[ch] && mixer[ch].media;
+	if (!media || !media.out) { return; }
+	// element ids must match the array positions the server stores files by
+	media.out.forEach(function (t, i) { if (t && t.track) { t.track.id = 'studio_channel_' + ch + '_' + i; } });
+}
+
+// Razor: cut a clip in two at timeline position t. Both halves share the source;
+// the right half is a new in-point into it.
+function studioSplitTake(ch, take, t) {
+	var media = mixer[ch] && mixer[ch].media;
+	if (!media || !media.out) { return null; }
+	var index = media.out.indexOf(take);
+	if (index == -1) { return null; }
+	var end = take.startTime + (take.duration || 0);
+	if (t <= take.startTime + 0.02 || t >= end - 0.02) { return null; }
+
+	var right = {
+		uuid: take.uuid || null,
+		startTime: t,
+		offset: (take.offset || 0) + (t - take.startTime),
+		duration: end - t,
+		status: 'stop',
+		src: take.src,
+		encoding: take.encoding
+	};
+	// A saved clip already has a server file, so both halves reference it. An
+	// unsaved clip has to carry its blob so both halves get uploaded.
+	if (!take.uuid) { right.data = take.data; }
+
+	var el = document.createElement('video');
+	el.className = 'studio_video';
+	el.style.display = 'none';
+	if (take.src) { el.src = take.src; }
+	$('#studio_track_container').append(el);
+	right.track = el;
+
+	take.duration = t - take.startTime;
+	media.out.splice(index + 1, 0, right);
+	studioReindexTakes(ch);
+	return right;
+}
+
 $(document).on('pointerdown', '.track', function (e) {
 	var hit = studioCanvasHit(this, e.originalEvent.clientX);
-	if (!hit) { return; }
+	if (!hit) {
+		studioSelectedTake = null;
+		studioDrawChannel(studioCanvasChannel(this));
+		return;
+	}
+	studioSelectedTake = { ch: hit.ch, take: hit.take };
 	studioTakeDrag = hit;
+	studioDrawChannel(hit.ch);
 });
 
 $(document).on('pointermove', function (e) {
 	if (!studioTakeDrag) { return; }
-	var dt = (e.originalEvent.clientX - studioTakeDrag.x) * studioTakeDrag.tpp;
-	var take = studioTakeDrag.take;
-	if (studioTakeDrag.mode == 'move') {
-		take.startTime = Math.max(0, studioTakeDrag.startTime + dt);
+	var d = studioTakeDrag;
+	var take = d.take;
+	var dt = (e.originalEvent.clientX - d.x) * d.tpp;
+	var targets = studioSnapTargets(d.ch, take);
+	var threshold = d.tpp * 7;
+
+	if (d.mode == 'move') {
+		take.startTime = Math.max(0, studioSnap(d.startTime + dt, targets, threshold));
 	}
-	else {
-		take.duration = Math.max(0.05, studioTakeDrag.startDur + dt);
+	else if (d.mode == 'trim-end') {
+		var maxDur = (take.track && isFinite(take.track.duration)) ? (take.track.duration - (take.offset || 0)) : Infinity;
+		var end = studioSnap(d.startTime + d.startDur + dt, targets, threshold);
+		take.duration = Math.max(0.05, Math.min(maxDur, end - take.startTime));
+	}
+	else if (d.mode == 'trim-start') {
+		var newStart = Math.min(d.startTime + d.startDur - 0.05, d.startTime + dt);
+		newStart = Math.max(0, studioSnap(newStart, targets, threshold));
+		var delta = newStart - d.startTime;
+		if (d.startOffset + delta < 0) { newStart = d.startTime - d.startOffset; delta = newStart - d.startTime; }
+		take.startTime = newStart;
+		take.offset = d.startOffset + delta;
+		take.duration = Math.max(0.05, d.startDur - delta);
 	}
 	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + (take.duration || 0));
-	studioDrawChannel(studioTakeDrag.ch);
+	studioDrawChannel(d.ch);
 	e.preventDefault();
 });
 
@@ -497,9 +648,31 @@ $(document).on('pointerup', function () {
 	studioSaver();
 });
 
+// double-click = razor cut at the clicked point
 $(document).on('dblclick', '.track', function (e) {
 	var hit = studioCanvasHit(this, e.originalEvent.clientX);
-	if (hit) { studioRemoveTake(hit.ch, hit.take); }
+	if (!hit) { return; }
+	studioSelectedTake = { ch: hit.ch, take: hit.take };
+	studioSplitTake(hit.ch, hit.take, hit.t);
+	studioDrawChannel(hit.ch);
+	studioSaver();
+});
+
+$(document).on('keydown', function (e) {
+	if (!studioSelectedTake) { return; }
+	var tag = (e.target.tagName || '').toLowerCase();
+	if (tag == 'input' || tag == 'textarea') { return; }
+	if (e.key == 'Delete' || e.key == 'Backspace') {
+		studioRemoveTake(studioSelectedTake.ch, studioSelectedTake.take);
+		e.preventDefault();
+	}
+	else if (e.key == 's' || e.key == 'S') {
+		var ch = studioSelectedTake.ch;
+		studioSplitTake(ch, studioSelectedTake.take, mixer['time']['position']);
+		studioDrawChannel(ch);
+		studioSaver();
+		e.preventDefault();
+	}
 });
 
 // ---- pedal / channel selection ---------------------------------------------
@@ -567,6 +740,8 @@ function studioInit(data) {
 			};
 			// fresh channel graphs, but keep the shared AudioContext
 			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {} };
+			studioSelectedTake = null;
+			studioTakeDrag = null;
 			$('#studio_track_container').html('');
 
 			var pd = $('#pedalboard');
@@ -636,6 +811,8 @@ function studioInit(data) {
 }
 
 $(document).on('click', '.studio_close_button', function() {
+	studioSelectedTake = null;
+	studioTakeDrag = null;
 	$('#soundroom_sidebar_container').html('').hide();
 	$('.cord').remove();
 });
@@ -796,8 +973,8 @@ function studioSaver() {
 		mixer[i].media.out.forEach(function(take, ir) {
 			if (!take) { return; }
 			song[i]['mixer'].out[ir] = {
-				uuid: take.uuid, startTime: take.startTime, duration: take.duration,
-				encoding: take.encoding, src: take.src
+				uuid: take.uuid, startTime: take.startTime, offset: take.offset || 0,
+				duration: take.duration, encoding: take.encoding, src: take.src
 			};
 		});
 	});
@@ -1156,7 +1333,7 @@ function studioStartTake(ch) {
 	el.style.display = 'none';
 	$('#studio_track_container').append(el);
 
-	var take = { startTime: Math.max(0, mixer['time']['position'] - studioRecordOffset()), duration: 0, status: 'recording', track: el };
+	var take = { startTime: Math.max(0, mixer['time']['position'] - studioRecordOffset()), offset: 0, duration: 0, status: 'recording', track: el };
 	media.out[ir] = take;
 
 	var mime = studioPickMime(!!media.video);
@@ -1585,8 +1762,8 @@ function studioLoad(uuid) {
 					var startTime = studioKnobNumber(vr['startTime'], 0);
 					var duration = studioKnobNumber(vr['duration'], 0);
 					mixer[i].media.out[ir] = {
-						uuid: vr['uuid'], startTime: startTime, duration: duration,
-						encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el
+						uuid: vr['uuid'], startTime: startTime, offset: studioKnobNumber(vr['offset'], 0),
+						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el
 					};
 					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);
 				});
@@ -1616,7 +1793,7 @@ function studioImport(files) {
 		el.style.display = 'none';
 		el.src = URL.createObjectURL(file);
 		$('#studio_track_container').append(el);
-		var take = { uuid: null, startTime: mixer['time']['position'] || 0, duration: 0, status: 'stop', track: el, data: file, encoding: file.type };
+		var take = { uuid: null, startTime: mixer['time']['position'] || 0, offset: 0, duration: 0, status: 'stop', track: el, data: file, encoding: file.type };
 		el.addEventListener('loadedmetadata', function() {
 			take.duration = el.duration || 0;
 			mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
