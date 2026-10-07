@@ -1430,6 +1430,60 @@ get '/manager/market' => sub($c) {
 	$c->render(json => { window => $window });
 };
 
+# Where does an item live? An explicit 'place' setting on the item wins, then
+# one on the app the transaction is being recorded in, then the app itself if
+# it is tagged as a place (pos=place). Returns '' when nothing resolves, and
+# callers treat that as "do not touch stock".
+sub warehouse_place_for($app,$item) {
+	foreach my $subject ( $item, $app ) {
+		next unless $subject;
+		my $s = &subs::db_query('select value from settings where app=? and setting=? limit 1', $subject, 'place')->hashes->[0];
+		return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
+	}
+	if ($app) {
+		my $pos = &subs::db_query('select value from settings where app=? and setting=? and value=? limit 1', $app, 'pos', 'place')->hashes->[0];
+		return $app if $pos;
+	}
+	return '';
+}
+
+# The shelf life (e.g. '3w') declared on an item's packaging, if any.
+sub warehouse_item_expires($item) {
+	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) } || {};
+	foreach my $p ( values %{$packaging} ) {
+		next unless ref $p eq 'HASH';
+		my $exp = $p->{'expires'};
+		return $exp if $exp && $exp ne '';
+	}
+	return '';
+}
+
+# Record a stock movement. Positive quantity puts stock in, negative takes it
+# out. Only called once a place is known, so stock never lands unplaced.
+sub warehouse_movement($d) {
+	my $item = $d->{'item'};
+	my $quantity = &subs::numeric_formatter($d->{'quantity'}) + 0;
+	return unless $item && $quantity != 0;
+	my $wdata = {
+		timestamp => $d->{'timestamp'} || &subs::rightNow(),
+		server_time => &subs::rightNow(),
+		item => $item,
+		model => $d->{'model'},
+		options => $d->{'options'},
+		uuid => &subs::random_string_creator(40),
+		quantity => $quantity,
+		unit => $d->{'unit'} || 'each',
+		place => $d->{'place'},
+		type => $d->{'type'} || 'stock',
+		account => $d->{'account'},
+		project => $d->{'project'},
+		warranty => $d->{'warranty'},
+		app_uuid => $d->{'app_uuid'}
+	};
+	&subs::db_insert('warehouse', $wdata);
+	return $wdata;
+}
+
 # Group warehouse rows for the warehouse app. The warehouse holds both money
 # and stock: a money row is one that names an account (or is denominated in a
 # currency measure), everything else is stock grouped by place, then item,
@@ -1450,7 +1504,8 @@ sub warehouse_grabber($opts) {
 	else {
 		$rows = &subs::db_select('warehouse')->hashes;
 	}
-	my $warehouse = { places => {}, accounts => {}, items => {} };
+	my $warehouse = { places => {}, accounts => {}, items => {}, expires => {}, latest => {} };
+	my %expires_cache;
 	foreach my $r ( @{$rows} ) {
 		my $unit = $r->{'unit'} || 'each';
 		my $qty = &subs::numeric_formatter($r->{'quantity'}) + 0;
@@ -1465,6 +1520,14 @@ sub warehouse_grabber($opts) {
 			my $place = ($r->{'place'} && $r->{'place'} ne '') ? $r->{'place'} : 'unplaced';
 			$warehouse->{'places'}->{$place}->{$item}->{$unit} = ($warehouse->{'places'}->{$place}->{$item}->{$unit} || 0) + $qty;
 			$warehouse->{'items'}->{$item}->{$place}->{$unit} = ($warehouse->{'items'}->{$item}->{$place}->{$unit} || 0) + $qty;
+			unless (defined $expires_cache{$item}) {
+				$expires_cache{$item} = &warehouse_item_expires($item);
+			}
+			if ($expires_cache{$item}) {
+				$warehouse->{'expires'}->{$item} = $expires_cache{$item};
+				my $ts = &subs::numeric_formatter($r->{'timestamp'}) + 0;
+				$warehouse->{'latest'}->{$item} = $ts if $ts > ($warehouse->{'latest'}->{$item} || 0);
+			}
 		}
 	}
 	return $warehouse;
@@ -1986,6 +2049,33 @@ sub quote_id_maker($quote) {
 	return $id;
 }
 
+# Move the stock a quote/invoice/sale represents through the warehouse. $sign
+# is +1 to apply the movement and -1 to reverse it (when the document is
+# deleted or moved back to a quote). Only fires when the item has a place.
+sub store_quote_stock($appt,$sign) {
+	return unless $appt && $appt->{'data'};
+	my $q = eval { return decode_json $appt->{'data'} } || {};
+	return unless $q->{'item'};
+	return unless ($q->{'movement'} eq 'income' || $q->{'movement'} eq 'expense');
+	my $place = &warehouse_place_for($appt->{'app'}, $q->{'item'});
+	return unless $place;
+	my $quantity = &subs::numeric_formatter($q->{'model'}->{'quantity'} || 1) + 0;
+	my $signed = ($q->{'movement'} eq 'income') ? -1 : 1;
+	foreach my $i ( split ',', $q->{'item'} ) {
+		next unless $i;
+		&warehouse_movement({
+			item => $i,
+			quantity => $quantity * $signed * $sign,
+			unit => $q->{'model'}->{'unit'},
+			place => $place,
+			model => $q->{'model'}->{'uuid'},
+			timestamp => $appt->{'timestamp'},
+			app_uuid => $appt->{'uuid'},
+			type => 'stock'
+		});
+	}
+}
+
 post '/store/quote/delete' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $cx_uuid = $c->param('cx_uuid');
@@ -1994,6 +2084,11 @@ post '/store/quote/delete' => sub($c) {
 	my $server_time = $c->param('server_time');
 	my $customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx_uuid })->hashes->[0];
 	my $data = { type => $type, app => $customer_s->{'app'}, uuid => $uuid };
+	# deleting a sale/invoice puts the stock back (or takes it back out)
+	if ($type eq 'invoice' || $type eq 'sale') {
+		my $appt = &subs::db_select('appointments', undef, $data)->hashes->[0];
+		&store_quote_stock($appt, -1);
+	}
 	&delete_app($customer_s->{'app'},$uuid,$server_time,'quote_delete');
 	$c->render(text => $data);
 };
@@ -2010,6 +2105,7 @@ post '/store/quote/move' => sub($c) {
 
 	my $data = { type => $type, app => $customer_s->{'app'}, uuid => $uuid };
 	my $appt = &subs::db_select('appointments', undef, $data)->hashes->[0];
+	my $was = $appt->{'type'};
 	if ($action eq 'invoice' && $appt->{'type'} eq 'quote') {
 		my $d = eval { return decode_json $appt->{'data'} };
 		$d->{'numbers'}->{'balance'} = $d->{'numbers'}->{'total'};
@@ -2020,6 +2116,14 @@ post '/store/quote/move' => sub($c) {
 	$appt->{'server_time'} = &subs::rightNow();
 	$appt->{'uuid'} = &subs::random_string_creator(25);
 	&subs::db_insert('appointments', $appt, $data);
+
+	# a quote becoming an invoice/sale moves stock; moving it back reverses
+	if ($was eq 'quote' && ($action eq 'invoice' || $action eq 'sale')) {
+		&store_quote_stock($appt, 1);
+	}
+	elsif (($was eq 'invoice' || $was eq 'sale') && $action eq 'quote') {
+		&store_quote_stock($appt, -1);
+	}
 
 	$c->render(text => 'ok');
 };
@@ -7975,6 +8079,32 @@ post '/manager/transaction/record' => sub($c) {
 			my $model_data = eval { return decode_json $model->{'inventory'} } || $gb::inventory_states;
 			my $new_quantity = ($model->{'inventory'} || 0) + $quantity;
 	#		&subs::db_query('update models set inventory=? where uuid=?', $new_quantity, $model->{'uuid'});
+		}
+
+		# move stock for the item(s) on this transaction: a sale (income) takes
+		# stock out, a purchase (expense) puts it in. Only when we know the place.
+		if ($item) {
+			my $place = &warehouse_place_for($app, $item);
+			if ($place) {
+				my $signed = ($movement eq 'income') ? -1 : 1;
+				my $q = &subs::numeric_formatter($quantity) + 0;
+				foreach my $i ( split ',', $item ) {
+					next unless $i;
+					&warehouse_movement({
+						item => $i,
+						quantity => $q * $signed,
+						unit => $unit,
+						place => $place,
+						model => $model->{'uuid'},
+						account => $account,
+						project => $project,
+						warranty => $warranty,
+						timestamp => $timestamp,
+						app_uuid => $uuid,
+						type => 'stock'
+					});
+				}
+			}
 		}
 	}
 	elsif ($movement eq 'transfer') {

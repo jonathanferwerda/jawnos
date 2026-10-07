@@ -7,7 +7,9 @@
 		<% } %>
 		<% foreach my $item ( sort keys %{$warehouse->{'items'}} ) { %>
 			<div class="warehouse_search_item" item="<%= $item %>">
-				<h3 class="warehouse_item hover" item="<%= $item %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item) %></h3>
+				<% my $expires = $warehouse->{'expires'}->{$item}; %>
+				<% my $expired = $expires && (&subs::rightNow() > &subs::ago_calc('-' . $expires, $warehouse->{'latest'}->{$item} || &subs::rightNow())); %>
+				<h3 class="warehouse_item hover<% if ($expired) { %> warehouse_expired<% } %>" item="<%= $item %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item) %><% if ($expired) { %> (expired)<% } %></h3>
 				<% foreach my $place ( sort keys %{$warehouse->{'items'}->{$item}} ) { %>
 					<span class="warehouse_search_place"><b><%= &subs::format_name($place) %>:</b>
 						<% foreach my $unit ( sort keys %{$warehouse->{'items'}->{$item}->{$place}} ) { %>
@@ -28,8 +30,10 @@
 				<h3><%= &subs::format_name($place) %></h3>
 				<% if (scalar keys %{$pitems} == 0) { %><i>(empty)</i><br><% } %>
 				<% foreach my $item ( sort keys %{$pitems} ) { %>
-					<span class="warehouse_item hover" item="<%= $item %>" place="<%= $place %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)">
-						<b><%= &subs::format_name($item) %></b>:
+					<% my $expires = $warehouse->{'expires'}->{$item}; %>
+					<% my $expired = $expires && (&subs::rightNow() > &subs::ago_calc('-' . $expires, $warehouse->{'latest'}->{$item} || &subs::rightNow())); %>
+					<span class="warehouse_item hover<% if ($expired) { %> warehouse_expired<% } %>" item="<%= $item %>" place="<%= $place %>" onclick="appointmentGrabber('<%= $item %>',<%= &subs::rightNow() %>)">
+						<b><%= &subs::format_name($item) %><% if ($expired) { %> (expired)<% } %></b>:
 						<% foreach my $unit ( sort keys %{$pitems->{$item}} ) { %>
 							<span class="warehouse_quantity"><%= &subs::numeric_formatter($pitems->{$item}->{$unit}) %><%= $unit %></span>
 						<% } %>

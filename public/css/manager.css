@@ -543,6 +543,16 @@ canvas { overflow: scroll; z-index: 99; }
 	background-color:lightgreen;
 }
 
+.warehouse_expired {
+	color: red;
+	text-decoration: line-through;
+}
+
+.warehouse_place_block, .warehouse_accounts, .warehouse_search_item {
+	border-bottom: 1px solid var(--ink-muted, #888);
+	padding: 4px;
+}
+
 .enabler.toggle[status=on] {
 	background-color: yellow;
 }
