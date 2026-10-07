@@ -156,10 +156,10 @@ To run
 
 ```
 sudo apt update; sudo apt upgrade;
-sudo apt install net-tools lib32z1-dev cpanminus \
+sudo apt install lib32z1-dev cpanminus \
 ssh espeak build-essential zip openssl libssl-dev \
 perl tesseract-ocr imagemagick sqlite3 sshpass \
-ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
+curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
 tmux weasyprint autossh net-tools ollama
 
 sudo cpanm --notest --force Mojolicious::Lite \
