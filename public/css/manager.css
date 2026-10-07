@@ -418,6 +418,16 @@ canvas { overflow: scroll; z-index: 99; }
 	border-radius: 5px;
 }
 
+/* a little bigger than the default .jonathan size, but leave the taskbar dock
+   (#start_apps, large_thumb) and other .jonathan users alone */
+#start_menu .jonathan,
+#start_menu .start_menu_main_display img,
+#start_menu .start_menu_menu {
+	height: 54px;
+	width: 54px;
+	max-width: 54px;
+}
+
 .appointment_option {
 	height: 50px;
 	width: 100%;

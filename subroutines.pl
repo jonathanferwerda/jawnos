@@ -29,6 +29,7 @@ use MIME::Parser;
 use Email::Stuffer;
 use Email::Sender::Transport::SMTP;
 use IO::Socket::UNIX;
+use IO::Select;
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
 use Sereal::Decoder qw(decode_sereal);
 use IPC::Open2;
@@ -525,7 +526,7 @@ sub unix_socket_sender() {
         if (!$socket->connected || !defined syswrite($socket, '', 0)) {
             $socket->close;
             undef $socket;
-            delete $cached_sockets->{$file};
+            delete $cached_sockets->{$cache_key};
         }
     }
 		if (!$socket) {
@@ -536,6 +537,18 @@ sub unix_socket_sender() {
 			$socket->autoflush(1);
 			$cached_sockets->{$cache_key} = $socket;
 		}
+		my $select = IO::Select->new($socket);
+
+		# Anything left unread from a previous transaction would desync the
+		# length-prefixed reply we are about to ask for, so drain the pipe first.
+		if ($rcv == 1) {
+			while ($select->can_read(0)) {
+				my $stale = '';
+				my $got = sysread($socket, $stale, 65536);
+				last unless $got;
+			}
+		}
+
 		my $jwsm           = $encoder->encode($data);
 		my $payload_length = length($jwsm);
 		my $packet         = pack('N', $payload_length) . $jwsm;
@@ -549,18 +562,23 @@ sub unix_socket_sender() {
 	#	print $socket $packet;
 
     if ($rcv == 1) {
-      # 1. Read header (4 bytes) safely
+      my $timeout = 5; # seconds to wait for any single chunk of the reply
+
+      # 1. Read header (4 bytes) safely, but never block forever
       my $response_header = '';
       while (length($response_header) < 4) {
+          die "Timed out reading reply header" unless $select->can_read($timeout);
           my $bytes_read = sysread($socket, $response_header, 4 - length($response_header), length($response_header));
 					die "Connection closed by remote side while reading header" if !$bytes_read;
 
       }
       my $incoming_length = unpack('N', $response_header);
+      die "Reply unreasonably large" if $incoming_length > 64 * 1024 * 1024;
 
-      # 2. Read the actual 4MB payload sequentially safely
+      # 2. Read the payload sequentially safely
       my $response_payload = '';
       while (length($response_payload) < $incoming_length) {
+          die "Timed out reading reply payload" unless $select->can_read($timeout);
           my $bytes_read = sysread($socket, $response_payload, $incoming_length - length($response_payload), length($response_payload));
 					die "Connection dropped mid-payload reading" if !$bytes_read;
 
@@ -655,16 +673,23 @@ sub subprocessor() {
 sub subprocess_tree_viewer() {
 	my $tmp_dir = &subs::home('~/.process_watch');
 	my $file = $tmp_dir;
-	my $returner = {};
+	my $returner = { data => {}, html => '' };
 
 	my $response_data = &subs::unix_socket_sender($file,{ 'query' => 'subprocesses' },1);
 
+	# The process list lives in the launcher (jawn); if it is busy or the reply is
+	# unreadable, fall back to an empty tree rather than breaking the whole
+	# system settings page.
+	return $returner unless ref $response_data eq 'HASH';
+
 	my $c = &subs::controller_builder(undef,{ cache => 'no' });
 	delete $response_data->{'status'};
-	my $html = $c->render_to_string(
-		template => 'configure/process_tree',
-		subprocesses => $response_data
-	);
+	my $html = eval {
+		$c->render_to_string(
+			template => 'configure/process_tree',
+			subprocesses => $response_data
+		);
+	} || '';
 
 	$returner = { data => $response_data, html => $html };
 
@@ -4208,6 +4233,16 @@ sub _hsl_to_hex {
 	elsif ($h < 300) { ($r, $g, $b) = ($x, 0, $c); }
 	else { ($r, $g, $b) = ($c, 0, $x); }
 	return sprintf('#%02X%02X%02X', map { int(($_ + $m) * 255 + 0.5) } ($r, $g, $b));
+}
+
+# Pick black or white ink to sit on top of an arbitrary background colour, so
+# appointment/name labels stay readable whatever colour the theme gives them.
+sub contrast_ink {
+	my ($bg) = @_;
+	return '#000000' unless defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/;
+	my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
+	return $lum < 0.5 ? '#ffffff' : '#000000';
 }
 
 # Render the CSS custom properties for a theme, given its background colour.

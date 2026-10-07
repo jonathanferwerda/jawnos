@@ -288,7 +288,10 @@ sub process_watch() {
 						#	}
 						}
 
-						$stream->write($process->{'uuid'}) if defined $process->{'uuid'} && $process->{'uuid'};
+						# Ordinary updates get no reply. A bare uuid write here used to pile up
+						# unread in the worker's socket and desync the next length-prefixed
+						# query reply (which is why the system settings page only sometimes
+						# loaded). Only queries are answered, always length-prefixed.
 					}
 
 

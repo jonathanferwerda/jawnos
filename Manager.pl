@@ -9388,6 +9388,9 @@ get '/manager/configure/system_list' => sub($c) {
 
 	my $evaluation = &subs::cache_get({ app => '__president', context => 'evaluation' }) || {};
 
+	my $last_restart = -e $duty_file ? read_file($duty_file) : &subs::rightNow();
+	$last_restart =~ s/\s+$// if defined $last_restart;
+
 	$settings->{$device}->{'stats'} = $stats;
 	$c->render(
 		template => '/configure/system_setting_list',
@@ -9395,7 +9398,7 @@ get '/manager/configure/system_list' => sub($c) {
 		local_storage => $local_storage,
 		evaluation => $evaluation,
 		settings => $settings,
-		last_restart => read_file($duty_file),
+		last_restart => $last_restart,
 		device => $device
 	);
 };
@@ -12481,7 +12484,7 @@ sub window_maker($type,$timestamp) {
 						<img class="medium_thumb jack droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/studio/jack.png">
 					</span>
 
-					<span class="name_text"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
+					<span class="name_text" style="color:' . &subs::contrast_ink($settings->{'colour'}) . ';"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
 					<span style="float:right;">
 
 						<span class="navbar_buttons" style="right:7px;">

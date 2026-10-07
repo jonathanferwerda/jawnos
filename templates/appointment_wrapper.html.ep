@@ -26,9 +26,10 @@
 			id="app_<%= $appts->{$a}->{'html_name'} %>" style="text-align:center;" navigation="<%= &subs::time_abbrev_translator($appts->{$a}->{'setting'}->{'navigation'}) %>">
 			<% if ($appts->{'__stash'}->{'header'} eq 'yes') { %>
 				<span style="" class="appointment_cell" id="<%= $appts->{$a}->{'html_name'} %>_cell" app="<%= $a %>">
-					<div style="font-size: 20px; background-color:<%= $appts->{$a}->{'setting'}->{'colour'} %>;" 
+					<% my $label_colour = $appts->{$a}->{'setting'}->{'colour'} || 'yellow'; %>
+					<div style="font-size: 20px; background-color:<%= $label_colour %>; color:<%= &subs::contrast_ink($label_colour) %>;" 
 						class="appointment_name" app="<%= $a %>" >
-						<span class="name_text" app="<%= $a %>" style="border-radius: 7%; border-width: 3px; border: solid; padding: 7px; background-color:<%= $appts->{$a}->{'setting'}->{'colour'} || 'yellow' %>;"><%= $appts->{$a}->{'formatted_name'} %></span>
+						<span class="name_text" app="<%= $a %>" style="border-radius: 7%; border-width: 3px; border: solid; padding: 7px; background-color:<%= $label_colour %>; color:<%= &subs::contrast_ink($label_colour) %>;"><%= $appts->{$a}->{'formatted_name'} %></span>
 					</div>
 				</span>
 			<% } %>

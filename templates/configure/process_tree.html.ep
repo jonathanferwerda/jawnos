@@ -29,7 +29,7 @@
 		<% } %>
 	<% end %>
 
-	<div id="subprocess_tree" style="background-color:lightblue;width:100%;">
+	<div id="subprocess_tree" style="background-color:var(--panel-2);width:100%;">
 		<h2>Subprocesses</h2>
 		<table style="width:100%;">
 			<% foreach my $pid ( sort keys %{$subprocesses} ) { %>

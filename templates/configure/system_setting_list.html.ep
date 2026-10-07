@@ -31,11 +31,11 @@
 				</tr>
 			<% } %>
 		</tbody>
-	</div>
+	</table>
 <% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
 
 	<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
-<% } elsif ($settings->{$device}->{'settings_list_view'} eq 'cache') { %>
+<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'cache') { %>
 
 	Anchor <input type="checkbox" class="anchor_all_settings" setting_type="sys">
 	<% foreach my $dt ( @gb::device_types ) { %>
