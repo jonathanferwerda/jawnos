@@ -770,6 +770,28 @@ $(function () { jawnosApplyInk(); });
 // open appointment windows and rebuilds the start-menu dock from their icons.
 function jawnosReloadIcons() {
 	try {
+		// The desktop's own buttons were rendered with the old set, and only the
+		// server knows where a path lives in the new one, so ask it for those
+		// paths again and swap the sources.
+		var nodes = $('[jawnos_icon]');
+		if (nodes.length > 0) {
+			var paths = [];
+			nodes.each(function () {
+				var p = $(this).attr('jawnos_icon');
+				if (p && paths.indexOf(p) == -1) { paths.push(p); }
+			});
+			$.ajax({
+				url: '/manager/icons',
+				type: 'GET',
+				data: { paths: JSON.stringify(paths) },
+				success: function (response) {
+					nodes.each(function () {
+						var p = $(this).attr('jawnos_icon');
+						if (response.icons && response.icons[p]) { $(this).attr('src', response.icons[p]); }
+					});
+				}
+			});
+		}
 		$('.wind').each(function () {
 			var app = $(this).attr('app');
 			if (!app) { return; }
@@ -784,6 +806,7 @@ function jawnosReloadIcons() {
 		if (typeof startMenuToggle === 'function' && $('#start_menu').is(':visible')) {
 			startMenuToggle({ source: 'icon_refresh' });
 		}
+		if (typeof startMenuListify === 'function') { startMenuListify(); }
 		if (typeof taskbarDisplayer === 'function') {
 			setTimeout(function () { taskbarDisplayer(); }, 1200);
 		}

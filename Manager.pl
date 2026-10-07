@@ -9364,6 +9364,19 @@ sub father_time($data) {
 }
 
 
+get '/manager/icons' => sub($c) {
+	# the desktop's own buttons are rendered with whichever icon set was active at
+	# the time, so when the set changes the browser asks what the new one calls
+	# each of the paths it is already showing
+	my $paths = eval { decode_json $c->param('paths') } || [];
+	my %icons;
+	foreach my $p ( @{$paths} ) {
+		next unless defined $p && $p =~ m{^/};
+		$icons{$p} = &subs::icon_for($p);
+	}
+	$c->render(json => { icons => \%icons });
+};
+
 post '/manager/configure/colour_update' => sub($c) {
 	# The theme stopped repainting appointments on its own, so this is the
 	# deliberate version of it, per device: colours that are no longer part of the
@@ -9378,7 +9391,9 @@ post '/manager/configure/colour_update' => sub($c) {
 		my $colour = &subs::theme_colour_grabber({ app => $app, existing => $row->{'value'}, device => $device });
 		$updated++ if defined $colour && lc($colour) ne lc($row->{'value'} || '');
 	}
-	# the desktop paints from a copy of its own, so ask it to read the colours again
+	# the desk top and the stored clothesline both paint from caches, so rebuild them
+	# the same way a single colour change does before telling the browsers to redraw
+	&subs::hang_to_dry() if $updated;
 	&Websocket::send('server', { console => 'if (typeof calculator === "function") { calculator(); }' }) if $updated;
 	$c->render(json => { updated => $updated, device => $device });
 };

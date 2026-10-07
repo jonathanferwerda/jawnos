@@ -232,13 +232,20 @@ html, body {
 	z-index:6000;
 }
 #top_right_buttons {
-	height: 30px;
+	height: 46px;
 	width: 320px;
 	text-align:right;
 	position:fixed;
 	right:0px;
 	top:2px;
 	z-index:6000;
+}
+/* The buttons here are all .little_thumb, but the now button carries a 3px border
+   and the rest 1px, so they render at different sizes and heights. border-box
+   counts the border into the 40px and vertical-align keeps their tops together. */
+#top_right_buttons img {
+	box-sizing: border-box;
+	vertical-align: top;
 }
 #bottom_left_buttons {
 	left:0px;
@@ -443,6 +450,30 @@ canvas { overflow: scroll; z-index: 99; }
 .start_menu_main_display {
 	display: block;
 	padding-top: 44px;
+}
+
+/* The app menu is a list: one icon and its name per row, instead of rows of icons
+   broken up with <br>. startMenuListify() in manager.js builds the rows, so these
+   rules only have to lay them out. */
+#start_menu .start_menu_item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 2px 8px;
+	cursor: pointer;
+	text-align: left;
+}
+#start_menu .start_menu_item:hover {
+	background-color: rgba(0,0,0,0.08);
+}
+#start_menu .start_menu_item img {
+	height: 40px;
+	width: 40px;
+	max-width: 40px;
+	object-fit: contain;
+}
+.start_menu_item_text {
+	font-size: 22px;
 }
 
 .appointment_option {

@@ -1063,6 +1063,7 @@ function startMenuToggle(data) {
 					console.log('in the start');
 					$('#start_menu').replaceWith(response.html);
 					$('#start_menu').show();
+					startMenuListify();
 					taskbarDisplayer();
 					st.attr('toggled', 'open');
 					startMenuCloser(35000);
@@ -1070,8 +1071,40 @@ function startMenuToggle(data) {
 			}
 		});
 	//	$('#search').focus();
+		}
 	}
+
+// The app menu ships as a wall of icons separated by <br>. Turn it into a list:
+// each icon keeps its id and classes (the click handlers hang off those) and gains
+// a text label from its hint, and the breaks in between go away. Runs on every
+// render of the menu, so it is safe to call again on the same markup.
+function startMenuListify() {
+	var main = $('.start_menu_main_display');
+	if (main.length == 0) { return; }
+	main.find('br').remove();
+	main.find('img').each(function () {
+		var img = $(this);
+		if (img.closest('.start_menu_item').length > 0) { return; }
+		// the leave and site-type buttons are absolutely placed in the top corner;
+		// wrapping them in a row would move them
+		if (/position\s*:\s*absolute/i.test(img.attr('style') || '')) { return; }
+		var label = img.attr('hint') || '';
+		// start_menu_list is what the other menus use for a row that closes the menu
+		var item = $('<span class="start_menu_item start_menu_list"></span>');
+		img.before(item);
+		item.append(img);
+		if (label) {
+			item.append($('<span class="start_menu_item_text"></span>').text(label));
+		}
+	});
 }
+// the name is part of the button: pressing it presses the icon next to it
+$(document).on('click', '.start_menu_item_text', function () {
+	$(this).siblings('img').trigger('click');
+});
+
+// the menu ships inside the page as well as over the socket, so do it once at load
+$(function () { startMenuListify(); });
 
 function startMenuCloser(wait) {
 	clearTimeout(startMenuTimeout);

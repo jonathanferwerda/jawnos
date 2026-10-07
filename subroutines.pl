@@ -3345,6 +3345,7 @@ sub setting_setter() {
 	}
 	elsif ($setting eq 'icon_set') {
 		# invalidate the shared caches across all workers
+		&icon_set_forget();
 		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ app => 'me', context => 'pseudonyms' });
 		&cache_delete({ context => 'template' });
@@ -4401,6 +4402,12 @@ sub icon_set() {
 	$icon_set_memo = $config->{'icon_set'} || '';
 	$icon_set_memo_time = $now;
 	return $icon_set_memo;
+}
+# Called when the icon set is changed, so the very next render already uses it
+# instead of waiting out the memo above.
+sub icon_set_forget {
+	$icon_set_memo = undef;
+	$icon_set_memo_time = 0;
 }
 
 # When the hand-drawn set is active, swap a public icon path for its original
