@@ -298,7 +298,11 @@ $(document).on('click', '.budget_app', function() {
 	var scope = localStorage.getItem('scope');
 	appointmentGrabber(app,timestamp);
 	var variables = { app: app, filter: filter, sorts: sorts, timeshift: '0d', time_machine: '', timestamp: timestamp, scope: scope };
+	var budgetAppAttempts = 0;
 	var budgetAppInterval = setInterval(function() {
+		budgetAppAttempts++;
+		// give up after 10s if the window never appears, so we don't poll forever
+		if (budgetAppAttempts > 50) { clearInterval(budgetAppInterval); return; }
 		var parent = $('.wind[app="' + app + '"]');
 		if (parent.length > 0) {
 			var container = parent.find('.re_details');
@@ -359,6 +363,11 @@ $(document).on('click', '.budget_autocalc', function() {
 			if ($('.wind[app="' + app + '"]').is(':visible')) {
 				inventoryDetails(app);
 			}
+		},
+		error: function() {
+			// stop the pulse if the autocalc request failed
+			button.addClass('medium_thumb').removeClass('little_thumb');
+			clearInterval(autoCalcInterval);
 		}
 	});
 });

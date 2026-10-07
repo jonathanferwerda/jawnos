@@ -351,6 +351,10 @@ function markerDragger(id,status) {
 						clearInterval(markerVideoInterval);
 					}
 					markerVideoInterval = setInterval(function() {
+						// stop mirroring if the video or the whiteboard went away, and
+						// don't draw offscreen while the tab is hidden
+						if (!document.body.contains(v) || !document.body.contains(wb[0])) { clearInterval(markerVideoInterval); return; }
+						if (document.hidden) { return; }
 						whiteboard_ctx.drawImage(v, 0, 0, white['width'], white['height']);
 					}, 1000 / fps);
 				}

@@ -1458,6 +1458,8 @@ async function studioInputStreamGrabber(channel,state) {
 
 	clearInterval(mixer[ch].media.in_analyzer_timeout);
 	mixer[ch].media.in_analyzer_timeout = setInterval(function() {
+		// metres are only worth drawing when they can be seen
+		if (document.hidden) { return; }
 		studioDrawChannel(ch);
 		studioDrawMetre(ch);
 	}, 40);

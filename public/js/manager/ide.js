@@ -187,10 +187,16 @@ $(document).on('click', '#ide_new_file_create', function() {
 		success: function(response) {
 			$('#alert').hide();
 			ideFolderSelector(idecwd);
+			var openerAttempts = 0;
 			var opener = setInterval(function() {
+				openerAttempts++;
 				var f = $('.ide_file[location="' + idecwd + '"][file="' + filename + '"]');
 				if (f.length > 0) {
-					$('.ide_file[location="' + idecwd + '"][file="' + filename + '"]').trigger('click');
+					f.trigger('click');
+					clearInterval(opener);
+				}
+				else if (openerAttempts >= 30) {
+					// give up after 15s so a file that never renders can't leak an interval
 					clearInterval(opener);
 				}
 			},500);

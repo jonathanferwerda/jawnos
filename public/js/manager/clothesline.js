@@ -180,14 +180,24 @@ function clotheslineScroller(x,y,diff,source) {
 		clothesLinePos['x'] = clothesLinePos['x'] + diff;
 		clotheslineHanger(wardrobe);
 		if (source != 'smoothScroll' && source != 'mousewheel') {
-			clearInterval(clothesLinePos['smoothScrolling']);
-			clothesLinePos['smoothScrolling'] = setInterval(function() {
-				if (Math.abs(diff) > 0.09) {
-					diff = diff * .97;
-					clotheslineScroller(x,y,diff,'smoothScroll')
+			// Glide to a stop on requestAnimationFrame instead of a 5ms interval:
+			// rAF is capped at the screen refresh rate and pauses while the tab is
+			// hidden. The decay is time-compensated so the glide feels the same at
+			// any frame rate.
+			cancelAnimationFrame(clothesLinePos['smoothScrolling']);
+			var last = undefined;
+			var glide = function(now) {
+				if (Math.abs(diff) <= 0.09) {
+					clothesLinePos['smoothScrolling'] = undefined;
+					return;
 				}
-				else { clearInterval(clothesLinePos['smoothScrolling']); }
-			},5);
+				if (last == undefined) { last = now; }
+				diff = diff * Math.pow(.97, (now - last) / 5);
+				last = now;
+				clothesLinePos['smoothScrolling'] = requestAnimationFrame(glide);
+				clotheslineScroller(x,y,diff,'smoothScroll');
+			};
+			clothesLinePos['smoothScrolling'] = requestAnimationFrame(glide);
 		}
 	}
 }

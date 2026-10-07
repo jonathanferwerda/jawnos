@@ -613,7 +613,10 @@ function jpViewAdjuster(streams) {
 	});
 	clearInterval(jpSmoothInterval);
 	jpSmoothInterval = setInterval(function() {
-		$('.jpSmoothStream').each(function(ir,vr) {
+		var streams = $('.jpSmoothStream');
+		// nothing left to watch - don't leave a timer running forever
+		if (streams.length == 0) { clearInterval(jpSmoothInterval); return; }
+		streams.each(function(ir,vr) {
 			var id = $(vr).attr('id');
 			var v = document.getElementById(id);
 			if (them['stats'][id] == v.currentTime) {
