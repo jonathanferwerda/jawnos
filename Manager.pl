@@ -18103,6 +18103,33 @@ get '/manager/update_database' => sub ($c) {
 };
 
 
+# A lot of the migration list below predates the schema, so on a database built from
+# database/schema.sql the column or index it wants to add is already there and
+# SQLite refuses the statement ("duplicate column name", "index ... already
+# exists"). Those refusals are warnings, not errors, so they never reached the eval
+# around the runner -- they just filled the log on every unlock, and a real failure
+# would have been one line among dozens. Statements that are already satisfied are
+# skipped now, and everything that still runs is worth looking at.
+sub migration_already_applied($command) {
+	if ($command =~ /^\s*alter\s+table\s+(\w+)\s+add\s+column\s+(\w+)/i) {
+		my ($table, $column) = ($1, $2);
+		return &subs::db_query('select 1 from pragma_table_info(?) where name=?', $table, $column)->hashes->[0] ? 1 : 0;
+	}
+	elsif ($command =~ /^\s*alter\s+table\s+(\w+)\s+drop\s+column\s+(\w+)/i) {
+		my ($table, $column) = ($1, $2);
+		# dropping a column that is already gone is just as old news
+		return &subs::db_query('select 1 from pragma_table_info(?) where name=?', $table, $column)->hashes->[0] ? 0 : 1;
+	}
+	elsif ($command =~ /^\s*create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?(\w+)/i) {
+		return &subs::db_query('select 1 from sqlite_master where type=? and name=?', 'index', $1)->hashes->[0] ? 1 : 0;
+	}
+	elsif ($command =~ /^\s*drop\s+table\s+(?:if\s+exists\s+)?(\w+)/i) {
+		# a table that is already gone (firewall) is the same kind of old news
+		return &subs::db_query('select 1 from sqlite_master where type=? and name=?', 'table', $1)->hashes->[0] ? 0 : 1;
+	}
+	return 0;
+}
+
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [
@@ -18236,6 +18263,7 @@ sub update_database($data) {
 	else {
 		my ($db,$database,$sql) = &subs::database_grabber();
 		foreach my $command (@{$commands}) {
+			next if &migration_already_applied($command);
 			eval { &subs::db_query($command) };
 		}
 		# Deliberately no pragma tuning here. The handle is shared by the whole
