@@ -23,6 +23,18 @@
 #include "FS.h"
 #include "FFat.h"
 
+// The file helpers at the bottom of this sketch; PlatformIO's .ino preprocessor
+// does not inject prototypes for them, the Arduino IDE does.
+void writeFile(fs::FS &fs, const char * path, const char * message);
+String readFile(fs::FS &fs, const char * path);
+void appendFile(fs::FS &fs, const char * path, const char * message);
+void createDir(fs::FS &fs, const char * path);
+void deleteFile(fs::FS &fs, const char * path);
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels);
+void listJsonDir(fs::FS &fs, const char * dirname, JSONVar &list);
+void saveFileToFolder(const char * folderPath, const char * fileName);
+String getContentType(String filename);
+
 // The current LilyGoLib keeps its board object in a global reference called
 // `instance` (LilyGoWatch2022 for the T-Watch S3). The rest of this sketch was
 // written against the old fork, which called it `watch`.

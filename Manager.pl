@@ -17299,7 +17299,7 @@ post '/manager/embedded/usb_upload' => sub($c) {
 	my $log = &subs::home('~/.jawnos_usb_upload.log');
 	my $project_path = Mojo::File->new($project)->to_abs_path;
 	Mojo::File->new($log)->spurt("usb upload to $port starting...\n");
-	my $command = 'cd ' . $project_path . ' && exec ' . $pio . ' run -e ' . $environment . ' -t upload --upload-port ' . $port;
+	my $command = 'cd ' . $project_path . ' && exec ' . $pio . ' run -j 4 -e ' . $environment . ' -t upload --upload-port ' . $port;
 	system("nohup sh -c '" . $command . "' > " . $log . " 2>&1 &");
 
 	$c->render(json => { started => 1, port => $port, project => $project });

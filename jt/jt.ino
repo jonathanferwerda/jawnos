@@ -37,6 +37,17 @@ using fs::FS;
 #define AA_FONT_LARGE NotoSansBold36
 PNG png;
 
+// The file helpers at the bottom of this sketch; PlatformIO's .ino preprocessor
+// does not inject prototypes for them, the Arduino IDE does.
+void writeFile(fs::FS &fs, const char * path, const char * message);
+String readFile(fs::FS &fs, const char * path);
+void appendFile(fs::FS &fs, const char * path, const char * message);
+void createDir(fs::FS &fs, const char * path);
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels);
+void deleteFile(fs::FS &fs, const char * path);
+void https_download(fs::FS &fs, String url, String filename);
+bool sd_tester();
+
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
 #define DEFAULT_COLOR               (lv_color_make(252, 218, 72))
