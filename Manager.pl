@@ -12172,9 +12172,10 @@ get '/manager/keyup_search' => sub($c) {
 
 		$search = '%' . $search . '%';
 		my ($db) = &subs::database_grabber();
-		# an app that has gallery appointments is a gallery album, and the dock's
-		# search is not the place for those
-		my $results = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and value = ? and app like ? and app not in (select app from appointments where account = ?) LIMIT 7', $device, 'visible','checked', $search, 'gallery')->hashes;
+		# an album in the gallery is an app too, and the dock's search is for apps,
+		# not for those. The gallery's own rule for an album is an app with image
+		# or video appointments, so that is the set left out here.
+		my $results = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and value = ? and app like ? and app not in (select distinct app from appointments where app is not null and file is not null and (type = ? or type = ?)) LIMIT 7', $device, 'visible','checked', $search, 'image', 'video')->hashes;
 		my $resulted = $c->render_to_string(template => 'search/manager', results => $results);
 
 		$c->render(json => { results => $resulted, count => scalar @{$results}, timestamp => $timestamp });
