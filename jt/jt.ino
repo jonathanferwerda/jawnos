@@ -52,6 +52,7 @@ static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
 #define DEFAULT_COLOR               (lv_color_make(252, 218, 72))
 #define MIC_I2S_SAMPLE_RATE         16000
+#define MIC_I2S_BITS_PER_SAMPLE     16
 #define MIC_I2S_PORT                I2S_NUM_1
 #define SPK_I2S_PORT                I2S_NUM_0
 #define VAD_SAMPLE_RATE_HZ          16000
@@ -183,6 +184,11 @@ void setupLvgl();
 // The keypad only gets registered when the keyboard answers; that can happen
 // after setup() has moved on, so loop() retries this.
 static void registerKeyboard();
+// voice notes: record to flash with the ES7210 mic array, play it back through
+// the speaker (buttons live next to the text box in the chat and pen rooms)
+static void micRecordToggle(lv_event_t *e);
+static void recordingPlay(lv_event_t *e);
+bool es7210Begin();
 static lv_obj_t *vad_btn_label;
 static uint32_t vad_detected_counter = 0;
 static TaskHandle_t vadTaskHandler;
@@ -795,6 +801,7 @@ void setup() {
   });
   deckLog("[deck] mic i2s init");
   setupMicrophoneI2S(MIC_I2S_PORT);
+  es7210Begin();
   deckLog("[deck] mic i2s up");
   tft.fillCircle(240, 120, 20, TFT_BLUE);
   tft.drawCircle(240, 120, 20, TFT_BLACK);
@@ -857,15 +864,21 @@ bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
     // Get version information
     startTimeout = millis() + stopWaitMs;
     Serial.print("Try to init L76K . Wait stop .");
-    while (SerialGPS.available()) {
-        Serial.print(".");
-        SerialGPS.readString();
-        if (millis() > startTimeout) {
-            Serial.println("Wait L76K stop NMEA timeout!");
-            return false;
-        }
+    // Drain with read(), not readString(): readString() only comes back when the
+    // line goes quiet (it waits up to its own timeout per byte), so a module
+    // that is talking at another baud rate - which is exactly what the u-blox
+    // here does once it has been configured for 38400 - feeds it garbage
+    // forever and the deadline check below it never gets a chance to run. This
+    // is the "GPS freezes the deck on boot" symptom, and it hangs the whole
+    // deck, including the retries from loop().
+    while (SerialGPS.available() && millis() < startTimeout) {
+        SerialGPS.read();
     };
     Serial.println();
+    if (millis() >= startTimeout) {
+        Serial.println("Wait L76K stop NMEA timeout!");
+        return false;
+    }
     SerialGPS.flush();
     delay(200);
 
@@ -2029,13 +2042,36 @@ static void roomInputBuild(const char *placeholder, int logTop, int logHeight) {
 
   room_input = lv_textarea_create(lv_scr_act());
   lv_obj_set_pos(room_input, 5, 158);
-  lv_obj_set_size(room_input, 310, 36);
+  lv_obj_set_size(room_input, 232, 36);
   lv_textarea_set_one_line(room_input, true);
   lv_textarea_set_placeholder_text(room_input, placeholder);
   lv_obj_add_event_cb(room_input, roomInputSend, LV_EVENT_READY, NULL);
   lv_group_t *group = lv_group_get_default();
   if (group) {
     lv_group_add_obj(group, room_input);
+    lv_group_focus_obj(room_input);
+  }
+
+  // a voice note next to the text box: record (toggles) and play
+  lv_obj_t *rec = lv_btn_create(lv_scr_act());
+  lv_obj_set_pos(rec, 242, 158);
+  lv_obj_set_size(rec, 36, 36);
+  lv_obj_add_event_cb(rec, micRecordToggle, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *rec_label = lv_label_create(rec);
+  lv_label_set_text(rec_label, "Rec");
+  lv_obj_center(rec_label);
+
+  lv_obj_t *play = lv_btn_create(lv_scr_act());
+  lv_obj_set_pos(play, 282, 158);
+  lv_obj_set_size(play, 33, 36);
+  lv_obj_add_event_cb(play, recordingPlay, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *play_label = lv_label_create(play);
+  lv_label_set_text(play_label, "Play");
+  lv_obj_center(play_label);
+
+  if (group) {
+    lv_group_add_obj(group, rec);
+    lv_group_add_obj(group, play);
     lv_group_focus_obj(room_input);
   }
   buttonMillis = millis();
@@ -4385,6 +4421,10 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
   tdm_cfg.slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
                      I2S_SLOT_MODE_STEREO,
                      (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3));
+  // four slots in one frame, not the two a stereo config would assume; without
+  // this the driver frames the ES7210's TDM output wrong (this is the same
+  // setting LilyGoLib's ES7210 bring-up uses)
+  tdm_cfg.slot_cfg.total_slot = 4;
   tdm_cfg.gpio_cfg.mclk = (gpio_num_t)BOARD_ES7210_MCLK;
   tdm_cfg.gpio_cfg.bclk = (gpio_num_t)BOARD_ES7210_SCK;
   tdm_cfg.gpio_cfg.ws = (gpio_num_t)BOARD_ES7210_LRCK;
@@ -4419,4 +4459,196 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
   xTaskCreate(vadTask, "vad", 8 * 1024, NULL, 12, &vadTaskHandler);
 #endif
 
+}
+
+// ---- voice notes: ES7210 mic array -> WAV on flash -> speaker -----------------
+// The shape of this is the watch's: write a 44 byte RIFF header, append the PCM
+// while recording, then patch the two size fields when it stops. What differs
+// is the hardware - the deck's microphone is an ES7210 wired for TDM with four
+// slots, so every frame in the I2S buffer is four 16 bit samples and MIC1 (the
+// first of them) becomes the mono track.
+String WAV_FILE_PATH = "/rec.wav";
+#define MIC_TDM_SLOTS        4
+#define MIC_TDM_FRAMES       512                               // frames per read
+#define MIC_TDM_BUFFER_BYTES (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
+static volatile bool isRecording = false;
+
+bool es7210Begin()
+{
+  Wire.beginTransmission(ES7210_ADDR);
+  if (Wire.endTransmission() != 0) {
+    deckLog("[mic] no ES7210 on the i2c bus");
+    return false;
+  }
+  audio_hal_codec_config_t cfg = {};
+  cfg.adc_input = AUDIO_HAL_ADC_INPUT_ALL;
+  cfg.codec_mode = AUDIO_HAL_CODEC_MODE_ENCODE;
+  cfg.i2s_iface.mode = AUDIO_HAL_MODE_SLAVE;
+  cfg.i2s_iface.fmt = AUDIO_HAL_I2S_DSP;      // four mics come out as TDM
+  cfg.i2s_iface.samples = AUDIO_HAL_16K_SAMPLES;
+  cfg.i2s_iface.bits = AUDIO_HAL_BIT_LENGTH_16BITS;
+  es7210_adc_init(&Wire, &cfg);               // sets slave mode, clocks and mics
+  es7210_adc_set_gain_all(GAIN_24DB);         // the library's own init uses 0 dB
+  es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE, AUDIO_HAL_CTRL_START);
+  deckLog("[mic] ES7210 up");
+  return true;
+}
+
+// 44 byte RIFF/WAVE header with zeroes where the sizes go
+bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_rate, uint16_t bits_per_sample) {
+  File new_audio_file = FFat.open(song_name, FILE_WRITE);
+  if (!new_audio_file) {
+    deckLog("[mic] cannot create %s", song_name);
+    return false;
+  }
+
+  uint8_t header[44] = {
+    'R', 'I', 'F', 'F',
+    0, 0, 0, 0,       // ChunkSize placeholder (updated later)
+    'W', 'A', 'V', 'E',
+    'f', 'm', 't', ' ',
+    16, 0, 0, 0,      // Subchunk1Size
+    1, 0,             // AudioFormat PCM
+    1, 0,             // Mono channel (1)
+    (uint8_t)(sampling_rate & 0xff), (uint8_t)((sampling_rate >> 8) & 0xff), 0, 0,
+    0, 0, 0, 0,       // ByteRate placeholder (updated later)
+    (uint8_t)((1 * bits_per_sample) / 8), 0, // BlockAlign
+    (uint8_t)bits_per_sample, 0,             // BitsPerSample
+    'd', 'a', 't', 'a',
+    0, 0, 0, 0        // Subchunk2Size placeholder (updated later)
+  };
+
+  new_audio_file.write(header, 44);
+  new_audio_file.close();
+  return true;
+}
+
+// rewrites header placeholders with the exact byte sizes after recording stops
+void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
+  File audio_file = FFat.open(song_name, "r+");
+  if (!audio_file) {
+    return;
+  }
+
+  uint32_t chunk_size = raw_pcm_bytes + 36;
+  uint32_t byte_rate = MIC_I2S_SAMPLE_RATE * 1 * (MIC_I2S_BITS_PER_SAMPLE / 8);
+
+  audio_file.seek(4);
+  audio_file.write((uint8_t *)&chunk_size, 4);
+  audio_file.seek(28);
+  audio_file.write((uint8_t *)&byte_rate, 4);
+  audio_file.seek(40);
+  audio_file.write((uint8_t *)&raw_pcm_bytes, 4);
+  audio_file.close();
+}
+
+static void micCaptureTask(void *pvParameters) {
+  if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
+    isRecording = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
+  if (!audio_file) {
+    deckLog("[mic] cannot append to %s", WAV_FILE_PATH.c_str());
+    isRecording = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  int16_t *buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES);
+  if (buf == NULL) {
+    deckLog("[mic] no buffer");
+    audio_file.close();
+    isRecording = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  // the channel has been enabled since boot and nobody read it, so drop what
+  // is sitting in the DMA and start from now
+  i2s_channel_disable(mic_rx_handle);
+  i2s_channel_enable(mic_rx_handle);
+
+  uint32_t written = 0;
+  uint32_t started_ms = millis();
+  uint32_t last_levels_ms = 0;
+  deckLog("[mic] recording to %s", WAV_FILE_PATH.c_str());
+
+  while (isRecording) {
+    size_t got = 0;
+    if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) != ESP_OK
+        || got < MIC_TDM_SLOTS * 2) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    int frames = got / (MIC_TDM_SLOTS * 2);
+
+    // once a second say how loud each channel is: the quickest way to tell
+    // which microphone the board actually has fitted
+    if (millis() - last_levels_ms > 1000) {
+      last_levels_ms = millis();
+      uint32_t sums[MIC_TDM_SLOTS] = {0, 0, 0, 0};
+      for (int i = 0; i < frames; i++) {
+        for (int c = 0; c < MIC_TDM_SLOTS; c++) {
+          int32_t v = buf[i * MIC_TDM_SLOTS + c];
+          sums[c] += (uint32_t)(v * v);
+        }
+      }
+      deckLog("[mic] levels %u %u %u %u",
+              (unsigned)sqrtf((float)sums[0] / frames), (unsigned)sqrtf((float)sums[1] / frames),
+              (unsigned)sqrtf((float)sums[2] / frames), (unsigned)sqrtf((float)sums[3] / frames));
+    }
+
+    // keep MIC1, which is the first slot of every frame
+    for (int i = 0; i < frames; i++) {
+      buf[i] = buf[i * MIC_TDM_SLOTS];
+    }
+    audio_file.write((uint8_t *)buf, frames * 2);
+    written += frames * 2;
+  }
+
+  audio_file.close();
+  free(buf);
+  uint32_t spent = millis() - started_ms;
+  finalize_wav_sizes(WAV_FILE_PATH.c_str(), written);
+  deckLog("[mic] captured %u bytes in %u ms (%u B/s, expect ~32000)",
+          (unsigned)written, (unsigned)spent,
+          spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0);
+  vTaskDelete(NULL);
+}
+
+static void micRecordToggle(lv_event_t *e) {
+  lv_obj_t *btn = lv_event_get_target_obj(e);
+  lv_obj_t *label = lv_obj_get_child(btn, 0);
+  if (isRecording) {
+    isRecording = false;      // the task closes the file and patches the sizes
+    lv_label_set_text(label, "Rec");
+    return;
+  }
+  if (audio.isRunning()) {
+    return;
+  }
+  isRecording = true;
+  lv_label_set_text(label, "Stop");
+  xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
+}
+
+static void recordingPlay(lv_event_t *e) {
+  if (isRecording) {
+    return;
+  }
+  if (!FFat.exists(WAV_FILE_PATH.c_str())) {
+    deckLog("[mic] nothing recorded yet");
+    return;
+  }
+  if (audio.isRunning()) {
+    audio.stopSong();
+    deckLog("[mic] playback stopped");
+    return;
+  }
+  audio.setVolume(volumeLevel);
+  deckLog("[mic] playing %s", WAV_FILE_PATH.c_str());
+  audio.connecttoFS(FFat, WAV_FILE_PATH.c_str());
 }
