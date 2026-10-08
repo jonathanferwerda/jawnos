@@ -1172,10 +1172,14 @@ function textareaUpgrader() {
 						$('#' + p_id).html(te);
 					});
 					$(document).on('keyup', '#' + p_id, function(e) {
-						$('#' + id).val($('#' + p_id).text());
-						if (e.keyCode == 186) {
-							textEditorMagic($('#' + p_id));
-						}
+						var box = $('#' + p_id);
+						$('#' + id).val(box.text());
+						if (e.keyCode != 186) { return; }
+						// ${vape}->duration; names the variable outright, so it is eaten
+						// without the wand; anything else waits to be asked for
+						var word = (box.text().match(/(\S+);$/) || [])[1] || '';
+						var named = /\$\{[^}\s]+\}->[A-Za-z0-9_]+$/.test(word) || /\$[A-Za-z_][A-Za-z0-9_]*->[A-Za-z0-9_]+$/.test(word);
+						textEditorMagic(box, named);
 					});
 
 					ta.hide();
@@ -1185,9 +1189,18 @@ function textareaUpgrader() {
 	});
 }
 
-$(document).on('focus mousemove click', '.text_editor_container', function(e) {
+// The toolbox is shown once the editor is being used, not on hover: a toolbar
+// that appears under a moving pointer is a button pressed by accident.
+$(document).on('focus click', '.text_editor_container', function(e) {
 	var source_id = $(this).attr('source_id');
 	$('.text_editor_toolbox[source_id="' + source_id + '"]').show();
+});
+
+// A click on the padding or the toolbox row is a click meant for the text.
+$(document).on('click', '.text_editor_container', function(e) {
+	if ($(e.target).closest('.text_editor_toolbox').length == 0 && !$(e.target).closest('.text_editor').length) {
+		$(this).find('.text_editor').focus();
+	}
 });
 
 $(document).on('blur', '.text_editor_container', function(e) {
@@ -1223,14 +1236,14 @@ $(document).on('click', '.teb_style', function() {
 	$(this).attr('status', status);
 });
 
-function textEditorMagic(dom) {
+function textEditorMagic(dom, force) {
 	var text = dom.html();
 	var id = dom.attr('id');
 	var container = dom.closest('.text_editor_container');
 	var toolbox = container.find('.text_editor_toolbox');
 	var wand = toolbox.find('.teb_style[utility="magic_wand"]');
 	var source_id = dom.attr('source_id');
-	if (wand.attr('status') == 'on') {
+	if (wand.attr('status') == 'on' || force) {
 
 		var data = { method: 'textAreaMagic', text: text, id: id, source_id: source_id };
 

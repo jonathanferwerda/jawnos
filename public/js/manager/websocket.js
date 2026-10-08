@@ -422,37 +422,25 @@ function wsMessageHandler(event) {
 		else if (data['textAreaMagic']) {
 			var d = data['textAreaMagic'];
 			var ta = $('#' + d.id);
-			var tas = document.getElementById(d.id);
-			var gs = window.getSelection();
-			var cursorPosition = gs.getRangeAt(0).startOffset;
 			ta.html(d.text);
-			var newPos = numeral(cursorPosition + d.char_count - d.new_char_count).value();
-
-			function setCursorAtOffset(el, offset) {
-				el.focus();
-				const range = document.createRange();
-				const sel = window.getSelection();
-
-				// Target the actual text node inside the div
-				const textNode = el.childNodes[0]; 
-
-				if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-						// Ensure offset doesn't exceed text length
-						const validOffset = Math.min(offset, textNode.length);
-						range.setStart(textNode, validOffset);
-						range.collapse(true);
-						
-						sel.removeAllRanges();
-						sel.addRange(range);
+			// whatever reads the hidden textarea behind the editor keeps up with
+			// what was eaten
+			var source = $('#' + ta.attr('source_id'));
+			if (source.length) { source.val(ta.text()); }
+			// the server names the spans it wrote, so the caret can be put after
+			// the last of them instead of guessing where the word used to be
+			if (d.token) {
+				var eaten = ta.find('span[te_token="' + d.token + '"]').last()[0];
+				if (eaten) {
+					var range = document.createRange();
+					range.setStartAfter(eaten);
+					range.collapse(true);
+					var sel = window.getSelection();
+					ta.focus();
+					sel.removeAllRanges();
+					sel.addRange(range);
 				}
 			}
-
-			// Usage: Places cursor after the 5th character
-			setCursorAtOffset(tas, newPos);
-
-
-
-
 		}
 		if (data['appts']) {
 

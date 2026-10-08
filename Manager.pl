@@ -26,7 +26,7 @@ use List::Util qw(shuffle);
 plugin 'RenderFile';
 
 use Data::Dumper;
-use Mojo::Util qw/md5_sum html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
+use Mojo::Util qw/md5_sum html_unescape xml_escape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use File::Find;
 use File::Slurp;
 use File::Type;
@@ -19998,6 +19998,46 @@ sub remote_machine_online($data) {
 
 our $ws_server;
 
+# Fill in the variables a text editor says: ${vape}->duration; becomes the
+# setting itself, shown as an illusion that remembers what was written, so a
+# click hands the words back. The name may wear braces and a dollar or neither
+# - ${vape}->duration, $vape->duration and vape->duration all name the same app
+# and setting, read the way the manager reads names. The text arrives as the
+# browser serialised it, where an arrow may already be -&gt;. A word whose
+# setting does not exist is left exactly as it was written, never eaten. The
+# whole text comes back with the token its spans wear, so the caret can be put
+# back after the last one; the token is undefined when nothing was found.
+sub text_area_magic($text) {
+	my $token = &subs::random_string_creator(10);
+	my $found = 0;
+	my $magic = $text;
+	$magic =~ s!
+		(
+			\$\{[^}&\n]+\}                       # ${vape}
+			| \$?[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*   # $vape or vape
+		)
+		(?:-&gt;|->)([A-Za-z0-9_]+);
+	!
+		my ($raw_app,$raw_set,$whole) = ($1,$2,$&);
+		my $app = $raw_app;
+		$app =~ s/^\$\{//; $app =~ s/\}$//; $app =~ s/^\$//;
+		my $value = &subs::setting_grabber({
+			app => &subs::unformat_name($app),
+			setting => &subs::unformat_name($raw_set)
+		});
+		unless (defined $value) {
+			$whole;
+		}
+		else {
+			$found++;
+			my $shown = xml_escape $value;
+			my $said = xml_escape html_unescape $whole;
+			'<span class="text_editor_illusion" te_token="' . $token . '" original="' . $said . '" trick="' . $shown . '" displaying="trick">' . $shown . '</span>';
+		}
+	!gex;
+	return ($magic, $found ? $token : undef);
+}
+
 websocket '/manager/ws' => sub ($c) {
 	my $ug    = Data::UUID->new;
 	my $uuid = $ug->create_str();
@@ -20315,26 +20355,11 @@ websocket '/manager/ws' => sub ($c) {
 			&subs::music_transmitter($c, $data);
 		}
 		elsif ($data->{'method'} eq 'textAreaMagic') {
-			$data->{'text'} = html_unescape $data->{'text'};
-			my @words = split ' ', $data->{'text'};
-			foreach my $w ( @words ) {
-				if ($w =~ /->/gi) {
-					if ($w =~ /[;]$/gi) {
-						my $ow = $w;
-						my @char_count = split '', $ow;
-						$data->{'char_count'} = scalar @char_count;
-						$w =~ s/;$//gi;
-						my @variable = split /->/, $w;
-						my $vapp = &subs::unformat_name($variable[0]);
-						my $vset = &subs::unformat_name($variable[1]);
-						my $new = &subs::setting_grabber({ app => $vapp, setting => $vset });
-						my $result = '<span class="text_editor_illusion" original="' . $ow . '" trick="' . $new . '" displaying="trick">' . $new . '</span>';
-						@char_count = split '', $result;
-						$data->{'new_char_count'} = scalar @char_count;
-						$data->{'text'} =~ s/\Q$ow/$result/gi;
-						&Websocket::send('tab', { textAreaMagic => $data });
-					}
-				}
+			my ($magic,$token) = &text_area_magic($data->{'text'});
+			if (defined $token) {
+				$data->{'text'} = $magic;
+				$data->{'token'} = $token;
+				&Websocket::send('tab', { textAreaMagic => $data });
 			}
 		}
 		else {
