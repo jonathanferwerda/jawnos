@@ -1102,6 +1102,9 @@ function startMenuListify() {
 		if (label) {
 			item.append($('<span class="start_menu_item_text"></span>').text(label));
 		}
+		// the X takes the app back off the recent list; startMenuView() shows
+		// it only over the recents, and the row press steps aside for it
+		item.append('<span class="start_menu_recent_clear" hint="Forget">✕</span>');
 	});
 	startMenuSort(main);
 	startMenuView();
@@ -1126,18 +1129,19 @@ $(document).on('click', '.start_menu_item_text', function () {
 // and so is the padding around them: a tap anywhere on the row opens the app,
 // rather than landing on the gap and only closing the menu
 $(document).on('click', '.start_menu_item', function (e) {
+	if ($(e.target).closest('.start_menu_recent_clear').length > 0) { return; }
 	startMenuUseRecord($(this));
 	if ((e.target.tagName || '').toUpperCase() == 'IMG') { return; }
 	if ($(e.target).hasClass('start_menu_item_text')) { return; }
 	$(this).find('img').first().trigger('click');
 });
 
-// What the app menu remembers: the last use of each app and the shelf it is
-// showing, both in localStorage the way the menu button is. The list leads
-// with the used-lately apps, freshest first; an app never pressed keeps its
-// alphabetical place below them, so a fresh browser still sees everything.
-// A press on the shelf that is showing puts the recents back.
-var startMenuRecentKey = 'start_menu_recent';
+// What the app menu remembers: the apps opened from it, freshest first, kept
+// in the president's cache and riding on the list as its recent attribute -
+// the list IS the recent list, and the shelf rail is how everything else is
+// reached. A press writes the app back, through the server and into the
+// attribute so the view agrees without waiting; the shelf showing is a local
+// preference, remembered the way the menu button is.
 var startMenuCategoryKey = 'start_menu_category';
 
 function startMenuRowKey(item) {
@@ -1150,25 +1154,38 @@ function startMenuRowCategory(item) {
 }
 
 function startMenuRecent() {
-	var recent = {};
-	try { recent = JSON.parse(localStorage.getItem(startMenuRecentKey)) || {}; } catch (e) { recent = {}; }
-	return recent;
+	var said = $('.start_menu_main_display').attr('recent') || '';
+	return said.length ? said.split(',') : [];
 }
 
 function startMenuUseRecord(item) {
 	var key = startMenuRowKey(item);
 	if (!key) { return; }
-	var recent = startMenuRecent();
-	recent[key] = Date.now();
-	// only the freshest handful are worth remembering
-	var keys = Object.keys(recent).sort(function (a, b) { return recent[b] - recent[a]; });
-	$.each(keys.slice(40), function (i, k) { delete recent[k]; });
-	try { localStorage.setItem(startMenuRecentKey, JSON.stringify(recent)); } catch (e) {}
+	var recent = $.grep(startMenuRecent(), function (k) { return k !== key; });
+	recent.unshift(key);
+	$('.start_menu_main_display').attr('recent', recent.join(','));
+	$.ajax({ url: '/manager/start_menu/used', type: 'POST', data: { used: key } });
+}
+
+// The X on a recent item forgets the app: it must not open it, so the press
+// is stopped here, the list is rewritten without the key and the view shows
+// the row gone.
+$(document).on('click', '.start_menu_recent_clear', function (e) {
+	e.stopPropagation();
+	startMenuForget(startMenuRowKey($(this).closest('.start_menu_item')));
+});
+
+function startMenuForget(key) {
+	if (!key) { return; }
+	var recent = $.grep(startMenuRecent(), function (k) { return k !== key; });
+	$('.start_menu_main_display').attr('recent', recent.join(','));
+	$.ajax({ url: '/manager/start_menu/forget', type: 'POST', data: { forget: key } });
+	startMenuView();
 }
 
 // The shelf showing narrows the list to its own, kept alphabetical; otherwise
-// the used-lately lead, freshest first, and the never-pressed keep the
-// alphabetical order the list was built in.
+// the list is the recents, freshest first, and the note stands in their place
+// until a press has filled it.
 function startMenuView() {
 	var main = $('.start_menu_main_display');
 	if (main.length == 0) { return; }
@@ -1183,18 +1200,21 @@ function startMenuView() {
 		});
 	}
 	else {
-		var recent = startMenuRecent();
-		var order = rows.get();
-		var place = new Map();
-		$.each(order, function (i, row) { place.set(row, i); });
-		order.sort(function (a, b) {
-			var ar = recent[startMenuRowKey($(a))] || 0;
-			var br = recent[startMenuRowKey($(b))] || 0;
-			if (ar == br) { return place.get(a) - place.get(b); }
-			return br - ar;
+		var rank = new Map();
+		$.each(startMenuRecent(), function (i, key) {
+			if (!rank.has(key)) { rank.set(key, i); }
 		});
+		var order = [];
+		rows.each(function () {
+			if (rank.has(startMenuRowKey($(this)))) { order.push(this); }
+			else { $(this).hide(); }
+		});
+		order.sort(function (a, b) { return rank.get(startMenuRowKey($(a))) - rank.get(startMenuRowKey($(b))); });
 		$(order).appendTo(main);
 	}
+	var shown = rows.filter(function () { return $(this).css('display') != 'none'; }).length;
+	main.find('.start_menu_empty').toggle(!category && shown == 0);
+	rows.find('.start_menu_recent_clear').toggle(!category);
 	$('.start_menu_category').removeClass('selected');
 	$('.start_menu_category[category="' + category + '"]').addClass('selected');
 }

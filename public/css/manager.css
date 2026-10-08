@@ -495,9 +495,10 @@ canvas { overflow: scroll; z-index: 99; }
 
 /* The app menu wears a shelf rail on its left: the five categories filter the
    list beside it, and the shelf showing wears the same .selected the menu
-   buttons do. The list leads with what was used lately (startMenuView() in
-   manager.js orders it), so the rail is the way to a shelf the recents have
-   not reached; a press on the showing shelf brings the recents back. */
+   buttons do. The list is the recent list - startMenuView() in manager.js
+   fills it from the list's recent attribute, which every press writes back -
+   so the rail is how everything else is reached, and a press on the showing
+   shelf brings the recents back. */
 .start_menu_app_menu {
 	display: flex;
 	align-items: flex-start;
@@ -527,6 +528,30 @@ canvas { overflow: scroll; z-index: 99; }
 .start_menu_app_menu .start_menu_main_display {
 	flex: 1 1 auto;
 	min-width: 0;
+}
+
+/* Until a press fills the recent list the note stands where the rows will;
+   startMenuView() toggles it, and it never shows over a shelf. */
+#start_menu .start_menu_empty {
+	display: block;
+	padding: 18px 12px;
+	color: var(--ink-muted, #666);
+	font-size: clamp(15px, 4vw, 19px);
+}
+
+/* The X on a recent item takes the app back off the list; it shows only over
+   the recents, never over a shelf. */
+#start_menu .start_menu_recent_clear {
+	flex: 0 0 auto;
+	color: #cc0000;
+	font-size: 18px;
+	line-height: 1;
+	padding: 4px 8px;
+	cursor: pointer;
+	opacity: 0.75;
+}
+#start_menu .start_menu_recent_clear:hover {
+	opacity: 1;
 }
 
 .appointment_option {

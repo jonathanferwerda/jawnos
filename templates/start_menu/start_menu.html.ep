@@ -48,13 +48,19 @@
 				media => '/images/make believe/music.png',
 				system => '/images/decipherable/gear.png'
 			}; %>
+			<%# the menu is fetched with the list; the pre-rendered include carries no
+			    recent key, so it is read from the stash rather than a bare name %>
+			<% my $recent = $c->stash('recent') || []; %>
 			<span class="start_menu_app_menu">
 				<span class="start_menu_categories">
 					<% foreach my $category ( sort keys %{$category_icons} ) { %>
 						<img class="start_menu_category hover" category="<%= $category %>" hint="<%= &subs::format_name($category) %>" src="<%= &subs::icon_path($category, $category_icons->{$category}) %>">
 					<% } %>
 				</span>
-				<span class="start_menu_main_display">
+				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>">
+					<%# the app menu is the recent list; until a press fills it, the note
+					    stands where the rows will - startMenuView() toggles it %>
+					<span class="start_menu_empty" style="display:none;">No recent apps yet - the ones you open from here land here</span>
 					<img class="jonathan" category="system" src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folders" id="folders_toggle"></img>
 				<img class="jonathan" category="business" src="<%= &subs::icon_for('/images/decipherable/chart.png') %>" hint="Budget" id="budget"></img>
 				<img id="travel_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/aeroplane.png') %>" hint="Travel" class="jonathan gps"></img>

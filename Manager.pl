@@ -4754,6 +4754,59 @@ get '/manager/start_menu' => sub($c) {
 	$c->render(json => $start_menu);
 };
 
+# A press in the app menu says what it opened, and the recent list - the app
+# menu's front page - is written from it, so the next open leads with it.
+post '/manager/start_menu/used' => sub($c) {
+	my $recent = &start_menu_used($c->param('used'));
+	$c->render(json => { recent => $recent });
+};
+
+# The X on a recent item takes the app back off the list, which is only ever
+# the cache rewritten without it.
+post '/manager/start_menu/forget' => sub($c) {
+	my $recent = &start_menu_forget($c->param('forget'));
+	$c->render(json => { recent => $recent });
+};
+
+# The apps the start menu was last used to open, freshest first. The app menu
+# is a recent list and the shelf rail is how everything else is reached, so
+# it lives in the president's cache like the htop snapshot; cache entries are
+# per device, so each screen keeps its own list.
+sub start_menu_recent() {
+	my $recent = &subs::cache_get({ app => '__president', context => 'start_menu', subcontext => 'recent' });
+	return [ ref $recent eq 'ARRAY' ? @{$recent} : () ];
+}
+
+# A press's key is the button's id, or its hint when it has none. It is a
+# cache value that the list renders back into the page, so the press and the
+# forget both cut it down to plain words first.
+sub start_menu_key_clean($key) {
+	$key =~ s/[^A-Za-z0-9 _\-]//g;
+	$key =~ s/^\s+//; $key =~ s/\s+$//;
+	return substr($key, 0, 60);
+}
+
+# The freshest ten are kept.
+sub start_menu_used($key) {
+	$key = &start_menu_key_clean($key);
+	return &start_menu_recent() unless length $key;
+	my $recent = &start_menu_recent();
+	@{$recent} = grep { $_ ne $key } @{$recent};
+	unshift @{$recent}, $key;
+	pop @{$recent} while scalar @{$recent} > 10;
+	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent' }, $recent);
+	return $recent;
+}
+
+# What the X on an item asks for: the app leaves the list, whatever its place.
+sub start_menu_forget($key) {
+	$key = &start_menu_key_clean($key);
+	return &start_menu_recent() unless length $key;
+	my $recent = [ grep { $_ ne $key } @{ &start_menu_recent() } ];
+	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent' }, $recent);
+	return $recent;
+}
+
 sub start_menu_maker($c) {
 	my $fingerprint = 0;
 	my $returner = {};
@@ -4787,7 +4840,8 @@ sub start_menu_maker($c) {
 			parking_lot => &parking_lot_grabber($c),
 			config => &subs::config_reader(),
 			padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
-			menu => $menu
+			menu => $menu,
+			recent => &start_menu_recent()
 		);
 		# Static files carry no Cache-Control, so browsers cached the icons
 		# heuristically and kept showing stale ones. Version the local images
