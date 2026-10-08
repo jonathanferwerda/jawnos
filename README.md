@@ -17,8 +17,13 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 
 ## Features
 
-- **Files & media** — browse folders, play video and audio, and view photos through an
-  on-the-fly thumbnailer with a disk cache.
+- **Files & media** — browse folders with a full right-click menu (new file and folder,
+  rename, open, open with, copy/cut/paste, delete, shred, archive, properties), play video
+  and audio, and view photos through an on-the-fly thumbnailer with a disk cache. Files can
+  be sealed — encrypted with your suds under a name of their own — and opened again from the
+  same menu, with the long jobs running in the background and showing their progress. A move,
+  sealing, opening or deletion carries the appointments, mail attachments and store entries
+  that named the file along with it.
 - **Music & studio** — a multitrack studio with takes, crossfades, waveform clips and a
   pedalboard routed onto channels, alongside the synth and the music player.
 - **Appointments & scheduling** — a full calendaring system with alarms, recurring
@@ -283,8 +288,10 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 ## Status
 
 JawnOS is a work in progress. It ships with ten selectable icon sets and hover/long-press hints
-throughout the interface; the original hand-drawn icons are still the default. The warehouse and
-the marker have had most of the attention lately, along with battery use on phones.
+throughout the interface; the original hand-drawn icons are still the default. The folders app
+has had most of the attention lately — the right-click menu now does everything it lists, and
+files can be sealed and opened — along with the warehouse, the marker and battery use on
+phones.
 
 ## License
 
