@@ -35,7 +35,6 @@ my $dump_dir = &home('~/.president');
 `rm -R $dump_dir/*` if -e $dump_dir;
 `mkdir $dump_dir` unless -e $dump_dir;
 my $subprocesses = {};
-my @all_subprocesses;
 our $logfile = &home('~/manager.log');
 
 `touch $logfile` if not -e $logfile;
@@ -213,7 +212,6 @@ sub shut_down() {
 		}
 	}
 	$subprocesses = {};
-	@all_subprocesses;
 	sleep .1;
 
 }
