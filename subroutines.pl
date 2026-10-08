@@ -3070,6 +3070,10 @@ sub archive_destination {
 	return { error => 'unknown location' } unless grep { $_ eq $location } &location_types();
 	my $root = $data->{'root'} || &archive_root();
 	return { error => 'no archive_dir on this machine' } unless $root;
+	# the root is usually a mounted drive, so a drive that has not come up has
+	# to fail the transfer rather than have its folders invented on the disk
+	# below it
+	return { error => 'archive root is not there' } unless -d $root;
 	my $relative = defined $data->{'path'} ? $data->{'path'} : '';
 	$relative =~ s{\\}{/}g;
 	my @parts;
