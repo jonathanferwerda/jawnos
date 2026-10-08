@@ -8748,6 +8748,7 @@ sub inventory_details($c,$settings) {
 		&subs::setting_setter({ app => $app, setting => 's_display', value => 'occurences'});
 		$settings->{'s_display'} = 'occurences';
 	}
+	my $s_display = $settings->{'s_display'};
 	$settings->{'s_movement'} = eval { decode_json $settings->{'s_movement'} } || ['all'];
 	$appts = &subs::db_query('select * from appointments where app = ? or model = ? order by timestamp', $app, $app)->hashes;
 	my $movements = [ 'all' ];
@@ -8845,7 +8846,7 @@ sub inventory_details($c,$settings) {
 		app => $app,
 		budget_status => {},
 	};
-	my $bmt = scalar grep { $_ eq $settings->{'s_display'} } keys %{$gb::budget_modes};
+	my $bmt = scalar grep { $_ eq $s_display } keys %{$gb::budget_modes};
 	# duration_sayer re-parses and re-formats its argument on every call, but the
 	# window loops ask for the same handful of values thousands of times
 	my %duration_sayer_cache;
@@ -8893,7 +8894,7 @@ sub inventory_details($c,$settings) {
 				}
 			}
 			$a->{'duration'} = abs $a->{'duration'};
-			if (($settings->{'s_display'} eq 'total') && ($a->{'total'} == 0 || $a->{'total'} == undef)) {
+			if (($s_display eq 'total') && ($a->{'total'} == 0 || $a->{'total'} == undef)) {
 				next;
 			}
 			if ($settings->{'s_visual'} eq 'historical' || $settings->{'s_visual'} eq '') {
@@ -8907,7 +8908,7 @@ sub inventory_details($c,$settings) {
 						if ($a->{'measures'} && $bmt == 0 ) {
 
 							foreach my $measure ( @{$a->{'measures'}} ) {
-								unless ($measure->{$settings->{'s_display'}} || $measure->{$settings->{'s_display'}} == 0) {
+								unless ($measure->{$s_display} || $measure->{$s_display} == 0) {
 									last;
 								}
 								foreach my $mk ( grep { $_ ne 'uuid' } keys %{$measure} ) {
@@ -8916,7 +8917,7 @@ sub inventory_details($c,$settings) {
 										$measure->{'timestamp'} = $measure->{'ts'};
 										delete $measure->{'ts'};
 									}
-									if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} > $temp_timestamp) && $settings->{'s_display'} eq $mk) {
+									if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} > $temp_timestamp) && $s_display eq $mk) {
 
 										unless ($appt_uuids{$measure->{'uuid'}}) {
 											my $new_measure = {
@@ -8934,7 +8935,7 @@ sub inventory_details($c,$settings) {
 										$measure = undef;
 									}
 									else {
-										if (($measure->{$mk} || $measure->{$mk} == 0) && $measure->{$settings->{'s_display'}}  eq $measure->{$mk}) {
+										if (($measure->{$mk} || $measure->{$mk} == 0) && $measure->{$s_display}  eq $measure->{$mk}) {
 
 											$bucket->{$mk . '_occurences'} += 1;
 											if ($settings->{'s_calc'} eq 'average' ) {
@@ -8974,7 +8975,7 @@ sub inventory_details($c,$settings) {
 						}
 						elsif ($bmt > 0) {
 
-							if ($settings->{'s_display'} eq 'quantity') {
+							if ($s_display eq 'quantity') {
 								if ($a->{'unit'} ne $settings->{'unit'}) {
 									my $neg = 0;
 									if ($a->{'quantity'} < 0) { $neg = 1; }
@@ -8987,60 +8988,60 @@ sub inventory_details($c,$settings) {
 							}
 
 							if ($settings->{'s_calc'} eq 'average' ) {
-								$bucket->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
-								$bucket->{'c_' . $settings->{'s_display'}} += 1;
+								$bucket->{'t_' . $s_display} += $a->{$s_display};
+								$bucket->{'c_' . $s_display} += 1;
 								my $sprinter = "%.2f";
-								if ($a->{$settings->{'s_display'}} < 1 && $a->{$settings->{'s_display'}} > -1) {
+								if ($a->{$s_display} < 1 && $a->{$s_display} > -1) {
 									$sprinter = "%.4f";
 								}
-								$bucket->{$settings->{'s_display'}} = sprintf($sprinter, $bucket->{'t_' . $settings->{'s_display'}} / $bucket->{'c_' . $settings->{'s_display'}});
-								if ($bucket->{$settings->{'s_display'}} == 0) {
-									$bucket->{$settings->{'s_display'}} = 0;
+								$bucket->{$s_display} = sprintf($sprinter, $bucket->{'t_' . $s_display} / $bucket->{'c_' . $s_display});
+								if ($bucket->{$s_display} == 0) {
+									$bucket->{$s_display} = 0;
 								}
 							}
 							elsif ($settings->{'s_calc'} eq 'high') {
-								$bucket->{$settings->{'s_display'}} = 0 unless $bucket->{$settings->{'s_display'}};
-								if ($a->{$settings->{'s_display'}} > $bucket->{$settings->{'s_display'}}) {
-									$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+								$bucket->{$s_display} = 0 unless $bucket->{$s_display};
+								if ($a->{$s_display} > $bucket->{$s_display}) {
+									$bucket->{$s_display} = $a->{$s_display};
 								}
 							}
 							elsif ($settings->{'s_calc'} eq 'low') {
-								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
-								if ($a->{$settings->{'s_display'}} < $bucket->{$settings->{'s_display'}}) {
-									$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+								$bucket->{$s_display} = $a->{$s_display} unless $bucket->{$s_display};
+								if ($a->{$s_display} < $bucket->{$s_display}) {
+									$bucket->{$s_display} = $a->{$s_display};
 								}
 							}
 							else {
-								$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}} unless $settings->{'s_display'} eq 'occurences';
+								$bucket->{$s_display} += $a->{$s_display} unless $s_display eq 'occurences';
 							}
 						}
 						$bucket->{'timestamp'} = $a->{'timestamp'};
-						$bucket->{'occurences'} += 1;# unless $settings->{'s_display'} eq 'occurences';
+						$bucket->{'occurences'} += 1;# unless $s_display eq 'occurences';
 						$a->{'occurences'} = 1;
 
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
 				#		$bucket->{'total'} += abs $a->{'total'} if $a->{'total'};
 				#		$bucket->{'amount'} += abs $a->{'amount'} if $a->{'amount'};
-						$returner->{'total'}->{$scope}->{$settings->{'s_display'}} += abs $a->{$settings->{'s_display'}};
-						$returner->{'count'}->{$scope}->{$settings->{'s_display'}} += 1;
-						$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / $returner->{'count'}->{$scope}->{$settings->{'s_display'}});
-						if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $bucket->{$settings->{'s_display'}} != 0) {
+						$returner->{'total'}->{$scope}->{$s_display} += abs $a->{$s_display};
+						$returner->{'count'}->{$scope}->{$s_display} += 1;
+						$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / $returner->{'count'}->{$scope}->{$s_display});
+						if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $bucket->{$s_display} != 0) {
 							unless ($returner->{'autocalc'}) {
-								$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $settings->{'s_display'} });
+								$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $s_display });
 							}
 							my $budget = &budget_calculator({
 								app => $returner->{'app'},
 								budget => $settings->{'budget'},
-								circumstance => $settings->{'s_display'},
-								value => $bucket->{$settings->{'s_display'}},
+								circumstance => $s_display,
+								value => $bucket->{$s_display},
 								scope => $scope,
 								appts => $appts,
 								settings => $settings
 							});
 
-							if ($bucket->{$settings->{'s_display'}} && $ts eq 'this' &&
+							if ($bucket->{$s_display} && $ts eq 'this' &&
 								&subs::timespan_widener($budget->{'scope_name'}) eq &subs::timespan_widener($scope) && $budget->{'is_scope'} eq 'yes' &&
-									$settings->{'s_display'} eq $budget->{'circumstance'}) {
+									$s_display eq $budget->{'circumstance'}) {
 
 								$returner->{'cachable'} = $budget if $budget->{'colour'};
 							}
@@ -9048,14 +9049,14 @@ sub inventory_details($c,$settings) {
 
 							$bucket->{'budget'} = $budget;
 							$returner->{'budgets'} = $budget->{'budgets'};
-							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'expected'} += $budget->{'expected'};
-							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'actual'} += $budget->{'actual'};
+							$returner->{'budget_status'}->{$scope}->{$s_display}->{'expected'} += $budget->{'expected'};
+							$returner->{'budget_status'}->{$scope}->{$s_display}->{'actual'} += $budget->{'actual'};
 
-							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}} = &budget_status_maker($returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}});
+							$returner->{'budget_status'}->{$scope}->{$s_display} = &budget_status_maker($returner->{'budget_status'}->{$scope}->{$s_display});
 						}
 
-						if ($settings->{'s_display'} eq 'occurences') {
-							$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / scalar @time_scopes);
+						if ($s_display eq 'occurences') {
+							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / scalar @time_scopes);
 						}
 						foreach my $d ( @display_options ) {
 							my $name = $d->{'name'};
@@ -9084,7 +9085,7 @@ sub inventory_details($c,$settings) {
 				if ($a->{'measures'}) {
 					foreach my $measure ( @{$a->{'measures'}} ) {
 						foreach my $mk ( keys %{$measure} ) {
-							unless ($measure->{$settings->{'s_display'}} || $measure->{$settings->{'s_display'}} == 0) {
+							unless ($measure->{$s_display} || $measure->{$s_display} == 0) {
 								last;
 							}
 
@@ -9096,14 +9097,14 @@ sub inventory_details($c,$settings) {
 								delete $measure->{'ts'};
 							}
 
-							if ($settings->{'s_display'} eq $mk) {
+							if ($s_display eq $mk) {
 								unless ($appt_uuids{$measure->{'uuid'}}) {
 									my $new_measure = {
 										app => $a->{'app'},
 										timestamp => $measure->{'timestamp'} || $measure->{'ts'},
 										type => 'measure',
 										uuid => $measure->{'uuid'} || &subs::random_string_creator(8),
-										$mk => $measure->{$settings->{'s_display'}},
+										$mk => $measure->{$s_display},
 										measures => encode_json [ $measure ],
 									};
 									push @{$appts}, $new_measure;
@@ -9117,7 +9118,7 @@ sub inventory_details($c,$settings) {
 				}
 				next unless $a->{'uuid'};
 				for (my $n = 0; $n <= scalar @time_lengths; $n++) {
-					if (($a->{$settings->{'s_display'}} || $a->{$settings->{'s_display'}} == 0) || ( $bmt > 0 )) {
+					if (($a->{$s_display} || $a->{$s_display} == 0) || ( $bmt > 0 )) {
 						my $scope = $time_lengths[$n];
 						my $ts = $localtime[$n];
 						if ($scope eq 'month') { $ts += 1; }
@@ -9126,32 +9127,32 @@ sub inventory_details($c,$settings) {
 					#	if ($scope eq 'wday') { $ts += 1; }
 						$bucket->{'occurences'} += 1;
 						if ($settings->{'s_calc'} eq 'average' ) {
-							$bucket->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
-							$bucket->{$settings->{'s_display'}} = sprintf("%.2f", $bucket->{'t_' . $settings->{'s_display'}} / $bucket->{'occurences'});
-							if ($bucket->{$settings->{'s_display'}} == 0) {
-								$bucket->{$settings->{'s_display'}} = 0;
+							$bucket->{'t_' . $s_display} += $a->{$s_display};
+							$bucket->{$s_display} = sprintf("%.2f", $bucket->{'t_' . $s_display} / $bucket->{'occurences'});
+							if ($bucket->{$s_display} == 0) {
+								$bucket->{$s_display} = 0;
 							}
 						}
 						elsif ($settings->{'s_calc'} eq 'high') {
-							$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
-							if ($a->{$settings->{'s_display'}} > $bucket->{$settings->{'s_display'}}) {
-								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+							$bucket->{$s_display} = $a->{$s_display} unless $bucket->{$s_display};
+							if ($a->{$s_display} > $bucket->{$s_display}) {
+								$bucket->{$s_display} = $a->{$s_display};
 							}
 						}
 						elsif ($settings->{'s_calc'} eq 'low') {
-							$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
-							if ($a->{$settings->{'s_display'}} < $bucket->{$settings->{'s_display'}}) {
-								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+							$bucket->{$s_display} = $a->{$s_display} unless $bucket->{$s_display};
+							if ($a->{$s_display} < $bucket->{$s_display}) {
+								$bucket->{$s_display} = $a->{$s_display};
 							}
 						}
 						else {
-							$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+							$bucket->{$s_display} += $a->{$s_display};
 
 						}
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
 						$bucket->{'total'} += $a->{'total'};
 						unless ($bmt > 0) {
-							#$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+							#$bucket->{$s_display} += $a->{$s_display};
 						}
 
 						foreach my $d ( @display_options ) {
@@ -9222,7 +9223,7 @@ sub inventory_details($c,$settings) {
 
 	@time_scopes = @revised_time_scopes;
 	push @time_scopes, qw/average total/;
-	if ($returner->{'budgets'}->{$settings->{'s_display'}}) {
+	if ($returner->{'budgets'}->{$s_display}) {
 		&subs::cache_set({ app => $returner->{'app'}, context => 'budget', subcontext => $returner->{'cachable'}->{'circumstance'} },$returner->{'cachable'});
 	}
 	&Websocket::send('tab', $returner->{'sendable'});
@@ -9253,9 +9254,13 @@ sub father_time($data) {
 	my $ts = $data->{'ts'};
 	my $lock = $data->{'lock'} || 'off';
 	my $timestamp = $data->{'timestamp'};
-	my ($bt,$temp_timestamp,$t1,$t2);
+	my ($bt, $temp_timestamp);
 
-	if ($gb::father_time->{$scope}->{$ts}->{$lock}->{'st'} > $start_time - 10000) {
+	# A window is only good for the timestamp it was built from: handing the
+	# same one to a later request is what put January's month on screen just
+	# after midnight on the first.
+	if ($gb::father_time->{$scope}->{$ts}->{$lock}->{'timestamp'} == $timestamp &&
+		$gb::father_time->{$scope}->{$ts}->{$lock}->{'st'} > $start_time - 10000) {
 		$bt = $gb::father_time->{$scope}->{$ts}->{$lock}->{'bt'};
 		$temp_timestamp = $gb::father_time->{$scope}->{$ts}->{$lock}->{'tt'};
 		$gb::father_time->{$scope}->{$ts}->{$lock}->{'st'} = $start_time;
@@ -9275,9 +9280,11 @@ sub father_time($data) {
 			}
 		}
 		elsif ($ts =~ 'next') {
-			my $bt = &{$subs::time_subs->{$scope}}($timestamp);
-			my $t1 = $timestamp - $bt;
-			$temp_timestamp = $t1 + $timestamp;
+			# the span this scope is worth: "next" is one span ahead, "Nnext"
+			# carries that span plus the N the ts names
+			my $span_bt = &{$subs::time_subs->{$scope}}($timestamp);
+			my $span = $timestamp - $span_bt;
+			$temp_timestamp = $span + $timestamp;
 			if ($ts =~ /(^[0-9])/) {
 				my $tas = $ts;
 				$tas =~ s/next//gi;
@@ -9295,21 +9302,23 @@ sub father_time($data) {
 			}
 		}
 
-		if ($lock eq 'on' && grep { &subs::timespan_widener($scope) =~ /\Q$_/gi } qw/minute hour day week month year/) {
+		if ($lock eq 'on' && grep { &subs::timespan_widener($scope) =~ /\Q$_/i } qw/minute hour day week month year/) {
+			# the number in a scope such as "3day" widens the window, the unit
+			# is the calendar edge the lock snaps it to
+			my $unit = lc $scope;
+			$unit =~ s/[^a-zA-Z]//gi;
 			my $multiplier = $scope;
 			$multiplier =~ s/[^0-9.]//gi;
 			$multiplier = 1 unless $multiplier;
 
-			$scope =~ s/[^a-zA-Z]//gi;
-			$scope = lc $scope;
 			my @localtime = localtime $temp_timestamp / 1000;
 
-			if ($scope eq 'minute') {
+			if ($unit eq 'minute') {
 				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
 				$bt = &subs::ago_calc($second . 's', $temp_timestamp);
 				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'm',$bt);
 			}
-			elsif ($scope eq 'hour') {
+			elsif ($unit eq 'hour') {
 				my $hour = localtime( $temp_timestamp / 1000 )->strftime( "%H");
 				my $minute = localtime( $temp_timestamp / 1000 )->strftime( "%M");
 				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
@@ -9317,14 +9326,14 @@ sub father_time($data) {
 				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'h', $bt);
 
 			}
-			elsif ($scope eq 'day') {
+			elsif ($unit eq 'day') {
 				my $hour = localtime( $temp_timestamp / 1000 )->strftime( "%H");
 				my $minute = localtime( $temp_timestamp / 1000 )->strftime( "%M");
 				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
 				$bt = &subs::ago_calc( $hour . 'h ' . $minute . 'm ' . $second . 's',$temp_timestamp);
 				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'd', $bt);
 			}
-			elsif ($scope eq 'week') {
+			elsif ($unit eq 'week') {
 				my $day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
 				my $month = localtime( $temp_timestamp / 1000 )->strftime( "%m");
 				my $year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
@@ -9342,55 +9351,43 @@ sub father_time($data) {
 				$year = localtime( $awtemp / 1000 )->strftime( "%Y");
 				$temp_timestamp = &subs::ago_calc($month . '/' . $day . '/' . $year . ' 11:59:59pm', $awtemp);
 			}
-			elsif ($scope eq 'month') {
-				my $day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
-				my $tday = localtime( $timestamp / 1000 )->strftime( "%d" );
-				my $year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
-				my $month = localtime( $temp_timestamp / 1000 )->strftime( "%m");
-
-	#			$day = $tday - $day;
-
-
-				if ($ts =~ 'next') {
-
-				#	$temp_timestamp = &subs::ago_calc($gb::months->[$month - 1]->{'days'} - $day . 'd', $temp_timestamp);
-					$day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
-
-					if ($month == 12) {
-					#	$month = 1;
-					}
-					else {
-					#	$month--;
-					}
+			elsif ($unit eq 'month') {
+				# Real calendar months, worked out from the request timestamp and
+				# the ts rather than from the 30 day steps above.  Those drift a
+				# day or two a year, which read the month before last as "last"
+				# near the first, and February's length is not 28 days every
+				# year, so a leap year lost its 29th.  Ending on the first
+				# instant of the next month needs neither a length nor a leap
+				# rule.
+				my $months_away = 0;
+				if ($ts =~ /last/i) {
+					my ($n) = $ts =~ /^(\d+)/;
+					$months_away = -($n || 1);
 				}
-				elsif ($ts =~ 'last') {
-				#	$temp_timestamp = &subs::ago_calc($day + 1 . 'd', $temp_timestamp);
-					$day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
-					$day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
-					$month = localtime( $temp_timestamp / 1000 )->strftime( "%m");
-					$year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
+				elsif ($ts =~ /next/i) {
+					my ($n) = $ts =~ /^(\d+)/;
+					$months_away = ($n || 1);
 				}
-				my $last_day = $gb::months->[$month - 1]->{'days'};
-				my $datetime = $month . '/' .  $last_day .'/' . $year . ' 11:59:59pm';
-				my $bdatetime = $month . '/1/' . $year . ' 12am';
+				my $at = localtime($timestamp / 1000);
+				my $this_month = $at->year * 12 + ($at->mon - 1) + $months_away;
+				my $next_month = $this_month + 1;
 
-				$bt = &subs::ago_calc($bdatetime, $temp_timestamp);
-				$temp_timestamp = &subs::ago_calc($datetime, $temp_timestamp);
+				$bt = &subs::ago_calc((($this_month % 12) + 1) . '/1/' . int($this_month / 12) . ' 12am', $timestamp);
+				$temp_timestamp = &subs::ago_calc((($next_month % 12) + 1) . '/1/' . int($next_month / 12) . ' 12am', $timestamp);
 			}
-			elsif ($scope eq 'year') {
+
+			elsif ($unit eq 'year') {
 				my $year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
 				$bt = &subs::ago_calc('jan 1 ' . $year . ' 12am', $temp_timestamp);
 				$temp_timestamp = &subs::ago_calc('jan 1 ' . ($year + $multiplier) . ' 12am', $temp_timestamp);
 			}
 		}
 		else {
-			$bt = &{$subs::time_subs->{$scope}}($temp_timestamp); #timestamp at beginning
-			my $t1 = ($temp_timestamp - $bt);
-			$t2 = ($t1 + $temp_timestamp);
+			$bt = &{$subs::time_subs->{$scope}}($temp_timestamp);
 		}
 	}
 
-	$gb::father_time->{$scope}->{$ts}->{$lock} = { bt => $bt, tt => $temp_timestamp, st => $start_time };
+	$gb::father_time->{$scope}->{$ts}->{$lock} = { bt => $bt, tt => $temp_timestamp, st => $start_time, timestamp => $timestamp };
 
 	return ($bt,$temp_timestamp);
 }
