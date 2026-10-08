@@ -10,7 +10,7 @@
 	<% my $in_view = &subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }); %>
 	<% $trackpad = '.02' unless (defined $trackpad && length $trackpad); %>
 	<% $clothesline = '.4' unless (defined $clothesline && length $clothesline); %>
-	<span style="display:block;text-align:left;font-size:13px;">
+	<span style="display:block;text-align:center;font-size:13px;">
 		Trackpad <input type="range" class="keyboard_sensitivity" setting="trackpad_sensitivity" min=".002" max=".1" step=".002" value="<%= $trackpad %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="trackpad_sensitivity"><%= $trackpad %></span><br>
 		Clothesline <input type="range" class="keyboard_sensitivity" setting="clothesline_sensitivity" min=".05" max="2" step=".05" value="<%= $clothesline %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="clothesline_sensitivity"><%= $clothesline %></span><br>
 		<label><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>>Timestamps in view only</label>
