@@ -24,6 +24,13 @@ using fs::FS;
 #include <RadioLib.h>
 #include <SD.h>
 #include <ArduinoWebsockets.h>
+// PNGdec's zutil.h #defines `local` as `static`, and NimBLE's ble_sm.h has a
+// struct member actually named `local`: undefine it before the BLE headers
+#undef local
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
 #include "FS.h"
 #include "FFat.h"
 #include "NotoSansBold15.h"
@@ -47,6 +54,9 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels);
 void deleteFile(fs::FS &fs, const char * path);
 void https_download(fs::FS &fs, String url, String filename);
 bool sd_tester();
+// the deck's serial logger (defined near the bottom); the BLE callbacks run
+// before its definition
+static void deckLog(const char *fmt, ...);
 // defined next to setupMicrophoneI2S() at the bottom, used by the boot rate
 // check in setup()
 extern i2s_chan_handle_t mic_rx_handle;
@@ -81,8 +91,45 @@ long offset;
 static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
+// Bluetooth (Nordic UART Service), ported from the watch. A saved config that
+// says "on" only sets btStartPending: bringing the stack up inside setup()
+// panicked the watch, and loop() starts it once the boot has settled.
+static bool bt_enabled = false;
+static bool btStartPending = false;
 String tauth_remote_enabled = "off";
 #define DEFAULT_SCREEN_TIMEOUT                  20*1000
+
+// ---- bluetooth: the watch's Nordic UART Service --------------------------
+#define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+BLEServer *pServer = NULL;
+BLECharacteristic *pTxCharacteristic = NULL;
+bool deviceConnected = false;
+QueueHandle_t bleIncomingQueue = NULL;
+
+class MyServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    deviceConnected = true;
+  };
+  void onDisconnect(BLEServer* pServer) {
+    deviceConnected = false;
+  }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String rawInput = String(pCharacteristic->getValue().c_str());
+    if (rawInput.length() > 0 && bleIncomingQueue != NULL) {
+      // heap allocated so it outlives this callback's frame; loop() frees it
+      String* msgPtr = new String(rawInput);
+      if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
+        delete msgPtr;
+        deckLog("[bt] queue full, message dropped");
+      }
+    }
+  }
+};
 // Which TDM slot the microphone shows up in. The startup dump prints all four,
 // and "JAWNSLOT <n>" can change it over the usb serial. On this board the
 // microphone is on MIC1 (slot 0, with a mirror image on MIC3/slot 1).
@@ -207,6 +254,10 @@ void setupLvgl();
 // The keypad only gets registered when the keyboard answers; that can happen
 // after setup() has moved on, so loop() retries this.
 static void registerKeyboard();
+// bluetooth: defined next to net_room() further down, but loop() and
+// configRestore() call them
+void start_ble_transfer();
+void stop_ble_transfer();
 // voice notes: record to flash with the ES7210 mic array, play it back through
 // the speaker (buttons live next to the text box in the chat and pen rooms)
 static void micRecordToggle(lv_event_t *e);
@@ -488,6 +539,9 @@ void setup() {
   else {
     deckLog("[deck] ffat ok");
   }
+
+  // BLE writes are queued from the stack's own task and handled in loop()
+  bleIncomingQueue = xQueueCreate(5, sizeof(String*));
 
 
   //!⚠️ The board peripheral power control pin needs to be set to HIGH when using the peripheral
@@ -1327,6 +1381,45 @@ void loop() {
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   wsclient.poll();
+
+  // Bluetooth asked for by the saved config comes up here, well away from
+  // setup(), where initialising the stack used to panic the board
+  if (btStartPending && millis() > 2000) {
+    btStartPending = false;
+    start_ble_transfer();
+  }
+
+  // messages written to the NUS RX characteristic are queued by the stack's
+  // task; the JSON is handled here, on the same thread as everything else
+  String* incomingMsgPtr = nullptr;
+  if (bleIncomingQueue != NULL && xQueueReceive(bleIncomingQueue, &incomingMsgPtr, 0) == pdTRUE) {
+    if (incomingMsgPtr != nullptr) {
+      String btmsg = *incomingMsgPtr;
+      delete incomingMsgPtr;
+      deckLog("[bt] %s", btmsg.c_str());
+      JSONVar btMsg = JSON.parse(btmsg);
+      if (JSON.typeof(btMsg) != "undefined") {
+        if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "button") {
+          if (before_me == "") {
+            before_me = "{}";
+          }
+          JSONVar bm = JSON.parse(before_me);
+          if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("button")) {
+            int button = 0;
+            if (JSON.typeof(btMsg["data"]["button"]) == "string") {
+              button = String((const char *)btMsg["data"]["button"]).toInt();
+            }
+            else {
+              button = (int)btMsg["data"]["button"];
+            }
+            String buttonKey = "b" + String(button);
+            bm[buttonKey] = btMsg["data"];
+            before_me = JSON.stringify(bm);
+          }
+        }
+      }
+    }
+  }
   // The audio library is pumped by hand, from here. A task turned out to be
   // worse than useless: if its creation failed or it exited early the flag that
   // said "a task owns the pump" stayed set and nothing drove the I2S at all,
@@ -1552,6 +1645,20 @@ void loop() {
                 int ch = hostLine.substring(7).toInt();
                 mic_channels = (ch == MIC_TDM_SLOTS) ? MIC_TDM_SLOTS : 1;
                 Serial.printf("JAWNCH %d\n", mic_channels);
+            }
+            else if (hostLine.startsWith("JAWNBT ")) {
+                String onoff = hostLine.substring(7);
+                onoff.trim();
+                if (onoff == "on") {
+                    start_ble_transfer();
+                }
+                else {
+                    stop_ble_transfer();
+                }
+                // persist it the way the net room's toggle does at the next
+                // screen sleep, so the boot-time start can be tested from here
+                configSave();
+                Serial.printf("JAWNBT %s\n", bt_enabled ? "on" : "off");
             }
             hostLine = "";
         }
@@ -3963,6 +4070,70 @@ static void touch_button6(lv_event_t *e) {
   net_room();
 }
 
+// The watch's Nordic UART Service, unchanged except for the advertise name
+// (the deck's configured name, so a house full of them can be told apart).
+void start_ble_transfer() {
+  if (bt_enabled == true) {
+    return;
+  }
+  deckLog("[bt] powering up");
+  bt_enabled = true;
+
+  BLEDevice::init(name.length() ? name.c_str() : "T-Deck");
+  BLEDevice::setMTU(512);
+
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // TX: this board notifying the phone
+  pTxCharacteristic = pService->createCharacteristic(
+                        CHARACTERISTIC_UUID_TX,
+                        BLECharacteristic::PROPERTY_NOTIFY
+                      );
+  pTxCharacteristic->addDescriptor(new BLE2902());
+
+  // RX: the phone writing to this board
+  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+                                           CHARACTERISTIC_UUID_RX,
+                                           BLECharacteristic::PROPERTY_WRITE
+                                         );
+  pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // hint for iPhone connections
+  pAdvertising->setMinPreferred(0x12);
+  pAdvertising->start();
+  deckLog("[bt] advertising as %s", name.length() ? name.c_str() : "T-Deck");
+}
+
+void stop_ble_transfer() {
+  if (bt_enabled == false) {
+    return;
+  }
+  deckLog("[bt] shutting down");
+  bt_enabled = false;
+  pServer->getAdvertising()->stop();
+  // false shuts the RF off without destroying the NUS mapping objects in RAM
+  BLEDevice::deinit(false);
+}
+
+static void bt_control(lv_event_t *e) {
+  lv_obj_t * bt_button = lv_event_get_target_obj(e);
+  if (bt_enabled == true) {
+    stop_ble_transfer();
+    lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+  }
+  else {
+    start_ble_transfer();
+    lv_obj_set_style_bg_color(bt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
+  }
+}
+
 void net_room() {
   jw_room = "net";
 
@@ -4007,6 +4178,24 @@ void net_room() {
   lv_label_set_text(lwi2, "AP");
   lv_obj_center(lwi2);
 
+  lv_obj_t * bt_button = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(bt_button, bt_control, LV_EVENT_CLICKED, NULL);
+  lv_obj_set_pos(bt_button, 110, 20 );
+  lv_obj_set_size(bt_button, 40, 40 );
+  if (bt_enabled == true) {
+    lv_obj_set_style_bg_color(bt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
+  }
+  else {
+    lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+  }
+  lv_obj_t *lwi3;
+  lv_color_t twi3;
+  twi3 = lv_color_make(0, 0, 0);
+
+  lv_obj_set_style_text_color(bt_button, twi3, LV_PART_MAIN);
+  lwi3 = lv_label_create(bt_button);
+  lv_label_set_text(lwi3, "BT");
+  lv_obj_center(lwi3);
 }
 
 static void sd_test(lv_event_t *e) {
@@ -4201,6 +4390,12 @@ void configSave() {
   else {
     conf["wifi_enabled"] = "off";
   }
+  if (bt_enabled == true) {
+    conf["bt_enabled"] = "on";
+  }
+  else {
+    conf["bt_enabled"] = "off";
+  }
   if (loraChatBroadcaster == true) {
     conf["loraChatBroadcaster"] = "on";
   }
@@ -4374,6 +4569,16 @@ void configRestore() {
     }
     else {
       wifi_enabled = false;
+    }
+    String bte = (const char *)conf["bt_enabled"];
+    if (bte == "on") {
+      if (bt_enabled == false) {
+        // loop() starts it; doing it here panicked boards on boot
+        btStartPending = true;
+      }
+    }
+    else {
+      stop_ble_transfer();
     }
     wifi_server();
     String lcb = (const char *)conf["loraChatBroadcaster"];
