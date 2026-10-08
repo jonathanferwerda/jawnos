@@ -20244,10 +20244,35 @@ websocket '/manager/ws' => sub ($c) {
 			foreach my $optional ( qw/windows music_data jp_data/ ) {
 				$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
 			}
-			&subs::db_update('websockets', $ws_update, {
+			my $ws_updated = &subs::db_update('websockets', $ws_update, {
 				browser_tab_id => $browser_tab_id,
 				app => $data->{'app'}
 			});
+			# The row can vanish underneath a live socket: stale-row sweeps,
+			# warranty expiry while a tab slept, or older builds that deleted
+			# too broadly. A heartbeat that matched no row means the controller
+			# can no longer see this websocket, so put the row back.
+			unless ($ws_updated && $ws_updated->rows) {
+				# Same as the connect insert: warranty settings are negative
+				# offsets ('-1d' puts the row a day ahead), so alarm_haircut
+				# won't cull a freshly healed row.
+				my $app_warranty = &subs::setting_grabber({ app => $c->session('app'), setting => 'warranty' });
+				my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
+				&subs::db_insert('websockets', {
+					%{$ws_update},
+					browser_tab_id => $browser_tab_id,
+					browser_tab => $browser_tab,
+					db => $database,
+					'uuid' => $uuid,
+					app => $data->{'app'},
+					connected => $init_data->{'connected'} || $timestamp,
+					hostname => $hostname,
+					user_agent => $user_agent,
+					random_string => &subs::random_string_creator(25),
+					ticket_uuid => $c->session('ticket_uuid'),
+					warranty => $warranty
+				});
+			}
 			if ($data->{'debriefer'}) {
 				if ($c->session('ticket_uuid')) {
 					&subs::db_query('update tickets set debriefer = ? where uuid = ?', $data->{'debriefer'}, $c->session('ticket_uuid'));
@@ -20388,8 +20413,13 @@ websocket '/manager/ws' => sub ($c) {
 			}
 		}
 		&websocket_close($app);
-		my $ago = &subs::ago_calc('-1d', &subs::rightNow());
-		&subs::db_query('delete from websockets where room is null and server_time < ?', $ago)->hashes;
+		# Tidy stale rows for this tab only. This used to run against a
+		# *future* timestamp, so closing any socket deleted every other
+		# tab's rows too and the controller list stayed empty until the
+		# next reconnect. ago_calc counts backwards: '1d' is yesterday,
+		# '-1d' is tomorrow.
+		my $stale = &subs::ago_calc('1d', &subs::rightNow());
+		&subs::db_query('delete from websockets where room is null and browser_tab_id = ? and server_time < ?', $browser_tab_id, $stale)->hashes;
 	});
 
 	unless (1 == 0 && $c->param('remote') eq 'yes') {
