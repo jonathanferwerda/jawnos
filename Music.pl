@@ -255,16 +255,18 @@ any '/music/receiver' => sub($c) {
 
 
 
-sub music_folder_grabber($selected) {
+# Which folders this device is looking at, by location name as well as by path.
+# The window sends the buttons it has lit and the names are the intent -
+# documents, downloads, and so on - while the path behind each one is this
+# machine's own, so a library on another machine is asked for the same locations
+# by name instead of by this machine's paths. Without a selection the stored
+# toggles decide, which is what the first window build has to go on. A lit button
+# with no path behind it on this machine is nothing to walk, and is left out
+# rather than guessed at.
+sub music_folder_selection($selected) {
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my @folders = ();
+	my @picked = ();
 	my $settings = &Manager::misc_setting_list();
-	# The window knows which folder buttons are lit and sends that selection with
-	# every search. The names are the intent - documents, downloads, and so on -
-	# and the path behind each one is the walking machine's own, so a library on
-	# another machine is asked for the same locations by name instead of by this
-	# machine's paths. Without a selection, the stored toggles decide, which is
-	# what the first window build has to go on.
 	my %wanted;
 	my $chosen = defined $selected;
 	foreach my $s ( @{$selected || []} ) {
@@ -280,14 +282,85 @@ sub music_folder_grabber($selected) {
 			elsif ($status ne 'on') {
 				next;
 			}
-			# a lit button with no path behind it on this machine is nothing to
-			# walk, and is left out rather than guessed at
 			my $path = $settings->{$device}->{$s};
 			next unless (defined $path && length $path);
-			push @folders, $path;
+			my $location = $s;
+			$location =~ s/_location$//;
+			push @picked, { location => $location, path => $path };
 		}
 	}
-	return @folders;
+	return \@picked;
+}
+
+sub music_folder_grabber($selected) {
+	return map { $_->{'path'} } @{&music_folder_selection($selected)};
+}
+
+# The archived half of a listing. For the folders being looked at, the rows come
+# from the archive machine's manifest - one small request instead of a walk over
+# the tunnel - and each row keeps the machine it lives on, because that is where
+# the player has to fetch the bytes from. An artist or album pick reads the same
+# manifest down to that folder instead of a whole location.
+sub music_archive_entries($data) {
+	my $picked = $data->{'picked'} || [];
+	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
+	my $device = &subs::device_setter();
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my %machine_for;
+	foreach my $rm ( @{$machines} ) {
+		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
+		$machine_for{$rm->{'uuid'}} = $rm if $rm->{'uuid'};
+	}
+	my @lookups;
+	foreach my $pick ( @{$picked} ) {
+		if ($pick->{'location'}) {
+			my $archive = $misc->{$device}->{$pick->{'location'} . '_archive'};
+			next unless $archive;
+			my $rm = $machine_for{$archive};
+			next unless ($rm && $rm->{'uuid'});
+			push @lookups, { location => $pick->{'location'}, remote_uuid => $rm->{'uuid'}, prefix => '' };
+		}
+		else {
+			my $plan = &subs::archive_plan({
+				items => [ { path => $pick->{'path'}, type => 'folder' } ],
+				settings => $misc->{$device} || {},
+				machines => $machines
+			});
+			foreach my $job ( @{$plan->{'jobs'}} ) {
+				push @lookups, { location => $job->{'location'}, remote_uuid => $job->{'remote_uuid'}, prefix => $job->{'relative'} };
+			}
+		}
+	}
+	my (@entries, %fetched);
+	foreach my $lookup ( @lookups ) {
+		my $key = $lookup->{'location'} . '|' . $lookup->{'remote_uuid'};
+		my $manifest = $fetched{$key};
+		unless (defined $manifest) {
+			$manifest = &subs::archive_manifest_fetch({ remote_uuid => $lookup->{'remote_uuid'}, location => $lookup->{'location'} });
+			$fetched{$key} = $manifest;
+		}
+		next if $manifest->{'error'};
+		my $folder = $manifest->{'folder'} || '';
+		foreach my $row ( @{$manifest->{'rows'} || []} ) {
+			my $type = $row->{'type'} || '';
+			next unless ($type eq 'audio' || $type eq 'video');
+			my $relative = $row->{'relative'} || '';
+			next unless length $relative;
+			next if (length $lookup->{'prefix'} && index($relative, $lookup->{'prefix'}) != 0);
+			push @entries, {
+				path => (length $folder ? $folder . '/' . $relative : $relative),
+				location => $lookup->{'location'},
+				relative => $relative,
+				type => $type,
+				info => $row->{'info'} || {},
+				size => $row->{'size'},
+				mtime => $row->{'mtime'},
+				remote_uuid => $lookup->{'remote_uuid'},
+				remote_hostname => $manifest->{'hostname'} || ''
+			};
+		}
+	}
+	return { entries => \@entries };
 }
 
 sub music_search($data) {
@@ -310,18 +383,24 @@ sub music_search($data) {
 	}
 
 	my @folders;
+	my %archive;
 	if ($data->{'files'}) {
 		$files = $data->{'files'};
 	}
 	else {
+		my $picked = [];
 		if (scalar @{$settings->{'album'}} > 0) { 
 			push @folders, map { $_->{'path'} } @{$settings->{'album'}};
+			$picked = [ map { { path => $_->{'path'} } } @{$settings->{'album'}} ];
 		}
 		elsif (scalar @{$settings->{'artist'}} > 0) {
 			push @folders, map { $_->{'path'} } @{$settings->{'artist'}};
+			$picked = [ map { { path => $_->{'path'} } } @{$settings->{'artist'}} ];
 		}
 		else {
-			@folders = &music_folder_grabber($data->{'folders'});
+			my $selection = &music_folder_selection($data->{'folders'});
+			@folders = map { $_->{'path'} } @{$selection};
+			$picked = $selection;
 		}
 		foreach my $folder (@folders) {
 			$folder = &subs::home($folder);
@@ -329,12 +408,22 @@ sub music_search($data) {
 				find(\&process_file,$folder);
 			}
 		}
+		# the archive is part of the collection too, when the app is asked to
+		# look there: its manifest is the listing, and each row knows the
+		# machine its bytes come from
+		if ($settings->{'archive'} eq 'on') {
+			my $archived = &music_archive_entries({ picked => $picked, misc_settings => $misc_settings });
+			foreach my $entry ( @{$archived->{'entries'}} ) {
+				push @{$files}, $entry->{'path'};
+				$archive{$entry->{'path'}} = $entry;
+			}
+		}
 	}
 	my @local_files = @{$files};
 	if ($search && !$data->{'files'}) {	
 		@local_files = grep { lc $_ =~ /($search)/gi } @{$files};
 	}
-	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, settings => $settings, now_playing => $now_playing });
+	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing });
 	$permissive = 0;
 	return $crate;
 }
@@ -347,6 +436,7 @@ sub song_maker($data) {
 	my $misc_settings = $data->{'misc_settings'};
 	my $port = $data->{'port'};
 	my $config = $data->{'config'};
+	my $archive = $data->{'archive'} || {};
 	my @local_files;
 	my $background_colour = &subs::config_reader()->{'manager'}->{'background_colour'} || &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour'});
 	my $computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
@@ -388,7 +478,10 @@ sub song_maker($data) {
 
 	for (my $n = 0; $n <= $max_files; $n++) {
 		my $f = $local_files[$n];
-		unless (-e $f) {
+		# an archived track is not on this disk: the manifest already said what it
+		# is, and its machine is where the player fetches the bytes from
+		my $archive_row = $archive->{$f};
+		unless ($archive_row || -e $f) {
 			next;
 		}
 		$track_number = $track_number + 1;
@@ -399,7 +492,10 @@ sub song_maker($data) {
 		$t =~ s/(\.mp3$|\.m4a$|\.wav$|\.flac$)//gi;
 		my $extension = $1;
 		my ($info,$type,@thumbs);
-		if ($extension) {
+		if ($archive_row) {
+			$type = ($archive_row->{'type'} eq 'video') ? 'video' : 'audio';
+		}
+		elsif ($extension) {
 			$type = 'audio';
 		}
 		else {
@@ -412,7 +508,7 @@ sub song_maker($data) {
 		$tree->{lc $t} .="\n" . $tree->{lc $t};
 		pop @temp_path;
 		my $album_folder = join '/', @temp_path;
-		if ($type eq 'audio') {
+		if ($type eq 'audio' && !$archive_row) {
 			$thumb_files = [];
 			find(\&process_thumbfile,$album_folder);
 			@thumbs = @{$thumb_files};
@@ -448,7 +544,15 @@ sub song_maker($data) {
 			colour => $background_colour
 		};
 
-		if ($filename && $filename !~ /\.enc$/gi) {
+		if ($archive_row) {
+			# nothing here to probe: the manifest carried the facts, and the tags
+			# keep the shape the rest of this loop and the template expect
+			$f->{'info'} = $archive_row->{'info'} || {};
+			$f->{'info'}->{'tags'} = {} unless ref $f->{'info'}->{'tags'};
+			$f->{'remote_uuid'} = $archive_row->{'remote_uuid'};
+			$f->{'archive_host'} = $archive_row->{'remote_hostname'};
+		}
+		elsif ($filename && $filename !~ /\.enc$/gi) {
 			if (!$file_informations->{$artist_folder}) {
 				$file_informations->{$artist_folder} = &subs::cache_get({ app => 'music', context => 'file_information', subcontext => $artist_folder }) || {};
 			}
@@ -671,6 +775,28 @@ post '/music/folder_toggle' => sub($c) {
 	}
 	my $setting = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $location, device => $device });
 	$c->render(text => $setting);
+};
+
+# Whether a listing also carries what the archives hold. Like the folder
+# toggles, it steers the machine whose library is loaded, so a remote library
+# gets the same choice.
+post '/music/archive_toggle' => sub($c) {
+	my $status = $c->param('status');
+	&subs::setting_setter({ app => 'music', setting => 'archive', value => $status, timestamp => $c->param('timestamp') });
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
+		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
+		if ($rm->{'uuid'}) {
+			$c->param('remote_uuid' => $rm->{'uuid'});
+			$c->param('subprocess' => 'yes');
+			my $result = &Manager::remote_relay_request($c);
+			if ($result && $result =~ /^\s*(on|off)\s*$/) {
+				$c->render(text => $result);
+				return;
+			}
+		}
+	}
+	$c->render(text => &subs::setting_grabber({ app => 'music', setting => 'archive' }));
 };
 
 post '/music/audio_output_select' => sub ($c) {

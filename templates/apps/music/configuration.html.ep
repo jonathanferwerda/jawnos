@@ -19,6 +19,9 @@
 				location="<%= $f %>" status="<%= $status %>" class="button music_folder_toggle hover"><%= &subs::shorthand_name($n, 4) %></button>
 		<% } %>
 	<% } %>
+	<% my $archive_status = &subs::setting_grabber({ app => 'music', setting => 'archive' }); %>
+	<button type="button" style="<% if ($archive_status eq 'on') { %>background-color:lightblue;<% } %>"
+		status="<%= $archive_status %>" class="button music_archive_toggle hover">Archives</button>
 </div>
 <div id="music_audio_output" style="background-color:#C5F4D6">
 	<% foreach my $ma ( qw/me srv/ ) { %>

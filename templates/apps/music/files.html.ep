@@ -19,19 +19,19 @@
 						<tbody>
 							<tr>
 								<td file="<%= $f->{'filename'} %>" class="music_file music_thumb track_item link hover <% if ($f->{'playing'} eq 'yes') { %>playing holla<% } %>" number="<%= $n %>" colspan="2" style="float:left;height:100%;">
-									<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" remote_uuid="<%= $crate->{'remote_uuid'} %>" song="<%= $f->{'song'} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+									<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" song="<%= $f->{'song'} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 									<div style="display:none;" class="file_json" file="<%= $f->{'file'} %>" file_uuid="<%= $f->{'file_uuid'} %>"><%= encode_json $f->{'info'} %></div>
 									<% if ($f->{'type'} eq 'audio') { %>
 										<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-											<img class="gigantic_thum music_file_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $crate->{'remote_uuid'} %>">
+											<img class="gigantic_thum music_file_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 										<% } else { %>
 											<img class="gigantic_thumb music_file_thumb" src="<%= &subs::icon_for('/images/make believe/music.png') %>">
 										<% } %>
 									<% } elsif ($f->{'type'} eq 'video') { %>
 										<% if (1) { %>
 											<% my $brother = &subs::random_string_creator(); %>
-											<img class="video_preview_thumb gigantic_thumb music_file_thumb" src="/file_open?app=<%= $f->{'app'} %>&track=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-											<video autoplay loop muted potential_src="/file_open?app=<%= $f->{'app'} %>&file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} || 2 %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
+											<img class="video_preview_thumb gigantic_thumb music_file_thumb" src="/file_open?app=<%= $f->{'app'} %>&track=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+											<video autoplay loop muted potential_src="/file_open?app=<%= $f->{'app'} %>&file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} || 2 %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
 										<% } else { %>
 											<img class="gigantic_thumb" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
 										<% } %>
@@ -56,22 +56,22 @@
 							<td class="music_thumb" style="float:left;height:100%;">
 								<% if ($f->{'type'} eq 'audio') { %>
 									<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-										<img class="medium_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $crate->{'remote_uuid'} %>">
+										<img class="medium_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 									<% } else { %>
 										<img class="medium_thumb music_file_thumb" src="<%= &subs::icon_for('/images/decipherable/cdrom.png') %>">
 									<% } %>
 								<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'}) { %>
 									<% if ($f->{'info'}->{'height'}) { %>
 										<% my $brother = &subs::random_string_creator(); %>
-										<img class="video_preview_thumb medium_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-										<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb medium_thumb" brother="<%= $brother %>" style="min-width:110px;border-color:yellow;display:none;"></video>
+										<img class="video_preview_thumb medium_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+										<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb medium_thumb" brother="<%= $brother %>" style="min-width:110px;border-color:yellow;display:none;"></video>
 									<% } else { %>
 										<img class="medium_thumb" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
 									<% } %>
 								<% } %>
 							</td>
 							<td file="<%= $f->{'filename'} %>" class="music_file <% if ($f->{'playing'} eq 'yes') { %>playing<% } %>" number="<%= $n %>" style="text-align:center;font-size:20px;bold">
-								<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $crate->{'remote_uuid'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+								<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 								<div style="display:none;" class="file_json" file_uuid="<%= $f->{'file_uuid'} %>"><%= encode_json $f->{'info'} %></div>
 								<img class="music_information_toggle little_thumb" src="<%= &subs::icon_for('/images/decipherable/information.png') %>"  file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>" style="float:left;">
 								<% if ($f->{'type'} eq 'audio') { %>
@@ -89,13 +89,13 @@
 									<span style="text-align:center;">
 										<% if ($f->{'type'} eq 'audio') { %>
 											<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-												<img class="massive_thumb music_file_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $crate->{'remote_uuid'} %>">
+												<img class="massive_thumb music_file_thumb" src="/file_open?file=<%= url_escape $f->{'thumbs'}->[0] %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 											<% } %>
 										<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'}) { %>
 											<% if ($f->{'info'}->{'height'}) { %>
 												<% my $brother = &subs::random_string_creator(); %>
-												<img class="video_preview_thumb massive_thumb music_file_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-												<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb massive_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
+												<img class="video_preview_thumb massive_thumb music_file_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+												<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb massive_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
 											<% } %>
 										<% } %>
 									</span>
@@ -117,8 +117,8 @@
 													</th>
 												</thead>
 												<tbody><tr><td>
-													<img class="video_preview_thumb large_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $crate->{'remote_uuid'} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-													<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $crate->{'remote_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb large_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
+													<img class="video_preview_thumb large_thumb" src="/file_open?file=<%= url_escape $f->{'filename'} %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+													<video autoplay loop muted potential_src="/file_open?file=<%= url_escape $f->{'filename'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb large_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
 													<br><%= &subs::duration_sayer($ch->{'start_time'}) %>
 												</td></tr></tbody>
 											</table>

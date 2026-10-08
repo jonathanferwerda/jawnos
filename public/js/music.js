@@ -1015,6 +1015,32 @@ $(document).on('click', '.music_folder_toggle', function() {
 	});
 });
 
+$(document).on('click', '.music_archive_toggle', function() {
+	var b = $(this);
+	var status = b.attr('status');
+	if (status == 'on') {
+		status = 'off';
+	}
+	else {
+		status = 'on';
+	}
+	$.ajax({
+		url: '/music/archive_toggle',
+		type: 'POST',
+		data: { timestamp: Date.now(), status: status },
+		success: function (response) {
+			b.attr('status', response);
+			if (response == 'on') {
+				b.css({'background-color': 'lightblue'});
+			}
+			else {
+				b.css({'background-color': ''});
+			}
+			searchMusic();
+		}
+	});
+});
+
 $(document).on('click', '.music_lock', function() {
 	if ($('#music').attr('unlock')) {
 		$('#music').attr('unlock', undefined);

@@ -3538,6 +3538,24 @@ sub archive_manifest_rescan_job {
 	$job->finish({ location => $data->{'location'}, rows => $written->{'rows'}, files => scalar @files });
 }
 
+# What an archive machine holds for a location, asked for by uuid, with the
+# absolute folder those rows sit in - so a caller can address the files on that
+# machine without ever mounting it. An unreachable machine is an answer too:
+# the caller carries on without the archive instead of failing the whole
+# listing.
+sub archive_manifest_fetch {
+	my $data = shift;
+	my $agent = &remote_agent_for($data->{'remote_uuid'});
+	return { error => $agent->{'error'} } if $agent->{'error'};
+	my $res = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/manifest' => form => {
+			location => $data->{'location'}
+		})->result->json;
+	};
+	return { error => 'the archive machine did not answer' } unless ($res && $res->{'status'} eq 'ok');
+	return { %{$res}, hostname => $agent->{'hostname'} };
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
