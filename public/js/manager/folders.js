@@ -252,6 +252,9 @@ function foldersCommand(data) {
 	else if (command == 'open') {
 		foldersOpener({ folder: folders.path });
 	}
+	else if (command == 'archive') {
+		foldersArchive();
+	}
 	else {
 		var jfolders = JSON.stringify(folders);
 		$.ajax({
@@ -272,3 +275,66 @@ function foldersCommandConfirm(data) {
 	$('[uuid="' + uuid + '"]').remove();
 
 }
+
+// Put the selection (or the folder being looked at) on the archive queue. The
+// machine decides which location each item belongs to and where it goes; what
+// comes back is how many were queued and why anything was not.
+function foldersArchive() {
+	$('body').css({ 'cursor': 'progress' });
+	$.ajax({
+		url: '/manager/folders/archive',
+		type: 'POST',
+		data: { folders: JSON.stringify(folders) },
+		success: function (response) {
+			$('body').css({ 'cursor': 'auto' });
+			if (response && response.dialog) {
+				$('#dialog_boxes').append(response.dialog);
+			}
+			if ($('#folders_archive_queue').is(':visible')) { foldersArchiveQueue(); }
+		},
+		error: function () {
+			$('body').css({ 'cursor': 'auto' });
+		}
+	});
+}
+
+var folders_archive_interval;
+function foldersArchiveQueue() {
+	$.ajax({
+		url: '/manager/folders/archive',
+		type: 'GET',
+		success: function (response) {
+			var box = $('#folders_archive_queue').empty();
+			var jobs = (response && response.jobs) || [];
+			if (!jobs.length) {
+				box.html('<i>Nothing is queued for the archive.</i>');
+				return;
+			}
+			$.each(jobs, function (i, job) {
+				var item = job['item'] || {};
+				var name = (item['relative'] && item['relative'].length) ? item['relative'] : (item['path'] || '');
+				var line = $('<div>').css({ 'border-bottom': 'solid 1px', 'padding': '3px', 'overflow-wrap': 'break-word' });
+				$('<b>').text(job['state']).appendTo(line);
+				$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
+				var detail = '';
+				if (job['progress']) { detail = job['progress']; }
+				else if (job['errors'] && job['errors'].length) { detail = job['errors'].join('; '); }
+				if (detail) { $('<div>').css({ 'font-size': '13px' }).text(detail).appendTo(line); }
+				box.append(line);
+			});
+		}
+	});
+}
+
+$(document).on('click', '#folders_archive_toggle', function () {
+	var box = $('#folders_archive_queue');
+	if (box.is(':visible')) {
+		box.hide();
+		clearInterval(folders_archive_interval);
+	}
+	else {
+		box.show();
+		foldersArchiveQueue();
+		folders_archive_interval = setInterval(foldersArchiveQueue, 3000);
+	}
+});

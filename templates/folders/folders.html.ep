@@ -4,7 +4,9 @@
 		<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" class="little_thumb hover folders_command" command="up">
 
 		<input value="<%= $fo->{'folder'} %>" style="vertical-align:top;width:50%;" id="folders_address">
+		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archive queue" class="little_thumb hover" id="folders_archive_toggle">
 	</div>
+	<div id="folders_archive_queue" style="display:none;position:absolute;top:40px;right:2px;width:min(430px, 60%);max-height:60%;overflow:auto;background-color:var(--panel-2);border:solid;z-index:6;font-size:15px;padding:4px;"></div>
 	<div id="folders_mainview" style="height:90%;width:100%;border:solid;padding-bottom:22px;">
 		<div id="folders_contents" class="folders_contents" style="padding-top:5px;height:100%;width:100%;overflow-y:scroll;display:grid;grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));gap:5px; align-content: start; align-items: start;">
 			<% foreach my $f ( @{$fo->{'files'}} ) { %>
