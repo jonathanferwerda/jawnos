@@ -308,6 +308,13 @@ function foldersCommand(data) {
 	}
 }
 
+// The toolbar is as thick as its items need - even one row of icons is taller
+// than the bar's own minimum - so a drawer asks where its bottom is before
+// hanging from it.
+function foldersDrawerTop() {
+	return $('#folders_toolbar').outerHeight() + 5;
+}
+
 // Bring what is selected - or the folder being looked at - back to this
 // machine. The paths are on the machine being browsed, and it is that machine
 // which says where they belong; the queue panel shows the work as it goes.
@@ -325,7 +332,7 @@ function foldersFetchHome() {
 			data: { path: item['path'], remote_uuid: remote_uuid }
 		});
 	});
-	$('#folders_archive_queue').show();
+	$('#folders_archive_queue').css({ 'top': foldersDrawerTop() }).show();
 	foldersArchiveQueue();
 }
 
@@ -541,7 +548,13 @@ function foldersArchiveRescan(location) {
 }
 
 $(document).on('click', '#folders_bookmarks_toggle', function () {
-	$('#folders_bookmarks').toggle();
+	var box = $('#folders_bookmarks');
+	if (box.is(':visible')) {
+		box.hide();
+	}
+	else {
+		box.css({ 'top': foldersDrawerTop() }).show();
+	}
 });
 
 // A bookmark is navigation only, so it works the same on a remote machine:
@@ -559,7 +572,7 @@ $(document).on('click', '#folders_archive_toggle', function () {
 		clearInterval(folders_archive_interval);
 	}
 	else {
-		box.show();
+		box.css({ 'top': foldersDrawerTop() }).show();
 		foldersArchiveQueue();
 		folders_archive_interval = setInterval(foldersArchiveQueue, 3000);
 	}

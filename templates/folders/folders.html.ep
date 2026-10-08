@@ -1,5 +1,5 @@
 <div id="folders" style="background-color:var(--panel);width:100%;height:100%;" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
-	<div id="folders_toolbar" style="height:35px;width:100%;border:solid;background-color:var(--panel-2);">
+	<div id="folders_toolbar" style="min-height:35px;width:100%;border:solid;background-color:var(--panel-2);">
 		<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="little_thumb hover folders_command" command="home">
 		<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" class="little_thumb hover folders_command" command="up">
 
