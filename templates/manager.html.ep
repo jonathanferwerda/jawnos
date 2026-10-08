@@ -27,7 +27,7 @@
 		<img id="grapple" src="<%= &subs::icon_for('/images/make believe/bullseye.png') %>" jawnos_icon="/images/make believe/bullseye.png" style="z-index:10000;display:none;" class="draggable medium_thumb">
 	</div>
 	<div id="ticketmaster">
-		<img id="ticket_sales" class="medium_thumb draggable lock" style="right:0px;z-index:10000;display:none;" src="<%= &subs::icon_for('/images/make believe/key.png') %>" jawnos_icon="/images/make believe/key.png">
+		<img id="ticket_sales" class="medium_thumb draggable lock" style="position:fixed;right:8px;top:96px;z-index:10000;display:none;" src="<%= &subs::icon_for('/images/make believe/key.png') %>" jawnos_icon="/images/make believe/key.png">
 	</div>
 	<div id="ide_sidebar_container" onmouseover="ideSidebarShower();" style="display:none;z-index:9000;padding-bottom:20px;padding-top:20px;position:fixed;bottom:60px;background-color:<%= $config->{$device}->{'ide_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;left:0px;width:35%;height:80%;max-height:80%;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
 	</div>
