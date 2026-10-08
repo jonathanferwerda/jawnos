@@ -93,7 +93,7 @@ sub alarm_clock() {
 			my $default_warranty = &subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d';
 
 			my $warranty = &subs::ago_calc($default_warranty, $timestamp);
-			my $t = &{$subs::time_subs->{$interval}}($timestamp);
+			my $t = &subs::time_span($interval, $timestamp);
 			my $t1 = ($timestamp - $t);
 			foreach my $a ( @{$alarm} ) {
 #				&subs::db_query('update appointments set seen = ? where uuid=?', 'yes',$a->{'uuid'});

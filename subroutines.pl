@@ -765,997 +765,65 @@ sub statement_grabber() {
 }
 
 
-our $time_subs = {
-	'second' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * ($multiplier || 1));
-		return $re;
-	},
-	'15second' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'30second' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'45second' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 45 * ($multiplier || 1));
-		return $re;
-	},
-	'minute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * ($multiplier || 1));
-		return $re;
-	},
-	'twominute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 2 * ($multiplier || 1));
-		return $re;
-	},
-	'threeminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 3 * ($multiplier || 1));
-		return $re;
-	},
-	'fourminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fiveminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eightminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'nineminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelveminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyoneminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwominute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreeminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfourminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfiveminute' => sub() {
-		my $timestamp = shift;
-		my $multiplier = shift || 1;
-		my $re = $timestamp - (1000 * 60 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeightminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentynineminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtyminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'fortyfiveminute' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 45 * ($multiplier || 1));
-		return $re;
-	},
-	'hour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = abs $timestamp - (1000 * 60 * 60 * ($multiplier || 1));
-		return $re;
-	},
-	'twohour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = abs $timestamp - (1000 * 60 * 120 * ($multiplier || 1));
-		return $re;
-	},
-	'threehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 3 * ($multiplier || 1));
-		return $re;
-	},
-	'fourhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fivehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eighthour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'ninehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelvehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyonehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwohour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfourhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfivehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeighthour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyninehour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtyhour' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'day' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twoday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 48 * ($multiplier || 1));
-		return $re;
-	},
-	'threeday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 72 * ($multiplier || 1));
-		return $re;
-	},
-	'fourday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fiveday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eightday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'nineday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelveday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyoneday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwoday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreeday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfourday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfiveday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeightday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentynineday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtyday' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'week' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'twoweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 2 * ($multiplier || 1));
-		return $re;
-	},
-	'threeweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 3 * ($multiplier || 1));
-		return $re;
-	},
-	'fourweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fiveweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eightweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'nineweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelveweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyoneweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwoweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreeweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfourweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfiveweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeightweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentynineweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtyweek' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 7 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'moon' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'month' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'twomonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 2 * ($multiplier || 1));
-		return $re;
-	},
-	'threemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 3 * ($multiplier || 1));
-		return $re;
-	},
-	'fourmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fivemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eightmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'ninemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelvemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentymonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyonemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwomonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfourmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfivemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeightmonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyninemonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtymonth' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'season' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 90 * ($multiplier || 1));
-		return $re;
-	},
-	'quarter' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * (30.5 * 3) * ($multiplier || 1));
-		return $re;
-	},
-	'year' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * ($multiplier || 1));
-		return $re;
-	},
-	'twoyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 2 * ($multiplier || 1));
-		return $re;
-	},
-	'threeyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 3 * ($multiplier || 1));
-		return $re;
-	},
-	'fouryear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 4 * ($multiplier || 1));
-		return $re;
-	},
-	'fiveyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 5 * ($multiplier || 1));
-		return $re;
-	},
-	'sixyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 6 * ($multiplier || 1));
-		return $re;
-	},
-	'sevenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 7 * ($multiplier || 1));
-		return $re;
-	},
-	'eightyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 8 * ($multiplier || 1));
-		return $re;
-	},
-	'nineyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 9 * ($multiplier || 1));
-		return $re;
-	},
-	'tenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'elevenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 11 * ($multiplier || 1));
-		return $re;
-	},
-	'twelveyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 12 * ($multiplier || 1));
-		return $re;
-	},
-	'thirteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 13 * ($multiplier || 1));
-		return $re;
-	},
-	'fourteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 14 * ($multiplier || 1));
-		return $re;
-	},
-	'fifteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 15 * ($multiplier || 1));
-		return $re;
-	},
-	'sixteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 16 * ($multiplier || 1));
-		return $re;
-	},
-	'seventeenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 17 * ($multiplier || 1));
-		return $re;
-	},
-	'eighteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 18 * ($multiplier || 1));
-		return $re;
-	},
-	'nineteenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 19 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 20 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyoneyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 21 * ($multiplier || 1));
-		return $re;
-	},
-	'twentytwoyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 22 * ($multiplier || 1));
-		return $re;
-	},
-	'twentythreeyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 23 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfouryear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 24 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyfiveyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 25 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysixyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 26 * ($multiplier || 1));
-		return $re;
-	},
-	'twentysevenyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 27 * ($multiplier || 1));
-		return $re;
-	},
-	'twentyeightyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 28 * ($multiplier || 1));
-		return $re;
-	},
-	'twentynineyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 29 * ($multiplier || 1));
-		return $re;
-	},
-	'thirtyyear' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 30 * ($multiplier || 1));
-		return $re;
-	},
-	'decade' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'century' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 10 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'millenium' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 10 * 10 * 10 * ($multiplier || 1));
-		return $re;
-	},
-	'era' => sub() {
-		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 365 * 10 * 10 * 10 * 10 * ($multiplier || 1));
-		return $re;
-	},
+# Every span the app offers: a span is a count of a unit, so "2month" is two
+# of the 30 day months, and the odd ones do not read that way.  time_span() is
+# the one door into them, which is why a twenty two month can no longer mean
+# twenty one, and time_span_list() is what the pickers are built from.
+our $time_units = {
+	second => 1000,
+	minute => 60 * 1000,
+	hour => 60 * 60 * 1000,
+	day => 24 * 60 * 60 * 1000,
+	week => 7 * 24 * 60 * 60 * 1000,
+	month => 30 * 24 * 60 * 60 * 1000,
+	year => 365 * 24 * 60 * 60 * 1000,
 };
+
+our $time_odd_spans = {
+	'15second' => [ 15 * 1000, '15 Seconds' ],
+	'30second' => [ 30 * 1000, '30 Seconds' ],
+	'45second' => [ 45 * 1000, '45 Seconds' ],
+	'fortyfiveminute' => [ 45 * 60 * 1000, '45 Minutes' ],
+	moon => [ 28 * 24 * 60 * 60 * 1000, 'Moon' ],
+	season => [ 90 * 60 * 60 * 1000, 'Season' ],
+	quarter => [ (30.5 * 3) * 60 * 60 * 1000, 'Quarter' ],
+	decade => [ 10 * 365 * 24 * 60 * 60 * 1000, 'Decade' ],
+	century => [ 100 * 365 * 24 * 60 * 60 * 1000, 'Century' ],
+	millenium => [ 1000 * 365 * 24 * 60 * 60 * 1000, 'Millenium' ],
+	era => [ 10000 * 365 * 24 * 60 * 60 * 1000, 'Era' ],
+};
+
+my %time_span_table;
+sub time_spans() {
+	unless ( %time_span_table ) {
+		%time_span_table = %{$time_odd_spans};
+		foreach my $unit ( keys %{$time_units} ) {
+			my $length = $time_units->{$unit};
+			$time_span_table{$unit} = [ $length, '1 ' . ucfirst($unit) ];
+			foreach my $count ( keys %{$gb::numerics} ) {
+				next if $count == 1;
+				$time_span_table{ $gb::numerics->{$count} . $unit } = [ $count * $length, $count . ' ' . ucfirst($unit) . 's' ];
+			}
+		}
+	}
+	return \%time_span_table;
+}
+
+sub time_span() {
+	my ($span, $timestamp, $multiplier) = @_;
+	my $found = &time_spans()->{$span} or die "unknown time span: $span";
+	return $timestamp - $found->[0] * ($multiplier || 1);
+}
+
+sub time_span_list() {
+	return sort { &time_spans()->{$a}->[0] <=> &time_spans()->{$b}->[0] || $a cmp $b } keys %{&time_spans()};
+}
+
+sub time_span_label() {
+	my $span = shift;
+	my $found = &time_spans()->{$span};
+	return $found ? $found->[1] : undef;
+}
 
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
@@ -1784,47 +852,47 @@ sub ago_calc() {
 	}
 	if ($ago) {
 		if ($ago =~ /(tom)/) {
-			$difference = &{$subs::time_subs->{'day'}}(0);
+			$difference = &time_span('day', 0);
 			$ago =~ s/$1//gi;
 		}
 		if ($ago =~ /(yes)/) {
-			$difference = -1 * &{$subs::time_subs->{'day'}}(0);
+			$difference = -1 * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 		}
 
 		my $is_dow = 0;
 		if ($ago =~ /(mon)/) {
-			$difference = (1 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (1 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(tue)/) {
-			$difference = (2 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (2 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(wed)/) {
-			$difference = (3 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (3 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(thu)/) {
-			$difference = (4 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (4 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(fri)/) {
-			$difference = (5 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (5 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(sat)/) {
-			$difference = (6 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (6 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
 		elsif ($ago =~ /(sun)/) {
-			$difference = (7 - $time_dow) * &{$subs::time_subs->{'day'}}(0);
+			$difference = (7 - $time_dow) * &time_span('day', 0);
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
@@ -3983,49 +3051,6 @@ sub location_types {
 	return qw/music download photo document video scan rec/;
 }
 
-# The archive root of this machine (config.json archive_dir), tidied: ~
-# resolved, no trailing slash. Undef when this machine is not an archive.
-sub archive_root {
-	my $dir = $config->{'archive_dir'} or return undef;
-	my $root = &home($dir);
-	$root =~ s{/+$}{};
-	return $root;
-}
-
-# Where an item lands inside an archive: <root>/<location>/<path inside the
-# location folder>. The location has to be one we know, and the relative path
-# cannot climb out of it, since the sending machine chooses both. `folder` is
-# the location's folder, `parent` the folder the item's own file goes in.
-sub archive_destination {
-	my $data = shift;
-	my $location = $data->{'location'};
-	return { error => 'unknown location' } unless grep { $_ eq $location } &location_types();
-	my $root = $data->{'root'} || &archive_root();
-	return { error => 'no archive_dir on this machine' } unless $root;
-	my $relative = defined $data->{'path'} ? $data->{'path'} : '';
-	$relative =~ s{\\}{/}g;
-	my @parts;
-	foreach my $part (split m{/+}, $relative) {
-		next if $part eq '' || $part eq '.';
-		# .. resolves against what came before it, and cannot climb above the
-		# location folder because there is nothing above it to pop
-		if ($part eq '..') { pop @parts; next; }
-		push @parts, $part;
-	}
-	my $inside = join '/', @parts;
-	my $folder = $root . '/' . $location;
-	my @upper = @parts;
-	pop @upper if scalar @upper;
-	return {
-		root => $root,
-		location => $location,
-		folder => $folder,
-		parent => $folder . (scalar @upper ? '/' . join('/', @upper) : ''),
-		relative => $inside,
-		path => $folder . (length $inside ? '/' . $inside : '')
-	};
-}
-
 # Make sure the archive root (config.json's archive_dir) has one folder per
 # location type. A blank archive_dir — the default — means this machine is not
 # an archive, so nothing is touched; an archive_dir that is not there yet is
@@ -4034,8 +3059,9 @@ sub archive_destination {
 # run at any time. Pass a path to check a specific root.
 sub archive_scaffolder {
 	my $dir = shift;
-	my $root = (defined $dir && length $dir) ? &home($dir) : &archive_root();
-	return { enabled => 0, reason => 'no archive_dir set' } unless $root;
+	$dir = $config->{'archive_dir'} unless (defined $dir && length $dir);
+	return { enabled => 0, reason => 'no archive_dir set' } unless $dir;
+	my $root = &home($dir);
 	$root =~ s{/+$}{};
 	return { enabled => 0, dir => $root, reason => 'archive_dir does not exist' } unless -d $root;
 	my (@created, @existing, @failed);

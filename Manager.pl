@@ -2854,7 +2854,7 @@ sub editor_maker($c) {
 	my $uuid = $c->param('article_uuid') || '';
 	my $scope = $c->param('scope');
 	my $timestamp = $c->param('timestamp');
-	my $t = &{$subs::time_subs->{$scope}}($timestamp); #timestamp at beginning
+	my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 	my $t1 = ($timestamp - $t);
 	my $t2 = ($t1 + $timestamp + $t1);
 	my $articulation = &subs::db_query('select * from magazine order by timestamp DESC');# where timestamp >= ? and timestamp <= ?', $t, $t2);
@@ -3235,7 +3235,7 @@ get '/manager/time_jump' => sub($c) {
 	my $type = $c->param('type');
 	my $app = $c->param('app');
 	my $scope = $c->param('scope');
-	my $t = &{$subs::time_subs->{$scope}}($timestamp); #timestamp at beginning
+	my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 	my $t1 = ($timestamp - $t);
 	my $t2 = ($t1 + $timestamp + $t1);
 	my $query;
@@ -5547,7 +5547,7 @@ sub log_reader {
 
 	if ($scope && $timestamp && $data->{'view'} eq 'appointment_viewer') {
 		# appointment_viewer
-		my $t = &{$subs::time_subs->{$scope}}($timestamp); #timestamp at beginning
+		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp + $t1);
 
@@ -5655,7 +5655,7 @@ sub log_reader {
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'appointment_details') {
 		#appointment_details;
-		my $t = &{$subs::time_subs->{$scope}}($timestamp); #timestamp at beginning
+		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp);
 		if ($data->{'uuid'}) {
@@ -6667,9 +6667,8 @@ sub schedule_maker($c,$schedule,$timestamp) {
 		$rsnumber =~ s/[^0-9,.]//gi;
 		$rsword =~ s/[^[a-zA-Z]//gi;
 		$rsword = &subs::timespan_widener($rsword);
-		if (eval {&{$subs::time_subs->{$rsword}}() }) {
+		if (defined( my $t = eval { &subs::time_span($rsword, $timestamp, $rsnumber) } )) {
 
-			my $t = &{$subs::time_subs->{$rsword}}($timestamp,$rsnumber);
 			my $diff = $timestamp - $t;
 			my $settings = &subs::settings_grabber({ app => $c->param('app') });
 			$warranty = $settings->{'warranty'} unless $warranty ne '';
@@ -8948,10 +8947,10 @@ sub inventory_details($c,$settings) {
 													$sprinter = "%.4f";
 												}
 
-												$bucket->{$mk} = sprintf($sprinter, $bucket->{'t_' . $mk} / $bucket->{$mk . '_occurences'}) if $measure->{$mk};
-												if ($bucket->{$mk} == undef) {
-													$bucket->{$mk} = 0;
-												}
+												# a zero measure is an average like any other: the divisor
+												# is how many it has seen, never the measure itself
+												$bucket->{$mk} = sprintf($sprinter, $bucket->{'t_' . $mk} / $bucket->{$mk . '_occurences'});
+												$bucket->{$mk} = 0 unless defined $bucket->{$mk};
 											}
 											elsif ($settings->{'s_calc'} eq 'high') {
 												$bucket->{$mk} = $measure->{$mk} unless $bucket->{$mk};
@@ -9260,35 +9259,38 @@ sub father_time($data) {
 	my ($bt, $temp_timestamp);
 	# how many periods an "Nnext" window spans, zero for the other ts values
 	my $reach = 0;
+	# a caller can ask for a window that many periods wide instead of one,
+	# keeping its far edge (the budget's multiplier)
+	my $periods = $data->{'periods'} || 1;
 
 	# A window is only good for the timestamp it was built from: handing the
 	# same one to a later request is what put January's month on screen just
 	# after midnight on the first.
-	if ($gb::father_time->{$scope}->{$ts}->{$lock}->{'timestamp'} == $timestamp &&
-		$gb::father_time->{$scope}->{$ts}->{$lock}->{'st'} > $start_time - 10000) {
-		$bt = $gb::father_time->{$scope}->{$ts}->{$lock}->{'bt'};
-		$temp_timestamp = $gb::father_time->{$scope}->{$ts}->{$lock}->{'tt'};
-		$gb::father_time->{$scope}->{$ts}->{$lock}->{'st'} = $start_time;
+	if ($gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'timestamp'} == $timestamp &&
+		$gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'st'} > $start_time - 10000) {
+		$bt = $gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'bt'};
+		$temp_timestamp = $gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'tt'};
+		$gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'st'} = $start_time;
 	}
 	else {
 		if ($ts eq 'this') {
 			$temp_timestamp = $timestamp;
 		}
 		elsif ($ts =~ 'last') {
-			$temp_timestamp = &{$subs::time_subs->{$scope}}($timestamp);
+			$temp_timestamp = &subs::time_span($scope, $timestamp);
 			if ($ts =~ /(^[0-9])/) {
 				my $tas = $ts;
 				$tas =~ s/last//gi;
 				my $tame = $gb::numerics->{$tas};
 				$tame = '' if $tas == 1;
-				$temp_timestamp = &{$subs::time_subs->{$tame . $scope}}($timestamp);
+				$temp_timestamp = &subs::time_span($tame . $scope, $timestamp);
 			}
 		}
 		elsif ($ts =~ 'next') {
 			# the span this scope is worth: "next" is the span after this one,
 			# "Nnext" is the next N spans counting this one, so 2next in week is
 			# this week plus next week
-			my $span_bt = &{$subs::time_subs->{$scope}}($timestamp);
+			my $span_bt = &subs::time_span($scope, $timestamp);
 			my $span = $timestamp - $span_bt;
 			$temp_timestamp = $span + $timestamp;
 			if ($ts =~ /(^[0-9])/) {
@@ -9320,40 +9322,45 @@ sub father_time($data) {
 				if ($ts =~ /^(\d+)/ && $1 > 1) { $units = $multiplier * $1 }
 				else { $shift = 1 }
 			}
+			if ($periods > 1) {
+				$shift -= ($periods - 1) * $units;
+				$units *= $periods;
+			}
 			my $at = localtime($timestamp / 1000);
 			my $period_start = sub {
-				my $periods = shift;
+				my $offset = shift;
 				if ($unit eq 'minute') {
-					return timelocal(0, $at->min, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $periods * 60000;
+					return timelocal(0, $at->min, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 60000;
 				}
 				if ($unit eq 'hour') {
-					return timelocal(0, 0, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $periods * 3600000;
+					return timelocal(0, 0, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 3600000;
 				}
 				if ($unit eq 'year') {
-					return timelocal(0, 0, 0, 1, 0, $at->year + $periods) * 1000;
+					return timelocal(0, 0, 0, 1, 0, $at->year + $offset) * 1000;
 				}
 				if ($unit eq 'month') {
-					my $index = $at->year * 12 + ($at->mon - 1) + $periods;
+					my $index = $at->year * 12 + ($at->mon - 1) + $offset;
 					return timelocal(0, 0, 0, 1, $index % 12, int($index / 12)) * 1000;
 				}
 				if ($unit eq 'week') {
 					# weeks start on Sunday, so step off the Sunday of this week
 					my $sunday = timegm(0, 0, 0, $at->mday, $at->mon - 1, $at->year) - $at->strftime('%w') * 86400;
-					my @date = gmtime($sunday + 7 * $periods * 86400);
+					my @date = gmtime($sunday + 7 * $offset * 86400);
 					return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
 				}
-				my @date = gmtime(timegm(0, 0, 0, $at->mday, $at->mon - 1, $at->year) + $periods * 86400);
+				my @date = gmtime(timegm(0, 0, 0, $at->mday, $at->mon - 1, $at->year) + $offset * 86400);
 				return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
 			};
 			$bt = $period_start->($shift);
 			$temp_timestamp = $period_start->($shift + $units);
 		}
 		else {
-			$bt = $reach > 1 ? $timestamp : &{$subs::time_subs->{$scope}}($temp_timestamp);
+			$bt = $reach > 1 ? $timestamp : &subs::time_span($scope, $temp_timestamp);
+			$bt = $temp_timestamp - ($temp_timestamp - $bt) * $periods if $periods > 1;
 		}
 	}
 
-	$gb::father_time->{$scope}->{$ts}->{$lock} = { bt => $bt, tt => $temp_timestamp, st => $start_time, timestamp => $timestamp };
+	$gb::father_time->{$scope}->{$ts}->{$lock}->{$periods} = { bt => $bt, tt => $temp_timestamp, st => $start_time, timestamp => $timestamp };
 
 	return ($bt,$temp_timestamp);
 }
@@ -10497,24 +10504,19 @@ get '/manager/budget' => sub($c) {
 		if ($timeshift) {
 			$timestamp = &subs::ago_calc($timeshift,$timestamp);
 		}
-		$bt = &{$subs::time_subs->{$scope}}($timestamp); #timestamp at beginning
+		$bt = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		$t1 = ($timestamp - $bt);
 		$t2 = ($timestamp);
+		# the multiplier widens the window in whole periods, the same way the
+		# inventory's Nnext windows read it
 		($bt, $t2) = &father_time({
 			scope => $scope,
 			ts => $settings->{'time_when'},
 			lock => $settings->{'s_lock'},
-			timestamp => $timestamp
+			timestamp => $timestamp,
+			periods => $settings->{'when_multiplier'} || 1
 		});
 		$t2_comp = '<';
-		if ($settings->{'when_multiplier'}) {
-			my $tt = ($t2 - $bt) * $settings->{'when_multiplier'};
-
-				$bt = $t2 - $tt;
-
-
-		}
-
 	}
 	my $total_duration = $t2 - $bt;
 	my $last_inventory = $bt;
@@ -11453,7 +11455,7 @@ get '/manager/appointment_viewer' => sub($c) {
 		$timestamp = &subs::ago_calc($timeshift,$timestamp);
 	#	$timestamp = $timestamp - ($timeshift);
 	}
-	my $period = &{$subs::time_subs->{$scope}}($timestamp) if eval {&{$subs::time_subs->{$scope}}($timestamp)};
+	my $period = eval { &subs::time_span($scope, $timestamp) };
 
 	my $appts = &log_reader({
 		appts => $chosen_appts,
@@ -11534,7 +11536,7 @@ get '/manager/appointment_viewer' => sub($c) {
 						if ($sorts eq 'log') {
 							push @{$appts->{'__logwatch'}}, $p;
 						}
-						foreach my $ts (keys %{$subs::time_subs}) {
+						foreach my $ts ( &subs::time_span_list() ) {
 							if ($type eq 'list') {
 								$appts->{'__stash'}->{$ts . '_total_' . $sorts} += (unformat_number($p->{'total'} || $p->{'amount'})) if $p->{'total'} || $p->{'amount'};
 							}
@@ -11543,7 +11545,7 @@ get '/manager/appointment_viewer' => sub($c) {
 							}
 
 						}
-						$appts->{$a}->{$scope . '_duration_percent'} =  ($appts->{$a}->{$scope . '_duration'} / abs &{$subs::time_subs->{$scope}}(0)) * 100 if $appts->{$a}->{$scope . '_duration'};
+						$appts->{$a}->{$scope . '_duration_percent'} =  ($appts->{$a}->{$scope . '_duration'} / abs &subs::time_span($scope, 0)) * 100 if $appts->{$a}->{$scope . '_duration'};
 						$appts->{$a}->{$scope . '_duration_percent'} = sprintf("%.2f",$appts->{$a}->{$scope . '_duration_percent'}) . "%" if ($appts->{$a}->{$scope . '_duration_percent'} );
 					}
 				}
@@ -14007,53 +14009,6 @@ get '/manager/folders/archive/dirs' => sub($c) {
 	$c->render(json => &subs::archive_scaffolder());
 };
 
-# An archive machine answering for its own root. A sending machine asks first
-# whether the item is already there, so a second pass over a folder costs one
-# small request per file instead of the file itself.
-post '/manager/folders/archive/probe' => sub($c) {
-	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
-	if ($dest->{'error'}) {
-		$c->render(json => { status => 'error', error => $dest->{'error'} });
-		return;
-	}
-	my $exists = -e $dest->{'path'} ? 1 : 0;
-	my @stat = $exists ? stat($dest->{'path'}) : ();
-	$c->render(json => {
-		status => 'ok',
-		path => $dest->{'path'},
-		exists => $exists,
-		# so the sender can skip a file it has already delivered unchanged
-		size => $exists ? -s $dest->{'path'} : undef,
-		mtime => $exists ? $stat[9] : undef
-	});
-};
-
-# The upload half of archiving: the item is posted here and lands in
-# <archive root>/<location>/<path>, so transfers ride the same tunnel and
-# session as every other manager to manager request instead of rsync.
-post '/manager/folders/archive/receive' => sub($c) {
-	my @uploads = @{$c->req->uploads};
-	my $upload = $uploads[0];
-	unless ($upload) {
-		$c->render(json => { status => 'error', error => 'no file in the request' });
-		return;
-	}
-	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
-	if ($dest->{'error'}) {
-		$c->render(json => { status => 'error', error => $dest->{'error'} });
-		return;
-	}
-	Mojo::File->new($dest->{'parent'})->make_path;
-	eval { $upload->move_to($dest->{'path'}) };
-	if ($@) {
-		$c->render(json => { status => 'error', error => "$@", path => $dest->{'path'} });
-		return;
-	}
-	my $written = -s $dest->{'path'};
-	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)');
-	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written });
-};
-
 post '/manager/folders/file/open' => sub ($c) {
 
 	my $folders = eval { return decode_json $c->param('folders') } || {};
@@ -15037,7 +14992,7 @@ get '/manager/travel/viewer' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $travel_scope = $c->param('travel_scope') ? $c->param('travel_scope') : 20;
 	my $time_scope = $c->param('time_scope') ? $c->param('time_scope') : '5minute';
-	my $t = &{$subs::time_subs->{$time_scope}}($timestamp); #timestamp at beginning
+	my $t = &subs::time_span($time_scope, $timestamp); #timestamp at beginning
 	my $t1 = ($timestamp - $t);
 	my $t2 = ($t1 + $timestamp);
 	if ($settings->{'start_time'}) {

@@ -243,45 +243,9 @@
 			<input style="max-width: 90%" type="range" id="timeshift" step=1 max=20 min=-20 /><br>
 			<span id="timeshift_viewer"></span><br>
 			<select name="scope" id="scope">
-				<option value="second">1s</option>
-				<option value="15second">15s</option>
-				<option value="30second">30s</option>
-				<option value="45second">45s</option>
-				<option value="minute">1m</option>
-				<option value="fiveminute">5 Mins</option>
-				<option value="tenminute">10 Mins</option>
-				<option value="fifteenminute">15 Mins</option>
-				<option value="thirtyminute">30 Mins</option>
-				<option value="fortyfiveminute">45 Mins</option>
-				<option value="hour">Hour</option>
-				<option value="twohour">2 Hours</option>
-				<option value="threehour">3 Hours</option>
-				<option value="sixhour">6 Hours</option>
-				<option value="ninehour">9 Hours</option>
-				<option value="twelvehour">12 Hours</option>
-				<option value="fifteenhour">15 Hours</option>
-				<option value="eighteenhour">18 Hours</option>
-				<option value="twentyonehour">21 Hours</option>
-				<option value="day">Day</option>
-				<option value="twoday">2 Days</option>
-				<option value="threeday">3 Days</option>
-				<option value="fourday">4 Days</option>
-				<option value="fiveday">5 Days</option>
-				<option value="sixday">6 Days</option>
-				<option value="week">Week</option>
-				<option value="twoweeks">2 Weeks</option>
-				<option value="threeweeks">3 Weeks</option>
-				<option value="moon">Moon</option>
-				<option value="month">Month</option>
-				<option value="quarter">Quarter</option>
-				<option value="season">Season</option>
-				<option value="sixmonth">6 Months</option>
-				<option value="ninemonth">9 Months</option>
-				<option value="year">Year</option>
-				<option value="decade">Decade</option>
-				<option value="century">Century</option>
-				<option value="millenium">Millenium</option>
-				<option value="era">Era</option>
+				<% foreach my $span ( &subs::time_span_list() ) { %>
+					<option value="<%= $span %>"><%= &subs::time_span_label($span) %></option>
+				<% } %>
 			</select>
 			<select id="timeshift_scope" name="timeshift_scope">
 				<option value="Mill">Millenium</option>

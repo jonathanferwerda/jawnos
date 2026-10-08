@@ -147,8 +147,17 @@ function statisticGrapher(data,canvasId) {
 		}
 		var id = canvasId || data.app + '_' + tl + '_statistic_graph';
 		var g = document.getElementById(id);
-		g.width = wind.width();
+		// draw at the size the canvas is shown at, at the device's own resolution:
+		// the backing store used to stay at the default 300x150 and the browser
+		// stretched it to the stylesheet's 250px, which softened the line and the
+		// text without changing any of the coordinates
+		var thick = window.devicePixelRatio || 1;
+		var wide = wind.width();
+		var tall = numeral($(g).css('height')).value() || 250;
+		$(g).attr({ width: Math.round(wide * thick), height: Math.round(tall * thick) });
 		ctx = g.getContext('2d');
+		ctx.setTransform(thick, 0, 0, thick, 0, 0);
+		ctx.clearRect(0, 0, wide, tall);
 		ctx.beginPath();
 		ctx.fillStyle = data.settings.colour || 'black';
 		ctx.strokeStyle = 'black';
@@ -159,23 +168,26 @@ function statisticGrapher(data,canvasId) {
 			var lowest = numeral(data.lowest[tl][data.settings.s_display]).value();
 			var highest = numeral(data.highest[tl][data.settings.s_display]).value();
 
-			var max = highest * 1.1;
-			if (lowest < 0) {
-				max = highest + Math.abs(lowest);
-			}
-			var min = g.height * .9;
+			// the axis runs from a little under the lowest value to a little over
+			// the highest, so the lowest number sits near the floor instead of
+			// floating wherever zero leaves it
+			var spread = (highest - lowest) || Math.abs(highest) || 1;
+			var roof = highest + spread * .1;
+			var floor = lowest - spread * .1;
+			var min = tall - 12;
+			var y_for = function(point) {
+				return min - (min * ((point - floor) / (roof - floor)));
+			};
 
-			var colWidth = g.width / time_widths + 1; 
+			var colWidth = wide / time_widths + 1; 
+			var label_edge = -100;
 			$.each(data.scopes, function(n,ts) {
 				if (data[ts] && (ts != 'average' && ts != 'total')) {
 					if (typeof data[ts][tl] == 'object') {
 						if (data[ts][tl][data.settings.s_display]) {
 							var point = numeral(data[ts][tl][data.settings.s_display]).value();
-							if (lowest < 0) {
-								point = point + Math.abs(lowest);
-							}
-							var x = g.width * (n / time_widths);
-							var y = min - (min * point / max);
+							var x = wide * (n / time_widths);
+							var y = y_for(point);
 							ctx.lineTo(x, y);
 
 							var text = data[ts][tl][data.settings.s_display];
@@ -186,27 +198,30 @@ function statisticGrapher(data,canvasId) {
 							if (text_x < 0) {
 								text_x = x;
 							}
-							ctx.fillText(text,text_x, y);
+							ctx.fillText(text,text_x, y - 4);
 							ctx.save('a');
 							ctx.fillStyle = 'black';
 							ctx.strokeStyle = 'black';
 
 							ctx.font = "400 10px Arial";
+							var under = ts;
 							if (data.settings.s_visual == 'historical') {
+								under = ts.substr(0,3);
 								if (data[ts][tl]['start_timestamp']) {
 									var ft = new Date(data[ts][tl]['start_timestamp']);
-									var text = ts.substr(0,3)
 									if (tl == 'hour') {
 										ft.getHours()
 									} else if (tl == 'day') {
-										text = dayProcessor(ft.getDay())
+										under = dayProcessor(ft.getDay())
 									}
 
 								}
-								ctx.fillText(text, x - 5, g.height);
 							}
-							else {
-								ctx.fillText(ts, x - 5, g.height);
+							// the points are closer together than the labels are wide, so
+							// only the labels with room under them are written
+							if (label_edge < x - ctx.measureText(under).width / 2) {
+								ctx.fillText(under, x - 5, tall - 3);
+								label_edge = x + ctx.measureText(under).width / 2 + 4;
 							}
 							ctx.restore('a');
 							if (data[ts][tl]['budget']) {
@@ -225,16 +240,16 @@ function statisticGrapher(data,canvasId) {
 				ctx.fillStyle = 'blue';
 				ctx.strokeStyle = data['budget_status'][tl][data.settings.s_display]['colour'] || 'blue';
 				ctx.lineWidth = 4;
-				ctx.moveTo(0, min - (min * data.autocalc[tl]['result'] / max));
-				ctx.lineTo(g.width, min - (min * data.autocalc[tl]['result'] / max));
+				ctx.moveTo(0, y_for(data.autocalc[tl]['result']));
+				ctx.lineTo(wide, y_for(data.autocalc[tl]['result']));
 				ctx.stroke();
 			}
 
 			ctx.beginPath();
 			ctx.lineWidth = 2;
 			ctx.strokeStyle = 'black';
-			ctx.moveTo(0, min - (min * threshold / max));
-			ctx.lineTo(g.width, min - (min * threshold / max));
+			ctx.moveTo(0, y_for(threshold));
+			ctx.lineTo(wide, y_for(threshold));
 			ctx.stroke();
 			ctx.restore('b');
 			ctx.beginPath();

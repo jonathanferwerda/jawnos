@@ -30,12 +30,12 @@
 				<input class="time budget_time" setting="start_time" timestamp="<%= $start %>" style="width:120px;">
 				<input class="time budget_time" setting="end_time" timestamp="<%= $end %>" style="width:120px;">
 				<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Lock" class="statistic_lock little_thumb hover <% if ($settings->{'s_lock'} eq 'on') { %>selected<% } %>" app="budget" locked="<%= $settings->{'s_lock'} %>">
-				<select class="budget_config" config="when_multiplier" style="vertical-align:bottom;">
+				<select class="budget_config" config="when_multiplier" style="vertical-align:bottom;" hint="How many periods">
 					<% foreach my $count (1..30) { %>
 						<option value="<%= $count %>" <% if ($count == $settings->{'when_multiplier'}) { %>selected<% } %>><%= $count %></option>
 					<% } %>
 				</select>
-				<select class="budget_config" config="time_when" style="vertical-align:bottom;">
+				<select class="budget_config" config="time_when" style="vertical-align:bottom;" hint="Which period">
 					<% foreach my $when ( @{$time_scopes} ) { %>
 						<option value="<%= $when %>" <% if ($when eq $settings->{'time_when'}) { %>selected<% } %>><%= &subs::format_name($when) %></option>
 					<% } %>
