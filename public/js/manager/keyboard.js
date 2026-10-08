@@ -95,6 +95,8 @@ $(window).on('resize', function() {
 });
 
 $(document).on('click', '.keyboard.bc,.keyboard_tab', function(i) {
+	// the bar across the top is a handle, not a claim button
+	if ($(i.target).closest('.keyboard_drag_bar').length > 0) { return; }
 	var keyboard = $(this);
 	var id = i.target.id;
 	if ($(this).hasClass('keyboard_tab')) {
@@ -106,54 +108,59 @@ $(document).on('click', '.keyboard.bc,.keyboard_tab', function(i) {
 
 function keyboardDragEnabler(k,id,state) {
 
+	if (k.attr('id') != id) { return; }
 
-	if (k.attr('id') == id) {
+	if (k.attr('claimed') == 'yes' && state != 'on') {
+		k.attr('claimed','no');
+		k.css({ 'border-left': 'none' });
+	}
+	else {
+		k.attr('claimed', 'yes');
+		k.css({ 'border-left': 'solid 10px' });
+	}
+	keyboardDragBarMaker(k);
+}
 
-		if (k.attr('claimed') == 'yes' && state != 'on') {
-
-			k.attr('claimed','no');
-			k.css({ 'border-left': 'none' });
-			if (!k.hasClass('ui-draggable')) {
-				k.draggable({
-					cancel: '.jonathan,input,textarea,select,option,button,.keyboard_button',
-					start: function(p) {
-						var timestamp = Date.now();
-						pseudonyms[p.target.id] = timestamp;
-						keyboardIntervals = Date.now();
-					},
-					drag: function(p) {
-						keyboardIntervals = Date.now();
-					},
-					stop: function(p) {
-						var now = Date.now();
-						if (now - pseudonyms[p.target.id] < 250) {
-							k.hide();
-							k.draggable('disable');
-						}
-						var css = {};
-						var style = $($('#' + p.target.id))[0].style;
-						$.each(style, function(i,v) {
-							if (!v.match('border-left')) {
-								css[v] = $('#' + p.target.id).css(v);
-							}
-						});
-						var jcss = JSON.stringify(css);
-						localStorage.setItem(p.target.id + '_dynamic', jcss);
-						localStorage.setItem('pseudonym_location_' + p.target.id, jcss);
+// A keyboard panel is moved by the thin bar across its top, so the body stays
+// free for tapping buttons and typing: a drag only ever starts on the bar.
+// The bar is added once; safe to call again on the same panel.
+function keyboardDragBarMaker(k) {
+	k = $(k);
+	if (k.length == 0) { return; }
+	if (k.children('.keyboard_drag_bar').length == 0) {
+		k.prepend('<div class="keyboard_drag_bar"></div>');
+	}
+	if (!k.hasClass('ui-draggable')) {
+		k.draggable({
+			handle: '.keyboard_drag_bar',
+			start: function(p) {
+				var panel = $(this);
+				pseudonyms[panel.attr('id')] = Date.now();
+				keyboardIntervals = Date.now();
+			},
+			drag: function(p) {
+				keyboardIntervals = Date.now();
+			},
+			stop: function(p) {
+				// the computed style is the only record of where the panel sits
+				// once it has been moved, so keep the lot (minus the claim border)
+				var panel = $(this);
+				var id = panel.attr('id');
+				var css = {};
+				var style = panel[0].style;
+				$.each(style, function(i,v) {
+					if (!v.match('border-left')) {
+						css[v] = panel.css(v);
 					}
 				});
+				var jcss = JSON.stringify(css);
+				localStorage.setItem(id + '_dynamic', jcss);
+				localStorage.setItem('pseudonym_location_' + id, jcss);
 			}
-			else {
-				k.draggable('enable');
-			}
-		}
-		else {
-			k.attr('claimed', 'yes');
-			k.css({ 'border-left': 'solid 10px' });
-			if (k.hasClass('ui-draggable')) {
-				k.draggable('disable');
-			}
-		}
+		});
+	}
+	else {
+		k.draggable('enable');
 	}
 }
 
@@ -247,8 +254,11 @@ function pseudonymHomeHider(interval) {
 
 	interval = interval || pseudonymHIntervals;
 	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
-		var h = $('#pseudonym_home').height();
-		var diff = (0 - (h * .7));
+		// tuck the dock down, but keep the search and a strip beneath it on
+		// screen: that strip is where the mouse rests to call the icons back
+		var h = $('#pseudonym_home').outerHeight();
+		var reach = 47;
+		var diff = Math.min(0, reach - h);
 		$('#pseudonym_home').css({ 'bottom': diff });
 		$('.pseudonym.bar').hide();
 		$('.keyboard').each(function() {
@@ -573,10 +583,7 @@ async function keyboardMaker(data) {
 				}
 				t.attr('claimed', 'yes');
 				t.css({ 'border-left': 'solid 10px' });
-				var bg = t.css('background-color');
-				var h = t.html();
-				h = h + '<div class="keyboard_tab" style="border:solid;border-width:3px;border-radius:10px;background-color:' + bg + ';width:30px;height:15px;position:absolute;top:-11px;left:0px;"></div>';
-	//			t.html(h);
+				keyboardDragBarMaker(t);
 			}
 		});
 	}
@@ -585,6 +592,7 @@ async function keyboardMaker(data) {
 		$('#' + toggle).css(css);
 		$('#' + toggle).attr('claimed', 'yes');
 		$('#' + toggle).css({ 'border-left': 'solid 10px' });
+		keyboardDragBarMaker($('#' + toggle));
 	}
 	else if (state != 'on') {
 		$('#' + toggle).parent().remove();

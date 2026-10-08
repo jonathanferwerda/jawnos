@@ -158,3 +158,35 @@
 .teb_style[status="on"] {
 	background-color: yellow;
 }
+
+/* A keyboard panel is moved by the thin bar across its top: the body stays free
+   for tapping buttons and typing, and the bar is the drag's anchor. The bar
+   sticks so it stays in reach while a scrollable panel's contents move. */
+.keyboard_drag_bar {
+	display: block;
+	position: sticky;
+	top: 0;
+	z-index: 30;
+	height: 14px;
+	background: linear-gradient(rgba(0,0,0,.20), rgba(0,0,0,.06));
+	border-bottom: 1px solid rgba(0,0,0,.22);
+	border-radius: 6px 6px 0 0;
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+.keyboard_drag_bar:active {
+	cursor: grabbing;
+}
+.keyboard_drag_bar::after {
+	content: '';
+	display: block;
+	width: 44px;
+	height: 4px;
+	margin: 0 auto;
+	position: relative;
+	top: 5px;
+	border-radius: 2px;
+	background-color: rgba(0,0,0,.32);
+}
