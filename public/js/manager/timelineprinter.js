@@ -17,7 +17,7 @@ function timelinePrinter(appts,sort,offset) {
 
 	var rowHeight = 34;
 	var dotRadius = 14;
-	var dotIcon = 24;
+	var dotIcon = 29;
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
