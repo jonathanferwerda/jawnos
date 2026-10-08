@@ -13962,8 +13962,11 @@ sub folders_command_items {
 
 # Take a folders selection away. Anything an appointment has attached goes
 # through the app's own file deletion first, so the appointment lets go of it,
-# the thumb goes with it, and the other machines hear about it; whatever is
-# left after that is deleted or shredded where it lies. Returns the errors.
+# the thumb goes with it, and the other machines hear about it; the rows
+# besides appointments that named the file - a mailbox's attachments, the
+# store's rows - are trimmed of it, and a backup whose sealed file it was goes
+# the way a pruned backup goes. Whatever is left after that is deleted or
+# shredded where it lies. Returns the errors.
 sub folders_delete_away {
 	my ($command, $items) = @_;
 	my @errors;
@@ -13972,11 +13975,32 @@ sub folders_delete_away {
 		foreach my $attached ( @{ &subs::folders_appt_entries($path) } ) {
 			&delete_file($attached);
 		}
+		&subs::folders_entry_trim($path);
+		&folders_delete_backups($path);
 		next unless -e $path;
 		my $error = ($command eq 'shred') ? &subs::folders_job_shred($path) : &subs::folders_job_take_away($path);
 		push @errors, $error if $error;
 	}
 	return \@errors;
+}
+
+# A backup whose sealed file is being taken away goes with it: the row is
+# deleted and the other machines are told to drop it, the same as when
+# backup_now rotates a backup out. Returns how many were pruned.
+sub folders_delete_backups {
+	my $path = shift;
+	return 0 unless (defined $path && length $path);
+	my @names = (-d $path) ? &subs::folders_job_files([ { path => $path } ]) : ( $path );
+	my %wanted = map { $_ => 1 } @names;
+	my $backups = &subs::db_query('select uuid, server_time, enc_file from backups where enc_file is not null and enc_file != ?', '')->hashes;
+	my $pruned = 0;
+	foreach my $backup ( @{$backups} ) {
+		next unless $wanted{ $backup->{'enc_file'} };
+		&deletion_registration({ table => 'backups', uuid => $backup->{'uuid'}, scope => 'single', server_time => $backup->{'server_time'} });
+		&subs::db_delete('backups', { uuid => $backup->{'uuid'} });
+		$pruned++;
+	}
+	return $pruned;
 }
 
 post '/manager/folders/context' => sub($c) {

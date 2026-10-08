@@ -3827,6 +3827,94 @@ sub folders_appt_entries {
 	return \@found;
 }
 
+# Whether a decoded thing names a path, anywhere inside it: an entry's f or
+# thumb, an attachment wrapped around an entry, or a bare path in a list.
+sub folders_entry_names {
+	my ($blob, $wanted) = @_;
+	return 0 unless ref $blob;
+	if (ref $blob eq 'ARRAY') {
+		foreach my $item ( @{$blob} ) {
+			return 1 if &folders_entry_names($item, $wanted);
+		}
+	}
+	elsif (ref $blob eq 'HASH') {
+		foreach my $kind ( qw/f thumb/ ) {
+			return 1 if (defined $blob->{$kind} && $wanted->{ $blob->{$kind} });
+		}
+		foreach my $key ( keys %{$blob} ) {
+			next unless ref $blob->{$key};
+			return 1 if &folders_entry_names($blob->{$key}, $wanted);
+		}
+	}
+	return 0;
+}
+
+# Take the entries naming a path out of one decoded blob: an entry goes whole,
+# a bare path in a list goes alone, and an attachment wrapped around an entry
+# goes with it. Returns how many were dropped.
+sub folders_entry_trim_in {
+	my ($blob, $wanted) = @_;
+	my $dropped = 0;
+	if (ref $blob eq 'ARRAY') {
+		my @kept;
+		foreach my $item ( @{$blob} ) {
+			if (ref $item) {
+				if (&folders_entry_names($item, $wanted)) { $dropped++; next }
+				$dropped += &folders_entry_trim_in($item, $wanted);
+			}
+			elsif (defined $item && $wanted->{$item}) {
+				$dropped++;
+				next;
+			}
+			push @kept, $item;
+		}
+		@{$blob} = @kept;
+	}
+	elsif (ref $blob eq 'HASH') {
+		foreach my $key ( keys %{$blob} ) {
+			next unless ref $blob->{$key};
+			$dropped += &folders_entry_trim_in($blob->{$key}, $wanted);
+		}
+	}
+	return $dropped;
+}
+
+# Take a path out of the rows besides an appointment that write one down - a
+# mailbox's attachments, the store's rows - so a file that is taken away is not
+# still named by them. A folder covers the files under it, and a row that
+# changed is stamped with the time so the other machines hear about it.
+# Returns how many entries were taken out.
+sub folders_entry_trim {
+	my $path = shift;
+	return 0 unless (defined $path && length $path);
+	my @names = (-d $path) ? &folders_job_files([ { path => $path } ]) : ( $path );
+	my %wanted = map { $_ => 1 } @names;
+	my $trimmed = 0;
+	foreach my $place ( &file_reference_places() ) {
+		next unless ($place->{'shape'} eq 'entries');
+		next if ($place->{'table'} eq 'appointments');
+		my $table = $place->{'table'};
+		my $column = $place->{'column'};
+		my $rows = eval { &db_query("select rowid, $column from $table where $column is not null and $column != ''")->hashes } || [];
+		foreach my $row ( @{$rows} ) {
+			my $blob = eval { return decode_json $row->{$column} };
+			next unless ref $blob;
+			my $touched = 0;
+			if (ref $blob eq 'HASH' && &folders_entry_names($blob, \%wanted)) {
+				$touched = 1;
+				$blob = [];
+			}
+			else {
+				$touched = &folders_entry_trim_in($blob, \%wanted);
+			}
+			next unless $touched;
+			&db_update($table, { $column => encode_json $blob, server_time => &rightNow() }, { rowid => $row->{'rowid'} });
+			$trimmed += $touched;
+		}
+	}
+	return $trimmed;
+}
+
 # Every place a path is written down, so that sealing a file or opening one
 # keeps whatever points at it pointing at it: an appointment's file array, a
 # mailbox's attachments (each one wrapped around a file entry), and the store's
