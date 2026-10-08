@@ -1250,8 +1250,16 @@ void loop() {
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   wsclient.poll();
-  if (audio.isRunning()){
+  // The audio library pumps from here. Report the moment it stops on its own,
+  // which is what tells a finished (or refused) file apart from a silent one.
+  static bool audioWasRunning = false;
+  if (audio.isRunning()) {
     audio.loop();
+    audioWasRunning = true;
+  }
+  else if (audioWasRunning) {
+    audioWasRunning = false;
+    deckLog("[mic] playback finished (or gave up)");
   }
 
   if (digitalRead(BOARD_TOUCH_INT)) {
@@ -4504,6 +4512,13 @@ bool es7210Begin()
   es7210_adc_init(&Wire, &cfg);               // sets slave mode, clocks and mics
   es7210WriteReg(ES7210_SDP_INTERFACE1_REG11, 0x03);   // DSP-B, as the factory build does
   es7210WriteReg(ES7210_SDP_INTERFACE2_REG12, 0x02);   // all four mics on SDOUT1
+  // The vendored driver's high pass filter writes are commented out, and the
+  // esp_codec_dev driver LilyGoLib ships applies them: without them the ADC's
+  // DC and low frequency content ends up in the recording as hum.
+  es7210WriteReg(ES7210_ADC12_HPF2_REG23, 0x2a);
+  es7210WriteReg(ES7210_ADC12_HPF1_REG22, 0x0a);
+  es7210WriteReg(ES7210_ADC34_HPF2_REG20, 0x0a);
+  es7210WriteReg(ES7210_ADC34_HPF1_REG21, 0x2a);
   es7210_adc_set_gain_all(GAIN_30DB);         // the library's own init leaves it at 0 dB
   es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE, AUDIO_HAL_CTRL_START);
   deckLog("[mic] ES7210 up (30 dB)");
@@ -4559,24 +4574,9 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
 }
 
 static void micCaptureTask(void *pvParameters) {
-  if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
-    isRecording = false;
-    vTaskDelete(NULL);
-    return;
-  }
-
-  File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
-  if (!audio_file) {
-    deckLog("[mic] cannot append to %s", WAV_FILE_PATH.c_str());
-    isRecording = false;
-    vTaskDelete(NULL);
-    return;
-  }
-
   int16_t *buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES);
   if (buf == NULL) {
     deckLog("[mic] no buffer");
-    audio_file.close();
     isRecording = false;
     vTaskDelete(NULL);
     return;
@@ -4587,10 +4587,63 @@ static void micCaptureTask(void *pvParameters) {
   i2s_channel_disable(mic_rx_handle);
   i2s_channel_enable(mic_rx_handle);
 
+  // The microphone on this board is TDM slot 0. The others are not
+  // microphones: slots 1 and 2 sit at zero, and slot 3 carries a byte shifted
+  // copy of something (every one of its samples is a multiple of 0x100) which
+  // reads as loud noise - and it won every "pick the loudest slot" attempt, so
+  // no more guessing. All four are still logged once here, with their level and
+  // their first samples, so a different board can be read straight off the log.
+  const int mono_slot = 0;
+  uint32_t pick_started = millis();
+  bool dumped = false;
+  while (isRecording && millis() - pick_started < 150) {
+    size_t got = 0;
+    if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) != ESP_OK
+        || got < MIC_TDM_SLOTS * 2) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    int frames = got / (MIC_TDM_SLOTS * 2);
+    if (!dumped) {
+      dumped = true;
+      uint32_t sums[MIC_TDM_SLOTS] = {0, 0, 0, 0};
+      for (int i = 0; i < frames; i++) {
+        for (int c = 0; c < MIC_TDM_SLOTS; c++) {
+          int32_t v = buf[i * MIC_TDM_SLOTS + c];
+          sums[c] += (uint32_t)(v * v);
+        }
+      }
+      for (int c = 0; c < MIC_TDM_SLOTS; c++) {
+        String line;
+        for (int i = 0; i < 8; i++) {
+          line += String(buf[i * MIC_TDM_SLOTS + c]) + " ";
+        }
+        deckLog("[mic] slot %d rms %u samples: %s", c,
+                (unsigned)sqrtf((float)sums[c] / frames), line.c_str());
+      }
+    }
+  }
+  deckLog("[mic] recording %s from slot %d", WAV_FILE_PATH.c_str(), mono_slot);
+
+  if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
+    free(buf);
+    isRecording = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
+  if (!audio_file) {
+    deckLog("[mic] cannot append to %s", WAV_FILE_PATH.c_str());
+    free(buf);
+    isRecording = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
   uint32_t written = 0;
   uint32_t started_ms = millis();
   uint32_t last_levels_ms = 0;
-  deckLog("[mic] recording to %s", WAV_FILE_PATH.c_str());
 
   while (isRecording) {
     size_t got = 0;
@@ -4601,25 +4654,36 @@ static void micCaptureTask(void *pvParameters) {
     }
     int frames = got / (MIC_TDM_SLOTS * 2);
 
-    // once a second say how loud each channel is: the quickest way to tell
-    // which microphone the board actually has fitted
+    // once a second say how loud each channel is, so a future board's slot
+    // layout can be read straight off the log
     if (millis() - last_levels_ms > 1000) {
       last_levels_ms = millis();
-      uint32_t sums[MIC_TDM_SLOTS] = {0, 0, 0, 0};
+      uint32_t levels[MIC_TDM_SLOTS] = {0, 0, 0, 0};
       for (int i = 0; i < frames; i++) {
         for (int c = 0; c < MIC_TDM_SLOTS; c++) {
           int32_t v = buf[i * MIC_TDM_SLOTS + c];
-          sums[c] += (uint32_t)(v * v);
+          levels[c] += (uint32_t)(v * v);
         }
       }
       deckLog("[mic] levels %u %u %u %u",
-              (unsigned)sqrtf((float)sums[0] / frames), (unsigned)sqrtf((float)sums[1] / frames),
-              (unsigned)sqrtf((float)sums[2] / frames), (unsigned)sqrtf((float)sums[3] / frames));
+              (unsigned)sqrtf((float)levels[0] / frames), (unsigned)sqrtf((float)levels[1] / frames),
+              (unsigned)sqrtf((float)levels[2] / frames), (unsigned)sqrtf((float)levels[3] / frames));
+      // two samples from each slot, spread across the buffer, so the actual
+      // waveform can be read out of the log instead of guessed at
+      int span = frames / 3;
+      if (span < 1) {
+        span = 1;
+      }
+      deckLog("[mic] wf %d %d | %d %d | %d %d | %d %d",
+              buf[0], buf[span * MIC_TDM_SLOTS],
+              buf[1], buf[span * MIC_TDM_SLOTS + 1],
+              buf[2], buf[span * MIC_TDM_SLOTS + 2],
+              buf[3], buf[span * MIC_TDM_SLOTS + 3]);
     }
 
-    // keep MIC1, which is the first slot of every frame
+    // keep the microphone we picked, mono
     for (int i = 0; i < frames; i++) {
-      buf[i] = buf[i * MIC_TDM_SLOTS];
+      buf[i] = buf[i * MIC_TDM_SLOTS + mono_slot];
     }
     audio_file.write((uint8_t *)buf, frames * 2);
     written += frames * 2;
@@ -4629,9 +4693,19 @@ static void micCaptureTask(void *pvParameters) {
   free(buf);
   uint32_t spent = millis() - started_ms;
   finalize_wav_sizes(WAV_FILE_PATH.c_str(), written);
-  deckLog("[mic] captured %u bytes in %u ms (%u B/s, expect ~32000)",
+  // size() on an append handle reports the size it had when it was opened, so
+  // ask the file again now that it is closed
+  uint32_t file_size = 0;
+  {
+    File check = FFat.open(WAV_FILE_PATH.c_str());
+    if (check) {
+      file_size = check.size();
+      check.close();
+    }
+  }
+  deckLog("[mic] captured %u bytes in %u ms (%u B/s, expect ~32000), file %u bytes",
           (unsigned)written, (unsigned)spent,
-          spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0);
+          spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0, (unsigned)file_size);
   vTaskDelete(NULL);
 }
 
@@ -4646,6 +4720,13 @@ static void micRecordToggle(lv_event_t *e) {
   if (audio.isRunning()) {
     return;
   }
+  // Same naming as the watch: /recordings/<epoch>.wav, so the manager - and
+  // whisper.cpp behind it - can tell when something was said.
+  if (!FFat.exists("/recordings")) {
+    createDir(FFat, "/recordings");
+  }
+  WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
+  deckLog("[mic] recording %s", WAV_FILE_PATH.c_str());
   isRecording = true;
   lv_label_set_text(label, "Stop");
   xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
@@ -4656,17 +4737,20 @@ static void recordingPlay(lv_event_t *e) {
     return;
   }
   if (!FFat.exists(WAV_FILE_PATH.c_str())) {
-    deckLog("[mic] nothing recorded yet");
+    deckLog("[mic] nothing recorded yet (%s)", WAV_FILE_PATH.c_str());
     return;
   }
   if (audio.isRunning()) {
+    // tapping play again while it is playing stops it
+    deckLog("[mic] stopping playback");
     audio.stopSong();
-    deckLog("[mic] playback stopped");
+    deckLog("[mic] stopped");
     return;
   }
   audio.setVolume(volumeLevel);
-  deckLog("[mic] playing %s at volume %d", WAV_FILE_PATH.c_str(), (int)volumeLevel);
-  audio.connecttoFS(FFat, WAV_FILE_PATH.c_str());
+  bool connected = audio.connecttoFS(FFat, WAV_FILE_PATH.c_str());
+  deckLog("[mic] play %s: connect=%d running=%d volume=%d", WAV_FILE_PATH.c_str(),
+          (int)connected, (int)audio.isRunning(), (int)volumeLevel);
   // set it again once the stream exists: this makes the slider take effect
   // whether it was moved before or during playback
   audio.setVolume(volumeLevel);
