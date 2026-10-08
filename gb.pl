@@ -138,19 +138,22 @@ our @misc_settings = qw/homepage homepage_content manager start_menu gate config
 
 # selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg
 # 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
-our @icon_sets = qw/handdrawn squircle flat cartoon professional dark light outline neon pastel mono/;
+our @icon_sets = qw/handdrawn cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
 our %icon_set_labels = (
-	handdrawn   => 'Hand-drawn (original)',
-	squircle     => 'Squircle',
-	flat         => 'Flat',
+	handdrawn    => 'Hand-drawn (original)',
 	cartoon      => 'Cartoon',
-	professional => 'Professional',
 	dark         => 'Dark',
 	light        => 'Light',
 	outline      => 'Outline',
 	neon         => 'Neon',
 	pastel       => 'Pastel',
 	mono         => 'Mono',
+	sunburst     => 'Sunburst',
+	holographic  => 'Holographic',
+	sticker      => 'Sticker',
+	psychedelic  => 'Psychedelic',
+	kaleidoscope => 'Kaleidoscope',
+	clown        => 'Clown Barf',
 );
 
 our $pos = {

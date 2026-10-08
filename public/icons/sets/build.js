@@ -395,7 +395,19 @@ const ICONS = {
 // --- styles --------------------------------------------------------------------
 // Each style: render(hue, innerGlyphMarkup) -> full <svg> string.
 // `inner` already has {G}/{D} resolved to the style's glyph/detail colours.
-const wrap = inner => '<g transform="translate(124,124) scale(11)">' + inner + '</g>';
+const wrapAt = (inner, scale) => '<g transform="translate(' + (256 - 12 * scale) + ',' + (256 - 12 * scale) + ') scale(' + scale + ')">' + inner + '</g>';
+const wrap = inner => wrapAt(inner, 11);
+// paint an offset translucent silhouette first, then the glyph, for a cheap
+// drop shadow that needs no filters (the loud sets lean on big glyphs)
+function glyphWithShadow(inner, scale, g, d, shadow, dx, dy) {
+	return '<g transform="translate(' + dx + ',' + dy + ')">' + wrapAt(sub(inner, shadow, shadow), scale) + '</g>'
+		+ wrapAt(sub(inner, g, d), scale);
+}
+// a point at radius r from the tile centre, deg degrees clockwise from the top
+function polar(r, deg) {
+	const a = deg * Math.PI / 180;
+	return (256 + r * Math.sin(a)).toFixed(1) + ' ' + (256 - r * Math.cos(a)).toFixed(1);
+}
 
 function frame(fill, opts) {
 	opts = opts || {};
@@ -407,31 +419,10 @@ function frame(fill, opts) {
 }
 
 const STYLES = {
-	// muted macOS-style gradient squircle with a white glyph
-	squircle: {
-		label: 'Squircle',
-		render: (h, inner) => {
-			const g = hsl(h, 0.24, 0.56), b = hsl(h, 0.22, 0.42);
-			const svg = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + g + '"/><stop offset="1" stop-color="' + b + '"/></linearGradient></defs>'
-				+ frame('url(#bg)', { stroke: 'rgba(0,0,0,0.18)', sw: 4, rx: 102 });
-			return svgWrap(svg + wrap(sub(inner, '#ffffff', 'rgba(0,0,0,0.3)')));
-		},
-	},
-	// saturated flat colour, big rounded square, white glyph
-	flat: {
-		label: 'Flat',
-		render: (h, inner) => svgWrap(frame(hsl(h, 0.55, 0.5), { inset: 40, rx: 72 }) + wrap(sub(inner, '#ffffff', 'rgba(0,0,0,0.28)'))),
-	},
 	// bright, thick black outline, sticker-ish
 	cartoon: {
 		label: 'Cartoon',
 		render: (h, inner) => svgWrap(frame(hsl(h, 0.85, 0.63), { inset: 34, rx: 112, stroke: '#1b1b1b', sw: 16 }) + wrap(sub(inner, '#ffffff', 'rgba(0,0,0,0.35)'))),
-	},
-	// restrained corporate grey/blue, white glyph
-	professional: {
-		label: 'Professional',
-		render: (h, inner) => svgWrap(frame(hsl(h, 0.16, 0.4), { rx: 64 }) + wrap(sub(inner, '#ffffff', 'rgba(0,0,0,0.24)')))
-		,
 	},
 	// near-black gradient, soft light glyph
 	dark: {
@@ -473,6 +464,198 @@ const STYLES = {
 		label: 'Mono',
 		render: (h, inner) => svgWrap(frame('#ffffff', { inset: 40, rx: 70, stroke: '#111111', sw: 14 }) + wrap(sub(inner, '#111111', '#ffffff'))),
 	},
+	// --- the loud ones: full-bleed plates with oversized glyphs ---
+	// vintage badge: a sunburst of rays behind a big white glyph
+	sunburst: {
+		label: 'Sunburst',
+		render: (h, inner) => {
+			const defs = '<defs>'
+				+ '<path id="ray" d="M256 256 L' + polar(480, -7.5) + ' L' + polar(480, 7.5) + ' Z"/>'
+				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
+				+ '<radialGradient id="glow" cx="0.5" cy="0.4" r="0.8">'
+				+ '<stop offset="0" stop-color="' + hsl(h, 0.95, 0.6) + '"/>'
+				+ '<stop offset="1" stop-color="' + hsl(h + 24, 0.9, 0.44) + '"/>'
+				+ '</radialGradient></defs>';
+			let rays = '';
+			for (let i = 0; i < 18; i++) {
+				rays += '<use href="#ray" transform="rotate(' + (i * 20) + ' 256 256)" fill="rgba(255,255,255,0.22)"/>';
+			}
+			return svgWrap(defs
+				+ '<g clip-path="url(#plate)">' + frame('url(#glow)', { inset: 10, rx: 128 }) + rays + '</g>'
+				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.22)', sw: 8 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.32)', 'rgba(0,0,0,0.28)', 7, 9));
+		},
+	},
+	// iridescent foil sweeping through the wheel, with a glossy diagonal sheen
+	holographic: {
+		label: 'Holographic',
+		render: (h, inner) => {
+			const offs = [0, 0.22, 0.45, 0.68, 1];
+			let stops = '';
+			for (let i = 0; i < offs.length; i++) {
+				stops += '<stop offset="' + offs[i] + '" stop-color="' + hsl(h - 50 + i * 64, 0.95, i % 2 ? 0.72 : 0.56) + '"/>';
+			}
+			const defs = '<defs>'
+				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
+				+ '<linearGradient id="foil" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+				+ '</defs>';
+			const sheen = '<path d="M-60 560 L240 -60 L340 -60 L40 560 Z" fill="rgba(255,255,255,0.30)"/>'
+				+ '<path d="M150 560 L420 -60 L455 -60 L185 560 Z" fill="rgba(255,255,255,0.16)"/>';
+			return svgWrap(defs
+				+ '<g clip-path="url(#plate)">' + frame('url(#foil)', { inset: 10, rx: 128 }) + sheen + '</g>'
+				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(255,255,255,0.55)', sw: 6 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(30,0,50,0.4)', 'rgba(30,0,50,0.4)', 6, 8));
+		},
+	},
+	// die-cut sticker: white border, saturated core, tossed onto the tile
+	sticker: {
+		label: 'Sticker',
+		render: (h, inner) => {
+			const tilt = 'rotate(-3 256 256)';
+			const plate = '<g transform="' + tilt + '">'
+				+ '<g transform="translate(7,9)">' + frame('rgba(0,0,0,0.20)', { inset: 20, rx: 128 }) + '</g>'
+				+ frame('#ffffff', { inset: 20, rx: 128 })
+				+ frame(hsl(h, 0.95, 0.58), { inset: 58, rx: 98 })
+				+ '</g>';
+			return svgWrap(plate
+				+ '<g transform="' + tilt + '">' + glyphWithShadow(inner, 14, '#ffffff', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.3)', 4, 6) + '</g>');
+		},
+	},
+	// hypnotic tie-dye: wobbling concentric bands, dark glyph riding on top
+	psychedelic: {
+		label: 'Psychedelic',
+		render: (h, inner) => {
+			// one wavy ring on a 100px radius, reused scaled and rotated per band
+			let ring = '';
+			for (let s = 0; s <= 60; s++) {
+				const a = s / 60 * Math.PI * 2;
+				const r = 100 + 3 * Math.sin(3 * a) + 1.3 * Math.sin(5 * a + 0.8);
+				ring += (s ? 'L' : 'M') + (r * Math.cos(a)).toFixed(1) + ' ' + (r * Math.sin(a)).toFixed(1);
+			}
+			const defs = '<defs>'
+				+ '<path id="ring" d="' + ring + ' Z"/>'
+				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
+				+ '</defs>';
+			const hues = [0, 72, 144, 216, 288];
+			let bands = '';
+			for (let i = 0; i < 9; i++) {
+				const R = 470 - i * 52;
+				bands += '<use href="#ring" transform="translate(256,256) scale(' + (R / 100).toFixed(3) + ') rotate(' + (i * 17) + ')" fill="' + hsl(h + hues[i % hues.length], 0.92, i % 2 ? 0.62 : 0.46) + '"/>';
+			}
+			return svgWrap(defs
+				+ '<g clip-path="url(#plate)">' + bands + '</g>'
+				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.18)', sw: 6 })
+				+ glyphWithShadow(inner, 14, hsl(h + 200, 0.5, 0.16), hsl(h + 200, 0.45, 0.34), 'rgba(255,255,255,0.55)', 3, 4));
+		},
+	},
+	// stained glass: twelve bright facets with lead lines and a big white glyph
+	kaleidoscope: {
+		label: 'Kaleidoscope',
+		render: (h, inner) => {
+			const defs = '<defs>'
+				+ '<path id="wedge" d="M256 256 L' + polar(520, -0.7) + ' L' + polar(520, 30.7) + ' Z"/>'
+				+ '<path id="lead" d="M256 256 L' + polar(520, 0) + '"/>'
+				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
+				+ '<radialGradient id="shine" cx="0.32" cy="0.26" r="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient>'
+				+ '</defs>';
+			let facets = '';
+			for (let i = 0; i < 12; i++) {
+				facets += '<use href="#wedge" transform="rotate(' + (i * 30) + ' 256 256)" fill="' + hsl(h + i * 14, 0.92, i % 2 ? 0.48 : 0.64) + '"/>'
+					+ '<use href="#lead" transform="rotate(' + (i * 30) + ' 256 256)" stroke="rgba(255,255,255,0.4)" stroke-width="5"/>';
+			}
+			return svgWrap(defs
+				+ '<g clip-path="url(#plate)">' + facets + frame('url(#shine)', { inset: 10, rx: 128 }) + '</g>'
+				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.2)', sw: 6 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.3)', 6, 8));
+		},
+	},
+	// the dare, at full tilt: clashing rainbow slabs whose bands rotate their
+	// palettes, spinning hazard stripes, counter-spinning polka dots, six
+	// twinkling sparkles, a pulsing frame, and a gently swaying gradient glyph.
+	// Every icon runs on clock speeds seeded from its own hue, so a screen full
+	// of these never syncs up. Do not assign this one if you actually have work
+	// to do.
+	clown: {
+		label: 'Clown Barf',
+		render: (h, inner) => {
+			// per-icon clocks, seeded off the hue, so no two icons in the set share
+			// a phase and nothing ever lines up
+			const phase = (h % 11) / 10;
+			const drift = 14 + (h % 11);
+			const spin = 19 + (h % 7);
+			const wobble = 3.6 + (h % 9) * 0.35;
+			const pulse = 2.4 + (h % 6) * 0.4;
+			const wob = (h * 7) % 360;
+			// band hues chosen so each one clashes with its neighbours, and every
+			// band keeps rotating through its palette at its own pace forever
+			const clash = [0, 180, 40, 220, 80, 300];
+			let stops = '';
+			for (let i = 0; i < clash.length; i++) {
+				const cycle = [];
+				for (let k = 0; k <= clash.length; k++) {
+					cycle.push(hsl(h + clash[(i + k) % clash.length], 1, i % 2 ? 0.55 : 0.67));
+				}
+				stops += '<stop offset="' + Math.round(i / (clash.length - 1) * 100) + '%" stop-color="' + cycle[0] + '">'
+					+ '<animate attributeName="stop-color" values="' + cycle.join(';') + '" dur="' + (drift + i * 1.3).toFixed(1) + 's" repeatCount="indefinite"/>'
+					+ '</stop>';
+			}
+			const defs = '<defs>'
+				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="120"/></clipPath>'
+				+ '<linearGradient id="slab" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+				+ '<pattern id="hazard" width="76" height="76" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+				+ '<rect width="38" height="76" fill="' + hsl(h + 130, 1, 0.52) + '"><animate attributeName="fill" values="' + [hsl(h + 130, 1, 0.52), hsl(h + 250, 1, 0.52), hsl(h + 10, 1, 0.52), hsl(h + 130, 1, 0.52)].join(';') + '" dur="' + (drift + 2).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
+				+ '<rect x="38" width="38" height="76" fill="' + hsl(h + 310, 1, 0.6) + '"><animate attributeName="fill" values="' + [hsl(h + 310, 1, 0.6), hsl(h + 70, 1, 0.6), hsl(h + 190, 1, 0.6), hsl(h + 310, 1, 0.6)].join(';') + '" dur="' + (drift + 3).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
+				+ '</pattern>'
+				+ '<pattern id="dots" width="88" height="88" patternUnits="userSpaceOnUse">'
+				+ '<circle cx="22" cy="22" r="13" fill="' + hsl(h + 200, 1, 0.64) + '"/>'
+				+ '<circle cx="66" cy="66" r="13" fill="' + hsl(h + 24, 1, 0.7) + '"/>'
+				+ '</pattern>'
+				+ '<linearGradient id="glyph" x1="0" y1="0" x2="1" y2="1">'
+				+ '<stop offset="0" stop-color="' + hsl(h + 70, 1, 0.78) + '"/>'
+				+ '<stop offset="1" stop-color="' + hsl(h + 250, 1, 0.42) + '"/>'
+				+ '</linearGradient>'
+				+ '</defs>';
+			// the stars twinkle on independent clocks, so the set never settles:
+			// kt/scale/fade drive each one's private bloom-and-fade cycle and the
+			// half-turn snap lands at a different phase for every star
+			const sparkle = (x, y, r, fill, dur, kt, scale, fade) => {
+				const d = (dur + phase).toFixed(1);
+				return '<g transform="translate(' + x + ',' + y + ')">'
+					+ '<g><animateTransform attributeName="transform" type="rotate" values="0;0;45;45" keyTimes="0;0.45;0.55;1" dur="' + d + 's" repeatCount="indefinite"/>'
+					+ '<g><animateTransform attributeName="transform" type="scale" values="' + scale + '" keyTimes="' + kt + '" dur="' + d + 's" repeatCount="indefinite"/>'
+					+ '<path d="M0 ' + (-r) + 'L' + (r * 0.28) + ' ' + (-r * 0.28) + 'L' + r + ' 0L' + (r * 0.28) + ' ' + (r * 0.28) + 'L0 ' + r + 'L' + (-r * 0.28) + ' ' + (r * 0.28) + 'L' + (-r) + ' 0L' + (-r * 0.28) + ' ' + (-r * 0.28) + 'Z" fill="' + fill + '"/>'
+					+ '<animate attributeName="opacity" values="' + fade + '" keyTimes="' + kt + '" dur="' + d + 's" repeatCount="indefinite"/>'
+					+ '</g></g></g>';
+			};
+			const twinkles = [
+				[ 100, 96, 36, '#ffffff', 2.6, '0;0.15;0.35;1', '0;1;0.85;0', '0;1;0.9;0' ],
+				[ 424, 128, 26, hsl(h + 150, 1, 0.72), 3.1, '0;0.45;0.55;1', '0;0;1.05;0', '0;0;1;0' ],
+				[ 126, 424, 26, hsl(h + 320, 1, 0.74), 3.6, '0;0.75;0.85;1', '0;0;1;0', '0;0;1;0' ],
+				[ 416, 412, 38, hsl(h + 50, 1, 0.68), 4.1, '0;0.3;0.45;1', '0;1;0.8;0', '0;1;0.8;0' ],
+				[ 256, 74, 19, '#ffffff', 4.7, '0;0.62;0.68;1', '0;0;1.2;0', '0;0;1;0' ],
+				[ 74, 258, 19, hsl(h + 100, 1, 0.76), 5.3, '0;0.2;0.28;1', '0;1;0;0', '0;1;0;0' ],
+			];
+			const plate = '<g clip-path="url(#plate)">'
+				+ frame('url(#slab)', { inset: 10, rx: 120 })
+				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + wob + ' 256 256" to="' + (wob + 360) + ' 256 256" dur="' + spin + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#hazard)" opacity="0.6"/></g>'
+				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + (-wob) + ' 256 256" to="' + (-wob - 360) + ' 256 256" dur="' + (spin + 4) + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#dots)" opacity="0.55"/></g>'
+				+ twinkles.map(t => sparkle(...t)).join('')
+				+ '</g>';
+			const glyph = '<g>'
+				+ '<animateTransform attributeName="transform" type="rotate" values="-4.5 256 256;4.5 256 256;-4.5 256 256" dur="' + wobble.toFixed(1) + 's" repeatCount="indefinite"/>'
+				+ '<g transform="translate(10,12)">' + wrapAt(sub(inner, '#000000', '#000000'), 15) + '</g>'
+				+ '<g transform="translate(5,7)">' + wrapAt(sub(inner, '#ffffff', '#ffffff'), 15) + '</g>'
+				+ wrapAt(sub(inner, 'url(#glyph)', 'rgba(0,0,0,0.85)'), 15)
+				+ '</g>';
+			const border = '<rect x="10" y="10" width="492" height="492" rx="120" fill="none" stroke="#000000" stroke-width="18">'
+				+ '<animate attributeName="stroke-width" values="18;10;18" dur="' + pulse.toFixed(1) + 's" repeatCount="indefinite"/>'
+				+ '</rect>';
+			const ring = '<g><animate attributeName="opacity" values="0.9;0.3;0.9" dur="' + (pulse + 1.1).toFixed(1) + 's" repeatCount="indefinite"/>'
+				+ frame('none', { inset: 30, rx: 100, stroke: '#ffffff', sw: 8 })
+				+ '</g>';
+			return svgWrap(defs + plate + border + ring + glyph);
+		},
+	},
 };
 
 function sub(inner, g, d) {
@@ -489,6 +672,20 @@ function hashHue(str) {
 	return h;
 }
 
+// The transport controls keep fixed hues in every colour set: stop is blue and
+// every rewind/forward button shares a green, whatever the set or the name.
+const HUE_OVERRIDES = {
+	stop: 216,
+	'stop sign': 216,
+	prev: 148,
+	back: 148,
+	'left arrow': 148,
+	next: 148,
+	forward: 148,
+	'right arrow': 148,
+};
+const hueFor = name => (HUE_OVERRIDES[name] != null ? HUE_OVERRIDES[name] : hashHue(name));
+
 const styleKeys = Object.keys(STYLES);
 const iconNames = Object.keys(ICONS);
 let written = 0;
@@ -499,7 +696,7 @@ for (const style of styleKeys) {
 	for (const name of iconNames) {
 		const glyph = GLYPHS[ICONS[name]];
 		if (!glyph) { throw new Error('Missing glyph for ' + name); }
-		const svg = STYLES[style].render(hashHue(name), glyph);
+		const svg = STYLES[style].render(hueFor(name), glyph);
 		fs.writeFileSync(path.join(dir, name + '.svg'), svg);
 		written++;
 	}
