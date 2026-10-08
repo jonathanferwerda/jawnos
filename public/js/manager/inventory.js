@@ -219,6 +219,13 @@ function statisticPageStep(ir, step) {
 	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next });
 	inventoryDetails(app);
 }
+
+// the page label is the way back to now, however far a scroll or a swipe has
+// walked: stepping back by the page it is showing lands on zero
+$(document).on('click', '.statistic_page', function() {
+	var ir = $(this).closest('.appointment');
+	statisticPageStep(ir, -(numeral(ir.attr('scope_page')).value() || 0));
+});
 var ctx;
 // a compact date for a window's own start, which is what the historical
 // charts label their points with: the row names (3la, nex) say nothing about
@@ -259,7 +266,10 @@ function statisticGrapher(data,canvasId,mark) {
 		// stretched it to the stylesheet's 250px, which softened the line and the
 		// text without changing any of the coordinates
 		var thick = window.devicePixelRatio || 1;
-		var wide = wind.width();
+		// the popup's canvas is a small box inside its own parent, not a graph
+		// that spans the window and scrolls sideways, so it is drawn at the size
+		// it is shown at - the window's width put it far past its parent's edge
+		var wide = canvasId ? $(g).width() : wind.width();
 		var tall = numeral($(g).css('height')).value() || 250;
 		$(g).attr({ width: Math.round(wide * thick), height: Math.round(tall * thick) });
 		ctx = g.getContext('2d');
