@@ -320,8 +320,23 @@ void ota_upload() {
   }
 }
 
+// Print to both consoles. The sketch's Serial is the USB CDC, which only talks
+// to a host that asserts DTR - so a plain monitor sees nothing but ROM output.
+// esp_log_write goes to the USB-Serial/JTAG console regardless, which makes the
+// deck's progress visible from either side.
+static void deckLog(const char *fmt, ...) {
+  char buf[192];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  Serial.println(buf);
+  esp_log_write(ESP_LOG_INFO, "deck", "%s\n", buf);
+}
+
 void setup() {
   Serial.begin(115200);
+  deckLog("[deck] boot: peripheral power on");
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
   pinMode(RADIO_CS_PIN, OUTPUT);
@@ -332,16 +347,28 @@ void setup() {
   digitalWrite(BOARD_TFT_CS, HIGH);
 
   if (!FFat.begin()) {
-    Serial.println("FFat Mount Failed");
-    return;
+    // No filesystem means no config and no recordings. It used to return out of
+    // setup() here, which left the deck with a dead screen, so try to make one
+    // instead and keep going regardless.
+    deckLog("[deck] ffat did not mount; formatting");
+    if (FFat.begin(true)) {
+      deckLog("[deck] ffat formatted");
+    }
+    else {
+      deckLog("[deck] ffat unusable; booting without it");
+    }
+  }
+  else {
+    deckLog("[deck] ffat ok");
   }
 
 
   //!⚠️ The board peripheral power control pin needs to be set to HIGH when using the peripheral
+  deckLog("[deck] peripheral power on");
   pinMode(BOARD_POWERON, OUTPUT);
   digitalWrite(BOARD_POWERON, HIGH);
   delay(500);
-
+  deckLog("[deck] i2c up");
   Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
 
   // A keyboard that does not answer used to park the boot in a silent `while (1)`
@@ -356,25 +383,16 @@ void setup() {
     }
   }
   if (!kbDected) {
-    Serial.println("[kb] no answer from the keyboard; booting anyway");
+    deckLog("[deck] no answer from the keyboard; booting anyway");
   }
 
+  deckLog("[deck] display init");
   tft.init();
   tft.setRotation(1);
+  deckLog("[deck] display init done (%dx%d)", tft.width(), tft.height());
 
-  // TFT_eSPI brings the shared SPI bus up itself in init(). The sketch used to
-  // begin it first, and on arduino-esp32 3.x the display library then kept a bus
-  // object that was never started and crashed on the first command it sent. The
-  // SD card and radio share this same bus from here on.
-  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
-  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI); //SD + radio
-
-  // Adjust backlight
-
-
+  deckLog("[deck] backlight + touch pins");
   pinMode(BOARD_BL_PIN, OUTPUT);
-
-  // Set touch int input
   pinMode(BOARD_TOUCH_INT, INPUT);
   digitalWrite(BOARD_TOUCH_INT, HIGH);
 
@@ -385,6 +403,7 @@ void setup() {
   xSemaphoreGive( xSemaphore );
   // Serial.print("Init display id:");
 
+  deckLog("[deck] painting the boot screen");
   tft.fillScreen(TFT_YELLOW);
   tft.begin();
 
@@ -401,15 +420,24 @@ void setup() {
 
   tft.fillCircle(80, 120, 20, TFT_RED);
   tft.drawCircle(80, 120, 20, TFT_BLACK);
+  deckLog("[deck] boot screen up");
+
+  // TFT_eSPI brings the shared SPI bus up itself in init(), and the SD card and
+  // radio share that bus. Beginning it again on the sketch's SPI object is done
+  // last on purpose: if it ever blocks, the boot screen is already on the panel.
+  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
+  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI); //SD + radio
+  deckLog("[deck] sd/radio spi shared");
   // one short attempt at boot; if the module is quiet we carry on booting and
   // let loop() retry, rather than holding the whole deck hostage to a GPS
   gpsReady = gpsBringUp(1200, 300, 1, 300);
   if (gpsReady) {
-    Serial.println("[gps] module ready");
+    deckLog("[gps] module ready");
   } else {
-    Serial.println("[gps] no answer yet, booting on and retrying in the background");
+    deckLog("[gps] no answer yet, booting on and retrying in the background");
     gpsRetryAt = millis() + 15000;
   }
+  deckLog("[deck] gps stage done, scanning i2c");
 
   // Serial.println(USER_SETUP_ID);
   // Two touch screens, the difference between them is the device address,
@@ -777,14 +805,17 @@ static bool GPS_Recovery(uint32_t ackMs)
 // when none does.
 static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint32_t ackMs)
 {
+  deckLog("[gps] trying the L76K protocol");
   if (setupGPS(stopWaitMs, verWaitMs, tries)) {
     return true;
   }
   // maybe it is a u-blox M10Q at 38400 instead of an L76K at 9600
+  deckLog("[gps] no L76K, trying u-blox at 38400");
   SerialGPS.begin(38400, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
   if (GPS_Recovery(ackMs)) {
     return true;
   }
+  deckLog("[gps] trying u-blox at 9600");
   SerialGPS.updateBaudRate(9600);
   if (GPS_Recovery(ackMs)) {
     return true;
@@ -800,8 +831,11 @@ int getAck(uint8_t *buffer, uint16_t size, uint8_t requestedClass, uint8_t reque
     uint32_t    startTime = millis();
     uint16_t    needRead;
 
+    // The deadline has to be checked in here as well: a module that keeps
+    // streaming NMEA leaves this inner loop with data available forever, and
+    // the outer check only runs once it drains - which is never.
     while (millis() - startTime < timeoutMs) {
-        while (SerialGPS.available()) {
+        while (SerialGPS.available() && (millis() - startTime < timeoutMs)) {
             int c = SerialGPS.read();
             switch (ubxFrameCounter) {
             case 0:
@@ -1211,12 +1245,12 @@ void loop() {
     if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt) {
       gpsAttempts++;
       gpsRetryAt = millis() + GPS_RETRY_INTERVAL;
-      Serial.printf("[gps] retry %u of %u\n", (unsigned)gpsAttempts, (unsigned)GPS_MAX_ATTEMPTS);
+      deckLog("[gps] retry %u of %u", (unsigned)gpsAttempts, (unsigned)GPS_MAX_ATTEMPTS);
       gpsReady = gpsBringUp(1000, 300, 1, 300);
       if (gpsReady) {
-        Serial.println("[gps] module ready");
+        deckLog("[gps] module ready");
       } else if (gpsAttempts >= GPS_MAX_ATTEMPTS) {
-        Serial.println("[gps] giving up on the module; the deck runs fine without it");
+        deckLog("[gps] giving up on the module; the deck runs fine without it");
       }
     }
 
@@ -1269,8 +1303,8 @@ void loop() {
   static uint32_t lastBeat = 0;
   if (millis() - lastBeat > 30000) {
     lastBeat = millis();
-    Serial.printf("[deck] alive heap=%u room=%s gps=%d\n",
-                  (unsigned)ESP.getFreeHeap(), jw_room.c_str(), (int)gpsReady);
+    deckLog("[deck] alive heap=%u room=%s gps=%d",
+            (unsigned)ESP.getFreeHeap(), jw_room.c_str(), (int)gpsReady);
   }
 }
 
