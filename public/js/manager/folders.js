@@ -321,15 +321,26 @@ function foldersArchive() {
 }
 
 var folders_archive_interval;
+var folders_archive_locations = [];
 function foldersArchiveQueue() {
 	$.ajax({
 		url: '/manager/folders/archive',
 		type: 'GET',
 		success: function (response) {
 			var box = $('#folders_archive_queue').empty();
-			var jobs = (response && response.jobs) || [];
+			folders_archive_locations = (response && response['locations']) || [];
+			if (folders_archive_locations.length) {
+				var pick = $('<select>').appendTo(box);
+				$.each(folders_archive_locations, function (i, l) {
+					$('<option>').attr('value', l['location']).text(l['location'] + (l['remote_hostname'] ? ' on ' + l['remote_hostname'] : '')).appendTo(pick);
+				});
+				$('<button>').addClass('hover').text('rescan').css({ 'float': 'right' }).on('click', function () {
+					foldersArchiveRescan(pick.val());
+				}).appendTo(box);
+			}
+			var jobs = (response && response['jobs']) || [];
 			if (!jobs.length) {
-				box.html('<i>Nothing is queued for the archive.</i>');
+				$('<i>').text('Nothing is queued for the archive.').appendTo(box);
 				return;
 			}
 			$.each(jobs, function (i, job) {
@@ -345,12 +356,21 @@ function foldersArchiveQueue() {
 				}
 				buttons.appendTo(line);
 				$('<b>').text(job['state']).appendTo(line);
-				$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
-				var detail = '';
-				if (job['progress']) { detail = job['progress']; }
-				else if (job['errors'] && job['errors'].length) { detail = job['errors'].join('; '); }
-				if (job['sent'] || job['skipped']) { detail = (detail ? detail + ' - ' : '') + (job['sent'] || 0) + ' sent, ' + (job['skipped'] || 0) + ' already there'; }
-				if (detail) { $('<div>').css({ 'font-size': '13px' }).text(detail).appendTo(line); }
+				if (job['task'] == 'archive_manifest_rescan') {
+					$('<span>').text(' reading ' + (item['location'] || '?') + ' again').appendTo(line);
+				}
+				else {
+					$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
+				}
+				if (job['errors'] && job['errors'].length) {
+					$('<div>').css({ 'font-size': '13px' }).text(job['errors'].join('; ')).appendTo(line);
+				}
+				else if (job['progress']) {
+					$('<div>').css({ 'font-size': '13px' }).text(job['progress']).appendTo(line);
+				}
+				else if (job['sent'] || job['skipped']) {
+					$('<div>').css({ 'font-size': '13px' }).text((job['sent'] || 0) + ' sent, ' + (job['skipped'] || 0) + ' already there').appendTo(line);
+				}
 				box.append(line);
 			});
 		}
@@ -362,6 +382,21 @@ function foldersArchiveJob(action, id) {
 		url: '/manager/folders/archive/' + action,
 		type: 'POST',
 		data: { id: id },
+		success: function () { foldersArchiveQueue(); }
+	});
+}
+
+// Ask the machine holding a location's archive to read that location again.
+// The work happens there, where the drive is, not here.
+function foldersArchiveRescan(location) {
+	var remote_uuid = '';
+	$.each(folders_archive_locations, function (i, l) {
+		if (l['location'] == location) { remote_uuid = l['remote_uuid']; }
+	});
+	$.ajax({
+		url: '/manager/folders/archive/manifest/rescan',
+		type: 'POST',
+		data: { location: location, remote_uuid: remote_uuid },
 		success: function () { foldersArchiveQueue(); }
 	});
 }

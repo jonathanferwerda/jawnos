@@ -14096,15 +14096,17 @@ post '/manager/folders/archive/retry' => sub($c) {
 };
 
 # The queue as the folders app shows it: every archive job this machine holds,
-# newest first, with the note the worker last wrote on it.
+# newest first, with the note the worker last wrote on it, and the locations
+# this device archives so the panel can offer a rescan for one.
 get '/manager/folders/archive' => sub($c) {
-	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer'] })->{'jobs'} || [];
+	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer', 'archive_manifest_rescan'] })->{'jobs'} || [];
 	my @jobs;
 	foreach my $job ( @{$list} ) {
 		my $item = ($job->{'args'} || [])->[0] || {};
 		my $result = $job->{'result'} || {};
 		push @jobs, {
 			id => $job->{'id'},
+			task => $job->{'task'},
 			state => $job->{'state'},
 			attempts => $job->{'attempts'},
 			retries => $job->{'retries'},
@@ -14116,10 +14118,112 @@ get '/manager/folders/archive' => sub($c) {
 			skipped => $result->{'skipped'},
 			bytes => $result->{'bytes'},
 			files => $result->{'files'},
+			rows => $result->{'rows'},
 			errors => $result->{'errors'}
 		};
 	}
-	$c->render(json => { status => 'ok', jobs => \@jobs });
+	my $misc = &Manager::misc_setting_list();
+	my $device = &subs::device_setter();
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my %machine_for;
+	foreach my $rm ( @{$machines} ) {
+		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
+	}
+	my @locations;
+	foreach my $location ( &subs::location_types() ) {
+		my $where = $misc->{$device}->{$location . '_location'};
+		my $archive = $misc->{$device}->{$location . '_archive'};
+		next unless ($where && $archive);
+		push @locations, {
+			location => $location,
+			where => $where,
+			remote_uuid => $machine_for{$archive} ? $machine_for{$archive}->{'uuid'} : '',
+			remote_hostname => $machine_for{$archive} ? $machine_for{$archive}->{'hostname'} : $archive
+		};
+	}
+	$c->render(json => { status => 'ok', jobs => \@jobs, locations => \@locations });
+};
+
+# Where a finished transfer puts what it delivered: one line for the whole job,
+# because the listing underneath is only rewritten when the journal piles up.
+post '/manager/folders/archive/manifest/append' => sub($c) {
+	my $location = $c->param('location');
+	my $rows = eval { return decode_json $c->param('rows') } || [];
+	my $dest = &subs::archive_destination({ location => $location, path => '' });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my @clean;
+	foreach my $row ( @{$rows} ) {
+		next unless (ref $row && defined $row->{'relative'} && length $row->{'relative'});
+		# resolved the way a receive would resolve it, so what is listed is what
+		# would be written and nothing can point outside the location folder
+		my $into = &subs::archive_destination({ location => $location, path => $row->{'relative'} });
+		next if $into->{'error'};
+		push @clean, { %{$row}, relative => $into->{'relative'} };
+	}
+	Mojo::File->new($dest->{'folder'})->make_path;
+	write_file($dest->{'folder'} . '/manifest.jsonl', { append => 1 }, encode_json(\@clean) . "\n") if scalar @clean;
+	# fold the journal into the listing once it has piled up, so a read is not a
+	# hundred lines to walk through every time
+	my $manifest = &subs::archive_manifest_read({ dir => $dest->{'folder'} });
+	my $compacted = 0;
+	if ($manifest->{'journal_lines'} > 200) {
+		&subs::archive_manifest_write({ dir => $dest->{'folder'}, rows => $manifest->{'rows'} });
+		$compacted = 1;
+	}
+	$log->info('archive: manifest for ' . $location . ' +' . scalar(@clean) . ' row(s)' . ($compacted ? ', compacted' : ''));
+	$c->render(json => { status => 'ok', rows => scalar @clean, compacted => $compacted });
+};
+
+# What an archive holds for a location: relative paths, sizes, times and the
+# media facts, so a library can be built from one small request instead of a
+# walk over the tunnel.
+post '/manager/folders/archive/manifest' => sub($c) {
+	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		my $result = &Manager::remote_relay_request($c);
+		if (length $result) {
+			$c->res->headers->content_type('application/json');
+			$c->render(text => $result);
+			return;
+		}
+	}
+	my $location = $c->param('location');
+	my $dest = &subs::archive_destination({ location => $location, path => '' });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $manifest = &subs::archive_manifest_read({ dir => $dest->{'folder'} });
+	$c->render(json => {
+		status => 'ok',
+		location => $location,
+		folder => $dest->{'folder'},
+		rows => $manifest->{'rows'},
+		journal_lines => $manifest->{'journal_lines'}
+	});
+};
+
+# Read an archive location again from the drive, as a job, because it opens
+# every file it finds.
+post '/manager/folders/archive/manifest/rescan' => sub($c) {
+	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		my $result = &Manager::remote_relay_request($c);
+		if (length $result) {
+			$c->res->headers->content_type('application/json');
+			$c->render(text => $result);
+			return;
+		}
+	}
+	my $location = $c->param('location');
+	my $dest = &subs::archive_destination({ location => $location, path => '' });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $id = &subs::minion_grabber()->enqueue(archive_manifest_rescan => [ { location => $location } ] => { retries => 1 });
+	$c->render(json => { status => 'ok', id => $id, location => $location });
 };
 
 # The archive root's per-location folders, made and checked on demand, so the

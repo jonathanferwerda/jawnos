@@ -3318,6 +3318,7 @@ sub archive_transfer_job {
 
 	my ($sent, $skipped, $bytes, $count) = (0, 0, 0, 0);
 	my @errors;
+	my @rows;
 	foreach my $file ( @files ) {
 		$count++;
 		my $relative = $data->{'relative'};
@@ -3359,6 +3360,7 @@ sub archive_transfer_job {
 		}
 		$sent++;
 		$bytes += ($res->{'size'} || $size || 0);
+		push @rows, &archive_manifest_row({ path => $file, relative => $relative });
 		if ($count % 5 == 0) {
 			$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");
 			# a cancel asked for from the folders app cannot kill this process
@@ -3376,9 +3378,31 @@ sub archive_transfer_job {
 		skipped => $skipped,
 		bytes => $bytes,
 		files => scalar @files,
+		manifest_rows => scalar @rows,
 		archive_host => $agent->{'hostname'},
 		location => $data->{'location'}
 	};
+
+	# what was just delivered goes into the archive's manifest, in one request
+	# per job rather than one per file: the far machine appends a line and only
+	# rewrites the listing itself when the journal has piled up
+	if (scalar @rows) {
+		my $batch_size = 500;
+		for (my $n = 0; $n < scalar @rows; $n += $batch_size) {
+			my $last = ($n + $batch_size - 1 > $#rows) ? $#rows : $n + $batch_size - 1;
+			my @batch = @rows[$n .. $last];
+			my $res = eval {
+				return $ua->post($manager . '/manager/folders/archive/manifest/append' => form => {
+					location => $data->{'location'},
+					rows => encode_json \@batch
+				})->result->json;
+			};
+			if (!$res || $res->{'status'} ne 'ok') {
+				push @errors, 'manifest: ' . (($res && $res->{'error'}) || 'the listing could not be updated');
+				last;
+			}
+		}
+	}
 	if (scalar @errors) {
 		$result->{'errors'} = \@errors;
 		$job->fail($result);
@@ -3388,11 +3412,138 @@ sub archive_transfer_job {
 	$job->finish($result);
 }
 
+# The type an archive row carries, in the same words the folders app uses for a
+# file, so a listing built from a manifest reads like a local one.
+sub archive_media_type {
+	my $path = shift || '';
+	return 'image' if $path =~ /\.(jpe?g|png|bmp|tiff?|xcf|webp|gif|heic)$/i;
+	return 'audio' if $path =~ /\.(wav|mp3|aiff|weba|m4a|flac|aac|ogg|opus)$/i;
+	return 'video' if $path =~ /\.(mp4|avi|mov|webm|mkv|m4v|wmv)$/i;
+	return 'pdf' if $path =~ /\.pdf$/i;
+	return 'document' if $path =~ /\.(docx?|xlsx?|pptx?|txt|rtf|odt)$/i;
+	return 'subtitles' if $path =~ /\.(vtt|srt)$/i;
+	return 'other';
+}
+
+# One manifest row for a file: what it is and where it sits inside its location
+# folder, with the media facts worked out once, so the apps reading a manifest
+# never have to open the file. `relative` is what makes a row portable - it
+# means the same thing on whichever machine is holding the drive.
+sub archive_manifest_row {
+	my $data = shift;
+	my $path = $data->{'path'};
+	my $type = &archive_media_type($path);
+	my $row = {
+		relative => $data->{'relative'},
+		size => -s $path,
+		mtime => (stat($path))[9],
+		type => $type
+	};
+	if ($type eq 'image' || $type eq 'audio' || $type eq 'video') {
+		my $file_data = &file_media_information({ f => $path, type => $type });
+		$row->{'info'} = $file_data->{'info'} if $file_data->{'info'};
+	}
+	return $row;
+}
+
+# What an archive holds for a location: the compacted manifest with the journal
+# read over the top of it. An append is one line, so a transfer never rewrites
+# the listing; a read is one file plus whatever has piled up since. A line that
+# does not parse - a write caught mid-flight - is skipped rather than fatal,
+# and the last row for a path wins.
+sub archive_manifest_read {
+	my $data = shift;
+	my $dir = $data->{'dir'};
+	my %rows;
+	my $json = $dir . '/manifest.json';
+	if (-e $json) {
+		my $compacted = eval { return decode_json scalar read_file($json) } || [];
+		foreach my $row ( @{$compacted} ) {
+			next unless (ref $row && defined $row->{'relative'} && length $row->{'relative'});
+			$rows{$row->{'relative'}} = $row;
+		}
+	}
+	my ($lines, $skipped) = (0, 0);
+	my $journal = $dir . '/manifest.jsonl';
+	if (-e $journal) {
+		foreach my $line ( read_file($journal) ) {
+			chomp $line;
+			next unless (defined $line && length $line);
+			$lines++;
+			my $batch = eval { return decode_json $line };
+			unless (ref $batch eq 'ARRAY') { $skipped++; next }
+			foreach my $row ( @{$batch} ) {
+				next unless (ref $row && defined $row->{'relative'} && length $row->{'relative'});
+				$rows{$row->{'relative'}} = $row;
+			}
+		}
+	}
+	return { rows => [ map { $rows{$_} } sort keys %rows ], journal_lines => $lines, journal_skipped => $skipped };
+}
+
+# Write the listing a reader sees. Rewriting the whole thing is the one
+# expensive write there is, so it happens when the journal has piled up or a
+# rescan asks for it, never per received file. A temporary file is renamed into
+# place, so a reader can never catch half of one, and the journal is dropped
+# once it is folded in.
+sub archive_manifest_write {
+	my $data = shift;
+	my $dir = $data->{'dir'};
+	my @rows = @{$data->{'rows'} || []};
+	my $json = $dir . '/manifest.json';
+	my $temp = $json . '.tmp';
+	write_file($temp, encode_json [ map {
+		{
+			relative => $_->{'relative'},
+			size => $_->{'size'},
+			mtime => $_->{'mtime'},
+			type => $_->{'type'},
+			($_->{'info'} ? (info => $_->{'info'}) : ())
+		}
+	} @rows ]);
+	rename $temp, $json;
+	my $journal = $dir . '/manifest.jsonl';
+	unlink $journal if -e $journal;
+	return { rows => scalar @rows, path => $json };
+}
+
+# Read an archive location again from the drive itself and write the manifest
+# from what is really there, for a drive filled by hand or shuffled outside the
+# queue. It opens every media file it finds, so it runs as a job and says where
+# it is in its notes.
+sub archive_manifest_rescan_job {
+	my ($job, $data) = @_;
+	my $dest = &archive_destination({ location => $data->{'location'}, path => '' });
+	if ($dest->{'error'}) { $job->fail($dest->{'error'}); return }
+	unless (-d $dest->{'folder'}) {
+		&archive_manifest_write({ dir => $dest->{'folder'}, rows => [] });
+		$job->finish({ location => $data->{'location'}, rows => 0, files => 0 });
+		return;
+	}
+	my @files;
+	find({ wanted => sub { push @files, $File::Find::name if -f $File::Find::name }, no_chdir => 1 }, $dest->{'folder'});
+	my @rows;
+	my $count = 0;
+	foreach my $file ( sort @files ) {
+		$count++;
+		$job->note(progress => "read $count of " . scalar(@files)) if $count % 25 == 0;
+		my $relative = substr($file, length($dest->{'folder'}) + 1);
+		next unless (defined $relative && length $relative);
+		# the listing is not part of the listing
+		next if $relative =~ m{^manifest\.jsonl?$};
+		push @rows, &archive_manifest_row({ path => $file, relative => $relative });
+	}
+	my $written = &archive_manifest_write({ dir => $dest->{'folder'}, rows => \@rows });
+	$job->note(progress => 'read ' . scalar(@files) . ' files');
+	$job->finish({ location => $data->{'location'}, rows => $written->{'rows'}, files => scalar @files });
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
 	return {
-		archive_transfer => \&archive_transfer_job
+		archive_transfer => \&archive_transfer_job,
+		archive_manifest_rescan => \&archive_manifest_rescan_job
 	};
 }
 
