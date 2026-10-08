@@ -411,7 +411,12 @@ function timelineFling(diff) {
 		$.each(kept, function(i,s) { moved += s[1]; });
 		var elapsed = kept[kept.length - 1][0] - kept[0][0];
 		if (Math.abs(moved) < 2 || elapsed <= 0) { return; }
-		timelineGlide((moved / elapsed) * 16);
+		// the samples are pixels of finger travel; the glide moves in time, so one
+		// frame of the swipe has to cross the same bridge a wheel event does
+		var span = response.appts['__specs']['end'] - response.appts['__specs']['start'];
+		var ww = $('#background').width();
+		if (!ww) { return; }
+		timelineGlide(((moved / elapsed) * 16) * (span / ww));
 	}, 80);
 }
 
