@@ -198,7 +198,13 @@ $(document).on('mousewheel', '.background', function(e) {
 		}
 		if (clothesLinePos['startMove'] == 'canvas') {
 			if (id == 'timeline') {
-				timelineScroller({ mousediff: diff });
+				// a plain wheel is not glided, exactly like the clothesline; the
+				// trackpad and the flick are
+				var source;
+				if (Math.abs(e.deltaY) > 4 && Math.abs(e.deltaX) === 0) {
+					source = 'mousewheel';
+				}
+				timelineScroller({ mousediff: diff, source: source });
 			}
 			else if (id == 'clockface') {
 				clockfaceScroller({ mousediff: diff });
@@ -273,12 +279,18 @@ function timelineScroller(data) {
 
 	var scope = localStorage.getItem('scope');
 	var period = response.appts['__specs']['period'];
+	// the centre the time machine alone stands for. The separate timeshift is not
+	// folded into it: the drag below writes this back into #time_machine, and
+	// anchoring the string on the final centre would count the timeshift again on
+	// every poll, so each slide marched the view further back than the last.
+	var tm_timestamp = response.appts['__specs']['time_machine_timestamp'] || response.appts['__specs']['timestamp'];
 	response.appts['__specs']['end'] = response.appts['__specs']['end'] - sdiff;
 	response.appts['__specs']['start'] = response.appts['__specs']['start'] - sdiff;
 	response.appts['__specs']['timestamp'] = (numeral(response.appts['__specs']['timestamp']).value() - sdiff);
+	response.appts['__specs']['time_machine_timestamp'] = (numeral(tm_timestamp).value() - sdiff);
 
-	var ts = quality_inventory(numeral(response.appts['__specs']['timestamp']).value() );
-	if (!$('#time_machine').is(':focus') && data.mousediff) {
+	var ts = quality_inventory(numeral(response.appts['__specs']['time_machine_timestamp']).value() );
+	if (!$('#time_machine').is(':focus') && (data.mousediff || data['source'] == 'smoothScroll')) {
 		$('#time_machine').val(ts)
 		localStorage.setItem('time_machine', ts);
 	}
@@ -305,25 +317,32 @@ function timelineScroller(data) {
 		}
 	});
 	graphicalize(response);
-	if (data['source'] != 'smoothScroll' && 1 == 0) {
-		clearInterval(clothesLinePos['timelineSmoothScrolling']);
-		clothesLinePos['timelineSmoothScrolling'] = setInterval(function() {
-
-
-			if (Math.abs(data['sdiff']) > 10000) {
-				console.log(data['sdiff']);
-				if (Math.abs(data['sdiff']) > 50000) {
-					data['sdiff'] = data['sdiff'] * .8;
-				}
-				else {
-					data['sdiff'] = data['sdiff'] * .95;
-				}
-				timelineScroller({ sdiff: data['sdiff'] });
+	if (data['source'] != 'smoothScroll' && data['source'] != 'mousewheel') {
+		// the clothesline's glide, measured in time instead of pixels: a flick
+		// carries about 32x its distance, spread over however many frames the
+		// screen actually gives us, and it pauses with the tab. Each step lands
+		// like an input event would, so the field above keeps up and the next
+		// poll does not snap the view back mid-flight.
+		cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
+		var last = undefined;
+		var reach = .97 / .03;
+		var glideDiff = sdiff;
+		var stopAt = (span / ww) * .09;
+		var glide = function(now) {
+			if (Math.abs(glideDiff) <= stopAt) {
+				clothesLinePos['timelineSmoothScrolling'] = undefined;
+				return;
 			}
-			else { clearInterval(clothesLinePos['timelineSmoothScrolling']); }
-
-
-		},5);
+			if (last == undefined) { last = now; }
+			var decay = Math.pow(.97, (now - last) / 5);
+			last = now;
+			var step = glideDiff * reach * (1 - decay);
+			glideDiff = glideDiff * decay;
+			clothesLinePos['moving'] = Date.now();
+			clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
+			timelineScroller({ sdiff: step, source: 'smoothScroll' });
+		};
+		clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
 	}
 
 }

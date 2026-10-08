@@ -11468,6 +11468,12 @@ get '/manager/appointment_viewer' => sub($c) {
 	if ($time_machine) {
 		$timestamp = &subs::ago_calc($time_machine,$timestamp);
 	}
+	# The centre the time machine alone stands for. The timeline writes a slide back
+	# into #time_machine as a relative string, and that string must anchor here -
+	# anchoring it on the final centre would fold the separate timeshift into it,
+	# and the server would apply the timeshift a second time on every poll, so the
+	# view marched further back with every slide.
+	my $time_machine_timestamp = $timestamp;
 	if ($timeshift && $timeshift =~ /[0-9]/) {
 		$timestamp = &subs::ago_calc($timeshift,$timestamp);
 	#	$timestamp = $timestamp - ($timeshift);
@@ -11487,6 +11493,7 @@ get '/manager/appointment_viewer' => sub($c) {
 		stats => $stats
 	});
 	$appts->{'__specs'}->{'layout'} = $layout;
+	$appts->{'__specs'}->{'time_machine_timestamp'} = $time_machine_timestamp;
 	if ($appts->{'updateable'} eq 'no') {
 		$c->render(json => { updateable => 'no', '__specs' => $appts->{'__specs'} });
 		$c->rendered;

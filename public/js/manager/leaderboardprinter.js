@@ -182,8 +182,10 @@ $(document).on('click', '.background', function (e) {
 	var app_clicked = 0;
 	ctx.save('click');
 	ctx.moveTo(0,0);
-	clearInterval(clothesLinePos['smoothScrolling']);
-	clearInterval(clothesLinePos['timelineSmoothScrolling']);
+	// both glides run on requestAnimationFrame now; cancelAnimationFrame is how
+	// they stop (clearInterval on a frame handle does nothing)
+	cancelAnimationFrame(clothesLinePos['smoothScrolling']);
+	cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
 	$.each(appPosition, function(i,o) {
 		if (o[0] < x && o[2] > x &&
 					o[1] < y && o[3] > y) {
