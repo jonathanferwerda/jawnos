@@ -21,7 +21,7 @@
 			style="position:absolute;right:0px;bottom:0px;<% unless ($padlock) { %>display:none;<% } %>">
 	</div>
 
-	<div class="security_view" view="neighbour_link" style="<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">
+	<div class="security_view" view="neighbour_link" style="overflow-x:auto;padding-right:8px;<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">
 		<table style="width:100%;text-align:center;"
 			<thead>
 				<th>Initiator</th><th>Initiated</th><th>Privilege</th><th>Accepted</th><th>Updated</th><th>Cxl</th>
@@ -32,10 +32,10 @@
 					<tr class="neighbour_link" uuid="<%= $nl->{'uuid'} %>">
 						<td><%= $nl->{'initiator'} %></td>
 						<td><%= $nl->{'initiated'} %></td>
-						<td><img class="neighbour_link_updater large_thumb" hint="<%= &subs::format_name($nl->{'status'}) %>" src="<%= &subs::icon_for($gb::known_appts->{$nl->{'status'}}->{'icon'}) %>"><br><%= &subs::format_name($nl->{'status'}) %></td>
-						<td class="time" timestamp="<%= $nl->{'ost'} %>"</td>
-						<td class="time" timestamp="<%= $nl->{'server_time'} %>"</td>
-						<td><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="neighbour_link_delete medium_thumb"></td>
+						<td><img class="neighbour_link_updater medium_thumb" hint="<%= &subs::format_name($nl->{'status'}) %>" src="<%= &subs::icon_for($gb::known_appts->{$nl->{'status'}}->{'icon'}) %>"><br><%= &subs::format_name($nl->{'status'}) %></td>
+						<td class="time" timestamp="<%= $nl->{'ost'} %>"></td>
+						<td class="time" timestamp="<%= $nl->{'server_time'} %>"></td>
+						<td><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="neighbour_link_delete little_thumb"></td>
 					</tr>
 					<tr style="display:none;" class="neighbour_link_updater_selection" uuid="<%= $nl->{'uuid'} %>">
 						<td colspan="6">
