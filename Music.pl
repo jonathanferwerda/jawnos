@@ -537,6 +537,13 @@ post '/music/search' => sub ($c) {
 	&subs::setting_setter({ app => 'music', setting => 'album', value => $album });
 	&subs::setting_setter({ app => 'music', setting => 'artist', value => $artist });
 	&subs::setting_setter({ app => 'music', setting => 'search', value => $search });
+	# the library choice rides in with the search: written as its own request it
+	# raced the search, and whenever the search won it relayed to the old
+	# machine again, which looked like being stuck on a remote library. It is a
+	# local-machine choice, so it is not forwarded as new_settings.
+	if (my $library = $c->param('library')) {
+		&subs::setting_setter({ app => 'music', setting => 'library', value => $library });
+	}
 	my $settings = &subs::settings_grabber({ app => 'music' });
 
 	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {

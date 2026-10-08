@@ -814,6 +814,7 @@ function searchMusic(data) {
 	var same_order = data['same_order'];
 	var new_settings = data['new_settings'];
 	var source = data['source'];
+	var library = data['library'];
 	if (new_settings) {
 		new_settings = JSON.stringify(new_settings);
 	}
@@ -858,6 +859,7 @@ function searchMusic(data) {
 		data: { 
 			search: search, 
 			window_maker: 'yes', 
+			library: library,
 			folders: folders, 
 			artist: artist, 
 			album: album, 
@@ -1071,8 +1073,13 @@ $(document).on('click', '#music_layout_select', function() {
 
 $(document).on('change', '#music_library_select', function() {
 	var library = $(this).val();
-	settingSetter({ app: 'music', setting: 'library', value: library });
-	searchMusic({  });
+	// clear the artist/album picks: they were folds of the old library, and
+	// their stored paths would be scanned (and found empty) at the new one
+	$('.music_album').attr('active', 'no');
+	$('.music_artist').attr('active', 'no');
+	// the choice goes with the search, in one request - written separately it
+	// raced the search, and the search could relay to the old machine again
+	searchMusic({ library: library });
 });
 
 $(document).on('click', '.music_repeat', function() {
