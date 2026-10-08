@@ -3676,23 +3676,32 @@ sub archive_fetch_home_job {
 		# video never lands in memory whole
 		my $fh;
 		my $write_error;
-		my $tx = $ua->get($url => sub {
+		my $last_tx;
+		my $done;
+		$ua->get($url => sub {
 			my ($ua, $tx) = @_;
+			$last_tx = $tx;
 			my $res = $tx->res;
 			my $chunk = $res->body;
 			if (defined $chunk && length $chunk) {
 				unless ($fh) {
 					open my $open, '>', $into->{'path'} or do { $write_error = 'cannot write ' . $into->{'path'}; return };
-				$fh = $open;
+					$fh = $open;
 				}
 				print {$fh} $chunk;
 				$res->body('');
 			}
+			$done = 1 if ($res->is_finished || $res->error);
 		});
+		# the callback form is the non-blocking one, so the loop has to be
+		# driven until the response is in hand
+		Mojo::IOLoop->one_tick until $done;
 		close $fh if $fh;
 		if ($write_error) { push @errors, $file->{'relative'} . ': ' . $write_error; next }
-		unless ($tx && $tx->success && -e $into->{'path'}) {
-			my $why = ($tx && $tx->res->error) ? $tx->res->error->{'message'} : 'the download failed';
+		# a callback form of get returns the transaction's id, not the
+		# transaction, so the outcome is taken from the last one it handed back
+		unless ($last_tx && $last_tx->res->is_success && -e $into->{'path'}) {
+			my $why = ($last_tx && $last_tx->res->error) ? $last_tx->res->error->{'message'} : 'the download failed';
 			push @errors, $file->{'relative'} . ': ' . $why;
 			next;
 		}
