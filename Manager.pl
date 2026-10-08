@@ -5566,13 +5566,15 @@ sub log_reader {
 		# Every clause here is framed on timestamp, the moment the timeline draws a
 		# row at: a row just behind the left edge sticks to it the way a row past
 		# the right edge already sticks to that one, a row that stopped inside the
-		# fetch comes in with the span it ran, and a row that never stopped is pure
+		# view comes in with the span it ran, and a row that never stopped is pure
 		# presence - it may be older than anything else fetched, and its band is
-		# what the left half of the view is holding on to. Flat terms, so the
+		# what the left half of the view is holding on to. A stop earlier than the
+		# view is left out: the appointment ended before anything on screen, so its
+		# row could only pile a bare dot against the edge. Flat terms, so the
 		# planner can still reach each one by an index.
 		my $stick_where = "((timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
 		my $stick_suffix = '';
-		my @stick_variables = ( $fetch_start, $t, $fetch_start, $fetch_end, 'start', 'record', $fetch_end );
+		my @stick_variables = ( $fetch_start, $t, $t, $fetch_end, 'start', 'record', $fetch_end );
 		if ($data->{'filter'} && $data->{'filter'} ne 'all') {
 			$stick_suffix .= " and type = ?";
 			push @stick_variables, $data->{'filter'};
