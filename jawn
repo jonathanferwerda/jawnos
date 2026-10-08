@@ -4,6 +4,8 @@ use strict;
 use warnings;
 use Mojo::IOLoop::ReadWriteFork;
 use IO::Socket::UNIX;
+use IO::Select;
+use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use File::Slurp;
 use Mojo::File 'path';
 use Mojo::Log;
@@ -17,14 +19,29 @@ my $decoder = Sereal::Decoder->new();
 no warnings 'uninitialized';
 
 # One master per machine: the watch socket is the machine's alone, so a launch
-# that finds it answering is a second jawn. It stands down here - before the
+# that finds a master *answering* on it is a second jawn. A bare connect() is no
+# proof of life - children inherit the listening fd, so survivors of a dead
+# master still accept into the kernel backlog - therefore the framed query
+# below, and only a reply counts. It stands down here - before the
 # ~/.president wipe below, which must not eat the serving master's state, and
 # before a single President.pl is started. Two masters otherwise fight over the
 # ports and the socket, kill each other's trees, and cycle forever.
 my $watch_path = &home('~/.process_watch');
 if (-S $watch_path) {
 	my $watch_live = 0;
-	eval { $watch_live = 1 if IO::Socket::UNIX->new(Peer => $watch_path) };
+	eval {
+		my $probe = IO::Socket::UNIX->new(Peer => $watch_path);
+		if ($probe) {
+			$probe->autoflush(1);
+			my $blob = $encoder->encode({ query => 'subprocesses' });
+			my $packet = pack('N', length($blob)) . $blob;
+			$probe->syswrite($packet);
+			if (IO::Select->new($probe)->can_read(3)) {
+				my $header = '';
+				$watch_live = 1 if sysread($probe, $header, 4);
+			}
+		}
+	};
 	if ($watch_live) {
 		print "\nAnother jawn is already running; this one is standing down.\n\n";
 		exit 0;
@@ -327,6 +344,14 @@ sub process_watch() {
 				delete $buffers{$id};
 			});
 		});
+		# Mojo keeps listener fds open across exec on purpose ($^F = 1023), so
+		# every child inherits this socket; a survivor then keeps it accepting
+		# into the kernel backlog long after the master is gone, which is what
+		# fooled the guard at the top of this script. This fd is the master's.
+		# (server() hands back an id; the acceptor holds the socket.)
+		my $acceptor = $server ? Mojo::IOLoop->acceptor($server) : undef;
+		my $handle = $acceptor ? $acceptor->handle : undef;
+		fcntl($handle, F_SETFD, FD_CLOEXEC) if $handle;
 		return $server;
 	}
 }
