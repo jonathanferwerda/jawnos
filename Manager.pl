@@ -8784,8 +8784,10 @@ sub inventory_details($c,$settings) {
 		push @display_options, { name => $ameas, formatted_name => $formatted_name } unless grep { $_->{'name'} eq $ameas } @display_options;
 	}
 
-	my @time_scopes = ('next', 'this','last');
+	my @time_scopes;
 	my @time_widths;
+	my $scope_page = 0;
+	my $scope_page_max = 24;
 
 	my @time_lengths = qw/minute hour day week month year/;
 	if ($settings->{'s_visual'} eq 'allocation') {
@@ -8797,10 +8799,12 @@ sub inventory_details($c,$settings) {
 		@time_widths = ( 60, 60, 24, 31, 12, 150, 7, 365, 2 );
 	}
 	else {
-		for (my $n = 2; $n <= 30; $n++) {
-			push @time_scopes, $n . 'last' if $n <= $settings->{'s_scope_count'};
-			unshift @time_scopes, $n . 'next' if $n <= $settings->{'s_scope_count'};
-		}
+		# the page of periods the rows cover: now first, then the blocks before
+		# it (or the ones past next) as a graph is scrolled sideways
+		$scope_page = $settings->{'s_scope_page'} || 0;
+		$scope_page = $scope_page_max if $scope_page > $scope_page_max;
+		$scope_page = -$scope_page_max if $scope_page < -$scope_page_max;
+		@time_scopes = &subs::time_scope_page({ count => $settings->{'s_scope_count'} || 30, page => $scope_page });
 	}
 
 	if ($c->param('scope')) {
@@ -8843,6 +8847,8 @@ sub inventory_details($c,$settings) {
 		time_lengths => \@time_lengths,
 		time_widths => \@time_widths,
 		timestamp => $timestamp,
+		scope_page => $scope_page,
+		scope_page_max => $scope_page_max,
 		app => $app,
 		budget_status => {},
 	};
@@ -9286,9 +9292,9 @@ sub father_time($data) {
 			if ($ts =~ /(^[0-9])/) {
 				my $tas = $ts;
 				$tas =~ s/last//gi;
-				my $tame = $gb::numerics->{$tas};
-				$tame = '' if $tas == 1;
-				$temp_timestamp = &subs::time_span($tame . $scope, $timestamp);
+				# the number itself: the words run out at forty, and the pages
+				# of periods walk well past that
+				$temp_timestamp = &subs::time_span($tas . $scope, $timestamp);
 			}
 		}
 		elsif ($ts =~ 'next') {
@@ -14021,7 +14027,25 @@ post '/manager/folders/archive' => sub($c) {
 		push @queued, { %{$item}, id => $minion->enqueue(archive_transfer => [ $item ] => { retries => 3 }) };
 	}
 	$log->info('archive: queued ' . scalar(@queued) . ' item(s), refused ' . scalar @{$plan->{'refused'}});
-	$c->render(json => { status => 'ok', queued => \@queued, refused => $plan->{'refused'} });
+	# the answer the folders app shows: plain text, the dialog template escapes it
+	my @refused_text = map { $_->{'path'} . ' (' . $_->{'reason'} . ')' } @{$plan->{'refused'}};
+	my $text = 'Nothing to archive.';
+	if (scalar @queued && scalar @refused_text) {
+		$text = scalar(@queued) . ' item(s) queued for the archive; not queued: ' . join '; ', @refused_text;
+	}
+	elsif (scalar @queued) {
+		$text = scalar(@queued) . ' item(s) queued for the archive.';
+	}
+	elsif (scalar @refused_text) {
+		$text = 'Nothing was queued: ' . join '; ', @refused_text;
+	}
+	my $dialog = $c->render_to_string(
+		template => 'folders/dialog_box',
+		folders => $folders,
+		box => { name => 'Archive', text => $text, cancel => 'no', height => '220px' },
+		uuid => &subs::random_string_creator(10)
+	);
+	$c->render(json => { status => 'ok', queued => \@queued, refused => $plan->{'refused'}, dialog => $dialog });
 };
 
 # The queue as the folders app shows it: every archive job this machine holds,

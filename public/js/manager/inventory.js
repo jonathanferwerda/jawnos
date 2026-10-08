@@ -54,8 +54,12 @@ $(document).on('change', '.statistic_visual', function() {
 $(document).on('change','.statistic_scope_count', function() {
 	var s = $(this);
 	var val = s.val();
-	var app = s.closest('.appointment').attr('app');
+	var ir = s.closest('.appointment');
+	var app = ir.attr('app');
 	settingSetter({ 'app': app, 'setting': 's_scope_count', 'value': val });
+	// a page is a page of these periods, so ask for the first one again
+	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': 0 });
+	ir.attr('scope_page', 0);
 	inventoryDetails(app);
 });
 
@@ -89,6 +93,7 @@ function inventoryDetails(app) {
 	var jsmv = JSON.stringify(smv);
 	var smsT = sm.scrollTop();
 	var s_scroll = iq.find('.statistic_graphs').scrollTop();
+	var s_scroll_left = iq.find('.statistic_graphs').scrollLeft();
 	$.ajax({
 		url: '/manager/inventory/details',
 		type: 'GET',
@@ -100,8 +105,11 @@ function inventoryDetails(app) {
 				iq.html(response.content);
 
 				appointment_chron();
+				scrollerFinder(iq);
 				ir.find('.statistic_scope_count').val(sscv || response.settings.s_scope_count);
 				ir.find('.statistic_display').val(sdv || response.settings.s_display);
+				ir.attr('scope_page', response.scope_page || 0);
+				ir.attr('scope_page_max', response.scope_page_max || 24);
 				ir.find('.statistic_lock').attr('locked', response.settings.s_lock);
 				if (response.settings.s_lock == 'on') {
 					ir.find('.statistic_lock').addClass('selected');
@@ -117,6 +125,7 @@ function inventoryDetails(app) {
 					new_s_scroll = response.settings.s_scroll;
 				}
 				iq.find('.statistic_graphs').scrollTop(new_s_scroll);
+				iq.find('.statistic_graphs').scrollLeft(s_scroll_left);
 
 				appointment_chron();
 				inventoryStatus.loading = false;
@@ -133,6 +142,44 @@ function inventoryDetailsUpdater() {
 			inventoryDetails(app);
 		}
 	});
+}
+
+// Sideways scrolling over a graph walks the rows along the timeline, one page
+// of periods per gesture, which is how the history past the scope count is
+// reached.  The canvases are redrawn inside the details content, so the
+// listener is put back after every render.
+var statistic_page_delta = 0;
+
+function scrollerFinder(container) {
+	container.find('.statistic_graph').each(function() {
+		if (this.statistic_scroller) { return; }
+		this.statistic_scroller = 1;
+		this.addEventListener('wheel', statisticPageWheel, { passive: false });
+	});
+}
+
+function statisticPageWheel(e) {
+	var delta = e.deltaX || (e.shiftKey ? e.deltaY : 0);
+	if (!delta) { return; }
+	var ir = $(this).closest('.appointment');
+	if (ir.find('.statistic_visual').val() != 'historical') { return; }
+	e.preventDefault();
+	if (inventoryStatus.loading) { statistic_page_delta = 0; return; }
+	statistic_page_delta = statistic_page_delta + delta;
+	if (Math.abs(statistic_page_delta) < 60) { return; }
+	// the older periods sit to the right, so scrolling that way walks back
+	var step = statistic_page_delta > 0 ? 1 : -1;
+	statistic_page_delta = 0;
+	var page = numeral(ir.attr('scope_page')).value() || 0;
+	var max = numeral(ir.attr('scope_page_max')).value() || 24;
+	var next = page + step;
+	if (next > max) { next = max; }
+	if (next < -max) { next = -max; }
+	if (next == page) { return; }
+	var app = ir.attr('app');
+	ir.attr('scope_page', next);
+	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next });
+	inventoryDetails(app);
 }
 var ctx;
 // a compact date for a window's own start, which is what the historical

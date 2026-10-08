@@ -43,6 +43,8 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 </span>
 <img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" style="vertical-align:bottom;">
 <% if (scalar @{$appts} > 0) { %>
+	<% my $scope_page = $returner->{'scope_page'} || 0; %>
+	<span class="statistic_page hint" hint="Scroll a graph sideways to walk through the periods"><%= $scope_page == 0 ? 'now' : abs($scope_page) . ($scope_page > 0 ? ' back' : ' forward') %></span>
 	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
 		<% foreach my $col ( @cols ) { %>
 			<span id="<%= $app %>_<%= $col %>_statistic_graph_span">

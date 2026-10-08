@@ -810,10 +810,37 @@ sub time_spans() {
 	return \%time_span_table;
 }
 
+sub time_span_length() {
+	my $span = shift;
+	my $spans = &time_spans();
+	return $spans->{$span}->[0] if $spans->{$span};
+	# the table spells out the counts the number words run to (forty); beyond
+	# that a span is worked out from the number in its name, so 57day and
+	# 57last resolve without needing a word of their own
+	foreach my $unit ( sort { length($b) <=> length($a) } keys %{$time_units} ) {
+		next unless $span =~ /^([0-9]+)$unit$/;
+		return $1 * $time_units->{$unit};
+	}
+	return undef;
+}
+
 sub time_span() {
 	my ($span, $timestamp, $multiplier) = @_;
-	my $found = &time_spans()->{$span} or die "unknown time span: $span";
-	return $timestamp - $found->[0] * ($multiplier || 1);
+	my $length = &time_span_length($span) or die "unknown time span: $span";
+	return $timestamp - $length * ($multiplier || 1);
+}
+
+# The rows a page of periods walks: the periods around now first (the nexts,
+# this one, the lasts), then the block of periods before or after it, so
+# scrolling a graph sideways carries on along the timeline.
+sub time_scope_page() {
+	my $data = shift;
+	my $count = $data->{'count'} || 30;
+	my $page = $data->{'page'} || 0;
+	return ( ( map { $_ . 'next' } reverse( 2 .. $count ) ), 'next', 'this', 'last', ( map { $_ . 'last' } 2 .. $count ) ) unless $page;
+	return ( map { $_ . 'last' } reverse( $page * $count + 1 .. ( $page + 1 ) * $count ) ) if $page > 0;
+	my $ahead = -$page;
+	return ( map { $_ . 'next' } reverse( $ahead * $count + 1 .. ( $ahead + 1 ) * $count ) );
 }
 
 sub time_span_list() {
