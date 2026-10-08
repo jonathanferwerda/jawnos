@@ -71,6 +71,7 @@ String tauth_remote_enabled = "off";
 uint8_t currentBrightness = 30;
 uint8_t lastBrightness = 30;
 int tempBrightness;
+static bool screenAsleep = false;
 String wifi_update;
 JSONVar wigi;
 
@@ -189,6 +190,8 @@ static void registerKeyboard();
 static void micRecordToggle(lv_event_t *e);
 static void recordingPlay(lv_event_t *e);
 bool es7210Begin();
+static void speakerSelfTest();
+static void pruneRecordings(int keep);
 static lv_obj_t *vad_btn_label;
 static uint32_t vad_detected_counter = 0;
 static TaskHandle_t vadTaskHandler;
@@ -845,11 +848,40 @@ void setup() {
   }
   Serial.printf("Total space: %10u\n", FFat.totalBytes());
   Serial.printf("Free space: %10u\n", FFat.freeBytes());
+  uint32_t held = flashReport();
+  // Power cuts during writes strand clusters in the FAT: the room is used but
+  // belongs to no file, so deleting files never brings it back (this deck lost
+  // 9.4 MB that way). When the free space cannot be explained by the files on
+  // the disk, rebuild the filesystem. Everything on it - config, wigi,
+  // recordings - is pulled again from the manager.
+  if (FFat.freeBytes() < 64 * 1024 && held < FFat.totalBytes() / 2) {
+    deckLog("[fs] %u bytes missing from the FAT, rebuilding the filesystem",
+            (unsigned)(FFat.totalBytes() - held - FFat.freeBytes()));
+    // FFat.format() refuses while the filesystem is mounted, and the sketch
+    // mounts it at boot, so unmount around it and mount again afterwards.
+    // begin(true) is the second chance: it formats on a failed mount.
+    FFat.end();
+    bool rebuilt = FFat.format();
+    FFat.begin(true);
+    if (rebuilt || FFat.freeBytes() > FFat.totalBytes() / 2) {
+      deckLog("[fs] filesystem rebuilt, %u bytes free", (unsigned)FFat.freeBytes());
+      createDir(FFat, "/recordings");
+      writeFile(FFat, "/bootreport.txt", "rebuilt");
+    }
+    else {
+      deckLog("[fs] filesystem rebuild failed, %u bytes free", (unsigned)FFat.freeBytes());
+    }
+  }
+  // Reclaim room before anything needs to write: config, the tone file and a
+  // new recording all come out as 0-byte files on a full filesystem.
+  pruneRecordings(12);
+  deckLog("[fs] free after prune: %u bytes", (unsigned)FFat.freeBytes());
   deckLog("[deck] sd test");
   sd_tester();
   audio.setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
   audio.setVolume(10);
 //  audio.connecttoFS(SD, "ding.mp3");
+  speakerSelfTest();
   deckLog("[deck] setup complete");
 }
 
@@ -1250,8 +1282,11 @@ void loop() {
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   wsclient.poll();
-  // The audio library pumps from here. Report the moment it stops on its own,
-  // which is what tells a finished (or refused) file apart from a silent one.
+  // The audio library is pumped by hand, from here. A task turned out to be
+  // worse than useless: if its creation failed or it exited early the flag that
+  // said "a task owns the pump" stayed set and nothing drove the I2S at all,
+  // which sounds exactly like a silent file. This is reported below when a
+  // stream ends.
   static bool audioWasRunning = false;
   if (audio.isRunning()) {
     audio.loop();
@@ -1464,8 +1499,12 @@ void loop() {
         delay(1000);
     }
   uint32_t tAfterGps = millis();
-  if (millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && currentBrightness != 0) {
-    // Serial.println(currentBrightness);
+  // The panel sleeps after the idle timeout and any input (anything that
+  // refreshes buttonMillis) brings it back. The flag makes each transition
+  // happen exactly once: the wake branch used to re-run tft.begin() - a
+  // half-second panel re-init - on every loop whenever brightness restored as
+  // 0, which is what a wiped config produces.
+  if (millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && !screenAsleep) {
     tempBrightness = lastBrightness;
     configSave();
     writeFile(FFat, "/bootreport.txt", "success");
@@ -1479,27 +1518,32 @@ void loop() {
       //If you need other peripherals to maintain power, please set the IO port to hold
 
     tft.writecommand(0x10);      //set display enter sleep mode
- 
+    screenAsleep = true;
   }
-  else if (millis() - buttonMillis < DEFAULT_SCREEN_TIMEOUT && currentBrightness == 0) {
+  else if (screenAsleep && millis() - buttonMillis < DEFAULT_SCREEN_TIMEOUT) {
     // Serial.println("not sleepy " + lastBrightness);
+    screenAsleep = false;
     tft.begin();
-    for (int i = 0; i <= brightnessLevel; ++i) {
+    uint8_t target = brightnessLevel > 0 ? (uint8_t)brightnessLevel : (uint8_t)7;
+    for (int i = 0; i <= target; ++i) {
       setBrightness(i);
       lv_task_handler();
       delay(30);
     }
   }
+  uint32_t tAfterSleep = millis();
 
   // A quiet heartbeat. The USB CDC only talks while a host is listening, and a
   // periodic line makes "is the deck alive, and is the GPS up?" answerable
   // without having to catch the boot output.
   uint32_t loopEnd = millis();
   if (loopEnd - loopStart > 200) {
-    deckLog("[deck] slow loop %u ms (ui %u, server+radio %u, gps %u, tail %u)",
+    deckLog("[deck] slow loop %u ms (ui %u, server+radio %u, gps %u, sleep %u, rest %u) bright=%u last=%u lvl=%u idle=%u",
             (unsigned)(loopEnd - loopStart), (unsigned)(tBeforeServer - loopStart),
             (unsigned)(tAfterRadio - tBeforeServer), (unsigned)(tAfterGps - tAfterRadio),
-            (unsigned)(loopEnd - tAfterGps));
+            (unsigned)(tAfterSleep - tAfterGps), (unsigned)(loopEnd - tAfterSleep),
+            (unsigned)currentBrightness, (unsigned)lastBrightness, (unsigned)brightnessLevel,
+            (unsigned)(millis() - buttonMillis));
   }
   static uint32_t lastBeat = 0;
   if (millis() - lastBeat > 30000) {
@@ -4207,6 +4251,18 @@ void configRestore() {
     brightnessLevel = conf["brightness"];
     volumeLevel = conf["volume"];
     room_count = conf["room_count"];
+    // A config that could not be written (a full flash leaves config.json at 0
+    // bytes) parses as all zeroes, which would boot to a dark, silent device
+    // with 0 rooms. Keep the device usable enough to fix itself.
+    if (brightnessLevel < 1) {
+      brightnessLevel = 5;
+    }
+    if (volumeLevel < 1) {
+      volumeLevel = 5;
+    }
+    if (room_count < 1) {
+      room_count = 6;
+    }
     fontSize = conf["fontSize"];
     fontSelect = (const char * )conf["fontSelect"];
     setBrightness(brightnessLevel);
@@ -4725,6 +4781,10 @@ static void micRecordToggle(lv_event_t *e) {
   if (!FFat.exists("/recordings")) {
     createDir(FFat, "/recordings");
   }
+  // keep the newest dozen recordings and say how much room is left: a full
+  // filesystem turns every recording into an empty header
+  pruneRecordings(12);
+  deckLog("[mic] flash free %u bytes before recording", (unsigned)FFat.freeBytes());
   WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
   deckLog("[mic] recording %s", WAV_FILE_PATH.c_str());
   isRecording = true;
@@ -4741,7 +4801,7 @@ static void recordingPlay(lv_event_t *e) {
     return;
   }
   if (audio.isRunning()) {
-    // tapping play again while it is playing stops it
+    // play again while it is playing = stop it
     deckLog("[mic] stopping playback");
     audio.stopSong();
     deckLog("[mic] stopped");
@@ -4754,4 +4814,174 @@ static void recordingPlay(lv_event_t *e) {
   // set it again once the stream exists: this makes the slider take effect
   // whether it was moved before or during playback
   audio.setVolume(volumeLevel);
+}
+
+// Keep the newest `keep` recordings in /recordings, delete the rest oldest
+// first, and if the flash is nearly full keep deleting until there is room
+// again. The manager pulls these out; the deck should not fill its own flash
+// with them (a full filesystem makes every write fail silently, which is how a
+// recording ends up as a 44 byte header that plays nothing).
+static void pruneRecordings(int keep) {
+  // The listing array is capped, so a filesystem holding hundreds of small
+  // recordings needs several passes before it has room again.
+  for (int round = 0; round < 20; round++) {
+    File dir = FFat.open("/recordings");
+    if (!dir) {
+      return;
+    }
+    String names[64];
+    int count = 0;
+    for (File f = dir.openNextFile(); f && count < 64; f = dir.openNextFile()) {
+      if (!f.isDirectory()) {
+        String n = String(f.name());
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) {
+          n = n.substring(slash + 1);
+        }
+        names[count++] = n;
+      }
+      f.close();
+    }
+    dir.close();
+
+    // the names are the epochs they were recorded at, so plain string order is
+    // chronological order
+    for (int i = 0; i < count - 1; i++) {
+      for (int j = i + 1; j < count; j++) {
+        if (names[j] < names[i]) {
+          String t = names[i];
+          names[i] = names[j];
+          names[j] = t;
+        }
+      }
+    }
+
+    int doomed = count - keep;
+    if (doomed < 0) {
+      doomed = 0;
+    }
+    // a write needs room for the whole recording, not just its header, and a
+    // nearly full filesystem starts failing before it is actually full
+    while (doomed < count && FFat.freeBytes() < 512 * 1024) {
+      doomed++;
+    }
+    if (doomed <= 0) {
+      return;
+    }
+    for (int i = 0; i < doomed && i < count; i++) {
+      String path = "/recordings/" + names[i];
+      File df = FFat.open(path.c_str());
+      uint32_t dsz = df ? (uint32_t)df.size() : 0;
+      if (df) {
+        df.close();
+      }
+      deckLog("[mic] deleting old recording %s (%u bytes)", path.c_str(), (unsigned)dsz);
+      FFat.remove(path.c_str());
+    }
+    deckLog("[fs] prune round %d deleted %d of %d, free now %u",
+            round, doomed < count ? doomed : count, count, (unsigned)FFat.freeBytes());
+    if (FFat.freeBytes() >= 512 * 1024 || count == 0) {
+      return;
+    }
+  }
+}
+
+// What is actually on the flash? A full filesystem makes every write fail
+// (config.json and new recordings both come out empty) and nothing can be freed
+// without knowing what took the room. Returns the bytes the files hold, so it
+// can be compared with what the filesystem says is used.
+static uint32_t fsAccount(File dir, int depth, int *files) {
+  uint32_t total = 0;
+  for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    if (f.isDirectory()) {
+      if (depth < 4) {
+        total += fsAccount(f, depth + 1, files);
+      }
+    }
+    else {
+      total += f.size();
+      (*files)++;
+      deckLog("[fs] %s %u", String(f.name()).c_str(), (unsigned)f.size());
+    }
+    f.close();
+  }
+  return total;
+}
+
+static uint32_t flashReport() {
+  int files = 0;
+  File root = FFat.open("/");
+  if (!root) {
+    return 0;
+  }
+  uint32_t total = fsAccount(root, 0, &files);
+  root.close();
+  deckLog("[fs] free %u of %u bytes, %d files holding %u bytes",
+          (unsigned)FFat.freeBytes(), (unsigned)FFat.totalBytes(), files, (unsigned)total);
+  return total;
+}
+
+// A one shot speaker check: 1.5 seconds of 440 Hz on flash, played once, so
+// "is the playback clean?" can be answered with no microphone involved. The
+// file is left behind, so only the first boot after a flash plays it.
+static void speakerSelfTest() {
+  if (FFat.exists("/tone.wav")) {
+    File check = FFat.open("/tone.wav");
+    uint32_t have = 0;
+    if (check) {
+      have = check.size();
+      check.close();
+    }
+    if (have >= 44 + 10000) {
+      // a real tone from a previous boot: it has already been heard
+      return;
+    }
+    // a dud from a boot with a full filesystem: drop it and try again
+    deckLog("[mic] stale %u byte tone file, rewriting it", (unsigned)have);
+    FFat.remove("/tone.wav");
+  }
+  const uint32_t frames = MIC_I2S_SAMPLE_RATE * 3 / 2;
+  if (!create_wav_header_on_flash("/tone.wav", MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
+    return;
+  }
+  File f = FFat.open("/tone.wav", FILE_APPEND);
+  if (!f) {
+    return;
+  }
+  int16_t chunk[256];
+  uint32_t written = 0;
+  for (uint32_t done = 0; done < frames;) {
+    uint32_t n = frames - done;
+    if (n > 256) {
+      n = 256;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+      chunk[i] = (int16_t)(12000.0f * sinf(2.0f * 3.14159265f * 440.0f * (done + i) / MIC_I2S_SAMPLE_RATE));
+    }
+    f.write((uint8_t *)chunk, n * 2);
+    written += n * 2;
+    done += n;
+  }
+  f.close();
+  finalize_wav_sizes("/tone.wav", written);
+  // a zero byte tone means the write failed (a full filesystem); drop the file
+  // so the test runs again on the next boot
+  uint32_t actual = 0;
+  {
+    File check = FFat.open("/tone.wav");
+    if (check) {
+      actual = check.size();
+      check.close();
+    }
+  }
+  if (actual < 44 + 10000) {
+    deckLog("[mic] tone file came out %u bytes, removing it", (unsigned)actual);
+    FFat.remove("/tone.wav");
+    return;
+  }
+  deckLog("[mic] speaker test tone written (%u bytes), playing it once", (unsigned)actual);
+  audio.setVolume(volumeLevel);
+  if (audio.connecttoFS(FFat, "/tone.wav")) {
+    deckLog("[mic] tone playing");
+  }
 }
