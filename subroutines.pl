@@ -18,6 +18,7 @@ use File::Slurp;
 use File::Find;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::SQLite;
+use Minion;
 use Data::Dumper;
 use Time::HiRes qw(gettimeofday time);
 use Mojo::IOLoop;
@@ -817,6 +818,29 @@ sub time_span() {
 
 sub time_span_list() {
 	return sort { &time_spans()->{$a}->[0] <=> &time_spans()->{$b}->[0] || $a cmp $b } keys %{&time_spans()};
+}
+
+# What a picker shows: the whole family is still readable by time_span(), but
+# scrolling three hundred of them is not a picker, so this is the handful per
+# unit that gets reached for, in size order.  Add or drop names here freely.
+our $time_picker_spans = [ qw(
+	second 15second 30second 45second
+	minute fiveminute tenminute fifteenminute thirtyminute fortyfiveminute
+	hour twohour threehour sixhour ninehour twelvehour fifteenhour eighteenhour twentyonehour twentyfourhour
+	day twoday threeday fourday fiveday sixday sevenday
+	week twoweek threeweek fourweek
+	moon month twomonth threemonth sixmonth ninemonth twelvemonth
+	season quarter
+	year twoyear fiveyear tenyear
+	decade century millenium era
+) ];
+
+sub time_span_picker() {
+	my $spans = &time_spans();
+	foreach my $span ( @{$time_picker_spans} ) {
+		die "unknown time span in the picker: $span" unless $spans->{$span};
+	}
+	return sort { $spans->{$a}->[0] <=> $spans->{$b}->[0] || $a cmp $b } @{$time_picker_spans};
 }
 
 sub time_span_label() {
@@ -3118,6 +3142,33 @@ sub archive_scaffolder {
 		else { push @failed, $location; }
 	}
 	return { enabled => 1, dir => $root, created => \@created, existing => \@existing, failed => \@failed };
+}
+
+# The queue for work that has to outlive the request that asked for it: its own
+# SQLite file under ~/.president. The web process enqueues, the worker in
+# President.pl runs, and the folders app lists the same rows, so there is one
+# place that says what is waiting, running or failed.
+my $minion;
+sub minion_grabber {
+	unless ($minion) {
+		my $dir = &home('~/.president');
+		mkdir $dir unless -d $dir;
+		$minion = Minion->new(SQLite => $dir . '/minion.db');
+		# every process registers the same list, so a job can only be enqueued
+		# under a name the worker also knows
+		my $tasks = &minion_task_list();
+		foreach my $task ( keys %{$tasks} ) {
+			$minion->add_task($task => $tasks->{$task});
+		}
+	}
+	return $minion;
+}
+
+# Every job the queue can run, in one place. The archive transfer lands here —
+# it takes { remote_uuid, location, path, relative }, probes the far machine
+# and posts the file to it — along with whatever follows it.
+sub minion_task_list {
+	return {};
 }
 
 # Resolve ~ once; this used to shell out to `echo $HOME` on every call. That
