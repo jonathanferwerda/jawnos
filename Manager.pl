@@ -14709,10 +14709,18 @@ sub file_type_recognizer($f) {
 		$file->{'icon'} = '/images/decipherable/folder.png';
 	}
 	elsif ($f =~ /\.enc$/i) {
-		# a sealed file: its name says nothing about what is inside it, so the
-		# icon has to say only that much
-		$file->{'type'} = 'encrypted';
-		$file->{'icon'} = '/images/make believe/lock.png';
+		# a sealed file wears the extension of what it holds - sealing keeps
+		# it so opening can hand the file back as itself - so a picture inside
+		# can still show itself and open in the images app, which reads it
+		# through /file_open like any other picture; anything else says only
+		# that it is sealed
+		if ($file_type && $file_type eq 'image') {
+			$file->{'icon'} = '/file_open?file=' . uri_encode $f;
+		}
+		else {
+			$file->{'type'} = 'encrypted';
+			$file->{'icon'} = '/images/make believe/lock.png';
+		}
 	}
 	elsif ($file_type eq 'image' || $file_type eq 'video') {
 		$file->{'icon'} = '/file_open?file=' . uri_encode $f;
