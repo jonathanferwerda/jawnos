@@ -2,7 +2,7 @@
 	<div id="search_entanglement" style="display:inline-block;top:-10px;" >
 		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:var(--panel);border:solid;border-width:2px;border-radius:3px;"></div>
 		<input id="search"  style="vertical-align:top;min-width:200px;" entry="text" autocomplete="off" class="add_something timed_input search" id="search" placeholder="anything?" >
-		<img id="search_toggle" class="little_thumb search_toggle hover" style="vertical-align:top;" src="<%= &subs::icon_for('/images/make believe/search_button.png') %>" hint="Mirror"></img><br>
+		<img id="search_toggle" class="little_thumb search_toggle hover" style="vertical-align:top;" src="<%= &subs::icon_for('/images/make believe/search_button.png') %>" hint="Search"></img><br>
 		<div id="main_upload_container">
 			<form id="main_upload" style="display:none;">
 				<input id="main_upload_input" type="file" name="fileupload" multiple />

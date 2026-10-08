@@ -85,7 +85,7 @@
 														<img src="<%= &subs::icon_for('/images/jbuttons/padlock unlock.png') %>" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
 													<% } %>
 													<% if ($n->{'purpose'} eq 'server') { %>
-														<img src="<%= &subs::icon_for('/images/decipherable/mirror.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $a->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $d->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
+														<img src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $a->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $d->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
 													<% } %>
 													<button class="delete_neighbour_device" style="vertical-align:top;" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
 													<button class="device_scan ping_scan" style="vertical-align:top;" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>'<br>
