@@ -4473,6 +4473,20 @@ String WAV_FILE_PATH = "/rec.wav";
 #define MIC_TDM_BUFFER_BYTES (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
 static volatile bool isRecording = false;
 
+// The vendored es7210 driver and the esp_codec_dev driver LilyGoLib ships write
+// different DSP mode bits, and they disagree about the register values too:
+// this one sends 0x13, which leaves the upper pair of mics on the second output
+// pin, while the factory firmware sends 0x03 with all four mics time multiplexed
+// onto SDOUT1 - which is what the four slot Philips TDM on the I2S side expects.
+// Reading a 0x13 codec with a 0x02 receiver gets roughly half of every frame off
+// by a slot: quiet and gritty. So write those two registers ourselves afterwards.
+static void es7210WriteReg(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(ES7210_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
 bool es7210Begin()
 {
   Wire.beginTransmission(ES7210_ADDR);
@@ -4488,9 +4502,11 @@ bool es7210Begin()
   cfg.i2s_iface.samples = AUDIO_HAL_16K_SAMPLES;
   cfg.i2s_iface.bits = AUDIO_HAL_BIT_LENGTH_16BITS;
   es7210_adc_init(&Wire, &cfg);               // sets slave mode, clocks and mics
-  es7210_adc_set_gain_all(GAIN_24DB);         // the library's own init uses 0 dB
+  es7210WriteReg(ES7210_SDP_INTERFACE1_REG11, 0x03);   // DSP-B, as the factory build does
+  es7210WriteReg(ES7210_SDP_INTERFACE2_REG12, 0x02);   // all four mics on SDOUT1
+  es7210_adc_set_gain_all(GAIN_30DB);         // the library's own init leaves it at 0 dB
   es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE, AUDIO_HAL_CTRL_START);
-  deckLog("[mic] ES7210 up");
+  deckLog("[mic] ES7210 up (30 dB)");
   return true;
 }
 
@@ -4649,6 +4665,9 @@ static void recordingPlay(lv_event_t *e) {
     return;
   }
   audio.setVolume(volumeLevel);
-  deckLog("[mic] playing %s", WAV_FILE_PATH.c_str());
+  deckLog("[mic] playing %s at volume %d", WAV_FILE_PATH.c_str(), (int)volumeLevel);
   audio.connecttoFS(FFat, WAV_FILE_PATH.c_str());
+  // set it again once the stream exists: this makes the slider take effect
+  // whether it was moved before or during playback
+  audio.setVolume(volumeLevel);
 }
