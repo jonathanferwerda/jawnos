@@ -60,8 +60,10 @@
 				<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
 				<button class="armed" channel="<%= $ch %>" control="armed" state="off">O</button>
 				<span class="channel_fx" channel="<%= $ch %>" hint="Inserted pedals (drag a pedal here)"></span>
-				<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
-				<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" class="channel_volume channel_volume_<%= $ch %>" value="1">
+				<span class="channel_fader">
+					<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
+					<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" class="channel_volume channel_volume_<%= $ch %>" value="1">
+				</span>
 
 			</span>
 		<% } %>
@@ -147,6 +149,23 @@
 					<tr>
 						<td>Crossfade (s)<br><span style="font-size:12px;">clips that meet ramp into each other</span></td>
 						<td><input class="studio_config" setting="crossfade" value="<%= $settings->{'crossfade'} || '' %>"></td>
+					</tr>
+					<tr>
+						<td>Loop bars<br><span style="font-size:12px;">arm a channel to L and record: the phrase loops over this many bars, starting on the bar the playhead is in. 0 lets the phrase run free (its length still snaps to whole bars).</span></td>
+						<td><input class="studio_config" setting="loop_bars" value="<%= $settings->{'loop_bars'} || 4 %>"></td>
+					</tr>
+					<tr>
+						<td>Monitor input<br><span style="font-size:12px;">hear the live input through the pedals: headphones only, speakers will feed back</span></td>
+						<td>
+							<select class="studio_config" setting="monitor">
+								<option value="no"<%= (($settings->{'monitor'} || 'no') eq 'no') ? ' selected' : '' %>>no</option>
+								<option value="yes"<%= (($settings->{'monitor'} || 'no') eq 'yes') ? ' selected' : '' %>>yes</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td>Latency<br><span style="font-size:12px;">what the browser reports for this session</span></td>
+						<td><span id="studio_latency_info">&mdash;</span></td>
 					</tr>
 				</tbody>
 			</table>
@@ -244,6 +263,9 @@
 	.armed {
 		height: 30px;
 		width: 20px;
+		/* the button never gives way to a fader drawn over the strip */
+		position: relative;
+		z-index: 1;
 	}
 	.armed[state=off] {
 		background:grey;
@@ -264,12 +286,25 @@
 		width:40px;
 	}
 
+	/* the fader and its metre live inside the strip, below the arm button, so
+	   they can never sit on top of the record/play/loop toggle */
+	.channel_fader {
+		position: relative;
+		display: block;
+		width: 34px;
+		height: 120px;
+		margin: 2px 0 4px 0;
+		/* dropped to the foot of the strip when there is room for it, but it
+		   stays below the arm button when the strip is short */
+		margin-top: auto;
+	}
 	.channel_volume {
 		position:absolute;
 		appearance: none;
 		height: 118px;
 		width: 34px;
-		top: 550px;
+		left: 0;
+		top: 0;
 		border: solid;
 		border-radius: 5px;
 		border-width: .1px;
@@ -284,9 +319,9 @@
 	.channel_volume_metre {
 		position:absolute;
 		height: 118px;
-
 		width: 30px;
-		bottom: 1px;
+		left: 2px;
+		top: 1px;
 		color: black;
 		outline: none;
 	  vertical-align: middle;
@@ -298,9 +333,16 @@
 		border-radius: 5px;
 		width: 40px;
 		height: 100%;
-		display:inline-block;
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
 		padding-top:10px;
+		position: relative;
 
+	}
+	/* controls keep their size whether or not the strip is tall enough */
+	.channel > * {
+		flex: none;
 	}
 	<% for (my $ch = 0; $ch <= $channel_count; $ch++) { %>
 		.channel_<%= $ch %> {
@@ -309,14 +351,6 @@
 		.knob_control[channel=<%= $ch %>] {
 			left: <%= 45 * $ch %>px;
 		}
-
-		.channel_volume_<%= $ch %> {
-			left: <%= -49 + 48 * ($ch) %>px;
-			z-index: calc(10000);
-		}	
-		.channel_volume_metre_<%= $ch %> {
-			left: <%= -46 + 48 * ($ch) %>px;
-		}	
 	<% } %>
 	#studio {
 		height:100%;

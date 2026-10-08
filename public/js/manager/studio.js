@@ -23,6 +23,15 @@ function jawnosStudioButtonIcon(state, colour) {
 // recording (a guitar tracks through its pedals). Playback runs through the
 // channel volume/pan only, so nothing is processed twice. The live input is
 // never routed to the speakers, which keeps monitoring from feeding back.
+//
+// A take recorded on a channel armed to L is a looping sample: while the
+// transport runs it wraps back to its in-point every time its own length
+// elapses, until it is snipped on the waveform canvas. Loop takes are
+// bar-locked: recording starts on the bar line the playhead is in, runs for
+// the configured number of bars, then punches out and repeats on the spot.
+//
+// The live input can be monitored through the pedals into the speakers when the
+// song asks for it (headphones only — an open mic plus speakers will howl).
 
 var studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {} };
 var studioSelectedChannel = 1;
@@ -157,6 +166,7 @@ function studioChannelEngine(ch) {
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
 		playPan: ctx.createStereoPanner(),
+		monGain: ctx.createGain(),
 		inserts: [],
 		insertByName: {},
 		source: null
@@ -171,6 +181,11 @@ function studioChannelEngine(ch) {
 	c.recGain.connect(c.recDest);
 	// takes play through the channel fader + pan into the master bus
 	c.playBus.connect(c.playPan).connect(studioAudio.master);
+	// live monitoring taps the same post-pedal signal the recorder gets, so you
+	// hear exactly what is being captured; it is muted until the song asks
+	c.monGain.gain.value = 0;
+	c.recGain.connect(c.monGain);
+	c.monGain.connect(studioAudio.master);
 	studioAudio.channels[ch] = c;
 	return c;
 }
@@ -243,6 +258,30 @@ function studioAttachInput(ch, stream) {
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
 	return c.recDest.stream;
+}
+
+// Live monitoring: the processed input only reaches the speakers when the song
+// asks for it, because an open mic plus speakers howls.
+function studioApplyMonitor() {
+	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
+	$.each(studioAudio.channels, function (ch, c) {
+		if (c.monGain) { c.monGain.gain.value = on ? 1 : 0; }
+	});
+}
+
+// What the browser reports about the round trip, so the record offset can be
+// sanity-checked instead of guessed at.
+function studioUpdateLatencyInfo() {
+	var el = $('#studio_latency_info');
+	if (!el.length) { return; }
+	var ctx = studioAudio.ctx;
+	if (!ctx) { el.text('engine idle'); return; }
+	var ch = studioSelectedChannel;
+	var m = mixer[ch] && mixer[ch].media;
+	var parts = ['output ' + Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000) + ' ms'];
+	if (m && m.latency > 0) { parts.push('input ' + Math.round(m.latency * 1000) + ' ms'); }
+	parts.push('offset ' + Math.round(studioRecordOffset(ch) * 1000) + ' ms');
+	el.text(parts.join(' · '));
 }
 
 function studioDetachInput(ch) {
@@ -336,11 +375,51 @@ function studioEnsureWaveform(ch, take) {
 	});
 }
 
+// Only browsers that expose loop points can repeat a trimmed span; without
+// them el.loop would repeat the whole media file rather than the take.
+function studioSetTakeLoop(el, start, end) {
+	if (!('loopStart' in el) || !('loopEnd' in el)) { return; }
+	if (end > start) {
+		if (el.loopStart != start) { try { el.loopStart = start; } catch (e) {} }
+		if (el.loopEnd != end) { try { el.loopEnd = end; } catch (e) {} }
+		if (!el.loop) { el.loop = true; }
+	}
+	else if (el.loop) { el.loop = false; }
+}
+
+// Elements start rolling a little after play() is called, so a take can sit a
+// fixed distance behind the transport. Small errors are trimmed back with a
+// tiny playback-rate bend (no click, no gap); only a clearly adrift take is
+// hard-seeked, and not again until the previous seek has had time to land.
+function studioSyncTakeClock(take, el, target, period) {
+	var delta = el.currentTime - target;
+	if (period > 0) {
+		// compare on the loop cycle, so a wrap never reads as an error
+		delta = ((delta % period) + period) % period;
+		if (delta > period / 2) { delta -= period; }
+	}
+	var mag = Math.abs(delta);
+	var now = Date.now();
+	if (mag > 0.25 || (mag > 0.08 && (!take.seekedAt || (now - take.seekedAt) > 400))) {
+		take.seekedAt = now;
+		el.playbackRate = 1;
+		try { el.currentTime = target; } catch (e) {}
+		return;
+	}
+	if (mag > 0.02) {
+		el.playbackRate = Math.max(0.95, Math.min(1.05, 1 - (delta * 0.5)));
+	}
+	else if (el.playbackRate != 1) {
+		el.playbackRate = 1;
+	}
+}
+
 // Keep every take aligned to the transport. A take maps timeline position to
 // its own source time as  source = (position - startTime) + offset, where
 // `offset` is the in-point after any left trim or split. Where a clip meets a
 // neighbour (butted or overlapping) each side ramps over half the crossfade
 // length into the other's territory, so the two gains sum to about one.
+// Looping takes never ramp out; they wrap to their in-point instead.
 function studioSyncTakes() {
 	var pos = mixer['time']['position'];
 	$.each(mixer, function (ch, m) {
@@ -361,24 +440,28 @@ function studioSyncTakes() {
 			if (!el || !el.src) { return; }
 			var offset = take.offset || 0;
 			var start = take.startTime;
-			var end = start + (take.duration || 0);
+			var dur = take.duration || 0;
+			var end = start + dur;
+			var looping = !!(take.loop && dur > 0);
 			var prev = ordered[i - 1];
 			var next = ordered[i + 1];
 
 			var fIn = 0, fOut = 0;
 			if (prev) {
-				var fi = Math.min(xf, prev.duration || 0, take.duration || 0) / 2;
+				var fi = Math.min(xf, prev.duration || 0, dur) / 2;
 				if (fi > 0 && prev.src !== take.src && Math.abs(start - (prev.startTime + (prev.duration || 0))) <= fi * 2) { fIn = fi; }
 			}
-			if (next) {
-				var fo = Math.min(xf, take.duration || 0, next.duration || 0) / 2;
+			if (next && !looping) {
+				var fo = Math.min(xf, dur, next.duration || 0) / 2;
 				if (fo > 0 && next.src !== take.src && Math.abs(next.startTime - end) <= fo * 2) { fOut = fo; }
 			}
 
 			var winStart = start - fIn;
-			var winEnd = end + fOut;
+			var winEnd = looping ? Infinity : end + fOut;
 			var routed = !!studioTakeNode(ch, take);
 			if (!routed) { el.volume = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()); }
+
+			studioSetTakeLoop(el, looping ? offset : 0, looping ? offset + dur : 0);
 
 			if (pos < winStart || pos >= winEnd) {
 				if (!el.paused) { try { el.pause(); } catch (e) {} }
@@ -386,6 +469,7 @@ function studioSyncTakes() {
 				if (reset < 0) { reset = 0; }
 				if (el.currentTime != reset) { try { el.currentTime = reset; } catch (e) {} }
 				if (take.playGain) { take.playGain.gain.value = 0; }
+				el.playbackRate = 1;
 				return;
 			}
 
@@ -394,16 +478,30 @@ function studioSyncTakes() {
 			if (fOut > 0) { g *= Math.max(0, Math.min(1, (winEnd - pos) / (2 * fOut))); }
 			if (take.playGain) { take.playGain.gain.value = g; }
 
-			var target = pos - start + offset;
+			var elapsed = pos - start;
+			if (elapsed < 0) { elapsed = 0; }
+			var target = elapsed + offset;
+			if (looping) { target = offset + (elapsed % dur); }
 			if (target < 0) { target = 0; }
-			if (mixer['time']['status'] == 'scroll') { try { el.currentTime = target; } catch (e) {} return; }
+			if (mixer['time']['status'] == 'scroll') { try { el.currentTime = target; } catch (e) {} el.playbackRate = 1; return; }
 			if (el.paused) {
+				// Never start past the end of the file: the element would silently
+				// seek back to the top, which sounds like a blip of the take's start.
+				if (isFinite(el.duration) && el.duration > 0 && target >= el.duration - 0.005) {
+					if (take.playGain) { take.playGain.gain.value = 0; }
+					return;
+				}
+				el.playbackRate = 1;
 				try { el.currentTime = target; } catch (e) {}
 				var p = el.play();
 				if (p && p.catch) { p.catch(function () {}); }
 			}
-			else if (Math.abs(el.currentTime - target) > 0.3) {
-				try { el.currentTime = target; } catch (e) {}
+			else {
+				studioSyncTakeClock(take, el, target, looping ? dur : 0);
+				if (looping && !('loopStart' in el) && el.currentTime >= offset + dur - 0.005) {
+					// no loop points to lean on: wrap the take by hand
+					try { el.currentTime = target; } catch (e) {}
+				}
 			}
 		});
 	});
@@ -481,6 +579,16 @@ function studioDrawChannel(ch) {
 		ctx.stroke();
 	}
 
+	// the loop region: reserved bars, or what arming L would reserve now
+	var region = studioVisibleRegion();
+	var region_x = 0, region_w = 0;
+	if (region && region.end > region.start) {
+		region_x = (region.start / duration) * w;
+		region_w = Math.max(2, ((region.end - region.start) / duration) * w);
+		ctx.fillStyle = 'rgba(255,255,255,0.22)';
+		ctx.fillRect(region_x, 0, region_w, h);
+	}
+
 	if (m.media && m.media.out) {
 		var orderedDraw = studioChannelTakes(ch, true);
 		var xfDraw = studioCrossfade();
@@ -493,6 +601,15 @@ function studioDrawChannel(ch) {
 			var isVideo = take.encoding && take.encoding.indexOf('video') !== -1;
 			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : 'rgba(20,90,190,0.5)');
 			ctx.fillRect(x, 3, tw, h - 6);
+
+			// a looping take repeats across the rest of the song: ghost those passes
+			if (take.loop && take.duration > 0) {
+				ctx.save();
+				ctx.globalAlpha = 0.16;
+				ctx.fillStyle = '#145abe';
+				for (var gx = x + tw; gx < w; gx += tw) { ctx.fillRect(gx, 3, tw, h - 6); }
+				ctx.restore();
+			}
 
 			// waveform peaks
 			if (take.waveform && take.waveform.length) {
@@ -548,7 +665,30 @@ function studioDrawChannel(ch) {
 				ctx.fillStyle = '#ffe9a8';
 				ctx.fillRect(x + 3, 3, 3, h - 6);
 			}
+			// a dashed edge + arrow marks a looping sample
+			if (take.loop && take.duration > 0) {
+				ctx.save();
+				ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+				ctx.setLineDash([4, 3]);
+				ctx.strokeRect(x + 1.5, 4.5, Math.max(1, tw - 3), h - 9);
+				ctx.restore();
+				ctx.fillStyle = '#ffffff';
+				ctx.font = '10px sans-serif';
+				ctx.fillText('\u21bb', x + 6, 14);
+			}
 		});
+	}
+
+	if (region && region.end > region.start) {
+		ctx.save();
+		ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+		ctx.setLineDash([5, 4]);
+		ctx.lineWidth = 1;
+		ctx.strokeRect(region_x + 0.5, 0.5, Math.max(1, region_w - 1), h - 1);
+		ctx.restore();
+		ctx.fillStyle = '#04325f';
+		ctx.font = '10px sans-serif';
+		ctx.fillText(studioBarLabel(region.start) + ' \u2192 ' + studioBarLabel(region.end) + (region.tentative ? ' loop' : ' (loop)'), region_x + 4, h - 3);
 	}
 
 	if (mixer['time']['position'] > 0) {
@@ -615,10 +755,12 @@ function studioUpdateKnobHints() {
 
 // ---- take editing on the canvas --------------------------------------------
 
-// How far to pull a freshly recorded take back in time to cancel input latency.
-// An explicit record_offset (ms) in the song admin wins; otherwise use the
-// AudioContext's reported latencies.
-function studioRecordOffset() {
+// How far to pull a freshly recorded take back in time to cancel the round
+// trip. An explicit record_offset (ms) in the song admin wins; otherwise use
+// the AudioContext's reported output latency plus whatever the input stream
+// reports for itself, since the browser's output figure on its own is often an
+// under-estimate of what the player actually hears and plays against.
+function studioRecordOffset(ch) {
 	var raw = mixer['time']['record_offset'];
 	if (raw !== undefined && raw !== null && String(raw).length > 0) {
 		var n = numeral(raw).value();
@@ -626,7 +768,89 @@ function studioRecordOffset() {
 	}
 	var ctx = studioAudio.ctx;
 	if (!ctx) { return 0; }
-	return (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+	var offset = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+	var m = (ch !== undefined && ch !== null) ? (mixer[ch] && mixer[ch].media) : null;
+	if (m && m.latency > 0) { offset += m.latency; }
+	return offset;
+}
+
+// ---- loop regions ----------------------------------------------------------
+
+// One bar of the current tempo + signature, in seconds.
+function studioBarSeconds() {
+	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
+	var sig = String(mixer['time']['sig'] || '4/4').split('/');
+	var beats = studioKnobNumber(sig[0], 4) || 4;
+	return Math.max(0.05, (60 / bpm) * beats);
+}
+
+// How many bars a loop take covers. Blank or 0 means "follow the playing": no
+// region is reserved, and only the take's length is snapped to whole bars.
+function studioLoopBars() {
+	var raw = mixer['time']['loop_bars'];
+	if (raw === undefined || raw === null) { return 4; }
+	var n = studioKnobNumber(raw, 0);
+	return n > 0 ? Math.floor(n) : 0;
+}
+
+// The committed region: where the last loop take was recorded, which is also
+// the section the transport repeats while "ongoing". Stored as a bar, so a
+// tempo change keeps it musical.
+function studioLoopRegion() {
+	var r = mixer['time'] && mixer['time']['loop_region'];
+	if (!r || !(r.bars > 0)) { return null; }
+	var bar = studioBarSeconds();
+	return { start: r.start, bars: r.bars, end: r.start + (r.bars * bar) };
+}
+
+// What recording now would commit: the bar the playhead is in, for the
+// configured number of bars. Drawn while a channel waits on L, so the bars can
+// be lined up before a note is played.
+function studioProspectiveRegion() {
+	var status = mixer['time']['status'];
+	if (status != 'stop' && status != 'scroll') { return null; }
+	if (!studioAnyChannelArmed('loop')) { return null; }
+	var bars = studioLoopBars();
+	if (bars <= 0) { return null; }
+	var bar = studioBarSeconds();
+	var start = Math.floor(mixer['time']['position'] / bar) * bar;
+	return { start: start, bars: bars, end: start + (bars * bar), tentative: true };
+}
+
+function studioVisibleRegion() {
+	var status = mixer['time']['status'];
+	if (status == 'stop' || status == 'scroll') {
+		var prospective = studioProspectiveRegion();
+		if (prospective) { return prospective; }
+	}
+	return studioLoopRegion();
+}
+
+// "2:1" style, the same numbering the time display uses.
+function studioBarLabel(seconds) {
+	return Math.round(seconds / studioBarSeconds()) + ':1';
+}
+
+function studioAnyChannelArmed(state) {
+	var found = false;
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.armed) { return; }
+		if (m.armed.state == state) { found = true; }
+	});
+	return found;
+}
+
+// Whole bars recorded for a loop take: exactly the region when its end was
+// reached, otherwise the nearest bar, so a phrase stopped by hand still
+// repeats in time.
+function studioLoopTakeBars(take) {
+	var bar = studioBarSeconds();
+	var region = take.region;
+	if (region && region.bars > 0 && mixer['time']['position'] >= region.end) { return region.bars; }
+	var span = mixer['time']['position'] - take.startTime - (take.latency || 0);
+	var bars = Math.max(1, Math.round(span / bar));
+	if (region && region.bars > 0) { bars = Math.min(bars, region.bars); }
+	return bars;
 }
 
 var studioTakeDrag = null;
@@ -730,6 +954,9 @@ function studioSplitTake(ch, take, t) {
 		src: take.src,
 		encoding: take.encoding
 	};
+	// A razor cut ends the looper behaviour: both halves become ordinary clips.
+	take.loop = false;
+	right.loop = false;
 	// A saved clip already has a server file, so both halves reference it. An
 	// unsaved clip has to carry its blob so both halves get uploaded.
 	if (!take.uuid) { right.data = take.data; }
@@ -737,6 +964,7 @@ function studioSplitTake(ch, take, t) {
 	var el = document.createElement('video');
 	el.className = 'studio_video';
 	el.style.display = 'none';
+	el.preload = 'auto';
 	if (take.src) { el.src = take.src; }
 	$('#studio_track_container').append(el);
 	right.track = el;
@@ -884,7 +1112,7 @@ function studioInit(data) {
 		success: function(response) {
 			windowMaker(response.html);
 			mixer = {
-				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: 0 },
+				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: 0, loop_bars: 4, monitor: 'no', loop_region: null },
 				buttons: { record: { obg: '', bg: 'red', interval: '' }, stop: { obg: '', bg: 'lightgreen', interval: '' }, play: { obg: '', bg: 'yellow', interval: '' } },
 				settings: response.settings,
 				automations: {}
@@ -929,6 +1157,8 @@ function studioInit(data) {
 			}
 			studioApplyPedals();
 			studioUpdateFxBadges();
+			studioApplyMonitor();
+			studioUpdateLatencyInfo();
 
 			// pedals are dragged from the pedalboard onto a channel strip
 			$('.pedal_background').draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
@@ -1127,7 +1357,8 @@ function studioSaver() {
 			if (!take) { return; }
 			song[i]['mixer'].out[ir] = {
 				uuid: take.uuid, startTime: take.startTime, offset: take.offset || 0,
-				duration: take.duration, encoding: take.encoding, src: take.src
+				duration: take.duration, encoding: take.encoding, src: take.src,
+				loop: take.loop ? 1 : 0
 			};
 		});
 	});
@@ -1290,7 +1521,12 @@ $(document).on('click', '.armed',function() {
 	}
 	studioSaver();
 	state = armed.attr('state');
+	// playback reads the armed state from mixer, so keep it in step with the
+	// button instead of waiting for the next load
+	if (!mixer[channel]) { mixer[channel] = {}; }
+	mixer[channel].armed = { state: state, text: armed.text() };
 	studioInputStreamGrabber(channel,state);
+	studioDrawTracks();
 });
 
 $(document).on('click', '.studio_jack', function() {
@@ -1404,7 +1640,9 @@ async function studioInputStreamGrabber(channel,state) {
 	if (!mixer[ch].media.out) { mixer[ch].media.out = []; }
 	if (!mixer[ch].media.rec) { mixer[ch].media.rec = []; }
 
-	if (state != 'rec') {
+	// An armed channel keeps its input open for rec *and* loop: loop is the
+	// looper state, so it has to be able to capture the sample it repeats.
+	if (state != 'rec' && state != 'loop') {
 		if (mixer[ch].media.inRaw) {
 			mixer[ch].media.inRaw.getTracks().forEach(function(track) { track.stop(); });
 		}
@@ -1447,6 +1685,15 @@ async function studioInputStreamGrabber(channel,state) {
 	mixer[ch].media.inRaw = stream;
 	mixer[ch].media.active = true;
 
+	// The browser's own latency report for this input; it feeds the record
+	// offset so overdubs land on the grid without a manual trim.
+	var in_track = stream.getAudioTracks()[0];
+	if (in_track && in_track.getSettings) {
+		var in_latency = numeral(in_track.getSettings().latency).value();
+		if (in_latency > 0) { mixer[ch].media.latency = in_latency; }
+	}
+	studioUpdateLatencyInfo();
+
 	// Push the raw input through the channel's tone stack + pedals and take the
 	// processed result as our recording source.
 	var processed = studioAttachInput(ch, stream);
@@ -1473,7 +1720,7 @@ async function studioInputStreamGrabber(channel,state) {
 	return combined;
 }
 
-function studioStartTake(ch) {
+function studioStartTake(ch, looping) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.in) {
 		console.log('studio: channel ' + ch + ' is armed to record but has no input');
@@ -1487,9 +1734,15 @@ function studioStartTake(ch) {
 	el.className = 'studio_video';
 	el.id = 'studio_channel_' + ch + '_' + ir;
 	el.style.display = 'none';
+	el.preload = 'auto';
 	$('#studio_track_container').append(el);
 
-	var take = { startTime: Math.max(0, mixer['time']['position'] - studioRecordOffset()), offset: 0, duration: 0, status: 'recording', track: el };
+	// Latency skew pulls a fresh take earlier so it lines up with what was
+	// already playing. Negative positions are kept on purpose: clamping to zero
+	// is what used to leave every overdub recorded from the top late by the
+	// monitoring latency.
+	var latency = studioRecordOffset(ch);
+	var take = { startTime: mixer['time']['position'] - latency, latency: latency, offset: 0, duration: 0, status: 'recording', track: el, loop: !!looping, region: looping ? studioLoopRegion() : null };
 	media.out[ir] = take;
 
 	var mime = studioPickMime(!!media.video);
@@ -1522,7 +1775,13 @@ function studioStopTake(ch, ir) {
 	if (recorder && recorder.state && recorder.state != 'inactive') { recorder.stop(); }
 	if (take && take.status == 'recording') {
 		take.status = 'stop';
-		take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
+		if (take.loop) {
+			// loop takes are bar-locked, so their repeats never drift off the grid
+			take.duration = studioLoopTakeBars(take) * studioBarSeconds();
+		}
+		else {
+			take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
+		}
 		mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
 	}
 	if (media.rec) { media.rec[ir] = null; }
@@ -1530,15 +1789,40 @@ function studioStopTake(ch, ir) {
 
 async function studioRecord() {
 	if (mixer['time']['status'] == 'record') { return; }
+
+	var song = studioSaver();
+	var takes = [];
+	var loop_armed = false;
+	$.each(song, function(i,v) {
+		var arm = v['armed'] && v['armed']['state'];
+		if (!/^[0-9]+$/.test(i) || (arm != 'rec' && arm != 'loop')) { return; }
+		if (arm == 'loop') { loop_armed = true; }
+		takes.push({ ch: i, loop: arm == 'loop' });
+	});
+
+	// A loop take is bar-locked: recording is nudged onto the bar line the
+	// playhead is in and runs for the configured number of bars, so the phrase
+	// and its repeats stay on the beat grid.
+	if (loop_armed) {
+		var bars = studioLoopBars();
+		if (bars > 0) {
+			var bar = studioBarSeconds();
+			var start = Math.floor(mixer['time']['position'] / bar) * bar;
+			mixer['time']['position'] = start;
+			mixer['time']['loop_region'] = { start: start, bars: bars };
+		}
+		else {
+			mixer['time']['loop_region'] = null;
+		}
+	}
+
 	mixer['time']['status'] = 'record';
 	studioTime('start');
 
-	var song = studioSaver();
-	$.each(song, function(i,v) {
-		if (!/^[0-9]+$/.test(i) || !v['armed'] || v['armed']['state'] != 'rec') { return; }
-		if (!mixer[i]) { mixer[i] = {}; }
-		if (!mixer[i].media) { mixer[i].media = {}; }
-		studioStartTake(i);
+	$.each(takes, function(n, a) {
+		if (!mixer[a.ch]) { mixer[a.ch] = {}; }
+		if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
+		studioStartTake(a.ch, a.loop);
 	});
 	studioSyncTakes();
 }
@@ -1620,6 +1904,31 @@ function studioTime(command) {
 	},1000);
 }
 
+// Loop takes finish themselves at the end of their region — a hair late, so
+// the phrase's tail (which the player heard and answered late) is still
+// captured — then start repeating on the spot. When nothing else is still
+// recording, the transport drops out of record and keeps playing the loop.
+function studioLoopPunchOut() {
+	var pos = mixer['time']['position'];
+	var stopped = false;
+	var pending = false;
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		m.media.out.forEach(function (take, ir) {
+			if (!take || take.status != 'recording') { return; }
+			if (!take.region || !(take.region.end > 0) || pos < take.region.end + (take.latency || 0)) {
+				pending = true;
+				return;
+			}
+			studioStopTake(ch, ir);
+			stopped = true;
+		});
+	});
+	if (!stopped || pending || mixer['time']['status'] != 'record') { return; }
+	mixer['time']['status'] = 'play';
+	studioTime('play');
+}
+
 function studioTransportTick() {
 	var now = Date.now();
 	mixer['time']['position'] = (now - mixer['time']['startTime']) / 1000;
@@ -1631,15 +1940,24 @@ function studioTransportTick() {
 			mixer['time']['duration'] = mixer['time']['position'];
 			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
 		}
+		studioLoopPunchOut();
 	}
-	else if (status == 'play' && end > 0 && mixer['time']['position'] >= end) {
-		if (mixer['time']['loop'] == 'ongoing') {
-			mixer['time']['position'] = 0;
-			mixer['time']['startTime'] = Date.now();
+	else if (status == 'play') {
+		var region = studioLoopRegion();
+		if (mixer['time']['loop'] == 'ongoing' && region && mixer['time']['position'] >= region.end) {
+			// repeat the section the loop was built in, not the whole song
+			mixer['time']['position'] = region.start;
+			mixer['time']['startTime'] = Date.now() - (region.start * 1000);
 		}
-		else if (mixer['time']['loop'] == 'on') {
-			studioStop();
-			return;
+		else if (end > 0 && mixer['time']['position'] >= end) {
+			if (mixer['time']['loop'] == 'ongoing') {
+				mixer['time']['position'] = 0;
+				mixer['time']['startTime'] = Date.now();
+			}
+			else if (mixer['time']['loop'] == 'on') {
+				studioStop();
+				return;
+			}
 		}
 	}
 
@@ -1884,6 +2202,10 @@ function studioLoad(uuid) {
 			$('#studio_video_toggle').attr('toggled', admin['video_toggle']);
 			$('.studio_config[setting="record_offset"]').val(mixer['time']['record_offset'] || '');
 			$('.studio_config[setting="crossfade"]').val(mixer['time']['crossfade'] || '');
+			$('.studio_config[setting="loop_bars"]').val(mixer['time']['loop_bars'] === undefined ? 4 : mixer['time']['loop_bars']);
+			$('.studio_config[setting="monitor"]').val(mixer['time']['monitor'] || 'no');
+			studioApplyMonitor();
+			studioUpdateLatencyInfo();
 			if (mixer['time']['loop'] == 'on') {
 				$('#studio_loop').attr('enabled','on').attr('obg', 'rgb(211, 211, 211)').css({'background-color':'red'});
 			}
@@ -1914,13 +2236,15 @@ function studioLoad(uuid) {
 					el.className = 'studio_video';
 					el.id = id;
 					el.style.display = 'none';
+					el.preload = 'auto';
 					if (vr['src']) { el.src = vr['src']; }
 					$('#studio_track_container').append(el);
 					var startTime = studioKnobNumber(vr['startTime'], 0);
 					var duration = studioKnobNumber(vr['duration'], 0);
 					mixer[i].media.out[ir] = {
 						uuid: vr['uuid'], startTime: startTime, offset: studioKnobNumber(vr['offset'], 0),
-						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el
+						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el,
+						loop: vr['loop'] ? true : false
 					};
 					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);
 				});
@@ -1948,6 +2272,7 @@ function studioImport(files) {
 		el.className = 'studio_video';
 		el.id = id;
 		el.style.display = 'none';
+		el.preload = 'auto';
 		el.src = URL.createObjectURL(file);
 		$('#studio_track_container').append(el);
 		var take = { uuid: null, startTime: mixer['time']['position'] || 0, offset: 0, duration: 0, status: 'stop', track: el, data: file, encoding: file.type };
@@ -2021,6 +2346,7 @@ $(document).on('click', '#studio_config_toggle', function() {
 		config.show();
 		controls.hide();
 		mixer.hide();
+		studioUpdateLatencyInfo();
 	}
 });
 
@@ -2031,12 +2357,27 @@ $(document).on('change', '.studio_config', function() {
 	if (setting == 'record_offset') {
 		mixer['time']['record_offset'] = value;
 		studioSaver();
+		studioUpdateLatencyInfo();
 		return;
 	}
 	if (setting == 'crossfade') {
 		mixer['time']['crossfade'] = value;
 		studioSaver();
 		studioDrawTracks();
+		return;
+	}
+	if (setting == 'loop_bars') {
+		mixer['time']['loop_bars'] = value;
+		// no reserved bars: loop takes still snap their length to whole bars
+		if (!(studioKnobNumber(value, 0) > 0)) { mixer['time']['loop_region'] = null; }
+		studioSaver();
+		studioDrawTracks();
+		return;
+	}
+	if (setting == 'monitor') {
+		mixer['time']['monitor'] = value;
+		studioApplyMonitor();
+		studioSaver();
 		return;
 	}
 	if (restart == 'yes') {
