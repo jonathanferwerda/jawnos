@@ -76,13 +76,24 @@ function timelinePrinter(appts,sort,offset) {
 
 		$.each(v.list, function(n,l) {
 			if ( !l ) { return true; }
+			// the window itself has no percent for a row it fetched beyond an edge,
+			// and such a row belongs stuck against that edge: the one just past the
+			// right edge has always stuck there, and the one carrying a still-
+			// running appointment now sticks to the left, its band reaching in to
+			// the rail
 			var pct = parseFloat(l[scope + '_percent']);
+			if ( !isFinite(pct) && isFinite(l['timestamp']) ) {
+				pct = (l['timestamp'] - appts['__specs']['start']) / (appts['__specs']['timestamp'] - appts['__specs']['start']);
+			}
 			if ( !isFinite(pct) ) { pct = 0; }
 			pct = Math.min(Math.max(pct, 0), 2);
 			var x = pad + (column * pct / 2);
 
 			var startX;
 			var startPct = parseFloat(l[scope + '_start_percent']);
+			if ( !isFinite(startPct) && l['duration'] && isFinite(l['timestamp']) ) {
+				startPct = (l['timestamp'] - l['duration'] - appts['__specs']['start']) / (appts['__specs']['timestamp'] - appts['__specs']['start']);
+			}
 			if ( isFinite(startPct) ) {
 				startPct = Math.min(Math.max(startPct, 0), 2);
 				startX = pad + (column * startPct / 2);

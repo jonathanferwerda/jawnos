@@ -5550,9 +5550,46 @@ sub log_reader {
 		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp + $t1);
+		# The view is drawn from $t out to the centre and as far again, so anything
+		# fetched beyond that right edge sticks to the right edge. The fetch also
+		# reaches a span behind the left edge, for the same reason at the other
+		# end, and takes in a row that stopped inside the view, or one that is
+		# still running across it - that last is pure presence: its row may be
+		# older than anything else fetched, and it is what the left edge holds on
+		# to.
+		my $fetch_start = $t - $t1;
+		# Every clause here is framed on timestamp, the moment the timeline draws a
+		# row at: a row just behind the left edge sticks to it the way a row past
+		# the right edge already sticks to that one, a row that stopped inside the
+		# fetch comes in with the span it ran, and a row that never stopped is pure
+		# presence - it may be older than anything else fetched, and its band is
+		# what the left half of the view is holding on to. Flat terms, so the
+		# planner can still reach each one by an index.
+		my $stick_where = "((timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
+		my $stick_suffix = '';
+		my @stick_variables = ( $fetch_start, $t, $fetch_start, $t2, 'start', 'record', $t2 );
+		if ($data->{'filter'} && $data->{'filter'} ne 'all') {
+			$stick_suffix .= " and type = ?";
+			push @stick_variables, $data->{'filter'};
+		}
+		if ($project && $project ne 'all') {
+			$stick_suffix .= " and project = ?";
+			push @stick_variables, $project;
+		}
+		if ($account && $account ne 'all') {
+			$stick_suffix .= " and account = ?";
+			push @stick_variables, $account;
+		}
+		my $stick_query = sub {
+			my ($for_app) = @_;
+			my $q = "select * from appointments where ";
+			$q .= "app = ? and " if $for_app;
+			return $q . $stick_where . $stick_suffix . " order by timestamp";
+		};
 
 		$appts->{'__specs'}->{'start'} = $t;
 		$appts->{'__specs'}->{'end'} = $t2;
+		$appts->{'__specs'}->{'fetch_start'} = $fetch_start;
 		if ($appt_toggle eq 'on') {
 			my $temp_appointments;
 
@@ -5579,6 +5616,8 @@ sub log_reader {
 				$results = &subs::db_query($query, @query_variables);
 				$temp_appointments = $results->hashes;
 				push @{$appointments}, @{$temp_appointments};
+				$results = &subs::db_query($stick_query->($a), $a, @stick_variables);
+				push @{$appointments}, @{$results->hashes};
 			}
 		}
 		else {
@@ -5604,6 +5643,29 @@ sub log_reader {
 
 			$results = &subs::db_query($query, @query_variables);
 			$appointments = $results->hashes;
+			$results = &subs::db_query($stick_query->(), @stick_variables);
+			push @{$appointments}, @{$results->hashes};
+		}
+		# a row inside the view can be a stop or a presence too, so both queries
+		# can find it: keep the first of each row, and put the list back in time
+		# order - last_event, the status and the formatted times all read off its
+		# tail. The key cannot be the uuid alone: the per-appointment query does
+		# not fetch one.
+		$appointments = [] unless $appointments;
+		my %seen_row;
+		my @merged_rows;
+		foreach my $row (sort { ($a->{$timestamp_selector} || 0) <=> ($b->{$timestamp_selector} || 0) } @{$appointments}) {
+			my $row_key = join '|', $row->{'app'}, $row->{'timestamp'}, $row->{'type'}, $row->{'duration'};
+			next if $seen_row{$row_key}++;
+			push @merged_rows, $row;
+		}
+		$appointments = \@merged_rows;
+		# the payload reaches back as far as the rows it carries, so the client
+		# prunes by what it was actually handed
+		foreach my $row (@merged_rows) {
+			if ($row->{'timestamp'} && $row->{'timestamp'} < $appts->{'__specs'}->{'fetch_start'}) {
+				$appts->{'__specs'}->{'fetch_start'} = $row->{'timestamp'};
+			}
 		}
 #		my $resulters = &subs::db_query('select * from continent where timestamp >= ? and timestamp <= ?',$t,$t2);
 		my $continent = [];#$resulters->hashes;

@@ -2073,10 +2073,16 @@ function graphicalize(respons) {
 	if ($('#' + localStorage.getItem('layout')).length == 0) {
 		return;
 	}
+	// a row outside the drawn window is kept out to the fetched edge instead: the
+	// server reaches a span past the left edge so a row just behind it can stick
+	// there, and carries the row of a still-running appointment however old it
+	// is, and those rows are the ones the left edge is holding on to
+	var fetch_start = appts['__specs']['fetch_start'];
+	if (fetch_start == undefined) { fetch_start = appts['__specs']['start']; }
 	$.each(appts, function(i,v) {
 		$.each(v['list'], function(am,way) {
 			if (way != undefined) {
-				if (way['timestamp'] && way['timestamp'] >= appts['__specs']['start'] && way['timestamp'] <= appts['__specs']['end']) {
+				if (way['timestamp'] && way['timestamp'] >= fetch_start && way['timestamp'] <= appts['__specs']['end']) {
 				}
 				else {
 					appts[i]['list'].splice(am, 1);

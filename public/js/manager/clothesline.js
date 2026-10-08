@@ -359,6 +359,11 @@ function timelineScroller(data) {
 	response.appts['__specs']['start'] = response.appts['__specs']['start'] - sdiff;
 	response.appts['__specs']['timestamp'] = (numeral(response.appts['__specs']['timestamp']).value() - sdiff);
 	response.appts['__specs']['time_machine_timestamp'] = (numeral(tm_timestamp).value() - sdiff);
+	// the edge the fetch reached to travels with the view, or the prune would
+	// drop the rows that were fetched to stick to it
+	if (response.appts['__specs']['fetch_start'] != undefined) {
+		response.appts['__specs']['fetch_start'] = numeral(response.appts['__specs']['fetch_start']).value() - sdiff;
+	}
 
 	var ts = quality_inventory(numeral(response.appts['__specs']['time_machine_timestamp']).value() );
 	if (!$('#time_machine').is(':focus') && (data.mousediff || data['source'] == 'smoothScroll')) {
