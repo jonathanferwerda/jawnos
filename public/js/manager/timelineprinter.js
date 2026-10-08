@@ -160,6 +160,12 @@ function timelinePrinter(appts,sort,offset) {
 	});
 }
 
+// Icons are kept, not re-created per dot: a fresh Image for every draw made
+// every reload wait for the icon all over again, so the dots landed first and
+// the icons popped in a frame later - the flash. A kept image is already
+// decoded and is drawn with the dots on every later pass; only the first time
+// an icon appears does it wait for the network, once.
+var pseudonymIcons = {};
 function pseudoGenerator(appts,type,x,y,size) {
 	var pseudonym = $.grep(appts['__specs']['pseudonyms'], function(n, i){ // just use arr
 		return n['name'] == type;
@@ -167,10 +173,25 @@ function pseudoGenerator(appts,type,x,y,size) {
 
 	if (pseudonym.length > 0) {
 		size = size || 30;
-		var img = new Image;
-		img.onload = function(){
-			ctx.drawImage(img,x,y, size, size);
+		var src = pseudonym[0]['icon'];
+		var icon = pseudonymIcons[src];
+		if (!icon) {
+			icon = pseudonymIcons[src] = { img: new Image, ready: 0, waiting: [] };
+			icon.img.onload = function(){
+				icon.ready = 1;
+				$.each(icon.waiting, function(i,draw){ draw(); });
+				icon.waiting = [];
+			};
+			icon.img.src = src;
+		}
+		var draw = function(){
+			ctx.drawImage(icon.img, x, y, size, size);
 		};
-		img.src = pseudonym[0]['icon'];
+		if (icon.ready) {
+			draw();
+		}
+		else {
+			icon.waiting.push(draw);
+		}
 	}
 }
