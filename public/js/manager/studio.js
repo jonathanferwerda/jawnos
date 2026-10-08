@@ -29,6 +29,9 @@ function jawnosStudioButtonIcon(state, colour) {
 // elapses, until it is snipped on the waveform canvas. Loop takes are
 // bar-locked: recording starts on the bar line the playhead is in, runs for
 // the configured number of bars, then punches out and repeats on the spot.
+// Recording can be preceded by a count-in of the configured number of beats
+// (the signature's beats per bar by default), which clicks even when the
+// metronome is off.
 //
 // The live input can be monitored through the pedals into the speakers when the
 // song asks for it (headphones only — an open mic plus speakers will howl).
@@ -793,6 +796,29 @@ function studioLoopBars() {
 	return n > 0 ? Math.floor(n) : 0;
 }
 
+function studioBeatSeconds() {
+	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
+	return 60 / bpm;
+}
+
+// Beats of count-in before a recording starts. Blank follows the signature (4
+// in 4/4, 3 in 3/4); 0 turns the count-in off.
+function studioCountInBeats() {
+	var raw = mixer['time']['count_in'];
+	if (raw === undefined || raw === null || String(raw).length == 0) {
+		var sig = String(mixer['time']['sig'] || '4/4').split('/');
+		return studioKnobNumber(sig[0], 4) || 4;
+	}
+	var n = studioKnobNumber(raw, 0);
+	return n > 0 ? Math.floor(n) : 0;
+}
+
+// True while the transport is running up to a pending punch-in.
+function studioCountingIn() {
+	var punch = mixer['time']['punch_in'];
+	return mixer['time']['status'] == 'record' && punch !== undefined && punch !== null && mixer['time']['position'] < punch;
+}
+
 // The committed region: where the last loop take was recorded, which is also
 // the section the transport repeats while "ongoing". Stored as a bar, so a
 // tempo change keeps it musical.
@@ -1112,7 +1138,7 @@ function studioInit(data) {
 		success: function(response) {
 			windowMaker(response.html);
 			mixer = {
-				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: 0, loop_bars: 4, monitor: 'no', loop_region: null },
+				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: null, loop_bars: 4, monitor: 'no', loop_region: null, count_in: '', punch_in: null, pending_takes: null },
 				buttons: { record: { obg: '', bg: 'red', interval: '' }, stop: { obg: '', bg: 'lightgreen', interval: '' }, play: { obg: '', bg: 'yellow', interval: '' } },
 				settings: response.settings,
 				automations: {}
@@ -1720,7 +1746,7 @@ async function studioInputStreamGrabber(channel,state) {
 	return combined;
 }
 
-function studioStartTake(ch, looping) {
+function studioStartTake(ch, looping, at) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.in) {
 		console.log('studio: channel ' + ch + ' is armed to record but has no input');
@@ -1740,9 +1766,10 @@ function studioStartTake(ch, looping) {
 	// Latency skew pulls a fresh take earlier so it lines up with what was
 	// already playing. Negative positions are kept on purpose: clamping to zero
 	// is what used to leave every overdub recorded from the top late by the
-	// monitoring latency.
+	// monitoring latency. `at` is the punch-in point when a count-in ran.
+	var from = (at === undefined || at === null) ? mixer['time']['position'] : at;
 	var latency = studioRecordOffset(ch);
-	var take = { startTime: mixer['time']['position'] - latency, latency: latency, offset: 0, duration: 0, status: 'recording', track: el, loop: !!looping, region: looping ? studioLoopRegion() : null };
+	var take = { startTime: from - latency, latency: latency, offset: 0, duration: 0, status: 'recording', track: el, loop: !!looping, region: looping ? studioLoopRegion() : null };
 	media.out[ir] = take;
 
 	var mime = studioPickMime(!!media.video);
@@ -1787,6 +1814,23 @@ function studioStopTake(ch, ir) {
 	if (media.rec) { media.rec[ir] = null; }
 }
 
+// Start the takes held back by a count-in, once the transport reaches the
+// punch-in point. The takes are anchored to that point, not to the tick that
+// notices it, so a loop still starts exactly on the bar line.
+function studioStartPendingTakes() {
+	var punch = mixer['time']['punch_in'];
+	if (punch === undefined || punch === null) { return; }
+	if (mixer['time']['position'] < punch) { return; }
+	var pending = mixer['time']['pending_takes'] || [];
+	mixer['time']['punch_in'] = null;
+	mixer['time']['pending_takes'] = null;
+	$.each(pending, function (n, a) {
+		if (!mixer[a.ch]) { mixer[a.ch] = {}; }
+		if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
+		studioStartTake(a.ch, a.loop, punch);
+	});
+}
+
 async function studioRecord() {
 	if (mixer['time']['status'] == 'record') { return; }
 
@@ -1800,16 +1844,16 @@ async function studioRecord() {
 		takes.push({ ch: i, loop: arm == 'loop' });
 	});
 
-	// A loop take is bar-locked: recording is nudged onto the bar line the
-	// playhead is in and runs for the configured number of bars, so the phrase
-	// and its repeats stay on the beat grid.
+	// Where recording begins. Loop takes are bar-locked: the region starts on
+	// the bar line the playhead is in and runs for the configured number of
+	// bars, so the phrase and its repeats stay on the beat grid.
+	var punch = mixer['time']['position'];
 	if (loop_armed) {
 		var bars = studioLoopBars();
 		if (bars > 0) {
 			var bar = studioBarSeconds();
-			var start = Math.floor(mixer['time']['position'] / bar) * bar;
-			mixer['time']['position'] = start;
-			mixer['time']['loop_region'] = { start: start, bars: bars };
+			punch = Math.floor(mixer['time']['position'] / bar) * bar;
+			mixer['time']['loop_region'] = { start: punch, bars: bars };
 		}
 		else {
 			mixer['time']['loop_region'] = null;
@@ -1817,13 +1861,27 @@ async function studioRecord() {
 	}
 
 	mixer['time']['status'] = 'record';
+	mixer['time']['punch_in'] = null;
+	mixer['time']['pending_takes'] = null;
+	mixer['time']['position'] = punch;
+
+	// A count-in runs the transport up to the punch-in point with clicks; the
+	// takes are held back until it gets there.
+	var count_in = studioCountInBeats() * studioBeatSeconds();
+	if (count_in > 0) {
+		mixer['time']['position'] = punch - count_in;
+		mixer['time']['punch_in'] = punch;
+		mixer['time']['pending_takes'] = takes;
+	}
 	studioTime('start');
 
-	$.each(takes, function(n, a) {
-		if (!mixer[a.ch]) { mixer[a.ch] = {}; }
-		if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
-		studioStartTake(a.ch, a.loop);
-	});
+	if (count_in <= 0) {
+		$.each(takes, function(n, a) {
+			if (!mixer[a.ch]) { mixer[a.ch] = {}; }
+			if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
+			studioStartTake(a.ch, a.loop, punch);
+		});
+	}
 	studioSyncTakes();
 }
 
@@ -1847,6 +1905,9 @@ $(document).on('click', '#studio_stop', function() {
 
 async function studioStop() {
 	var wasRecording = (mixer['time']['status'] == 'record');
+	// a stop during the count-in cancels the take that never started
+	mixer['time']['punch_in'] = null;
+	mixer['time']['pending_takes'] = null;
 
 	$.each(mixer, function(i,v) {
 		if (!/^[0-9]+$/.test(i) || !mixer[i].media) { return; }
@@ -1870,7 +1931,7 @@ function studioTime(command) {
 	if (svm) { $(svm).show(); }
 
 	if (command == 'start') {
-		mixer['time']['lastMetronome'] = 0;
+		mixer['time']['lastMetronome'] = null;
 		mixer['time']['startTime'] = Date.now() - (mixer['time']['position'] * 1000);
 		clearInterval(mixer['time']['interval']);
 		mixer['time']['interval'] = setInterval(studioTransportTick, 25);
@@ -1941,6 +2002,7 @@ function studioTransportTick() {
 			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
 		}
 		studioLoopPunchOut();
+		studioStartPendingTakes();
 	}
 	else if (status == 'play') {
 		var region = studioLoopRegion();
@@ -1968,16 +2030,22 @@ function studioTransportTick() {
 }
 
 function studioMetronomeTick() {
-	if (mixer['time']['metronome'] != 'yes' || !mixer['time']['bpm']) { return; }
+	// a count-in clicks even when the metronome itself is off
+	var counting = studioCountingIn();
+	if (mixer['time']['metronome'] != 'yes' && !counting) { return; }
+	if (!mixer['time']['bpm']) { return; }
 	var tdisplay = studioTimeDisplay();
-	if (tdisplay['beat'] <= mixer['time']['lastMetronome']) { return; }
-	if (!mixer['time']['lastMetronome']) { mixer['time']['lastMetronome'] = tdisplay['beat']; return; }
+	var beat = tdisplay['beat'];
+	var last = mixer['time']['lastMetronome'];
+	if (last !== null && last !== undefined && beat == last) { return; }
+	mixer['time']['lastMetronome'] = beat;
 	var ctx = studioContext();
 	if (!ctx) { return; }
 	var oscillator = ctx.createOscillator();
 	var gainNode = ctx.createGain();
 	var beats = studioKnobNumber(tdisplay['signature'][0], 4) || 4;
-	var accent = (tdisplay['beat'] % beats) ? 0 : 1;
+	// accents land on the bar line, count-in beats included
+	var accent = (Math.abs(beat) % beats) ? 0 : 1;
 	oscillator.frequency.value = accent ? 1100 : 900;
 	oscillator.type = 'triangle';
 	gainNode.gain.value = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50) / 100;
@@ -1986,7 +2054,6 @@ function studioMetronomeTick() {
 	setTimeout(function() {
 		oscillator.stop();
 	},20);
-	mixer['time']['lastMetronome'] = tdisplay['beat'];
 }
 
 function studioTimeDisplay() {
@@ -2203,6 +2270,7 @@ function studioLoad(uuid) {
 			$('.studio_config[setting="record_offset"]').val(mixer['time']['record_offset'] || '');
 			$('.studio_config[setting="crossfade"]').val(mixer['time']['crossfade'] || '');
 			$('.studio_config[setting="loop_bars"]').val(mixer['time']['loop_bars'] === undefined ? 4 : mixer['time']['loop_bars']);
+			$('.studio_config[setting="count_in"]').val(mixer['time']['count_in'] || '');
 			$('.studio_config[setting="monitor"]').val(mixer['time']['monitor'] || 'no');
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
@@ -2372,6 +2440,11 @@ $(document).on('change', '.studio_config', function() {
 		if (!(studioKnobNumber(value, 0) > 0)) { mixer['time']['loop_region'] = null; }
 		studioSaver();
 		studioDrawTracks();
+		return;
+	}
+	if (setting == 'count_in') {
+		mixer['time']['count_in'] = value;
+		studioSaver();
 		return;
 	}
 	if (setting == 'monitor') {

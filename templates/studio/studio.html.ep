@@ -155,6 +155,10 @@
 						<td><input class="studio_config" setting="loop_bars" value="<%= $settings->{'loop_bars'} || 4 %>"></td>
 					</tr>
 					<tr>
+						<td>Count-in (beats)<br><span style="font-size:12px;">clicks this many beats before recording starts; blank follows the signature (4 in 4/4), 0 turns it off</span></td>
+						<td><input class="studio_config" setting="count_in" value="<%= $settings->{'count_in'} || '' %>"></td>
+					</tr>
+					<tr>
 						<td>Monitor input<br><span style="font-size:12px;">hear the live input through the pedals: headphones only, speakers will feed back</span></td>
 						<td>
 							<select class="studio_config" setting="monitor">
