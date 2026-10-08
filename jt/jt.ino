@@ -274,7 +274,14 @@ SemaphoreHandle_t xSemaphore = NULL;
 #define FORMAT_FFAT true
 
 static bool getTouch(int16_t &x, int16_t &y);
-SX1262 radio = new Module(RADIO_CS_PIN, RADIO_DIO1_PIN, RADIO_RST_PIN, RADIO_BUSY_PIN);
+// One SPI bus, one owner: TFT_eSPI starts GPSPI2 inside tft.init() from its own
+// SPIClass instance (USE_FSPI_PORT in platformio.ini, see the comments there).
+// The radio and the SD card share that bus, so they have to talk through the
+// same instance. Beginning the Arduino `SPI` object as well calls periph reset
+// on GPSPI2 again, which leaves TFT_eSPI's register-level writes spinning (that
+// is what stopped the deck dead right after the third boot dot).
+extern SPIClass spi;
+SX1262 radio = new Module(RADIO_CS_PIN, RADIO_DIO1_PIN, RADIO_RST_PIN, RADIO_BUSY_PIN, spi);
 volatile bool operationDone = false;
 void setFlag(void) {
   // we sent or received a packet, set the flag
@@ -330,13 +337,37 @@ static void deckLog(const char *fmt, ...) {
   va_start(args, fmt);
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
-  Serial.println(buf);
+  // Only touch the CDC when a host is actually holding it: writing to it with
+  // nobody on the other end can stall the caller, and the boot must never wait
+  // on a serial monitor.
+  if (Serial) {
+    Serial.println(buf);
+  }
   esp_log_write(ESP_LOG_INFO, "deck", "%s\n", buf);
+}
+
+// Why did the deck restart? The ROM reports the reset reason once per boot and
+// it scrolls away with the old console contents, so it goes in the log instead.
+static const char *resetReasonStr(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_EXT:       return "external pin";
+    case ESP_RST_SW:        return "software restart";
+    case ESP_RST_PANIC:     return "panic/exception";
+    case ESP_RST_INT_WDT:   return "interrupt watchdog";
+    case ESP_RST_TASK_WDT:  return "task watchdog";
+    case ESP_RST_WDT:       return "other watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_SDIO:      return "sdio";
+    case ESP_RST_USB:       return "usb peripheral";
+    default:                return "unknown";
+  }
 }
 
 void setup() {
   Serial.begin(115200);
-  deckLog("[deck] boot: peripheral power on");
+  deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
   pinMode(RADIO_CS_PIN, OUTPUT);
@@ -427,11 +458,9 @@ void setup() {
   gpsRetryAt = millis() + 4000;
   deckLog("[deck] boot screen up; the gps stage is handed to the background");
 
-  // TFT_eSPI brings the shared SPI bus up itself in init(), and the SD card and
-  // radio share that bus. Beginning it again on the sketch's SPI object is done
-  // last on purpose: if it ever blocks, the boot screen is already on the panel.
+  // TFT_eSPI brought the shared SPI bus up in init() and the radio and the SD
+  // card are pointed at that same instance, so there is nothing to begin here.
   pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
-  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI); //SD + radio
   deckLog("[deck] sd/radio spi shared");
   // one short attempt at boot; if the module is quiet we carry on booting and
   // let loop() retry, rather than holding the whole deck hostage to a GPS
@@ -448,16 +477,20 @@ void setup() {
   // Two touch screens, the difference between them is the device address,
   // use ScanDevices to get the existing I2C address
   scanDevices(&Wire);
+  deckLog("[deck] i2c scan done, touch addr 0x%02x", touchAddress);
   tft.fillCircle(160, 120, 20, TFT_GREEN);
   tft.drawCircle(160, 120, 20, TFT_BLACK);
   touch = new TouchLib(Wire, BOARD_I2C_SDA, BOARD_I2C_SCL, touchAddress);
 
   touch->init();
+  deckLog("[deck] touch driver started");
 
   Wire.beginTransmission(touchAddress);
   touchDected = Wire.endTransmission() == 0;
+  deckLog("[deck] touch present=%d", touchDected);
 
   kbDected = checkKb();
+  deckLog("[deck] keyboard present=%d", kbDected);
 
   server.on("/notification", []() {
 
@@ -681,36 +714,41 @@ void setup() {
     server.send(200, "text/plain", "homebase ip is now " + homebaseIP);
     lv_task_handler();
   });
+  deckLog("[deck] mic i2s init");
   setupMicrophoneI2S(MIC_I2S_PORT);
+  deckLog("[deck] mic i2s up");
   tft.fillCircle(240, 120, 20, TFT_BLUE);
   tft.drawCircle(240, 120, 20, TFT_BLACK);
   setupLvgl();
+  deckLog("[deck] lvgl up");
 
   readFile(FFat, "/bootreport.txt");
   if (returner == "success") {
     configRestore();
   }
+  deckLog("[deck] config restore done (%s)", returner.c_str());
   wsclient.onMessage(wsMessageCallback);
   // set output power to 10 dBm (accepted range is -17 - 22 dBm)
+  // The radio is a bonus like the GPS: each of these used to park in a silent
+  // `while (true);` on failure, which froze the deck with nothing in the log.
+  // Booting without a radio is better (hasRadio is what the LoRa paths check).
+  deckLog("[deck] radio init");
   if (radio.setOutputPower(22) == RADIOLIB_ERR_INVALID_OUTPUT_POWER) {
-    // Serial.println(F("Selected output power is invalid for this module!"));
-    while (true);
+    deckLog("[radio] invalid output power; continuing without it");
   }
   // set over current protection limit to 80 mA (accepted range is 45 - 240 mA)
   // NOTE: set value to 0 to disable overcurrent protection
   if (radio.setCurrentLimit(80) == RADIOLIB_ERR_INVALID_CURRENT_LIMIT) {
-    // Serial.println(F("Selected current limit is invalid for this module!"));
-    while (true);
+    deckLog("[radio] invalid current limit; continuing without it");
   }
   int state = radio.begin(433.0);
   if (state == RADIOLIB_ERR_NONE) {
-    // Serial.println(F("success!"));
     radio.setDio1Action(setFlag);
     radio.startReceive();
+    hasRadio = true;
+    deckLog("[radio] up");
   } else {
-    // Serial.print(F("failed, code "));
-    // Serial.println(state);
-    while (true);
+    deckLog("[radio] init failed (%d); continuing without it", state);
   }
 
   if (fontSelect != "") {
@@ -718,10 +756,12 @@ void setup() {
   }
   Serial.printf("Total space: %10u\n", FFat.totalBytes());
   Serial.printf("Free space: %10u\n", FFat.freeBytes());
+  deckLog("[deck] sd test");
   sd_tester();
   audio.setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
   audio.setVolume(10);
 //  audio.connecttoFS(SD, "ding.mp3");
+  deckLog("[deck] setup complete");
 }
 
 bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
@@ -3560,7 +3600,7 @@ bool sd_tester() {
   digitalWrite(RADIO_CS_PIN, HIGH);
   digitalWrite(BOARD_TFT_CS, HIGH);
 
-  if (SD.begin(BOARD_SDCARD_CS, SPI, 800000U)) {
+  if (SD.begin(BOARD_SDCARD_CS, spi, 800000U)) {
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
       Serial.println("No SD_MMC card attached");
