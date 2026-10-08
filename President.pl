@@ -373,6 +373,16 @@ sub manager_starter() {
 		});
 		Mojo::IOLoop->start;
 	}, { name => 'utility functions' });
+
+	# The archive queue's worker. Jobs are enqueued from the web process into
+	# the same SQLite file under ~/.president; one at a time, so a slow link is
+	# never asked for two files at once and the queue keeps its order.
+	&subs::subprocessor(sub {
+		my $minion = &subs::minion_grabber();
+		my $worker = $minion->worker;
+		$worker->status->{jobs} = 1;
+		$worker->run;
+	}, { name => 'Minion Worker' });
 	Mojo::IOLoop->start;
 	END {
 		print "quitting now!\n";
