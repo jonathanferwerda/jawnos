@@ -3568,10 +3568,10 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 	my $password = &subs::decrypter($c->{'suds'},$rm->[0]->{'password'});
 	my $connector;
 	if ($direction eq 'from') {
-		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ' . $username . '@' . $ip . ':' . $home . ' ~/ --delete --exclude=public/images/jonathans --exclude=config.json';
+		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ' . $username . '@' . $ip . ':' . $home . ' ~/ --delete --exclude=public/images/jonathans --exclude=config.json --exclude=.git';
 	}
 	elsif ($direction eq 'to') {
-		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ~/jawnos ' . $username . '@' . $ip . ':~/ --delete --exclude=public/images/jonathans --exclude=config.json';
+		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ~/jawnos ' . $username . '@' . $ip . ':~/ --delete --exclude=public/images/jonathans --exclude=config.json --exclude=.git';
 	}
 	my @ldomain = split /\./, $config->{'domain'};
 	my @rdomain = split /\./, $ip;
