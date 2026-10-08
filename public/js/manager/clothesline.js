@@ -308,13 +308,15 @@ function clockfaceScroller(data) {
 // clockface. The deltas are the browser's own pixels.
 //
 // A trackpad's deltas are fine-grained and arrive in floods, and the flick it
-// leaves behind carries well past the fingers, so a swipe is damped to a tenth
-// of the finger travel. Everything that follows - the move and the glide it is
-// armed with - scales with this one number.
-var trackpadSensitivity = .1;
+// leaves behind carries well past the fingers, so a swipe is damped to a
+// twentieth of the finger travel. Everything that follows - the move and the
+// glide it is armed with - scales with this one number. A positive deltaX - a
+// scroll to the right in the DOM's own terms - walks the timeline back, the
+// same way dragging the canvas to the right does.
+var trackpadSensitivity = .02;
 function timelineWheelMotion(deltaX, deltaY) {
 	if (Math.abs(deltaX) > Math.abs(deltaY)) {
-		return { mousediff: -trackpadSensitivity * (numeral(deltaX).value()), glide: 1 };
+		return { mousediff: trackpadSensitivity * (numeral(deltaX).value()), glide: 1 };
 	}
 	return { mousediff: numeral(deltaY).value(), glide: 0 };
 }
