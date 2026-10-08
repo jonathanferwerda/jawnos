@@ -47,6 +47,17 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels);
 void deleteFile(fs::FS &fs, const char * path);
 void https_download(fs::FS &fs, String url, String filename);
 bool sd_tester();
+// defined next to setupMicrophoneI2S() at the bottom, used by the boot rate
+// check in setup()
+extern i2s_chan_handle_t mic_rx_handle;
+// prints a file as base64 over the usb serial, for pulling a recording off the
+// deck without wifi (see the "JAWNDUMP" line handling in loop())
+static void serialDumpFile(String name);
+// starts a recording from the host ("JAWNREC <seconds>") and writes one codec
+// register ("JAWNREG <reg> <value>", hex)
+static void serialRecordStart(uint32_t seconds);
+static void serialRegWrite(String args);
+static void serialSlotSet(String args);
 
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
@@ -55,6 +66,10 @@ static const uint16_t screenHeight = 240;
 #define MIC_I2S_BITS_PER_SAMPLE     16
 #define MIC_I2S_PORT                I2S_NUM_1
 #define SPK_I2S_PORT                I2S_NUM_0
+// the ES7210's four mics arrive as one TDM frame of four 16 bit slots
+#define MIC_TDM_SLOTS               4
+#define MIC_TDM_FRAMES              512      // frames per read
+#define MIC_TDM_BUFFER_BYTES        (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
 #define VAD_SAMPLE_RATE_HZ          16000
 #define VAD_FRAME_LENGTH_MS         30
 #define VAD_BUFFER_LENGTH           (VAD_FRAME_LENGTH_MS * VAD_SAMPLE_RATE_HZ / 1000)
@@ -68,6 +83,13 @@ static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
 String tauth_remote_enabled = "off";
 #define DEFAULT_SCREEN_TIMEOUT                  20*1000
+// Which TDM slot the microphone shows up in. The startup dump prints all four,
+// and "JAWNSLOT <n>" can change it over the usb serial. On this board the
+// microphone is on MIC1 (slot 0, with a mirror image on MIC3/slot 1).
+static int mic_mono_slot = 0;
+// 1 = mono from mic_mono_slot, 4 = all four TDM slots interleaved into the file
+// ("JAWNCH 4"), for finding which channel a board's microphone is wired to
+static int mic_channels = 1;
 uint8_t currentBrightness = 30;
 uint8_t lastBrightness = 30;
 int tempBrightness;
@@ -805,6 +827,29 @@ void setup() {
   deckLog("[deck] mic i2s init");
   setupMicrophoneI2S(MIC_I2S_PORT);
   es7210Begin();
+  // How many frames does the codec really produce per second? The first 300 ms
+  // are read and thrown away - the dma is already holding a buffer's worth of
+  // audio from boot, and counting that in makes the number nonsense.
+  {
+    static int16_t scratch[256];
+    uint32_t drain_until = millis() + 300;
+    while (millis() < drain_until) {
+      size_t got = 0;
+      i2s_channel_read(mic_rx_handle, scratch, sizeof(scratch), &got, 100);
+    }
+    uint32_t t0 = millis();
+    uint32_t frames = 0;
+    while (millis() - t0 < 700) {
+      size_t got = 0;
+      if (i2s_channel_read(mic_rx_handle, scratch, sizeof(scratch), &got, 100) == ESP_OK) {
+        frames += got / (MIC_TDM_SLOTS * 2);
+      }
+    }
+    uint32_t spent = millis() - t0;
+    deckLog("[mic] rate check %u frames in %u ms = %u frames/s (expect %u)",
+            (unsigned)frames, (unsigned)spent,
+            (unsigned)(spent ? frames * 1000 / spent : 0), (unsigned)MIC_I2S_SAMPLE_RATE);
+  }
   deckLog("[deck] mic i2s up");
   tft.fillCircle(240, 120, 20, TFT_BLUE);
   tft.drawCircle(240, 120, 20, TFT_BLACK);
@@ -1482,8 +1527,37 @@ void loop() {
       }
     }
 
+    // Host -> GPS bridge. One exception: a line that arrives as "JAWNDUMP
+    // <path>" is a request to print that file as base64 back up this port, so a
+    // recording can be pulled for analysis without wifi. Those bytes still go
+    // to the GPS (gibberish to it) so a config tool keeps working.
+    static String hostLine;
     while (Serial.available()) {
-        SerialGPS.write(Serial.read());
+        char ch = Serial.read();
+        SerialGPS.write(ch);
+        if (ch == '\n') {
+            if (hostLine.startsWith("JAWNDUMP ")) {
+                serialDumpFile(hostLine.substring(9));
+            }
+            else if (hostLine.startsWith("JAWNREC ")) {
+                serialRecordStart((uint32_t)hostLine.substring(8).toInt());
+            }
+            else if (hostLine.startsWith("JAWNREG ")) {
+                serialRegWrite(hostLine.substring(8));
+            }
+            else if (hostLine.startsWith("JAWNSLOT ")) {
+                serialSlotSet(hostLine.substring(9));
+            }
+            else if (hostLine.startsWith("JAWNCH ")) {
+                int ch = hostLine.substring(7).toInt();
+                mic_channels = (ch == MIC_TDM_SLOTS) ? MIC_TDM_SLOTS : 1;
+                Serial.printf("JAWNCH %d\n", mic_channels);
+            }
+            hostLine = "";
+        }
+        else if (ch != '\r' && hostLine.length() < 96) {
+            hostLine += ch;
+        }
     }
 
     while (SerialGPS.available()) {
@@ -4465,6 +4539,55 @@ void deleteFile(fs::FS &fs, const char * path) {
   }
 }
 
+// ---- pulling a file off the deck without wifi ------------------------------
+// The usb serial is the GPS bridge. A line that arrives as "JAWNDUMP <path>"
+// (watch it in loop()) is the one exception: the file comes back as base64
+// between BEGIN and END markers, so a recording can be pulled with nothing but
+// the usb cable.
+static void serialDumpFile(String name) {
+  while (name.length() > 0 && (name.endsWith("\r") || name.endsWith(" "))) {
+    name.remove(name.length() - 1);
+  }
+  if (!name.startsWith("/") || name.indexOf("..") >= 0) {
+    Serial.println("JAWNDUMP bad name");
+    return;
+  }
+  File f = FFat.open(name.c_str());
+  if (!f || f.isDirectory()) {
+    Serial.println("JAWNDUMP no file");
+    return;
+  }
+  Serial.printf("JAWNDUMP BEGIN %s %u\n", name.c_str(), (unsigned)f.size());
+  static const char *b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  static uint8_t raw[768];
+  static char out[(sizeof(raw) / 3 + 1) * 4 + 1];
+  while (true) {
+    size_t got = f.read(raw, sizeof(raw));
+    if (got == 0) {
+      break;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < got; i += 3) {
+      uint32_t v = ((uint32_t)raw[i]) << 16;
+      if (i + 1 < got) {
+        v |= ((uint32_t)raw[i + 1]) << 8;
+      }
+      if (i + 2 < got) {
+        v |= (uint32_t)raw[i + 2];
+      }
+      out[n++] = b64[(v >> 18) & 63];
+      out[n++] = b64[(v >> 12) & 63];
+      out[n++] = (i + 1 < got) ? b64[(v >> 6) & 63] : '=';
+      out[n++] = (i + 2 < got) ? b64[v & 63] : '=';
+    }
+    out[n] = 0;
+    Serial.println(out);
+    delay(1);
+  }
+  f.close();
+  Serial.println("JAWNDUMP END");
+}
+
 // The mic array is an ES7210 wired for TDM; core 3.x dropped the old
 // i2s_driver_install() API, so this is the same setup through i2s_tdm.
 i2s_chan_handle_t mic_rx_handle = NULL;
@@ -4472,8 +4595,12 @@ i2s_chan_handle_t mic_rx_handle = NULL;
 void setupMicrophoneI2S(i2s_port_t  i2s_ch)
 {
   i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(i2s_ch, I2S_ROLE_MASTER);
+  // 8 x 256 frames is 128 ms of audio sitting in the rx DMA. The capture task
+  // writes to flash between reads, and a write that stalls for a few ms used
+  // to overflow this: the missing samples are heard as a periodic buzz and
+  // cost about 9% of the capture rate (29 kB/s instead of 32).
   chan_cfg.dma_desc_num = 8;
-  chan_cfg.dma_frame_num = 64;
+  chan_cfg.dma_frame_num = 256;
 
   if (i2s_new_channel(&chan_cfg, NULL, &mic_rx_handle) != ESP_OK) {
     Serial.println("mic i2s channel failed");
@@ -4532,10 +4659,9 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
 // slots, so every frame in the I2S buffer is four 16 bit samples and MIC1 (the
 // first of them) becomes the mono track.
 String WAV_FILE_PATH = "/rec.wav";
-#define MIC_TDM_SLOTS        4
-#define MIC_TDM_FRAMES       512                               // frames per read
-#define MIC_TDM_BUFFER_BYTES (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
 static volatile bool isRecording = false;
+// a timed recording (0 = until the button is tapped again)
+static uint32_t record_end_ms = 0;
 
 // The vendored es7210 driver and the esp_codec_dev driver LilyGoLib ships write
 // different DSP mode bits, and they disagree about the register values too:
@@ -4562,12 +4688,16 @@ bool es7210Begin()
   cfg.adc_input = AUDIO_HAL_ADC_INPUT_ALL;
   cfg.codec_mode = AUDIO_HAL_CODEC_MODE_ENCODE;
   cfg.i2s_iface.mode = AUDIO_HAL_MODE_SLAVE;
-  cfg.i2s_iface.fmt = AUDIO_HAL_I2S_DSP;      // four mics come out as TDM
+  // LilyGo's own driver puts the ES7210 in plain I2S (register 0x11 = 0x00),
+  // and that is what a four slot Philips receiver wants to read: MIC1 lands in
+  // slot 0, MIC2 in slot 2, the odd slots carry padding. The DSP-B setup this
+  // used to write (0x03 into 0x11, 0x02 into 0x12) packs the four mics back to
+  // back inside the frame with a different sync, and the receiver then slices
+  // them into near-Nyquist garbage - heard as the buzz that came and went.
+  cfg.i2s_iface.fmt = AUDIO_HAL_I2S_NORMAL;
   cfg.i2s_iface.samples = AUDIO_HAL_16K_SAMPLES;
   cfg.i2s_iface.bits = AUDIO_HAL_BIT_LENGTH_16BITS;
   es7210_adc_init(&Wire, &cfg);               // sets slave mode, clocks and mics
-  es7210WriteReg(ES7210_SDP_INTERFACE1_REG11, 0x03);   // DSP-B, as the factory build does
-  es7210WriteReg(ES7210_SDP_INTERFACE2_REG12, 0x02);   // all four mics on SDOUT1
   // The vendored driver's high pass filter writes are commented out, and the
   // esp_codec_dev driver LilyGoLib ships applies them: without them the ADC's
   // DC and low frequency content ends up in the recording as hum.
@@ -4575,14 +4705,27 @@ bool es7210Begin()
   es7210WriteReg(ES7210_ADC12_HPF1_REG22, 0x0a);
   es7210WriteReg(ES7210_ADC34_HPF2_REG20, 0x0a);
   es7210WriteReg(ES7210_ADC34_HPF1_REG21, 0x2a);
-  es7210_adc_set_gain_all(GAIN_30DB);         // the library's own init leaves it at 0 dB
+  es7210_adc_set_gain_all(GAIN_37_5DB);       // the chip's maximum: this microphone is quiet
   es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE, AUDIO_HAL_CTRL_START);
-  deckLog("[mic] ES7210 up (30 dB)");
+  // These three only stick once the adc clocks are running - writing them
+  // before the START above is silently lost, which is what made every
+  // recording so far read garbage or a dead noise floor:
+  //  - REG40 0x43: the vendored init's 0xC3 sets bit 7, which powers the
+  //    analog block down.
+  //  - REG12 0x02: TDM mode, all four mics on one output line. The vendored
+  //    config_fmt clears it to 0x00 and the old code compensated with DSP-B
+  //    format bits that left the receiver slicing the stream a byte off.
+  //  - REG11 0x60: 16 bit data, normal I2S format, which is what the four slot
+  //    Philips receiver expects.
+  es7210WriteReg(ES7210_ANALOG_REG40, 0x43);
+  es7210WriteReg(ES7210_SDP_INTERFACE2_REG12, 0x02);
+  es7210WriteReg(ES7210_SDP_INTERFACE1_REG11, 0x60);
+  deckLog("[mic] ES7210 up (37.5 dB)");
   return true;
 }
 
 // 44 byte RIFF/WAVE header with zeroes where the sizes go
-bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_rate, uint16_t bits_per_sample) {
+bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_rate, uint16_t bits_per_sample, uint16_t channels) {
   File new_audio_file = FFat.open(song_name, FILE_WRITE);
   if (!new_audio_file) {
     deckLog("[mic] cannot create %s", song_name);
@@ -4596,10 +4739,10 @@ bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_r
     'f', 'm', 't', ' ',
     16, 0, 0, 0,      // Subchunk1Size
     1, 0,             // AudioFormat PCM
-    1, 0,             // Mono channel (1)
+    (uint8_t)(channels & 0xff), (uint8_t)((channels >> 8) & 0xff),   // channels
     (uint8_t)(sampling_rate & 0xff), (uint8_t)((sampling_rate >> 8) & 0xff), 0, 0,
     0, 0, 0, 0,       // ByteRate placeholder (updated later)
-    (uint8_t)((1 * bits_per_sample) / 8), 0, // BlockAlign
+    (uint8_t)((channels * bits_per_sample) / 8), 0, // BlockAlign
     (uint8_t)bits_per_sample, 0,             // BitsPerSample
     'd', 'a', 't', 'a',
     0, 0, 0, 0        // Subchunk2Size placeholder (updated later)
@@ -4611,14 +4754,14 @@ bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_r
 }
 
 // rewrites header placeholders with the exact byte sizes after recording stops
-void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
+void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint16_t channels) {
   File audio_file = FFat.open(song_name, "r+");
   if (!audio_file) {
     return;
   }
 
   uint32_t chunk_size = raw_pcm_bytes + 36;
-  uint32_t byte_rate = MIC_I2S_SAMPLE_RATE * 1 * (MIC_I2S_BITS_PER_SAMPLE / 8);
+  uint32_t byte_rate = MIC_I2S_SAMPLE_RATE * channels * (MIC_I2S_BITS_PER_SAMPLE / 8);
 
   audio_file.seek(4);
   audio_file.write((uint8_t *)&chunk_size, 4);
@@ -4631,77 +4774,75 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
 
 static void micCaptureTask(void *pvParameters) {
   int16_t *buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES);
-  if (buf == NULL) {
-    deckLog("[mic] no buffer");
+  // The whole recording is held in PSRAM and written to the flash in one go at
+  // the end. Writing during capture is what broke the audio: a flash erase or
+  // program stalls the cpu with the cache off for tens of milliseconds, the i2s
+  // dma overruns while that happens, and the read that follows returns torn
+  // buffers - heard as a buzz that comes and goes about once a second.
+  static const uint32_t caps_s[] = {120, 60, 30, 15};
+  uint32_t max_frames = 0;
+  int16_t *stage = NULL;
+  for (int i = 0; i < 4 && stage == NULL; i++) {
+    max_frames = MIC_I2S_SAMPLE_RATE * caps_s[i];
+    stage = (int16_t *)ps_malloc((size_t)max_frames * 2);
+  }
+  if (buf == NULL || stage == NULL) {
+    deckLog("[mic] no buffer (i2s %d, psram %d)", buf ? 1 : 0, stage ? 1 : 0);
+    if (buf) {
+      free(buf);
+    }
+    if (stage) {
+      free(stage);
+    }
     isRecording = false;
     vTaskDelete(NULL);
     return;
   }
+  deckLog("[mic] buffering up to %u s in psram", (unsigned)(max_frames / MIC_I2S_SAMPLE_RATE));
 
   // the channel has been enabled since boot and nobody read it, so drop what
   // is sitting in the DMA and start from now
   i2s_channel_disable(mic_rx_handle);
   i2s_channel_enable(mic_rx_handle);
 
-  // The microphone on this board is TDM slot 0. The others are not
-  // microphones: slots 1 and 2 sit at zero, and slot 3 carries a byte shifted
-  // copy of something (every one of its samples is a multiple of 0x100) which
-  // reads as loud noise - and it won every "pick the loudest slot" attempt, so
-  // no more guessing. All four are still logged once here, with their level and
-  // their first samples, so a different board can be read straight off the log.
-  const int mono_slot = 0;
-  uint32_t pick_started = millis();
-  bool dumped = false;
-  while (isRecording && millis() - pick_started < 150) {
-    size_t got = 0;
-    if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) != ESP_OK
-        || got < MIC_TDM_SLOTS * 2) {
-      vTaskDelay(pdMS_TO_TICKS(1));
-      continue;
-    }
+  // The microphone report: which slot is loud is printed once here (and the
+  // slot itself can be changed with "JAWNSLOT <n>" over the usb serial), so a
+  // different board can be read straight off the log.
+  const int mono_slot = (mic_mono_slot >= 0 && mic_mono_slot < MIC_TDM_SLOTS) ? mic_mono_slot : 1;
+  uint32_t staged = 0;
+  size_t got = 0;
+  if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) == ESP_OK
+      && got >= MIC_TDM_SLOTS * 2) {
     int frames = got / (MIC_TDM_SLOTS * 2);
-    if (!dumped) {
-      dumped = true;
-      uint32_t sums[MIC_TDM_SLOTS] = {0, 0, 0, 0};
-      for (int i = 0; i < frames; i++) {
-        for (int c = 0; c < MIC_TDM_SLOTS; c++) {
-          int32_t v = buf[i * MIC_TDM_SLOTS + c];
-          sums[c] += (uint32_t)(v * v);
-        }
-      }
+    uint32_t sums[MIC_TDM_SLOTS] = {0, 0, 0, 0};
+    for (int i = 0; i < frames; i++) {
       for (int c = 0; c < MIC_TDM_SLOTS; c++) {
-        String line;
-        for (int i = 0; i < 8; i++) {
-          line += String(buf[i * MIC_TDM_SLOTS + c]) + " ";
-        }
-        deckLog("[mic] slot %d rms %u samples: %s", c,
-                (unsigned)sqrtf((float)sums[c] / frames), line.c_str());
+        int32_t v = buf[i * MIC_TDM_SLOTS + c];
+        sums[c] += (uint32_t)(v * v);
       }
     }
+    for (int c = 0; c < MIC_TDM_SLOTS; c++) {
+      String line;
+      for (int i = 0; i < 8; i++) {
+        line += String(buf[i * MIC_TDM_SLOTS + c]) + " ";
+      }
+      deckLog("[mic] slot %d rms %u samples: %s", c,
+              (unsigned)sqrtf((float)sums[c] / frames), line.c_str());
+    }
+    if (frames > (int)max_frames) {
+      frames = max_frames;
+    }
+    for (int i = 0; i < frames; i++) {
+      stage[staged + i] = buf[i * MIC_TDM_SLOTS + mono_slot];
+    }
+    staged += frames;
   }
   deckLog("[mic] recording %s from slot %d", WAV_FILE_PATH.c_str(), mono_slot);
 
-  if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
-    free(buf);
-    isRecording = false;
-    vTaskDelete(NULL);
-    return;
-  }
-
-  File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
-  if (!audio_file) {
-    deckLog("[mic] cannot append to %s", WAV_FILE_PATH.c_str());
-    free(buf);
-    isRecording = false;
-    vTaskDelete(NULL);
-    return;
-  }
-
-  uint32_t written = 0;
   uint32_t started_ms = millis();
   uint32_t last_levels_ms = 0;
 
-  while (isRecording) {
+  while (isRecording && (record_end_ms == 0 || millis() < record_end_ms)) {
     size_t got = 0;
     if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) != ESP_OK
         || got < MIC_TDM_SLOTS * 2) {
@@ -4710,9 +4851,9 @@ static void micCaptureTask(void *pvParameters) {
     }
     int frames = got / (MIC_TDM_SLOTS * 2);
 
-    // once a second say how loud each channel is, so a future board's slot
-    // layout can be read straight off the log
-    if (millis() - last_levels_ms > 1000) {
+    // once every other second say how loud each channel is, so a future
+    // board's slot layout can be read straight off the log
+    if (millis() - last_levels_ms > 2000) {
       last_levels_ms = millis();
       uint32_t levels[MIC_TDM_SLOTS] = {0, 0, 0, 0};
       for (int i = 0; i < frames; i++) {
@@ -4724,31 +4865,65 @@ static void micCaptureTask(void *pvParameters) {
       deckLog("[mic] levels %u %u %u %u",
               (unsigned)sqrtf((float)levels[0] / frames), (unsigned)sqrtf((float)levels[1] / frames),
               (unsigned)sqrtf((float)levels[2] / frames), (unsigned)sqrtf((float)levels[3] / frames));
-      // two samples from each slot, spread across the buffer, so the actual
-      // waveform can be read out of the log instead of guessed at
-      int span = frames / 3;
-      if (span < 1) {
-        span = 1;
-      }
-      deckLog("[mic] wf %d %d | %d %d | %d %d | %d %d",
-              buf[0], buf[span * MIC_TDM_SLOTS],
-              buf[1], buf[span * MIC_TDM_SLOTS + 1],
-              buf[2], buf[span * MIC_TDM_SLOTS + 2],
-              buf[3], buf[span * MIC_TDM_SLOTS + 3]);
     }
 
-    // keep the microphone we picked, mono
-    for (int i = 0; i < frames; i++) {
-      buf[i] = buf[i * MIC_TDM_SLOTS + mono_slot];
+    // keep the microphone we picked, mono (or all four slots when the host
+    // asked for "JAWNCH 4" to see which channel carries a mic), straight into
+    // psram: nothing in this loop touches the flash, which is the whole point
+    // of the buffer
+    int ch = (mic_channels == MIC_TDM_SLOTS) ? MIC_TDM_SLOTS : 1;
+    int n = frames;
+    if (n > (int)((max_frames - staged) / ch)) {
+      n = (max_frames - staged) / ch;
     }
-    audio_file.write((uint8_t *)buf, frames * 2);
-    written += frames * 2;
+    if (ch == 1) {
+      for (int i = 0; i < n; i++) {
+        stage[staged + i] = buf[i * MIC_TDM_SLOTS + mono_slot];
+      }
+      staged += n;
+    }
+    else {
+      for (int i = 0; i < n; i++) {
+        for (int c = 0; c < ch; c++) {
+          stage[staged + i * ch + c] = buf[i * MIC_TDM_SLOTS + c];
+        }
+      }
+      staged += n * ch;
+    }
+    if (staged >= max_frames - ch) {
+      deckLog("[mic] buffer full (%u samples), stopping", (unsigned)staged);
+      isRecording = false;
+    }
   }
 
-  audio_file.close();
-  free(buf);
+  // the timed recording has to release the flag itself; the button path sets
+  // it when it is tapped, and "JAWNREC" would otherwise refuse forever
+  isRecording = false;
+  record_end_ms = 0;
+
+  // now, and only now, the flash: header first, then the whole recording in
+  // 32 KB bites
   uint32_t spent = millis() - started_ms;
-  finalize_wav_sizes(WAV_FILE_PATH.c_str(), written);
+  uint32_t written = 0;
+  int out_ch = (mic_channels == MIC_TDM_SLOTS) ? MIC_TDM_SLOTS : 1;
+  if (create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, out_ch)) {
+    File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
+    if (audio_file) {
+      uint8_t *p = (uint8_t *)stage;
+      uint32_t remaining = staged * 2;
+      while (remaining > 0) {
+        size_t chunk = remaining > 32768 ? 32768 : remaining;
+        audio_file.write(p, chunk);
+        p += chunk;
+        remaining -= chunk;
+        written += chunk;
+      }
+      audio_file.close();
+    }
+  }
+  finalize_wav_sizes(WAV_FILE_PATH.c_str(), written, out_ch);
+  free(stage);
+  free(buf);
   // size() on an append handle reports the size it had when it was opened, so
   // ask the file again now that it is closed
   uint32_t file_size = 0;
@@ -4759,9 +4934,64 @@ static void micCaptureTask(void *pvParameters) {
       check.close();
     }
   }
-  deckLog("[mic] captured %u bytes in %u ms (%u B/s, expect ~32000), file %u bytes",
+  // How continuous is what we just wrote? A clean waveform does not jump by
+  // half scale between neighbours; a file full of those is a capture problem
+  // rather than a speaker one.
+  uint32_t cliffs = 0;
+  int32_t biggest = 0;
+  uint32_t cliff_last = 0;
+  uint32_t gap_min = 0;
+  uint32_t gap_max = 0;
+  uint32_t sample_idx = 0;
+  {
+    File scan_file = FFat.open(WAV_FILE_PATH.c_str());
+    if (scan_file) {
+      scan_file.seek(44);
+      static int16_t scan[2048];
+      int16_t prev = 0;
+      bool have_prev = false;
+      while (true) {
+        size_t n = scan_file.read((uint8_t *)scan, sizeof(scan));
+        if (n < 2) {
+          break;
+        }
+        int samples = n / 2;
+        for (int s = 0; s < samples; s++) {
+          int16_t v = scan[s];
+          if (have_prev) {
+            int32_t d = (int32_t)v - prev;
+            if (d < 0) {
+              d = -d;
+            }
+            if (d > biggest) {
+              biggest = d;
+            }
+            if (d > 20000) {
+              cliffs++;
+              if (cliffs > 1) {
+                uint32_t gap = sample_idx - cliff_last;
+                if (gap_min == 0 || gap < gap_min) {
+                  gap_min = gap;
+                }
+                if (gap > gap_max) {
+                  gap_max = gap;
+                }
+              }
+              cliff_last = sample_idx;
+            }
+          }
+          prev = v;
+          have_prev = true;
+          sample_idx++;
+        }
+      }
+      scan_file.close();
+    }
+  }
+  deckLog("[mic] captured %u bytes in %u ms (%u B/s, expect ~32000), file %u bytes, %u cliffs, biggest step %d, gaps %u..%u",
           (unsigned)written, (unsigned)spent,
-          spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0, (unsigned)file_size);
+          spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0, (unsigned)file_size,
+          (unsigned)cliffs, (int)biggest, (unsigned)gap_min, (unsigned)gap_max);
   vTaskDelete(NULL);
 }
 
@@ -4787,9 +5017,67 @@ static void micRecordToggle(lv_event_t *e) {
   deckLog("[mic] flash free %u bytes before recording", (unsigned)FFat.freeBytes());
   WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
   deckLog("[mic] recording %s", WAV_FILE_PATH.c_str());
+  record_end_ms = 0;
   isRecording = true;
   lv_label_set_text(label, "Stop");
-  xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 6144, NULL, 4, NULL, 1);
+}
+
+// A timed recording, started from the host with "JAWNREC <seconds>". The point
+// is that a codec experiment can then be run from the serial port alone:
+// record, dump, listen - no screen tapping in between.
+static void serialRecordStart(uint32_t seconds) {
+  if (isRecording) {
+    Serial.println("JAWNREC already recording");
+    return;
+  }
+  if (seconds < 1) {
+    seconds = 1;
+  }
+  if (seconds > 120) {
+    seconds = 120;
+  }
+  if (!FFat.exists("/recordings")) {
+    createDir(FFat, "/recordings");
+  }
+  pruneRecordings(12);
+  WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
+  record_end_ms = millis() + seconds * 1000;
+  isRecording = true;
+  xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 6144, NULL, 4, NULL, 1);
+  Serial.printf("JAWNREC %s for %u s, free %u\n", WAV_FILE_PATH.c_str(),
+                (unsigned)seconds, (unsigned)FFat.freeBytes());
+}
+
+// "JAWNREG <reg> <value>", both hex: write one codec register from the host, so
+// the serial interface can be tried out without a reflash.
+static void serialRegWrite(String args) {
+  int sp = args.indexOf(' ');
+  if (sp <= 0) {
+    Serial.println("JAWNREG bad args");
+    return;
+  }
+  long reg = strtol(args.substring(0, sp).c_str(), NULL, 16);
+  long value = strtol(args.substring(sp + 1).c_str(), NULL, 16);
+  es7210WriteReg((uint8_t)reg, (uint8_t)value);
+  Wire.beginTransmission(ES7210_ADDR);
+  Wire.write((uint8_t)reg);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint8_t)ES7210_ADDR, (uint8_t)1);
+  int got = Wire.available() ? Wire.read() : -1;
+  Serial.printf("JAWNREG %02x = %02x (read back %02x)\n",
+                (unsigned)reg, (unsigned)value, (unsigned)got);
+}
+
+// "JAWNSLOT <n>": which of the four TDM slots becomes the mono track.
+static void serialSlotSet(String args) {
+  long n = strtol(args.c_str(), NULL, 10);
+  if (n < 0 || n >= MIC_TDM_SLOTS) {
+    Serial.println("JAWNSLOT bad slot");
+    return;
+  }
+  mic_mono_slot = (int)n;
+  Serial.printf("JAWNSLOT %d\n", mic_mono_slot);
 }
 
 static void recordingPlay(lv_event_t *e) {
@@ -4941,7 +5229,7 @@ static void speakerSelfTest() {
     FFat.remove("/tone.wav");
   }
   const uint32_t frames = MIC_I2S_SAMPLE_RATE * 3 / 2;
-  if (!create_wav_header_on_flash("/tone.wav", MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
+  if (!create_wav_header_on_flash("/tone.wav", MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
     return;
   }
   File f = FFat.open("/tone.wav", FILE_APPEND);
@@ -4963,7 +5251,7 @@ static void speakerSelfTest() {
     done += n;
   }
   f.close();
-  finalize_wav_sizes("/tone.wav", written);
+  finalize_wav_sizes("/tone.wav", written, 1);
   // a zero byte tone means the write failed (a full filesystem); drop the file
   // so the test runs again on the next boot
   uint32_t actual = 0;
