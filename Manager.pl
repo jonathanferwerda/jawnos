@@ -13940,6 +13940,26 @@ sub folders_property_grabber($data) {
 	return $file;
 }
 
+# One name inside a folder, as a file manager means it: no slash, no climbing
+# out of the folder, and nothing that is only whitespace.
+sub folders_name_cleaner {
+	my $name = shift;
+	return undef unless defined $name;
+	$name =~ s{^\s+|\s+$}{}g;
+	return undef if ($name eq '' || $name eq '.' || $name eq '..');
+	return undef if $name =~ m{/};
+	return $name;
+}
+
+# What a folders command works on: what is selected, else the file the menu was
+# opened on, else nothing at all. The background menu names no item.
+sub folders_command_items {
+	my $folders = shift;
+	my @items = grep { defined $_->{'path'} && length $_->{'path'} } @{$folders->{'selected'} || []};
+	push @items, { path => $folders->{'path'} } if (!scalar @items && $folders->{'path'});
+	return @items;
+}
+
 post '/manager/folders/context' => sub($c) {
 	my $file = $c->param('file');
 	my $folders = eval { return decode_json $c->param('folders') } || {};
@@ -13966,6 +13986,8 @@ get '/manager/folders/context/command' => sub($c) {
 	my $uuid = &subs::random_string_creator(255);
 	my $returner = {};
 	my $box;
+	my @items = &folders_command_items($folders);
+	my @names = map { &subs::format_name( (split '/', $_->{'path'})[-1] ) } @items;
 
 	if ($command eq 'new_file') {
 		$box = {
@@ -13986,11 +14008,14 @@ get '/manager/folders/context/command' => sub($c) {
 		};
 	}
 	elsif ($command eq 'rename') {
+		my @parts = split '/', ($folders->{'path'} || '');
+		my $name = pop @parts;
 		$box = {
-			name => 'Rename File',
+			name => 'Rename ' . (&subs::format_name($name) || ''),
 			inputs => [{
 				placeholder => 'Filename',
-				name => 'filename'
+				name => 'filename',
+				value => $name
 			}]
 		};
 	}
@@ -13999,15 +14024,40 @@ get '/manager/folders/context/command' => sub($c) {
 			name => 'Archive'
 		};
 	}
+	elsif ($command eq 'delete' || $command eq 'shred') {
+		my $text = ($command eq 'delete')
+			? 'Delete ' . scalar(@items) . " item(s)? A folder goes with everything in it.\n\n"
+			: 'Shred ' . scalar(@items) . " item(s)? Nothing shredded can be read again.\n\n";
+		$box = {
+			name => &subs::format_name($command),
+			text => $text . join("\n", @names),
+			height => '320px'
+		};
+	}
+	elsif ($command eq 'encrypt' || $command eq 'decrypt') {
+		my $text = ($command eq 'encrypt')
+			? 'Seal ' . scalar(@items) . " item(s) with the suds? Every file gets a name of its own and the plaintext is shredded behind it.\n\n"
+			: 'Open ' . scalar(@items) . " sealed item(s) with the suds? The seal is shredded once the file is out.\n\n";
+		$box = {
+			name => &subs::format_name($command),
+			text => $text . join("\n", @names),
+			height => '320px'
+		};
+	}
 	elsif ($command eq 'paste') {
 
 	}
 	elsif ($command eq 'properties') {
+		# the background menu asks about the folder being looked at, which is
+		# not a selection of anything
+		@items = ( { path => $folders->{'folder'} } ) if (!scalar @items && $folders->{'folder'} && length $folders->{'folder'});
 		my $total_size = 0;
 		my @files;
-		foreach my $f ( @{$folders->{'selected'}} ) {
-			my $file = &folders_property_grabber({ f => $f->{'path'}, folder => $folders->{'folder'} });
-			$total_size += $file->{'size'} unless $file->{'type'} eq 'folder';
+		foreach my $item ( @items ) {
+			my @parts = split '/', $item->{'path'};
+			my $name = pop @parts;
+			my $file = &folders_property_grabber({ file => $name, folder => join('/', @parts) });
+			$total_size += $file->{'size'} unless (($file->{'type'} || '') eq 'folder');
 			push @files, $file;
 		}
 		my $text = $c->render_to_string(
@@ -14019,13 +14069,15 @@ get '/manager/folders/context/command' => sub($c) {
 
 
 		$box = {
-			cancal => 'no',
+			ok => 'no',
+			cancel => 'no',
 			height => '60%',
 			name => 'Properties',
-			text => $text
+			content => $text
 		};
 	}
 	if ($box) {
+		$box->{'command'} = $command;
 		my $dialog = $c->render_to_string(
 			template => 'folders/dialog_box',
 			folders => $folders,
@@ -14037,10 +14089,187 @@ get '/manager/folders/context/command' => sub($c) {
 	$c->render(json => $returner);
 };
 
+# What the OK of a folders dialog does. The things that only touch the folder
+# being looked at happen here; anything that walks a disk - a paste, a seal, an
+# opening - is queued for the worker, and the answer is a dialog the app keeps
+# asking after until the job is done with.
 post '/manager/folders/context/command' => sub($c) {
+	my $command = $c->param('command');
+	my $inputs = eval { return decode_json $c->param('inputs') } || {};
+	my $folders = eval { return decode_json $c->param('folders') } || {};
+	my $folder = $folders->{'folder'};
 	my $returner = {};
+	my $answer = sub {
+		my $box = shift;
+		$returner->{'dialog'} = $c->render_to_string(
+			template => 'folders/dialog_box',
+			folders => $folders,
+			box => $box,
+			uuid => &subs::random_string_creator(10)
+		);
+		return;
+	};
 
+	if ($command eq 'new_file' || $command eq 'new_folder') {
+		my $is_folder = ($command eq 'new_folder') ? 1 : 0;
+		my $name = &folders_name_cleaner($inputs->{ $is_folder ? 'foldername' : 'filename' });
+		my $name_of = $is_folder ? 'New Folder' : 'New File';
+		if (!defined $name || !defined $folder || !length $folder) {
+			$answer->({ name => $name_of, text => 'That is not a name a file can have.', cancel => 'no' });
+		}
+		elsif (-e $folder . '/' . $name) {
+			$answer->({ name => $name_of, text => &subs::format_name($name) . ' is already there.', cancel => 'no' });
+		}
+		else {
+			if ($is_folder) { Mojo::File->new($folder . '/' . $name)->make_path; }
+			else { open my $fh, '>', $folder . '/' . $name; close $fh; }
+			$returner->{'status'} = 'ok';
+		}
+	}
+	elsif ($command eq 'rename') {
+		my $path = $folders->{'path'};
+		my $name = &folders_name_cleaner($inputs->{'filename'});
+		my @parts = split '/', ($path || '');
+		my $was = pop @parts;
+		my $into = join '/', @parts;
+		if (!defined $name || !defined $path || !length $path) {
+			$answer->({ name => 'Rename', text => 'That is not a name a file can have.', cancel => 'no' });
+		}
+		elsif ($name eq $was) {
+			$returner->{'status'} = 'ok';
+		}
+		elsif (-e $into . '/' . $name) {
+			$answer->({ name => 'Rename', text => &subs::format_name($name) . ' is already there.', cancel => 'no' });
+		}
+		elsif (rename($path, $into . '/' . $name)) {
+			$returner->{'status'} = 'ok';
+		}
+		else {
+			$answer->({ name => 'Rename', text => &subs::format_name($was) . ' could not be renamed.', cancel => 'no' });
+		}
+	}
+	elsif ($command eq 'delete' || $command eq 'shred') {
+		my @errors;
+		foreach my $item ( &folders_command_items($folders) ) {
+			my $error = ($command eq 'shred') ? &subs::folders_job_shred($item->{'path'}) : &subs::folders_job_take_away($item->{'path'});
+			push @errors, $error if $error;
+		}
+		if (scalar @errors) {
+			$answer->({ name => &subs::format_name($command), text => join("\n", @errors), cancel => 'no' });
+			$returner->{'status'} = 'error';
+			$returner->{'error'} = join '; ', @errors;
+		}
+		else {
+			$returner->{'status'} = 'ok';
+		}
+	}
+	elsif ($command eq 'paste') {
+		my @items = @{$folders->{'clipboard'} || []};
+		my $move = (($folders->{'command'} || '') eq 'cut') ? 1 : 0;
+		if (!scalar @items) {
+			$answer->({ name => 'Paste', text => 'The clipboard is empty.', cancel => 'no' });
+		}
+		elsif (!defined $folder || !length $folder || !-d $folder) {
+			$answer->({ name => 'Paste', text => 'The folder to paste into is not there.', cancel => 'no' });
+		}
+		else {
+			my $id = &subs::minion_grabber()->enqueue(folders_copy => [ { items => \@items, to => $folder, move => $move } ] => { retries => 1 });
+			$answer->({
+				name => $move ? 'Moving' : 'Copying',
+				text => scalar(@items) . ' item(s) into ' . $folder,
+				job => $id,
+				progress => 'starting',
+				ok => 'no',
+				cancel => 'no',
+				height => '220px'
+			});
+			$returner->{'status'} = 'ok';
+		}
+	}
+	elsif ($command eq 'encrypt' || $command eq 'decrypt') {
+		my @items = &folders_command_items($folders);
+		my $suds = eval { &subs::suds_grabber() };
+		if (!scalar @items) {
+			$answer->({ name => &subs::format_name($command), text => 'Nothing is selected.', cancel => 'no' });
+		}
+		elsif (!defined $suds || !length $suds) {
+			$answer->({ name => &subs::format_name($command), text => 'There is no suds on duty to use.', cancel => 'no' });
+		}
+		else {
+			my $task = ($command eq 'encrypt') ? 'folders_encrypt' : 'folders_decrypt';
+			my $id = &subs::minion_grabber()->enqueue($task => [ { items => \@items, suds => $suds } ] => { retries => 1 });
+			$answer->({
+				name => ($command eq 'encrypt') ? 'Encrypting' : 'Decrypting',
+				text => scalar(@items) . ' item(s)',
+				job => $id,
+				progress => 'starting',
+				ok => 'no',
+				cancel => 'no',
+				height => '220px'
+			});
+			$returner->{'status'} = 'ok';
+		}
+	}
 	$c->render(json => $returner);
+};
+
+# How a job the folders app queued is getting on: the note the worker last
+# wrote on it and where it ended, which is what the dialog box that started it
+# shows while it runs.
+get '/manager/folders/job' => sub($c) {
+	my $job = &subs::minion_grabber()->job($c->param('id'));
+	unless ($job) {
+		$c->render(json => { status => 'error', error => 'no such job' });
+		return;
+	}
+	my $info = $job->info || {};
+	my $payload = $info->{'result'} || $info->{'error'} || {};
+	$payload = {} unless ref $payload;
+	$c->render(json => {
+		status => 'ok',
+		state => $info->{'state'},
+		progress => ($info->{'notes'} || {})->{'progress'},
+		errors => $payload->{'errors'},
+		payload => $payload
+	});
+};
+
+# Stop a queued job, or ask a running one to stop. A job that has not started
+# is simply removed; one that is already going cannot be killed from this
+# process, so it is told instead and looks for the note between files.
+post '/manager/folders/job/cancel' => sub($c) {
+	my $job = &subs::minion_grabber()->job($c->param('id'));
+	unless ($job) {
+		$c->render(json => { status => 'error', error => 'no such job' });
+		return;
+	}
+	my $state = $job->info->{'state'};
+	if ($state eq 'active') {
+		$job->note(cancel => 1);
+		$c->render(json => { status => 'ok', state => $state, asked => 1 });
+		return;
+	}
+	$job->remove;
+	$c->render(json => { status => 'ok', state => 'removed' });
+};
+
+# Open what is selected with whatever this machine opens that kind of file
+# with: the desktop's own choice, which is the one thing a file manager can
+# offer that the apps cannot. A remote listing is read-only and never gets
+# here, so this always opens on the machine in front of the screen.
+post '/manager/folders/open_with' => sub($c) {
+	my $folders = eval { return decode_json $c->param('folders') } || {};
+	my @paths = map { $_->{'path'} } grep { -e $_->{'path'} } &folders_command_items($folders);
+	&subs::subprocessor(sub {
+		my $opener;
+		if ($ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux') { $opener = 'termux-open' }
+		elsif (-x '/usr/bin/xdg-open') { $opener = '/usr/bin/xdg-open' }
+		return unless $opener;
+		foreach my $path ( @paths ) {
+			system($opener, $path);
+		}
+	}, { name => 'folders open with' });
+	$c->render(json => { status => 'ok', opened => scalar @paths });
 };
 
 post '/manager/folders/archive' => sub($c) {
@@ -14048,7 +14277,7 @@ post '/manager/folders/archive' => sub($c) {
 	my $items = $folders->{'selected'} || [];
 	# the background menu archives the folder being looked at, which is not a
 	# selection of anything
-	@{$items} = ( { path => $folders->{'path'}, type => 'folder' } ) if !scalar @{$items} && $folders->{'path'};
+	@{$items} = ( { path => ($folders->{'path'} || $folders->{'folder'}), type => 'folder' } ) if !scalar @{$items} && ($folders->{'path'} || $folders->{'folder'});
 	my $device = &subs::device_setter();
 	my $misc = &Manager::misc_setting_list();
 	my $plan = &subs::archive_plan({
@@ -14440,7 +14669,13 @@ sub file_type_recognizer($f) {
 		$file->{'type'} = 'folder';
 		$file->{'icon'} = '/images/decipherable/folder.png';
 	}
-	if ($file_type eq 'image' || $file_type eq 'video') {
+	elsif ($f =~ /\.enc$/i) {
+		# a sealed file: its name says nothing about what is inside it, so the
+		# icon has to say only that much
+		$file->{'type'} = 'encrypted';
+		$file->{'icon'} = '/images/make believe/lock.png';
+	}
+	elsif ($file_type eq 'image' || $file_type eq 'video') {
 		$file->{'icon'} = '/file_open?file=' . uri_encode $f;
 	}
 	elsif ($file_type eq 'subtitles') {

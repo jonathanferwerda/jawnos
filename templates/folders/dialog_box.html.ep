@@ -1,17 +1,23 @@
 
-<div class="dialog_box" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="background-color:var(--panel-2);height:<%= $box->{'height'} || '180px' %>;width:400px;position:fixed;top: 50%;left: 50%;transform: translate(-50%, -50%);z-index: 9999;">
+<div class="dialog_box" command="<%= $box->{'command'} %>" job="<%= $box->{'job'} %>" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="background-color:var(--panel-2);height:<%= $box->{'height'} || '180px' %>;width:400px;position:fixed;top: 50%;left: 50%;transform: translate(-50%, -50%);z-index: 9999;">
 	<div class="header" style="background-color:navy;color:white;font-size:26px;position:absolute;top:0px;width:100%;">
 		<span style="float:right;"><button class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()">X</button></span>
 		<span style="float:left;"><%= $box->{'name'} || 'Dialog Box' %></span>
 	</div>
 	<div class="body" style="width:100%;position:absolute;top:60px;font-size:16px;">
 		<% if ($box->{'text'}) { %>
-			<%= $box->{'text'} %>
+			<div style="white-space:pre-wrap;"><%= $box->{'text'} %></div>
+		<% } %>
+		<% if ($box->{'content'}) { %>
+			<div><%== $box->{'content'} %></div>
 		<% } %>
 		<% if ($box->{'inputs'}) { %>
 			<% foreach my $i ( @{$box->{'inputs'}} ) { %>
 				<input type="<%= $i->{'type'} %>" placeholder="<%= $i->{'placeholder'} %>" value="<%= $i->{'value'} %>" name="<%= $i->{'name'} %>">
 			<% } %>
+		<% } %>
+		<% if ($box->{'job'}) { %>
+			<div class="job_progress" style="white-space:pre-wrap;"><%= $box->{'progress'} || 'starting' %></div>
 		<% } %>
 
 
@@ -20,6 +26,9 @@
 
 	<div class="bottom_buttons" style="position:absolute;bottom:2px;width:100%;">
 		<span class="float:right;">
+			<% if ($box->{'job'}) { %>
+				<button class="job_stop" job="<%= $box->{'job'} %>">Stop</button>
+			<% } %>
 			<% unless ( $box->{'cancel'} eq 'no') { %>
 				<button class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()">Cancel</button>
 			<% } %>

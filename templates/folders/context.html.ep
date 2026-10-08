@@ -1,5 +1,12 @@
 
 <div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:var(--panel-2);" uuid="<%= $uuid %>">
+	<% my $selected = $folders->{'selected'} || []; %>
+	<% my $has_folder = scalar grep { ($_->{'type'} || '') eq 'folder' } @{$selected}; %>
+	<% my $sealed = scalar grep { (defined $_->{'path'}) && $_->{'path'} =~ /\.enc$/i } @{$selected}; %>
+	<% my $plain = scalar grep { (defined $_->{'path'}) && $_->{'path'} !~ /\.enc$/i } @{$selected}; %>
+	<%# a folder can hold either kind, so both the sealing and the opening are offered for one %>
+	<% my $encrypt_visible = ($plain || $has_folder) ? 'yes' : 'no'; %>
+	<% my $decrypt_visible = ($sealed || $has_folder) ? 'yes' : 'no'; %>
 	<% my $contexts = {
 		file => [
 			{ 'open' => {} },
@@ -9,6 +16,8 @@
 			{ 'cut' => {} },
 			{ 'copy' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 'yes' : 'no' } },
+			{ 'encrypt' => { visible => $encrypt_visible } },
+			{ 'decrypt' => { visible => $decrypt_visible } },
 			{ 'delete' => {} },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
@@ -22,6 +31,8 @@
 			{ 'cut' => {} },
 			{ 'copy' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
+			{ 'encrypt' => { visible => $encrypt_visible } },
+			{ 'decrypt' => { visible => $decrypt_visible } },
 			{ 'delete' => {} },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },

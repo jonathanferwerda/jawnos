@@ -265,6 +265,8 @@ our $known_icons = {
 	folder => '/images/decipherable/folder.png',
 	'delete' => '/icons/trash.png',
 	cut => '/images/palette/crop.png',
+	encrypt => '/images/make believe/lock.png',
+	decrypt => '/images/make believe/key.png',
 	
 };
 

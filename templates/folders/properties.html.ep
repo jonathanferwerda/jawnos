@@ -1,1 +1,19 @@
-<%= scalar @{$files} %> <%= $total_size %><br>
+<table style="width:100%;font-size:14px;">
+	<thead>
+		<th style="text-align:left;">Name</th>
+		<th style="text-align:left;">Type</th>
+		<th style="text-align:left;">Size</th>
+		<th style="text-align:left;">Modified</th>
+	</thead>
+	<tbody>
+		<% foreach my $f ( @{$files} ) { %>
+			<tr>
+				<td style="overflow-wrap:break-word;word-break:break-word;"><%= &subs::format_name($f->{'name'}) %></td>
+				<td><%= &subs::format_name($f->{'type'} || 'file') %></td>
+				<td><% if (($f->{'type'} || '') eq 'folder') { %>-<% } else { %><%= &subs::data_size($f->{'size'}) %><% } %></td>
+				<td><span class="time" mode="fixed" timestamp="<%= (($f->{'stat'}->[9] || 0) * 1000) %>"></span></td>
+			</tr>
+		<% } %>
+	</tbody>
+</table>
+<%= scalar @{$files} %> item(s), <%= &subs::data_size($total_size) %> together<br>

@@ -275,7 +275,18 @@ function foldersCommand(data) {
 		folderSelection();
 	}
 	else if (command == 'open') {
-		foldersOpener({ folder: folders.path });
+		if (folders.type == 'folder') {
+			foldersOpener({ folder: folders.path });
+		}
+		else {
+			foldersFileOpener();
+		}
+	}
+	else if (command == 'open_with') {
+		foldersOpenWith();
+	}
+	else if (command == 'paste') {
+		foldersPaste();
 	}
 	else if (command == 'archive') {
 		foldersArchive();
@@ -291,6 +302,7 @@ function foldersCommand(data) {
 			},
 			success:function(response) {
 				$('#dialog_boxes').append(response.dialog);
+				appointment_chron();
 			}
 		});
 	}
@@ -301,7 +313,10 @@ function foldersCommand(data) {
 // which says where they belong; the queue panel shows the work as it goes.
 function foldersFetchHome() {
 	var items = folders.selected || [];
-	if (!items.length && folders.path) { items = [ { path: folders.path } ]; }
+	if (!items.length) {
+		var path = folders.path || folders.folder;
+		if (path) { items = [ { path: path } ]; }
+	}
 	var remote_uuid = folders.remote_uuid || $('#folders').attr('remote_uuid') || '';
 	$.each(items, function (i, item) {
 		$.ajax({
@@ -314,10 +329,113 @@ function foldersFetchHome() {
 	foldersArchiveQueue();
 }
 
-function foldersCommandConfirm(data) {
-	$('[uuid="' + uuid + '"]').remove();
-
+function foldersCommandConfirm(uuid) {
+	var box = $('.dialog_box[uuid="' + uuid + '"]');
+	var command = box.attr('command');
+	var inputs = {};
+	box.find('input').each(function() {
+		inputs[$(this).attr('name')] = $(this).val();
+	});
+	box.remove();
+	if (!command) { return; }
+	foldersCommandPOST({ command: command, inputs: inputs });
 }
+
+// What a command with nothing more to ask does: the clipboard going into the
+// folder on screen, and the desktop's own opener for a file.
+function foldersPaste() {
+	foldersCommandPOST({ command: 'paste' });
+	// the paste is on its way, so a second one does not queue it again
+	folders.clipboard = [];
+	folders.command = undefined;
+}
+
+function foldersOpenWith() {
+	$.ajax({
+		url: '/manager/folders/open_with',
+		type: 'POST',
+		data: { folders: JSON.stringify(folders) }
+	});
+}
+
+// A command from a dialog's OK, or one that needs no dialog at all. The answer
+// is a dialog when there is something to say - a job's progress, or why the
+// command would not go - and the folder is read again when it went.
+function foldersCommandPOST(data) {
+	$.ajax({
+		url: '/manager/folders/context/command',
+		type: 'POST',
+		data: {
+			command: data['command'],
+			inputs: JSON.stringify(data['inputs'] || {}),
+			folders: JSON.stringify(folders)
+		},
+		success: function(response) {
+			if (response && response['dialog']) {
+				$('#dialog_boxes').append(response['dialog']);
+				appointment_chron();
+				foldersJobWatcher();
+			}
+			if (response && response['status'] == 'ok') {
+				foldersRefresh();
+			}
+		}
+	});
+}
+
+// Read the folder being looked at again, in the window it is already in.
+function foldersRefresh() {
+	foldersOpener({ folder: folders['folder'] });
+}
+
+// A job's progress lives in the dialog box that started it: the box carries
+// the job's id and asks after it once a second until the job is finished or
+// failed, when the box keeps the last word and the folder is read again. The
+// asking stops when no box is watching anything.
+var folders_job_interval;
+function foldersJobWatcher() {
+	if (folders_job_interval) { return; }
+	folders_job_interval = setInterval(function() {
+		var boxes = $('.dialog_box[job]');
+		if (!boxes.length) {
+			clearInterval(folders_job_interval);
+			folders_job_interval = undefined;
+			return;
+		}
+		boxes.each(function() {
+			var box = $(this);
+			$.ajax({
+				url: '/manager/folders/job',
+				type: 'GET',
+				data: { id: box.attr('job') },
+				success: function(job) {
+					if (!job || job['status'] != 'ok') {
+						box.removeAttr('job').find('.job_progress').text('that job is gone');
+						return;
+					}
+					var word = job['progress'] || job['state'];
+					if (job['errors'] && job['errors'].length) { word = word + '\n' + job['errors'].join('\n'); }
+					box.find('.job_progress').text(word);
+					if (job['state'] == 'finished' || job['state'] == 'failed') {
+						box.removeAttr('job');
+						box.find('.job_stop').remove();
+						foldersRefresh();
+					}
+				}
+			});
+		});
+	}, 1000);
+}
+
+$(document).on('click', '.job_stop', function() {
+	var button = $(this);
+	button.closest('.dialog_box').find('.job_progress').text('stopping...');
+	$.ajax({
+		url: '/manager/folders/job/cancel',
+		type: 'POST',
+		data: { id: button.attr('job') }
+	});
+});
 
 // Put the selection (or the folder being looked at) on the archive queue. The
 // machine decides which location each item belongs to and where it goes; what
