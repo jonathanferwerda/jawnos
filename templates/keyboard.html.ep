@@ -182,7 +182,7 @@
 			<button id="i" class="now">now</button>
 			<button id="calculate_it">M</button>
 			<button id="appt_view_toggle">V</button>
-			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('delorean')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
+			<img class="jonathan miniscule_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('delorean')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure" style="vertical-align:middle;margin-left:3px;"></img>
 			<div toggle="delorean" class="keyboard_config delorean_configuration" style="display:none;width:100%;"></div>
 			<input style="width:60%" class="time_machine" id="time_machine" placeholder="Time Machine"></input><br>
 

@@ -72,7 +72,10 @@ function timelinePrinter(appts,sort,offset) {
 			v['placement_number'] = rowY;
 		}
 		var named = false;
-		var hit = [canvas.width, rowY - 16, 0, rowY + 16, v];
+		// the whole line answers to a click - band, dot, text and the space between
+		// them - the way a leaderboard row does; it used to be cut down to the dot
+		// and the text, which left the appointment's own band unclickable
+		var hit = [0, rowY - 16, canvas.width, rowY + 16, v];
 
 		$.each(v.list, function(n,l) {
 			if ( !l ) { return true; }
@@ -157,12 +160,7 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.font = "400 14px Arial";
 				labelEnd = amountX + ctx.measureText(amount).width;
 			}
-			if (labelEnd > hit[2]) { hit[2] = labelEnd; }
-			if (x - 18 < hit[0]) { hit[0] = x - 18; }
-			if (x + 18 > hit[2]) { hit[2] = x + 18; }
 		});
-		if (hit[0] < 0) { hit[0] = 0; }
-		if (hit[2] > canvas.width) { hit[2] = canvas.width; }
 		appPosition.push(hit);
 	});
 
