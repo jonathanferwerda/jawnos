@@ -151,6 +151,22 @@ function imageViewer(data) {
 	}*/
 }
 
+// Whether the gallery also looks in the archive for photos whose local copy
+// has gone. 'load' is the view that only carries settings, so the listing the
+// window is on is not disturbed.
+$(document).on('click', '.gallery_archive_toggle', function () {
+	var b = $(this);
+	var status = (b.attr('status') == 'on') ? 'off' : 'on';
+	var new_settings = {};
+	new_settings['archive'] = status;
+	imageViewer({
+		view: 'load',
+		apps: $('#gallery').attr('apps'),
+		loadImages: 1,
+		new_settings: new_settings
+	});
+});
+
 function imageDiscover() {
 
 	image_number = numeral(image_number).value();

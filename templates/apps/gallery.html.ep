@@ -4,7 +4,7 @@
 <% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 	@{$padlock_sighting} = grep { $_ eq 'gallery' } @{$padlock_sighting};
 %>
-<% my $ghome = {}; my $appts; if ($view eq 'home') { 
+<% my $ghome = {}; my $appts; my $archive_lookup; if ($view eq 'home') { 
 	<% 
 	if ($settings->{'search'}) {
 		$appts = &subs::db_query('select * from appointments where (app like ? or file like ?) and file is not null and (type=? or type=?) order by timestamp desc',
@@ -42,6 +42,15 @@
 						if ((!$f->{'info'}->{'duration'} || $f->{'info'}->{'duration'} =~ /[A-Za-z]/gi) && $f->{'type'} eq 'video') {
 							$f->{'info'}->{'duration'} = $appt->{'duration'} / 1000;
 						}
+						# a tile whose photo has gone to the archive is shown from there
+						if (!-e $f->{'f'} && ($settings->{'archive'} || '') eq 'on') {
+							$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
+							my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
+							if ($archived) {
+								$f->{'f'} = $archived->{'path'};
+								$f->{'remote_uuid'} = $archived->{'remote_uuid'};
+							}
+						}
 					}
 					push @{$ghome->{$appt->{'app'}}}, @{$files};
 				}
@@ -76,6 +85,8 @@
 	<% } elsif ($view eq 'album') { %>
 		<div id="gallery_album" style="display:inline-block;background-color:var(--panel);height:100%; width:100%;overflow:scroll;">
 			<%= include 'apps/gallery_album', appts => $appts, settings => $settings, asettings => $asettings, pre_count => $count, load => 'all', first_count => 0 %>
+			<% my $archive_status = &subs::setting_grabber({ app => 'gallery', setting => 'archive' }); %>
+			<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archives" status="<%= $archive_status %>" class="hover tiny_thumb gallery gallery_archive_toggle" style="position:absolute;top:35px;right:120px;<% if ($archive_status eq 'on') { %>background-color:lightblue;<% } %>">
 			<% if ($settings->{'scroll_direction'} eq 'asc') { %>
 				<img src="<%= &subs::icon_for('/images/make believe/down.png') %>" hint="Ascending order" direction="asc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
 			<% } else { %>
