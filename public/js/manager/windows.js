@@ -343,11 +343,20 @@ function windowReorganizer(window_id) {
 
 			}
 		}
-		if (win.width() > $(document).width()) {
-			win.width($(document).width());
+		// Keep a window on the screen: these used to clamp against $(document)
+		// sizes, so any tall element that stretched the document let windows grow
+		// past the viewport (a 1111px window on a phone screen). Clamp to what is
+		// left of the viewport instead, so the bottom edge and its scrollbar stay
+		// reachable.
+		var viewW = $(window).width();
+		var viewH = $(window).height();
+		var winLeft = Number(numeral(win.css('left')).format()) || 0;
+		var winTop = Number(numeral(win.css('top')).format()) || 0;
+		if (winLeft + win.width() > viewW) {
+			win.width(Math.max(240, viewW - winLeft));
 		}
-		if (win.height() > $(document).height()) {
-			win.height($(document).height());
+		if (winTop + win.height() > viewH) {
+			win.height(Math.max(240, viewH - winTop));
 		}
 		var note = localStorage.getItem(app + '_note');
 		var ago = localStorage.getItem(app + '_ago');
