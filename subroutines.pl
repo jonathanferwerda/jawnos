@@ -4846,6 +4846,28 @@ sub icon_for() {
 	return $path;
 }
 
+# The colours a text control wears to sit beside the icon set's tiles: every
+# generated tile is filled from hsl() values (the loud sets build their
+# gradients from the same ones, so the first hsl() in the file is still the
+# tile's colour) and the lightness says whether dark or light ink reads on it.
+# The "now" tile is the one a control about the present borrows from - the
+# page button, the travel now button. Memoised per set: the files only change
+# when build.js runs, while the manager re-renders constantly.
+my %icon_plate_memo;
+sub icon_plate_colours() {
+	my $set = &icon_set() || '';
+	return $icon_plate_memo{$set} if exists $icon_plate_memo{$set};
+	my $colours = { plate => '', ink => '' };
+	if ($set && $set ne 'handdrawn') {
+		my $file = 'public/icons/sets/' . $set . '/now.svg';
+		my $svg = -e $file ? read_file($file) : undef;
+		if (defined $svg && $svg =~ /(hsl\(\s*\d+\s*,\s*\d+%\s*,\s*(\d+)%\s*\))/) {
+			$colours = { plate => $1, ink => ($2 > 65 ? '#111111' : '#ffffff') };
+		}
+	}
+	return $icon_plate_memo{$set} = $colours;
+}
+
 # A fingerprint of everything that gets baked into cached window/header HTML:
 # the icon set and the device's theme colours. Cached renders whose signature no
 # longer matches are discarded, so closed windows don't come back looking stale.

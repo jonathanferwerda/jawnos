@@ -323,7 +323,7 @@ async function settingSetter(setter) {
 	var setting = setter['setting'];
 	var timestamp = Date.now();
 	var device = setter['device'];
-	$.ajax({
+	return $.ajax({
 		url: '/manager/setting_setter',
 		type: 'POST',
 		data: { app: app, setting:setting, device: device, value:value, timestamp: timestamp},

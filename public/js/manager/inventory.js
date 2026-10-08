@@ -99,6 +99,10 @@ function inventoryDetails(app) {
 		type: 'GET',
 		data: { timestamp: timestamp, app: app, scope_count: sscv, calc: sc, lock: sdl, display: sdv, visual: sv, movement: jsmv, s_scroll: s_scroll },
 		success: function(response) {
+			// the request is done the moment the answer lands: clearing the flag here
+			// keeps a draw that throws from leaving every page control silently deaf,
+			// which is how a page with no data used to wedge the button and the swipes
+			inventoryStatus.loading = false;
 			if (iq.is(':visible')) {
 				var new_s_scroll = iq.find('.statistic_graphs').scrollTop();
 
@@ -128,7 +132,6 @@ function inventoryDetails(app) {
 				iq.find('.statistic_graphs').scrollLeft(s_scroll_left);
 
 				appointment_chron();
-				inventoryStatus.loading = false;
 			}
 		}
 	});
@@ -216,11 +219,15 @@ function statisticPageStep(ir, step) {
 	if (next == page) { return; }
 	var app = ir.attr('app');
 	ir.attr('scope_page', next);
-	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next });
-	inventoryDetails(app);
+	// the page is only persisted by the setter and the render reads it back out
+	// of the settings, so the fetch waits for the write: fired together, the
+	// render could return the page the walk just left and put the button back
+	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next }).then(function() {
+		inventoryDetails(app);
+	});
 }
 
-// the page label is the way back to now, however far a scroll or a swipe has
+// the page button is the way back to now, however far a scroll or a swipe has
 // walked: stepping back by the page it is showing lands on zero
 $(document).on('click', '.statistic_page', function() {
 	var ir = $(this).closest('.appointment');
@@ -281,7 +288,9 @@ function statisticGrapher(data,canvasId,mark) {
 		ctx.globalAlpha = 1;	
 		ctx.font = "400 10px Arial";
 		var threshold;
-		if (data.highest[tl]) {
+		// a page whose periods hold nothing carries no highest or lowest at all:
+		// there is no axis to draw against, which is an empty chart, not an error
+		if (data.highest && data.lowest && data.highest[tl]) {
 			var lowest = numeral(data.lowest[tl][data.settings.s_display]).value();
 			var highest = numeral(data.highest[tl][data.settings.s_display]).value();
 
