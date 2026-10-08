@@ -306,9 +306,15 @@ function clockfaceScroller(data) {
 // direction the wheel has always had here: a notch that would walk a page up
 // walks the timeline forward, as it does over the clothesline and the
 // clockface. The deltas are the browser's own pixels.
+//
+// A trackpad's deltas are fine-grained and arrive in floods, and the flick it
+// leaves behind carries well past the fingers, so a swipe is damped to a tenth
+// of the finger travel. Everything that follows - the move and the glide it is
+// armed with - scales with this one number.
+var trackpadSensitivity = .1;
 function timelineWheelMotion(deltaX, deltaY) {
 	if (Math.abs(deltaX) > Math.abs(deltaY)) {
-		return { mousediff: -1 * (numeral(deltaX).value()), glide: 1 };
+		return { mousediff: -trackpadSensitivity * (numeral(deltaX).value()), glide: 1 };
 	}
 	return { mousediff: numeral(deltaY).value(), glide: 0 };
 }
@@ -440,7 +446,9 @@ function timelineFling(diff) {
 		var moved = 0;
 		$.each(kept, function(i,s) { moved += s[1]; });
 		var elapsed = kept[kept.length - 1][0] - kept[0][0];
-		if (Math.abs(moved) < 2 || elapsed <= 0) { return; }
+		// the samples arrive already damped by the swipe's sensitivity, so a
+		// still finger is a hundredth of a pixel, not two
+		if (Math.abs(moved) < 0.2 || elapsed <= 0) { return; }
 		// the samples are pixels of finger travel; the glide moves in time, so one
 		// frame of the swipe has to cross the same bridge a wheel event does
 		var span = response.appts['__specs']['end'] - response.appts['__specs']['start'];
