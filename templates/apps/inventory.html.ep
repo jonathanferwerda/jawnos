@@ -44,10 +44,11 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 <img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" style="vertical-align:bottom;">
 <% if (scalar @{$appts} > 0) { %>
 	<% my $scope_page = $returner->{'scope_page'} || 0; %>
-	<% my $page_colours = &subs::icon_plate_colours(); %>
+	<% my $page_icon = $scope_page == 0 ? 'now' : ($scope_page > 0 ? 'back' : 'forward'); %>
+	<% my $page_colours = &subs::icon_plate_colours($page_icon); %>
 	<%# the page button wears where a scroll or a swipe has walked - N at now,
 	    2P two pages back, 1F one page forward - and tapping it returns to now;
-	    the icon set's own tile colour keeps it in with the thumbnails beside it %>
+	    its tile follows the walk: now at home, back/forward once it has moved %>
 	<button class="statistic_page little_thumb hover" style="<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll a graph sideways to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') %></button>
 	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
 		<% foreach my $col ( @cols ) { %>

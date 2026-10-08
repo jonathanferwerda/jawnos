@@ -4850,22 +4850,25 @@ sub icon_for() {
 # generated tile is filled from hsl() values (the loud sets build their
 # gradients from the same ones, so the first hsl() in the file is still the
 # tile's colour) and the lightness says whether dark or light ink reads on it.
-# The "now" tile is the one a control about the present borrows from - the
-# page button, the travel now button. Memoised per set: the files only change
-# when build.js runs, while the manager re-renders constantly.
+# The tile is named for the state the control is about - the page button wears
+# the "now" tile at home and the back/forward tiles once it has walked. Memoised
+# per set and tile: the files only change when build.js runs, while the manager
+# re-renders constantly.
 my %icon_plate_memo;
 sub icon_plate_colours() {
+	my $icon = shift || 'now';
 	my $set = &icon_set() || '';
-	return $icon_plate_memo{$set} if exists $icon_plate_memo{$set};
+	my $memo_key = $set . '/' . $icon;
+	return $icon_plate_memo{$memo_key} if exists $icon_plate_memo{$memo_key};
 	my $colours = { plate => '', ink => '' };
 	if ($set && $set ne 'handdrawn') {
-		my $file = 'public/icons/sets/' . $set . '/now.svg';
+		my $file = 'public/icons/sets/' . $set . '/' . $icon . '.svg';
 		my $svg = -e $file ? read_file($file) : undef;
 		if (defined $svg && $svg =~ /(hsl\(\s*\d+\s*,\s*\d+%\s*,\s*(\d+)%\s*\))/) {
 			$colours = { plate => $1, ink => ($2 > 65 ? '#111111' : '#ffffff') };
 		}
 	}
-	return $icon_plate_memo{$set} = $colours;
+	return $icon_plate_memo{$memo_key} = $colours;
 }
 
 # A fingerprint of everything that gets baked into cached window/header HTML:
