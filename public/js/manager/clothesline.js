@@ -9,7 +9,11 @@ var clothesLinePos = {
 	moving: Date.now() - 300, 
 	startMove: undefined,
 	exists: 0,
-	bordersize: 5
+	bordersize: 5,
+	// whether the wheel at hand belongs to a trackpad. Seeded from the last
+	// session and settled by wheelKind() below; while it is set, the press-and-
+	// drag grab stands down, since a swipe already moves the canvas.
+	trackpad: localStorage.getItem('trackpad') == 'yes'
 };
 var wardrobe = [];
 var hangingClothes = 0;
@@ -176,6 +180,9 @@ $(document).on('touchmove', '.background', function(m) {
 $(document).on('mousedown', '.background', function(m) {
 	var w = $(this);
 	if (w.attr('id') != 'timeline' || m.which != 1) { return; }
+	// a trackpad moves the canvas with its swipe, so once one has been seen the
+	// press-and-drag grab would only be in the way
+	if (clothesLinePos['trackpad']) { return; }
 	var y = numeral(m.clientY - w.offset().top).value();
 	if (y < clothesLinePos['maxHeight']) { return; }
 	clothesLinePos['moving'] = Date.now();
@@ -225,6 +232,15 @@ $(document).on(wheelEvent, '.background', function(e) {
 	var deltaY = wheelNumber(o.deltaY);
 	var wheelDelta = wheelNumber(o.wheelDelta);
 	var wheelDeltaX = wheelNumber(o.wheelDeltaX);
+
+	// the wheel says which device it came from, and only says it once in a while:
+	// keep the answer for the session, and let the grab above read it
+	var kind = wheelKind(deltaX, deltaY, wheelNumber(o.deltaMode));
+	if (kind) {
+		clothesLinePos['trackpad'] = (kind == 'trackpad') ? 1 : 0;
+		localStorage.setItem('trackpad', clothesLinePos['trackpad'] ? 'yes' : 'no');
+	}
+
 	if (!deltaX && !deltaY && !wheelDelta && !wheelDeltaX) { return; }
 	if (!wheelDelta) {
 		wheelDelta = -5 * (Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY);
@@ -336,6 +352,22 @@ function timelineWheelMotion(deltaX, deltaY) {
 function wheelNumber(v) {
 	var n = numeral(v).value();
 	return isFinite(n) ? n : 0;
+}
+
+// The browser will not say whether a wheel came from a trackpad or a mouse:
+// PointerEvent.pointerType answers 'mouse' for both, and matchMedia only tells
+// coarse from fine. The stream itself does say it. A mouse sends one coarse,
+// whole-numbered notch at a time - tens of pixels straight down, and no
+// sideways part - while a trackpad sends fine, often fractional pixels in
+// floods, and only a trackpad leans sideways. An event only one of them could
+// have produced settles the question; a slow, whole, small, vertical step is
+// read as the trackpad, since a mouse has no notch that small.
+function wheelKind(deltaX, deltaY, deltaMode) {
+	if (!deltaX && !deltaY) { return undefined; }
+	if (deltaX !== 0) { return 'trackpad'; }
+	if (deltaMode !== 0) { return 'mouse'; }
+	if (!Number.isInteger(deltaY)) { return 'trackpad'; }
+	return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
 }
 
 function timelineScroller(data) {
