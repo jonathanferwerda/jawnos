@@ -3051,6 +3051,49 @@ sub location_types {
 	return qw/music download photo document video scan rec/;
 }
 
+# The archive root of this machine (config.json archive_dir), tidied: ~
+# resolved, no trailing slash. Undef when this machine is not an archive.
+sub archive_root {
+	my $dir = $config->{'archive_dir'} or return undef;
+	my $root = &home($dir);
+	$root =~ s{/+$}{};
+	return $root;
+}
+
+# Where an item lands inside an archive: <root>/<location>/<path inside the
+# location folder>. The location has to be one we know, and the relative path
+# cannot climb out of it, since the sending machine chooses both. `folder` is
+# the location's folder, `parent` the folder the item's own file goes in.
+sub archive_destination {
+	my $data = shift;
+	my $location = $data->{'location'};
+	return { error => 'unknown location' } unless grep { $_ eq $location } &location_types();
+	my $root = $data->{'root'} || &archive_root();
+	return { error => 'no archive_dir on this machine' } unless $root;
+	my $relative = defined $data->{'path'} ? $data->{'path'} : '';
+	$relative =~ s{\\}{/}g;
+	my @parts;
+	foreach my $part (split m{/+}, $relative) {
+		next if $part eq '' || $part eq '.';
+		# .. resolves against what came before it, and cannot climb above the
+		# location folder because there is nothing above it to pop
+		if ($part eq '..') { pop @parts; next; }
+		push @parts, $part;
+	}
+	my $inside = join '/', @parts;
+	my $folder = $root . '/' . $location;
+	my @upper = @parts;
+	pop @upper if scalar @upper;
+	return {
+		root => $root,
+		location => $location,
+		folder => $folder,
+		parent => $folder . (scalar @upper ? '/' . join('/', @upper) : ''),
+		relative => $inside,
+		path => $folder . (length $inside ? '/' . $inside : '')
+	};
+}
+
 # Make sure the archive root (config.json's archive_dir) has one folder per
 # location type. A blank archive_dir — the default — means this machine is not
 # an archive, so nothing is touched; an archive_dir that is not there yet is
@@ -3059,9 +3102,8 @@ sub location_types {
 # run at any time. Pass a path to check a specific root.
 sub archive_scaffolder {
 	my $dir = shift;
-	$dir = $config->{'archive_dir'} unless (defined $dir && length $dir);
-	return { enabled => 0, reason => 'no archive_dir set' } unless $dir;
-	my $root = &home($dir);
+	my $root = (defined $dir && length $dir) ? &home($dir) : &archive_root();
+	return { enabled => 0, reason => 'no archive_dir set' } unless $root;
 	$root =~ s{/+$}{};
 	return { enabled => 0, dir => $root, reason => 'archive_dir does not exist' } unless -d $root;
 	my (@created, @existing, @failed);

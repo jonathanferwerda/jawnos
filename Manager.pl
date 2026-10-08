@@ -14009,6 +14009,53 @@ get '/manager/folders/archive/dirs' => sub($c) {
 	$c->render(json => &subs::archive_scaffolder());
 };
 
+# An archive machine answering for its own root. A sending machine asks first
+# whether the item is already there, so a second pass over a folder costs one
+# small request per file instead of the file itself.
+post '/manager/folders/archive/probe' => sub($c) {
+	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $exists = -e $dest->{'path'} ? 1 : 0;
+	my @stat = $exists ? stat($dest->{'path'}) : ();
+	$c->render(json => {
+		status => 'ok',
+		path => $dest->{'path'},
+		exists => $exists,
+		# so the sender can skip a file it has already delivered unchanged
+		size => $exists ? -s $dest->{'path'} : undef,
+		mtime => $exists ? $stat[9] : undef
+	});
+};
+
+# The upload half of archiving: the item is posted here and lands in
+# <archive root>/<location>/<path>, so transfers ride the same tunnel and
+# session as every other manager to manager request instead of rsync.
+post '/manager/folders/archive/receive' => sub($c) {
+	my @uploads = @{$c->req->uploads};
+	my $upload = $uploads[0];
+	unless ($upload) {
+		$c->render(json => { status => 'error', error => 'no file in the request' });
+		return;
+	}
+	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	Mojo::File->new($dest->{'parent'})->make_path;
+	eval { $upload->move_to($dest->{'path'}) };
+	if ($@) {
+		$c->render(json => { status => 'error', error => "$@", path => $dest->{'path'} });
+		return;
+	}
+	my $written = -s $dest->{'path'};
+	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)');
+	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written });
+};
+
 post '/manager/folders/file/open' => sub ($c) {
 
 	my $folders = eval { return decode_json $c->param('folders') } || {};
