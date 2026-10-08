@@ -1540,7 +1540,16 @@ $(document).on('click', '#timeshift_viewer', function() {
 	localStorage.setItem('time_machine',time_machine);
 });
 
-$(document).on('click','.now',function() {
+// Back to the present: the now button and a double-click on the canvas both
+// come through here. Any glide or pending flick is stopped first - it would
+// write the time machine back the moment it landed and undo this.
+function nowResetter() {
+	cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
+	clothesLinePos['timelineSmoothScrolling'] = undefined;
+	if (clothesLinePos['fling']) {
+		clearTimeout(clothesLinePos['fling']['settle']);
+		clothesLinePos['fling'] = undefined;
+	}
 	$('#time_machine').val('');
 	$('#timeshift').val('');
 	localStorage.setItem('timeshift', '0');
@@ -1550,6 +1559,10 @@ $(document).on('click','.now',function() {
 	initializer();
 	debrief_setter();
 	calculator();
+}
+
+$(document).on('click','.now',function() {
+	nowResetter();
 });
 
 

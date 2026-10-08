@@ -236,7 +236,8 @@ $(document).on('click', '.background', function (e) {
 });
 
 $(document).on('dblclick', '.background', function() {
-	$('#now_toggle').trigger('click');
+	// back to the present, the same thing the now button does
+	nowResetter();
 });
 
 $(document).on('mousemove', '.background', function(e) {
