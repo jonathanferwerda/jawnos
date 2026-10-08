@@ -33,9 +33,12 @@
 			<b>Template Name</b><br>
 			<input class="email_template_field" field="name" style="width:100%;" value="<%= &subs::format_name($st->{'name'}) %>"><br>
 			<b>Subject</b><br>
-			<input class="email_template_field" field="subject" style="width:100%;" value="<%= $st->{'subject'} %>"><br>
+			<% my $template_magic_vars = 'template:' . ($st->{'purpose'} || ''); %>
+			<% my $subject_variables = &Manager::text_editor_variables(&Manager::text_area_context($template_magic_vars)); %>
+			<input id="email_template_subject" class="email_template_field" field="subject" style="width:100%;" value="<%= $st->{'subject'} %>" magic_vars="<%= $template_magic_vars %>"><br>
+			<%= include 'text_editor_legend', variables => $subject_variables, source_id => '', target => 'email_template_subject' %>
 			<b>Body</b><br>
-			<textarea class="email_template_field" field="body" style="width:100%;height:60%;" upgradeable="yes" magic_vars="template:<%= $st->{'purpose'} %>"><%= $st->{'body'} %></textarea>
+			<textarea class="email_template_field" field="body" style="width:100%;height:60%;" upgradeable="yes" magic_vars="<%= $template_magic_vars %>"><%= $st->{'body'} %></textarea>
 		</span>
 		<span class="template_variables">
 			<b>Variables</b>

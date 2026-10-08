@@ -1,0 +1,14 @@
+<%# one legend for every field that speaks the same names - the text editor, and
+    the plain fields (the compose subject) sharing its context; target names
+    the field a chip writes into when it is not the editor the panel belongs to %>
+<% $variables ||= []; %>
+<% if (scalar @{$variables}) { %>
+	<div class="text_editor_variables_bar"<% if ($source_id) { %> source_id="<%= $source_id %>"<% } %><% if ($target) { %> target="<%= $target %>"<% } %>>
+		<button type="button" class="text_editor_variables_toggle hover">Variables</button>
+		<span class="text_editor_variables_panel" style="display:none;">
+			<% foreach my $v ( @{$variables} ) { %>
+				<button type="button" class="text_editor_variable hover" variable="<%= $v->{'name'} %>"<% if (defined $v->{'value'}) { %> value="<%= $v->{'value'} %>"<% } %>><%= $v->{'name'} %><% if (defined $v->{'value'}) { %> <span class="text_editor_variable_value"><%= $v->{'value'} %></span><% } %></button>
+			<% } %>
+		</span>
+	</div>
+<% } %>

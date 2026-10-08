@@ -422,25 +422,33 @@ function wsMessageHandler(event) {
 		else if (data['textAreaMagic']) {
 			var d = data['textAreaMagic'];
 			var ta = $('#' + d.id);
-			ta.html(d.text);
-			// whatever reads the hidden textarea behind the editor keeps up with
-			// what was eaten
-			var source = $('#' + ta.attr('source_id'));
-			if (source.length) { source.val(ta.text()); }
-			// and whatever saves on change hears about the eaten words too
-			ta.trigger('change');
-			// the server names the spans it wrote, so the caret can be put after
-			// the last of them instead of guessing where the word used to be
-			if (d.token) {
-				var eaten = ta.find('span[te_token="' + d.token + '"]').last()[0];
-				if (eaten) {
-					var range = document.createRange();
-					range.setStartAfter(eaten);
-					range.collapse(true);
-					var sel = window.getSelection();
-					ta.focus();
-					sel.removeAllRanges();
-					sel.addRange(range);
+			if (d.plain) {
+				// a plain field (the compose subject) takes the words back as
+				// text: there are no spans for it to wear
+				ta.val(d.text);
+				ta.trigger('change');
+			}
+			else {
+				ta.html(d.text);
+				// whatever reads the hidden textarea behind the editor keeps up with
+				// what was eaten
+				var source = $('#' + ta.attr('source_id'));
+				if (source.length) { source.val(ta.text()); }
+				// and whatever saves on change hears about the eaten words too
+				ta.trigger('change');
+				// the server names the spans it wrote, so the caret can be put after
+				// the last of them instead of guessing where the word used to be
+				if (d.token) {
+					var eaten = ta.find('span[te_token="' + d.token + '"]').last()[0];
+					if (eaten) {
+						var range = document.createRange();
+						range.setStartAfter(eaten);
+						range.collapse(true);
+						var sel = window.getSelection();
+						ta.focus();
+						sel.removeAllRanges();
+						sel.addRange(range);
+					}
 				}
 			}
 		}

@@ -15069,6 +15069,16 @@ get '/manager/mail/email/compose' => sub($c) {
 		$email = $setting_email ? $setting_email : $email;
 	}
 
+	# whoever the letter is to: an address that belongs to a customer makes
+	# ${self} answer for them and the newest thing they were sent, wherever
+	# the compose was asked for
+	my $magic_vars = '';
+	my $email_app = &subs::db_query('select app from settings where setting = ? and value = ?', 'email', $email)->hashes->[0];
+	if ($email_app && $email_app->{'app'}) {
+		my $cx_row = &subs::db_select('settings', undef, { setting => 'uuid', app => $email_app->{'app'} })->hashes->[0];
+		$magic_vars = 'customer:' . $cx_row->{'value'} if $cx_row;
+	}
+
 	my $draft = {};
 	my $drafts = [];
 	if ($draft_selection) {
@@ -15102,7 +15112,7 @@ get '/manager/mail/email/compose' => sub($c) {
 		drafts => $drafts,
 		attachments => $draft->{'attachments'} || [],
 		timestamp => $draft->{'timestamp'} || &subs::rightNow(),
-		magic_vars => ''
+		magic_vars => $magic_vars
 	);
 	$c->render(json => {
 		email => $email,
@@ -15278,6 +15288,15 @@ post '/manager/mail/email/send' => sub($c) {
 	my $timestamp = $c->param('timestamp') ? $c->param('timestamp') : &subs::rightNow();
 	my $sender = $c->param('sender') || &subs::device_setter();
 	my $attachments = eval { return decode_json $jattachments } || [];
+	my $magic_vars = $c->param('magic_vars');
+
+	# the words are said before the letter leaves: the subject plainly (prose
+	# has no illusions), the body keeping them for whoever reads it back
+	if ($magic_vars) {
+		my $context = &text_area_context($magic_vars);
+		$subject = ( &text_area_magic($subject, $context, { plain => 1, self_only => 1 }) )[0];
+		$body = ( &text_area_magic($body, $context) )[0];
+	}
 
 	&subs::db_delete('mailbox', { status => 'draft', uuid => $uuid });
 
@@ -20014,45 +20033,64 @@ our $ws_server;
 # back after the last one; the token is undefined when nothing was found.
 #
 # ${self}->total names the thing the editor is about rather than an app: the
-# appointment it sits in, or the quote/invoice and its customer the compose
-# window was opened for. The context rides on the editor's magic_vars
-# attribute; when it names no record - a template, before it belongs to a
-# document - the words are left as written, because a template is where they
-# are meant to wait.
-sub text_area_magic($text, $context) {
+# appointment it sits in, the quote/invoice and its customer the compose window
+# was opened for, or the person a letter is addressed to and the newest thing
+# they were sent. The context rides on the editor's magic_vars attribute; when
+# it names no record - a template, before it belongs to a document - the words
+# are left as written, because a template is where they are meant to wait.
+#
+# Two flourishes for fields that are not rich editors. 'plain' answers with the
+# value itself, no illusion, and does not need the semicolon - it is for the
+# compose subject, which cannot wear spans and is prose. 'self_only' refuses
+# the app->setting spellings and only says ${self}: a subject is prose, and
+# prose must not have its arrows eaten. Tags are stepped over, so an illusion
+# already in the text keeps its remembrance of the words through a later pass.
+sub text_area_magic($text, $context, $options = undef) {
+	$options ||= {};
+	my $plain = $options->{'plain'};
+	my $self_only = $options->{'self_only'};
+	my $terminator = $plain ? ';?' : ';';
 	my $token = &subs::random_string_creator(10);
 	my $found = 0;
-	my $magic = $text;
-	$magic =~ s!
-		(
-			\$\{[^}&\n]+\}                       # ${vape}
-			| \$?[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*   # $vape or vape
-		)
-		(?:-&gt;|->)([A-Za-z0-9_]+);
-	!
-		my ($raw_app,$raw_set,$whole) = ($1,$2,$&);
-		my $app = $raw_app;
-		$app =~ s/^\$\{//; $app =~ s/\}$//; $app =~ s/^\$//;
-		my $value;
-		if ($app eq 'self') {
-			$value = &text_editor_context_value($context, $raw_set);
-		}
-		else {
-			$value = &subs::setting_grabber({
-				app => &subs::unformat_name($app),
-				setting => &subs::unformat_name($raw_set)
-			});
-		}
-		unless (defined $value) {
-			$whole;
-		}
-		else {
-			$found++;
-			my $shown = xml_escape $value;
-			my $said = xml_escape html_unescape $whole;
-			'<span class="text_editor_illusion" te_token="' . $token . '" original="' . $said . '" trick="' . $shown . '" displaying="trick">' . $shown . '</span>';
-		}
-	!gex;
+	my @pieces = split /(<[^>]*>)/, $text;
+	foreach my $piece ( @pieces ) {
+		next if ($piece =~ /^</);
+		$piece =~ s!
+			(
+				\$\{[^}&\n]+\}                       # ${vape}
+				| \$?[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*   # $vape or vape
+			)
+			(?:-&gt;|->)([A-Za-z0-9_]+)$terminator
+		!
+			my ($raw_app,$raw_set,$whole) = ($1,$2,$&);
+			my $app = $raw_app;
+			$app =~ s/^\$\{//; $app =~ s/\}$//; $app =~ s/^\$//;
+			my $value;
+			if ($app eq 'self') {
+				$value = &text_editor_context_value($context, $raw_set);
+			}
+			else {
+				$value = &subs::setting_grabber({
+					app => &subs::unformat_name($app),
+					setting => &subs::unformat_name($raw_set)
+				}) unless ($self_only);
+			}
+			unless (defined $value) {
+				$whole;
+			}
+			elsif ($plain) {
+				$found++;
+				$value;
+			}
+			else {
+				$found++;
+				my $shown = xml_escape $value;
+				my $said = xml_escape html_unescape $whole;
+				'<span class="text_editor_illusion" te_token="' . $token . '" original="' . $said . '" trick="' . $shown . '" displaying="trick">' . $shown . '</span>';
+			}
+		!gex;
+	}
+	my $magic = join '', @pieces;
 	return ($magic, $found ? $token : undef);
 }
 
@@ -20070,11 +20108,21 @@ sub text_area_context($string) {
 	return $context;
 }
 
+# The newest thing a customer was sent - whatever carries numbers, so a quote,
+# invoice, receipt or the like - is what a letter about them is about. Only
+# papers this house printed are asked for, by the numbers they carry.
+sub text_editor_latest_document($app) {
+	return unless $app;
+	return &subs::db_query('select * from appointments where app = ? and data like ? order by timestamp desc limit 1', $app, '%"numbers"%')->hashes->[0];
+}
+
 # What ${self}->name and its brothers answer for a context. An appointment
 # answers from itself and its settings; a document answers from its numbers
 # (total, balance, the id it printed under) and from its customer (name,
-# email, phone, address); a context that names no record answers nothing, so
-# the words wait to be said by whoever applies them.
+# email, phone, address); a letter to a customer answers the same way, with
+# the newest document standing in for the one the words are about; a context
+# that names no record answers nothing, so the words wait to be said by
+# whoever applies them.
 sub text_editor_context_value($context, $key) {
 	my $lookup = &subs::unformat_name($key);
 	my $appt;
@@ -20085,6 +20133,7 @@ sub text_editor_context_value($context, $key) {
 	my $customer;
 	if ($context->{'customer'}) {
 		$customer = &subs::db_select('settings', undef, { setting => 'uuid', value => $context->{'customer'} })->hashes->[0];
+		$appt = &text_editor_latest_document($customer->{'app'}) if ($customer && !$appt);
 	}
 	my $data = {};
 	$data = eval { return decode_json($appt->{'data'}) } || {} if ($appt && $appt->{'data'});
@@ -20096,15 +20145,15 @@ sub text_editor_context_value($context, $key) {
 		return $data->{'id'};
 	}
 	# a document is about its customer; an appointment is about itself
-	if (defined $context->{'document'}) {
-		return unless $customer;
-		return &subs::format_name($customer->{'app'}) if ($lookup eq 'name');
-		my $settings = &subs::settings_grabber({ app => $customer->{'app'} });
+	my $about = $appt ? $appt->{'app'} : ($customer ? $customer->{'app'} : undef);
+	$about = $customer->{'app'} if (defined $context->{'document'} && $customer);
+	return unless $about;
+	return &subs::format_name($about) if ($lookup eq 'name');
+	if ($context->{'document'} || $context->{'customer'}) {
+		my $settings = &subs::settings_grabber({ app => $about });
 		return $settings->{$lookup};
 	}
-	return unless $appt;
-	return &subs::format_name($appt->{'app'}) if ($lookup eq 'name');
-	return &subs::setting_grabber({ app => $appt->{'app'}, setting => $lookup });
+	return &subs::setting_grabber({ app => $about, setting => $lookup });
 }
 
 # The legend an upgraded text editor shows across its top: the names ${self}
@@ -20125,6 +20174,13 @@ sub text_editor_variables($context) {
 	}
 	elsif (defined $context->{'document'} || defined $context->{'template'}) {
 		@names = qw/name email phone address id subtotal discount tax aux total balance/;
+	}
+	elsif ($context->{'customer'}) {
+		@names = qw/name email phone address/;
+		# the numbers of the newest document, when the customer has one
+		my $newest = &text_editor_context_value($context, 'total');
+		$newest = &text_editor_context_value($context, 'id') unless defined $newest;
+		push @names, qw/id subtotal discount tax aux total balance/ if defined $newest;
 	}
 	else {
 		return [];
@@ -20483,8 +20539,8 @@ websocket '/manager/ws' => sub ($c) {
 		}
 		elsif ($data->{'method'} eq 'textAreaMagic') {
 			my $context = &text_area_context($data->{'magic_vars'});
-			my ($magic,$token) = &text_area_magic($data->{'text'}, $context);
-			if (defined $token) {
+			my ($magic,$token) = &text_area_magic($data->{'text'}, $context, { plain => $data->{'plain'} });
+			if ($magic ne $data->{'text'}) {
 				$data->{'text'} = $magic;
 				$data->{'token'} = $token;
 				&Websocket::send('tab', { textAreaMagic => $data });

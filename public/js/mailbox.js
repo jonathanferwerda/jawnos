@@ -567,6 +567,9 @@ $(document).on('click', '.email_send', function() {
 		});
 		message['attachments'] = JSON.stringify(attachments);
 		message['uuid'] = form.attr('uuid');
+		// the send side says any last words: the context this compose was
+		// opened with travels with the letter
+		message['magic_vars'] = form.find('.email_compose_body').attr('magic_vars') || '';
 		$.ajax({
 			url: '/manager/mail/email/send',
 			type: 'POST',

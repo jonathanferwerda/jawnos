@@ -1,5 +1,6 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
 <% my $settings = &subs::settings_grabber({ app => 'mailbox' }); %>
+<% my $subject_variables = &Manager::text_editor_variables(&Manager::text_area_context($magic_vars)); %>
 <div class="email_compose_form" uuid="<%= $draft->{'uuid'} %>">
 	<% my $email_servers = eval { return decode_json $settings->{'email_config'} } || []; %>
 	<% @{$email_servers} = grep { $_->{'active'} eq 'on' } @{$email_servers}; %>
@@ -57,7 +58,10 @@
 				<input type="hidden" value="<%= $draft->{'uuid'} %>" id="email_compose_uuid" class="email_compose_input email_compose_uuid">
 			</tr>
 			<tr>
-				<td><b>Subject: </b></td><td><input type="text" id="email_compose_subject" style="width:80%;" class="email_compose_input email_compose_subject" value="<%= $draft->{'subject'} %>"></td>
+				<td><b>Subject: </b></td><td>
+					<input type="text" id="email_compose_subject" style="width:80%;" class="email_compose_input email_compose_subject" value="<%= $draft->{'subject'} %>" magic_vars="<%= $magic_vars %>">
+					<%= include 'text_editor_legend', variables => $subject_variables, source_id => '', target => 'email_compose_subject' %>
+				</td>
 			</tr>
 			<tr>
 				<td><b>Attachments: </b></td>
