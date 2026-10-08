@@ -26,12 +26,11 @@ function jawnosStudioButtonIcon(state, colour) {
 //
 // A take recorded on a channel armed to L is a looping sample: while the
 // transport runs it wraps back to its in-point every time its own length
-// elapses, until it is snipped on the waveform canvas. Loop takes are
-// bar-locked: recording starts on the bar line the playhead is in, runs for
-// the configured number of bars, then punches out and repeats on the spot.
-// Recording can be preceded by a count-in of the configured number of beats
-// (the signature's beats per bar by default), which clicks even when the
-// metronome is off.
+// elapses, until it is snipped on the waveform canvas. Recording locks to the
+// Start on setting (bar, beat, or free wheeling), runs for the configured
+// number of bars, then punches out and repeats on the spot, and it can be
+// preceded by a count-in of the configured number of beats (the signature's
+// beats per bar by default), which clicks even when the metronome is off.
 //
 // The live input can be monitored through the pedals into the speakers when the
 // song asks for it (headphones only — an open mic plus speakers will howl).
@@ -43,7 +42,12 @@ function studioContext() {
 	if (!studioAudio.ctx) {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
-		var ctx = new Ctor({ latencyHint: 'interactive' });
+		var options = { latencyHint: 'interactive' };
+		var rate = studioSampleRate();
+		if (rate > 0) { options.sampleRate = rate; }
+		var ctx;
+		try { ctx = new Ctor(options); }
+		catch (e) { ctx = new Ctor({ latencyHint: 'interactive' }); }
 		studioAudio.ctx = ctx;
 		studioAudio.master = ctx.createGain();
 		studioAudio.masterAnalyser = ctx.createAnalyser();
@@ -66,6 +70,22 @@ function studioVolumeFraction(value) {
 	var v = studioKnobNumber(value, 1);
 	if (v > 1) { v = v / 100; }
 	return Math.max(0, Math.min(1, v));
+}
+
+// Capture/encode preferences (video size, bit rates, sample rate, channels)
+// live in the app settings rather than the song, so they apply to whatever is
+// recorded next.
+function studioSettingNumber(setting, fallback) {
+	var raw = mixer['settings'] ? mixer['settings'][setting] : undefined;
+	if (raw === undefined || raw === null || String(raw).length == 0) { return fallback; }
+	var n = studioKnobNumber(raw, fallback);
+	return (n === null || n === undefined || isNaN(n)) ? fallback : n;
+}
+
+// 0 means "whatever the device does".
+function studioSampleRate() {
+	var rate = studioSettingNumber('sample_rate', 0);
+	return rate >= 8000 ? Math.round(rate) : 0;
 }
 
 // ---- effect factories ------------------------------------------------------
@@ -179,6 +199,8 @@ function studioChannelEngine(ch) {
 	c.treble.type = 'highshelf'; c.treble.frequency.value = 3500;
 	c.recAnalyser.fftSize = 2048;
 	c.recData = new Float32Array(c.recAnalyser.fftSize);
+	// the recorded stream follows the configured channel count
+	try { c.recDest.channelCount = studioSettingNumber('audio_channels', 2) || 2; } catch (e) {}
 	c.trim.connect(c.bass).connect(c.mid).connect(c.treble);
 	c.recGain.connect(c.recAnalyser);
 	c.recGain.connect(c.recDest);
@@ -263,12 +285,31 @@ function studioAttachInput(ch, stream) {
 	return c.recDest.stream;
 }
 
+// Push a capture-quality change (channel count) onto the live channels.
+function studioApplyCapture() {
+	var chans = studioSettingNumber('audio_channels', 2) || 2;
+	$.each(studioAudio.channels, function (ch, c) {
+		if (!c.recDest) { return; }
+		try { c.recDest.channelCount = chans; } catch (e) {}
+	});
+}
+
 // Live monitoring: the processed input only reaches the speakers when the song
 // asks for it, because an open mic plus speakers howls.
 function studioApplyMonitor() {
 	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
 	$.each(studioAudio.channels, function (ch, c) {
 		if (c.monGain) { c.monGain.gain.value = on ? 1 : 0; }
+	});
+}
+
+// Persist an app-wide preference (capture quality) without rebuilding the
+// window: the studio endpoint stores settings and hands back markup we ignore.
+function studioSaveSettings(settings) {
+	$.ajax({
+		url: '/manager/studio',
+		type: 'GET',
+		data: { timestamp: Date.now(), data: JSON.stringify({ settings: settings }) }
 	});
 }
 
@@ -801,6 +842,15 @@ function studioBeatSeconds() {
 	return 60 / bpm;
 }
 
+// Where a recording locks: the bar line (default), the nearest beat, or
+// nothing at all — free wheeling from wherever the playhead happens to be.
+function studioSnapUnit() {
+	var mode = String((mixer['time'] && mixer['time']['snap']) || 'bar');
+	if (mode == 'off' || mode == 'free' || mode == 'none') { return 0; }
+	if (mode == 'beat') { return studioBeatSeconds(); }
+	return studioBarSeconds();
+}
+
 // Beats of count-in before a recording starts. Blank follows the signature (4
 // in 4/4, 3 in 3/4); 0 turns the count-in off.
 function studioCountInBeats() {
@@ -829,18 +879,19 @@ function studioLoopRegion() {
 	return { start: r.start, bars: r.bars, end: r.start + (r.bars * bar) };
 }
 
-// What recording now would commit: the bar the playhead is in, for the
-// configured number of bars. Drawn while a channel waits on L, so the bars can
-// be lined up before a note is played.
+// What recording now would commit: the snapped position the playhead is at (or
+// in), for the configured number of bars. Drawn while a channel waits on L, so
+// the bars can be lined up before a note is played.
 function studioProspectiveRegion() {
 	var status = mixer['time']['status'];
 	if (status != 'stop' && status != 'scroll') { return null; }
 	if (!studioAnyChannelArmed('loop')) { return null; }
 	var bars = studioLoopBars();
 	if (bars <= 0) { return null; }
-	var bar = studioBarSeconds();
-	var start = Math.floor(mixer['time']['position'] / bar) * bar;
-	return { start: start, bars: bars, end: start + (bars * bar), tentative: true };
+	var start = mixer['time']['position'];
+	var unit = studioSnapUnit();
+	if (unit > 0) { start = Math.floor(start / unit) * unit; }
+	return { start: start, bars: bars, end: start + (bars * studioBarSeconds()), tentative: true };
 }
 
 function studioVisibleRegion() {
@@ -866,17 +917,19 @@ function studioAnyChannelArmed(state) {
 	return found;
 }
 
-// Whole bars recorded for a loop take: exactly the region when its end was
-// reached, otherwise the nearest bar, so a phrase stopped by hand still
-// repeats in time.
-function studioLoopTakeBars(take) {
-	var bar = studioBarSeconds();
+// How long a take that repeats should be: the committed region when its end was
+// reached, otherwise the played span snapped to the grid the recording started
+// on (whole bars, whole beats, or untouched when free wheeling).
+function studioLoopTakeDuration(take) {
 	var region = take.region;
-	if (region && region.bars > 0 && mixer['time']['position'] >= region.end) { return region.bars; }
+	var bar = studioBarSeconds();
+	if (region && region.bars > 0 && mixer['time']['position'] >= region.end) { return region.bars * bar; }
 	var span = mixer['time']['position'] - take.startTime - (take.latency || 0);
-	var bars = Math.max(1, Math.round(span / bar));
-	if (region && region.bars > 0) { bars = Math.min(bars, region.bars); }
-	return bars;
+	var unit = studioSnapUnit();
+	if (unit > 0) { span = Math.max(unit, Math.round(span / unit) * unit); }
+	else { span = Math.max(0.05, span); }
+	if (region && region.bars > 0) { span = Math.min(span, region.bars * bar); }
+	return span;
 }
 
 var studioTakeDrag = null;
@@ -1137,8 +1190,18 @@ function studioInit(data) {
 		data: { window_maker: 'yes', timestamp: timestamp, data: jdata },
 		success: function(response) {
 			windowMaker(response.html);
+			var studio_defaults = response.settings || {};
 			mixer = {
-				time: { duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0, loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0, lastMetronome: null, loop_bars: 4, monitor: 'no', loop_region: null, count_in: '', punch_in: null, pending_takes: null },
+				time: {
+					duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0,
+					loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0,
+					lastMetronome: null, loop_region: null, punch_in: null, pending_takes: null,
+					// seeded from the app settings, then kept per song
+					loop_bars: studio_defaults['loop_bars'] || 4,
+					snap: studio_defaults['snap'] || 'bar',
+					count_in: (studio_defaults['count_in'] === undefined ? '' : studio_defaults['count_in']),
+					monitor: studio_defaults['monitor'] || 'no'
+				},
 				buttons: { record: { obg: '', bg: 'red', interval: '' }, stop: { obg: '', bg: 'lightgreen', interval: '' }, play: { obg: '', bg: 'yellow', interval: '' } },
 				settings: response.settings,
 				automations: {}
@@ -1183,6 +1246,7 @@ function studioInit(data) {
 			}
 			studioApplyPedals();
 			studioUpdateFxBadges();
+			studioApplyCapture();
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
 
@@ -1688,16 +1752,28 @@ async function studioInputStreamGrabber(channel,state) {
 	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
 	var video = (plug['av'] != 'a');
 
-	var constraints = {
-		audio: {
-			echoCancellation: false,  // Disables echo suppression
-			noiseSuppression: false,  // Disables background noise dampening
-			autoGainControl: false,   // Prevents the browser from auto-adjusting volume
-			sampleRate: 44100,
-			channelCount: 2
-		}
+	var audio = {
+		echoCancellation: false,  // Disables echo suppression
+		noiseSuppression: false,  // Disables background noise dampening
+		autoGainControl: false   // Prevents the browser from auto-adjusting volume
 	};
-	if (video) { constraints['video'] = true; }
+	var sample_rate = studioSampleRate();
+	if (sample_rate > 0) { audio.sampleRate = sample_rate; }
+	var channels = studioSettingNumber('audio_channels', 0);
+	if (channels > 0) { audio.channelCount = channels; }
+
+	var constraints = { audio: audio };
+	if (video) {
+		// 320p up to the device maximum, with an optional frame-rate cap
+		var height = studioSettingNumber('video_height', 0);
+		var fps = studioSettingNumber('video_fps', 0);
+		if (height > 0 || fps > 0) {
+			constraints['video'] = {};
+			if (height > 0) { constraints['video'].height = { ideal: Math.round(height) }; }
+			if (fps > 0) { constraints['video'].frameRate = { ideal: Math.round(fps) }; }
+		}
+		else { constraints['video'] = true; }
+	}
 
 	var stream;
 	try {
@@ -1773,9 +1849,15 @@ function studioStartTake(ch, looping, at) {
 	media.out[ir] = take;
 
 	var mime = studioPickMime(!!media.video);
+	var options = {};
+	if (mime) { options.mimeType = mime; }
+	var kbps = studioSettingNumber('audio_kbps', 256);
+	if (kbps > 0) { options.audioBitsPerSecond = Math.max(6, Math.min(510, Math.round(kbps))) * 1000; }
+	var mbps = studioSettingNumber('video_mbps', 0);
+	if (media.video && mbps > 0) { options.videoBitsPerSecond = Math.round(mbps * 1000) * 1000; }
 	var recorder;
 	try {
-		recorder = mime ? new MediaRecorder(media.in, { mimeType: mime, audioBitsPerSecond: 256000 }) : new MediaRecorder(media.in);
+		recorder = new MediaRecorder(media.in, options);
 	} catch (e) {
 		console.log('studio: MediaRecorder could not start', e);
 		return;
@@ -1803,8 +1885,8 @@ function studioStopTake(ch, ir) {
 	if (take && take.status == 'recording') {
 		take.status = 'stop';
 		if (take.loop) {
-			// loop takes are bar-locked, so their repeats never drift off the grid
-			take.duration = studioLoopTakeBars(take) * studioBarSeconds();
+			// repeats are grid-locked, so they never drift off the beat
+			take.duration = studioLoopTakeDuration(take);
 		}
 		else {
 			take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
@@ -1844,20 +1926,17 @@ async function studioRecord() {
 		takes.push({ ch: i, loop: arm == 'loop' });
 	});
 
-	// Where recording begins. Loop takes are bar-locked: the region starts on
-	// the bar line the playhead is in and runs for the configured number of
-	// bars, so the phrase and its repeats stay on the beat grid.
+	// Where recording begins. Loop takes reserve a region: it starts on the
+	// grid the Start on setting asks for (bar, beat, or the playhead itself)
+	// and runs for the configured number of bars, so the phrase and its repeats
+	// stay on the beat grid.
+	var unit = studioSnapUnit();
 	var punch = mixer['time']['position'];
+	if (unit > 0) { punch = Math.floor(punch / unit) * unit; }
 	if (loop_armed) {
 		var bars = studioLoopBars();
-		if (bars > 0) {
-			var bar = studioBarSeconds();
-			punch = Math.floor(mixer['time']['position'] / bar) * bar;
-			mixer['time']['loop_region'] = { start: punch, bars: bars };
-		}
-		else {
-			mixer['time']['loop_region'] = null;
-		}
+		if (bars > 0) { mixer['time']['loop_region'] = { start: punch, bars: bars }; }
+		else { mixer['time']['loop_region'] = null; }
 	}
 
 	mixer['time']['status'] = 'record';
@@ -2271,6 +2350,7 @@ function studioLoad(uuid) {
 			$('.studio_config[setting="crossfade"]').val(mixer['time']['crossfade'] || '');
 			$('.studio_config[setting="loop_bars"]').val(mixer['time']['loop_bars'] === undefined ? 4 : mixer['time']['loop_bars']);
 			$('.studio_config[setting="count_in"]').val(mixer['time']['count_in'] || '');
+			$('.studio_config[setting="snap"]').val(mixer['time']['snap'] || 'bar');
 			$('.studio_config[setting="monitor"]').val(mixer['time']['monitor'] || 'no');
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
@@ -2445,6 +2525,31 @@ $(document).on('change', '.studio_config', function() {
 	if (setting == 'count_in') {
 		mixer['time']['count_in'] = value;
 		studioSaver();
+		return;
+	}
+	if (setting == 'snap') {
+		mixer['time']['snap'] = value;
+		studioSaver();
+		studioDrawTracks();
+		return;
+	}
+	if (setting == 'sample_rate') {
+		// the audio context is built with one fixed rate, so it has to be rebuilt
+		mixer['settings'] = mixer['settings'] || {};
+		mixer['settings'][setting] = value;
+		if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
+		studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {} };
+		setTimeout(function() {
+			studioInit({ 'settings': [{ 'setting': setting, 'value': value }] });
+		}, 500);
+		return;
+	}
+	if (setting == 'video_height' || setting == 'video_fps' || setting == 'video_mbps' ||
+		setting == 'audio_kbps' || setting == 'audio_channels') {
+		mixer['settings'] = mixer['settings'] || {};
+		mixer['settings'][setting] = value;
+		if (String(value).length > 0) { studioSaveSettings([{ 'setting': setting, 'value': value }]); }
+		studioApplyCapture();
 		return;
 	}
 	if (setting == 'monitor') {

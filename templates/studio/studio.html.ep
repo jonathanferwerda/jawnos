@@ -151,8 +151,18 @@
 						<td><input class="studio_config" setting="crossfade" value="<%= $settings->{'crossfade'} || '' %>"></td>
 					</tr>
 					<tr>
-						<td>Loop bars<br><span style="font-size:12px;">arm a channel to L and record: the phrase loops over this many bars, starting on the bar the playhead is in. 0 lets the phrase run free (its length still snaps to whole bars).</span></td>
+						<td>Loop bars<br><span style="font-size:12px;">arm a channel to L and record: the phrase loops over this many bars from where recording starts. 0 lets the phrase run free (its length follows Start on).</span></td>
 						<td><input class="studio_config" setting="loop_bars" value="<%= $settings->{'loop_bars'} || 4 %>"></td>
+					</tr>
+					<tr>
+						<td>Start on<br><span style="font-size:12px;">where a recording locks when it begins: the bar line, the nearest beat, or nothing at all (free wheeling from the playhead)</span></td>
+						<td>
+							<select class="studio_config" setting="snap">
+								<option value="bar"<%= (($settings->{'snap'} || 'bar') eq 'bar') ? ' selected' : '' %>>bar</option>
+								<option value="beat"<%= (($settings->{'snap'} || 'bar') eq 'beat') ? ' selected' : '' %>>beat</option>
+								<option value="off"<%= (($settings->{'snap'} || 'bar') eq 'off') ? ' selected' : '' %>>off (free)</option>
+							</select>
+						</td>
 					</tr>
 					<tr>
 						<td>Count-in (beats)<br><span style="font-size:12px;">clicks this many beats before recording starts; blank follows the signature (4 in 4/4), 0 turns it off</span></td>
@@ -164,6 +174,51 @@
 							<select class="studio_config" setting="monitor">
 								<option value="no"<%= (($settings->{'monitor'} || 'no') eq 'no') ? ' selected' : '' %>>no</option>
 								<option value="yes"<%= (($settings->{'monitor'} || 'no') eq 'yes') ? ' selected' : '' %>>yes</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td colspan="2" style="padding-top:14px;"><b>Recording quality</b><br><span style="font-size:12px;">applies to the next recording. Bit depth is not selectable: browser recorders always encode Opus or AAC, so the sample rate, channels and bit rate are the quality knobs that exist.</span></td>
+					</tr>
+					<tr>
+						<td>Video height<br><span style="font-size:12px;">320p up to the device maximum</span></td>
+						<td>
+							<select class="studio_config" setting="video_height">
+								<option value=""<%= (($settings->{'video_height'} || '') eq '') ? ' selected' : '' %>>maximum</option>
+								<% foreach my $h (1440, 1080, 720, 480, 360, 320) { %>
+								<option value="<%= $h %>"<%= (($settings->{'video_height'} || '') eq $h) ? ' selected' : '' %>><%= $h %>p</option>
+								<% } %>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td>Video frame rate<br><span style="font-size:12px;">fps; blank takes what the device offers</span></td>
+						<td><input class="studio_config" setting="video_fps" value="<%= $settings->{'video_fps'} || '' %>"></td>
+					</tr>
+					<tr>
+						<td>Video bit rate (Mbps)<br><span style="font-size:12px;">blank lets the browser choose</span></td>
+						<td><input class="studio_config" setting="video_mbps" value="<%= $settings->{'video_mbps'} || '' %>"></td>
+					</tr>
+					<tr>
+						<td>Audio bit rate (kbps)<br><span style="font-size:12px;">64 to 320</span></td>
+						<td><input class="studio_config" setting="audio_kbps" value="<%= $settings->{'audio_kbps'} || 256 %>"></td>
+					</tr>
+					<tr>
+						<td>Audio channels</td>
+						<td>
+							<select class="studio_config" setting="audio_channels">
+								<option value="2"<%= (($settings->{'audio_channels'} || '2') eq '2') ? ' selected' : '' %>>stereo</option>
+								<option value="1"<%= (($settings->{'audio_channels'} || '2') eq '1') ? ' selected' : '' %>>mono</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td>Sample rate<br><span style="font-size:12px;">changing this reboots the studio window, so save first</span></td>
+						<td>
+							<select class="studio_config" setting="sample_rate" restart="yes">
+								<option value=""<%= (($settings->{'sample_rate'} || '') eq '') ? ' selected' : '' %>>device default</option>
+								<option value="44100"<%= (($settings->{'sample_rate'} || '') eq '44100') ? ' selected' : '' %>>44100</option>
+								<option value="48000"<%= (($settings->{'sample_rate'} || '') eq '48000') ? ' selected' : '' %>>48000</option>
 							</select>
 						</td>
 					</tr>
