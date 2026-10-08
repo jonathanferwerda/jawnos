@@ -88,6 +88,10 @@ sub master_time_looper() {
 			$fork = undef;
 
 			$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+			# the paused flag only guards this restart sequence; clear it or the next
+			# restart trigger takes the early return above and the master loop stays
+			# dead until ./jawn is run by hand
+			$master_timer_paused = 0;
 		  &master_time_looper();
 		}
 	});
