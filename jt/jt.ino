@@ -1070,7 +1070,35 @@ void chat_grabber(String s, String uuid) {
 }
 
 int last_chat_y;
+
+// ---- the chat and pen rooms' text input --------------------------------------
+// Those two rooms used to print every keystroke straight onto the panel from
+// keypad_read() and keep their own String of what had been typed. That is why
+// putting a real widget in here double-typed everything: both the widget and
+// the raw code were handed the same key. Now the log is an LVGL label, the
+// input is a real textarea in the keypad group, and keypad_read() passes these
+// rooms straight to LVGL.
+static lv_obj_t *room_log = NULL;     // label holding the message log
+static lv_obj_t *room_input = NULL;   // the textarea being typed into
+static String room_log_text;
+
+static void roomLogAppend(String who, String body) {
+  if (room_log == NULL) {
+    return;
+  }
+  room_log_text += who + ": " + body + "\n";
+  lv_label_set_text(room_log, room_log_text.c_str());
+  lv_obj_scroll_to_y(lv_obj_get_parent(room_log), LV_COORD_MAX, LV_ANIM_OFF);
+}
+
 void chat_text_writer(String manager_file, String body, long timestamp) {
+  buttonMillis = millis();
+  // in the chat and pen rooms the log lives in LVGL above the input; the raw
+  // TFT path below is what the other rooms still draw with
+  if (room_log != NULL && (jw_room == "chat" || jw_room == "pen")) {
+    roomLogAppend(manager_file, body);
+    return;
+  }
   int y = tft.getCursorY();
   int x = tft.getCursorX();
   JSONVar president;
@@ -1307,10 +1335,7 @@ void loop() {
         movement = "right";
         if (roller_ball_direction == "right" && rb_count >= 5) {
           troom = "home";
-          display_exit();
-          button_writer();
-          jw_room = "pen";
-          pen_room();
+          clock_writer();          // right is the clock (was the pen room)
           rb_count = 0;
         }
         else if (roller_ball_direction == "right") {
@@ -1325,10 +1350,10 @@ void loop() {
         movement = "down";
         if (roller_ball_direction == "down" && rb_count >= 5) {
           troom = "home";
-          jw_room = "configure";
           rb_count = 0;
-          //authorization_changer("down");
-          setting_room();
+          pen_room();              // down is the pen room (was configure; the
+          //                        configure room is still on the third room
+          //                        button)
         }
         else if (roller_ball_direction == "down") {
           rb_count++;
@@ -1526,6 +1551,10 @@ void readRadio() {
 void display_exit( void ) {
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
+  // the chat/pen log and input lived on the screen that was just cleaned
+  room_log = NULL;
+  room_input = NULL;
+  room_log_text = "";
   button_writer();
   //  time_writer("now");
 }
@@ -1672,12 +1701,24 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
   char keyValue;
   keyValue = keypad_get_key();
   if (keyValue != 0) {
-    fontLoader();
-    char buf[256] = {0};
     data->state = LV_INDEV_STATE_PR;
     buttonMillis = millis();
     Serial.println(keyValue);
-    last_key = keyValue;
+    // LVGL's own key codes live in the low ASCII range and its Enter is '\n',
+    // while this keyboard sends a carriage return for Enter.
+    last_key = (keyValue == (char)0x0D) ? (uint32_t)LV_KEY_ENTER : (uint32_t)(uint8_t)keyValue;
+
+    // The chat and pen rooms have real LVGL textareas now: the key goes to the
+    // focused widget through the keypad group and the sending happens on the
+    // textarea's READY event. Handling it here as well would type it twice -
+    // which is what happened the last time this was tried.
+    if (jw_room == "chat" || jw_room == "pen") {
+      data->key = last_key;
+      return;
+    }
+
+    fontLoader();
+    char buf[256] = {0};
     long timestamp = rtc.getLocalEpoch() - rtc.offset;
     JSONVar president;
     if (buttoned_before) {
@@ -1934,6 +1975,72 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
   }
 }
 
+// The input half of the chat and pen rooms: a scrolling log on top and a one
+// line textarea underneath, focused in the keypad group so the keyboard types
+// straight into it. LVGL fires LV_EVENT_READY when Enter is pressed.
+static void roomInputSend(lv_event_t *e) {
+  lv_obj_t *ta = lv_event_get_target_obj(e);
+  String text = String(lv_textarea_get_text(ta));
+  lv_textarea_set_text(ta, "");
+  if (text.length() == 0) {
+    return;
+  }
+  long timestamp = rightNow();
+  if (jw_room == "chat") {
+    chat_text_writer(computer_name, text, timestamp);
+    if (authorization != "") {
+      String request = "https://" + homebaseIP + "/watch/chat_received?message=" + urlEncode(text)
+                       + "&username=" + urlEncode(computer_name)
+                       + "&community=" + urlEncode(community_room) + "&club=" + urlEncode(club_room)
+                       + "&team=" + urlEncode(team_room) + "&account=" + urlEncode(account_room)
+                       + "&project=" + urlEncode(project_room) + "&contact=" + urlEncode(contact_room)
+                       + "&person=" + urlEncode(person_room);
+      https_request(request);
+    }
+    loraChatBroadcast(computer_name, text, timestamp);
+  }
+  else if (jw_room == "pen") {
+    chat_text_writer("Me", text, timestamp);
+    if (authorization != "") {
+      String request = "https://" + homebaseIP + "/teletype/pen?message=" + urlEncode(text)
+                       + "&username=" + urlEncode(computer_name);
+      String information = https_request(request);
+      JSONVar info = JSON.parse(information);
+      chat_text_writer("Pen", (const char *)info["message"], rightNow());
+    }
+  }
+}
+
+static void roomInputBuild(const char *placeholder, int logTop, int logHeight) {
+  room_log_text = "";
+  lv_obj_t *box = lv_obj_create(lv_scr_act());
+  lv_obj_set_pos(box, 5, logTop);
+  lv_obj_set_size(box, 310, logHeight);
+  lv_obj_set_style_pad_all(box, 4, 0);
+  lv_obj_set_style_radius(box, 0, 0);
+  lv_obj_set_style_bg_color(box, lv_color_black(), 0);
+  lv_obj_set_style_border_width(box, 1, 0);
+  lv_obj_set_style_border_color(box, lv_color_hex(0x606060), 0);
+  room_log = lv_label_create(box);
+  lv_obj_set_width(room_log, 292);
+  lv_label_set_long_mode(room_log, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(room_log, lv_color_white(), 0);
+  lv_label_set_text(room_log, "");
+
+  room_input = lv_textarea_create(lv_scr_act());
+  lv_obj_set_pos(room_input, 5, 158);
+  lv_obj_set_size(room_input, 310, 36);
+  lv_textarea_set_one_line(room_input, true);
+  lv_textarea_set_placeholder_text(room_input, placeholder);
+  lv_obj_add_event_cb(room_input, roomInputSend, LV_EVENT_READY, NULL);
+  lv_group_t *group = lv_group_get_default();
+  if (group) {
+    lv_group_add_obj(group, room_input);
+    lv_group_focus_obj(room_input);
+  }
+  buttonMillis = millis();
+}
+
 long rightNow() {
   long timestamp = rtc.getLocalEpoch() - rtc.offset;
 
@@ -2100,6 +2207,13 @@ static bool getTouch(int16_t &x, int16_t &y)
       y = t.y;
   }
   // Serial.printf("R:%d X:%d Y:%d\n", rotation, x, y);
+  // What the panel reported versus where LVGL will be told it happened, in case
+  // a tap lands somewhere unexpected. Rate limited, only while a touch is held.
+  static uint32_t lastTouchProbe = 0;
+  if (millis() - lastTouchProbe > 700) {
+    lastTouchProbe = millis();
+    deckLog("[deck] touch raw %d,%d rot %d -> %d,%d", t.x, t.y, (int)rotation, x, y);
+  }
   buttonMillis = millis();
 
   return true;
@@ -2134,9 +2248,14 @@ static void touchpad_read( lv_indev_t *indev_driver, lv_indev_data_t *data )
   // Touch drives LVGL in every room. The room-specific handling that reads the
   // panel directly (the typewriter's websocket mouse, the room's button replay)
   // stays where it is in loop().
+  // getTouch() takes references: writing into locals and never putting them
+  // back left data->point at whatever LVGL had last, so every tap was a press
+  // in the wrong place.
   int16_t x = data->point.x;
   int16_t y = data->point.y;
   data->state = getTouch(x, y) ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
+  data->point.x = x;
+  data->point.y = y;
 }
 
 void scanDevices(TwoWire * w)
@@ -3463,8 +3582,8 @@ void chat_displayer() {
     lv_dropdown_set_options(codd, cooptions.c_str());
     lv_obj_add_event_cb(codd, community_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(codd, community_room.c_str());
-    lv_obj_set_pos(codd, 10, 10 );
-    lv_obj_set_size(codd, 120, 40 );
+    lv_obj_set_pos(codd, 5, 2 );
+    lv_obj_set_size(codd, 98, 28 );
     lv_obj_set_style_bg_color(codd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(codd, t1, LV_PART_MAIN);
     Serial.println("after community");
@@ -3477,8 +3596,8 @@ void chat_displayer() {
     lv_dropdown_set_options(cldd, cloptions.c_str());
     lv_obj_add_event_cb(cldd, club_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(cldd, club_room.c_str());
-    lv_obj_set_pos(cldd, 10, 50 );
-    lv_obj_set_size(cldd, 120, 40 );
+    lv_obj_set_pos(cldd, 107, 2 );
+    lv_obj_set_size(cldd, 98, 28 );
     lv_obj_set_style_bg_color(cldd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(cldd, t1, LV_PART_MAIN);
     Serial.println("after the club");
@@ -3492,8 +3611,8 @@ void chat_displayer() {
     lv_dropdown_set_options(tedd, teoptions.c_str());
     lv_obj_add_event_cb(tedd, team_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(tedd, team_room.c_str());
-    lv_obj_set_pos(tedd, 10, 90 );
-    lv_obj_set_size(tedd, 120, 40 );
+    lv_obj_set_pos(tedd, 209, 2 );
+    lv_obj_set_size(tedd, 106, 28 );
     lv_obj_set_style_bg_color(tedd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(tedd, t1, LV_PART_MAIN);
     Serial.println("after the team");
@@ -3506,8 +3625,8 @@ void chat_displayer() {
     lv_dropdown_set_options(prdd, proptions.c_str());
     lv_obj_add_event_cb(prdd, project_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(prdd, project_room.c_str());
-    lv_obj_set_pos(prdd, 150, 10 );
-    lv_obj_set_size(prdd, 120, 40 );
+    lv_obj_set_pos(prdd, 5, 34 );
+    lv_obj_set_size(prdd, 73, 28 );
     lv_obj_set_style_bg_color(prdd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(prdd, t1, LV_PART_MAIN);
     Serial.println("after the project");
@@ -3520,8 +3639,8 @@ void chat_displayer() {
     lv_dropdown_set_options(acdd, acoptions.c_str());
     lv_obj_add_event_cb(acdd, account_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(acdd, account_room.c_str());
-    lv_obj_set_pos(acdd, 150, 50 );
-    lv_obj_set_size(acdd, 120, 40 );
+    lv_obj_set_pos(acdd, 81, 34 );
+    lv_obj_set_size(acdd, 73, 28 );
     lv_obj_set_style_bg_color(acdd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(acdd, t1, LV_PART_MAIN);
     Serial.println("after the account");
@@ -3534,8 +3653,8 @@ void chat_displayer() {
     lv_dropdown_set_options(pedd, peoptions.c_str());
     lv_obj_add_event_cb(pedd, person_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(pedd, person_room.c_str());
-    lv_obj_set_pos(pedd, 10, 130 );
-    lv_obj_set_size(pedd, 220, 40 );
+    lv_obj_set_pos(pedd, 157, 34 );
+    lv_obj_set_size(pedd, 73, 28 );
     lv_obj_set_style_bg_color(pedd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(pedd, t1, LV_PART_MAIN);
     Serial.println("after the person");
@@ -3548,12 +3667,13 @@ void chat_displayer() {
     lv_dropdown_set_options(condd, conoptions.c_str());
     lv_obj_add_event_cb(condd, contact_room_select, LV_EVENT_VALUE_CHANGED, NULL);
     lv_dropdown_set_text(condd, contact_room.c_str());
-    lv_obj_set_pos(condd, 150, 90 );
-    lv_obj_set_size(condd, 120, 40 );
+    lv_obj_set_pos(condd, 233, 34 );
+    lv_obj_set_size(condd, 82, 28 );
     lv_obj_set_style_bg_color(condd, lv_color_hex(0x58fdd4), LV_PART_MAIN);
     lv_obj_set_style_text_color(condd, t1, LV_PART_MAIN);
     Serial.println("after the contact");
   }
+  roomInputBuild("chat", 68, 86);
   lv_task_handler();
 }
 
@@ -3654,7 +3774,7 @@ static void touch_button5(lv_event_t *e) {
 void pen_room() {
   jw_room = "pen";
   display_exit();
-
+  roomInputBuild("pen", 5, 148);
 }
 
 static void fontPicker(lv_event_t *e) {
