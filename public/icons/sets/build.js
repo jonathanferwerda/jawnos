@@ -123,11 +123,10 @@ const GLYPHS = {
 	crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14" fill="none" stroke="{G}" stroke-width="2"/><path d="M2 6h14a2 2 0 0 1 2 2v14" fill="none" stroke="{G}" stroke-width="2"/>',
 	fill: '<path d="M5 11 11 5l7 7-6 6a2 2 0 0 1-2.8 0L5 13.8a2 2 0 0 1 0-2.8z" fill="{G}"/><path d="M19 14s2 2.2 2 3.6a2 2 0 1 1-4 0C17 16.2 19 14 19 14z" fill="{D}"/>',
 	duplicate: '<rect x="8" y="8" width="13" height="13" rx="2" fill="{D}"/><rect x="3" y="3" width="13" height="13" rx="2" fill="{G}"/>',
-	mirror: '<path d="M12 3v18" stroke="{D}" stroke-width="1.4" stroke-dasharray="2 2"/><path d="M4 7l5 5-5 5z" fill="{G}"/><path d="M20 7l-5 5 5 5z" fill="{G}"/>',
 	// the search button (search_button) reads as a magnifying glass
 	magnifier: '<circle cx="10.3" cy="10.3" r="6.2" fill="{D}" opacity="0.45"/><circle cx="10.3" cy="10.3" r="6.2" fill="none" stroke="{G}" stroke-width="2.2"/><path d="M7.4 8.7a3.6 3.6 0 0 1 1.8-1.7" fill="none" stroke="{D}" stroke-width="1.2" stroke-linecap="round"/><path d="M15 15 20.6 20.6" fill="none" stroke="{G}" stroke-width="2.9" stroke-linecap="round"/>',
 	// the device lister's neighbour button starts an ssh tunnel, so it gets an
-	// arch with the road running in rather than the flip-mirror glyph
+	// arch with the road running in
 	tunnel: '<path d="M2.6 20.4v-6.6a9.4 9.4 0 0 1 18.8 0v6.6z" fill="{G}"/><path d="M7.9 20.4v-6a4.1 4.1 0 0 1 8.2 0v6z" fill="{D}"/><path d="M12 15.4v5" fill="none" stroke="{G}" stroke-width="1.1" stroke-dasharray="1.6 1.4" stroke-linecap="round"/>',
 	backspace: '<path d="M9 5h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6-7z" fill="{G}"/><path d="M11.5 9.5l5 5M16.5 9.5l-5 5" stroke="{D}" stroke-width="1.7" stroke-linecap="round"/>',
 	thumbsdown: '<g transform="rotate(180 12 12)"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73V10z" fill="{G}"/></g>',
@@ -339,7 +338,6 @@ const ICONS = {
 	'eat': 'eat',
 	'fill': 'fill',
 	'gps': 'pin',
-	'mirror': 'mirror',
 	'search_button': 'magnifier',
 	'tunnel': 'tunnel',
 	'palette': 'palette',
