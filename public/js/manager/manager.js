@@ -1140,10 +1140,9 @@ $(document).on('click', '.start_menu_item', function (e) {
 // in the president's cache and riding on the list as its recent attribute -
 // the list IS the recent list, and the shelf rail is how everything else is
 // reached. A press writes the app back, through the server and into the
-// attribute so the view agrees without waiting; the shelf showing is a local
-// preference, remembered the way the menu button is.
-var startMenuCategoryKey = 'start_menu_category';
-
+// attribute so the view agrees without waiting. Which shelf is showing lives
+// on the rail button itself, so a fresh menu - fetched on every open - always
+// starts on the recents.
 function startMenuRowKey(item) {
 	var img = item.find('img').first();
 	return img.attr('id') || img.attr('hint') || ($.trim(item.text()) || '');
@@ -1191,7 +1190,7 @@ function startMenuView() {
 	if (main.length == 0) { return; }
 	var rows = main.children('.start_menu_item');
 	if (rows.length == 0) { return; }
-	var category = localStorage.getItem(startMenuCategoryKey) || '';
+	var category = $('.start_menu_category.selected').attr('category') || '';
 	rows.show();
 	if (category) {
 		startMenuSort(main);
@@ -1215,14 +1214,15 @@ function startMenuView() {
 	var shown = rows.filter(function () { return $(this).css('display') != 'none'; }).length;
 	main.find('.start_menu_empty').toggle(!category && shown == 0);
 	rows.find('.start_menu_recent_clear').toggle(!category);
-	$('.start_menu_category').removeClass('selected');
-	$('.start_menu_category[category="' + category + '"]').addClass('selected');
 }
 
+// A press on a shelf shows it, a press on the shelf showing brings the
+// recents back; the button wears the choice, and the next open - a fresh
+// menu with no shelf marked - lands on the recents again.
 $(document).on('click', '.start_menu_category', function () {
-	var category = $(this).attr('category') || '';
-	var showing = localStorage.getItem(startMenuCategoryKey) || '';
-	localStorage.setItem(startMenuCategoryKey, showing === category ? '' : category);
+	var showing = $(this).hasClass('selected');
+	$('.start_menu_category').removeClass('selected');
+	if (!showing) { $(this).addClass('selected'); }
 	startMenuView();
 });
 
