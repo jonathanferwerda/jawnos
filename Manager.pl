@@ -12764,13 +12764,15 @@ get '/manager/text_editor/create' => sub($c) {
 	my $id = $c->param('id');
 	my $contents = $c->param('contents');
 	my $placeholder = $c->param('placeholder');
+	my $context = &text_area_context($c->param('magic_vars'));
 	my $p_id = $id . '_text_editor';
 	my $html = $c->render_to_string(
 		template => 'text_editor',
 		id => $id,
 		p_id => $p_id,
 		contents => $contents,
-		placeholder => $placeholder
+		placeholder => $placeholder,
+		variables => &text_editor_variables($context)
 	);
 
 	$c->render(json => { html => $html, p_id => $p_id, id => $id });
@@ -15099,7 +15101,8 @@ get '/manager/mail/email/compose' => sub($c) {
 		draft => $draft,
 		drafts => $drafts,
 		attachments => $draft->{'attachments'} || [],
-		timestamp => $draft->{'timestamp'} || &subs::rightNow()
+		timestamp => $draft->{'timestamp'} || &subs::rightNow(),
+		magic_vars => ''
 	);
 	$c->render(json => {
 		email => $email,
@@ -15208,7 +15211,9 @@ get '/store/email' => sub($c) {
 		draft => $draft,
 		drafts => $drafts,
 		timestamp => $draft->{'timestamp'} || &subs::rightNow(),
-		attachments => $attachments
+		attachments => $attachments,
+		# ${self} in the body answers for this quote/invoice and its customer
+		magic_vars => 'document:' . $uuid . ',customer:' . $cx_uuid
 	);
 	foreach my $att ( @{$attachments} ) {
 
@@ -20007,7 +20012,14 @@ our $ws_server;
 # setting does not exist is left exactly as it was written, never eaten. The
 # whole text comes back with the token its spans wear, so the caret can be put
 # back after the last one; the token is undefined when nothing was found.
-sub text_area_magic($text) {
+#
+# ${self}->total names the thing the editor is about rather than an app: the
+# appointment it sits in, or the quote/invoice and its customer the compose
+# window was opened for. The context rides on the editor's magic_vars
+# attribute; when it names no record - a template, before it belongs to a
+# document - the words are left as written, because a template is where they
+# are meant to wait.
+sub text_area_magic($text, $context) {
 	my $token = &subs::random_string_creator(10);
 	my $found = 0;
 	my $magic = $text;
@@ -20021,10 +20033,16 @@ sub text_area_magic($text) {
 		my ($raw_app,$raw_set,$whole) = ($1,$2,$&);
 		my $app = $raw_app;
 		$app =~ s/^\$\{//; $app =~ s/\}$//; $app =~ s/^\$//;
-		my $value = &subs::setting_grabber({
-			app => &subs::unformat_name($app),
-			setting => &subs::unformat_name($raw_set)
-		});
+		my $value;
+		if ($app eq 'self') {
+			$value = &text_editor_context_value($context, $raw_set);
+		}
+		else {
+			$value = &subs::setting_grabber({
+				app => &subs::unformat_name($app),
+				setting => &subs::unformat_name($raw_set)
+			});
+		}
 		unless (defined $value) {
 			$whole;
 		}
@@ -20036,6 +20054,90 @@ sub text_area_magic($text) {
 		}
 	!gex;
 	return ($magic, $found ? $token : undef);
+}
+
+# The context an upgraded text editor carries in its magic_vars attribute:
+# comma separated key:value pairs. The keys name the kinds of thing an editor
+# can be about - appointment, document, customer, template. It is deliberately
+# small, and both sides of the wire build or read it in one line.
+sub text_area_context($string) {
+	my $context = {};
+	foreach my $pair ( split ',', ($string || '') ) {
+		my ($key,$value) = split ':', $pair, 2;
+		next unless defined $key && length $key;
+		$context->{$key} = defined $value ? $value : '';
+	}
+	return $context;
+}
+
+# What ${self}->name and its brothers answer for a context. An appointment
+# answers from itself and its settings; a document answers from its numbers
+# (total, balance, the id it printed under) and from its customer (name,
+# email, phone, address); a context that names no record answers nothing, so
+# the words wait to be said by whoever applies them.
+sub text_editor_context_value($context, $key) {
+	my $lookup = &subs::unformat_name($key);
+	my $appt;
+	my $uuid = $context->{'appointment'} || $context->{'document'};
+	if ($uuid) {
+		$appt = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+	}
+	my $customer;
+	if ($context->{'customer'}) {
+		$customer = &subs::db_select('settings', undef, { setting => 'uuid', value => $context->{'customer'} })->hashes->[0];
+	}
+	my $data = {};
+	$data = eval { return decode_json($appt->{'data'}) } || {} if ($appt && $appt->{'data'});
+	my $numbers = $data->{'numbers'};
+	if ($numbers && defined $numbers->{$lookup}) {
+		return $numbers->{$lookup};
+	}
+	if ($lookup eq 'id' && defined $data->{'id'}) {
+		return $data->{'id'};
+	}
+	# a document is about its customer; an appointment is about itself
+	if (defined $context->{'document'}) {
+		return unless $customer;
+		return &subs::format_name($customer->{'app'}) if ($lookup eq 'name');
+		my $settings = &subs::settings_grabber({ app => $customer->{'app'} });
+		return $settings->{$lookup};
+	}
+	return unless $appt;
+	return &subs::format_name($appt->{'app'}) if ($lookup eq 'name');
+	return &subs::setting_grabber({ app => $appt->{'app'}, setting => $lookup });
+}
+
+# The legend an upgraded text editor shows across its top: the names ${self}
+# can say in this context, each with the value it would show right now when
+# there is something to resolve it against. A template is shown the same
+# names without values - they are what it will say once it belongs to a
+# document, and seeing them is how a template is written at all.
+sub text_editor_variables($context) {
+	my @names;
+	if ($context->{'appointment'}) {
+		@names = qw/name ago duration quantity schedule warranty notes/;
+		my $appt = &subs::db_select('appointments', undef, { uuid => $context->{'appointment'} })->hashes->[0];
+		my $data = {};
+		$data = eval { return decode_json($appt->{'data'}) } || {} if ($appt && $appt->{'data'});
+		if ($data->{'numbers'} || defined $data->{'id'}) {
+			push @names, qw/id subtotal discount tax aux total balance/;
+		}
+	}
+	elsif (defined $context->{'document'} || defined $context->{'template'}) {
+		@names = qw/name email phone address id subtotal discount tax aux total balance/;
+	}
+	else {
+		return [];
+	}
+	my @variables;
+	foreach my $name ( @names ) {
+		my $value = &text_editor_context_value($context, $name);
+		push @variables, {
+			name => '${self}->' . $name,
+			value => (defined $value && length $value) ? $value : undef
+		};
+	}
+	return \@variables;
 }
 
 websocket '/manager/ws' => sub ($c) {
@@ -20380,7 +20482,8 @@ websocket '/manager/ws' => sub ($c) {
 			&subs::music_transmitter($c, $data);
 		}
 		elsif ($data->{'method'} eq 'textAreaMagic') {
-			my ($magic,$token) = &text_area_magic($data->{'text'});
+			my $context = &text_area_context($data->{'magic_vars'});
+			my ($magic,$token) = &text_area_magic($data->{'text'}, $context);
 			if (defined $token) {
 				$data->{'text'} = $magic;
 				$data->{'token'} = $token;

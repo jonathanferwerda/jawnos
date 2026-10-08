@@ -69,7 +69,7 @@
 			<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="schedule" style="width:16%;" />
 			<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" style="width:16%;" />
 			<br>
-			<textarea  class="timed_input notes" rows="3" app="<%= $a %>" text="notes" style="width:99%" placeholder="notes" upgradeable="yes"></textarea>
+			<textarea  class="timed_input notes" rows="3" app="<%= $a %>" text="notes" style="width:99%" placeholder="notes" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
 			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
 				<%= include 'apps/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>
 			</div>

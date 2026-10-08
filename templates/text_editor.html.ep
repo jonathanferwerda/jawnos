@@ -1,4 +1,19 @@
+<% $variables ||= []; %>
 <div tabindex="0" class="text_editor_container" source_id="<%= $id %>">
+	<%# the legend sits across the top as part of the furniture: opening it must
+	    never move the words under the pointer, so the panel opens over the text
+	    rather than pushing it, and only an editor with something to say about
+	    its context wears one at all %>
+	<% if (scalar @{$variables}) { %>
+		<div class="text_editor_variables_bar" source_id="<%= $id %>">
+			<button type="button" class="text_editor_variables_toggle hover">Variables</button>
+			<span class="text_editor_variables_panel" style="display:none;">
+				<% foreach my $v ( @{$variables} ) { %>
+					<button type="button" class="text_editor_variable hover" variable="<%= $v->{'name'} %>"<% if (defined $v->{'value'}) { %> value="<%= $v->{'value'} %>"<% } %>><%= $v->{'name'} %><% if (defined $v->{'value'}) { %> <span class="text_editor_variable_value"><%= $v->{'value'} %></span><% } %></button>
+				<% } %>
+			</span>
+		</div>
+	<% } %>
 	<div class="text_editor" contenteditable="true" id="<%= $p_id %>" source_id="<%= $id %>" placeholder="<%= $placeholder %>"><%== $contents %></div>
 	<%# the toolbox lives below the text: showing it must never move the words
 	    the pointer is on, or a click aimed at the editor lands on the toolbox %>

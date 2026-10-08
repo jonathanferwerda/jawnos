@@ -35,7 +35,7 @@
 			<b>Subject</b><br>
 			<input class="email_template_field" field="subject" style="width:100%;" value="<%= $st->{'subject'} %>"><br>
 			<b>Body</b><br>
-			<textarea class="email_template_field" field="body" style="width:100%;height:60%;" upgradeable="yes"><%= $st->{'body'} %></textarea>
+			<textarea class="email_template_field" field="body" style="width:100%;height:60%;" upgradeable="yes" magic_vars="template:<%= $st->{'purpose'} %>"><%= $st->{'body'} %></textarea>
 		</span>
 		<span class="template_variables">
 			<b>Variables</b>

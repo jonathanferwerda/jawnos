@@ -307,6 +307,12 @@ $(document).on('change', '.email_template_select', function() {
 					input.html(v).trigger('change');
 				}
 			});
+			// a template is full of names waiting for a document, and this
+			// compose knows one: the words become what it says
+			var body = form.find('.email_compose_body.text_editor');
+			if (body.length && body.attr('magic_vars')) {
+				textEditorMagic(body, true);
+			}
 
 
 		}

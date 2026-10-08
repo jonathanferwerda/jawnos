@@ -75,7 +75,7 @@
 				</td>
 			</tr>
 		</table>
-		<textarea id="email_compose_body" style="height:80%;width:100%;" placeholder="Body" class="email_compose_input email_compose_body" upgradeable="yes"><%= $draft->{'body'} %></textarea>
+		<textarea id="email_compose_body" style="height:80%;width:100%;" placeholder="Body" class="email_compose_input email_compose_body" upgradeable="yes" magic_vars="<%= $magic_vars %>"><%= $draft->{'body'} %></textarea>
 		<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>
 			<% if ($att->{'html'}) { %>
 				<div class="email_attachment_embed" uuid="<%= $att->{'uuid'} %>">

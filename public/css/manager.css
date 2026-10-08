@@ -708,6 +708,57 @@ img[src*="/icons/original/"] {
   border-radius: 10px;
 }
 
+/* ---- the text editor's variable legend --------------------------------------
+
+   The bar is furniture from the moment the editor is built, and the panel
+   opens over the words rather than pushing them, because a legend that moves
+   the text under the pointer is a click lost. The chips wear the name the
+   magic eats and, where the editor has something to answer with, the value
+   it would show right now. */
+
+.text_editor_variables_bar {
+	position: relative;
+	text-align: left;
+}
+
+.text_editor_variables_toggle {
+	height: 20px;
+	font-size: 14px;
+	padding: 0 6px;
+	min-width: 0;
+	line-height: 1;
+}
+
+.text_editor_variables_panel {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	z-index: 60;
+	max-height: 200px;
+	min-width: 200px;
+	overflow: auto;
+	white-space: nowrap;
+	text-align: left;
+	background-color: var(--panel-2);
+	border: solid;
+	border-radius: 5px;
+	padding: 2px;
+}
+
+.text_editor_variable {
+	display: block;
+	width: 100%;
+	height: auto;
+	min-width: 0;
+	margin: 1px 0;
+	font-size: 16px;
+	text-align: left;
+}
+
+.text_editor_variable_value {
+	color: var(--ink-muted);
+}
+
 /* ---- the ide's code view ----------------------------------------------------
 
    The words live in the textarea and the colour lives in a <pre> behind it,

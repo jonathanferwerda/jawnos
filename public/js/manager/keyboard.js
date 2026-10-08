@@ -1148,7 +1148,7 @@ function textareaUpgrader() {
 			$.ajax({
 				url: '/manager/text_editor/create',
 				type: 'GET',
-				data: { id: id, contents: contents, placeholder: placeholder },
+				data: { id: id, contents: contents, placeholder: placeholder, magic_vars: ta.attr('magic_vars') || '' },
 				success: function(response) {
 					var p_id = response.p_id;
 					id = response.id;
@@ -1245,7 +1245,9 @@ function textEditorMagic(dom, force) {
 	var source_id = dom.attr('source_id');
 	if (wand.attr('status') == 'on' || force) {
 
-		var data = { method: 'textAreaMagic', text: text, id: id, source_id: source_id };
+		// magic_vars says what ${self} is about here - the appointment the editor
+		// sits in, or the quote/invoice and customer the compose was opened for
+		var data = { method: 'textAreaMagic', text: text, id: id, source_id: source_id, magic_vars: dom.attr('magic_vars') || '' };
 
 		var jdata = JSON.stringify(data);
 
