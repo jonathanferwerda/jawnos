@@ -700,6 +700,33 @@ function jawnosInkHalo(ink) {
 	var lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 	return lum > 0.5 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
 }
+// Canvas text for the manager printers. The themed ink alone vanishes over a
+// background picture, so when pictures are on the text is stroked with the
+// contrasting halo first, then filled. Vertical centring is the default -
+// the printers reason about marker rows, not baselines.
+function jawnosPrinterText(ctx, text, x, y, opts) {
+	opts = opts || {};
+	ctx.save();
+	if (opts.font) { ctx.font = opts.font; }
+	if (opts.align) { ctx.textAlign = opts.align; }
+	ctx.textBaseline = opts.baseline || 'middle';
+	if (opts.alpha != null) { ctx.globalAlpha = opts.alpha; }
+	if (opts.halo) {
+		ctx.lineWidth = opts.haloWidth || 3;
+		ctx.strokeStyle = opts.halo;
+		ctx.strokeText('' + text, x, y);
+	}
+	ctx.fillStyle = opts.colour || jawnosInk();
+	ctx.fillText('' + text, x, y);
+	ctx.restore();
+}
+// The halo to draw under printer text, or undefined when no picture is up.
+function jawnosPrinterHalo() {
+	if (localStorage.getItem('background_images') == 'on' && typeof jawnosInkHalo == 'function') {
+		return jawnosInkHalo(jawnosInk());
+	}
+	return undefined;
+}
 function jawnosRgbToHsl(r, g, b) {
 	r /= 255; g /= 255; b /= 255;
 	var max = Math.max(r, g, b), min = Math.min(r, g, b);

@@ -1,11 +1,7 @@
 var headerHeight = 50;
 function headerPrinter(ctx,appts,title) {
-	ctx.fillStyle = 'yellow';
-	ctx.font = "400 24px arial";
 	var canvas = document.getElementById(title.toLowerCase());
 	$('#' + title.toLowerCase()).show();
-	ctx.fillStyle = jawnosInk();
-	var sorts = localStorage.getItem('sorts');
 	var scope = localStorage.getItem('scope');
 
 	var formatted_time = fixedTimeString(numeral(appts['__specs']['timestamp']).value());
@@ -14,183 +10,141 @@ function headerPrinter(ctx,appts,title) {
 		header = header + ' ' + appts['__specs']['birthday'];
 	}
 	$('#header').html(header);
-	if (formatted_time.match('NaN')) {
-	//	formatted_time = appts['__specs']['formatted_timestamp'];
-	}
-//	ctx.fillText(formatted_time + '  ' + appts['__specs']['birthday'], 5  , 65 );
-	ctx.font = "400 28px Arial";
-	ctx.save('init');
 
-	if (appts['__stash']) {
-	/*
-		ctx.save('stash');
-		ctx.fillStyle = jawnosInk();
-		ctx.fillRect(-10, canvas.height * .98, canvas.width, canvas.height * .98);
-		ctx.fillStyle = jawnosInk();
-		var vertical = 105;
-		ctx.fillText('d: ' + numeral(appts['__stash']['day_total_' + sorts]).format('0,0.00'), 5 , vertical );
-		ctx.fillText('w: ' + numeral(appts['__stash']['week_total_' + sorts]).format('0,0.00'), 5 + 160 , vertical );
-		ctx.fillText('m: ' + numeral(appts['__stash']['month_total_' + sorts]).format('0,0.00'), 5 + 310 , vertical );
-		ctx.fillText('y: ' + numeral(appts['__stash']['year_total_' + sorts]).format('0,0.00'), 5 + 460 , vertical );
-		ctx.restore('stash')
-		*/
-	}
-	ctx.beginPath();
+	// the divider under the header text - a moveTo alone never drew a line
+	ctx.save();
 	ctx.strokeStyle = 'yellow';
-	reservedSpots['header'] = headerHeight - 4;
 	ctx.lineWidth = 10;
+	ctx.beginPath();
 	ctx.moveTo(0, headerHeight);
-	reservedSpots['header']['y'] = headerHeight;
-	ctx.fill();
+	ctx.lineTo(canvas ? canvas.width : $(window).width(), headerHeight);
+	reservedSpots['header'] = headerHeight - 4;
 	ctx.stroke();
-	//ctx.fillText(scope, 5, 30);
-
-	ctx.fill();
+	ctx.restore();
 }
 
 
 var appPosition;
 function leaderboardPrinter(appts) {
 	appPosition = [];
-	var lineHeight = 26;
+	var lineHeight = 30;
 	var scope = localStorage.getItem('scope');
 	var sorts = localStorage.getItem('sorts');
 	var filter = scope + '_' + sorts;
 	$('#leaderboard').show();
 	var canvas = document.getElementById('leaderboard');
 	canvas.width = $('#background').width();
-	var translateHeight = 0;
-	
-	var temp_height = (canvas.height * .10);
-	$.each(appts,function(i,v) {
-		if (!v.list) { return true; }
-		temp_height = (temp_height + (numeral(lineHeight)).value());
-	});
 
-	if (temp_height > $(window).height()) {
-		$('#leaderboard').height(temp_height);
-		canvas.height = temp_height;
+	// one row per app that has a value for the current scope+sort, biggest first
+	var appt_storage = [];
+	$.each(appts, function(appt_n,appt) {
+		if (appt_n.match(/^__/)) { return true; }
+		if (!appt['setting'] || !appt[filter]) { return true; }
+		appt_storage.push(appt);
+	});
+	var appt_store = appt_storage.sort(function(a, b) { return b[filter] - a[filter]; });
+
+	var top = headerHeight + clothesLineHeight + 26;
+	var rowsHeight = top + (appt_store.length * lineHeight) + 40;
+	if (rowsHeight > $(window).height()) {
+		$('#leaderboard').height(rowsHeight);
+		canvas.height = rowsHeight;
 	}
 	else {
 		canvas.height = $(window).height();
 		$('#leaderboard').height(canvas.height);
 	}
-
 	ctx = canvas.getContext('2d');
-
-
-	var outer = canvas.height;
-
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	headerPrinter(ctx,appts,'Leaderboard');
-	ctx.save('leaderboard');
 
-	var lineWidth = 2500;
-	var warrantyHeight = 55;
-	var startingHeight = 100 + clothesLineHeight;
-	ctx.translate(7, startingHeight);
-	var appt_storage = [];
+	var ink = jawnosInk();
+	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
+	var font = '600 20px Arial';
+	ctx.font = font;
 
-	$.each(appts, function(appt_n,appt) {
-		if (appts[appt_n][filter]) {
-			var appt_check = $.grep(appt_storage, function(n,i) { return (n.formatted_name == appt.formatted_name) })
-			if (appt_check.length == 0 ) {
-				appt.setting.colour = appts[appt_n].setting.colour;
-				appt_storage.push(appt);
-			}
-		}
+	// the left columns set the start of the time column, so long names do not
+	// shove it into the numbers
+	var nameWidth = 0;
+	$.each(appt_store, function(i,v) {
+		nameWidth = Math.max(nameWidth, ctx.measureText('' + v['shorthand_name']).width);
 	});
-	var appt_store = appt_storage.sort((a, b) => b[filter] - a[filter] );
-	var rightNow = appts.timestamp;
+	var timeX = 16 + nameWidth + 16;
+	var rightLimit = canvas.width - 56;
 	var presently = Date.now();
-	var nowWatch;
-	var dateWatch;
-	ctx.font = "420 " + lineHeight + "px Arial";
+	var nowWatch = 0;
 
+	$.each(appt_store, function(i,v) {
+		var rowY = top + (i * lineHeight);
+		var colour = v.setting.colour || ink;
+		var status = v.setting.status;
+		var rowTop = rowY - (lineHeight * 0.55);
+		var rowHeight = lineHeight * 1.1;
 
-	for (i = 0; i <= appt_store.length; i++) {
-		if (appt_store[i] == undefined) { continue; }
-		if (appt_store[i]['timestamp'] < presently && nowWatch != 'completed') {
-//			ctx.fillStyle = jawnosInk();
-				ctx.beginPath();
-				ctx.fillStyle = appt_store[i].setting.colour || jawnosInk();
-				ctx.strokeStyle = jawnosInk();
-				ctx.globalAlpha = 1;
-				ctx.arc(canvas.width - 17, 0, 33, (Math.PI * 2),.5, true);
-				ctx.fill();
-	//			ctx.fillText(new_arr[i].name,0,0);
-				ctx.arc(canvas.width - 17, 0, 31, (Math.PI * 2),.5, true);
-				ctx.stroke();
-				nowWatch = 'completed';
+		// the row: loud while recording, faint otherwise, ticked with the colour
+		ctx.save();
+		if (status == 'record' || status == 'start') {
+			ctx.globalAlpha = 0.85;
+			ctx.fillStyle = colour;
+			ctx.fillRect(6, rowTop, rightLimit - 6, rowHeight);
+		}
+		else if (status == 'pause') {
+			ctx.globalAlpha = 0.3;
+			ctx.fillStyle = colour;
+			ctx.fillRect(40, rowTop, rightLimit - 46, rowHeight);
+		}
+		else {
+			ctx.globalAlpha = 0.05;
+			ctx.fillStyle = ink;
+			ctx.fillRect(6, rowTop, rightLimit - 6, rowHeight);
+		}
+		ctx.globalAlpha = 0.9;
+		ctx.fillStyle = colour;
+		ctx.fillRect(6, rowTop, 4, rowHeight);
+		ctx.restore();
 
+		// the left columns
+		jawnosPrinterText(ctx, v['shorthand_name'], 16, rowY, { font: font, colour: ink, halo: halo });
+		jawnosPrinterText(ctx, v['just_time'], timeX, rowY, { font: font, colour: ink, halo: halo });
+
+		// the right columns, each honest about its own width: money first, then
+		// duration, since, occurrences
+		var columns = [];
+		if (v[scope + '_percent'] != undefined && v[scope + '_percent'] !== '') { columns.push(numeral(v[scope + '_percent']).format('0%')); }
+		if (v[scope + '_total']) { columns.push('$' + v[scope + '_total']); }
+		if (v[scope + '_tax']) { columns.push('$' + v[scope + '_tax']); }
+		if (v[scope + '_amount']) { columns.push('$' + v[scope + '_amount']); }
+		columns.push(v[scope + '_formatted_duration']);
+		columns.push(v['formatted_since']);
+		if (v[scope + '_occurrences']) { columns.push(v[scope + '_occurrences']); }
+
+		var cx = rightLimit;
+		$.each(columns, function(ci,text) {
+			if (text == undefined || text == '') { return true; }
+			var w = ctx.measureText('' + text).width;
+			jawnosPrinterText(ctx, text, cx - w, rowY, { font: font, colour: ink, halo: halo });
+			cx = cx - w - 16;
+		});
+
+		// ring the first row whose moment has passed - the board's "you are here"
+		if (!nowWatch && v['timestamp'] && v['timestamp'] < presently) {
+			nowWatch = 1;
+			ctx.save();
+			ctx.strokeStyle = colour;
+			ctx.lineWidth = 3;
+			ctx.beginPath();
+			ctx.arc(canvas.width - 26, rowY, 10, 0, (Math.PI * 2));
+			ctx.stroke();
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.arc(canvas.width - 26, rowY, 10, 0, (Math.PI * 2));
+			ctx.stroke();
+			ctx.restore();
 		}
 
-
-		if (appt_store[i] != undefined) {
-			var point = appt_store[i][filter];
-			ctx.fillStyle = appt_store[i].setting.colour || jawnosInk();
-			ctx.save('u');
-			if (appt_store[i].setting.status == 'record') {
-				ctx.globalAlpha = 1;
-				ctx.fillRect(-10, 0, canvas.width, lineHeight * 1.1);
-				ctx.fillStyle = jawnosInk();
-			}
-			else if (appt_store[i].setting.status == 'start') {
-				ctx.globalAlpha = 1;
-				ctx.fillRect(-10, 0, canvas.width, lineHeight * 1.1);
-				ctx.fillStyle = jawnosInk();
-			}
-			else if (appt_store[i].setting.status == 'pause') {
-				ctx.globalAlpha = 1;
-				ctx.fillRect(30, 0, $('#background').width() - 330, lineHeight * 1.1);
-				ctx.fillStyle = jawnosInk();
-			}
-			else {
-				ctx.globalAlpha = 0.03
-				ctx.fillRect(-10, 0, canvas.width, lineHeight * 1.1);
-			}
-			ctx.globalAlpha = 1;
-			ctx.translate(0, lineHeight);
-			ctx.save('y');
-			ctx.translate(-2,0);
-			ctx.fillText(appt_store[i].shorthand_name, 0, 0);
-
-			ctx.translate(85,0);
-			ctx.fillText(appt_store[i]['just_time'], 0, 0);
-			ctx.translate(120,0);
-			ctx.fillText(appt_store[i][scope + '_occurrences'], 0, 0);
-			appPosition.push([0, (lineHeight * i) + startingHeight, lineWidth, ((lineHeight * i) + (lineHeight)) + startingHeight, appt_store[i]]);
-			ctx.translate(40,0);
-			ctx.fillText(appt_store[i]['formatted_since'], 0, 0);
-			ctx.translate(140,0);
-
-			ctx.fillText(appt_store[i][scope + '_formatted_duration'], 0, 0);
-
-
-		//	ctx.fillText(appt_store[i][scope + '_duration_percent'], 0,0);
-			point =  appt_store[i][scope + '_timestamp'];
-//ctx.fillText(point, 0, 0);
-
-			if (appt_store[i][scope + '_amount']) {
-				ctx.fillText('$' + appt_store[i][scope + '_amount'], 110, 0);
-				ctx.translate(120,0);
-				if (appt_store[i][scope + '_tax']) {
-					ctx.fillText('$' + appt_store[i][scope + '_tax'], 110, 0);
-				}
-				ctx.translate(120,0);
-				ctx.fillText('$' + appt_store[i][scope + '_total'], 110, 0);
-				ctx.translate(120,0);
-				ctx.fillText((numeral(appt_store[i][scope + '_percent']).format(".2f") * 100) + '%', 110, 0);
-			}
-			translateHeight = (lineHeight * i) + startingHeight + lineHeight;
-
-			ctx.restore('y');
-		}
-
-
-	}
-	ctx.translate(0,( -1 * translateHeight));
-
-	ctx.closePath();
+		appPosition.push([0, rowY - (lineHeight / 2), canvas.width, rowY + (lineHeight / 2), v]);
+	});
 }
 
 $(document).on('click', '.background', function (e) {

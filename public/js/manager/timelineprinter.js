@@ -1,160 +1,171 @@
-
+// The timeline: one row per app, a dot per occurrence placed by its percent,
+// money beside the dot, and the span from the start percent to the percent
+// drawn as a faded band behind it. Rows begin under the header and the
+// clothesline, and the canvas grows to hold every app.
 
 var appPosition = [];
 function timelinePrinter(appts,sort,offset) {
 	appPosition = [];
-	var pseudonymLoader = [];
 	var scope = localStorage.getItem('scope');
 	var canvas = document.getElementById('timeline');
 
 	$('#timeline').show();
 	canvas.width = $('#background').width();
 
-
-
-	var temp_height = (canvas.height * .05) + clothesLineHeight;
-	$.each(appts,function(i,v) {
-		if (!v.list) { return true; }
-		temp_height = (temp_height + (numeral(19)).value());
+	var rowHeight = 34;
+	var pad = 26;
+	var top = headerHeight + clothesLineHeight + 26;
+	var rows = 0;
+	$.each(appts, function(i,v) {
+		if ( i.match(/^__/) ) { return true; }
+		if ( !v.setting || !v.list || v.list.length == 0 ) { return true; }
+		rows++;
 	});
-
-	if (temp_height > $(window).height()) {
-		$('#timeline').height(temp_height);
-		canvas.height = temp_height;
+	var needed = top + (rows * rowHeight) + pad;
+	if (needed > $(window).height()) {
+		$('#timeline').height(needed);
+		canvas.height = needed;
 	}
 	else {
 		canvas.height = $(window).height();
 		$('#timeline').height(canvas.height);
 	}
 	ctx = canvas.getContext('2d');
-	ctx.strokeStyle = jawnosInk();
 	ctx.clearRect(0,clothesLineHeight,canvas.width,canvas.height);
-	ctx.fill();
 	ctx.beginPath();
 	headerPrinter(ctx,appts,'Timeline');
-	ctx.save('init');
 
+	var ink = jawnosInk();
+	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
+
+	// the yellow rail the rows are hung from
+	ctx.save();
 	ctx.strokeStyle = 'yellow';
-	ctx.lineWidth = 5;
+	ctx.lineWidth = 8;
+	ctx.lineCap = 'round';
+	ctx.beginPath();
 	ctx.moveTo(canvas.width / 2, 80);
-	ctx.lineTo(canvas.width /2, canvas.height);
-	ctx.fill();
+	ctx.lineTo(canvas.width / 2, canvas.height);
 	ctx.stroke();
-	ctx.restore('init');
-	ctx.moveTo(0, 80);
-	ctx.lineWidth = 3;
-	var placement_number = 2;
+	ctx.restore();
+
+	var placement_number = 0;
 	var textPrinter = [];
-	var appts_length = appts.length;
+	var column = canvas.width - pad * 2;
 
 	$.each(appts, function(i,v) {
-
 		if ( i.match(/^__/) ) { return true; }
-		if ( !v.setting ) { return true; }
-		ctx.strokeStyle = jawnosInk();
-		ctx.fillStyle = v.setting.colour || jawnosInk();
-		if (!v.list) { return true; }
-		var ln = v.list.length;
-		ctx.moveTo(0, canvas.height * .8);
-		var appt_store = [];
-
-		$.each(appts, function(appt_n,appt) {
-			var appt_check = $.grep(appt_store, function(n,i) { return n.formatted_name == appt.formatted_name })
-			if (appt_check.length == 0 && appt[scope + '_occurrences'] > 0) {
-				appt_store.push(appt);
-			}
-
-		});
-		var total_store_size = appt_store.length;
-
-		for (var n = 0; n < ln; n++) {
-			placement_number++;
-			ctx.beginPath();
-
-			var l = v.list[n];
-			if (l.length == 0 ) { return true; }
-			var occurrence = (n / ln) / canvas.height;
-			ctx.font = "400 20px Arial";
-			var position = (canvas.width/2) * l[scope + '_percent'];
-			var verticalPosition = (placement_number * 28) + clothesLineHeight;
-
-			if (v['placement_number']) {
-				verticalPosition = v['placement_number'];
-				placement_number--;
-			}
-			ctx.arc(position, verticalPosition, 10, 0, (Math.PI*2), true);
-
-			appPosition.push([position - 40, verticalPosition - 10, position + 10, verticalPosition + 10, v]);
-			ctx.fillStyle = jawnosInk();
-			if (l['total'] || l['amount']) {
-				ctx.font = "400 14px Arial";
-				var fillText = l['total'] ? '$' + l['total'] : '$' + l['amount'];
-				ctx.fillText(fillText, position + 40, (  verticalPosition + 14 ));			
-				ctx.font = "400 20px Arial";	
-			}
-
-
-			appPosition.push([position , verticalPosition - 26, position + ctx.measureText(l['formatted_name']).width, verticalPosition +10, v]);
-			ctx.fill();
-			ctx.stroke();
-			ctx.strokeStyle = v.setting.colour || jawnosInk();
-			ctx.arc(position, verticalPosition, 9, 0, (Math.PI*2), true);
-			var now = Date.now();
-			if (clothesLinePos['moving'] + 300 < now) {
-				pseudoGenerator(appts,l['type'],position - 20, verticalPosition - 10);
-			}
-
-			if (l[scope + '_start_percent']) {
-				ctx.save('to the beginning');
-				var startPosition = (canvas.width/2) * l[scope + '_start_percent'];
-
-				if (l[scope + '_start_percent'] < 0) {
-					appPosition.push([startPosition - 40, verticalPosition - 10, position + 10, verticalPosition + 10, v]);
-				}
-				else {
-					appPosition.push([position - 40, verticalPosition - 10, startPosition + 10, verticalPosition + 10, v]);
-				}
-
-				ctx.lineWidth = 10;
-				ctx.lineTo(startPosition, verticalPosition);
-				ctx.strokeStyle = v.setting.colour || jawnosInk();
-
-				ctx.stroke();
-				ctx.lineWidth = 2;
-				ctx.lineTo(startPosition, verticalPosition);
-				ctx.arc(startPosition + 7, verticalPosition, 7, 0, (Math.PI*2), true);
-				ctx.stroke();
-				ctx.restore('to the beginning');
-
-			}
-			if(!v['placement_number']) {
-				var fillText = l['formatted_name'];	
-				textPrinter.push({ text: fillText, x: position + 25, y: verticalPosition });
-			}
-			v['placement_number'] = verticalPosition;
-			ctx.stroke();
-			ctx.closePath()
+		if ( !v.setting || !v.list || v.list.length == 0 ) { return true; }
+		var colour = v.setting.colour || ink;
+		var rowY;
+		if (v['placement_number']) {
+			rowY = v['placement_number'];
 		}
-		ctx.moveTo(0, canvas.height * .2);
+		else {
+			rowY = top + (placement_number * rowHeight);
+			placement_number++;
+			v['placement_number'] = rowY;
+		}
+		var named = false;
+		var hit = [canvas.width, rowY - 16, 0, rowY + 16, v];
 
-		ctx.stroke();
-		 
+		$.each(v.list, function(n,l) {
+			if ( !l ) { return true; }
+			var pct = parseFloat(l[scope + '_percent']);
+			if ( !isFinite(pct) ) { pct = 0; }
+			pct = Math.min(Math.max(pct, 0), 1);
+			var x = pad + (column * pct);
+
+			var startX;
+			var startPct = parseFloat(l[scope + '_start_percent']);
+			if ( isFinite(startPct) ) {
+				startPct = Math.min(Math.max(startPct, 0), 1);
+				startX = pad + (column * startPct);
+				ctx.save();
+				ctx.globalAlpha = 0.3;
+				ctx.strokeStyle = colour;
+				ctx.lineWidth = 16;
+				ctx.lineCap = 'round';
+				ctx.beginPath();
+				ctx.moveTo(startX, rowY);
+				ctx.lineTo(x, rowY);
+				ctx.stroke();
+				ctx.restore();
+			}
+
+			// the pseudonym's own icon, hung to the left of the dot
+			if ( x - 44 > 0 ) {
+				pseudoGenerator(appts,l['type'], x - 40, rowY - 12, 24);
+				if (x - 44 < hit[0]) { hit[0] = x - 44; }
+			}
+
+			// the dot: halo, ink disc, coloured ring, and the span's end cap
+			ctx.save();
+			if (halo) {
+				ctx.strokeStyle = halo;
+				ctx.lineWidth = 7;
+				ctx.beginPath();
+				ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+				ctx.stroke();
+			}
+			ctx.fillStyle = ink;
+			ctx.beginPath();
+			ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+			ctx.fill();
+			ctx.strokeStyle = colour;
+			ctx.lineWidth = 4;
+			ctx.beginPath();
+			ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+			ctx.stroke();
+			if (startX != undefined) {
+				ctx.lineWidth = 3;
+				ctx.beginPath();
+				ctx.arc(startX, rowY, 5, 0, (Math.PI * 2));
+				ctx.stroke();
+			}
+			ctx.restore();
+
+			var labelX = x + 16;
+			var labelEnd = labelX;
+			var nameOnThisDot = false;
+			if (!named) {
+				named = true;
+				nameOnThisDot = true;
+				ctx.font = "400 20px Arial";
+				textPrinter.push({ text: l['formatted_name'], x: labelX, y: rowY, font: "400 20px Arial" });
+				labelEnd = labelX + ctx.measureText('' + l['formatted_name']).width;
+			}
+			if (l['total'] || l['amount']) {
+				var amount = '$' + (l['total'] ? l['total'] : l['amount']);
+				var amountX = nameOnThisDot ? labelEnd + 10 : labelX;
+				textPrinter.push({ text: amount, x: amountX, y: rowY + 2, font: "400 14px Arial" });
+				ctx.font = "400 14px Arial";
+				labelEnd = amountX + ctx.measureText(amount).width;
+			}
+			if (labelEnd > hit[2]) { hit[2] = labelEnd; }
+			if (x - 14 < hit[0]) { hit[0] = x - 14; }
+			if (x + 14 > hit[2]) { hit[2] = x + 14; }
+		});
+		if (hit[0] < 0) { hit[0] = 0; }
+		if (hit[2] > canvas.width) { hit[2] = canvas.width; }
+		appPosition.push(hit);
 	});
-	$.each(textPrinter, function(i,v) {
-		ctx.fillText(v.text, v.x, v.y);				
+
+	$.each(textPrinter, function(i,t) {
+		jawnosPrinterText(ctx, t.text, t.x, t.y, { font: t.font, colour: ink, halo: halo });
 	});
-	ctx.stroke();
 }
 
-function pseudoGenerator(appts,type,x,y) {
+function pseudoGenerator(appts,type,x,y,size) {
 	var pseudonym = $.grep(appts['__specs']['pseudonyms'], function(n, i){ // just use arr
 		return n['name'] == type;
 	});
 
 	if (pseudonym.length > 0) {
+		size = size || 30;
 		var img = new Image;
 		img.onload = function(){
-			ctx.drawImage(img,x,y, 30, 30);
+			ctx.drawImage(img,x,y, size, size);
 		};
 		img.src = pseudonym[0]['icon'];
 	}
