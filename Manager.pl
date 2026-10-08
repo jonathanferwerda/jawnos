@@ -19082,6 +19082,12 @@ sub update_database($data) {
 		# process failing every later contended write with "database is locked".
 		# A one-off migration that wants its own settings should open its own
 		# Mojo::SQLite, not borrow this one.
+		# Statistics are the exception: after schema or index changes the planner's
+		# numbers describe a database that no longer exists, and optimize only
+		# re-runs ANALYZE where they are stale or missing. The alarm haircut carries
+		# the same pair, for installs that have that utility switched on.
+		eval { $db->query('PRAGMA analysis_limit=400;'); };
+		eval { $db->query('PRAGMA optimize;'); };
 	}
 
 	if (1 == 0) {
