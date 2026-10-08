@@ -4416,16 +4416,30 @@ our $database_holder;
 our $database;
 sub database_grabber() {
 	my $connection = shift || '';
-	# One connection per call. A process-wide handle looked like a free win, but a
-	# single results object left unexhausted keeps that process's read snapshot
-	# open for the rest of its life: the WAL never gets checkpointed (it grew to
-	# the size of the database here) and later requests read stale pages. Dialling
-	# per call is what this file did for years, and it is what the other writers on
-	# this file (the mirror server, pen.pl, the device scripts) expect.
+	# A forked child inherits the parent's handle. Detach it so our exit cannot
+	# close a connection the parent is still using, then dial our own below.
 	if (defined $gb::database_holder->{'pid'} && $gb::database_holder->{'pid'} != $$ && defined $gb::database_holder->{'sql'} ) {
-		# we are a fork of the process that owns the newest handle: detach it, or our
-		# exit would close a connection our parent is still using
 		$gb::database_holder->{'sql'}->db->dbh->{InactiveDestroy} = 1;
+		$gb::database_holder = {};
+	}
+	# One connection per process, not per call: opening the file costs about two
+	# milliseconds, which every database touch of every request used to pay, while
+	# a kept handle costs microseconds. Three rules keep it safe. It is only reused
+	# by the process that opened it (pid). It is only reused while the same file is
+	# still in place (dev+ino) - the database is shredded and replaced on leave, and
+	# a handle on the old inode would quietly serve a dead file. And before it is
+	# handed on, whatever the previous caller left unfinished is finished: a results
+	# object that was never fetched from pins the connection's read snapshot, and
+	# that is what stopped the WAL checkpointing and grew it to the size of the
+	# database once. The callers here fetch their rows before making the next
+	# database call, so nothing live is cut short.
+	my $holder = $gb::database_holder;
+	if ($holder->{'pid'} && $holder->{'pid'} == $$ && $holder->{'db'} && $holder->{'dbh'} && $holder->{'dev'}) {
+		my @stat = stat($holder->{'database'});
+		if (@stat && $stat[0] == $holder->{'dev'} && $stat[1] == $holder->{'ino'}) {
+			eval { $holder->{'dbh'}->visit_child_handles(sub { my $sth = shift; $sth->finish }) };
+			return ($holder->{'db'}, $holder->{'database'}, $holder->{'sql'});
+		}
 	}
 	my $dir = &subs::home($config->{'start_dir'});
 	$dir =~ s{/+$}{};
@@ -4444,14 +4458,20 @@ sub database_grabber() {
 		my $sql = Mojo::SQLite->new('sqlite:' . $database, sqlite_use_immediate_transaction => 0);
 		$sql->options({AutoCommit => 1 });
 		my $db = $sql->db;
-		# Keep the newest handle on the holder only so a forked child can detach from
-		# it and hooks.pl can tell that a database is up.
+		my @stat = stat($database);
+		# The handle and its dbh are kept on the holder: the pid so a forked child
+		# knows to detach rather than share it, the dbh so the reuse guard above can
+		# finish its abandoned statements, and dev+ino so a replaced file is noticed.
+		# hooks.pl also looks here to tell that a database is up.
 		$gb::database_holder = {
 			server_time => &subs::rightNow(),
 			database => $database,
 			db => $db,
+			dbh => $db->dbh,
 			sql => $sql,
-			pid => $$
+			pid => $$,
+			dev => $stat[0],
+			ino => $stat[1]
 		};
 		# Wait for other writers before anything else. SQLite's default is not to
 		# wait at all, so any contention surfaced as an immediate "database is locked",
@@ -4466,6 +4486,14 @@ sub database_grabber() {
 			my $row = $db->query('PRAGMA journal_mode;')->hashes->[0] || {};
 			$db->query('PRAGMA journal_mode=WAL;') if (($row->{'journal_mode'} || '') ne 'wal');
 		};
+		# The rest of the tuning only makes sense on a handle that lives past one
+		# call: an 8MB page cache, sorts in memory, a 128MB read-only mapping of the
+		# file, and a cap on the WAL so it can never quietly grow to a quarter of a
+		# gigabyte again.
+		eval { $db->query('PRAGMA cache_size=-8000;'); };
+		eval { $db->query('PRAGMA temp_store=MEMORY;'); };
+		eval { $db->query('PRAGMA mmap_size=134217728;'); };
+		eval { $db->query('PRAGMA journal_size_limit=33554432;'); };
 		return ($db,$database,$sql);
 	}
 	$gb::database_holder = {};
