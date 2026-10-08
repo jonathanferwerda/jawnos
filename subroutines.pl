@@ -3899,13 +3899,31 @@ sub file_reference_remembered {
 
 # Put the new paths where the old ones were written down, in a set already
 # read, and write back only the rows that changed. Each pair is named by the
-# path it was, and carries where it went and the name it went in under. A row
-# that changed is stamped with the time so the other machines hear about it,
-# and an appointment that had a file sealed or opened says which encryption
-# standard it is under now, the way file_encrypter and file_decrypter say it.
+# path it was, and carries where it went and the name it went in under; a
+# moved folder hands its prefixes over instead, and every path under them gets
+# its pair worked out from them. A row that changed is stamped with the time
+# so the other machines hear about it, and an appointment that had a file
+# sealed or opened says which encryption standard it is under now, the way
+# file_encrypter and file_decrypter say it.
 sub file_reference_apply {
-	my ($read, $pairs) = @_;
-	return 0 unless (ref $read && ref $pairs && scalar keys %{$pairs});
+	my ($read, $pairs, $folders) = @_;
+	return 0 unless (ref $read && ref $pairs);
+	# a folder that moved takes everything under it along
+	foreach my $from ( keys %{$folders || {}} ) {
+		my $to = $folders->{$from};
+		next unless (defined $to && length $to);
+		my $stem = $from;
+		$stem =~ s{/+$}{};
+		my $to_stem = $to;
+		$to_stem =~ s{/+$}{};
+		my $under = $stem . '/';
+		$pairs->{$stem} = { to => $to_stem } if ($read->{'paths'}->{$stem});
+		foreach my $path ( keys %{ $read->{'paths'} } ) {
+			next unless (substr($path, 0, length $under) eq $under);
+			$pairs->{$path} = { to => $to_stem . substr($path, length $stem) };
+		}
+	}
+	return 0 unless (scalar keys %{$pairs});
 	my $standard;
 	my $clear = 0;
 	foreach my $pair ( values %{$pairs} ) {
@@ -3951,9 +3969,11 @@ sub file_reference_apply {
 # The worker half of paste: put what was cut or copied into the folder being
 # looked at. A move on one disk is a rename; anything else is copied file by
 # file and the source taken away once it has landed, so a selection can cross
-# disks, and a folder goes with everything in it. Errors are collected rather
-# than thrown on the first bad file, and the job stops itself when the dialog
-# asks it to.
+# disks, and a folder goes with everything in it. A move also hands the rows
+# that pointed at a file its new path, once the old one has gone; a copy
+# leaves what points at the original pointing at it. Errors are collected
+# rather than thrown on the first bad file, and the job stops itself when the
+# dialog asks it to.
 sub folders_copy_job {
 	my ($job, $data) = @_;
 	my $to = $data->{'to'};
@@ -3966,6 +3986,12 @@ sub folders_copy_job {
 	}
 	my @errors;
 	my ($copied, $moved, $bytes, $count) = (0, 0, 0, 0);
+	# a move is what sends the rows to new paths - a copy leaves what points at
+	# the original pointing at it
+	my $references = $move ? &file_reference_read() : undef;
+	my %moved_files;
+	my %moved_folders;
+	my $since_apply = 0;
 	foreach my $item ( @items ) {
 		my $path = $item->{'path'};
 		unless (defined $path && length $path && -e $path) {
@@ -3979,9 +4005,15 @@ sub folders_copy_job {
 			push @errors, $name . ': something with that name is already there';
 			next;
 		}
-		# the whole of a move on one disk, and the cheap way round the rest
-		if ($move && rename($path, $dest)) { $moved++; next }
 		my $source_is_folder = -d $path;
+		# the whole of a move on one disk, and the cheap way round the rest
+		if ($move && rename($path, $dest)) {
+			$moved++;
+			$since_apply++;
+			if ($source_is_folder) { $moved_folders{$path} = $dest; }
+			else { $moved_files{$path} = { to => $dest }; }
+			next;
+		}
 		my @mine = $source_is_folder ? &folders_job_files([ $item ]) : ( $path );
 		my $landed = 1;
 		foreach my $file ( @mine ) {
@@ -3989,6 +4021,7 @@ sub folders_copy_job {
 			if ($count % 10 == 0) {
 				$job->note(progress => ($move ? 'moved' : 'copied') . " $copied of $total files, $bytes bytes");
 				if (($job->info->{'notes'} || {})->{'cancel'}) {
+					&file_reference_apply($references, \%moved_files, \%moved_folders);
 					$job->note(progress => "stopped after $copied files");
 					$job->finish({ copied => $copied, moved => $moved, bytes => $bytes, files => $total, cancelled => 1 });
 					return;
@@ -4018,9 +4051,23 @@ sub folders_copy_job {
 		if ($move && $landed) {
 			my $error = &folders_job_take_away($path);
 			push @errors, $error if $error;
-			$moved++ unless $error;
+			unless ($error) {
+				# the old paths have gone, so the rows go to the new ones
+				$moved++;
+				$since_apply++;
+				if ($source_is_folder) { $moved_folders{$path} = $dest; }
+				else { $moved_files{$path} = { to => $dest }; }
+			}
+		}
+		# the moved paths are handed over in stretches, so a long paste is not
+		# left pointing at places its files have left
+		if ($since_apply >= 100) {
+			&file_reference_apply($references, \%moved_files, \%moved_folders);
+			$since_apply = 0;
 		}
 	}
+	# whatever moved is pointed at where it moved to
+	&file_reference_apply($references, \%moved_files, \%moved_folders);
 	my $result = { copied => $copied, moved => $moved, bytes => $bytes, files => $total };
 	if (scalar @errors) {
 		$result->{'errors'} = \@errors;
