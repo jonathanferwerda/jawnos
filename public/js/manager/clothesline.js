@@ -195,16 +195,37 @@ $(document).on('mouseout touchend mouseup', '.background', function() {
 	//clothesLinePos['velocities'] = [];
 });
 
-$(document).on('mousewheel', '.background', function(e) {
+// A wheel is a `wheel` event in every engine that has one; `mousewheel` is only
+// for an engine too old for it. Binding both would double up where one gesture
+// is dispatched under both names, so let the engine pick.
+var wheelEvent = ('onwheel' in document) ? 'wheel' : 'mousewheel';
+
+$(document).on(wheelEvent, '.background', function(e) {
 	clothesLinePos['moving'] = Date.now();
 	var w = $(this);
 	var id = $(this).attr('id');
-	var mvmt = numeral(e.originalEvent.wheelDelta).value();
+	var o = e.originalEvent || e;
 
-	var diff = -1 * (numeral(mvmt / 5).value());
-	var m = mouse_position();
-	var x = m.x;
-	var y = m.y;
+	// the browser's own pixels. jQuery copies neither deltaX/deltaY nor
+	// wheelDelta onto its event object, so they are read from the original
+	// event; an engine with only the legacy wheelDelta (a notch was 120 of
+	// them, and moved the timeline 24 pixels) is converted to the same pixels.
+	var deltaX = wheelNumber(o.deltaX);
+	var deltaY = wheelNumber(o.deltaY);
+	var wheelDelta = wheelNumber(o.wheelDelta);
+	var wheelDeltaX = wheelNumber(o.wheelDeltaX);
+	if (!deltaX && !deltaY && !wheelDelta && !wheelDeltaX) { return; }
+	if (!wheelDelta) {
+		wheelDelta = -5 * (Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY);
+	}
+	if (!deltaX && !deltaY && (wheelDelta || wheelDeltaX)) {
+		deltaX = -1 * (numeral(wheelDeltaX / 5).value());
+		deltaY = -1 * (numeral(wheelDelta / 5).value());
+	}
+
+	var diff = -1 * (numeral(wheelDelta / 5).value());
+	var x = (o.clientX != undefined) ? numeral(o.clientX).value() : mouse_position().x;
+	var y = (o.clientY != undefined) ? numeral(o.clientY).value() : mouse_position().y;
 
 	if (y <= clothesLinePos['maxHeight'] && y >= clothesLinePos['minHeight']) {
 		if (clothesLinePos['startMove'] == undefined) {
@@ -212,7 +233,7 @@ $(document).on('mousewheel', '.background', function(e) {
 		}
 		if (clothesLinePos['startMove'] == 'clothesline') {
 			var source;
- 			if (Math.abs(e.deltaY) > 4 && Math.abs(e.deltaX) === 0) {
+ 			if (Math.abs(deltaY) > 4 && deltaX === 0) {
 				source = 'mousewheel';
 			}
 
@@ -225,7 +246,7 @@ $(document).on('mousewheel', '.background', function(e) {
 		}
 		if (clothesLinePos['startMove'] == 'canvas') {
 			if (id == 'timeline') {
-				var motion = timelineWheelMotion(e.deltaX, e.deltaY, e.originalEvent.wheelDelta);
+				var motion = timelineWheelMotion(deltaX, deltaY);
 				if (motion.glide) { timelineFling(motion.mousediff); }
 				timelineScroller({ mousediff: motion.mousediff, source: motion.glide ? 'wheel' : 'mousewheel' });
 			}
@@ -280,13 +301,22 @@ function clockfaceScroller(data) {
 }
 
 // How a wheel event moves the timeline: horizontal is a trackpad swipe that
-// grabs the canvas, so it glides; vertical is a plain scroll, from a wheel or a
-// trackpad, and does not.
-function timelineWheelMotion(deltaX, deltaY, wheelDelta) {
+// grabs the canvas, so it glides; anything vertical - a wheel, or a trackpad
+// pushed up and down - is a plain scroll, and does not. Vertical keeps the
+// direction the wheel has always had here: a notch that would walk a page up
+// walks the timeline forward, as it does over the clothesline and the
+// clockface. The deltas are the browser's own pixels.
+function timelineWheelMotion(deltaX, deltaY) {
 	if (Math.abs(deltaX) > Math.abs(deltaY)) {
 		return { mousediff: -1 * (numeral(deltaX).value()), glide: 1 };
 	}
-	return { mousediff: -1 * (numeral(wheelDelta / 5).value()), glide: 0 };
+	return { mousediff: numeral(deltaY).value(), glide: 0 };
+}
+
+// a number from an event field; a missing one is zero and never a NaN
+function wheelNumber(v) {
+	var n = numeral(v).value();
+	return isFinite(n) ? n : 0;
 }
 
 function timelineScroller(data) {
