@@ -146,8 +146,10 @@ function inventoryDetailsUpdater() {
 
 // Sideways scrolling over a graph walks the rows along the timeline, one page
 // of periods per gesture, which is how the history past the scope count is
-// reached.  The canvases are redrawn inside the details content, so the
-// listener is put back after every render.
+// reached.  A trackpad sends sideways deltas of its own, a wheel mouse has
+// none so it holds ctrl, and a finger swipes the graph.  The canvases are
+// redrawn inside the details content, so the listeners are put back after
+// every render.
 var statistic_page_delta = 0;
 
 function scrollerFinder(container) {
@@ -155,11 +157,20 @@ function scrollerFinder(container) {
 		if (this.statistic_scroller) { return; }
 		this.statistic_scroller = 1;
 		this.addEventListener('wheel', statisticPageWheel, { passive: false });
+		this.addEventListener('touchstart', statisticPageTouchStart, { passive: true });
+		this.addEventListener('touchmove', statisticPageTouchMove, { passive: true });
 	});
 }
 
 function statisticPageWheel(e) {
 	var delta = e.deltaX || (e.shiftKey ? e.deltaY : 0);
+	if (e.ctrlKey && !delta) {
+		// a wheel mouse has no sideways motion, so ctrl and the wheel walk the
+		// periods.  A trackpad pinch also sets ctrl, but its deltas are small
+		// and fractional, so those stay with the browser's zoom
+		if (e.deltaMode == 0 && Math.abs(e.deltaY) < 12) { return; }
+		delta = e.deltaY;
+	}
 	if (!delta) { return; }
 	var ir = $(this).closest('.appointment');
 	if (ir.find('.statistic_visual').val() != 'historical') { return; }
@@ -170,6 +181,33 @@ function statisticPageWheel(e) {
 	// the older periods sit to the right, so scrolling that way walks back
 	var step = statistic_page_delta > 0 ? 1 : -1;
 	statistic_page_delta = 0;
+	statisticPageStep(ir, step);
+}
+
+function statisticPageTouchStart(e) {
+	if (e.touches.length != 1) { this.statistic_touch = null; return; }
+	var touch = e.touches[0];
+	this.statistic_touch = { x: touch.clientX, y: touch.clientY };
+}
+
+function statisticPageTouchMove(e) {
+	var start = this.statistic_touch;
+	if (!start || e.touches.length != 1) { this.statistic_touch = null; return; }
+	var touch = e.touches[0];
+	var x = touch.clientX - start.x;
+	var y = touch.clientY - start.y;
+	if (Math.abs(x) < 50 || Math.abs(x) < Math.abs(y)) { return; }
+	// one page per swipe: the start is cleared so the rest of the drag is quiet
+	this.statistic_touch = null;
+	var ir = $(this).closest('.appointment');
+	if (ir.find('.statistic_visual').val() != 'historical') { return; }
+	// dragging the graph to the left brings the older periods in from the right
+	statisticPageStep(ir, x < 0 ? 1 : -1);
+}
+
+// one page of periods along the timeline, clamped to what the scope allows
+function statisticPageStep(ir, step) {
+	if (inventoryStatus.loading) { return; }
 	var page = numeral(ir.attr('scope_page')).value() || 0;
 	var max = numeral(ir.attr('scope_page_max')).value() || 24;
 	var next = page + step;
