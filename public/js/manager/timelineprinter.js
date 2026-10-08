@@ -1,9 +1,10 @@
-// The timeline: one row per app, a dot per occurrence placed by its percent,
-// money beside the dot, and the span from the start percent to the percent
-// drawn as a faded band behind it. A percent runs over the scope either side
-// of now: 1 is the rail, 2 is a scope ahead, 0 a scope behind, so now hangs
-// mid-canvas with the future to its right. Rows begin under the header and
-// the clothesline, and the canvas grows to hold every app.
+// The timeline: one row per app, a dot per occurrence placed by its percent
+// with the pseudonym's icon in its middle, money beside the dot, and the span
+// from the start percent to the percent drawn as a faded band behind it. A
+// percent runs over the scope either side of now: 1 is the rail, 2 is a scope
+// ahead, 0 a scope behind, so now hangs mid-canvas with the future to its
+// right. Rows begin under the header and the clothesline, and the canvas
+// grows to hold every app.
 
 var appPosition = [];
 function timelinePrinter(appts,sort,offset) {
@@ -15,6 +16,8 @@ function timelinePrinter(appts,sort,offset) {
 	canvas.width = $('#background').width();
 
 	var rowHeight = 34;
+	var dotRadius = 14;
+	var dotIcon = 24;
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
@@ -95,29 +98,24 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.restore();
 			}
 
-			// the pseudonym's own icon, hung to the left of the dot
-			if ( x - 44 > 0 ) {
-				pseudoGenerator(appts,l['type'], x - 40, rowY - 12, 24);
-				if (x - 44 < hit[0]) { hit[0] = x - 44; }
-			}
-
-			// the dot: halo, ink disc, coloured ring, and the span's end cap
+			// the dot: halo, ink disc, coloured ring, and the span's end cap.
+			// It sits just around the icon that goes in its middle.
 			ctx.save();
 			if (halo) {
 				ctx.strokeStyle = halo;
 				ctx.lineWidth = 7;
 				ctx.beginPath();
-				ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+				ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 				ctx.stroke();
 			}
 			ctx.fillStyle = ink;
 			ctx.beginPath();
-			ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.fill();
 			ctx.strokeStyle = colour;
 			ctx.lineWidth = 4;
 			ctx.beginPath();
-			ctx.arc(x, rowY, 9, 0, (Math.PI * 2));
+			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.stroke();
 			if (startX != undefined) {
 				ctx.lineWidth = 3;
@@ -127,7 +125,11 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			ctx.restore();
 
-			var labelX = x + 16;
+			// the pseudonym's own icon, centred in the dot. It draws when the
+			// image loads, so it lands on top of the disc above.
+			pseudoGenerator(appts,l['type'], x - (dotIcon / 2), rowY - (dotIcon / 2), dotIcon);
+
+			var labelX = x + 20;
 			var labelEnd = labelX;
 			var nameOnThisDot = false;
 			if (!named) {
@@ -145,8 +147,8 @@ function timelinePrinter(appts,sort,offset) {
 				labelEnd = amountX + ctx.measureText(amount).width;
 			}
 			if (labelEnd > hit[2]) { hit[2] = labelEnd; }
-			if (x - 14 < hit[0]) { hit[0] = x - 14; }
-			if (x + 14 > hit[2]) { hit[2] = x + 14; }
+			if (x - 18 < hit[0]) { hit[0] = x - 18; }
+			if (x + 18 > hit[2]) { hit[2] = x + 18; }
 		});
 		if (hit[0] < 0) { hit[0] = 0; }
 		if (hit[2] > canvas.width) { hit[2] = canvas.width; }
