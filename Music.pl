@@ -255,14 +255,36 @@ any '/music/receiver' => sub($c) {
 
 
 
-sub music_folder_grabber() {
+sub music_folder_grabber($selected) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my @folders = ();
 	my $settings = &Manager::misc_setting_list();
-	foreach my $s ( keys %{$settings->{$device}} ) {
+	# The window knows which folder buttons are lit and sends that selection with
+	# every search. The names are the intent - documents, downloads, and so on -
+	# and the path behind each one is the walking machine's own, so a library on
+	# another machine is asked for the same locations by name instead of by this
+	# machine's paths. Without a selection, the stored toggles decide, which is
+	# what the first window build has to go on.
+	my %wanted;
+	my $chosen = defined $selected;
+	foreach my $s ( @{$selected || []} ) {
+		next unless $s =~ /_location$/;
+		$wanted{$s} = 1;
+	}
+	foreach my $s ( sort keys %{$settings->{$device}} ) {
 		if ($s =~ /_location$/gi) {
 			my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $s, device => $device });
-			push @folders, $settings->{$device}->{$s} if $status eq 'on';
+			if ($chosen) {
+				next unless $wanted{$s};
+			}
+			elsif ($status ne 'on') {
+				next;
+			}
+			# a lit button with no path behind it on this machine is nothing to
+			# walk, and is left out rather than guessed at
+			my $path = $settings->{$device}->{$s};
+			next unless (defined $path && length $path);
+			push @folders, $path;
 		}
 	}
 	return @folders;
@@ -299,7 +321,7 @@ sub music_search($data) {
 			push @folders, map { $_->{'path'} } @{$settings->{'artist'}};
 		}
 		else {
-			@folders = &music_folder_grabber();
+			@folders = &music_folder_grabber($data->{'folders'});
 		}
 		foreach my $folder (@folders) {
 			$folder = &subs::home($folder);
@@ -503,6 +525,12 @@ post '/music/search' => sub ($c) {
 	my $search = lc $c->param('search');
 	my $unlock = $c->param('unlock');
 	my $window_maker = $c->param('window_maker');
+	# the lit folder buttons from the window, by location name, so the machine
+	# that walks the folders looks in the ones the panel shows as on. No param
+	# at all means the stored toggles still decide; an empty list means nothing
+	# is lit and nothing is walked.
+	my $folders = $c->param('folders');
+	$folders = defined $folders ? (eval { return decode_json $folders } || []) : undef;
 	my $new_settings = eval { return decode_json $c->param('new_settings') } || {};
 	my $resizes = $c->param('resizes');
 	my $misses = eval { return decode_json $c->param('misses') } || {};
@@ -582,7 +610,7 @@ post '/music/search' => sub ($c) {
 		$crate = &song_maker({ c => $c, config => $config, port => $port, files => $list, settings => $settings, now_playing => $now_playing, same_order => $same_order, misc_settings => $misc_settings });
 	}
 	else {
-		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings });
+		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings, folders => $folders });
 	}
 	
 	my @interface_color= qw/yellow green blue orange black fuschia pink navy purple brown/;
