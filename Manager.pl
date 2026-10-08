@@ -18811,18 +18811,18 @@ sub marker_sessions($app) {
 
 sub marker_session_store($session) {
 	my $timestamp = &subs::rightNow();
-	&subs::db_delete('cache', { app => 'marker', context => 'sessions', subcontext => $session->{'uuid'} });
-	&subs::db_insert('cache', {
-		app => 'marker',
-		context => 'sessions',
-		subcontext => $session->{'uuid'},
-		data => encode_sereal $session,
-		timestamp => $timestamp,
-		server_time => $timestamp,
-		warranty => &subs::ago_calc('-5y', $timestamp),
-		device => '',
-		uuid => $session->{'uuid'}
-	});
+	# One statement, so the autosave arriving twice at once - it fires every few
+	# seconds while drawing and again as the page goes away - cannot have both
+	# saves delete and then both insert. The second insert met the unique key,
+	# the constraint error was printed, and the drawing was quietly left at its
+	# older self. The row is found by its subcontext and its uuid is the
+	# session, so replacing it lets the newer words win.
+	&subs::db_query(
+		'insert or replace into cache (uuid,app,context,subcontext,data,timestamp,server_time,warranty,device,ost) values (?,?,?,?,?,?,?,?,?,?)',
+		$session->{'uuid'}, 'marker', 'sessions', $session->{'uuid'},
+		encode_sereal $session, $timestamp, $timestamp,
+		&subs::ago_calc('-5y', $timestamp), '', $timestamp
+	);
 }
 
 post '/manager/marker/session/save' => sub ($c) {
