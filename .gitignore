@@ -30,3 +30,6 @@ Thumbs.db
 # --- Python tooling (font + face preview generator) ---
 __pycache__/
 *.pyc
+
+# --- Agent test harnesses (see .shots/README.md) ---
+.shots/
