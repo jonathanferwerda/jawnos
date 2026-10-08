@@ -72,10 +72,13 @@ function timelinePrinter(appts,sort,offset) {
 			v['placement_number'] = rowY;
 		}
 		var named = false;
-		// the whole line answers to a click - band, dot, text and the space between
-		// them - the way a leaderboard row does; it used to be cut down to the dot
-		// and the text, which left the appointment's own band unclickable
-		var hit = [0, rowY - 16, canvas.width, rowY + 16, v];
+		// the line answers to a click where it is actually drawn - the band, the dot
+		// and the words beside it - the way a leaderboard row does. It used to be cut
+		// down to the dot and the text, which left the appointment's own band
+		// unclickable; the whole width of the canvas is just as wrong the other way,
+		// so the row's extent is measured while it is drawn.
+		var rowLeft;
+		var rowRight;
 
 		$.each(v.list, function(n,l) {
 			if ( !l ) { return true; }
@@ -91,6 +94,8 @@ function timelinePrinter(appts,sort,offset) {
 			if ( !isFinite(pct) ) { pct = 0; }
 			pct = Math.min(Math.max(pct, 0), 2);
 			var x = pad + (column * pct / 2);
+			rowLeft = (rowLeft == undefined) ? (x - dotRadius) : Math.min(rowLeft, x - dotRadius);
+			rowRight = (rowRight == undefined) ? (x + dotRadius) : Math.max(rowRight, x + dotRadius);
 
 			var startX;
 			var startPct = parseFloat(l[scope + '_start_percent']);
@@ -100,6 +105,11 @@ function timelinePrinter(appts,sort,offset) {
 			if ( isFinite(startPct) ) {
 				startPct = Math.min(Math.max(startPct, 0), 2);
 				startX = pad + (column * startPct / 2);
+				// the band is a 16-wide stroke with round caps, so it reaches 8 past each
+				// of its ends - back from the dot for an ordinary row, and ahead of it to
+				// the rail for one that is still running
+				rowLeft = Math.min(rowLeft, Math.min(startX, x) - 8);
+				rowRight = Math.max(rowRight, Math.max(startX, x) + 8);
 				ctx.save();
 				ctx.globalAlpha = 0.3;
 				ctx.strokeStyle = colour;
@@ -160,8 +170,11 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.font = "400 14px Arial";
 				labelEnd = amountX + ctx.measureText(amount).width;
 			}
+			rowRight = Math.max(rowRight, labelEnd);
 		});
-		appPosition.push(hit);
+		// a row with nothing drawn has nothing to answer for
+		if (rowLeft == undefined) { return true; }
+		appPosition.push([rowLeft, rowY - 16, rowRight, rowY + 16, v]);
 	});
 
 	$.each(textPrinter, function(i,t) {
