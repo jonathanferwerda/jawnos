@@ -63,14 +63,47 @@ function leaderboardPrinter(appts) {
 	var font = '600 20px Arial';
 	ctx.font = font;
 
-	// the left columns set the start of the time column, so long names do not
-	// shove it into the numbers
-	var nameWidth = 0;
-	$.each(appt_store, function(i,v) {
-		nameWidth = Math.max(nameWidth, ctx.measureText('' + v['shorthand_name']).width);
-	});
-	var timeX = 16 + nameWidth + 16;
+	// the right columns, each honest about its own width: money first, then
+	// duration, since, occurrences. Built here because the name column has to be
+	// measured against where they start.
 	var rightLimit = canvas.width - 56;
+	var rowColumns = function(v) {
+		var columns = [];
+		if (v[scope + '_percent'] != undefined && v[scope + '_percent'] !== '') { columns.push(numeral(v[scope + '_percent']).format('0%')); }
+		if (v[scope + '_total']) { columns.push('$' + v[scope + '_total']); }
+		if (v[scope + '_tax']) { columns.push('$' + v[scope + '_tax']); }
+		if (v[scope + '_amount']) { columns.push('$' + v[scope + '_amount']); }
+		columns.push(v[scope + '_formatted_duration']);
+		columns.push(v['formatted_since']);
+		if (v[scope + '_occurrences']) { columns.push(v[scope + '_occurrences']); }
+		return columns;
+	};
+	var columnsLeft = function(v) {
+		var cx = rightLimit;
+		$.each(rowColumns(v), function(ci,text) {
+			if (text == undefined || text == '') { return true; }
+			cx = cx - ctx.measureText('' + text).width - 16;
+		});
+		return cx;
+	};
+
+	// the left columns set the start of the time column, so long names do not
+	// shove it into the numbers. The full name is used while the widest of them
+	// still leaves the time column clear of the right-hand columns; otherwise
+	// only the shorthand fits.
+	var shortWidth = 0;
+	var fullWidth = 0;
+	var timeWidth = 0;
+	var leftEdge = rightLimit;
+	$.each(appt_store, function(i,v) {
+		shortWidth = Math.max(shortWidth, ctx.measureText('' + v['shorthand_name']).width);
+		fullWidth = Math.max(fullWidth, ctx.measureText('' + (v['formatted_name'] || v['shorthand_name'])).width);
+		timeWidth = Math.max(timeWidth, ctx.measureText('' + v['just_time']).width);
+		leftEdge = Math.min(leftEdge, columnsLeft(v));
+	});
+	var nameKey = (16 + fullWidth + 16 + timeWidth <= leftEdge) ? 'formatted_name' : 'shorthand_name';
+	var nameWidth = (nameKey == 'formatted_name') ? fullWidth : shortWidth;
+	var timeX = 16 + nameWidth + 16;
 	var presently = Date.now();
 	var nowWatch = 0;
 
@@ -104,19 +137,11 @@ function leaderboardPrinter(appts) {
 		ctx.restore();
 
 		// the left columns
-		jawnosPrinterText(ctx, v['shorthand_name'], 16, rowY, { font: font, colour: ink, halo: halo });
+		jawnosPrinterText(ctx, (v[nameKey] || v['shorthand_name']), 16, rowY, { font: font, colour: ink, halo: halo });
 		jawnosPrinterText(ctx, v['just_time'], timeX, rowY, { font: font, colour: ink, halo: halo });
 
-		// the right columns, each honest about its own width: money first, then
-		// duration, since, occurrences
-		var columns = [];
-		if (v[scope + '_percent'] != undefined && v[scope + '_percent'] !== '') { columns.push(numeral(v[scope + '_percent']).format('0%')); }
-		if (v[scope + '_total']) { columns.push('$' + v[scope + '_total']); }
-		if (v[scope + '_tax']) { columns.push('$' + v[scope + '_tax']); }
-		if (v[scope + '_amount']) { columns.push('$' + v[scope + '_amount']); }
-		columns.push(v[scope + '_formatted_duration']);
-		columns.push(v['formatted_since']);
-		if (v[scope + '_occurrences']) { columns.push(v[scope + '_occurrences']); }
+		// the right columns, laid out from the right
+		var columns = rowColumns(v);
 
 		var cx = rightLimit;
 		$.each(columns, function(ci,text) {
