@@ -1350,8 +1350,11 @@ $(document).on('keydown', function(e) {
 
 		if (e.ctrlKey == true) {
 			if (win.attr('view') == '') {
+				// the window may hang up to half off the side, but the titlebar
+				// buttons (top right) have to stay reachable
+				var minLeft = -Math.min(win.width() / 2, win.width() - 95);
 				var l = numeral(win.css('left')).value() - movInc;
-				if (l > 0) {
+				if (l > minLeft) {
 					win.css({ 'left': l });
 				}
 			}
@@ -1368,8 +1371,11 @@ $(document).on('keydown', function(e) {
 	} else if (e.keyCode == 39 && keysPressed[91]) { //right
 		if (e.ctrlKey == true) {
 			if (win.attr('view') == '') {
+				// pushed right the buttons leave the screen first, so only the
+				// sliver in front of them may hang off
+				var maxLeft = $(window).width() - win.width() + Math.min(win.width() / 2, 95);
 				var l = numeral(win.css('left')).value() + movInc;
-				if (l < $(window).width()) {
+				if (l < maxLeft) {
 					win.css({ 'left': l });
 				}
 			}
@@ -1386,8 +1392,9 @@ $(document).on('keydown', function(e) {
 	} else if (e.keyCode == 38 && keysPressed[91]) { //up
 		if (e.ctrlKey == true) {
 			if (win.attr('view') == '') {
+				// a strip of the titlebar (and its buttons) stays on screen
 				var l = numeral(win.css('top')).value() - movInc;
-				if (l > 0) {
+				if (l > -18) {
 					win.css({ 'top': l });
 				}
 			}
