@@ -1371,9 +1371,10 @@ $(document).on('keydown', function(e) {
 	} else if (e.keyCode == 39 && keysPressed[91]) { //right
 		if (e.ctrlKey == true) {
 			if (win.attr('view') == '') {
-				// pushed right the buttons leave the screen first, so only the
-				// sliver in front of them may hang off
-				var maxLeft = $(window).width() - win.width() + Math.min(win.width() / 2, 95);
+				// pushed right the buttons leave the screen first, so a right push
+				// stops with the window's right edge still on screen: all three
+				// stay visible and clickable
+				var maxLeft = $(window).width() - win.width();
 				var l = numeral(win.css('left')).value() + movInc;
 				if (l < maxLeft) {
 					win.css({ 'left': l });
