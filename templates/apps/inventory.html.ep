@@ -53,6 +53,7 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 			</span>
 		<% } %>
 	</div>
+	<div class="statistic_graph_information" style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:5px;padding:2px;"></div>
 	<table id="<%= $app %>_inventory_table" style="overflow-x:scroll;width:100%;">
 		<thead>
 			<th></th>

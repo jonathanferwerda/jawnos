@@ -250,6 +250,10 @@ function statisticGrapher(data,canvasId,mark) {
 		}
 		var id = canvasId || data.app + '_' + tl + '_statistic_graph';
 		var g = document.getElementById(id);
+		// what the mouse reads back: the points the line runs through, kept in
+		// the drawing's own coordinates, and the display they are measured in
+		g.statistic_points = [];
+		g.statistic_display = data.settings.s_display;
 		// draw at the size the canvas is shown at, at the device's own resolution:
 		// the backing store used to stay at the default 300x150 and the browser
 		// stretched it to the stylesheet's 250px, which softened the line and the
@@ -301,6 +305,15 @@ function statisticGrapher(data,canvasId,mark) {
 							if (data.settings.s_display == 'duration') {
 								text = data[ts][tl]['formatted_duration'];
 							}
+							g.statistic_points.push({
+								x: x,
+								y: y,
+								ts: ts,
+								scope: tl,
+								text: text,
+								start: numeral(data[ts][tl]['start_timestamp']).value(),
+								end: numeral(data[ts][tl]['end_timestamp']).value()
+							});
 							var text_x = (x - ctx.measureText(text).width);
 							if (text_x < 0) {
 								text_x = x;
@@ -476,3 +489,61 @@ function evaluationStation(b) {
 		}
 	});
 }
+
+// The graphs answer the mouse: a floating readout follows the pointer over a
+// canvas, naming the row and column it is on, the window's own time (the row
+// names alone say nothing about when a window is) and the value drawn there.
+$(document).on('mousemove touchmove', '.statistic_graph', function(m) {
+	var g = this;
+	var points = g.statistic_points;
+	if (!points || points.length == 0) { return; }
+	var info = $(this).closest('.appointment').find('.statistic_graph_information');
+	if (info.length == 0) { return; }
+	var x = m.originalEvent.clientX;
+	var y = m.originalEvent.clientY;
+	if (m.originalEvent.targetTouches) {
+		x = m.originalEvent.targetTouches[0].clientX;
+		y = m.originalEvent.targetTouches[0].clientY;
+	}
+	// the mouse is in screen pixels and the points are in the drawing's own
+	// coordinates, which the stylesheet may have stretched
+	var thick = window.devicePixelRatio || 1;
+	var rect = g.getBoundingClientRect();
+	var local = (x - rect.left) * ((g.width / thick) / (rect.width || 1));
+	var hovering;
+	$.each(points, function(i,p) {
+		if (hovering == undefined || Math.abs(p.x - local) < Math.abs(hovering.x - local)) {
+			hovering = p;
+		}
+	});
+	if (info.attr('point') != hovering.ts + '_' + hovering.scope) {
+		var value = hovering.text;
+		if (g.statistic_display == 'amount' || g.statistic_display == 'total') {
+			value = numeral(value).format('$0.00');
+		}
+		var html = '<span style="padding:1px;">';
+		html += '<div><b>' + format_name(hovering.ts) + '</b> ' + format_name(hovering.scope) + '</div>';
+		html += '<div class="time" mode="fixed" timestamp="' + hovering.start + '"></div>';
+		if (hovering.end) {
+			html += '<div class="time" mode="fixed" timestamp="' + (hovering.end - 1000) + '"></div>';
+		}
+		html += '<div><b>' + format_name(g.statistic_display) + ':</b> ' + value + '</div>';
+		html += '</span>';
+		info.html(html).attr('point', hovering.ts + '_' + hovering.scope);
+		appointment_chron();
+	}
+	info.show();
+	// beside the pointer, flipped to the other side when the screen runs out
+	var gap = 16;
+	var left = x + gap;
+	var top = y + gap;
+	if (left + info.outerWidth() > $(window).width()) { left = x - info.outerWidth() - gap; }
+	if (left < 0) { left = 4; }
+	if (top + info.outerHeight() > $(window).height()) { top = y - info.outerHeight() - gap; }
+	if (top < 0) { top = 4; }
+	info.css({ 'left': left + 'px', 'top': top + 'px' });
+});
+
+$(document).on('mouseleave touchend touchcancel', '.statistic_graph', function() {
+	$(this).closest('.appointment').find('.statistic_graph_information').hide();
+});
