@@ -22,7 +22,7 @@
 	</div>
 
 	<div class="security_view" view="neighbour_link" style="overflow-x:auto;padding-right:8px;<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">
-		<table style="width:100%;text-align:center;"
+		<table style="width:100%;table-layout:fixed;text-align:center;"
 			<thead>
 				<th>Initiator</th><th>Initiated</th><th>Privilege</th><th>Accepted</th><th>Updated</th><th>Cxl</th>
 			</thead>
