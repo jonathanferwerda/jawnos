@@ -37,6 +37,9 @@ use Minion;
 use threads 'exit' => 'threads_only';
 
 no warnings 'uninitialized'; 
+# the gb globals below live in gb.pl and are written or read from every
+# corner of the house; a file that touches one only once is not a typo
+no warnings 'once';
 my $working_dir = $0;
 my $present_dir = `pwd`;
 

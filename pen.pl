@@ -29,7 +29,7 @@ if ( scalar @{$tally->{'__statements'}} == 0 ) {
 
 
 	foreach my $st ( @{$statements} ) {
-		my $old_message = &subs::note_decrypter($gb::suds, $st->{'body'});
+		my $old_message = &subs::note_decrypter($suds, $st->{'body'});
 		$tally = &statement_preparer($old_message,$tally);
 		push @{$tally->{'__statements'}}, $old_message;
 		my $role = $st->{'contact'} eq 'pen' ? 'assistant' : 'user';
@@ -113,7 +113,10 @@ my $response = $ollama->chat(
   stream   => 0, # Instructs Ollama to stream token by token
 
   # 4. The Streaming Callback Function
-  stream_cb => sub ($chunk) {
+  # a ($chunk) sub is a prototype, not a signature, here - it left the name a
+  # package global that nothing writes, so the chunk is taken from @_ by hand
+  stream_cb => sub {
+      my ($chunk) = @_;
       # $chunk is a WebService::Ollama::Response object containing the new token
       my $token = $chunk->message->{content};
       $ai_response_accumulator .= $token;
