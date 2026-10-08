@@ -470,7 +470,18 @@ function markerSessionSave() {
 	});
 }
 
+var markerSessionUploadInFlight = false;
+var markerSessionUploadWaiting = null;
+
 function markerSessionUpload(options) {
+	// one multi-megabyte save at a time: a second save waits its turn rather
+	// than posting the same board alongside the first, and what it says is the
+	// newest art, because it builds its layers when it finally leaves
+	if (markerSessionUploadInFlight) {
+		// a named save is never forgotten for an autosave queuing behind it
+		if (!options.silent || !markerSessionUploadWaiting) { markerSessionUploadWaiting = options; }
+		return;
+	}
 	var layers = [];
 	$.each(markerLayers, function(i, layer) {
 		layers.push({ name: layer.name, visible: layer.visible, image: layer.canvas.toDataURL('image/png') });
@@ -487,6 +498,7 @@ function markerSessionUpload(options) {
 		else { alert('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.'); }
 		return;
 	}
+	markerSessionUploadInFlight = true;
 	$.ajax({
 		url: '/manager/marker/session/save',
 		type: 'POST',
@@ -509,6 +521,14 @@ function markerSessionUpload(options) {
 			// let the working copy remember which named session it came from
 			markerAutosaveDirty = true;
 			markerAutosaveNow();
+		},
+		complete: function() {
+			markerSessionUploadInFlight = false;
+			if (markerSessionUploadWaiting) {
+				var next = markerSessionUploadWaiting;
+				markerSessionUploadWaiting = null;
+				markerSessionUpload(next);
+			}
 		}
 	});
 }
