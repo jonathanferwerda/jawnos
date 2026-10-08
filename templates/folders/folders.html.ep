@@ -10,7 +10,24 @@
 				<option value="<%= $rm->{'uuid'} %>" <% if (($remote_uuid || '') eq $rm->{'uuid'}) { %>selected="selected"<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
 			<% } %>
 		</select>
+		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Bookmarks" class="little_thumb hover" id="folders_bookmarks_toggle">
 		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archive queue" class="little_thumb hover" id="folders_archive_toggle">
+	</div>
+	<%# the folders worth getting back to on the machine being browsed - which,
+	    for a remote one, is that machine's own list, since it renders this %>
+	<% my @bookmarks = ( { name => 'Home', path => &subs::home('~') } ); %>
+	<% my $misc = &Manager::misc_setting_list(); %>
+	<% my $dev = &subs::device_setter(); %>
+	<% foreach my $location ( &subs::location_types() ) { %>
+		<% my $path = $misc->{$dev}->{$location . '_location'}; %>
+		<% push @bookmarks, { name => &subs::format_name($location), path => &subs::home($path) } if (defined $path && length $path); %>
+	<% } %>
+	<% my $archive_root = &subs::archive_root(); %>
+	<% push @bookmarks, { name => 'Archive', path => $archive_root } if ($archive_root && -d $archive_root); %>
+	<div id="folders_bookmarks" style="display:none;position:absolute;top:40px;left:2px;width:min(280px, 55%);max-height:70%;overflow:auto;background-color:var(--panel-2);border:solid;z-index:6;text-align:left;">
+		<% foreach my $b ( @bookmarks ) { %>
+			<button type="button" class="hover folders_bookmark" path="<%= $b->{'path'} %>" style="display:block;width:100%;text-align:left;"><%= $b->{'name'} %></button>
+		<% } %>
 	</div>
 	<div id="folders_archive_queue" style="display:none;position:absolute;top:40px;right:2px;width:min(430px, 60%);max-height:60%;overflow:auto;background-color:var(--panel-2);border:solid;z-index:6;font-size:15px;padding:4px;"></div>
 	<div id="folders_mainview" style="height:90%;width:100%;border:solid;padding-bottom:22px;">

@@ -401,6 +401,18 @@ function foldersArchiveRescan(location) {
 	});
 }
 
+$(document).on('click', '#folders_bookmarks_toggle', function () {
+	$('#folders_bookmarks').toggle();
+});
+
+// A bookmark is navigation only, so it works the same on a remote machine:
+// the path means something there, and the machine being browsed stays put.
+$(document).on('click', '.folders_bookmark', function () {
+	var path = $(this).attr('path');
+	$('#folders_bookmarks').hide();
+	foldersOpener({ folder: path });
+});
+
 $(document).on('click', '#folders_archive_toggle', function () {
 	var box = $('#folders_archive_queue');
 	if (box.is(':visible')) {
