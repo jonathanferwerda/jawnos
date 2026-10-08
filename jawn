@@ -3,6 +3,7 @@
 use strict;
 use warnings;
 use Mojo::IOLoop::ReadWriteFork;
+use IO::Socket::UNIX;
 use File::Slurp;
 use Mojo::File 'path';
 use Mojo::Log;
@@ -14,6 +15,22 @@ use feature 'current_sub';
 my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 });
 my $decoder = Sereal::Decoder->new();
 no warnings 'uninitialized';
+
+# One master per machine: the watch socket is the machine's alone, so a launch
+# that finds it answering is a second jawn. It stands down here - before the
+# ~/.president wipe below, which must not eat the serving master's state, and
+# before a single President.pl is started. Two masters otherwise fight over the
+# ports and the socket, kill each other's trees, and cycle forever.
+my $watch_path = &home('~/.process_watch');
+if (-S $watch_path) {
+	my $watch_live = 0;
+	eval { $watch_live = 1 if IO::Socket::UNIX->new(Peer => $watch_path) };
+	if ($watch_live) {
+		print "\nAnother jawn is already running; this one is standing down.\n\n";
+		exit 0;
+	}
+}
+
 my $dump_dir = &home('~/.president');
 `rm -R $dump_dir/*` if -e $dump_dir;
 `mkdir $dump_dir` unless -e $dump_dir;
@@ -73,6 +90,10 @@ sub master_time_looper() {
 		  Mojo::IOLoop->remove($master_timer);
 		  return if $master_timer_paused == 1;
 			$master_timer_paused = 1;
+			# the request is ours now: left standing, the next two-second tick reads
+			# it again, kills the fresh boot before it writes "good", and restarts
+			# forever
+			write_file($status_file, 'good') if $f_status eq 'restart';
 			&shut_down();
 			$status = 'dead';
 		}
@@ -146,9 +167,9 @@ my %buffers;
 $process_watch = &process_watch();
 Mojo::IOLoop->recurring(2 => sub {
 
-	my $is_running = defined Mojo::IOLoop->acceptor($process_watch) ? 1 : 0;
+	my $is_running = $process_watch && defined Mojo::IOLoop->acceptor($process_watch) ? 1 : 0;
 	if (!$is_running) {
-		Mojo::IOLoop->remove($process_watch);
+		Mojo::IOLoop->remove($process_watch) if $process_watch;
 		$process_watch = &process_watch();
 	}
 	else {
