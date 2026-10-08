@@ -64,6 +64,7 @@
 		<script src="/js/manager/windows.js?string=<%= $string %>"></script>
 		<script src="/js/manager/editor.js?string=<%= $string %>"></script>
 		<script src="/js/manager/ide.js?string=<%= $string %>"></script>
+		<script src="/js/manager/ide_code.js?string=<%= $string %>"></script>
 		<script src="/js/mailbox.js?string=<%= $string %>"></script>
 		<script src="/js/manager/clockfaceprinter.js?string=<%= $string %>"></script>
 		<script src="/js/manager/leaderboardprinter.js?string=<%= $string %>"></script>

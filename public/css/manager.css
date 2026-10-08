@@ -707,3 +707,108 @@ img[src*="/icons/original/"] {
 .jonathan_fixed[src*="/icons/original/"] {
   border-radius: 10px;
 }
+
+/* ---- the ide's code view ----------------------------------------------------
+
+   The words live in the textarea and the colour lives in a <pre> behind it,
+   carrying the same text. Both boxes share every metric - font, padding, line
+   height, tabs - so a character sits in the same place in both, and the
+   textarea's own ink is transparent, so only the pre's coloured words show.
+   The scroll of the two is kept in step by ide_code.js. The token colours are
+   variables so the dark theme can answer with its own palette. */
+
+#ide {
+	--ide-comment: #6a737d;
+	--ide-string: #a31515;
+	--ide-keyword: #0033b3;
+	--ide-number: #098658;
+	--ide-tag: #800000;
+	--ide-attr: #b35c00;
+	--ide-var: #795e26;
+	--ide-func: #6f42c1;
+	--ide-type: #267f99;
+}
+
+body.dark_theme #ide {
+	--ide-comment: #6a9955;
+	--ide-string: #ce9178;
+	--ide-keyword: #569cd6;
+	--ide-number: #b5cea8;
+	--ide-tag: #569cd6;
+	--ide-attr: #9cdcfe;
+	--ide-var: #dcdcaa;
+	--ide-func: #dcdcaa;
+	--ide-type: #4ec9b0;
+}
+
+#ide_editor {
+	position: relative;
+	width: 99%;
+	height: 88%;
+	max-height: 700px;
+	overflow: hidden;
+	border: solid;
+	box-sizing: border-box;
+	background-color: var(--panel);
+}
+
+#ide_content, #ide_highlight {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 6px 8px;
+	border: 0;
+	box-sizing: border-box;
+	font-family: monospace;
+	font-size: 20px;
+	line-height: 24px;
+	tab-size: 2;
+	-moz-tab-size: 2;
+	white-space: pre;
+	word-wrap: normal;
+	overflow-wrap: normal;
+}
+
+#ide_content {
+	background-color: transparent;
+	color: transparent;
+	caret-color: var(--ink);
+	resize: none;
+	overflow: auto;
+	z-index: 1;
+}
+
+/* a selection may not paint over the coloured words: let them show through */
+#ide_content::selection {
+	background-color: rgba(110, 160, 255, 0.35);
+	color: transparent;
+}
+
+#ide_highlight {
+	overflow: hidden;
+	pointer-events: none;
+	z-index: 0;
+}
+
+#ide_highlight code {
+	display: block;
+	font-family: monospace;
+	font-size: 20px;
+	line-height: 24px;
+	tab-size: 2;
+	-moz-tab-size: 2;
+	white-space: pre;
+}
+
+.ide_tok_comment { color: var(--ide-comment); font-style: italic; }
+.ide_tok_string { color: var(--ide-string); }
+.ide_tok_keyword { color: var(--ide-keyword); font-weight: 700; }
+.ide_tok_number { color: var(--ide-number); }
+.ide_tok_tag { color: var(--ide-tag); }
+.ide_tok_attr { color: var(--ide-attr); }
+.ide_tok_var { color: var(--ide-var); }
+.ide_tok_func { color: var(--ide-func); }
+.ide_tok_type { color: var(--ide-type); }

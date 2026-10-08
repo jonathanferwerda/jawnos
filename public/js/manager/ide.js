@@ -2,6 +2,14 @@ var ide = {};
 
 var ideSearchTimeout;
 
+// one move in: the words and the file they belong to, so the colours and the
+// caret can never disagree about what is open
+function ideContentSet(text, file) {
+	var c = $('#ide_content');
+	c.val(text).attr('file', file || '');
+	ideCodeRefresh();
+}
+
 
 
 $(document).on('click', '#ide_toggle', function() {
@@ -79,8 +87,7 @@ function ideFileOpen(data) {
 					$('#ide_navbar').append(response['tab']);
 				}
 				$('#ide_main_window');
-				$('#ide_content').val(response.content).trigger('change');
-				$('#ide_content').attr('file', response['file']);
+				ideContentSet(response.content, response['file']);
 				if (sel) {
 					sel.attr('status', 'active');
 				}
@@ -166,10 +173,14 @@ $(document).on('click', '.ide_file_delete', function() {
 });
 
 
-$(document).on('keyup', '#ide_content', function() {
+// input, not keyup: a paste belongs to the file just as much as a keystroke,
+// and the tab written by the keydown below never sees a keyup of its own
+$(document).on('input', '#ide_content', function() {
 	var t = $(this).val();
 	var file = $(this).attr('file');
-	ide[file]["content"] = t;
+	if (typeof ide[file] != "undefined") {
+		ide[file]["content"] = t;
+	}
 });
 
 $(document).on('click', '#ide_new', function() {
@@ -235,8 +246,7 @@ $(document).on('click', '.ide_tab', function(e) {
 		return;
 	}
 	if (typeof ide[file] != "undefined") {
-		$('#ide_content').val(ide[file]["content"])
-		$('#ide_content').attr('file', ide[file]['file']);
+		ideContentSet(ide[file]["content"], ide[file]['file']);
 	}
 	else {
 		$('.ide_file[file="' + file + '"]').trigger('click');
@@ -259,11 +269,10 @@ $(document).on('click', '.ide_close_tab', function(e) {
 		}
 		if (p.length >= 1) {
 			p.addClass('active');
-			$('#ide_content').val(ide[p.attr('file')]["content"]);
-			$('#ide_content').attr('file', ide[p.attr('file')]['file']);
+			ideContentSet(ide[p.attr('file')]["content"], ide[p.attr('file')]['file']);
 		}
 		else {
-			$('#ide_content').val('').attr('file', '').trigger('change');
+			ideContentSet('', '');
 		}
 	}
 	t.remove();
