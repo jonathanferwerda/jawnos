@@ -832,7 +832,9 @@ sub time_span() {
 
 # The rows a page of periods walks: the periods around now first (the nexts,
 # this one, the lasts), then the block of periods before or after it, so
-# scrolling a graph sideways carries on along the timeline.
+# scrolling a graph sideways carries on along the timeline.  A row that names
+# periods ahead counts from the request forward, so the part of this period
+# already spent belongs to "this" and never shows in a row past it.
 sub time_scope_page() {
 	my $data = shift;
 	my $count = $data->{'count'} || 30;

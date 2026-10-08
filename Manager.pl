@@ -9031,8 +9031,9 @@ sub inventory_details($c,$settings) {
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
 				#		$bucket->{'total'} += abs $a->{'total'} if $a->{'total'};
 				#		$bucket->{'amount'} += abs $a->{'amount'} if $a->{'amount'};
-						# the cumulative "Nnext" windows hold the same events again, so
-						# the per period totals and average leave them out
+						# the "Nnext" windows reach past this period from the request on,
+						# so they hold what it and "next" hold again, and the per period
+						# totals and average leave them out
 						if ($ts !~ /^[0-9]+next/) {
 							$returner->{'total'}->{$scope}->{$s_display} += abs $a->{$s_display};
 							$returner->{'count'}->{$scope}->{$s_display} += 1;
