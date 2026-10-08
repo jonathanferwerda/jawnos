@@ -47,6 +47,13 @@
 			<% } %>
 			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
 			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+			// what the keyboard's config keeps per device: the damping the timeline
+			// and the clothesline read, seeded here so either is right before its
+			// keyboard is ever opened
+			var keyboard_sensitivity = {
+				trackpad: '<%= &subs::setting_grabber({ app => 'keyboard', setting => 'trackpad_sensitivity' }) || '.02' %>',
+				clothesline: '<%= &subs::setting_grabber({ app => 'keyboard', setting => 'clothesline_sensitivity' }) || '.4' %>'
+			};
 		</script>
 		<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
 		<script src="/js/jquery-ui.js"></script>

@@ -634,7 +634,7 @@ async function keyboardMaker(data) {
 
 function keyboardConfigToggle(toggle) {
 	var keyboard = $('#' + toggle);
-	var config = $('.remote_control_configuration[toggle="' + toggle + '"]')
+	var config = $('.keyboard_config[toggle="' + toggle + '"]')
 	var remote_uuid = config.attr('remote_uuid');
 
 	var content = keyboard.find('.keyboard_content');
@@ -657,6 +657,37 @@ function keyboardConfigToggle(toggle) {
 		});
 	}
 }
+
+// The delorean's config: the two sensitivities ride on the globals the timeline
+// and the clothesline actually read, so a change is felt at once, and each is
+// kept on the server per device (settingSetter sends no device, which is how
+// the server reads it as this one).
+var keyboard_sensitivity_setter;
+$(document).on('input', '.keyboard_sensitivity', function() {
+	var slider = $(this);
+	var setting = slider.attr('setting');
+	var value = numeral(slider.val()).value();
+	$('.keyboard_sensitivity_viewer[setting="' + setting + '"]').text(value);
+	if (typeof keyboard_sensitivity == 'undefined') { keyboard_sensitivity = {}; }
+	if (setting == 'clothesline_sensitivity') {
+		clotheslineSensitivity = value;
+		keyboard_sensitivity['clothesline'] = value;
+	}
+	else {
+		trackpadSensitivity = value;
+		keyboard_sensitivity['trackpad'] = value;
+	}
+	// one save once the slider settles, not one per step
+	clearTimeout(keyboard_sensitivity_setter);
+	keyboard_sensitivity_setter = setTimeout(function() {
+		settingSetter({ 'app': 'keyboard', 'setting': setting, 'value': value });
+	}, 500);
+});
+
+$(document).on('change', '#timestamp_in_view', function() {
+	var value = $(this).is(':checked') ? 'checked' : 'unchecked';
+	settingSetter({ 'app': 'keyboard', 'setting': 'timestamp_in_view', 'value': value });
+});
 
 $(document).on('click', '.keyboard_base', function() {
 	var b = $(this);

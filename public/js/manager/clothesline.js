@@ -13,6 +13,17 @@ var clothesLinePos = {
 };
 var wardrobe = [];
 var hangingClothes = 0;
+
+// What the keyboard's config keeps per device, seeded into keyboard_sensitivity
+// by the layout: a swipe is damped to this much of the finger travel, and the
+// clothesline's drag to that much of its own. The fallbacks are what the two
+// were before either could be set.
+function keyboardSensitivity(setting, fallback) {
+	var set = (typeof keyboard_sensitivity != 'undefined') ? numeral(keyboard_sensitivity[setting]).value() : NaN;
+	return (isFinite(set) && set > 0) ? set : fallback;
+}
+var trackpadSensitivity = keyboardSensitivity('trackpad', .02);
+var clotheslineSensitivity = keyboardSensitivity('clothesline', .4);
 function clotheslineHanger(clothes) {
 
 	if (hangingClothes == 0) {
@@ -133,7 +144,7 @@ $(document).on('touchmove', '.background', function(m) {
 		clothesLinePos['x'] += mouseDiff;
 		clothesLinePos['y'] = y;
 		if (clothesLinePos['startMove'] == 'clothesline') {
-			clotheslineScroller(x,y,(mouseDiff * .4));
+			clotheslineScroller(x,y,(mouseDiff * clotheslineSensitivity));
 		}
 	}
 	else if ((y >= clothesLinePos['maxHeight'] && (id == 'timeline' || id == 'clockface')) && ( clothesLinePos['startMove'] == undefined || clothesLinePos['startMove'] == 'canvas')) {
@@ -237,7 +248,7 @@ $(document).on(wheelEvent, '.background', function(e) {
 				source = 'mousewheel';
 			}
 
-			clotheslineScroller(x,y,(diff * .4), source);
+			clotheslineScroller(x,y,(diff * clotheslineSensitivity), source);
 		}
 	}
 	else if (y >= clothesLinePos['maxHeight'] && (id == 'timeline' || id == 'clockface')) {
@@ -310,10 +321,10 @@ function clockfaceScroller(data) {
 // A trackpad's deltas are fine-grained and arrive in floods, and the flick it
 // leaves behind carries well past the fingers, so a swipe is damped to a
 // twentieth of the finger travel. Everything that follows - the move and the
-// glide it is armed with - scales with this one number. A positive deltaX - a
-// scroll to the right in the DOM's own terms - walks the timeline back, the
-// same way dragging the canvas to the right does.
-var trackpadSensitivity = .02;
+// glide it is armed with - scales with trackpadSensitivity (above), which the
+// keyboard's config sets. A positive deltaX - a scroll to the right in the
+// DOM's own terms - walks the timeline back, the same way dragging the canvas
+// to the right does.
 function timelineWheelMotion(deltaX, deltaY) {
 	if (Math.abs(deltaX) > Math.abs(deltaY)) {
 		return { mousediff: trackpadSensitivity * (numeral(deltaX).value()), glide: 1 };

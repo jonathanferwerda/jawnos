@@ -1,4 +1,18 @@
 <% if ($toggle eq 'remote_control') { %>
 	This is remote config on <%= &subs::device_setter() %>
 <% } %>
-
+<% if ($toggle eq 'delorean') { %>
+	<%# What a trackpad wants is not what another device's wheel wants, so both
+	    sensitivities are kept per device, and the view keeps to whichever of the
+	    two reaches it. %>
+	<% my $trackpad = &subs::setting_grabber({ app => 'keyboard', setting => 'trackpad_sensitivity' }); %>
+	<% my $clothesline = &subs::setting_grabber({ app => 'keyboard', setting => 'clothesline_sensitivity' }); %>
+	<% my $in_view = &subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }); %>
+	<% $trackpad = '.02' unless (defined $trackpad && length $trackpad); %>
+	<% $clothesline = '.4' unless (defined $clothesline && length $clothesline); %>
+	<span style="display:block;text-align:left;font-size:13px;">
+		Trackpad <input type="range" class="keyboard_sensitivity" setting="trackpad_sensitivity" min=".002" max=".1" step=".002" value="<%= $trackpad %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="trackpad_sensitivity"><%= $trackpad %></span><br>
+		Clothesline <input type="range" class="keyboard_sensitivity" setting="clothesline_sensitivity" min=".05" max="2" step=".05" value="<%= $clothesline %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="clothesline_sensitivity"><%= $clothesline %></span><br>
+		<label><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>>Timestamps in view only</label>
+	</span>
+<% } %>

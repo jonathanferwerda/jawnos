@@ -5558,8 +5558,11 @@ sub log_reader {
 		# end, and takes in a row that stopped inside the view, or one that is
 		# still running across it - that last is pure presence: its row may be
 		# older than anything else fetched, and it is what the left edge holds on
-		# to.
-		my $fetch_start = $t - $t1;
+		# to. The keyboard's checkbox asks for the older view instead: rows whose
+		# timestamp is inside the view, and nothing fetched beyond either edge.
+		my $in_view_only = (&subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }) || '') eq 'checked';
+		my $fetch_end = $in_view_only ? ($timestamp + $t1) : $t2;
+		my $fetch_start = $in_view_only ? $t : $t - $t1;
 		# Every clause here is framed on timestamp, the moment the timeline draws a
 		# row at: a row just behind the left edge sticks to it the way a row past
 		# the right edge already sticks to that one, a row that stopped inside the
@@ -5569,7 +5572,7 @@ sub log_reader {
 		# planner can still reach each one by an index.
 		my $stick_where = "((timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
 		my $stick_suffix = '';
-		my @stick_variables = ( $fetch_start, $t, $fetch_start, $t2, 'start', 'record', $t2 );
+		my @stick_variables = ( $fetch_start, $t, $fetch_start, $fetch_end, 'start', 'record', $fetch_end );
 		if ($data->{'filter'} && $data->{'filter'} ne 'all') {
 			$stick_suffix .= " and type = ?";
 			push @stick_variables, $data->{'filter'};
@@ -5590,13 +5593,13 @@ sub log_reader {
 		};
 
 		$appts->{'__specs'}->{'start'} = $t;
-		$appts->{'__specs'}->{'end'} = $t2;
+		$appts->{'__specs'}->{'end'} = $fetch_end;
 		$appts->{'__specs'}->{'fetch_start'} = $fetch_start;
 		if ($appt_toggle eq 'on') {
 			my $temp_appointments;
 
 			foreach my $a (@{$open_appts}) {
-				my @query_variables = ( $a, $t, $t2 );
+				my @query_variables = ( $a, $t, $fetch_end );
 
 				my $query;
 				if ($data->{'filter'} && $data->{'filter'} ne 'all') {
@@ -5618,13 +5621,15 @@ sub log_reader {
 				$results = &subs::db_query($query, @query_variables);
 				$temp_appointments = $results->hashes;
 				push @{$appointments}, @{$temp_appointments};
-				$results = &subs::db_query($stick_query->($a), $a, @stick_variables);
-				push @{$appointments}, @{$results->hashes};
+				unless ($in_view_only) {
+					$results = &subs::db_query($stick_query->($a), $a, @stick_variables);
+					push @{$appointments}, @{$results->hashes};
+				}
 			}
 		}
 		else {
 			my $query;
-			my @query_variables = ( $t, $t2 );
+			my @query_variables = ( $t, $fetch_end );
 			if ($data->{'filter'} && $data->{'filter'} ne 'all') {
 				$query = "select distinct(app) as app,* from appointments where $timestamp_selector between ? and ? and type = ?";
 				push @query_variables, $data->{'filter'};
@@ -5645,8 +5650,10 @@ sub log_reader {
 
 			$results = &subs::db_query($query, @query_variables);
 			$appointments = $results->hashes;
-			$results = &subs::db_query($stick_query->(), @stick_variables);
-			push @{$appointments}, @{$results->hashes};
+			unless ($in_view_only) {
+				$results = &subs::db_query($stick_query->(), @stick_variables);
+				push @{$appointments}, @{$results->hashes};
+			}
 		}
 		# a row inside the view can be a stop or a presence too, so both queries
 		# can find it: keep the first of each row, and put the list back in time
