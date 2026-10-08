@@ -4530,13 +4530,23 @@ sub db_insert() {
 	$data->{'uuid'} = &random_string_creator(15) unless $data->{'uuid'};
 	my ($db,$database,$sql) = &database_grabber();
 	return unless $db;
-	my $lid = undef;
 	my $success;
 	my $count = 0;
-	until ($lid || $count >= 25) {
-		$success = eval { return $db->insert($table, $data); };
-		$lid = eval { return $success->last_insert_id };
-		unless ($lid) {  }
+	# Whether the insert landed is the insert's own row count, not
+	# last_insert_id: a refused write answers zero rows while last_insert_id
+	# is either zero on a fresh connection or, worse, the *previous* insert's
+	# id - which is how a refused write came back looking like a success and
+	# was retried until the driver had complained twenty-five times. A retry
+	# is for a statement that would not run at all, and it stays bounded.
+	until ($success || $count >= 25) {
+		my $results = eval { return $db->insert($table, $data); };
+		if ($results && $results->rows) {
+			$success = $results;
+		}
+		elsif ($results) {
+			# the statement ran and was refused; asking again will not help
+			last;
+		}
 		$count++;
 	}
 	&db_cache_updater($table, $data);
