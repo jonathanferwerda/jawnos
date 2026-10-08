@@ -8815,6 +8815,9 @@ sub inventory_details($c,$settings) {
 		$settings->{'s_calc'} = $c->param('calc');
 		$settings->{'s_lock'} = $c->param('lock');
 	}
+	# the canvas a walk happened on lends its unit to the page button: the fresh
+	# gesture carries it on the request, the setting keeps it for the loads after
+	my $page_scope = $c->param('page_scope') || $settings->{'s_page_scope'} || '';
 
 	unless ($settings->{'s_display'}) {
 		&subs::setting_setter({ app => $app, setting => 's_display', value => 'occurences'});
@@ -8922,6 +8925,7 @@ sub inventory_details($c,$settings) {
 		timestamp => $timestamp,
 		scope_page => $scope_page,
 		scope_page_max => $scope_page_max,
+		page_scope => $page_scope,
 		app => $app,
 		budget_status => {},
 	};

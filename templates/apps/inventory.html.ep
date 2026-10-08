@@ -44,12 +44,15 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 <img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator" style="vertical-align:bottom;">
 <% if (scalar @{$appts} > 0) { %>
 	<% my $scope_page = $returner->{'scope_page'} || 0; %>
+	<% my $page_letter = ''; %>
+	<% if ($scope_page != 0 && $returner->{'page_scope'}) { my $fl = uc substr($returner->{'page_scope'}, 0, 1); $page_letter = $returner->{'page_scope'} eq 'minute' ? lc($fl) : $fl; } %>
 	<% my $page_icon = $scope_page == 0 ? 'now' : ($scope_page > 0 ? 'back' : 'forward'); %>
 	<% my $page_colours = &subs::icon_plate_colours($page_icon); %>
 	<%# the page button wears where a scroll or a swipe has walked - N at now,
-	    2P two pages back, 1F one page forward - and tapping it returns to now;
-	    its tile follows the walk: now at home, back/forward once it has moved %>
-	<button class="statistic_page little_thumb hover" style="<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll a graph sideways to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') %></button>
+	    2P two pages back, 1F one page forward - and then the unit of the canvas
+	    that was walked, as in 1FD; it stays wide enough for 99FY, and tapping
+	    it returns to now while its tile follows the walk %>
+	<button class="statistic_page little_thumb hover" style="min-width:68px;<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll a graph sideways to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') . $page_letter %></button>
 	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
 		<% foreach my $col ( @cols ) { %>
 			<span id="<%= $app %>_<%= $col %>_statistic_graph_span">

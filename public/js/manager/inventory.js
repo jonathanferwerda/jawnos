@@ -97,7 +97,7 @@ function inventoryDetails(app) {
 	$.ajax({
 		url: '/manager/inventory/details',
 		type: 'GET',
-		data: { timestamp: timestamp, app: app, scope_count: sscv, calc: sc, lock: sdl, display: sdv, visual: sv, movement: jsmv, s_scroll: s_scroll },
+		data: { timestamp: timestamp, app: app, scope_count: sscv, calc: sc, lock: sdl, display: sdv, visual: sv, movement: jsmv, s_scroll: s_scroll, page_scope: ir.attr('page_scope') },
 		success: function(response) {
 			// the request is done the moment the answer lands: clearing the flag here
 			// keeps a draw that throws from leaving every page control silently deaf,
@@ -184,7 +184,7 @@ function statisticPageWheel(e) {
 	// the older periods sit to the right, so scrolling that way walks back
 	var step = statistic_page_delta > 0 ? 1 : -1;
 	statistic_page_delta = 0;
-	statisticPageStep(ir, step);
+	statisticPageStep(ir, step, $(this).attr('scope'));
 }
 
 function statisticPageTouchStart(e) {
@@ -205,11 +205,12 @@ function statisticPageTouchMove(e) {
 	var ir = $(this).closest('.appointment');
 	if (ir.find('.statistic_visual').val() != 'historical') { return; }
 	// dragging the graph to the left brings the older periods in from the right
-	statisticPageStep(ir, x < 0 ? 1 : -1);
+	statisticPageStep(ir, x < 0 ? 1 : -1, $(this).attr('scope'));
 }
 
-// one page of periods along the timeline, clamped to what the scope allows
-function statisticPageStep(ir, step) {
+// one page of periods along the timeline, clamped to what the scope allows;
+// the canvas the gesture landed on names the unit the button speaks in
+function statisticPageStep(ir, step, scope) {
 	if (inventoryStatus.loading) { return; }
 	var page = numeral(ir.attr('scope_page')).value() || 0;
 	var max = numeral(ir.attr('scope_page_max')).value() || 24;
@@ -219,10 +220,16 @@ function statisticPageStep(ir, step) {
 	if (next == page) { return; }
 	var app = ir.attr('app');
 	ir.attr('scope_page', next);
-	// the page is only persisted by the setter and the render reads it back out
-	// of the settings, so the fetch waits for the write: fired together, the
+	var writes = [ settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next }) ];
+	if (scope) {
+		ir.attr('page_scope', scope);
+		// kept so a reload after the walk still says which unit the page is in
+		writes.push(settingSetter({ 'app': app, 'setting': 's_page_scope', 'value': scope }));
+	}
+	// the page is only persisted by the setters and the render reads it back out
+	// of the settings, so the fetch waits for the writes: fired together, the
 	// render could return the page the walk just left and put the button back
-	settingSetter({ 'app': app, 'setting': 's_scope_page', 'value': next }).then(function() {
+	Promise.all(writes).then(function() {
 		inventoryDetails(app);
 	});
 }
