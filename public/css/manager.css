@@ -493,6 +493,42 @@ canvas { overflow: scroll; z-index: 99; }
 	text-align: left;
 }
 
+/* The app menu wears a shelf rail on its left: the five categories filter the
+   list beside it, and the shelf showing wears the same .selected the menu
+   buttons do. The list leads with what was used lately (startMenuView() in
+   manager.js orders it), so the rail is the way to a shelf the recents have
+   not reached; a press on the showing shelf brings the recents back. */
+.start_menu_app_menu {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+.start_menu_categories {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 auto;
+	gap: 8px;
+	padding-top: 44px;
+}
+#start_menu .start_menu_category {
+	box-sizing: border-box;
+	height: 40px;
+	width: 40px;
+	max-width: 40px;
+	object-fit: contain;
+	cursor: pointer;
+	opacity: 0.65;
+	border-radius: 6px;
+}
+#start_menu .start_menu_category:hover,
+#start_menu .start_menu_category.selected {
+	opacity: 1;
+}
+.start_menu_app_menu .start_menu_main_display {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
 .appointment_option {
 	height: 50px;
 	width: 100%;

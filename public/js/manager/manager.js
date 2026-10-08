@@ -1104,6 +1104,7 @@ function startMenuListify() {
 		}
 	});
 	startMenuSort(main);
+	startMenuView();
 }
 
 function startMenuSort(main) {
@@ -1125,9 +1126,84 @@ $(document).on('click', '.start_menu_item_text', function () {
 // and so is the padding around them: a tap anywhere on the row opens the app,
 // rather than landing on the gap and only closing the menu
 $(document).on('click', '.start_menu_item', function (e) {
+	startMenuUseRecord($(this));
 	if ((e.target.tagName || '').toUpperCase() == 'IMG') { return; }
 	if ($(e.target).hasClass('start_menu_item_text')) { return; }
 	$(this).find('img').first().trigger('click');
+});
+
+// What the app menu remembers: the last use of each app and the shelf it is
+// showing, both in localStorage the way the menu button is. The list leads
+// with the used-lately apps, freshest first; an app never pressed keeps its
+// alphabetical place below them, so a fresh browser still sees everything.
+// A press on the shelf that is showing puts the recents back.
+var startMenuRecentKey = 'start_menu_recent';
+var startMenuCategoryKey = 'start_menu_category';
+
+function startMenuRowKey(item) {
+	var img = item.find('img').first();
+	return img.attr('id') || img.attr('hint') || ($.trim(item.text()) || '');
+}
+
+function startMenuRowCategory(item) {
+	return item.find('img').first().attr('category') || '';
+}
+
+function startMenuRecent() {
+	var recent = {};
+	try { recent = JSON.parse(localStorage.getItem(startMenuRecentKey)) || {}; } catch (e) { recent = {}; }
+	return recent;
+}
+
+function startMenuUseRecord(item) {
+	var key = startMenuRowKey(item);
+	if (!key) { return; }
+	var recent = startMenuRecent();
+	recent[key] = Date.now();
+	// only the freshest handful are worth remembering
+	var keys = Object.keys(recent).sort(function (a, b) { return recent[b] - recent[a]; });
+	$.each(keys.slice(40), function (i, k) { delete recent[k]; });
+	try { localStorage.setItem(startMenuRecentKey, JSON.stringify(recent)); } catch (e) {}
+}
+
+// The shelf showing narrows the list to its own, kept alphabetical; otherwise
+// the used-lately lead, freshest first, and the never-pressed keep the
+// alphabetical order the list was built in.
+function startMenuView() {
+	var main = $('.start_menu_main_display');
+	if (main.length == 0) { return; }
+	var rows = main.children('.start_menu_item');
+	if (rows.length == 0) { return; }
+	var category = localStorage.getItem(startMenuCategoryKey) || '';
+	rows.show();
+	if (category) {
+		startMenuSort(main);
+		rows.each(function () {
+			if (startMenuRowCategory($(this)) !== category) { $(this).hide(); }
+		});
+	}
+	else {
+		var recent = startMenuRecent();
+		var order = rows.get();
+		var place = new Map();
+		$.each(order, function (i, row) { place.set(row, i); });
+		order.sort(function (a, b) {
+			var ar = recent[startMenuRowKey($(a))] || 0;
+			var br = recent[startMenuRowKey($(b))] || 0;
+			if (ar == br) { return place.get(a) - place.get(b); }
+			return br - ar;
+		});
+		$(order).appendTo(main);
+	}
+	$('.start_menu_category').removeClass('selected');
+	$('.start_menu_category[category="' + category + '"]').addClass('selected');
+}
+
+$(document).on('click', '.start_menu_category', function () {
+	var category = $(this).attr('category') || '';
+	var showing = localStorage.getItem(startMenuCategoryKey) || '';
+	localStorage.setItem(startMenuCategoryKey, showing === category ? '' : category);
+	startMenuView();
 });
 
 // the menu ships inside the page as well as over the socket, so do it once at load

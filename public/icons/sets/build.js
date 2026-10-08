@@ -176,6 +176,12 @@ const GLYPHS = {
 	calendar: '<path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z" fill="{G}"/>',
 	blocked: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z" fill="{G}"/>',
 	moon: '<path d="M20.2 14.8A8.6 8.6 0 1 1 9.2 3.8a6.9 6.9 0 0 0 11 11z" fill="{G}"/>',
+	// --- the start menu's category rail: a toolbox, a gamepad, a briefcase
+	// and a layered stack; media wears the photo the social construct has ---
+	accessories: '<path d="M3 9.5h18v9A1.6 1.6 0 0 1 19.4 20H4.6A1.6 1.6 0 0 1 3 18.5z" fill="{G}"/><path d="M8.4 9.5V7.2a2 2 0 0 1 2-2h3.2a2 2 0 0 1 2 2v2.3" fill="none" stroke="{G}" stroke-width="1.7"/><rect x="10.5" y="11.9" width="3" height="2.9" rx="1" fill="{D}"/><path d="M3 12.7h18" fill="none" stroke="{D}" stroke-width="1.1"/>',
+	games: '<rect x="2.5" y="7.5" width="19" height="9.5" rx="4.75" fill="{G}"/><rect x="5.9" y="11.3" width="1.6" height="4.6" rx="0.8" fill="{D}"/><rect x="4.4" y="12.8" width="4.6" height="1.6" rx="0.8" fill="{D}"/><circle cx="16" cy="11.4" r="1.5" fill="{D}"/><circle cx="18.7" cy="13.7" r="1.5" fill="{D}"/>',
+	business: '<rect x="2.5" y="7" width="19" height="13" rx="2.4" fill="{G}"/><path d="M8.6 7V5.6a2 2 0 0 1 2-2h2.8a2 2 0 0 1 2 2V7" fill="none" stroke="{G}" stroke-width="1.7"/><rect x="10.5" y="11.6" width="3" height="3.4" rx="1" fill="{D}"/><path d="M2.5 12.7h19" fill="none" stroke="{D}" stroke-width="1.1"/>',
+	system: '<path d="M12 3 3.2 7.5 12 12l8.8-4.5z" fill="{G}"/><path d="M3.2 11.4 12 15.9l8.8-4.5" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.2 15.3 12 19.8l8.8-4.5" fill="none" stroke="{D}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 // --- pseudonym icon name -> glyph ---------------------------------------------
@@ -395,6 +401,12 @@ const ICONS = {
 	'knob_teal_rounded': 'knob',
 	'knob_white': 'knob',
 	'knob_yellow': 'knob',
+	// --- the start menu's category rail; media already has its icon (the
+	// photo the social construct wears), the other four are new glyphs ---
+	'accessories': 'accessories',
+	'games': 'games',
+	'business': 'business',
+	'system': 'system',
 };
 
 // --- styles --------------------------------------------------------------------
