@@ -1,4 +1,4 @@
-<% my $ghome = {}; my $processed_files = []; %>
+<% my $ghome = {}; my $processed_files = []; my $archive_lookup; %>
 
 <% foreach my $a ( @{$apps} ) { 
 	if ($settings->{'search'}) {
@@ -40,6 +40,16 @@
 			$f->{'info'}->{'duration'} = $appt->{'duration'} / 1000;
 		}
 		$f->{'count'} = $count; $count++;
+		# a photo whose local copy is gone may still be in the archive, in which
+		# case it is shown from there instead of counted missing
+		if (!-e $f->{'f'} && ($settings->{'archive'} || '') eq 'on') {
+			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
+			my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
+			if ($archived) {
+				$f->{'f'} = $archived->{'path'};
+				$f->{'remote_uuid'} = $archived->{'remote_uuid'};
+			}
+		}
 		push @{$temp_files}, $f;
 		last if $count >= ($pre_count + $gallery_count);
 	}
@@ -65,16 +75,16 @@
 		<% foreach my $f ( @{$ghome->{$a}} ) { %>
 			<% my $aset = $asettings->{$f->{'app'}} || &subs::settings_grabber({ app => $f->{'app'}, settings => ['main_image','visible'] }); %>
 			<% next if $aset->{'visible'} ne 'checked' && $permissive == 0; %>
-			<% unless (-e $f->{'f'}){ $subtractors++; next; } %>
+			<% unless (-e $f->{'f'} || $f->{'remote_uuid'}){ $subtractors++; next; } %>
 			<% next if grep { $_->{'uuid'} eq $f->{'uuid'} } @{$processed_files};	push @{$processed_files}, $f; %>
 			<table class="gallery_home_preview hover" app="<%= $app %>" file="<%= $f->{'f'} %>" id="<%= $f->{'uuid'} %>_album_thumb %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" count="<%= $f->{'count'} - $subtractors %>" timestamp="<%= $f->{'app_timestamp'} %>" uuid="<%= $f->{'uuid'} %>" type="<%= $f->{'type'} %>" style="min-width:110px;display:<% if ($f->{'f'} eq 'template') { %>none;<% } else { %>inline-block<% } %>;border:solid;">
 				<tbody><tr><td>
 					<% if ($f->{'type'} eq 'image') { %>
-						<img src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&app_uuid=<%= $f->{'app_uuid'} %>&thumb=ya&app=<%= $f->{'app'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" class="gigantic_thumb" type="<%= $f->{'type'} %>" style="">
+						<img src="/file_open?file=<%= $f->{f} %>&remote_uuid=<%= $f->{remote_uuid} || q{} %>&timestamp=<%= $f->{'app_timestamp'} %>&app_uuid=<%= $f->{'app_uuid'} %>&thumb=ya&app=<%= $f->{'app'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" class="gigantic_thumb" type="<%= $f->{'type'} %>" style="">
 					<% } else { %>
 						<% my $brother = &subs::random_string_creator(); %>
-						<img src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&thumb=ya&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= &subs::random_string_creator() %>" isa="img" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;" brother="<%= $brother %>"></img>
-						<video autoplay loop muted potential_src="/file_open?file=<%= $f->{'f'} %>&timestamp=<%= $f->{'app_timestamp'} %>&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" id="<%= &subs::random_string_creator(20) %>" file_uuid="<%= $f->{'uuid'} %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" brother="<%= $brother %>" style="min-width:110px;border-color:yellow;display:none;"></video>
+						<img src="/file_open?file=<%= $f->{f} %>&remote_uuid=<%= $f->{remote_uuid} || q{} %>&timestamp=<%= $f->{'app_timestamp'} %>&thumb=ya&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= &subs::random_string_creator() %>" isa="img" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" style="min-width:110px;border-color:yellow;" brother="<%= $brother %>"></img>
+						<video autoplay loop muted potential_src="/file_open?file=<%= $f->{f} %>&remote_uuid=<%= $f->{remote_uuid} || q{} %>&timestamp=<%= $f->{'app_timestamp'} %>&app=<%= $f->{'app'} %>&app_uuid=<%= $f->{'app_uuid'} %>&file_uuid="<%= $f->{'uuid'} %>" app_uuid="<%= $f->{'app_uuid'} %>" duration="<%= $f->{'info'}->{'duration'} %>" id="<%= &subs::random_string_creator(20) %>" file_uuid="<%= $f->{'uuid'} %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb gigantic_thumb" brother="<%= $brother %>" style="min-width:110px;border-color:yellow;display:none;"></video>
 					<% } %>
 				</td></tr></tbody>
 			</table>

@@ -3556,6 +3556,49 @@ sub archive_manifest_fetch {
 	return { %{$res}, hostname => $agent->{'hostname'} };
 }
 
+# Where a photo that has left this disk can still be found. The archive machine
+# holding photo_location is asked for its manifest once, and `locate` then
+# answers for one path at a time, by the path's place inside the location. Only
+# missing files are ever asked about, so a listing of live files never waits on
+# a machine, and a machine that cannot be reached answers with nothing rather
+# than failing the listing.
+sub archive_image_lookup {
+	my $data = shift;
+	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
+	my $device = &subs::device_setter();
+	my $here = $misc->{$device}->{'photo_location'};
+	my $archive = $misc->{$device}->{'photo_archive'};
+	return {} unless ($here && $archive);
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my %machine_for;
+	foreach my $rm ( @{$machines} ) {
+		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
+	}
+	my $rm = $machine_for{$archive};
+	return {} unless ($rm && $rm->{'uuid'});
+	my $manifest = &archive_manifest_fetch({ remote_uuid => $rm->{'uuid'}, location => 'photo' });
+	return {} if $manifest->{'error'};
+	my $folder = $manifest->{'folder'} || '';
+	my $base = &home($here);
+	$base =~ s{/+$}{};
+	my %rows = map { $_->{'relative'} => $_ } @{$manifest->{'rows'} || []};
+	my $locate = sub {
+		my $path = shift;
+		return undef unless (defined $path && length $path);
+		return undef unless $path =~ m{^\Q$base\E/};
+		my $relative = substr($path, length($base) + 1);
+		my $row = $rows{$relative};
+		return undef unless ($row && ($row->{'type'} || '') eq 'image');
+		return {
+			path => (length $folder ? $folder . '/' . $relative : $relative),
+			relative => $relative,
+			remote_uuid => $rm->{'uuid'},
+			remote_hostname => $manifest->{'hostname'} || ''
+		};
+	};
+	return { locate => $locate, folder => $folder, remote_uuid => $rm->{'uuid'}, hostname => $manifest->{'hostname'} || '' };
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {

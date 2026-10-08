@@ -12904,6 +12904,9 @@ get '/manager/gallery' => sub ($c) {
 	my $last_send = 0;
 	my $seen_chosen = 0;
 	my $skip_processing = 0;
+	# a photo whose local copy is gone may still be in the archive: one manifest
+	# request, made only when a missing file is actually met
+	my $archive_lookup;
 	foreach my $app_name ( @{$apps} ) {
 		$asettings->{$app_name} = &subs::settings_grabber({ app => $app_name, settings => ['main_image', 'visible' ] }) unless $asettings->{$app_name};
 		next if $asettings->{$app_name}->{'visible'} ne 'checked' && $permissive == 0;
@@ -12961,7 +12964,17 @@ get '/manager/gallery' => sub ($c) {
 
 						$f->{'app'} = $fi->{'app'};
 						unless (-e $f->{'f'} ) {
-							if ($skip_processing == 0) {
+							if ($skip_processing == 0 && ($settings->{'archive'} || '') eq 'on') {
+								$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
+							}
+							my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
+							if ($archived) {
+								# shown from the machine holding it, and kept out of the
+								# absentees, which is what used to have it deleted
+								$f->{'f'} = $archived->{'path'};
+								$f->{'remote_uuid'} = $archived->{'remote_uuid'};
+							}
+							elsif ($skip_processing == 0) {
 								push @{$absentees}, $f;
 
 								next;
@@ -12971,7 +12984,7 @@ get '/manager/gallery' => sub ($c) {
 						my @ext = split /\./, $f->{'f'};
 
 						if (grep { $ext[-2] eq $_ || $ext[-1] eq $_ } qw/png jpg svg bmp gif mp4 webm/ ) {
-							$f->{'file'} = '/play?app=' . $fi->{'app'} . '&track=' . uri_encode $f->{'f'} . '&timestamp=' . $fi->{'server_time'};
+							$f->{'file'} = '/play?app=' . $fi->{'app'} . '&track=' . uri_encode $f->{'f'} . '&timestamp=' . $fi->{'server_time'} . ($f->{'remote_uuid'} ? '&remote_uuid=' . $f->{'remote_uuid'} : '');
 							$f->{'type'} = $fi->{'type'} unless $f->{'type'};
 							$f->{'server_time'} = $fi->{'server_time'};
 							$f->{'timestamp'} = $fi->{'timestamp'},
