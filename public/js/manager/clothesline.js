@@ -158,6 +158,32 @@ $(document).on('touchmove', '.background', function(m) {
 	}
 
 });
+
+// A mouse drag on the canvas below the clothesline is a grab: it slides the
+// timeline and glides, exactly like a touch drag. The wheel is not a grab - it
+// stays a regular scroll.
+$(document).on('mousedown', '.background', function(m) {
+	var w = $(this);
+	if (w.attr('id') != 'timeline' || m.which != 1) { return; }
+	var y = numeral(m.clientY - w.offset().top).value();
+	if (y < clothesLinePos['maxHeight']) { return; }
+	clothesLinePos['moving'] = Date.now();
+	clothesLinePos['mouseDrag'] = 1;
+	clothesLinePos['dragged'] = 0;
+	clothesLinePos['lastBX'] = numeral(m.clientX - w.offset().left).value();
+});
+
+$(document).on('mousemove', '.background', function(m) {
+	if (!clothesLinePos['mouseDrag'] || clothesLinePos['lastBX'] == undefined) { return; }
+	var w = $(this);
+	var x = numeral(m.clientX - w.offset().left).value();
+	var mouseDiff = (x - clothesLinePos['lastBX']);
+	clothesLinePos['lastBX'] = x;
+	clothesLinePos['moving'] = Date.now();
+	if (Math.abs(mouseDiff) > 1) { clothesLinePos['dragged'] = 1; }
+	timelineScroller({ mousediff: mouseDiff });
+});
+
 $(document).on('mouseout touchend mouseup', '.background', function() {
 	if (clothesLinePos['lastBX']) {
 	//	calculator();
@@ -165,6 +191,7 @@ $(document).on('mouseout touchend mouseup', '.background', function() {
 	clothesLinePos['lastX'] = undefined;
 	clothesLinePos['lastBX'] = undefined;
 	clothesLinePos['startMove'] = undefined;
+	clothesLinePos['mouseDrag'] = 0;
 	//clothesLinePos['velocities'] = [];
 });
 
@@ -198,13 +225,8 @@ $(document).on('mousewheel', '.background', function(e) {
 		}
 		if (clothesLinePos['startMove'] == 'canvas') {
 			if (id == 'timeline') {
-				// a plain wheel is not glided, exactly like the clothesline; the
-				// trackpad and the flick are
-				var source;
-				if (Math.abs(e.deltaY) > 4 && Math.abs(e.deltaX) === 0) {
-					source = 'mousewheel';
-				}
-				timelineScroller({ mousediff: diff, source: source });
+				var motion = timelineWheelMotion(e.deltaX, e.deltaY, e.originalEvent.wheelDelta);
+				timelineScroller({ mousediff: motion.mousediff, source: motion.glide ? undefined : 'mousewheel' });
 			}
 			else if (id == 'clockface') {
 				clockfaceScroller({ mousediff: diff });
@@ -254,6 +276,16 @@ function clockfaceScroller(data) {
 		localStorage.setItem('scrollPositioner', 	localStorage.getItem('scrollPositioner') * .95);
 	}
 	graphicalize(response);
+}
+
+// How a wheel event moves the timeline: horizontal is a trackpad swipe that
+// grabs the canvas, so it glides; vertical is a plain scroll, from a wheel or a
+// trackpad, and does not.
+function timelineWheelMotion(deltaX, deltaY, wheelDelta) {
+	if (Math.abs(deltaX) > Math.abs(deltaY)) {
+		return { mousediff: -1 * (numeral(deltaX).value()), glide: 1 };
+	}
+	return { mousediff: -1 * (numeral(wheelDelta / 5).value()), glide: 0 };
 }
 
 function timelineScroller(data) {

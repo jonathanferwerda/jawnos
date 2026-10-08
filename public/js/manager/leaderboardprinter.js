@@ -173,6 +173,12 @@ function leaderboardPrinter(appts) {
 }
 
 $(document).on('click', '.background', function (e) {
+	// a mouse grab that moved the timeline ends with a click; it is not a
+	// selection of whatever the pointer happened to stop on
+	if (clothesLinePos['dragged']) {
+		clothesLinePos['dragged'] = 0;
+		return;
+	}
 	var scroll = $(document).scrollTop();
 	var x = e.clientX - numeral($(this).css('left')).value();
 	var y = (e.clientY + scroll);
