@@ -12172,7 +12172,9 @@ get '/manager/keyup_search' => sub($c) {
 
 		$search = '%' . $search . '%';
 		my ($db) = &subs::database_grabber();
-		my $results = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and value = ? and app like ? LIMIT 7', $device, 'visible','checked', $search)->hashes;
+		# an app that has gallery appointments is a gallery album, and the dock's
+		# search is not the place for those
+		my $results = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and value = ? and app like ? and app not in (select app from appointments where account = ?) LIMIT 7', $device, 'visible','checked', $search, 'gallery')->hashes;
 		my $resulted = $c->render_to_string(template => 'search/manager', results => $results);
 
 		$c->render(json => { results => $resulted, count => scalar @{$results}, timestamp => $timestamp });
