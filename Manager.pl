@@ -9363,6 +9363,11 @@ sub father_time($data) {
 				return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
 			};
 			$bt = $period_start->($shift);
+			# A window that names periods ahead counts from the request: the part
+			# of this period already spent is behind the row and belongs to "this",
+			# not to the rows past it.  The far edge stays the period the name
+			# counts to, and the unlocked windows already start here.
+			$bt = $timestamp if ($ts =~ /next/ && $bt < $timestamp);
 			$temp_timestamp = $period_start->($shift + $units);
 		}
 		else {
@@ -14108,11 +14113,83 @@ post '/manager/folders/archive/retry' => sub($c) {
 	$c->render(json => { status => 'ok', id => $c->param('id') });
 };
 
+# Which location an archived path belongs to and where it sits inside it, asked
+# of the machine that owns the drive. A caller that only has a path on that
+# machine - a selection in folders, a track, a photo - asks this first, and the
+# answer is what a fetch needs.
+post '/manager/folders/archive/locate' => sub($c) {
+	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		my $result = &Manager::remote_relay_request($c);
+		if (length $result) {
+			$c->res->headers->content_type('application/json');
+			$c->render(text => $result);
+			return;
+		}
+	}
+	my $root = &subs::archive_root();
+	if (!$root || !-d $root) {
+		$c->render(json => { status => 'error', error => 'this machine is not an archive' });
+		return;
+	}
+	my $path = $c->param('path');
+	$path =~ s{/+$}{} if defined $path;
+	foreach my $location ( &subs::location_types() ) {
+		my $folder = $root . '/' . $location;
+		next unless (defined $path && $path =~ m{^\Q$folder\E/});
+		$c->render(json => {
+			status => 'ok',
+			location => $location,
+			relative => substr($path, length($folder) + 1),
+			folder => $folder,
+			folder_path => (-d $path ? 1 : 0)
+		});
+		return;
+	}
+	$c->render(json => { status => 'error', error => 'not inside any archive location' });
+};
+
+# Bring something that lives in an archive back to this machine. The path as it
+# is on the other machine is enough: that machine says which location it is and
+# where it sits inside it, and this one puts it back where it came from. One
+# item per request, folder or file, so a series or an album comes home whole.
+post '/manager/folders/archive/fetch' => sub($c) {
+	my $remote_uuid = $c->param('remote_uuid');
+	my $path = $c->param('path');
+	unless ($remote_uuid && defined $path && length $path) {
+		$c->render(json => { status => 'error', error => 'a path and the machine holding it are needed' });
+		return;
+	}
+	my $located = &subs::archive_remote_locate({ remote_uuid => $remote_uuid, path => $path });
+	if ($located->{'error'}) {
+		$c->render(json => { status => 'error', error => $located->{'error' } });
+		return;
+	}
+	my $into = &subs::archive_local_destination({ location => $located->{'location'}, relative => $located->{'relative'} });
+	if ($into->{'error'}) {
+		$c->render(json => { status => 'error', error => $into->{'error'} });
+		return;
+	}
+	my $id = &subs::minion_grabber()->enqueue(archive_fetch_home => [ {
+		remote_uuid => $remote_uuid,
+		location => $located->{'location'},
+		relative => $located->{'relative'},
+		folder => $located->{'folder_path'},
+		archive_path => $path
+	} ] => { retries => 2 });
+	$c->render(json => {
+		status => 'ok',
+		id => $id,
+		location => $located->{'location'},
+		relative => $located->{'relative'},
+		to => $into->{'path'}
+	});
+};
+
 # The queue as the folders app shows it: every archive job this machine holds,
 # newest first, with the note the worker last wrote on it, and the locations
 # this device archives so the panel can offer a rescan for one.
 get '/manager/folders/archive' => sub($c) {
-	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer', 'archive_manifest_rescan'] })->{'jobs'} || [];
+	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer', 'archive_manifest_rescan', 'archive_fetch_home'] })->{'jobs'} || [];
 	my @jobs;
 	foreach my $job ( @{$list} ) {
 		my $item = ($job->{'args'} || [])->[0] || {};

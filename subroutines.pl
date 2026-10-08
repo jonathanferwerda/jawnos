@@ -3599,12 +3599,150 @@ sub archive_image_lookup {
 	return { locate => $locate, folder => $folder, remote_uuid => $rm->{'uuid'}, hostname => $manifest->{'hostname'} || '' };
 }
 
+# Where a fetched item lands here: the same place inside this machine's own
+# folder for that location. The inverse of the archive plan, and the only path
+# a fetch writes to; the relative path is resolved so it cannot climb out.
+sub archive_local_destination {
+	my $data = shift;
+	my $location = $data->{'location'};
+	my $relative = $data->{'relative'} || '';
+	return { error => 'unknown location' } unless grep { $_ eq $location } &location_types();
+	my $base = &setting_grabber({ app => 'misc', setting => $location . '_location' });
+	return { error => 'this machine has no folder for ' . $location } unless (defined $base && length $base);
+	$base = &home($base);
+	$base =~ s{/+$}{};
+	my @parts;
+	foreach my $part ( split m{/+}, $relative ) {
+		next if $part eq '' || $part eq '.';
+		return { error => 'the path climbs out of the location' } if $part eq '..';
+		push @parts, $part;
+	}
+	my $inside = join '/', @parts;
+	my @upper = @parts;
+	pop @upper if scalar @upper;
+	return {
+		base => $base,
+		relative => $inside,
+		parent => $base . (scalar @upper ? '/' . join('/', @upper) : ''),
+		path => $base . (length $inside ? '/' . $inside : '')
+	};
+}
+
+# Bring something the archive holds back to this machine, into the place it came
+# from: a whole folder - a series, an album - or one file. A folder is read out
+# of the archive's manifest, so nothing walks the far disk over the tunnel, and
+# each file is streamed down rather than pulled into memory, since a fetched
+# video is a video. Anything already here, at the same size, is left alone.
+sub archive_fetch_home_job {
+	my ($job, $data) = @_;
+	my $agent = &remote_agent_for($data->{'remote_uuid'});
+	if ($agent->{'error'}) { $job->fail($agent->{'error'}); return }
+	my $ua = $agent->{'ua'};
+	my $manager = $agent->{'manager'};
+	my $dest = &archive_local_destination({ location => $data->{'location'}, relative => $data->{'relative'} });
+	if ($dest->{'error'}) { $job->fail($dest->{'error'}); return }
+
+	my @files;
+	if ($data->{'folder'}) {
+		my $manifest = &archive_manifest_fetch({ remote_uuid => $data->{'remote_uuid'}, location => $data->{'location'} });
+		if ($manifest->{'error'}) { $job->fail($manifest->{'error'}); return }
+		my $folder = $manifest->{'folder'} || '';
+		my $prefix = length $dest->{'relative'} ? $dest->{'relative'} . '/' : '';
+		foreach my $row ( @{$manifest->{'rows'} || []} ) {
+			my $relative = $row->{'relative'} || '';
+			next unless length $relative;
+			next if (length $prefix && index($relative, $prefix) != 0);
+			push @files, { relative => $relative, size => $row->{'size'}, mtime => $row->{'mtime'}, path => (length $folder ? $folder . '/' . $relative : $relative) };
+		}
+	}
+	else {
+		push @files, { relative => $dest->{'relative'}, path => $data->{'archive_path'}, mtime => $data->{'mtime'} };
+	}
+
+	my ($fetched, $skipped, $bytes, $count) = (0, 0, 0, 0);
+	my @errors;
+	foreach my $file ( @files ) {
+		$count++;
+		my $into = &archive_local_destination({ location => $data->{'location'}, relative => $file->{'relative'} });
+		if ($into->{'error'}) { push @errors, $file->{'relative'} . ': ' . $into->{'error'}; next }
+		next unless (defined $file->{'path'} && length $file->{'path'});
+		if (-e $into->{'path'}) {
+			my $size = -s $into->{'path'};
+			if (defined $file->{'size'} && defined $size && $size == $file->{'size'}) { $skipped++; next }
+		}
+		Mojo::File->new($into->{'parent'})->make_path;
+		my $url = $manager . '/file_open?file=' . url_escape $file->{'path'};
+		# streamed to the file, draining what has arrived each time so a long
+		# video never lands in memory whole
+		my $fh;
+		my $write_error;
+		my $tx = $ua->get($url => sub {
+			my ($ua, $tx) = @_;
+			my $res = $tx->res;
+			my $chunk = $res->body;
+			if (defined $chunk && length $chunk) {
+				unless ($fh) {
+					open my $open, '>', $into->{'path'} or do { $write_error = 'cannot write ' . $into->{'path'}; return };
+				$fh = $open;
+				}
+				print {$fh} $chunk;
+				$res->body('');
+			}
+		});
+		close $fh if $fh;
+		if ($write_error) { push @errors, $file->{'relative'} . ': ' . $write_error; next }
+		unless ($tx && $tx->success && -e $into->{'path'}) {
+			my $why = ($tx && $tx->res->error) ? $tx->res->error->{'message'} : 'the download failed';
+			push @errors, $file->{'relative'} . ': ' . $why;
+			next;
+		}
+		utime $file->{'mtime'}, $file->{'mtime'}, $into->{'path'} if ($file->{'mtime'} && $file->{'mtime'} =~ /^\d+$/);
+		$fetched++;
+		$bytes += (-s $into->{'path'}) || 0;
+		$job->note(progress => "fetched $fetched, skipped $skipped, $bytes bytes") if $count % 5 == 0;
+	}
+
+	my $result = {
+		fetched => $fetched,
+		skipped => $skipped,
+		bytes => $bytes,
+		files => scalar @files,
+		location => $data->{'location'},
+		relative => $data->{'relative'},
+		archive_host => $agent->{'hostname'}
+	};
+	if (scalar @errors) {
+		$result->{'errors'} = \@errors;
+		$job->fail($result);
+		return;
+	}
+	$job->note(progress => "fetched $fetched, skipped $skipped, $bytes bytes");
+	$job->finish($result);
+}
+
+# Ask the machine holding a path what it is: which location it belongs to and
+# where it sits inside it. Only the machine that owns the drive can answer,
+# because only it knows its own archive root.
+sub archive_remote_locate {
+	my $data = shift;
+	my $agent = &remote_agent_for($data->{'remote_uuid'});
+	return { error => $agent->{'error'} } if $agent->{'error'};
+	my $res = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/locate' => form => {
+			path => $data->{'path'}
+		})->result->json;
+	};
+	return { error => 'the archive machine did not answer' } unless ($res && $res->{'status'} eq 'ok');
+	return $res;
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
 	return {
 		archive_transfer => \&archive_transfer_job,
-		archive_manifest_rescan => \&archive_manifest_rescan_job
+		archive_manifest_rescan => \&archive_manifest_rescan_job,
+		archive_fetch_home => \&archive_fetch_home_job
 	};
 }
 
