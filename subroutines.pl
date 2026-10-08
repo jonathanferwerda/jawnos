@@ -5671,11 +5671,25 @@ sub remote_machine_lister() {
 	my $data = shift;
 	my $remote_machines = &subs::db_select('remote_machines')->hashes || [];
 
+	# a mirror entry is how a machine the source knows about is reached through
+	# it; when that machine already has a row of its own the list would show the
+	# same machine twice (once, three times, with overlapping mirror sources),
+	# so a mirror is only added when it is not otherwise present. One identity
+	# per machine - uuid beats signatorial beats ip, so a tunnelled machine's
+	# 127.0.0.1 can never collide with another entry.
+	my %already;
+	foreach my $rm ( @{$remote_machines} ) {
+		my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
+		$already{$key} = 1 if $key;
+	}
 	foreach my $rm ( @{$remote_machines} ) {
 		$rm->{'mirror'} = 'no';
 		if ($rm->{'mirrors'} && $data->{'mirrors'} ne 'none') {
 			my $mirrors = eval { return decode_json $rm->{'mirrors'} } || [];
 			foreach my $mirror ( @{$mirrors} ) {
+				my $key = $mirror->{'uuid'} || $mirror->{'signatorial'} || $mirror->{'ip'};
+				next if $key && $already{$key};
+				$already{$key} = 1 if $key;
 				$mirror->{'hostname'} .= ' (mirror)';
 				$mirror->{'source_ip'} = $rm->{'ip'};
 				$mirror->{'source_domain'} = $rm->{'domain'};

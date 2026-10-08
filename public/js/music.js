@@ -547,9 +547,10 @@ function theatreModeOn() {
 	}
 	else if ($('#video').attr('src')) {
 		$('#video').show();
+		// the interface already fades in and out with the theatre controls (see
+		// the video include), so the gear only has to stop being hidden here
 		$('#interface').hide();
 		$('#music_padlock_toggle').hide();
-		$('#music_configuration_toggle').hide();
 		$('#music_album_cover').hide()
 	}
 }
@@ -1136,7 +1137,7 @@ $(document).on('click', '.music_audio_output_select', function() {
 
 $(document).on('click', '#music_configuration_toggle', function() {
 	var mc = $('#music_configuration');
-	var remote_uuid = $('#music_configuration').attr('remote_uuid');
+	var remote_uuid = mc.attr('remote_uuid');
 	if (mc.is(':visible')) {
 		mc.hide();
 	}
@@ -1145,11 +1146,15 @@ $(document).on('click', '#music_configuration_toggle', function() {
 		$.ajax({
 			url: '/music/configuration',
 			type: 'GET',
-			data: { },
+			// name the loaded remote library so the panel can show it as the
+			// current selection instead of losing it
+			data: { remote_uuid: remote_uuid },
 			success: function(response) {
 				mc.html(response.html);
 				volumeChecker();
-				var z_index = $('#interface').css('z-index') + 1;
+				// a computed z-index of 'auto' used to become 'auto1' here, which
+				// browsers ignore - the panel then hid behind a theatre picture
+				var z_index = (parseInt($('#interface').css('z-index')) || 0) + 1;
 				mc.css({ 'z-index': z_index });
 			}
 		});

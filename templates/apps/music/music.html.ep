@@ -63,7 +63,12 @@
 
 	</div>
 	<div id="music_configuration" remote_uuid="<%= $crate->{'remote_uuid'} %>" style="position:absolute;width:300px;top:90px;display:none;border-solid;border-radius:5px;width:50%;right:0px;background-color:#<%= &subs::random_colour_grabber() %>;">
-		<%= include 'apps/music/configuration' %>
+		<% if ($crate->{'remote_uuid'}) { %>
+			<%# a remote library is still configured from this machine - the panel is
+			    fetched from home when the gear is first opened %>
+		<% } else { %>
+			<%= include 'apps/music/configuration' %>
+		<% } %>
 	</div>
 
 	<div id="music_theatre" style="bottom:0px;">

@@ -1,4 +1,13 @@
 <% my $remote_machines = &subs::remote_machine_lister(); %>
+<% my @machines; my %seen_machine; %>
+<% foreach my $rm ( @{$remote_machines} ) {
+	my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
+	next if !$key || $seen_machine{$key};
+	$seen_machine{$key} = 1;
+	push @machines, $rm;
+} %>
+<% my $remote_listed = 0; %>
+<% if ($crate->{'remote_uuid'}) { foreach my $rm ( @machines ) { $remote_listed = 1 if $rm->{'uuid'} && $rm->{'uuid'} eq $crate->{'remote_uuid'}; } } %>
 <div id="music_folders" style="background-color:#D5E4F6">
 	<% foreach my $f ( keys %{$folders->{$device}} ) { %>
 		<% if ($f =~ /location$/gi) { %>
@@ -15,7 +24,7 @@
 	<% foreach my $ma ( qw/me srv/ ) { %>
 		<button class="music_audio_output_select hover" state="<%= $mao->{$ma} %>" value="<%= $ma %>"><%= &subs::format_name($ma) %></button>
 	<% } %>
-	<% foreach my $rm ( @{$remote_machines}) { %>
+	<% foreach my $rm ( @machines ) { %>
 		<button class="music_audio_output_select hover" state="<%= $mao->{$rm->{'fqdn'} || $rm->{'ip'}} %>" value="<%= $rm->{'fqdn'} || $rm->{'ip'} %>"><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></button>
 	<% } %>
 </div>
@@ -26,12 +35,12 @@
 </select>
 
 <select id="music_library_select" value="<%= $crate->{'settings'}->{'library'} || 'local' %>">
-	<% if ($crate->{'remote_uuid'}) { %>
-		<option value="<%= $crate->{'remote_uuid'} %>"><%= $crate->{'remote_uuid'} %></option>
+	<% if ($crate->{'remote_uuid'} && !$remote_listed) { %>
+		<option value="<%= $crate->{'remote_uuid'} %>" <% if ($crate->{'settings'}->{'library'} eq $crate->{'remote_uuid'}) { %>selected<% } %>><%= $crate->{'remote_hostname'} || $crate->{'remote_uuid'} %></option>
 	<% } %>
 	<option value="none">None</option>
 	<option value="local" <% if ($crate->{'settings'}->{'library'} eq 'local' || $crate->{'settings'}->{'library'} eq '') { %>selected<% } %>>Local</option>
-	<% foreach my $rm ( @{$remote_machines} ) { %>
+	<% foreach my $rm ( @machines ) { %>
 		<option value="<%= $rm->{'uuid'} %>" <% if ($crate->{'settings'}->{'library'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
 	<% } %>
 </select>

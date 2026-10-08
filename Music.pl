@@ -547,8 +547,16 @@ post '/music/search' => sub ($c) {
 			$c->param('subprocess' => 'yes');
 			my $result = &Manager::remote_relay_request($c);
 			if ($result =~ /music/gi) {
-			#	my $dom = Mojo::DOM->new($result);
-				$c->render(text => $result);
+				# the relay hands the remote's reply back as a plain string; the
+				# browser's search handler expects JSON, so put the content type
+				# back or the response arrives as text and the list never reloads
+				my $reply = eval { return decode_json $result };
+				if ($reply && ref $reply eq 'HASH') {
+					$c->render(json => $reply);
+				}
+				else {
+					$c->render(text => $result);
+				}
 				return;
 			}
 		}
@@ -611,6 +619,21 @@ post '/music/folder_toggle' => sub($c) {
 	my $location = $c->param('location');
 	my $status = $c->param('status');
 	&subs::setting_setter({ app => 'music_folder_toggle', setting => $location, value => $status, timestamp => $timestamp });
+	# the toggle flips the local button and also steers the scanning of the
+	# machine whose library is loaded, so a remote library gets the same click
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
+		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
+		if ($rm->{'uuid'}) {
+			$c->param('remote_uuid' => $rm->{'uuid'});
+			$c->param('subprocess' => 'yes');
+			my $result = &Manager::remote_relay_request($c);
+			if ($result && $result =~ /^\s*(on|off)\s*$/) {
+				$c->render(text => $result);
+				return;
+			}
+		}
+	}
 	my $setting = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $location, device => $device });
 	$c->render(text => $setting);
 };
@@ -629,6 +652,15 @@ get '/music/configuration' => sub($c) {
 	my $returner = {};
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	my $jmao = $settings->{'mao'};
+	# the panel belongs to this machine even when the library does not: it is
+	# rendered from the local settings, and the loaded remote is shown by name
+	# rather than as a bare uuid
+	my $remote_uuid = $c->param('remote_uuid');
+	my $remote_hostname;
+	if ($remote_uuid) {
+		my $rm = &subs::db_query('select * from remote_machines where uuid=?', $remote_uuid)->hashes->[0];
+		$remote_hostname = $rm->{'hostname'} if $rm;
+	}
 	$returner->{'html'} = $c->render_to_string(
 		template => 'apps/music/configuration',
 		folders => &Manager::misc_setting_list(),
@@ -636,7 +668,7 @@ get '/music/configuration' => sub($c) {
 		mao => eval { return decode_json $jmao } || {},
 		jmao => $jmao,
 		settings => $settings,
-		crate => { remote_uuid => $c->param('remote_uuid') }
+		crate => { remote_uuid => $remote_uuid, remote_hostname => $remote_hostname, settings => $settings }
 	);
 	$c->render(json => $returner);
 };
