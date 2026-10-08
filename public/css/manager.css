@@ -64,6 +64,9 @@ html, body {
 	z-index: 40000; 
 	position:fixed;
 	background-color: var(--panel-2);
+	/* the dock sizes these in JS; counting the border in keeps the row's maths
+	   and the even gaps honest */
+	box-sizing: border-box;
 }
 #pseudonym_home {
 	height: 120px;
@@ -79,7 +82,9 @@ html, body {
 	padding-left: 30px;
 	z-index: 39999;
 	max-width: 100%;
-
+	/* the dock sizes this box in JS; counting the padding in keeps its maths
+	   and the centring honest */
+	box-sizing: border-box;
 }
 #pseudonym_bar {
 	width: 100%;

@@ -10,66 +10,70 @@ var pseudonymHideWait = 5000;
 var text_editor = {};
 var keysPressed = {};
 var appSwitcherSelected = 0;
+// The dock at the bottom of the screen: one centred row of pseudonyms. Icons that
+// are switched off hide, and the rest share the row, shrinking below their full
+// size when there are too many to fit, so the dock never runs off the screen.
 function pseudonymFreeSpaceFinder(type) {
 	var w = $(window).width();
 	var h = $(window).height();
-	var count = 0;
-	var was = 0;
-	var wasnt = 0;
-	$('.pseudonym').each(function(i,v){
-		$('.pseudonym.keyboard').each(function(i,k) {
-			k = $(k);
-			var id = k.attr('id');
-			var toggle = k.attr('toggle');
+	var icons = $('#pseudonym_bar .pseudonym.bar').toArray();
+	var visible = [];
 
-			var s = localStorage.getItem('pseudonym_keyboard_' + toggle);
-			if (s == 'on') {
-				k.show();
-				if (toggle == $(v).attr('toggle')) {
-					count++;
-				}
-			}
-			else { k.hide(); }
-		});
-		if (!$(v).hasClass('keyboard')) { count++; }
-		if (count == 0) {
-			$('.pseudonym').hide()
-			$('.pseudonym[toggle="remote_control"]').show();
-			var s = localStorage.setItem('pseudonym_keyboard_remote_control', 'on');
-			count = 1;
-		}
-		var p = $('#' + $(v).attr('id'));
-		var elements = document.elementsFromPoint(p.offset().left, p.offset().top);
-		$.each(elements, function(i,v) {
-			if ($(v).attr('id') == 'pseudonym_home') {
-				was++;
-			}
-		});
-		if (was > 0) {
-			wasnt++;
-		}
-		var d = Number(numeral(p.width()).format()) * 1.07;
-
-		var new_width = ((count) * d);
-		var new_left = (w / 2) - ( new_width / 2 );
-		$('#pseudonym_home').css({ 'left': new_left });
-		var left;
-		if (count % 2) {
-			left = new_left;
+	$.each(icons, function(i,el) {
+		var icon = $(el);
+		var toggle = icon.attr('toggle');
+		if (localStorage.getItem('pseudonym_keyboard_' + toggle) == 'on') {
+			icon.show();
+			visible.push(el);
 		}
 		else {
-			left = new_left + new_width;
+			icon.hide();
 		}
-		$('#pseudonym_home').css({ 'width': new_width * 1.05 + 'px' });
-		p.css({ 'left': (left) + 'px', top: h - 15 - p.height() });
-
 	});
-	if (count > 0) {
+	// the dock keeps at least the remote control in it
+	if (visible.length == 0 && icons.length > 0) {
+		localStorage.setItem('pseudonym_keyboard_remote_control', 'on');
+		$.each(icons, function(i,el) {
+			if ($(el).attr('toggle') == 'remote_control') {
+				$(el).show();
+				visible.push(el);
+			}
+		});
+	}
+
+	// 60px is the comfortable size; past that the icons share what the screen
+	// has, down to a floor so they stay recognisable
+	var full = 60;
+	var floor = 14;
+	var gap = 4;
+	var home_chrome = 68; // #pseudonym_home padding + border
+	var lane = Math.min(w - 8, 720) - home_chrome;
+	var count = Math.max(1, visible.length);
+	var size = Math.floor((lane - (gap * (count - 1))) / count);
+	size = Math.max(floor, Math.min(full, size));
+	var total = (size * visible.length) + (gap * Math.max(0, visible.length - 1));
+	var start = Math.round((w - total) / 2);
+
+	$.each(visible, function(i,el) {
+		$(el).css({
+			'width': size,
+			'height': size,
+			'left': start + Math.round(i * (size + gap)),
+			'top': Math.round(h - 15 - size)
+		});
+	});
+
+	// the home wraps the row, wide enough for the search box at the least
+	var home_width = Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320));
+	$('#pseudonym_home').css({ 'width': home_width + 'px', 'left': Math.round((w - home_width) / 2) + 'px' });
+
+	if (visible.length > 0) {
 		$('#pseudonym_home').show();
 	}
 	else {
 		$('#pseudonym_home').hide();
 	}
+	// a home that is tucked away takes its icons with it
 	if (numeral($('#pseudonym_home').css('bottom')).value() < 0) {
 		$('.pseudonym').hide();
 	}
@@ -84,6 +88,11 @@ function pseudonymFreeSpaceFinder(type) {
 		}
 	});
 }
+
+// the dock lives on the bottom edge, so a new screen shape means new sizes
+$(window).on('resize', function() {
+	pseudonymFreeSpaceFinder();
+});
 
 $(document).on('click', '.keyboard.bc,.keyboard_tab', function(i) {
 	var keyboard = $(this);
@@ -652,7 +661,7 @@ function keyboardConfigToggle(toggle) {
 $(document).on('click', '.keyboard_base', function() {
 	var b = $(this);
 	var toggle = b.attr('toggle');
-	var p = $('.pseudonym.keyboard[toggle="' + toggle + '"');
+	var p = $('.pseudonym.keyboard[toggle="' + toggle + '"]');
 	var q = localStorage.getItem('pseudonym_keyboard_' + toggle);
 
 	if (q == 'on') {

@@ -879,10 +879,23 @@ function jawnosHintHide() {
 	var h = document.getElementById('jawnos_hint');
 	if (h) { h.style.display = 'none'; }
 }
+var jawnos_click_killer = null;
+var jawnos_killer_timer = null;
+// for a moment after a long press, throw away the click the browser is about to
+// deliver, so reading a hint does not also press the thing underneath it
 function jawnosSuppressClick() {
-	var killer = function (e) { e.stopPropagation(); e.preventDefault(); document.removeEventListener('click', killer, true); };
-	document.addEventListener('click', killer, true);
-	setTimeout(function () { document.removeEventListener('click', killer, true); }, 700);
+	jawnosUnsuppressClick();
+	jawnos_click_killer = function (e) { e.stopPropagation(); e.preventDefault(); jawnosUnsuppressClick(); };
+	document.addEventListener('click', jawnos_click_killer, true);
+	jawnos_killer_timer = setTimeout(jawnosUnsuppressClick, 700);
+}
+function jawnosUnsuppressClick() {
+	if (jawnos_click_killer) {
+		document.removeEventListener('click', jawnos_click_killer, true);
+		jawnos_click_killer = null;
+	}
+	clearTimeout(jawnos_killer_timer);
+	jawnos_killer_timer = null;
 }
 
 var jawnos_hover_capable = true;
@@ -909,6 +922,11 @@ if (jawnos_hover_capable) {
 $(document).on('touchstart', '[hint]', function (e) {
 	var el = this;
 	if ($(el).hasClass('draggable') || $(el).closest('.draggable').length > 0) { return; }
+	// the start menu rows wear their name already; a long press there must not
+	// swallow the tap that would open the app
+	if ($(el).closest('.start_menu_item').length > 0) { return; }
+	// a fresh press owns its click, whatever the last long press left behind
+	jawnosUnsuppressClick();
 	var touch = e.originalEvent.touches && e.originalEvent.touches[0];
 	if (!touch) { return; }
 	var tx = touch.clientX, ty = touch.clientY;

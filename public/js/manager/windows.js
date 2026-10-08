@@ -1033,13 +1033,19 @@ $(document).on('click touchend', '.close_button', function(e) {
   // Prevent the event from bubbling up to the draggable container
   e.stopPropagation();
   e.preventDefault();
+  if (e.type == 'touchend' && typeof jawnosSuppressClick == 'function') {
+    // the window leaves the page under the finger; keep the browser's delayed
+    // click from landing on whatever sits underneath it
+    jawnosSuppressClick();
+  }
   
   // Retrieve the variables from data attributes
   var app = $(this).attr('app');
   var timestamp = $(this).attr('timestamp');
   
-  // Execute your functions
-  websocketStop(app);
+  // Execute your functions; a websocket that will not stop is no reason to
+  // leave the window open
+  try { websocketStop(app); } catch (err) { console.log('close: websocket stop failed', err); }
   closeWindow(timestamp);
 });
 

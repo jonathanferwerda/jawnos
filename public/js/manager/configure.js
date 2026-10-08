@@ -492,7 +492,7 @@ $(document).on('change', '.pseudonym_setting', function() {
 		success: function(response) {
 			$('#pseudonym_list').html(response);
 			if (setting == 'status') {
-				var p = $('.pseudonym.keyboard[toggle="' + name + '"');
+				var p = $('.pseudonym.keyboard[toggle="' + name + '"]');
 				localStorage.setItem('pseudonym_keyboard_' + name, value);
 				if (value == 'on') {
 					p.show();

@@ -1122,6 +1122,14 @@ $(document).on('click', '.start_menu_item_text', function () {
 	$(this).siblings('img').trigger('click');
 });
 
+// and so is the padding around them: a tap anywhere on the row opens the app,
+// rather than landing on the gap and only closing the menu
+$(document).on('click', '.start_menu_item', function (e) {
+	if ((e.target.tagName || '').toUpperCase() == 'IMG') { return; }
+	if ($(e.target).hasClass('start_menu_item_text')) { return; }
+	$(this).find('img').first().trigger('click');
+});
+
 // the menu ships inside the page as well as over the socket, so do it once at load
 $(function () { startMenuListify(); });
 
