@@ -1204,7 +1204,10 @@ function textareaUpgrader() {
 							$('#' + p_id).attr(io, vo);
 						}
 					});
-					$prepender.css({ 'overflow':'scroll' });
+					// The container is not a scroll box: its heights are all auto, so the
+					// overflow only ever clipped. The variable legend lives in the toolbox
+					// now and opens upward from there, and nothing may cut it at the edge.
+					$prepender.css({ 'overflow':'visible' });
 					$(document).on('change', '#' + id, function() {
 
 						var te = textEditorProcessor($('#' + id));

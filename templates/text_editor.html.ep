@@ -1,17 +1,16 @@
 <% $variables ||= []; %>
 <div tabindex="0" class="text_editor_container" source_id="<%= $id %>">
-	<%# the legend sits across the top as part of the furniture: opening it must
-	    never move the words under the pointer, so the panel opens over the text
-	    rather than pushing it, and only an editor with something to say about
-	    its context wears one at all %>
-	<%= include 'text_editor_legend', variables => $variables, source_id => $id, target => '' %>
 	<div class="text_editor" contenteditable="true" id="<%= $p_id %>" source_id="<%= $id %>" placeholder="<%= $placeholder %>"><%== $contents %></div>
 	<%# the toolbox lives below the text: showing it must never move the words
-	    the pointer is on, or a click aimed at the editor lands on the toolbox %>
+	    the pointer is on, or a click aimed at the editor lands on the toolbox.
+	    The variable legend is one of its buttons now, and its panel opens upward
+	    from there, over the words, so the whole legend is visible above the
+	    toolbox instead of reaching below the window %>
 	<div class="text_editor_toolbox" style="display:none;" source_id="<%= $id %>" t_id="<%= $p_id %>">
 		<button class="teb_style hover" tag="b">b</button>
 		<button class="teb_style hover" tag="i">i</button>
 		<button class="teb_style hover" tag="u">u</button>
 		<img src="<%= &subs::icon_for('/images/make believe/eat.png') %>" hint="Eat" class="tiny_thumb hover teb_style" utility="magic_wand" style="vertical-align:bottom;">
+		<%= include 'text_editor_legend', variables => $variables, source_id => $id, target => '' %>
 	</div>
 </div>

@@ -759,6 +759,20 @@ img[src*="/icons/original/"] {
 	color: var(--ink-muted);
 }
 
+/* the legend has moved into the toolbox: it keeps to the row with the
+   formatting buttons, and its panel opens upward from there - over the words
+   and above the toolbox - so the whole panel is visible instead of reaching
+   below the window */
+.text_editor_toolbox .text_editor_variables_bar {
+	display: inline-block;
+	vertical-align: bottom;
+}
+
+.text_editor_toolbox .text_editor_variables_panel {
+	top: auto;
+	bottom: 100%;
+}
+
 /* ---- the ide's code view ----------------------------------------------------
 
    The words live in the textarea and the colour lives in a <pre> behind it,
