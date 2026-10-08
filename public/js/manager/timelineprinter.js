@@ -1,7 +1,9 @@
 // The timeline: one row per app, a dot per occurrence placed by its percent,
 // money beside the dot, and the span from the start percent to the percent
-// drawn as a faded band behind it. Rows begin under the header and the
-// clothesline, and the canvas grows to hold every app.
+// drawn as a faded band behind it. A percent runs over the scope either side
+// of now: 1 is the rail, 2 is a scope ahead, 0 a scope behind, so now hangs
+// mid-canvas with the future to its right. Rows begin under the header and
+// the clothesline, and the canvas grows to hold every app.
 
 var appPosition = [];
 function timelinePrinter(appts,sort,offset) {
@@ -73,14 +75,14 @@ function timelinePrinter(appts,sort,offset) {
 			if ( !l ) { return true; }
 			var pct = parseFloat(l[scope + '_percent']);
 			if ( !isFinite(pct) ) { pct = 0; }
-			pct = Math.min(Math.max(pct, 0), 1);
-			var x = pad + (column * pct);
+			pct = Math.min(Math.max(pct, 0), 2);
+			var x = pad + (column * pct / 2);
 
 			var startX;
 			var startPct = parseFloat(l[scope + '_start_percent']);
 			if ( isFinite(startPct) ) {
-				startPct = Math.min(Math.max(startPct, 0), 1);
-				startX = pad + (column * startPct);
+				startPct = Math.min(Math.max(startPct, 0), 2);
+				startX = pad + (column * startPct / 2);
 				ctx.save();
 				ctx.globalAlpha = 0.3;
 				ctx.strokeStyle = colour;
