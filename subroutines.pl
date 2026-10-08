@@ -838,7 +838,7 @@ sub time_scope_page() {
 	my $count = $data->{'count'} || 30;
 	my $page = $data->{'page'} || 0;
 	return ( ( map { $_ . 'next' } reverse( 2 .. $count ) ), 'next', 'this', 'last', ( map { $_ . 'last' } 2 .. $count ) ) unless $page;
-	return ( map { $_ . 'last' } reverse( $page * $count + 1 .. ( $page + 1 ) * $count ) ) if $page > 0;
+	return ( map { $_ . 'last' } ( $page * $count + 1 .. ( $page + 1 ) * $count ) ) if $page > 0;
 	my $ahead = -$page;
 	return ( map { $_ . 'next' } reverse( $ahead * $count + 1 .. ( $ahead + 1 ) * $count ) );
 }
