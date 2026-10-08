@@ -8899,7 +8899,9 @@ sub inventory_details($c,$settings) {
 			}
 			if ($settings->{'s_visual'} eq 'historical' || $settings->{'s_visual'} eq '') {
 				foreach my $window (@time_windows) {
-					if ($a->{'timestamp'} > $window->[2] && $a->{'timestamp'} < $window->[3]) {
+					# half open [bt, tt): an instant on an edge belongs to the window
+					# it opens, so the windows never overlap and never leave a gap
+					if ($a->{'timestamp'} >= $window->[2] && $a->{'timestamp'} < $window->[3]) {
 						# only unpack the matching windows: unpacking all of them is most of
 						# what this loop spends its time on
 						my ($ts, $scope, $bt, $temp_timestamp) = @{$window};
@@ -8917,7 +8919,8 @@ sub inventory_details($c,$settings) {
 										$measure->{'timestamp'} = $measure->{'ts'};
 										delete $measure->{'ts'};
 									}
-									if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} > $temp_timestamp) && $s_display eq $mk) {
+									# out once tt arrives, to match the appointment test above
+									if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} >= $temp_timestamp) && $s_display eq $mk) {
 
 										unless ($appt_uuids{$measure->{'uuid'}}) {
 											my $new_measure = {
@@ -9311,8 +9314,6 @@ sub father_time($data) {
 			$multiplier =~ s/[^0-9.]//gi;
 			$multiplier = 1 unless $multiplier;
 
-			my @localtime = localtime $temp_timestamp / 1000;
-
 			if ($unit eq 'minute') {
 				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
 				$bt = &subs::ago_calc($second . 's', $temp_timestamp);
@@ -9334,22 +9335,16 @@ sub father_time($data) {
 				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'd', $bt);
 			}
 			elsif ($unit eq 'week') {
-				my $day = localtime( $temp_timestamp / 1000 )->strftime( "%d");
-				my $month = localtime( $temp_timestamp / 1000 )->strftime( "%m");
-				my $year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
-				my $wday = $localtime[6];
-				my $bwtemp = &subs::ago_calc($wday . 'd', $temp_timestamp);
-				my $awtemp = &subs::ago_calc('-' . ( 6 - $wday ) . 'd', $temp_timestamp);
-
-				$day = localtime( $bwtemp / 1000 )->strftime( "%d");
-				$month = localtime( $bwtemp / 1000 )->strftime( "%m");
-				$year = localtime( $bwtemp / 1000 )->strftime( "%Y");
-				$bt = &subs::ago_calc($month . '/' . $day . '/' . $year . ' 12am', $bwtemp);
-
-				$day = localtime( $awtemp / 1000 )->strftime( "%d");
-				$month = localtime( $awtemp / 1000 )->strftime( "%m");
-				$year = localtime( $awtemp / 1000 )->strftime( "%Y");
-				$temp_timestamp = &subs::ago_calc($month . '/' . $day . '/' . $year . ' 11:59:59pm', $awtemp);
+				# the week runs Sunday to Sunday, worked out on the civil calendar:
+				# day sized steps in milliseconds drift an hour across daylight saving
+				# and can land the edge on the wrong day
+				my $anchor = localtime($temp_timestamp / 1000);
+				my $sunday = timegm(0, 0, 0, $anchor->mday, $anchor->mon - 1, $anchor->year)
+					- $anchor->strftime('%w') * 86400;
+				my @open = gmtime($sunday);
+				my @close = gmtime($sunday + 7 * 86400);
+				$bt = timelocal(0, 0, 0, $open[3], $open[4], $open[5]) * 1000;
+				$temp_timestamp = timelocal(0, 0, 0, $close[3], $close[4], $close[5]) * 1000;
 			}
 			elsif ($unit eq 'month') {
 				# Real calendar months, worked out from the request timestamp and
@@ -10511,6 +10506,9 @@ get '/manager/budget' => sub($c) {
 
 
 	my ($bt,$t1,$t2);
+	# a father_time window ends on the next period's first instant, so that bound
+	# is exclusive; an end_time the user picked stays inclusive
+	my $t2_comp = '<=';
 	if ($settings->{'start_time'} || $settings->{'end_time'}) {
 		$bt = $settings->{'start_time'};
 		$t2 = $settings->{'end_time'};
@@ -10537,6 +10535,7 @@ get '/manager/budget' => sub($c) {
 			lock => $settings->{'s_lock'},
 			timestamp => $timestamp
 		});
+		$t2_comp = '<';
 		if ($settings->{'when_multiplier'}) {
 			my $tt = ($t2 - $bt) * $settings->{'when_multiplier'};
 
@@ -10603,11 +10602,11 @@ get '/manager/budget' => sub($c) {
 #		push @{$transactions}, $final_t if $final_t->{'timestamp'};
 		my $transactional;
 		if ($display eq 'invoices') {
-			$transactional = &subs::db_query('select * from appointments where timestamp >= ? and timestamp <= ? order by timestamp',
+			$transactional = &subs::db_query("select * from appointments where timestamp >= ? and timestamp $t2_comp ? order by timestamp",
 				$last_inventory,$t2);
 		}
 		else {
-			$transactional = &subs::db_query('select * from appointments where account = ? and type != ? and timestamp >= ? and timestamp <= ? order by timestamp',
+			$transactional = &subs::db_query("select * from appointments where account = ? and type != ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
 			$accounting->{'app'}, 'inventory',$last_inventory,$t2);
 		}
 		push @{$transactions}, @{$transactional->hashes};
@@ -11015,7 +11014,7 @@ sub budget_calculator($data) {
 				my ($bt, $temp_timestamp) = &father_time($ft_data);
 
 				my @params = ( $app, $temp_timestamp, $bt );
-				my $query = 'select * from appointments where app = ? and timestamp <= ? and timestamp >= ? ';
+				my $query = 'select * from appointments where app = ? and timestamp < ? and timestamp >= ? ';
 
 				if ($settings->{'s_movement'}) {
 					my $bail = 0;
