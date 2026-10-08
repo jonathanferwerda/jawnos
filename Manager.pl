@@ -5553,28 +5553,25 @@ sub log_reader {
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp + $t1);
 		# The view is drawn from $t out to the centre and as far again, so anything
-		# fetched beyond that right edge sticks to the right edge. The fetch also
-		# reaches a span behind the left edge, for the same reason at the other
-		# end, and takes in a row that stopped inside the view, or one that is
-		# still running across it - that last is pure presence: its row may be
-		# older than anything else fetched, and it is what the left edge holds on
-		# to. The keyboard's checkbox asks for the older view instead: rows whose
-		# timestamp is inside the view, and nothing fetched beyond either edge.
+		# fetched beyond that right edge sticks to the right edge. Nothing is fetched
+		# behind the left edge that could not still be seen from inside the view: a
+		# row that stopped within it, which comes in with the span it ran, and a row
+		# that never stopped at all - that last is pure presence: its row may be
+		# older than anything else fetched, and its band is what the left half of the
+		# view is holding on to. The keyboard's checkbox asks for the older view
+		# instead: rows whose timestamp is inside the view, and nothing fetched
+		# beyond either edge.
 		my $in_view_only = (&subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }) || '') eq 'checked';
 		my $fetch_end = $in_view_only ? ($timestamp + $t1) : $t2;
+		# the client prunes by this; the oldest row carried settles it below
 		my $fetch_start = $in_view_only ? $t : $t - $t1;
-		# Every clause here is framed on timestamp, the moment the timeline draws a
-		# row at: a row just behind the left edge sticks to it the way a row past
-		# the right edge already sticks to that one, a row that stopped inside the
-		# view comes in with the span it ran, and a row that never stopped is pure
-		# presence - it may be older than anything else fetched, and its band is
-		# what the left half of the view is holding on to. A stop earlier than the
-		# view is left out: the appointment ended before anything on screen, so its
-		# row could only pile a bare dot against the edge. Flat terms, so the
-		# planner can still reach each one by an index.
-		my $stick_where = "((timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
+		# A finished appointment behind the view is left alone: it was over before
+		# anything on screen, so its dot would pile against the edge with no band to
+		# explain it. These terms are flat, so the planner can still reach each one
+		# by an index.
+		my $stick_where = "((stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
 		my $stick_suffix = '';
-		my @stick_variables = ( $fetch_start, $t, $t, $fetch_end, 'start', 'record', $fetch_end );
+		my @stick_variables = ( $t, $fetch_end, 'start', 'record', $fetch_end );
 		if ($data->{'filter'} && $data->{'filter'} ne 'all') {
 			$stick_suffix .= " and type = ?";
 			push @stick_variables, $data->{'filter'};
