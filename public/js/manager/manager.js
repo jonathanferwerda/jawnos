@@ -1077,8 +1077,8 @@ function startMenuToggle(data) {
 // The app menu ships as a wall of icons separated by <br>. Turn it into a list:
 // each icon keeps its id and classes (the click handlers hang off those) and gains
 // a text label from its hint, and the breaks in between go away. The rows are kept
-// in alphabetical order and read right-aligned, name first so the icons line up in
-// a column against the right edge. Safe to call again on the same markup.
+// in alphabetical order and read icon first, so the icons line up in a column
+// against the left edge. Safe to call again on the same markup.
 function startMenuListify() {
 	var main = $('.start_menu_main_display');
 	if (main.length == 0) { return; }
@@ -1097,10 +1097,11 @@ function startMenuListify() {
 		// that wrapper it is not a child of the list, so the sort never sees it and it
 		// ends up stranded above the rows that were sorted.
 		main.append(item);
+		// icon first so it sits on the left, name beside it
+		item.append(img);
 		if (label) {
 			item.append($('<span class="start_menu_item_text"></span>').text(label));
 		}
-		item.append(img);
 	});
 	startMenuSort(main);
 }

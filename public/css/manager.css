@@ -415,8 +415,11 @@ canvas { overflow: scroll; z-index: 99; }
 }
 
 #start_menu {
-	width: 400px;
-	height: 400px;
+	/* the menu hangs off the top-right corner; never wider than the screen so
+	   phones and split-screen windows do not clip it */
+	box-sizing: border-box;
+	width: min(400px, 100vw);
+	height: min(400px, calc(100vh - 60px));
 	position:fixed;
 	right: 0px;
 	top: 48px;
@@ -452,30 +455,37 @@ canvas { overflow: scroll; z-index: 99; }
 	padding-top: 44px;
 }
 
-/* The app menu is a list: one name and its icon per row, instead of rows of icons
+/* The app menu is a list: one icon and its name per row, instead of rows of icons
    broken up with <br>. startMenuListify() in manager.js builds and orders the rows,
-   so these rules only shape them: right-aligned, name first, icons in a column. */
+   so these rules only shape them: icon on the left, name beside it. */
 #start_menu .start_menu_item {
 	display: flex;
 	align-items: center;
-	justify-content: flex-end;
-	gap: 10px;
-	padding: 2px 8px;
+	gap: 12px;
+	padding: 6px 10px;
 	cursor: pointer;
-	text-align: right;
+}
+#start_menu .start_menu_item + .start_menu_item {
+	border-top: 1px solid rgba(0,0,0,0.06);
 }
 #start_menu .start_menu_item:hover {
-	background-color: rgba(0,0,0,0.08);
+	background-color: rgba(0,0,0,0.1);
 }
 #start_menu .start_menu_item img {
+	flex: 0 0 auto;
 	height: 40px;
 	width: 40px;
 	max-width: 40px;
 	object-fit: contain;
 }
 .start_menu_item_text {
-	font-size: 22px;
-	text-align: right;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: clamp(16px, 5vw, 22px);
+	text-align: left;
 }
 
 .appointment_option {
