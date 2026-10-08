@@ -226,7 +226,8 @@ $(document).on('mousewheel', '.background', function(e) {
 		if (clothesLinePos['startMove'] == 'canvas') {
 			if (id == 'timeline') {
 				var motion = timelineWheelMotion(e.deltaX, e.deltaY, e.originalEvent.wheelDelta);
-				timelineScroller({ mousediff: motion.mousediff, source: motion.glide ? undefined : 'mousewheel' });
+				if (motion.glide) { timelineFling(motion.mousediff); }
+				timelineScroller({ mousediff: motion.mousediff, source: motion.glide ? 'wheel' : 'mousewheel' });
 			}
 			else if (id == 'clockface') {
 				clockfaceScroller({ mousediff: diff });
@@ -349,34 +350,69 @@ function timelineScroller(data) {
 		}
 	});
 	graphicalize(response);
-	if (data['source'] != 'smoothScroll' && data['source'] != 'mousewheel') {
-		// the clothesline's glide, measured in time instead of pixels: a flick
-		// carries about 32x its distance, spread over however many frames the
-		// screen actually gives us, and it pauses with the tab. Each step lands
-		// like an input event would, so the field above keeps up and the next
-		// poll does not snap the view back mid-flight.
+	if (data['source'] == 'wheel') {
+		// a wheel stream carries its own momentum: the fling that follows the
+		// stream is the glide, and a new event means the fingers took over
 		cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
-		var last = undefined;
-		var reach = .97 / .03;
-		var glideDiff = sdiff;
-		var stopAt = (span / ww) * .09;
-		var glide = function(now) {
-			if (Math.abs(glideDiff) <= stopAt) {
-				clothesLinePos['timelineSmoothScrolling'] = undefined;
-				return;
-			}
-			if (last == undefined) { last = now; }
-			var decay = Math.pow(.97, (now - last) / 5);
-			last = now;
-			var step = glideDiff * reach * (1 - decay);
-			glideDiff = glideDiff * decay;
-			clothesLinePos['moving'] = Date.now();
-			clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
-			timelineScroller({ sdiff: step, source: 'smoothScroll' });
-		};
-		clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
+	}
+	else if (data['source'] != 'smoothScroll' && data['source'] != 'mousewheel') {
+		timelineGlide(sdiff);
 	}
 
+}
+
+// The clothesline's glide, measured in time instead of pixels: a flick carries
+// about 32x its distance, spread over however many frames the screen actually
+// gives us, and it pauses with the tab. Each step lands like an input event
+// would, so the time machine field keeps up and the next poll does not snap the
+// view back mid-flight.
+function timelineGlide(diff) {
+	var span = response.appts['__specs']['end'] - response.appts['__specs']['start'];
+	var ww = $('#background').width();
+	cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
+	var last = undefined;
+	var reach = .97 / .03;
+	var glideDiff = diff;
+	var stopAt = (span / ww) * .09;
+	var glide = function(now) {
+		if (Math.abs(glideDiff) <= stopAt) {
+			clothesLinePos['timelineSmoothScrolling'] = undefined;
+			return;
+		}
+		if (last == undefined) { last = now; }
+		var decay = Math.pow(.97, (now - last) / 5);
+		last = now;
+		var step = glideDiff * reach * (1 - decay);
+		glideDiff = glideDiff * decay;
+		clothesLinePos['moving'] = Date.now();
+		clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
+		timelineScroller({ sdiff: step, source: 'smoothScroll' });
+	};
+	clothesLinePos['timelineSmoothScrolling'] = requestAnimationFrame(glide);
+}
+
+// A trackpad swipe arrives as a stream of small wheel events, and the last of
+// them are often tiny as the fingers slow - which is why swiping only glided
+// while the fingers were still moving. Keep the movement of the last fraction
+// of a second instead, and when the stream has been quiet for a moment, glide
+// from that velocity - one frame of it, the same starting point a touch flick
+// gets from its last movement.
+function timelineFling(diff) {
+	var fling = clothesLinePos['fling'] = clothesLinePos['fling'] || { samples: [], settle: undefined };
+	var now = Date.now();
+	fling['samples'].push([now, diff]);
+	while (fling['samples'].length > 1 && now - fling['samples'][0][0] > 160) { fling['samples'].shift(); }
+	clearTimeout(fling['settle']);
+	fling['settle'] = setTimeout(function() {
+		fling['settle'] = undefined;
+		var kept = fling['samples'];
+		fling['samples'] = [];
+		var moved = 0;
+		$.each(kept, function(i,s) { moved += s[1]; });
+		var elapsed = kept[kept.length - 1][0] - kept[0][0];
+		if (Math.abs(moved) < 2 || elapsed <= 0) { return; }
+		timelineGlide((moved / elapsed) * 16);
+	}, 80);
 }
 
 $(document).on('click', '.clothesline', function() {
