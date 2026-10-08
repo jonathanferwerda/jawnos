@@ -14048,6 +14048,39 @@ post '/manager/folders/archive' => sub($c) {
 	$c->render(json => { status => 'ok', queued => \@queued, refused => $plan->{'refused'}, dialog => $dialog });
 };
 
+# Stop a queued item, or ask a running one to stop. A job that has not started
+# is simply removed; one that is already going cannot be killed from this
+# process, so it is told instead and the transfer checks between files.
+post '/manager/folders/archive/cancel' => sub($c) {
+	my $minion = &subs::minion_grabber();
+	my $job = $minion->job($c->param('id'));
+	unless ($job) {
+		$c->render(json => { status => 'error', error => 'no such job' });
+		return;
+	}
+	my $state = $job->info->{'state'};
+	if ($state eq 'active') {
+		$job->note(cancel => 1);
+		$c->render(json => { status => 'ok', state => $state, asked => 1 });
+		return;
+	}
+	$job->remove;
+	$c->render(json => { status => 'ok', state => 'removed' });
+};
+
+# Put a failed or finished item back on the queue. The transfer skips whatever
+# already landed, so the retry only carries what did not.
+post '/manager/folders/archive/retry' => sub($c) {
+	my $minion = &subs::minion_grabber();
+	my $job = $minion->job($c->param('id'));
+	unless ($job) {
+		$c->render(json => { status => 'error', error => 'no such job' });
+		return;
+	}
+	$job->retry({ delay => 0 });
+	$c->render(json => { status => 'ok', id => $c->param('id') });
+};
+
 # The queue as the folders app shows it: every archive job this machine holds,
 # newest first, with the note the worker last wrote on it.
 get '/manager/folders/archive' => sub($c) {

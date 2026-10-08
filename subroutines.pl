@@ -3359,7 +3359,16 @@ sub archive_transfer_job {
 		}
 		$sent++;
 		$bytes += ($res->{'size'} || $size || 0);
-		$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes") if $count % 5 == 0;
+		if ($count % 5 == 0) {
+			$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");
+			# a cancel asked for from the folders app cannot kill this process
+			# from there, so the job stops itself at the next file
+			if (($job->info->{'notes'} || {})->{'cancel'}) {
+				$job->note(progress => "stopped after $count files");
+				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => scalar @files, cancelled => 1 });
+				return;
+			}
+		}
 	}
 
 	my $result = {

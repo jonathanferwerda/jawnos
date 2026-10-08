@@ -314,15 +314,33 @@ function foldersArchiveQueue() {
 				var item = job['item'] || {};
 				var name = (item['relative'] && item['relative'].length) ? item['relative'] : (item['path'] || '');
 				var line = $('<div>').css({ 'border-bottom': 'solid 1px', 'padding': '3px', 'overflow-wrap': 'break-word' });
+				var buttons = $('<span>').css({ 'float': 'right' });
+				if (job['state'] == 'failed' || job['state'] == 'finished') {
+					$('<button>').addClass('hover').text('retry').on('click', function () { foldersArchiveJob('retry', job['id']); }).appendTo(buttons);
+				}
+				else {
+					$('<button>').addClass('hover').text('stop').on('click', function () { foldersArchiveJob('cancel', job['id']); }).appendTo(buttons);
+				}
+				buttons.appendTo(line);
 				$('<b>').text(job['state']).appendTo(line);
 				$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
 				var detail = '';
 				if (job['progress']) { detail = job['progress']; }
 				else if (job['errors'] && job['errors'].length) { detail = job['errors'].join('; '); }
+				if (job['sent'] || job['skipped']) { detail = (detail ? detail + ' - ' : '') + (job['sent'] || 0) + ' sent, ' + (job['skipped'] || 0) + ' already there'; }
 				if (detail) { $('<div>').css({ 'font-size': '13px' }).text(detail).appendTo(line); }
 				box.append(line);
 			});
 		}
+	});
+}
+
+function foldersArchiveJob(action, id) {
+	$.ajax({
+		url: '/manager/folders/archive/' + action,
+		type: 'POST',
+		data: { id: id },
+		success: function () { foldersArchiveQueue(); }
 	});
 }
 
