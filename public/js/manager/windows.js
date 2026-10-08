@@ -131,6 +131,14 @@ $(document).on('click', '.window_toggle', function() {
 
 });
 
+// A real tap/click/keypress marks intent. windowMaker brings an existing
+// window to the top only when one happened a moment ago, so the background
+// re-renders that refresh windows don't steal the top spot from what the
+// person is actually looking at. Intentional opens (start menu, centre view,
+// swipes) all come from a gesture, so they always qualify.
+var lastUserGesture = 0;
+$(document).on('mousedown touchstart keydown click', function () { lastUserGesture = Date.now(); });
+
 function windowMaker(response) {
 	if (response == '') { return; }
 	var window_id = $(response).filter('.wind').attr('id');
@@ -177,10 +185,16 @@ function windowMaker(response) {
 					if (new_v.attr('pre_dimensioned') != 1) {
 					//	new_v.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
 					}
-					if(view[window_app].wc == false) {
+					if (view[window_app].wc == false) {
 						$('#window_contents_' + timestamp).hide();
 					}
-					topLevelNow($('#' + id));
+					// Reopening the app brings it to the top; a background refresh
+					// that merely re-renders it does not. This used to target the
+					// timestamp of the *response*, which is not the window on the
+					// page yet, so it raised nothing at all.
+					if (Date.now() - lastUserGesture < 1500) {
+						topLevelNow($(v));
+					}
 					var blci2 = $(new_v).attr('current_information');
 					if (blci.attr('status') == 'open' || blci2) {
 						var circumstance = blci2 || blci.attr('circumstance');
@@ -211,6 +225,7 @@ function windowMaker(response) {
 			else if (windowPhoneChecker() && matches == 0) {
 				$('#' + window_id).css( {'width':'100%','height':'71.28%'});
 			}
+			windowFit($('#' + window_id));
 			$('#' + window_id).find('.unlock').droppable({
 				drop: function(event, ui) {
 					var app = $(this).attr('app');
@@ -343,21 +358,9 @@ function windowReorganizer(window_id) {
 
 			}
 		}
-		// Keep a window on the screen: these used to clamp against $(document)
-		// sizes, so any tall element that stretched the document let windows grow
-		// past the viewport (a 1111px window on a phone screen). Clamp to what is
-		// left of the viewport instead, so the bottom edge and its scrollbar stay
-		// reachable.
-		var viewW = $(window).width();
-		var viewH = $(window).height();
-		var winLeft = Number(numeral(win.css('left')).format()) || 0;
-		var winTop = Number(numeral(win.css('top')).format()) || 0;
-		if (winLeft + win.width() > viewW) {
-			win.width(Math.max(240, viewW - winLeft));
-		}
-		if (winTop + win.height() > viewH) {
-			win.height(Math.max(240, viewH - winTop));
-		}
+		// Keep a window on the screen (and phones it is the width of the screen,
+		// pinned left), with its contents scrolling rather than spilling.
+		windowFit(win);
 		var note = localStorage.getItem(app + '_note');
 		var ago = localStorage.getItem(app + '_ago');
 		var duration = localStorage.getItem(app + '_duration');
@@ -673,6 +676,7 @@ function appWindowOpener(i,timestamp,v) {
 							top_level_now = numeral(v.zindex).value();
 						}
 					}
+					windowFit(window);
 
 				},
 				error: function(e) { console.log(e); }
@@ -693,6 +697,7 @@ function appWindowOpener(i,timestamp,v) {
 				if (v.top > 0 && v.left < window_w && v.top < window_h && v.left > 0) {
 					window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 				}
+				windowFit(window);
 
 				if (refresh_jopen) {
 					windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });
@@ -1031,7 +1036,9 @@ function windowDraggable(win) {
 				windowDimensionSetter($('#' + p.target.id));
 			}
 		});
-		setTimeout(function() {
+		// a phone keeps its windows the width of the screen: vertical only
+		if (windowPhoneChecker()) { win.draggable('option', 'axis', 'y'); }
+		setTimeout(function () {
 			win.removeClass('active');
 		},50);
 	}
@@ -1083,9 +1090,45 @@ $(document).on('click touchend', '.minimize_button', function(e) {
 });
 
 
+// Keep a window on the screen. These used to clamp against $(document) sizes,
+// so any tall element that stretched the document let windows grow past the
+// viewport. A phone window is always the full width of the screen, pinned
+// left; anything overflowing gets its contents scrolled instead of spilled.
+function windowFit(win) {
+	if (win.length == 0) { return; }
+	var viewW = $(window).width();
+	var viewH = $(window).height();
+	if (windowPhoneChecker()) {
+		win.css({ 'left': 0, 'width': viewW });
+	}
+	var winLeft = Number(numeral(win.css('left')).format()) || 0;
+	var winTop = Number(numeral(win.css('top')).format()) || 0;
+	if (winLeft + win.width() > viewW) {
+		win.width(Math.max(240, viewW - winLeft));
+	}
+	if (winTop + win.height() > viewH) {
+		win.height(Math.max(240, viewH - winTop));
+	}
+	win.find('.window_contents').each(function () {
+		var el = this;
+		var cs = getComputedStyle(el);
+		if (cs.overflow != 'visible') { return; }
+		if (el.scrollHeight > el.clientHeight + 4 || el.scrollWidth > el.clientWidth + 4) {
+			$(el).css('overflow', 'auto');
+		}
+	});
+}
+
+$(window).on('resize orientationchange', function () {
+	$('.wind').each(function () { windowFit($(this)); });
+});
+$(document).on('resizestop', '.wind', function () { windowFit($(this)); });
+
 function windowPhoneChecker() {
 	if (navigator.userAgent.match('Android') || navigator.userAgent.match('Mobile')) {
-		if ($(window).width() < 500) {
+		// the short side of the screen decides: a phone is still a phone in
+		// landscape, and a tablet does not become one just by being narrow
+		if (Math.min(screen.width, screen.height) < 500) {
 			return true;
 		}
 		return false;
