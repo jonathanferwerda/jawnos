@@ -67,7 +67,8 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 						<td>
 							<% if ($returner->{$rw}->{$ry}) {
 								<% if ( $returner->{$rw}->{$ry} =~ /[A-Za-z0-9]/gi ) { %>
-									<span class="statistic_entry hover" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $returner->{$rw}->{$ry}->{'end_timestamp'} %>"
+									<% my $end_seen = $returner->{$rw}->{$ry}->{'end_timestamp'} ? $returner->{$rw}->{$ry}->{'end_timestamp'} - 1000 : ''; %>
+									<span class="statistic_entry hover" inventory_timestamp="<%= $returner->{'timestamp'} %>" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $end_seen %>"
 										timestamp="<%= $returner->{$rw}->{$ry}->{'timestamp'} %>" zone="<%= $rw %>" scope="<%= $ry %>"
 										style="
 										<% if ($returner->{$rw}->{$ry}->{'budget'}) { %>

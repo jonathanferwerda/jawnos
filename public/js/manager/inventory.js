@@ -135,7 +135,25 @@ function inventoryDetailsUpdater() {
 	});
 }
 var ctx;
-function statisticGrapher(data,canvasId) {
+// a compact date for a window's own start, which is what the historical
+// charts label their points with: the row names (3la, nex) say nothing about
+// when the window is
+function chartDate(date, scope) {
+	var pad = function(value) { return (value < 10 ? '0' : '') + value; };
+	var day = (date.getMonth() + 1) + '/' + date.getDate();
+	if (scope == 'minute' || scope == 'hour') {
+		return day + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+	}
+	if (scope == 'month') {
+		return date.getFullYear() + '-' + pad(date.getMonth() + 1);
+	}
+	if (scope == 'year') {
+		return '' + date.getFullYear();
+	}
+	return day;
+}
+
+function statisticGrapher(data,canvasId,mark) {
 
 	var wind = $('.wind[app="' + data.app + '"]');
 	var wind_id = wind.attr('id');
@@ -181,6 +199,7 @@ function statisticGrapher(data,canvasId) {
 
 			var colWidth = wide / time_widths + 1; 
 			var label_edge = -100;
+			var marks = [];
 			$.each(data.scopes, function(n,ts) {
 				if (data[ts] && (ts != 'average' && ts != 'total')) {
 					if (typeof data[ts][tl] == 'object') {
@@ -189,6 +208,9 @@ function statisticGrapher(data,canvasId) {
 							var x = wide * (n / time_widths);
 							var y = y_for(point);
 							ctx.lineTo(x, y);
+							if (mark && numeral(data[ts][tl]['start_timestamp']).value() == mark) {
+								marks.push([x, y]);
+							}
 
 							var text = data[ts][tl][data.settings.s_display];
 							if (data.settings.s_display == 'duration') {
@@ -208,13 +230,7 @@ function statisticGrapher(data,canvasId) {
 							if (data.settings.s_visual == 'historical') {
 								under = ts.substr(0,3);
 								if (data[ts][tl]['start_timestamp']) {
-									var ft = new Date(data[ts][tl]['start_timestamp']);
-									if (tl == 'hour') {
-										ft.getHours()
-									} else if (tl == 'day') {
-										under = dayProcessor(ft.getDay())
-									}
-
+									under = chartDate(new Date(numeral(data[ts][tl]['start_timestamp']).value()), tl);
 								}
 							}
 							// the points are closer together than the labels are wide, so
@@ -232,6 +248,14 @@ function statisticGrapher(data,canvasId) {
 				}
 			});
 			ctx.stroke();
+			// the window that was clicked, so the popup shows which point it is
+			$.each(marks, function(i, spot) {
+				ctx.beginPath();
+				ctx.strokeStyle = 'red';
+				ctx.lineWidth = 2;
+				ctx.arc(spot[0], spot[1], 4, 0, Math.PI * 2);
+				ctx.stroke();
+			});
 			ctx.beginPath();
 			ctx.save('b');
 				
@@ -276,7 +300,7 @@ $(document).on('click', '.statistic_entry', function() {
 		type: 'GET',
 		data: { 
 			app: app, 
-			timestamp: timestamp, 
+			timestamp: s.attr('inventory_timestamp') || timestamp, 
 			scope: scope,
 			zone: zone,
 			x: mouse['x'], 
@@ -299,7 +323,7 @@ $(document).on('click', '.statistic_entry', function() {
 				var new_top = ($(window).height() - info.height() - 5);
 				info.css({'top': new_top + 'px' });
 			}
-			statisticGrapher(response.details,id + '_canvas');
+			statisticGrapher(response.details,id + '_canvas', numeral(start_timestamp).value());
 			appointment_chron();
 		}
 	});
