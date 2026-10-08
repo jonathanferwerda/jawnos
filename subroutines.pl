@@ -3128,6 +3128,74 @@ sub archive_destination {
 	};
 }
 
+# A selected path's archive plan. The location whose folder holds the path,
+# the machine that location archives to, and where the item lands inside the
+# archive. The longest matching location folder wins, so a scans folder inside
+# documents resolves to scans; a tie, which is two names for one folder, goes
+# to the earlier location type, so document beats scan. A path under no
+# location, or in one with no archive machine, is refused by name rather than
+# guessed at, and every path appears once however many selections repeat it.
+sub archive_plan {
+	my $data = shift;
+	my $items = $data->{'items'} || [];
+	my $settings = $data->{'settings'} || {};
+	my $machines = $data->{'machines'} || [];
+	my %machine_for;
+	foreach my $rm ( @{$machines} ) {
+		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
+		$machine_for{$rm->{'uuid'}} = $rm if $rm->{'uuid'};
+	}
+	# the folders to match against, longest first; within one length the
+	# location type order decides, so a tie is not hash order
+	my @roots;
+	my $order = 0;
+	foreach my $location ( &location_types() ) {
+		$order++;
+		my $base = $settings->{$location . '_location'};
+		next unless (defined $base && length $base);
+		$base = &home($base);
+		$base =~ s{/+$}{};
+		push @roots, { location => $location, base => $base, order => $order };
+	}
+	@roots = sort { length($b->{'base'}) <=> length($a->{'base'}) || $a->{'order'} <=> $b->{'order'} } @roots;
+
+	my (@jobs, @refused, %seen);
+	foreach my $item ( @{$items} ) {
+		my $path = $item->{'path'};
+		next unless (defined $path && length $path);
+		$path = &home($path);
+		$path =~ s{/+$}{};
+		next if $seen{$path}++;
+		my $match;
+		foreach my $root ( @roots ) {
+			next unless ($path eq $root->{'base'} || $path =~ m{^\Q$root->{'base'}\E/});
+			$match = $root;
+			last;
+		}
+		unless ($match) {
+			push @refused, { path => $path, reason => 'no location folder holds it' };
+			next;
+		}
+		my $archive = $settings->{$match->{'location'} . '_archive'};
+		my $rm = $archive ? $machine_for{$archive} : undef;
+		unless ($rm) {
+			push @refused, { path => $path, location => $match->{'location'}, reason => 'its location has no archive machine' };
+			next;
+		}
+		# the item may be the location folder itself, which lands at its top
+		my $relative = ($path eq $match->{'base'}) ? '' : substr($path, length($match->{'base'}) + 1);
+		push @jobs, {
+			path => $path,
+			location => $match->{'location'},
+			relative => $relative,
+			folder => (($item->{'type'} || '') eq 'folder' || -d $path) ? 1 : 0,
+			remote_uuid => $rm->{'uuid'},
+			remote_hostname => $rm->{'hostname'}
+		};
+	}
+	return { jobs => \@jobs, refused => \@refused };
+}
+
 # Make sure the archive root (config.json's archive_dir) has one folder per
 # location type. A blank archive_dir — the default — means this machine is not
 # an archive, so nothing is touched; an archive_dir that is not there yet is
@@ -3170,11 +3238,126 @@ sub minion_grabber {
 	return $minion;
 }
 
-# Every job the queue can run, in one place. The archive transfer lands here —
-# it takes { remote_uuid, location, path, relative }, probes the far machine
-# and posts the file to it — along with whatever follows it.
+# A manager-to-manager agent for a job to use. The worker runs under
+# President.pl and cannot see Manager.pl, so this is the small twin of
+# Manager::remote_useragent_maker: the cookie jar stored on the
+# remote_machines row is the whole of the authentication, and the tunnel-aware
+# manager url is the whole of the addressing.
+sub remote_agent_for {
+	my $remote_uuid = shift;
+	my $rm = &remote_machine_lister({ uuid => $remote_uuid, limit => 1 });
+	return { error => 'no machine is registered for ' . ($remote_uuid || '(nothing)') } unless (ref $rm && $rm->{'manager'});
+	$rm = &remote_machine_tunnel_processor($rm);
+	my $ua = Mojo::UserAgent->new;
+	$ua->max_response_size(0);
+	$ua->insecure(1);
+	$ua->inactivity_timeout(3000);
+	if ($rm->{'cookie'}) {
+		my $cookies = eval { return decode_json $rm->{'cookie'} } || [];
+		foreach my $cookie ( @{$cookies} ) {
+			$ua->cookie_jar->add(
+				Mojo::Cookie::Response->new(
+					name => $cookie->{'name'},
+					value => $cookie->{'value'},
+					domain => $cookie->{'domain'},
+					path => $cookie->{'path'}
+				)
+			);
+		}
+	}
+	return { ua => $ua, manager => $rm->{'manager'}, hostname => $rm->{'hostname'}, rm => $rm };
+}
+
+# The worker half of archiving: deliver one queued item. The far machine is
+# asked first whether it already has the file at that size and time, because a
+# retry after a failed folder re-runs the whole folder and everything already
+# sent should cost one small request each instead of the file itself. Errors
+# are collected rather than thrown on the first bad file, so one unreadable
+# file does not hide the rest; a job with any of them fails at the end, and
+# Minion's retry skips what did land.
+sub archive_transfer_job {
+	my ($job, $data) = @_;
+	my $agent = &remote_agent_for($data->{'remote_uuid'});
+	if ($agent->{'error'}) { $job->fail($agent->{'error'}); return; }
+	my $ua = $agent->{'ua'};
+	my $manager = $agent->{'manager'};
+
+	my @files;
+	if ($data->{'folder'}) {
+		find({ wanted => sub { push @files, $File::Find::name if -f $File::Find::name }, no_chdir => 1 }, $data->{'path'});
+		@files = sort @files;
+	}
+	else { @files = ( $data->{'path'} ) }
+
+	my ($sent, $skipped, $bytes, $count) = (0, 0, 0, 0);
+	my @errors;
+	foreach my $file ( @files ) {
+		$count++;
+		my $relative = $data->{'relative'};
+		if ($data->{'folder'}) {
+			my $tail = substr($file, length($data->{'path'}));
+			$tail =~ s{^/+}{};
+			$relative = length $relative ? $relative . '/' . $tail : $tail;
+		}
+		my $size = -s $file;
+		my $mtime = (stat($file))[9];
+
+		my $probe = eval {
+			return $ua->post($manager . '/manager/folders/archive/probe' => form => {
+				location => $data->{'location'},
+				path => $relative
+			})->result->json;
+		};
+		if (!$probe || $probe->{'status'} ne 'ok') {
+			push @errors, ($relative || $file) . ': ' . (($probe && $probe->{'error'}) || 'the archive machine did not answer');
+			next;
+		}
+		if ($probe->{'exists'} && defined $probe->{'size'} && defined $size && $probe->{'size'} == $size
+			&& (!defined $probe->{'mtime'} || !defined $mtime || $probe->{'mtime'} == $mtime)) {
+			$skipped++;
+			next;
+		}
+
+		my $res = eval {
+			return $ua->post($manager . '/manager/folders/archive/receive' => form => {
+				location => $data->{'location'},
+				path => $relative,
+				mtime => $mtime,
+				file => { file => $file }
+			})->result->json;
+		};
+		if (!$res || $res->{'status'} ne 'ok') {
+			push @errors, ($relative || $file) . ': ' . (($res && $res->{'error'}) || 'the upload did not land');
+			next;
+		}
+		$sent++;
+		$bytes += ($res->{'size'} || $size || 0);
+		$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes") if $count % 5 == 0;
+	}
+
+	my $result = {
+		sent => $sent,
+		skipped => $skipped,
+		bytes => $bytes,
+		files => scalar @files,
+		archive_host => $agent->{'hostname'},
+		location => $data->{'location'}
+	};
+	if (scalar @errors) {
+		$result->{'errors'} = \@errors;
+		$job->fail($result);
+		return;
+	}
+	$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");
+	$job->finish($result);
+}
+
+# Every job the queue can run, in one place. The worker and the code that
+# enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
-	return {};
+	return {
+		archive_transfer => \&archive_transfer_job
+	};
 }
 
 # Resolve ~ once; this used to shell out to `echo $HOME` on every call. That

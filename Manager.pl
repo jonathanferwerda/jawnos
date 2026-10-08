@@ -14003,9 +14003,52 @@ post '/manager/folders/context/command' => sub($c) {
 };
 
 post '/manager/folders/archive' => sub($c) {
-	my $folders = eval { return decode_json $c->param('folders') };
-	my $command;
-	$c->render(text => '');
+	my $folders = eval { return decode_json $c->param('folders') } || {};
+	my $items = $folders->{'selected'} || [];
+	# the background menu archives the folder being looked at, which is not a
+	# selection of anything
+	@{$items} = ( { path => $folders->{'path'}, type => 'folder' } ) if !scalar @{$items} && $folders->{'path'};
+	my $device = &subs::device_setter();
+	my $misc = &Manager::misc_setting_list();
+	my $plan = &subs::archive_plan({
+		items => $items,
+		settings => $misc->{$device} || {},
+		machines => &subs::remote_machine_lister({})
+	});
+	my $minion = &subs::minion_grabber();
+	my @queued;
+	foreach my $item ( @{$plan->{'jobs'}} ) {
+		push @queued, { %{$item}, id => $minion->enqueue(archive_transfer => [ $item ] => { retries => 3 }) };
+	}
+	$log->info('archive: queued ' . scalar(@queued) . ' item(s), refused ' . scalar @{$plan->{'refused'}});
+	$c->render(json => { status => 'ok', queued => \@queued, refused => $plan->{'refused'} });
+};
+
+# The queue as the folders app shows it: every archive job this machine holds,
+# newest first, with the note the worker last wrote on it.
+get '/manager/folders/archive' => sub($c) {
+	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer'] })->{'jobs'} || [];
+	my @jobs;
+	foreach my $job ( @{$list} ) {
+		my $item = ($job->{'args'} || [])->[0] || {};
+		my $result = $job->{'result'} || {};
+		push @jobs, {
+			id => $job->{'id'},
+			state => $job->{'state'},
+			attempts => $job->{'attempts'},
+			retries => $job->{'retries'},
+			created => $job->{'created'},
+			finished => $job->{'finished'},
+			item => $item,
+			progress => ($job->{'notes'} || {})->{'progress'},
+			sent => $result->{'sent'},
+			skipped => $result->{'skipped'},
+			bytes => $result->{'bytes'},
+			files => $result->{'files'},
+			errors => $result->{'errors'}
+		};
+	}
+	$c->render(json => { status => 'ok', jobs => \@jobs });
 };
 
 # The archive root's per-location folders, made and checked on demand, so the
@@ -14057,6 +14100,10 @@ post '/manager/folders/archive/receive' => sub($c) {
 		return;
 	}
 	my $written = -s $dest->{'path'};
+	# keep the source's time, so the next pass over the same folder can tell an
+	# unchanged file from a changed one by size and time instead of by the file
+	my $mtime = $c->param('mtime');
+	utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
 	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)');
 	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written });
 };
