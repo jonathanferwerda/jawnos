@@ -3364,8 +3364,8 @@ post '/manager/configure/logo_upload' => sub($c) {
 
 sub misc_setting_list() {
     my ($db, $database, $sql) = &subs::database_grabber();
-		my @locations = qw/download music photo document video scan rec/;
-    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard/;
+		my @locations = &subs::location_types();
+    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir/;
 		foreach my $l ( @locations ) {
 			push @settings, $l . '_location';
 			push @settings, $l . '_archive';
@@ -8842,6 +8842,7 @@ sub inventory_details($c,$settings) {
 		scopes => \@time_scopes,
 		time_lengths => \@time_lengths,
 		time_widths => \@time_widths,
+		timestamp => $timestamp,
 		app => $app,
 		budget_status => {},
 	};
@@ -9024,9 +9025,13 @@ sub inventory_details($c,$settings) {
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
 				#		$bucket->{'total'} += abs $a->{'total'} if $a->{'total'};
 				#		$bucket->{'amount'} += abs $a->{'amount'} if $a->{'amount'};
-						$returner->{'total'}->{$scope}->{$s_display} += abs $a->{$s_display};
-						$returner->{'count'}->{$scope}->{$s_display} += 1;
-						$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / $returner->{'count'}->{$scope}->{$s_display});
+						# the cumulative "Nnext" windows hold the same events again, so
+						# the per period totals and average leave them out
+						if ($ts !~ /^[0-9]+next/) {
+							$returner->{'total'}->{$scope}->{$s_display} += abs $a->{$s_display};
+							$returner->{'count'}->{$scope}->{$s_display} += 1;
+							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / $returner->{'count'}->{$scope}->{$s_display});
+						}
 						if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $bucket->{$s_display} != 0) {
 							unless ($returner->{'autocalc'}) {
 								$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $s_display });
@@ -9058,7 +9063,7 @@ sub inventory_details($c,$settings) {
 						}
 
 						if ($s_display eq 'occurences') {
-							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / scalar @time_scopes);
+							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / scalar grep { $_ !~ /^[0-9]+next/ } @time_scopes);
 						}
 						foreach my $d ( @display_options ) {
 							my $name = $d->{'name'};
@@ -10477,8 +10482,8 @@ get '/manager/budget' => sub($c) {
 	}
 	else {
 		for (my $n = 2; $n <= 30; $n++) {
-			push @time_scopes, $n . 'last' if $n <= 10;
-			unshift @time_scopes, $n . 'next' if $n <= 10;
+			push @time_scopes, $n . 'last';
+			unshift @time_scopes, $n . 'next';
 		}
 	}
 

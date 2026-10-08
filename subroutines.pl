@@ -3075,10 +3075,16 @@ sub location_types {
 	return qw/music download photo document video scan rec/;
 }
 
-# The archive root of this machine (config.json archive_dir), tidied: ~
-# resolved, no trailing slash. Undef when this machine is not an archive.
+# The archive root of this machine: the configure panel's pick first — it is a
+# misc setting, so the root can be chosen without editing config.json — then
+# config.json's archive_dir. Tidied: ~ resolved, no trailing slash. Undef when
+# this machine is not an archive.
 sub archive_root {
-	my $dir = $config->{'archive_dir'} or return undef;
+	# the panel's pick wants the settings table, which the very first boot may
+	# not have open yet; config.json is the fallback either way
+	my $dir = eval { return &setting_grabber({ app => 'misc', setting => 'archive_dir' }) };
+	$dir = $config->{'archive_dir'} unless (defined $dir && length $dir && lc($dir) ne 'null');
+	return undef unless (defined $dir && length $dir);
 	my $root = &home($dir);
 	$root =~ s{/+$}{};
 	return $root;

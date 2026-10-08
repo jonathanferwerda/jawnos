@@ -165,6 +165,20 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			<% } %>
 		</div>
 
+		<h4>Archive Root</h4>
+		<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+			<label style="display:flex;flex-direction:column;min-width:180px;">
+				<b>archive_dir</b>
+				<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
+				<select id="archive_dir" class="misc_setting" device="<%= $dt %>" setting="archive_dir">
+					<% foreach my $s ( '', @{$folders} ) { %>
+						<option <% if ($current_archive_dir eq $s) { %>selected="selected"<% } %>><%= $s %></option>
+					<% } %>
+				</select>
+			</label>
+			<span style="font-size:13px;max-width:340px;">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</span>
+		</div>
+
 		<h4>Colours</h4>
 		<div style="display:flex;flex-wrap:wrap;gap:8px;">
 			<% my @colours = @gb::misc_settings; %>
