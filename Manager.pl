@@ -14001,6 +14001,12 @@ post '/manager/folders/archive' => sub($c) {
 	$c->render(text => '');
 };
 
+# The archive root's per-location folders, made and checked on demand, so the
+# folders app can show what an archive holds.
+get '/manager/folders/archive/dirs' => sub($c) {
+	$c->render(json => &subs::archive_scaffolder());
+};
+
 post '/manager/folders/file/open' => sub ($c) {
 
 	my $folders = eval { return decode_json $c->param('folders') } || {};

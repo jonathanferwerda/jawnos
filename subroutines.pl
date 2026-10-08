@@ -3976,6 +3976,36 @@ sub vacuum_app() {
 
 }
 
+# The location types a device can point at a folder and archive to: one per
+# <location>_location / <location>_archive setting pair, and one folder each
+# under the archive root.
+sub location_types {
+	return qw/music download photo document video scan rec/;
+}
+
+# Make sure the archive root (config.json's archive_dir) has one folder per
+# location type. A blank archive_dir — the default — means this machine is not
+# an archive, so nothing is touched; an archive_dir that is not there yet is
+# left alone rather than invented, since it may be a mount that has not come up.
+# Folders that already exist are left exactly as they are, so this is safe to
+# run at any time. Pass a path to check a specific root.
+sub archive_scaffolder {
+	my $dir = shift;
+	$dir = $config->{'archive_dir'} unless (defined $dir && length $dir);
+	return { enabled => 0, reason => 'no archive_dir set' } unless $dir;
+	my $root = &home($dir);
+	$root =~ s{/+$}{};
+	return { enabled => 0, dir => $root, reason => 'archive_dir does not exist' } unless -d $root;
+	my (@created, @existing, @failed);
+	foreach my $location (&location_types()) {
+		my $path = $root . '/' . $location;
+		if (-d $path) { push @existing, $location; next; }
+		if (mkdir $path) { push @created, $location; }
+		else { push @failed, $location; }
+	}
+	return { enabled => 1, dir => $root, created => \@created, existing => \@existing, failed => \@failed };
+}
+
 # Resolve ~ once; this used to shell out to `echo $HOME` on every call. That
 # helper is hit constantly (every settings/cache/db path), so caching it avoids
 # a fork+exec per call.

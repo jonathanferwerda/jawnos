@@ -142,7 +142,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			<% } %>
 		</div>
 
-		<% my @locations = qw/download music photo document video scan rec/; %>
+		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<h4>Locations</h4>
 		<div style="display:flex;flex-wrap:wrap;gap:10px;">

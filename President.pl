@@ -79,6 +79,16 @@ my $cache_dir = &home('~/') . '.president';
 `mkdir -p $cache_dir` unless -e $cache_dir;
 
 require './gb.pl';
+
+# The archive root (config.json archive_dir) gets one folder per location type,
+# made here if it is missing. A blank archive_dir means this machine is not an
+# archive and nothing happens.
+my $archive_root = &subs::archive_scaffolder();
+if ($archive_root->{'enabled'}) {
+	my @made = @{$archive_root->{'created'}};
+	$log->info('archive root ' . $archive_root->{'dir'} . (@made ? ' created: ' . join(', ', @made) : ' already in place'));
+}
+
 $SIG{INT} = sub {
 	print "President Died, Ctrl+C! Performing cleanup logic...\n";
 	#`rm -R $dump_dir/*` if -e $dump_dir;

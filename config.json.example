@@ -3,6 +3,7 @@
 	"device": "computer",
 	"environment": "development",
 	"start_dir": "~/",
+	"archive_dir": "",
 	"ssh_port": "8022",
 	"email": "me@email.com",
 	"port": "3000",
