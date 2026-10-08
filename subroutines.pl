@@ -1274,9 +1274,9 @@ sub device_lister() {
 	my $user_agent = $gb::user_agent;
 	my $server_time = &subs::rightNow();
 	my $remote_machinery = &subs::db_query('select * from remote_machines');
+	my $remote_machines = $remote_machinery->hashes;
 	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 	my $signatorial = &subs::signatorial_designer();
-	my $remote_machines = $remote_machinery->hashes;
 	my $chip_ids = [];
 	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {
 		$dev = &subs::db_select('devices');

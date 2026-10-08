@@ -2858,9 +2858,11 @@ sub editor_maker($c) {
 	my $t1 = ($timestamp - $t);
 	my $t2 = ($t1 + $timestamp + $t1);
 	my $articulation = &subs::db_query('select * from magazine order by timestamp DESC');# where timestamp >= ? and timestamp <= ?', $t, $t2);
+	# fetched before the next database call: the kept handle finishes an unfetched
+	# statement, and $articles would come back empty
+	my $articles = $articulation->hashes;
 	my $mag_cat = &subs::db_query('select distinct(app) from settings where (setting=? or setting=?) and value=?','pos','mab','category');
 	my $magazine_categories = $mag_cat->hashes;
-	my $articles = $articulation->hashes;
 
 	my $contents = $c->render_to_string(
 		template => 'editor',
@@ -7724,8 +7726,8 @@ post '/manager/configure/stop_all_appointments' => sub($c) {
 	foreach my $a ( @{$appts}) {
 		my $duration = $a->{'timestamp'} - $timestamp;
 		my $sq = &subs::db_query('select app,setting,value from settings where app = ? and setting=? and value != ?',$a->{'app'},'duration','');
-		my $old_appts = &subs::db_query('select * from appointments where type=? and app = ? order by timestamp DESC LIMIT 20', 'stop', $a->{'app'})->hashes;
 		my $sqsults = $sq->hashes;
+		my $old_appts = &subs::db_query('select * from appointments where type=? and app = ? order by timestamp DESC LIMIT 20', 'stop', $a->{'app'})->hashes;
 		if (scalar @{$old_appts} > 2) {
 			my $toa = 0;
 			foreach my $oa ( @{$old_appts} ) {
@@ -10166,11 +10168,11 @@ sub merge_database($c,$configuration) {
 	`mkdir -p $temp_folder` unless -e "$temp_folder";
 	my $temporary_file = $temp_folder . '/tmpman.db';
 	my $credentials = &subs::db_query('select level,credential from security where level != ? order by server_time DESC', 'padlock');
+	my $creds = $credentials->hashes;
 	my $signatorial = &subs::signatorial_designer();
 	my $last_update_time = &subs::db_select('backups', undef, { recipient => $signatorial, signatorial => $configuration->{'signatorial'} })->hashes->[-1];
 	$last_update_time = $last_update_time->{'server_time'} || 0;
 	$last_update_time = $configuration->{'gimme'} if $configuration->{'gimme'};
-	my $creds = $credentials->hashes;
 	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
 	@{$creds} = reverse @{$creds};
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
@@ -12660,8 +12662,8 @@ get '/manager/browser' => sub ($c) {
 		else {
 			$results = &subs::db_select('websites', ['app','content','url','internal_url'],{ internal_url => $internal_url });
 		}
-		my $settings = &subs::settings_grabber({ app => $app, settings => [ 'web_format' ] });
 		my $saved_websites = $results->hashes;
+		my $settings = &subs::settings_grabber({ app => $app, settings => [ 'web_format' ] });
 		my $website = $saved_websites->[-1]->{'content'};
 
 
@@ -16185,9 +16187,12 @@ post '/manager/delete_app' => sub($c) {
 };
 
 sub delete_app($app,$uuid,$server_time,$reason) {
-	my $appt = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app });
-	&Websocket::send($app, { console => '$(\'.appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
-	my $appts = $appt->hashes;
+	# The rows are fetched before the websocket send, not after it: send dials the
+	# database, and the kept handle finishes whatever statement was left unfetched
+	# on its way past, so a result read after it comes back empty. Fetched late,
+	# this sub only ever removed the appointment from the page, never the table.
+	my $appts = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes;
+	&Websocket::send($app, { console => '$(\'appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
 	my $status = '';
 	if (scalar @{$appts} > 0) {
 
