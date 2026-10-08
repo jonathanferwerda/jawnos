@@ -2838,10 +2838,6 @@ sub cache_set() {
 			uuid => &random_string_creator(25)
 		});
 	};
-
-#	&subs::socket_cache_set($params,$data);
-#	my $result = &db_select('cache', undef, $params);
-#	return $result->hashes;
 }
 
 sub cache_delete() {
@@ -2849,14 +2845,10 @@ sub cache_delete() {
 	$params->{'device'} = $device;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $result = &db_delete('cache', $params);
-	&subs::socket_cache_delete($params);
 }
 
 sub cache_get() {
 	my ($params) = @_;
-	#if (my $s = &subs::socket_cache_get($params)) {
-	#	return $s;
-	#}
 	$params->{'device'} = $device;
 	my $returner;
 	my $results = &subs::db_select('cache', ['data'], $params)->hashes;
@@ -2864,33 +2856,8 @@ sub cache_get() {
 	my $json_data = $result->{'data'};
 	if ($result->{'data'}) {
 		$returner = eval { return decode_sereal $json_data };
-	#	&subs::socket_cache_set($params,$returner);
 		return $returner if $returner;
 	}
-}
-
-sub socket_cache_get() {
-	my ($params) = @_;
-	my $tmp_dir = &subs::home('~/.president/');
-	my $file = $tmp_dir . '/memory';
-	my $returner = &unix_socket_sender($file, { duty => 'cache_get', params => $params }, 1);
-	return $returner;
-}
-
-sub socket_cache_set() {
-	my ($params,$data) = @_;
-	my $tmp_dir = &subs::home('~/.president/');
-	my $file = $tmp_dir . '/memory';
-	my $returner = &unix_socket_sender($file, { duty => 'cache_set', data => $data, params => $params }, 1);
-	return $returner;
-}
-
-sub socket_cache_delete() {
-	my ($params) = @_;
-	my $tmp_dir = &subs::home('~/.president/');
-	my $file = $tmp_dir . '/memory';
-	my $returner = &unix_socket_sender($file, { duty => 'cache_delete', params => $params }, 1);
-	return $returner;
 }
 
 sub file_device_renamer() {
@@ -4506,20 +4473,10 @@ sub database_grabber() {
 }
 
 sub dbs_insert {
-  my $table = shift;
-  my $data = shift;
-
-  $data->{'ost'} = $data->{'ost'} || &rightNow();
-  $data->{'server_time'} = $data->{'server_time'} ? $data->{'server_time'} : $data->{'ost'};
-  $data->{'uuid'} = &random_string_creator(15) unless $data->{'uuid'};
-  my $res = &subs::unix_socket_sender('memory', {
-      duty  => 'insert',
-      table => $table,
-      data  => $data,
-			db => 'disk'
-  }, 1);
-
-  return $res->{data}->{last_insert_id};
+  # Legacy name kept for the device scripts: inserts used to be posted through
+  # the memory mirror's socket, and now they go straight to the database.
+  my $success = &db_insert(@_);
+  return $success ? $success->last_insert_id : undef;
 }
 
 sub db_insert() {
@@ -4573,31 +4530,14 @@ sub db_update() {
 }
 
 sub dbs_update {
-  my $table = shift;
-  my $data = shift;
-  my $params = shift;
-
-  $data->{'server_time'} = &subs::rightNow() unless $data->{'server_time'};
-
-  return &subs::unix_socket_sender('memory', {
-    duty   => 'update',
-    table  => $table,
-    data   => $data,
-    params => $params,
-		db => 'disk'
-  }, 1);
+  # Straight to the database now; the memory mirror is retired.
+  return &db_update(@_);
 }
 
 
 sub dbs_delete {
-  my $table = shift;
-  my $params = shift;
-  return &subs::unix_socket_sender('memory', {
-    duty   => 'delete',
-    table  => $table,
-    params => $params,
-		db => 'disk'
-  }, 1);
+  # Straight to the database now; the memory mirror is retired.
+  return &db_delete(@_);
 }
 
 sub db_delete() {

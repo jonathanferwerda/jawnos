@@ -390,12 +390,17 @@ sub manager_starter() {
 	}
 }
 
-our ($db_handle, $sql_handle, $current_db_path,$db_duties);
-our ($mem_db_handle, $sql_memory);
+# Only the database's path is kept here. The process opens no database handle
+# any more: the mirror that copied the database into RAM is retired, so the
+# web process and the device scripts stay its readers and writers.
+our $current_db_path;
 
 sub get_internal_db {
-    # 1. Test if the handle exists AND the plain file path string is still valid on disk
-    return $db_handle if $db_handle && $current_db_path && -e $current_db_path;
+    # Resolve the newest .db in start_dir and hand back its path. No handle is
+    # opened here on purpose: the web process, pen.pl and the device scripts are
+    # the database's readers and writers, and a handle held open in this process
+    # only pinned the WAL and kept a stale copy of the data around.
+    return $current_db_path if $current_db_path && -e $current_db_path;
     
     my $dir = $config->{'start_dir'};
     $dir =~ s/\/$//gi;
@@ -406,85 +411,17 @@ sub get_internal_db {
     if ($database) {
         # 2. Cache the clean, raw path string for the next iteration's file test
         $current_db_path = $database;
-        
-        $sql_handle = Mojo::SQLite->new('sqlite:' . $database);
-        $log->info('using ' . $database); # This will now fire ONLY when the file changes or drops!
-        $db_handle  = $sql_handle->db;
-        # This handle lives as long as the process, sharing the file with the web
-        # process, pen.pl and the device scripts. Without this it fails the moment
-        # another writer is mid-transaction.
-        $db_handle->query('PRAGMA busy_timeout=15000;');
-
-        # --- Instantiate Pristine In-Memory Database Environment ---
-        $sql_memory    = Mojo::SQLite->new('sqlite::memory:');
-        $mem_db_handle = $sql_memory->db;
-        
-        # Apply blistering fast execution parameters into RAM context
-        $mem_db_handle->query('PRAGMA synchronous = OFF');
-        $mem_db_handle->query('PRAGMA journal_mode = MEMORY');
-
-        # --- Hot Sync: Copy the freshly loaded Disk database into RAM ---
-       eval {
-            # $mem_db_handle->dbh drops straight into the underlying DBI layer.
-            # sqlite_backup_from_file reads the disk file and populates RAM in one shot.
-            $mem_db_handle->dbh->sqlite_backup_from_file($database);
-            $log->info('Successfully hot-swapped and mirrored data blocks into RAM.');
-        };
-        if ($@) {
-            warn "Failed to mirror database into RAM: $@";
-        }
-        
-        return $db_handle;
+        $log->info('using ' . $database);
+        return $current_db_path;
     }
     return undef;
-}
-
-# New secondary helper for your socket routing logic
-sub get_mem_db {
-    &get_internal_db(); # Ensures the disk database is resolved/synced first if missing
-    return $mem_db_handle;
 }
 
 
 
 sub socket_watch() {
 	my ($watch_file) = @_;
-	my $memory = {};
 	my %buffers;
-	Mojo::IOLoop->recurring(5 => sub {
-		my $disk_db = get_internal_db();
-    while ( my $du = shift @{$db_duties} ) {
-
-			eval {
-				if ($du->{'type'} eq 'query') {
-					my $disk_err;
-
-				#	eval { $disk_db->query($du->{query}, @{$du->{params}}); };
-					$disk_err = $@;
-				
-					if ($disk_err && $disk_err !~ /duplicate|already exists/i) {
-						die $disk_err; # Only throw fatal disk errors, skip schema duplicate errors
-					}
-				} elsif ($du->{'type'} eq 'insert') {
-				#	my $disk_success = $disk_db->insert($du->{table}, $du->{data});
-				#	my $assigned_id  = $disk_success->last_insert_id;
-				#	$log->info('insert on ' . $du->{table});
-				} elsif ( $du->{'type'} eq 'update') {
-		    #	$disk_db->update($du->{table}, $du->{data}, $du->{params});
-				}
-				elsif ( $du->{'type'} eq 'delete') {
-					$log->info($du->{'table'});
-					$log->info(Dumper $du->{'params'});
-        #  $disk_db->delete($du->{table}, $du->{params});
-				}
-			};
-      if ($@) {
-          # If an unexpected error happened, put it back at the front of the queue
-          unshift @{$db_duties}, $du;
-          last; # Stop the current interval loop execution
-      }
-		}
-	});
 	eval {
 		my $server = Mojo::IOLoop->server({ path => $watch_file } => sub {
 			my ($loop,$stream,$id) = @_;
@@ -514,8 +451,6 @@ sub socket_watch() {
 					my $sereal_blob = substr($buffers{$id}, 0, $payload_length, '');
 	        
 	        my $query = eval { $decoder->decode($sereal_blob) };
-          my $req = $query;
-
 	        if ($@) {
             warn "Worker $$: Failed to parse Sereal: $@";
             next;
@@ -524,45 +459,7 @@ sub socket_watch() {
 
 					
           my $duty = $query->{'duty'} // '';
-          my $p    = $query->{'params'} // {};
-          if ($duty =~ /^(cache_|global_)/) {
-						my $data;
-		        if ($duty eq 'cache_get') {
-		          $data = $memory->{$p->{'app'}}->{$p->{'context'}}->{$p->{'subcontext'}};
-		        } elsif ($duty eq 'cache_set') {
-		          $memory->{$p->{'app'}}->{$p->{'context'}}->{$p->{'subcontext'}} = $query->{'data'};
-		          $data = $query->{'data'};
-		        } elsif ($duty eq 'cache_delete') {
-		          delete $memory->{$p->{'app'}}->{$p->{'context'}}->{$p->{'subcontext'}};
-		        }
-						elsif ($duty eq 'global_get') {
-							my $variable = $p->{'variable'};
-							my $target_variable = "gb::$variable";
-							no strict 'refs'; 
-							my $raw_value = $$target_variable;
-
-							if (ref($raw_value)) {
-									$data = $raw_value;
-							} else {
-									$data = { value => $raw_value };
-							}
-						}
-						elsif ($duty eq 'global_set') {
-							my $variable = $p->{'variable'};
-							my $target_variable = "gb::$variable";
-							no strict 'refs';
-							if ($query->{'data'}) {
-								$$target_variable = $query->{'data'};
-							}
-						}
-
-		        eval {
-		          my $jwsm = $encoder->encode($data);
-		          my $packet = pack('N', length($jwsm)) . $jwsm;
-		          $stream->write($packet => sub{});
-		        };
-					}
-					elsif ($duty eq 'ai') {
+					if ($duty eq 'ai') {
 
 						$log->info('A.I. Called');
 
@@ -575,99 +472,27 @@ sub socket_watch() {
 
 					}
 					elsif ($duty eq 'db_file_get') {
-						# Call your internal resolver to find the latest active database path string
-						my $db = get_internal_db(); 
+						# Resolve the latest active database path string
+						my $db_path = get_internal_db();
 						
-						# Send the absolute file path ($current_db_path) straight back up the wire!
+						# Send the absolute file path straight back up the wire!
 						eval {
-								my $jwsm = $encoder->encode({ success => 1, data => { path => $current_db_path || '' } });
+								my $jwsm = $encoder->encode({ success => 1, data => { path => $db_path || '' } });
 								my $packet = pack('N', length($jwsm)) . $jwsm;
 								$stream->write($packet => sub{});
 						};
 					}
 					else {
-					  my $disk_db = get_internal_db();
-					  my $mem_db  = get_mem_db();
-					  
-					  unless ($disk_db && $mem_db) {
-					      $stream->write($encoder->encode({ error => 'No database available' }) => sub{});
-					      return;
-					  }
-					  
-					  my $res;
+						# The mirror is retired: cache duties and raw database duties used to
+						# run here against a RAM copy. The cache now reads and writes the
+						# database in the calling process, so the only job left is to answer
+						# - quickly - that this duty is not served any more, so a stray caller
+						# fails fast instead of waiting out its socket timeout.
 						eval {
-						  # --- SELECT / READ (RAM Only - Instant) ---
-		          if ($req->{duty} eq 'select') {
-								my $table   = $req->{table};
-								my $columns = $req->{columns};
-								my $params  = ref $req->{params} eq 'HASH' ? { %{$req->{params}} } : $req->{params};
-								my $filters = ref $req->{filters} eq 'HASH' ? { %{$req->{filters}} } : $req->{filters};
-								
-								my $rows_ref = defined $filters 
-									? $mem_db->select($table, $columns, $params, $filters)->hashes->to_array
-									: $mem_db->select($table, $columns, $params)->hashes->to_array;
-								
-								$res = { rows => $rows_ref || [] };
-		          }
-		          # --- RAW SQL QUERY (RAM for SELECTs, Write-Through for Mutations) ---
-							# --- RAW QUERY (RAM Only for SELECTs, Write-Through for Mutations) ---
-							elsif ($req->{duty} eq 'query') {
-								if ($req->{query} =~ /^\s*select/i) {
-									$res = { rows => $mem_db->query($req->{query}, @{$req->{params}})->hashes->to_array };
-								} else {
-
-									push @{$db_duties}, { type => 'query', query => $req->{query}, params => $req->{params} };
-									my $mem_res = $mem_db->query($req->{query}, @{$req->{params}});
-
-									$res = { affected => $mem_res->rows };
-								}
-							}
-
-							elsif ($req->{duty} eq 'insert') {
-								my $success;
-								if ($req->{'db'} eq 'disk') {
-									$success = $disk_db->insert($req->{table}, $req->{data});
-								} else {
-									push @{$db_duties}, { type => 'insert', data => $req->{data}, table => $req->{table} };
-									$success = $mem_db->insert($req->{table}, $req->{data});
-								}
-								my $assigned_id  = $success->last_insert_id;								
-								$res = { last_insert_id => $assigned_id };
-							}
-		          elsif ($req->{duty} eq 'update') {
-								my $success;
-								if ($req->{'db'} eq 'disk') {
-		              $success = $disk_db->update($req->{table}, $req->{data}, $req->{params});
-								} else {
-									push @{$db_duties}, { type => 'update', data => $req->{data}, table => $req->{table}, params => $req->{params} };
-		              $success = $mem_db->update($req->{table}, $req->{data}, $req->{params});
-								}
-	              $res = { affected => $success->rows };
-		          }
-		          elsif ($req->{duty} eq 'delete') {
-								my $success;
-								if ($req->{'db'} eq 'disk') {
-		              $success = $disk_db->delete($req->{table}, $req->{params});
-								} else {
-									push @{$db_duties}, { type => 'delete', params => $req->{params}, table => $req->{table} };
-		              $success = $mem_db->delete($req->{table}, $req->{params});
-								}
-		            $res = { affected => $success->rows };
-		          }
+							my $jwsm = $encoder->encode({ error => "no duty '$duty' here" });
+							my $packet = pack('N', length($jwsm)) . $jwsm;
+							$stream->write($packet => sub{});
 						};
-						if ($@) {
-								$log->info($req->{'table'} . ' ' . $query->{'duty'});
-								$log->info(Dumper $req->{'params'});
-								$log->info(Dumper $req->{'data'});
-						    $stream->write($encoder->encode({ error => $@ }) => {});
-						} else {
-					      my $jwsm = $encoder->encode({ success => 1, data => $res });
-					      my $packet = pack('N', length($jwsm)) . $jwsm;
-					      $stream->write($packet => sub{});
-						#    $stream->write($encoder->encode({ success => 1, data => $res }));
-						}
-						
-
 					}
 
 
