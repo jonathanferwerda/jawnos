@@ -1532,7 +1532,7 @@ our $time_subs = {
 	},
 	'twentytwomonth' => sub() {
 		my $timestamp = shift; my $multiplier = shift;
-		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 21 * ($multiplier || 1));
+		my $re = $timestamp - (1000 * 60 * 60 * 24 * 30 * 22 * ($multiplier || 1));
 		return $re;
 	},
 	'twentythreemonth' => sub() {

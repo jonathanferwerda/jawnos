@@ -9258,6 +9258,8 @@ sub father_time($data) {
 	my $lock = $data->{'lock'} || 'off';
 	my $timestamp = $data->{'timestamp'};
 	my ($bt, $temp_timestamp);
+	# how many periods an "Nnext" window spans, zero for the other ts values
+	my $reach = 0;
 
 	# A window is only good for the timestamp it was built from: handing the
 	# same one to a later request is what put January's month on screen just
@@ -9283,102 +9285,71 @@ sub father_time($data) {
 			}
 		}
 		elsif ($ts =~ 'next') {
-			# the span this scope is worth: "next" is one span ahead, "Nnext"
-			# carries that span plus the N the ts names
+			# the span this scope is worth: "next" is the span after this one,
+			# "Nnext" is the next N spans counting this one, so 2next in week is
+			# this week plus next week
 			my $span_bt = &{$subs::time_subs->{$scope}}($timestamp);
 			my $span = $timestamp - $span_bt;
 			$temp_timestamp = $span + $timestamp;
 			if ($ts =~ /(^[0-9])/) {
 				my $tas = $ts;
 				$tas =~ s/next//gi;
-				my $tame = $gb::numerics->{$tas};
-				my $template_tame = 0;
-				if ($tas == 1) {
-					$tame = '';
-				}
-				else {
-					$template_tame = $timestamp - &{$subs::time_subs->{$scope}}($timestamp);
-				}
-				my $tamer = $timestamp -  &{$subs::time_subs->{$tame . $scope}}($timestamp);
-
-				$temp_timestamp = $timestamp + $tamer + $template_tame;
+				$reach = $tas + 0;
+				$temp_timestamp = $timestamp + $span * $reach;
 			}
 		}
 
-		if ($lock eq 'on' && grep { &subs::timespan_widener($scope) =~ /\Q$_/i } qw/minute hour day week month year/) {
-			# the number in a scope such as "3day" widens the window, the unit
-			# is the calendar edge the lock snaps it to
+		if ($lock eq 'on' && grep { &subs::timespan_widener($scope) =~ /\Q$_\E/i } qw/minute hour day week month year/) {
+			# Locked windows are counted in whole periods off the one the request
+			# is in: "last" is the period before this one, "2next" is this one and
+			# the next, and the number in a scope such as "3day" widens them.  The
+			# periods come off the calendar, since a day is not always 24 hours
+			# long and millisecond steps drift across daylight saving.
 			my $unit = lc $scope;
 			$unit =~ s/[^a-zA-Z]//gi;
 			my $multiplier = $scope;
 			$multiplier =~ s/[^0-9.]//gi;
 			$multiplier = 1 unless $multiplier;
-
-			if ($unit eq 'minute') {
-				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
-				$bt = &subs::ago_calc($second . 's', $temp_timestamp);
-				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'm',$bt);
+			my $shift = 0;
+			my $units = $multiplier;
+			if ($ts =~ 'last') {
+				$shift = -1;
+				$shift = -$1 if $ts =~ /^(\d+)/;
 			}
-			elsif ($unit eq 'hour') {
-				my $hour = localtime( $temp_timestamp / 1000 )->strftime( "%H");
-				my $minute = localtime( $temp_timestamp / 1000 )->strftime( "%M");
-				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
-				$bt = &subs::ago_calc($minute . 'm ' . $second . 's', $temp_timestamp);
-				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'h', $bt);
-
+			elsif ($ts =~ 'next') {
+				if ($ts =~ /^(\d+)/ && $1 > 1) { $units = $multiplier * $1 }
+				else { $shift = 1 }
 			}
-			elsif ($unit eq 'day') {
-				my $hour = localtime( $temp_timestamp / 1000 )->strftime( "%H");
-				my $minute = localtime( $temp_timestamp / 1000 )->strftime( "%M");
-				my $second = localtime( $temp_timestamp / 1000 )->strftime( "%S");
-				$bt = &subs::ago_calc( $hour . 'h ' . $minute . 'm ' . $second . 's',$temp_timestamp);
-				$temp_timestamp = &subs::ago_calc('-' . $multiplier . 'd', $bt);
-			}
-			elsif ($unit eq 'week') {
-				# the week runs Sunday to Sunday, worked out on the civil calendar:
-				# day sized steps in milliseconds drift an hour across daylight saving
-				# and can land the edge on the wrong day
-				my $anchor = localtime($temp_timestamp / 1000);
-				my $sunday = timegm(0, 0, 0, $anchor->mday, $anchor->mon - 1, $anchor->year)
-					- $anchor->strftime('%w') * 86400;
-				my @open = gmtime($sunday);
-				my @close = gmtime($sunday + 7 * 86400);
-				$bt = timelocal(0, 0, 0, $open[3], $open[4], $open[5]) * 1000;
-				$temp_timestamp = timelocal(0, 0, 0, $close[3], $close[4], $close[5]) * 1000;
-			}
-			elsif ($unit eq 'month') {
-				# Real calendar months, worked out from the request timestamp and
-				# the ts rather than from the 30 day steps above.  Those drift a
-				# day or two a year, which read the month before last as "last"
-				# near the first, and February's length is not 28 days every
-				# year, so a leap year lost its 29th.  Ending on the first
-				# instant of the next month needs neither a length nor a leap
-				# rule.
-				my $months_away = 0;
-				if ($ts =~ /last/i) {
-					my ($n) = $ts =~ /^(\d+)/;
-					$months_away = -($n || 1);
+			my $at = localtime($timestamp / 1000);
+			my $period_start = sub {
+				my $periods = shift;
+				if ($unit eq 'minute') {
+					return timelocal(0, $at->min, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $periods * 60000;
 				}
-				elsif ($ts =~ /next/i) {
-					my ($n) = $ts =~ /^(\d+)/;
-					$months_away = ($n || 1);
+				if ($unit eq 'hour') {
+					return timelocal(0, 0, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $periods * 3600000;
 				}
-				my $at = localtime($timestamp / 1000);
-				my $this_month = $at->year * 12 + ($at->mon - 1) + $months_away;
-				my $next_month = $this_month + 1;
-
-				$bt = &subs::ago_calc((($this_month % 12) + 1) . '/1/' . int($this_month / 12) . ' 12am', $timestamp);
-				$temp_timestamp = &subs::ago_calc((($next_month % 12) + 1) . '/1/' . int($next_month / 12) . ' 12am', $timestamp);
-			}
-
-			elsif ($unit eq 'year') {
-				my $year = localtime( $temp_timestamp / 1000 )->strftime( "%Y");
-				$bt = &subs::ago_calc('jan 1 ' . $year . ' 12am', $temp_timestamp);
-				$temp_timestamp = &subs::ago_calc('jan 1 ' . ($year + $multiplier) . ' 12am', $temp_timestamp);
-			}
+				if ($unit eq 'year') {
+					return timelocal(0, 0, 0, 1, 0, $at->year + $periods) * 1000;
+				}
+				if ($unit eq 'month') {
+					my $index = $at->year * 12 + ($at->mon - 1) + $periods;
+					return timelocal(0, 0, 0, 1, $index % 12, int($index / 12)) * 1000;
+				}
+				if ($unit eq 'week') {
+					# weeks start on Sunday, so step off the Sunday of this week
+					my $sunday = timegm(0, 0, 0, $at->mday, $at->mon - 1, $at->year) - $at->strftime('%w') * 86400;
+					my @date = gmtime($sunday + 7 * $periods * 86400);
+					return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
+				}
+				my @date = gmtime(timegm(0, 0, 0, $at->mday, $at->mon - 1, $at->year) + $periods * 86400);
+				return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
+			};
+			$bt = $period_start->($shift);
+			$temp_timestamp = $period_start->($shift + $units);
 		}
 		else {
-			$bt = &{$subs::time_subs->{$scope}}($temp_timestamp);
+			$bt = $reach > 1 ? $timestamp : &{$subs::time_subs->{$scope}}($temp_timestamp);
 		}
 	}
 
