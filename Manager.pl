@@ -20126,13 +20126,13 @@ our $ws_server;
 # setting itself, shown as an illusion that remembers what was written, so a
 # click hands the words back. The name may wear braces and a dollar or neither
 # - ${vape}->duration, $vape->duration and vape->duration all name the same app
-# and setting, read the way the manager reads names. The text arrives as the
-# browser serialised it, where an arrow may already be -&gt;. A word whose
-# setting does not exist is left exactly as it was written, never eaten. The
-# whole text comes back with the token its spans wear, so the caret can be put
-# back after the last one; the token is undefined when nothing was found.
+# and setting, read the way the manager reads names. A dollar with a digit
+# behind it - $5, $500 - is a number, not a name, and is left alone. A word
+# whose setting does not exist is left exactly as it was written, never eaten.
+# The whole text comes back with the token its spans wear, so the caret can be
+# put back after the last one; the token is undefined when nothing was found.
 #
-# ${self}->total names the thing the editor is about rather than an app: the
+# $self->total names the thing the editor is about rather than an app: the
 # appointment it sits in, the quote/invoice and its customer the compose window
 # was opened for, or the person a letter is addressed to and the newest thing
 # they were sent. The context rides on the editor's magic_vars attribute; when
@@ -20142,7 +20142,7 @@ our $ws_server;
 # Two flourishes for fields that are not rich editors. 'plain' answers with the
 # value itself, no illusion, and does not need the semicolon - it is for the
 # compose subject, which cannot wear spans and is prose. 'self_only' refuses
-# the app->setting spellings and only says ${self}: a subject is prose, and
+# the app->setting spellings and only says $self: a subject is prose, and
 # prose must not have its arrows eaten. Tags are stepped over, so an illusion
 # already in the text keeps its remembrance of the words through a later pass.
 sub text_area_magic($text, $context, $options = undef) {
@@ -20155,6 +20155,9 @@ sub text_area_magic($text, $context, $options = undef) {
 	my @pieces = split /(<[^>]*>)/, $text;
 	foreach my $piece ( @pieces ) {
 		next if ($piece =~ /^</);
+		# the name after a dollar must begin with a letter or an underscore, so
+		# $5 and $500 are numbers and are never taken for names; an arrow the
+		# browser serialised arrives as -&gt;
 		$piece =~ s!
 			(
 				\$\{[^}&\n]+\}                       # ${vape}
@@ -20216,19 +20219,24 @@ sub text_editor_latest_document($app) {
 	return &subs::db_query('select * from appointments where app = ? and data like ? order by timestamp desc limit 1', $app, '%"numbers"%')->hashes->[0];
 }
 
-# What ${self}->name and its brothers answer for a context. An appointment
-# answers from itself and its settings; a document answers from its numbers
-# (total, balance, the id it printed under) and from its customer (name,
-# email, phone, address); a letter to a customer answers the same way, with
-# the newest document standing in for the one the words are about; a context
-# that names no record answers nothing, so the words wait to be said by
-# whoever applies them.
+# What $self->name and its brothers answer for a context. An appointment
+# answers from itself and its settings, and names its app rather than a record -
+# the newest record that app wrote is the one its numbers come from; a document
+# answers from its numbers (total, balance, the id it printed under) and from
+# its customer (name, email, phone, address); a letter to a customer answers
+# the same way, with the newest document standing in for the one the words are
+# about; a context that names no record answers nothing, so the words wait to
+# be said by whoever applies them.
 sub text_editor_context_value($context, $key) {
 	my $lookup = &subs::unformat_name($key);
 	my $appt;
-	my $uuid = $context->{'appointment'} || $context->{'document'};
-	if ($uuid) {
-		$appt = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+	my $named_app;
+	if ($context->{'appointment'}) {
+		$named_app = &subs::unformat_name($context->{'appointment'});
+		$appt = &subs::db_query('select * from appointments where app = ? order by timestamp desc limit 1', $named_app)->hashes->[0];
+	}
+	elsif ($context->{'document'}) {
+		$appt = &subs::db_select('appointments', undef, { uuid => $context->{'document'} })->hashes->[0];
 	}
 	my $customer;
 	if ($context->{'customer'}) {
@@ -20245,7 +20253,7 @@ sub text_editor_context_value($context, $key) {
 		return $data->{'id'};
 	}
 	# a document is about its customer; an appointment is about itself
-	my $about = $appt ? $appt->{'app'} : ($customer ? $customer->{'app'} : undef);
+	my $about = $named_app || ($appt ? $appt->{'app'} : ($customer ? $customer->{'app'} : undef));
 	$about = $customer->{'app'} if (defined $context->{'document'} && $customer);
 	return unless $about;
 	return &subs::format_name($about) if ($lookup eq 'name');
@@ -20256,7 +20264,7 @@ sub text_editor_context_value($context, $key) {
 	return &subs::setting_grabber({ app => $about, setting => $lookup });
 }
 
-# The legend an upgraded text editor shows across its top: the names ${self}
+# The legend an upgraded text editor shows across its top: the names $self
 # can say in this context, each with the value it would show right now when
 # there is something to resolve it against. A template is shown the same
 # names without values - they are what it will say once it belongs to a
@@ -20265,7 +20273,7 @@ sub text_editor_variables($context) {
 	my @names;
 	if ($context->{'appointment'}) {
 		@names = qw/name ago duration quantity schedule warranty notes/;
-		my $appt = &subs::db_select('appointments', undef, { uuid => $context->{'appointment'} })->hashes->[0];
+		my $appt = &subs::db_query('select * from appointments where app = ? order by timestamp desc limit 1', &subs::unformat_name($context->{'appointment'}))->hashes->[0];
 		my $data = {};
 		$data = eval { return decode_json($appt->{'data'}) } || {} if ($appt && $appt->{'data'});
 		if ($data->{'numbers'} || defined $data->{'id'}) {
@@ -20289,7 +20297,7 @@ sub text_editor_variables($context) {
 	foreach my $name ( @names ) {
 		my $value = &text_editor_context_value($context, $name);
 		push @variables, {
-			name => '${self}->' . $name,
+			name => '$self->' . $name,
 			value => (defined $value && length $value) ? $value : undef
 		};
 	}
