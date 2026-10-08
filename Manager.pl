@@ -13960,6 +13960,25 @@ sub folders_command_items {
 	return @items;
 }
 
+# Take a folders selection away. Anything an appointment has attached goes
+# through the app's own file deletion first, so the appointment lets go of it,
+# the thumb goes with it, and the other machines hear about it; whatever is
+# left after that is deleted or shredded where it lies. Returns the errors.
+sub folders_delete_away {
+	my ($command, $items) = @_;
+	my @errors;
+	foreach my $item ( @{$items} ) {
+		my $path = $item->{'path'};
+		foreach my $attached ( @{ &subs::folders_appt_entries($path) } ) {
+			&delete_file($attached);
+		}
+		next unless -e $path;
+		my $error = ($command eq 'shred') ? &subs::folders_job_shred($path) : &subs::folders_job_take_away($path);
+		push @errors, $error if $error;
+	}
+	return \@errors;
+}
+
 post '/manager/folders/context' => sub($c) {
 	my $file = $c->param('file');
 	my $folders = eval { return decode_json $c->param('folders') } || {};
@@ -14149,11 +14168,7 @@ post '/manager/folders/context/command' => sub($c) {
 		}
 	}
 	elsif ($command eq 'delete' || $command eq 'shred') {
-		my @errors;
-		foreach my $item ( &folders_command_items($folders) ) {
-			my $error = ($command eq 'shred') ? &subs::folders_job_shred($item->{'path'}) : &subs::folders_job_take_away($item->{'path'});
-			push @errors, $error if $error;
-		}
+		my @errors = @{ &folders_delete_away($command, [ &folders_command_items($folders) ]) };
 		if (scalar @errors) {
 			$answer->({ name => &subs::format_name($command), text => join("\n", @errors), cancel => 'no' });
 			$returner->{'status'} = 'error';

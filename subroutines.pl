@@ -3799,6 +3799,34 @@ sub folders_job_shred {
 	return &folders_job_take_away($path);
 }
 
+# The appointment entries that name a path, or a file under it when the path is
+# a folder, so the folders app can hand a file an appointment has attached to
+# the app's own file deletion - which lets the appointment go of it, takes the
+# thumb with it, and tells the other machines - rather than pulling it out from
+# under the row. Each answer is an appointment and the entry in it to delete.
+sub folders_appt_entries {
+	my $path = shift;
+	return [] unless (defined $path && length $path);
+	my @names = (-d $path) ? &folders_job_files([ { path => $path } ]) : ( $path );
+	my %wanted = map { $_ => 1 } @names;
+	my $appts = eval { &db_query('select app, uuid, file from appointments where file is not null and file != ?', '')->hashes } || [];
+	my @found;
+	foreach my $appt ( @{$appts} ) {
+		my $entries = eval { return decode_json $appt->{'file'} };
+		next unless ref $entries;
+		$entries = [ $entries ] if (ref $entries eq 'HASH');
+		foreach my $entry ( @{$entries} ) {
+			next unless ref $entry;
+			next unless (defined $entry->{'uuid'} && length $entry->{'uuid'});
+			my $named = (defined $entry->{'f'} && $wanted{ $entry->{'f'} })
+				|| (defined $entry->{'thumb'} && $wanted{ $entry->{'thumb'} });
+			next unless $named;
+			push @found, { app => $appt->{'app'}, app_uuid => $appt->{'uuid'}, file_uuid => $entry->{'uuid'} };
+		}
+	}
+	return \@found;
+}
+
 # Every place a path is written down, so that sealing a file or opening one
 # keeps whatever points at it pointing at it: an appointment's file array, a
 # mailbox's attachments (each one wrapped around a file entry), and the store's
