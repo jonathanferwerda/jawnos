@@ -8751,10 +8751,11 @@ sub inventory_details($c,$settings) {
 	$settings->{'s_movement'} = eval { decode_json $settings->{'s_movement'} } || ['all'];
 	$appts = &subs::db_query('select * from appointments where app = ? or model = ? order by timestamp', $app, $app)->hashes;
 	my $movements = [ 'all' ];
+	my %movement_seen = ( all => 1 );
 	foreach my $a ( @{$appts} ) {
-		push @{$movements}, $a->{'type'} unless grep { $_ eq $a->{'type'} } @{$movements};
+		push @{$movements}, $a->{'type'} unless $movement_seen{$a->{'type'}}++;
 	}
-	push @{$movements}, 'start' unless grep { $_ eq 'start' } @{$movements};
+	push @{$movements}, 'start' unless $movement_seen{'start'};
 	if ($settings->{'s_movement'} == undef || grep { $_ eq 'all' } @{$settings->{'s_movement'}} ) {
 	}
 	else {
@@ -8845,10 +8846,41 @@ sub inventory_details($c,$settings) {
 		budget_status => {},
 	};
 	my $bmt = scalar grep { $_ eq $settings->{'s_display'} } keys %{$gb::budget_modes};
+	# duration_sayer re-parses and re-formats its argument on every call, but the
+	# window loops ask for the same handful of values thousands of times
+	my %duration_sayer_cache;
+	my $duration_sayer = sub {
+		my $value = shift;
+		my $key = defined $value ? $value : '';
+		return $duration_sayer_cache{$key} if exists $duration_sayer_cache{$key};
+		return $duration_sayer_cache{$key} = &subs::duration_sayer($value);
+	};
+	# measures only feed the two custom-measure paths below, so the JSON decode can
+	# be skipped entirely for the budget-mode displays
+	my $measures_required = ($settings->{'s_visual'} eq 'allocation') || ($bmt == 0);
 
 	if ( scalar @{$appts} > 0 ) {
+		# the time windows only depend on the request timestamp, so they are computed
+		# once here instead of calling father_time for every appointment
+		my @time_windows;
+		if ($settings->{'s_visual'} eq 'historical' || $settings->{'s_visual'} eq '') {
+			foreach my $ts (@time_scopes) {
+				foreach my $scope (@time_lengths) {
+					my ($bt, $temp_timestamp) = &father_time({
+						scope => $scope,
+						ts => $ts,
+						lock => $settings->{'s_lock'},
+						timestamp => $timestamp
+					});
+					push @time_windows, [ $ts, $scope, $bt, $temp_timestamp ];
+				}
+			}
+		}
+		# constant time membership test for measures promoted to their own appointment
+		my %appt_uuids;
+		$appt_uuids{$_->{'uuid'}} = 1 for @{$appts};
 		foreach my $a ( @{$appts} ) {
-			if ($a->{'measures'} && !$a->{'measure_dejsonified'}) {
+			if ($measures_required && $a->{'measures'} && !$a->{'measure_dejsonified'}) {
 				$a->{'measures'} = eval { return decode_json $a->{'measures'} } || [];
 				$a->{'measure_dejsonified'} = 1;
 			}
@@ -8865,187 +8897,184 @@ sub inventory_details($c,$settings) {
 				next;
 			}
 			if ($settings->{'s_visual'} eq 'historical' || $settings->{'s_visual'} eq '') {
-				foreach my $ts (@time_scopes) {
-					foreach my $scope (@time_lengths) {
-						my ($bt,$t1,$t2,$temp_timestamp);
-						($bt, $temp_timestamp) = &father_time({
-							scope => $scope,
-							ts => $ts,
-							lock => $settings->{'s_lock'},
-							timestamp => $timestamp
-						});
+				foreach my $window (@time_windows) {
+					if ($a->{'timestamp'} > $window->[2] && $a->{'timestamp'} < $window->[3]) {
+						# only unpack the matching windows: unpacking all of them is most of
+						# what this loop spends its time on
+						my ($ts, $scope, $bt, $temp_timestamp) = @{$window};
+						# ||= creates the bucket: a plain read of the chain would leave it undef
+						my $bucket = $returner->{$ts}->{$scope} ||= {};
+						if ($a->{'measures'} && $bmt == 0 ) {
 
+							foreach my $measure ( @{$a->{'measures'}} ) {
+								unless ($measure->{$settings->{'s_display'}} || $measure->{$settings->{'s_display'}} == 0) {
+									last;
+								}
+								foreach my $mk ( grep { $_ ne 'uuid' } keys %{$measure} ) {
 
-						if ($a->{'timestamp'} > $bt && $a->{'timestamp'} < $temp_timestamp) {
-							if ($a->{'measures'} && $bmt == 0 ) {
-
-								foreach my $measure ( @{$a->{'measures'}} ) {
-									unless ($measure->{$settings->{'s_display'}} || $measure->{$settings->{'s_display'}} == 0) {
-										last;
+									if ($measure->{'ts'} && $measure->{'ts'} ne '') {
+										$measure->{'timestamp'} = $measure->{'ts'};
+										delete $measure->{'ts'};
 									}
-									foreach my $mk ( grep { $_ ne 'uuid' } keys %{$measure} ) {
+									if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} > $temp_timestamp) && $settings->{'s_display'} eq $mk) {
 
-										if ($measure->{'ts'} && $measure->{'ts'} ne '') {
-											$measure->{'timestamp'} = $measure->{'ts'};
-											delete $measure->{'ts'};
+										unless ($appt_uuids{$measure->{'uuid'}}) {
+											my $new_measure = {
+												app => $a->{'app'},
+												timestamp => $measure->{'timestamp'} || $measure->{'ts'},
+												type => 'measure',
+												uuid => $measure->{'uuid'},
+												measures => encode_json [ $measure ],
+											};
+											push @{$appts}, $new_measure;
+											$appt_uuids{$new_measure->{'uuid'}} = 1;
+										#	@{$a->{'measures'}} = grep { $_->{'uuid'} ne $measure->{'uuid'} } @{$a->{'measures'}};
+											next;
 										}
-										if (($measure->{'timestamp'} < $bt || $measure->{'timestamp'} > $temp_timestamp) && $settings->{'s_display'} eq $mk) {
+										$measure = undef;
+									}
+									else {
+										if (($measure->{$mk} || $measure->{$mk} == 0) && $measure->{$settings->{'s_display'}}  eq $measure->{$mk}) {
 
-											unless (grep { $_->{'uuid'} eq $measure->{'uuid'} } @{$appts}) {
-												my $new_measure = {
-													app => $a->{'app'},
-													timestamp => $measure->{'timestamp'} || $measure->{'ts'},
-													type => 'measure',
-													uuid => $measure->{'uuid'},
-													measures => encode_json [ $measure ],
-												};
-												push @{$appts}, $new_measure;
-											#	@{$a->{'measures'}} = grep { $_->{'uuid'} ne $measure->{'uuid'} } @{$a->{'measures'}};
-												next;
+											$bucket->{$mk . '_occurences'} += 1;
+											if ($settings->{'s_calc'} eq 'average' ) {
+												$bucket->{'t_' . $mk} += $measure->{$mk};
+												my $sprinter = "%.2f";
+												if ($measure->{$mk} < 1 && $measure->{$mk} > -1) {
+													$sprinter = "%.4f";
+												}
+
+												$bucket->{$mk} = sprintf($sprinter, $bucket->{'t_' . $mk} / $bucket->{$mk . '_occurences'}) if $measure->{$mk};
+												if ($bucket->{$mk} == undef) {
+													$bucket->{$mk} = 0;
+												}
 											}
-											$measure = undef;
-										}
-										else {
-											if (($measure->{$mk} || $measure->{$mk} == 0) && $measure->{$settings->{'s_display'}}  eq $measure->{$mk}) {
+											elsif ($settings->{'s_calc'} eq 'high') {
+												$bucket->{$mk} = $measure->{$mk} unless $bucket->{$mk};
 
-												$returner->{$ts}->{$scope}->{$mk . '_occurences'} += 1;
-												if ($settings->{'s_calc'} eq 'average' ) {
-													$returner->{$ts}->{$scope}->{'t_' . $mk} += $measure->{$mk};
-													my $sprinter = "%.2f";
-													if ($measure->{$mk} < 1 && $measure->{$mk} > -1) {
-														$sprinter = "%.4f";
-													}
-
-													$returner->{$ts}->{$scope}->{$mk} = sprintf($sprinter, $returner->{$ts}->{$scope}->{'t_' . $mk} / $returner->{$ts}->{$scope}->{$mk . '_occurences'}) if $measure->{$mk};
-													if ($returner->{$ts}->{$scope}->{$mk} == undef) {
-														$returner->{$ts}->{$scope}->{$mk} = 0;
-													}
+												if ($measure->{$mk} > $bucket->{$mk}) {
+													$bucket->{$mk} = $measure->{$mk};
 												}
-												elsif ($settings->{'s_calc'} eq 'high') {
-													$returner->{$ts}->{$scope}->{$mk} = $measure->{$mk} unless $returner->{$ts}->{$scope}->{$mk};
-
-													if ($measure->{$mk} > $returner->{$ts}->{$scope}->{$mk}) {
-														$returner->{$ts}->{$scope}->{$mk} = $measure->{$mk};
-													}
-												}
-												elsif ($settings->{'s_calc'} eq 'low') {
-													$returner->{$ts}->{$scope}->{$mk} = $measure->{$mk} unless $returner->{$ts}->{$scope}->{$mk};
-													if ($measure->{$mk} < $returner->{$ts}->{$scope}->{$mk}) {
-														$returner->{$ts}->{$scope}->{$mk} = $measure->{$mk};
-													}
-												}
-												else {
-													$returner->{$ts}->{$scope}->{$mk} += $measure->{$mk};# if $measure->{$mk} != undef;
-
-												}
-												$returner->{'total'}->{$scope}->{$mk} += 1;
 											}
+											elsif ($settings->{'s_calc'} eq 'low') {
+												$bucket->{$mk} = $measure->{$mk} unless $bucket->{$mk};
+												if ($measure->{$mk} < $bucket->{$mk}) {
+													$bucket->{$mk} = $measure->{$mk};
+												}
+											}
+											else {
+												$bucket->{$mk} += $measure->{$mk};# if $measure->{$mk} != undef;
+
+											}
+											$returner->{'total'}->{$scope}->{$mk} += 1;
 										}
 									}
 								}
 							}
-							elsif (grep { $_ eq $settings->{'s_display'} } keys %{$gb::budget_modes}) {
+						}
+						elsif ($bmt > 0) {
 
-								if ($settings->{'s_display'} eq 'quantity') {
-									if ($a->{'unit'} ne $settings->{'unit'}) {
-										my $neg = 0;
-										if ($a->{'quantity'} < 0) { $neg = 1; }
-										$a->{'quantity'} = abs $a->{'quantity'};
-										my ($formula,$evaluation,$uom,$format) = &formula_calculator($a->{'quantity'} . $a->{'unit'} . ' to ' . $settings->{'unit'});
-										$a->{'quantity'} = $evaluation unless $evaluation == 0;
-										$a->{'quantity'} = (abs $a->{'quantity'}) * -1 if $neg == 1;
-										$a->{'unit'} = $settings->{'unit'} unless $evaluation == 0;
-									}
-								}
-
-								if ($settings->{'s_calc'} eq 'average' ) {
-									$returner->{$ts}->{$scope}->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
-									$returner->{$ts}->{$scope}->{'c_' . $settings->{'s_display'}} += 1;
-									my $sprinter = "%.2f";
-									if ($a->{$settings->{'s_display'}} < 1 && $a->{$settings->{'s_display'}} > -1) {
-										$sprinter = "%.4f";
-									}
-									$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = sprintf($sprinter, $returner->{$ts}->{$scope}->{'t_' . $settings->{'s_display'}} / $returner->{$ts}->{$scope}->{'c_' . $settings->{'s_display'}});
-									if ($returner->{$ts}->{$scope}->{$settings->{'s_display'}} == 0) {
-										$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = 0;
-									}
-								}
-								elsif ($settings->{'s_calc'} eq 'high') {
-									$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = 0 unless $returner->{$ts}->{$scope}->{$settings->{'s_display'}};
-									if ($a->{$settings->{'s_display'}} > $returner->{$ts}->{$scope}->{$settings->{'s_display'}}) {
-										$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
-									}
-								}
-								elsif ($settings->{'s_calc'} eq 'low') {
-									$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $returner->{$ts}->{$scope}->{$settings->{'s_display'}};
-									if ($a->{$settings->{'s_display'}} < $returner->{$ts}->{$scope}->{$settings->{'s_display'}}) {
-										$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
-									}
-								}
-								else {
-									$returner->{$ts}->{$scope}->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}} unless $settings->{'s_display'} eq 'occurences';
+							if ($settings->{'s_display'} eq 'quantity') {
+								if ($a->{'unit'} ne $settings->{'unit'}) {
+									my $neg = 0;
+									if ($a->{'quantity'} < 0) { $neg = 1; }
+									$a->{'quantity'} = abs $a->{'quantity'};
+									my ($formula,$evaluation,$uom,$format) = &formula_calculator($a->{'quantity'} . $a->{'unit'} . ' to ' . $settings->{'unit'});
+									$a->{'quantity'} = $evaluation unless $evaluation == 0;
+									$a->{'quantity'} = (abs $a->{'quantity'}) * -1 if $neg == 1;
+									$a->{'unit'} = $settings->{'unit'} unless $evaluation == 0;
 								}
 							}
-							$returner->{$ts}->{$scope}->{'timestamp'} = $a->{'timestamp'};
-							$returner->{$ts}->{$scope}->{'occurences'} += 1;# unless $settings->{'s_display'} eq 'occurences';
-							$a->{'occurences'} = 1;
 
-							$returner->{$ts}->{$scope}->{'formatted_duration'} = &subs::duration_sayer((abs $returner->{$ts}->{$scope}->{'duration'}) / 1000);
-					#		$returner->{$ts}->{$scope}->{'total'} += abs $a->{'total'} if $a->{'total'};
-					#		$returner->{$ts}->{$scope}->{'amount'} += abs $a->{'amount'} if $a->{'amount'};
-							$returner->{'total'}->{$scope}->{$settings->{'s_display'}} += abs $a->{$settings->{'s_display'}};
-							$returner->{'count'}->{$scope}->{$settings->{'s_display'}} += 1;
-							$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / $returner->{'count'}->{$scope}->{$settings->{'s_display'}});
-							if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $returner->{$ts}->{$scope}->{$settings->{'s_display'}} != 0) {
-								unless ($returner->{'autocalc'}) {
-									$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $settings->{'s_display'} });
+							if ($settings->{'s_calc'} eq 'average' ) {
+								$bucket->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+								$bucket->{'c_' . $settings->{'s_display'}} += 1;
+								my $sprinter = "%.2f";
+								if ($a->{$settings->{'s_display'}} < 1 && $a->{$settings->{'s_display'}} > -1) {
+									$sprinter = "%.4f";
 								}
-								my $budget = &budget_calculator({
-									app => $returner->{'app'},
-									budget => $settings->{'budget'},
-									circumstance => $settings->{'s_display'},
-									value => $returner->{$ts}->{$scope}->{$settings->{'s_display'}},
-									scope => $scope,
-									appts => $appts,
-									settings => $settings
-								});
-
-								if ($returner->{$ts}->{$scope}->{$settings->{'s_display'}} && $ts eq 'this' &&
-									&subs::timespan_widener($budget->{'scope_name'}) eq &subs::timespan_widener($scope) && $budget->{'is_scope'} eq 'yes' &&
-										$settings->{'s_display'} eq $budget->{'circumstance'}) {
-
-									$returner->{'cachable'} = $budget if $budget->{'colour'};
+								$bucket->{$settings->{'s_display'}} = sprintf($sprinter, $bucket->{'t_' . $settings->{'s_display'}} / $bucket->{'c_' . $settings->{'s_display'}});
+								if ($bucket->{$settings->{'s_display'}} == 0) {
+									$bucket->{$settings->{'s_display'}} = 0;
 								}
+							}
+							elsif ($settings->{'s_calc'} eq 'high') {
+								$bucket->{$settings->{'s_display'}} = 0 unless $bucket->{$settings->{'s_display'}};
+								if ($a->{$settings->{'s_display'}} > $bucket->{$settings->{'s_display'}}) {
+									$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+								}
+							}
+							elsif ($settings->{'s_calc'} eq 'low') {
+								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
+								if ($a->{$settings->{'s_display'}} < $bucket->{$settings->{'s_display'}}) {
+									$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+								}
+							}
+							else {
+								$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}} unless $settings->{'s_display'} eq 'occurences';
+							}
+						}
+						$bucket->{'timestamp'} = $a->{'timestamp'};
+						$bucket->{'occurences'} += 1;# unless $settings->{'s_display'} eq 'occurences';
+						$a->{'occurences'} = 1;
 
+						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
+				#		$bucket->{'total'} += abs $a->{'total'} if $a->{'total'};
+				#		$bucket->{'amount'} += abs $a->{'amount'} if $a->{'amount'};
+						$returner->{'total'}->{$scope}->{$settings->{'s_display'}} += abs $a->{$settings->{'s_display'}};
+						$returner->{'count'}->{$scope}->{$settings->{'s_display'}} += 1;
+						$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / $returner->{'count'}->{$scope}->{$settings->{'s_display'}});
+						if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $bucket->{$settings->{'s_display'}} != 0) {
+							unless ($returner->{'autocalc'}) {
+								$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $settings->{'s_display'} });
+							}
+							my $budget = &budget_calculator({
+								app => $returner->{'app'},
+								budget => $settings->{'budget'},
+								circumstance => $settings->{'s_display'},
+								value => $bucket->{$settings->{'s_display'}},
+								scope => $scope,
+								appts => $appts,
+								settings => $settings
+							});
 
-								$returner->{$ts}->{$scope}->{'budget'} = $budget;
-								$returner->{'budgets'} = $budget->{'budgets'};
-								$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'expected'} += $budget->{'expected'};
-								$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'actual'} += $budget->{'actual'};
+							if ($bucket->{$settings->{'s_display'}} && $ts eq 'this' &&
+								&subs::timespan_widener($budget->{'scope_name'}) eq &subs::timespan_widener($scope) && $budget->{'is_scope'} eq 'yes' &&
+									$settings->{'s_display'} eq $budget->{'circumstance'}) {
 
-								$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}} = &budget_status_maker($returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}});
+								$returner->{'cachable'} = $budget if $budget->{'colour'};
 							}
 
-							if ($settings->{'s_display'} eq 'occurences') {
-								$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / scalar @time_scopes);
-							}
-							foreach my $d ( @display_options ) {
-								if ($returner->{$ts}->{$scope}->{$d->{'name'}} > $returner->{'highest'}->{$scope}->{$d->{'name'}}) {
-									$returner->{'highest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
-								}
-								elsif ($returner->{'highest'}->{$scope}->{$d->{'name'}} == undef) {
-									$returner->{'highest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
-								}
-								if ($returner->{$ts}->{$scope}->{$d->{'name'}} < $returner->{'lowest'}->{$scope}->{$d->{'name'}}) {
-									$returner->{'lowest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
-								}
-								elsif ($returner->{'lowest'}->{$scope}->{$d->{'name'}} == undef) {
-									$returner->{'lowest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
-								}
-								$returner->{$ts}->{$scope}->{'start_timestamp'} = $bt;
-								$returner->{$ts}->{$scope}->{'end_timestamp'} = $temp_timestamp;
 
+							$bucket->{'budget'} = $budget;
+							$returner->{'budgets'} = $budget->{'budgets'};
+							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'expected'} += $budget->{'expected'};
+							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}}->{'actual'} += $budget->{'actual'};
+
+							$returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}} = &budget_status_maker($returner->{'budget_status'}->{$scope}->{$settings->{'s_display'}});
+						}
+
+						if ($settings->{'s_display'} eq 'occurences') {
+							$returner->{'average'}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$settings->{'s_display'}} / scalar @time_scopes);
+						}
+						foreach my $d ( @display_options ) {
+							my $name = $d->{'name'};
+							my $value = $bucket->{$name};
+							if ($value > $returner->{'highest'}->{$scope}->{$name}) {
+								$returner->{'highest'}->{$scope}->{$name} = $value;
 							}
+							elsif ($returner->{'highest'}->{$scope}->{$name} == undef) {
+								$returner->{'highest'}->{$scope}->{$name} = $value;
+							}
+							if ($value < $returner->{'lowest'}->{$scope}->{$name}) {
+								$returner->{'lowest'}->{$scope}->{$name} = $value;
+							}
+							elsif ($returner->{'lowest'}->{$scope}->{$name} == undef) {
+								$returner->{'lowest'}->{$scope}->{$name} = $value;
+							}
+							$bucket->{'start_timestamp'} = $bt;
+							$bucket->{'end_timestamp'} = $temp_timestamp;
+
 						}
 					}
 				}
@@ -9068,7 +9097,7 @@ sub inventory_details($c,$settings) {
 							}
 
 							if ($settings->{'s_display'} eq $mk) {
-								unless (grep { $_->{'uuid'} eq $measure->{'uuid'} } @{$appts}) {
+								unless ($appt_uuids{$measure->{'uuid'}}) {
 									my $new_measure = {
 										app => $a->{'app'},
 										timestamp => $measure->{'timestamp'} || $measure->{'ts'},
@@ -9078,6 +9107,7 @@ sub inventory_details($c,$settings) {
 										measures => encode_json [ $measure ],
 									};
 									push @{$appts}, $new_measure;
+									$appt_uuids{$new_measure->{'uuid'}} = 1;
 									undef $a;
 								}
 								$measure = undef;
@@ -9092,49 +9122,52 @@ sub inventory_details($c,$settings) {
 						my $ts = $localtime[$n];
 						if ($scope eq 'month') { $ts += 1; }
 						if ($scope eq 'year') { $ts += 1900; }
+						my $bucket = $returner->{$ts}->{$scope} ||= {};
 					#	if ($scope eq 'wday') { $ts += 1; }
-						$returner->{$ts}->{$scope}->{'occurences'} += 1;
+						$bucket->{'occurences'} += 1;
 						if ($settings->{'s_calc'} eq 'average' ) {
-							$returner->{$ts}->{$scope}->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
-							$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = sprintf("%.2f", $returner->{$ts}->{$scope}->{'t_' . $settings->{'s_display'}} / $returner->{$ts}->{$scope}->{'occurences'});
-							if ($returner->{$ts}->{$scope}->{$settings->{'s_display'}} == 0) {
-								$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = 0;
+							$bucket->{'t_' . $settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+							$bucket->{$settings->{'s_display'}} = sprintf("%.2f", $bucket->{'t_' . $settings->{'s_display'}} / $bucket->{'occurences'});
+							if ($bucket->{$settings->{'s_display'}} == 0) {
+								$bucket->{$settings->{'s_display'}} = 0;
 							}
 						}
 						elsif ($settings->{'s_calc'} eq 'high') {
-							$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $returner->{$ts}->{$scope}->{$settings->{'s_display'}};
-							if ($a->{$settings->{'s_display'}} > $returner->{$ts}->{$scope}->{$settings->{'s_display'}}) {
-								$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+							$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
+							if ($a->{$settings->{'s_display'}} > $bucket->{$settings->{'s_display'}}) {
+								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
 							}
 						}
 						elsif ($settings->{'s_calc'} eq 'low') {
-							$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $returner->{$ts}->{$scope}->{$settings->{'s_display'}};
-							if ($a->{$settings->{'s_display'}} < $returner->{$ts}->{$scope}->{$settings->{'s_display'}}) {
-								$returner->{$ts}->{$scope}->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
+							$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}} unless $bucket->{$settings->{'s_display'}};
+							if ($a->{$settings->{'s_display'}} < $bucket->{$settings->{'s_display'}}) {
+								$bucket->{$settings->{'s_display'}} = $a->{$settings->{'s_display'}};
 							}
 						}
 						else {
-							$returner->{$ts}->{$scope}->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+							$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
 
 						}
-						$returner->{$ts}->{$scope}->{'formatted_duration'} = &subs::duration_sayer((abs $returner->{$ts}->{$scope}->{'duration'}) / 1000);
-						$returner->{$ts}->{$scope}->{'total'} += $a->{'total'};
-						unless (grep { $settings->{'s_display'} eq $_ } keys %{$gb::budget_modes}) {
-							#$returner->{$ts}->{$scope}->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
+						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
+						$bucket->{'total'} += $a->{'total'};
+						unless ($bmt > 0) {
+							#$bucket->{$settings->{'s_display'}} += $a->{$settings->{'s_display'}};
 						}
 
 						foreach my $d ( @display_options ) {
-							if ($returner->{$ts}->{$scope}->{$d->{'name'}} > $returner->{'highest'}->{$scope}->{$d->{'name'}}) {
-								$returner->{'highest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
+							my $name = $d->{'name'};
+							my $value = $bucket->{$name};
+							if ($value > $returner->{'highest'}->{$scope}->{$name}) {
+								$returner->{'highest'}->{$scope}->{$name} = $value;
 							}
-							elsif ($returner->{'highest'}->{$scope}->{$d->{'name'}} == undef) {
-								$returner->{'highest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
+							elsif ($returner->{'highest'}->{$scope}->{$name} == undef) {
+								$returner->{'highest'}->{$scope}->{$name} = $value;
 							}
-							if ($returner->{$ts}->{$scope}->{$d->{'name'}} < $returner->{'lowest'}->{$scope}->{$d->{'name'}}) {
-								$returner->{'lowest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
+							if ($value < $returner->{'lowest'}->{$scope}->{$name}) {
+								$returner->{'lowest'}->{$scope}->{$name} = $value;
 							}
-							elsif ($returner->{'lowest'}->{$scope}->{$d->{'name'}} == undef) {
-								$returner->{'lowest'}->{$scope}->{$d->{'name'}} = $returner->{$ts}->{$scope}->{$d->{'name'}};
+							elsif ($returner->{'lowest'}->{$scope}->{$name} == undef) {
+								$returner->{'lowest'}->{$scope}->{$name} = $value;
 							}
 						}
 					}
@@ -9197,7 +9230,6 @@ sub inventory_details($c,$settings) {
 	undef $returner->{'sendable'};
 	undef $returner->{'cachable'};
 	$returner->{'evaluation'} = &subs::cache_get({ app => $app, context => 'evaluation' });
-	$returner->{'json_returner'} = encode_json $returner;
 
 	$returner->{'content'} = $c->render_to_string(
 		template => 'apps/inventory',
@@ -12101,7 +12133,9 @@ sub centre_view_grabber($data) {
 		}
 		my $string;
 		my $appointment = &subs::db_query('select app,server_time,timestamp from appointments where app=? LIMIT 1',$app);
-		my $appts = &log_reader({ app => $app, view => 'centre_view'  });
+		# the header worker hands its appointments over so this render does not
+		# fetch the same set again
+		my $appts = $data->{'appts'} || &log_reader({ app => $app, view => 'centre_view'  });
 		if (!$appts->{$app}) {
 			$string = $c->render_to_string(
 				template => 'denial',
@@ -18356,6 +18390,9 @@ sub update_database($data) {
 		'CREATE INDEX IF NOT EXISTS idx6_settings on settings (app,setting)',
 		# transactions pull their documents by (type,app)
 		'CREATE INDEX IF NOT EXISTS idx12_appts on appointments (type,app)',
+		# inventory_details matches appointments by app or model; without an index
+		# on model the model half of that or scans the whole table
+		'CREATE INDEX IF NOT EXISTS idx13_appts on appointments (model)',
 		# remote machines are looked up by connection state and ip
 		'CREATE INDEX IF NOT EXISTS idx1_remote_machines on remote_machines (connection)',
 		'CREATE INDEX IF NOT EXISTS idx2_remote_machines on remote_machines (ip)',

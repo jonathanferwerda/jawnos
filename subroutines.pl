@@ -480,7 +480,9 @@ sub appt_header_printer() {
 			&appt_alarm_setter($a);
 		}
 		unless ($data->{'source'} eq 'centre_view_grabber') {
-			&Manager::centre_view_grabber({ app => &subs::unformat_name($app), header => $header, timestamp => &subs::rightNow(), cached => 'no' });
+			# hand the appointments we already loaded to the worker: the render below
+			# would otherwise fetch the same set from the database again
+			&Manager::centre_view_grabber({ app => &subs::unformat_name($app), appts => $appts, header => $header, timestamp => &subs::rightNow(), cached => 'no' });
 		}
 	}, { name => 'header worker' });
 
@@ -5232,13 +5234,15 @@ sub appt_toggle_checker() {
 	my $app = shift;
 	return unless $app;
 	my $server_time = &subs::rightNow();
-	my $settings = {};
-	my $apps = [];
 	my $toggle = 'off';
-	my $appts = &subs::db_query('select app,timestamp,type,status from appointments where app=? and (type=? or type=?) and timestamp <= ?', $app, 'start','record',$server_time)->hashes;
+	# only the existence of an open start/record matters, so stop at the first one
+	my $appts = &subs::db_query('select 1 as found from appointments where app=? and (type=? or type=?) and timestamp <= ? limit 1', $app, 'start','record',$server_time)->hashes;
 
 	$toggle = 'on' if scalar @{$appts} > 0;
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle });
+	# rewriting an unchanged toggle cost two writes and a websocket message on
+	# every header render
+	my $current = &subs::setting_grabber({ app => $app, setting => 'toggle' });
+	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle }) unless defined $current && $current eq $toggle;
 	return $toggle;
 }
 
