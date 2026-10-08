@@ -13812,6 +13812,18 @@ get '/manager/twirl' => sub ($c) {
 
 post '/manager/folders' => sub($c) {
 	my $timestamp = $c->param('timestamp');
+	# a machine picked in the toolbar: the listing has to come from that machine,
+	# which is also the only machine that can stat its own paths
+	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		my $result = &Manager::remote_relay_request($c);
+		if (length $result) {
+			# the relay hands the reply back as a plain string and the browser
+			# parses it as JSON, so put the content type back
+			$c->res->headers->content_type('application/json');
+			$c->render(text => $result);
+			return;
+		}
+	}
 	my $folder = $c->param('folder') || &subs::home('~');
 	my $command = $c->param('command');
 	my $settings = &subs::settings_grabber({ app => 'folders' });
@@ -13821,7 +13833,9 @@ post '/manager/folders' => sub($c) {
 		template => 'folders/folders',
 		settings => $settings,
 		fo => $fo,
-		folder => $folder
+		folder => $folder,
+		machines => &subs::remote_machine_lister({ self => 'no' }),
+		remote_uuid => $c->param('remote_uuid')
 	);
 
 	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', contents => $contents }, $timestamp);

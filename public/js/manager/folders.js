@@ -6,7 +6,8 @@ var folders = {
 	disk: {},
 	files: [],
 	type: undefined,
-	path: undefined
+	path: undefined,
+	remote_uuid: undefined
 };
 $(document).on('click', '#folders_toggle', function() {
 	foldersOpener();
@@ -16,6 +17,12 @@ function foldersOpener(data) {
 	if (!data) {
 		data = {};
 	}
+	// which machine is being browsed: an explicit choice, else whatever the
+	// window was rendered for, else this machine
+	if (folders.remote_uuid === undefined) {
+		folders.remote_uuid = $('#folders').attr('remote_uuid') || '';
+	}
+	var remote_uuid = (data['remote_uuid'] !== undefined) ? data['remote_uuid'] : folders.remote_uuid;
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/folders',
@@ -23,17 +30,28 @@ function foldersOpener(data) {
 		data: { 
 			timestamp: timestamp,
 			folder: data['folder'],
-			command: data['command']
+			command: data['command'],
+			remote_uuid: remote_uuid
 		},
 		success:function(response) {
 			windowMaker(response.html);
 			folders['folder'] = response.fo.folder;
 			folders['disk'] = response.fo.disk;
 			folders['files'] = response.fo.files;
+			folders['remote_uuid'] = remote_uuid;
+			$('#folders_machine_select').val(remote_uuid);
+			// a remote listing is read-only, and worth saying so at a glance
+			$('#folders_toolbar').css({ 'border-color': remote_uuid ? 'orange' : '' });
 			foldersDraggable();
 		}
 	});
 }
+
+$(document).on('change', '#folders_machine_select', function () {
+	// a new machine starts at its own home: this machine's paths mean nothing
+	// over there
+	foldersOpener({ remote_uuid: $(this).val(), folder: '' });
+});
 
 function foldersDraggable() {
 	if (windowPhoneChecker() == false) {
@@ -165,6 +183,9 @@ function folderSelection() {
 
 $(document).on('contextmenu', '.folders_file, .folders_contents', function(e) {
   e.preventDefault();
+	// a remote listing is read-only: every command here would run on this
+	// machine against a path that only exists on the other one
+	if (folders.remote_uuid) { return; }
 	var wind = $(this).closest('.wind');
 	var f = $(e.target);
 	var context = 'file';
@@ -236,6 +257,7 @@ $(document).on('click','.folders_context_selection', function(e) {
 
 function foldersCommand(data) {
 	if (!data) { return; }
+	if (folders.remote_uuid) { return; }
 	var command = data['command'];
 	if (command == 'copy') {
 		folders.clipboard = folders.selected;
