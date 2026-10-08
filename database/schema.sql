@@ -214,16 +214,10 @@ CREATE TABLE warehouse (
 			app_uuid VARCHAR(255)
 		, place VARCHAR(500), type VARCHAR(25), project VARCHAR(255), account VARCHAR(255), warranty VARCHAR(25));
 CREATE INDEX idx1_tunnels on tunnels (signatorial);
-CREATE INDEX idx1_settings on settings (setting);
 CREATE INDEX idx2_settings on settings (setting,device);
 CREATE INDEX idx3_settings on settings (setting,value);
 CREATE INDEX idx4_settings on settings (setting,device,value);
-CREATE INDEX idx1_appts on appointments (app);
 CREATE INDEX idx2_appts on appointments (app,timestamp);
-CREATE INDEX idx3_appts on appointments (app,uuid);
-CREATE INDEX idx4_appts on appointments (uuid);
-CREATE INDEX idx5_appts on appointments (app,timestamp);
-CREATE INDEX idx6_appts on appointments (app,server_time);
 CREATE INDEX idx7_appts on appointments (timestamp,seen);
 CREATE INDEX idx8_appts on appointments (timestamp, stop_timestamp, seen, stop_seen);
 CREATE INDEX idx9_appts on appointments (stop_timestamp,stop_seen);
@@ -234,9 +228,6 @@ CREATE INDEX idx3_ws on websockets (app,browser_tab_id,remote_address);
 CREATE INDEX idx2_ws on websockets (browser_tab_id);
 CREATE INDEX idx1_continent on continent (app);
 CREATE INDEX idx2_continent on continent (app,uuid);
-CREATE INDEX idx3_continent on continent (app,uuid,signatorial);
-CREATE INDEX idx4_continent on continent (app,uuid,signatorial,type);
-CREATE INDEX idx5_continent on continent (app,uuid,signatorial,type,server_time);
 CREATE INDEX idx1_security on security (level);
 CREATE INDEX idx2_security on security (level,server_time);
 CREATE INDEX idx1_cache on cache (app,device,context,subcontext);

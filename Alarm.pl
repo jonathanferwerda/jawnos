@@ -292,6 +292,13 @@ sub alarm_haircut() {
 		my $art_query = &subs::db_query('delete from drawings where browser_tab_id = ?', $webs->{'browser_tab_id'});
 		my $del_query = &subs::db_query('delete from websockets where browser_tab_id = ?', $webs->{'browser_tab_id'});
 	}
+
+	# Keep the planner's statistics honest. optimize only re-runs ANALYZE for tables
+	# whose stats are stale or missing, and analysis_limit keeps each run bounded,
+	# so this stays cheap even though it rides along with every haircut. Both on the
+	# one handle on purpose: analysis_limit is a connection setting.
+	eval { $dber->query('PRAGMA analysis_limit=400;'); };
+	eval { $dber->query('PRAGMA optimize;'); };
 }
 
 sub budget_watcher() {

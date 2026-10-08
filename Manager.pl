@@ -18924,6 +18924,10 @@ sub migration_already_applied($command) {
 		# a table that is already gone (firewall) is the same kind of old news
 		return &subs::db_query('select 1 from sqlite_master where type=? and name=?', 'table', $1)->hashes->[0] ? 0 : 1;
 	}
+	elsif ($command =~ /^\s*drop\s+index\s+(?:if\s+exists\s+)?(\w+)/i) {
+		# an index that is already gone has nothing left to drop
+		return &subs::db_query('select 1 from sqlite_master where type=? and name=?', 'index', $1)->hashes->[0] ? 0 : 1;
+	}
 	return 0;
 }
 
@@ -18989,16 +18993,10 @@ sub update_database($data) {
 		'alter table warehouse add column account VARCHAR(255)',
 		'alter table warehouse add column warranty VARCHAR(25)',
 		'CREATE INDEX idx1_tunnels on tunnels (signatorial)',
-		'CREATE INDEX idx1_settings on settings (setting)',
 		'CREATE INDEX idx2_settings on settings (setting,device)',
 		'CREATE INDEX idx3_settings on settings (setting,value)',
 		'CREATE INDEX idx4_settings on settings (setting,device,value)',
-		'CREATE INDEX idx1_appts on appointments (app)',
 		'CREATE INDEX idx2_appts on appointments (app,timestamp)',
-		'CREATE INDEX idx3_appts on appointments (app,uuid)',
-		'CREATE INDEX idx4_appts on appointments (uuid)',
-		'CREATE INDEX idx5_appts on appointments (app,timestamp)',
-		'CREATE INDEX idx6_appts on appointments (app,server_time)',
 		'CREATE INDEX idx7_appts on appointments (timestamp,seen)',
 		'CREATE INDEX idx8_appts on appointments (timestamp, stop_timestamp, seen, stop_seen)',
 		'CREATE INDEX idx9_appts on appointments (stop_timestamp,stop_seen)',
@@ -19009,9 +19007,6 @@ sub update_database($data) {
 		'CREATE INDEX idx2_ws on websockets (browser_tab_id)',
 		'CREATE INDEX idx1_continent on continent (app)',
 		'CREATE INDEX idx2_continent on continent (app,uuid)',
-		'CREATE INDEX idx3_continent on continent (app,uuid,signatorial)',
-		'CREATE INDEX idx4_continent on continent (app,uuid,signatorial,type)',
-		'CREATE INDEX idx5_continent on continent (app,uuid,signatorial,type,server_time)',
 		'CREATE INDEX idx1_security on security (level)',
 		'CREATE INDEX idx2_security on security (level,server_time)',
 		'CREATE INDEX idx1_cache on cache (app,device,context,subcontext)',
@@ -19047,7 +19042,21 @@ sub update_database($data) {
 		# mailbox reads by uuid, by (email,status), and by pen conversations
 		'CREATE INDEX IF NOT EXISTS idx3_mailbox on mailbox (uuid)',
 		'CREATE INDEX IF NOT EXISTS idx4_mailbox on mailbox (email,status)',
-		'CREATE INDEX IF NOT EXISTS idx5_mailbox on mailbox (contact,conversation_uuid)'
+		'CREATE INDEX IF NOT EXISTS idx5_mailbox on mailbox (contact,conversation_uuid)',
+		# Redundant indexes retired after a plans-and-usage audit: byte-for-byte
+		# duplicates, prefixes of an index that is kept, or shapes the planner never
+		# chose. The creates are gone from this list on purpose - leave one behind and
+		# it would be recreated on the next run because migration_already_applied
+		# checks sqlite_master rather than a ledger.
+		'DROP INDEX IF EXISTS idx1_settings',
+		'DROP INDEX IF EXISTS idx1_appts',
+		'DROP INDEX IF EXISTS idx3_appts',
+		'DROP INDEX IF EXISTS idx4_appts',
+		'DROP INDEX IF EXISTS idx5_appts',
+		'DROP INDEX IF EXISTS idx6_appts',
+		'DROP INDEX IF EXISTS idx3_continent',
+		'DROP INDEX IF EXISTS idx4_continent',
+		'DROP INDEX IF EXISTS idx5_continent'
 	];
 	foreach my $t ( qw/model option option_category subcategory/) {
 		foreach my $h ( qw/month day hour wday/ ) {
