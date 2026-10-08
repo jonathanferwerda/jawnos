@@ -420,7 +420,12 @@ void setup() {
 
   tft.fillCircle(80, 120, 20, TFT_RED);
   tft.drawCircle(80, 120, 20, TFT_BLACK);
-  deckLog("[deck] boot screen up");
+  // The GPS bring-up is deliberately NOT part of the boot. It talks UBX to a
+  // module that may be absent, and anything that stalls in here used to hold up
+  // the whole deck (screen, WiFi, keyboards). loop() retries it in the
+  // background once the deck is up.
+  gpsRetryAt = millis() + 4000;
+  deckLog("[deck] boot screen up; the gps stage is handed to the background");
 
   // TFT_eSPI brings the shared SPI bus up itself in init(), and the SD card and
   // radio share that bus. Beginning it again on the sketch's SPI object is done
@@ -775,26 +780,31 @@ static bool GPS_Recovery(uint32_t ackMs)
     uint8_t cfg_clear1[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x1C, 0xA2};
     uint8_t cfg_clear2[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1B, 0xA1};
     uint8_t cfg_clear3[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x03, 0x1D, 0xB3};
-    SerialGPS.write(cfg_clear1, sizeof(cfg_clear1));
+    uint32_t t0;
+    int got;
 
-    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
-        Serial.println("Get ack successes!");
-    }
+    SerialGPS.write(cfg_clear1, sizeof(cfg_clear1));
+    t0 = millis();
+    got = getAck(buffer, 256, 0x05, 0x01, ackMs);
+    deckLog("[gps] vals clear 1 -> %d in %u ms", got, millis() - t0);
+
     SerialGPS.write(cfg_clear2, sizeof(cfg_clear2));
-    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
-        Serial.println("Get ack successes!");
-    }
+    t0 = millis();
+    got = getAck(buffer, 256, 0x05, 0x01, ackMs);
+    deckLog("[gps] vals clear 2 -> %d in %u ms", got, millis() - t0);
+
     SerialGPS.write(cfg_clear3, sizeof(cfg_clear3));
-    if (getAck(buffer, 256, 0x05, 0x01, ackMs)) {
-        Serial.println("Get ack successes!");
-    }
+    t0 = millis();
+    got = getAck(buffer, 256, 0x05, 0x01, ackMs);
+    deckLog("[gps] vals clear 3 -> %d in %u ms", got, millis() - t0);
 
     // UBX-CFG-RATE, Size 8, 'Navigation/measurement rate settings'
     uint8_t cfg_rate[] = {0xB5, 0x62, 0x06, 0x08, 0x00, 0x00, 0x0E, 0x30};
     SerialGPS.write(cfg_rate, sizeof(cfg_rate));
-    if (getAck(buffer, 256, 0x06, 0x08, ackMs)) {
-        Serial.println("Get ack successes!");
-    } else {
+    t0 = millis();
+    got = getAck(buffer, 256, 0x06, 0x08, ackMs);
+    deckLog("[gps] rate poll -> %d in %u ms", got, millis() - t0);
+    if (!got) {
         return false;
     }
     return true;
