@@ -167,6 +167,18 @@ $(document).on('click', '.gallery_archive_toggle', function () {
 	});
 });
 
+// Bring the photo on screen home when it is one the archive is holding.
+// Nothing to do for a photo that is already here.
+$(document).on('click', '.image_fetch_home', function () {
+	var item = images[image_number] || {};
+	if (!item['remote_uuid'] || !item['f']) { return; }
+	$.ajax({
+		url: '/manager/folders/archive/fetch',
+		type: 'POST',
+		data: { path: item['f'], remote_uuid: item['remote_uuid'] }
+	});
+});
+
 function imageDiscover() {
 
 	image_number = numeral(image_number).value();

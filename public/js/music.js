@@ -593,7 +593,13 @@ function musicAppointmentWriter(type,mute) {
 	var album = app.attr('album');
 	var artist = app.attr('artist');
 	var song = app.attr('song');
-	var words = artist + ' - ' + song;
+	// the appointment reads album - artist - track, and a part that is not there
+	// is left out rather than written as 'undefined'
+	var words = [];
+	if (album != undefined && album != '') { words.push(album); }
+	if (artist != undefined && artist != '') { words.push(artist); }
+	if (song != undefined && song != '') { words.push(song); }
+	words = words.join(' - ');
 	var filename = app.text();
 	var timestamp = Date.now();
 	var musicData = { 
@@ -627,6 +633,19 @@ function musicAppointmentWriter(type,mute) {
 	}
 	return musicData;
 }
+
+$(document).on('click', '.music_file_fetch_home', function () {
+	var b = $(this);
+	$.ajax({
+		url: '/manager/folders/archive/fetch',
+		type: 'POST',
+		data: { path: b.attr('file'), remote_uuid: b.attr('remote_uuid') },
+		success: function (response) {
+			// dimmed once it is on the queue; the folders app's panel shows it
+			if (response && response.status == 'ok') { b.css({ 'opacity': 0.4 }); }
+		}
+	});
+});
 
 $(document).on('click', '#play', function() {
 	if (tree.sound.src == '') {

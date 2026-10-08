@@ -106,6 +106,7 @@
 		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" class="hover tiny_thumb image_repeat repeat" style="position:absolute;top:35px;left:170px;">
 		<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" class="hover tiny_thumb image_shuffle shuffle" style="position:absolute;top:35px;left:125px;">
 		<img src="<%= &subs::icon_path('info', '/icons/lymeboard/I.png') %>" hint="File information" class="hover tiny_thumb gallery file_information_grabber" style="position:absolute;top:35px;left:220px;">
+		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" class="hover tiny_thumb gallery image_fetch_home" style="position:absolute;top:35px;left:300px;">
 
 		<img class="hover little_thumb gallery main_image_selector"	app="" file="" style="position:absolute;top:35px;left:255px;" src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Set as main image">
 		<img src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Albums" class="hover tiny_thumb gallery gallery_home_album" style="position:absolute;top:35px;right:40px;">

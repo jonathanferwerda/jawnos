@@ -20,6 +20,9 @@
 							<tr>
 								<td file="<%= $f->{'filename'} %>" class="music_file music_thumb track_item link hover <% if ($f->{'playing'} eq 'yes') { %>playing holla<% } %>" number="<%= $n %>" colspan="2" style="float:left;height:100%;">
 									<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" song="<%= $f->{'song'} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+									<% if ($f->{'remote_uuid'}) { %>
+										<img class="music_file_fetch_home little_thumb hover" src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" file="<%= $f->{'filename'} %>" remote_uuid="<%= $f->{'remote_uuid'} %>">
+									<% } %>
 									<div style="display:none;" class="file_json" file="<%= $f->{'file'} %>" file_uuid="<%= $f->{'file_uuid'} %>"><%= encode_json $f->{'info'} %></div>
 									<% if ($f->{'type'} eq 'audio') { %>
 										<% if (scalar @{$f->{'thumbs'}} > 0) { %>
@@ -74,6 +77,9 @@
 								<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 								<div style="display:none;" class="file_json" file_uuid="<%= $f->{'file_uuid'} %>"><%= encode_json $f->{'info'} %></div>
 								<img class="music_information_toggle little_thumb" src="<%= &subs::icon_for('/images/decipherable/information.png') %>"  file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>" style="float:left;">
+								<% if ($f->{'remote_uuid'}) { %>
+									<img class="music_file_fetch_home little_thumb hover" src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" file="<%= $f->{'filename'} %>" remote_uuid="<%= $f->{'remote_uuid'} %>" style="float:left;">
+								<% } %>
 								<% if ($f->{'type'} eq 'audio') { %>
 									<% if ($f->{'info'}->{'tags'}->{'artist'} && $f->{'info'}->{'tags'}->{'title'}) { %>
 										<span class="full_title"><% if ($f->{'info'}->{'tags'}->{'track'}) { %><%= $f->{'info'}->{'tags'}->{'track'} %>. <% } %><%= $f->{'info'}->{'tags'}->{'artist'} %> - <%= $f->{'info'}->{'tags'}->{'title'} %></span>

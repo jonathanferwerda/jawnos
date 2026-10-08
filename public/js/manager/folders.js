@@ -257,6 +257,9 @@ $(document).on('click','.folders_context_selection', function(e) {
 
 function foldersCommand(data) {
 	if (!data) { return; }
+	// fetching is the one thing that makes sense while looking at another
+	// machine, so it is answered before the read-only gate below
+	if (data['command'] == 'fetch_home') { foldersFetchHome(); return; }
 	if (folders.remote_uuid) { return; }
 	var command = data['command'];
 	if (command == 'copy') {
@@ -291,6 +294,24 @@ function foldersCommand(data) {
 			}
 		});
 	}
+}
+
+// Bring what is selected - or the folder being looked at - back to this
+// machine. The paths are on the machine being browsed, and it is that machine
+// which says where they belong; the queue panel shows the work as it goes.
+function foldersFetchHome() {
+	var items = folders.selected || [];
+	if (!items.length && folders.path) { items = [ { path: folders.path } ]; }
+	var remote_uuid = folders.remote_uuid || $('#folders').attr('remote_uuid') || '';
+	$.each(items, function (i, item) {
+		$.ajax({
+			url: '/manager/folders/archive/fetch',
+			type: 'POST',
+			data: { path: item['path'], remote_uuid: remote_uuid }
+		});
+	});
+	$('#folders_archive_queue').show();
+	foldersArchiveQueue();
 }
 
 function foldersCommandConfirm(data) {

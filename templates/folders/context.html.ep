@@ -2,9 +2,10 @@
 <div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:var(--panel-2);" uuid="<%= $uuid %>">
 	<% my $contexts = {
 		file => [
-			{ 'open' => {} }, 
+			{ 'open' => {} },
 			{ 'open_with' => {} },
 			{ 'archive' => {} },
+			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
 			{ 'copy' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 'yes' : 'no' } },
@@ -17,6 +18,7 @@
 		folder => [
 			{ 'open' => {} },
 			{ 'archive' => {} },
+			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
 			{ 'copy' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
@@ -30,6 +32,7 @@
 			{ 'new_file' => {} },
 			{ 'new_folder' => {} },
 			{ 'archive' => {} },
+			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'select_all' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
 			{ 'properties' => {} }
