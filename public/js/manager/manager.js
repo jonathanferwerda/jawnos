@@ -1550,6 +1550,12 @@ function nowResetter() {
 		clearTimeout(clothesLinePos['fling']['settle']);
 		clothesLinePos['fling'] = undefined;
 	}
+	// and stand the drag state down, or calculator() sees the view as just moved
+	// and declines to fetch the present back
+	clothesLinePos['moving'] = 0;
+	clothesLinePos['lastBX'] = undefined;
+	clothesLinePos['mouseDrag'] = 0;
+	clothesLinePos['startMove'] = undefined;
 	$('#time_machine').val('');
 	$('#timeshift').val('');
 	localStorage.setItem('timeshift', '0');
