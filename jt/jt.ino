@@ -180,6 +180,9 @@ void wsClose(WebsocketsMessage closer) {
 
 }
 void setupLvgl();
+// The keypad only gets registered when the keyboard answers; that can happen
+// after setup() has moved on, so loop() retries this.
+static void registerKeyboard();
 static lv_obj_t *vad_btn_label;
 static uint32_t vad_detected_counter = 0;
 static TaskHandle_t vadTaskHandler;
@@ -365,6 +368,68 @@ static const char *resetReasonStr(esp_reset_reason_t reason) {
   }
 }
 
+// Talk to the SX1262 by hand. Three questions in one go: what state is the
+// Arduino driver's SPI register left in, does the radio answer at any clock,
+// and can *anything* be read on MISO at all (the ST7789 answers RDDST).
+static void radioBusProbe() {
+  pinMode(RADIO_RST_PIN, OUTPUT);
+  digitalWrite(RADIO_RST_PIN, HIGH);   // out of reset, the SX126x reset is active low
+  pinMode(RADIO_CS_PIN, OUTPUT);
+  digitalWrite(RADIO_CS_PIN, HIGH);
+  delay(10);
+
+  deckLog("[radio] probe: user=0x%08x clk=0x%08x div=%u",
+          (unsigned)READ_PERI_REG(SPI_USER_REG(2)), (unsigned)READ_PERI_REG(SPI_CLOCK_REG(2)),
+          (unsigned)spi.getClockDivider());
+
+  // the display answers a status read if the bus can receive at all
+  tft.setRotation(1);
+  uint8_t rddst = tft.readcommand8(0x09);
+  deckLog("[radio] probe: tft rddst=0x%02x", rddst);
+
+  // how long does it take to push a full frame? 153600 bytes: ~35ms at 40MHz,
+  // ~500ms at 2.4MHz, ~1.2s at 1MHz. The answer says whether the TFT is
+  // drawing at the configured SPI_FREQUENCY or at whatever the bus was left at.
+  uint32_t tFill = millis();
+  tft.fillScreen(TFT_BLACK);
+  deckLog("[radio] probe: fillScreen %u ms", (unsigned)(millis() - tFill));
+
+  const uint32_t freqs[] = {2000000, 1000000, 4000000, 500000};
+  for (unsigned f = 0; f < sizeof(freqs) / sizeof(freqs[0]); f++) {
+    spi.beginTransaction(SPISettings(freqs[f], MSBFIRST, SPI_MODE0));
+    digitalWrite(RADIO_CS_PIN, LOW);
+    uint8_t status = spi.transfer(0xC0);      // GetStatus
+    digitalWrite(RADIO_CS_PIN, HIGH);
+    spi.endTransaction();
+    deckLog("[radio] probe @%u hz: status=0x%02x div=%u",
+            (unsigned)freqs[f], status, (unsigned)spi.getClockDivider());
+  }
+
+  // The TFT driver overwrites SPI_USER_REG on every transaction; its write mode
+  // leaves only MOSI enabled, while the Arduino driver only sets the receive
+  // bits once, when the bus starts. Put them back and read the version string.
+  REG_SET_BIT(SPI_USER_REG(2), SPI_USR_MOSI | SPI_USR_MISO | SPI_DOUTDIN);
+  spi.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(RADIO_CS_PIN, LOW);
+  spi.transfer(0x1D);                  // ReadRegister
+  spi.transfer(0x03);                  // address high
+  spi.transfer(0x20);                  // address low -> 0x0320
+  spi.transfer(0x00);                  // NOP
+  uint8_t version[16];
+  for (int i = 0; i < 16; i++) {
+    version[i] = spi.transfer(0x00);
+  }
+  digitalWrite(RADIO_CS_PIN, HIGH);
+  spi.endTransaction();
+
+  char hex[40] = {0};
+  for (int i = 0; i < 16; i++) {
+    snprintf(hex + i * 2, 3, "%02x", version[i]);
+  }
+  deckLog("[radio] probe: version=%s user=0x%08x", hex,
+          (unsigned)READ_PERI_REG(SPI_USER_REG(2)));
+}
+
 void setup() {
   Serial.begin(115200);
   deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
@@ -406,21 +471,24 @@ void setup() {
   // (the task watchdog restarts the deck a few seconds later, so it looks like
   // "freezes then reboots"). Retry briefly and carry on without it instead.
   kbDected = false;
-  for (int attempt = 0; attempt < 5 && !kbDected; attempt++) {
+  for (int attempt = 0; attempt < 12 && !kbDected; attempt++) {
     Wire.requestFrom(LILYGO_KB_SLAVE_ADDRESS, 1);
     kbDected = Wire.read() != -1;
     if (!kbDected) {
-      delay(200);
+      delay(150);
     }
   }
   if (!kbDected) {
-    deckLog("[deck] no answer from the keyboard; booting anyway");
+    // the keyboard's own controller takes its time coming up sometimes; loop()
+    // keeps asking and registers the keypad as soon as it answers
+    deckLog("[deck] no answer from the keyboard yet; loop() will keep trying");
   }
 
   deckLog("[deck] display init");
   tft.init();
   tft.setRotation(1);
   deckLog("[deck] display init done (%dx%d)", tft.width(), tft.height());
+  deckLog("[deck] tft spi bus %s", spi.bus() ? "up" : "NOT UP");
 
   deckLog("[deck] backlight + touch pins");
   pinMode(BOARD_BL_PIN, OUTPUT);
@@ -460,7 +528,14 @@ void setup() {
 
   // TFT_eSPI brought the shared SPI bus up in init() and the radio and the SD
   // card are pointed at that same instance, so there is nothing to begin here.
-  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
+  //
+  // And do NOT pinMode() the MISO pin: pinMode() calls perimanClearPinBus(),
+  // which runs the peripheral that owns the pin to its detach callback, and the
+  // SPI detach removes SPI2's MISO input route. Writes keep working (so the
+  // display looks fine) and *every* read on the bus returns 0x00 - which is how
+  // the radio ended up as CHIP_NOT_FOUND and the SD card would not mount. The
+  // old code ran SPI.begin() right after this, which re-attached MISO and hid
+  // the whole thing.
   deckLog("[deck] sd/radio spi shared");
   // one short attempt at boot; if the module is quiet we carry on booting and
   // let loop() retry, rather than holding the whole deck hostage to a GPS
@@ -602,9 +677,11 @@ void setup() {
     pa["ap_ssid"] = ap_ssid;
     pa["ap_password"] = ap_password;
     String public_announcement = JSON.stringify(pa);
-    //    radio.startTransmit(public_announcement);
-    //    delay(1000);
-    radio.startReceive();
+    if (hasRadio) {
+      //    radio.startTransmit(public_announcement);
+      //    delay(1000);
+      radio.startReceive();
+    }
     server.send(200, "text/plain", "sent wifi info");
 
   });
@@ -615,9 +692,11 @@ void setup() {
     m["app"] = server.arg("app");
     String jsm = JSON.stringify(m);
     //  Serial.println("Sending msg: " + jsm);
-    radio.startTransmit(jsm);
-    delay(2000);
-    radio.startReceive();
+    if (hasRadio) {
+      radio.startTransmit(jsm);
+      delay(2000);
+      radio.startReceive();
+    }
     server.send(200, "text/plain", "transmission sent");
   });
   server.on("/chat_received", []() {
@@ -749,6 +828,9 @@ void setup() {
     deckLog("[radio] up");
   } else {
     deckLog("[radio] init failed (%d); continuing without it", state);
+  }
+  if (!hasRadio) {
+    radioBusProbe();
   }
 
   if (fontSelect != "") {
@@ -1121,6 +1203,10 @@ void wifi_server() {
 
 
 void loop() {
+  // The UI has been answering keystrokes and roller clicks late, so the loop
+  // times itself and names the slow section instead of us guessing.
+  uint32_t loopStart = millis();
+  static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   wsclient.poll();
   if (audio.isRunning()){
@@ -1133,6 +1219,11 @@ void loop() {
       //    buttonMillis = millis();
 
       TP_Point  p = touch->getPoint(0);
+      static uint32_t lastTouchLog = 0;
+      if (millis() - lastTouchLog > 1000) {
+        lastTouchLog = millis();
+        deckLog("[deck] touch x=%d y=%d int=%d", p.x, p.y, digitalRead(BOARD_TOUCH_INT));
+      }
       if (troom == "typewriter" && jw_room == "room") {
         if (millis() >= touchLastMillis + 50 && ws_connected == 1 && ws_mouse_to_send <= 3) {
           ws_mouse_to_send++;
@@ -1288,8 +1379,14 @@ void loop() {
 
   }
 
+  uint32_t tBeforeServer = millis();
+  if (!kb_indev && millis() - lastKbProbe > 5000) {
+    lastKbProbe = millis();
+    registerKeyboard();
+  }
   server.handleClient();
   readRadio();
+  uint32_t tAfterRadio = millis();
     // the GPS bring-up retries in the background: bounded, and it stops trying
     // after a few goes so a missing module costs nothing after that
     if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt) {
@@ -1320,6 +1417,7 @@ void loop() {
         Serial.println(F("No GPS detected: check wiring."));
         delay(1000);
     }
+  uint32_t tAfterGps = millis();
   if (millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && currentBrightness != 0) {
     // Serial.println(currentBrightness);
     tempBrightness = lastBrightness;
@@ -1350,6 +1448,13 @@ void loop() {
   // A quiet heartbeat. The USB CDC only talks while a host is listening, and a
   // periodic line makes "is the deck alive, and is the GPS up?" answerable
   // without having to catch the boot output.
+  uint32_t loopEnd = millis();
+  if (loopEnd - loopStart > 200) {
+    deckLog("[deck] slow loop %u ms (ui %u, server+radio %u, gps %u, tail %u)",
+            (unsigned)(loopEnd - loopStart), (unsigned)(tBeforeServer - loopStart),
+            (unsigned)(tAfterRadio - tBeforeServer), (unsigned)(tAfterGps - tAfterRadio),
+            (unsigned)(loopEnd - tAfterGps));
+  }
   static uint32_t lastBeat = 0;
   if (millis() - lastBeat > 30000) {
     lastBeat = millis();
@@ -1359,7 +1464,7 @@ void loop() {
 }
 
 void readRadio() {
-  if (loraChatReceiver) {
+  if (loraChatReceiver && hasRadio) {
     if (operationDone) {
       operationDone = false;
       String str;
@@ -1497,6 +1602,12 @@ void setupLvgl()
   lv_display_t *disp = lv_display_create(TFT_HEIGHT, TFT_WIDTH);
   lv_display_set_flush_cb(disp, disp_flush);
   lv_display_set_buffers(disp, buf, NULL, LVGL_BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+
+  // The default theme paints its screens white, and the deck wants black. Every
+  // room is built on this one screen (they lv_obj_clean() it and add their own
+  // widgets), so setting it once here covers all of them.
+  lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
   /*Initialize the  input device driver*/
   /*Register a touchscreen input device*/
@@ -1788,8 +1899,27 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
   data->key = last_key;
 }
 
+// The keypad input device can only be created once the keyboard answers, and
+// that is not always inside setup(). setupLvgl() registers it when the boot
+// probe already had a reply; loop() calls this until it does.
+static void registerKeyboard() {
+  if (kb_indev || !checkKb()) {
+    return;
+  }
+  kbDected = true;
+  deckLog("[deck] keyboard answered late; keypad registered");
+  kb_indev = lv_indev_create();
+  lv_indev_set_type(kb_indev, LV_INDEV_TYPE_KEYPAD);
+  lv_indev_set_read_cb(kb_indev, keypad_read);
+  lv_indev_set_group(kb_indev, lv_group_get_default());
+  buttonMillis = millis();
+}
+
 void loraChatBroadcast(String computer_name, String body, long timestamp) {
-  if (loraBroadcastToggle) {
+  // The old test here was `if (loraBroadcastToggle)`, which is the *event
+  // callback* sitting next to this function, so it was always true; the flag the
+  // button actually sets is loraChatBroadcaster. And no radio, no transmit.
+  if (hasRadio && loraChatBroadcaster) {
     JSONVar msg;
     msg["u"] = computer_name;
     msg["m"] = body;
@@ -2001,11 +2131,12 @@ static void mouse_read(lv_indev_t *indev, lv_indev_data_t *data)
 /*Read the touchpad*/
 static void touchpad_read( lv_indev_t *indev_driver, lv_indev_data_t *data )
 {
-  if (troom == "home") {
-    int16_t x = data->point.x;
-    int16_t y = data->point.y;
-    data->state = getTouch(x, y) ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
-  }
+  // Touch drives LVGL in every room. The room-specific handling that reads the
+  // panel directly (the typewriter's websocket mouse, the room's button replay)
+  // stays where it is in loop().
+  int16_t x = data->point.x;
+  int16_t y = data->point.y;
+  data->state = getTouch(x, y) ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
 }
 
 void scanDevices(TwoWire * w)
@@ -3051,7 +3182,9 @@ static void ap_lora_send(lv_event_t *e) {
   pa["ap_ssid"] = ap_ssid;
   pa["ap_password"] = ap_password;
   String public_announcement = JSON.stringify(pa);
-  radio.startTransmit(public_announcement);
+  if (hasRadio) {
+    radio.startTransmit(public_announcement);
+  }
   //Serial.print(public_announcement);
 }
 
@@ -3062,7 +3195,9 @@ static void wifi_lora_send(lv_event_t *e) {
   pa["ap_ssid"] = ssid;
   pa["ap_password"] = password;
   String public_announcement = JSON.stringify(pa);
-  radio.startTransmit(public_announcement);
+  if (hasRadio) {
+    radio.startTransmit(public_announcement);
+  }
   //Serial.print(public_announcement);
 }
 
@@ -3600,7 +3735,9 @@ bool sd_tester() {
   digitalWrite(RADIO_CS_PIN, HIGH);
   digitalWrite(BOARD_TFT_CS, HIGH);
 
-  if (SD.begin(BOARD_SDCARD_CS, spi, 800000U)) {
+  bool sdMounted = SD.begin(BOARD_SDCARD_CS, spi, 800000U);
+  deckLog("[deck] sd mount %s", sdMounted ? "ok" : "failed");
+  if (sdMounted) {
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
       Serial.println("No SD_MMC card attached");
