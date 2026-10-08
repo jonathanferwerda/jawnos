@@ -292,9 +292,16 @@ sub time_abbrev_translator() {
 		}
 		$measure = $measure || $1 || 'm';
 		$time =~ s/[a-zA-Z]//gi;
+		# what is left is a number, or what a word left behind - "in" leaves
+		# nothing, a lone "-" keeps its sign - and neither is a number to compare,
+		# multiply or count months with
+		$time = 0 unless $time =~ /\d/;
 		next if $times[0] =~ /\s/;
 		if ($times[0]) {
-			if ($times[0] < 0 || $negative eq '-') { $time = $time * -1 unless $time < 0; }
+			# the first word may be "in" or a bare "-" too: only a token holding a
+			# number can be negative
+			my $leads_negative = ($times[0] =~ /^-/ && $times[0] =~ /\d/) ? 1 : 0;
+			if ($leads_negative || $negative eq '-') { $time = $time * -1 unless $time < 0; }
 		}
 		my $duration;
 		if ($time && $time ne '-' && $time ne '') {
@@ -1722,7 +1729,9 @@ sub backup_now() {
 		my $tables = `sqlite3 $database .tables`;
 		my @tables = sort split ' ', $tables;
 		my $schema_file = $temporary_path . '.schema.sql';
-		`sqlite3 $database .schema > $schema_file`;
+		# the statistics tables are internal: replaying their CREATE is a parse
+		# error, and ANALYZE builds them again where they are wanted
+		`sqlite3 $database .schema | grep -v sqlite_stat > $schema_file`;
 		my $command = `sqlite3 $temporary_path < $schema_file`;
 		`shred -u $schema_file`;
 #		my $backup = `sqlite3 $database .schema $temporary_path`;

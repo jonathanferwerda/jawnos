@@ -1717,13 +1717,16 @@ sub store_item_merchandiser($items,$types) {
 		my $seen = 0;
 		$i->{'price'} = &subs::numeric_formatter($i->{'price'});
 		foreach my $mo ( @{$models}, @{$options} ) {
+			# a blank quantity is no quantity at all; left as words it only earned a
+			# warning and multiplied as zero anyway
+			my $quantity = &subs::numeric_formatter($mo->{'quantity'});
 			if ($mo->{'def'} eq 'on') {
 				if ($mo->{'price'}) {
-					$i->{'price'} += $mo->{'price'} * ($mo->{'quantity'});
+					$i->{'price'} += $mo->{'price'} * $quantity;
 					$seen += 1;
 				}
 				elsif ($mo->{'cost'}) {
-					$i->{'price'} += $mo->{'cost'} * ($mo->{'quantity'}) * $markup;
+					$i->{'price'} += $mo->{'cost'} * $quantity * $markup;
 					$seen += 1;
 				}
 			}
@@ -9830,7 +9833,9 @@ post '/manager/configure/new_database' => sub($c) {
 	my $server_time = &subs::rightNow();
 	`touch $database`;
 	my $schema_file = $temp_folder . 'schema.sql';
-	`sqlite3 $old_db .schema > $schema_file`;
+	# the statistics tables are internal: replaying their CREATE is a parse
+	# error, and ANALYZE builds them again where they are wanted
+	`sqlite3 $old_db .schema | grep -v sqlite_stat > $schema_file`;
 	my $command = `sqlite3 $database < $schema_file`;
 	`shred -u $schema_file`;
 	$sql = Mojo::SQLite->new('sqlite:' . $database);
@@ -10045,7 +10050,7 @@ post '/manager/configure/database_doctor_confirm' => sub($c) {
 	my $tdatabase = $temp_folder . '/' . &subs::random_string_creator(20) . '.db';
 	`touch $tdatabase`;
 	`touch $ndatabase`;
-	`sqlite3 $database .schema > $temp_folder/schema.sql`;
+	`sqlite3 $database .schema | grep -v sqlite_stat > $temp_folder/schema.sql`;
 	my $backup = `sqlite3 $database ".backup '$tdatabase'"`;
 
 	my $command = `sqlite3 $ndatabase < $temp_folder/schema.sql`;
