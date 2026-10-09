@@ -512,6 +512,19 @@ $(document).on('change', '.nightly_evaluation', function() {
 	});
 });
 
+$(document).on('change', '.nightly_evaluation_days', function() {
+	var pick = $(this);
+	var nights = pick.val() || [];
+	// which nights of the week it runs; none picked means every night
+	settingSetter({ app: pick.attr('app'), setting: 'nightly_evaluation_days', value: nights.join(',') });
+});
+
+$(document).on('change', '.evaluation_machine', function() {
+	var pick = $(this);
+	// which machine's queue runs the nights; the other machines follow at boot
+	settingSetter({ app: pick.attr('app'), setting: 'evaluation_machine', value: pick.val() });
+});
+
 $(document).on('change', '.evaluation_period', function() {
 	var pick = $(this);
 	// the window is remembered per scope; the nightly run reads the same setting

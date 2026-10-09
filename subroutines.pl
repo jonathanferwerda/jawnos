@@ -2672,6 +2672,15 @@ sub setting_setter() {
 	if ($setting eq 'site_type') {
 		&subs::db_delete('cache', { context => 'navigation_information' });
 	}
+	if ($setting eq 'nightly_evaluation_days') {
+		# the nights changed under a standing wish: the schedule follows
+		&subs::nightly_evaluation_arrange($app, 1) if (&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation' }) || '') eq 'on';
+	}
+	if ($setting eq 'evaluation_machine') {
+		# the machine changed: this queue follows right away, the other machines
+		# when boot or their next settings sync brings them the change
+		&subs::nightly_evaluation_reconcile();
+	}
 
 	if ($setting eq 'uuid') {
 		my $s_old = &db_select('settings', undef, { app => $app, setting => $setting, device => $dev })->hashes->[0];
@@ -7726,7 +7735,16 @@ sub evaluation_agent() {
 		timestamp => &subs::rightNow(),
 	};
 	&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
+	# the cache lives on the machine that ran the evaluation; a setting is what
+	# the rest of the house reads, so the report is written both places
+	&subs::setting_setter({ app => $app, setting => 'evaluation_report', value => encode_json($report) });
 	return $report;
+}
+
+# the machine whose worker runs the nightly evaluations; blank means every
+# machine that reconciles keeps its own queue
+sub evaluation_machine {
+	return &subs::setting_grabber({ app => '__president', setting => 'evaluation_machine' }) || '';
 }
 
 # The nightly evaluation is one Minion schedule per scope, named for the scope.
@@ -7747,6 +7765,21 @@ sub nightly_evaluation_schedule {
 	return ($listed->{'schedules'} || [])->[0];
 }
 
+# the days the nightly runs, as a comma list of cron weekdays (0 is Sunday);
+# nothing picked means every night
+sub nightly_evaluation_days {
+	my ($app) = @_;
+	$app = '__president' unless $app && $app ne '';
+	my $days = &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' }) || '';
+	return [ grep { /^[0-6]$/ } split /\s*,\s*/, $days ];
+}
+
+sub nightly_evaluation_cron {
+	my ($app) = @_;
+	my $days = &subs::nightly_evaluation_days($app);
+	return '0 7 * * ' . (scalar @{$days} ? join(',', @{$days}) : '*');
+}
+
 # carry out one scope's wish: schedule it, or unschedule it
 sub nightly_evaluation_arrange {
 	my ($app, $on) = @_;
@@ -7755,7 +7788,7 @@ sub nightly_evaluation_arrange {
 	my $name = &subs::nightly_evaluation_name($app);
 	if ($on) {
 		# one retry, in case the model was only briefly unreachable
-		$minion->schedule($name, '0 7 * * *', 'appointment_evaluation', [ { app => $app } ], { attempts => 2 });
+		$minion->schedule($name, &subs::nightly_evaluation_cron($app), 'appointment_evaluation', [ { app => $app } ], { attempts => 2 });
 	}
 	else {
 		$minion->unschedule($name);
@@ -7780,6 +7813,10 @@ sub nightly_evaluation_apply {
 # take the worker down with it.
 sub nightly_evaluation_reconcile {
 	eval {
+		# a named machine keeps the nights to itself; blank keeps the old
+		# habit of every queue carrying whatever wish its settings show
+		my $chosen = &subs::evaluation_machine();
+		my $mine = !$chosen || $chosen eq &subs::signatorial_designer();
 		my $rows = &subs::db_select('settings', undef, { setting => 'nightly_evaluation', device => &subs::device_setter() })->hashes || [];
 		my %wanted;
 		foreach my $row ( @{$rows} ) {
@@ -7793,11 +7830,13 @@ sub nightly_evaluation_reconcile {
 			$present{$sch->{'name'}} = 1;
 		}
 		foreach my $scope ( keys %wanted ) {
+			next unless $mine;
 			&subs::nightly_evaluation_arrange($scope, 1) unless $present{ &subs::nightly_evaluation_name($scope) };
 		}
 		foreach my $name ( keys %present ) {
 			my ($scope) = $name =~ /^nightly_evaluation_(.*)$/;
-			&subs::nightly_evaluation_arrange($scope, 0) unless $wanted{$scope};
+			next if $mine && $wanted{$scope};
+			&subs::nightly_evaluation_arrange($scope, 0);
 		}
 	};
 	return;
@@ -7808,6 +7847,13 @@ sub nightly_evaluation_reconcile {
 sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
+	# the queue is per-machine and the settings are shared, so this is what keeps
+	# one wish from running on every machine's queue at once
+	my $machine = &subs::evaluation_machine();
+	if ($machine && $machine ne &subs::signatorial_designer()) {
+		$job->finish({ app => $app, skipped => 'not the evaluation machine' });
+		return;
+	}
 	my $report = &subs::evaluation_agent($app);
 	if ($report->{'error'}) { $job->fail($report->{'error'}); return; }
 	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });

@@ -35,6 +35,18 @@
 <% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
 
 	<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
+	<br>
+	<%# every machine keeps its own queue, so the house has to say where the
+	    nightly evaluations happen; remote_machine_lister names the machines %>
+	<% my $machines = &subs::remote_machine_lister({ self => 'yes' }); %>
+	<label>Nightly machine</label>
+	<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="Only this machine's worker runs the nightly evaluations; any machine means every queue that carries the wish keeps its own" style="vertical-align:bottom;">
+		<option value="">Any machine</option>
+		<% foreach my $m ( @{$machines} ) { %>
+			<% next unless $m->{'signatorial'}; %>
+			<option value="<%= $m->{'signatorial'} %>" <% if (($settings->{$device}->{'evaluation_machine'} || '') eq $m->{'signatorial'}) { %>selected<% } %>><%= ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})) %></option>
+		<% } %>
+	</select>
 <% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'cache') { %>
 
 	Anchor <input type="checkbox" class="anchor_all_settings" setting_type="sys">
