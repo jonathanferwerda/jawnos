@@ -15,7 +15,7 @@
 				my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" hint="' . &subs::format_name($n->{'type'}) . '" class="tiny_thumb">' : '';
 				
 			%>
-			<span class="appointment_header" style="height:30px;float:left;left:0;"><%== $icon %><span style="vertical-align:top;" timestamp="<%= $n->{'timestamp'} %>" class="time" app="<%= $a %>" id="<%= $appts->{$a}->{'html_name'} %>_time">
+			<span class="appointment_header" style="height:30px;float:left;left:0;"><%== $icon %><span style="vertical-align:middle;" timestamp="<%= $n->{'timestamp'} %>" class="time" app="<%= $a %>" id="<%= $appts->{$a}->{'html_name'} %>_time">
 			</span></span>
 		<% } %>
 	<% } %>
@@ -24,7 +24,7 @@
 		my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" hint="' . &subs::format_name($appts->{$a}->{'setting'}->{'status'}) . '" class="tiny_thumb">' : '';
 	%>
 
-	<span class="appointment_status"><%== $icon %><b  style="vertical-align:top;"> <%= $appts->{$a}->{'setting'}->{'status'} %></b>
+	<span class="appointment_status"><%== $icon %><b style="vertical-align:middle;"> <%= $appts->{$a}->{'setting'}->{'status'} %></b>
 	</span>
 
 	<span class="">
