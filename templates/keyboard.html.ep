@@ -48,7 +48,10 @@
 			<button class="ctrl_key keyboard_button hover" key="ctrl">ctrl</button>
 			<button class="special keyboard_button hover" key="fn">fn</button>
 			<button class="space_bar keyboard_button hover" key="<%= $keys->{' '} %>">&nbsp; Space &nbsp;</button><br>
-			<script id="keyboard_legend"><%== encode_json $keys %></script>
+			<%# a data block, not a script: the panel is fetched and appended whole,
+			    and jQuery runs any script it finds - bare JSON wears a type of its
+			    own so it is read as data and never parsed as JavaScript %>
+			<script id="keyboard_legend" type="application/json"><%== encode_json $keys %></script>
 		</span>
 	<% } %>
 	<% if ($toggle eq 'calculator') { %>
@@ -106,7 +109,7 @@
 					<br>
 				<% } %>
 			</div>
-			<script id="calculator_legend"><%== encode_json $keys %></script>
+			<script id="calculator_legend" type="application/json"><%== encode_json $keys %></script>
 		</span>
 	<% } %>
 	<% if ($toggle eq 'remote_control') { %>

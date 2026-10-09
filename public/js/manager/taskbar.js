@@ -94,7 +94,6 @@ function jawnosBarsApply() {
 		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '' });
 	}
 	jawnosTopIconsApply();
-	jawnosTaskbarIconsSideApply();
 
 	// a taskbar on the top edge pushes the whole page down: the line the printers
 	// draw, the clothesline under it and the rows below all measure from
@@ -120,6 +119,10 @@ function jawnosBarsApply() {
 			search.prependTo(dock);
 		}
 	}
+
+	// the icons take their end after the search has taken its place, so a start
+	// button set to the left leads the bar with nothing before it
+	jawnosTaskbarIconsSideApply();
 
 	// the top dock rests tucked away - its icons above the visible edge, its
 	// search strip on screen - so a fresh layout settles it there; every other
