@@ -10745,6 +10745,34 @@ get '/manager/budget' => sub($c) {
 		$projects = \@proj;
 	}
 
+	# the invoices display is a document ledger, not a money tally: collect the
+	# documents once. (The old code ran this query inside the account loop as well,
+	# which returned the same unrestricted window once per account and multiplied
+	# every transaction - and its total - by the number of accounts.)
+	my $documents = [];
+	if ($display eq 'invoices') {
+		my $docr = &subs::db_query("select * from appointments where type in ('invoice','quote') and timestamp >= ? and timestamp $t2_comp ? order by timestamp desc", $last_inventory, $t2)->hashes;
+		foreach my $doc ( @{$docr} ) {
+			$doc->{'data'} = eval { return decode_json $doc->{'data'} } || {};
+			my $numbers = $doc->{'data'}->{'numbers'} || {};
+			my $paid = 0;
+			foreach my $p ( @{$doc->{'data'}->{'payments'} || []} ) {
+				$paid += $p->{'amount'} if defined $p->{'amount'} && $p->{'amount'} =~ /[0-9]/;
+			}
+			$doc->{'paid'} = $paid;
+			$doc->{'balance'} = defined $numbers->{'balance'} ? $numbers->{'balance'} : ($numbers->{'total'} || 0) - $paid;
+			$doc->{'formatted_type'} = &subs::format_name($doc->{'type'});
+			$doc->{'formatted_item'} = &subs::format_name($doc->{'data'}->{'item'});
+			$doc->{'formatted_total'} = &subs::price_formatter($numbers->{'total'} || 0);
+			$doc->{'formatted_paid'} = &subs::price_formatter($paid);
+			$doc->{'formatted_balance'} = &subs::price_formatter($doc->{'balance'});
+			$totals->{'documents'}->{'count'}++;
+			$totals->{'documents'}->{'total'} += $numbers->{'total'} || 0;
+			$totals->{'documents'}->{'paid'} += $paid;
+			$totals->{'documents'}->{'balance'} += $doc->{'balance'};
+		}
+		push @{$documents}, @{$docr};
+	}
 	my $transactions;
 	foreach my $accounting ( @{$accounts}) {
 		next if $acc->{$accounting->{'app'}};
@@ -10764,15 +10792,8 @@ get '/manager/budget' => sub($c) {
 			}
 		}
 #		push @{$transactions}, $final_t if $final_t->{'timestamp'};
-		my $transactional;
-		if ($display eq 'invoices') {
-			$transactional = &subs::db_query("select * from appointments where timestamp >= ? and timestamp $t2_comp ? order by timestamp",
-				$last_inventory,$t2);
-		}
-		else {
-			$transactional = &subs::db_query("select * from appointments where account = ? and type != ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
+		my $transactional = &subs::db_query("select * from appointments where account = ? and type != ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
 			$accounting->{'app'}, 'inventory',$last_inventory,$t2);
-		}
 		push @{$transactions}, @{$transactional->hashes};
 		if (grep { $_ eq 'all' } @{$movement}) {
 
@@ -10944,6 +10965,7 @@ get '/manager/budget' => sub($c) {
 		account => $account,
 		tally => $tally,
 		transactions => $transactions,
+		documents => $documents,
 		budgets => $budgets,
 		all_projects => $all_projects,
 		projects => $projects,

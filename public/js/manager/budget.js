@@ -322,6 +322,44 @@ $(document).on('click', '.budget_app', function() {
 	},200);
 });
 
+$(document).on('click', '.budget_invoice', function() {
+	var row = $(this);
+	var app = row.attr('app');
+	var uuid = row.attr('uuid');
+	var timestamp = row.attr('timestamp');
+	var sorts = localStorage.getItem('sorts');
+	var scope = localStorage.getItem('scope');
+	appointmentGrabber(app,timestamp);
+	var variables = { app: app, uuid: uuid, sorts: sorts, timeshift: '0d', time_machine: '', timestamp: timestamp, scope: scope };
+	var budgetInvoiceAttempts = 0;
+	var budgetInvoiceInterval = setInterval(function() {
+		budgetInvoiceAttempts++;
+		// give up after 10s if the window never appears, so we don't poll forever
+		if (budgetInvoiceAttempts > 50) { clearInterval(budgetInvoiceInterval); return; }
+		var parent = $('.wind[app="' + app + '"]');
+		if (parent.length > 0) {
+			var container = parent.find('.re_details');
+			if (container.length == 0) { return; }
+			clearInterval(budgetInvoiceInterval);
+			$.ajax({
+				url: '/manager/appointment_details',
+				type: 'GET',
+				data: variables,
+				success: function(response) {
+					container.html(response);
+					container.show();
+					appointment_chron();
+				}
+			});
+		}
+	},200);
+});
+
+$(document).on('click', '.budget_invoice_payments_toggle', function(e) {
+	e.stopPropagation();
+	var uuid = $(this).attr('uuid');
+	$('.budget_invoice_payment_row[uuid="' + uuid + '"]').toggle();
+});
 
 $(document).on('click', '.budget_autocalc', function() {
 	var button = $(this);

@@ -324,13 +324,55 @@
 			</tbody>
 		</table>
 	<% } elsif ($display eq 'invoices') { %>
-		<% foreach my $d ( qw/income expense inventory transfer/ ) { %>
-			<% foreach my $app ( sort keys %{$tally} ) { %>
-				<% if (eval {scalar @{$tally->{$app}->{$d}}} > 0) { %>
-					<%= $d %> <%= $app %>
+		<b><%= scalar @{$documents} %></b> document<% unless (scalar @{$documents} == 1) { %>s<% } %>
+		<table id="budget_invoices" style="width:100%;border:groove;">
+			<thead style="text-align:left;font-size:20px;">
+				<th>Type</th>
+				<th>#</th>
+				<th>Customer</th>
+				<th>Item</th>
+				<th>When</th>
+				<th>Total</th>
+				<th>Paid</th>
+				<th>Balance</th>
+				<th>Status</th>
+			</thead>
+			<tbody>
+				<% foreach my $d ( @{$documents} ) { %>
+					<tr class="budget_invoice hover" app="<%= $d->{'app'} %>" uuid="<%= $d->{'uuid'} %>" timestamp="<%= $d->{'timestamp'} %>">
+						<td><%= $d->{'formatted_type'} %></td>
+						<td><%= $d->{'data'}->{'id'} %></td>
+						<td><%= &subs::format_name($d->{'app'}) %></td>
+						<td><%= $d->{'formatted_item'} %></td>
+						<td><span class="time" timestamp="<%= $d->{'timestamp'} %>"></span></td>
+						<td><%= $d->{'formatted_total'} %></td>
+						<td><%= $d->{'formatted_paid'} %>
+							<% if (scalar @{$d->{'data'}->{'payments'} || []} > 0) { %>
+								<img class="tiny_thumb budget_invoice_payments_toggle hover" uuid="<%= $d->{'uuid'} %>" hint="Payments" src="<%= &subs::icon_for('/images/decipherable/list.png') %>">
+							<% } %>
+						</td>
+						<td><%= $d->{'formatted_balance'} %></td>
+						<td><%= &subs::format_name($d->{'status'}) %></td>
+					</tr>
+					<% if (scalar @{$d->{'data'}->{'payments'} || []} > 0) { %>
+						<tr class="budget_invoice_payment_row" uuid="<%= $d->{'uuid'} %>" style="display:none;font-size:16px;">
+							<td colspan="9">
+								<% foreach my $p ( @{$d->{'data'}->{'payments'}} ) { %>
+									<%= &subs::price_formatter($p->{'amount'}) %> <%= &subs::format_name($p->{'account'}) %> <span class="time" timestamp="<%= $p->{'timestamp'} %>"></span><br>
+								<% } %>
+							</td>
+						</tr>
+					<% } %>
 				<% } %>
-			<% } %>
-		<% } %>
+				<tr style="font-size:20px;">
+					<td colspan="5"><b>Total</b></td>
+					<td><b><%= &subs::price_formatter($totals->{'documents'}->{'total'} || 0) %></b></td>
+					<td><b><%= &subs::price_formatter($totals->{'documents'}->{'paid'} || 0) %></b></td>
+					<td><b><%= &subs::price_formatter($totals->{'documents'}->{'balance'} || 0) %></b></td>
+					<td></td>
+				</tr>
+			</tbody>
+		</table>
 	<% } %>
 </div>
 <script>appointment_chron()</script>
