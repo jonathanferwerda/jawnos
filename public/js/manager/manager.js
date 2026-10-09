@@ -2225,9 +2225,13 @@ function graphicalize(respons) {
 	}
 	if (time_machine != '') {
 		nowb.css({'background-color': 'blue'});
+		// the tile answers the state with the background, in whatever colours
+		// the icon set builds (an older universal.js just keeps its icon)
+		if (typeof nowIconApply == 'function') { nowIconApply('time_machine'); }
 	}
 	else {
 		nowb.css({'background-color': 'yellow'});
+		if (typeof nowIconApply == 'function') { nowIconApply('here'); }
 	}
 
 	//guests.push(appts);

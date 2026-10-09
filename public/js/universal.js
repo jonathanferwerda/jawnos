@@ -795,6 +795,24 @@ $(function () { jawnosApplyInk(); });
 // ---- icon set swap: refresh the icons currently on screen ----------------------
 // Called over the websocket after the pseudonym icon set changes; re-renders any
 // open appointment windows and rebuilds the start-menu dock from their icons.
+
+// The now button wears the state of the time machine in its tile: the same
+// yellow the button's background turns at home, and the same blue it turns
+// while the machine is walking. Every icon set keeps the pair beside its plain
+// now tile - "now here" and "now time machine" - so each answers the state in
+// its own colours; the hand-drawn set, and any set built before the pair
+// existed, keep the plain icon. The pair is derived from the plain now tile in
+// the button's src, which is what both the template and the set-change reload
+// put there.
+function nowIconApply(state) {
+	var button = $('#now_toggle');
+	if (button.length == 0) { return; }
+	var src = button.attr('src') || '';
+	var match = src.match(/^(.*\/)now( here| time machine)?\.svg$/i);
+	if (!match) { return; }
+	button.attr('src', match[1] + 'now' + (state == 'time_machine' ? ' time machine' : ' here') + '.svg');
+}
+
 function jawnosReloadIcons() {
 	try {
 		// The desktop's own buttons were rendered with the old set, and only the
@@ -816,6 +834,8 @@ function jawnosReloadIcons() {
 						var p = $(this).attr('jawnos_icon');
 						if (response.icons && response.icons[p]) { $(this).attr('src', response.icons[p]); }
 					});
+					// that swap put the plain now tile back; let it answer the state
+					nowIconApply(localStorage.getItem('time_machine') ? 'time_machine' : 'here');
 				}
 			});
 		}

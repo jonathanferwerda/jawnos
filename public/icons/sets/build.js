@@ -476,10 +476,12 @@ const STYLES = {
 		label: 'Pastel',
 		render: (h, inner) => svgWrap(frame(hsl(h, 0.6, 0.85), { rx: 104 }) + wrap(sub(inner, hsl(h, 0.35, 0.34), '#ffffff'))),
 	},
-	// high-contrast black & white
+	// high-contrast black & white. The time machine's pair still answers the
+	// state in colour - the third argument marks a state tile - or the state
+	// light would be the one button no set ever obeys.
 	mono: {
 		label: 'Mono',
-		render: (h, inner) => svgWrap(frame('#ffffff', { inset: 40, rx: 70, stroke: '#111111', sw: 14 }) + wrap(sub(inner, '#111111', '#ffffff'))),
+		render: (h, inner, state) => svgWrap(frame(state ? hsl(h, 0.9, 0.56) : '#ffffff', { inset: 40, rx: 70, stroke: '#111111', sw: 14 }) + wrap(sub(inner, '#111111', '#ffffff'))),
 	},
 	// --- the loud ones: full-bleed plates with oversized glyphs ---
 	// vintage badge: a sunburst of rays behind a big white glyph
@@ -715,6 +717,21 @@ for (const style of styleKeys) {
 		if (!glyph) { throw new Error('Missing glyph for ' + name); }
 		const svg = STYLES[style].render(hueFor(name), glyph);
 		fs.writeFileSync(path.join(dir, name + '.svg'), svg);
+		written++;
+	}
+}
+
+// The now button reads the time machine's state in its tile: at home it wears
+// the same yellow the button's background turns, and while the machine walks,
+// the same blue. The pair is rendered by every style from its own hue - the
+// styles build all of their colour out of it - and the plain now.svg is left
+// alone for the controls that want only the set's colours (the inventory page
+// button among them).
+const NOW_STATES = { 'now here': 60, 'now time machine': 240 };
+for (const style of styleKeys) {
+	for (const name in NOW_STATES) {
+		const svg = STYLES[style].render(NOW_STATES[name], GLYPHS[ICONS['now']], 1);
+		fs.writeFileSync(path.join(DIR, style, name + '.svg'), svg);
 		written++;
 	}
 }
