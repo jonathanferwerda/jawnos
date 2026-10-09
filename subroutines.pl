@@ -1613,9 +1613,63 @@ sub device_lister() {
 	}
 	$dev = &subs::db_select('devices');
 	$devices = $dev->hashes;
+	# One row per address across the whole listing: a device can sit in several
+	# machines' neighbour tables (and in more than one NIC of one -- the T-Deck
+	# showed three times on 2026-10-09, twice on wlo1 and once under lo). The
+	# richest entry wins -- the one the device itself answered -- and every
+	# other copy is dropped before the tables render. 127.0.0.1 is left alone:
+	# it is how each machine marks itself.
+	{
+		my %best;
+		my $richness = sub {
+			my ($n, $nic) = @_;
+			my $r = 0;
+			$r += 4 if $n->{'chip_id'};
+			$r += 2 if $n->{'model'} || $n->{'mac_addresses'};
+			$r += 2 if ($n->{'purpose'} || '') ne '' && $n->{'purpose'} ne 'hmmm';
+			$r += 1 if $n->{'name'} || $n->{'fqdn'};
+			$r -= 2 if $nic eq 'lo';
+			return $r;
+		};
+		foreach my $d (@{$devices}) {
+			$d->{'address'} = eval { return decode_json $d->{'address'} } if $d->{'address'} && !ref $d->{'address'};
+			my @self_ips = map { $d->{'address'}->{$_}->{'ip'} } keys %{$d->{'address'} || {}};
+			foreach my $a ( keys %{$d->{'address'} || {}} ) {
+				foreach my $n ( @{$d->{'address'}->{$a}->{'neigh'} || []} ) {
+					my $ip = $n->{'ip'} || $n->{'ip_address'};
+					next unless $ip;
+					next if $ip eq '127.0.0.1' || grep { $_ && $_ eq $ip } @self_ips;
+					my $r = $richness->($n, $a);
+					if (!$best{$ip}) {
+						$best{$ip} = [ $r, $n ];
+					}
+					elsif ($r > $best{$ip}->[0]) {
+						foreach my $f ( keys %{$best{$ip}->[1]} ) {
+							$n->{$f} = $best{$ip}->[1]->{$f} if !$n->{$f};
+						}
+						$best{$ip} = [ $r, $n ];
+					}
+					else {
+						foreach my $f ( keys %{$n} ) {
+							$best{$ip}->[1]->{$f} = $n->{$f} if !$best{$ip}->[1]->{$f};
+						}
+					}
+				}
+			}
+		}
+		foreach my $d (@{$devices}) {
+			foreach my $a ( keys %{$d->{'address'} || {}} ) {
+				next unless $d->{'address'}->{$a}->{'neigh'};
+				@{$d->{'address'}->{$a}->{'neigh'}} = grep {
+					my $ip = $_->{'ip'} || $_->{'ip_address'};
+					!$ip || !$best{$ip} || $best{$ip}->[1] eq $_;
+				} @{$d->{'address'}->{$a}->{'neigh'}};
+			}
+		}
+	}
 	my $all_chips = [];
 	foreach my $d (@{$devices}) {
-		$d->{'address'} = decode_json $d->{'address'} if $d->{'address'};
+		$d->{'address'} = decode_json $d->{'address'} if $d->{'address'} && !ref $d->{'address'};
 		$d->{'formatted_time'} = &subs::formatted_time($d->{'timestamp'});
 		foreach my $a ( keys %{$d->{'address'}} ) {
 			foreach my $n ( @{$d->{'address'}->{$a}->{'neigh'}} ) {
