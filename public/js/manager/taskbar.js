@@ -130,6 +130,12 @@ function jawnosClockShow(timestamp) {
 function jawnosSearchPlace() {
 	var search = $('#search_entanglement');
 	if (!search.length) { return; }
+	// the menu's own chrome answers to where the search lives: the search's row
+	// is reserved at its top only while the menu is the search's home
+	if ($('#start_menu').length) {
+		if (jawnosBars.search == 'start_menu') { $('#start_menu').addClass('search_home'); }
+		else { $('#start_menu').removeClass('search_home'); }
+	}
 	if (jawnosBars.search == 'taskbar') {
 		if (!search.closest('#taskbar').length) { search.prependTo('#taskbar'); }
 	}

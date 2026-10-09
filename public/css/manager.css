@@ -655,22 +655,29 @@ canvas { overflow: scroll; z-index: 99; }
 	max-width: 40px;
 	object-fit: contain;
 }
-/* the menu's body fills the whole box now that the window list left its foot:
-   the app lists scroll inside it, and the rail keeps its 18% at the right */
+/* the menu's body: the lists scroll inside it, and the rail keeps its 18% at
+   the right. It is not a positioned box: the corner buttons ride the menu's own
+   frame (they are absolutely placed and their containing block is #start_menu),
+   so scrolling a list does not carry them along - while the body was absolute
+   they scrolled with it */
 #start_menu .start_menu_body {
-	position: absolute;
-	left: 0px;
-	top: 0px;
-	bottom: 0px;
+	/* blockified so height:100% resolves (a bare inline span ignores it); not
+	   positioned, so the corner buttons' containing block stays #start_menu */
+	display: block;
+	height: 100%;
 	width: 82%;
 	overflow: auto;
 }
 .start_menu_main_display {
 	display: block;
+	/* the search's own row, while the menu is its home; without it the list is
+	   pushed up to the menu's top */
 	padding-top: 44px;
 	/* the corner buttons moved to the menu's foot: leave their strip clear */
 	padding-bottom: 52px;
 }
+#start_menu:not(.search_home) .start_menu_main_display,
+#start_menu:not(.search_home) .start_menu_categories { padding-top: 0px; }
 
 /* The app menu is a list: one icon and its name per row, instead of rows of icons
    broken up with <br>. startMenuListify() in manager.js builds and orders the rows,

@@ -1,7 +1,7 @@
 % my $signatorial = &subs::signatorial_designer();
 % my $navigation_information = &subs::navigation_information({ cache => 'yes', signatorial => $signatorial });
-<div id="start_menu" style="display:none;max-width:100%;overflow:scroll;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
-	<span style="float:right;width:20%;position:absolute;right:0px;top:0px;">
+<div id="start_menu" style="display:none;max-width:100%;overflow:hidden;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
+	<span style="float:right;width:20%;position:absolute;right:0px;top:0px;text-align:right;">
 
 		<% my $images = {
 			app => '/images/jbuttons/logo3.png',
