@@ -4965,7 +4965,7 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'button', name => 'delay', icon => 'delay_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
 		{ status => 'button', name => 'complete', icon => 'cake', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
 		{ status => 'button', name => 'cancel', icon => 'cancel_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'telephone', icon => 'telephone line', classmates => 'medium_thumb save_appointment row_gap', colour => '#ffec1f', place => 'mid' },
+		{ status => 'button', name => 'telephone', icon => 'telephone line', classmates => 'little_thumb save_appointment row_gap', colour => '#ffec1f', place => 'mid' },
 		# the rest wait on their names being configured into classmates
 		{ status => 'button', name => 'camera', icon => 'eye', colour => '#bdd6c5', place => 'mid' },
 		{ status => 'button', name => 'marker', icon => 'marker', colour => '#ff0000', place => 'mid' },
