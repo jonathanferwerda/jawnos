@@ -214,6 +214,8 @@ static lv_obj_t *face_ap = nullptr;
 static lv_obj_t *face_apgw = nullptr;
 static lv_obj_t *face_presidente = nullptr;
 static lv_obj_t *notification_lines[4] = { nullptr, nullptr, nullptr, nullptr };
+// the clock room's Wigi button carries the count of taps waiting in wigi
+static lv_obj_t *wigi_count_label = nullptr;
 
 // Tracking operation status flags across threads
 volatile bool isRecording = false;
@@ -322,6 +324,9 @@ void start_ble_transfer() {
 
   // 1. Re-wake the underlying Espressif BLE stack hardware
   BLEDevice::init("T-Watch-S3");
+  // This is the peripheral's local maximum: without it the negotiation caps
+  // at Bluedroid's calm 256, and the button payload (~450 bytes) goes out
+  // truncated at 253 -- received by the homebase, but unparseable.
   BLEDevice::setMTU(512); 
 
 // Create the BLE Server
@@ -361,6 +366,9 @@ void start_ble_transfer() {
   pAdvertising->start();
   Serial.println("Nordic UART BLE Advertising has safely started!");
   Serial.println("Nordic UART advertising active.");
+  // the bring-up blocks the loop for seconds; two full passes once it is done
+  // so no half-drawn frame (or an older room's pixels) survives
+  full_refresh();
 }
 
 void stop_ble_transfer() {
@@ -369,11 +377,24 @@ void stop_ble_transfer() {
   }
   Serial.println("Shutting down BLE Radio...");
   bt_enabled = false;
-  pServer->getAdvertising()->stop();
+  if (pServer) {
+    // Close the link before tearing the stack down. Deinit used to run while a
+    // disconnect event was still in flight, and BLEServer's callback then
+    // walked characteristics that no longer existed (LoadProhibited panic),
+    // rebooting the watch mid-save and eating /config.json with it.
+    for (int tries = 0; pServer->getConnectedCount() > 0 && tries < 20; tries++) {
+      pServer->disconnect(pServer->getConnId());
+      delay(50);
+    }
+    pServer->getAdvertising()->stop();
+  }
   
   // Passing 'false' shuts off the RF power without destroying 
   // the NUS UUID/Characteristic mapping objects in RAM
   BLEDevice::deinit(false); 
+  // the teardown blocks the loop for a moment; repaint so the pause cannot
+  // leave half-drawn frames behind
+  lv_obj_invalidate(lv_scr_act());
 }
 
 // ---- over the air updates -----------------------------------------------------
@@ -988,6 +1009,21 @@ void loop() {
     president_data_ready = false;
     apply_president_payload();
   }
+  // taps queued while the link was down go out shortly after a fresh central
+  // arrives: notify() before its CCCD subscription lands is dropped
+  static bool ble_link_was_up = false;
+  static uint32_t ble_link_up_at = 0;
+  if (deviceConnected && !ble_link_was_up) {
+    ble_link_was_up = true;
+    ble_link_up_at = millis();
+  }
+  else if (!deviceConnected) {
+    ble_link_was_up = false;
+  }
+  if (deviceConnected && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
+    ble_link_up_at = 0;
+    ble_flush_wigi();
+  }
   if (loraChatReceiver) {
     readRadio();
   }
@@ -1490,7 +1526,12 @@ void watch_face_maker()
   // status bar along the top
   face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 30);
   face_percent = face_label_maker(42, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 14);
-  face_name = face_label_maker(0, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 110, LV_ALIGN_TOP_MID);
+  // the homebase shows as ip:port here: the smaller face plus dot-truncation
+  // keeps it on exactly one line above the clock, however long the name gets
+  face_name = face_label_maker(0, 4, &lv_font_montserrat_14, lv_color_hex(0x00FF00), 128, LV_ALIGN_TOP_MID);
+  if (face_name) {
+    lv_label_set_long_mode(face_name, LV_LABEL_LONG_DOT);
+  }
   face_volts = face_label_maker(-10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 45, LV_ALIGN_TOP_RIGHT);
 
   // the clock, centred under the status bar; the digits come from clock_font
@@ -1512,8 +1553,20 @@ void display_exit( void ) {
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
   face_forget();
+  wigi_count_label = nullptr;   // the Wigi button died with lv_obj_clean
   button_writer();
 //  time_writer("now");
+}
+
+// With Bluetooth up the panel's DMA buffers get starved for a moment, and a
+// dropped SPI transfer leaves that region holding the previous room's pixels
+// (LVGL believes the frame went out, so nothing ever repaints it). Every room
+// draw ends with two full passes: whatever the first lost, the second redraws.
+void full_refresh() {
+  lv_obj_invalidate(lv_scr_act());
+  lv_task_handler();
+  lv_obj_invalidate(lv_scr_act());
+  lv_task_handler();
 }
 
 long timestamp_maker() {
@@ -1553,6 +1606,30 @@ void time_writer(char * situation) {
       if (face_steps && stepCounter == true) {
         lv_label_set_text_fmt(face_steps, "%u", (unsigned)steps);
       }
+      update_wigi_indicator();
+    }
+  }
+}
+
+// The room views used to carry a red LED and a count for taps that could not be
+// delivered; they crowded the buttons down there, so the indicator lives on the
+// clock room's Wigi button instead: the count rides in its label and the button
+// turns red while anything is waiting.
+void update_wigi_indicator() {
+  if (!wigi_count_label) {
+    return;
+  }
+  int pending = wigi.length();
+  if (pending > 0) {
+    lv_label_set_text_fmt(wigi_count_label, "Wigi %d", pending);
+    if (wigi_btn) {
+      lv_obj_set_style_bg_color(wigi_btn, lv_color_hex(0xde2716), LV_PART_MAIN);
+    }
+  }
+  else {
+    lv_label_set_text(wigi_count_label, "Wigi");
+    if (wigi_btn) {
+      lv_obj_set_style_bg_color(wigi_btn, lv_color_hex(0x27de16), LV_PART_MAIN);
     }
   }
 }
@@ -1724,43 +1801,42 @@ String https_request(String url, String method, String payloadData) {
 }
 
 String https_request_raw(String url, String method, String payloadData) {
+  // An empty homebase used to become "https:///" and the name lookup that
+  // followed panicked the chip (a FreeRTOS assert inside lwip) whenever the
+  // config had been wiped. Nothing to talk to means nothing to try.
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return "failure";
+  }
   url = url_maker(url);
   Serial.println(url);
-  WiFiClientSecure *connexion = new WiFiClientSecure;
-  String https_returner = "failure";
-  connexion -> setInsecure();
-  if (connexion) {
-    // Serial.println ("there is a connection");
-    {
-      HTTPClient https;
-      https.setTimeout(4000);   // a slow homebase must not freeze the loop for long
-      if (https.begin(*connexion, url)) {
-         Serial.println("est connection");
-        int httpCode = https.GET();
-        if (method == "POST") {
-          Serial.println("Executing HTTPS POST...");
-           // If your POST needs a payload string later, pass it here instead of ""
-          httpCode = https.POST(""); 
-        }
-        if (httpCode > 0) {
-           Serial.printf("HTTPS GET code: %d\n", httpCode);
-
-          if (httpCode == HTTP_CODE_OK) {
-            String payload = https.getString();
-             Serial.print(payload);
-             Serial.println(payload);
-            return payload;
-
-          }
-        }
-        else {
-          // Serial.printf("HTTPS FAILED error: %s\n", https.errorToString(httpCode).c_str());
-          writeFile(FFat, "/bootreport.txt", "failure");
-
-          return "failure";
-        }
-        https.end();
+  // A stack client, not "new": one leaked WiFiClientSecure per request is what
+  // ground the heap down until the panel's SPI DMA buffers stopped allocating.
+  WiFiClientSecure connexion;
+  connexion.setInsecure();
+  {
+    HTTPClient https;
+    https.setTimeout(4000);   // a slow homebase must not freeze the loop for long
+    if (https.begin(connexion, url)) {
+       Serial.println("est connection");
+      int httpCode = https.GET();
+      if (method == "POST") {
+        Serial.println("Executing HTTPS POST...");
+        httpCode = https.POST("");
       }
+      String answer = "failure";
+      if (httpCode > 0) {
+         Serial.printf("HTTPS GET code: %d\n", httpCode);
+        if (httpCode == HTTP_CODE_OK) {
+          answer = https.getString();
+           Serial.print(answer);
+           Serial.println(answer);
+        }
+      }
+      else {
+        writeFile(FFat, "/bootreport.txt", "failure");
+      }
+      https.end();
+      return answer;
     }
   }
   return "failure";
@@ -1830,13 +1906,6 @@ void apply_president_payload() {
 void presidents_buttons() {
   JSONVar result;
   Serial.println("in the buttons");
-  lv_obj_t * led1  = lv_led_create(lv_scr_act());
-  lv_obj_set_pos(led1, 10, 160 );
-  lv_led_set_color(led1, lv_palette_main(LV_PALETTE_RED));
-  lv_led_off(led1);
-  lv_obj_t * led2 = lv_label_create(lv_scr_act());
-  lv_obj_set_pos(led2, 45, 160);
-  lv_obj_set_style_text_color(led2, lv_palette_main(LV_PALETTE_GREEN), LV_PART_MAIN);
 
   if (!buttoned_before) {
     if (!face_presidente) {
@@ -1844,21 +1913,10 @@ void presidents_buttons() {
       face_presidente = face_label_maker(0, 80, &lv_font_montserrat_20, lv_color_hex(0xFFFFFF), 240, LV_ALIGN_TOP_MID);
     }
     lv_label_set_text(face_presidente, "Ne pas Presidente");
-    lv_led_off(led1);
     return;
   }
   else {
     result = JSON.parse(before_me);
-  }
-  if (wigi.length() > 0) {
-    lv_led_on(led1);
-    int wl = wigi.length();
-    char wil[4];
-    itoa( wl, wil, 10 );
-    lv_label_set_text(led2, wil);
-  } 
-  else {
-    lv_label_set_text(led2, "0");
   }
   Serial.println("after before me parsing");
   if (room > room_count) { room = 1; }  
@@ -1866,9 +1924,11 @@ void presidents_buttons() {
 
   // Serial.println(room);
   // Serial.println(sb);
+  // the status bar keeps the top rows: the buttons start below it so the
+  // battery and ip:port line stay readable in every room
   lv_obj_t * b1 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b1, mb1, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b1, 10, 10 );
+  lv_obj_set_pos(b1, 10, 26 );
   lv_obj_set_size(b1, 60, 60 );
   lv_color_t c1;
   lv_color_t t1;
@@ -1893,7 +1953,7 @@ void presidents_buttons() {
   // Serial.println(sb + ' toggle:' + b1_toggle);
   lv_obj_t * b2 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b2, mb2, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b2, 90, 10 );
+  lv_obj_set_pos(b2, 90, 26 );
   lv_obj_set_size(b2, 60, 60 );
   lv_color_t c2;
   lv_color_t t2;
@@ -1918,7 +1978,7 @@ void presidents_buttons() {
   // Serial.println(sb + ' toggle:' + b2_toggle);
   lv_obj_t * b3 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b3, mb3, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b3, 170, 10 );
+  lv_obj_set_pos(b3, 170, 26 );
   lv_obj_set_size(b3, 60, 60 );
   lv_color_t c3;
   lv_color_t t3;
@@ -1943,7 +2003,7 @@ void presidents_buttons() {
   // Serial.println(sb + ' toggle:' + b3_toggle);
   lv_obj_t * b4 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b4, mb4, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b4, 10, 90 );
+  lv_obj_set_pos(b4, 10, 106 );
   lv_obj_set_size(b4, 60, 60 );
   lv_color_t c4;
   lv_color_t t4;
@@ -1968,7 +2028,7 @@ void presidents_buttons() {
   // Serial.println(sb + ' toggle:' + b4_toggle);
   lv_obj_t * b5 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b5, mb5, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b5, 90, 90 );
+  lv_obj_set_pos(b5, 90, 106 );
   lv_obj_set_size(b5, 60, 60 );
   lv_color_t c5;
   lv_color_t t5;
@@ -1994,7 +2054,7 @@ void presidents_buttons() {
   // Serial.println("b" + String(sb));
   lv_obj_t * b6 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b6, mb6, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(b6, 170, 90 );
+  lv_obj_set_pos(b6, 170, 106 );
   lv_obj_set_size(b6, 60, 60 );
   lv_color_t c6;
   lv_color_t t6;
@@ -2049,6 +2109,7 @@ void remote_room() {
   }
   presidents_buttons();
   button_writer();
+  full_refresh();
 }
 
 unsigned long getTime() {
@@ -2338,7 +2399,51 @@ String generateRandomString(int length) {
   return randomString;
 }
 
-
+// Taps made while no central was attached sit in wigi until the webapp's WIGI
+// button collects them; when a central comes back, hand the fresh ones over
+// over BLE so a momentary drop does not strand them. Anything older than five
+// minutes stays in the queue for the webapp to pull.
+void ble_flush_wigi() {
+  int l = wigi.length();
+  if (l <= 0) {
+    return;
+  }
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return;
+  }
+  long now = timestamp_maker();
+  JSONVar remainder = JSON.parse("[]");
+  int keep = 0;
+  for (int i = 0; i < l; i++) {
+    JSONVar item = wigi[i];
+    if (!item.hasOwnProperty("room") || !item.hasOwnProperty("button")) {
+      continue;
+    }
+    long ts = item["timestamp"];
+    if (now - ts > 300) {
+      remainder[keep] = item;
+      keep++;
+      continue;
+    }
+    int room_n = item["room"];
+    int button_n = item["button"];
+    int toggle_n = item["toggle"];
+    String url = "https://" + homebaseIP +
+      "/watch/button?room=" + room_n +
+      "&button=" + button_n +
+      "&toggle=" + toggle_n;
+    String r = generateRandomString(7);
+    btMessages[r]["type"] = "button";
+    btMessages[r]["payload"] = item;
+    btMessages[r]["url"] = url_maker(url);
+    String payload = JSON.stringify(btMessages[r]);
+    pTxCharacteristic->setValue(payload.c_str());
+    pTxCharacteristic->notify();
+    Serial.println("Flushed a queued tap over BLE");
+    delay(50);
+  }
+  wigi = remainder;
+}
 
 void mb1(lv_event_t *e) {
   if (b1_toggle == 0) {
@@ -2635,6 +2740,9 @@ void clock_writer() {
   l2 = lv_label_create(wigi_btn);
   lv_label_set_text(l2, "Wigi");
   lv_obj_center(l2);
+  // the clock room carries the wigi indicator now; time_writer keeps it honest
+  wigi_count_label = l2;
+  update_wigi_indicator();
 
   delay(5);
   lastMillis = lastMillis - 1000;
@@ -2642,7 +2750,7 @@ void clock_writer() {
     notification_review();
 
   }
-  lv_task_handler();
+  full_refresh();
 }
 static void wigi_button(lv_event_t *e) {
   homebasePing();
@@ -2864,7 +2972,7 @@ void setting_room() {
   lv_label_set_text(l6012, "LS");
   lv_obj_center(l6012);   
 
-  lv_task_handler();
+  full_refresh();
 }
 
 static void step_control(lv_event_t *e) {
@@ -3219,6 +3327,9 @@ void lowPowerEnergyHandler()
 
     esp_light_sleep_start();
     Serial.println("right after sleep");
+    // the screen comes back before the radio: the BLE stack takes seconds to
+    // come up, and waking it first left the display dark while it did
+    watch.incrementalBrightness(brightnessLevel);
     if (temp_bt_enabled == true) {
       start_ble_transfer();
     }
@@ -3398,7 +3509,7 @@ void net_room() {
   lv_label_set_text(lwi3, "BT");
   lv_obj_center(lwi3);
 
-
+  full_refresh();
 }
 
 void configSaveBackup() {
@@ -3491,7 +3602,13 @@ void configSave() {
   conf["room_count"] = room_count;
   conf["offset"] = offset;
   returner = JSON.stringify(conf);
-  writeFile(FFat, "/config.json", returner.c_str());
+  // LittleFS truncates in place, so a reset mid-save used to leave a clobbered
+  // config.json (the panic reboots did exactly that, and the watch came back
+  // with factory settings). Stage in a temp file and rename over the old one.
+  writeFile(FFat, "/config.tmp", returner.c_str());
+  if (!FFat.rename("/config.tmp", "/config.json")) {
+    writeFile(FFat, "/config.json", returner.c_str());
+  }
 }
 
 void configDelete() {
