@@ -2290,8 +2290,11 @@ function graphicalize(respons) {
 	else {
 		$('#background').hide();
 	}
-	var json_appts = JSON.stringify(appts);
-	sessionStorage.setItem('appts', json_appts);
+	// The whole payload used to be stringified into sessionStorage here - every
+	// app, every appointment, megabytes of it - so the two handlers that read it
+	// could fall back on one number, the view's timestamp. That was over quota
+	// and failing silently; the timestamp is what they get now.
+	sessionStorage.setItem('appts_timestamp', appts['__specs']['timestamp']);
 
 	clotheslineHanger(respons.clothesline);
 }

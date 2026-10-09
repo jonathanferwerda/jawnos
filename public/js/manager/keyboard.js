@@ -501,9 +501,9 @@ $(document).on('click','#room_check,#windshield_wiper,#drawing_check', function(
 });
 
 $(document).on('click', '.past_life,.life_direction', function() {
-	var json_appts = sessionStorage.getItem('appts');
-	appts = JSON.parse(json_appts);
-	var timestamp = timestamp || $(this).attr('timestamp') || appts['__specs']['timestamp'];
+	// the view's own timestamp stands in for whatever the pressed line does not
+	// carry; the whole payload it used to be fished out of is not kept any more
+	var timestamp = $(this).attr('timestamp') || sessionStorage.getItem('appts_timestamp');
 
 	var direction = $(this).attr('direction');
 	var room_check = $('#room_check').is(':checked');
@@ -589,8 +589,7 @@ function manager_play(response) {
 
 $(document).on('click', '#new_room', function() {
 	var app = $('#room_name').text();
-	var appts = JSON.parse(sessionStorage.getItem('appts'));
-	var timestamp = appts['__specs']['timestamp'];
+	var timestamp = sessionStorage.getItem('appts_timestamp');
 	$.ajax({
 		url: '/manager/new_room',
 		type: 'POST',
