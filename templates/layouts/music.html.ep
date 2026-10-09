@@ -12,6 +12,7 @@
 		<% if ($window_maker ne 'yes') { %>
 			<script src="/js/manager.js"></script>
 			<link rel="stylesheet" href="/css/manager.css" />
+			<link rel="stylesheet" href="/css/music.css" />
 
 		<% } %>
 			

@@ -369,19 +369,21 @@ function mediaMaker(data) {
 					}
 					clearInterval(interval);
 					interval = setInterval(function(){
-						var trackCues = tree.sound.textTracks[0].cues;
-						if (trackCues.length > 0) {
+						// subtitles are there when the track has a usable source, not when its
+						// cues happen to be parsed: after a search re-render the cues arrive a
+						// beat later, and the button used to be hidden in that beat and the
+						// mode forced off
+						var subtitle_track = document.getElementById('video_subtitles');
+						var subtitle_text = tree.sound.textTracks && tree.sound.textTracks[0];
+						var subtitle_cues = subtitle_text && subtitle_text.cues;
+						var subtitle_ready = !!(subtitle_track && subtitle_track.getAttribute('src') && (subtitle_track.readyState < 2 || (subtitle_cues && subtitle_cues.length)));
+						if (subtitle_ready && subtitle_text) {
 							$('#video_subtitle_toggle').show();
-							if ($('#video_subtitle_toggle').attr('status') == 'showing') {
-								tree.sound.textTracks[0].mode = 'showing';
-							}
-							else {
-								tree.sound.textTracks[0].mode = 'hidden';
-							}
+							subtitle_text.mode = $('#video_subtitle_toggle').attr('status') == 'showing' ? 'showing' : 'hidden';
 						}
 						else {
 							$('#video_subtitle_toggle').hide();
-							tree.sound.textTracks[0].mode = 'hidden';
+							if (subtitle_text) { subtitle_text.mode = 'hidden'; }
 						}
 						var pre_value = $('#progress_bar').val();
 						var cursor = tree.sound.currentTime;

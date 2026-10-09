@@ -9,11 +9,11 @@
 .medium { height: 10%; }
 .large { height: 23%; }
 .xlarge { height: 38% }
-#interface { 
-	bottom: 0;
+#interface {
+	top: 0;
 	left: 0;
 	width: 100%;
-	height: 120px;
+	height: 60px;
 }
 
 html, body {
@@ -170,11 +170,31 @@ body.dark_theme #music {
 
 /* the top bar */
 #music #interface {
+	display: flex;
+	align-items: center;
+	height: 60px;
+	box-sizing: border-box;
 	border-bottom: 1px solid var(--music-line);
 	box-shadow: var(--music-shadow);
 	z-index: 5;
 }
-#music #audio_controls { padding-left: 6px; }
+/* one row: transport, search taking the slack, the time, then the two options -
+   nothing is laid over anything else, so the search can never cover the clock */
+#music #audio_controls {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-width: 0;
+	padding: 0 10px;
+	box-sizing: border-box;
+}
+#music #transport {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex: 0 0 auto;
+}
 #music #audio_controls .control {
 	display: inline-block;
 	padding: 3px;
@@ -188,12 +208,18 @@ body.dark_theme #music {
 	border: none;
 	background: transparent;
 }
-#music #audio_controls .medium {
+#music #progress_readout {
+	flex: 0 0 auto;
 	color: var(--ink-muted);
 	font-variant-numeric: tabular-nums;
 	letter-spacing: 1px;
+	font-size: 18px;
+	white-space: nowrap;
 }
 #music #music_search {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0 2px;
 	height: 36px;
 	border-radius: 999px;
 	padding: 0 16px;
@@ -202,10 +228,20 @@ body.dark_theme #music {
 	border: 1px solid var(--music-line);
 	box-shadow: inset 0 1px 3px rgba(0, 0, 0, .12);
 }
+#music #music_search::placeholder {
+	text-align: left;
+	font-size: 15px;
+}
 #music #music_search:focus {
 	outline: none;
 	border-color: var(--music-accent);
 	box-shadow: 0 0 0 3px rgba(255, 207, 46, .30);
+}
+#music #music_interface_options {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
 }
 #music #music_configuration_toggle,
 #music #music_padlock_toggle {
@@ -220,6 +256,25 @@ body.dark_theme #music {
 #music #music_padlock_toggle:hover {
 	transform: scale(1.08);
 	background-color: var(--music-line-soft);
+}
+
+/* phones: the same bar tightened - smaller controls and a shorter search, so
+   the transport, the search and the clock all stay on one line */
+@media (max-width: 700px) {
+	#music #interface { height: 52px; }
+	#music #audio_controls { gap: 6px; padding: 0 6px; }
+	#music #audio_controls .control { padding: 2px; border-radius: 9px; }
+	#music #audio_controls img.medium_thumb { height: 32px; max-width: 38px; }
+	#music #music_search { height: 30px; padding: 0 10px; font-size: 14px; }
+	#music #progress_readout { font-size: 13px; letter-spacing: 0; }
+	#music #music_configuration_toggle,
+	#music #music_padlock_toggle { height: 28px; }
+	/* the shelves and the list lose their generous padding */
+	#music #music_artists, #music #music_albums { padding: 4px; }
+	#music .music_artist, #music .music_album { padding: 3px 6px; font-size: 13px; }
+	#music #files { font-size: 13px; }
+	#music #files .full_title { font-size: 14px; padding: 0 6px; }
+	#music #files .file_duration { padding: 0 6px; font-size: 12px; }
 }
 
 /* the artist and album shelves */

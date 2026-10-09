@@ -4,21 +4,29 @@
 	@{$padlock_sighting} = grep { $_ eq 'music' } @{$padlock_sighting};
 %>
 <% my $background_colour = &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour'}); %>
+<%# the shelf heights the last resize left behind; the template wears them so a
+    search render comes back the size it went out (see musicWindowResizes) %>
+<% my $shelf_height = eval { $resizes->{'music_albums'}->{'height'} } || 125; %>
 <div id="music" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
 	<div id="music_player_data" style="display:none;">
 		<%= eval { return encode_json &subs::cache_get({ app => 'music', context => 'player' }) } || {} %>
 	</div>
-	<div id="interface" style="position:absolute;top:0px;height:60px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
+	<div id="interface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">
-			<span id="prev" class="hover control"><img id="prev_logo" hint="Previous" class="medium_thumb" src="<%= &subs::icon_path('prev', '/icons/prev.jpg') %>" /></span>
-			<span id="play" class="hover control"><img id="play_logo" hint="Play / Pause" play_icon="<%= &subs::icon_path('play', '/icons/play.jpg') %>" pause_icon="<%= &subs::icon_path('pause', '/icons/pause.jpg') %>" class="medium_thumb" src="<%= &subs::icon_path('play', '/icons/play.jpg') %>" /></span>
-			<span id="next" class="hover control"><img id="next_logo" hint="Next" class="medium_thumb" src="<%= &subs::icon_path('next', '/icons/next.jpg') %>" /></span>
-			<input id="music_search" value="<%= $search %>" style="width:40%;position:absolute;top:3px;">
-			<span class="medium" style="padding-top:4px;word-wrap: break-word;font-size: 22px;">
-				<span id="elapsed_progress"></span>/<span id="total_progress"></span>
+			<span id="transport">
+				<span id="prev" class="hover control"><img id="prev_logo" hint="Previous" class="medium_thumb" src="<%= &subs::icon_path('prev', '/icons/prev.jpg') %>" /></span>
+				<span id="play" class="hover control"><img id="play_logo" hint="Play / Pause" play_icon="<%= &subs::icon_path('play', '/icons/play.jpg') %>" pause_icon="<%= &subs::icon_path('pause', '/icons/pause.jpg') %>" class="medium_thumb" src="<%= &subs::icon_path('play', '/icons/play.jpg') %>" /></span>
+				<span id="next" class="hover control"><img id="next_logo" hint="Next" class="medium_thumb" src="<%= &subs::icon_path('next', '/icons/next.jpg') %>" /></span>
 			</span>
-
+			<input id="music_search" value="<%= $search %>" placeholder="Search">
+			<span id="progress_readout"><span id="elapsed_progress"></span>/<span id="total_progress"></span></span>
+			<span id="music_interface_options">
+				<% if (scalar @{$padlock_sighting} > 0) { %>
+					<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+				<% } %>
+				<img src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="music_configuration_toggle">
+			</span>
 
 			<span style="display:none;">
 				<span style="float:left;width:70%;">
@@ -28,14 +36,10 @@
 			</span>
 
 		</div>
-		<% if (scalar @{$padlock_sighting} > 0) { %>
-			<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="position:absolute;top:0px;right:60px;<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
-		<% } %>
-		<image src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="music_configuration_toggle" style="position:absolute;top:0px;right:4px;">
 	</div>
 	<div id="music_library">
-		<div id="music_artists" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:var(--panel);">
-			<button id="all_music_artists" class="all_music" library="artists" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_artists'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
+		<div id="music_artists" style="width:50%;height:<%= $shelf_height %>px;top:100px;position:absolute;overflow:scroll;left:0px;background-color:var(--panel);">
+			<button id="all_music_artists" class="all_music" library="artists" style="position:absolute;right:20px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_artists'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
 			<% foreach my $art ( sort keys %{$crate->{'artists'}} ) { %>
 				<% if ($crate->{'artists'}->{$art}->{'path'}) { %>
 					<span class="hover music_artist" path="<%= $crate->{'artists'}->{$art}->{'path'} %>" artist="<%= $art %>" active="<% if ( grep { $_->{'artist'} eq $art } @{$crate->{'artist'}} ) { %>yes<% } else { %>no<% } %>"> 
@@ -45,8 +49,8 @@
 				<% } %>
 			<% } %>
 		</div>
-		<div id="music_albums" style="width:50%;height:125px;top:100px;position:absolute;overflow:scroll;left:50%;background-color:var(--panel);">
-			<button id="all_music_albums" class="all_music" library="albums" style="position:absolute;right:1px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_albums'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
+		<div id="music_albums" style="width:50%;height:<%= $shelf_height %>px;top:100px;position:absolute;overflow:scroll;left:50%;background-color:var(--panel);">
+			<button id="all_music_albums" class="all_music" library="albums" style="position:absolute;right:20px;top:1px;" enabled="<% if ($crate->{'settings'}->{'all_albums'} eq 'yes') { %>yes<% } else { %>no<% } %>">All</button>
 			<% foreach my $alb ( sort keys %{$crate->{'albums'}} ) { %>
 				<% if ($crate->{'albums'}->{$alb}->{'path'}) { %>
 					<span class="hover music_album" path="<%= $crate->{'albums'}->{$alb}->{'path'} %>" album="<%= $alb %>" active="<% if ( grep { $_->{'album'} eq $alb } @{$crate->{'album'}} ) { %>yes<% } else { %>no<% } %>">
@@ -57,7 +61,7 @@
 			<% } %>
 		</div>
 
-		<div id="music_files" style="width:100%;bottom:110px;top:210px;position:absolute;overflow:scroll;">
+		<div id="music_files" style="width:100%;bottom:110px;top:<%= $shelf_height + 100 %>px;position:absolute;overflow:scroll;">
 			%= include 'apps/music/files'
 		</div>
 
