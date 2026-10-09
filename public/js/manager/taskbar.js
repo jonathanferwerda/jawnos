@@ -43,8 +43,14 @@ function jawnosSideSearchVisible() {
 }
 function jawnosSideSearchShow(show) {
 	var home = $('#pseudonym_home');
+	// only a panel that lives in the dock has anything to open: with the search
+	// riding the taskbar the input is already out, so the button just searches
+	if (!home.length || !$('#search_entanglement').closest('#pseudonym_home').length) { return; }
 	if (show) {
 		home.addClass('search_open');
+		// the pill may be tucked away; the search rides beside it, so it has to
+		// be out for the input to have somewhere to slide from
+		if (typeof pseudonymSideSettle == 'function') { pseudonymSideSettle(0); }
 		if (!$('#search').is(':focus')) { $('#search').focus(); }
 	}
 	else {
@@ -107,7 +113,11 @@ function jawnosBarsApply() {
 	bar.attr('position', jawnosBars.taskbar);
 	if (dock.attr('position') != jawnosBars.dock) {
 		// a move between edges drops the tuck the old edge left behind
-		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '' });
+		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '', left: '', right: '' });
+		if (typeof pseudonymSideTucked != 'undefined') {
+			pseudonymSideTucked = 0;
+			pseudonymSideLayout = null;
+		}
 	}
 	jawnosTopIconsApply();
 

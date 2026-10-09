@@ -889,8 +889,9 @@ $(document).on('click','.manager_search_result', function() {
 
 $(document).on('click', '.search_toggle', function(i,e) {
 	// on a side dock the input rides hidden: the first press calls it out, and
-	// only a press with the input showing runs the search itself
-	if (typeof jawnosSideDock == 'function' && jawnosSideDock() && !jawnosSideSearchVisible()) {
+	// only a press with the input showing runs the search itself. A button that
+	// rides the taskbar has its input in sight already, so it just searches.
+	if (typeof jawnosSideDock == 'function' && jawnosSideDock() && $(this).closest('#pseudonym_home').length > 0 && !jawnosSideSearchVisible()) {
 		jawnosSideSearchShow(1);
 		return;
 	}

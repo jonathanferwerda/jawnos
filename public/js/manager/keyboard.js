@@ -11,6 +11,11 @@ var pseudonymHideWait = 5000;
 // top one keeps its bottom strip, which is the search too, pushed below the
 // row by the CSS.
 var pseudonymDockReach = 47;
+// how much of a tucked side dock stays on screen - the strip the pointer rests
+// on to call the pill back - and the state its slide answers to
+var pseudonymSideReach = 20;
+var pseudonymSideTucked = 0;
+var pseudonymSideLayout = null;
 
 var text_editor = {};
 var keysPressed = {};
@@ -72,7 +77,10 @@ function pseudonymFreeSpaceFinder(type) {
 
 	if (dock_side) {
 		// a side dock stacks its icons: the search button takes a slot at the foot
-		// of the stack, and the whole pill is centred between the bars
+		// of the stack, and the whole pill is centred between the bars. The stack
+		// rides the home's own edge, so it slides out of sight with the home when
+		// the dock tucks - only the width and height are the finder's to set, and
+		// the edge offsets belong to pseudonymSideSettle() and its reveal
 		var edge_top = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('top') : 0;
 		var slots = count + (search_in_dock ? 1 : 0);
 		var room = h - edge_top - dock_edge - 30;
@@ -80,6 +88,12 @@ function pseudonymFreeSpaceFinder(type) {
 		size = Math.max(floor, Math.min(full, size));
 		var stack = (size * slots) + (gap * (slots - 1));
 		var start = edge_top + Math.round((h - edge_top - dock_edge - (stack + 30)) / 2) + 15;
+		// the pill hugs the edge it lives on, so its own geometry is known here
+		// rather than measured - a measurement taken mid-slide would read the
+		// tuck, not the layout. The revealed layout it leaves behind is what
+		// pseudonymSideSlide() applies the tuck on top of.
+		var home_w = size + 30;
+		var home_h = stack + 30;
 		var icon_left = dock_left ? 15 : (w - 15 - size);
 
 		$.each(visible, function(i,el) {
@@ -95,25 +109,32 @@ function pseudonymFreeSpaceFinder(type) {
 				'position': 'fixed',
 				'width': size,
 				'height': size,
-				'left': icon_left,
 				'top': start + Math.round(count * (size + gap))
 			});
+			// the panel waits beside the pill, wherever the pill has slid to
 			$('#search_entanglement').css({
 				'top': '50%',
-				'width': Math.min(320, w - size - 68) + 'px',
-				'left': dock_left ? (size + 38) + 'px' : 'auto',
-				'right': dock_left ? 'auto' : (size + 38) + 'px'
+				'width': Math.min(320, w - size - 68) + 'px'
 			});
 		}
 		home.css({
-			'width': (size + 30) + 'px',
-			'height': (stack + 30) + 'px',
+			'width': home_w + 'px',
+			'height': home_h + 'px',
 			'top': (start - 15) + 'px',
-			'left': dock_left ? '0px' : 'auto',
-			'right': dock_left ? 'auto' : '0px'
+			'bottom': 'auto'
 		});
+		pseudonymSideLayout = {
+			left: dock_left,
+			search_in_dock: search_in_dock,
+			icon_left: icon_left,
+			home_w: home_w
+		};
+		pseudonymSideSlide();
 	}
 	else {
+		// a row dock owns its own edges: the side slide has nothing to hold
+		pseudonymSideLayout = null;
+		pseudonymSideTucked = 0;
 		var lane = Math.min(w - 8, 720) - home_chrome;
 		var size = Math.floor((lane - (gap * (count - 1))) / count);
 		size = Math.max(floor, Math.min(full, size));
@@ -187,6 +208,54 @@ function pseudonymFreeSpaceFinder(type) {
 			$(this).removeAttr('adjusted_already');
 		});
 	}
+}
+
+// A side dock slides between its edge and a tucked-away resting place that
+// keeps a strip of the pill on screen - the pointer's perch to call it back.
+// The pill, the icons riding it, the search button at the stack's foot and the
+// panel that waits beside it travel together. The revealed layout is the
+// finder's; this only adds the slide, so a resize mid-tuck still lands right.
+function pseudonymSideSlide() {
+	if (!pseudonymSideLayout) { return; }
+	var L = pseudonymSideLayout;
+	var offset = pseudonymSideTucked ? Math.max(0, L.home_w - pseudonymSideReach) : 0;
+	var slide = L.left ? -offset : offset;
+	if (L.left) {
+		$('#pseudonym_home').css({ 'left': -offset + 'px', 'right': 'auto' });
+	}
+	else {
+		$('#pseudonym_home').css({ 'right': -offset + 'px', 'left': 'auto' });
+	}
+	$('#pseudonym_bar .pseudonym.bar').css({ 'left': (L.icon_left + slide) + 'px' });
+	// the tiles slip away with the pill: only the strip stays, and a sliver of
+	// tiles along it would be litter. The dock's own on/off rule decides which
+	// ones come back, so a switched-off icon stays off.
+	$('#pseudonym_bar .pseudonym.bar').each(function () {
+		if (pseudonymSideTucked) { $(this).hide(); }
+		else if (jawnosDockIconGet($(this).attr('toggle')) == 'on') { $(this).show(); }
+	});
+	if (L.search_in_dock) {
+		$('#search_toggle').css({ 'left': (L.icon_left + slide) + 'px' });
+		if (pseudonymSideTucked) { $('#search_toggle').hide(); }
+		else { $('#search_toggle').show(); }
+		if (L.left) {
+			$('#search_entanglement').css({ 'left': (L.home_w + 8 + slide) + 'px', 'right': 'auto' });
+		}
+		else {
+			$('#search_entanglement').css({ 'right': (L.home_w + 8 - slide) + 'px', 'left': 'auto' });
+		}
+	}
+}
+
+// Tuck a side dock away, or call it back out. An open search keeps the pill
+// with it - the panel hangs beside the pill, and tucking the pill out from
+// under an input being typed in would send the words away with it.
+function pseudonymSideSettle(tucked) {
+	if (typeof jawnosSideDock != 'function' || !jawnosSideDock()) { return 0; }
+	if (tucked && typeof jawnosSideSearchVisible == 'function' && jawnosSideSearchVisible()) { tucked = 0; }
+	pseudonymSideTucked = tucked ? 1 : 0;
+	pseudonymSideSlide();
+	return 1;
 }
 
 // the dock is sized for whichever edge it lives on, so a new screen shape
@@ -273,11 +342,10 @@ function keyboardDragBarMaker(k) {
 }
 
 function pseudonymHomeShower(x,y,interval) { 
-	// a side dock never tucks, so there is nothing to call back
-	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) { return; }
 	var was = 0;
 	var okay = 1;
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	var elements = document.elementsFromPoint(x, y);
 
 	if (interval) {
@@ -308,11 +376,16 @@ function pseudonymHomeShower(x,y,interval) {
 		var w = $('#pseudonym_home').width();
 		var h = $('#pseudonym_home').height();
 		var wh = $(window).height();
-		if ( (was > 0)) {
+		if (was > 0) {
+			// a side dock slides straight back out over its strip
+			if (dock_side) {
+				pseudonymSideSettle(0);
+				pseudonymIntervals = Date.now();
+			}
 			// a dock on the top edge answers by slipping its row back down over
 			// the search strip; the row rides the home's top, so moving the home
 			// is all it takes
-			if (dock_top) {
+			else if (dock_top) {
 				$('#pseudonym_home').css({ 'top': jawnosDockTopOffset() });
 				pseudonymFreeSpaceFinder();
 				var so = $('#search').offset();
@@ -383,9 +456,8 @@ function pseudonymHomeHider(interval) {
 	// beneath it on screen, the top slips up keeping its search strip on screen
 	// with the icon row above the visible edge. A hidden dock is already gone.
 	if (typeof jawnosDockHidden == 'function' && jawnosDockHidden()) { return; }
-	// a side dock never tucks either: its stack stands in the open
-	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) { return; }
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	pseudonymFreeSpaceFinder();
 	var m = mouse_position();
 	// a desk whose mouse has never moved has no position yet; it counts as away
@@ -403,7 +475,12 @@ function pseudonymHomeHider(interval) {
 
 	interval = interval || pseudonymHIntervals;
 	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
-		if (dock_top) {
+		if (dock_side) {
+			// the pill slips off its own edge, keeping the strip the pointer rests
+			// on to call it back
+			pseudonymSideSettle(1);
+		}
+		else if (dock_top) {
 			pseudonymHomeTopSettle();
 		}
 		else {
