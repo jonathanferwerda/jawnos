@@ -9,6 +9,12 @@ var debrieferInterval = 300000;
 var windowWsWindows = '';
 var windowWsDebriefer = 0;
 var windowVisible = 1;
+// A phone that was locked comes back with dead sockets, and a socket that died
+// silently still reads readyState 1, so waiting for the staleness check to
+// notice took seconds. Hidden longer than this and the sockets are rebuilt the
+// moment the page is visible again.
+var resumeRebuildAfter = 2000;
+var pageHiddenAt = 0;
 var dotTimeout = {};
 var seenWsMessages = [];
 $(document).ready(function() {
@@ -34,6 +40,7 @@ var wsStatusInterval = setInterval(wsStatusChecker, 3000);
 // check entirely and only restart them once we're back.
 document.addEventListener('visibilitychange', function() {
 	if (document.hidden) {
+		pageHiddenAt = Date.now();
 		windowVisible = 0;
 		clearInterval(wsStatusInterval);
 		wsStatusInterval = null;
@@ -50,11 +57,30 @@ document.addEventListener('visibilitychange', function() {
 	else {
 		windowVisible = 1;
 		if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, 3000); }
-		$.each(ws, function(app, socket) {
-			if (socket && ( socket.readyState == 1 || socket['status'] == 'alive' || socket['status'] == 'open' )) {
-				heartbeatStart(app);
-			}
-		});
+		var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
+		if (away > resumeRebuildAfter) {
+			// the sockets are probably dead and there is no way to tell a dead one
+			// from a live one until it answers, so they are torn down and rebuilt
+			// at once - that is what makes the resume instantaneous
+			Object.keys(ws).forEach(function(app) {
+				clearInterval(heartbeat[app]);
+				delete heartbeat[app];
+				if (ws[app] && ws[app].close) { ws[app].close(); }
+				ws[app] = null;
+				delete ws[app];
+			});
+			websocketStart();
+		}
+		else {
+			$.each(ws, function(app, socket) {
+				if (socket && ( socket.readyState == 1 || socket['status'] == 'alive' || socket['status'] == 'open' )) {
+					heartbeatStart(app);
+				}
+			});
+		}
+		// a socket that had already gone stale before the page was hidden is
+		// caught right here rather than on the next three second pass
+		wsStatusChecker();
 	}
 });
 
