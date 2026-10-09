@@ -495,7 +495,9 @@ function evaluationStation(b) {
 	var timestamp = Date.now();
 	var app = b.attr('app');
 	var text = b.text();
+	var report = b.siblings('.evaluation_report').first();
 	b.text('* ' + text);
+	report.text('The evaluator is reading the numbers...');
 	clearInterval(configIntervals['sysEvaluateInterval']);
 	clearTimeout(configIntervals['sysEvaluateTimeout']);
 	configIntervals['sysEvaluateInterval'] = setInterval(function() {
@@ -512,6 +514,20 @@ function evaluationStation(b) {
 			clearInterval(configIntervals['sysEvaluateInterval']);
 			clearTimeout(configIntervals['sysEvaluateTimeout']);
 			b.text(text);
+			// the model's report lands whole, so it is set as text - nothing in
+			// it may be taken for markup
+			var r = response['evaluation_report'] || {};
+			report.empty();
+			report.append($('<span>').css({ 'white-space':'pre-wrap' }).text(r['text'] || 'No report came back.'));
+			if (r['model']) {
+				report.append($('<i>').css({ 'font-size':'80%' }).append($('<br>')).append($('<span>').text(r['model'])));
+			}
+		},
+		error: function() {
+			clearInterval(configIntervals['sysEvaluateInterval']);
+			clearTimeout(configIntervals['sysEvaluateTimeout']);
+			b.text(text);
+			report.text('The evaluation request failed.');
 		}
 	});
 }

@@ -111,7 +111,7 @@
 				<% } %>
 				<div id="pen_chatbot_data" style="display:none;"><%= $settings->{'chatbot_conversations'} || '{}' %></div>
 				<div id="pen_assistant_model_selection" style="width:100%;border:solid;border-radius:2%;">
-					<% my $assistants = [qw/visual_assistant text_to_image_assistant/]; %>
+					<% my $assistants = [qw/visual_assistant text_to_image_assistant eval_assistant/]; %>
 					<% my $ass_settings = &subs::settings_grabber({ app => 'mail', settings => $assistants }); %>
 
 					<%= &subs::format_name('visual_assistant') %>
@@ -126,6 +126,13 @@
 			      <% foreach my $cm ( @{$chatbot_models}) { %>
 							% next unless $cm->{'task'}->{'name'} eq 'Text-to-Image';
 			        <option value="<%= $cm->{'name'} %>" <% if ($ass_settings->{'text_to_image_assistant'} eq $cm->{'name'}) { %>selected<% } %>><%= $cm->{'name'} %></option>
+			      <% } %>
+			    </select>
+					<br>
+					<label>Evaluation</label>
+					<select class="configure_input" app="mail" setting="eval_assistant" value="<%= $ass_settings->{'eval_assistant'} %>">
+			      <% foreach my $cm ( @{$chatbot_models}) { %>
+			        <option value="<%= $cm->{'model'} %>" <% if ($ass_settings->{'eval_assistant'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %><% if ($cm->{'price'}) { %> <%= $cm->{'price'} %><% } %></option>
 			      <% } %>
 			    </select>
 				</div>

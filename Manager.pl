@@ -8799,26 +8799,27 @@ get '/manager/transaction/movement' => sub($c) {
 post '/manager/inventory/evaluate' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
-	my $returner = { localtimes => {} };
 	my $timeslots = [ 's','m','h','mday','M','y','wday','yday','isdst'];
-	my $appts = [];
-	if ($app) {
-		$appts = &subs::db_select('appointments', undef, { app => $app })->hashes;
-	}
-	else {
-		$appts = &subs::db_select('appointments')->hashes;
-	}
 	my $evaluation = { timeslots => {} };
-	foreach my $appt ( @{$appts} ) {
-		my @time = localtime($appt->{'timestamp'} / 1000);
-		$appt->{'localtime'} = \@time;
+	# the counts need the timestamps one at a time: streaming them keeps a
+	# life's worth of appointments from being carried around in memory, and
+	# the localtime detail that used to ride along in the answer had no reader
+	my $rows = $app
+		? &subs::db_query('select timestamp from appointments where app = ?', $app)
+		: &subs::db_query('select timestamp from appointments');
+	my $stream = $rows->sth;
+	while (my $row = $stream->fetchrow_arrayref) {
+		my $ts = $row->[0];
+		next unless $ts =~ /^[0-9]+$/;
+		my @time = localtime($ts / 1000);
 		for (my $n = 0; $n < scalar @{$timeslots}; $n++) {
-			my $t = $time[$n];
-			push @{$returner->{'localtimes'}->{$timeslots->[$n]}->{$t}}, $appt;
-			$evaluation->{'timeslots'}->{$timeslots->[$n]}->{$t} = scalar @{$returner->{'localtimes'}->{$timeslots->[$n]}->{$t}};
+			$evaluation->{'timeslots'}->{$timeslots->[$n]}->{$time[$n]}++;
 		}
 	}
+	$rows->finish;
 	&subs::cache_set({ app => $app || '__president', context => 'evaluation', warranty => '-6M' }, $evaluation);
+	# the numbers are rolled up; let the evaluation agent read them with the model
+	my $returner = { ok => 'yes', app => $app, evaluation_report => &subs::evaluation_agent($app || '__president') };
 	$c->render(json => $returner);
 };
 

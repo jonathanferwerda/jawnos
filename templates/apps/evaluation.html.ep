@@ -1,4 +1,7 @@
 <button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
+<% my $report_app = $app || '__president'; %>
+<% my $report = &subs::cache_get({ app => $report_app, context => 'evaluation_report' }) || {}; %>
+<span class="evaluation_report" app="<%= $report_app %>" style="display:block;text-align:left;white-space:pre-wrap;"><%= $report->{'text'} || '' %><% if ($report->{'model'}) { %><i style="font-size:80%;"><br><%= $report->{'model'} %> <span class="time" timestamp="<%= $report->{'timestamp'} %>"></span></i><% } %></span>
 <br>
 <table id="timeslot_counter">
 	<% foreach my $e ( keys %{$evaluation->{'timeslots'}} ) { %>

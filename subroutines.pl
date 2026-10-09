@@ -7284,6 +7284,263 @@ sub cloudflare_model_list() {
 	}
 	else { return []; }
 }
+# --- the evaluation agent -------------------------------------------------------
+# The evaluate buttons hand an app - or the whole house - to this. The raw
+# appointment numbers are rolled up first: counts, durations, an hourly and a
+# weekday profile, and one count per calendar day. The relational window's
+# links (the sc_ lists, one per construct) are walked to find the apps tied to
+# it, and each tied app's daily series is lined up against the app's own and
+# correlated - Pearson, tried at a small spread of lags, so a thing that
+# follows another can say so. Only then does a model speak: its job is the
+# words - trends, correlations, predictions - never the arithmetic, which the
+# numbers below it have already done.
+
+sub appointment_rollup() {
+	my ($app) = @_;
+	my $global = ($app eq '__president');
+	my $filter = $global ? '' : ' where app = ?';
+	my @args = $global ? () : ($app);
+	my $roll = { activity => {}, hours => {}, weekdays => {}, daily => {} };
+	my $owner_of = sub { $global ? ($_[0]->{'app'} || 'other') : $app };
+	# every roll-up is asked of the database in its own grouped form - a life of
+	# appointments is far too much to hold in memory just to count it
+	my $activity = &subs::db_query(
+		'select app, count(*) as count, sum(case when abs(duration) < 604800000 then abs(duration) else 0 end) as duration, min(cast(timestamp as integer)) as first, max(cast(timestamp as integer)) as last from appointments' . $filter . ' group by app',
+		@args)->hashes;
+	foreach my $row ( @{$activity} ) {
+		$roll->{'activity'}->{$owner_of->($row)} = {
+			count => $row->{'count'} + 0,
+			duration => $row->{'duration'} + 0,
+			first => $row->{'first'} + 0,
+			last => $row->{'last'} + 0,
+		};
+	}
+	my $bucket_rows = sub {
+		my ($rows) = @_;
+		my %out;
+		foreach my $row ( @{$rows} ) {
+			next unless defined $row->{'bucket'} && $row->{'bucket'} ne '';
+			$out{$owner_of->($row)}->{$row->{'bucket'}} = $row->{'count'} + 0;
+		}
+		return \%out;
+	};
+	$roll->{'hours'} = $bucket_rows->(&subs::db_query(
+		"select app, cast(strftime('%H', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as integer) as bucket, count(*) as count from appointments" . $filter . ' group by app, bucket',
+		@args)->hashes);
+	$roll->{'weekdays'} = $bucket_rows->(&subs::db_query(
+		"select app, cast(strftime('%w', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as integer) as bucket, count(*) as count from appointments" . $filter . ' group by app, bucket',
+		@args)->hashes);
+	# the day series is only ever read for the last stretch of history, so the
+	# query is capped there too and long lives do not walk the whole table
+	my $cutoff = &subs::rightNow() - 180 * 86400000;
+	$roll->{'daily'} = $bucket_rows->(&subs::db_query(
+		"select app, date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as bucket, count(*) as count from appointments" . $filter . ($filter ? ' and ' : ' where ') . 'cast(timestamp as integer) >= ? group by app, bucket',
+		@args, $cutoff)->hashes);
+	return $roll;
+}
+
+# every app the relational window has tied to this one: the sc_ settings are
+# uuid links, one list per construct, and 'all' means every app of it
+sub relational_family() {
+	my ($app) = @_;
+	my $settings = &subs::settings_grabber({ app => $app });
+	my (@links, %seen);
+	foreach my $key ( sort keys %{$settings} ) {
+		next unless $key =~ /^sc_/;
+		my $construct = $key;
+		$construct =~ s/^sc_//;
+		my $list = eval { return decode_json $settings->{$key} } || [];
+		foreach my $entry ( @{$list} ) {
+			my $linked;
+			if ($entry eq 'all') {
+				$linked = [ map { $_->{'app'} } @{ &subs::db_select('settings', undef, { setting => 'pos', value => $construct, device => &subs::device_setter() })->hashes } ];
+			}
+			else {
+				my $ts = &subs::settings_grabber({ uuid => $entry, benign => 1 });
+				$linked = $ts->{'app'} ? [ $ts->{'app'} ] : [];
+			}
+			foreach my $la ( @{$linked} ) {
+				next if !$la || $la eq $app || $seen{$la}++;
+				push @links, { app => $la, link => $construct };
+			}
+		}
+	}
+	return \@links;
+}
+
+# two apps' day counts, lined up over the union of their days
+sub day_pair_series() {
+	my ($da, $db) = @_;
+	my %seen;
+	my @keys = sort grep { !$seen{$_}++ } ( keys %{$da}, keys %{$db} );
+	my @xs = map { $da->{$_} || 0 } @keys;
+	my @ys = map { $db->{$_} || 0 } @keys;
+	return (\@xs, \@ys, \@keys);
+}
+
+# Pearson's r at a small spread of lags; the best fit wins, so a follower can
+# be told from a leader. Positive lag means the second series trails the first
+# by that many days. Undef when there is too little shared history, when the
+# pair is almost all zero days, or when either line never moves
+sub series_correlation() {
+	my ($xs, $ys) = @_;
+	my $n = scalar @{$xs};
+	return undef if $n < 14;
+	my $active = grep { ($xs->[$_] || 0) + ($ys->[$_] || 0) > 0 } ( 0 .. $n - 1 );
+	return undef if $active < 7;
+	my $corr = sub {
+		my ($xa, $ya) = @_;
+		my $m = scalar @{$xa};
+		return undef if $m < 14;
+		my ($sx,$sy,$sxx,$syy,$sxy) = (0,0,0,0,0);
+		foreach my $i ( 0 .. $m - 1 ) {
+			$sx += $xa->[$i]; $sy += $ya->[$i];
+			$sxx += $xa->[$i] ** 2; $syy += $ya->[$i] ** 2; $sxy += $xa->[$i] * $ya->[$i];
+		}
+		my $den = sqrt(($m * $sxx - $sx ** 2) * ($m * $syy - $sy ** 2));
+		return undef unless $den;
+		return ($m * $sxy - $sx * $sy) / $den;
+	};
+	my ($best, $best_lag);
+	foreach my $lag ( -2 .. 2 ) {
+		my ($xa, $ya) = ([], []);
+		foreach my $i ( 0 .. $n - 1 ) {
+			my $j = $i + $lag;
+			next if $j < 0 || $j > $n - 1;
+			push @{$xa}, $xs->[$i];
+			push @{$ya}, $ys->[$j];
+		}
+		my $r = $corr->($xa, $ya);
+		next unless defined $r;
+		if (!defined $best || abs($r) > abs($best)) { $best = $r; $best_lag = $lag; }
+	}
+	return undef unless defined $best;
+	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
+}
+
+# the same wire pen_message uses, but the answer is read whole: the evaluation
+# is a report, not a conversation
+sub evaluation_model_call() {
+	my ($model, $system, $user) = @_;
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', 'ollama_key' ] });
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
+	my $payload = {
+		model => $model,
+		messages => [
+			{ role => 'system', content => $system },
+			{ role => 'user', content => $user },
+		],
+		stream => \0,
+	};
+	my ($url, $key);
+	if ($model =~ /^\@cf/ && $settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) {
+		$url = 'https://api.cloudflare.com/client/v4/accounts/'. $settings->{'cloudflare_account'} . '/ai/run/' . $model;
+		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'});
+	}
+	else {
+		$url = 'http://localhost:11434/api/chat';
+		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'ollama_key'});
+		my $nproc = 4;
+		if (open(my $fh, "-|", "nproc")) { $nproc = <$fh>; chomp($nproc); close($fh); }
+		$payload->{'options'} = { num_thread => $nproc - 2, num_ctx => 32768 };
+	}
+	my $tx = $ua->build_tx(POST => $url => {
+		'Authorization' => "Bearer $key",
+		'Content-Type'  => 'application/json',
+	} => json => $payload);
+	$ua->start($tx);
+	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
+	my $res = $tx->res;
+	return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200)) unless $res->is_success;
+	my $body = eval { return $res->json } || {};
+	my $text = $body->{'message'}->{'content'}
+		|| $body->{'response'}
+		|| $body->{'result'}->{'response'}
+		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
+		|| $body->{'choices'}->[0]->{'message'}->{'content'};
+	return ($text, $text ? undef : 'the model returned nothing readable');
+}
+
+sub evaluation_agent() {
+	my ($app) = @_;
+	$app = '__president' unless $app && $app ne '';
+	my $global = ($app eq '__president');
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
+	my $model = $settings->{'eval_assistant'};
+	my $roll = &appointment_rollup($app);
+	my @owners = sort { $roll->{'activity'}->{$b}->{'count'} <=> $roll->{'activity'}->{$a}->{'count'} } keys %{$roll->{'activity'}};
+	if ($global) { splice(@owners, 12) if scalar @owners > 12; }
+	else { @owners = ($app); }
+	my @lt = localtime((&subs::rightNow() - 120 * 86400000) / 1000);
+	my $cut_day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
+	my $entry = sub {
+		my ($from, $owner) = @_;
+		my $act = $from->{'activity'}->{$owner} || {};
+		my $daily = $from->{'daily'}->{$owner} || {};
+		my @days = sort keys %{$daily};
+		my $avg = $act->{'count'} ? int(($act->{'duration'} || 0) / $act->{'count'}) : 0;
+		return {
+			app => $owner,
+			occurrences => $act->{'count'} || 0,
+			days_active => scalar @days,
+			average_duration => &subs::duration_sayer($avg / 1000),
+			total_duration => &subs::duration_sayer(($act->{'duration'} || 0) / 1000),
+			first_day => $days[0] || '',
+			last_day => $days[-1] || '',
+			hour_profile => $from->{'hours'}->{$owner} || {},
+			weekday_profile => $from->{'weekdays'}->{$owner} || {},
+			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } grep { $_ ge $cut_day } @days,
+		};
+	};
+	my $briefing = {
+		scope => $global ? 'the whole house' : $app,
+		apps => [ map { $entry->($roll, $_) } @owners ],
+	};
+	my @related;
+	if ($global) {
+		my @pairs;
+		foreach my $i ( 0 .. $#owners ) {
+			foreach my $j ( $i + 1 .. $#owners ) {
+				my ($xs, $ys) = &day_pair_series($roll->{'daily'}->{$owners[$i]} || {}, $roll->{'daily'}->{$owners[$j]} || {});
+				my $c = &series_correlation($xs, $ys);
+				next unless $c && abs($c->{'r'}) >= 0.5;
+				push @pairs, { apps => [ $owners[$i], $owners[$j] ], %{$c} };
+			}
+		}
+		@pairs = sort { abs($b->{'r'}) <=> abs($a->{'r'}) } @pairs;
+		splice(@pairs, 10) if scalar @pairs > 10;
+		$briefing->{'correlations'} = \@pairs;
+	}
+	else {
+		foreach my $link ( @{ &relational_family($app) } ) {
+			my $lroll = &appointment_rollup($link->{'app'});
+			my ($xs, $ys) = &day_pair_series($roll->{'daily'}->{$app} || {}, $lroll->{'daily'}->{$link->{'app'}} || {});
+			my $c = &series_correlation($xs, $ys);
+			push @related, { app => $link->{'app'}, link => $link->{'link'}, correlation => $c, activity => $entry->($lroll, $link->{'app'}) };
+		}
+		$briefing->{'related'} = \@related;
+	}
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house), an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count for the last 120 days, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 180 days at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads).';
+	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Correlations use only pairs with |r| >= 0.5 and at least 14 shared days; say what r means here and whether the lag suggests one follows the other; if nothing clears that bar, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks. Use only the numbers given - never invent figures. Plain text.';
+	my $user = $instructions . "\n\n" . encode_json($briefing);
+	my ($text, $error);
+	if ($model) {
+		($text, $error) = &evaluation_model_call($model, $system, $user);
+	}
+	else {
+		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
+	}
+	my $report = {
+		text => $text || ('The evaluation could not run: ' . $error),
+		model => $model,
+		error => $error,
+		apps => [ map { $_->{'app'} } @{$briefing->{'apps'}} ],
+		timestamp => &subs::rightNow(),
+	};
+	&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
+	return $report;
+}
+
 sub generate_ai_image {
   my ($data) = @_;
 	my $c = &subs::controller_builder();
