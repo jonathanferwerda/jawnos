@@ -53,13 +53,18 @@ function pseudonymFreeSpaceFinder(type) {
 	size = Math.max(floor, Math.min(full, size));
 	var total = (size * visible.length) + (gap * Math.max(0, visible.length - 1));
 	var start = Math.round((w - total) / 2);
+	// a dock on the top edge hangs its row from the top, clear of the header's
+	// band; the bottom one keeps its 15px from the edge, raised over the taskbar
+	// when the two share the bottom
+	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
 
 	$.each(visible, function(i,el) {
 		$(el).css({
 			'width': size,
 			'height': size,
 			'left': start + Math.round(i * (size + gap)),
-			'top': Math.round(h - 15 - size)
+			'top': Math.round(dock_top ? (jawnosDockTopOffset() + 15) : (h - 15 - size - dock_edge))
 		});
 	});
 
@@ -77,16 +82,20 @@ function pseudonymFreeSpaceFinder(type) {
 	if (numeral($('#pseudonym_home').css('bottom')).value() < 0) {
 		$('.pseudonym').hide();
 	}
-	$('#search_entanglement').css({'width': '100%'});
-	$('#search').css({'width': '80%'});
+	// the search is the dock's to size only while it rides there; in the taskbar
+	// the bar's own rules give it its width
+	if ($('#search_entanglement').closest('#pseudonym_home').length > 0) {
+		$('#search_entanglement').css({'width': '100%'});
+		$('#search').css({'width': '80%'});
 
-	$.each(['search','search_toggle'], function(i,v) {
-		if ($('#' + v).attr('adjusted_already') != "done") {
-			var se = $('#' + v).offset();
-			$('#' + v).offset({ top: se.top - 7 });
-			$('#' + v).attr('adjusted_already', 'done');
-		}
-	});
+		$.each(['search','search_toggle'], function(i,v) {
+			if ($('#' + v).attr('adjusted_already') != "done") {
+				var se = $('#' + v).offset();
+				$('#' + v).offset({ top: se.top - 7 });
+				$('#' + v).attr('adjusted_already', 'done');
+			}
+		});
+	}
 }
 
 // the dock lives on the bottom edge, so a new screen shape means new sizes
@@ -221,7 +230,7 @@ function pseudonymHomeShower(x,y,interval) {
 					kbg.show();
 				}
 			});
-			$('#pseudonym_home').css({ 'bottom': 0 });
+			$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
 			var o = $('#search').offset();
 			$('#search_results').css({ 'bottom': $(window).height() - o.top });
 			pseudonymIntervals = Date.now();
@@ -241,6 +250,9 @@ function pseudonymHomeShower(x,y,interval) {
 
 
 function pseudonymHomeHider(interval) {
+	// only the bottom edge tucks away; a dock on the top edge has no dark below
+	// to slip into, and a hidden one is already gone
+	if (typeof jawnosDockTop == 'function' && jawnosDockTop()) { return; }
 	pseudonymFreeSpaceFinder();
 	var m = mouse_position();
 	var was = 0;
@@ -255,10 +267,13 @@ function pseudonymHomeHider(interval) {
 	interval = interval || pseudonymHIntervals;
 	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
 		// tuck the dock down, but keep the search and a strip beneath it on
-		// screen: that strip is where the mouse rests to call the icons back
+		// screen: that strip is where the mouse rests to call the icons back. A
+		// taskbar sharing the bottom edge takes its height first, so the strip
+		// rests above the bar instead of lying across it.
 		var h = $('#pseudonym_home').outerHeight();
 		var reach = 47;
-		var diff = Math.min(0, reach - h);
+		var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
+		var diff = Math.min(0, reach - h) + edge;
 		$('#pseudonym_home').css({ 'bottom': diff });
 		$('.pseudonym.bar').hide();
 		$('.keyboard').each(function() {

@@ -26,7 +26,7 @@
 			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/store"><img class="jonathan" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>"></a>
 		-->
 	</span>
-	<span style="float:left;width:82%;overflow:scroll;height:80%;">
+	<span class="start_menu_body">
 		<% if ($menu eq 'view') { %>
 			<!--
 			<img src="<%= &subs::icon_for('/images/make believe/eye.png') %>" hint="Webcam" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
@@ -181,5 +181,4 @@
 			</div>
 		<% } %>
 	</span>
-	<div id="start_apps" style="position:absolute;bottom:0%;width:100%;overflow-x:scroll;height:50px;max-height:50px;"></div>
 </div>

@@ -5,7 +5,11 @@ function headerPrinter(ctx,appts,title) {
 	var scope = localStorage.getItem('scope');
 
 	var formatted_time = fixedTimeString(numeral(appts['__specs']['timestamp']).value());
-	var header = format_name(scope) + '<br>' + formatted_time;
+	// the clock lives in the taskbar while there is one; the header keeps the
+	// scope (and the desk's birthday) and takes the time back when it is away
+	var clock_in_bar = (typeof jawnosClockInTaskbar == 'function') && jawnosClockInTaskbar();
+	if (typeof jawnosClockShow == 'function') { jawnosClockShow(formatted_time); }
+	var header = format_name(scope) + (clock_in_bar ? '' : '<br>' + formatted_time);
 	if (!windowPhoneChecker()) {
 		header = header + ' ' + appts['__specs']['birthday'];
 	}

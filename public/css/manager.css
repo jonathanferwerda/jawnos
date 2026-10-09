@@ -71,7 +71,6 @@ html, body {
 #pseudonym_home {
 	height: 120px;
 	position:fixed;
-	bottom: 0px;
 	left: 50%;
 	background-color:grey;
 	border: solid;
@@ -86,6 +85,13 @@ html, body {
 	   and the centring honest */
 	box-sizing: border-box;
 }
+/* where the dock lives: the misc setting names the edge, and the custom
+   properties keep it clear of the taskbar the layout may have put there. The
+   top variant pins over the tucked-away inline bottom the dock's own hiding
+   writes, so a top dock never slips away. */
+#pseudonym_home[position=bottom] { bottom: var(--taskbar_bottom_h, 0px); top: auto !important; }
+#pseudonym_home[position=top] { top: var(--dock_top_h, 0px); bottom: auto !important; }
+#pseudonym_home[position=hidden] { display: none !important; }
 #pseudonym_bar {
 	width: 100%;
 	overflow-x:scroll;
@@ -223,8 +229,36 @@ html, body {
 #centre_view { right:0%; z-index: 5005; bottom: 0; width: 100%; position:fixed; overflow:scroll; }
 #right_view { right:0%; top: 110px;}
 #close_centre_view { right: 0px; padding-right: 5px; position:fixed; }
-#header { padding-left: 4px; padding-top: 1px; z-index:3; position:fixed;left: 0px; top: 0px; width:100%; font-size: 20px; }
-#taskbar { padding-left: 4px; padding-top: 1px; z-index:3; position:fixed;left: 300px; top: 0px; width:100%; font-size: 20px; height: 40px;}
+#header { padding-left: 4px; padding-top: 1px; z-index:3; position:fixed;left: 0px; top: var(--taskbar_top_h, 0px); width:100%; font-size: 20px; }
+/* the taskbar: the open windows (the list the start menu used to carry at its
+   foot) and the clock the header used to hold, laid along the edge its setting
+   names. Its height is what the custom properties others read are measured
+   from, so the two figures agree. */
+#taskbar {
+	box-sizing: border-box;
+	position: fixed; left: 0px; right: 0px;
+	height: 44px;
+	z-index: 39998;
+	display: flex; align-items: center; gap: 6px;
+	padding: 2px 6px;
+	font-size: 20px;
+	background-color: var(--panel-2);
+	border: solid; border-width: 0px;
+	overflow: hidden;
+}
+#taskbar[position=top] { top: 0px; border-bottom-width: 3px; }
+#taskbar[position=bottom] { bottom: 0px; border-top-width: 3px; }
+#taskbar[position=hidden] { display: none; }
+#taskbar_windows { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
+/* one button per open window: its icon, then its name, on the taskbar's colour */
+#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; height: 36px; padding: 0px 6px; box-sizing: border-box; background-color: var(--panel); }
+#taskbar .window_toggle .window_toggle_icon { height: 28px; width: 28px; max-width: 28px; object-fit: contain; }
+#taskbar .window_toggle span { font-size: 16px; white-space: nowrap; }
+#taskbar_clock { flex: 0 0 auto; white-space: nowrap; padding: 0px 8px; }
+/* the search, when the taskbar is its home: it rides on the right of the
+   window list rather than taking the bar over */
+#taskbar #search_entanglement { flex: 0 0 auto; width: 280px; }
+#taskbar #search { width: 100%; }
 #timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
 #clockface { z-index: 2; overscroll-behavior: contain; position:absolute; right: 0px; top: 0px; width: 100% }
 #leaderboard { z-index: 2; position:absolute; left:0px; width: 100%;}
@@ -478,8 +512,8 @@ canvas { overflow: scroll; z-index: 99; }
 	border-radius: 5px;
 }
 
-/* a little bigger than the default .jonathan size, but leave the taskbar dock
-   (#start_apps, large_thumb) and other .jonathan users alone */
+/* a little bigger than the default .jonathan size, but leave the taskbar's own
+   buttons (.little_thumb) and other .jonathan users alone */
 #start_menu .jonathan,
 #start_menu .start_menu_main_display img,
 #start_menu .start_menu_menu {
@@ -499,6 +533,16 @@ canvas { overflow: scroll; z-index: 99; }
 	width: 40px;
 	max-width: 40px;
 	object-fit: contain;
+}
+/* the menu's body fills the whole box now that the window list left its foot:
+   the app lists scroll inside it, and the rail keeps its 18% at the right */
+#start_menu .start_menu_body {
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	bottom: 0px;
+	width: 82%;
+	overflow: auto;
 }
 .start_menu_main_display {
 	display: block;

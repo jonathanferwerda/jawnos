@@ -142,6 +142,26 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			<% } %>
 		</div>
 
+		<h4>Bars</h4>
+		<div style="display:flex;flex-wrap:wrap;gap:10px;">
+			<% my @bars = (
+				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'hidden' ] ],
+				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
+				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar' ] ],
+			); %>
+			<% foreach my $g ( @bars ) { %>
+				<% my ($key, $label, $opts) = @{$g}; %>
+				<label style="display:flex;flex-direction:column;">
+					<b><%= $label %></b>
+					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
+						<% foreach my $o ( @{$opts} ) { %>
+							<option <% if ($settings->{$dt}->{$key} eq $o) { %>selected="selected"<% } %>><%= $o %></option>
+						<% } %>
+					</select>
+				</label>
+			<% } %>
+		</div>
+
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<h4>Locations</h4>

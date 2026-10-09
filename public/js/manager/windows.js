@@ -42,11 +42,16 @@ function window_initializer(id) {
 	wind.css({ 'left': '30%', 'bottom': 0, 'background-color': 'red', 'height': '80%', 'width': '70%' }).show();
 }
 
+// The taskbar's window list: one button per open window, newest on top, each
+// wearing the window's own icon and name. This is the list the start menu used
+// to carry at its foot, so every caller that kept the menu's strip fresh keeps
+// the bar fresh by the same name.
 function taskbarDisplayer(destination) {
 	if (!destination) {
-		destination = '#start_apps';
+		destination = '#taskbar_windows';
 	}
 	$(destination).html('');
+	if ($(destination).length == 0) { return; }
 	var html = '';
 	var timestamp = Date.now();
 	$('.wind').sort(function(a, b) {
@@ -69,9 +74,9 @@ function taskbarDisplayer(destination) {
 
 		new_icon.show();
 	});
-	$('#start_apps').html(html);
+	$(destination).html(html);
 	$('.window_toggle_name').remove();
-	$('.window_toggle_icon').each(function(i,v) {
+	$(destination).find('.window_toggle_icon').each(function(i,v) {
 		var app = $(v).attr('app');
 		var rand = Math.random().toString(36).substring(2);
 		$(v).wrap('<span class="hover window_toggle_icon window_toggle" style="border:solid;border-radius:2px;" id="' + rand + '" app="' + app + '" style="vertical-align:top;text-align:center;"></span>');
@@ -84,7 +89,10 @@ function taskbarDisplayer(destination) {
 
 function startMenuDisplayer(destination) {
 	if (!destination) {
-		destination = '#start_apps';
+		// the open windows live in the taskbar now, and its own displayer is the
+		// one that knows their look; a named destination (the app switcher) keeps
+		// the table below
+		return taskbarDisplayer();
 	}
 	$(destination).html('');
 	var html = '';
@@ -120,10 +128,16 @@ function startMenuDisplayer(destination) {
 $(document).on('click', '.window_toggle', function() {
 
 	var timestamp = Date.now();
-	var win = $('.wind[app="' + app + '"]');
 	var app = $(this).attr('app');
+	var win = $('.wind[app="' + app + '"]');
+	// a button on the taskbar answers for its window: a minimized one comes
+	// back, the top one steps down, and any other rises
+	if (!win.is(':visible')) {
+		windowRestorer(timestamp,app);
+		return;
+	}
 	var topApp = topWindow();
-	if (app == topApp && win.is(':visible')) {
+	if (app == topApp) {
 		windowMinimizer(timestamp,app);
 	} else {
 		topLevelNow(win);

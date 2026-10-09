@@ -1002,7 +1002,7 @@ function fuck_you() {
 	jpStop();
 	twirlRunning = false;
 	startMenuCloser(0);
-	$('#start_apps').html('');
+	$('#taskbar_windows').html('');
 	$('#time_machine').val('');
 	$('#timeshift').val('');
 	$('#alert').html('').hide();
