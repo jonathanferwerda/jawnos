@@ -324,6 +324,17 @@ canvas { overflow: scroll; z-index: 99; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
 .window_icon { vertical-align:top; border:solid; border-radius:2px; border-width:2px; font-size:26px; }
+/* the window title bar is a thin strip: the icon, the name and the window
+   controls all answer to the one 30px figure, so the bar closes up around
+   them instead of standing 45 deep, and the extras the line-height would
+   add above and below are dropped */
+.top_navbar { line-height: 0; }
+.top_navbar .window_icon_holder { display: inline-block; vertical-align: middle; }
+.top_navbar .window_icon_holder .window_icon { display: inline-block; height: 26px; line-height: 26px; font-size: 20px; vertical-align: middle; }
+.top_navbar .appointment_name { vertical-align: middle; }
+.top_navbar .appointment_name .name_text { line-height: 24px; vertical-align: middle; }
+.top_navbar .navbar_buttons { display: inline-flex; align-items: center; }
+.top_navbar .navbar_buttons .window_action { width: 30px; height: 30px; min-width: 30px; }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
 .keyboard { z-index: 9100; border:solid;border-radius:10px;border-width:3px; }
