@@ -4003,10 +4003,20 @@ static uint32_t wrist_still_since = 0;
 static uint32_t wrist_last_sample = 0;
 static uint32_t wrist_fast_until = 0;      // a sign of movement buys quick samples
 static bool wrist_sim = false;             // tiltsim drives the machine by hand
+static bool wrist_armed = false;           // a long still pose is where a look can begin
+
+// The angle between two gravity vectors, in degrees.
+static float wrist_angle(float ax, float ay, float az, float bx, float by, float bz) {
+  float dot = ax * bx + ay * by + az * bz;
+  float n1 = sqrtf(ax * ax + ay * ay + az * az);
+  float n2 = sqrtf(bx * bx + by * by + bz * bz);
+  return (n1 > 0.1f && n2 > 0.1f) ? acosf(dot / (n1 * n2)) * 57.3f : 0.0f;
+}
 
 static void wristPollReset() {
   wrist_have = false;
   wrist_rose = false;
+  wrist_armed = false;
   wrist_last_sample = 0;
 }
 
@@ -4047,56 +4057,60 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
   float moved = fabsf(wrist_lx - wrist_sx) + fabsf(wrist_ly - wrist_sy) + fabsf(wrist_lz - wrist_sz);
   if (moved > 1.2f) {
     wrist_moved_at = now;
+    // a sign of movement buys quick samples: the turn itself is brief
     if (moved > 2.0f) {
       wrist_fast_until = now + 2000;
     }
   }
-  else if (!wrist_rose && now - wrist_moved_at > 400) {
-    // settled: this pose becomes the "before" the next raise is measured from
-    wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
+  else if (!wrist_rose) {
+    if (now - wrist_moved_at > 400) {
+      // settled: this pose becomes the "before" the next turn is measured from
+      wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
+    }
+    if (now - wrist_moved_at > 800) {
+      wrist_armed = true;      // a long still pose: a turn out of it can be a look
+    }
   }
 
-  if (!wrist_rose && wrist_lz > 4.4f && (wrist_lz - wrist_sz) > 3.0f) {
-    // 0.45 g of screen-normal gravity: past sideways, which the arm-down pose
-    // and a hand at a keyboard never produce
-    wrist_rose = true;
-    wrist_still_since = now;
-    wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
-    if (tiltDbg) {
-      Serial.printf("[tilt] rising z=%.1f (from %.1f)\n", wrist_lz, wrist_sz);
+  // A look is a large, deliberate turn of the watch that ends held in front of
+  // the face. The pose says it better than the direction of the turn: reading
+  // the watch has the screen facing the eyes, so gravity stays in the screen
+  // plane (|z| small), while lying on a desk or in a pocket is the screen
+  // facing up or down (|z| large) -- which is where the old rule fired, so the
+  // watch lit up when it was set down and never when it was read (2026-10-09).
+  if (!wrist_rose && wrist_armed) {
+    float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
+    if (angle > 50.0f) {
+      wrist_rose = true;
+      wrist_still_since = now;
+      wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
+      if (tiltDbg) {
+        Serial.printf("[tilt] turn %.0f deg (z=%.1f)\n", angle, wrist_lz);
+      }
     }
   }
 
   if (wrist_rose) {
     float moved_now = fabsf(wrist_lx - wrist_px) + fabsf(wrist_ly - wrist_py) + fabsf(wrist_lz - wrist_pz);
     if (moved_now > 1.2f) {
-      if (wrist_lz < 2.0f) {                 // put back down: not a look
-        if (tiltDbg) {
-          Serial.println("[tilt] rejected: put back down");
-        }
-        wrist_rose = false;
-        return false;
-      }
       wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
       wrist_still_since = now;
     }
     if (now - wrist_still_since >= 250) {
-      // a real raise also turned the watch by a good angle; a slow drift to
-      // the same z does not count
-      float dot = wrist_sx * wrist_lx + wrist_sy * wrist_ly + wrist_sz * wrist_lz;
-      float n1 = sqrtf(wrist_sx * wrist_sx + wrist_sy * wrist_sy + wrist_sz * wrist_sz);
-      float n2 = sqrtf(wrist_lx * wrist_lx + wrist_ly * wrist_ly + wrist_lz * wrist_lz);
-      float angle = (n1 > 0.1f && n2 > 0.1f) ? acosf(dot / (n1 * n2)) * 57.3f : 0.0f;
+      float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
       wrist_rose = false;
-      if (angle > 40.0f && wrist_lz > 3.4f) {
+      if (angle > 45.0f && fabsf(wrist_lz) < 6.5f) {
+        // held up in front of the face. The arm coming back down is not another
+        // look, so the next one has to wait for the next long still pose.
+        wrist_armed = false;
         wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
         if (tiltDbg) {
-          Serial.printf("[tilt] look: angle=%.0f z=%.1f\n", angle, wrist_lz);
+          Serial.printf("[tilt] look: turn %.0f deg z=%.1f\n", angle, wrist_lz);
         }
         return true;
       }
       if (tiltDbg) {
-        Serial.printf("[tilt] rejected: settle angle=%.0f z=%.1f\n", angle, wrist_lz);
+        Serial.printf("[tilt] rejected: settled turn %.0f deg z=%.1f\n", angle, wrist_lz);
       }
     }
   }
@@ -4203,16 +4217,37 @@ static void tilt_serial_command(String line) {
     // while dozing, the doze should end and the screen sit for ten seconds.
     wrist_sim = true;
     wristPollReset();
-    for (int i = 0; i < 8; i++) { wristPollStep(-1.0f, 0.0f, -8.0f, millis()); delay(30); }
-    for (int i = 0; i < 14; i++) { wristPollStep(-1.0f, 0.0f, -8.0f + i * 1.18f, millis()); delay(30); }
+    // the desk pose, long enough to settle and arm, then the turn up to the
+    // face: gravity leaves z for y, the pose the 2026-10-09 samples showed
+    for (int i = 0; i < 40; i++) { wristPollStep(-1.0f, 0.0f, 9.8f, millis()); delay(30); }
+    for (int i = 0; i <= 12; i++) {
+      float t = i / 12.0f;
+      wristPollStep(-1.0f, 9.2f * t, 9.8f * (1.0f - t), millis());
+      delay(30);
+    }
     bool look = false;
-    for (int i = 0; i < 30; i++) {
-      if (wristPollStep(-1.0f, 0.0f, 8.5f, millis())) { look = true; }
+    for (int i = 0; i < 20; i++) {
+      if (wristPollStep(-1.0f, 9.2f, 0.0f, millis())) { look = true; }
       delay(30);
     }
     wrist_sim = false;
-    Serial.printf("[tiltsim] %s (lz=%.1f sz=%.1f)\n",
-                  look ? "look detected" : "no look", wrist_lz, wrist_sz);
+    Serial.printf("[tiltsim] look=%s", look ? "detected" : "no");
+    // and back down to the desk: not a look, and this is exactly what used to
+    // be the only thing that lit the screen
+    bool set_down = false;
+    wrist_sim = true;
+    for (int i = 0; i <= 12; i++) {
+      float t = i / 12.0f;
+      wristPollStep(-1.0f, 9.2f * (1.0f - t), 9.8f * t, millis());
+      delay(30);
+    }
+    for (int i = 0; i < 20; i++) {
+      if (wristPollStep(-1.0f, 0.0f, 9.8f, millis())) { set_down = true; }
+      delay(30);
+    }
+    wrist_sim = false;
+    Serial.printf(" set-down=%s (lz=%.1f sz=%.1f)\n",
+                  set_down ? "FIRED" : "quiet", wrist_lz, wrist_sz);
     if (look && dozing) {
       Serial.println("[tilt] wrist raise: lighting the screen (sim)");
       tilt_wake_short = true;
