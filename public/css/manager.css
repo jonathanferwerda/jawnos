@@ -569,6 +569,19 @@ canvas { overflow: scroll; z-index: 99; }
 	max-width: 54px;
 }
 
+/* Mail the server accepted rings the envelope until the mailbox is opened: the
+   icon wears a red border that pulses, so the ring needs no extra markup and
+   survives the menu being fetched anew. */
+#mailbox_toggle[waiting="yes"] {
+	border-color: red;
+	animation: mail_dot_pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mail_dot_pulse {
+	0%, 100% { box-shadow: 0 0 4px 1px red; }
+	50% { box-shadow: 0 0 14px 5px red; }
+}
+
 /* Leave, site-type, now, assistant and the bird sit in a strip across the
    top-left of the menu; keep them a fixed square, side by side, and drop the
    app grid below them so nothing gets covered. (The grid needs the full width

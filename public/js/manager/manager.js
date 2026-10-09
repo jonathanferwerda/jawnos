@@ -1089,6 +1089,7 @@ function startMenuToggle(data) {
 					startMenuListify();
 					assistantIconInitializer();
 					taskbarDisplayer();
+					if (typeof mailDotPaint == 'function') { mailDotPaint(); }
 					st.attr('toggled', 'open');
 					startMenuCloser(35000);
 				}

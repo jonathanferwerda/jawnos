@@ -306,8 +306,9 @@ any '/watch/chat_received' => sub ($c) {
 		my ($db,$database,$sql) = &subs::database_grabber();
 		my $ticket = &subs::db_query('select uuid from tickets where name = ?', $contact);
 		my $contact_uuid = $ticket->hashes->[0]->{'uuid'};
-		&subs::db_insert('mailbox', {
-			uuid => &subs::random_string_creator(25),
+		my $muuid = &subs::random_string_creator(25);
+		my $mailbox_row = {
+			uuid => $muuid,
 			timestamp => &subs::rightNow(),
 			server_time => &subs::rightNow(),
 			body => $message,
@@ -320,7 +321,10 @@ any '/watch/chat_received' => sub ($c) {
 			team => $team || $gb::social_constructs->{'teams'}->{'def'},
 			person => $person || $gb::social_constructs->{'people'}->{'def'},
 			contact => $contact_uuid || $watch_settings->{'__specs'}->{'computer'}
-		});
+		};
+		&subs::db_insert('mailbox', $mailbox_row);
+		# the watch handed a message over: the browsers hear about it
+		&subs::mail_arrival({ c => $c, %{$mailbox_row} });
 		$c->render(json => { returner => $username . ": " . $message });
 	}
 	else {

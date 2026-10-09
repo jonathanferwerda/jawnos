@@ -1198,6 +1198,7 @@ function closeWindow(timestamp) {
 	if (app == 'twirl') {
 		twirlRunning = false;
 	}
+	if (app == 'mailbox' && typeof mailSocketClose == 'function') { mailSocketClose(); }
 	$('#window_' + timestamp ).remove();
 	$('#window_icon_' + timestamp).remove();
 	//pseudonymFreeSpaceFinder();

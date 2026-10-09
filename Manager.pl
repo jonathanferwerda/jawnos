@@ -15487,7 +15487,11 @@ post '/manager/mail/email/send' => sub($c) {
 		timestamp => $timestamp
 	});
 
-
+	# the letter goes out now rather than on the next tick of the timer: the row
+	# above is the record, not a queue. The session goes with it so the words
+	# just written are the words that decrypt, and a letter that fails waits in
+	# the outbox for the sweep to try again.
+	$result = &subs::email_sender($uuid, $c);
 
 	$c->render(json => $result);
 };
@@ -19484,21 +19488,16 @@ websocket '/mail/ws' => sub ($c) {
 	my $browser_tab_id = $c->param('browser_tab_id');
 
 	my $picker = eval { return decode_json $c->param('picker') } || {};
-	if ($c->param('phone') && $c->param('phone') ne 'null' && $c->param('phone') ne 'undefined') {
-		$gb::mailws->{$c->param('phone')}->{$browser_tab_id} = $c->tx;
-	}
-	elsif ($c->param('email') && $c->param('email') ne 'null' && $c->param('email') ne 'undefined') {
-		$gb::mailws->{$c->param('email')}->{$browser_tab_id} = $c->tx;
-	}
-	elsif ($c->param('mail_contact') && $c->param('mail_contact') ne 'null') {
-		$gb::mailws->{$c->param('mail_contact')}->{$browser_tab_id} = $c->tx;
-	}
-	elsif ($c->session('privilege') eq 'guest') {
-		$gb::mailws->{$c->session('ticket_uuid')}->{$browser_tab_id} = $c->tx;
-	}
-	else {
-		$gb::mailws->{$picker->{'people'}}->{$picker->{'accounts'}}->{$picker->{'projects'}}->{$picker->{'teams'}}->{$picker->{'clubs'}}->{$picker->{'communities'}}->{$browser_tab_id} = $c->tx;
-	}
+	# One entry per browser tab, carrying the address it is watching: a phone
+	# number, an email address, a contact, a guest's ticket, or the six social
+	# constructs a dial or list tab picked. The old registry nested the
+	# constructs as hash levels - people->accounts->projects->teams->clubs->
+	# communities - which left a sender no way to tell one shape from another;
+	# the address keeps that nest as plain data instead.
+	$gb::mailws->{$browser_tab_id} = {
+		tx => $c->tx,
+		address => &mailws_address($c, $picker)
+	};
 	my $name = $c->session('name');
 	$c->on(message => sub ($mws, $msg) {
 		my $m = decode_json $msg;
@@ -19551,24 +19550,29 @@ websocket '/mail/ws' => sub ($c) {
 			my $e_msg = &subs::note_encrypter(&subs::suds_grabber(),$m->{'msg'});
 
 			my $picker = eval { return decode_json $m->{'picker'} } || {};
-			if ($m->{'mail_contact'}) { $picker = {} };
+			# the six social constructs are defaulted the way the mailbox reads
+			# them, so a message sent from a tab with its pickers hidden still
+			# lands on the thread the reader will open; a message addressed to a
+			# phone, an email or a contact keeps its construct columns empty
+			my $constructs = &mailws_constructs($picker);
+			if ($m->{'mail_contact'} || $m->{'phone'} || $m->{'email'}) { $constructs = {}; }
 			my ($db,$database,$sql) = &subs::database_grabber();
 			my $msg = {
 				uuid => $m->{'uuid'},
 				timestamp => $m->{'timestamp'},
 				server_time => &subs::rightNow(),
 				body => $e_msg,
-				project => $picker->{'projects'},
-				account => $picker->{'accounts'},
-				club => $picker->{'clubs'},
-				team => $picker->{'teams'},
-				community => $picker->{'communities'},
+				project => $constructs->{'projects'},
+				account => $constructs->{'accounts'},
+				club => $constructs->{'clubs'},
+				team => $constructs->{'teams'},
+				community => $constructs->{'communities'},
 				manager_file => $m->{'manager_file'},
 				status => 'sent',
 				contact => $m->{'mail_contact'},
 				phone => $m->{'phone'},
 				email => $m->{'email'},
-				person => $picker->{'people'},
+				person => $constructs->{'people'},
 				conversation_uuid => $m->{'conversation_uuid'}
 			};
 			&subs::db_insert('mailbox', $msg);
@@ -19577,97 +19581,77 @@ websocket '/mail/ws' => sub ($c) {
 				'm' => $m,
 				'me' => $me
 			);
-			$msg = encode_json $m;
+			# one sender carries the message to every address shape the registry
+			# can hold: a phone number, an email address, a contact (a ticket or
+			# the pen), a guest's ticket, or the nested social construct chain a
+			# dial or list tab is watching
+			&mailws_sender($m);
 			if ($m->{'phone'}) {
-				foreach my $bti ( keys %{$gb::mailws->{$m->{'phone'}}} ) {
-					$gb::mailws->{$m->{'phone'}}->{$bti}->send($msg);
-				}
 				&sms_message_send($m->{'phone'},$m->{'msg'});
 			}
-			elsif ($m->{'email'}) {
-				foreach my $bti ( keys %{$gb::mailws->{$m->{'email'}}} ) {
-					$gb::mailws->{$m->{'email'}}->{$bti}->send($msg);
-				}
-			}
-			elsif ($m->{'mail_contact'}) {
-				foreach my $bti ( keys %{$gb::mailws->{$m->{'mail_contact'}}} ) {
-					$gb::mailws->{$m->{'mail_contact'}}->{$bti}->send($msg);
-				}
-				if ($m->{'mail_contact'} eq 'pen') {
-					my $mesg = {
-						uuid => &subs::random_string_creator(25),
-						conversation_uuid => $m->{'conversation_uuid'},
-						timestamp => &subs::rightNow(),
-						server_time => &subs::rightNow(),
-						manager_file => &subs::manager_file_maker('pen'),
+			if ($m->{'mail_contact'} && $m->{'mail_contact'} eq 'pen') {
+				my $mesg = {
+					uuid => &subs::random_string_creator(25),
+					conversation_uuid => $m->{'conversation_uuid'},
+					timestamp => &subs::rightNow(),
+					server_time => &subs::rightNow(),
+					manager_file => &subs::manager_file_maker('pen'),
+					status => 'public',
+					contact => 'pen'
+				};
+				&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
+				&subs::db_insert('mailbox', $mesg);
+				&subs::subprocessor(sub {
+					$m->{'msg_data'} = $mesg;
+					$m->{'uuid'} = $mesg->{'uuid'};
+					my ($response_text,$attachments) = &subs::pen_message($m);
+					&subs::db_update('mailbox', {
+						body => $response_text,
 						status => 'public',
-						contact => 'pen'
-					};
-					&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
-					&subs::db_insert('mailbox', $mesg);
-					&subs::subprocessor(sub {
-						$m->{'msg_data'} = $mesg;
-						$m->{'uuid'} = $mesg->{'uuid'};
-						my ($response_text,$attachments) = &subs::pen_message($m);
-						&subs::db_update('mailbox', {
-							body => $response_text,
-							status => 'public',
-							server_time => &subs::rightNow(),
-							attachments => encode_json $attachments
-						}, { uuid => $mesg->{'uuid'} });
-						$log->info(Dumper $mesg);
-						my $returner = encode_json $mesg;
-						print $returner;
-						$mesg->{'envelope'} = $c->render_to_string(
-							template => 'mail/message',
-							'm' => $mesg,
-							'me' => $me
-						);
-						$mesg->{'type'} = 'message';
-						my $pmsg = encode_json $mesg;
-						&Websocket::mail_send($mesg);
-
-						&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
-
-					}, { name => 'Mail Assistant' });
+						server_time => &subs::rightNow(),
+						attachments => encode_json $attachments
+					}, { uuid => $mesg->{'uuid'} });
+					$log->info(Dumper $mesg);
+					my $returner = encode_json $mesg;
+					print $returner;
 					$mesg->{'envelope'} = $c->render_to_string(
 						template => 'mail/message',
 						'm' => $mesg,
 						'me' => $me
 					);
 					$mesg->{'type'} = 'message';
-					my $pmsg = encode_json $mesg;
-					foreach my $bti ( keys %{$gb::mailws->{$m->{'mail_contact'}}} ) {
-						$gb::mailws->{$m->{'mail_contact'}}->{$bti}->send($pmsg);
-					}
-				}
+					&Websocket::mail_send($mesg);
+
+					&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
+
+				}, { name => 'Mail Assistant' });
+				$mesg->{'envelope'} = $c->render_to_string(
+					template => 'mail/message',
+					'm' => $mesg,
+					'me' => $me
+				);
+				$mesg->{'type'} = 'message';
+				# the placeholder wears the pen's own contact address; the reply
+				# comes back from the forked worker over the mail socket
+				&mailws_sender($mesg);
 			}
-			elsif ($c->session('privilege') eq 'guest') {
-				my $t_uuid = $c->session('ticket_uuid');
-				foreach my $bti ( keys %{$gb::mailws->{$t_uuid}} ) {
-					$gb::mailws->{$m->{'mail_contact'}}->{$bti}->send($msg);
-				}
-			}
-			else {
-				foreach my $bti ( keys %{$gb::mailws->{$picker->{'people'}}->{$picker->{'accounts'}}->{$picker->{'projects'}}->{$picker->{'teams'}}->{$picker->{'clubs'}}->{$picker->{'communities'}}} ) {
-					$gb::mailws->{$picker->{'people'}}->{$picker->{'accounts'}}->{$picker->{'projects'}}->{$picker->{'teams'}}->{$picker->{'clubs'}}->{$picker->{'communities'}}->{$bti}->send($msg);
-				}
+			elsif (!$m->{'phone'} && !$m->{'email'} && !$m->{'mail_contact'} && $c->session('privilege') ne 'guest') {
 				my $mail_msg = {
 					uuid => $m->{'uuid'},
 					timestamp => $m->{'timestamp'},
 					server_time => &subs::rightNow(),
 					body => $m->{'msg'},
-					project => $picker->{'projects'},
-					account => $picker->{'accounts'},
-					club => $picker->{'clubs'},
-					team => $picker->{'teams'},
-					community => $picker->{'communities'},
+					project => $constructs->{'projects'},
+					account => $constructs->{'accounts'},
+					club => $constructs->{'clubs'},
+					team => $constructs->{'teams'},
+					community => $constructs->{'communities'},
 					manager_file => $m->{'manager_file'},
 					status => 'public',
 					contact => $m->{'mail_contact'},
 					phone => $m->{'phone'},
 					email => $m->{'email'},
-					person => $picker->{'people'}
+					person => $constructs->{'people'}
 				};
 				my $remote_machines = &subs::db_select('remote_machines', undef, { connection => 'active' })->hashes;
 				my $form_data = {
@@ -19719,41 +19703,55 @@ websocket '/mail/ws' => sub ($c) {
 		}
 		elsif ($m->{'type'} eq 'refresher') {
 			my ($db,$database,$sql) = &subs::database_grabber();
-			my $picker = eval { return decode_json $m->{'picker'} } || {};
-
+			# the tab's own address is the thread to catch up on - the client
+			# sends nothing but the timestamp of the last message it saw
+			my $address = $gb::mailws->{$browser_tab_id}->{'address'} || {};
+			my $picker = $address->{'picker'} || {};
+			my $last_message = $m->{'last_message'} || 0;
 			my $q;
-			if ($m->{'phone'}) {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and phone = ? order by timestamp desc LIMIT 20', $m->{'last_message'}, $m->{'phone'});
+			if ($address->{'phone'}) {
+				$q = &subs::db_query('select * from mailbox where timestamp > ? and phone = ? order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
 			}
-			elsif ($m->{'mail_contact'}) {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $m->{'last_message'}, $m->{'mail_contact'});
+			elsif ($address->{'email'}) {
+				$q = &subs::db_query('select * from mailbox where timestamp > ? and email = ? order by timestamp desc LIMIT 20', $last_message, $address->{'email'});
+			}
+			elsif ($address->{'contact'} || $address->{'ticket'}) {
+				my $contact = $address->{'contact'} || $address->{'ticket'};
+				$q = &subs::db_query('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $last_message, $contact);
 			}
 			else {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and  project=? and account =? and community = ? and club = ? and team = ? and person = ? order by timestamp desc LIMIT 20',
-					$m->{'last_message'}, $picker->{'projects'}, $picker->{'accounts'}, $picker->{'community'}, $picker->{'club'}, $picker->{'team'}, $picker->{'person'}
+				$q = &subs::db_query('select * from mailbox where timestamp > ? and project=? and account =? and community = ? and club = ? and team = ? and person = ? order by timestamp desc LIMIT 20',
+					$last_message, $picker->{'projects'}, $picker->{'accounts'}, $picker->{'communities'}, $picker->{'clubs'}, $picker->{'teams'}, $picker->{'people'}
 				);
 			}
 			my $messaging = $q->hashes;
 			foreach my $mess ( @{$messaging} ) {
-				$mess->{'body'} = &subs::note_decrypter($c->session('suds'), $mess->{'body'}, $mess->{'ost'});
+				if ($mess->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
+					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter($c->session('suds'), $mess->{'body'}, $mess->{'timestamp'}), $mess->{'uuid'});
+				}
+				else {
+					$mess->{'body'} = &subs::note_decrypter(&subs::suds_grabber(), $mess->{'body'}, $mess->{'ost'});
+				}
+				if ($mess->{'subject'}) {
+					$mess->{'subject'} = &subs::note_decrypter($c->session('suds'), $mess->{'subject'}, $mess->{'ost'});
+				}
+				$mess->{'decrypted'} = 'yes';
+				$mess->{'envelope'} = $c->render_to_string(
+					template => 'mail/message',
+					'm' => $mess,
+					'me' => $me
+				);
 			}
-			$messaging = encode_json { messages => $messaging, 'type' => 'refresher' };
-			$mws->send($messaging);
+			$mws->send(encode_json { messages => $messaging, 'type' => 'refresher' });
 		}
 	});
 	$c->on(finish => sub ($c, $code, $reason) {
-		$gb::mailws->{$browser_tab_id} = undef;
-		if ($c->param('phone') && $c->param('phone') ne 'null') {
-			$gb::mailws->{$c->param('phone')}->{$browser_tab_id} = undef;
-		}
-		elsif ($c->param('mail_contact') && $c->param('mail_contact') ne 'null') {
-			$gb::mailws->{$c->param('mail_contact')}->{$browser_tab_id} = undef;
-		}
-		elsif ($c->session('privilege') eq 'guest') {
-			$gb::mailws->{$c->session('ticket_uuid')}->{$browser_tab_id} = undef;
-		}
-		else {
-			$gb::mailws->{$picker->{'people'}}->{$picker->{'accounts'}}->{$picker->{'projects'}}->{$picker->{'teams'}}->{$picker->{'clubs'}}->{$picker->{'communities'}}->{$browser_tab_id} = undef;
+		# a reconnect - a wake, a new section - registers the new connection
+		# before this older one is noticed to be gone: only the connection
+		# still on duty may take the tab's entry away
+		my $entry = $gb::mailws->{$browser_tab_id};
+		if ($entry && $entry->{'tx'} && $entry->{'tx'} == $c->tx) {
+			delete $gb::mailws->{$browser_tab_id};
 		}
 	});
 };
@@ -19766,6 +19764,9 @@ post '/mail/msg' => sub($c) {
 		my $pre_msg = &subs::db_query('select uuid from mailbox where uuid=? and manager_file=?', $msg->{'uuid'}, $msg->{'manager_file'})->hashes->[0];
 		unless ($pre_msg->{'uuid'}) {
 			&subs::db_insert('mailbox', $msg);
+			# a neighbour handed a message over: the browsers hear about it
+			# here, not only on the machine the letter started from
+			&subs::mail_arrival({ c => $c, %{$msg} });
 			my $remote_machines = &subs::db_select('remote_machines', undef, { connection => 'active' })->hashes;
 			my $form_data = {
 				signatorial => &subs::signatorial_designer(),
@@ -19821,10 +19822,7 @@ sub mail_depublicizer($c) {
 			'm' => $p,
 			'me' => $me
 		);
-		my $message = encode_json $messenger;
-		foreach my $bti ( keys %{$gb::mailws->{$p->{'person'}}->{$p->{'account'}}->{$p->{'project'}}->{$p->{'team'}}->{$p->{'club'}}->{$p->{'community'}}} ) {
-			$gb::mailws->{$p->{'person'}}->{$p->{'account'}}->{$p->{'project'}}->{$p->{'team'}}->{$p->{'club'}}->{$p->{'community'}}->{$bti}->send($message);
-		}
+		&mailws_sender($messenger);
 	}
 
 }
@@ -20768,20 +20766,27 @@ websocket '/manager/ws' => sub ($c) {
 		}
 	});
 	$c->on(finish => sub ($c,$code,$reason) {
-		&subs::db_update('websockets', { 'type' => 'closed'}, { app => $app, browser_tab_id => $browser_tab_id });
-		delete $gb::ws->{$app}->{$browser_tab_id};
-		&Websocket::send('server', { magic_wand => $browser_tab_id, action => 'closed', timestamp => $timestamp });
-		if ($app eq 'music') {
-			if ($log_me eq 'on') {
-				my $appts = &subs::db_query('select * from appointments where source_uuid = ? and app = ? and type = ? order by timestamp desc limit 30', $browser_tab, $computer_name,'start')->hashes;
-				foreach my $appt ( @{$appts} ) {
-					&appointment_writer($c, {
-						type => 'stop',
-						uuid => $appt->{'uuid'},
-						app => $appt->{'app'}
-					});
-					&subs::appt_header_printer({ app => $appt->{'app'} });
-					&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
+		# A resume that rebuilds sockets (a phone waking) can register a new
+		# connection for the same tab before this older, silently dead one is
+		# noticed to be gone. Only a connection still on duty may clear the tab
+		# out and log the stop, or the fresh socket goes deaf.
+		my $on_duty = $gb::ws->{$app}->{$browser_tab_id};
+		if ($on_duty && $on_duty == $c->tx) {
+			&subs::db_update('websockets', { 'type' => 'closed'}, { app => $app, browser_tab_id => $browser_tab_id });
+			delete $gb::ws->{$app}->{$browser_tab_id};
+			&Websocket::send('server', { magic_wand => $browser_tab_id, action => 'closed', timestamp => $timestamp });
+			if ($app eq 'music') {
+				if ($log_me eq 'on') {
+					my $appts = &subs::db_query('select * from appointments where source_uuid = ? and app = ? and type = ? order by timestamp desc limit 30', $browser_tab, $computer_name,'start')->hashes;
+					foreach my $appt ( @{$appts} ) {
+						&appointment_writer($c, {
+							type => 'stop',
+							uuid => $appt->{'uuid'},
+							app => $appt->{'app'}
+						});
+						&subs::appt_header_printer({ app => $appt->{'app'} });
+						&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
+					}
 				}
 			}
 		}
@@ -20968,52 +20973,61 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 
 	my $mailfile = $gb::tmp_dir . '/ws/mailws';
 
-	Mojo::IOLoop->server({ path => $mailfile } => sub ($loop,$stream,$id) {
-		$stream->handle->autoflush(1);
-		$stream->high_water_mark(8 * 1024 * 1024);
-		$buffers{$id} = '';
-		$stream->on(read => sub ($stream, $bytes) {
-			$buffers{$id} .= $bytes;
+	my $mailws_server;
+	my $mailws_listener = sub {
+		unlink $mailfile if -e $mailfile;
+		$mailws_server = Mojo::IOLoop->server({ path => $mailfile } => sub ($loop,$stream,$id) {
+			$stream->handle->autoflush(1);
+			$stream->high_water_mark(8 * 1024 * 1024);
+			$buffers{$id} = '';
+			$stream->on(read => sub ($stream, $bytes) {
+				$buffers{$id} .= $bytes;
 
 
-			while (1) {
-				last if length($buffers{$id}) < 4;
+				while (1) {
+					last if length($buffers{$id}) < 4;
 
-	      my $payload_length = unpack('N', substr($buffers{$id}, 0, 4));
+			      my $payload_length = unpack('N', substr($buffers{$id}, 0, 4));
 
-	      # If we don't have the full payload yet, wait for next event loop tick
-	      last if length($buffers{$id}) < (4 + $payload_length);
+			      # If we don't have the full payload yet, wait for next event loop tick
+			      last if length($buffers{$id}) < (4 + $payload_length);
 
 
-	      # Extract header and data cleanly using 4-argument substr for speed
-	      substr($buffers{$id}, 0, 4, '');
-	      my $sereal_blob = substr($buffers{$id}, 0, $payload_length, '');
-	      my $m = eval { $decoder->decode($sereal_blob) };
-        if ($@) {
-            warn "Worker $$: Failed to parse JSON: $@";
-            next;
-        }
+			      # Extract header and data cleanly using 4-argument substr for speed
+			      substr($buffers{$id}, 0, 4, '');
+			      my $sereal_blob = substr($buffers{$id}, 0, $payload_length, '');
+			      my $m = eval { $decoder->decode($sereal_blob) };
+		        if ($@) {
+		            warn "Worker $$: Failed to parse mail message: $@";
+		            next;
+		        }
 
-				my $c = &subs::controller_builder();
+					# one sender matches it against every tab's address
+					my $count = &mailws_sender($m);
 
-				my $pmsg = encode_json $m;
-				if ($m->{'mail_contact'}) {
-					foreach my $bti ( keys %{$gb::mailws->{$m->{'mail_contact'}}} ) {
-						$gb::mailws->{$m->{'mail_contact'}}->{$bti}->send($pmsg);
+					# mail_arrival marked what the server just accepted: the tab socket
+					# hears it for the start menu dot, and when no mailbox is watching
+					# that thread the regular notification speaks
+					if ($m->{'arrival'}) {
+						&Websocket::send('tab', { type => 'mail_arrival', uuid => $m->{'uuid'}, message => $m->{'arrival_message'}, timestamp => $m->{'timestamp'} || &subs::rightNow() });
+						unless ($count) {
+							&notification_sender({ app => 'mailbox', role => 'all', title => 'Mail', message => $m->{'arrival_message'} || 'New mail', image => '/images/decipherable/envelope.png' });
+						}
 					}
+
+				  $stream->write($m->{'uuid'});
 				}
-
-
-
-
-
-
-			  $stream->write($m->{'uuid'});
-			}
-    });
-		$stream->on(close => sub {
-				delete $buffers{$id};
-		});
+		    });
+				$stream->on(close => sub {
+						delete $buffers{$id};
+				});
+			});
+	};
+	$mailws_listener->();
+	# like the per-app sockets above, the mail socket is put back up if it dies
+	Mojo::IOLoop->recurring(5 => sub {
+		my $is_running = defined Mojo::IOLoop->acceptor($mailws_server) ? 1 : 0;
+		if (!$is_running) { $mailws_listener->(); }
 	});
 	sub websocket_close($app) {
 		$app = $app;
@@ -21103,6 +21117,103 @@ sub websocket_sender($wsm) {
 
 	}
 	return $return_msg;
+}
+
+# The six social constructs with every value filled: what the client leaves
+# out falls back to the same default the mailbox reader reaches for, so a tab
+# with its pickers hidden (a phone) still has an address a message can find.
+sub mailws_constructs($picker) {
+	my $constructs = {};
+	foreach my $k ( keys %{$gb::social_constructs} ) {
+		my $value = $picker->{$k};
+		$value = undef unless defined $value && length $value;
+		$constructs->{$k} = $value || $gb::social_constructs->{$k}->{'def'};
+	}
+	return $constructs;
+}
+
+# What one mail tab is watching when it connects: a guest watches its ticket,
+# everyone else watches whichever of a phone number, an email address, a
+# contact or a social construct chain their section put in the url.
+sub mailws_address($c, $picker) {
+	my $address = {};
+	if ($c->session('privilege') eq 'guest' && $c->session('ticket_uuid')) {
+		$address->{'ticket'} = $c->session('ticket_uuid');
+	}
+	else {
+		my $phone = $c->param('phone');
+		my $email = $c->param('email');
+		my $contact = $c->param('mail_contact');
+		if ($phone && $phone ne 'null' && $phone ne 'undefined') {
+			$address->{'phone'} = $phone;
+		}
+		elsif ($email && $email ne 'null' && $email ne 'undefined') {
+			$address->{'email'} = $email;
+		}
+		elsif ($contact && $contact ne 'null') {
+			$address->{'contact'} = $contact;
+		}
+		else {
+			$address->{'picker'} = &mailws_constructs($picker);
+		}
+	}
+	return $address;
+}
+
+# The constructs a message is addressed to - undef when it wears a phone, an
+# email or a contact instead.
+sub mailws_message_constructs($m) {
+	return undef if $m->{'phone'} || $m->{'email'} || $m->{'mail_contact'} || $m->{'contact'};
+	my $picker = $m->{'picker'};
+	$picker = eval { return decode_json $picker } unless ref $picker eq 'HASH';
+	$picker = {} unless ref $picker eq 'HASH';
+	return &mailws_constructs($picker);
+}
+
+sub mailws_address_matches($address, $m, $constructs) {
+	return 0 unless $address;
+	if ($m->{'phone'}) {
+		return (defined $address->{'phone'} && $address->{'phone'} eq $m->{'phone'}) ? 1 : 0;
+	}
+	if ($m->{'email'}) {
+		return (defined $address->{'email'} && lc $address->{'email'} eq lc $m->{'email'}) ? 1 : 0;
+	}
+	my $contact = $m->{'mail_contact'} || $m->{'contact'};
+	if ($contact) {
+		return 1 if defined $address->{'contact'} && $address->{'contact'} eq $contact;
+		return 1 if defined $address->{'ticket'} && $address->{'ticket'} eq $contact;
+		return 0;
+	}
+	return 0 unless $address->{'picker'} && $constructs;
+	foreach my $k ( keys %{$constructs} ) {
+		my $watched = $address->{'picker'}->{$k};
+		return 0 unless defined $watched && $watched eq $constructs->{$k};
+	}
+	return 1;
+}
+
+# Deliver one mail message to every tab it is addressed to. The registry is
+# flat now - one entry per browser tab - so the address does the matching
+# instead of a hand-walked nest of hash levels, and every door a message can
+# come through (a browser, the mail unix socket, the depublicizer) ends up
+# here.
+sub mailws_sender($m) {
+	my $constructs = &mailws_message_constructs($m);
+	my $pmsg = encode_json $m;
+	my $sent = 0;
+	foreach my $bti ( keys %{$gb::mailws} ) {
+		my $entry = $gb::mailws->{$bti};
+		next unless $entry && $entry->{'tx'};
+		next unless &mailws_address_matches($entry->{'address'}, $m, $constructs);
+		my $ok = eval { $entry->{'tx'}->send($pmsg); 1 };
+		unless ($ok) {
+			warn "Worker $$: mail send failed for $bti: $@";
+			delete $gb::mailws->{$bti};
+			next;
+		}
+		$sent++;
+	}
+	return $sent;
 }
 
 

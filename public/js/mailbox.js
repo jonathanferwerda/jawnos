@@ -4,6 +4,33 @@ $(document).on('click', '#mailbox_toggle', function() {
 	mailMaker();
 });
 
+// Mail the server accepted rings the start menu's envelope until the mailbox is
+// opened. The state lives in localStorage rather than on the element because the
+// menu's markup is fetched fresh on every open, so the ring has to be painted
+// back after each build (manager.js calls mailDotPaint when the menu lands).
+function mailDotSet(message) {
+	localStorage.setItem('mail_waiting', message || 'New mail');
+	mailDotPaint();
+}
+
+function mailDotPaint() {
+	var icon = $('#mailbox_toggle');
+	if (!icon.length) { return; }
+	if (localStorage.getItem('mail_waiting')) { icon.attr('waiting', 'yes'); }
+	else { icon.removeAttr('waiting'); }
+}
+
+function mailDotClear() {
+	localStorage.removeItem('mail_waiting');
+	$('#mailbox_toggle').removeAttr('waiting');
+}
+
+// the tab socket's announcement: the server accepted a letter, so the envelope
+// rings until the mailbox is opened
+function mailArrival(data) {
+	mailDotSet(data ? data['message'] : '');
+}
+
 function mailMaker(incomingData) {
 	if (!incomingData) { incomingData = {}; }
 	var jData = JSON.stringify(incomingData);
@@ -30,6 +57,7 @@ function mailMaker(incomingData) {
 				windowDrawerCloser('mailbox');
 				mailWebSocketStart();
 				mailScrollBottom('load');
+				mailDotClear();
 			}
 			else {
 				var mb = $(response.contents).find('#mailbox');
@@ -709,42 +737,70 @@ function sendIt() {
 
 var mailws = undefined;
 var mailwsInterval;
+var mailwsLastAnswer = 0;
+var mailwsSignature = '';
+// the echo of each heartbeat is the proof the socket is alive; a dead one
+// still reads readyState 1, so three missed beats call it dead
+var mailwsStaleAfter = 6000;
 var last_mail_message = '';
+
+// What the socket should be registered as: the section decides whether the tab
+// watches a phone number, an email address, a contact, the pen or the social
+// construct chain. A guest has no sections and the server gives those sockets
+// their ticket, so nothing needs to be sent for them.
+function mailAddressGrabber() {
+	var section = $('.mail_subsection.active').attr('section');
+	var address = {
+		section: section || 'guest',
+		picker: JSON.stringify(mail_picker()),
+		mail_contact: '',
+		phone: '',
+		email: ''
+	};
+	if (section == 'pen') {
+		address.mail_contact = 'pen';
+	}
+	else if (section == 'sms') {
+		address.phone = localStorage.getItem('mail_phone') || '';
+	}
+	else if (section == 'email') {
+		address.email = localStorage.getItem('mail_email') || '';
+	}
+	else if (section == 'tickets') {
+		address.mail_contact = localStorage.getItem('mail_contact') || '';
+	}
+	return address;
+}
 
 function mailWebSocketStart() {
 
 	var timestamp = Date.now();
-	if (typeof mailws == 'object') {
-		if (mailws.readyState == 1) {
+	var address = mailAddressGrabber();
+	var signature = JSON.stringify(address);
+	if (typeof mailws == 'object' && mailws) {
+		// an open socket watching the same address is already right; one still
+		// watching the address of the section that was left is rebuilt
+		if (mailws.readyState == 1 && signature == mailwsSignature) {
 			return true;
 		}
-	}
-	if (typeof mailws == 'object') {
-		if (mailws.readyState != 1) {
-			mailWebSocketStop();
-		}
+		// stop rebuilds the socket itself, so this call is done either way
+		mailWebSocketStop();
+		return true;
 	}
 
 	clearInterval(mailwsInterval);
+	mailwsSignature = signature;
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
 	var browser_tab = localStorage.getItem('browser_tab') || bt;
-	var picked = JSON.stringify(mail_picker());
-	var mail_contact = localStorage.getItem('mail_contact');
-	var phone;
-	if ($('.mail_subsection.active').attr('section') == 'sms') {
-		phone = localStorage.getItem('mail_phone');
-	}
-	var email;
-	if ($('.mail_subsection.active').attr('section') == 'email') {
-		email = localStorage.getItem('mail_email');
-	}
-	mailws = new WebSocket(mail_ws_url + '?timestamp=' + timestamp + '&browser_tab=' + browser_tab + '&browser_tab_id=' + browser_tab_id + '&picker=' + picked + '&mail_contact=' + mail_contact + '&phone=' + phone + '&email=' + email);
-	console.log('ws+() mail at ' + mail_ws_url + ' ' + mail_contact);
+	mailws = new WebSocket(mail_ws_url + '?timestamp=' + timestamp + '&browser_tab=' + encodeURIComponent(browser_tab) + '&browser_tab_id=' + encodeURIComponent(browser_tab_id) + '&picker=' + encodeURIComponent(address.picker) + '&mail_contact=' + encodeURIComponent(address.mail_contact) + '&phone=' + encodeURIComponent(address.phone) + '&email=' + encodeURIComponent(address.email));
+	mailwsLastAnswer = Date.now();
+	console.log('ws+() mail at ' + mail_ws_url + ' ' + address.mail_contact);
 	mailws.onopen = function (event) {
+		mailwsLastAnswer = Date.now();
 		var sender = JSON.stringify({ type: 'refresher', 'last_message': last_mail_message });
 		mailws.send(sender);
 		mailwsInterval = setInterval(function() {
-			if (mailws.readyState != 1) {
+			if (typeof mailws != 'object' || !mailws || mailws.readyState != 1 || mailWebSocketStale()) {
 				mailWebSocketStop();
 			}
 			else {
@@ -760,19 +816,34 @@ function mailWebSocketStart() {
 		},2000);
 	};
 	mailws.onmessage = function (event) {
+		mailwsLastAnswer = Date.now();
 		var data = JSON.parse(event.data);
 		if (data.type == 'message') {
-			var data = JSON.parse(event.data);
-			$('#mailbox').append(data.envelope);
+			if (data.envelope) {
+				// the pen's reply arrives after its placeholder, so a uuid already
+				// on screen is replaced instead of doubled
+				var existing = $('.mailbox_message[uuid="' + data.uuid + '"]');
+				if (existing.length > 0) {
+					existing.replaceWith(data.envelope);
+				}
+				else {
+					$('#mailbox').append(data.envelope);
+				}
+			}
 			mailScrollBottom();
 			last_mail_message = Date.now();
 			appointment_chron();
 		}
 		else if (data.type == 'refresher') {
+			// messages that arrived while the socket was down, each with its own
+			// envelope rendered by the server
 			$.each(data.messages, function(i,v) {
-				$('#mailbox').append(data.envelope);
-				mailScrollBottom();
+				if (v.envelope) {
+					$('#mailbox').append(v.envelope);
+				}
+				last_mail_message = Date.now();
 			});
+			mailScrollBottom();
 			appointment_chron();
 		}
 		else if (data.type == 'writing') {
@@ -792,9 +863,37 @@ function mailWebSocketStart() {
 	}
 }
 
+function mailWebSocketStale() {
+	return mailwsLastAnswer && (Date.now() - mailwsLastAnswer) > mailwsStaleAfter;
+}
+
+// A phone that slept comes back with a socket that reads open and sends into
+// the void, so a wake puts it back on duty at once instead of waiting for the
+// two second pass to notice.
+function mailWebSocketWake() {
+	if (document.hidden) { return; }
+	if (typeof mailws != 'object' || !mailws) { return; }
+	if (mailws.readyState != 1 || mailWebSocketStale()) {
+		mailWebSocketStop();
+	}
+}
+
+document.addEventListener('visibilitychange', function() { if (!document.hidden) { mailWebSocketWake(); } });
+window.addEventListener('focus', mailWebSocketWake);
+// last resort: the first tap after a wake that slipped past every event
+document.addEventListener('pointerdown', mailWebSocketWake, { capture: true, passive: true });
+
 function mailWebSocketStop() {
 	if ( mailws ) { mailws.close(); mailws = undefined;	delete mailws; };
-		mailWebSocketStart();
+	mailWebSocketStart();
+}
+
+// Closing the mailbox window takes its socket off duty too: the server counts a
+// thread watched by a live socket as read, so closing the window is what lets
+// the regular notification speak when the next letter lands.
+function mailSocketClose() {
+	clearInterval(mailwsInterval);
+	if (mailws) { mailws.close(); mailws = undefined; delete mailws; }
 }
 
 

@@ -35,6 +35,70 @@ function wsStatusChecker() {
 
 var wsStatusInterval = setInterval(wsStatusChecker, 3000);
 
+// A phone that was locked comes back with sockets that still read readyState 1
+// and send into the void. The only honest test is when the server last answered
+// one, so that is what marks a socket dead here.
+function websocketLooksDead() {
+	var apps = Object.keys(ws);
+	if (apps.length == 0) { return 1; }
+	for (var i = 0; i < apps.length; i++) {
+		var socket = ws[apps[i]];
+		if (socket && socket.readyState == 0) { continue; } // still shaking hands
+		if (!socket || socket.readyState != 1) { return 1; }
+		if (socket['stayingAlive'] && Date.now() > (socket['stayingAlive'] + (stayingAliveInterval * 2))) { return 1; }
+	}
+	return 0;
+}
+
+var lastSocketRebuild = 0;
+// There is no way to tell a dead socket from a live one until it answers, so
+// after a real absence the sockets are torn down and rebuilt at once - that is
+// what makes the resume instantaneous. Focus and visibility arrive together,
+// so back to back rebuilds are ignored.
+function websocketRebuild() {
+	if (Date.now() - lastSocketRebuild < 1000) { return; }
+	lastSocketRebuild = Date.now();
+	Object.keys(ws).forEach(function(app) {
+		clearInterval(heartbeat[app]);
+		delete heartbeat[app];
+		if (ws[app] && ws[app].close) { ws[app].close(); }
+		ws[app] = null;
+		delete ws[app];
+	});
+	websocketStart();
+}
+
+// The page is back: rebuild dead sockets, restart the heartbeats on live ones,
+// and put the status check on duty again.
+function websocketWake() {
+	windowVisible = 1;
+	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, 3000); }
+	var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
+	pageHiddenAt = 0;
+	if (away > resumeRebuildAfter || websocketLooksDead()) {
+		websocketRebuild();
+	}
+	else {
+		$.each(ws, function(app, socket) {
+			if (socket && ( socket.readyState == 1 || socket['status'] == 'alive' || socket['status'] == 'open' )) {
+				heartbeatStart(app);
+			}
+		});
+	}
+	// a socket that had already gone stale before the page was hidden is
+	// caught right here rather than on the next three second pass
+	wsStatusChecker();
+}
+
+// A wake does not always show up as visibilitychange: a locked phone can come
+// back through the bfcache as pageshow, through focus, through the page
+// lifecycle's resume, or when the network returns. Any one of them can be the
+// first sign of life, so any one of them may carry the rebuild.
+function websocketWakeIfNeeded() {
+	if (document.hidden) { return; }
+	if (websocketLooksDead() || !wsStatusInterval) { websocketWake(); }
+}
+
 // Timers are what chew through phone batteries. When the page isn't visible
 // there is nothing to animate or report, so stop the heartbeats and the status
 // check entirely and only restart them once we're back.
@@ -55,34 +119,17 @@ document.addEventListener('visibilitychange', function() {
 		clearTimeout(heartbeater);
 	}
 	else {
-		windowVisible = 1;
-		if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, 3000); }
-		var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
-		if (away > resumeRebuildAfter) {
-			// the sockets are probably dead and there is no way to tell a dead one
-			// from a live one until it answers, so they are torn down and rebuilt
-			// at once - that is what makes the resume instantaneous
-			Object.keys(ws).forEach(function(app) {
-				clearInterval(heartbeat[app]);
-				delete heartbeat[app];
-				if (ws[app] && ws[app].close) { ws[app].close(); }
-				ws[app] = null;
-				delete ws[app];
-			});
-			websocketStart();
-		}
-		else {
-			$.each(ws, function(app, socket) {
-				if (socket && ( socket.readyState == 1 || socket['status'] == 'alive' || socket['status'] == 'open' )) {
-					heartbeatStart(app);
-				}
-			});
-		}
-		// a socket that had already gone stale before the page was hidden is
-		// caught right here rather than on the next three second pass
-		wsStatusChecker();
+		websocketWake();
 	}
 });
+
+document.addEventListener('resume', websocketWakeIfNeeded);
+window.addEventListener('pageshow', websocketWakeIfNeeded);
+window.addEventListener('focus', websocketWakeIfNeeded);
+window.addEventListener('online', websocketWakeIfNeeded);
+// last resort: a wake that slipped past every event still gets caught by the
+// first tap, before the tap's own handlers can send into a dead socket
+document.addEventListener('pointerdown', websocketWakeIfNeeded, { capture: true, passive: true });
 
 function websocketStart(appt,address) {
 
@@ -150,7 +197,16 @@ function wsOpener(event,app,origin) {
 	}
 	var closer = $('.close_appointment[app="' + app + '"]');
 	closer.css({'background-color':'green'});
+	// a socket that just (re)opened has missed whatever was sent while it was
+	// gone: for the tab, forget the layout throttle so the first beat hands the
+	// window state - header timestamps included - back to the server
+	if (app == 'tab') {
+		windowWsWindows = '';
+		windowWsMouseMove = {};
+	}
 	heartbeatStart(app);
+	// beat once now so a rebuilt socket catches up on the spot, not in two seconds
+	heartbeatSend(app);
 }
 
 // (Re)start the liveness heartbeat for one socket. Called when a socket opens
@@ -158,80 +214,86 @@ function wsOpener(event,app,origin) {
 function heartbeatStart(app) {
 	clearInterval(heartbeat[app]);
 	heartbeat[app] = window.setInterval(function () {
-		var apper = app.split('@')[0];
-		var now = Date.now();
-		var browser_tab_id = sessionStorage.getItem('browser_tab_id') || '';
-		var browser_tab = localStorage.getItem('browser_tab') || '';
-		var uA = navigator.userAgent;
-		if (!ws[app]) { clearInterval(heartbeat[app]); websocketStop(app); return; }
-		ws[app]['status'] = 'alive';
-		if (!document.hidden) {
-			var data = {
-				browser_tab_id: browser_tab_id,
-				browser_tab: browser_tab,
-				timestamp: now,
-				app: app,
-				from: uA,
-				type: 'stayingAlive',
-				href: window.location.href,
-				pathname: window.location.pathname
-			};
+		heartbeatSend(app);
+	}, stayingAliveInterval);
+}
 
-			if (app == 'tab' || apper == 'tab') {
-				var mm = mouse_position();
-				if ((mm['x'] != windowWsMouseMove['x'] && mm['y'] != windowWsMouseMove['y']) || ( mm['lastTs'] < now - windowResendInterval)) {
-					var windows_json = windowSaver();
-					// only ship the layout when it actually changed
-					if (windows_json != windowWsWindows) {
-						windowWsWindows = windows_json;
-						data['windows'] = windows_json;
-					}
-					windowWsMouseMove = mm;
+// One heartbeat: tell the server this tab is still here and hand over anything
+// that changed since the last one.
+function heartbeatSend(app) {
+	var apper = app.split('@')[0];
+	var now = Date.now();
+	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || '';
+	var browser_tab = localStorage.getItem('browser_tab') || '';
+	var uA = navigator.userAgent;
+	if (!ws[app]) { clearInterval(heartbeat[app]); websocketStop(app); return; }
+	ws[app]['status'] = 'alive';
+	if (!document.hidden) {
+		var data = {
+			browser_tab_id: browser_tab_id,
+			browser_tab: browser_tab,
+			timestamp: now,
+			app: app,
+			from: uA,
+			type: 'stayingAlive',
+			href: window.location.href,
+			pathname: window.location.pathname
+		};
+
+		if (app == 'tab' || apper == 'tab') {
+			var mm = mouse_position();
+			if ((mm['x'] != windowWsMouseMove['x'] && mm['y'] != windowWsMouseMove['y']) || ( mm['lastTs'] < now - windowResendInterval)) {
+				var windows_json = windowSaver();
+				// only ship the layout when it actually changed
+				if (windows_json != windowWsWindows) {
+					windowWsWindows = windows_json;
+					data['windows'] = windows_json;
 				}
-				// the localStorage debrief is for auditing, not for liveness
-				if (now - windowWsDebriefer > debrieferInterval) {
-					windowWsDebriefer = now;
-					data['debriefer'] = JSON.stringify(localStorage);
-				}
+				windowWsMouseMove = mm;
 			}
-			else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
-				tree['music_data'] = musicAppointmentWriter('data_entry');
-				data['music_data'] = tree['music_data']
-			}
-			else if ((app == 'server' || apper == 'server')) {
-				data['ws'] = [];
-				$.each(ws, function(i,v) {
-					data['ws'].push(i);
-				});
-				if (advertise_watching == 'on') {
-					data['jp_data'] = jpWatcher();
-				}
-				if ($('#controller').is(':visible')) {
-					data['controller_visible'] = 'yes';
-				}
-				if (errorInfo.length > 0) {
-					var errors = JSON.stringify(errorInfo);
-					$.ajax({
-						url: '/manager/terminal/error_report',
-						type: 'POST',
-						data: { errors: errors },
-						success: function(response) {
-							errorInto = [];
-						}
-					});
-				}
-			}
-			var json_data = JSON.stringify(data);
-			if (ws[app] && ws[app] != null && ws[app]['readyState'] == 1) {
-				ws[app].send(json_data);
-			}
-			else {
-				websocketStop(app);
-				delete heartbeat[app];
-				websocketStart();
+			// the localStorage debrief is for auditing, not for liveness
+			if (now - windowWsDebriefer > debrieferInterval) {
+				windowWsDebriefer = now;
+				data['debriefer'] = JSON.stringify(localStorage);
 			}
 		}
-	}, stayingAliveInterval);
+		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
+			tree['music_data'] = musicAppointmentWriter('data_entry');
+			data['music_data'] = tree['music_data']
+		}
+		else if ((app == 'server' || apper == 'server')) {
+			data['ws'] = [];
+			$.each(ws, function(i,v) {
+				data['ws'].push(i);
+			});
+			if (advertise_watching == 'on') {
+				data['jp_data'] = jpWatcher();
+			}
+			if ($('#controller').is(':visible')) {
+				data['controller_visible'] = 'yes';
+			}
+			if (errorInfo.length > 0) {
+				var errors = JSON.stringify(errorInfo);
+				$.ajax({
+					url: '/manager/terminal/error_report',
+					type: 'POST',
+					data: { errors: errors },
+					success: function(response) {
+						errorInto = [];
+					}
+				});
+			}
+		}
+		var json_data = JSON.stringify(data);
+		if (ws[app] && ws[app] != null && ws[app]['readyState'] == 1) {
+			ws[app].send(json_data);
+		}
+		else {
+			websocketStop(app);
+			delete heartbeat[app];
+			websocketStart();
+		}
+	}
 }
 
 function wsMessageHandler(event) {
@@ -344,6 +406,11 @@ function wsMessageHandler(event) {
 			s.replaceWith($(data['content']).clone());
 			appointment_chron()
 			mailScrollBottom();
+		}
+		else if ( data['type'] == 'mail_arrival' ) {
+			// a letter the server accepted: the start menu's envelope rings until
+			// the mailbox is opened
+			if (typeof mailArrival == 'function') { mailArrival(data); }
 		}
 		else if ( data['type'] == 'html' ) {
 			var s = $(data['selector']);

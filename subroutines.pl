@@ -2107,14 +2107,24 @@ my $returner = '';
 					$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
 					my $message = &subs::note_encrypter($suds,$l->{'body'});
 					my $sender = &subs::format_name($r->{'app'});
+					my $suuid = &subs::random_string_creator(44);
 					&subs::db_insert('mailbox', {
-						uuid => &subs::random_string_creator(44),
+						uuid => $suuid,
 						timestamp => $time,
 						server_time => &subs::rightNow(),
 						body => $l->{'body'}, #$message,
 						manager_file => $sender,
 						status => 'public', #$l->{'type'},
 						phone => $phone,
+					});
+					# the telephone accepted a message: the browsers hear about it
+					&subs::mail_arrival({
+						c => $c,
+						uuid => $suuid,
+						phone => $phone,
+						manager_file => $sender,
+						body => $l->{'body'},
+						status => 'public'
 					});
 				}
 
@@ -7032,6 +7042,19 @@ sub email_receiver() {
 							attachments => $jfile
 						};
 						&subs::db_insert('mailbox', $email_data);
+						# a letter the server accepted goes out to the browsers at once;
+						# only what lands in the inbox is news
+						if ($status eq 'inbox') {
+							&subs::mail_arrival({
+								c => $c,
+								uuid => $email_data->{'uuid'},
+								email => $email,
+								manager_file => $from,
+								subject => $subject,
+								status => 'inbox',
+								body => $body
+							});
+						}
 						foreach my $u_data ( @{$files} ) {
 							$u_data->{'app_uuid'} = $app_uuid;
 							$u_data = &thumbnail_creator($u_data);
@@ -7057,19 +7080,93 @@ sub email_receiver() {
 	return { email_servers => $email_servers, html => $html };
 }
 
-sub email_sender() {
-	my $outbox = &subs::db_query('select * from mailbox where status=? and timestamp <= ? and sender = ?', 'outbox', &subs::rightNow(), &subs::device_setter())->hashes;
-	foreach my $o ( @{$outbox} ) {
-		&subs::db_update('mailbox', { status => 'sending', server_time => &subs::rightNow() }, { uuid => $o->{'uuid'} });
-		my $result = &email_send({
-			from => $o->{'from_email'},
-			email => $o->{'email'},
-			subject => $o->{'subject'},
-			body => $o->{'body'},
-			attachments => $o->{'attachments'},
-			uuid => $o->{'uuid'},
-		});
+# Send what waits in the outbox. A uuid picks one letter and sends it on the
+# spot - the compose side calls it the moment a letter is written, so nothing
+# waits for the sweep. The uuid-less form is the utility's, and it keeps the
+# old manners: only this device's letters, and never ahead of their timestamp.
+sub email_sender {
+	my ($uuid, $c) = @_;
+	my $query;
+	if ($uuid) {
+		$query = &subs::db_query('select * from mailbox where status = ? and uuid = ?', 'outbox', $uuid);
 	}
+	else {
+		$query = &subs::db_query('select * from mailbox where status = ? and timestamp <= ? and sender = ?', 'outbox', &subs::rightNow(), &subs::device_setter());
+	}
+	# hashes hands back one collection, so the rows are taken off it by hand:
+	# assigning it straight to an array wrapped it in a single-element list
+	my $waiting = $query ? $query->hashes : [];
+	my $returner;
+	foreach my $o ( @{$waiting} ) {
+		&subs::db_update('mailbox', { status => 'sending', server_time => &subs::rightNow() }, { uuid => $o->{'uuid'} });
+		my $result = eval {
+			&email_send({
+				c => $c,
+				from => $o->{'from_email'},
+				email => $o->{'email'},
+				subject => $o->{'subject'},
+				body => $o->{'body'},
+				attachments => $o->{'attachments'},
+				uuid => $o->{'uuid'},
+			});
+		};
+		if ($@) {
+			# an smtp server that refuses the connection dies inside the transport:
+			# the letter goes back to the outbox like any other failure
+			warn "email_sender: send failed for $o->{'uuid'}: $@";
+			$result = { result => 'fail' };
+		}
+		$returner = ref $result eq 'HASH' ? $result->{'result'} : $result;
+		if ($returner ne 'success') {
+			# a letter that failed goes back to the outbox: it stays visible and
+			# the sweep retries it, instead of sitting in 'sending' forever
+			&subs::db_update('mailbox', { status => 'outbox', server_time => &subs::rightNow() }, { uuid => $o->{'uuid'} });
+		}
+	}
+	return $returner;
+}
+
+# Letters the server accepts all come through here: the imap reader, the
+# telephone's sms list, a watch, a neighbour posting one over. The message
+# travels to the websocket daemon over the mail socket, which matches it to
+# open mailboxes, dots the start menus' mail icons, and lets the regular
+# notification speak when no mailbox is watching the thread. The envelope is
+# rendered here because a controller is what reads the words back out.
+sub mail_arrival {
+	my $m = shift;
+	my $c = delete $m->{'c'} || &subs::c_maker();
+	$m->{'uuid'} ||= &subs::random_string_creator(44);
+	$m->{'type'} ||= 'message';
+	if (!$m->{'picker'}) {
+		# a row that carries the social constructs as columns is addressed to
+		# that thread; one with none is addressed by phone, email or contact
+		if (grep { defined $m->{$_} && length $m->{$_} } qw/project account community club team person/ ) {
+			$m->{'picker'} = {
+				projects => $m->{'project'},
+				accounts => $m->{'account'},
+				communities => $m->{'community'},
+				clubs => $m->{'club'},
+				teams => $m->{'team'},
+				people => $m->{'person'}
+			};
+		}
+	}
+	$m->{'decrypted'} = 'yes' unless exists $m->{'decrypted'};
+	unless ($m->{'envelope'}) {
+		$m->{'envelope'} = $c->render_to_string(
+			template => 'mail/message',
+			'm' => $m,
+			'me' => ''
+		);
+	}
+	unless ($m->{'arrival_message'}) {
+		my $who = $m->{'manager_file'} || $m->{'email'} || $m->{'phone'} || 'someone';
+		my $what = $m->{'arrival_subject'} || $m->{'subject'} || '';
+		$m->{'arrival_message'} = 'Mail from ' . $who . ($what ? ': ' . $what : '');
+	}
+	$m->{'arrival'} = 'yes';
+	&Websocket::mail_send($m);
+	return $m;
 }
 
 
