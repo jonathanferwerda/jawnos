@@ -52,13 +52,6 @@
 				<% } %>
 
 			</span><br>
-			<% foreach my $p ( @{$pseudonyms} ) { %>
-				<% if ($p->{'classmates'}) { %>
-					<% if ($p->{'place'} eq 'write') { %>
-						<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
-					<% } %>
-				<% } %>
-			<% } %>
 			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
 			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
 			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />
@@ -109,7 +102,7 @@
 							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
-				<% } %>
+				<% } %><br>
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'colour'} eq 'bottom') { %>
@@ -135,11 +128,11 @@
 				<% } %>
 				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
 					<br>
-					<img class="medium_thumb save_appointment" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
+					<img class="medium_thumb save_appointment row_gap" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
 					<img class="medium_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
 				<% } %>
 				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
-					<img class="little_thumb save_appointment" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
+					<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
 					<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
 					<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
 				<% } %>

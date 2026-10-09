@@ -19,7 +19,7 @@
 				</td>
 				<td>
 					<select setting="place" class="pseudonym_setting pseudonym_place_set">
-						<% foreach my $place (qw/top write mid bottom/) { %>
+						<% foreach my $place (qw/top mid bottom/) { %>
 							<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= $place %></option>
 						<% } %>
 					</select>
