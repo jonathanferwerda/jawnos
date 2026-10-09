@@ -1,0 +1,120 @@
+#!/usr/bin/perl
+# jawn-bt: client for the JawnOS BLE bridge (JawnBleService in the JawnOS API app).
+#
+#   jawn-bt scan [seconds]                     list BLE devices
+#   jawn-bt connect <mac> [--service U] [--rx U] [--tx U]
+#   jawn-bt send <text>                        (or pipe text on stdin)
+#   jawn-bt listen                             stream events as JSON lines
+#   jawn-bt status
+#   jawn-bt disconnect
+#
+# Events are printed as raw JSON, one per line, so callers can parse them.
+use strict;
+use warnings;
+use IO::Socket::INET;
+use IO::Select;
+use JSON::PP;
+use Time::HiRes qw(sleep time);
+
+$| = 1; # stdout must flush: listen runs for a long time
+
+my $port = 45999;
+
+my $cmd = shift @ARGV;
+unless (defined $cmd) {
+	die "usage: jawn-bt scan [seconds] | connect <mac> [--service U --rx U --tx U] | send <text> | listen | status | disconnect\n";
+}
+
+my %opt;
+my @args;
+while (defined(my $a = shift @ARGV)) {
+	if ($a =~ /^--(service|rx|tx)$/) { $opt{$1} = shift @ARGV; }
+	else { push @args, $a; }
+}
+
+sub start_daemon {
+	system('sh', '-c', 'am start-foreground-service -n com.termux.api/.JawnBleService >/dev/null 2>&1');
+}
+
+sub dial {
+	my $sock;
+	for my $i (1 .. 24) {
+		$sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 2);
+		return $sock if $sock;
+		start_daemon() if $i == 1 || $i == 6 || $i == 12;
+		sleep 0.5;
+	}
+	die "jawn-bt: could not reach the BLE bridge on 127.0.0.1:$port\n";
+}
+
+my $sock = dial();
+$sock->autoflush(1);
+$sock->blocking(0);
+
+my $sel = IO::Select->new($sock);
+my $buf = '';
+
+sub send_cmd {
+	my $h = shift;
+	print {$sock} JSON::PP->new->encode($h), "\n";
+}
+
+# Read whatever arrived within $timeout seconds; print each line as JSON.
+# Returns the first event satisfying $cond, or undef on timeout/EOF.
+# (Non-blocking + select: a blocking readline here would ignore the deadline.)
+sub wait_for {
+	my ($cond, $timeout) = @_;
+	my $deadline = time() + $timeout;
+	while (time() < $deadline) {
+		my $rem = $deadline - time();
+		my @ready = $sel->can_read($rem > 0.2 ? 0.2 : $rem);
+		next unless @ready;
+		my $chunk = '';
+		my $n = sysread($sock, $chunk, 65536);
+		return undef unless defined $n && $n > 0;
+		$buf .= $chunk;
+		while ($buf =~ s/^(.*?)\n//) {
+			my $line = $1;
+			print $line, "\n";
+			my $o = eval { JSON::PP->new->decode($line) };
+			return $o if $o && $cond->($o);
+		}
+	}
+	return undef;
+}
+
+my $last;
+if ($cmd eq 'scan') {
+	my $secs = $args[0] || 8;
+	send_cmd({ cmd => 'scan', seconds => $secs });
+	$last = wait_for(sub { $_[0]->{'event'} eq 'scan_done' || $_[0]->{'event'} eq 'error' }, $secs + 15);
+}
+elsif ($cmd eq 'connect') {
+	my $mac = $args[0] or die "jawn-bt connect: mac required\n";
+	send_cmd({ cmd => 'connect', mac => $mac, map { $_ => $opt{$_} } grep { $opt{$_} } qw/service rx tx/ });
+	$last = wait_for(sub { $_[0]->{'event'} =~ /^(connected|disconnected|error)$/ }, 30);
+}
+elsif ($cmd eq 'send') {
+	my $text = $args[0];
+	unless (defined $text) { local $/; $text = <STDIN>; }
+	$text =~ s/\s+$// if defined $text;
+	die "jawn-bt send: empty message\n" unless defined $text && length $text;
+	send_cmd({ cmd => 'send', message => $text });
+	$last = wait_for(sub { $_[0]->{'event'} =~ /^(sent|error)$/ }, 30);
+}
+elsif ($cmd eq 'status') {
+	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, 10);
+}
+elsif ($cmd eq 'disconnect') {
+	send_cmd({ cmd => 'disconnect' });
+	$last = wait_for(sub { $_[0]->{'event'} =~ /^(disconnected|status|error)$/ }, 10);
+}
+elsif ($cmd eq 'listen') {
+	$last = wait_for(sub { 0 }, 86400 * 365);
+	exit 0;
+}
+else {
+	die "jawn-bt: unknown command '$cmd'\n";
+}
+
+exit(($last && ($last->{'event'} || '') eq 'error') ? 1 : 0);

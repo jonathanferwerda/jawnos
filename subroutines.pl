@@ -20,6 +20,7 @@ use File::Copy;
 use File::Path;
 use File::Type;
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::IOLoop::ReadWriteFork;
 use Mojo::SQLite;
 use Minion;
 use Data::Dumper;
@@ -1637,6 +1638,24 @@ sub device_lister() {
 
 
 
+# --- JawnOS BLE bridge (replaces the am broadcast + Tasker + BLE plugin chain) ---
+
+sub ble_bridge_enabled() {
+	# On by default now that the phone's Tasker bridge is retired. Set
+	# ble_bridge to 0 in config.json to fall back to the old broadcast path.
+	return 1 unless $config && defined $config->{'ble_bridge'};
+	return $config->{'ble_bridge'} ? 1 : 0;
+}
+
+sub ble_bridge_client() {
+	# jawn-bt client of the JawnOS BLE bridge daemon (JawnBleService in the
+	# JawnOS API app). Prefer the copy that ships with the repo.
+	foreach my $c ( "$ENV{HOME}/jawnos/scripts/jawn-bt", "$ENV{HOME}/jawn-bt", './scripts/jawn-bt' ) {
+		return $c if -e $c;
+	}
+	return undef;
+}
+
 sub bluetooth_sender() {
 	my $data = shift;
 	return unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::device_setter() eq 'mobile';
@@ -1650,10 +1669,73 @@ sub bluetooth_sender() {
 		my $bt_mac = $embedded->{'mac_addresses'}->{'bluetooth'};
 		my $name = $embedded->{'name'};
 		$message = encode_base64 encode_json $message;
+		my $client = &ble_bridge_client();
+		if (&ble_bridge_enabled() && $client) {
+			# Connect only when needed; the daemon keeps the link alive with
+			# auto-reconnect after that.
+			my $status = `$client status 2>/dev/null`;
+			unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
+				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx);
+			}
+			# Hand the message over on stdin: base64 needs no shell quoting.
+			open(my $bt_fh, '|-', $client, 'send') or return;
+			print {$bt_fh} $message;
+			return close $bt_fh;
+		}
 		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$message' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
 		return `$cmd`;
 	}
 }
+
+sub ble_message_processor() {
+	my $data = shift;
+	# A BLE notification as JSON text from the watch/board. The payload carries
+	# the url the old Tasker "rcv bt" task used to fetch, so all existing
+	# server-side handling stays untouched.
+	my $msg = eval { decode_json $data };
+	if ($@ || !$msg || ref $msg ne 'HASH') {
+		$log->error('BLE message could not be decoded: ' . ($@ || 'not an object'));
+		return;
+	}
+	my $url = $msg->{'url'};
+	if (!$url) {
+		$log->info('BLE message without url: ' . $data);
+		return;
+	}
+	eval {
+		my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
+		my $tx = $ua->insecure(1)->get($url);
+		if ($tx->res->is_error) {
+			$log->error('BLE message fetch returned ' . $tx->res->code . ' for ' . $url);
+		}
+	};
+	$log->error('BLE message fetch failed: ' . $@) if $@;
+}
+
+sub ble_listener_start() {
+	# One long-lived 'jawn-bt listen' child: every BLE message the daemon
+	# receives ends up in ble_message_processor(). Restarted if it dies.
+	return if $gb::ble_listener;
+	my $client = &ble_bridge_client();
+	return unless &ble_bridge_enabled() && $client;
+	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
+	$gb::ble_listener->on(read => sub() {
+		my ($fork, $bytes) = @_;
+		foreach my $line ( split /\n/, $bytes ) {
+			my $event = eval { decode_json $line };
+			next unless $event && ref $event eq 'HASH' && ($event->{'event'} || '') eq 'message';
+			&ble_message_processor($event->{'data'});
+		}
+	});
+	$gb::ble_listener->on(close => sub() {
+		$gb::ble_listener = undef;
+		Mojo::IOLoop->timer(30 => sub() { &ble_listener_start(); });
+	});
+	print "Starting BLE bridge listener\n";
+	$gb::ble_listener->start({ program => $client, program_args => [ 'listen' ] });
+	return 1;
+}
+
 
 
 sub backup_now() {

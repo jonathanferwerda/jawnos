@@ -531,6 +531,8 @@ sub utility_functions() {
 	print "Starting Alarm Clock\n";
 
 	require './Alarm.pl';
+	# Bring up the JawnOS BLE bridge listener (the Tasker replacement).
+	&subs::ble_listener_start();
 	# Keep a pristine copy of the built-in utilities so newly added ones show up
 	# for installs that already have their utilities configured.
 	$gb::utility_defaults = clone $gb::timeouts unless $gb::utility_defaults;
