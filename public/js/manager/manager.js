@@ -1913,12 +1913,17 @@ function calculator() {
 					}
 				}
 				else {
-
-					timestamp = respons['__specs']['timestamp'];
-					
-					timelineScroller({ diff: (response.appts['__specs']['timestamp'] - respons['__specs']['timestamp']) });
-					response['__specs'] = respons['__specs'];
-
+					// nothing new was fetched: the view slides to the centre the server
+					// names - exactly, and only from rest. The flick's ~32x reach belongs
+					// to a gesture and not to a correction: added here it flew past the
+					// target, and the next poll flew the whole error again, 32x larger,
+					// until the dates left the calendar behind.
+					now = Date.now();
+					if (clothesLinePos['moving'] + 300 < now && clothesLinePos['lastBX'] == undefined) {
+						timestamp = respons['__specs']['timestamp'];
+						timelineScroller({ diff: (response.appts['__specs']['timestamp'] - respons['__specs']['timestamp']), source: 'slide' });
+						response['__specs'] = respons['__specs'];
+					}
 				}
 			}
 		});

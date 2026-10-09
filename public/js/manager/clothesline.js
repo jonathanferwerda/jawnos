@@ -438,10 +438,12 @@ function timelineScroller(data) {
 	graphicalize(response);
 	if (data['source'] == 'wheel') {
 		// a wheel stream carries its own momentum: the fling that follows the
-		// stream is the glide, and a new event means the fingers took over
+		// stream is the glide, and a new event means the fingers took over.
+		// A plain wheel and the server's slide are not glided - they go exactly
+		// where they are put.
 		cancelAnimationFrame(clothesLinePos['timelineSmoothScrolling']);
 	}
-	else if (data['source'] != 'smoothScroll' && data['source'] != 'mousewheel') {
+	else if (data['source'] != 'smoothScroll' && data['source'] != 'mousewheel' && data['source'] != 'slide') {
 		timelineGlide(sdiff);
 	}
 
