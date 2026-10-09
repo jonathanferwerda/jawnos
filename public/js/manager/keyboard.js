@@ -6,6 +6,11 @@ var keyboardIntervals = Date.now() - 5000;
 var pseudonymHiderTimeout;
 var pseudonymHIntervals = 4000;
 var pseudonymHideWait = 5000;
+// how much of a tucked dock stays on screen - the strip the mouse rests on to
+// call the icons back. The bottom dock keeps its top strip (the search); the
+// top one keeps its bottom strip, which is the search too, pushed below the
+// row by the CSS.
+var pseudonymDockReach = 47;
 
 var text_editor = {};
 var keysPressed = {};
@@ -53,18 +58,19 @@ function pseudonymFreeSpaceFinder(type) {
 	size = Math.max(floor, Math.min(full, size));
 	var total = (size * visible.length) + (gap * Math.max(0, visible.length - 1));
 	var start = Math.round((w - total) / 2);
-	// a dock on the top edge hangs its row from the top, clear of the header's
-	// band; the bottom one keeps its 15px from the edge, raised over the taskbar
-	// when the two share the bottom
+	// a dock on the top edge hangs its row from its own top - riding down with
+	// the home when the search strip calls it - and the bottom one keeps its
+	// 15px from the edge, raised over the taskbar when the two share the bottom
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	var dock_edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
+	var dock_row_top = Math.round(numeral($('#pseudonym_home').css('top')).value()) + 15;
 
 	$.each(visible, function(i,el) {
 		$(el).css({
 			'width': size,
 			'height': size,
 			'left': start + Math.round(i * (size + gap)),
-			'top': Math.round(dock_top ? (jawnosDockTopOffset() + 15) : (h - 15 - size - dock_edge))
+			'top': Math.round(dock_top ? dock_row_top : (h - 15 - size - dock_edge))
 		});
 	});
 
@@ -98,7 +104,8 @@ function pseudonymFreeSpaceFinder(type) {
 	}
 }
 
-// the dock lives on the bottom edge, so a new screen shape means new sizes
+// the dock is sized for whichever edge it lives on, so a new screen shape
+// means new sizes
 $(window).on('resize', function() {
 	pseudonymFreeSpaceFinder();
 });
@@ -176,6 +183,7 @@ function keyboardDragBarMaker(k) {
 function pseudonymHomeShower(x,y,interval) { 
 	var was = 0;
 	var okay = 1;
+	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	var elements = document.elementsFromPoint(x, y);
 
 	if (interval) {
@@ -207,33 +215,45 @@ function pseudonymHomeShower(x,y,interval) {
 		var h = $('#pseudonym_home').height();
 		var wh = $(window).height();
 		if ( (was > 0)) {
-			$('.pseudonym.bar').each(function() {
-				var kbg = $(this);
-				var bottom = kbg.css('bottom');
-				var toggle = kbg.attr('toggle');
-				var diff = (0 - (h * .9));
-				var d = Number(numeral(bottom).format());
-				var diff_body = diff + d;
+			// a dock on the top edge answers by slipping its row back down over
+			// the search strip; the row rides the home's top, so moving the home
+			// is all it takes
+			if (dock_top) {
+				$('#pseudonym_home').css({ 'top': jawnosDockTopOffset() });
+				pseudonymFreeSpaceFinder();
+				var so = $('#search').offset();
+				$('#search_results').css({ 'top': Math.round(so.top + $('#search').outerHeight() + 8), 'bottom': 'auto' });
+				pseudonymIntervals = Date.now();
+			}
+			else {
+				$('.pseudonym.bar').each(function() {
+					var kbg = $(this);
+					var bottom = kbg.css('bottom');
+					var toggle = kbg.attr('toggle');
+					var diff = (0 - (h * .9));
+					var d = Number(numeral(bottom).format());
+					var diff_body = diff + d;
 
-				var diffplus =  Math.abs( d ) + Math.abs( diff );
-				if (diffplus == 80 && bottom != 80) {
-					if (was > 0) {
-						kbg.css({'bottom': diffplus });
+					var diffplus =  Math.abs( d ) + Math.abs( diff );
+					if (diffplus == 80 && bottom != 80) {
+						if (was > 0) {
+							kbg.css({'bottom': diffplus });
 
+						}
 					}
-				}
-				var ls = localStorage.getItem('pseudonym_keyboard_' + toggle);
-				if (ls == 'on') {
-					$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
-				}
-				else if (kbg.hasClass('window_toggle')) {
-					kbg.show();
-				}
-			});
-			$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
-			var o = $('#search').offset();
-			$('#search_results').css({ 'bottom': $(window).height() - o.top });
-			pseudonymIntervals = Date.now();
+					var ls = localStorage.getItem('pseudonym_keyboard_' + toggle);
+					if (ls == 'on') {
+						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
+					}
+					else if (kbg.hasClass('window_toggle')) {
+						kbg.show();
+					}
+				});
+				$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
+				var o = $('#search').offset();
+				$('#search_results').css({ 'bottom': $(window).height() - o.top });
+				pseudonymIntervals = Date.now();
+			}
 		}
 		else if (Date.now() >= pseudonymIntervals + pseudonymHIntervals && !interval) {
 			pseudonymHomeHider(pseudonymHIntervals);
@@ -249,45 +269,67 @@ function pseudonymHomeShower(x,y,interval) {
 }
 
 
+// The top dock's resting place: the home slips up until only its search strip
+// stays on screen, and the icon row rides above the visible edge with it. That
+// strip is where the mouse rests to call the row back down. Answers 0 for any
+// other edge, so the caller knows to size the dock the plain way instead.
+function pseudonymHomeTopSettle() {
+	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
+	var home = $('#pseudonym_home');
+	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockReach - home.outerHeight()) });
+	pseudonymFreeSpaceFinder();
+	return 1;
+}
+
 function pseudonymHomeHider(interval) {
-	// only the bottom edge tucks away; a dock on the top edge has no dark below
-	// to slip into, and a hidden one is already gone
-	if (typeof jawnosDockTop == 'function' && jawnosDockTop()) { return; }
+	// both edges tuck away: the bottom slips down keeping the search and a strip
+	// beneath it on screen, the top slips up keeping its search strip on screen
+	// with the icon row above the visible edge. A hidden dock is already gone.
+	if (typeof jawnosDockHidden == 'function' && jawnosDockHidden()) { return; }
+	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	pseudonymFreeSpaceFinder();
 	var m = mouse_position();
+	// a desk whose mouse has never moved has no position yet; it counts as away
+	// from the dock rather than crashing elementsFromPoint on a non-finite
 	var was = 0;
-	var elements = document.elementsFromPoint(m.x, m.y);
-	$.each(elements, function(i,v) {
-		var has_it = $(v).hasClass('keyboard');
-		if ($(v).attr('id') == 'pseudonym_home' || $(v).hasClass('manager_search_result')) {
-			was++;
-		}
-	});
+	if (isFinite(m.x) && isFinite(m.y)) {
+		var elements = document.elementsFromPoint(m.x, m.y);
+		$.each(elements, function(i,v) {
+			var has_it = $(v).hasClass('keyboard');
+			if ($(v).attr('id') == 'pseudonym_home' || $(v).hasClass('manager_search_result')) {
+				was++;
+			}
+		});
+	}
 
 	interval = interval || pseudonymHIntervals;
 	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
-		// tuck the dock down, but keep the search and a strip beneath it on
-		// screen: that strip is where the mouse rests to call the icons back. A
-		// taskbar sharing the bottom edge takes its height first, so the strip
-		// rests above the bar instead of lying across it.
-		var h = $('#pseudonym_home').outerHeight();
-		var reach = 47;
-		var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
-		var diff = Math.min(0, reach - h) + edge;
-		$('#pseudonym_home').css({ 'bottom': diff });
-		$('.pseudonym.bar').hide();
-		$('.keyboard').each(function() {
-			var kbg = $(this);
-			var bottom = kbg.css('bottom');
-			var d = Number(numeral(bottom).format());
-			var diff_body = diff + d;
+		if (dock_top) {
+			pseudonymHomeTopSettle();
+		}
+		else {
+			// tuck the dock down, but keep the search and a strip beneath it on
+			// screen: that strip is where the mouse rests to call the icons back. A
+			// taskbar sharing the bottom edge takes its height first, so the strip
+			// rests above the bar instead of lying across it.
+			var h = $('#pseudonym_home').outerHeight();
+			var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
+			var diff = Math.min(0, pseudonymDockReach - h) + edge;
+			$('#pseudonym_home').css({ 'bottom': diff });
+			$('.pseudonym.bar').hide();
+			$('.keyboard').each(function() {
+				var kbg = $(this);
+				var bottom = kbg.css('bottom');
+				var d = Number(numeral(bottom).format());
+				var diff_body = diff + d;
 
-			if (d == 80) {
-				kbg.css({'bottom': diff_body });
-			}
-			var o = $('#search').offset();
-			$('#search_results').css({ 'bottom': $(window).height() - o.top });
-		});
+				if (d == 80) {
+					kbg.css({'bottom': diff_body });
+				}
+				var o = $('#search').offset();
+				$('#search_results').css({ 'bottom': $(window).height() - o.top });
+			});
+		}
 	}
 	else {
 		pseudonymInterval = Date.now();

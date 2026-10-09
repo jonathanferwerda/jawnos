@@ -1,30 +1,31 @@
-var headerHeight = 50;
+// The band above the clothesline is gone - the scope and the desk's birthday
+// went with it - so nothing is reserved there unless a taskbar has taken the
+// top edge; taskbar.js measures that and writes it back here.
+var headerHeight = 0;
 function headerPrinter(ctx,appts,title) {
 	var canvas = document.getElementById(title.toLowerCase());
 	$('#' + title.toLowerCase()).show();
-	var scope = localStorage.getItem('scope');
 
 	var formatted_time = fixedTimeString(numeral(appts['__specs']['timestamp']).value());
-	// the clock lives in the taskbar while there is one; the header keeps the
-	// scope (and the desk's birthday) and takes the time back when it is away
+	// the clock lives in the taskbar while there is one; the header span keeps
+	// only the clock's fallback home for when that bar is set away
 	var clock_in_bar = (typeof jawnosClockInTaskbar == 'function') && jawnosClockInTaskbar();
 	if (typeof jawnosClockShow == 'function') { jawnosClockShow(formatted_time); }
-	var header = format_name(scope) + (clock_in_bar ? '' : '<br>' + formatted_time);
-	if (!windowPhoneChecker()) {
-		header = header + ' ' + appts['__specs']['birthday'];
-	}
-	$('#header').html(header);
+	$('#header').html(clock_in_bar ? '' : formatted_time);
 
-	// the divider under the header text - a moveTo alone never drew a line
-	ctx.save();
-	ctx.strokeStyle = 'yellow';
-	ctx.lineWidth = 10;
-	ctx.beginPath();
-	ctx.moveTo(0, headerHeight);
-	ctx.lineTo(canvas ? canvas.width : $(window).width(), headerHeight);
-	reservedSpots['header'] = headerHeight - 4;
-	ctx.stroke();
-	ctx.restore();
+	// the divider under the old header text - a moveTo alone never drew a line -
+	// stands only while a top taskbar has lifted the rows down
+	if (headerHeight > 0) {
+		ctx.save();
+		ctx.strokeStyle = 'yellow';
+		ctx.lineWidth = 10;
+		ctx.beginPath();
+		ctx.moveTo(0, headerHeight);
+		ctx.lineTo(canvas ? canvas.width : $(window).width(), headerHeight);
+		ctx.stroke();
+		ctx.restore();
+	}
+	reservedSpots['header'] = Math.max(0, headerHeight - 4);
 }
 
 

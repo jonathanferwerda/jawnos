@@ -29,10 +29,9 @@ function jawnosDockTop() {
 function jawnosDockHidden() {
 	return jawnosBars.dock == 'hidden';
 }
-// The dock hangs below the header's band when it lives on the top edge, and
-// clears the taskbar when the two share the bottom one. headerHeight carries
-// the band - and the top taskbar it may have been pushed down by - so it is the
-// top offset itself.
+// The dock hangs at the very top of the page - below only a top taskbar, which
+// headerHeight carries - and clears the taskbar when the two share the bottom
+// one.
 function jawnosDockTopOffset() {
 	return (typeof headerHeight != 'undefined') ? headerHeight : 50;
 }
@@ -55,14 +54,18 @@ function jawnosBarsApply() {
 	if (!bar.length) { return; }
 
 	bar.attr('position', jawnosBars.taskbar);
-	dock.attr('position', jawnosBars.dock);
+	if (dock.attr('position') != jawnosBars.dock) {
+		// a move between edges drops the tuck the old edge left behind
+		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '' });
+	}
 	jawnosTopIconsApply();
 
-	// a taskbar on the top edge pushes the whole header band down: the line the
-	// printers draw, the clothesline under it and the rows below all measure
-	// from headerHeight, so shifting it once moves them together
+	// a taskbar on the top edge pushes the whole page down: the line the printers
+	// draw, the clothesline under it and the rows below all measure from
+	// headerHeight, so shifting it once moves them together. With no band above
+	// the clothesline any more, that offset is the bar's own height.
 	if (typeof headerHeight != 'undefined') {
-		headerHeight = 50 + jawnosTaskbarEdge('top');
+		headerHeight = jawnosTaskbarEdge('top');
 	}
 
 	var root = document.documentElement.style;
@@ -82,7 +85,11 @@ function jawnosBarsApply() {
 		}
 	}
 
-	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	// the top dock rests tucked away - its icons above the visible edge, its
+	// search strip on screen - so a fresh layout settles it there; every other
+	// edge takes the plain sizing, which the settle runs itself when it takes
+	var settled = (typeof pseudonymHomeTopSettle == 'function') && pseudonymHomeTopSettle();
+	if (!settled && typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
 }
 

@@ -91,6 +91,10 @@ html, body {
    writes, so a top dock never slips away. */
 #pseudonym_home[position=bottom] { bottom: var(--taskbar_bottom_h, 0px); top: auto !important; }
 #pseudonym_home[position=top] { top: var(--dock_top_h, 0px); bottom: auto !important; }
+/* a dock on the top edge keeps its icon row in the strip that hides above the
+   visible area: the search rides below the row, in the last 47px of the box,
+   which is all that stays on screen while the row is tucked away */
+#pseudonym_home[position=top] { height: 134px; padding-top: 94px; }
 #pseudonym_home[position=hidden] { display: none !important; }
 #pseudonym_bar {
 	width: 100%;
@@ -513,7 +517,7 @@ canvas { overflow: scroll; z-index: 99; }
 	height: min(400px, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 8px));
 	position:fixed;
 	right: 0px;
-	top: 48px;
+	top: calc(var(--taskbar_top_h, 0px) + 4px);
 	z-index: 40001;
 	border: solid;
 	border-width: 4px;
