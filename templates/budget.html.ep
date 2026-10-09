@@ -352,7 +352,7 @@
 							<% } %>
 						</td>
 						<td><%= $d->{'formatted_balance'} %></td>
-						<td><%= &subs::format_name($d->{'status'}) %></td>
+						<td><%= $d->{'formatted_status'} %></td>
 					</tr>
 					<% if (scalar @{$d->{'data'}->{'payments'} || []} > 0) { %>
 						<tr class="budget_invoice_payment_row" uuid="<%= $d->{'uuid'} %>" style="display:none;font-size:16px;">
@@ -363,6 +363,15 @@
 							</td>
 						</tr>
 					<% } %>
+				<% } %>
+				<% foreach my $dt ( qw/invoice quote/ ) { %>
+					<tr style="font-size:18px;">
+						<td colspan="5"><b><%= &subs::format_name($dt . 's') %></b></td>
+						<td><b><%= &subs::price_formatter($totals->{'documents'}->{$dt}->{'total'} || 0) %></b></td>
+						<td><b><%= &subs::price_formatter($totals->{'documents'}->{$dt}->{'paid'} || 0) %></b></td>
+						<td><b><%= &subs::price_formatter($totals->{'documents'}->{$dt}->{'balance'} || 0) %></b></td>
+						<td></td>
+					</tr>
 				<% } %>
 				<tr style="font-size:20px;">
 					<td colspan="5"><b>Total</b></td>

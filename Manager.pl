@@ -10766,10 +10766,14 @@ get '/manager/budget' => sub($c) {
 			$doc->{'formatted_total'} = &subs::price_formatter($numbers->{'total'} || 0);
 			$doc->{'formatted_paid'} = &subs::price_formatter($paid);
 			$doc->{'formatted_balance'} = &subs::price_formatter($doc->{'balance'});
+			$doc->{'formatted_status'} = $doc->{'status'} ? &subs::format_name($doc->{'status'}) : ($doc->{'type'} eq 'quote' ? 'Draft' : 'Open');
 			$totals->{'documents'}->{'count'}++;
-			$totals->{'documents'}->{'total'} += $numbers->{'total'} || 0;
-			$totals->{'documents'}->{'paid'} += $paid;
-			$totals->{'documents'}->{'balance'} += $doc->{'balance'};
+			$totals->{'documents'}->{$doc->{'type'}}->{'count'}++;
+			foreach my $key ( qw/total paid balance/ ) {
+				my $value = $key eq 'total' ? ($numbers->{'total'} || 0) : $key eq 'paid' ? $paid : $doc->{'balance'};
+				$totals->{'documents'}->{$key} += $value;
+				$totals->{'documents'}->{$doc->{'type'}}->{$key} += $value;
+			}
 		}
 		push @{$documents}, @{$docr};
 	}
