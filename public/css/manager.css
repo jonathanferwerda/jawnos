@@ -331,7 +331,11 @@ canvas { overflow: scroll; z-index: 99; }
 .top_navbar { line-height: 0; }
 .top_navbar .window_icon_holder { display: inline-block; vertical-align: middle; }
 .top_navbar .window_icon_holder .window_icon { display: inline-block; height: 26px; line-height: 26px; font-size: 20px; vertical-align: middle; }
-.top_navbar .appointment_name { vertical-align: middle; }
+/* the name rides straight on the bar's own colour: the panel chip it sat in
+   answered to the theme while the ink answered to the app's colour, so one of
+   the two always clashed - the ink contrast_ink picks reads on the bar in
+   either theme */
+.top_navbar .appointment_name { vertical-align: middle; background: none; border: none; }
 .top_navbar .appointment_name .name_text { line-height: 24px; vertical-align: middle; }
 .top_navbar .navbar_buttons { display: inline-flex; align-items: center; }
 .top_navbar .navbar_buttons .window_action { width: 30px; height: 30px; min-width: 30px; }
