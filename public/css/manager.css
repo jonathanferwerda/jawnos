@@ -68,18 +68,31 @@ html, body {
 	   and the even gaps honest */
 	box-sizing: border-box;
 }
+/* the dock's own tiles wear the taskbar buttons' dressing: a thin ink edge,
+   rounded corners, and a lift under the pointer */
+.pseudonym.bar {
+	border: solid 2px;
+	border-color: var(--ink);
+	border-radius: 10px;
+	transition: border-color .15s ease, transform .12s ease;
+}
+.pseudonym.bar:hover { border-color: yellow; }
+.pseudonym.bar:active { transform: translateY(1px); }
 #pseudonym_home {
 	height: 120px;
 	position:fixed;
 	left: 50%;
 	background-color:grey;
 	border: solid;
-	border-radius: 10px;
-	border-width:4px;
+	border-radius: 12px;
+	border-width:2px;
 	border-color:black;
 	padding-right: 30px;
 	padding-left: 30px;
-	z-index: 39999;
+	/* the taskbar paints over a tucked dock's box, which slips under the shared
+	   edge: sharing the screen with the bar must never leave a slab of the
+	   dock's backing lying across the bar */
+	z-index: 39997;
 	max-width: 100%;
 	/* the dock sizes this box in JS; counting the padding in keeps its maths
 	   and the centring honest */
@@ -100,7 +113,12 @@ html, body {
    button at the foot of the stack, and the search panel waiting beside it. The
    panel slides out of its edge when the button calls it, and the cancel beside
    the input sends it away again. */
-#pseudonym_home[position=left], #pseudonym_home[position=right] { padding: 11px; }
+#pseudonym_home[position=left], #pseudonym_home[position=right] { padding: 11px; transition: left .22s ease, right .22s ease; }
+/* everything riding the pill travels with it on the same left edge */
+#pseudonym_home[position=left] .pseudonym,
+#pseudonym_home[position=right] .pseudonym,
+#pseudonym_home[position=left] #search_toggle,
+#pseudonym_home[position=right] #search_toggle { transition: border-color .15s ease, transform .12s ease, left .22s ease; }
 #pseudonym_home[position=left] #search_toggle,
 #pseudonym_home[position=right] #search_toggle { position: fixed; box-sizing: border-box; object-fit: contain; }
 #pseudonym_home[position=left] #search_entanglement,
@@ -502,12 +520,13 @@ canvas { overflow: scroll; z-index: 99; }
 
 		background-color:yellow;
 		border: solid;
-		border-radius: 10px;
-		border-width:3px;
+		border-radius: 12px;
+		border-width:2px;
 		border-color:black;
 		padding-right: 30px;
 		padding-left: 30px;
-		z-index: 39999;
+		/* the taskbar paints over a tucked dock here too */
+		z-index: 39997;
 	}
 	.pseudonym { 
 		height: 50px;
