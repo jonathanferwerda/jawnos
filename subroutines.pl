@@ -1202,6 +1202,13 @@ sub edt_button_presser() {
 		my $insert = &Manager::appointment_writer($c,$db_data);
 	}
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid . '\');' });
+	# embeddedAuthorizer hands the settings over with __shutup (the patience
+	# half of the authorization pair) deliberately blanked, and this write-back
+	# used to store that blanked copy: it destroyed the device's patience with
+	# the first accepted request, so every later request failed auth and fell
+	# into the wigi queue. Put the stored key back before saving the buttons.
+	my $stored = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id }) } || {};
+	$watch_settings->{'__shutup'} = $stored->{'__shutup'} if $stored->{'__shutup'};
 	my $od = encode_json $watch_settings;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $od, subsetting => $chip_id });
 	return $returner;
@@ -1702,14 +1709,22 @@ sub ble_message_processor() {
 		$log->info('BLE message without url: ' . $data);
 		return;
 	}
+	# The old check looked at the response before the asynchronous request had
+	# any chance to complete, so a dead homebase and a good fetch looked alike.
+	# One kept-alive user agent plus the completion callback log what happened.
 	eval {
-		my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
-		my $tx = $ua->insecure(1)->get($url);
-		if ($tx->res->is_error) {
-			$log->error('BLE message fetch returned ' . $tx->res->code . ' for ' . $url);
-		}
+		$gb::ble_ua ||= Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
+		$gb::ble_ua->insecure(1)->get($url, sub {
+			my ($ua, $tx) = @_;
+			if ($tx->error) {
+				$log->error('BLE message fetch failed: ' . $tx->error->{message} . ' for ' . $url);
+			}
+			else {
+				$log->info('BLE message fetched: ' . $tx->res->code . ' ' . $url);
+			}
+		});
 	};
-	$log->error('BLE message fetch failed: ' . $@) if $@;
+	$log->error('BLE message fetch dispatch failed: ' . $@) if $@;
 }
 
 sub ble_listener_start() {
@@ -1718,11 +1733,19 @@ sub ble_listener_start() {
 	return if $gb::ble_listener;
 	my $client = &ble_bridge_client();
 	return unless &ble_bridge_enabled() && $client;
+	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
 	$gb::ble_listener->on(read => sub() {
 		my ($fork, $bytes) = @_;
-		foreach my $line ( split /\n/, $bytes ) {
-			my $event = eval { decode_json $line };
+		# Reads are arbitrary chunks: a JSON line longer than one chunk used to
+		# be decoded in halves and silently dropped. Buffer until the newline.
+		$gb::ble_listener_buffer .= $bytes;
+		if (length($gb::ble_listener_buffer) > 1048576) {
+			$log->error('BLE listener buffer overflow; dropping partial data');
+			$gb::ble_listener_buffer = '';
+		}
+		while ($gb::ble_listener_buffer =~ s/^(.*?)\n//) {
+			my $event = eval { decode_json $1 };
 			next unless $event && ref $event eq 'HASH' && ($event->{'event'} || '') eq 'message';
 			&ble_message_processor($event->{'data'});
 		}
