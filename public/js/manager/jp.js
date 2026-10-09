@@ -88,8 +88,11 @@ async function jpCanvas(app) {
 
 async function jpStart(app,pref,uuid) {
 	var timestamp = Date.now();
-	var type = 'video';
-	var id = app + '_cam';
+	// an audio take keeps an audio name through the whole journey - the
+	// recorder, the file and the appointment entry - so the server files it
+	// as a sound and not as a silent little video
+	var type = pref == 'audio' ? 'audio' : 'video';
+	var id = app + (pref == 'audio' ? '_snd' : '_cam');
 	me['id'][app] = id;
 	me['type'][app] = type;
 	me['uuid'][app] = uuid;
@@ -98,7 +101,6 @@ async function jpStart(app,pref,uuid) {
 		var constraints = await constraintMaker(pref);
 		if (pref == 'audio') {
 			constraints['video'] = false;
-			id = app + '_snd';
 		}
 		if (app) {
 			try {
@@ -111,7 +113,7 @@ async function jpStart(app,pref,uuid) {
 				}
 				if (!me['rec'][app] || me['rec'][app].state == "inactive" ) {
 					const options = {
-						mimeType: 'video/webm;codecs=opus', // Standard high-quality web codec
+						mimeType: type == 'audio' ? 'audio/webm;codecs=opus' : 'video/webm;codecs=opus',
 						audioBitsPerSecond: 256000          // Force 128 kbps (or use 256000 for 256 kbps)
 					};
 					me['rec'][app] = new MediaRecorder(me['in'][app],options);
@@ -129,7 +131,7 @@ async function jpStart(app,pref,uuid) {
 					formData.append('duration', duration);
 					formData.append('timestamp', me['timestamp'][app]);
 					formData.append('type', type);
-					formData.append('blob', data, app + '.webm');
+					formData.append('blob', data, app + (type == 'audio' ? '.weba' : '.webm'));
 					formData.append('uuid', uuid);
 					$.ajax({
 							url: '/manager/upload_file',
@@ -265,6 +267,9 @@ async function constraintMaker(pref) {
 function jpScope(app) {
 	var x = 0;
 	var canvas = document.getElementById('visualizer_' + app);
+	// the visualizer is a decoration, and nothing feeds it an analyzer yet -
+	// when there is no canvas or no analyzer to read, there is nothing to draw
+	if (!canvas || !me['analyzer'][app] || !me['data'][app]) { return; }
 	var ctx = canvas.getContext("2d");
 
 	var sliceWidth = canvas.width / me['buffer'][app];
@@ -304,7 +309,7 @@ async function jpScreen(app,uuid) {
 				var options = { 'surfaceSwitching': 'include', 'audio': true, 'video': { 'displaySurface': 'monitor' }};
 				us['in'][app] = await navigator.mediaDevices.getDisplayMedia(options);
 			}
-			if (!us['rec'][app] || us['rec']['app'].state =="inactive" ) {
+			if (!us['rec'][app] || us['rec'][app].state =="inactive" ) {
 				us['rec'][app] = new MediaRecorder(us['in'][app]);
 				us['timestamp'][app] = Date.now();
 				us['rec'][app].start();
