@@ -34,6 +34,12 @@ my $syl = &subs::shorthand_name($component,$syl_count); %>
 							value="<%= $movements->{$mov}->{'mov'} %>"><%= $movements->{$mov}->{'formatted_name'} %></option>
 					<% } %>
 				</select>
+				<select class="watch_destination watch_setting" setting="destination" numero="<%= $n %>" component="<%= $component %>" edt="<%= $device_type %>" chip_id="<%= $embedded->{'chip_id'} %>">
+					<option value="">every machine</option>
+					<% foreach my $rm ( @{$destinations || []} ) { %>
+						<option value="<%= $rm->{'signatorial'} %>" <% if (($settings->{$syl . $n}->{'destination'} || '') eq $rm->{'signatorial'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
+					<% } %>
+				</select>
 			<% } %>
 		<% } elsif ($components->{$component}->{'direction'} eq 'output') { %>
 			<% if ($settings->{$syl . $n}->{'app'}) { %>
@@ -46,6 +52,12 @@ my $syl = &subs::shorthand_name($component,$syl_count); %>
 							<% if ( $movements->{$mov}->{'mov'} eq $settings->{$syl . $n}->{'movement'}) { %>selected<% } %>
 							value="<%= $movements->{$mov}->{'mov'} %>"><%= $movements->{$mov}->{'formatted_name'} %>
 						</option>
+					<% } %>
+				</select>
+				<select class="watch_destination watch_setting" setting="destination" numero="<%= $n %>" component="<%= $component %>" edt="<%= $device_type %>" chip_id="<%= $embedded->{'chip_id'} %>">
+					<option value="">every machine</option>
+					<% foreach my $rm ( @{$destinations || []} ) { %>
+						<option value="<%= $rm->{'signatorial'} %>" <% if (($settings->{$syl . $n}->{'destination'} || '') eq $rm->{'signatorial'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
 					<% } %>
 				</select>
 				<% if ($settings->{$syl . $n}->{'movement'} eq 'measure') { %>

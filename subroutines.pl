@@ -1176,7 +1176,29 @@ sub edt_button_presser() {
 			$toggle = $saved_toggle;
 			$b->{'toggle'} = $saved_toggle eq 'on' ? 1 : 0;
 		}
-		my $resulter = &subs::run_command($app,$settings->{$movement});
+		# The button can name the machine the command belongs to (a signatorial
+		# from the remote machine list); blank means every machine runs its own
+		# copy, and an unreachable destination falls back to running here.
+		my $destination = $b->{'destination'} || '';
+		my $me = &subs::signatorial_designer();
+		my $ran_away = 0;
+		if (!$destination) {
+			&subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time });
+			$db_data->{'data'} = 'every machine';
+		}
+		elsif ($destination ne $me) {
+			my $to = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time });
+			if ($to) {
+				$ran_away = 1;
+				$db_data->{'data'} = $to;
+			}
+		}
+		unless ($ran_away) {
+			# no destination set, it is this machine, or the destination could
+			# not be reached: run here
+			my $resulter = &subs::run_command($app,$settings->{$movement});
+			$db_data->{'data'} = &subs::runner_label() unless $db_data->{'data'};
+		}
 
 	}
 	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle });
@@ -5269,6 +5291,65 @@ sub signatorial_designer() {
 	$gb::signatorial = $md5;
 
 	return $gb::signatorial;
+}
+
+sub runner_label() {
+	# the machine a command ran on, for the appointment details
+	my $hostname = `hostname`;
+	chomp $hostname;
+	return $hostname;
+}
+
+sub destination_relay() {
+	# Run an app's command on other machines: a POST to the machine's
+	# /manager/reset, which runs that machine's own command for the app and
+	# records its own appointment (exactly what a press there does). The
+	# destination is a signatorial from the remote machine list; 'all' fans out
+	# to every active machine. Returns a label for the machine that took it, or
+	# undef when nobody did.
+	my $data = shift;
+	my $destination = $data->{'destination'};
+	my $app = $data->{'app'};
+	my $movement = $data->{'movement'} || 'command';
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $me = &subs::signatorial_designer();
+	my $rms;
+	if (!$destination || $destination eq 'all') {
+		$rms = &subs::remote_machine_lister({ connection => 'active' });
+	}
+	else {
+		$rms = &subs::remote_machine_lister({ signatorial => $destination, connection => 'active' });
+	}
+	$rms = [] unless ref $rms eq 'ARRAY';
+	my $sent = 0;
+	my $label;
+	foreach my $rm ( @{$rms} ) {
+		next unless ref $rm eq 'HASH';
+		my $sig = $rm->{'signatorial'};
+		next unless $sig && $sig ne $me;   # this machine's own copy is run by the caller
+		next unless $rm->{'ip'};
+		my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+		next unless $hop && $hop->{'ua'} && $hop->{'manager'};
+		my $res = eval {
+			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => {
+				app => $app,
+				type => $movement,
+				timestamp => $timestamp,
+				notes => 'sent from ' . $me
+			})->result;
+		};
+		if ($res && eval { $res->is_success }) {
+			$sent++;
+			$label = $rm->{'hostname'} . ' (' . $rm->{'ip'} . ')' unless $label;
+		}
+		else {
+			$log->error('destination relay to ' . ($sig || '?') . ' failed: ' . ($@ || 'no answer'));
+		}
+	}
+	if (!$destination || $destination eq 'all') {
+		return $sent ? 'every machine (' . $sent . ')' : undef;
+	}
+	return $label;
 }
 
 sub run_command() {

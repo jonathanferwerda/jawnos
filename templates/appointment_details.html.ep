@@ -124,6 +124,7 @@
 							<th><button class="appointment_list_toggle hover" list="measures">Measures</button</th>
 						<% } %>
 					<% } %>
+					<% if ($l->{'type'} eq 'command' || $l->{'type'} eq 'kill') { %><th>Ran</th><% } %>
 					<% if ($l->{'type'} eq 'record') { %>
 						<th>Rec</th>
 					<% } %>
@@ -148,6 +149,7 @@
 								<td></td>
 							<% } %>
 						<% } %>
+						<% if ($l->{'type'} eq 'command' || $l->{'type'} eq 'kill') { %><td><%= $l->{'data'} %></td><% } %>
 						<% if ($l->{'type'} eq 'record') { %>
 							<td><%= &subs::format_name($l->{'data'}->{'recorder'}) %></td>
 						<% } %>
