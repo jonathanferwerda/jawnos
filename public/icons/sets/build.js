@@ -701,16 +701,21 @@ function hashHue(str) {
 	return h;
 }
 
-// The transport controls keep fixed hues in every colour set: stop is blue and
-// every rewind/forward button shares a green, whatever the set or the name.
+// The transport controls keep fixed hues in every colour set: record is red,
+// play green, rewind and fast-forward a sunflower yellow, stop blue and the
+// music note magenta, whatever the set or the name - each style shows them in
+// its own palette. The plain navigation arrows keep the green they share.
 // Window chrome is one calm blue, with the close in the red it has earned.
 const HUE_OVERRIDES = {
+	record: 0,
+	play: 120,
+	prev: 48,
+	next: 48,
+	note: 300,
 	stop: 216,
 	'stop sign': 216,
-	prev: 148,
 	back: 148,
 	'left arrow': 148,
-	next: 148,
 	forward: 148,
 	'right arrow': 148,
 	minimize: 216,
