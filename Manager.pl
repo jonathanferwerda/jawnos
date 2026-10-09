@@ -18512,17 +18512,15 @@ sub now_me($data) {
 	}
 	my $room_max = $op_d->{'__specs'}->{'room_max'};
 	my $screen_timeout = ($op_d->{'__specs'}->{'screen_timeout'} || 20) * 1000;
-	my $authorization;
-	if ($method ne 'bluetooth') {
-		my $patience = &subs::random_string_creator(36);
-		my $au = &subs::random_string_creator(27);
-		my $auth = &subs::note_encrypter($patience, $au );
-		$authorization = `(echo $auth) | base64 -w 0`;
-		$op_d->{'__shutup'}->{'patience'} = $patience;
-		$op_d->{'__specs'}->{'authorization'} = $authorization;
-	} else {
-		$authorization = $op_d->{'__specs'}->{'authorization'};
-	}
+	# the authorization rotates on every Now Me, bluetooth included now that the
+	# bridge can deliver it; reusing the stored one left the phone and the watch
+	# disagreeing whenever the panel ran anywhere else
+	my $patience = &subs::random_string_creator(36);
+	my $au = &subs::random_string_creator(27);
+	my $auth = &subs::note_encrypter($patience, $au );
+	my $authorization = `(echo $auth) | base64 -w 0`;
+	$op_d->{'__shutup'}->{'patience'} = $patience;
+	$op_d->{'__specs'}->{'authorization'} = $authorization;
 
 	my $params = {
 		name           => $name,
@@ -18573,8 +18571,18 @@ sub now_me($data) {
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $chip_id,
 			edt => $edt,
-			message => { type => 'now_me', data => {} }
+			message => { type => 'now_me', data => $params }
 		});
+		# the buttons follow the params, so the watch draws without any network
+		my $room_payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
+		if ($room_payload) {
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'room', data => { room => 1, payload => $room_payload } }
+			});
+		}
 	} else {
 		my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
 		my $ping_test = `$ping`;

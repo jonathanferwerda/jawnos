@@ -1680,7 +1680,7 @@ sub bluetooth_sender() {
 	if ($embedded->{'mac_addresses'}->{'bluetooth'}) {
 		my $bt_mac = $embedded->{'mac_addresses'}->{'bluetooth'};
 		my $name = $embedded->{'name'};
-		$message = encode_base64 encode_json $message;
+		my $json = encode_json $message;
 		my $client = &ble_bridge_client();
 		if (&ble_bridge_enabled() && $client) {
 			# Connect only when needed; the daemon keeps the link alive with
@@ -1689,14 +1689,66 @@ sub bluetooth_sender() {
 			unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
 				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx);
 			}
-			# Hand the message over on stdin: base64 needs no shell quoting.
+			# The client hands the JSON to the daemon as-is and the daemon writes
+			# it to the watch. Base64 is only for the old broadcast path; the
+			# client used to receive the encoded copy and the watch got a base64
+			# blob it could not parse.
 			open(my $bt_fh, '|-', $client, 'send') or return;
-			print {$bt_fh} $message;
+			print {$bt_fh} $json;
 			return close $bt_fh;
 		}
-		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$message' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
+		my $b64 = encode_base64 $json;
+		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$b64' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
 		return `$cmd`;
 	}
+}
+
+sub watch_room_payload() {
+	# The same picture watch.pl's /watch route renders, built in-process so the
+	# bridge can push it over BLE (the route itself needs an HTTP request).
+	my $data = shift;
+	my $edt = $data->{'edt'} || 'watch';
+	my $chip_id = $data->{'chip_id'};
+	my $device = $data->{'device'} || &subs::device_setter();
+	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
+	my $watch_settings = eval { decode_json $od } || {};
+	return undef unless $watch_settings->{'__specs'};
+	foreach my $k ( keys %{$watch_settings} ) {
+		next unless $watch_settings->{$k}->{'app'};
+		$watch_settings->{$k}->{'toggle'} = &subs::setting_grabber({ app => $watch_settings->{$k}->{'app'}, setting => 'toggle' }) eq 'on' ? 1 : 0;
+	}
+	$watch_settings = &subs::embedded_internal_jobs($watch_settings);
+	return $watch_settings;
+}
+
+sub watch_toggle_pusher() {
+	# A toggle changed somewhere. While the watch is awake and connected this
+	# lights its button up right away; a watch that slept through it asks for
+	# the whole picture on its next state_request.
+	my $data = shift;
+	return unless &subs::device_setter() eq 'mobile';
+	return unless &subs::ble_bridge_enabled();
+	my $app = $data->{'app'} || return;
+	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';
+	my $watches = &subs::device_lister(&subs::rightNow(), 'watch', undef, 'all');
+	return unless ref $watches eq 'ARRAY' && scalar @{$watches};
+	my @targets;
+	foreach my $w ( @{$watches} ) {
+		next unless ref $w eq 'HASH' && $w->{'chip_id'};
+		push @targets, $w->{'chip_id'};
+	}
+	return unless scalar @targets;
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		foreach my $chip ( @targets ) {
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip,
+				edt => 'watch',
+				message => { type => 'toggle', data => { app => $app, state => $state } }
+			});
+		}
+	}, { name => 'watch toggle push' });
 }
 
 sub ble_message_processor() {
@@ -1707,6 +1759,42 @@ sub ble_message_processor() {
 	my $msg = eval { decode_json $data };
 	if ($@ || !$msg || ref $msg ne 'HASH') {
 		$log->error('BLE message could not be decoded: ' . ($@ || 'not an object'));
+		return;
+	}
+	my $type = $msg->{'type'};
+	# the newer bridge messages are dispatches, not url fetches
+	if ($type && $type eq 'state_request') {
+		my $chip_id = $msg->{'chip_id'};
+		my $edt = $msg->{'edt'} || 'watch';
+		my $toggles = {};
+		my $rows = &subs::db_select('settings', undef, { setting => 'toggle' })->hashes;
+		foreach my $row ( @{$rows} ) {
+			next unless $row->{'app'};
+			$toggles->{$row->{'app'}} = $row->{'value'} eq 'on' ? 'on' : 'off';
+		}
+		$log->info('BLE state_request for ' . $chip_id . ': ' . scalar(keys %{$toggles}) . ' toggles');
+		&subs::bluetooth_sender({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $chip_id,
+			edt => $edt,
+			message => { type => 'toggles', data => $toggles }
+		});
+		return;
+	}
+	if ($type && $type eq 'room_request') {
+		my $chip_id = $msg->{'chip_id'};
+		my $edt = $msg->{'edt'} || 'watch';
+		my $room = $msg->{'room'} || 1;
+		my $payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
+		if ($payload) {
+			$log->info('BLE room_request for ' . $chip_id . ', room ' . $room);
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'room', data => { room => $room, payload => $payload } }
+			});
+		}
 		return;
 	}
 	my $url = $msg->{'url'};
@@ -2555,8 +2643,9 @@ sub setting_setter() {
 			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'/images/decipherable/' . $value . '.png\').css({\'background-color\': \'yellow\' });' });
 		}
 		else {
-			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'/images/decipherable/' . $value . '.png\').css({\'background-color\': \'grey\' });' });
+			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'/images/decipherable/' . $value . '.png\').css({\'background-color\': \'yellow\' });' });
 		}
+		&subs::watch_toggle_pusher({ app => $app, value => $value });
 	}
 	if ($setting eq 'site_type') {
 		&subs::db_delete('cache', { context => 'navigation_information' });

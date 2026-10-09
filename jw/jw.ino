@@ -114,6 +114,12 @@ static volatile bool president_fetch_running = false;
 static volatile bool president_data_ready = false;
 static String president_payload;
 static int president_fetch_room = 1;
+// loop2 sets these when a BLE message changed what belongs on screen; the LVGL
+// work itself stays on core 1 in loop()
+static volatile bool ble_toggle_refresh = false;
+static volatile bool ble_now_me_ready = false;
+// when the bridge last showed up; loop2 uses it to ask for missed state
+volatile uint32_t ble_connected_at = 0;
 char bufsec[64];
 char bufdate[64];
 char buftime[64];
@@ -267,26 +273,102 @@ bool deviceConnected = false;
 #define CHARACTERISTIC_UUID_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 QueueHandle_t bleIncomingQueue = NULL;
 
+// The bridge daemon frames a payload that does not fit one write as
+// "<i>/<n>:" + chunk (i is 0-based). A write with no such prefix is a whole
+// message -- an older daemon, or a manual write -- and passes straight through.
+static bool ble_frame_split(const String &in, int &index, int &total, String &body) {
+    int slash = in.indexOf('/');
+    if (slash <= 0) {
+        return false;
+    }
+    int colon = in.indexOf(':', slash);
+    if (colon <= slash + 1) {
+        return false;
+    }
+    for (int i = 0; i < slash; i++) {
+        if (!isDigit(in[i])) return false;
+    }
+    for (int i = slash + 1; i < colon; i++) {
+        if (!isDigit(in[i])) return false;
+    }
+    index = in.substring(0, slash).toInt();
+    total = in.substring(slash + 1, colon).toInt();
+    if (total <= 0 || index < 0 || index >= total) {
+        return false;
+    }
+    body = in.substring(colon + 1);
+    return true;
+}
+
+// reassembly state for a framed daemon write; the BLE task owns it
+static String ble_rx_buffer;
+static int ble_rx_next = 0;
+static uint32_t ble_rx_last = 0;
+
+static void queue_ble_message(const String &message) {
+    if (bleIncomingQueue == NULL) {
+        return;
+    }
+    // Allocate string dynamically on heap so it survives after function exits
+    String* msgPtr = new String(message);
+    // Push string pointer to the queue. Wait 0ms if full.
+    if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
+        // Fail-safe: Delete allocated memory if queue is full to prevent leaks
+        delete msgPtr;
+        Serial.println("BLE Queue Full! Message dropped.");
+    }
+}
+
+// small outbound message over the Nordic UART TX characteristic; used for the
+// bridge requests (state_request / room_request) from either core
+static void ble_send(JSONVar message) {
+    if (!deviceConnected || pTxCharacteristic == nullptr) {
+        return;
+    }
+    String payload = JSON.stringify(message);
+    pTxCharacteristic->setValue(payload.c_str());
+    pTxCharacteristic->notify();
+}
+
 //64:e8:33:4B:38:39
 // Handles connection status
 class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) { deviceConnected = true; };
-    void onDisconnect(BLEServer* pServer) { deviceConnected = false; }
+    void onConnect(BLEServer* pServer) { deviceConnected = true; ble_connected_at = millis(); };
+    void onDisconnect(BLEServer* pServer) { deviceConnected = false; ble_connected_at = 0; }
 };
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
         String rawInput = String(pCharacteristic->getValue().c_str());
-        
-        if (rawInput.length() > 0 && bleIncomingQueue != NULL) {
-            // Allocate string dynamically on heap so it survives after function exits
-            String* msgPtr = new String(rawInput);
-            
-            // Push string pointer to the queue. Wait 0ms if full.
-            if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
-                // Fail-safe: Delete allocated memory if queue is full to prevent leaks
-                delete msgPtr;
-                Serial.println("BLE Queue Full! Message dropped.");
+        if (rawInput.length() == 0) {
+            return;
+        }
+        int index = 0, total = 0;
+        String body;
+        if (ble_frame_split(rawInput, index, total, body)) {
+            // a fresh message, a gap, or a long pause restarts the buffer
+            if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
+                ble_rx_buffer = "";
+                ble_rx_next = 0;
             }
+            ble_rx_buffer += body;
+            ble_rx_last = millis();
+            ble_rx_next = index + 1;
+            if (ble_rx_buffer.length() > 65536) {
+                Serial.println("[ble] payload over 64k; dropping");
+                ble_rx_buffer = "";
+                ble_rx_next = 0;
+                return;
+            }
+            if (ble_rx_next >= total) {
+                String complete = ble_rx_buffer;
+                ble_rx_buffer = "";
+                ble_rx_next = 0;
+                Serial.printf("[ble] reassembled %u bytes (%d chunks)\n", complete.length(), total);
+                queue_ble_message(complete);
+            }
+        }
+        else {
+            queue_ble_message(rawInput);
         }
     }
 };
@@ -1017,6 +1099,20 @@ void loop() {
     president_data_ready = false;
     apply_president_payload();
   }
+  if (ble_now_me_ready) {
+    // the bridge pushed new params: land on the buttons room; remote_room()
+    // asks for the buttons over BLE (see below)
+    ble_now_me_ready = false;
+    room = 1;
+    remote_room();
+  }
+  if (ble_toggle_refresh) {
+    ble_toggle_refresh = false;
+    if (jw_room == "room") {
+      presidents_buttons();
+      full_refresh();
+    }
+  }
   // taps queued while the link was down go out shortly after a fresh central
   // arrives: notify() before its CCCD subscription lands is dropped
   static bool ble_link_was_up = false;
@@ -1080,7 +1176,10 @@ void loop2(void * pvParameters) {
         delete incomingMsgPtr; // CRITICAL: Free the allocated heap memory!
 
         Serial.print("Safely processing incoming Tasker JSON on loop2 stack: ");
-        Serial.println(btmsg);
+        // the whole message can be several KB and the usb serial drops what it
+        // cannot buffer while the host is slow, taking the markers after it down
+        // with it; a prefix is enough to follow what arrived
+        Serial.println(btmsg.substring(0, 120));
 
         JSONVar btMsg = JSON.parse(btmsg);
         if (JSON.typeof(btMsg) != "undefined") {
@@ -1110,11 +1209,70 @@ void loop2(void * pvParameters) {
             }
           }
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "now_me") {
-            
-            // Mutex protect because we are modifying global memory map strings
+            // the phone pushes the whole picture over BLE: the homebase, the
+            // authorization (freshly rotated), the clock offset and the room
+            // shape. No network needed on this side.
+            JSONVar params = btMsg["data"];
             if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              // the same mapping the http /now_me handler uses
+              homebaseIP = (const char *)params["homebase"];
+              homebase = (const char *)params["ip"];
+              authorization = (const char *)params["authorization"];
+              DEFAULT_SCREEN_TIMEOUT = params["screen_timeout"];
+              long timestamp = params["timestamp"];
+              rtc.setTime(timestamp);
+              offset = params["offset"];
+              rtc.offset = offset;
+              room_count = params["room_count"];
+              room_max = params["room_max"] || room_max;
+              if (DEFAULT_SCREEN_TIMEOUT < 30000) {
+                DEFAULT_SCREEN_TIMEOUT = 30000;
+              }
+              buttoned_before = false;   // ask the bridge for fresh buttons
               xSemaphoreGive(taskMutex);
-
+              ble_now_me_ready = true;
+              Serial.println("[ble] now_me applied");
+              Serial.flush();
+            }
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "room") {
+            // a room payload pushed by the bridge: the same picture the HTTP
+            // fetch returns, handed to loop() through the existing apply path
+            if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              president_fetch_room = btMsg["data"]["room"];
+              president_payload = JSON.stringify(btMsg["data"]["payload"]);
+              president_data_ready = true;
+              xSemaphoreGive(taskMutex);
+              Serial.println("[ble] room pushed");
+              Serial.flush();
+            }
+          }
+          else if (btMsg.hasOwnProperty("type") &&
+                   (String((const char *)btMsg["type"]) == "toggle" || String((const char *)btMsg["type"]) == "toggles")) {
+            // a toggle flipped somewhere else (a phone press, an alarm, an
+            // appointment): light up every button that has that app
+            if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              JSONVar updates = JSON.parse("{}");
+              if (String((const char *)btMsg["type"]) == "toggles") {
+                updates = btMsg["data"];
+              }
+              else {
+                updates[(const char *)btMsg["data"]["app"]] = btMsg["data"]["state"];
+              }
+              JSONVar bm = JSON.parse(before_me);
+              JSONVar keys = bm.keys();
+              for (int i = 0; i < keys.length(); i++) {
+                String k = keys[i];
+                String app = (const char *)bm[k]["app"];
+                if (app.length() > 0 && updates.hasOwnProperty(app.c_str())) {
+                  String state = (const char *)updates[app.c_str()];
+                  bm[k]["toggle"] = (state == "on") ? 1 : 0;
+                }
+              }
+              before_me = JSON.stringify(bm);
+              ble_toggle_refresh = true;
+              Serial.println("[ble] toggles applied");
+              xSemaphoreGive(taskMutex);
             }
           }
         }
@@ -1126,6 +1284,23 @@ void loop2(void * pvParameters) {
 
     // Essential: Prevents Core 0 Watchdog starvation panics
     vTaskDelay(pdMS_TO_TICKS(10)); 
+
+    // once the bridge is up, ask for anything that changed while the watch was
+    // asleep: the phone queues nothing for a sleeping peripheral, so the watch
+    // asks on its own (from here, so the ui never waits on the radio)
+    static bool state_requested = false;
+    if (!deviceConnected) {
+      state_requested = false;
+    }
+    else if (!state_requested && ble_connected_at != 0 && millis() - ble_connected_at > 3000) {
+      state_requested = true;
+      JSONVar req = JSON.parse("{}");
+      req["type"] = "state_request";
+      req["chip_id"] = chip_id_maker();
+      req["edt"] = "watch";
+      ble_send(req);
+      Serial.println("[ble] state requested");
+    }
     
 
 
@@ -2077,10 +2252,23 @@ void remote_room() {
     static uint32_t last_attempt = 0;
     if (millis() - last_attempt > 20000) {
       last_attempt = millis();
-      president_fetch_room = room;
-      president_fetch_running = true;
-      // the handshake needs more stack than loop2's 4 KB
-      xTaskCreatePinnedToCore(president_fetch_task, "PresTask", 12288, NULL, 1, NULL, 0);
+      if (deviceConnected) {
+        // the bridge is up: the phone fetches the room and pushes it back, so
+        // this works away from the home wifi
+        JSONVar req = JSON.parse("{}");
+        req["type"] = "room_request";
+        req["chip_id"] = chip_id_maker();
+        req["edt"] = "watch";
+        req["room"] = room;
+        ble_send(req);
+        Serial.println("[ble] room requested");
+      }
+      else {
+        president_fetch_room = room;
+        president_fetch_running = true;
+        // the handshake needs more stack than loop2's 4 KB
+        xTaskCreatePinnedToCore(president_fetch_task, "PresTask", 12288, NULL, 1, NULL, 0);
+      }
     }
   }
   presidents_buttons();
