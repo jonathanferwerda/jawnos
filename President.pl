@@ -382,6 +382,9 @@ sub manager_starter() {
 	# never asked for two files at once and the queue keeps its order.
 	&subs::subprocessor(sub {
 		my $minion = &subs::minion_grabber();
+		# the launcher clears the queue at startup and the nightly evaluation
+		# wishes live in the settings: put their schedules back
+		&subs::nightly_evaluation_reconcile();
 		my $worker = $minion->worker;
 		$worker->status->{jobs} = 1;
 		$worker->run;

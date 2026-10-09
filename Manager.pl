@@ -8823,6 +8823,20 @@ post '/manager/inventory/evaluate' => sub ($c) {
 	$c->render(json => $returner);
 };
 
+post '/manager/inventory/evaluate/nightly' => sub ($c) {
+	# the setting remembers the wish, the schedule carries it out, so the
+	# checkbox cannot drift from the queue; the answer reports the schedule that
+	# now exists (or does not), and the page paints that
+	my $app = &subs::unformat_name($c->param('app')) || '__president';
+	my $schedule = &subs::nightly_evaluation_apply($app, $c->param('checked'));
+	$c->render(json => {
+		ok => 'yes',
+		app => $app,
+		checked => $schedule ? 1 : 0,
+		next_run => $schedule ? $schedule->{'next_run'} : undef
+	});
+};
+
 get '/manager/inventory/information' => sub($c) {
 	my $app = $c->param('app');
 	my $timestamp = $c->param('timestamp');

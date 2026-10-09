@@ -4560,7 +4560,8 @@ sub minion_task_list {
 		archive_fetch_home => \&archive_fetch_home_job,
 		folders_copy => \&folders_copy_job,
 		folders_encrypt => \&folders_encrypt_job,
-		folders_decrypt => \&folders_decrypt_job
+		folders_decrypt => \&folders_decrypt_job,
+		appointment_evaluation => \&appointment_evaluation_job
 	};
 }
 
@@ -7628,6 +7629,90 @@ sub evaluation_agent() {
 	};
 	&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
 	return $report;
+}
+
+# The nightly evaluation is one Minion schedule per scope, named for the scope.
+# The schedule is the mechanism, but it does not survive the launcher: jawn
+# clears ~/.president at startup. So the wish lives in a setting too, and the
+# worker restores the schedules from the settings at boot - see
+# nightly_evaluation_reconcile. Minion reads cron expressions in UTC, and
+# 0 7 * * * is the small hours of the house: 3am EDT, 2am EST.
+sub nightly_evaluation_name {
+	my ($app) = @_;
+	$app = '__president' unless $app && $app ne '';
+	return 'nightly_evaluation_' . $app;
+}
+
+sub nightly_evaluation_schedule {
+	my ($app) = @_;
+	my $listed = eval { return &subs::minion_grabber()->list_schedules(0, 1, { names => [ &subs::nightly_evaluation_name($app) ] }) } || {};
+	return ($listed->{'schedules'} || [])->[0];
+}
+
+# carry out one scope's wish: schedule it, or unschedule it
+sub nightly_evaluation_arrange {
+	my ($app, $on) = @_;
+	$app = '__president' unless $app && $app ne '';
+	my $minion = &subs::minion_grabber();
+	my $name = &subs::nightly_evaluation_name($app);
+	if ($on) {
+		# one retry, in case the model was only briefly unreachable
+		$minion->schedule($name, '0 7 * * *', 'appointment_evaluation', [ { app => $app } ], { attempts => 2 });
+	}
+	else {
+		$minion->unschedule($name);
+	}
+}
+
+# the checkbox writes both halves: the setting remembers the wish, the schedule
+# carries it out, and the answer reports the schedule that now exists
+sub nightly_evaluation_apply {
+	my ($app, $on) = @_;
+	$app = '__president' unless $app && $app ne '';
+	$on = $on ? 1 : 0;
+	&subs::setting_setter({ app => $app, setting => 'nightly_evaluation', value => $on ? 'on' : 'off' });
+	&subs::nightly_evaluation_arrange($app, $on);
+	return &subs::nightly_evaluation_schedule($app);
+}
+
+# The queue under ~/.president does not outlive the launcher, but the settings
+# do. At boot this reads the wishes back, puts the schedules that are wanted
+# back, and drops any nightly schedule the settings no longer ask for. Held in
+# an eval because a boot that cannot reach the queue or the settings must not
+# take the worker down with it.
+sub nightly_evaluation_reconcile {
+	eval {
+		my $rows = &subs::db_select('settings', undef, { setting => 'nightly_evaluation', device => &subs::device_setter() })->hashes || [];
+		my %wanted;
+		foreach my $row ( @{$rows} ) {
+			next unless ($row->{'value'} || '') eq 'on';
+			$wanted{ ($row->{'app'} && $row->{'app'} ne '') ? $row->{'app'} : '__president' } = 1;
+		}
+		my $listed = &subs::minion_grabber()->list_schedules(0, 1000) || {};
+		my %present;
+		foreach my $sch ( @{ $listed->{'schedules'} || [] } ) {
+			next unless $sch->{'name'} =~ /^nightly_evaluation_/;
+			$present{$sch->{'name'}} = 1;
+		}
+		foreach my $scope ( keys %wanted ) {
+			&subs::nightly_evaluation_arrange($scope, 1) unless $present{ &subs::nightly_evaluation_name($scope) };
+		}
+		foreach my $name ( keys %present ) {
+			my ($scope) = $name =~ /^nightly_evaluation_(.*)$/;
+			&subs::nightly_evaluation_arrange($scope, 0) unless $wanted{$scope};
+		}
+	};
+	return;
+}
+
+# The worker half of the nightly checkbox: the same agent the evaluate button
+# runs, so a fresh report is in the cache before the house wakes.
+sub appointment_evaluation_job {
+	my ($job, $data) = @_;
+	my $app = $data->{'app'} || '__president';
+	my $report = &subs::evaluation_agent($app);
+	if ($report->{'error'}) { $job->fail($report->{'error'}); return; }
+	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });
 }
 
 sub generate_ai_image {

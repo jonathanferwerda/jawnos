@@ -491,6 +491,27 @@ $(document).on('click', '.system_evaluation', function() {
 	evaluationStation(b);
 });
 
+$(document).on('change', '.nightly_evaluation', function() {
+	var box = $(this);
+	var wanted = box.is(':checked');
+	box.prop('disabled', true);
+	$.ajax({
+		url: '/manager/inventory/evaluate/nightly',
+		type: 'POST',
+		data: { app: box.attr('app'), checked: wanted ? 1 : 0 },
+		success: function(response) {
+			box.prop('disabled', false);
+			// the schedule that now exists, or doesn't, is the truth: paint what
+			// the server says rather than what was asked for
+			box.prop('checked', response['checked'] ? true : false);
+		},
+		error: function() {
+			box.prop('disabled', false);
+			box.prop('checked', !wanted);
+		}
+	});
+});
+
 function evaluationStation(b) {
 	var timestamp = Date.now();
 	var app = b.attr('app');
