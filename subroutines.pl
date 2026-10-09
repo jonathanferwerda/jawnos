@@ -8046,16 +8046,24 @@ sub evaluation_report_for {
 
 # the report's text, split so that each app name inside it comes back as its
 # own piece: the page renders those as links, and format_name drops the
-# underscores on the way
+# underscores on the way. The model may write an app the way it is spelled
+# (chips_and_granola) or the way it reads (chips and granola), so both forms
+# are offered to the match.
 sub evaluation_text_chunks {
 	my ($report) = @_;
 	my $text = ($report->{'text'} || '') . '';
-	my @names = sort { length($b) <=> length($a) } grep { $_ && $_ =~ /\w/ } @{ $report->{'mentions'} || [] };
+	my @names = grep { $_ && $_ =~ /\w/ } @{ $report->{'mentions'} || [] };
 	return [ { text => $text } ] unless scalar @names;
-	my %lookup = map { lc($_) => $_ } @names;
-	my $pattern = join '|', map { quotemeta } @names;
+	my %lookup;
+	foreach my $name ( @names ) {
+		$lookup{ lc $name } = $name;
+		my $spaced = $name;
+		$spaced =~ s/_/ /g;
+		$lookup{ lc $spaced } = $name if $spaced ne $name;
+	}
+	my $pattern = join '|', map { quotemeta } sort { length($b) <=> length($a) } keys %lookup;
 	my @chunks;
-	foreach my $piece ( split /(\b(?:$pattern)\b)/, $text ) {
+	foreach my $piece ( split /(\b(?:$pattern)\b)/i, $text ) {
 		next if !defined $piece || $piece eq '';
 		if (my $app = $lookup{ lc $piece }) {
 			push @chunks, { app => $app, text => &subs::format_name($app) };
