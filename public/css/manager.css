@@ -329,8 +329,12 @@ canvas { overflow: scroll; z-index: 99; }
    them instead of standing 45 deep, and the extras the line-height would
    add above and below are dropped */
 .top_navbar { line-height: 0; }
-.top_navbar .window_icon_holder { display: inline-block; vertical-align: middle; }
-.top_navbar .window_icon_holder .window_icon { display: inline-block; height: 26px; line-height: 26px; font-size: 20px; vertical-align: middle; }
+/* the icon sits in a 26px tile with a 2px collar of the bar's colour around
+   it: the holder pads the top, left and bottom, and being the tallest thing
+   on the line it keeps the name's middle on the bar's middle. The corners of
+   the tile are rounded to match */
+.top_navbar .window_icon_holder { display: inline-block; vertical-align: middle; padding: 2px 0 2px 2px; }
+.top_navbar .window_icon_holder .window_icon { display: inline-block; height: 22px; line-height: 22px; font-size: 16px; vertical-align: middle; border-radius: 6px; }
 /* the name rides straight on the bar's own colour: the panel chip it sat in
    answered to the theme while the ink answered to the app's colour, so one of
    the two always clashed - the ink contrast_ink picks reads on the bar in
