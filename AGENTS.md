@@ -235,3 +235,38 @@ bench watch (`/dev/ttyACM0`) and the T-Deck (`/dev/ttyACM1`).
   `PERL5LIB=/home/jawn/perl5/lib/perl5 perl -MData::UUID -MJSON::PP -MMojo::UserAgent -e
   'chdir "/home/jawn/jawnos"; require "./subroutines.pl"; …'` runs the same code path outside
   the app (President.pl is what loads some of the modules, hence the `-M`s).
+
+## Deck fetch, PSRAM, and the scan's sharp edges (2026-10-09, later)
+
+- **The deck's HTTPS fetch needs PSRAM.** mbedTLS in this core allocates its
+  buffers from internal RAM only; the deck's internal heap (46 KB free, 31 KB
+  largest block) cannot hold the handshake's two ~16 KB records, and HTTPClient
+  reports that as `"connection refused"` — which is a lie worth remembering.
+  `templates` for the fix live in `jt.ino`: `mbedtls_platform_set_calloc_free()`
+  with an allocator that sends 4 KB+ to `MALLOC_CAP_SPIRAM`, plus
+  `heap_caps_malloc_extmem_enable(1024)`. The board's 8 MB of PSRAM was idle
+  except the LVGL screen buffer. `GET <deck>:3000/netcheck` prints ip/ssid/gw,
+  a raw TCP connect, a TLS connect with the mbedTLS error text, and the heap
+  state — use it before believing any "connection refused" from a board.
+- **Never `new WiFiClientSecure` per request.** Both firmwares have been bitten:
+  the leak (client + TLS buffers) grinds the heap down until handshakes fail.
+  Use a stack client and `https.end()` on every path.
+- **Now Me on a board:** the plain Now Me stores the payload server-side and
+  leaves the board to fetch `/watch?room=N` itself (fails on TLS, above, unless
+  PSRAM is arranged). `BT Now Me` pushes the payload and the room over the
+  phone/tablet BLE bridge — no TLS at all — and the boards already prefer the
+  BLE path when a central is connected.
+- **One entry per homebase, not per Now Me.** The deck's `authorization_json`
+  used to append on every Now Me (the green count button grew forever); it now
+  replaces the entry whose `__specs.homebase` matches, and the restore collapses
+  old saves. Keying on a signatorial would need `now_me` in `Manager.pl` to put
+  one into `__specs`.
+- **The device list dedupes by IP now** (`subroutines.pl`), keeping the richer
+  row. Related trap: a scan that runs while a board is rebooting stores the
+  board as `purpose: hmmm` with no `chip_id`, and then `now_me` 500s with
+  `Not a HASH reference at Manager.pl` (the `device_lister` lookup for
+  `load_type=teletype` found no such device and returned the device list
+  instead of a hash). A fresh scan with the board up fixes it.
+- **The manager's workers must be restarted after every `.pl` edit** — the
+  scan dedupe, for one, is invisible until then. Compare
+  `stat -c %Y subroutines.pl /proc/<worker pid>` to be sure.
