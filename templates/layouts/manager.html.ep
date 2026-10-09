@@ -69,7 +69,8 @@
 				dock_position: '<%= &subs::misc_setting('dock_position') || 'bottom' %>',
 				taskbar_position: '<%= &subs::misc_setting('taskbar_position') || 'bottom' %>',
 				search_placement: '<%= &subs::misc_setting('search_placement') || 'dock' %>',
-				start_button_side: '<%= &subs::misc_setting('start_button_side') || 'right' %>'
+				start_button_side: '<%= &subs::misc_setting('start_button_side') || 'right' %>',
+				dock_icons: '<%= &subs::misc_setting('dock_icons') || 'shown' %>'
 			};
 			var jawnos_clock_format = '<%= &subs::misc_setting('clock_format') || '24' %>';
 		</script>

@@ -334,6 +334,15 @@ function windowTopLimit() {
 	return limit;
 }
 
+// The foot of the screen a window in a half or maximized state leaves free: a
+// bottom taskbar first, then whatever the dock still keeps on screen when its
+// icons are switched permanently off.
+function windowBottomClearance() {
+	var bar = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('bottom') : 0;
+	if (typeof jawnosDockWindowReserve == 'function') { bar += jawnosDockWindowReserve(); }
+	return bar;
+}
+
 function windowReorganizer(window_id) {
 	var windows = [];
 	var startingV = windowTopLimit();
@@ -914,7 +923,13 @@ function windowHalfski(win,side) {
 	if (!windowPhoneChecker()) {
 		var ok = reservedSpots['header'] + 2;
 		var ww = $(window).width();
-		var height = $(window).height() - headerHeight - $('#search').height() - 10;
+		// with the dock's icons switched off the old allowance for the search box
+		// is wrong - the dock may be gone entirely - so the window measures itself
+		// against the bar and whatever the dock still keeps
+		var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
+		var height = hidden
+			? $(window).height() - ok - windowBottomClearance() - 10
+			: $(window).height() - headerHeight - $('#search').height() - 10;
 		if (mouse.x > (ww - (ww / 10)) || side == 'right') {
 
 			win.css({ 
@@ -948,10 +963,14 @@ function windowMaximizer(timestamp, app) {
 	var win = $('#window_' + timestamp );
 	$('#window_' + timestamp + '_restore').show();
 	$('#window_' + timestamp + '_maximize').hide();
+	// with the dock's icons off the foot is measured, not guessed: the fixed
+	// percentages left the dock's dead room unclaimed
+	var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
+	var tall = hidden ? Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance() - 6) + 'px' : null;
 	if (windowPhoneChecker()) {
 		win.css({ 
 			'position':'fixed', 
-			'height': '80%', 
+			'height': tall || '80%', 
 			'width': '98%',
 			'left': '0px',
 			'top': windowTopLimit()
@@ -960,7 +979,7 @@ function windowMaximizer(timestamp, app) {
 	else {
 		win.css({ 
 			'position':'fixed', 
-			'height': '90%', 
+			'height': tall || '90%', 
 			'width': '100%',
 			'left': '0px',
 			'top': windowTopLimit()

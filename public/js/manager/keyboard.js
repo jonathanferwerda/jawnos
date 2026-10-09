@@ -9,8 +9,16 @@ var pseudonymHideWait = 5000;
 // how much of a tucked dock stays on screen - the strip the mouse rests on to
 // call the icons back. The bottom dock keeps its top strip (the search); the
 // top one keeps its bottom strip, which is the search too, pushed below the
-// row by the CSS.
+// row by the CSS. With the search away, only a sliver of the pill stays - just
+// enough to hover and call the dock out.
 var pseudonymDockReach = 47;
+var pseudonymDockSliver = 15;
+// The strip a tucked row dock keeps: the search's own row while the input rides
+// the dock, the sliver otherwise.
+function pseudonymDockStrip() {
+	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+	return search_in_dock ? pseudonymDockReach : pseudonymDockSliver;
+}
 // how much of a tucked side dock stays on screen - the strip the pointer rests
 // on to call the pill back - and the state its slide answers to
 var pseudonymSideReach = 20;
@@ -29,28 +37,6 @@ function pseudonymFreeSpaceFinder(type) {
 	var icons = $('#pseudonym_bar .pseudonym.bar').toArray();
 	var visible = [];
 
-	$.each(icons, function(i,el) {
-		var icon = $(el);
-		var toggle = icon.attr('toggle');
-		if (jawnosDockIconGet(toggle) == 'on') {
-			icon.show();
-			visible.push(el);
-		}
-		else {
-			icon.hide();
-		}
-	});
-	// the dock keeps at least the remote control in it
-	if (visible.length == 0 && icons.length > 0) {
-		jawnosDockIconSet('remote_control', 'on');
-		$.each(icons, function(i,el) {
-			if ($(el).attr('toggle') == 'remote_control') {
-				$(el).show();
-				visible.push(el);
-			}
-		});
-	}
-
 	// 60px is the comfortable size; past that the icons share what the screen
 	// has, down to a floor so they stay recognisable
 	var full = 60;
@@ -63,7 +49,31 @@ function pseudonymFreeSpaceFinder(type) {
 	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	var dock_left = (typeof jawnosDockLeft == 'function') && jawnosDockLeft();
 	var dock_edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
+	var icons_hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
 	var count = Math.max(1, visible.length);
+
+	$.each(icons, function(i,el) {
+		var icon = $(el);
+		var toggle = icon.attr('toggle');
+		if (!icons_hidden && jawnosDockIconGet(toggle) == 'on') {
+			icon.show();
+			visible.push(el);
+		}
+		else {
+			icon.hide();
+		}
+	});
+	// the dock keeps at least the remote control in it
+	if (!icons_hidden && visible.length == 0 && icons.length > 0) {
+		jawnosDockIconSet('remote_control', 'on');
+		$.each(icons, function(i,el) {
+			if ($(el).attr('toggle') == 'remote_control') {
+				$(el).show();
+				visible.push(el);
+			}
+		});
+	}
+	count = Math.max(1, visible.length);
 
 	// the search's own button: it rides with the input while the search sits in
 	// the dock's row, and keeps the foot of the stack on a side dock, where the
@@ -82,7 +92,10 @@ function pseudonymFreeSpaceFinder(type) {
 		// the dock tucks - only the width and height are the finder's to set, and
 		// the edge offsets belong to pseudonymSideSettle() and its reveal
 		var edge_top = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('top') : 0;
-		var slots = count + (search_in_dock ? 1 : 0);
+		// with the icons switched off only the search takes a slot; nothing at all
+		// still holds one, so the pill keeps a shape to tuck from
+		var drawn = visible.length;
+		var slots = Math.max(1, drawn + (search_in_dock ? 1 : 0));
 		var room = h - edge_top - dock_edge - 26;
 		var size = Math.floor((room - (gap * (slots - 1))) / slots);
 		size = Math.max(floor, Math.min(full, size));
@@ -110,7 +123,7 @@ function pseudonymFreeSpaceFinder(type) {
 				'position': 'fixed',
 				'width': size,
 				'height': size,
-				'top': start + Math.round(count * (size + gap))
+				'top': start + Math.round(drawn * (size + gap))
 			});
 			// the panel waits beside the pill, wherever the pill has slid to
 			$('#search_entanglement').css({
@@ -157,7 +170,11 @@ function pseudonymFreeSpaceFinder(type) {
 
 		// the home wraps the row, wide enough for the search box at the least, and
 		// just tall enough for the search row, the icon row and the air between
-		// them - a phone's small icons no longer wear a box with an empty middle
+		// them - a phone's small icons no longer wear a box with an empty middle.
+		// A hidden box measures its children at nothing, so the search row is only
+		// read once the home is on screen (it may have been hidden with the icons
+		// off a moment ago).
+		if (search_in_dock) { home.show(); }
 		var search_row = search_in_dock ? Math.round(($('#search_entanglement').outerHeight() || 0) + 6) : 0;
 		var home_width = Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320));
 		home.css({ 'width': home_width + 'px', 'left': Math.round((w - home_width) / 2) + 'px', 'right': 'auto' });
@@ -168,15 +185,21 @@ function pseudonymFreeSpaceFinder(type) {
 			$('#search_toggle').css({ 'position': 'relative', 'top': '-7px', 'left': '', 'width': '', 'height': '' });
 		}
 		if (dock_top) {
-			// the row hangs from the padding, the search below it in the last 47px
-			home.css({ 'padding-top': (15 + size + 12) + 'px', 'height': (15 + size + 12 + 40) + 'px' });
+			// the row hangs from the padding, the search below it in the last 47px;
+			// with no icon row the search takes the box itself
+			if (icons_hidden) {
+				home.css({ 'padding-top': '', 'height': (search_row + 15) + 'px' });
+			}
+			else {
+				home.css({ 'padding-top': (15 + size + 12) + 'px', 'height': (15 + size + 12 + 40) + 'px' });
+			}
 		}
 		else {
-			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + size + 15) + 'px' });
+			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + (icons_hidden ? 0 : size) + 15) + 'px' });
 		}
 	}
 
-	if (visible.length > 0) {
+	if (visible.length > 0 || (icons_hidden && search_in_dock)) {
 		home.show();
 	}
 	else {
@@ -233,7 +256,7 @@ function pseudonymSideSlide() {
 	// ones come back, so a switched-off icon stays off.
 	$('#pseudonym_bar .pseudonym.bar').each(function () {
 		if (pseudonymSideTucked) { $(this).hide(); }
-		else if (jawnosDockIconGet($(this).attr('toggle')) == 'on') { $(this).show(); }
+		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden()) && jawnosDockIconGet($(this).attr('toggle')) == 'on') { $(this).show(); }
 	});
 	if (L.search_in_dock) {
 		$('#search_toggle').css({ 'left': (L.icon_left + slide) + 'px' });
@@ -410,7 +433,7 @@ function pseudonymHomeShower(x,y,interval) {
 						}
 					}
 					var ls = jawnosDockIconGet(toggle);
-					if (ls == 'on') {
+					if (ls == 'on' && !(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())) {
 						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
 					}
 					else if (kbg.hasClass('window_toggle')) {
@@ -445,9 +468,10 @@ function pseudonymHomeTopSettle() {
 	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
 	var home = $('#pseudonym_home');
 	// size the box for the top edge first - its height is what the tuck reaches
-	// past - then tuck it and let the row ride up with it
+	// past - then tuck it and let the row ride up with it. The strip it keeps is
+	// the search's row, or the sliver when the search rides elsewhere.
 	pseudonymFreeSpaceFinder();
-	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockReach - home.outerHeight()) });
+	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockStrip() - home.outerHeight()) });
 	pseudonymFreeSpaceFinder();
 	return 1;
 }
@@ -491,7 +515,7 @@ function pseudonymHomeHider(interval) {
 			// rests above the bar instead of lying across it.
 			var h = $('#pseudonym_home').outerHeight();
 			var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
-			var diff = Math.min(0, pseudonymDockReach - h) + edge;
+			var diff = Math.min(0, pseudonymDockStrip() - h) + edge;
 			$('#pseudonym_home').css({ 'bottom': diff });
 			$('.pseudonym.bar').hide();
 			$('.keyboard').each(function() {

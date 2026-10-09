@@ -153,6 +153,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
 				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar' ] ],
 				[ 'start_button_side', 'Start Button', [ 'right', 'left' ] ],
+				[ 'dock_icons', 'Dock Icons', [ 'shown', 'hidden' ] ],
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],
 			); %>
 			<% foreach my $g ( @bars ) { %>

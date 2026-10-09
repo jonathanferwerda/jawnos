@@ -12,7 +12,8 @@ var jawnosBars = {
 	dock: jawnos_bar_settings['dock_position'] || 'bottom',
 	taskbar: jawnos_bar_settings['taskbar_position'] || 'bottom',
 	search: jawnos_bar_settings['search_placement'] || 'dock',
-	start_side: jawnos_bar_settings['start_button_side'] || 'right'
+	start_side: jawnos_bar_settings['start_button_side'] || 'right',
+	icons: jawnos_bar_settings['dock_icons'] || 'shown'
 };
 
 // How tall the taskbar stands while it is up; the CSS gives it one height.
@@ -37,6 +38,22 @@ function jawnosSideDock() {
 }
 function jawnosDockLeft() {
 	return jawnosBars.dock == 'left';
+}
+// The dock's icons switched permanently off: the pill keeps whatever else it
+// carries - the search, or nothing at all - but the icon row never shows.
+function jawnosDockIconsHidden() {
+	return jawnosBars.icons == 'hidden';
+}
+// What a window in a half or maximized state leaves at the foot for the dock.
+// While the icons are on, nothing: those states measured themselves against the
+// search strip, and the dock is the user's to call out over the window's own
+// foot, as it always was. With the icons off, whatever the dock still keeps on
+// screen - the search's strip, or nothing at all.
+function jawnosDockWindowReserve() {
+	if (!jawnosDockIconsHidden()) { return 0; }
+	if (jawnosBars.dock == 'hidden' || jawnosSideDock() || jawnosDockTop()) { return 0; }
+	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+	return search_in_dock ? ((typeof pseudonymDockReach != 'undefined') ? pseudonymDockReach : 47) : 0;
 }
 function jawnosSideSearchVisible() {
 	return $('#pseudonym_home').hasClass('search_open');
@@ -243,6 +260,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'taskbar_position') { jawnosBars.taskbar = $(this).val(); }
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
+	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'clock_format') {
 		jawnos_clock_format = $(this).val();
 		jawnosClockShow();
