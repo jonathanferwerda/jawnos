@@ -2374,6 +2374,10 @@ void when_i_get_in(JSONVar wigi_item, String url) {
     
     Serial.print("Sent to Tasker: ");
     Serial.println(message);
+    // the message is on the wire: clear the staging map, or every tap leaves
+    // its payload behind and the heap bleeds until the display's DMA buffers
+    // stop allocating (which is when the room artifacts show up)
+    btMessages = JSON.parse("{}");
   } else {
     wigi[l] = wigi_item;
   }
@@ -2443,6 +2447,7 @@ void ble_flush_wigi() {
     delay(50);
   }
   wigi = remainder;
+  btMessages = JSON.parse("{}");
 }
 
 void mb1(lv_event_t *e) {
@@ -3451,9 +3456,9 @@ void net_room() {
   
   display_exit();
   ip_writer();
-    lv_obj_t * wifi_button = lv_btn_create(lv_scr_act());
+  lv_obj_t * wifi_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wifi_button, wifi_control, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(wifi_button, 10, 20 );
+  lv_obj_set_pos(wifi_button, 10, 30 );
   lv_obj_set_size(wifi_button, 40, 40 );
   if (wifi_enabled == true) {
     lv_obj_set_style_bg_color(wifi_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
@@ -3472,7 +3477,7 @@ void net_room() {
 
   lv_obj_t * wifi_ap_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wifi_ap_button, wifi_ap_control, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(wifi_ap_button, 60, 20 );
+  lv_obj_set_pos(wifi_ap_button, 60, 30 );
   lv_obj_set_size(wifi_ap_button, 40, 40 );
   if (wifi_ap_enabled == true) {
     lv_obj_set_style_bg_color(wifi_ap_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
@@ -3492,7 +3497,7 @@ void net_room() {
 
   lv_obj_t * bt_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(bt_button, bt_control, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(bt_button, 190, 20 );
+  lv_obj_set_pos(bt_button, 190, 30 );
   lv_obj_set_size(bt_button, 40, 40 );
   if (bt_enabled == true) {
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
@@ -3705,7 +3710,8 @@ void configRestore() {
     else {
       stop_ble_transfer();
     }
-    accesspoint_start();
+    // no unconditional accesspoint_start() here: it undid the saved off
+    // setting on every boot (the branch above already starts it when on)
     String we = (const char *)conf["wifi_enabled"];
     if (we == "on") {
       wifi_enabled = true;
