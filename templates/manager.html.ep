@@ -12,6 +12,7 @@
 <% my $taskbar_position = &subs::setting_grabber({ app => 'misc', setting => 'taskbar_position' }) || 'bottom'; %>
 <div id="taskbar" position="<%= $taskbar_position %>">
 	<span id="taskbar_windows"></span>
+	<span id="taskbar_icons"></span>
 	<span id="taskbar_clock"></span>
 </div>
 <canvas class="background" id="background"></canvas>
@@ -40,7 +41,6 @@
 </div>
 
 <div id="top_right_buttons">
-	<img src="<%= &subs::icon_for('/icons/lymeboard/automate everything.png') %>" jawnos_icon="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover" id="assistant">
 	<div id="assistant_view" style="position:fixed;height:320px;width:300px;display:none;background-color:var(--panel);border:solid;border-radius:5px;">
 		<div id="assistant_header" style="position:absolute;top:0px;width:100%;">
 			<span style="float:right;">
@@ -59,18 +59,17 @@
 			<div class="assistant_content" style="text-align:center;padding-bottom:4px;"></div>
 		</div>
 	</div>
-	<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
-	<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;" class="little_thumb now jonathan">
-	<img class="jonathan little_thumb fuck_you" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" ></img>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 	<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
 
 
 	<img id="start_menu_toggle" hint="Start menu" class="jonathan little_thumb start" src="<%= &subs::icon_for('/images/jbuttons/logo2.png') %>" jawnos_icon="/images/jbuttons/logo2.png">
-	<%= include 'start_menu/start_menu', parking_lot => {} %>
-	<div id="start_menu_backlog"></div>
-
 </div>
+<!-- the menu hangs off the corner itself rather than out of the button box: it
+     must stand over the dock and the taskbar, which the box it used to live in
+     sits under -->
+<%= include 'start_menu/start_menu', parking_lot => {} %>
+<div id="start_menu_backlog"></div>
 <div id="bottom_left_buttons">
 
 </div>

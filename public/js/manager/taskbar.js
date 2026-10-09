@@ -56,6 +56,7 @@ function jawnosBarsApply() {
 
 	bar.attr('position', jawnosBars.taskbar);
 	dock.attr('position', jawnosBars.dock);
+	jawnosTopIconsApply();
 
 	// a taskbar on the top edge pushes the whole header band down: the line the
 	// printers draw, the clothesline under it and the rows below all measure
@@ -83,6 +84,20 @@ function jawnosBarsApply() {
 
 	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+}
+
+// The icons the top-right corner used to wear alone: while the taskbar stands
+// they ride inside it at its right end, beside the clock, and with the bar
+// hidden the corner takes them back.
+function jawnosTopIconsApply() {
+	var icons = $('#lock_session, #start_menu_toggle');
+	if (!icons.length) { return; }
+	if (jawnosBars.taskbar == 'hidden') {
+		icons.appendTo('#top_right_buttons');
+	}
+	else {
+		icons.appendTo('#taskbar_icons');
+	}
 }
 
 $(document).ready(function () {

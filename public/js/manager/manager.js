@@ -109,7 +109,13 @@ async function assistantInitializer() {
 		}
 	});
 
+	assistantIconInitializer();
+}
 
+// The assistant's own button rides in the start menu, which the socket fetches
+// anew on every open, so the drag is armed once at load for the copy the page
+// ships with and again over there after each fetch.
+function assistantIconInitializer() {
 	$('#assistant').draggable({
 		appendTo: "body",
 		helper: "clone",
@@ -1064,6 +1070,7 @@ function startMenuToggle(data) {
 					$('#start_menu').replaceWith(response.html);
 					$('#start_menu').show();
 					startMenuListify();
+					assistantIconInitializer();
 					taskbarDisplayer();
 					st.attr('toggled', 'open');
 					startMenuCloser(35000);

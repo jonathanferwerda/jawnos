@@ -255,10 +255,16 @@ html, body {
 #taskbar .window_toggle .window_toggle_icon { height: 28px; width: 28px; max-width: 28px; object-fit: contain; }
 #taskbar .window_toggle span { font-size: 16px; white-space: nowrap; }
 #taskbar_clock { flex: 0 0 auto; white-space: nowrap; padding: 0px 8px; }
+/* the corner's own buttons come aboard while the bar stands: bare tiles of the
+   bar's inner height, sitting between the window list and the clock */
+#taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; }
+#taskbar_icons img { box-sizing: content-box; width: 34px; height: 34px; max-width: 34px; }
 /* the search, when the taskbar is its home: it rides on the right of the
-   window list rather than taking the bar over */
-#taskbar #search_entanglement { flex: 0 0 auto; width: 280px; }
-#taskbar #search { width: 100%; }
+   window list but takes a fifth of the bar at most, so the windows keep the
+   room; the input and its toggle share that fifth on one line */
+#taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; }
+#taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; }
+#taskbar #search_toggle { flex: 0 0 auto; width: 32px; height: 32px; max-width: 32px; object-fit: contain; }
 #timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
 #clockface { z-index: 2; overscroll-behavior: contain; position:absolute; right: 0px; top: 0px; width: 100% }
 #leaderboard { z-index: 2; position:absolute; left:0px; width: 100%;}
@@ -500,13 +506,15 @@ canvas { overflow: scroll; z-index: 99; }
 
 #start_menu {
 	/* the menu hangs off the top-right corner; never wider than the screen so
-	   phones and split-screen windows do not clip it */
+	   phones and split-screen windows do not clip it. It drops from under a top
+	   taskbar and stops above a bottom one, and stands over both bars. */
 	box-sizing: border-box;
 	width: min(400px, 100vw);
-	height: min(400px, calc(100vh - 60px));
+	height: min(400px, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 8px));
 	position:fixed;
 	right: 0px;
 	top: 48px;
+	z-index: 40001;
 	border: solid;
 	border-width: 4px;
 	border-radius: 5px;
@@ -522,12 +530,13 @@ canvas { overflow: scroll; z-index: 99; }
 	max-width: 54px;
 }
 
-/* Leave + site-type sit in a strip across the top-left of the menu; keep them a
-   fixed square, side by side, and drop the app grid below them so nothing gets
-   covered. (The grid needs the full width for its five-per-row icons, so it
-   cannot be inset sideways.) */
+/* Leave, site-type, now, assistant and the bird sit in a strip across the
+   top-left of the menu; keep them a fixed square, side by side, and drop the
+   app grid below them so nothing gets covered. (The grid needs the full width
+   for its five-per-row icons, so it cannot be inset sideways.) */
 #start_menu .leave,
-#start_menu .site_type_manual_changer_toggle {
+#start_menu .site_type_manual_changer_toggle,
+#start_menu .start_menu_corner {
 	box-sizing: border-box;
 	height: 40px;
 	width: 40px;
