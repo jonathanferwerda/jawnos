@@ -96,6 +96,38 @@ html, body {
    which is all that stays on screen while the row is tucked away */
 #pseudonym_home[position=top] { height: 134px; padding-top: 94px; }
 #pseudonym_home[position=hidden] { display: none !important; }
+/* a dock on a side edge: a pill of stacked icons hugging the edge, the search
+   button at the foot of the stack, and the search panel waiting beside it. The
+   panel slides out of its edge when the button calls it, and the cancel beside
+   the input sends it away again. */
+#pseudonym_home[position=left], #pseudonym_home[position=right] { padding: 11px; }
+#pseudonym_home[position=left] #search_toggle,
+#pseudonym_home[position=right] #search_toggle { position: fixed; box-sizing: border-box; object-fit: contain; }
+#pseudonym_home[position=left] #search_entanglement,
+#pseudonym_home[position=right] #search_entanglement {
+	position: fixed;
+	width: min(72vw, 320px);
+	transform: translateY(-50%) translateX(-30px);
+	opacity: 0;
+	pointer-events: none;
+	transition: transform .22s ease, opacity .22s ease;
+	background-color: var(--panel);
+	border: solid; border-width: 3px; border-radius: 10px;
+	padding: 8px;
+	z-index: 40000;
+}
+#pseudonym_home[position=right] #search_entanglement { transform: translateY(-50%) translateX(30px); }
+#pseudonym_home.search_open[position=left] #search_entanglement,
+#pseudonym_home.search_open[position=right] #search_entanglement {
+	transform: translateY(-50%) translateX(0);
+	opacity: 1;
+	pointer-events: auto;
+}
+#pseudonym_home[position=left] #search,
+#pseudonym_home[position=right] #search { width: 100%; box-sizing: border-box; }
+#search_cancel { display: none; }
+#pseudonym_home[position=left] #search_cancel,
+#pseudonym_home[position=right] #search_cancel { display: inline-block; vertical-align: top; box-sizing: border-box; }
 #pseudonym_bar {
 	width: 100%;
 	overflow-x:scroll;
@@ -430,6 +462,9 @@ canvas { overflow: scroll; z-index: 99; }
 }
 @media screen and (max-width:600px) {
 	#header { font-size: 16px; padding-top:6px; }
+	/* the phone's clock: the date over the time, small enough to leave the bar
+	   to the windows */
+	#taskbar_clock { font-size: 13px; line-height: 1.12; text-align: center; padding: 0px 4px; }
 	#ticket { width: 100% }
 	.window_view { width: 100%; }
 	.appointment { width: 100%; }

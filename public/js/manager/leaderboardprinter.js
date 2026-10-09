@@ -7,10 +7,11 @@ function headerPrinter(ctx,appts,title) {
 	$('#' + title.toLowerCase()).show();
 
 	var formatted_time = fixedTimeString(numeral(appts['__specs']['timestamp']).value());
-	// the clock lives in the taskbar while there is one; the header span keeps
-	// only the clock's fallback home for when that bar is set away
+	// the clock lives in the taskbar while there is one - it reads the raw
+	// timestamp so a phone can wear its shorter two-line face - and the header
+	// span keeps only the clock's fallback home for when that bar is set away
 	var clock_in_bar = (typeof jawnosClockInTaskbar == 'function') && jawnosClockInTaskbar();
-	if (typeof jawnosClockShow == 'function') { jawnosClockShow(formatted_time); }
+	if (typeof jawnosClockShow == 'function') { jawnosClockShow(numeral(appts['__specs']['timestamp']).value()); }
 	$('#header').html(clock_in_bar ? '' : formatted_time);
 
 	// the divider under the old header text - a moveTo alone never drew a line -

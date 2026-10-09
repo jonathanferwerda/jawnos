@@ -52,45 +52,122 @@ function pseudonymFreeSpaceFinder(type) {
 	var floor = 14;
 	var gap = 4;
 	var home_chrome = 68; // #pseudonym_home padding + border
-	var lane = Math.min(w - 8, 720) - home_chrome;
-	var count = Math.max(1, visible.length);
-	var size = Math.floor((lane - (gap * (count - 1))) / count);
-	size = Math.max(floor, Math.min(full, size));
-	var total = (size * visible.length) + (gap * Math.max(0, visible.length - 1));
-	var start = Math.round((w - total) / 2);
-	// a dock on the top edge hangs its row from its own top - riding down with
-	// the home when the search strip calls it - and the bottom one keeps its
-	// 15px from the edge, raised over the taskbar when the two share the bottom
+	var home = $('#pseudonym_home');
+	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
+	var dock_left = (typeof jawnosDockLeft == 'function') && jawnosDockLeft();
 	var dock_edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
-	var dock_row_top = Math.round(numeral($('#pseudonym_home').css('top')).value()) + 15;
+	var count = Math.max(1, visible.length);
 
-	$.each(visible, function(i,el) {
-		$(el).css({
-			'width': size,
-			'height': size,
-			'left': start + Math.round(i * (size + gap)),
-			'top': Math.round(dock_top ? dock_row_top : (h - 15 - size - dock_edge))
+	// the search's own button: it rides with the input while the search sits in
+	// the dock's row, and keeps the foot of the stack on a side dock, where the
+	// input panel stays hidden until the button calls it out
+	if (search_in_dock && dock_side) {
+		if ($('#search_toggle').closest('#search_entanglement').length > 0) { $('#search_toggle').appendTo('#pseudonym_home'); }
+	}
+	else if (!$('#search_toggle').closest('#search_entanglement').length) {
+		$('#search_toggle').insertAfter($('#search'));
+	}
+
+	if (dock_side) {
+		// a side dock stacks its icons: the search button takes a slot at the foot
+		// of the stack, and the whole pill is centred between the bars
+		var edge_top = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('top') : 0;
+		var slots = count + (search_in_dock ? 1 : 0);
+		var room = h - edge_top - dock_edge - 30;
+		var size = Math.floor((room - (gap * (slots - 1))) / slots);
+		size = Math.max(floor, Math.min(full, size));
+		var stack = (size * slots) + (gap * (slots - 1));
+		var start = edge_top + Math.round((h - edge_top - dock_edge - (stack + 30)) / 2) + 15;
+		var icon_left = dock_left ? 15 : (w - 15 - size);
+
+		$.each(visible, function(i,el) {
+			$(el).css({
+				'width': size,
+				'height': size,
+				'left': icon_left,
+				'top': start + Math.round(i * (size + gap))
+			});
 		});
-	});
-
-	// the home wraps the row, wide enough for the search box at the least
-	var home_width = Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320));
-	$('#pseudonym_home').css({ 'width': home_width + 'px', 'left': Math.round((w - home_width) / 2) + 'px' });
-
-	if (visible.length > 0) {
-		$('#pseudonym_home').show();
+		if (search_in_dock) {
+			$('#search_toggle').css({
+				'position': 'fixed',
+				'width': size,
+				'height': size,
+				'left': icon_left,
+				'top': start + Math.round(count * (size + gap))
+			});
+			$('#search_entanglement').css({
+				'top': '50%',
+				'width': Math.min(320, w - size - 68) + 'px',
+				'left': dock_left ? (size + 38) + 'px' : 'auto',
+				'right': dock_left ? 'auto' : (size + 38) + 'px'
+			});
+		}
+		home.css({
+			'width': (size + 30) + 'px',
+			'height': (stack + 30) + 'px',
+			'top': (start - 15) + 'px',
+			'left': dock_left ? '0px' : 'auto',
+			'right': dock_left ? 'auto' : '0px'
+		});
 	}
 	else {
-		$('#pseudonym_home').hide();
+		var lane = Math.min(w - 8, 720) - home_chrome;
+		var size = Math.floor((lane - (gap * (count - 1))) / count);
+		size = Math.max(floor, Math.min(full, size));
+		var total = (size * count) + (gap * (count - 1));
+		var start = Math.round((w - total) / 2);
+		// a dock on the top edge hangs its row from its own top - riding down with
+		// the home when the search strip calls it - and the bottom one keeps its
+		// 15px from the edge, raised over the taskbar when the two share the bottom
+		var dock_row_top = Math.round(numeral(home.css('top')).value()) + 15;
+
+		$.each(visible, function(i,el) {
+			$(el).css({
+				'width': size,
+				'height': size,
+				'left': start + Math.round(i * (size + gap)),
+				'top': Math.round(dock_top ? dock_row_top : (h - 15 - size - dock_edge))
+			});
+		});
+
+		// the home wraps the row, wide enough for the search box at the least, and
+		// just tall enough for the search row, the icon row and the air between
+		// them - a phone's small icons no longer wear a box with an empty middle
+		var search_row = search_in_dock ? Math.round(($('#search_entanglement').outerHeight() || 0) + 6) : 0;
+		var home_width = Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320));
+		home.css({ 'width': home_width + 'px', 'left': Math.round((w - home_width) / 2) + 'px', 'right': 'auto' });
+		$('#search_entanglement').css({ 'top': '', 'left': '', 'right': '' });
+		// the button comes back to the search's own row: the nudge the row wears,
+		// and none of the strip's own placement
+		if (search_in_dock) {
+			$('#search_toggle').css({ 'position': 'relative', 'top': '-7px', 'left': '', 'width': '', 'height': '' });
+		}
+		if (dock_top) {
+			// the row hangs from the padding, the search below it in the last 47px
+			home.css({ 'padding-top': (15 + size + 12) + 'px', 'height': (15 + size + 12 + 40) + 'px' });
+		}
+		else {
+			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + size + 15) + 'px' });
+		}
+	}
+
+	if (visible.length > 0) {
+		home.show();
+	}
+	else {
+		home.hide();
 	}
 	// a home that is tucked away takes its icons with it
-	if (numeral($('#pseudonym_home').css('bottom')).value() < 0) {
+	if (numeral(home.css('bottom')).value() < 0) {
 		$('.pseudonym').hide();
 	}
-	// the search is the dock's to size only while it rides there; in the taskbar
-	// the bar's own rules give it its width
-	if ($('#search_entanglement').closest('#pseudonym_home').length > 0) {
+	// the search is the dock's to size only while it rides there in a row; in the
+	// taskbar the bar's own rules give it its width, and a side dock's panel
+	// takes the width its own rules name
+	if (search_in_dock && !dock_side) {
 		$('#search_entanglement').css({'width': '100%'});
 		$('#search').css({'width': '80%'});
 
@@ -122,33 +199,40 @@ $(document).on('click', '.keyboard.bc,.keyboard_tab', function(i) {
 	keyboardDragEnabler(keyboard,id);
 });
 
+// the bar's own X sends the panel away; the pseudonym that called it brings it
+// back, and it is the only other way to drag it that goes with it
+$(document).on('click', '.keyboard_closer', function(e) {
+	e.stopPropagation();
+	$(this).closest('.keyboard').hide();
+});
+
 function keyboardDragEnabler(k,id,state) {
 
 	if (k.attr('id') != id) { return; }
 
 	if (k.attr('claimed') == 'yes' && state != 'on') {
 		k.attr('claimed','no');
-		k.css({ 'border-left': 'none' });
 	}
 	else {
 		k.attr('claimed', 'yes');
-		k.css({ 'border-left': 'solid 10px' });
 	}
 	keyboardDragBarMaker(k);
 }
 
 // A keyboard panel is moved by the thin bar across its top, so the body stays
-// free for tapping buttons and typing: a drag only ever starts on the bar.
-// The bar is added once; safe to call again on the same panel.
+// free for tapping buttons and typing: a drag only ever starts on the bar. The
+// bar carries the panel's close button at its own right end. The bar is added
+// once; safe to call again on the same panel.
 function keyboardDragBarMaker(k) {
 	k = $(k);
 	if (k.length == 0) { return; }
 	if (k.children('.keyboard_drag_bar').length == 0) {
-		k.prepend('<div class="keyboard_drag_bar"></div>');
+		k.prepend('<div class="keyboard_drag_bar"><span class="keyboard_closer hover" hint="Close">✕</span></div>');
 	}
 	if (!k.hasClass('ui-draggable')) {
 		k.draggable({
 			handle: '.keyboard_drag_bar',
+			cancel: '.keyboard_closer',
 			start: function(p) {
 				var panel = $(this);
 				pseudonyms[panel.attr('id')] = Date.now();
@@ -181,6 +265,8 @@ function keyboardDragBarMaker(k) {
 }
 
 function pseudonymHomeShower(x,y,interval) { 
+	// a side dock never tucks, so there is nothing to call back
+	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) { return; }
 	var was = 0;
 	var okay = 1;
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
@@ -276,6 +362,9 @@ function pseudonymHomeShower(x,y,interval) {
 function pseudonymHomeTopSettle() {
 	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
 	var home = $('#pseudonym_home');
+	// size the box for the top edge first - its height is what the tuck reaches
+	// past - then tuck it and let the row ride up with it
+	pseudonymFreeSpaceFinder();
 	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockReach - home.outerHeight()) });
 	pseudonymFreeSpaceFinder();
 	return 1;
@@ -286,6 +375,8 @@ function pseudonymHomeHider(interval) {
 	// beneath it on screen, the top slips up keeping its search strip on screen
 	// with the icon row above the visible edge. A hidden dock is already gone.
 	if (typeof jawnosDockHidden == 'function' && jawnosDockHidden()) { return; }
+	// a side dock never tucks either: its stack stands in the open
+	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) { return; }
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	pseudonymFreeSpaceFinder();
 	var m = mouse_position();
@@ -639,7 +730,6 @@ async function keyboardMaker(data) {
 					t.css(css);
 				}
 				t.attr('claimed', 'yes');
-				t.css({ 'border-left': 'solid 10px' });
 				keyboardDragBarMaker(t);
 			}
 		});
@@ -648,7 +738,6 @@ async function keyboardMaker(data) {
 		$('#' + toggle).show();
 		$('#' + toggle).css(css);
 		$('#' + toggle).attr('claimed', 'yes');
-		$('#' + toggle).css({ 'border-left': 'solid 10px' });
 		keyboardDragBarMaker($('#' + toggle));
 	}
 	else if (state != 'on') {

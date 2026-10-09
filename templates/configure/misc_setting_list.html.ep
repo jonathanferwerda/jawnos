@@ -145,9 +145,10 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		<h4>Bars</h4>
 		<div style="display:flex;flex-wrap:wrap;gap:10px;">
 			<% my @bars = (
-				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'hidden' ] ],
+				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
 				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar' ] ],
+				[ 'start_button_side', 'Start Button', [ 'right', 'left' ] ],
 			); %>
 			<% foreach my $g ( @bars ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>

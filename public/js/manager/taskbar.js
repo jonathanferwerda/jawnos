@@ -11,7 +11,8 @@ var jawnos_bar_settings = (typeof jawnos_bar_settings != 'undefined' && jawnos_b
 var jawnosBars = {
 	dock: jawnos_bar_settings['dock_position'] || 'bottom',
 	taskbar: jawnos_bar_settings['taskbar_position'] || 'bottom',
-	search: jawnos_bar_settings['search_placement'] || 'dock'
+	search: jawnos_bar_settings['search_placement'] || 'dock',
+	start_side: jawnos_bar_settings['start_button_side'] || 'right'
 };
 
 // How tall the taskbar stands while it is up; the CSS gives it one height.
@@ -29,6 +30,27 @@ function jawnosDockTop() {
 function jawnosDockHidden() {
 	return jawnosBars.dock == 'hidden';
 }
+// A dock on a side edge stacks its icons, with the search panel hidden beside
+// it until the button at the foot of the stack calls it out.
+function jawnosSideDock() {
+	return jawnosBars.dock == 'left' || jawnosBars.dock == 'right';
+}
+function jawnosDockLeft() {
+	return jawnosBars.dock == 'left';
+}
+function jawnosSideSearchVisible() {
+	return $('#pseudonym_home').hasClass('search_open');
+}
+function jawnosSideSearchShow(show) {
+	var home = $('#pseudonym_home');
+	if (show) {
+		home.addClass('search_open');
+		if (!$('#search').is(':focus')) { $('#search').focus(); }
+	}
+	else {
+		home.removeClass('search_open');
+	}
+}
 // The dock hangs at the very top of the page - below only a top taskbar, which
 // headerHeight carries - and clears the taskbar when the two share the bottom
 // one.
@@ -44,8 +66,21 @@ function jawnosClockInTaskbar() {
 	var bar = $('#taskbar');
 	return bar.length > 0 && bar.is(':visible');
 }
-function jawnosClockShow(text) {
-	$('#taskbar_clock').text(text);
+// The clock's text: a phone's bar is narrow, so there the day of the week goes,
+// the year shortens to two figures, and the date sits over the time; a desk
+// keeps the one long line headerPrinter builds.
+function jawnosClockText(timestamp) {
+	var date = new Date(timestamp);
+	var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+	var time = pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+	var date_text = pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + '/';
+	if (windowPhoneChecker()) {
+		return date_text + String(date.getFullYear()).slice(-2) + '<br>' + time;
+	}
+	return dayProcessor(date.getDay()) + ' ' + date_text + date.getFullYear() + ' ' + time;
+}
+function jawnosClockShow(timestamp) {
+	$('#taskbar_clock').html(jawnosClockText(timestamp));
 }
 
 function jawnosBarsApply() {
@@ -59,6 +94,7 @@ function jawnosBarsApply() {
 		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '' });
 	}
 	jawnosTopIconsApply();
+	jawnosTaskbarIconsSideApply();
 
 	// a taskbar on the top edge pushes the whole page down: the line the printers
 	// draw, the clothesline under it and the rows below all measure from
@@ -107,6 +143,24 @@ function jawnosTopIconsApply() {
 	}
 }
 
+// The start button (and the lock beside it) answers to its own setting: on the
+// right end it stands just before the clock, on the left it leads the bar.
+function jawnosTaskbarIconsSideApply() {
+	var icons = $('#taskbar_icons');
+	if (!icons.length || !$('#taskbar').length) { return; }
+	if (jawnosBars.start_side == 'left') {
+		icons.prependTo('#taskbar');
+	}
+	else {
+		icons.insertBefore('#taskbar_clock');
+	}
+}
+
+// the cancel beside a side dock's input sends the panel away
+$(document).on('click', '#search_cancel', function () {
+	jawnosSideSearchShow(0);
+});
+
 $(document).ready(function () {
 	jawnosBarsApply();
 });
@@ -118,6 +172,7 @@ $(document).on('change', '.misc_setting', function () {
 	if (setting == 'dock_position') { jawnosBars.dock = $(this).val(); }
 	else if (setting == 'taskbar_position') { jawnosBars.taskbar = $(this).val(); }
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
+	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
 	else { return; }
 	jawnosBarsApply();
 });
