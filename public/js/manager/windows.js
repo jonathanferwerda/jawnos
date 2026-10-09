@@ -267,9 +267,9 @@ function windowMaker(response) {
 			}
 			var appointments = win.find('.appointment');
 			$.each(appointments, function(n,val) {
-				var notes = localStorage.getItem(app + '_notes');
-				var ago = localStorage.getItem(app + '_ago');
-				var duration = localStorage.getItem(app + '_duration');
+				var notes = jawnosAppFieldGet(app, 'notes');
+				var ago = jawnosAppFieldGet(app, 'ago');
+				var duration = jawnosAppFieldGet(app, 'duration');
 				$(val).find('.notes').val(notes);
 				$(val).find('.ago').val(ago);
 				$(val).find('.duration').val(duration);
@@ -388,9 +388,9 @@ function windowReorganizer(window_id) {
 		// Keep a window on the screen (and phones it is the width of the screen,
 		// pinned left), with its contents scrolling rather than spilling.
 		windowFit(win);
-		var note = localStorage.getItem(app + '_note');
-		var ago = localStorage.getItem(app + '_ago');
-		var duration = localStorage.getItem(app + '_duration');
+		var note = jawnosAppFieldGet(app, 'note');
+		var ago = jawnosAppFieldGet(app, 'ago');
+		var duration = jawnosAppFieldGet(app, 'duration');
 		win.find('.notes').val(note);
 		win.find('.ago').val(ago);
 		win.find('.duration').val(duration);
@@ -426,8 +426,8 @@ function windowSaver() {
 			scrollTop = $('#' + timestamp).scrollTop();
 		}
 		var wc = $('#window_contents_' + timestamp).is(':visible');
-		var tnh = sessionStorage.getItem('tnh_' + timestamp);
-		var tnw = sessionStorage.getItem('tnw_' + timestamp);
+		var tnh = jawnosWindowSizeGet(timestamp, 'h');
+		var tnw = jawnosWindowSizeGet(timestamp, 'w');
 		var jopen = windowjOpenSaver($(v));
 		var current_information;
 		var blci = $(v).find('.budget_current_information');
@@ -546,8 +546,9 @@ function windowRetriever() {
 			var window = $('#' + i);
 			window.parent().show();
 			var toggle = window.parent().attr('toggle');
-			if (localStorage.getItem(i + '_dynamic')) {
-				var css = JSON.parse(localStorage.getItem(i + '_dynamic'));
+			var kept_style = jawnosWindowStyleGet(i);
+			if (kept_style) {
+				var css = JSON.parse(kept_style);
 				window.css(css);
 			}
 			else {
@@ -876,8 +877,8 @@ function windowMinimizer(timestamp,app) {
 		var tnh = win.height();
 		var tnw = win.width();
 
-		sessionStorage.setItem('tnh_' + timestamp,tnh);
-		sessionStorage.setItem('tnw_' + timestamp,tnw);
+		jawnosWindowSizeSet(timestamp, 'h', tnh);
+		jawnosWindowSizeSet(timestamp, 'w', tnw);
 
 	} else { 
 		$('#window_contents_' + timestamp).show();
@@ -885,8 +886,8 @@ function windowMinimizer(timestamp,app) {
 			$('#window_contents_' + timestamp).css({'overflow': 'scroll'});
 		}
 
-		var tnh = sessionStorage.getItem('tnh_' + timestamp);
-		var tnw = sessionStorage.getItem('tnw_' + timestamp);
+		var tnh = jawnosWindowSizeGet(timestamp, 'h');
+		var tnw = jawnosWindowSizeGet(timestamp, 'w');
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 	}
 	windowDimensionSetter(win);
@@ -1051,8 +1052,8 @@ function windowDraggable(win) {
 					var wc = $('#window_contents_' + timestamp);
 					wc.show();
 
-					var tnh = sessionStorage.getItem('tnh_' + timestamp);
-					var tnw = sessionStorage.getItem('tnw_' + timestamp);
+					var tnh = jawnosWindowSizeGet(timestamp, 'h');
+					var tnw = jawnosWindowSizeGet(timestamp, 'w');
 
 					$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 				}

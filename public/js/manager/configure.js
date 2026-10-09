@@ -31,7 +31,7 @@ async function configureToggle() {
 					var type = v.attr('type');
 					var kind = v.attr('kind');
 					var device_id = v.attr('device_id');
-					var mp = localStorage.getItem(type + device_id);
+					var mp = jawnosDevicePickGet(kind, device_id);
 					if (mp == 'on') { v.attr('selected', 'on'); v.css({'background-color': 'green'}); }
 				});
 			}, error: function(response) { console.log(response); }
@@ -493,7 +493,7 @@ $(document).on('change', '.pseudonym_setting', function() {
 			$('#pseudonym_list').html(response);
 			if (setting == 'status') {
 				var p = $('.pseudonym.keyboard[toggle="' + name + '"]');
-				localStorage.setItem('pseudonym_keyboard_' + name, value);
+				jawnosDockIconSet(name, value);
 				if (value == 'on') {
 					p.show();
 				}

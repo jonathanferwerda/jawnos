@@ -214,9 +214,9 @@ async function constraintMaker(pref) {
 	var all = [];
 	$.each(av, function(i,v) {
 		all.push(v);
-		var mic = localStorage.getItem('audioinput' + v.deviceId );
-		var cam = localStorage.getItem('videoinput' + v.deviceId );
-		var spkr = localStorage.getItem('audiooutput' + v.deviceId );
+		var mic = jawnosDevicePickGet('audioinput', v.deviceId);
+		var cam = jawnosDevicePickGet('videoinput', v.deviceId);
+		var spkr = jawnosDevicePickGet('audiooutput', v.deviceId);
 		if (v.kind == 'audioinput') {
 
 			hasAudio = true;

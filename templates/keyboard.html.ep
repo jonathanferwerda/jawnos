@@ -314,7 +314,7 @@
 				var type = v.attr('type');
 				var kind = v.attr('kind');
 				var device_id = v.attr('device_id');
-				var mp = localStorage.getItem(kind + device_id);
+				var mp = (typeof jawnosDevicePickGet == 'function') ? jawnosDevicePickGet(kind, device_id) : localStorage.getItem(kind + device_id);
 				if (mp == 'on') { v.attr('status', 'on'); }
 			});
 		</script>

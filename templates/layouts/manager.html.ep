@@ -34,16 +34,23 @@
 			var advertise_watching = '<%= $advertise_watching %>';
 			var volumeInterval;
 			<% if ($c->session('ticket_uuid')) { %>
-				$.ajax({
-					url: '/manager/debrief_grabber',
-					type: 'GET',
-					success: function(deb) {
-						$.each(deb,function(i,v) {
-							localStorage.setItem(i,v);
-						});
-			
-					}
-				});
+					$.ajax({
+						url: '/manager/debrief_grabber',
+						type: 'GET',
+						success: function(deb) {
+							// the debrief is the store's own snapshot; the keys the manager
+							// groups now are folded in on the way, so the old per-thing
+							// names are not seeded back in
+							if (typeof jawnosStoreFold == 'function') {
+								jawnosStoreFold(deb);
+							}
+							else {
+								$.each(deb,function(i,v) {
+									localStorage.setItem(i,v);
+								});
+							}
+						}
+					});
 			<% } %>
 			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
 			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
@@ -69,6 +76,7 @@
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/moment.js"></script>
+		<script src="/js/manager/stored.js?string=<%= $string %>"></script>
 		<script src="/js/manager/keyboard.js?string=<%= $string %>"></script>
 		<script src="/js/manager/text_editor_variables.js?string=<%= $string %>"></script>
 		<link rel="stylesheet" href="/css/keyboard.css?string=<%= $string %>" />

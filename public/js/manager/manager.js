@@ -1722,10 +1722,10 @@ $(document).on('keyup', '.notes, .ago, .duration', function() {
 				typed = input.html();
 			}
 			if (typed && typed != '' && typed != '<br>') {
-				localStorage.setItem(appointment + '_' + v, typed);
+				jawnosAppFieldSet(appointment, v, typed);
 			}
 			else {
-				localStorage.removeItem(appointment + '_' + v);
+				jawnosAppFieldRemove(appointment, v);
 			}
 			input.trigger('change');
 		});
@@ -2616,9 +2616,9 @@ function managerReset(caller,e) {
 function appClearer(app) {
 	$('.appointment[app="' + app + '"]').each(function(i,v) {
 		var container = $(v);
-		localStorage.removeItem(app + '_notes');
-		localStorage.removeItem(app + '_ago');
-		localStorage.removeItem(app + '_duration');
+		jawnosAppFieldRemove(app, 'notes');
+		jawnosAppFieldRemove(app, 'ago');
+		jawnosAppFieldRemove(app, 'duration');
 		container.find('.ago').val('');
 		container.find('.duration').val('');
 		container.find('.schedule').val('');

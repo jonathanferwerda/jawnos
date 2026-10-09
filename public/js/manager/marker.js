@@ -1075,7 +1075,7 @@ function markerStylusDisplay() {
 }
 
 function markerKeyboardPointer(pos) {
-	localStorage.setItem('whiteboard_position', '{ "x": "' + pos.x + '", "y": "' + pos.y + '"}');
+	jawnosWhiteboardSet('{ "x": "' + pos.x + '", "y": "' + pos.y + '"}');
 	var wb = $('#whiteboard').offset();
 	var screen = markerDocToScreen(pos.x, pos.y);
 	$('#pointer').css({ 'top': screen.y + wb['top'] - 12, 'left': screen.x + wb['left'] });

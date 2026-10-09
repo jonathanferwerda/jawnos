@@ -27,7 +27,7 @@ function pseudonymFreeSpaceFinder(type) {
 	$.each(icons, function(i,el) {
 		var icon = $(el);
 		var toggle = icon.attr('toggle');
-		if (localStorage.getItem('pseudonym_keyboard_' + toggle) == 'on') {
+		if (jawnosDockIconGet(toggle) == 'on') {
 			icon.show();
 			visible.push(el);
 		}
@@ -37,7 +37,7 @@ function pseudonymFreeSpaceFinder(type) {
 	});
 	// the dock keeps at least the remote control in it
 	if (visible.length == 0 && icons.length > 0) {
-		localStorage.setItem('pseudonym_keyboard_remote_control', 'on');
+		jawnosDockIconSet('remote_control', 'on');
 		$.each(icons, function(i,el) {
 			if ($(el).attr('toggle') == 'remote_control') {
 				$(el).show();
@@ -254,8 +254,8 @@ function keyboardDragBarMaker(k) {
 					}
 				});
 				var jcss = JSON.stringify(css);
-				localStorage.setItem(id + '_dynamic', jcss);
-				localStorage.setItem('pseudonym_location_' + id, jcss);
+				jawnosWindowStyleSet(id, jcss);
+				jawnosWindowPlaceSet(id, jcss);
 			}
 		});
 	}
@@ -327,7 +327,7 @@ function pseudonymHomeShower(x,y,interval) {
 
 						}
 					}
-					var ls = localStorage.getItem('pseudonym_keyboard_' + toggle);
+					var ls = jawnosDockIconGet(toggle);
 					if (ls == 'on') {
 						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
 					}
@@ -448,7 +448,7 @@ function pseudonymDraggableInitializer() {
 				left: p.originalEvent.target.offsetLeft
 			}
 			var data = JSON.stringify(d);
-			localStorage.setItem('pseudonym_location_' + p.target.id, data);
+			jawnosWindowPlaceSet(p.target.id, data);
 
 			var now = Date.now();
 			if (now - pseudonyms[p.target.id] < 250) {
@@ -551,12 +551,12 @@ $(document).on('click', '.media_picker', function() {
 	var type = mp.attr('type');
 	var kind = mp.attr('kind');
 	var device_id = mp.attr('device_id');
-	var selected = localStorage.getItem(kind + device_id);
+	var selected = jawnosDevicePickGet(kind, device_id);
 
 	$('.media_picker[kind="' + kind + '"]').each(function(i,v) {
 		$(v).attr('status', 'off');
 		var d = $(v).attr('device_id');
-		localStorage.setItem(kind + d, 'off');
+		jawnosDevicePickSet(kind, d, 'off');
 
 	});
 	if (selected == 'off') {
@@ -569,7 +569,7 @@ $(document).on('click', '.media_picker', function() {
 		selected = 'off';
 	}
 	mp.attr('status',selected);
-	localStorage.setItem(kind + device_id, selected);
+	jawnosDevicePickSet(kind, device_id, selected);
 });
 
 
@@ -660,7 +660,7 @@ async function keyboardMaker(data) {
 			return;
 		}
 	}
-	var pos = localStorage.getItem('pseudonym_location_' + toggle + '_toggle');
+	var pos = jawnosWindowPlaceGet(toggle + '_toggle');
 	var css;
 	if (pos) {
 		var ps = JSON.parse(pos);
@@ -668,8 +668,9 @@ async function keyboardMaker(data) {
 		var left = ps.left;
 		css = { 'position': 'fixed', 'top': top, 'left': left };
 		if (bottom < h / 4) {
-			if (localStorage.getItem(toggle + '_dynamic')) {
-				css = JSON.parse(localStorage.getItem(toggle + '_dynamic'));
+			var kept_style = jawnosWindowStyleGet(toggle);
+			if (kept_style) {
+				css = JSON.parse(kept_style);
 			}
 			else {
 				delete css['top'];
@@ -686,8 +687,8 @@ async function keyboardMaker(data) {
 			delete css['bottom'];
 			css['height'] = $('#' + toggle).height();
 			var jcss = JSON.stringify(css);
-			localStorage.setItem(toggle + '_dynamic', jcss);
-			localStorage.setItem('pseudonym_location_' + toggle, jcss);
+			jawnosWindowStyleSet(toggle, jcss);
+			jawnosWindowPlaceSet(toggle, jcss);
 
 		}
 		$('#' + toggle).css(css);
@@ -774,7 +775,7 @@ async function keyboardMaker(data) {
 					var status = 'off';
 
 
-						var input = localStorage.getItem(kind + deviceId );
+						var input = jawnosDevicePickGet(kind, deviceId);
 
 						if (input == 'on') { status = 'on' }
 						$(v).attr('selected','selected');
@@ -846,16 +847,16 @@ $(document).on('click', '.keyboard_base', function() {
 	var b = $(this);
 	var toggle = b.attr('toggle');
 	var p = $('.pseudonym.keyboard[toggle="' + toggle + '"]');
-	var q = localStorage.getItem('pseudonym_keyboard_' + toggle);
+	var q = jawnosDockIconGet(toggle);
 
 	if (q == 'on') {
 		p.hide();
 		b.css({'background-color': 'yellow' });
-		localStorage.setItem('pseudonym_keyboard_' + toggle, 'off');
+		jawnosDockIconSet(toggle, 'off');
 	}
 	else {
 		p.show();
-		localStorage.setItem('pseudonym_keyboard_' + toggle, 'on');
+		jawnosDockIconSet(toggle, 'on');
 		b.css({'background-color': 'green' });
 	}
 	//say_it(b.attr('speech'));
@@ -1039,7 +1040,7 @@ $(document).on('click', '.keyboard_button', function() {
 				data: { shift: shift, fn: fn, ctrl: ctrl, key: key, toggle: toggle, timestamp: timestamp, destination: destination, cushion: cushion },
 				success: function(response) {
 					if (localStorage.getItem('marker_tool') == 'kb' && $('#whiteboard').is(':visible')) {
-						var json_pos = localStorage.getItem('whiteboard_position');
+						var json_pos = jawnosWhiteboardGet();
 						var whiteboard_position = JSON.parse(json_pos || '{}' );
 						var font_size = marker.selected_marker_size * 2;
 						var marker_transparency = marker.selected_marker_transparency * 20;
@@ -1053,7 +1054,7 @@ $(document).on('click', '.keyboard_button', function() {
 
 						var new_x = Number(whiteboard_position['x']) + (Number(char_size) + 2);
 						var new_y = Number(whiteboard_position['y']);
-						localStorage.setItem('whiteboard_position', '{"x": "' + new_x + '", "y": "' + new_y + '"}' );
+						jawnosWhiteboardSet('{"x": "' + new_x + '", "y": "' + new_y + '"}' );
 						var wb = $('#whiteboard').offset();
 						// the board can be zoomed and panned, so convert the document
 						// position to screen position for the pointer icon
@@ -1113,7 +1114,7 @@ $(document).on('click', '.magic_wand', function() {
 
 $(document).on('click','.pseudonym', function() {
 	var toggle = $(this).attr('toggle');
-	var s = localStorage.getItem('pseudonym_keyboard_' + toggle);
+	var s = jawnosDockIconGet(toggle);
 	if (s == 'off' || $('#' + toggle).length == 0) {
 		keyboardMaker({ toggle: toggle })
 	}
