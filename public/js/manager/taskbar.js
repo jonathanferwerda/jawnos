@@ -130,7 +130,47 @@ function jawnosBarsApply() {
 	var settled = (typeof pseudonymHomeTopSettle == 'function') && pseudonymHomeTopSettle();
 	if (!settled && typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+	// a menu that is up follows its button when the bars move it
+	jawnosStartMenuPlace();
 }
+
+// The menu hangs from the button that opens it, wherever the bars have put that
+// button: above it when the taskbar is along the bottom, below it in the corner
+// or on a top bar, hugging whichever screen edge the button is nearest, and
+// never taller than the room between the button and the far edge.
+function jawnosStartMenuPlace() {
+	var menu = $('#start_menu');
+	var toggle = $('#start_menu_toggle');
+	if (!menu.length || !toggle.length || !menu.is(':visible') || !toggle.is(':visible')) { return; }
+	var t = toggle[0].getBoundingClientRect();
+	var w = $(window).width();
+	var h = $(window).height();
+	var gap = 4;
+	var menu_w = Math.min(menu.outerWidth() || 0, w);
+	var left = ((t.left + (t.width / 2)) < (w / 2)) ? t.left : (t.right - menu_w);
+	// a menu as wide as the screen sits flush to it rather than hanging over
+	left = Math.max(0, Math.min(left, w - menu_w));
+	var below = (jawnosBars.taskbar != 'bottom');
+	var room = below ? (h - t.bottom - gap - 8) : (t.top - gap - 8);
+	var place = {
+		'left': Math.round(left) + 'px',
+		'right': 'auto',
+		'max-height': Math.max(160, room) + 'px'
+	};
+	if (below) {
+		place['top'] = Math.round(t.bottom + gap) + 'px';
+		place['bottom'] = 'auto';
+	}
+	else {
+		place['bottom'] = Math.round(h - t.top + gap) + 'px';
+		place['top'] = 'auto';
+	}
+	menu.css(place);
+}
+
+$(window).on('resize', function () {
+	jawnosStartMenuPlace();
+});
 
 // The icons the top-right corner used to wear alone: while the taskbar stands
 // they ride inside it at its right end, beside the clock, and with the bar

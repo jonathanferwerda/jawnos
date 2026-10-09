@@ -1086,6 +1086,8 @@ function startMenuToggle(data) {
 					console.log('in the start');
 					$('#start_menu').replaceWith(response.html);
 					$('#start_menu').show();
+					// the menu hangs from the button that opened it
+					jawnosStartMenuPlace();
 					startMenuListify();
 					assistantIconInitializer();
 					taskbarDisplayer();
