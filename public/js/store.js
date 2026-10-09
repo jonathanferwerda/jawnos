@@ -763,6 +763,7 @@ function doTheMath() {
 	var total_cost = 0;
 	var total_discount = 0;
 	var price = numeral($('.item').attr('price')).value();
+	var model_quantity = numeral($('.item_model[select="on"]').find('.quantity').val() || 1).value();
 	var model_price = numeral($('.item_model[select="on"]').attr('original_price')).value();
 
 	var model_cost = numeral($('.item_model[select="on"]').attr('cost')).value();
@@ -778,9 +779,11 @@ function doTheMath() {
 		option_discount += numeral($(v).attr('discount')).value() * option_quantity;
 		option_quantity = 1;
 	});
-	total_discount = Math.abs(model_discount + option_discount) * -1;
-	total_price = model_price + option_price + total_discount;
-	total_cost = model_cost + option_cost;
+	// the model is charged by its quantity as the options are: a quantity that
+	// only rode along in the quote used to price as one
+	total_discount = Math.abs(model_discount * model_quantity + option_discount) * -1;
+	total_price = model_price * model_quantity + option_price + total_discount;
+	total_cost = model_cost * model_quantity + option_cost;
 
 	var markup = (total_price / total_cost - 1);
 	if (markup == Infinity) {

@@ -18,7 +18,7 @@
 				<% foreach my $col ( @mcols) { %>
 					<td>
 						<% if ($col eq 'total' && $d->{'model'}->{$col} == 0) { %>
-							<%= &subs::price_formatter($d->{'model'}->{'price'} + $d->{'model'}->{'tax'} + $d->{'model'}->{'aux'}) %>
+							<%= &subs::price_formatter(($d->{'model'}->{'price'} + $d->{'model'}->{'tax'} + $d->{'model'}->{'aux'}) * ($d->{'model'}->{'quantity'} || 1)) %>
 						<% } else { %>
 							<%= &subs::price_formatter($d->{'model'}->{$col}) %>
 						<% } %>
@@ -33,7 +33,7 @@
 						<% foreach my $col ( @mcols ) { %>
 							<td>
 								<% if ($col eq 'total' && $o->{$col} == 0) { %>
-									<%= &subs::price_formatter($o->{'price'} + $o->{'tax'} + $o->{'aux'}) %>
+									<%= &subs::price_formatter(($o->{'price'} + $o->{'tax'} + $o->{'aux'}) * ($o->{'quantity'} || 1)) %>
 								<% } else { %>
 									<%= &subs::price_formatter($o->{$col}) %>
 								<% } %>

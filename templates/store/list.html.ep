@@ -35,10 +35,10 @@
 						<td><% if ($q->{'model'}->{'cost'} && $q->{'model'}->{'price'}) { %><%= &subs::percent_formatter(($q->{'model'}->{'price'} / $q->{'model'}->{'cost'}) / 10) %><% } %></td>
 						<td><%= &subs::price_formatter($q->{'model'}->{'price'}) %></td>
 						<td><%= &subs::price_formatter($q->{'model'}->{'tax'}) %></td>
-						<td><% if ($q->{'model'}->{'price'} && $q->{'numbers'}->{'tax_rate'}) { %>
-							<%= &subs::price_formatter($q->{'model'}->{'price'} + $q->{'model'}->{'tax'}) %>
+						<td><% my $mq = $q->{'model'}->{'quantity'} || 1; if ($q->{'model'}->{'price'} && $q->{'numbers'}->{'tax_rate'}) { %>
+							<%= &subs::price_formatter(($q->{'model'}->{'price'} + $q->{'model'}->{'tax'}) * $mq) %>
 						<% } else { %>
-							<%= $q->{'model'}->{'price'} %>
+							<%= &subs::price_formatter($q->{'model'}->{'price'} * $mq) %>
 						<% } %></td>
 					</tr>
 					<thead>
@@ -57,9 +57,9 @@
 										<td><%= &subs::price_formatter($o->{'price'}) %></td>
 										<td><%= &subs::price_formatter($o->{'tax'}) %></td>
 										<td><% if ($o->{'price'} && $q->{'numbers'}->{'tax_rate'}) { %>
-											<%= &subs::price_formatter($o->{'price'} * $q->{'numbers'}->{'tax_rate'}) %>
+											<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1) * $q->{'numbers'}->{'tax_rate'}) %>
 											<% } else { %>
-												<%= $o->{'price'} %>
+												<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %>
 											<% } %>
 										</td>
 									</tr>

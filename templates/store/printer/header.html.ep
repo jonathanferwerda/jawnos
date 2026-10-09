@@ -69,8 +69,8 @@
 					</td>
 					<td class="paper_num"><%= $data->{'model'}->{'quantity'} || 1 %></td>
 					<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
-					<td class="paper_num"><%= $data->{'model'}->{'discount'} ? &subs::price_formatter($data->{'model'}->{'discount'}) : '' %></td>
-					<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
+					<td class="paper_num"><%= $data->{'model'}->{'discount'} ? &subs::price_formatter($data->{'model'}->{'discount'} * ($data->{'model'}->{'quantity'} || 1)) : '' %></td>
+					<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'} * ($data->{'model'}->{'quantity'} || 1)) %></td>
 				</tr>
 				<% foreach my $oc ( sort keys %{$data->{'options'}} ) { %>
 					<% foreach my $o ( @{$data->{'options'}->{$oc}} ) { %>
@@ -83,7 +83,7 @@
 							</td>
 							<td class="paper_num"><%= $o->{'quantity'} || 1 %></td>
 							<td class="paper_num"><%= &subs::price_formatter($o->{'price'}) %></td>
-							<td class="paper_num"><%= $o->{'discount'} ? &subs::price_formatter($o->{'discount'}) : '' %></td>
+							<td class="paper_num"><%= $o->{'discount'} ? &subs::price_formatter($o->{'discount'} * ($o->{'quantity'} || 1)) : '' %></td>
 							<td class="paper_num"><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
 						</tr>
 					<% } %>

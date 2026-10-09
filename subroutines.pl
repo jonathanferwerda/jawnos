@@ -7262,13 +7262,24 @@ sub email_send() {
 			my $loc_name = &subs::format_name($att->{'printer'}->{'type'}) . ' ' . $att->{'printer'}->{'id'} . '.pdf';
 			my $loc = $gb::tmp_dir . '/' . $loc_name;
 			push @locations, $loc;
-			# the house draws its own paper when it can answer for its name, and the
-			# public address stands in otherwise
+			# the paper draws itself from the very html the compose carried - it was
+			# rendered by the house the document was made on, it needs no network
+			# (the logo and the qr are data uris), and no theme or cache can reach
+			# it. The urls stand in should that html be absent.
 			my $local_url = $att->{'printer'}->{'pdf_url'} || $att_url;
-			`weasyprint "$local_url" "$loc"`;
+			if ($att->{'html'}) {
+				my $page = $gb::tmp_dir . '/paper_' . &subs::random_string_creator(12) . '.html';
+				write_file($page, '<!DOCTYPE html><html><head><meta charset="utf-8"><base href="' . $att_url . '"></head><body>' . $att->{'html'} . '</body></html>');
+				`weasyprint "$page" "$loc"`;
+				unlink $page;
+			}
+			unless (-s $loc) {
+				`weasyprint "$local_url" "$loc"`;
+			}
 			unless (-s $loc) {
 				`weasyprint "$att_url" "$loc"`;
 			}
+			&subs::log_writer('mail paper ' . $loc_name . ' drawn: ' . (-s $loc) . ' bytes');
 			$stuffer->attach_file($loc);
 			push @mail_files, { src => $loc, name => $loc_name, type => 'document' };
 		}
