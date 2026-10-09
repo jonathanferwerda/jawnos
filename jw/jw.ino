@@ -334,7 +334,14 @@ static void ble_send(JSONVar message) {
 // Handles connection status
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) { deviceConnected = true; ble_connected_at = millis(); };
-    void onDisconnect(BLEServer* pServer) { deviceConnected = false; ble_connected_at = 0; }
+    void onDisconnect(BLEServer* pServer) {
+        deviceConnected = false;
+        ble_connected_at = 0;
+        // Bluedroid stops advertising when a central attaches and never
+        // resumes it on its own: without this the phone cannot come back
+        // after a drop until the watch is rebooted or the radio toggled
+        pServer->startAdvertising();
+    }
 };
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {

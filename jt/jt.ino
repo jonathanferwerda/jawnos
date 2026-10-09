@@ -43,6 +43,10 @@ using fs::FS;
 #define AA_FONT_SMALL NotoSansBold15
 #define AA_FONT_LARGE NotoSansBold36
 PNG png;
+// PlatformIO's prototype generator inserts its block just before the first
+// function definition in the sketch; the BLE helpers below are the first, so
+// the unqualified websockets types must already be visible this early.
+using namespace websockets;
 
 // The file helpers at the bottom of this sketch; PlatformIO's .ino preprocessor
 // does not inject prototypes for them, the Arduino IDE does.
@@ -96,6 +100,11 @@ static bool wifi_enabled = false;
 // panicked the watch, and loop() starts it once the boot has settled.
 static bool bt_enabled = false;
 static bool btStartPending = false;
+// The radio's real state. bt_enabled is the *preference* (what configSave
+// writes and the net room button shows); it can be true while a start is still
+// pending, so the start/stop guards must not key off it or the radio never
+// comes up.
+static bool ble_radio_up = false;
 String tauth_remote_enabled = "off";
 #define DEFAULT_SCREEN_TIMEOUT                  20*1000
 
@@ -107,26 +116,111 @@ BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic = NULL;
 bool deviceConnected = false;
 QueueHandle_t bleIncomingQueue = NULL;
+// when the bridge last showed up; loop() uses it to ask for missed state
+volatile uint32_t ble_connected_at = 0;
+
+// The bridge daemon frames a payload that does not fit one write as
+// "<i>/<n>:" + chunk (i is 0-based). A write with no such prefix is a whole
+// message -- an older daemon, or a manual write -- and passes straight through.
+static bool ble_frame_split(const String &in, int &index, int &total, String &body) {
+  int slash = in.indexOf('/');
+  if (slash <= 0) {
+    return false;
+  }
+  int colon = in.indexOf(':', slash);
+  if (colon <= slash + 1) {
+    return false;
+  }
+  for (int i = 0; i < slash; i++) {
+    if (!isDigit(in[i])) return false;
+  }
+  for (int i = slash + 1; i < colon; i++) {
+    if (!isDigit(in[i])) return false;
+  }
+  index = in.substring(0, slash).toInt();
+  total = in.substring(slash + 1, colon).toInt();
+  if (total <= 0 || index < 0 || index >= total) {
+    return false;
+  }
+  body = in.substring(colon + 1);
+  return true;
+}
+
+// reassembly state for a framed daemon write; the BLE task owns it
+static String ble_rx_buffer;
+static int ble_rx_next = 0;
+static uint32_t ble_rx_last = 0;
+
+static void queue_ble_message(const String &message) {
+  if (bleIncomingQueue == NULL) {
+    return;
+  }
+  // heap allocated so it outlives this callback's frame; loop() frees it
+  String* msgPtr = new String(message);
+  if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
+    delete msgPtr;
+    deckLog("[bt] queue full, message dropped");
+  }
+}
+
+// small outbound message over the Nordic UART TX characteristic
+static void ble_send(JSONVar message) {
+  if (!deviceConnected || pTxCharacteristic == nullptr) {
+    return;
+  }
+  String payload = JSON.stringify(message);
+  pTxCharacteristic->setValue(payload.c_str());
+  pTxCharacteristic->notify();
+}
 
 class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     deviceConnected = true;
+    ble_connected_at = millis();
   };
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
+    ble_connected_at = 0;
+    // Bluedroid stops advertising when a central attaches and never resumes
+    // it on its own: without this the phone cannot come back after a drop
+    // until the deck is rebooted or the radio toggled
+    pServer->startAdvertising();
   }
 };
 
 class MyCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     String rawInput = String(pCharacteristic->getValue().c_str());
-    if (rawInput.length() > 0 && bleIncomingQueue != NULL) {
-      // heap allocated so it outlives this callback's frame; loop() frees it
-      String* msgPtr = new String(rawInput);
-      if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
-        delete msgPtr;
-        deckLog("[bt] queue full, message dropped");
+    if (rawInput.length() == 0) {
+      return;
+    }
+    int index = 0, total = 0;
+    String body;
+    if (ble_frame_split(rawInput, index, total, body)) {
+      // a fresh message, a gap, or a long pause restarts the buffer
+      if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
+        ble_rx_buffer = "";
+        ble_rx_next = 0;
       }
+      ble_rx_buffer += body;
+      ble_rx_last = millis();
+      ble_rx_next = index + 1;
+      if (ble_rx_buffer.length() > 65536) {
+        deckLog("[bt] payload over 64k; dropping");
+        ble_rx_buffer = "";
+        ble_rx_next = 0;
+        return;
+      }
+      if (ble_rx_next >= total) {
+        String complete = ble_rx_buffer;
+        ble_rx_buffer = "";
+        ble_rx_next = 0;
+        deckLog("[bt] reassembled %u bytes (%d chunks)", complete.length(), total);
+        queue_ble_message(complete);
+      }
+    }
+    else {
+      queue_ble_message(rawInput);
     }
   }
 };
@@ -911,10 +1005,10 @@ void setup() {
   deckLog("[deck] lvgl up");
 
   readFile(FFat, "/bootreport.txt");
-  if (returner == "success") {
-    configRestore();
-  }
-  deckLog("[deck] config restore done (%s)", returner.c_str());
+  // restore whatever the flash holds, healthy report or not: configRestore
+  // defaults the missing pieces and always draws a usable screen
+  configRestore();
+  deckLog("[deck] config restore done");
   wsclient.onMessage(wsMessageCallback);
   // set output power to 10 dBm (accepted range is -17 - 22 dBm)
   // The radio is a bonus like the GPS: each of these used to park in a silent
@@ -1399,7 +1493,8 @@ void loop() {
       deckLog("[bt] %s", btmsg.c_str());
       JSONVar btMsg = JSON.parse(btmsg);
       if (JSON.typeof(btMsg) != "undefined") {
-        if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "button") {
+        String mtype = btMsg.hasOwnProperty("type") ? String((const char *)btMsg["type"]) : String("");
+        if (mtype == "button") {
           if (before_me == "") {
             before_me = "{}";
           }
@@ -1417,8 +1512,102 @@ void loop() {
             before_me = JSON.stringify(bm);
           }
         }
+        else if (mtype == "now_me") {
+          // the phone pushes the whole picture over BLE: the homebase, the
+          // authorization (freshly rotated), the clock offset and the room
+          // shape. No network needed on this side.
+          JSONVar params = btMsg["data"];
+          homebaseIP = (const char *)params["homebase"];
+          homebase = (const char *)params["ip"];
+          authorization = (const char *)params["authorization"];
+          twshomebaseIP = (const char *)params["twshomebase"];
+          thomebaseIP = (const char *)params["thomebase"];
+          offset = params["offset"];
+          rtc.offset = offset;
+          long timestamp = params["timestamp"];
+          rtc.setTime(timestamp + offset);
+          room_count = params["room_count"] || room_count;
+          room_max = params["room_max"] || room_max;
+          buttoned_before = false;   // ask the bridge for fresh buttons
+          deckLog("[bt] now_me applied");
+          remote_room();
+        }
+        else if (mtype == "room") {
+          // a room payload pushed by the bridge: the same picture the http
+          // fetch returns
+          before_me = JSON.stringify(btMsg["data"]["payload"]);
+          buttoned_before = true;
+          JSONVar conf = JSON.parse(before_me);
+          int32_t year = conf["__specs"]["time"]["year"];
+          if (year > 2020) {
+            rtc.setTime(conf["__specs"]["time"]["sec"], conf["__specs"]["time"]["min"],
+                        conf["__specs"]["time"]["hour"], conf["__specs"]["time"]["day"],
+                        conf["__specs"]["time"]["month"], year);
+          }
+          if (jw_room == "room") {
+            presidents_buttons();
+            remote_writer();
+            presidents_title();
+          }
+          deckLog("[bt] room pushed");
+        }
+        else if (mtype == "toggle" || mtype == "toggles") {
+          // a toggle flipped somewhere else (a phone press, an alarm, an
+          // appointment): light up every button that has that app
+          JSONVar updates = JSON.parse("{}");
+          if (mtype == "toggles") {
+            updates = btMsg["data"];
+          }
+          else {
+            updates[(const char *)btMsg["data"]["app"]] = btMsg["data"]["state"];
+          }
+          JSONVar bm = JSON.parse(before_me);
+          JSONVar keys = bm.keys();
+          for (int i = 0; i < keys.length(); i++) {
+            String k = keys[i];
+            String app = (const char *)bm[k]["app"];
+            if (app.length() > 0 && updates.hasOwnProperty(app.c_str())) {
+              String state = (const char *)updates[app.c_str()];
+              bm[k]["toggle"] = (state == "on") ? 1 : 0;
+            }
+          }
+          before_me = JSON.stringify(bm);
+          if (jw_room == "room") {
+            presidents_buttons();
+          }
+          deckLog("[bt] toggles applied");
+        }
       }
     }
+  }
+
+  // the bridge just came up: ask for anything that changed while it was down,
+  // and hand over the taps that queued in the meantime
+  static bool state_requested = false;
+  if (!deviceConnected) {
+    state_requested = false;
+  }
+  else if (!state_requested && ble_connected_at != 0 && millis() - ble_connected_at > 3000) {
+    state_requested = true;
+    JSONVar req = JSON.parse("{}");
+    req["type"] = "state_request";
+    req["chip_id"] = chip_id_maker();
+    req["edt"] = "teletype";
+    ble_send(req);
+    deckLog("[bt] state requested");
+  }
+  static bool ble_link_was_up = false;
+  static uint32_t ble_link_up_at = 0;
+  if (deviceConnected && !ble_link_was_up) {
+    ble_link_was_up = true;
+    ble_link_up_at = millis();
+  }
+  else if (!deviceConnected) {
+    ble_link_was_up = false;
+  }
+  if (deviceConnected && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
+    ble_link_up_at = 0;
+    ble_flush_wigi();
   }
   // The audio library is pumped by hand, from here. A task turned out to be
   // worse than useless: if its creation failed or it exited early the flag that
@@ -2663,17 +2852,26 @@ void call_the_president() {
   Serial.print("bb: " );
   Serial.println(buttoned_before);
   if (!buttoned_before && homebaseIP != "") {
-    String req = "https://" + homebaseIP + "/watch?room=" + room;
-    Serial.println(req);
-    String watchRequest = https_request(req);
-    Serial.println(watchRequest);
-    if (watchRequest != "failure") {
-      before_me = watchRequest;
-      buttoned_before = true;
+    if (deviceConnected) {
+      // the bridge is up: the phone fetches the room and pushes it back, so
+      // this works anywhere the phone is, and it does not block the ui
+      JSONVar req = JSON.parse("{}");
+      req["type"] = "room_request";
+      req["chip_id"] = chip_id_maker();
+      req["edt"] = "teletype";
+      req["room"] = room;
+      ble_send(req);
+      deckLog("[bt] room requested");
     }
     else {
-      //    writeFile(FFat, "/bootreport.txt", "failed");
-
+      String req = "https://" + homebaseIP + "/watch?room=" + room;
+      Serial.println(req);
+      String watchRequest = https_request(req);
+      Serial.println(watchRequest);
+      if (watchRequest != "failure") {
+        before_me = watchRequest;
+        buttoned_before = true;
+      }
     }
   }
   else {
@@ -2970,7 +3168,7 @@ void remote_room() {
   remote_writer();
   presidents_title();
 }
-void when_i_get_in(JSONVar wigi_item) {
+void when_i_get_in(JSONVar wigi_item, String url) {
   
   int l = wigi.length();
   if (l < 0) {
@@ -3002,8 +3200,66 @@ void when_i_get_in(JSONVar wigi_item) {
     presidents_buttons();
   }
 
+  if (deviceConnected) {
+    // a local envelope: the bridge relays it, no network needed on this side
+    JSONVar envelope = JSON.parse("{}");
+    envelope["type"] = "button";
+    envelope["payload"] = wigi_item;
+    url = url_maker(url);
+    envelope["url"] = url;
+    String payload = JSON.stringify(envelope);
+    pTxCharacteristic->setValue(payload.c_str());
+    pTxCharacteristic->notify();
+    deckLog("[bt] tap sent (%u bytes)", payload.length());
+  } else {
+    wigi[l] = wigi_item;
+  }
+}
 
-  wigi[l] = wigi_item;
+// Taps made while no central was attached sit in wigi until the webapp's WIGI
+// button collects them; when a central comes back, hand the fresh ones over
+// over BLE so a momentary drop does not strand them. Anything older than five
+// minutes stays in the queue for the webapp to pull.
+void ble_flush_wigi() {
+  int l = wigi.length();
+  if (l <= 0) {
+    return;
+  }
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return;
+  }
+  long now = rtc.getLocalEpoch() - rtc.offset;
+  JSONVar remainder = JSON.parse("[]");
+  int keep = 0;
+  for (int i = 0; i < l; i++) {
+    JSONVar item = wigi[i];
+    if (!item.hasOwnProperty("room") || !item.hasOwnProperty("button")) {
+      continue;
+    }
+    long ts = item["timestamp"];
+    if (now - ts > 300) {
+      remainder[keep] = item;
+      keep++;
+      continue;
+    }
+    int room_n = item["room"];
+    int button_n = item["button"];
+    int toggle_n = item["toggle"];
+    String url = "https://" + homebaseIP +
+      "/watch/button?room=" + room_n +
+      "&button=" + button_n +
+      "&toggle=" + toggle_n;
+    JSONVar envelope = JSON.parse("{}");
+    envelope["type"] = "button";
+    envelope["payload"] = item;
+    envelope["url"] = url_maker(url);
+    String payload = JSON.stringify(envelope);
+    pTxCharacteristic->setValue(payload.c_str());
+    pTxCharacteristic->notify();
+    deckLog("[bt] flushed a queued tap");
+    delay(50);
+  }
+  wigi = remainder;
 }
 
 void mb1(lv_event_t *e) {
@@ -3012,17 +3268,16 @@ void mb1(lv_event_t *e) {
   } else {
     b1_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=1&toggle=" + b1_toggle
-  );
+    "&button=1&toggle=" + b1_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 1;
     updater["toggle"] = b1_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3053,17 +3308,16 @@ void mb2(lv_event_t *e) {
   } else {
     b2_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=2&toggle=" + b2_toggle
-  );
+    "&button=2&toggle=" + b2_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 2;
     updater["toggle"] = b2_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3091,17 +3345,16 @@ void mb3(lv_event_t *e) {
   } else {
     b3_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=3&toggle=" + b3_toggle
-  );
+    "&button=3&toggle=" + b3_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 3;
     updater["toggle"] = b3_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3131,17 +3384,16 @@ void mb4(lv_event_t *e) {
   } else {
     b4_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=4&toggle=" + b4_toggle
-  );
+    "&button=4&toggle=" + b4_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 4;
     updater["toggle"] = b4_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3170,17 +3422,16 @@ void mb5(lv_event_t *e) {
   } else {
     b5_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=5&toggle=" + b5_toggle
-  );
+    "&button=5&toggle=" + b5_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 5;
     updater["toggle"] = b5_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3207,17 +3458,16 @@ void mb6(lv_event_t *e) {
   } else {
     b6_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=6&toggle=" + b6_toggle
-  );
+    "&button=6&toggle=" + b6_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 6;
     updater["toggle"] = b6_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3245,17 +3495,16 @@ void mb7(lv_event_t *e) {
   } else {
     b7_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=7&toggle=" + b7_toggle
-  );
+    "&button=7&toggle=" + b7_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 7;
     updater["toggle"] = b7_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -3283,17 +3532,16 @@ void mb8(lv_event_t *e) {
   } else {
     b8_toggle = 0;
   }
-  String https = https_request(
-    "https://" + homebaseIP +
+  String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=8&toggle=" + b8_toggle
-  );
+    "&button=8&toggle=" + b8_toggle;
+  String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
     updater["button"] = 8;
     updater["toggle"] = b8_toggle;
-    when_i_get_in(updater);
+    when_i_get_in(updater, r);
     return;
   }
   JSONVar result = JSON.parse(https);
@@ -4073,10 +4321,11 @@ static void touch_button6(lv_event_t *e) {
 // The watch's Nordic UART Service, unchanged except for the advertise name
 // (the deck's configured name, so a house full of them can be told apart).
 void start_ble_transfer() {
-  if (bt_enabled == true) {
+  if (ble_radio_up == true) {
     return;
   }
   deckLog("[bt] powering up");
+  ble_radio_up = true;
   bt_enabled = true;
 
   BLEDevice::init(name.length() ? name.c_str() : "T-Deck");
@@ -4112,19 +4361,28 @@ void start_ble_transfer() {
 }
 
 void stop_ble_transfer() {
-  if (bt_enabled == false) {
+  if (ble_radio_up == false) {
     return;
   }
   deckLog("[bt] shutting down");
+  ble_radio_up = false;
   bt_enabled = false;
-  pServer->getAdvertising()->stop();
+  if (pServer) {
+    // Close the link before tearing the stack down: deinit with a disconnect
+    // event still in flight walked characteristics that no longer existed
+    for (int tries = 0; pServer->getConnectedCount() > 0 && tries < 20; tries++) {
+      pServer->disconnect(pServer->getConnId());
+      delay(50);
+    }
+    pServer->getAdvertising()->stop();
+  }
   // false shuts the RF off without destroying the NUS mapping objects in RAM
   BLEDevice::deinit(false);
 }
 
 static void bt_control(lv_event_t *e) {
   lv_obj_t * bt_button = lv_event_get_target_obj(e);
-  if (bt_enabled == true) {
+  if (ble_radio_up == true) {
     stop_ble_transfer();
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
   }
@@ -4450,14 +4708,27 @@ void configSave() {
   conf["wigi"] = wigi_wah;
   String returner = JSON.stringify(conf);
   Serial.println(returner);
-  writeFile(FFat, "/config.json", returner.c_str());
+  // a deck that has nothing configured must not write the empty picture over
+  // its own flash: a blank save cements a wipe for good
+  if (homebaseIP.length() == 0 && authorization.length() == 0 &&
+      ssid.length() == 0 && buttoned_before == false) {
+    deckLog("[config] nothing configured yet; not saving");
+    return;
+  }
+  // LittleFS truncates in place, so a reset mid-save leaves a clobbered
+  // config.json; stage in a temp file, drop the old one, then rename over it
+  writeFile(FFat, "/config.tmp", returner.c_str());
+  if (FFat.exists("/config.json")) {
+    FFat.remove("/config.json");
+  }
+  if (!FFat.rename("/config.tmp", "/config.json")) {
+    writeFile(FFat, "/config.json", returner.c_str());
+  }
 }
 
-void configDelete() {
-  deleteFile(FFat, "/config.json");
-  Serial.println("Formatting");
-  writeFile(FFat, "/bootreport.txt", "deleting");
-
+// the picture a never-configured deck comes up with: a boot with nothing
+// usable to restore, and Configure's Delete, both start from here
+void configDefaults() {
   before_me = "";
   jw_room = "gate";
   homebase = "";
@@ -4466,6 +4737,7 @@ void configDelete() {
   thomebaseIP = "";
   twshomebaseIP = "";
   offset = 0;
+  rtc.offset = 0;
   computer_name = "";
   authorization = "";
   ssid = "";
@@ -4485,20 +4757,42 @@ void configDelete() {
   buttoned_before = false;
   wifi_ap_enabled = false;
   wifi_enabled = false;
+  bt_enabled = true;      // the preference: the radio is wanted
   loraChatBroadcaster = false;
   loraChatReceiver = false;
   tauth_remote_enabled = "off";
   account_room, community_room, club_room, team_room, contact_room, project_room = "";
 }
 
+void configDelete() {
+  deleteFile(FFat, "/config.json");
+  deckLog("[config] deleted");
+  writeFile(FFat, "/bootreport.txt", "deleting");
+  configDefaults();
+}
+
+
+// a config file is only worth restoring if it says the deck has been set up;
+// a clobbered or half-written one parses fine but every field is null/zero,
+// and that picture must never win
+static bool config_is_live(JSONVar conf) {
+  if (String((const char *)conf["homebaseIP"]).length() > 0) return true;
+  if (String((const char *)conf["ssid"]).length() > 0) return true;
+  if (String((const char *)conf["authorization"]).length() > 0) return true;
+  if (String((const char *)conf["buttoned_before"]) == "on") return true;
+  return false;
+}
 
 void configRestore() {
+  // start from the factory picture and let the file overlay it: a clobbered
+  // field then falls back to its default instead of dragging the deck to zero
+  configDefaults();
   returner = "";
   returner = readFile(FFat, "/config.json");
   writeFile(FFat, "/bootreport.txt", "saving");
 
   JSONVar conf = JSON.parse(returner);
-  if (returner != "failure") {
+  if (config_is_live(conf)) {
     before_me = (const char *)conf["before_me"];
     community_room = (const char *)conf["community_room"];
     club_room = (const char *)conf["club_room"];
@@ -4572,12 +4866,11 @@ void configRestore() {
     }
     String bte = (const char *)conf["bt_enabled"];
     if (bte == "on") {
-      if (bt_enabled == false) {
-        // loop() starts it; doing it here panicked boards on boot
-        btStartPending = true;
-      }
+      bt_enabled = true;
+      btStartPending = true;   // loop() starts it; doing it here panicked boards on boot
     }
     else {
+      bt_enabled = false;
       stop_ble_transfer();
     }
     wifi_server();
@@ -4602,6 +4895,11 @@ void configRestore() {
     else {
       tauth_cancel();
     }
+  }
+  if (bt_enabled == true && btStartPending == false) {
+    // the defaults (or a live config) say the radio should be on; arm the
+    // deferred start that loop() runs once the boot has settled
+    btStartPending = true;
   }
   call_the_president();
   jw_room = (const char *)conf["jw_room"];

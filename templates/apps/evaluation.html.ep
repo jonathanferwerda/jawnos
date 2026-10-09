@@ -4,6 +4,15 @@
     will be re-run each night even across a restart %>
 <% my $nightly = (&subs::setting_grabber({ app => $app || '__president', setting => 'nightly_evaluation' }) || '') eq 'on'; %>
 <label class="hover" hint="Evaluate every night so a fresh report is waiting in the morning" style="vertical-align:bottom;"><input type="checkbox" class="nightly_evaluation" app="<%= $app || '' %>"<% if ($nightly) { %> checked<% } %>> Nightly</label>
+<%# how much history the evaluation may read: the window is the token bill, and
+    the setting is the memory the nightly run reads too %>
+<% my $eval_period = &subs::setting_grabber({ app => $app || '__president', setting => 'evaluation_period' }) || 'month'; %>
+<% $eval_period = 'month' unless $eval_period =~ /^(day|week|month)$/; %>
+<select class="evaluation_period" app="<%= $app || '__president' %>" hint="How much history the evaluation reads: a shorter window costs fewer tokens" style="vertical-align:bottom;">
+	<% foreach my $p ( qw/day week month/ ) { %>
+		<option value="<%= $p %>" <% if ($eval_period eq $p) { %>selected<% } %>><%= &subs::format_name($p) %></option>
+	<% } %>
+</select>
 <% my $report_app = $app || '__president'; %>
 <% my $report = &subs::cache_get({ app => $report_app, context => 'evaluation_report' }) || {}; %>
 <span class="evaluation_report" app="<%= $report_app %>" style="display:block;text-align:left;white-space:pre-wrap;"><%= $report->{'text'} || '' %><% if ($report->{'model'}) { %><i style="font-size:80%;"><br><%= $report->{'model'} %> <span class="time" timestamp="<%= $report->{'timestamp'} %>"></span></i><% } %></span>

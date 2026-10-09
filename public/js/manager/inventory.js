@@ -512,9 +512,16 @@ $(document).on('change', '.nightly_evaluation', function() {
 	});
 });
 
+$(document).on('change', '.evaluation_period', function() {
+	var pick = $(this);
+	// the window is remembered per scope; the nightly run reads the same setting
+	settingSetter({ app: pick.attr('app'), setting: 'evaluation_period', value: pick.val() });
+});
+
 function evaluationStation(b) {
 	var timestamp = Date.now();
 	var app = b.attr('app');
+	var period = b.siblings('.evaluation_period').first().val() || '';
 	var text = b.text();
 	var report = b.siblings('.evaluation_report').first();
 	b.text('* ' + text);
@@ -530,7 +537,7 @@ function evaluationStation(b) {
 	$.ajax({
 		url: '/manager/inventory/evaluate',
 		type: 'POST',
-		data: { timestamp: timestamp, app: app },
+		data: { timestamp: timestamp, app: app, period: period },
 		success: function(response) {
 			clearInterval(configIntervals['sysEvaluateInterval']);
 			clearTimeout(configIntervals['sysEvaluateTimeout']);

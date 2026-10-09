@@ -28,7 +28,7 @@ unless (defined $cmd) {
 my %opt;
 my @args;
 while (defined(my $a = shift @ARGV)) {
-	if ($a =~ /^--(service|rx|tx)$/) { $opt{$1} = shift @ARGV; }
+	if ($a =~ /^--(service|rx|tx|mtu)$/) { $opt{$1} = shift @ARGV; }
 	else { push @args, $a; }
 }
 
@@ -91,7 +91,7 @@ if ($cmd eq 'scan') {
 }
 elsif ($cmd eq 'connect') {
 	my $mac = $args[0] or die "jawn-bt connect: mac required\n";
-	send_cmd({ cmd => 'connect', mac => $mac, map { $_ => $opt{$_} } grep { $opt{$_} } qw/service rx tx/ });
+	send_cmd({ cmd => 'connect', mac => $mac, map { $_ => $opt{$_} } grep { $opt{$_} } qw/service rx tx mtu/ });
 	$last = wait_for(sub { $_[0]->{'event'} =~ /^(connected|disconnected|error)$/ }, 30);
 }
 elsif ($cmd eq 'send') {

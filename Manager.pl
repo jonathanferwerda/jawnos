@@ -8799,6 +8799,9 @@ get '/manager/transaction/movement' => sub($c) {
 post '/manager/inventory/evaluate' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
+	# the picker's answer rides the request; the setting behind it is what the
+	# nightly run will read
+	my $period = $c->param('period');
 	my $timeslots = [ 's','m','h','mday','M','y','wday','yday','isdst'];
 	my $evaluation = { timeslots => {} };
 	# the counts need the timestamps one at a time: streaming them keeps a
@@ -8819,7 +8822,7 @@ post '/manager/inventory/evaluate' => sub ($c) {
 	$rows->finish;
 	&subs::cache_set({ app => $app || '__president', context => 'evaluation', warranty => '-6M' }, $evaluation);
 	# the numbers are rolled up; let the evaluation agent read them with the model
-	my $returner = { ok => 'yes', app => $app, evaluation_report => &subs::evaluation_agent($app || '__president') };
+	my $returner = { ok => 'yes', app => $app, evaluation_report => &subs::evaluation_agent($app || '__president', $period) };
 	$c->render(json => $returner);
 };
 

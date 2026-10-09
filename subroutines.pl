@@ -1687,7 +1687,7 @@ sub bluetooth_sender() {
 			# auto-reconnect after that.
 			my $status = `$client status 2>/dev/null`;
 			unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
-				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx);
+				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512');
 			}
 			# The client hands the JSON to the daemon as-is and the daemon writes
 			# it to the watch. Base64 is only for the old broadcast path; the
@@ -7386,10 +7386,16 @@ sub cloudflare_model_list() {
 # numbers below it have already done.
 
 sub appointment_rollup() {
-	my ($app) = @_;
+	my ($app, $since) = @_;
 	my $global = ($app eq '__president');
-	my $filter = $global ? '' : ' where app = ?';
-	my @args = $global ? () : ($app);
+	# one where-clause for every roll-up: the app (unless whole house) and the
+	# window the evaluation may read. A shorter window is fewer numbers, and the
+	# numbers are the token bill
+	my @where;
+	my @args;
+	unless ($global) { push @where, 'app = ?'; push @args, $app; }
+	if ($since) { push @where, 'cast(timestamp as integer) >= ?'; push @args, $since; }
+	my $filter = scalar @where ? ' where ' . join(' and ', @where) : '';
 	my $roll = { activity => {}, hours => {}, weekdays => {}, daily => {} };
 	my $owner_of = sub { $global ? ($_[0]->{'app'} || 'other') : $app };
 	# every roll-up is asked of the database in its own grouped form - a life of
@@ -7420,12 +7426,9 @@ sub appointment_rollup() {
 	$roll->{'weekdays'} = $bucket_rows->(&subs::db_query(
 		"select app, cast(strftime('%w', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as integer) as bucket, count(*) as count from appointments" . $filter . ' group by app, bucket',
 		@args)->hashes);
-	# the day series is only ever read for the last stretch of history, so the
-	# query is capped there too and long lives do not walk the whole table
-	my $cutoff = &subs::rightNow() - 180 * 86400000;
 	$roll->{'daily'} = $bucket_rows->(&subs::db_query(
-		"select app, date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as bucket, count(*) as count from appointments" . $filter . ($filter ? ' and ' : ' where ') . 'cast(timestamp as integer) >= ? group by app, bucket',
-		@args, $cutoff)->hashes);
+		"select app, date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as bucket, count(*) as count from appointments" . $filter . ' group by app, bucket',
+		@args)->hashes);
 	return $roll;
 }
 
@@ -7551,18 +7554,30 @@ sub evaluation_model_call() {
 	return ($text, $text ? undef : 'the model returned nothing readable');
 }
 
+sub evaluation_period_span {
+	my ($period) = @_;
+	return 7 * 86400000 if ($period || '') eq 'week';
+	return 30 * 86400000 if ($period || '') eq 'month';
+	return 86400000;
+}
+
 sub evaluation_agent() {
-	my ($app) = @_;
+	my ($app, $period) = @_;
 	$app = '__president' unless $app && $app ne '';
 	my $global = ($app eq '__president');
+	# the button may carry the picker's answer; the setting is the memory the
+	# nightly run reads, and month when neither says anything
+	$period = '' unless $period && $period =~ /^(day|week|month)$/;
+	$period = &subs::setting_grabber({ app => $app, setting => 'evaluation_period' }) unless $period;
+	$period = 'month' unless $period && $period =~ /^(day|week|month)$/;
+	my $window = $period eq 'day' ? 'the last 24 hours' : ($period eq 'week' ? 'the last 7 days' : 'the last 30 days');
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
 	my $model = $settings->{'eval_assistant'};
-	my $roll = &appointment_rollup($app);
+	my $since = &subs::rightNow() - &subs::evaluation_period_span($period);
+	my $roll = &appointment_rollup($app, $since);
 	my @owners = sort { $roll->{'activity'}->{$b}->{'count'} <=> $roll->{'activity'}->{$a}->{'count'} } keys %{$roll->{'activity'}};
 	if ($global) { splice(@owners, 12) if scalar @owners > 12; }
 	else { @owners = ($app); }
-	my @lt = localtime((&subs::rightNow() - 120 * 86400000) / 1000);
-	my $cut_day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
 	my $entry = sub {
 		my ($from, $owner) = @_;
 		my $act = $from->{'activity'}->{$owner} || {};
@@ -7579,11 +7594,12 @@ sub evaluation_agent() {
 			last_day => $days[-1] || '',
 			hour_profile => $from->{'hours'}->{$owner} || {},
 			weekday_profile => $from->{'weekdays'}->{$owner} || {},
-			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } grep { $_ ge $cut_day } @days,
+			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } @days,
 		};
 	};
 	my $briefing = {
 		scope => $global ? 'the whole house' : $app,
+		window => $window,
 		apps => [ map { $entry->($roll, $_) } @owners ],
 	};
 	my @related;
@@ -7603,14 +7619,14 @@ sub evaluation_agent() {
 	}
 	else {
 		foreach my $link ( @{ &relational_family($app) } ) {
-			my $lroll = &appointment_rollup($link->{'app'});
+			my $lroll = &appointment_rollup($link->{'app'}, $since);
 			my ($xs, $ys) = &day_pair_series($roll->{'daily'}->{$app} || {}, $lroll->{'daily'}->{$link->{'app'}} || {});
 			my $c = &series_correlation($xs, $ys);
 			push @related, { app => $link->{'app'}, link => $link->{'link'}, correlation => $c, activity => $entry->($lroll, $link->{'app'}) };
 		}
 		$briefing->{'related'} = \@related;
 	}
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house), an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count for the last 120 days, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 180 days at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads).';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads).';
 	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Correlations use only pairs with |r| >= 0.5 and at least 14 shared days; say what r means here and whether the lag suggests one follows the other; if nothing clears that bar, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks. Use only the numbers given - never invent figures. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
@@ -7623,6 +7639,7 @@ sub evaluation_agent() {
 	my $report = {
 		text => $text || ('The evaluation could not run: ' . $error),
 		model => $model,
+		period => $period,
 		error => $error,
 		apps => [ map { $_->{'app'} } @{$briefing->{'apps'}} ],
 		timestamp => &subs::rightNow(),
