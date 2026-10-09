@@ -19,13 +19,6 @@
 			</span></span>
 		<% } %>
 	<% } %>
-	<% 
-		my @icon = grep { $_->{'name' } eq $appts->{$a}->{'setting'}->{'status'} } @{$pseudonyms};
-		my $icon = $icon[0]->{'icon'}  ? '<img style="border-radius:10%;" src="' . $icon[0]->{'icon'} . '" hint="' . &subs::format_name($appts->{$a}->{'setting'}->{'status'}) . '" class="tiny_thumb">' : '';
-	%>
-
-	<span class="appointment_status"><%== $icon %><b style="vertical-align:middle;"> <%= $appts->{$a}->{'setting'}->{'status'} %></b>
-	</span>
 
 	<span class="">
 		<% foreach my $br ( sort keys %{$appts->{$a}->{'budget'}} ) { %>

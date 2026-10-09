@@ -210,6 +210,10 @@ html, body {
    box, so neither wears a frame; the time and the status text make their
    middle the line's middle, which is the icons' middle too */
 .appointment_header_background .tiny_thumb { border: none; vertical-align: middle; }
+/* the strip's floats have no line of text to hold the strip open any more, so
+   the strip contains its own floats - flow-root does it without clipping the
+   icons that hang a whisker past it */
+.appointment_header_background { display: flow-root; }
 .walkman_controls { height: 60px; }
 .editorial_controls { height: 50px;}
 .window_view {
