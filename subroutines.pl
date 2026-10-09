@@ -2615,8 +2615,13 @@ sub setting_grabber() {
 	$device_defined = 1 if $settings->{'device'};
 	$settings->{'device'} = $settings->{'device'} || &device_setter();
 	my $returner;
+	# benign and settings are parameters of this sub, not columns of the settings
+	# table; riding into the where clause they made the select die with 'no such
+	# column: "benign"', and the eval below swallowed the answer with it
+	my $params = { %{$settings} };
+	delete @{$params}{qw/benign settings/};
 
-	if (my $q = eval { return &db_select('settings', ['value'], $settings) }) {
+	if (my $q = eval { return &db_select('settings', ['value'], $params) }) {
 		my $list = $q->hashes;
 
 		if (scalar @{$list} > 1) {
@@ -2689,7 +2694,7 @@ sub settings_grabber() {
 		}
 	}
 	unless ($returner->{'uuid'}) {
-		if ($settings->{'benign'} != 1) {
+		if (($settings->{'benign'} || 0) != 1) {
 			my $uuid = &random_string_creator(25);
 			$returner->{'uuid'} = $uuid;
 			&setting_setter({ app => $app, setting => 'uuid', subsetting => $settings->{'subsetting'}, value => $uuid });

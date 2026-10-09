@@ -208,10 +208,12 @@ sub alarm_clock() {
 				my $app = &subs::unformat_name($a->{'app'});
 				my $account = &subs::format_name($a->{'account'});
 				if ($settings->{'notification'} && $settings->{'notification'} eq 'on') {
+					# no uuid: keying on the appointment's made a start and a stop
+					# notification the same notifications row, so the second insert met
+					# the unique index and was dropped with a complaint
 					&Manager::notification_sender({ 
 						app => $app, 
 						role => 'all', 
-						uuid => $a->{'uuid'}, 
 						type => $type,
 						message => $settings->{'notification_text'},
 						settings => $settings, 
@@ -219,7 +221,9 @@ sub alarm_clock() {
 						title => $name, 
 					},$dot);
 				}
-				if ($a->{'type'} =~ /command|kill|record/) {
+				# the record setting is the kind of recording (audio/video/screen), not
+				# a command; running it exec'd 'audio' into nothing
+				if ($a->{'type'} =~ /command|kill/) {
 					my $command = $settings->{$a->{'type'}};
 					my $resulter = &subs::run_command($app,$command);
 					if ($a->{'type'} eq 'command') {
