@@ -415,7 +415,12 @@ sub appt_alarm_setter() {
 		$appt->{'stop_timestamp'},
 		$appt->{'next_duty'}
 	);
-	if (grep { $_ >= &subs::rightNow() } @times) {
+	# a moment that has just gone by still counts: the record button's
+	# appointment is due the instant it is written, and the poke is what wakes
+	# the alarm clock in time to start the recording - without the small grace
+	# the start was filtered away and the clock only woke at the stop, taking
+	# a take of nothing
+	if (grep { $_ && $_ >= &subs::rightNow() - 5000 } @times) {
 		my $file = $gb::tmp_dir . '/alarm';
 		eval {
 			my $socket = IO::Socket::UNIX->new(

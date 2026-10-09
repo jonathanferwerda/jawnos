@@ -120,10 +120,12 @@ sub alarm_clock() {
 								&Websocket::send('music', { console => 'jpStop(\'' . $a->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $a->{'uuid'} . '\');' });
 							}
 						}
-						else {
-#							&subs::db_query('update appointments set seen = ?,type=?, stop_seen=? where uuid=?', 'yes','stop', 'yes',$a->{'uuid'});
-							&subs::db_update('appointments', { seen => 'yes', type => 'stop', stop_seen => 'yes' }, { uuid => $a->{'uuid'}, app => $a->{'app'} });
-						}
+	#					&subs::db_query('update appointments set seen = ?,type=?, stop_seen=? where uuid=?', 'yes','stop', 'yes',$a->{'uuid'});
+						# the appointment is spent either way, record and start alike, and
+						# marking it is what keeps the alarm from reading it as stopped over
+						# and over - each reading fired another jpStop into whatever recording
+						# the next press had just begun
+						&subs::db_update('appointments', { seen => 'yes', type => 'stop', stop_seen => 'yes' }, { uuid => $a->{'uuid'}, app => $a->{'app'} });
 						&subs::intelligent_automation_toggle({ app => $a->{'app'}, 'state' => 'off', timestamp => $timestamp });
 						$type = 'stop';
 
@@ -439,7 +441,9 @@ sub alarm_server() {
 					$appt->{'stop_timestamp'},
 					$appt->{'next_duty'}
 				);
-				@times = grep { $_ >= &subs::rightNow() } @times;
+				# a just-gone moment still counts, so a recording born with the
+				# poke fires now instead of waiting for its stop
+				@times = grep { $_ && $_ >= &subs::rightNow() - 5000 } @times;
 				if (grep { $_ < $next_run } @times) {
 					Mojo::IOLoop->remove($alarm_id);
 					$alarm_id = undef;
@@ -459,7 +463,9 @@ sub alarm_server() {
 
 sub alarm_timer() {
 	my ($next_time) = @_;
-	$next_time = 2 unless $next_time;
+	# a poke can name a moment that has just gone by, and a negative delay must
+	# not become a timer; either way the alarm stands its usual two seconds
+	$next_time = 2 unless $next_time && $next_time > 0;
 	$log->info($next_time .  ' for alarm');
 	$alarm_id = Mojo::IOLoop->timer($next_time => sub() {
 		my $alarm = &alarm_clock();
