@@ -182,6 +182,11 @@ const GLYPHS = {
 	games: '<rect x="2.5" y="7.5" width="19" height="9.5" rx="4.75" fill="{G}"/><rect x="5.9" y="11.3" width="1.6" height="4.6" rx="0.8" fill="{D}"/><rect x="4.4" y="12.8" width="4.6" height="1.6" rx="0.8" fill="{D}"/><circle cx="16" cy="11.4" r="1.5" fill="{D}"/><circle cx="18.7" cy="13.7" r="1.5" fill="{D}"/>',
 	business: '<rect x="2.5" y="7" width="19" height="13" rx="2.4" fill="{G}"/><path d="M8.6 7V5.6a2 2 0 0 1 2-2h2.8a2 2 0 0 1 2 2V7" fill="none" stroke="{G}" stroke-width="1.7"/><rect x="10.5" y="11.6" width="3" height="3.4" rx="1" fill="{D}"/><path d="M2.5 12.7h19" fill="none" stroke="{D}" stroke-width="1.1"/>',
 	system: '<path d="M12 3 3.2 7.5 12 12l8.8-4.5z" fill="{G}"/><path d="M3.2 11.4 12 15.9l8.8-4.5" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.2 15.3 12 19.8l8.8-4.5" fill="none" stroke="{D}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+	// --- window chrome: the controls window_maker hangs on every title bar ---
+	window_minimize: '<rect x="5.5" y="16.2" width="13" height="2.2" rx="1.1" fill="{G}"/>',
+	window_restore: '<path d="M10 5.5h5.5a2 2 0 0 1 2 2V13" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><rect x="6" y="9" width="9.5" height="9.5" rx="1.6" fill="none" stroke="{G}" stroke-width="2"/>',
+	window_maximize: '<rect x="5.5" y="5.5" width="13" height="13" rx="1.8" fill="none" stroke="{G}" stroke-width="2"/>',
+	window_close: '<path d="M6.8 6.8 17.2 17.2M17.2 6.8 6.8 17.2" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/>',
 };
 
 // --- pseudonym icon name -> glyph ---------------------------------------------
@@ -407,6 +412,11 @@ const ICONS = {
 	'games': 'games',
 	'business': 'business',
 	'system': 'system',
+	// window chrome, asked for by name from window_maker
+	'minimize': 'window_minimize',
+	'restore': 'window_restore',
+	'maximize': 'window_maximize',
+	'close': 'window_close',
 };
 
 // --- styles --------------------------------------------------------------------
@@ -693,6 +703,7 @@ function hashHue(str) {
 
 // The transport controls keep fixed hues in every colour set: stop is blue and
 // every rewind/forward button shares a green, whatever the set or the name.
+// Window chrome is one calm blue, with the close in the red it has earned.
 const HUE_OVERRIDES = {
 	stop: 216,
 	'stop sign': 216,
@@ -702,6 +713,10 @@ const HUE_OVERRIDES = {
 	next: 148,
 	forward: 148,
 	'right arrow': 148,
+	minimize: 216,
+	restore: 216,
+	maximize: 216,
+	close: 0,
 };
 const hueFor = name => (HUE_OVERRIDES[name] != null ? HUE_OVERRIDES[name] : hashHue(name));
 

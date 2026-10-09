@@ -138,6 +138,11 @@ textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; bo
 .window_action {
 	cursor: pointer;
 }
+.window_control_icon {
+	width: 24px;
+	height: 24px;
+	vertical-align: middle;
+}
 
 button {
 	cursor: pointer;

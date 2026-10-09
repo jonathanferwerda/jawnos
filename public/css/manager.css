@@ -247,12 +247,11 @@ html, body {
 }
 /* The row's own buttons are bare tiles: every picture sits on the same 40px
    square, and each button's border is counted around that square, never out of
-   it. The now button's 5px speed border therefore wraps the same 40px picture
-   in a 50px button, while the plain 3px borders keep the rest at 46px - the
-   pictures, not the buttons, are what the row lines up. Only the now button
-   wears a tile of its own: its inline style paints the time machine's state
-   and the server's speed into the background and border. Nested images, like
-   the assistant panel's own buttons, keep the sizes they were given. */
+   it, so the four buttons all land on 46px. Only the now button wears a tile -
+   and no border: graphicalize writes the server's speed into its background,
+   and 3px of padding lets that colour frame the picture the way the other
+   buttons' borders frame theirs. Nested images, like the assistant panel's own
+   buttons, keep the sizes they were given. */
 #top_right_buttons > img {
 	box-sizing: content-box;
 	vertical-align: top;
@@ -260,6 +259,10 @@ html, body {
 	height: 40px;
 	background-color: transparent;
 	border-color: transparent;
+}
+#now_toggle {
+	border-width: 0;
+	padding: 3px;
 }
 #bottom_left_buttons {
 	left:0px;

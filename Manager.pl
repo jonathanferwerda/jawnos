@@ -12844,6 +12844,13 @@ sub window_maker($type,$timestamp) {
 	}
 
 	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny' });
+	# the window controls wear the icon set when it offers them, and the old text
+	# glyphs when it does not (the hand-drawn set, or no set at all)
+	my $window_control = sub {
+		my ($name, $glyph) = @_;
+		my $icon = &subs::icon_path($name, '');
+		return $icon ? '<img class="window_control_icon" src="' . $icon . '">' : $glyph;
+	};
 	my $pre_dimensioned = 0;
 	if ($settings->{'dimensions'} && ($user_agent !~ /Android/gi || $user_agent !~ /Mobile/gi)) {
 		$settings->{'dimensions'} = eval { return decode_json $settings->{'dimensions'} } || {};
@@ -12874,10 +12881,10 @@ sub window_maker($type,$timestamp) {
 					<span style="float:right;">
 
 						<span class="navbar_buttons" style="right:7px;">
-							<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">_</button>
-							<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">#</button>
-							<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">&#9634;</button>
-							<button id="window_' . $timestamp . '_close" class="' . $unformatted_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">X</button>
+							<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
+							<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
+							<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
+							<button id="window_' . $timestamp . '_close" class="' . $unformatted_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('close', 'X') . '</button>
 						</span>
 					</span>
 				</span>

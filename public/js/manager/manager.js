@@ -2199,19 +2199,19 @@ function graphicalize(respons) {
 	var nowb = $('.now');
 	if (diff > 1100) {
 		nowb.attr( 'presence', 'not' );
-		nowb.css({'border-color': 'red' });
+		nowb.css({'background-color': 'red' });
 		if (ts != timestamp) {
 
-			nowb.css({'border-color': 'orange' });
+			nowb.css({'background-color': 'orange' });
 		}
 	}
 	else if (diff <= 1100 && diff >= 500) {
-		nowb.css({'border-color': 'yellow' });
+		nowb.css({'background-color': 'yellow' });
 		nowb.attr('presence', 'delayed');
 	}
 	else {
 		nowb.attr('presence', 'here');
-		nowb.css({'border-color': 'green' });
+		nowb.css({'background-color': 'green' });
 	}
 	var layout = localStorage.getItem('layout');
 	var timeshit = localStorage.getItem('timeshift');
@@ -2223,16 +2223,9 @@ function graphicalize(respons) {
 		localStorage.setItem('time_machine', '');
 		time_machine = '';
 	}
-	if (time_machine != '') {
-		nowb.css({'background-color': 'blue'});
-		// the tile answers the state with the background, in whatever colours
-		// the icon set builds (an older universal.js just keeps its icon)
-		if (typeof nowIconApply == 'function') { nowIconApply('time_machine'); }
-	}
-	else {
-		nowb.css({'background-color': 'yellow'});
-		if (typeof nowIconApply == 'function') { nowIconApply('here'); }
-	}
+	// the tile carries the time machine's state itself now that the background
+	// carries the server's speed (an older universal.js just keeps its icon)
+	if (typeof nowIconApply == 'function') { nowIconApply(time_machine != '' ? 'time_machine' : 'here'); }
 
 	//guests.push(appts);
 	$.each(['leaderboard', 'clockface', 'timeline', 'calendar', 'continent', 'narrator'], function(i,v) {

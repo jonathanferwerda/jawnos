@@ -55,7 +55,7 @@
 		</div>
 	</div>
 	<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
-	<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color:black;border-width:5px;border-color: green;" class="little_thumb now jonathan">
+	<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;" class="little_thumb now jonathan">
 	<img class="jonathan little_thumb fuck_you" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" ></img>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 	<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
