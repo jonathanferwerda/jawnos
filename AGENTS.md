@@ -131,6 +131,13 @@ system unless marked "(unverified)". Read this before rediscovering anything the
 
 ## Testing fixtures and drivers (this machine)
 
+**What may be tested on, and nothing else.** The only appointments that may be used as
+fixtures are `email_test`, `email_tester`, `testing`, `testings`, `testingser`. The only
+phone number that may be tested is `5199188319`, and the only email address is
+`jonathan.ferwerda@outlook.com`. Every other email address and phone number is **strictly
+prohibited** — no test may address, send to, dial or write to one, and fixtures must not be
+edited to hold one.
+
 - Session cookie jar: `/tmp/jawn_cookies.txt` (Netscape format). **`cookie_jar->load` fails on
   curl files** — parse line by line into `Mojo::Cookie::Response` (name/value/domain/path,
   secure=1, strip trailing newline). Working snippet in `/tmp/drive_store.pl`.

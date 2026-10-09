@@ -151,7 +151,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			<% my @bars = (
 				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
-				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar' ] ],
+				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar', 'start_menu' ] ],
 				[ 'start_button_side', 'Start Button', [ 'right', 'left' ] ],
 				[ 'dock_icons', 'Dock Icons', [ 'shown', 'hidden' ] ],
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],

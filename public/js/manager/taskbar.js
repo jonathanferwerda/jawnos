@@ -122,6 +122,24 @@ function jawnosClockShow(timestamp) {
 	$('#taskbar_clock').html(jawnosClockText(jawnosClockStamp));
 }
 
+// The search's own home: the taskbar's right end, the start menu's corner
+// beside the leave, now and bird buttons, or the dock's row. One writer, so the
+// menu's own re-renders can call it again after they have swapped the corner
+// buttons out from under it.
+function jawnosSearchPlace() {
+	var search = $('#search_entanglement');
+	if (!search.length) { return; }
+	if (jawnosBars.search == 'taskbar') {
+		if (!search.closest('#taskbar').length) { search.prependTo('#taskbar'); }
+	}
+	else if (jawnosBars.search == 'start_menu') {
+		if (!search.closest('#start_menu').length) { search.appendTo('#start_menu'); }
+	}
+	else if (!search.closest('#pseudonym_home').length) {
+		search.prependTo('#pseudonym_home');
+	}
+}
+
 function jawnosBarsApply() {
 	var bar = $('#taskbar');
 	var dock = $('#pseudonym_home');
@@ -151,17 +169,9 @@ function jawnosBarsApply() {
 	root.setProperty('--taskbar_bottom_h', jawnosTaskbarEdge('bottom') + 'px');
 	root.setProperty('--dock_top_h', jawnosDockTopOffset() + 'px');
 
-	// the search rides in the dock or the taskbar, wherever the setting says
-	var search = $('#search_entanglement');
-	if (search.length) {
-		var in_taskbar = search.closest('#taskbar').length > 0;
-		if (jawnosBars.search == 'taskbar') {
-			if (!in_taskbar) { search.prependTo(bar); }
-		}
-		else if (in_taskbar || search.closest('#pseudonym_home').length == 0) {
-			search.prependTo(dock);
-		}
-	}
+	// the search rides in the dock, the taskbar or the start menu, wherever the
+	// setting says
+	jawnosSearchPlace();
 
 	// the icons take their end after the search has taken its place, so a start
 	// button set to the left leads the bar with nothing before it
@@ -261,6 +271,11 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
+	else if (setting == 'icon_set') {
+		// every icon in the menu is about to change path; the kept markup is stale
+		if (typeof startMenuHtmlFlush == 'function') { startMenuHtmlFlush(); }
+		return;
+	}
 	else if (setting == 'clock_format') {
 		jawnos_clock_format = $(this).val();
 		jawnosClockShow();

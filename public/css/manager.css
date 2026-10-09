@@ -318,7 +318,19 @@ html, body {
 #taskbar .window_toggle .window_toggle_icon { height: 26px; width: 26px; max-width: 26px; object-fit: contain; }
 #taskbar .window_toggle .window_toggle_name_text { font-size: 16px; white-space: nowrap; }
 #taskbar .window_toggle .window_toggle_shorthand { display: none; }
-#taskbar_clock { flex: 0 0 auto; white-space: nowrap; padding: 0px 8px; }
+#taskbar_clock {
+	flex: 0 0 auto;
+	white-space: nowrap;
+	padding: 0px 10px;
+	margin: 0px 4px;
+	/* a plate sunk into the bar: a muted edge, a lighter face and a shadow down
+	   its inside */
+	border: solid 2px;
+	border-radius: 6px;
+	border-color: var(--ink-muted, rgba(0,0,0,0.5));
+	background-color: var(--panel);
+	box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+}
 /* the corner's own buttons come aboard while the bar stands: bare tiles of the
    bar's inner height, sitting between the window list and the clock */
 #taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; padding-left: 6px; }
@@ -701,6 +713,10 @@ canvas { overflow: scroll; z-index: 99; }
 	flex: 0 0 auto;
 	gap: 8px;
 	padding-top: 44px;
+	/* the list scrolls under the rail; the rail itself stands still */
+	position: sticky;
+	top: 0px;
+	align-self: flex-start;
 }
 #start_menu .start_menu_category {
 	box-sizing: border-box;
@@ -728,6 +744,34 @@ canvas { overflow: scroll; z-index: 99; }
 	padding: 18px 12px;
 	color: var(--ink-muted, #666);
 	font-size: clamp(15px, 4vw, 19px);
+}
+
+/* the search, when the start menu is its home: a line beside the leave, site
+   type, now, assistant and bird buttons, clear of the menu buttons' column */
+#start_menu #search_entanglement {
+	position: absolute;
+	top: 0px;
+	left: 220px;
+	right: 84px;
+	height: 40px;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	z-index: 2;
+}
+#start_menu #search {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0 !important;
+	height: 34px;
+	box-sizing: border-box;
+}
+#start_menu #search_toggle {
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	max-width: 34px;
+	object-fit: contain;
 }
 
 /* The X on a recent item takes the app back off the list; it shows only over

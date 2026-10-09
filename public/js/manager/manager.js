@@ -45,6 +45,9 @@ $(document).on('change', '#time_machine',function() {
 
 var focused_input;
 var startMenuTimeout;
+// the menu's html per tab, so reopening a tab does not fetch (and re-stamp) it
+// again - see startMenuToggle()
+var startMenuHtml = {};
 $(document).on('click', '.time_jump', function() {
 	var j = $(this);
 	var appointment = j.closest('.appointment');
@@ -1062,6 +1065,9 @@ $(document).on('click', '.start_menu_menu', function() {
 });
 
 $(document).on('click', '.jonathan, .start_menu_list', function() {
+	// the toggle answers for itself in its own handler; closing here too would
+	// undo what that handler has just opened
+	if ($(this).closest('#start_menu_toggle').length) { return; }
 	if ($('#start_menu').is(':visible')) {
 		startMenuToggle();
 	}
@@ -1082,29 +1088,63 @@ function startMenuToggle(data) {
 		}
 	}
 	else {
+		// The menu's html is kept per tab: reopening a tab puts the same markup back
+		// instead of fetching again. Every fetch re-stamps every icon with the moment
+		// it ran, so a fresh fetch pulled every picture over again on every open - the
+		// flash. A press on a tab (source 'menu') is the refresh, and always fetches.
+		if (!source && startMenuHtml[menu]) {
+			startMenuRender(startMenuHtml[menu], st);
+			return;
+		}
 		$.ajax({
 			url: '/manager/start_menu',
 			type: 'GET',
 			data: { menu: menu },
 			success: function(response) {
 				if (response.html) {
-					console.log('in the start');
-					$('#start_menu').replaceWith(response.html);
-					$('#start_menu').show();
-					// the menu hangs from the button that opened it
-					jawnosStartMenuPlace();
-					startMenuListify();
-					assistantIconInitializer();
-					taskbarDisplayer();
-					if (typeof mailDotPaint == 'function') { mailDotPaint(); }
-					st.attr('toggled', 'open');
-					startMenuCloser(35000);
+					startMenuHtml[menu] = response.html;
+					startMenuRender(response.html, st);
 				}
 			}
 		});
-	//	$('#search').focus();
-		}
 	}
+}
+
+// Swap a menu's markup in - fresh from the server or out of the per-tab cache -
+// and put the corner back together. The search may be riding the menu's corner,
+// so it is held aside over the swap: replaceWith would take it down with the old
+// markup, and with it whatever was typed. There is no timer on the menu: it
+// stands until something else is pressed.
+function startMenuRender(html, st) {
+	var search = $('#search_entanglement').closest('#start_menu').length ? $('#search_entanglement').detach() : null;
+	$('#start_menu').replaceWith(html);
+	$('#start_menu').show();
+	if (search) { $('#start_menu').append(search); }
+	if (typeof jawnosSearchPlace == 'function') { jawnosSearchPlace(); }
+	// the menu hangs from the button that opened it
+	jawnosStartMenuPlace();
+	startMenuListify();
+	assistantIconInitializer();
+	taskbarDisplayer();
+	if (typeof mailDotPaint == 'function') { mailDotPaint(); }
+	st.attr('toggled', 'open');
+}
+
+// The recent list has changed under the menu; the kept markup carries the old
+// one, so it is dropped and fetched again when it is next wanted.
+function startMenuHtmlFlush() {
+	startMenuHtml = {};
+}
+
+// A press anywhere but the menu - or the button that opens it - puts the menu
+// away.
+$(document).on('click', function (e) {
+	var menu = $('#start_menu');
+	if (!menu.is(':visible')) { return; }
+	if ($(e.target).closest('#start_menu, #start_menu_toggle').length > 0) { return; }
+	$('#start_menu_toggle').attr('toggled', 'closed');
+	startMenuCloser(0);
+});
 
 // The app menu ships as a wall of icons separated by <br>. Turn it into a list:
 // each icon keeps its id and classes (the click handlers hang off those) and gains
@@ -1195,6 +1235,7 @@ function startMenuUseRecord(item) {
 	var recent = $.grep(startMenuRecent(), function (k) { return k !== key; });
 	recent.unshift(key);
 	$('.start_menu_main_display').attr('recent', recent.join(','));
+	startMenuHtmlFlush();
 	$.ajax({ url: '/manager/start_menu/used', type: 'POST', data: { used: key } });
 }
 
@@ -1210,6 +1251,7 @@ function startMenuForget(key) {
 	if (!key) { return; }
 	var recent = $.grep(startMenuRecent(), function (k) { return k !== key; });
 	$('.start_menu_main_display').attr('recent', recent.join(','));
+	startMenuHtmlFlush();
 	$.ajax({ url: '/manager/start_menu/forget', type: 'POST', data: { forget: key } });
 	startMenuView();
 }

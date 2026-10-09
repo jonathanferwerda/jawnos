@@ -231,6 +231,9 @@ function pseudonymFreeSpaceFinder(type) {
 			$(this).css({ 'position': '', 'top': '', 'left': '' });
 			$(this).removeAttr('adjusted_already');
 		});
+		// a search that has left the dock leaves the dock's own width and edge
+		// offsets behind; the taskbar and the menu lay it out themselves
+		$('#search_entanglement').css({ 'width': '', 'left': '', 'right': '', 'top': '' });
 	}
 }
 
