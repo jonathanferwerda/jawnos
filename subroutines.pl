@@ -4766,12 +4766,22 @@ sub _hsl_to_hex {
 
 # Pick black or white ink to sit on top of an arbitrary background colour, so
 # appointment/name labels stay readable whatever colour the theme gives them.
+# The inks are weighed the WCAG way - each channel linearised and weighted
+# before the sum - because that is how the eye reads them: the two tie at a
+# luminance of about 0.179, not half way, so a hot pink like #ea43b8 takes
+# black where a flat average of the channels inked it white.
 sub contrast_ink {
 	my ($bg) = @_;
 	return '#000000' unless defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/;
-	my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
-	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
-	return $lum < 0.5 ? '#ffffff' : '#000000';
+	my @channel = map { hex } ($1 =~ /(..)(..)(..)/);
+	my @weight = ( 0.2126, 0.7152, 0.0722 );
+	my $lum = 0;
+	foreach my $i ( 0 .. 2 ) {
+		my $c = $channel[$i] / 255;
+		$c = $c <= 0.04045 ? $c / 12.92 : ((($c + 0.055) / 1.055) ** 2.4);
+		$lum += $c * $weight[$i];
+	}
+	return $lum < 0.179 ? '#ffffff' : '#000000';
 }
 
 # Render the CSS custom properties for a theme, given its background colour.
