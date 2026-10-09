@@ -4200,6 +4200,27 @@ static void tilt_serial_command(String line) {
                   (int)tiltWake, (int)tiltDbg, (int)wrist_armed, (int)wrist_rose,
                   (int)wrist_have, wrist_lz, wrist_sz);
   }
+  else if (line == "crown") {
+    // press the crown, then run this: does the PMU latch the event at all?
+    uint64_t status = watch.pmic.irq().readStatus();
+    Serial.printf("[crown] status=0x%llx short=%d long=%d\n",
+                  (unsigned long long)status,
+                  (int)watch.pmic.irq().isPekeyShortPress(status),
+                  (int)watch.pmic.irq().isPekeyLongPress(status));
+  }
+  else if (line == "sleeptest") {
+    // what the light-sleep entry arms, and what the IDF says about it. Run it
+    // over USB: the sleep itself needs the cable out, but validation does not.
+    watch.pmic.irq().readStatus();
+    rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
+    rtc_gpio_pulldown_dis((gpio_num_t)PMU_INT);
+    esp_err_t e1 = esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
+    esp_err_t e2 = gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
+    esp_err_t e3 = esp_sleep_enable_gpio_wakeup();
+    Serial.printf("[sleeptest] ext1=%d gpio_enable=%d gpio_wakeup=%d pmu_int=%d sensor_int=%d\n",
+                  (int)e1, (int)e2, (int)e3, (int)PMU_INT, (int)SENSOR_INT);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  }
   else if (line == "crumb") {
     crumbs_dump();
   }
@@ -4327,6 +4348,7 @@ void lowPowerEnergyHandler()
   if (lightSleep && !watch.isUsbIn()) {
     
     Serial.println("right before sleep");
+    crumb("ls enter");
     // a latched PMU event keeps PMU_INT pulled low, and EXT1 would read that as
     // "the crown is being held" and bounce straight back out of the sleep
     watch.pmic.irq().readStatus();
@@ -4357,6 +4379,13 @@ void lowPowerEnergyHandler()
     }
     bool temp_bt_enabled = bt_enabled;
     stop_ble_transfer();
+    // Only the crown may wake the chip from here: with the battery and charger
+    // IRQs enabled, any VBUS or charge event would assert the PMU line and
+    // bounce the chip out of light sleep. This is the masking the library's own
+    // lightSleep() uses; the full set is restored once the naps are over.
+    watch.pmic.irq().disable(AXP2101Irq::IRQ_ALL_MASK);
+    watch.pmic.irq().enable(AXP2101Irq::IRQ_PEKEY_SHORT_PRESS | AXP2101Irq::IRQ_PEKEY_LONG_PRESS);
+    watch.pmic.irq().clearStatus();
 
     // The naps are interruptible by the crown (EXT1) and the sensor line; with
     // the wrist raise on there is also a short timer, because nothing announces
@@ -4364,9 +4393,31 @@ void lowPowerEnergyHandler()
     // raise that passes the state machine earns the screen; a step or a tap
     // clears the latched line and sinks back down.
     bool wrist_wake = false;
+    bool sensor_line_stuck = false;   // the sensor line never fell: nap without it
+    bool ext1_warned = false;
+    uint32_t last_real_nap = millis();
     uint32_t sleep_began = millis();
     esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED;
     while (true) {
+      // A crown press latched while the chip was up between naps must not be
+      // slept through: reading the status reports it and clears the latch, so
+      // EXT1 is armed against a clean line. The doze path catches presses the
+      // same way.
+      if (crown_irq_pending()) {
+        Serial.println("[tilt] crown latched between naps");
+        crumb("ls crown latched");
+        wakeup_reason = ESP_SLEEP_WAKEUP_EXT1;
+        break;
+      }
+      if (millis() - last_real_nap > 15000) {
+        // fifteen seconds without one real nap: something (a stuck sensor line,
+        // a phantom PMU level) is bouncing every sleep. Come back up rather
+        // than stay dark and unpressable.
+        Serial.println("[tilt] no real nap for 15s; waking");
+        crumb("ls no-nap wake");
+        wrist_wake = true;
+        break;
+      }
       int64_t remaining_us = notify_us;
       if (notify_us > 0) {
         remaining_us = notify_us - (int64_t)(millis() - sleep_began) * 1000LL;
@@ -4386,14 +4437,39 @@ void lowPowerEnergyHandler()
         esp_sleep_enable_timer_wakeup((uint64_t)nap_us);
       }
       rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
-      esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
-      if (tiltWake) {
+      rtc_gpio_pulldown_dis((gpio_num_t)PMU_INT);
+      esp_err_t ext1_arm = esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
+      if (ext1_arm != ESP_OK && !ext1_warned) {
+        // if this ever fails the crown cannot wake the watch from light sleep;
+        // say so once instead of sleeping into a dead button
+        Serial.printf("[sleep] ext1 arm failed: %d\n", (int)ext1_arm);
+        crumb("ls ext1 arm fail");
+        ext1_warned = true;
+      }
+      if (tiltWake && !sensor_line_stuck) {
         gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
         esp_sleep_enable_gpio_wakeup();
       }
+      uint32_t nap_began = millis();
       esp_light_sleep_start();
+      if (millis() - nap_began > 100) {
+        last_real_nap = millis();
+      }
       wakeup_reason = esp_sleep_get_wakeup_cause();
+      // The cause names one source; the crown is read from the PMU before the
+      // decision, because a sensor line that keeps winning the race would
+      // otherwise starve the button forever (the screen stayed dark and the
+      // crown did nothing until a power cycle, 2026-10-10).
+      if (wakeup_reason != ESP_SLEEP_WAKEUP_EXT1 && crown_irq_pending()) {
+        Serial.println("[tilt] crown found latched after a nap");
+        crumb("ls crown after nap");
+        wakeup_reason = ESP_SLEEP_WAKEUP_EXT1;
+      }
       if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+        // the press was meant for the sleep; read the status once more so the
+        // awake path does not handle the same click as a fresh one
+        watch.pmic.irq().readStatus();
+        crumb("ls crown");
         break;                    // the crown
       }
       if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
@@ -4402,6 +4478,7 @@ void lowPowerEnergyHandler()
         watch.loopSensor();
         if (wristPoll()) {
           wrist_wake = true;
+          crumb("ls raise");
           break;
         }
         // not a raise: the arm may still be moving and holding the line up, so
@@ -4411,14 +4488,28 @@ void lowPowerEnergyHandler()
           watch.loopSensor();
           delay(20);
         }
+        if (digitalRead(SENSOR_INT) == HIGH) {
+          // a line that never falls wakes the next nap the instant it starts:
+          // leave the sensor out until a quiet nap proves it let go (the poll
+          // timer still feeds the raise machine)
+          if (!sensor_line_stuck) {
+            Serial.println("[tilt] sensor line stuck; napping without it");
+            crumb("ls sensor stuck");
+          }
+          sensor_line_stuck = true;
+        }
         continue;
       }
       if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && tiltWake) {
         // a nap, not the notification (that is checked at the top): sample the
         // wrist and sink back down
+        if (sensor_line_stuck && digitalRead(SENSOR_INT) == LOW) {
+          sensor_line_stuck = false;   // it let go; the sensor may wake us again
+        }
         watch.loopSensor();
         if (wristPoll()) {
           wrist_wake = true;
+          crumb("ls raise");
           break;
         }
         continue;
@@ -4426,6 +4517,17 @@ void lowPowerEnergyHandler()
       break;                      // the notification timer, or a refused sleep
     }
     Serial.println("right after sleep");
+    crumb("ls exit");
+    // the awake watch wants the whole event set back (charger, battery, key)
+    watch.pmic.irq().disable(AXP2101Irq::IRQ_ALL_MASK);
+    watch.pmic.irq().enable(
+      AXP2101Irq::IRQ_VBUS_INSERT |
+      AXP2101Irq::IRQ_VBUS_REMOVE |
+      AXP2101Irq::IRQ_BAT_CHG_START |
+      AXP2101Irq::IRQ_BAT_CHG_DONE |
+      AXP2101Irq::IRQ_PEKEY_SHORT_PRESS |
+      AXP2101Irq::IRQ_PEKEY_LONG_PRESS);
+    watch.pmic.irq().clearStatus();
     // the screen comes back before the radio: the BLE stack takes seconds to
     // come up, and waking it first left the display dark while it did
     watch.incrementalBrightness(brightnessLevel);
@@ -4438,6 +4540,7 @@ void lowPowerEnergyHandler()
       tilt_wake_short = true;
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
       next_notification = 0;
+      crumb("ls notify");
       Serial.println("Wakeup was caused by the timer!");
       notification_display(notifications[0]["title"], notifications[0]["notification"]);
       notifications[0] = undefined;
