@@ -38,7 +38,7 @@
 	<br>
 	<%# every machine keeps its own queue, so the house has to say where the
 	    nightly evaluations happen; remote_machine_lister names the machines %>
-	<% my $machines = &subs::remote_machine_lister({ self => 'yes' }); %>
+	<% my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }); %>
 	<label>Nightly machine</label>
 	<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="Only this machine's worker runs the nightly evaluations; any machine means every queue that carries the wish keeps its own" style="vertical-align:bottom;">
 		<option value="">Any machine</option>

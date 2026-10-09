@@ -2672,15 +2672,6 @@ sub setting_setter() {
 	if ($setting eq 'site_type') {
 		&subs::db_delete('cache', { context => 'navigation_information' });
 	}
-	if ($setting eq 'nightly_evaluation_days') {
-		# the nights changed under a standing wish: the schedule follows
-		&subs::nightly_evaluation_arrange($app, 1) if (&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation' }) || '') eq 'on';
-	}
-	if ($setting eq 'evaluation_machine') {
-		# the machine changed: this queue follows right away, the other machines
-		# when boot or their next settings sync brings them the change
-		&subs::nightly_evaluation_reconcile();
-	}
 
 	if ($setting eq 'uuid') {
 		my $s_old = &db_select('settings', undef, { app => $app, setting => $setting, device => $dev })->hashes->[0];
@@ -2719,6 +2710,17 @@ sub setting_setter() {
 	}
 	elsif ($setting eq 'tasks') {
 		&subs::task_checker($app);
+	}
+	# these two must run after the new value is the one on record: the schedule
+	# is built from what the settings say, not from what they said
+	if ($setting eq 'nightly_evaluation_days') {
+		# the nights changed under a standing wish: the schedule follows
+		&subs::nightly_evaluation_arrange($app, 1) if (&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation' }) || '') eq 'on';
+	}
+	if ($setting eq 'evaluation_machine') {
+		# the machine changed: this queue follows right away, the other machines
+		# when boot or their next settings sync brings them the change
+		&subs::nightly_evaluation_reconcile();
 	}
 	return { app => $app, timestamp => $timestamp, setting => $setting, value => $value, device => $dev, browser_tab_id => $browser_tab_id };
 }
@@ -8035,7 +8037,10 @@ sub nightly_evaluation_reconcile {
 		}
 		foreach my $scope ( keys %wanted ) {
 			next unless $mine;
-			&subs::nightly_evaluation_arrange($scope, 1) unless $present{ &subs::nightly_evaluation_name($scope) };
+			# schedule() is an upsert by name (and keeping the same expression
+			# keeps the firing time), so asking for every wanted scope also
+			# retunes one whose nights changed while nobody was looking
+			&subs::nightly_evaluation_arrange($scope, 1);
 		}
 		foreach my $name ( keys %present ) {
 			my ($scope) = $name =~ /^nightly_evaluation_(.*)$/;
