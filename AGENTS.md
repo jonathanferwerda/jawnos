@@ -160,3 +160,71 @@ system unless marked "(unverified)". Read this before rediscovering anything the
   `public/js/manager/*` and `templates/`.
 - When testing accounting, restore fixtures afterwards (see `pay_invoice_cleanup.pl`) and say
   so in your report: the user's books are real.
+
+## Watch and deck firmware (`jw/jw.ino`, `jt/jt.ino`)
+
+Added 2026-10-09 (evening) by the agent who chased the room-push crashes. Verified on the
+bench watch (`/dev/ttyACM0`) and the T-Deck (`/dev/ttyACM1`).
+
+- Build/flash: `/home/jawn/.platformio/penv/bin/pio run -d jw -t upload --upload-port
+  /dev/ttyACM0` (deck: `-d jt -e deck --upload-port /dev/ttyACM1`). Libraries:
+  `lib_extra_dirs = /home/jawn/jawnos-fw/watch-libs`; ELF for decode:
+  `jw/.pio/build/watch/firmware.elf` (addr2line from
+  `~/.platformio/packages/toolchain-xtensa-esp-elf/bin`).
+- **Never print from the BLE write callback.** It runs on the BLE stack's own task; at the end
+  of a 52-chunk room push it had **1.9 KB of stack left**, and `Serial.printf` wants more. The
+  symptom is a *silent* hang or a panic with no dump (the "needs a hard reset" mornings). All
+  reporting lives in `loop2` (watch) / `loop()` (deck).
+- **Never copy the room push.** It is ~25 KB and the path used to hold five live copies (queue,
+  consumer, splice, payload, `before_me`). Every handover is a move; `WString::move` is
+  protected, so use the move operator (`*p = std::move(s)`); the payload is carved out of the
+  raw message in place with `raw_json_field_span`, and only `__specs.time` is parsed for the
+  clock.
+- **Big prints wedge the USB-Serial/JTAG console**, which reads as dead silicon while the app
+  keeps running. A 25 KB config dump at boot did this; `readFile` logs a size now — keep it
+  that way, and prefer a prefix over a whole message.
+- Breadcrumbs: `crumb("tag")` writes into `RTC_NOINIT_ATTR` memory (plain `RTC_DATA_ATTR` is
+  reloaded from the image on this reset type), the boot log prints the last one, and the
+  `crumb` console command dumps the 32-entry ring with the free heap at each mark. `crash`
+  aborts on purpose to test the path. A 20 s task watchdog on `loop2` reboots it instead of
+  hanging.
+- Serial console (921600; `stty -F /dev/ttyACM0 -hupcl` before writing, or the DTR toggles a
+  reset): `tilt on|off|now|status`, `tiltdbg on|off` (`[t] x y z` stream while dozing),
+  `tiltsim` (feeds the raise state machine a synthetic raise), `time`, `heap`, `crumb`,
+  `crash`, `blestop on|off` (stop the state_request that makes the phone push), `blesim`,
+  `blesimframe [n]` (the daemon's 52-chunk push from a BTC-sized task).
+- Wrist raise: the BMA423's interrupt line cannot announce it (any-motion detection crash-loops
+  the radio — do not re-enable), so `wristPoll()` samples at 10-25 Hz inside the doze beat and
+  runs a rise/settle/angle state machine; a raise earns a 10 s look and a touch hands the wake
+  back to the normal timeout. The **light-sleep** path (`lightsleep on`) still uses the
+  interrupt-gated `wristRaiseGate()`, so a raise there is not caught — port the polling into
+  the light-sleep nap loop if LS gets turned on.
+- The phone's BLE bridge dies when the phone sleeps (~10 min of screen-off); the tablet keeps
+  it alive. The watch asks for state 3 s after a connect, so the room hydrates by itself once
+  the bridge is back (START BLE BRIDGE in the API app).
+- Logging: **one** `cat /dev/ttyACM0` logger at a time. The loop shells
+  (`while :; do cat /dev/ttyACM0 >> log; sleep 1; done`) restart their `cat`, so
+  `pkill -f 'cat /dev/ttyACM0'` alone leaves them fighting over the tty (bytes split randomly
+  between logs); kill `pkill -f 'while :; do cat /dev/ttyACM0'` too.
+
+## Device lister and the scan
+
+- `GET /manager/configure/device_lister` passes the typed box as `host` → `ip_range`; each row's
+  Scan button is `load_type=ping_scan`. A typed host is honoured even when `ip neigh` has
+  entries (patch 4c775b5), and the aliveness ping waits 1.2 s (a sleeping esp32 answers
+  slowly).
+- Boards serve `/device_query` on **PORT_DOCK (3000)** — the fallback URL in `device_lister`
+  (`http://<ip>:3000/device_query`) is correct; the T-Deck answers there with
+  `purpose: teletype`.
+- The listing renders the **devices table** after the scan saves its fresh data, so a scan that
+  drops a device leaves no row behind. If a device pings but never lists, check
+  `ip neigh show dev <nic>` (a quiet device's ARP entry expires) and that the running workers
+  actually have the new `subroutines.pl`: compare the file mtime with the worker start
+  (`stat -c %Y subroutines.pl /proc/<worker pid>`) — prefork workers preload the app, so every
+  `.pl` change needs a real restart, and "the app was restarted" may have been before your
+  edit.
+- Headless testing: the ticket URLs (`https://127.0.0.1:3000/box_office/<uuid>?s=…`) log in and
+  set the `president` session cookie; curl the route with the cookie jar afterwards. A direct
+  `PERL5LIB=/home/jawn/perl5/lib/perl5 perl -MData::UUID -MJSON::PP -MMojo::UserAgent -e
+  'chdir "/home/jawn/jawnos"; require "./subroutines.pl"; …'` runs the same code path outside
+  the app (President.pl is what loads some of the modules, hence the `-M`s).
