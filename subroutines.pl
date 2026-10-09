@@ -1530,6 +1530,23 @@ sub device_lister() {
 						@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $n->{'ip'} } @{$address->{$nic}->{'neigh'}};
 						push @{$address->{$nic}->{'neigh'}}, $n;
 					}
+					# One row per address: the typed host and the neighbour table can name
+					# the same device, and the scan rendered it twice (2026-10-09). The
+					# richer row wins -- the one the device itself answered.
+					my %neigh_seen;
+					my @neigh_deduped;
+					foreach my $n ( @neighbours ) {
+						my $neigh_ip = $n->{'ip'};
+						if (my $had = $neigh_seen{$neigh_ip}) {
+							foreach my $f ( qw/chip_id purpose name model mac mac_addresses uuid fqdn/ ) {
+								$had->{$f} = $n->{$f} if $n->{$f} && !$had->{$f};
+							}
+							next;
+						}
+						$neigh_seen{$neigh_ip} = $n;
+						push @neigh_deduped, $n;
+					}
+					@neighbours = @neigh_deduped;
 					@{$address->{$nic}->{'neigh'}} = @neighbours;
 
 				}
