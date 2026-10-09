@@ -18,6 +18,17 @@ var clothesLinePos = {
 var wardrobe = [];
 var hangingClothes = 0;
 
+// The timeline is at rest when nothing has moved it for a settle and no grab is
+// in hand. The settle is short on purpose: the poll's corrections only need the
+// gesture to be over before they land, and a shorter one lets the view answer
+// the server sooner after a touch. A finger resting on the canvas counts as
+// motion (the touchstart below), so the settle only has to cover the gap
+// between events.
+var clothesLineRest = 150;
+function clothesLineAtRest() {
+	return clothesLinePos['moving'] + clothesLineRest < Date.now() && clothesLinePos['lastBX'] == undefined;
+}
+
 // What the keyboard's config keeps per device, seeded into keyboard_sensitivity
 // by the layout: a swipe is damped to this much of the finger travel, and the
 // clothesline's drag to that much of its own. The fallbacks are what the two
@@ -172,6 +183,20 @@ $(document).on('touchmove', '.background', function(m) {
 		}
 	}
 
+});
+
+// A finger down is not rest, whatever it does next: without this, a finger that
+// never moves is invisible to the guard, and the server's slide could set the
+// view going under it. The mouse's own press marks the same state in the
+// mousedown below.
+$(document).on('touchstart', '.background', function (m) {
+	var w = $(this);
+	if (w.attr('id') != 'timeline') { return; }
+	var touch = (m.originalEvent.touches && m.originalEvent.touches[0]) || m.originalEvent;
+	if (!touch) { return; }
+	var y = numeral(touch.clientY - w.offset().top).value();
+	if (y < clothesLinePos['maxHeight']) { return; }
+	clothesLinePos['moving'] = Date.now();
 });
 
 // A mouse drag on the canvas below the clothesline is a grab: it slides the

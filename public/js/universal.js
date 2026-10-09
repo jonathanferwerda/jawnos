@@ -901,11 +901,23 @@ function jawnosHintHide() {
 }
 var jawnos_click_killer = null;
 var jawnos_killer_timer = null;
+// how near the press a click has to land to be the press's own; a fingertip's
+// worth of drift covers the lag between the finger and the browser's click
+var jawnos_click_slop = 30;
 // for a moment after a long press, throw away the click the browser is about to
-// deliver, so reading a hint does not also press the thing underneath it
-function jawnosSuppressClick() {
+// deliver, so reading a hint does not also press the thing underneath it. Only
+// a click at the press is thrown away: that is where the press's own delayed
+// click lands, while a later tap elsewhere - a row on the timeline, say - keeps
+// its click even when it falls inside the moment. A press that names no point
+// keeps the old whole-page hold, since there is nothing to measure against.
+function jawnosSuppressClick(x, y) {
 	jawnosUnsuppressClick();
-	jawnos_click_killer = function (e) { e.stopPropagation(); e.preventDefault(); jawnosUnsuppressClick(); };
+	jawnos_click_killer = function (e) {
+		if (x != undefined && (Math.abs(e.clientX - x) > jawnos_click_slop || Math.abs(e.clientY - y) > jawnos_click_slop)) { return; }
+		e.stopPropagation();
+		e.preventDefault();
+		jawnosUnsuppressClick();
+	};
 	document.addEventListener('click', jawnos_click_killer, true);
 	jawnos_killer_timer = setTimeout(jawnosUnsuppressClick, 700);
 }
@@ -954,7 +966,7 @@ $(document).on('touchstart', '[hint]', function (e) {
 	jawnos_hint_timer = setTimeout(function () {
 		jawnos_touch_hint_active = true;
 		jawnosHintShow(el, tx, ty, 30);
-		jawnosSuppressClick();
+		jawnosSuppressClick(tx, ty);
 	}, 500);
 });
 $(document).on('touchend touchcancel', function () {

@@ -1057,8 +1057,11 @@ $(document).on('click touchend', '.close_button', function(e) {
   e.preventDefault();
   if (e.type == 'touchend' && typeof jawnosSuppressClick == 'function') {
     // the window leaves the page under the finger; keep the browser's delayed
-    // click from landing on whatever sits underneath it
-    jawnosSuppressClick();
+    // click from landing on whatever sits underneath it. Only a click at the
+    // finger is held back, so the next tap elsewhere - a dot on the timeline,
+    // say - keeps its click instead of paying for the closed window
+    var t = (e.originalEvent && e.originalEvent.changedTouches) ? e.originalEvent.changedTouches[0] : undefined;
+    jawnosSuppressClick(t ? t.clientX : undefined, t ? t.clientY : undefined);
   }
   
   // Retrieve the variables from data attributes

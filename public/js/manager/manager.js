@@ -1888,7 +1888,7 @@ function deloreanBringer() {
 function calculator() {
 	var now = Date.now();
 
-	if (document.visibilityState == 'visible' && !document.hidden && clothesLinePos['moving'] + 300 < now && clothesLinePos['lastBX'] == undefined) {
+	if (document.visibilityState == 'visible' && !document.hidden && clothesLineAtRest()) {
 		var data = deloreanBringer();
 		windowBackgroundAdjuster({ caller: 'calculator' });
 		if (appts['__specs']) {
@@ -1909,9 +1909,7 @@ function calculator() {
 			data: data,
 			success: function(respons){
 				if (respons.updateable != 'no') {
-					now = Date.now();
-
-					if (clothesLinePos['moving'] + 300 < now && clothesLinePos['lastBX'] == undefined) {
+					if (clothesLineAtRest()) {
 						appts = respons.appts;
 					//	appts = { ...appts, ...response.appts };
 						var pseudonyms = respons.pseudonyms;
@@ -1930,8 +1928,7 @@ function calculator() {
 					// to a gesture and not to a correction: added here it flew past the
 					// target, and the next poll flew the whole error again, 32x larger,
 					// until the dates left the calendar behind.
-					now = Date.now();
-					if (clothesLinePos['moving'] + 300 < now && clothesLinePos['lastBX'] == undefined) {
+					if (clothesLineAtRest()) {
 						timestamp = respons['__specs']['timestamp'];
 						timelineScroller({ diff: (response.appts['__specs']['timestamp'] - respons['__specs']['timestamp']), source: 'slide' });
 						response['__specs'] = respons['__specs'];
