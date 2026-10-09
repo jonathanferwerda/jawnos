@@ -66,12 +66,12 @@
 			// face: the misc settings, seeded here so the bars are laid out right
 			// from the first paint
 			var jawnos_bar_settings = {
-				dock_position: '<%= &subs::setting_grabber({ app => 'misc', setting => 'dock_position' }) || 'bottom' %>',
-				taskbar_position: '<%= &subs::setting_grabber({ app => 'misc', setting => 'taskbar_position' }) || 'bottom' %>',
-				search_placement: '<%= &subs::setting_grabber({ app => 'misc', setting => 'search_placement' }) || 'dock' %>',
-				start_button_side: '<%= &subs::setting_grabber({ app => 'misc', setting => 'start_button_side' }) || 'right' %>'
+				dock_position: '<%= &subs::misc_setting('dock_position') || 'bottom' %>',
+				taskbar_position: '<%= &subs::misc_setting('taskbar_position') || 'bottom' %>',
+				search_placement: '<%= &subs::misc_setting('search_placement') || 'dock' %>',
+				start_button_side: '<%= &subs::misc_setting('start_button_side') || 'right' %>'
 			};
-			var jawnos_clock_format = '<%= &subs::setting_grabber({ app => 'misc', setting => 'clock_format' }) || '24' %>';
+			var jawnos_clock_format = '<%= &subs::misc_setting('clock_format') || '24' %>';
 		</script>
 		<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
 		<script src="/js/jquery-ui.js"></script>

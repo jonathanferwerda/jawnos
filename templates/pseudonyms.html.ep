@@ -1,4 +1,4 @@
-<% my $dock_position = &subs::setting_grabber({ app => 'misc', setting => 'dock_position' }) || 'bottom'; %>
+<% my $dock_position = &subs::misc_setting('dock_position') || 'bottom'; %>
 <div id="pseudonym_home" position="<%= $dock_position %>" style="background-color:<%= $config->{$device}->{'pseudonym_home'}->{'background_colour'} %>">
 	<div id="search_entanglement">
 		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:var(--panel);border:solid;border-width:2px;border-radius:3px;"></div>

@@ -9,7 +9,7 @@
 </div>
 
 <span id="header"></span>
-<% my $taskbar_position = &subs::setting_grabber({ app => 'misc', setting => 'taskbar_position' }) || 'bottom'; %>
+<% my $taskbar_position = &subs::misc_setting('taskbar_position') || 'bottom'; %>
 <div id="taskbar" position="<%= $taskbar_position %>">
 	<span id="taskbar_windows"></span>
 	<span id="taskbar_icons"></span>

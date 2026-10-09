@@ -2776,6 +2776,23 @@ sub setting_grabber() {
 	return $returner;
 }
 
+# A misc setting as this device should read it: this device's own row when it has
+# one, then the person's own ("Me"), then nothing - the caller names the
+# fallback. The configure panel's per-device blocks write the tab's row, so a
+# value chosen under Me used to be invisible to the manager, which read the
+# device's row alone and fell back to its defaults on every load. An explicit
+# device may be named, for the panel asking after a tab that is not this one.
+sub misc_setting() {
+	my $setting = shift;
+	my $device = shift || &device_setter();
+	my $value = &setting_grabber({ app => 'misc', setting => $setting, device => $device });
+	unless (defined $value && length $value) {
+		my $signatorial = &signatorial_designer();
+		$value = &setting_grabber({ app => 'misc', setting => $setting, device => $signatorial }) if ($signatorial && $signatorial ne $device);
+	}
+	return $value;
+}
+
 sub settings_grabber() {
 	my $settings = shift;
 #	return {};

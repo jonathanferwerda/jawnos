@@ -6,6 +6,9 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 <% my $signatorial = &subs::signatorial_designer(); %>
 <% my $dev = &subs::device_setter(); %>
 <% my @devices = ( $signatorial, @gb::device_types ); %>
+<%# the person's own row, which the device tabs inherit from (the manager reads
+    a device's row first, then this one, then its own default) %>
+<% my $me_row = $settings->{$signatorial} || {}; %>
 <% my @fonts = (
 	'system-ui, sans-serif',
 	'Arial, sans-serif',
@@ -131,11 +134,12 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			); %>
 			<% foreach my $g ( @general ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
+				<% my $chosen = (defined $settings->{$dt}->{$key} && length $settings->{$dt}->{$key}) ? $settings->{$dt}->{$key} : $me_row->{$key}; %>
 				<label style="display:flex;flex-direction:column;">
 					<b><%= $label %></b>
 					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
 						<% foreach my $o ( @{$opts} ) { %>
-							<option <% if ($settings->{$dt}->{$key} eq $o) { %>selected="selected"<% } %>><%= $o %></option>
+							<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
 						<% } %>
 					</select>
 				</label>
@@ -153,11 +157,15 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			); %>
 			<% foreach my $g ( @bars ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
+				<%# the bars are read straight from the settings table: the list this template
+				    is handed does not carry them, and the lying dropdown showed the first
+				    option rather than what was stored. Falls back to Me, then nothing. %>
+				<% my $chosen = &subs::misc_setting($key, $dt); %>
 				<label style="display:flex;flex-direction:column;">
 					<b><%= $label %></b>
 					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
 						<% foreach my $o ( @{$opts} ) { %>
-							<option <% if ($settings->{$dt}->{$key} eq $o) { %>selected="selected"<% } %>><%= $o %></option>
+							<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
 						<% } %>
 					</select>
 				</label>
