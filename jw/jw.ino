@@ -1139,16 +1139,6 @@ void loop() {
     settingPMU();
     pmuIrq = false;
     buttonMillis = millis();
-    if (tilt_wake_short) {
-      // the wake was a wrist raise: age the clock as if the full timeout had
-      // almost elapsed, so only the look's ten seconds are left. A touch has
-      // already handed itself the full timeout through touch_watch().
-      tilt_wake_short = false;
-      if (DEFAULT_SCREEN_TIMEOUT > (long)TILT_WAKE_LOOK_MS) {
-        buttonMillis -= (uint32_t)(DEFAULT_SCREEN_TIMEOUT - TILT_WAKE_LOOK_MS);
-        Serial.println("[tilt] short wake: ten seconds");
-      }
-    }
   }
 
 
@@ -3907,6 +3897,18 @@ void lowPowerEnergyHandler()
   Serial.println("just before frequency");
   setCpuFrequencyMhz(240);
   step_writer();
+  if (tilt_wake_short) {
+    // a wrist raise earns a glance, not the full timeout: arm the deadline as
+    // if the full timeout had almost elapsed, leaving ten seconds. A touch
+    // rebases buttonMillis through touch_watch() and the full timeout is back.
+    // The tail is where this belongs: loop()'s wake block can be starved by
+    // the motion that always follows a raise.
+    tilt_wake_short = false;
+    if (DEFAULT_SCREEN_TIMEOUT > (long)TILT_WAKE_LOOK_MS) {
+      buttonMillis = millis() - (uint32_t)(DEFAULT_SCREEN_TIMEOUT - TILT_WAKE_LOOK_MS);
+      Serial.println("[tilt] short wake: ten seconds");
+    }
+  }
   // the event that woke us is spent, loop() would only re-run wakeup() for it
   pmuIrq = false;
   //JSONVar dct;
