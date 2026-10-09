@@ -192,6 +192,15 @@ const GLYPHS = {
 	window_restore: '<path d="M10 5.5h5.5a2 2 0 0 1 2 2V13" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><rect x="6" y="9" width="9.5" height="9.5" rx="1.6" fill="none" stroke="{G}" stroke-width="2"/>',
 	window_maximize: '<rect x="5.5" y="5.5" width="13" height="13" rx="1.8" fill="none" stroke="{G}" stroke-width="2"/>',
 	window_close: '<path d="M6.8 6.8 17.2 17.2M17.2 6.8 6.8 17.2" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/>',
+	// --- the paperwork family: the store's documents are asked for by their
+	// own names, and a bill, a discount and a return each want a shape of
+	// their own rather than borrowing one ---
+	invoice: '<rect x="4.6" y="2.4" width="14.8" height="19.2" rx="1.8" fill="{G}"/><path d="M7.4 6.6h9.2M7.4 9.4h5.4" fill="none" stroke="{D}" stroke-width="1.5" stroke-linecap="round"/><circle cx="14.9" cy="15.6" r="4.2" fill="{D}"/><path d="M14.9 12.6v6" fill="none" stroke="{G}" stroke-width="1.1" stroke-linecap="round"/><path d="M16.6 14c-.4-.4-.9-.7-1.5-.7-.9 0-1.5.5-1.5 1.2 0 .7.8 1 1.8 1.2.9.2 1.7.5 1.7 1.3 0 .7-.7 1.2-1.6 1.2-.7 0-1.4-.3-1.8-.8" fill="none" stroke="{G}" stroke-width="1" stroke-linecap="round"/>',
+	percent: '<circle cx="12" cy="12" r="9" fill="{G}"/><path d="M8.4 15.6 15.6 8.4" fill="none" stroke="{D}" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.6" cy="8.6" r="1.9" fill="{D}"/><circle cx="15.4" cy="15.4" r="1.9" fill="{D}"/>',
+	return_arrow: '<path d="M14.6 7H8.9a5.4 5.4 0 0 0 0 10.8H21" fill="none" stroke="{G}" stroke-width="2.4" stroke-linecap="round"/><path d="M9.2 3.6 4.8 7l4.4 3.4z" fill="{G}"/>',
+	assign: '<circle cx="9.4" cy="8" r="3.5" fill="{G}"/><path d="M3.2 19.8c0-3.3 2.8-5.6 6.2-5.6s6.2 2.3 6.2 5.6z" fill="{G}"/><path d="M15.6 12.4h5.8m0 0-2.5-2.5m2.5 2.5-2.5 2.5" fill="none" stroke="{D}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+	beacon: '<circle cx="12" cy="12.6" r="2.9" fill="{G}"/><path d="M6.4 7a8.4 8.4 0 0 0 0 11.2M17.6 7a8.4 8.4 0 0 1 0 11.2" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><path d="M3.6 4.2a12.4 12.4 0 0 0 0 16.8M20.4 4.2a12.4 12.4 0 0 1 0 16.8" fill="none" stroke="{D}" stroke-width="1.6" stroke-linecap="round"/>',
+	reset: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M4 3.5v5h5z" fill="{G}"/>',
 };
 
 // --- pseudonym icon name -> glyph ---------------------------------------------
@@ -425,6 +434,21 @@ const ICONS = {
 	// the appointment row's three group buttons
 	'extra': 'extra',
 	'connect': 'connect',
+	// --- the store's paperwork: the appointment header asks for an icon by the
+	// appointment's own type, so each document type carries a name of its own ---
+	'quote': 'tag',
+	'invoice': 'invoice',
+	'receipt': 'receipt',
+	'sale': 'percent',
+	'order': 'clipboard',
+	'return': 'return_arrow',
+	// --- the other types without a pseudonym to wear ---
+	'assign': 'assign',
+	'beacon': 'beacon',
+	'encrypt': 'lock',
+	'reset': 'reset',
+	'software': 'apps',
+	'info': 'info',
 };
 
 // --- styles --------------------------------------------------------------------
@@ -736,6 +760,14 @@ const HUE_OVERRIDES = {
 	restore: 216,
 	maximize: 216,
 	close: 0,
+	// the paperwork keeps one calm hue: a quote, an invoice, a receipt and
+	// their kin are the same family of paper
+	quote: 210,
+	invoice: 210,
+	receipt: 210,
+	sale: 210,
+	order: 210,
+	return: 210,
 };
 const hueFor = name => (HUE_OVERRIDES[name] != null ? HUE_OVERRIDES[name] : hashHue(name));
 
