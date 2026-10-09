@@ -151,12 +151,15 @@ static String ble_rx_buffer;
 static int ble_rx_next = 0;
 static uint32_t ble_rx_last = 0;
 
-static void queue_ble_message(const String &message) {
+static void queue_ble_message(String &message) {
   if (bleIncomingQueue == NULL) {
     return;
   }
-  // heap allocated so it outlives this callback's frame; loop() frees it
-  String* msgPtr = new String(message);
+  // the buffer is handed over, not copied: the room push is ~25 KB and three
+  // live strings of it is what the watch could not afford (2026-10-09). The
+  // String is left empty.
+  String* msgPtr = new String();
+  *msgPtr = std::move(message);
   if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
     delete msgPtr;
     deckLog("[bt] queue full, message dropped");
@@ -188,40 +191,49 @@ class MyServerCallbacks: public BLEServerCallbacks {
   }
 };
 
+// One BLE write as it arrives: a whole message, or one chunk of a framed one.
+// Runs on the BLE stack's own task, whose stack is small -- nothing here may
+// log (the watch measured 1.9 KB of headroom at this point, 2026-10-09, and a
+// vfprintf wants more); the reporting lives where the pushed message lands.
+static void ble_frame_ingest(const String &rawInput) {
+  if (rawInput.length() == 0) {
+    return;
+  }
+  int index = 0, total = 0;
+  String body;
+  if (ble_frame_split(rawInput, index, total, body)) {
+    // a fresh message, a gap, or a long pause restarts the buffer
+    if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
+      ble_rx_buffer = "";
+      // one allocation for the whole message: growing it a chunk at a time
+      // fragmented the heap the payload then needed in one block
+      ble_rx_buffer.reserve((unsigned int)body.length() * (unsigned int)total + 64);
+      ble_rx_next = 0;
+    }
+    ble_rx_buffer += body;
+    ble_rx_last = millis();
+    ble_rx_next = index + 1;
+    if (ble_rx_buffer.length() > 65536) {
+      ble_rx_buffer = "";
+      ble_rx_next = 0;
+      return;
+    }
+    if (ble_rx_next >= total) {
+      queue_ble_message(ble_rx_buffer);
+      ble_rx_buffer = "";
+      ble_rx_next = 0;
+    }
+  }
+  else {
+    String whole = rawInput;   // an unframed message (a manual write, an older daemon)
+    queue_ble_message(whole);
+  }
+}
+
 class MyCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     String rawInput = String(pCharacteristic->getValue().c_str());
-    if (rawInput.length() == 0) {
-      return;
-    }
-    int index = 0, total = 0;
-    String body;
-    if (ble_frame_split(rawInput, index, total, body)) {
-      // a fresh message, a gap, or a long pause restarts the buffer
-      if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
-        ble_rx_buffer = "";
-        ble_rx_next = 0;
-      }
-      ble_rx_buffer += body;
-      ble_rx_last = millis();
-      ble_rx_next = index + 1;
-      if (ble_rx_buffer.length() > 65536) {
-        deckLog("[bt] payload over 64k; dropping");
-        ble_rx_buffer = "";
-        ble_rx_next = 0;
-        return;
-      }
-      if (ble_rx_next >= total) {
-        String complete = ble_rx_buffer;
-        ble_rx_buffer = "";
-        ble_rx_next = 0;
-        deckLog("[bt] reassembled %u bytes (%d chunks)", complete.length(), total);
-        queue_ble_message(complete);
-      }
-    }
-    else {
-      queue_ble_message(rawInput);
-    }
+    ble_frame_ingest(rawInput);
   }
 };
 // Which TDM slot the microphone shows up in. The startup dump prints all four,
@@ -1468,6 +1480,83 @@ void wifi_server() {
 }
 
 
+// Find a field's value in raw JSON text: where it starts and how long it is,
+// without copying it out. A room push is ~25 KB and the enclosure only needs
+// cutting away, so the payload is reached as a span and carved in place.
+static bool raw_json_field_span(const String &src, const char *key, int &start, int &len) {
+  String needle = String("\"") + key + "\":";
+  int k = src.indexOf(needle);
+  if (k < 0) {
+    return false;
+  }
+  int i = k + needle.length();
+  while (i < (int)src.length() && (src[i] == ' ' || src[i] == '\t')) {
+    i++;
+  }
+  if (i >= (int)src.length()) {
+    return false;
+  }
+  int from = i;
+  char c = src[i];
+  if (c == '"') {
+    i++;
+    bool esc = false;
+    while (i < (int)src.length()) {
+      char d = src[i];
+      if (esc) { esc = false; }
+      else if (d == '\\') { esc = true; }
+      else if (d == '"') { break; }
+      i++;
+    }
+    if (i >= (int)src.length()) {
+      return false;
+    }
+    start = from;
+    len = i + 1 - from;      // keeps the quotes
+    return true;
+  }
+  if (c == '{' || c == '[') {
+    char close = (c == '{') ? '}' : ']';
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (; i < (int)src.length(); i++) {
+      char d = src[i];
+      if (in_str) {
+        if (esc) { esc = false; }
+        else if (d == '\\') { esc = true; }
+        else if (d == '"') { in_str = false; }
+        continue;
+      }
+      if (d == '"') { in_str = true; }
+      else if (d == c) { depth++; }
+      else if (d == close) {
+        depth--;
+        if (depth == 0) {
+          start = from;
+          len = i + 1 - from;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  while (i < (int)src.length() && src[i] != ',' && src[i] != '}' && src[i] != ']' && src[i] != ' ') {
+    i++;
+  }
+  start = from;
+  len = i - from;
+  return len > 0;
+}
+
+// Lift a value out of raw JSON text without building a tree.
+static String raw_json_field(const String &src, const char *key) {
+  int start = 0, len = 0;
+  if (!raw_json_field_span(src, key, start, len)) {
+    return "";
+  }
+  return src.substring(start, start + len);
+}
+
 void loop() {
   // The UI has been answering keystrokes and roller clicks late, so the loop
   // times itself and names the slow section instead of us guessing.
@@ -1488,9 +1577,11 @@ void loop() {
   String* incomingMsgPtr = nullptr;
   if (bleIncomingQueue != NULL && xQueueReceive(bleIncomingQueue, &incomingMsgPtr, 0) == pdTRUE) {
     if (incomingMsgPtr != nullptr) {
-      String btmsg = *incomingMsgPtr;
+      String btmsg;
+      btmsg = std::move(*incomingMsgPtr);   // steal the buffer: the push can be 25 KB
       delete incomingMsgPtr;
-      deckLog("[bt] %s", btmsg.c_str());
+      // a length, not the map: the message can be 25 KB of JSON
+      deckLog("[bt] rx %u bytes", (unsigned)btmsg.length());
       JSONVar btMsg = JSON.parse(btmsg);
       if (JSON.typeof(btMsg) != "undefined") {
         String mtype = btMsg.hasOwnProperty("type") ? String((const char *)btMsg["type"]) : String("");
@@ -1534,22 +1625,31 @@ void loop() {
         }
         else if (mtype == "room") {
           // a room payload pushed by the bridge: the same picture the http
-          // fetch returns
-          before_me = JSON.stringify(btMsg["data"]["payload"]);
-          buttoned_before = true;
-          JSONVar conf = JSON.parse(before_me);
-          int32_t year = conf["__specs"]["time"]["year"];
-          if (year > 2020) {
-            rtc.setTime(conf["__specs"]["time"]["sec"], conf["__specs"]["time"]["min"],
-                        conf["__specs"]["time"]["hour"], conf["__specs"]["time"]["day"],
-                        conf["__specs"]["time"]["month"], year);
+          // fetch returns. It is carved out of the raw message in place --
+          // parsing the envelope only to stringify the payload held three
+          // 25 KB strings at once (the watch's heap crash, 2026-10-09)
+          int payload_at = 0, payload_len = 0;
+          if (raw_json_field_span(btmsg, "payload", payload_at, payload_len) && payload_len > 2) {
+            btmsg.remove(0, payload_at);
+            btmsg.remove(payload_len);
+            before_me = std::move(btmsg);
+            buttoned_before = true;
+            String specs_str = raw_json_field(before_me, "__specs");
+            if (specs_str.length() > 2) {
+              JSONVar specs = JSON.parse(specs_str);
+              int32_t year = specs["time"]["year"];
+              if (year > 2020) {
+                rtc.setTime(specs["time"]["sec"], specs["time"]["min"], specs["time"]["hour"],
+                            specs["time"]["day"], specs["time"]["month"], year);
+              }
+            }
+            if (jw_room == "room") {
+              presidents_buttons();
+              remote_writer();
+              presidents_title();
+            }
+            deckLog("[bt] room pushed");
           }
-          if (jw_room == "room") {
-            presidents_buttons();
-            remote_writer();
-            presidents_title();
-          }
-          deckLog("[bt] room pushed");
         }
         else if (mtype == "toggle" || mtype == "toggles") {
           // a toggle flipped somewhere else (a phone press, an alarm, an
@@ -4707,7 +4807,7 @@ void configSave() {
   String wigi_wah = JSON.stringify(wigi);
   conf["wigi"] = wigi_wah;
   String returner = JSON.stringify(conf);
-  Serial.println(returner);
+  deckLog("[config] saving %u bytes", (unsigned)returner.length());
   // a deck that has nothing configured must not write the empty picture over
   // its own flash: a blank save cements a wipe for good
   if (homebaseIP.length() == 0 && authorization.length() == 0 &&
@@ -4958,15 +5058,13 @@ String readFile(fs::FS &fs, const char * path) {
     return "failure";
   }
 
-   Serial.println("- read from file:");
   while (file.available()) {
-    char fString = (char)file.read();
-    Serial.println(fString);
-    returner += fString;
-
+    returner += (char)file.read();
   }
   file.close();
-  Serial.println(returner);
+  // a size, not the file: this used to print it a character at a time, and a
+  // 25 KB config walked the console into a wedge on every boot
+  deckLog("[file] %s: %u bytes", path, (unsigned)returner.length());
   return returner;
 }
 
