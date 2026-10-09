@@ -4958,6 +4958,17 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'on', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
 		{ status => 'on', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
 		{ status => 'on', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
+		# the ledger's own types wear the set's glyphs of the same name: a quote,
+		# an invoice, the encrypt stamp and the rest of the appointment types
+		# that had no pseudonym (they showed no icon in the details and the
+		# timeline until now)
+		{ status => 'on', name => "invoice", icon => "invoice" },
+		{ status => 'on', name => "quote", icon => "quote" },
+		{ status => 'on', name => "encrypt", icon => "encrypt" },
+		{ status => 'on', name => "assign", icon => "assign" },
+		{ status => 'on', name => "beacon", icon => "beacon" },
+		{ status => 'on', name => "reset", icon => "reset" },
+		{ status => 'on', name => "software", icon => "software" },
 		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'text', icon => 'love letter', colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'start', icon => 'play', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
@@ -5802,6 +5813,12 @@ sub log_reader {
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'appointment_details') {
 		#appointment_details;
+		# a scope is required for the window: without one the request used to
+		# fall through to the final else below, whose body returns a bare 0, so
+		# every row vanished and the details panel read "0 apps" when it was
+		# opened without a scope in the request (the client always sends one, but
+		# the watch, the boards and hand-made requests do not)
+		$scope = 'hour' unless $scope;
 		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp);
@@ -12290,20 +12307,28 @@ get '/manager/torch' => sub($c) {
 };
 
 get '/manager/centre_view' => sub($c) {
-	my $app = eval { return decode_json $c->param('app') } || $c->param('app');
+	# the app arrives either as its JSON object or as a bare name. A bare name
+	# used to fall through and then be dereferenced as a hash ("Can't use
+	# string as a HASH ref"), which killed the worker and dropped the
+	# connection instead of answering - the app's own centre_view calls always
+	# carry the object, but the watch, the boards and any hand-made request do
+	# not, and they took the worker down with them.
+	my $ap = eval { return decode_json $c->param('app') };
+	$ap = { name => $c->param('app'), app => $c->param('app') } if ref $ap ne 'HASH';
+	my $app = $ap;
 	my $jp_report = eval { return decode_json $c->param('jp_report') } || {};
 	my $timestamp = $c->param('timestamp');
-	if ($app->{'source'}) {
-#		&subs::cache_delete({ app => $app->{'app'}, context => 'template' });
-	}
 	if ($app->{'name'}) {
 		&padlock_time_extender($c);
 		my $window = &centre_view_grabber({ c => $c, app => $app->{'name'}, timestamp => $timestamp, jp_report => $jp_report });
 		if ($c->param('source') ne 'ws') {
-			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => 'appointmentGrabber(\'' . $app->{'name'} . '\',\'' . $timestamp .'\',\'ws\');'});
+			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => 'appointmentGrabber(\'' . $app->{'name'} . '\',\'' . $timestamp .'\',\'ws\');' });
 		}
 	#	&Websocket::send('tab', { browser_tab_id => $c->stash('browser_tab_id'), app => $app, window => $window, timestamp => $timestamp, not_me => 1 });
 		$c->render(text => $window);
+	}
+	else {
+		$c->render(text => '');
 	}
 };
 
@@ -16343,6 +16368,13 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 	my $status = '';
 	if (scalar @{$appts} > 0) {
 
+		# a transaction that paid an invoice left a payment on the invoice's
+		# data; deleting the transaction takes the payment back out with it,
+		# or the invoice stays paid by a row that no longer exists
+		foreach my $app ( @{$appts} ) {
+			&invoice_payment_deleter($app->{'uuid'});
+		}
+
 		foreach my $app ( @{$appts} ) {
 			&subs::db_update('appointments', { status => 'deleting' }, { uuid => $app->{'uuid'}, app => $app->{'app'} });
 			$status = $app->{'type'};
@@ -16381,6 +16413,31 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 		&centre_view_grabber({ c => &subs::controller_builder(), app => $app, timestamp => &subs::rightNow(), cached => 'no' });
 	}
 	return { appts => $appts, status => $status };
+}
+
+sub invoice_payment_deleter($uuid) {
+	# called when an appointment is deleted: if it was the transaction a
+	# payment on an invoice points at, the payment is unwound - removed from
+	# the invoice's payments and its amount put back on the balance, and a
+	# document marked completed reopens
+	my $invoices = &subs::db_query("select * from appointments where type = ? and data like ?", 'invoice', '%' . $uuid . '%')->hashes;
+	foreach my $inv ( @{$invoices} ) {
+		my $data = eval { return decode_json $inv->{'data'} } || {};
+		my $payments = $data->{'payments'} || [];
+		my @kept = grep { ($_->{'appt_uuid'} || '') ne $uuid } @{$payments};
+		next if scalar @kept == scalar @{$payments};
+		my $reversed = 0;
+		foreach my $p ( @{$payments} ) {
+			$reversed += $p->{'amount'} if ($p->{'appt_uuid'} || '') eq $uuid && defined $p->{'amount'};
+		}
+		$data->{'payments'} = \@kept;
+		$data->{'numbers'}->{'balance'} = ($data->{'numbers'}->{'balance'} || 0) + $reversed;
+		my $inv_status = $inv->{'status'};
+		$inv_status = 'open' if $inv_status eq 'completed' && $data->{'numbers'}->{'balance'} > 0;
+		&subs::db_update('appointments', { data => encode_json $data, status => $inv_status, server_time => &subs::rightNow() }, { app => $inv->{'app'}, uuid => $inv->{'uuid'} });
+		$log->info('payment of ' . $reversed . ' reversed on ' . $inv->{'app'} . ' ' . $inv->{'uuid'} . ' (deleted ' . $uuid . ')');
+		&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $inv->{'app'} . '\',\'' . $inv->{'uuid'} .'\');' });
+	}
 }
 
 sub is_folder_empty {

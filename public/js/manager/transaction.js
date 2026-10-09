@@ -379,43 +379,78 @@ function transactionStorageSaver(app) {
 function transactionStorageRetriever(app) {
 	var appt = $('.appointment[app="' + app + '"]');
 	var movement = appt.find('.movement.app_setting[attribute="movement"]').val();
-	var storage = localStorage.getItem('transactionSaver_' + app);
-	var storage = eval(JSON.parse(storage) || {});
-	var uuid = appt.find('.app_details').attr('uuid');
+	var storage;
+	try { storage = JSON.parse(localStorage.getItem('transactionSaver_' + app)) || {}; }
+	catch (e) { storage = {}; }
 	if (storage[movement]) {
+		// the stored items, in the order they were written
+		var items = [];
+		$.each(storage[movement], function(i,v) {
+			if (i != 'totals') { items.push({ uuid: i, fields: v }); }
+		});
+		// one block per stored item, in place: a block already carrying the
+		// item's uuid is filled where it stands, a spare block is re-purposed,
+		// and only a genuinely missing block is added. A second tap on the
+		// history button replaces what it brought instead of stacking another
+		// copy of it.
+		var container = appt.find('.transaction_movement_container[app="' + app + '"]');
+		var available = [];
+		container.find('.purchase_details').each(function(n,v) { available.push($(v)); });
+		$.each(items, function(i,item) {
+			var block;
+			for (var n = 0; n < available.length; n++) {
+				if (available[n].attr('uuid') == item.uuid) { block = available.splice(n,1)[0]; break; }
+			}
+			if (!block && available.length > 0) {
+				block = available.shift();
+			}
+			if (!block) {
+				appt.find('.add_transaction_item').trigger('click');
+				block = container.find('.purchase_details').last();
+			}
+			block.attr('uuid', item.uuid);
+			block.find('.remove_transaction_item').attr('uuid', item.uuid);
+			block.find('.purchase_input').each(function(n,v) {
+				if (!$(v).is('select') && $(v).attr('type') != 'checkbox') {
+					$(v).val($(v).attr('attribute') == 'quantity' ? 1 : '');
+				}
+			});
+			$.each(item.fields, function(ir,vr) {
+				if (vr == 'undefined' || vr == 'null') { return true; }
+				var input = block.find('[attribute="' + ir + '"]');
+				if (input.attr('type') == 'checkbox') {
+					input.val(vr).prop('checked', vr == 'on');
+				}
+				else {
+					input.val(vr);
+				}
+			});
+		});
+		// whatever block is left unclaimed belongs to no stored item
+		$.each(available, function(i,v) { v.remove(); });
+		if (items.length > 0) {
+			// the form answers to its first block's name, and the add button
+			// clones that block
+			appt.find('.app_details').attr('uuid', items[0].uuid);
+		}
 		if (storage[movement]['totals']['uuid']) {
 			appt.find('.vendor.purchase_input').val(storage[movement]['totals']['vendor']);
-			uuid = storage[movement]['totals']['uuid'];
-			appt.find('.app_details').attr('uuid', uuid);
-			appt.find('.purchase_details').attr('uuid', uuid);
 		}
-
-		$.each(storage[movement], function(i,v) {
-			if (i != 'totals') {
-				if (uuid != i) {
-					appt.find('.add_transaction_item').trigger('click');
-					var count = appt.find('.purchase_details').length;
-					$(appt.find('.purchase_details')[count - 1]).attr('uuid', i);
-					$(appt.find('.purchase_details')[count - 1]).find('.remove_transaction_item').attr('uuid', i );
-				}
-				$.each(storage[movement][i], function(ir,vr) {
-					var input = $('.purchase_details[app="' + app + '"][uuid="' + i + '"]').find('[attribute="' + ir + '"]');
-					if (input.attr('type') == 'checkbox') {
-						if (vr == 'on') {
-							input.val('on').prop('checked', true);
-						}
-						else {
-							input.val('off').prop('checked', false);
-						}
-					}
-					else {
-						input.val(vr);
-					}
-				});
-			}
-		});
 	}
+	// the vendor's change brings the open invoices for that vendor back into
+	// the picker; when the stored transaction had one chosen, choose it again
+	// (the picker's own change would overwrite the retrieved amounts with the
+	// invoice's current numbers, so only the pick is restored)
+	var information = storage[movement] ? (storage[movement]['totals'] || {})['information'] : undefined;
 	appt.find('.purchase_input[attribute="vendor"]').trigger('change');
+	if (information && information != 'undefined' && information != 'none' && information != 'null') {
+		setTimeout(function() {
+			var select = appt.find('.transaction_information');
+			if (select.find('option[value="' + information + '"]').length > 0) {
+				select.val(information).show();
+			}
+		}, 400);
+	}
 
 	transactionStorageSaver(app);
 }
@@ -515,8 +550,10 @@ $(document).on('click', '.transaction_history_retriever', function() {
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
 			thr.attr('timestamp',response.timestamp);
-			var history = JSON.parse(response.data);
-			localStorage.setItem('transactionSaver_' + app, response.data);
+			// an app with no earlier transaction has nothing to bring back
+			if (response.data) {
+				localStorage.setItem('transactionSaver_' + app, response.data);
+			}
 			transactionStorageRetriever(app);
 		}
 	});
