@@ -7876,6 +7876,72 @@ sub evaluation_period_span {
 	return 86400000;
 }
 
+# The app's own budget, held against the window the evaluation rolled up. The
+# setting is a comma list of <amount>/<scope> entries - 17h/week, 7.0/w,
+# $50/M - and each is scaled to the window before it meets its actual, so a
+# month of readings of a weekly budget is still the same budget. Before this,
+# the report could see how long an app ran but never whether running that
+# long was over the line.
+sub budget_holding {
+	my ($app, $since, $act, $budget) = @_;
+	$budget = &subs::setting_grabber({ app => $app, setting => 'budget' }) unless defined $budget;
+	return [] unless $budget;
+	my $window = &subs::rightNow() - $since;
+	return [] unless $window > 0;
+	$act = {} unless $act;
+	my @out;
+	my $money;
+	foreach my $entry ( split ',', $budget ) {
+		# an entry with no scope says nothing a window can be held against
+		my ($amount, $scope) = split '/', $entry;
+		next unless defined $amount && defined $scope && $scope =~ /\w/;
+		$scope = '1' . $scope unless $scope =~ /[0-9]/;
+		my $scope_ms = &subs::time_abbrev_translator($scope);
+		next unless $scope_ms && $scope_ms > 0;
+		my $scale = $window / $scope_ms;
+		if ($amount =~ /^\s*\$/) {
+			my $expected = ($amount =~ s/[^0-9.]//gr) * $scale;
+			next unless $expected > 0;
+			unless (defined $money) {
+				$money = &subs::db_query('select sum(abs(coalesce(total,0))) as total from appointments where app = ? and cast(timestamp as integer) >= ?', $app, $since)->hash->{'total'};
+				$money = 0 unless defined $money;
+			}
+			push @out, {
+				of => 'total', budget => $entry,
+				expected => &subs::price_formatter($expected),
+				actual => &subs::price_formatter($money),
+				percentage => int(100 * $money / $expected + 0.5),
+				over => $money > $expected ? 1 : 0,
+			};
+		}
+		elsif ($amount =~ /[a-zA-Z]/) {
+			my $expected = &subs::time_abbrev_translator($amount) * $scale;
+			next unless $expected > 0;
+			my $actual = $act->{'duration'} || 0;
+			push @out, {
+				of => 'duration', budget => $entry,
+				expected => &subs::duration_sayer($expected / 1000),
+				actual => &subs::duration_sayer($actual / 1000),
+				percentage => int(100 * $actual / $expected + 0.5),
+				over => $actual > $expected ? 1 : 0,
+			};
+		}
+		else {
+			my $expected = $amount * $scale;
+			next unless $expected > 0;
+			my $actual = $act->{'count'} || 0;
+			push @out, {
+				of => 'occurences', budget => $entry,
+				expected => int($expected + 0.5),
+				actual => $actual + 0,
+				percentage => int(100 * $actual / $expected + 0.5),
+				over => $actual > $expected ? 1 : 0,
+			};
+		}
+	}
+	return \@out;
+}
+
 sub evaluation_agent() {
 	my ($app, $period) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -7915,6 +7981,9 @@ sub evaluation_agent() {
 		my %lives;
 		$lives{'pos'} = $owner_settings->{'pos'} if $owner_settings->{'pos'};
 		$lives{'mab'} = $owner_settings->{'mab'} if $owner_settings->{'mab'};
+		# what the app means to spend comes with what the window actually spent
+		# (the settings are already in hand, so an app with no budget asks nothing)
+		my $holding = &subs::budget_holding($owner, $since, $act, $owner_settings->{'budget'} || '');
 		return {
 			app => $owner,
 			occurrences => $act->{'count'} || 0,
@@ -7927,6 +7996,7 @@ sub evaluation_agent() {
 			weekday_profile => $from->{'weekdays'}->{$owner} || {},
 			kinds => $kinds,
 			%lives,
+			($holding && scalar @{$holding} ? (budget => $holding) : ()),
 			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } @days,
 		};
 	};
@@ -7991,8 +8061,8 @@ sub evaluation_agent() {
 		splice(@open, 8) if scalar @open > 8;
 		$briefing->{'tasks'} = \@open if scalar @open;
 	}
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, each app\'s kinds - the appointment types, subtypes and projects that ran and the model or option names they carried, each counted - and, for a single app, its open tasks with priorities and the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Each app entry also says what it is - the pos and mab constructs it carries - and the constructs list holds the names the house uses. Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A pair or entry marked habit runs on nearly every day of the window and its correlation is the calendar, not a cause. A thing need not be linked to be a cause.';
-	my $instructions = 'Begin with a single headline line - at most fifteen words, no label - that names what the window showed, then a blank line. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends use kinds, models and tasks to say what the activity was made of, not only how often it happened. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Use only the numbers given - never invent figures. Plain text.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, each app\'s kinds - the appointment types, subtypes and projects that ran and the model or option names they carried, each counted - and, for a single app, its open tasks with priorities and the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Each app entry also says what it is - the pos and mab constructs it carries - and, when the app keeps a budget, its budget entries scaled to this window: the amount expected (expected), what the window actually did (actual), the share of the budget used (percentage) and whether it went over (over). The constructs list holds the names the house uses. Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A pair or entry marked habit runs on nearly every day of the window and its correlation is the calendar, not a cause. A thing need not be linked to be a cause.';
+	my $instructions = 'Begin with a single headline line - at most fifteen words, no label - that names what the window showed, then a blank line. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends use kinds, models and tasks to say what the activity was made of, not only how often it happened, and say how long it ran - the total and the average - and, where a budget rides the briefing, whether the window came in over it, under it or on it. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Use only the numbers given - never invent figures. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {

@@ -34,6 +34,10 @@
 	</table>
 <% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
 
+	<br>
+	<%# the whole house's own evaluation controls sit here, where the global
+	    report already lives %>
+	<%= include 'apps/evaluation_controls', app => '' %>
 	<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
 	<br>
 	<%# every machine keeps its own queue, so the house has to say where the

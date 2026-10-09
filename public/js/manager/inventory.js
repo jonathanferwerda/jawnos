@@ -548,7 +548,11 @@ function evaluationStation(b) {
 	var app = b.attr('app');
 	var period = b.siblings('.evaluation_period').first().val() || '';
 	var text = b.text();
+	// the controls may sit in the strip, in the app's configuration, or in the
+	// system settings - the report is looked for where the button is
 	var report = b.siblings('.appointment_evaluation').first();
+	if (report.length == 0) { report = b.parent().find('.appointment_evaluation').first(); }
+	if (report.length == 0) { report = b.closest('.appointment').find('.appointment_evaluation').first(); }
 	b.text('* ' + text);
 	report.text('The evaluator is reading the numbers...');
 	clearInterval(configIntervals['sysEvaluateInterval']);

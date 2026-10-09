@@ -183,6 +183,19 @@
 							</div>
 						</span>
 					<% } %>
+					<%# the evaluation wears the shape of an ability too: the toggle opens
+					    the controls that run one and the report it last left, so an app's
+					    evaluation is configured where the app is %>
+					<span class="configuration_ability_container" setting="evaluation">
+						<button style="width:95%;" app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><b>Evaluation:</b> <%= ((($appts->{$a}->{'setting'}->{'nightly_evaluation'} || '') eq 'on') ? 'nightly' : 'on demand') %></button>
+						<div style="display:none;" class="app_configure_input" setting="evaluation" app="<%= $a %>">
+							<%= include 'apps/evaluation_controls', app => $a %>
+							<% my $app_evaluation = eval { return decode_json $appts->{$a}->{'setting'}->{'evaluation_report'} } || {}; %>
+							<% if (($app_evaluation->{'text'} || '') ne '') { %>
+								<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
+							<% } %>
+						</div>
+					</span>
 				</span>
 			</div>
 		<% } %>

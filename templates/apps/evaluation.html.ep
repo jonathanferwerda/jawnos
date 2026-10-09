@@ -1,26 +1,6 @@
-<button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
-<%# the setting is the wish and the schedule is the mechanism: the worker puts
-    the schedule back from the setting at boot, so checked means the evaluation
-    will be re-run each night even across a restart %>
-<% my $nightly = (&subs::setting_grabber({ app => $app || '__president', setting => 'nightly_evaluation' }) || '') eq 'on'; %>
-<label class="hover" hint="Evaluate every night so a fresh report is waiting in the morning" style="vertical-align:bottom;"><input type="checkbox" class="nightly_evaluation" app="<%= $app || '' %>"<% if ($nightly) { %> checked<% } %>> Nightly</label>
-<%# the nights it runs; nothing picked means every night %>
-<% my @nightly_days = @{ &subs::nightly_evaluation_days($app || '__president') }; %>
-<select multiple class="nightly_evaluation_days" app="<%= $app || '__president' %>" hint="The nights the evaluation runs; nothing picked means every night" style="vertical-align:bottom;height:70px;">
-	<% my @day_names = qw/sunday monday tuesday wednesday thursday friday saturday/; %>
-	<% foreach my $d ( 0 .. 6 ) { %>
-		<option value="<%= $d %>" <% if (grep { $_ == $d } @nightly_days) { %>selected<% } %>><%= &subs::format_name($day_names[$d]) %></option>
-	<% } %>
-</select>
-<%# how much history the evaluation may read: the window is the token bill, and
-    the setting is the memory the nightly run reads too %>
-<% my $eval_period = &subs::setting_grabber({ app => $app || '__president', setting => 'evaluation_period' }) || 'month'; %>
-<% $eval_period = 'month' unless $eval_period =~ /^(day|week|month)$/; %>
-<select class="evaluation_period" app="<%= $app || '__president' %>" hint="How much history the evaluation reads: a shorter window costs fewer tokens" style="vertical-align:bottom;">
-	<% foreach my $p ( qw/day week month/ ) { %>
-		<option value="<%= $p %>" <% if ($eval_period eq $p) { %>selected<% } %>><%= &subs::format_name($p) %></option>
-	<% } %>
-</select>
+<%# the report the evaluation last left for this scope; the controls that run
+    one live with the app's configuration now, and with the system settings for
+    the whole house %>
 <% my $report_app = $app || '__president'; %>
 <%# the setting is what the whole house can read; the cache is the fallback the
     machines kept before the report travelled %>
