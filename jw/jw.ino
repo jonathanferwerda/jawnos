@@ -21,6 +21,8 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+// ble_gap_conn_find: the connected central's address, for the net room's BT line
+#include <host/ble_gap.h>
 #include "FS.h"
 #include "FFat.h"
 
@@ -66,6 +68,10 @@ static bool tiltDbg = false;
 // Rate limiter for the gesture check: a storm of movement is not a queue of checks.
 static uint32_t tilt_next_eval = 0;
 static uint8_t tilt_storm = 0;
+// A wrist raise earns a glance, not the full screen timeout; a touch inside it
+// hands the wake back to the usual timeout (see the wake block in loop()).
+#define TILT_WAKE_LOOK_MS 10000
+static bool tilt_wake_short = false;
 // Flag used to indicate whether recording is enabled
 static bool recordFlag = false;
 // Flag used for PMU interrupt trigger status
@@ -236,6 +242,8 @@ static lv_obj_t *face_ip = nullptr;
 static lv_obj_t *face_gw = nullptr;
 static lv_obj_t *face_ap = nullptr;
 static lv_obj_t *face_apgw = nullptr;
+// the net room's "BT:" line: which device the bridge is (see ip_writer)
+static lv_obj_t *face_bt = nullptr;
 static lv_obj_t *face_presidente = nullptr;
 static lv_obj_t *notification_lines[4] = { nullptr, nullptr, nullptr, nullptr };
 // the clock room's Wigi button carries the count of taps waiting in wigi
@@ -280,6 +288,13 @@ JSONVar dualCoreTasks;
 BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic = NULL;
 bool deviceConnected = false;
+// Who is on the other end of the bridge. The address comes from the connect
+// event; the name arrives with the daemon's hello (Android rotates the
+// address underneath the connection, a name does not). Fixed buffers, not
+// String: the BLE callback and the ui run on different cores, and a String's
+// heap can tear under that.
+static char ble_peer_addr[18] = "";
+static char ble_peer_name[32] = "";
 
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -346,11 +361,40 @@ static void ble_send(JSONVar message) {
 
 //64:e8:33:4B:38:39
 // Handles connection status
+// the connect pair's second call hands over the central's address; keep it in
+// the fixed buffer the ui reads (see the note at ble_peer_addr)
+static void ble_peer_grab(uint8_t *b) {
+    snprintf(ble_peer_addr, sizeof(ble_peer_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+             b[0], b[1], b[2], b[3], b[4], b[5]);
+    ble_peer_name[0] = '\0';     // until the daemon says hello
+    Serial.printf("[bt] central attached: %s\n", ble_peer_addr);
+}
+
 class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) { deviceConnected = true; ble_connected_at = millis(); };
+    void onConnect(BLEServer* pServer) {
+        deviceConnected = true;
+        ble_connected_at = millis();
+        // the address comes straight from the host: this callback always runs,
+        // where the address-carrying overload of the pair sits behind a config
+        // macro the sketch's compile unit does not reliably see
+        struct ble_gap_conn_desc conn_desc;
+        if (ble_gap_conn_find((uint16_t)pServer->getConnId(), &conn_desc) == 0) {
+            uint8_t *b = conn_desc.peer_id_addr.val;
+            bool zero = true;
+            for (int i = 0; i < 6; i++) {
+                if (b[i] != 0) { zero = false; break; }
+            }
+            if (zero) {
+                b = conn_desc.peer_ota_addr.val;   // no identity without bonding
+            }
+            ble_peer_grab(b);
+        }
+    };
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         ble_connected_at = 0;
+        ble_peer_addr[0] = '\0';
+        ble_peer_name[0] = '\0';
         // Bluedroid stops advertising when a central attaches and never
         // resumes it on its own: without this the phone cannot come back
         // after a drop until the watch is rebooted or the radio toggled
@@ -1095,6 +1139,16 @@ void loop() {
     settingPMU();
     pmuIrq = false;
     buttonMillis = millis();
+    if (tilt_wake_short) {
+      // the wake was a wrist raise: age the clock as if the full timeout had
+      // almost elapsed, so only the look's ten seconds are left. A touch has
+      // already handed itself the full timeout through touch_watch().
+      tilt_wake_short = false;
+      if (DEFAULT_SCREEN_TIMEOUT > (long)TILT_WAKE_LOOK_MS) {
+        buttonMillis -= (uint32_t)(DEFAULT_SCREEN_TIMEOUT - TILT_WAKE_LOOK_MS);
+        Serial.println("[tilt] short wake: ten seconds");
+      }
+    }
   }
 
 
@@ -1232,6 +1286,15 @@ void loop2(void * pvParameters) {
               }
               xSemaphoreGive(taskMutex);
             }
+          }
+          if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "hello") {
+            // the bridge names itself ("SM-S721W"): what the net room shows
+            // in place of the address, which Android rotates underneath it
+            const char *who = (const char *)btMsg["name"];
+            if (who != nullptr) {
+              snprintf(ble_peer_name, sizeof(ble_peer_name), "%s", who);
+            }
+            Serial.printf("[bt] hello: %s\n", ble_peer_name);
           }
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "now_me") {
             // the phone pushes the whole picture over BLE: the homebase, the
@@ -1683,6 +1746,7 @@ static void face_forget()
   face_name = nullptr;
   face_ip = nullptr;
   face_gw = nullptr;
+  face_bt = nullptr;
   face_ap = nullptr;
   face_apgw = nullptr;
   face_presidente = nullptr;
@@ -1811,6 +1875,29 @@ void update_wigi_indicator() {
 }
 
 void ip_writer() {
+  if (face_bt) {
+    // the net room's BT line: the bridge's own name when it sent one, else
+    // the address the connect event carried, else the state of the radio
+    char bt_line[64];
+    if (bt_enabled == false) {
+      snprintf(bt_line, sizeof(bt_line), "BT: off");
+      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+    }
+    else if (deviceConnected) {
+      const char *who = ble_peer_name[0] ? ble_peer_name : (ble_peer_addr[0] ? ble_peer_addr : "?");
+      snprintf(bt_line, sizeof(bt_line), "BT: %s", who);
+      lv_obj_set_style_text_color(face_bt, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    }
+    else if (ble_radio_up) {
+      snprintf(bt_line, sizeof(bt_line), "BT: waiting");
+      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xFFE000), LV_PART_MAIN);
+    }
+    else {
+      snprintf(bt_line, sizeof(bt_line), "BT: starting");
+      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    }
+    lv_label_set_text(face_bt, bt_line);
+  }
   if (!face_ip) {
     return;
   }
@@ -3439,6 +3526,7 @@ static void doze_until_crown() {
     if (!pmuIrq && sportsIrq && wristRaiseGate()) {
       // the arm came up while dozing: end the doze the way a crown click would
       Serial.println("[tilt] wrist raise: lighting the screen");
+      tilt_wake_short = true;
       pmuIrq = true;
     }
     if (!pmuIrq && crown_irq_pending()) {
@@ -3666,6 +3754,8 @@ void lowPowerEnergyHandler()
 
   sportsIrq = false;
   pmuIrq = false;
+  // any marker from a past raise is about that wake, not this one
+  tilt_wake_short = false;
   if (WiFi.status() == WL_CONNECTED && buttoned_before && homebaseIP.length() > 0) {
     String req = "https://" + homebaseIP + "/watch/next_appt?format=sleep";
     Serial.println(req);
@@ -3779,6 +3869,7 @@ void lowPowerEnergyHandler()
 
     if (wrist_wake) {
       Serial.println("[tilt] wrist raise: screen up");
+      tilt_wake_short = true;
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
       next_notification = 0;
       Serial.println("Wakeup was caused by the timer!");
@@ -3907,6 +3998,8 @@ void net_room() {
   jw_room = "net";
   
   display_exit();
+  // who the bridge is; ip_writer() keeps this line fresh from here on
+  face_bt = face_label_maker(20, 80, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 200);
   ip_writer();
   lv_obj_t * wifi_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wifi_button, wifi_control, LV_EVENT_CLICKED, NULL);
