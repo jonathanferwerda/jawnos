@@ -655,6 +655,14 @@ canvas { overflow: scroll; z-index: 99; }
 	max-width: 40px;
 	object-fit: contain;
 }
+/* the app list must not scroll under the foot buttons (leave, site type, now,
+   assistant, the bird): the body stops above their strip, so the rows are
+   clipped there instead of passing behind the fixed buttons. Only the app menu
+   wears a foot, so only it gives up the strip. */
+#start_menu:has(.start_menu_app_menu) .start_menu_body {
+	height: calc(100% - 52px);
+}
+
 /* the menu's body: the lists scroll inside it, and the rail keeps its 18% at
    the right. It is not a positioned box: the corner buttons ride the menu's own
    frame (they are absolutely placed and their containing block is #start_menu),
@@ -673,8 +681,6 @@ canvas { overflow: scroll; z-index: 99; }
 	/* the search's own row, while the menu is its home; without it the list is
 	   pushed up to the menu's top */
 	padding-top: 44px;
-	/* the corner buttons moved to the menu's foot: leave their strip clear */
-	padding-bottom: 52px;
 }
 #start_menu:not(.search_home) .start_menu_main_display,
 #start_menu:not(.search_home) .start_menu_categories { padding-top: 0px; }
@@ -729,7 +735,7 @@ canvas { overflow: scroll; z-index: 99; }
 	flex: 0 0 auto;
 	gap: 8px;
 	padding-top: 44px;
-	padding-bottom: 52px;
+	padding-bottom: 6px;
 	/* the list scrolls under the rail; the rail itself stands still */
 	position: sticky;
 	top: 0px;
