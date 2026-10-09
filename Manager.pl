@@ -16434,7 +16434,10 @@ sub invoice_payment_deleter($uuid) {
 		$data->{'numbers'}->{'balance'} = ($data->{'numbers'}->{'balance'} || 0) + $reversed;
 		my $inv_status = $inv->{'status'};
 		$inv_status = 'open' if $inv_status eq 'completed' && $data->{'numbers'}->{'balance'} > 0;
-		&subs::db_update('appointments', { data => encode_json $data, status => $inv_status, server_time => &subs::rightNow() }, { app => $inv->{'app'}, uuid => $inv->{'uuid'} });
+		# encode_json is a list operator: without its own parentheses it eats the
+		# rest of the hash, so status and server_time were never sent and the
+		# balance was restored without the document reopening.
+		&subs::db_update('appointments', { data => encode_json($data), status => $inv_status, server_time => &subs::rightNow() }, { app => $inv->{'app'}, uuid => $inv->{'uuid'} });
 		$log->info('payment of ' . $reversed . ' reversed on ' . $inv->{'app'} . ' ' . $inv->{'uuid'} . ' (deleted ' . $uuid . ')');
 		&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $inv->{'app'} . '\',\'' . $inv->{'uuid'} .'\');' });
 	}
