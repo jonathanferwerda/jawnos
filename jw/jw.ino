@@ -151,6 +151,44 @@ JSONVar wigi;
 JSONVar notifications = JSON.parse("[]");
 String computer_name;
 static RTC_DATA_ATTR int brightnessLevel = 50;
+
+// Breadcrumbs in RTC memory survive a panic reset even when the panic handler
+// cannot print anything (the silent double-faults after the 25 KB pushes on
+// 2026-10-09): the boot after a crash says where the last one stood. Plain
+// RTC_DATA_ATTR is reloaded from the image on this reset type, so the crumbs
+// live in the no-init section behind a magic word instead. A ring, not one
+// slot: both cores write crumbs, and the newest write is not always the story
+// (during a push core 0 sits in loop2 while core 1 applies the last payload).
+#define CRUMB_RING 32
+#define CRUMB_MAGIC 0x4A574E21u   // "JWN!"
+static RTC_NOINIT_ATTR uint32_t crumb_magic;
+static RTC_NOINIT_ATTR uint8_t crumb_head;
+static RTC_NOINIT_ATTR char crumb_tag[CRUMB_RING][20];
+static RTC_NOINIT_ATTR uint32_t crumb_heap[CRUMB_RING];
+static RTC_NOINIT_ATTR uint8_t crumb_core[CRUMB_RING];
+
+static void crumb(const char *tag) {
+  crumb_magic = CRUMB_MAGIC;
+  uint8_t h = (uint8_t)((crumb_head + 1) % CRUMB_RING);
+  crumb_head = h;
+  strncpy(crumb_tag[h], tag, sizeof(crumb_tag[h]) - 1);
+  crumb_tag[h][sizeof(crumb_tag[h]) - 1] = '\0';
+  crumb_heap[h] = ESP.getFreeHeap();
+  crumb_core[h] = (uint8_t)xPortGetCoreID();
+}
+
+static void crumbs_dump() {
+  if (crumb_magic != CRUMB_MAGIC) {
+    Serial.println("[crumbs] none");
+    return;
+  }
+  for (int i = 1; i <= CRUMB_RING; i++) {
+    int idx = (crumb_head + i) % CRUMB_RING;
+    if (!crumb_tag[idx][0]) continue;
+    Serial.printf("[crumbs] c%u %-16s free=%u\n",
+                  (unsigned)crumb_core[idx], crumb_tag[idx], (unsigned)crumb_heap[idx]);
+  }
+}
 int vibrateLevel = 50;
 int volumeLevel = 50;
 void lowPowerEnergyHandler();
@@ -159,6 +197,8 @@ static bool wristRaiseGate();
 static void tilt_serial_poll();
 static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
+static bool room_has_buttons(int r);
+static void screen_gesture(lv_event_t *e);
 String chat_room;
 bool loraChatBroadcaster = false;
 bool loraChatReceiver = false;
@@ -244,6 +284,13 @@ static lv_obj_t *face_ap = nullptr;
 static lv_obj_t *face_apgw = nullptr;
 // the net room's "BT:" line: which device the bridge is (see ip_writer)
 static lv_obj_t *face_bt = nullptr;
+// set from a gesture or a page button; loop() does the redraw, because the
+// screen cannot be rebuilt while its own event is running
+static volatile bool room_redraw = false;
+// "blestop on": stop asking the bridge for state after a connect, which is what
+// makes the phone push the big room payload back. A debugging switch for the
+// 25 KB push panic (2026-10-09), while the fix is worked out.
+static bool ble_state_off = false;
 static lv_obj_t *face_presidente = nullptr;
 static lv_obj_t *notification_lines[4] = { nullptr, nullptr, nullptr, nullptr };
 // the clock room's Wigi button carries the count of taps waiting in wigi
@@ -334,12 +381,19 @@ static String ble_rx_buffer;
 static int ble_rx_next = 0;
 static uint32_t ble_rx_last = 0;
 
-static void queue_ble_message(const String &message) {
+// Hands the message's buffer to the queue instead of copying it. The room push
+// is ~25 KB and used to be copied again here, again in loop2, again by the
+// splice, and once more into president_payload: five of those buffers were
+// alive at the peak, and the abort after each push (2026-10-09) happened in
+// exactly that window. The String is left empty.
+static void queue_ble_message(String &message) {
     if (bleIncomingQueue == NULL) {
         return;
     }
-    // Allocate string dynamically on heap so it survives after function exits
-    String* msgPtr = new String(message);
+    // Allocate the string object dynamically so it survives after the function exits; the move
+    // constructor hands over its buffer instead of copying it
+    String* msgPtr = new String();
+    *msgPtr = std::move(message);
     // Push string pointer to the queue. Wait 0ms if full.
     if (xQueueSend(bleIncomingQueue, &msgPtr, 0) != pdPASS) {
         // Fail-safe: Delete allocated memory if queue is full to prevent leaks
@@ -401,40 +455,58 @@ class MyServerCallbacks: public BLEServerCallbacks {
         pServer->startAdvertising();
     }
 };
+// One BLE write as it arrives: a whole message, or one chunk of a framed one.
+// Runs on the BLE stack's own task, whose stack is small -- nothing here may
+// print (1.9 KB of headroom measured on 2026-10-09, less than vfprintf wants,
+// and the silent hangs followed). The reporting lives in loop2, where the
+// assembled message lands. The test harness further down feeds this directly.
+static void ble_frame_ingest(const String &rawInput) {
+    if (rawInput.length() == 0) {
+        return;
+    }
+    int index = 0, total = 0;
+    String body;
+    if (ble_frame_split(rawInput, index, total, body)) {
+        crumb("w1 frame");
+        // a fresh message, a gap, or a long pause restarts the buffer
+        if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
+            ble_rx_buffer = "";
+            // one allocation for the whole message instead of a realloc every
+            // chunk: growing the buffer 50-odd times fragmented the heap at
+            // the moment the payload needed one big block
+            ble_rx_buffer.reserve((unsigned int)body.length() * (unsigned int)total + 64);
+            ble_rx_next = 0;
+        }
+        crumb("w2 append");
+        ble_rx_buffer += body;
+        ble_rx_last = millis();
+        ble_rx_next = index + 1;
+        if (ble_rx_buffer.length() > 65536) {
+            crumb("w! over 64k");
+            ble_rx_buffer = "";
+            ble_rx_next = 0;
+            return;
+        }
+        if (ble_rx_next >= total) {
+            crumb("w3 reassembled");
+            crumb("w5 queueing");
+            queue_ble_message(ble_rx_buffer);
+            crumb("w6 queued");
+            ble_rx_buffer = "";
+            ble_rx_next = 0;
+            crumb("w7 cleared");
+        }
+    }
+    else {
+        String whole = rawInput;   // an unframed message (a manual write, an older daemon)
+        queue_ble_message(whole);
+    }
+}
+
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
         String rawInput = String(pCharacteristic->getValue().c_str());
-        if (rawInput.length() == 0) {
-            return;
-        }
-        int index = 0, total = 0;
-        String body;
-        if (ble_frame_split(rawInput, index, total, body)) {
-            // a fresh message, a gap, or a long pause restarts the buffer
-            if (index == 0 || ble_rx_next != index || millis() - ble_rx_last > 5000) {
-                ble_rx_buffer = "";
-                ble_rx_next = 0;
-            }
-            ble_rx_buffer += body;
-            ble_rx_last = millis();
-            ble_rx_next = index + 1;
-            if (ble_rx_buffer.length() > 65536) {
-                Serial.println("[ble] payload over 64k; dropping");
-                ble_rx_buffer = "";
-                ble_rx_next = 0;
-                return;
-            }
-            if (ble_rx_next >= total) {
-                String complete = ble_rx_buffer;
-                ble_rx_buffer = "";
-                ble_rx_next = 0;
-                Serial.printf("[ble] reassembled %u bytes (%d chunks)\n", complete.length(), total);
-                queue_ble_message(complete);
-            }
-        }
-        else {
-            queue_ble_message(rawInput);
-        }
+        ble_frame_ingest(rawInput);
     }
 };
 /*
@@ -586,13 +658,34 @@ void setup() {
   taskMutex = xSemaphoreCreateMutex(); 
 
   xTaskCreatePinnedToCore(
-    loop2, "Core0Task", 4096, NULL, 1, &Core0TaskHandle, 0
+    // 12 KB: this task parses the whole pushed payload (a room push is 25 KB of
+    // JSON); 4 KB overflowed the stack and aborted the watch on 2026-10-09
+    loop2, "Core0Task", 12288, NULL, 1, &Core0TaskHandle, 0
   );
   bleIncomingQueue = xQueueCreate(5, sizeof(String*));
 
   Serial.println("starting");
   // a doze or crown-press that ends in a reset is otherwise invisible here
   Serial.printf("[boot] reset reason: %d\n", (int)esp_reset_reason());
+  if (crumb_magic == CRUMB_MAGIC) {
+    // not cleared: a missed log line can be read back with the crumb command
+    // (crumbs_dump has the whole ring and the heap at every mark)
+    Serial.printf("[crumb] the reset happened after: %s\n",
+                  crumb_tag[crumb_head][0] ? crumb_tag[crumb_head] : "(?)");
+  }
+  else {
+    crumb_tag[0][0] = '\0';
+  }
+  // If loop2 stops feeding this, the chip reboots instead of hanging until a
+  // hard reset (the 25 KB pushes have hung it, 2026-10-09); the panic dump
+  // that follows names the task that stalled.
+  esp_task_wdt_config_t twdt_cfg = {};
+  twdt_cfg.timeout_ms = 20000;
+  twdt_cfg.idle_core_mask = 0;
+  twdt_cfg.trigger_panic = true;
+  if (esp_task_wdt_init(&twdt_cfg) == ESP_ERR_INVALID_STATE) {
+    esp_task_wdt_reconfigure(&twdt_cfg);
+  }
   watch.setRotation(screenRotation);  
   setCpuFrequencyMhz(240);
   time_writer("now");
@@ -935,6 +1028,18 @@ void setup() {
     configRestoreBackup();
     configRestore();
   }
+  // what the hardware clock holds at boot: the watch face reads it directly,
+  // so a wrong morning clock shows up here before anything else can fix it
+  {
+    struct tm boot_tm = {};
+    watch.rtc.getDateTime(&boot_tm);
+    Serial.printf("[rtc] boot clock %04d-%02d-%02d %02d:%02d:%02d\n",
+                  boot_tm.tm_year + 1900, boot_tm.tm_mon + 1, boot_tm.tm_mday,
+                  boot_tm.tm_hour, boot_tm.tm_min, boot_tm.tm_sec);
+    if (boot_tm.tm_year + 1900 < 2024) {
+      Serial.println("[rtc] the hardware clock is unset");
+    }
+  }
   lv_task_handler();
 
 }
@@ -1166,6 +1271,7 @@ void loop() {
   if (president_data_ready) {
     // the fetch ran on core 0; the JSON and the screen belong to this core
     president_data_ready = false;
+    crumb("c0 apply loop");
     apply_president_payload();
   }
   if (ble_now_me_ready) {
@@ -1180,6 +1286,15 @@ void loop() {
     if (jw_room == "room") {
       presidents_buttons();
       full_refresh();
+    }
+  }
+  if (room_redraw) {
+    // a page button or the scroller asked for a rebuild: it has to happen here,
+    // outside the event that asked (the pages die with the rebuild)
+    room_redraw = false;
+    if (jw_room == "room") {
+      crumb("c1 redraw");
+      remote_room();
     }
   }
   // taps queued while the link was down go out shortly after a fresh central
@@ -1232,24 +1347,140 @@ void dualCoreTaskMaker(JSONVar task) {
 
 }
 
-void loop2(void * pvParameters) {
-  
+// Find a field's value in raw JSON text: where it starts and how long it is,
+// without copying it out. The room push is ~25 KB: parsing the envelope only
+// to re-stringify its payload (and parse it again on the other core) ran the
+// heap into an abort on 2026-10-09, so callers that just need to reach the
+// bytes -- the splice, the clock -- use the span and copy only what they parse.
+static bool raw_json_field_span(const String &src, const char *key, int &start, int &len) {
+  String needle = String("\"") + key + "\":";
+  int k = src.indexOf(needle);
+  if (k < 0) {
+    return false;
+  }
+  int i = k + needle.length();
+  while (i < (int)src.length() && (src[i] == ' ' || src[i] == '\t')) {
+    i++;
+  }
+  if (i >= (int)src.length()) {
+    return false;
+  }
+  int from = i;
+  char c = src[i];
+  if (c == '"') {
+    i++;
+    bool esc = false;
+    while (i < (int)src.length()) {
+      char d = src[i];
+      if (esc) { esc = false; }
+      else if (d == '\\') { esc = true; }
+      else if (d == '"') { break; }
+      i++;
+    }
+    if (i >= (int)src.length()) {
+      return false;
+    }
+    start = from;
+    len = i + 1 - from;      // keeps the quotes
+    return true;
+  }
+  if (c == '{' || c == '[') {
+    char close = (c == '{') ? '}' : ']';
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (; i < (int)src.length(); i++) {
+      char d = src[i];
+      if (in_str) {
+        if (esc) { esc = false; }
+        else if (d == '\\') { esc = true; }
+        else if (d == '"') { in_str = false; }
+        continue;
+      }
+      if (d == '"') { in_str = true; }
+      else if (d == c) { depth++; }
+      else if (d == close) {
+        depth--;
+        if (depth == 0) {
+          start = from;
+          len = i + 1 - from;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  while (i < (int)src.length() && src[i] != ',' && src[i] != '}' && src[i] != ']' && src[i] != ' ') {
+    i++;
+  }
+  start = from;
+  len = i - from;
+  return len > 0;
+}
 
+// Lift a value out of raw JSON text without building a tree.
+static String raw_json_field(const String &src, const char *key) {
+  int start = 0, len = 0;
+  if (!raw_json_field_span(src, key, start, len)) {
+    return "";
+  }
+  return src.substring(start, start + len);
+}
+
+void loop2(void * pvParameters) {
+  esp_task_wdt_add(NULL);   // feed it below; a stalled loop2 reboots the chip
   for(;;) {
     String* incomingMsgPtr = nullptr;
         
     // Non-blocking check for a new string pointer from the queue
     if (bleIncomingQueue != NULL && xQueueReceive(bleIncomingQueue, &incomingMsgPtr, 0) == pdTRUE) {
       if (incomingMsgPtr != nullptr) {
-        String btmsg = *incomingMsgPtr;
+        crumb("l0 received");
+        String btmsg;
+        btmsg = std::move(*incomingMsgPtr);   // steal the buffer: the push can be 25 KB
         delete incomingMsgPtr; // CRITICAL: Free the allocated heap memory!
+        crumb("l1 moved");
 
+        // the BLE callback cannot afford these prints (its task's stack runs
+        // ~2 KB from full); loop2 can, and this is the first place the whole
+        // message exists
+        Serial.printf("[ble] rx %u bytes free=%u max=%u\n",
+                      (unsigned)btmsg.length(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        Serial.printf("[stack] loop2 headroom %u\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
         Serial.print("Safely processing incoming Tasker JSON on loop2 stack: ");
         // the whole message can be several KB and the usb serial drops what it
         // cannot buffer while the host is slow, taking the markers after it down
         // with it; a prefix is enough to follow what arrived
         Serial.println(btmsg.substring(0, 120));
+        crumb("l2 printed");
 
+        // A room push is ~25 KB of JSON: the payload is cut out of the raw text
+        // here so nothing but the one parse on core 1 ever builds a tree for it.
+        bool room_raw = false;
+        if (btmsg.indexOf("\"type\":\"room\"") >= 0) {
+          int payload_at = 0, payload_len = 0;
+          if (raw_json_field_span(btmsg, "payload", payload_at, payload_len) && payload_len > 2) {
+            crumb("l2a span");
+            String room_str = raw_json_field(btmsg, "room");
+            crumb("l2b room");
+            btmsg.remove(0, payload_at);
+            crumb("l2c cut");
+            btmsg.remove(payload_len);
+            crumb("l3 carved");
+            unsigned int pushed = (unsigned int)btmsg.length();
+            if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              president_fetch_room = room_str.toInt();
+              if (president_fetch_room < 1) { president_fetch_room = 1; }
+              president_payload = std::move(btmsg);
+              president_data_ready = true;
+              xSemaphoreGive(taskMutex);
+              crumb("l4 staged");
+              Serial.printf("[ble] room pushed (raw %u bytes)\n", pushed);
+              Serial.flush();
+            }
+            room_raw = true;
+          }
+        }
+        if (!room_raw) {
         JSONVar btMsg = JSON.parse(btmsg);
         if (JSON.typeof(btMsg) != "undefined") {
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "button") {
@@ -1270,9 +1501,9 @@ void loop2(void * pvParameters) {
                 String buttonKey = "b" + String(button);
                 bm[buttonKey] = btMsg["data"];
                 before_me = JSON.stringify(bm);
-                
-                Serial.print("Updated before_me map: ");
-                Serial.println(before_me);
+
+                // not the map itself: the console drowns in 25 KB
+                Serial.printf("[ble] %s updated (%u bytes)\n", buttonKey.c_str(), (unsigned)before_me.length());
               }
               xSemaphoreGive(taskMutex);
             }
@@ -1354,6 +1585,7 @@ void loop2(void * pvParameters) {
             }
           }
         }
+        }
       }
     }
 
@@ -1361,6 +1593,7 @@ void loop2(void * pvParameters) {
     // (Keep your existing xSemaphoreTake(taskMutex...) code block that iterates over btMessages here)
 
     // Essential: Prevents Core 0 Watchdog starvation panics
+    esp_task_wdt_reset();
     vTaskDelay(pdMS_TO_TICKS(10)); 
 
     // once the bridge is up, ask for anything that changed while the watch was
@@ -1370,7 +1603,7 @@ void loop2(void * pvParameters) {
     if (!deviceConnected) {
       state_requested = false;
     }
-    else if (!state_requested && ble_connected_at != 0 && millis() - ble_connected_at > 3000) {
+    else if (!ble_state_off && !state_requested && ble_connected_at != 0 && millis() - ble_connected_at > 3000) {
       state_requested = true;
       JSONVar req = JSON.parse("{}");
       req["type"] = "state_request";
@@ -1750,6 +1983,12 @@ void watch_face_maker()
   if (face_time) {
     return;                     // already on this screen
   }
+  // the room swipe; the screen object outlives lv_obj_clean, so once
+  static bool gesture_registered = false;
+  if (!gesture_registered) {
+    gesture_registered = true;
+    lv_obj_add_event_cb(lv_scr_act(), screen_gesture, LV_EVENT_GESTURE, NULL);
+  }
   // the panel only scrolls up and down, sideways nothing is allowed to stick out
   lv_obj_set_scroll_dir(lv_scr_act(), LV_DIR_VER);
 
@@ -2104,8 +2343,11 @@ static void president_fetch_task(void *pvParameters) {
   Serial.println(req);
   String watchRequest = https_request(req);
   if (watchRequest != "failure") {
-    president_payload = watchRequest;
-    president_data_ready = true;      // loop() picks the answer up
+    if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+      president_payload = std::move(watchRequest);   // no second 25 KB copy
+      president_data_ready = true;      // loop() picks the answer up
+      xSemaphoreGive(taskMutex);
+    }
   }
   else {
     writeFile(FFat, "/bootreport.txt", "failure");
@@ -2118,19 +2360,41 @@ static void president_fetch_task(void *pvParameters) {
 // buttons, sync the clock to the homebase's time and redraw the room if we are
 // still standing in it.
 void apply_president_payload() {
+  crumb("a0 apply");
   if (president_payload.length() == 0) {
     return;
   }
-  before_me = president_payload;
+  // hand the buffer over: the copy here was another of the five 25 KB strings
+  // the push path held at its peak (see queue_ble_message's note)
+  before_me = std::move(president_payload);
   buttoned_before = true;
-  JSONVar result = JSON.parse(before_me);
+  crumb("a1 moved");
 
-  int32_t year = result["__specs"]["time"]["year"];
-  int32_t month = result["__specs"]["time"]["month"];
-  int32_t day =  result["__specs"]["time"]["day"];
-  int32_t hour =  result["__specs"]["time"]["hour"];
-  int32_t minute = result["__specs"]["time"]["min"];
-  int32_t second = result["__specs"]["time"]["sec"];
+  // Only six numbers are needed here, and for a 25 KB payload a full parse is
+  // a big tree to build just for them -- the last of the memory the push
+  // could not spare. Cut the little __specs.time object out first and parse
+  // only that; the draw still parses the payload itself, once, in its own
+  // room (two trees were never meant to be alive at the same time on
+  // 2026-10-09).
+  int32_t year = 0;
+  int32_t month = 0;
+  int32_t day = 0;
+  int32_t hour = 0;
+  int32_t minute = 0;
+  int32_t second = 0;
+  {
+    String time_str = raw_json_field(raw_json_field(before_me, "__specs"), "time");
+    if (time_str.length() > 2) {
+      JSONVar result = JSON.parse(time_str);
+      year = result["year"];
+      month = result["month"];
+      day =  result["day"];
+      hour =  result["hour"];
+      minute = result["min"];
+      second = result["sec"];
+    }
+  }
+  crumb("a2 time");
 
   struct tm set_time = {};
   set_time.tm_year = year - 1900;
@@ -2139,24 +2403,47 @@ void apply_president_payload() {
   set_time.tm_hour = hour;
   set_time.tm_min = minute;
   set_time.tm_sec = second;
-  watch.rtc.setDateTime(RTC_DateTime(set_time));
-  // Reading time synchronization from RTC to system time
-  struct tm rtc_time = {};
-  watch.rtc.getDateTime(&rtc_time);
-  time_t sync_time = mktime(&rtc_time);
-  struct timeval now_tv = { .tv_sec = sync_time, .tv_usec = 0 };
-  settimeofday(&now_tv, NULL);
+  // say what the payload wants and where the clock was: a clock that jumps
+  // hours in the night is visible here, with the payload to blame or not
+  struct tm had_tm = {};
+  watch.rtc.getDateTime(&had_tm);
+  time_t had = mktime(&had_tm);
+  time_t wanted = mktime(&set_time);
+  Serial.printf("[rtc] payload %04d-%02d-%02d %02d:%02d:%02d; clock was %04d-%02d-%02d %02d:%02d:%02d (%ld s)\n",
+                (int)year, (int)month, (int)day, (int)hour, (int)minute, (int)second,
+                had_tm.tm_year + 1900, had_tm.tm_mon + 1, had_tm.tm_mday,
+                had_tm.tm_hour, had_tm.tm_min, had_tm.tm_sec,
+                (long)(wanted - had));
+  // A payload carries the time it was built. Replaying a stale one (a queued
+  // push arriving late) used to walk the clock backwards by hours -- the "two
+  // hours behind" mornings. Time only moves forward: a payload that is not
+  // behind the clock, or a clock that was never set, is what earns a set.
+  if (had_tm.tm_year + 1900 < 2024 || wanted + 60 >= had) {
+    watch.rtc.setDateTime(RTC_DateTime(set_time));
+    // Reading time synchronization from RTC to system time
+    struct tm rtc_time = {};
+    watch.rtc.getDateTime(&rtc_time);
+    time_t sync_time = mktime(&rtc_time);
+    struct timeval now_tv = { .tv_sec = sync_time, .tv_usec = 0 };
+    settimeofday(&now_tv, NULL);
+  }
+  else {
+    Serial.printf("[rtc] stale payload time ignored (%ld s behind)\n", (long)(had - wanted));
+  }
   buttonMillis = millis();
   lastMillis = millis();
+  crumb("a4 applied");
+  Serial.printf("[heap] after push free=%u max=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   Serial.println("[president] payload applied");
 
   if (jw_room == "room") {
-    // now that the buttons are known, draw them
-    remote_room();
+    // drawn in loop(), once this function's locals are gone
+    room_redraw = true;
   }
 }
 
 void presidents_buttons() {
+  crumb("d0 buttons");
   JSONVar result;
   Serial.println("in the buttons");
 
@@ -2171,7 +2458,9 @@ void presidents_buttons() {
   else {
     result = JSON.parse(before_me);
   }
+  crumb("d1 parsed");
   Serial.println("after before me parsing");
+  Serial.printf("[heap] draw free=%u max=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   if (room > room_count) { room = 1; }  
   int sb = ((room - 1) * 6) + 1;
 
@@ -2329,6 +2618,39 @@ void presidents_buttons() {
   lv_label_set_text(l6, result["b" + String(sb)]["shorthand_name"]);
   lv_obj_center(l6);
   buttonMillis = millis();
+  Serial.printf("[room] draw room=%d count=%d\n", room, room_count);
+  crumb("d9 drawn");
+}
+
+// Is this room's first button in the payload? A string search, not a parse:
+// a second full JSON tree for the same payload ran the heap too close to the
+// edge (a 25 KB push aborted the watch on 2026-10-09).
+static bool room_has_buttons(int r) {
+  if (!buttoned_before || before_me.length() < 3) {
+    return false;
+  }
+  String key = "\"b" + String(((r - 1) * room_max) + 1) + "\"";
+  return before_me.indexOf(key) > 0;
+}
+
+// Swiping across the buttons room walks the rooms: left to the next, right
+// back. The rooms all arrive in one payload, so no fetch is needed between
+// them; loop() rebuilds the screen after the gesture.
+static void screen_gesture(lv_event_t *e) {
+  if (jw_room != "room" || room_count < 2) {
+    return;
+  }
+  lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+  if (dir == LV_DIR_LEFT) {
+    room = (room >= room_count) ? 1 : room + 1;
+    room_redraw = true;
+    Serial.printf("[room] swipe -> %d\n", room);
+  }
+  else if (dir == LV_DIR_RIGHT) {
+    room = (room <= 1) ? room_count : room - 1;
+    room_redraw = true;
+    Serial.printf("[room] swipe -> %d\n", room);
+  }
 }
 
 static void touch_button1(lv_event_t *e) {
@@ -2343,11 +2665,11 @@ static void touch_button1(lv_event_t *e) {
   }
   remote_room();
 }
-
 void remote_room() {
+  crumb("r0 room");
   jw_room = "room";
   display_exit();
-  if (!buttoned_before && !president_fetch_running) {
+  if (!room_has_buttons(room) && !president_fetch_running) {
     // this used to block the screen for the length of the TLS handshake; ask in
     // the background instead and draw the room straight away. The throttle stops
     // a homebase that keeps failing from being asked on every single tap
@@ -2376,6 +2698,7 @@ void remote_room() {
   presidents_buttons();
   button_writer();
   full_refresh();
+  crumb("r9 room done");
 }
 
 unsigned long getTime() {
@@ -2619,7 +2942,7 @@ void when_i_get_in(JSONVar wigi_item, String url) {
       bm["b" + roomings]["toggle"] = 1;
     }
     before_me = JSON.stringify(bm);
-    presidents_buttons();
+    room_redraw = true;          // rebuilt from loop(): this ran inside a button
   }
   Serial.print("Defice connected: ");
   Serial.println(deviceConnected);
@@ -3496,6 +3819,8 @@ static void doze_until_crown() {
   uint32_t started_ms = millis();
   Serial.println("[doze] enter");
   dozing = true;
+  wristPollReset();
+  uint32_t crown_at = 0;
 
   while (!pmuIrq) {
     sportsIrq = false;      // movement must not light the screen back up either
@@ -3513,12 +3838,6 @@ static void doze_until_crown() {
       server.handleClient();
     }
     watch.loop();             // the PMU and sensor events arrive through here
-    if (!pmuIrq && sportsIrq && wristRaiseGate()) {
-      // the arm came up while dozing: end the doze the way a crown click would
-      Serial.println("[tilt] wrist raise: lighting the screen");
-      tilt_wake_short = true;
-      pmuIrq = true;
-    }
     if (!pmuIrq && crown_irq_pending()) {
       // the AXP2101 latches crown presses in its IRQ status registers; reading
       // them here catches a press even if the interrupt path missed it
@@ -3531,7 +3850,31 @@ static void doze_until_crown() {
     if (tiltDbg) {
       tilt_dbg_stream();
     }
-    delay(tiltDbg ? 20 : 500);
+    // The beat between the housekeeping passes above is spent sampling the
+    // wrist: the raise is the only thing that can turn the screen back on, and
+    // nothing announces it (any-motion detection crashed the radio, see
+    // settingSensor). ~25 Hz costs a few I2C reads a second and the sensor is
+    // running anyway; the crown is re-checked inside the beat so a press is
+    // not held up by the sampling.
+    uint32_t beat_end = millis() + (tiltDbg ? 20 : 500);
+    while (!pmuIrq && (int32_t)(beat_end - millis()) > 0) {
+      if (wristPoll()) {
+        // the arm came up while dozing: end the doze the way a crown click would
+        Serial.println("[tilt] wrist raise: lighting the screen");
+        tilt_wake_short = true;
+        pmuIrq = true;
+        break;
+      }
+      if (millis() - crown_at >= 150) {
+        crown_at = millis();
+        if (crown_irq_pending()) {
+          Serial.println("[doze] crown caught by the status poll");
+          pmuIrq = true;
+          break;
+        }
+      }
+      delay(15);
+    }
     // gpio_wakeup_enable ((gpio_num_t)BOARD_TOUCH_INT, GPIO_INTR_LOW_LEVEL);
     // esp_sleep_enable_timer_wakeup(3 * 1000);
     // esp_light_sleep_start();
@@ -3644,6 +3987,122 @@ static bool wristRaiseCheck() {
   return false;
 }
 
+// The wrist raise as a state machine, fed by the doze loop's polling. The
+// sensor's interrupt line cannot announce this (any-motion detection crashed
+// the radio, see settingSensor), and the blocking wristRaiseCheck would hold
+// the crown for its whole window; here a sample every 40 ms rides along the
+// loop, and the settled pose is remembered as the "before". The rules are the
+// blocking check's: the screen turned up, a settle, and a real angle moved.
+static bool wrist_have = false;
+static bool wrist_rose = false;
+static float wrist_lx = 0, wrist_ly = 0, wrist_lz = 0;     // low-passed pose
+static float wrist_sx = 0, wrist_sy = 0, wrist_sz = 0;     // the settled pose
+static float wrist_px = 0, wrist_py = 0, wrist_pz = 0;     // pose at last movement
+static uint32_t wrist_moved_at = 0;
+static uint32_t wrist_still_since = 0;
+static uint32_t wrist_last_sample = 0;
+static uint32_t wrist_fast_until = 0;      // a sign of movement buys quick samples
+static bool wrist_sim = false;             // tiltsim drives the machine by hand
+
+static void wristPollReset() {
+  wrist_have = false;
+  wrist_rose = false;
+  wrist_last_sample = 0;
+}
+
+static bool wristPollStep(float x, float y, float z, uint32_t now);
+
+static bool wristPoll() {
+  if (wrist_sim) {
+    return false;              // tiltsim is feeding the machine itself
+  }
+  uint32_t now = millis();
+  // 10 samples a second while the arm is still, 25 while it is doing
+  // something: the raise itself is only half a second long
+  uint32_t interval = (now < wrist_fast_until) ? 40 : 100;
+  if (now - wrist_last_sample < interval) {
+    return false;
+  }
+  wrist_last_sample = now;
+  float x, y, z;
+  if (!accel_sample(x, y, z)) {
+    return false;
+  }
+  return wristPollStep(x, y, z, now);
+}
+
+static bool wristPollStep(float x, float y, float z, uint32_t now) {
+  if (!wrist_have) {
+    wrist_lx = x; wrist_ly = y; wrist_lz = z;
+    wrist_sx = x; wrist_sy = y; wrist_sz = z;
+    wrist_px = x; wrist_py = y; wrist_pz = z;
+    wrist_moved_at = now;
+    wrist_have = true;
+    return false;
+  }
+  wrist_lx += (x - wrist_lx) * 0.35f;
+  wrist_ly += (y - wrist_ly) * 0.35f;
+  wrist_lz += (z - wrist_lz) * 0.35f;
+
+  float moved = fabsf(wrist_lx - wrist_sx) + fabsf(wrist_ly - wrist_sy) + fabsf(wrist_lz - wrist_sz);
+  if (moved > 1.2f) {
+    wrist_moved_at = now;
+    if (moved > 2.0f) {
+      wrist_fast_until = now + 2000;
+    }
+  }
+  else if (!wrist_rose && now - wrist_moved_at > 400) {
+    // settled: this pose becomes the "before" the next raise is measured from
+    wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
+  }
+
+  if (!wrist_rose && wrist_lz > 4.4f && (wrist_lz - wrist_sz) > 3.0f) {
+    // 0.45 g of screen-normal gravity: past sideways, which the arm-down pose
+    // and a hand at a keyboard never produce
+    wrist_rose = true;
+    wrist_still_since = now;
+    wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
+    if (tiltDbg) {
+      Serial.printf("[tilt] rising z=%.1f (from %.1f)\n", wrist_lz, wrist_sz);
+    }
+  }
+
+  if (wrist_rose) {
+    float moved_now = fabsf(wrist_lx - wrist_px) + fabsf(wrist_ly - wrist_py) + fabsf(wrist_lz - wrist_pz);
+    if (moved_now > 1.2f) {
+      if (wrist_lz < 2.0f) {                 // put back down: not a look
+        if (tiltDbg) {
+          Serial.println("[tilt] rejected: put back down");
+        }
+        wrist_rose = false;
+        return false;
+      }
+      wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
+      wrist_still_since = now;
+    }
+    if (now - wrist_still_since >= 250) {
+      // a real raise also turned the watch by a good angle; a slow drift to
+      // the same z does not count
+      float dot = wrist_sx * wrist_lx + wrist_sy * wrist_ly + wrist_sz * wrist_lz;
+      float n1 = sqrtf(wrist_sx * wrist_sx + wrist_sy * wrist_sy + wrist_sz * wrist_sz);
+      float n2 = sqrtf(wrist_lx * wrist_lx + wrist_ly * wrist_ly + wrist_lz * wrist_lz);
+      float angle = (n1 > 0.1f && n2 > 0.1f) ? acosf(dot / (n1 * n2)) * 57.3f : 0.0f;
+      wrist_rose = false;
+      if (angle > 40.0f && wrist_lz > 3.4f) {
+        wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
+        if (tiltDbg) {
+          Serial.printf("[tilt] look: angle=%.0f z=%.1f\n", angle, wrist_lz);
+        }
+        return true;
+      }
+      if (tiltDbg) {
+        Serial.printf("[tilt] rejected: settle angle=%.0f z=%.1f\n", angle, wrist_lz);
+      }
+    }
+  }
+  return false;
+}
+
 // Runs the check only when it is worth the samples: movement storms (walking,
 // riding in a car) space the evaluations out instead of queueing them.
 static bool wristRaiseGate() {
@@ -3683,6 +4142,39 @@ static void tilt_dbg_stream() {
 
 // The USB console: "tilt on|off" is the preference, "tilt now" runs one check,
 // "tilt status" reports the state, "tiltdbg on|off" streams raw samples.
+// The framed-push test harness (see the blesimframe command): a 25 KB room
+// message sent the way the daemon sends it, from a task with the BLE stack's
+// own stack size, so the reassembly can be exercised without the phone.
+static void blesimframe_task(void *pv) {
+  int rounds = (int)(intptr_t)pv;
+  String base = before_me;
+  String pad = "";
+  while (pad.length() < 20000) {
+    pad += "pad-pad-pad-pad-pad-pad-pad-pad-pad-";
+  }
+  String inner = base.substring(1, base.length() - 1);
+  String msg = "{\"type\":\"room\",\"data\":{\"room\":1,\"payload\":{\"pad\":\"" + pad + "\"," + inner + "}}}";
+  const int chunk = 490;
+  int total = (msg.length() + chunk - 1) / chunk;
+  for (int r = 0; r < rounds; r++) {
+    for (int i = 0; i < total; i++) {
+      int from = i * chunk;
+      int to = from + chunk;
+      if (to > (int)msg.length()) {
+        to = msg.length();
+      }
+      String frame = String(i) + "/" + String(total) + ":" + msg.substring(from, to);
+      ble_frame_ingest(frame);
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    Serial.printf("[blesimframe] round %d: %u bytes in %d chunks; headroom %u\n",
+                  r + 1, (unsigned)msg.length(), total, (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    vTaskDelay(pdMS_TO_TICKS(40));
+  }
+  Serial.println("[blesimframe] done");
+  vTaskDelete(NULL);
+}
+
 static void tilt_serial_command(String line) {
   line.trim();
   line.toLowerCase();
@@ -3704,6 +4196,29 @@ static void tilt_serial_command(String line) {
     configSave();
     Serial.println("[tilt] wrist wake off");
   }
+  else if (line == "tiltsim") {
+    // feed the state machine a raise without moving the watch: the arm-down
+    // pose, the screen turning up over ~half a second, then holding still;
+    // the real sensor samples are ignored while this runs. If it says look
+    // while dozing, the doze should end and the screen sit for ten seconds.
+    wrist_sim = true;
+    wristPollReset();
+    for (int i = 0; i < 8; i++) { wristPollStep(-1.0f, 0.0f, -8.0f, millis()); delay(30); }
+    for (int i = 0; i < 14; i++) { wristPollStep(-1.0f, 0.0f, -8.0f + i * 1.18f, millis()); delay(30); }
+    bool look = false;
+    for (int i = 0; i < 30; i++) {
+      if (wristPollStep(-1.0f, 0.0f, 8.5f, millis())) { look = true; }
+      delay(30);
+    }
+    wrist_sim = false;
+    Serial.printf("[tiltsim] %s (lz=%.1f sz=%.1f)\n",
+                  look ? "look detected" : "no look", wrist_lz, wrist_sz);
+    if (look && dozing) {
+      Serial.println("[tilt] wrist raise: lighting the screen (sim)");
+      tilt_wake_short = true;
+      pmuIrq = true;
+    }
+  }
   else if (line == "tilt now") {
     bool was = tiltDbg;
     tiltDbg = true;
@@ -3714,6 +4229,74 @@ static void tilt_serial_command(String line) {
     int32_t next = (tilt_next_eval > millis()) ? (int32_t)(tilt_next_eval - millis()) : 0;
     Serial.printf("[tilt] wake=%d dbg=%d next=%d storm=%u\n",
                   (int)tiltWake, (int)tiltDbg, (int)next, (unsigned)tilt_storm);
+  }
+  else if (line == "crumb") {
+    crumbs_dump();
+  }
+  else if (line == "crash") {
+    // test the breadcrumb path: the next boot should say "crash test"
+    crumb("crash test");
+    Serial.println("[crumb] aborting now");
+    Serial.flush();
+    abort();
+  }
+  else if (line == "heap") {
+    // what a room push has to work with: the largest single block matters as
+    // much as the total, because the payload needs one contiguous ~25 KB
+    Serial.printf("[heap] free=%u max=%u min=%u psram=%u/%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+                  (unsigned)ESP.getMinFreeHeap(),
+                  (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
+  }
+  else if (line == "time") {
+    // the watch face reads the hardware clock; this says what both of them hold
+    struct tm pcf_tm = {};
+    watch.rtc.getDateTime(&pcf_tm);
+    Serial.printf("[rtc] pcf %04d-%02d-%02d %02d:%02d:%02d | esp %s | offset %ld\n",
+                  pcf_tm.tm_year + 1900, pcf_tm.tm_mon + 1, pcf_tm.tm_mday,
+                  pcf_tm.tm_hour, pcf_tm.tm_min, pcf_tm.tm_sec,
+                  rtc.getTime("%Y-%m-%d %H:%M:%S").c_str(), offset);
+  }
+  else if (line == "blestop on") {
+    ble_state_off = true;   // the watch stops asking, the phone stops pushing
+    Serial.println("[ble] state requests off");
+  }
+  else if (line == "blestop off") {
+    ble_state_off = false;
+    Serial.println("[ble] state requests on");
+  }
+  else if (line == "blesim") {
+    // reproduce a 25 KB room push without the phone: same message, same queue,
+    // none of the BLE task; if this survives, the panic lives in the radio path.
+    // The base is captured once: pushing the payload back into itself would
+    // grow the message every run and the sizes would stop being the phone's.
+    static String blesim_base;
+    if (blesim_base.length() == 0) {
+      blesim_base = before_me;
+    }
+    String pad = "";
+    while (pad.length() < 20000) {
+      pad += "pad-pad-pad-pad-pad-pad-pad-pad-pad-";
+    }
+    String inner = blesim_base.substring(1, blesim_base.length() - 1);
+    String msg = "{\"type\":\"room\",\"data\":{\"room\":1,\"payload\":{\"pad\":\"" + pad + "\"," + inner + "}}}";
+    Serial.printf("[blesim] queueing %u bytes\n", (unsigned)msg.length());
+    queue_ble_message(msg);
+  }
+  else if (line.startsWith("blesimframe")) {
+    // the same push as blesim, but through the daemon's framing and split into
+    // the 52 chunks it really arrives in, fed from a task with the BLE stack's
+    // own stack budget: this is the reassembly path, exercisable without the phone
+    int rounds = line.substring(11).toInt();
+    if (rounds <= 0) {
+      rounds = 1;
+    }
+    static String blesimframe_base;
+    if (blesimframe_base.length() == 0) {
+      blesimframe_base = before_me;
+    }
+    Serial.printf("[blesimframe] %d round(s)\n", rounds);
+    xTaskCreatePinnedToCore(blesimframe_task, "bleSimTask", 3584, (void *)(intptr_t)rounds, 1, NULL, 0);
   }
 }
 
@@ -3941,6 +4524,19 @@ void settingSensor()
         break;
     }
   });
+  // Wake the chip at the start of the movement, not only when the tilt feature
+  // finally agrees: its verdict lands after the arm is already up, too late for
+  // the gesture check to see z climb. Any-motion rides the same interrupt pin.
+  // Any-motion mapped to INT1 crashed the watch seconds after boot (reset
+  // reason 4, twice in a row, on 2026-10-09), so the wake stays with the
+  // tilt/tap/step events the library already maps. If the raise has to be
+  // caught earlier, the detector has to accept a trigger that arrives after
+  // the arm is up (see wristRaiseCheck's rise rule).
+  // if (watch.sensor) {
+  //   watch.sensor->enableAnyMotionDetection(SensorBMA4XX::MotionAxesConfig(1, 1, 1), true, true);
+  //   Serial.println("[tilt] motion wake armed");
+  // }
+  Serial.println("[tilt] wake on the library's sensor events");
 }
 
 void setSportsFlag()
@@ -4488,7 +5084,9 @@ String readFile(fs::FS &fs, const char * path) {
     
   }
   file.close();
-  Serial.println(returner);
+  // the whole file used to go to the console from here: a 25 KB config printed
+  // at every boot, and the USB console wedged under it (2026-10-09)
+  Serial.printf("[file] %s: %u bytes\n", path, (unsigned)returner.length());
   return returner;
 }
 
