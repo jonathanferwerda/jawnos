@@ -52,6 +52,13 @@
 				<% } %>
 
 			</span><br>
+			<% foreach my $p ( @{$pseudonyms} ) { %>
+				<% if ($p->{'classmates'}) { %>
+					<% if ($p->{'place'} eq 'write') { %>
+						<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+					<% } %>
+				<% } %>
+			<% } %>
 			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
 			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
 			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />

@@ -313,6 +313,11 @@ input[type="checkbox"]:hover {
 .time_jump {
 	cursor: pointer;
 }
+/* the transport row keeps its two jobs apart - the run controls first, the
+   time machine pair after a wider breath - and the writing buttons do the
+   same for the tools row */
+.transport_gap { margin-left: 14px; }
+.write_gap { margin-right: 14px; }
 
 .app_act {
 	cursor: pointer;

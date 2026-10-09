@@ -4945,13 +4945,16 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'on', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
 		{ status => 'on', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
 		{ status => 'on', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
+		# the transport row reads as two jobs: the run controls first, then the
+		# time machine's pair, set apart by the gap class in their mates
 		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'text', icon => 'love letter', colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'start', icon => 'play', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'prev', icon => 'prev', classmates => "medium_thumb time_jump", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'next', icon => 'next', classmates => "medium_thumb time_jump", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'stop', icon => 'stop', classmates => "medium_thumb save_appointment", click => "", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'note', icon => 'Mr. President', classmates => "br medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
+		{ status => 'button', name => 'prev', icon => 'prev', classmates => "medium_thumb time_jump transport_gap", colour => '#ffec1f', place => 'top' },
+		{ status => 'button', name => 'next', icon => 'next', classmates => "medium_thumb time_jump", colour => '#ffec1f', place => 'top' },
+		# the writing buttons head the tools row instead of trailing the transport
+		{ status => 'button', name => 'note', icon => 'Mr. President', classmates => "little_thumb save_appointment write_gap", colour => '#ffec1f', place => 'write' },
 		{ status => 'button', name => 'msg', icon => 'mailbox', colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'usual', icon => 'usual_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
 		{ status => 'button', name => 'video', icon => 'camera', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid' },
