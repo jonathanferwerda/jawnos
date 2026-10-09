@@ -137,11 +137,24 @@ textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; bo
 
 .window_action {
 	cursor: pointer;
+	/* the icon is the button: the set's chrome tiles cover it whole, so the
+	   browser's grey face, its padding and its border all step aside */
+	width: 34px;
+	height: 34px;
+	min-width: 34px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	-webkit-appearance: none;
+	appearance: none;
+}
+.window_action:active {
+	border: none;
 }
 .window_control_icon {
-	width: 24px;
-	height: 24px;
-	vertical-align: middle;
+	display: block;
+	width: 100%;
+	height: 100%;
 }
 
 button {
