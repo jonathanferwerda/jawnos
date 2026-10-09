@@ -328,7 +328,13 @@ html, body {
 	right:0px;
 	top:2px;
 	z-index:6000;
+	/* the box is only a shelf: with the buttons riding the taskbar it holds
+	   nothing but its hidden assistant panel, and it must not swallow the
+	   clicks of whatever a window has under it */
+	pointer-events: none;
 }
+#top_right_buttons img,
+#top_right_buttons #assistant_view { pointer-events: auto; }
 /* The row's own buttons are bare tiles: every picture sits on the same 40px
    square, and each button's border is counted around that square, never out of
    it, so the four buttons all land on 46px. Only the now button wears a tile -

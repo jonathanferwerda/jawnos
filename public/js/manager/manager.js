@@ -855,9 +855,13 @@ $(document).on('keyup click', '#search', function(e) {
 						$('#search_results').html('').hide();
 					}
 					var height = $('#manager_search_results').height();
+					// the results keep a readable width and stay on screen, however
+					// narrow the box that called them is
+					var drop_w = Math.min(Math.max($('#search').width(), 260), $(window).width() - 16);
+					var drop_left = Math.max(8, Math.min(o.left, $(window).width() - drop_w - 8));
 					// the dropdown hangs from the search's own edge: above the box when
 					// it rides the bottom half, below when it rides the top
-					var drop = { 'position':'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': o.left, 'width': $('#search').width() };
+					var drop = { 'position':'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': drop_left, 'width': drop_w };
 					if ((o.top + (h / 2)) < ($(window).height() / 2)) {
 						drop['top'] = o.top + h + 6;
 						drop['bottom'] = 'auto';
