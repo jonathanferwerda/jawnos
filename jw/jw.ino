@@ -57,6 +57,15 @@ static bool lightSleep = false;
 double wakeup_time = 0;
 // Flag used for acceleration interrupt status
 static bool sportsIrq = false;
+// Wrist-raise wake. The BMA423's interrupt line wakes the chip when it notices
+// movement even with the screen off; every wake then has to pass the gesture
+// check below before the screen comes back, or fidgeting would light it up.
+static bool tiltWake = true;
+// Streams raw accelerometer samples over USB for tuning ("tiltdbg on").
+static bool tiltDbg = false;
+// Rate limiter for the gesture check: a storm of movement is not a queue of checks.
+static uint32_t tilt_next_eval = 0;
+static uint8_t tilt_storm = 0;
 // Flag used to indicate whether recording is enabled
 static bool recordFlag = false;
 // Flag used for PMU interrupt trigger status
@@ -139,6 +148,11 @@ static RTC_DATA_ATTR int brightnessLevel = 50;
 int vibrateLevel = 50;
 int volumeLevel = 50;
 void lowPowerEnergyHandler();
+static bool accel_sample(float &x, float &y, float &z);
+static bool wristRaiseGate();
+static void tilt_serial_poll();
+static void tilt_dbg_stream();
+static void tilt_wake_control(lv_event_t *e);
 String chat_room;
 bool loraChatBroadcaster = false;
 bool loraChatReceiver = false;
@@ -1016,6 +1030,7 @@ void loop() {
   static uint32_t loopStarted = millis();
   char count = 0;
   watch.loop();   // pumps the PMU and motion sensor events into the callbacks
+  tilt_serial_poll();   // "tilt ..." commands from the USB console
 
   // BLE was asked for by the saved config: bring it up here, well away from
   // setup(), where initialising the stack used to panic the watch
@@ -1098,6 +1113,9 @@ void loop() {
     lv_task_handler();
     if (webserver_enabled == true) {
       server.handleClient();
+    }
+    if (tiltDbg) {
+      tilt_dbg_stream();
     }
     delay(5);
   }
@@ -3418,6 +3436,11 @@ static void doze_until_crown() {
       server.handleClient();
     }
     watch.loop();             // the PMU and sensor events arrive through here
+    if (!pmuIrq && sportsIrq && wristRaiseGate()) {
+      // the arm came up while dozing: end the doze the way a crown click would
+      Serial.println("[tilt] wrist raise: lighting the screen");
+      pmuIrq = true;
+    }
     if (!pmuIrq && crown_irq_pending()) {
       // the AXP2101 latches crown presses in its IRQ status registers; reading
       // them here catches a press even if the interrupt path missed it
@@ -3426,14 +3449,211 @@ static void doze_until_crown() {
     }
     awake_notifications();
     readRadio();
-    delay(500);
+    tilt_serial_poll();       // the console stays reachable while dozing
+    if (tiltDbg) {
+      tilt_dbg_stream();
+    }
+    delay(tiltDbg ? 20 : 500);
     // gpio_wakeup_enable ((gpio_num_t)BOARD_TOUCH_INT, GPIO_INTR_LOW_LEVEL);
     // esp_sleep_enable_timer_wakeup(3 * 1000);
     // esp_light_sleep_start();
   }
   Serial.printf("[doze] exit after %u ms\n", millis() - started_ms);
   dozing = false;
-  //my_print("=========esp_light_sleep_end=========\n");
+  //my_print("=========esp_light_sleep_start=========\n");
+}
+
+// ---- wrist-raise wake --------------------------------------------------------
+//
+// The BMA423 hands over samples in m/s2 with the board remap applied: x and y
+// lie in the screen plane, z points out of the screen. So "the screen faces the
+// sky" is a large positive z, the watch hanging at the side is z near zero, and
+// face down is negative z. Looking at the watch is then: z climbs from sideways
+// to facing up within a second, stays there, and the arm holds still. Fidgeting,
+// typing and lowering the arm fail at least one of the three, and going by z
+// alone also makes it work the same on either wrist.
+
+static bool accel_sample(float &x, float &y, float &z) {
+  if (!watch.sensor) {
+    return false;
+  }
+  AccelerometerData d;
+  if (!watch.sensor->readData(d)) {
+    return false;
+  }
+  x = d.mps2.x;
+  y = d.mps2.y;
+  z = d.mps2.z;
+  return true;
+}
+
+// Waits up to ~1.6 s for the pose to say "being looked at".
+static bool wristRaiseCheck() {
+  const uint32_t started = millis();
+  float lx = 0, ly = 0, lz = 0;        // low-passed gravity vector
+  bool have = false;
+  float sx = 0, sy = 0, sz = 0;        // the pose when the movement began
+  bool have_start = false;
+  bool rose = false;
+  uint32_t still_since = 0;
+  float px = 0, py = 0, pz = 0;        // the pose at the last sign of movement
+  uint32_t samples = 0;
+
+  while (millis() - started < 1600) {
+    float x, y, z;
+    if (accel_sample(x, y, z)) {
+      if (!have) {
+        lx = x; ly = y; lz = z; have = true;
+      }
+      else {
+        // ~3 Hz tracker at ~50 Hz sampling: follows the arm, ignores the shake
+        lx += (x - lx) * 0.35f;
+        ly += (y - ly) * 0.35f;
+        lz += (z - lz) * 0.35f;
+      }
+      samples++;
+      if (!have_start && samples >= 6) {   // where the arm was before the raise
+        sx = lx; sy = ly; sz = lz; have_start = true;
+      }
+      if (have_start && !rose && lz > 4.4f && (lz - sz) > 3.0f) {
+        // 0.45 g of screen-normal gravity: past sideways, which the arm-down
+        // pose and a hand at a keyboard never produce
+        rose = true;
+        still_since = millis();
+        px = lx; py = ly; pz = lz;
+        if (tiltDbg) {
+          Serial.printf("[tilt] rising z=%.1f (from %.1f)\n", lz, sz);
+        }
+      }
+      if (rose) {
+        float moved = fabsf(lx - px) + fabsf(ly - py) + fabsf(lz - pz);
+        if (moved > 1.2f) {
+          if (lz < 2.0f) {                 // put back down: not a look
+            if (tiltDbg) {
+              Serial.println("[tilt] rejected: put back down");
+            }
+            return false;
+          }
+          px = lx; py = ly; pz = lz;
+          still_since = millis();
+        }
+        if (millis() - still_since >= 250) {
+          // a real raise also turned the watch by a good angle; a slow drift
+          // to the same z does not count
+          float dot = sx * lx + sy * ly + sz * lz;
+          float n1 = sqrtf(sx * sx + sy * sy + sz * sz);
+          float n2 = sqrtf(lx * lx + ly * ly + lz * lz);
+          float angle = (n1 > 0.1f && n2 > 0.1f) ? acosf(dot / (n1 * n2)) * 57.3f : 0.0f;
+          if (angle > 40.0f && lz > 3.4f) {
+            return true;
+          }
+        }
+      }
+      // nothing is happening at all: no raise is coming, stop paying for samples
+      if (!rose && samples >= 40 &&
+          fabsf(lx - sx) + fabsf(ly - sy) + fabsf(lz - sz) < 0.6f) {
+        if (tiltDbg) {
+          Serial.println("[tilt] rejected: no movement");
+        }
+        return false;
+      }
+    }
+    delay(20);
+  }
+  if (tiltDbg) {
+    Serial.printf("[tilt] rejected: timeout (z0=%.1f z=%.1f)\n", sz, lz);
+  }
+  return false;
+}
+
+// Runs the check only when it is worth the samples: movement storms (walking,
+// riding in a car) space the evaluations out instead of queueing them.
+static bool wristRaiseGate() {
+  if (!tiltWake) {
+    return false;
+  }
+  if (millis() < tilt_next_eval) {
+    return false;
+  }
+  if (wristRaiseCheck()) {
+    tilt_storm = 0;
+    tilt_next_eval = millis() + 3000;     // the lower-arm motion that follows
+    return true;
+  }
+  if (tilt_storm < 6) {
+    tilt_storm++;
+  }
+  tilt_next_eval = millis() + (tilt_storm >= 4 ? 8000 : 1200);
+  if (tiltDbg && tilt_storm == 4) {
+    Serial.println("[tilt] rejecting a lot: spacing the checks out");
+  }
+  return false;
+}
+
+// Raw x/y/z at ~50 Hz over USB: what the pose thresholds are tuned against.
+static void tilt_dbg_stream() {
+  static uint32_t last_print = 0;
+  if (millis() - last_print < 20) {
+    return;
+  }
+  last_print = millis();
+  float x, y, z;
+  if (accel_sample(x, y, z)) {
+    Serial.printf("[t] %.2f %.2f %.2f\n", x, y, z);
+  }
+}
+
+// The USB console: "tilt on|off" is the preference, "tilt now" runs one check,
+// "tilt status" reports the state, "tiltdbg on|off" streams raw samples.
+static void tilt_serial_command(String line) {
+  line.trim();
+  line.toLowerCase();
+  if (line == "tiltdbg on") {
+    tiltDbg = true;
+    Serial.println("[tilt] debug on");
+  }
+  else if (line == "tiltdbg off") {
+    tiltDbg = false;
+    Serial.println("[tilt] debug off");
+  }
+  else if (line == "tilt on") {
+    tiltWake = true;
+    configSave();
+    Serial.println("[tilt] wrist wake on");
+  }
+  else if (line == "tilt off") {
+    tiltWake = false;
+    configSave();
+    Serial.println("[tilt] wrist wake off");
+  }
+  else if (line == "tilt now") {
+    bool was = tiltDbg;
+    tiltDbg = true;
+    Serial.println(wristRaiseCheck() ? "[tilt] now: raise detected" : "[tilt] now: no raise");
+    tiltDbg = was;
+  }
+  else if (line == "tilt status") {
+    int32_t next = (tilt_next_eval > millis()) ? (int32_t)(tilt_next_eval - millis()) : 0;
+    Serial.printf("[tilt] wake=%d dbg=%d next=%d storm=%u\n",
+                  (int)tiltWake, (int)tiltDbg, (int)next, (unsigned)tilt_storm);
+  }
+}
+
+static void tilt_serial_poll() {
+  static String line;
+  while (Serial.available()) {
+    int c = Serial.read();
+    if (c == '\r') {
+      continue;
+    }
+    if (c == '\n') {
+      tilt_serial_command(line);
+      line = "";
+    }
+    else if (line.length() < 48) {
+      line += (char)c;
+    }
+  }
 }
 
 void lowPowerEnergyHandler()
@@ -3481,9 +3701,16 @@ void lowPowerEnergyHandler()
     rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
     uint64_t wakeup_pin = _BV(PMU_INT);
     esp_sleep_enable_ext1_wakeup((wakeup_pin), ESP_EXT1_WAKEUP_ALL_LOW);
- //   esp_sleep_enable_ext0_wakeup((gpio_num_t)_BV(BMA423_TILT_INT), 1); // 0 = LOW
- //   gpio_wakeup_enable ((gpio_num_t)BMA423_TILT_INT, GPIO_INTR_HIGH_LEVEL);
- //   esp_sleep_enable_gpio_wakeup();
+    // the sensor line is active high and level triggered, so it cannot ride
+    // EXT1's one level setting along with the crown's active-low PMU_INT; the
+    // GPIO wake configures the pin on its own. Any tilt/tap/step already
+    // latched is drained first, so the sleep does not bounce back up on a
+    // stale event.
+    watch.loopSensor();
+    if (tiltWake) {
+      gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
+      esp_sleep_enable_gpio_wakeup();
+    }
  
     int default_wakeup = (60 * 60 * 3);
     if (wakeup_time != 0) {
@@ -3501,7 +3728,47 @@ void lowPowerEnergyHandler()
     bool temp_bt_enabled = bt_enabled;
     stop_ble_transfer();
 
-    esp_light_sleep_start();
+    // Naps here are interruptible by the sensor line: something moved. Only a
+    // wrist raise that passes the gesture check earns the screen; anything else
+    // clears the latched line and sinks back down, so fidgeting cannot light it.
+    bool wrist_wake = false;
+    uint32_t sleep_began = millis();
+    esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED;
+    while (true) {
+      esp_light_sleep_start();
+      wakeup_reason = esp_sleep_get_wakeup_cause();
+      if (wakeup_reason != ESP_SLEEP_WAKEUP_GPIO) {
+        break;                    // the crown, the timer, or a refused sleep
+      }
+      // reading the interrupt status clears the latched line; without that the
+      // wake would be armed against a pin that is still held up
+      watch.loopSensor();
+      if (wristRaiseGate()) {
+        wrist_wake = true;
+        break;
+      }
+      // not a raise: the arm may still be moving and holding the line up, so
+      // give it a moment to fall before napping again
+      uint32_t settling = millis();
+      while (digitalRead(SENSOR_INT) == HIGH && millis() - settling < 500) {
+        watch.loopSensor();
+        delay(20);
+      }
+      // the notification timer keeps its schedule across the extra naps
+      int64_t remaining_us = (int64_t)wakeup_time * 1000000LL
+                             - (int64_t)(millis() - sleep_began) * 1000LL;
+      if (remaining_us < 1000000LL) {
+        wakeup_reason = ESP_SLEEP_WAKEUP_TIMER;
+        break;
+      }
+      esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
+      rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
+      esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
+      if (tiltWake) {
+        gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
+      }
+    }
     Serial.println("right after sleep");
     // the screen comes back before the radio: the BLE stack takes seconds to
     // come up, and waking it first left the display dark while it did
@@ -3509,9 +3776,10 @@ void lowPowerEnergyHandler()
     if (temp_bt_enabled == true) {
       start_ble_transfer();
     }
-    
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+
+    if (wrist_wake) {
+      Serial.println("[tilt] wrist raise: screen up");
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
       next_notification = 0;
       Serial.println("Wakeup was caused by the timer!");
       notification_display(notifications[0]["title"], notifications[0]["notification"]);
@@ -3622,6 +3890,19 @@ static void touch_button4(lv_event_t *e) {
 
 }
 
+static void tilt_wake_control(lv_event_t *e) {
+  lv_obj_t * tilt_button = lv_event_get_target_obj(e);
+
+  if (tiltWake == true) {
+    lv_obj_set_style_bg_color(tilt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+    tiltWake = false;
+  }
+  else {
+    lv_obj_set_style_bg_color(tilt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
+    tiltWake = true;
+  }
+}
+
 void net_room() {
   jw_room = "net";
   
@@ -3684,6 +3965,25 @@ void net_room() {
   lwi3 = lv_label_create(bt_button);
   lv_label_set_text(lwi3, "BT");
   lv_obj_center(lwi3);
+
+  lv_obj_t * tilt_button = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(tilt_button, tilt_wake_control, LV_EVENT_CLICKED, NULL);
+  lv_obj_set_pos(tilt_button, 115, 30 );
+  lv_obj_set_size(tilt_button, 40, 40 );
+  if (tiltWake == true) {
+    lv_obj_set_style_bg_color(tilt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
+  }
+  else {
+    lv_obj_set_style_bg_color(tilt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+  }
+  lv_obj_t *lwi4;
+  lv_color_t twi4;
+  twi4 = lv_color_make(0, 0, 0);
+
+  lv_obj_set_style_text_color(tilt_button, twi4, LV_PART_MAIN);
+  lwi4 = lv_label_create(tilt_button);
+  lv_label_set_text(lwi4, "TW");
+  lv_obj_center(lwi4);
 
   full_refresh();
 }
@@ -3776,6 +4076,12 @@ void configSave() {
   else {
     conf["step_counter"] = "off";
   }
+  if (tiltWake == true) {
+    conf["tilt_wake"] = "on";
+  }
+  else {
+    conf["tilt_wake"] = "off";
+  }
   conf["before_me"] = before_me;
   conf["jw_room"] = jw_room;
   String wigi_wah = JSON.stringify(wigi);
@@ -3850,6 +4156,7 @@ void configDefaults() {
   loraChatReceiver = false;
   lightSleep = false;
   stepCounter = true;
+  tiltWake = true;
   wigi = JSON.parse("[]");
   notifications = JSON.parse("[]");
   DEFAULT_SCREEN_TIMEOUT = 30*1000;
@@ -3994,6 +4301,15 @@ void configRestore() {
     }
     else {
       stepCounter = false;
+    }
+    String tw = (const char *)conf["tilt_wake"];
+    if (tw == "off") {
+      tiltWake = false;
+    }
+    else {
+      // absent means a config from before the watch learned about wrist
+      // raises: the feature is the point, so it comes up on
+      tiltWake = true;
     }
 //    call_the_president();
     jw_room = (const char *)conf["jw_room"];
