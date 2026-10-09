@@ -148,5 +148,9 @@
 	@media print {
 		@page { margin: 0; }
 		body { margin: 1.6cm; }
+		/* a sheet of panel colour is a lot of ink: whatever theme the screen
+		   wears, the paper that leaves is white with black words */
+		body { background: #ffffff !important; color: #000000 !important; --ink: #000000 !important; --ink-muted: #333333 !important; --panel: #ffffff !important; --panel-2: #f0f0f0 !important; }
+		#everything { background-color: #ffffff !important; color: #000000 !important; }
 	}
 </style>

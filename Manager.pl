@@ -2087,7 +2087,9 @@ post '/store/quote/move' => sub($c) {
 
 	my $data = { type => $type, app => $customer_s->{'app'}, uuid => $uuid };
 	my $appt = &subs::db_select('appointments', undef, $data)->hashes->[0];
+	return $c->render(text => 'no document') unless $appt;
 	my $was = $appt->{'type'};
+	my $source_server_time = $appt->{'server_time'};
 	if ($action eq 'invoice' && $appt->{'type'} eq 'quote') {
 		my $d = eval { return decode_json $appt->{'data'} };
 		$d->{'numbers'}->{'balance'} = $d->{'numbers'}->{'total'};
@@ -2106,6 +2108,11 @@ post '/store/quote/move' => sub($c) {
 	elsif (($was eq 'invoice' || $was eq 'sale') && $action eq 'quote') {
 		&store_quote_stock($appt, -1);
 	}
+
+	# a move is a move: the document the new one was made from is gone, not
+	# standing beside it. Its files go with it, and the new document's stock
+	# movement stays put - delete_app does not reverse stock.
+	&delete_app($data->{'app'}, $data->{'uuid'}, $source_server_time, 'quote_move');
 
 	$c->render(text => 'ok');
 };
