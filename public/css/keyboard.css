@@ -179,6 +179,28 @@
 .keyboard_drag_bar:active {
 	cursor: grabbing;
 }
+/* the panel's close button rides the bar's right end; it is not part of the
+   drag, so the bar keeps its grip in the middle */
+.keyboard_closer {
+	position: absolute;
+	right: 4px;
+	top: -3px;
+	z-index: 31;
+	width: 20px;
+	height: 20px;
+	line-height: 19px;
+	text-align: center;
+	font-size: 14px;
+	font-weight: bold;
+	border-radius: 50%;
+	background-color: rgba(255,255,255,.65);
+	border: 1px solid rgba(0,0,0,.35);
+	cursor: pointer;
+	touch-action: none;
+}
+.keyboard_closer:hover {
+	background-color: rgba(255,255,255,.95);
+}
 .keyboard_drag_bar::after {
 	content: '';
 	display: block;
