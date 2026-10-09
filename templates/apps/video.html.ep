@@ -133,15 +133,20 @@
 			left: 160px;
 			position: absolute;
 		}
+		/* the theatre-mode picture fills the window: the container takes the
+		   media window's whole height, so the video's own 100% resolves and the
+		   browser's subtitle overlay - drawn at the element's foot - lands at the
+		   window's foot instead of hanging below it */
+		#<%= $miss %>_container { height: 100%; }
 	</style>
 
-	<div id="<%= $miss %>_container" class="<%= $id %>_container" style="width:100%;background-color: black;display:block;">
+	<div id="<%= $miss %>_container" class="<%= $id %>_container" style="width:100%;background-color:black;display:block;">
 		<% if ($c->param('contents')) { %>
 			<%== $c->param('contents') %>
 			<script> $('#<%= $id %>').addClass('<%= $miss %>');</script>
 		<% } else { %>
 			<video autoplay class="media_out <%= $miss %>" id="<%= $id %>" miss="<%= $miss %>" <% if ($source ne 'music') { %> muted <% } %> thumb_style="border:solid;border-radius:7px;border-width:5px;width:30%;right:10px;bottom:120px;position:absolute;" 
-				big_style="max-height:100%;height:100%;width:100%;object-fit:contain;<% if ($source eq 'music') { %>top:10px;position:absolute;<% } %>" style="max-height:100%;width:100%;<% if ($source eq 'music') { %>top:103px;position:absolute;<% } %>"
+				big_style="max-height:<%= $source eq 'music' ? 'calc(100% - 10px)' : '100%' %>;height:<%= $source eq 'music' ? 'calc(100% - 10px)' : '100%' %>;width:100%;object-fit:contain;<% if ($source eq 'music') { %>top:10px;position:absolute;<% } %>" style="max-height:100%;width:100%;<% if ($source eq 'music') { %>top:103px;position:absolute;<% } %>"
 				>
 				<track src="" id="<%= $id %>_subtitles" kind="subtitles" onerror="this.onerror=null;" srclang="en" label="English" status="<%= $crate->{'settings'}->{'subtitles'} %>" default  />
 			</video>
