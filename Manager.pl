@@ -4953,22 +4953,24 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'button', name => 'stop', icon => 'stop', classmates => "medium_thumb save_appointment", click => "", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'note', icon => 'Mr. President', classmates => "br medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'msg', icon => 'mailbox', colour => '#ffec1f', place => 'top' },
-		# the appointment's own row reads in four groups: the recorders, pause and
-		# resume, the life of the appointment, then the telephone
-		{ status => 'button', name => 'video', icon => 'camera', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'screen', icon => 'monitor', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'audio', icon => 'microphone', classmates => "little_thumb save_appointment", click => "", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'pause', icon => 'pause', classmates => "little_thumb save_appointment row_gap", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'resume', icon => 'detour', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'usual', icon => 'usual_button', classmates => "little_thumb save_appointment row_gap", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'renew', icon => 'renew', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'delay', icon => 'delay_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'complete', icon => 'cake', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'cancel', icon => 'cancel_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'telephone', icon => 'telephone line', classmates => 'little_thumb save_appointment row_gap', colour => '#ffec1f', place => 'mid' },
-		# the rest wait on their names being configured into classmates
-		{ status => 'button', name => 'camera', icon => 'eye', colour => '#bdd6c5', place => 'mid' },
-		{ status => 'button', name => 'marker', icon => 'marker', colour => '#ff0000', place => 'mid' },
+		# the appointment's own buttons live behind three group buttons now: the
+		# media clapper, the extra ellipsis and the linked pair. The group key says
+		# which door a button sits behind, and the wrapper renders each row from it
+		{ status => 'button', name => 'video', icon => 'camera', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
+		{ status => 'button', name => 'audio', icon => 'microphone', classmates => "little_thumb save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
+		{ status => 'button', name => 'screen', icon => 'monitor', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
+		{ status => 'button', name => 'usual', icon => 'usual_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'cancel', icon => 'cancel_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'resume', icon => 'detour', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'renew', icon => 'renew', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'pause', icon => 'pause', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'complete', icon => 'cake', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'delay', icon => 'delay_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'telephone', icon => 'telephone line', classmates => 'little_thumb save_appointment', colour => '#ffec1f', place => 'mid', group => 'connect' },
+		# the rest wait on their names being configured into classmates, and on a
+		# group to sit behind
+		{ status => 'button', name => 'camera', icon => 'eye', colour => '#bdd6c5', place => 'mid', group => 'media' },
+		{ status => 'button', name => 'marker', icon => 'marker', colour => '#ff0000', place => 'mid', group => 'media' },
 		{ status => 'button', name => 'transaction', icon => 'register', colour => '#bdd6c5', place => 'mid' },
 		{ status => 'button', name => 'inventory', icon => 'inventory', classmates => "little_thumb", colour => '#bdd6c5' },
 		{ status => 'button', name => 'upload', icon => 'upload', colour => '#bdd6c5', place => 'mid' },

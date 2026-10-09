@@ -316,6 +316,8 @@ input[type="checkbox"]:hover {
 /* a button that begins a group keeps a wider breath from the mate before it
    than the four pixels that separate the mates themselves */
 .row_gap { margin-left: 14px; }
+/* the group buttons open the rows that carry their buttons */
+.group_toggle { cursor: pointer; }
 
 .app_act {
 	cursor: pointer;
@@ -329,7 +331,8 @@ input[type="checkbox"]:hover {
 	cursor: pointer;
 }
 .app_notes { overflow: scroll; }
-.notes { width:100%; }
+/* the notes are a page to write on, whatever colour the theme's panels are */
+.notes { width:100%; background-color:#ffffff; }
 canvas { overflow: scroll; z-index: 99; }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}

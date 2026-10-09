@@ -96,46 +96,54 @@
 			<span class="media_out snd" style="width:100%;"><audio autoplay="true" controls style="width:100%;display:none;" id="<%= $a %>_snd"></audio></span>
 			<span class="media_out scr"><video autoplay="true" controls id="<%= $a %>_scr" style="display:none;"></video></span><br>
 			<% if ($from ne 'store') { %>
-				<% foreach my $p ( @{$pseudonyms} ) { %>
-					<% if ($p->{'classmates'}) { %>
-						<% if ($p->{'place'} eq 'mid') { %>
+				<% my $remote_machines = &subs::db_query('select device from remote_machines where connection = ?', 'active')->hashes; %>
+				<span class="group_toggles" app="<%= $a %>">
+					<img class="little_thumb group_toggle" group="media" hint="Media" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>" app="<%= $a %>">
+					<img class="little_thumb group_toggle" group="extra" hint="Extra" src="<%= &subs::icon_path('extra', '/images/make believe/burger.png') %>" app="<%= $a %>">
+					<img class="little_thumb group_toggle" group="connect" hint="Connect" src="<%= &subs::icon_path('connect', '/images/make believe/web_button.png') %>" app="<%= $a %>">
+				</span><br>
+				<div class="group_contents media_group_contents" app="<%= $a %>" style="display:none;">
+					<% foreach my $p ( @{$pseudonyms} ) { %>
+						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'media') { %>
 							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
-				<% } %><br>
-				<% foreach my $p ( @{$pseudonyms} ) { %>
-					<% if ($p->{'classmates'}) { %>
-						<% if ($p->{'colour'} eq 'bottom') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"  
-							></img>
+					<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
+						<img class="little_thumb save_appointment row_gap" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
+						<img class="little_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
+					<% } %>
+					<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
+						<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
+						<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
+						<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
+					<% } %>
+				</div>
+				<div class="group_contents extra_group_contents" app="<%= $a %>" style="display:none;">
+					<% foreach my $p ( @{$pseudonyms} ) { %>
+						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'extra') { %>
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
-				<% } %>
-				<% if ($appts->{$a}->{'setting'}->{'command'}) { %>
-					<img app="<%= $a %>" type="command" class="little_thumb app_act save_appointment run_command shell" src="<%= &subs::icon_path('code', '/images/decipherable/code.png') %>" hint="Run command" />
-				<% } %>
-				<% if ($appts->{$a}->{'setting'}->{'kill'}) { %>
-					<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="<%= &subs::icon_path('scraper', '/images/make believe/Scarapy.png') %>" hint="Kill" />
-				<% } %>			
-				
-				<img app="<%= $a %>" type="web" web="<%= $appts->{$a}->{'setting'}->{'web'} %>" class="little_thumb web app_act" src="<%= &subs::icon_path('web_button', '/images/make believe/web_button.png') %>" hint="Web" 
-					style="<% if (!$appts->{$a}->{'setting'}->{'web'}) { %>display:none;<% } %>"/>
-
-				<% my $remote_machines = &subs::db_query('select device from remote_machines where connection = ?', 'active')->hashes; %>
-				<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="<%= &subs::icon_path('wiki', '/images/make believe/wiki.png') %>" hint="Wiki" />
-				<% if ($appts->{$a}->{'setting'}->{'phone'} && ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) ) { %>
-					<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment little_thumb sms" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>" hint="Send SMS">
-				<% } %>
-				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
-					<br>
-					<img class="little_thumb save_appointment row_gap" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
-					<img class="little_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
-				<% } %>
-				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
-					<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
-					<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
-					<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
-				<% } %>
+					<% if ($appts->{$a}->{'setting'}->{'command'}) { %>
+						<img app="<%= $a %>" type="command" class="little_thumb app_act save_appointment run_command shell" src="<%= &subs::icon_path('code', '/images/decipherable/code.png') %>" hint="Run command" />
+					<% } %>
+					<% if ($appts->{$a}->{'setting'}->{'kill'}) { %>
+						<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="<%= &subs::icon_path('scraper', '/images/make believe/Scarapy.png') %>" hint="Kill" />
+					<% } %>
+				</div>
+				<div class="group_contents connect_group_contents" app="<%= $a %>" style="display:none;">
+					<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="<%= &subs::icon_path('wiki', '/images/make believe/wiki.png') %>" hint="Wiki" />
+					<img app="<%= $a %>" type="web" web="<%= $appts->{$a}->{'setting'}->{'web'} %>" class="little_thumb web app_act" src="<%= &subs::icon_path('web_button', '/images/make believe/web_button.png') %>" hint="Web"
+						style="<% if (!$appts->{$a}->{'setting'}->{'web'}) { %>display:none;<% } %>"/>
+					<% foreach my $p ( @{$pseudonyms} ) { %>
+						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'connect') { %>
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+						<% } %>
+					<% } %>
+					<% if ($appts->{$a}->{'setting'}->{'phone'} && ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) ) { %>
+						<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment little_thumb sms" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>" hint="Send SMS">
+					<% } %>
+				</div>
 
 				&nbsp;
 				<canvas id="visualizer_<%= $a %>" class="visualizer" app="<%= $a %>" style="display:none;"></canvas><br>

@@ -1616,6 +1616,18 @@ $(document).on('click','.app_act, .save_appointment',function() {
 //	cacheDelete({ app: app, context: 'template' });
 });
 
+// the appointment's three group buttons each open the buttons they carry
+// beneath them; opening one folds the others away, so the row under the
+// groups always answers the button just pressed
+$(document).on('click', '.group_toggle', function() {
+	var group = $(this).attr('group');
+	var appointment = $(this).closest('.appointment');
+	var contents = appointment.find('.' + group + '_group_contents');
+	var open = contents.is(':visible');
+	appointment.find('.group_contents').hide();
+	if (!open) { contents.show(); }
+});
+
 $(document).on('click','#calculate_it', function() {
 	clearInterval(calculateInterval);
 	calculator();
