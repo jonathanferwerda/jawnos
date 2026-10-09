@@ -7521,6 +7521,32 @@ sub appointment_rollup() {
 	$roll->{'daily'} = $bucket_rows->(&subs::db_query(
 		"select app, date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime') as bucket, count(*) as count from appointments" . $filter . ' group by app, bucket',
 		@args)->hashes);
+	# what kind of thing ran, not just how often: the categorical columns the
+	# appointments carry - type, subtype, project, and the model and option names
+	# (those two often hold JSON with a name inside). One pass over the rows.
+	my $categorical = &subs::db_query(
+		"select app, type, subtype, project, model, option from appointments" . $filter,
+		@args)->hashes;
+	foreach my $row ( @{$categorical} ) {
+		my $owner = $owner_of->($row);
+		foreach my $column ( qw/type subtype project/ ) {
+			my $value = $row->{$column};
+			next unless defined $value && $value ne '';
+			$roll->{'kinds'}->{$owner}->{$column}->{$value}++;
+		}
+		foreach my $column ( qw/model option/ ) {
+			my $value = $row->{$column};
+			next unless defined $value && $value ne '';
+			my $name;
+			if ($value =~ /^\s*\{/) {
+				my $data = eval { return decode_json($value) } || {};
+				$name = ref $data eq 'HASH' ? $data->{'name'} : undef;
+			}
+			else { $name = $value; }
+			next unless defined $name && $name ne '';
+			$roll->{'kinds'}->{$owner}->{$column}->{substr($name, 0, 40)}++;
+		}
+	}
 	return $roll;
 }
 
@@ -7857,6 +7883,15 @@ sub evaluation_agent() {
 		my $daily = $from->{'daily'}->{$owner} || {};
 		my @days = sort keys %{$daily};
 		my $avg = $act->{'count'} ? int(($act->{'duration'} || 0) / $act->{'count'}) : 0;
+		# the kinds stay short: the busiest handful of values tells the model
+		# what the activity was made of without opening the whole catalogue
+		my $kinds = {};
+		foreach my $column ( sort keys %{ $from->{'kinds'}->{$owner} || {} } ) {
+			my $counts = $from->{'kinds'}->{$owner}->{$column};
+			my @values = sort { $counts->{$b} <=> $counts->{$a} || $a cmp $b } keys %{$counts};
+			splice(@values, 4) if scalar @values > 4;
+			$kinds->{$column} = { map { $_ => $counts->{$_} } @values } if scalar @values;
+		}
 		return {
 			app => $owner,
 			occurrences => $act->{'count'} || 0,
@@ -7867,6 +7902,7 @@ sub evaluation_agent() {
 			last_day => $days[-1] || '',
 			hour_profile => $from->{'hours'}->{$owner} || {},
 			weekday_profile => $from->{'weekdays'}->{$owner} || {},
+			kinds => $kinds,
 			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } @days,
 		};
 	};
@@ -7921,9 +7957,16 @@ sub evaluation_agent() {
 	$briefing->{'around'} = &subs::context_correlations(\@targets, $window_days, $all_counts, $measures);
 	unless ($global) {
 		$briefing->{'different'} = &subs::measure_contrasts($app, $window_days, $all_counts, $measures);
+		# the app's own task list: what is still open says what the app is for
+		my $tasks = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'tasks' }) || '') } || [];
+		my @open = map { { task => substr($_->{'task'}, 0, 60), priority => ($_->{'priority'} || 0) + 0 } }
+			grep { ($_->{'completed'} || '') ne 'on' && $_->{'task'} } @{$tasks};
+		@open = sort { $b->{'priority'} <=> $a->{'priority'} } @open;
+		splice(@open, 8) if scalar @open > 8;
+		$briefing->{'tasks'} = \@open if scalar @open;
 	}
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A thing need not be linked to be a cause.';
-	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, and name what was out of the ordinary on the app\'s own days. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. Use only the numbers given - never invent figures. Plain text.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, each app\'s kinds - the appointment types, subtypes and projects that ran and the model or option names they carried, each counted - and, for a single app, its open tasks with priorities and the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A thing need not be linked to be a cause.';
+	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Trends use kinds, models and tasks to say what the activity was made of, not only how often it happened. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, and name what was out of the ordinary on the app\'s own days. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. Use only the numbers given - never invent figures. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
@@ -7944,6 +7987,15 @@ sub evaluation_agent() {
 	# the cache lives on the machine that ran the evaluation; a setting is what
 	# the rest of the house reads, so the report is written both places
 	&subs::setting_setter({ app => $app, setting => 'evaluation_report', value => encode_json($report) });
+	return $report;
+}
+
+# the report a scope last produced: the setting is what the whole house can
+# read, the cache is where it lived before it travelled
+sub evaluation_report_for {
+	my ($app) = @_;
+	$app = '__president' unless $app && $app ne '';
+	my $report = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'evaluation_report' }) || '') } || &subs::cache_get({ app => $app, context => 'evaluation_report' }) || {};
 	return $report;
 }
 

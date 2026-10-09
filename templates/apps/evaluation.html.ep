@@ -1,4 +1,3 @@
-<% use Mojo::JSON qw/decode_json/; %>
 <button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
 <%# the setting is the wish and the schedule is the mechanism: the worker puts
     the schedule back from the setting at boot, so checked means the evaluation
@@ -25,7 +24,7 @@
 <% my $report_app = $app || '__president'; %>
 <%# the setting is what the whole house can read; the cache is the fallback the
     machines kept before the report travelled %>
-<% my $report = eval { decode_json(&subs::setting_grabber({ app => $report_app, setting => 'evaluation_report' }) || '') } || &subs::cache_get({ app => $report_app, context => 'evaluation_report' }) || {}; %>
+<% my $report = &subs::evaluation_report_for($report_app); %>
 <span class="evaluation_report" app="<%= $report_app %>" style="display:block;text-align:left;white-space:pre-wrap;"><%= $report->{'text'} || '' %><% if ($report->{'model'}) { %><i style="font-size:80%;"><br><%= $report->{'model'} %> <span class="time" timestamp="<%= $report->{'timestamp'} %>"></span></i><% } %></span>
 <br>
 <table id="timeslot_counter">

@@ -60,6 +60,12 @@
 			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" hint="Details" />
 			<img app="<%= $a %>" class="app_act little_thumb register" src="<%= &subs::icon_path('register', '/images/decipherable/register.png') %>" hint="Register" />
 
+			<%# the evaluation's output, when one has been run for this app: the
+			    same report the evaluate strip shows, quiet until there is one %>
+			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
+			<% if (($app_evaluation->{'text'} || '') ne '') { %>
+				<div class="appointment_evaluation" app="<%= $a %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;white-space:pre-wrap;font-size:85%;"><%= $app_evaluation->{'text'} %><% if ($app_evaluation->{'model'}) { %><i style="font-size:80%;"><br><%= $app_evaluation->{'model'} %> <span class="time" timestamp="<%= $app_evaluation->{'timestamp'} %>"></span></i><% } %></div>
+			<% } %>
 
 			<br>
 			<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="width:16%;" />
