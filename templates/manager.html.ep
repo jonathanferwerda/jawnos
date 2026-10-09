@@ -60,10 +60,15 @@
 		</div>
 	</div>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
-	<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
+			<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
 
 
-	<img id="start_menu_toggle" hint="Start menu" class="jonathan little_thumb start" src="<%= &subs::icon_for('/images/jbuttons/logo2.png') %>" jawnos_icon="/images/jbuttons/logo2.png">
+		<%# the start button's own face: a misc setting picks the picture out of the
+		    jbuttons folder, and the active icon set may carry a variant of it - the
+		    jawnos_icon attribute is what jawnosReloadIcons() re-maps when the set
+		    changes %>
+		<% my $start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
+		<img id="start_menu_toggle" hint="Start menu" class="jonathan little_thumb start" src="<%= &subs::icon_for($start_icon) %>" jawnos_icon="<%= $start_icon %>">
 </div>
 <!-- the menu hangs off the corner itself rather than out of the button box: it
      must stand over the dock and the taskbar, which the box it used to live in

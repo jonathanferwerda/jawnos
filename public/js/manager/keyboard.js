@@ -85,6 +85,10 @@ function pseudonymFreeSpaceFinder(type) {
 		$('#search_toggle').insertAfter($('#search'));
 	}
 
+	// a toggle left hidden by a side dock's tuck comes back whenever it is not
+	// riding a tucked side pill (the slide below hides it again when it is)
+	if (!(dock_side && search_in_dock && pseudonymSideTucked)) { $('#search_toggle').show(); }
+
 	if (dock_side) {
 		// a side dock stacks its icons: the search button takes a slot at the foot
 		// of the stack, and the whole pill is centred between the bars. The stack

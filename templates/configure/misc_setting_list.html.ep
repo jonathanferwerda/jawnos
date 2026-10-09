@@ -110,6 +110,19 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			</select>
 		</label>
 		<div class="icon_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+		<label style="display:flex;flex-direction:column;max-width:260px;">
+			<b>Start Button</b>
+			<%# the start button's picture: any file in the jbuttons folder; the icon
+			    set may carry a variant and icon_for() prefers it, so this is a theme
+			    choice as much as a face %>
+			<% my $current_start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
+			<% my @jbuttons = map { my $f = $_; $f =~ s|.*/||; $f } grep { /\.(png|svg|jpe?g)$/i } glob './public/images/jbuttons/*'; %>
+			<select class="misc_setting" setting="start_menu_icon" device="<%= $dev %>">
+				<% foreach my $f ( sort @jbuttons ) { %>
+					<option value="/images/jbuttons/<%= $f %>" <% if ($current_start_icon eq "/images/jbuttons/$f") { %>selected="selected"<% } %>><%= $f %></option>
+				<% } %>
+			</select>
+		</label>
 		<label style="display:flex;flex-direction:column;">
 			<b>Appointment Colours</b>
 			<button id="appt_colour_update" class="hover">Re-theme appointments</button>
@@ -154,6 +167,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar', 'start_menu' ] ],
 				[ 'start_button_side', 'Start Button', [ 'right', 'left' ] ],
 				[ 'dock_icons', 'Dock Icons', [ 'shown', 'hidden' ] ],
+				[ 'taskbar_height', 'Taskbar Height', [ 44, 32, 36, 40, 48, 52, 56, 64, 72 ] ],
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],
 			); %>
 			<% foreach my $g ( @bars ) { %>

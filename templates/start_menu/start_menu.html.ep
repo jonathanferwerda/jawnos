@@ -125,20 +125,20 @@
 
 				</span>
 			</span>
-			<img class="jonathan little_thumb leave" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="Leave" style="position:absolute;top:0px;left:0px;"></img>
+			<img class="jonathan little_thumb leave" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="Leave" style="position:absolute;bottom:4px;left:8px;"></img>
 			<img class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" hint="Site type" 
-				src="<%= &subs::icon_for($gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'}) %>" hint="Site type" style="position:absolute;top:0px;left:44px;
+				src="<%= &subs::icon_for($gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'}) %>" hint="Site type" style="position:absolute;bottom:4px;left:56px;
 				<% if ($navigation_information->{$signatorial}->{'site_source'} eq 'manual') { %>border-solid;border-color:red;border-width:8px;
 				<% } elsif ($navigation_information->{$signatorial}->{'site_source'} eq 'lost') { %>border-solid;border-color:black;border-width:8px;
 				<% } %>"></img>
 
-				<%# the now, assistant and bird buttons stand beside leave and the
-				    site type; the top-right corner wears them only while there is no
-				    taskbar for them to ride in %>
+				<%# the now, assistant and bird buttons stand along the menu's foot,
+				    away from the search's own row; they used to sit across the menu's
+				    top-left where a reach for the search kept landing on the bird %>
 				<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
-				<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;position:absolute;top:0px;left:88px;" class="little_thumb now jonathan start_menu_corner">
-				<img src="<%= &subs::icon_for('/icons/lymeboard/automate everything.png') %>" jawnos_icon="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover start_menu_corner" id="assistant" style="position:absolute;top:0px;left:132px;">
-				<img class="jonathan little_thumb fuck_you start_menu_corner" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" style="position:absolute;top:0px;left:176px;"></img>
+				<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;position:absolute;bottom:4px;left:104px;" class="little_thumb now jonathan start_menu_corner">
+				<img src="<%= &subs::icon_for('/icons/lymeboard/automate everything.png') %>" jawnos_icon="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover start_menu_corner" id="assistant" style="position:absolute;bottom:4px;left:152px;">
+				<img class="jonathan little_thumb fuck_you start_menu_corner" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" style="position:absolute;bottom:4px;left:200px;"></img>
 
 			<% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>
 				<div class="site_type_manual_changer_options" style="float:right;display:none;">

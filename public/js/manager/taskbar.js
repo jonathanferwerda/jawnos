@@ -13,7 +13,8 @@ var jawnosBars = {
 	taskbar: jawnos_bar_settings['taskbar_position'] || 'bottom',
 	search: jawnos_bar_settings['search_placement'] || 'dock',
 	start_side: jawnos_bar_settings['start_button_side'] || 'right',
-	icons: jawnos_bar_settings['dock_icons'] || 'shown'
+	icons: jawnos_bar_settings['dock_icons'] || 'shown',
+	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44
 };
 
 // How tall the taskbar stands while it is up; the CSS gives it one height.
@@ -165,6 +166,9 @@ function jawnosBarsApply() {
 	}
 
 	var root = document.documentElement.style;
+	// the bar's height is a misc setting: the CSS reads this property for the
+	// bar's own height and for everything that sizes itself against it
+	root.setProperty('--taskbar_h', Math.max(24, jawnosBars.height) + 'px');
 	root.setProperty('--taskbar_top_h', jawnosTaskbarEdge('top') + 'px');
 	root.setProperty('--taskbar_bottom_h', jawnosTaskbarEdge('bottom') + 'px');
 	root.setProperty('--dock_top_h', jawnosDockTopOffset() + 'px');
@@ -241,15 +245,18 @@ function jawnosTopIconsApply() {
 
 // The start button (and the lock beside it) answers to its own setting: on the
 // right end it stands after the clock, at the very end of the bar, and on the
-// left it leads the bar.
+// left it leads the bar. It also hugs its own edge - two pixels of the bar's
+// air on the outside, a hand's width on the inside.
 function jawnosTaskbarIconsSideApply() {
 	var icons = $('#taskbar_icons');
 	if (!icons.length || !$('#taskbar').length) { return; }
 	if (jawnosBars.start_side == 'left') {
 		icons.prependTo('#taskbar');
+		icons.css({ 'padding-left': '2px', 'padding-right': '6px' });
 	}
 	else {
 		icons.appendTo('#taskbar');
+		icons.css({ 'padding-left': '6px', 'padding-right': '2px' });
 	}
 }
 
@@ -271,6 +278,23 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
+	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
+	else if (setting == 'start_menu_icon') {
+		// the button's own face: ask the server where the path lives in the set
+		// that is showing, the same way a set change re-maps every jawnos_icon
+		var toggle = $('#start_menu_toggle');
+		var value = $(this).val();
+		toggle.attr('jawnos_icon', value);
+		$.ajax({
+			url: '/manager/icons',
+			type: 'GET',
+			data: { paths: JSON.stringify([value]) },
+			success: function (response) {
+				if (response.icons && response.icons[value]) { toggle.attr('src', response.icons[value]); }
+			}
+		});
+		return;
+	}
 	else if (setting == 'icon_set') {
 		// every icon in the menu is about to change path; the kept markup is stale
 		if (typeof startMenuHtmlFlush == 'function') { startMenuHtmlFlush(); }
