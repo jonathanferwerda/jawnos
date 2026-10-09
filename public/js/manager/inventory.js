@@ -491,6 +491,18 @@ $(document).on('click', '.system_evaluation', function() {
 	evaluationStation(b);
 });
 
+// a report is a headline until it is asked to be more: the tap opens or folds
+// the body beneath it
+$(document).on('click', '.evaluation_headline', function() {
+	$(this).siblings('.evaluation_body').toggle();
+});
+
+// an app the report named walks to that appointment like any other name
+$(document).on('click', '.evaluation_app_link', function() {
+	var link = $(this);
+	appointmentGrabber(link.attr('app'), Date.now());
+});
+
 $(document).on('change', '.nightly_evaluation', function() {
 	var box = $(this);
 	var wanted = box.is(':checked');
@@ -536,7 +548,7 @@ function evaluationStation(b) {
 	var app = b.attr('app');
 	var period = b.siblings('.evaluation_period').first().val() || '';
 	var text = b.text();
-	var report = b.siblings('.evaluation_report').first();
+	var report = b.siblings('.appointment_evaluation').first();
 	b.text('* ' + text);
 	report.text('The evaluator is reading the numbers...');
 	clearInterval(configIntervals['sysEvaluateInterval']);
@@ -555,14 +567,7 @@ function evaluationStation(b) {
 			clearInterval(configIntervals['sysEvaluateInterval']);
 			clearTimeout(configIntervals['sysEvaluateTimeout']);
 			b.text(text);
-			// the model's report lands whole, so it is set as text - nothing in
-			// it may be taken for markup
-			var r = response['evaluation_report'] || {};
-			report.empty();
-			report.append($('<span>').css({ 'white-space':'pre-wrap' }).text(r['text'] || 'No report came back.'));
-			if (r['model']) {
-				report.append($('<i>').css({ 'font-size':'80%' }).append($('<br>')).append($('<span>').text(r['model'])));
-			}
+			evaluationReportFill(report, response['evaluation_report'] || {}, response['pieces']);
 		},
 		error: function() {
 			clearInterval(configIntervals['sysEvaluateInterval']);
@@ -571,6 +576,36 @@ function evaluationStation(b) {
 			report.text('The evaluation request failed.');
 		}
 	});
+}
+
+// the model's report lands as text, and stays text - nothing in it may be
+// taken for markup. The headline goes up, the chunks go behind it, and only
+// the names the server matched come back as links.
+function evaluationReportFill(container, r, pieces) {
+pieces = pieces || {};
+container.empty();
+var head = $('<b>').addClass('evaluation_headline hover').attr('hint', 'Tap to open the whole report').text(pieces['headline'] || 'Evaluation');
+var body = $('<div>').addClass('evaluation_body').css({ 'display':'none', 'white-space':'pre-wrap' });
+$.each(pieces['chunks'] || [ { text: r['text'] || 'No report came back.' } ], function(i,chunk) {
+	if (chunk['app']) {
+		body.append($('<span>').addClass('evaluation_app_link hover').attr({ app: chunk['app'], hint: 'Open ' + chunk['text'] }).css('text-decoration', 'underline').text(chunk['text']));
+	}
+	else {
+		body.append(document.createTextNode(chunk['text'] || ''));
+	}
+});
+var linked = r['linked'] || {};
+if (r['model'] || linked['construct']) {
+	var foot = $('<i>').css('font-size', '80%');
+	if (linked['app'] && linked['construct']) {
+		foot.append($('<br>')).append(document.createTextNode('related to ')).append($('<span>').addClass('evaluation_app_link hover').attr({ app: linked['app'], hint: 'Open ' + linked['app'] }).css('text-decoration', 'underline').text(format_name(linked['app']))).append(document.createTextNode(' as ' + linked['construct']));
+	}
+	if (r['model']) {
+		foot.append($('<br>')).append($('<span>').text(r['model']));
+	}
+	body.append(foot);
+}
+container.append(head).append(body);
 }
 
 // The graphs answer the mouse: a floating readout follows the pointer over a

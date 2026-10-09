@@ -64,7 +64,7 @@
 			    same report the evaluate strip shows, quiet until there is one %>
 			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
 			<% if (($app_evaluation->{'text'} || '') ne '') { %>
-				<div class="appointment_evaluation" app="<%= $a %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;white-space:pre-wrap;font-size:85%;"><%= $app_evaluation->{'text'} %><% if ($app_evaluation->{'model'}) { %><i style="font-size:80%;"><br><%= $app_evaluation->{'model'} %> <span class="time" timestamp="<%= $app_evaluation->{'timestamp'} %>"></span></i><% } %></div>
+				<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
 			<% } %>
 
 			<br>

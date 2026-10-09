@@ -8821,8 +8821,11 @@ post '/manager/inventory/evaluate' => sub ($c) {
 	}
 	$rows->finish;
 	&subs::cache_set({ app => $app || '__president', context => 'evaluation', warranty => '-6M' }, $evaluation);
-	# the numbers are rolled up; let the evaluation agent read them with the model
-	my $returner = { ok => 'yes', app => $app, evaluation_report => &subs::evaluation_agent($app || '__president', $period) };
+	# the numbers are rolled up; let the evaluation agent read them with the model,
+	# and hand the page the headline and the chunks the text splits into so its
+	# app names can be links
+	my $evaluation_report = &subs::evaluation_agent($app || '__president', $period);
+	my $returner = { ok => 'yes', app => $app, evaluation_report => $evaluation_report, pieces => &subs::evaluation_report_pieces($evaluation_report) };
 	$c->render(json => $returner);
 };
 

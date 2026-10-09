@@ -7710,6 +7710,19 @@ sub day_map_correlation {
 	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
 }
 
+# Two series that both run on nearly every day of the window correlate by
+# construction - the calendar, not a cause. The maps that can have holes
+# (measured readings) count a day by being defined, the others by being non-zero.
+sub daily_habit {
+	my ($da, $db, $days, $da_holes, $db_holes) = @_;
+	my $n = scalar @{$days};
+	return 0 unless $n;
+	my $a = $da_holes ? (grep { defined $da->{$_} } @{$days}) : (grep { ($da->{$_} || 0) != 0 } @{$days});
+	my $b = $db_holes ? (grep { defined $db->{$_} } @{$days}) : (grep { ($db->{$_} || 0) != 0 } @{$days});
+	return 0 unless $a >= 0.8 * $n && $b >= 0.8 * $n;
+	return 1;
+}
+
 # what else was happening: every app's daily counts and every numeric measure
 # any app logged, correlated against the targets. The relational window only
 # knows the apps it was shown, so a headache never gets to blame the humidity
@@ -7753,10 +7766,13 @@ sub context_correlations {
 			my $entry = { app => $cand->{'app'}, vs_app => $target->{'app'}, r => $c->{'r'}, lag_days => $c->{'lag_days'} };
 			$entry->{'measure'} = $cand->{'measure'} if defined $cand->{'measure'};
 			$entry->{'vs_measure'} = $target->{'measure'} if defined $target->{'measure'};
+			$entry->{'habit'} = 1 if &subs::daily_habit($cand->{'day_map'}, $tseries, $days, defined $cand->{'measure'}, defined $target->{'measure'});
 			push @out, $entry;
 		}
 	}
-	@out = sort { abs($b->{'r'}) <=> abs($a->{'r'}) } @out;
+	# the arms-length list leads with the pairs that are not just two daily
+	# habits; the habits still trail it, flagged, so the report can name them
+	@out = sort { ($a->{'habit'} || 0) <=> ($b->{'habit'} || 0) || abs($b->{'r'}) <=> abs($a->{'r'}) } @out;
 	splice(@out, 10) if scalar @out > 10;
 	return \@out;
 }
@@ -7873,6 +7889,7 @@ sub evaluation_agent() {
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
 	my $model = $settings->{'eval_assistant'};
 	my $since = &subs::rightNow() - &subs::evaluation_period_span($period);
+	my $window_days = &subs::evaluation_window_days($since);
 	my $roll = &appointment_rollup($app, $since);
 	my @owners = sort { $roll->{'activity'}->{$b}->{'count'} <=> $roll->{'activity'}->{$a}->{'count'} } keys %{$roll->{'activity'}};
 	if ($global) { splice(@owners, 12) if scalar @owners > 12; }
@@ -7892,6 +7909,12 @@ sub evaluation_agent() {
 			splice(@values, 4) if scalar @values > 4;
 			$kinds->{$column} = { map { $_ => $counts->{$_} } @values } if scalar @values;
 		}
+		# what the app already is: the constructs it carries, so a relationship
+		# the model names can be filed under the right one
+		my $owner_settings = &subs::settings_grabber({ app => $owner, benign => 1 });
+		my %lives;
+		$lives{'pos'} = $owner_settings->{'pos'} if $owner_settings->{'pos'};
+		$lives{'mab'} = $owner_settings->{'mab'} if $owner_settings->{'mab'};
 		return {
 			app => $owner,
 			occurrences => $act->{'count'} || 0,
@@ -7903,12 +7926,14 @@ sub evaluation_agent() {
 			hour_profile => $from->{'hours'}->{$owner} || {},
 			weekday_profile => $from->{'weekdays'}->{$owner} || {},
 			kinds => $kinds,
+			%lives,
 			daily_counts => join ' ', map { $_ . ':' . $daily->{$_} } @days,
 		};
 	};
 	my $briefing = {
 		scope => $global ? 'the whole house' : $app,
 		window => $window,
+		constructs => [ sort keys %{$gb::relationals} ],
 		apps => [ map { $entry->($roll, $_) } @owners ],
 	};
 	my @related;
@@ -7919,6 +7944,7 @@ sub evaluation_agent() {
 				my ($xs, $ys) = &day_pair_series($roll->{'daily'}->{$owners[$i]} || {}, $roll->{'daily'}->{$owners[$j]} || {});
 				my $c = &series_correlation($xs, $ys);
 				next unless $c && abs($c->{'r'}) >= 0.5;
+				$c->{'habit'} = 1 if &subs::daily_habit($roll->{'daily'}->{$owners[$i]} || {}, $roll->{'daily'}->{$owners[$j]} || {}, $window_days);
 				push @pairs, { apps => [ $owners[$i], $owners[$j] ], %{$c} };
 			}
 		}
@@ -7931,6 +7957,7 @@ sub evaluation_agent() {
 			my $lroll = &appointment_rollup($link->{'app'}, $since);
 			my ($xs, $ys) = &day_pair_series($roll->{'daily'}->{$app} || {}, $lroll->{'daily'}->{$link->{'app'}} || {});
 			my $c = &series_correlation($xs, $ys);
+			$c->{'habit'} = 1 if $c && &subs::daily_habit($roll->{'daily'}->{$app} || {}, $lroll->{'daily'}->{$link->{'app'}} || {}, $window_days);
 			push @related, { app => $link->{'app'}, link => $link->{'link'}, correlation => $c, activity => $entry->($lroll, $link->{'app'}) };
 		}
 		$briefing->{'related'} = \@related;
@@ -7941,7 +7968,6 @@ sub evaluation_agent() {
 	# best lag, and the measures that stood out on this app's own days are listed
 	# too - a headache is sparse, so a correlation cannot carry it, but the
 	# humidity on its days can still be named.
-	my $window_days = &subs::evaluation_window_days($since);
 	my $all_counts = $global ? $roll->{'daily'} : &subs::appointment_rollup('__president', $since)->{'daily'};
 	my $measures = &subs::measure_series($since);
 	my @targets;
@@ -7965,8 +7991,8 @@ sub evaluation_agent() {
 		splice(@open, 8) if scalar @open > 8;
 		$briefing->{'tasks'} = \@open if scalar @open;
 	}
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, each app\'s kinds - the appointment types, subtypes and projects that ran and the model or option names they carried, each counted - and, for a single app, its open tasks with priorities and the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A thing need not be linked to be a cause.';
-	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Trends use kinds, models and tasks to say what the activity was made of, not only how often it happened. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, and name what was out of the ordinary on the app\'s own days. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. Use only the numbers given - never invent figures. Plain text.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, each app\'s kinds - the appointment types, subtypes and projects that ran and the model or option names they carried, each counted - and, for a single app, its open tasks with priorities and the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Each app entry also says what it is - the pos and mab constructs it carries - and the constructs list holds the names the house uses. Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A pair or entry marked habit runs on nearly every day of the window and its correlation is the calendar, not a cause. A thing need not be linked to be a cause.';
+	my $instructions = 'Begin with a single headline line - at most fifteen words, no label - that names what the window showed, then a blank line. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends use kinds, models and tasks to say what the activity was made of, not only how often it happened. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Use only the numbers given - never invent figures. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
@@ -7975,12 +8001,31 @@ sub evaluation_agent() {
 	else {
 		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
 	}
+	my %mentions;
+	foreach my $entry ( @{$briefing->{'apps'}} ) { $mentions{ $entry->{'app'} } = 1 if $entry->{'app'}; }
+	foreach my $entry ( @related ) { $mentions{ $entry->{'app'} } = 1 if $entry->{'app'}; }
+	foreach my $entry ( @{ $briefing->{'around'} || [] } ) {
+		$mentions{ $entry->{'app'} } = 1 if $entry->{'app'};
+		$mentions{ $entry->{'vs_app'} } = 1 if $entry->{'vs_app'};
+	}
+	foreach my $entry ( @{ $briefing->{'different'} || [] } ) { $mentions{ $entry->{'app'} } = 1 if $entry->{'app'}; }
+	# the model may name one relationship it is certain of; the naming is checked
+	# against the briefing before anything is written
+	my $linked;
+	if (!$global && $text) {
+		my ($named) = $text =~ /^\s*Link:\s*([A-Za-z0-9_\-\.]+)\s*$/mi;
+		if ($named && lc($named) ne 'none') {
+			$linked = &subs::evaluation_linker($app, lc($named), $briefing);
+		}
+	}
 	my $report = {
 		text => $text || ('The evaluation could not run: ' . $error),
 		model => $model,
 		period => $period,
 		error => $error,
 		apps => [ map { $_->{'app'} } @{$briefing->{'apps'}} ],
+		mentions => [ sort keys %mentions ],
+		$linked ? (linked => $linked) : (),
 		timestamp => &subs::rightNow(),
 	};
 	&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
@@ -7997,6 +8042,113 @@ sub evaluation_report_for {
 	$app = '__president' unless $app && $app ne '';
 	my $report = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'evaluation_report' }) || '') } || &subs::cache_get({ app => $app, context => 'evaluation_report' }) || {};
 	return $report;
+}
+
+# the report's text, split so that each app name inside it comes back as its
+# own piece: the page renders those as links, and format_name drops the
+# underscores on the way
+sub evaluation_text_chunks {
+	my ($report) = @_;
+	my $text = ($report->{'text'} || '') . '';
+	my @names = sort { length($b) <=> length($a) } grep { $_ && $_ =~ /\w/ } @{ $report->{'mentions'} || [] };
+	return [ { text => $text } ] unless scalar @names;
+	my %lookup = map { lc($_) => $_ } @names;
+	my $pattern = join '|', map { quotemeta } @names;
+	my @chunks;
+	foreach my $piece ( split /(\b(?:$pattern)\b)/, $text ) {
+		next if !defined $piece || $piece eq '';
+		if (my $app = $lookup{ lc $piece }) {
+			push @chunks, { app => $app, text => &subs::format_name($app) };
+		}
+		else {
+			push @chunks, { text => $piece };
+		}
+	}
+	return \@chunks;
+}
+
+# the report as the page wants to show it: a headline first, then the rest -
+# split into chunks - that waits behind it. A report told to begin with a
+# headline has one on its first line; an older one that opens straight into a
+# heading falls back to the first line of that section, shortened.
+sub evaluation_report_pieces {
+	my ($report) = @_;
+	my $text = ($report->{'text'} || '') . '';
+	my @lines = split /\n/, $text, -1;
+	my ($head_i, $start);
+	for my $i (0 .. $#lines) { next if $lines[$i] !~ /\S/; $head_i = $i; last; }
+	return { headline => '', chunks => [ { text => $text } ] } unless defined $head_i;
+	my $headline = $lines[$head_i];
+	$start = $head_i + 1;
+	# if the line is nothing but a section heading, a headline was never written
+	if ($headline =~ /^\s*(?:trends|correlations|predictions)\s*:?\s*$/i) {
+		for my $i ($head_i + 1 .. $#lines) {
+			next if $lines[$i] !~ /\S/;
+			$headline = $lines[$i];
+			$start = $i + 1;
+			last;
+		}
+	}
+	if (length($headline) > 200) {
+		$headline = substr($headline, 0, 200);
+		$headline =~ s/\s+\S*$//;
+		$headline .= '...';
+	}
+	my $body = join "\n", @lines[ $start .. $#lines ];
+	return { headline => $headline, chunks => &subs::evaluation_text_chunks({ %{$report}, text => $body }) };
+}
+
+# The evaluation may name one relationship it is sure of. This checks the
+# naming against what the briefing actually showed - the pair must be there,
+# strong and not a daily habit - and then writes it the way the relational app
+# itself does: the uuid goes into both apps' sc_ lists, filed under what the
+# other app is (its pos, or its mab). A wrong link mislabels an app, so every
+# check here is a gate, not a suggestion.
+sub evaluation_linker {
+	my ($app, $other, $briefing) = @_;
+	return undef if !$other || $other eq $app;
+	my $evidence;
+	foreach my $entry ( @{ $briefing->{'related'} || [] } ) {
+		next unless $entry->{'app'} eq $other;
+		my $c = $entry->{'correlation'} || {};
+		next if $c->{'habit'};
+		next unless defined $c->{'r'} && abs($c->{'r'}) >= 0.8;
+		$evidence = { r => $c->{'r'} };
+		last;
+	}
+	unless ($evidence) {
+		foreach my $entry ( @{ $briefing->{'around'} || [] } ) {
+			next unless $entry->{'app'} eq $other || $entry->{'vs_app'} eq $other;
+			next if $entry->{'habit'};
+			next unless defined $entry->{'r'} && abs($entry->{'r'}) >= 0.8;
+			$evidence = { r => $entry->{'r'} };
+			last;
+		}
+	}
+	return { app => $other, skipped => 'the pair was not certain in the briefing' } unless $evidence;
+	my $mine = &subs::settings_grabber({ app => $app, benign => 1 });
+	my $theirs = &subs::settings_grabber({ app => $other, benign => 1 });
+	my $my_construct = $mine->{'pos'} || $mine->{'mab'};
+	my $their_construct = $theirs->{'pos'} || $theirs->{'mab'};
+	return { app => $other, skipped => 'one of them has no construct to file under' }
+		unless $my_construct && $their_construct && $mine->{'uuid'} && $theirs->{'uuid'};
+	my $sc = eval { return decode_json($mine->{ 'sc_' . $their_construct }) } || [];
+	return { app => $other, skipped => 'already related' }
+		if grep { $_ eq $theirs->{'uuid'} } @{$sc};
+	push @{$sc}, $theirs->{'uuid'};
+	@{$sc} = grep { $_ ne 'all' } @{$sc};
+	my $bc = eval { return decode_json($theirs->{ 'sc_' . $my_construct }) } || [];
+	push @{$bc}, $mine->{'uuid'} unless grep { $_ eq $mine->{'uuid'} } @{$bc};
+	@{$bc} = grep { $_ ne 'all' } @{$bc};
+	&subs::setting_setter({ app => $app, setting => 'sc_' . $their_construct, value => encode_json($sc) });
+	&subs::setting_setter({ app => $other, setting => 'sc_' . $my_construct, value => encode_json($bc) });
+	# the relational window draws from a cache; drop the two entries so it draws
+	# them fresh on the next open
+	my $buckets = &subs::cache_get({ app => 'relational', context => 'buckets' }) || {};
+	delete $buckets->{$app};
+	delete $buckets->{$other};
+	&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $buckets);
+	return { app => $other, construct => $their_construct, their_construct => $my_construct, r => $evidence->{'r'} };
 }
 
 # the machine whose worker runs the nightly evaluations; blank means every

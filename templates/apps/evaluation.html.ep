@@ -25,7 +25,12 @@
 <%# the setting is what the whole house can read; the cache is the fallback the
     machines kept before the report travelled %>
 <% my $report = &subs::evaluation_report_for($report_app); %>
-<span class="evaluation_report" app="<%= $report_app %>" style="display:block;text-align:left;white-space:pre-wrap;"><%= $report->{'text'} || '' %><% if ($report->{'model'}) { %><i style="font-size:80%;"><br><%= $report->{'model'} %> <span class="time" timestamp="<%= $report->{'timestamp'} %>"></span></i><% } %></span>
+<% if (($report->{'text'} || '') ne '') { %>
+	<%= include 'apps/evaluation_report', report => $report, app => $report_app %>
+<% } else { %>
+	<%# the block lives even with nothing to say, because a run fills it in place %>
+	<div class="appointment_evaluation evaluation_report" app="<%= $report_app %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;font-size:110%;"><b class="evaluation_headline">No report yet</b></div>
+<% } %>
 <br>
 <table id="timeslot_counter">
 	<% foreach my $e ( keys %{$evaluation->{'timeslots'}} ) { %>
