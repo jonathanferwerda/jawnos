@@ -33,7 +33,7 @@ function jawnosDockHidden() {
 // headerHeight carries - and clears the taskbar when the two share the bottom
 // one.
 function jawnosDockTopOffset() {
-	return (typeof headerHeight != 'undefined') ? headerHeight : 50;
+	return (typeof headerHeight != 'undefined') ? headerHeight : 0;
 }
 function jawnosDockBottomOffset() {
 	return jawnosTaskbarEdge('bottom');
