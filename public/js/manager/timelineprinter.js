@@ -17,6 +17,8 @@ function timelinePrinter(appts,sort,offset) {
 
 	var rowHeight = 34;
 	var dotRadius = 14;
+	var dotRing = 4;   // the coloured ring around the disc
+	var dotHalo = 7;   // the theme's halo behind it, when the theme has one
 	var dotIcon = 29;
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
@@ -56,7 +58,10 @@ function timelinePrinter(appts,sort,offset) {
 
 	var placement_number = 0;
 	var textPrinter = [];
-	var column = canvas.width - pad * 2;
+	// a dot pinned to an edge belongs flush with it: the scale's ends are half a
+	// dot wide - the widest ring it wears - so the whole circle stays visible
+	var dotEdge = dotRadius + (halo ? dotHalo : dotRing) / 2;
+	var column = canvas.width - dotEdge * 2;
 
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
@@ -93,7 +98,7 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			if ( !isFinite(pct) ) { pct = 0; }
 			pct = Math.min(Math.max(pct, 0), 2);
-			var x = pad + (column * pct / 2);
+			var x = dotEdge + (column * pct / 2);
 			rowLeft = (rowLeft == undefined) ? (x - dotRadius) : Math.min(rowLeft, x - dotRadius);
 			rowRight = (rowRight == undefined) ? (x + dotRadius) : Math.max(rowRight, x + dotRadius);
 
@@ -104,7 +109,7 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			if ( isFinite(startPct) ) {
 				startPct = Math.min(Math.max(startPct, 0), 2);
-				startX = pad + (column * startPct / 2);
+				startX = dotEdge + (column * startPct / 2);
 				// the band is a 16-wide stroke with round caps, so it reaches 8 past each
 				// of its ends - back from the dot for an ordinary row, and ahead of it to
 				// the rail for one that is still running
@@ -127,7 +132,7 @@ function timelinePrinter(appts,sort,offset) {
 			ctx.save();
 			if (halo) {
 				ctx.strokeStyle = halo;
-				ctx.lineWidth = 7;
+				ctx.lineWidth = dotHalo;
 				ctx.beginPath();
 				ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 				ctx.stroke();
@@ -137,7 +142,7 @@ function timelinePrinter(appts,sort,offset) {
 			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.fill();
 			ctx.strokeStyle = colour;
-			ctx.lineWidth = 4;
+			ctx.lineWidth = dotRing;
 			ctx.beginPath();
 			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.stroke();
