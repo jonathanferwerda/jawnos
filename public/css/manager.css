@@ -245,17 +245,21 @@ html, body {
 	top:2px;
 	z-index:6000;
 }
-/* The row's own buttons are one size: the assistant's bare .little_thumb box
-   would render 40px tall beside .jonathan's 46px, and the now button wears the
-   thickest border of the row. One border-boxed 46px box for the row's images -
-   the border counts inward, so a thicker one never grows the button - and
-   vertical-align keeps their tops together. Nested images, like the assistant
-   panel's own buttons, keep the sizes they were given. */
+/* The row's own buttons are bare tiles: every picture sits on the same 40px
+   square, and each button's border is counted around that square, never out of
+   it. The now button's 5px speed border therefore wraps the same 40px picture
+   in a 50px button, while the plain 3px borders keep the rest at 46px - the
+   pictures, not the buttons, are what the row lines up. Only the now button
+   wears a tile of its own: its inline style paints the time machine's state
+   and the server's speed into the background and border. Nested images, like
+   the assistant panel's own buttons, keep the sizes they were given. */
 #top_right_buttons > img {
-	box-sizing: border-box;
+	box-sizing: content-box;
 	vertical-align: top;
-	width: 46px;
-	height: 46px;
+	width: 40px;
+	height: 40px;
+	background-color: transparent;
+	border-color: transparent;
 }
 #bottom_left_buttons {
 	left:0px;
