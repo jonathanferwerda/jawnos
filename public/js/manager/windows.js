@@ -332,28 +332,34 @@ function windowReorganizer(window_id) {
 			win.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
 		}
 		else {
+			// The title bar is the step a cascade takes - down a phone's stack
+			// of bars or across the desk - so each bar rides on the tail of the
+			// one before. Measured, not the fixed 40 that outlived the bar's
+			// thinning to 36 and left a sliver of the window underneath showing
+			// between one bar and the next.
+			var vStep = win.find('.top_navbar').outerHeight() || vSpace;
 			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
-				win.css({ 'left': winCount * 50, 'top': winCount * vSpace + startingV });
+				win.css({ 'left': winCount * 50, 'top': winCount * vStep + startingV });
 				win.show();
 
 
 				if (thisWinLeft > $(window).width()) {
 					winLine = winLine + 1;
-					win.css({ 'top': thisWinTop + ( vSpace * winLine + startingV) });
+					win.css({ 'top': thisWinTop + ( vStep * winLine + startingV) });
 					fullXCount = winCount
 				}
 				if (fullXCount * (winLine ) > winCount) {
-					win.css({'left': thisWinLeft - (vSpace * winCount) + startingV});
+					win.css({'left': thisWinLeft - (vStep * winCount) + startingV});
 				}
 			}
 			else {
-				var temp_placement = ( vSpace * winCount ) + startingV;
+				var temp_placement = ( vStep * winCount ) + startingV;
 				win.css({'top': temp_placement });
 
 				if (temp_placement > ($(window).height() - 100)) {
 					thisWinTop = Number(numeral(win.css('top')).format());
 					fullYCount = winCount;
-					win.css({ 'top': thisWinTop - (vSpace * fullYCount) + startingV });
+					win.css({ 'top': thisWinTop - (vStep * fullYCount) + startingV });
 				}
 
 			}
