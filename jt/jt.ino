@@ -13,6 +13,10 @@ using fs::FS;
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
+// for the PSRAM allocator settings and the netcheck probes (heap_caps_*, esp_ptr_external_ram)
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
+#include <mbedtls/platform.h>
 #include <driver/i2s_tdm.h>
 #include "es7210.h"
 #include <Audio.h>
@@ -618,8 +622,35 @@ static void radioBusProbe() {
           (unsigned)READ_PERI_REG(SPI_USER_REG(2)));
 }
 
+// The allocator installed in setup(): mbedTLS's big buffers (the handshake's
+// in/out records) from PSRAM, small ones internal.
+static void *mbedtls_psram_calloc(size_t n, size_t size) {
+  size_t total = n * size;
+  if (total >= 4096) {
+    void *p = heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p) {
+      memset(p, 0, total);
+      return p;
+    }
+  }
+  return heap_caps_calloc(n, size, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+}
+
+static void mbedtls_psram_free(void *p) {
+  heap_caps_free(p);
+}
+
 void setup() {
   Serial.begin(115200);
+  // mbedTLS allocates its ~16 KB handshake buffers from internal RAM only,
+  // and this board's internal heap (46 KB free, 31 KB largest block) cannot
+  // hold two of them at once: every room fetch died as "SSL - Memory
+  // allocation failed" (which HTTPClient reports as "connection refused"),
+  // and the buttons never arrived (2026-10-09). The board has 7.6 MB of idle
+  // PSRAM, so anything of 4 KB or more comes from there; the small, hot crypto
+  // allocations keep to internal RAM.
+  mbedtls_platform_set_calloc_free(mbedtls_psram_calloc, mbedtls_psram_free);
+  heap_caps_malloc_extmem_enable(1024);
   deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
@@ -918,6 +949,47 @@ void setup() {
     String gs = JSON.stringify(jonfig);    
     server.send(200, "text/plain", gs);
 
+  });
+  server.on("/netcheck", []() {
+    // What this board can actually reach, and where a fetch dies: the room
+    // fetch failing as "connection refused" says nothing about whether it was
+    // the LAN, the gateway, or the TLS handshake (2026-10-09).
+    JSONVar g;
+    g["ip"] = WiFi.localIP().toString();
+    g["ssid"] = WiFi.SSID();
+    g["gw"] = WiFi.gatewayIP().toString();
+    g["rssi"] = WiFi.RSSI();
+    WiFiClient gw;
+    bool gw_ok = gw.connect("192.168.2.1", 80, 2000);
+    g["tcp_gw_80"] = gw_ok ? "connected" : "failed";
+    if (gw_ok) { gw.stop(); }
+    WiFiClient plain;
+    bool tcp_ok = plain.connect("192.168.2.3", 45547, 3000);
+    g["tcp_home_45547"] = tcp_ok ? "connected" : "failed";
+    if (tcp_ok) { plain.stop(); }
+    WiFiClientSecure tls;
+    tls.setInsecure();
+    bool tls_ok = tls.connect("192.168.2.3", 45547, 4000);
+    g["tls_home_45547"] = tls_ok ? "connected" : "failed";
+    char tls_err[96] = "";
+    int tls_code = tls.lastError(tls_err, sizeof(tls_err));
+    g["tls_err"] = tls_err;
+    g["tls_err_code"] = tls_code;
+    if (tls_ok) { tls.stop(); }
+    g["heap"] = ESP.getFreeHeap();
+    g["max_alloc"] = ESP.getMaxAllocHeap();
+    g["psram"] = ESP.getFreePsram();
+    // what the TLS handshake actually needs: two ~16 KB buffers
+    void *a = malloc(16400);
+    void *b = a ? malloc(16400) : nullptr;
+    g["two16k"] = (a && b) ? "ok" : "failed";
+    if (a) { g["two16k_in_psram"] = esp_ptr_external_ram(a) ? "yes" : "no"; }
+    if (a) { free(a); }
+    if (b) { free(b); }
+    void *sp = heap_caps_malloc(16400, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    g["spiram16k"] = sp ? "ok" : "failed";
+    if (sp) { free(sp); }
+    server.send(200, "text/plain", JSON.stringify(g));
   });
   server.on("/my_position", []() {
     JSONVar location;
@@ -2665,34 +2737,28 @@ String https_request(String url) {
   url = url_maker(url);
   Serial.println("In the https request");
   Serial.println(url);
-  WiFiClientSecure *connexion = new WiFiClientSecure;
-  connexion -> setInsecure();
-  if (connexion) {
-    {
-      HTTPClient https;
-       Serial.println("Starting connexion");
-      if (https.begin(*connexion, url)) {
-         Serial.println("Right after connexion");
-        int httpCode = https.GET();
-        Serial.println(httpCode);
-        if (httpCode > 0) {
-
-          if (httpCode == HTTP_CODE_OK) {
-            String payload = https.getString();
-            return payload;
-          }
-        }
-        else {
-          Serial.printf("HTTPS FAILED error: %s\n", https.errorToString(httpCode).c_str());
-          writeFile(FFat, "/bootreport.txt", "failure");
-
-          return "failure";
-        }
-        https.end();
-      }
-    }
+  // A stack client, not `new`: one leaked WiFiClientSecure per request (and
+  // its TLS buffers) ground the heap down until a handshake could no longer
+  // allocate -- every fetch then failed as "connection refused" with ~30 KB
+  // still free, and the room's buttons never arrived (2026-10-09). The watch
+  // was fixed the same way earlier.
+  WiFiClientSecure connexion;
+  connexion.setInsecure();
+  HTTPClient https;
+  if (!https.begin(connexion, url)) {
+    return "failure";
   }
-  return "failure";
+  int httpCode = https.GET();
+  String answer = "failure";
+  if (httpCode == HTTP_CODE_OK) {
+    answer = https.getString();
+  }
+  else {
+    Serial.printf("HTTPS FAILED error: %s\n", https.errorToString(httpCode).c_str());
+    writeFile(FFat, "/bootreport.txt", "failure");
+  }
+  https.end();
+  return answer;
 }
 
 
@@ -4114,14 +4180,73 @@ void authorization_changer(String mov) {
   remote_room();
 }
 
+// The homebase a saved payload belongs to: its __specs.homebase ("ip:port"),
+// or the machine's name when that is missing. The key is what keeps one entry
+// per house instead of one per Now Me (2026-10-09).
+static String authorization_key(String js) {
+  JSONVar d = JSON.parse(js);
+  String k = (const char *)d["__specs"]["homebase"];
+  if (k.length() == 0) {
+    k = (const char *)d["__specs"]["computer"];
+  }
+  return k;
+}
+
 void authorization_pusher(String js) {
+  // The same house calling Now Me again takes its old slot: the count button
+  // used to grow with every press because this always appended.
+  String key = authorization_key(js);
+  if (key.length() > 0) {
+    for (int i = 1; i <= auth_count; i++) {
+      if (authorization_json[i] == undefined) {
+        continue;
+      }
+      if (authorization_key((const char *)authorization_json[i]) == key) {
+        authorization_json[i] = js;      // known homebase: replace in place
+        auth_watch = i;
+        deckLog("[auth] replaced %s (count %d)", key.c_str(), auth_count);
+        return;
+      }
+    }
+  }
   auth_count++;
   if (auth_watch == 0) {
     auth_watch = 1;
   }
-  room_count = 1;
+  room = 1;
   authorization_json[auth_count] = js;
-  //Serial.println("Pushing auth " + auth_count);
+  deckLog("[auth] added %s (count %d)", key.c_str(), auth_count);
+}
+
+// One entry per homebase, newest payload winning: a save from before the
+// replacement rule above can hold the same house many times over.
+static void authorization_dedupe() {
+  JSONVar kept = JSON.parse("[]");
+  int keep = 0;
+  for (int i = 1; i <= auth_count; i++) {
+    if (authorization_json[i] == undefined) {
+      continue;
+    }
+    String js = (const char *)authorization_json[i];
+    String key = authorization_key(js);
+    bool replaced = false;
+    for (int k = 1; k <= keep; k++) {
+      if (key.length() > 0 && authorization_key((const char *)kept[k]) == key) {
+        kept[k] = js;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      keep++;
+      kept[keep] = js;
+    }
+  }
+  authorization_json = kept;
+  auth_count = keep;
+  if (auth_watch > auth_count) {
+    auth_watch = auth_count > 0 ? 1 : 0;
+  }
 }
 
 
@@ -4939,6 +5064,7 @@ void configRestore() {
     wigi = JSON.parse(wigi_wah);
 
     auth_count = conf["auth_count"];
+    authorization_dedupe();   // a save from before the replacement rule can hold one house many times
     mouse_move_relative = (const char *)conf["mouse_move_relative"];
 
     String bb = (const char *)conf["buttoned_before"];
