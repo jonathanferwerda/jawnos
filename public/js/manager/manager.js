@@ -855,7 +855,18 @@ $(document).on('keyup click', '#search', function(e) {
 						$('#search_results').html('').hide();
 					}
 					var height = $('#manager_search_results').height();
-					$('#search_results').css({ 'position':'fixed', height: height, 'bottom': $(window).height() + $(document).scrollTop() - o.top, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': o.left, 'width': $('#search').width() });
+					// the dropdown hangs from the search's own edge: above the box when
+					// it rides the bottom half, below when it rides the top
+					var drop = { 'position':'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': o.left, 'width': $('#search').width() };
+					if ((o.top + (h / 2)) < ($(window).height() / 2)) {
+						drop['top'] = o.top + h + 6;
+						drop['bottom'] = 'auto';
+					}
+					else {
+						drop['bottom'] = $(window).height() + $(document).scrollTop() - o.top;
+						drop['top'] = 'auto';
+					}
+					$('#search_results').css(drop);
 				}
 			}
 		});
