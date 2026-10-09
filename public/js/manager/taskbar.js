@@ -68,19 +68,35 @@ function jawnosClockInTaskbar() {
 }
 // The clock's text: a phone's bar is narrow, so there the day of the week goes,
 // the year shortens to two figures, and the date sits over the time; a desk
-// keeps the one long line headerPrinter builds.
+// keeps the one long line headerPrinter builds. The hour answers to the clock
+// format setting - 24 by default, 12 for a 2:45pm face.
 function jawnosClockText(timestamp) {
 	var date = new Date(timestamp);
 	var pad = function (n) { return (n < 10 ? '0' : '') + n; };
-	var time = pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+	var hours = date.getHours();
+	var time;
+	if (typeof jawnos_clock_format != 'undefined' && jawnos_clock_format == '12') {
+		var meridiem = hours < 12 ? 'am' : 'pm';
+		hours = hours % 12;
+		if (hours == 0) { hours = 12; }
+		time = hours + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + meridiem;
+	}
+	else {
+		time = pad(hours) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+	}
 	var date_text = pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + '/';
 	if (windowPhoneChecker()) {
 		return date_text + String(date.getFullYear()).slice(-2) + '<br>' + time;
 	}
 	return dayProcessor(date.getDay()) + ' ' + date_text + date.getFullYear() + ' ' + time;
 }
+// The clock is redrawn from the last timestamp it was given, so a change to its
+// format shows at once rather than at the next view refresh.
+var jawnosClockStamp = null;
 function jawnosClockShow(timestamp) {
-	$('#taskbar_clock').html(jawnosClockText(timestamp));
+	if (timestamp !== undefined && timestamp !== null) { jawnosClockStamp = timestamp; }
+	if (jawnosClockStamp === null) { return; }
+	$('#taskbar_clock').html(jawnosClockText(jawnosClockStamp));
 }
 
 function jawnosBarsApply() {
@@ -187,7 +203,8 @@ function jawnosTopIconsApply() {
 }
 
 // The start button (and the lock beside it) answers to its own setting: on the
-// right end it stands just before the clock, on the left it leads the bar.
+// right end it stands after the clock, at the very end of the bar, and on the
+// left it leads the bar.
 function jawnosTaskbarIconsSideApply() {
 	var icons = $('#taskbar_icons');
 	if (!icons.length || !$('#taskbar').length) { return; }
@@ -195,7 +212,7 @@ function jawnosTaskbarIconsSideApply() {
 		icons.prependTo('#taskbar');
 	}
 	else {
-		icons.insertBefore('#taskbar_clock');
+		icons.appendTo('#taskbar');
 	}
 }
 
@@ -216,6 +233,11 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'taskbar_position') { jawnosBars.taskbar = $(this).val(); }
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
+	else if (setting == 'clock_format') {
+		jawnos_clock_format = $(this).val();
+		jawnosClockShow();
+		return;
+	}
 	else { return; }
 	jawnosBarsApply();
 });

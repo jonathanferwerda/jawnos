@@ -164,9 +164,10 @@ function pseudonymFreeSpaceFinder(type) {
 	if (numeral(home.css('bottom')).value() < 0) {
 		$('.pseudonym').hide();
 	}
-	// the search is the dock's to size only while it rides there in a row; in the
-	// taskbar the bar's own rules give it its width, and a side dock's panel
-	// takes the width its own rules name
+	// the search: sized by the dock while it rides there in a row, and nudged
+	// there to sit level with the icons; the taskbar centres its own items, so a
+	// search riding the bar takes that nudge back off - it used to sit high in
+	// the bar, the dock's -7px still on it
 	if (search_in_dock && !dock_side) {
 		$('#search_entanglement').css({'width': '100%'});
 		$('#search').css({'width': '80%'});
@@ -177,6 +178,13 @@ function pseudonymFreeSpaceFinder(type) {
 				$('#' + v).offset({ top: se.top - 7 });
 				$('#' + v).attr('adjusted_already', 'done');
 			}
+		});
+	}
+	else if (!search_in_dock) {
+		$('#search, #search_toggle').each(function () {
+			if ($(this).attr('adjusted_already') != "done") { return; }
+			$(this).css({ 'position': '', 'top': '', 'left': '' });
+			$(this).removeAttr('adjusted_already');
 		});
 	}
 }

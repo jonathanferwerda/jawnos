@@ -132,6 +132,9 @@ html, body {
 	width: 100%;
 	overflow-x:scroll;
 }
+/* the search rides in the dock's own row: the input and its button side by
+   side, at the box's top-left (the taskbar's own rules lay it out there) */
+#pseudonym_home #search_entanglement { display: inline-block; }
 
 #ticketmaster {
 	position:fixed;
@@ -276,7 +279,9 @@ html, body {
 	height: 44px;
 	z-index: 39998;
 	display: flex; align-items: center; gap: 6px;
-	padding: 2px 6px;
+	/* no air on the leading edge: the first thing in the bar - the window
+	   buttons as a rule - stands on the very left instead of floating in */
+	padding: 2px 6px 2px 0px;
 	font-size: 20px;
 	background-color: var(--panel-2);
 	border: solid; border-width: 0px;
@@ -286,19 +291,24 @@ html, body {
 #taskbar[position=bottom] { bottom: 0px; border-top-width: 3px; }
 #taskbar[position=hidden] { display: none; }
 #taskbar_windows { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
-/* one button per open window: its icon, then its name, on the taskbar's colour */
-#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; height: 36px; padding: 0px 6px; box-sizing: border-box; background-color: var(--panel); }
-#taskbar .window_toggle .window_toggle_icon { height: 28px; width: 28px; max-width: 28px; object-fit: contain; }
-#taskbar .window_toggle span { font-size: 16px; white-space: nowrap; }
+/* One button per open window: its icon and its name in a rounded tile that
+   lifts under the pointer. The shorthand stands where the name would when the
+   bar is too narrow to spell it out (see the phone's own rules). */
+#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: 36px; padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-radius: 10px; transition: background-color .15s ease, transform .12s ease; }
+#taskbar .window_toggle:hover { background-color: var(--panel-2); }
+#taskbar .window_toggle:active { transform: translateY(1px); }
+#taskbar .window_toggle .window_toggle_icon { height: 26px; width: 26px; max-width: 26px; object-fit: contain; }
+#taskbar .window_toggle .window_toggle_name_text { font-size: 16px; white-space: nowrap; }
+#taskbar .window_toggle .window_toggle_shorthand { display: none; }
 #taskbar_clock { flex: 0 0 auto; white-space: nowrap; padding: 0px 8px; }
 /* the corner's own buttons come aboard while the bar stands: bare tiles of the
    bar's inner height, sitting between the window list and the clock */
-#taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; }
+#taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; padding-left: 6px; }
 #taskbar_icons img { box-sizing: content-box; width: 34px; height: 34px; max-width: 34px; }
 /* the search, when the taskbar is its home: it rides on the right of the
    window list but takes a fifth of the bar at most, so the windows keep the
    room; the input and its toggle share that fifth on one line */
-#taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; }
+#taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; margin-left: 6px; }
 #taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; }
 #taskbar #search_toggle { flex: 0 0 auto; width: 32px; height: 32px; max-width: 32px; object-fit: contain; }
 #timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
@@ -471,6 +481,12 @@ canvas { overflow: scroll; z-index: 99; }
 	/* the phone's clock: the date over the time, small enough to leave the bar
 	   to the windows */
 	#taskbar_clock { font-size: 13px; line-height: 1.12; text-align: center; padding: 0px 4px; }
+	/* the phone's window buttons: the icon with its shorthand under it, since
+	   the bar has no room for whole names */
+	#taskbar .window_toggle { flex-direction: column; gap: 1px; padding: 0px 8px; height: 40px; justify-content: center; }
+	#taskbar .window_toggle .window_toggle_icon { height: 20px; width: 20px; max-width: 20px; }
+	#taskbar .window_toggle .window_toggle_name_text { display: none; }
+	#taskbar .window_toggle .window_toggle_shorthand { display: block; font-size: 10px; line-height: 1; white-space: nowrap; }
 	#ticket { width: 100% }
 	.window_view { width: 100%; }
 	.appointment { width: 100%; }

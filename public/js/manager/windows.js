@@ -67,6 +67,10 @@ function taskbarDisplayer(destination) {
 		if (!new_icon.attr('src')) {
 			new_icon.css({ 'font-size': '30px', 'height': '60px' });
 		}
+		// the icon's own press belongs to the window it was cloned from (it calls
+		// windowRestorer); in the bar the button's answer is the only one wanted,
+		// or a press on a background window raises it and then toggles it away
+		new_icon.removeAttr('onclick');
 		new_icon.removeClass('window_icon');
 		new_icon.addClass('window_toggle_icon little_thumb');
 
@@ -78,9 +82,17 @@ function taskbarDisplayer(destination) {
 	$('.window_toggle_name').remove();
 	$(destination).find('.window_toggle_icon').each(function(i,v) {
 		var app = $(v).attr('app');
+		var named = $(v).attr('formatted_name') || format_name(app);
 		var rand = Math.random().toString(36).substring(2);
-		$(v).wrap('<span class="hover window_toggle_icon window_toggle" style="border:solid;border-radius:2px;" id="' + rand + '" app="' + app + '" style="vertical-align:top;text-align:center;"></span>');
-		$('#' + rand).html($('#' + rand).html() + ' <span onclick="windowRestorer(' + timestamp + ',\'' + app + '\')">' + format_name(app) + '</span>');
+		// The button answers for its window itself (see the .window_toggle click):
+		// the name is a plain label, and the shorthand rides beside it for a bar
+		// too narrow to spell the name out. The label used to carry its own
+		// windowRestorer, so pressing the name restored the window and then fell
+		// through to the button's own answer, which is what made a press behave
+		// like something other than a window manager's.
+		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" style="text-align:center;"></span>');
+		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
+		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 3) + '</span>');
 	});
 
 

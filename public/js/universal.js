@@ -127,6 +127,14 @@ function format_name(name) {
 	return formatted;
 }
 
+// The first few letters of a name, the way subs::shorthand_name() takes them:
+// what a bar too narrow for the whole word can say instead.
+function shorthand_name(name, shorten) {
+	name = '' + (name || '');
+	shorten = shorten || 5;
+	return name.slice(0, shorten);
+}
+
 function quality_inventory(timestamp) {
 	var now = numeral(Date.now()).value();
 	var then = timestamp;
