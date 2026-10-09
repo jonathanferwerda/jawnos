@@ -1,156 +1,199 @@
 <span id="printer_title" style="<% if ($visibility ne 'show') { %>display:none;<% } %>"><%= &subs::format_name($cx->{'app'}) %> <%== $id %></span>
-<div>
+<div class="paper">
+
 	<% if ($totals->{'balance'} <= 0 && ($type eq 'invoice' || $type eq 'receipt')) { %>
-		<span style="position:absolute;width:100%;top:50px;">
-			<h1 style="font-size:60px;opacity:.6;top:50px;color:red;text-align:center;">PAID</h1>
-		</span>
+		<div class="paper_paid">PAID</div>
 	<% } %>
-	<span style="float:right;">
 
-		<% if ($qr_img) { %>
-			<img src="<%= $qr_img %>" class="huge_thumb">
-		<% } else { %>
-			<%= $qr_code %>
-		<% } %>
-		<br>
-
-
-		<b style="position:absolute;right:60px;text-align:right;"><%== $id %></b><br>
-
-	</span>
-
-	<span style="float:left;padding-right:15px;">
-		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
-			<img src="<%= $logo %>" class="huge_thumb">
-			<br>
-		<% } %>
-	</span
-	<span style="float:right;padding-left:15px;">
-		<b style="font-size:34px;"><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></b><br>
-		<% foreach my $info ( qw/address phone email slogan/ ) { %>
-			<% if (my $i = &subs::setting_grabber({ app => 'me', setting => $info })) { %>
-				<%= $i %><br>
+	<table class="paper_head"><tbody><tr>
+		<td class="paper_head_left">
+			<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
+				<img src="<%= $logo %>" class="paper_logo">
 			<% } %>
-		<% } %>
-	</span>
+			<div class="paper_store"><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></div>
+			<% foreach my $info ( qw/address phone email slogan/ ) { %>
+				<% if (my $i = &subs::setting_grabber({ app => 'me', setting => $info })) { %>
+					<div class="paper_muted"><%= $i %></div>
+				<% } %>
+			<% } %>
+		</td>
+		<td class="paper_head_right">
+			<% if ($qr_img) { %>
+				<img src="<%= $qr_img %>" class="paper_qr">
+			<% } else { %>
+				<div class="paper_footnote"><%= $qr_code %></div>
+			<% } %>
+			<div class="paper_id"><%== $id %></div>
+		</td>
+	</tr></tbody></table>
 
-</div>
-<div>
-	<br><br><br><br>
-	<span style="float:right;text-align:right;"><b>Date:</b> <%= $print_date %>
-		<% if ($due_date) { %>
-			<br>
-			<b>Due:</b> <%= $due_date %>
-		<% } %>
-	</span>
-	<br><br>
-	<b style="font-size:22px;"><%= &subs::format_name($cx->{'app'}) %></b><br>
-	<% foreach my $info (qw/address phone email/) { %>
-		<% if ($cx->{$info}) { %>
-			<%= $cx->{$info} %><br>
-		<% } %>
-	<% } %>
-</div>
-<h1 style="text-align:center;"><%= &subs::format_name($type) %></h1>
+	<hr class="paper_rule">
 
+	<table class="paper_meta"><tbody><tr>
+		<td class="paper_meta_left">
+			<div class="paper_cx"><%= &subs::format_name($cx->{'app'}) %></div>
+			<% foreach my $info (qw/address phone email/) { %>
+				<% if ($cx->{$info}) { %><div class="paper_muted"><%= $cx->{$info} %></div><% } %>
+			<% } %>
+		</td>
+		<td class="paper_meta_right">
+			<div><span class="paper_label">Date</span> <%= $print_date %></div>
+			<% if ($due_date) { %>
+				<div><span class="paper_label">Due</span> <%= $due_date %></div>
+			<% } %>
+		</td>
+	</tr></tbody></table>
 
+	<h1 class="paper_title"><%= &subs::format_name($type) %></h1>
 
-<div style="">
 	<% foreach my $reg ( @{$registers} ) { %>
 		<% my $data = $reg->{'data'}; %>
 
-		<table style="text-align:right;width:100%;border:solid;border-radius:5px;border-width:3px;">
-			<thead style="vertical-align:top;">
-				<th style="width:50%;text-align:left;">		<h2>
-			<%= &subs::format_name($data->{'item'}) %>
-		</h2></th><th>Quantity</th><th>Price</th><th>Discount</th><th>Subtotal</th>
+		<table class="paper_items">
+			<thead>
+				<tr>
+					<th class="paper_item_col"><span class="paper_item_name"><%= &subs::format_name($data->{'item'}) %></span></th>
+					<th class="paper_num">Quantity</th>
+					<th class="paper_num">Price</th>
+					<th class="paper_num">Discount</th>
+					<th class="paper_num">Subtotal</th>
+				</tr>
 			</thead>
 			<tbody>
+				<% my $model = &subs::db_select('model', undef, { app => $data->{'item'}, uuid => $data->{'model'}->{'uuid'} })->hashes->[0]; %>
 				<tr>
-					<% my $model = &subs::db_select('model', undef, { app => $data->{'item'}, uuid => $data->{'model'}->{'uuid'} })->hashes->[0]; %>
-					<td style="width:50%;text-align:left;font-size:22px;"><%= &subs::format_name($data->{'model'}->{'name'}) %><br>
-						<span style="float:right;width:95%;font-size:16px;"><%== $data->{'model'}->{'description'} || $model->{'description'} %></span></td>
-					<td><%= $model->{'quantity'} || 1 %></td>
-					<td><%= &subs::price_formatter($model->{'price'}) %></td>
-					<td><%= &subs::price_formatter($data->{'model'}->{'discount'}) %></td>
-					<td><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
+					<td class="paper_item_col">
+						<span class="paper_line"><%= &subs::format_name($data->{'model'}->{'name'}) %></span>
+						<% my $mdesc = $data->{'model'}->{'description'} || $model->{'description'}; %>
+						<% if ($mdesc) { %><div class="paper_desc"><%== $mdesc %></div><% } %>
+					</td>
+					<td class="paper_num"><%= $data->{'model'}->{'quantity'} || 1 %></td>
+					<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
+					<td class="paper_num"><%= $data->{'model'}->{'discount'} ? &subs::price_formatter($data->{'model'}->{'discount'}) : '' %></td>
+					<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
 				</tr>
-				<% foreach my $oc ( keys %{$data->{'options'}}) { %>
-					<tr></tr>
-					<% foreach my $o ( @{$data->{'options'}->{$oc}}) { %>
+				<% foreach my $oc ( sort keys %{$data->{'options'}} ) { %>
+					<% foreach my $o ( @{$data->{'options'}->{$oc}} ) { %>
+						<% my $option = &subs::db_select('option', undef, { app => $data->{'item'}, uuid => $o->{'uuid'} })->hashes->[0]; %>
 						<tr>
-							<% my $option = &subs::db_select('option', undef, { app => $data->{'item'}, uuid => $o->{'uuid'} })->hashes->[0]; %>
-							<td style="width:50%;text-align:left;font-size:20px;">&nbsp;<%= &subs::format_name($o->{'name'}) %><br>
-								<span style="float:right;width:95%;font-size:16px;"><%== $o->{'description'} || $option->{'description'} %></span></td>
-							<td><%= $o->{'quantity'} || 1 %></td>
-							<td><%= &subs::price_formatter($option->{'price'} * ($o->{'quantity'} || 1)) %></td>
-							<td><%= &subs::price_formatter($o->{'discount'} * ($o->{'quantity'} || 1)) %></td>
-							<td><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
+							<td class="paper_item_col">
+								<span class="paper_line"><%= &subs::format_name($o->{'name'}) %></span>
+								<% my $odesc = $o->{'description'} || $option->{'description'}; %>
+								<% if ($odesc) { %><div class="paper_desc"><%== $odesc %></div><% } %>
+							</td>
+							<td class="paper_num"><%= $o->{'quantity'} || 1 %></td>
+							<td class="paper_num"><%= &subs::price_formatter($o->{'price'}) %></td>
+							<td class="paper_num"><%= $o->{'discount'} ? &subs::price_formatter($o->{'discount'}) : '' %></td>
+							<td class="paper_num"><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
 						</tr>
 					<% } %>
 				<% } %>
 			</tbody>
 		</table>
 
-		<% if ($reg->{'data'}->{'payments'}) { %>
-			<span style="width:100%;font-size:20px;border-solid;border-radius:2px;text-align:center;">
-				<h2 style="text-align:center;font-size:24px;">Payments</h2>
-				<table style="width:100%;font-size:20px;border:solid;border-radius:2px;text-align:center;">
-					<thead>
-						<th style="text-align:left;">Date</th>
-						<th style="text-align:right;">Amount</th>
-					</thead>
-					<tbody>
-						<% foreach my $p ( @{$reg->{'data'}->{'payments'}}) { %>
-							<tr>
-								<td style="text-align:left;" class="time" mode="fixed" timestamp="<%= $p->{'timestamp'} %>"></td>
-								<td style="text-align:right;"><%= &subs::price_formatter($p->{'amount'}) %></td>
-							</tr>
-						<% } %>
-					</tbody>
-				</table>
-			</span>
+		<% if ($reg->{'data'}->{'payments'} && scalar @{$reg->{'data'}->{'payments'}} > 0) { %>
+			<h2 class="paper_subtitle">Payments</h2>
+			<table class="paper_items">
+				<thead>
+					<tr><th class="paper_item_col">Date</th><th class="paper_num">Amount</th></tr>
+				</thead>
+				<tbody>
+					<% foreach my $p ( @{$reg->{'data'}->{'payments'}}) { %>
+						<tr>
+							<td class="paper_item_col time" mode="fixed" timestamp="<%= $p->{'timestamp'} %>"><%= localtime($p->{'timestamp'} / 1000)->strftime('%b %d %Y') %></td>
+							<td class="paper_num"><%= &subs::price_formatter($p->{'amount'}) %></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
 		<% } %>
 	<% } %>
-	
-	<span style="float:right;right:60px;bottom:50px;font-size:20px;"><br>
-		<table>
-			<tbody>
-				<% foreach my $q ( qw/discount subtotal tax aux total balance/ ) { %>
-					<tr><td>
-					<b><%= &subs::format_name($q) %>: </b>
-					</td><td style="text-align:right;">
-					<% if ($q eq 'total') { %>
-						<u><%= &subs::price_formatter($totals->{$q}) %></u><br>
-					<% } else { %>
-						<%= &subs::price_formatter($totals->{$q}) %><br>
-					<% } %>
-					</td></tr>
+
+	<table class="paper_foot"><tbody><tr>
+		<td class="paper_foot_left">
+			<% if (my $tax_number = &subs::setting_grabber({ app => 'me', 'setting' => 'tax_number' })) { %>
+				<div><b>Tax:</b> <%= $tax_number %></div>
+			<% } %>
+			<% if (my $doc_notes = &subs::setting_grabber({ app => 'me', 'setting' => 'doc_notes' })) { %>
+				<div><b>Note:</b> <%= $doc_notes %></div>
+			<% } %>
+		</td>
+		<td class="paper_foot_right">
+			<table class="paper_totals"><tbody>
+				<% if ($totals->{'discount'}) { %>
+					<tr><td class="paper_label_cell">Discount</td><td class="paper_value"><%= &subs::price_formatter($totals->{'discount'}) %></td></tr>
 				<% } %>
-			</tbody>
-		</table>
-	</span>
-
-	<span style="float:left;left:60px;bottom:50px;text-align:left;">
-		<% if (my $tax_number = &subs::setting_grabber({ app => 'me', 'setting' => 'tax_number' })) { %>
-			<br><b>Tax:</b> <%= $tax_number %><br>
-		<% } %>
-		<% if (my $doc_notes = &subs::setting_grabber({ app => 'me', 'setting' => 'doc_notes' })) { %>
-			<br><b>Note: </b><%= $doc_notes %><br>
-		<% } %>
-	</span>
-
+				<tr><td class="paper_label_cell">Subtotal</td><td class="paper_value"><%= &subs::price_formatter($totals->{'subtotal'}) %></td></tr>
+				<% if ($totals->{'tax'}) { %>
+					<tr><td class="paper_label_cell">Tax</td><td class="paper_value"><%= &subs::price_formatter($totals->{'tax'}) %></td></tr>
+				<% } %>
+				<% if ($totals->{'aux'}) { %>
+					<tr><td class="paper_label_cell">Aux</td><td class="paper_value"><%= &subs::price_formatter($totals->{'aux'}) %></td></tr>
+				<% } %>
+				<tr class="paper_total_row"><td class="paper_label_cell">Total</td><td class="paper_value"><%= &subs::price_formatter($totals->{'total'}) %></td></tr>
+				<% if ($type ne 'quote' && $type ne 'order') { %>
+					<tr><td class="paper_label_cell">Balance</td><td class="paper_value"><%= &subs::price_formatter($totals->{'balance'}) %></td></tr>
+				<% } %>
+			</tbody></table>
+		</td>
+	</tr></tbody></table>
 
 </div>
 
 <style>
+	/* The paper: one white sheet in both worlds - on screen it rests on the
+	   themed page, on paper it is the page. Sizes are the print sizes; the
+	   densities are chosen to stay legible at arm's length. */
+	.paper {
+		max-width: 21cm;
+		margin: 0 auto;
+		background: #ffffff;
+		color: #000000;
+		padding: 1.4cm;
+		box-sizing: border-box;
+		text-align: left;
+		font-size: 15px;
+		line-height: 1.35;
+		position: relative;
+		overflow: hidden;
+	}
+	.paper table { width: 100%; border-collapse: collapse; }
+	.paper_head td { vertical-align: top; }
+	.paper_head_left { padding-right: 12px; }
+	.paper_logo { max-height: 64px; max-width: 60%; }
+	.paper_store { font-size: 26px; font-weight: 700; line-height: 1.1; }
+	.paper_muted { color: #555555; font-size: 13px; }
+	.paper_head_right { text-align: right; width: 120px; }
+	.paper_qr { width: 96px; height: 96px; }
+	.paper_id { font-weight: 700; font-size: 13px; margin-top: 4px; }
+	.paper_rule { border: none; border-top: 2px solid #000000; margin: 12px 0; }
+	.paper_cx { font-size: 19px; font-weight: 700; }
+	.paper_meta_right { text-align: right; white-space: nowrap; }
+	.paper_label { display: inline-block; min-width: 40px; color: #555555; }
+	.paper_title { text-align: center; letter-spacing: 6px; text-transform: uppercase; font-size: 30px; margin: 18px 0 10px; }
+	.paper_items { margin: 0 0 14px; }
+	.paper_items th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: #555555; border-bottom: 2px solid #000000; padding: 4px 6px; }
+	.paper_items td { padding: 7px 6px; border-bottom: 1px solid #dddddd; vertical-align: top; }
+	.paper_item_col { width: 52%; }
+	.paper_item_name { font-size: 17px; font-weight: 700; }
+	.paper_num { text-align: right; white-space: nowrap; }
+	.paper_line { font-weight: 600; font-size: 16px; }
+	.paper_desc { color: #555555; font-size: 12px; margin-top: 2px; }
+	.paper_subtitle { font-size: 18px; margin: 14px 0 6px; }
+	.paper_foot td { vertical-align: bottom; padding-top: 16px; }
+	.paper_foot_right { width: 46%; }
+	.paper_label_cell { color: #555555; padding: 2px 8px 2px 0; }
+	.paper_value { text-align: right; padding: 2px 0 2px 8px; white-space: nowrap; }
+	.paper_total_row td { border-top: 2px solid #000000; font-weight: 700; font-size: 17px; padding-top: 5px; }
+	.paper_footnote { color: #555555; font-size: 11px; word-break: break-all; }
+	.paper_paid { position: absolute; top: 32%; left: 0; width: 100%; text-align: center; color: #cc0000; opacity: .5; font-size: 90px; font-weight: 900; letter-spacing: 14px; transform: rotate(-8deg); }
 	@page { margin: 0; }
 	@media print {
-		@page { margin: 0; }
 		body { margin: 1.6cm; }
 		/* a sheet of panel colour is a lot of ink: whatever theme the screen
 		   wears, the paper that leaves is white with black words */
 		body { background: #ffffff !important; color: #000000 !important; --ink: #000000 !important; --ink-muted: #333333 !important; --panel: #ffffff !important; --panel-2: #f0f0f0 !important; }
 		#everything { background-color: #ffffff !important; color: #000000 !important; }
+		.paper { padding: 0; max-width: none; }
 	}
 </style>
