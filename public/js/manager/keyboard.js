@@ -83,18 +83,19 @@ function pseudonymFreeSpaceFinder(type) {
 		// the edge offsets belong to pseudonymSideSettle() and its reveal
 		var edge_top = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('top') : 0;
 		var slots = count + (search_in_dock ? 1 : 0);
-		var room = h - edge_top - dock_edge - 30;
+		var room = h - edge_top - dock_edge - 26;
 		var size = Math.floor((room - (gap * (slots - 1))) / slots);
 		size = Math.max(floor, Math.min(full, size));
 		var stack = (size * slots) + (gap * (slots - 1));
-		var start = edge_top + Math.round((h - edge_top - dock_edge - (stack + 30)) / 2) + 15;
+		var start = edge_top + Math.round((h - edge_top - dock_edge - (stack + 26)) / 2) + 13;
 		// the pill hugs the edge it lives on, so its own geometry is known here
 		// rather than measured - a measurement taken mid-slide would read the
 		// tuck, not the layout. The revealed layout it leaves behind is what
-		// pseudonymSideSlide() applies the tuck on top of.
-		var home_w = size + 30;
-		var home_h = stack + 30;
-		var icon_left = dock_left ? 15 : (w - 15 - size);
+		// pseudonymSideSlide() applies the tuck on top of. Its chrome is the 2px
+		// border and the 11px padding the side dock wears.
+		var home_w = size + 26;
+		var home_h = stack + 26;
+		var icon_left = dock_left ? 13 : (w - 13 - size);
 
 		$.each(visible, function(i,el) {
 			$(el).css({
@@ -120,7 +121,7 @@ function pseudonymFreeSpaceFinder(type) {
 		home.css({
 			'width': home_w + 'px',
 			'height': home_h + 'px',
-			'top': (start - 15) + 'px',
+			'top': (start - 13) + 'px',
 			'bottom': 'auto'
 		});
 		pseudonymSideLayout = {
