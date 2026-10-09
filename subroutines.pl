@@ -7601,6 +7601,187 @@ sub series_correlation() {
 	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
 }
 
+# every numeric measure the window's appointments logged, averaged per day:
+# { app => { measure => { day => average } } }. A condition word is skipped;
+# the measure's own reading time wins over the appointment's, so a humidity
+# log lands on the day it was read
+sub measure_series {
+	my ($since) = @_;
+	my $rows = &subs::db_query(
+		"select app, timestamp, measures from appointments where measures is not null and measures != '' and cast(timestamp as integer) >= ?",
+		$since);
+	my $sth = $rows->sth;
+	my %sum;
+	while (my $row = $sth->fetchrow_arrayref) {
+		my ($app, $ts, $jmeasures) = @{$row};
+		my $list = eval { return decode_json($jmeasures) } || next;
+		foreach my $entry ( @{$list} ) {
+			next unless ref $entry eq 'HASH';
+			my $when = $entry->{'ts'} || $ts;
+			my @lt = localtime($when / 1000);
+			my $day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
+			foreach my $name ( keys %{$entry} ) {
+				next if $name eq 'ts' || $name eq 'uuid';
+				my $value = $entry->{$name};
+				next unless defined $value && !ref $value && $value =~ /^-?[0-9]+(\.[0-9]+)?$/;
+				$sum{$app}->{$name}->{$day}->{'sum'} += $value;
+				$sum{$app}->{$name}->{$day}->{'n'}++;
+			}
+		}
+	}
+	$rows->finish;
+	my %out;
+	foreach my $app ( keys %sum ) {
+		foreach my $name ( keys %{$sum{$app}} ) {
+			foreach my $day ( keys %{$sum{$app}->{$name}} ) {
+				my $cell = $sum{$app}->{$name}->{$day};
+				$out{$app}->{$name}->{$day} = $cell->{'sum'} / $cell->{'n'};
+			}
+		}
+	}
+	return \%out;
+}
+
+# every day of the window, so a lag stays a lag in calendar days even when a
+# series has holes in it
+sub evaluation_window_days {
+	my ($since) = @_;
+	my $now = &subs::rightNow();
+	my @days;
+	for (my $t = $since; $t <= $now + 86400000; $t += 86400000) {
+		my @lt = localtime($t / 1000);
+		push @days, sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
+	}
+	my %seen;
+	return [ grep { !$seen{$_}++ } @days ];
+}
+
+# Pearson over day maps that may have holes - a day without a reading is not a
+# zero reading - joined on the window's days, so the best lag is in days
+sub day_map_correlation {
+	my ($da, $db, $days) = @_;
+	my $n = scalar @{$days};
+	my ($best, $best_lag);
+	foreach my $lag ( -2 .. 2 ) {
+		my ($sx,$sy,$sxx,$syy,$sxy,$m) = (0,0,0,0,0,0);
+		foreach my $i ( 0 .. $n - 1 ) {
+			my $j = $i + $lag;
+			next if $j < 0 || $j > $n - 1;
+			my $xa = $da->{ $days->[$i] };
+			my $yb = $db->{ $days->[$j] };
+			next unless defined $xa && defined $yb;
+			$sx += $xa; $sy += $yb; $sxx += $xa ** 2; $syy += $yb ** 2; $sxy += $xa * $yb; $m++;
+		}
+		next if $m < 14;
+		my $den = sqrt(($m * $sxx - $sx ** 2) * ($m * $syy - $sy ** 2));
+		next unless $den;
+		my $r = ($m * $sxy - $sx * $sy) / $den;
+		if (!defined $best || abs($r) > abs($best)) { $best = $r; $best_lag = $lag; }
+	}
+	return undef unless defined $best;
+	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
+}
+
+# what else was happening: every app's daily counts and every numeric measure
+# any app logged, correlated against the targets. The relational window only
+# knows the apps it was shown, so a headache never gets to blame the humidity
+# unless it is asked to look at the whole house.
+sub context_correlations {
+	my ($targets, $days, $counts, $measures) = @_;
+	my @candidates;
+	foreach my $capp ( sort keys %{$counts} ) {
+		push @candidates, { app => $capp, measure => undef, day_map => $counts->{$capp} };
+	}
+	foreach my $capp ( sort keys %{$measures} ) {
+		foreach my $name ( sort keys %{$measures->{$capp}} ) {
+			push @candidates, { app => $capp, measure => $name, day_map => $measures->{$capp}->{$name} };
+		}
+	}
+	my @out;
+	foreach my $target ( @{$targets} ) {
+		my $tseries = $target->{'measure'} ? ($measures->{ $target->{'app'} }->{ $target->{'measure'} } || {}) : ($counts->{ $target->{'app'} } || {});
+		next unless scalar keys %{$tseries};
+		my @tx = $target->{'measure'} ? () : map { $tseries->{$_} || 0 } @{$days};
+		# a target that barely ran cannot carry a count correlation - the pair
+		# would be the target's one day wearing the candidate's habits. Sparse
+		# days are the different list's business instead.
+		my $target_active = grep { ($tseries->{$_} || 0) > 0 } @{$days};
+		foreach my $cand ( @candidates ) {
+			# a series is not a story against itself
+			next if $cand->{'app'} eq $target->{'app'} && !defined $cand->{'measure'} && !defined $target->{'measure'};
+			next if $cand->{'app'} eq $target->{'app'} && defined $cand->{'measure'} && defined $target->{'measure'} && $cand->{'measure'} eq $target->{'measure'};
+			my $c;
+			if (!defined $cand->{'measure'} && !defined $target->{'measure'}) {
+				my @cx = map { $cand->{'day_map'}->{$_} || 0 } @{$days};
+				$c = ($target_active >= 7) ? &subs::series_correlation(\@cx, \@tx) : undef;
+			}
+			else {
+				# a count of nothing on a day is zero, but a missing reading is a hole
+				my $cmap = defined $cand->{'measure'} ? $cand->{'day_map'} : { map { $_ => ($cand->{'day_map'}->{$_} || 0) } @{$days} };
+				my $tmap = defined $target->{'measure'} ? $tseries : { map { $_ => ($tseries->{$_} || 0) } @{$days} };
+				$c = &subs::day_map_correlation($cmap, $tmap, $days);
+			}
+			next unless $c && abs($c->{'r'}) >= 0.6;
+			my $entry = { app => $cand->{'app'}, vs_app => $target->{'app'}, r => $c->{'r'}, lag_days => $c->{'lag_days'} };
+			$entry->{'measure'} = $cand->{'measure'} if defined $cand->{'measure'};
+			$entry->{'vs_measure'} = $target->{'measure'} if defined $target->{'measure'};
+			push @out, $entry;
+		}
+	}
+	@out = sort { abs($b->{'r'}) <=> abs($a->{'r'}) } @out;
+	splice(@out, 10) if scalar @out > 10;
+	return \@out;
+}
+
+# what was out of the ordinary on the days this app ran: every measure's
+# average on those days against its average on the window's other days, scaled
+# by how spread the measure is. A sparse app can still point at a reading this
+# way, which a correlation needs too many days to do.
+sub measure_contrasts {
+	my ($app, $days, $counts, $measures) = @_;
+	my %active = map { $_ => 1 } keys %{ $counts->{$app} || {} };
+	my @out;
+	foreach my $capp ( sort keys %{$measures} ) {
+		foreach my $name ( sort keys %{$measures->{$capp}} ) {
+			my (@on, @off);
+			foreach my $day ( @{$days} ) {
+				my $v = $measures->{$capp}->{$name}->{$day};
+				next unless defined $v;
+				if ($active{$day}) { push @on, $v; } else { push @off, $v; }
+			}
+			# one day with the app is the case this list exists for - a single
+			# headache against the rest of the month - so only the other side
+			# needs some width to it
+			next if scalar @on < 1 || scalar @off < 3;
+			my ($sum_all, $sum_on, $n_all) = (0, 0, 0);
+			foreach my $v ( @on ) { $sum_on += $v; $sum_all += $v; $n_all++; }
+			foreach my $v ( @off ) { $sum_all += $v; $n_all++; }
+			my $mean_on = $sum_on / scalar @on;
+			my $mean_off = ($sum_all - $sum_on) / scalar @off;
+			my $mean = $sum_all / $n_all;
+			my $var = 0;
+			$var += ($_ - $mean) ** 2 foreach ( @on, @off );
+			my $sd = sqrt($var / $n_all);
+			next unless $sd;
+			# a measure that barely moves (a currency quote) turns a cent into a
+			# large z: the list is for readings that actually vary
+			next unless $sd >= 0.03 * abs($mean);
+			my $z = ($mean_on - $mean_off) / $sd;
+			next unless abs($z) >= 0.8;
+			push @out, {
+				app => $capp, measure => $name,
+				on_days => sprintf('%.2f', $mean_on),
+				off_days => sprintf('%.2f', $mean_off),
+				z => sprintf('%.2f', $z),
+				days_on => scalar @on, days_off => scalar @off,
+			};
+		}
+	}
+	@out = sort { abs($b->{'z'}) <=> abs($a->{'z'}) } @out;
+	splice(@out, 8) if scalar @out > 8;
+	return \@out;
+}
+
 # the same wire pen_message uses, but the answer is read whole: the evaluation
 # is a report, not a conversation
 sub evaluation_model_call() {
@@ -7716,8 +7897,31 @@ sub evaluation_agent() {
 		}
 		$briefing->{'related'} = \@related;
 	}
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads).';
-	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Correlations use only pairs with |r| >= 0.5 and at least 14 shared days; say what r means here and whether the lag suggests one follows the other; if nothing clears that bar, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks. Use only the numbers given - never invent figures. Plain text.';
+	# what else was happening: the relational window only knows the apps it was
+	# shown. Every app's day counts and every numeric measure the window's
+	# appointments logged are lined up against this app (or the top apps), at the
+	# best lag, and the measures that stood out on this app's own days are listed
+	# too - a headache is sparse, so a correlation cannot carry it, but the
+	# humidity on its days can still be named.
+	my $window_days = &subs::evaluation_window_days($since);
+	my $all_counts = $global ? $roll->{'daily'} : &subs::appointment_rollup('__president', $since)->{'daily'};
+	my $measures = &subs::measure_series($since);
+	my @targets;
+	if ($global) {
+		@targets = map { { app => $_ } } @owners;
+	}
+	else {
+		push @targets, { app => $app };
+		foreach my $name ( sort keys %{ $measures->{$app} || {} } ) {
+			push @targets, { app => $app, measure => $name };
+		}
+	}
+	$briefing->{'around'} = &subs::context_correlations(\@targets, $window_days, $all_counts, $measures);
+	unless ($global) {
+		$briefing->{'different'} = &subs::measure_contrasts($app, $window_days, $all_counts, $measures);
+	}
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows: rolled-up numbers for one app (or the whole house) covering ' . $window . ', an hourly profile (hours 0-23), a weekday profile (0 is Sunday), one count per day as date:count, and - for a single app - the apps the relational window ties to it, each with a Pearson correlation of the daily series over the same window at the lag that fits best (a positive lag_days means the related app trails this one by that many days; negative means it leads). Two arms-length lists may follow: around - other apps\' daily counts and the numeric measures any app logged (a weather humidity reading, say) that move with the window\'s apps at the best lag - and, for a single app, different - the measures that stood out on the days that app ran, as its mean on those days (on_days) against its mean on the window\'s other days (off_days), scaled by z. A thing need not be linked to be a cause.';
+	my $instructions = 'Answer under exactly three headings: Trends, Correlations, Predictions. Under Correlations weigh related and around together - pairs with |r| >= 0.5 and at least 14 shared days - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, and name what was out of the ordinary on the app\'s own days. If nothing stands out at all, say so plainly. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the window\'s patterns actually carry - never a rule invented from a single day. Use only the numbers given - never invent figures. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
