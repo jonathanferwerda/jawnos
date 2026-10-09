@@ -74,6 +74,10 @@ static bool bt_enabled = false;
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
 static bool btStartPending = false;
+// The radio's real state. bt_enabled is the *preference* (what configSave writes
+// and the net room button shows); it can be true while a start is still pending,
+// so the start/stop guards must not key off it or the radio never comes up.
+static bool ble_radio_up = false;
 char standby_en = 1;
 long DEFAULT_SCREEN_TIMEOUT = 60*1000;
 String jw_room = "watch";
@@ -316,10 +320,11 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 };
 */
 void start_ble_transfer() {
-  if (bt_enabled == true) {
+  if (ble_radio_up == true) {
     return;
   }
   Serial.println("Powering up Nordic UART BLE Radio...");
+  ble_radio_up = true;
   bt_enabled = true;
 
   // 1. Re-wake the underlying Espressif BLE stack hardware
@@ -372,10 +377,11 @@ void start_ble_transfer() {
 }
 
 void stop_ble_transfer() {
-  if (bt_enabled == false) {
+  if (ble_radio_up == false) {
     return;
   }
   Serial.println("Shutting down BLE Radio...");
+  ble_radio_up = false;
   bt_enabled = false;
   if (pServer) {
     // Close the link before tearing the stack down. Deinit used to run while a
@@ -3054,7 +3060,7 @@ static void wifi_lora_send(lv_event_t *e) {
 
 static void bt_control(lv_event_t *e) {
   lv_obj_t * bt_button = lv_event_get_target_obj(e);
-  if (bt_enabled == true) {
+  if (ble_radio_up == true) {
     stop_ble_transfer();
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
   }
@@ -3748,12 +3754,12 @@ void configRestore() {
     }
     String bte = (const char *)conf["bt_enabled"];
     if (bte == "on") {
-      if (bt_enabled == false) {
-        // loop() starts it; doing it here panicked the watch on boot
-        btStartPending = true;
-      }
+      bt_enabled = true;
+      // loop() starts it; doing it here panicked the watch on boot
+      btStartPending = true;
     }
     else {
+      bt_enabled = false;
       stop_ble_transfer();
     }
     // no unconditional accesspoint_start() here: it undid the saved off
@@ -3822,6 +3828,12 @@ void configRestore() {
       (homebaseIP.length() == 0 || authorization.length() == 0 || room_count <= 0)) {
     Serial.println("[config] no homebase to talk to; staying on the clock");
     jw_room = "watch";
+  }
+  // if the picture in memory says the radio should be on -- a live config, or the
+  // defaults a wiped watch comes up on -- arm the deferred start; loop() runs it
+  // once the rest of the boot has settled
+  if (bt_enabled == true && btStartPending == false) {
+    btStartPending = true;
   }
   wifi_server();
   if (jw_room == "room") {
