@@ -17134,6 +17134,11 @@ sub notification_sender($m,$db) {
 	my $title = ($origin) . ': ' . $m->{'title'};
 
 	$m->{'timestamp'} = &subs::rightNow();
+	# the uuid has to exist before the live notification is rendered: the X button
+	# carries it and the stored row is keyed by it, and they have to match. Callers
+	# that do not supply one used to land here with uuid "", so the rendered X had
+	# nothing to remove and the row could not be cleared
+	$m->{'uuid'} ||= &subs::random_string_creator(20);
 	my $sound = $m->{'sound'} || 'ding.mp3';
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
@@ -17223,7 +17228,7 @@ sub notification_sender($m,$db) {
 			image => $m->{'image'},
 			message => $m->{'message'},
 			timestamp => $m->{'timestamp'},
-			uuid => $m->{'uuid'} || &subs::random_string_creator(20)
+			uuid => $m->{'uuid'}
 		});
 	}
 
