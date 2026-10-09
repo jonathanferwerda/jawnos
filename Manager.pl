@@ -2231,6 +2231,11 @@ sub store_printer($data) {
 	}
 
 	my $qr = 'https://' . $address . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid ;
+	# the paper a letter carries is rendered by this house's own instance when
+	# the config gives it a name here: the QR keeps the public address, which is
+	# for other people's phones, while the pdf is drawn where the code and the
+	# theme are current
+	my $pdf_url = $config->{'domain'} ? 'https://' . $config->{'domain'} . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid : $qr;
 
 	my $qr_img = `qrencode -o - $qr`;
 	$qr_img = 'data:image/png;base64,' . encode_base64($qr_img);
@@ -2243,6 +2248,7 @@ sub store_printer($data) {
 		uuid => $uuid,
 		cx => $cx_settings,
 		qr_code => $qr,
+		pdf_url => $pdf_url,
 		qr_img => $qr_img,
 		id => $id,
 		totals => $totals,

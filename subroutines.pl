@@ -7262,8 +7262,13 @@ sub email_send() {
 			my $loc_name = &subs::format_name($att->{'printer'}->{'type'}) . ' ' . $att->{'printer'}->{'id'} . '.pdf';
 			my $loc = $gb::tmp_dir . '/' . $loc_name;
 			push @locations, $loc;
-			my $command = 'weasyprint "' . $att_url . '" "' . $loc . '"';
-			`$command`;
+			# the house draws its own paper when it can answer for its name, and the
+			# public address stands in otherwise
+			my $local_url = $att->{'printer'}->{'pdf_url'} || $att_url;
+			`weasyprint "$local_url" "$loc"`;
+			unless (-s $loc) {
+				`weasyprint "$att_url" "$loc"`;
+			}
 			$stuffer->attach_file($loc);
 			push @mail_files, { src => $loc, name => $loc_name, type => 'document' };
 		}
