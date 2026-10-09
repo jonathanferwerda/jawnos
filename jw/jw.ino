@@ -16,6 +16,7 @@
 #include <Update.h>
 #include <uri/UriRegex.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
@@ -73,7 +74,6 @@ static bool bt_enabled = false;
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
 static bool btStartPending = false;
-JSONVar btMessages;
 char standby_en = 1;
 long DEFAULT_SCREEN_TIMEOUT = 60*1000;
 String jw_room = "watch";
@@ -438,6 +438,8 @@ void setup() {
   bleIncomingQueue = xQueueCreate(5, sizeof(String*));
 
   Serial.println("starting");
+  // a doze or crown-press that ends in a reset is otherwise invisible here
+  Serial.printf("[boot] reset reason: %d\n", (int)esp_reset_reason());
   watch.setRotation(screenRotation);  
   setCpuFrequencyMhz(240);
   time_writer("now");
@@ -1126,42 +1128,10 @@ void loop2(void * pvParameters) {
     int taskIndexToRemove = -1; // Keep track of which slot to clear
 
     if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
-      JSONVar btKeys = btMessages.keys();
-    
-      int totalKeys = btKeys.length();
-
-      if (-1 > 0) {
-
-        String keysToDelete[totalKeys];
-
-        for (int i = 0; i < btKeys.length(); i++) {
-          String spin = btKeys[i];
-          keysToDelete[i] = spin;
-
-          String payload = JSON.stringify(btMessages[spin]["payload"]);
-          String url = btMessages[spin]["url"];
-          Serial.println(url);
-          Serial.println(payload);
-          if (deviceConnected) {
-            String message = "Hello from T-Watch!";
-            Serial.println(message);
-            // Set the character value to your message
-            pTxCharacteristic->setValue(payload.c_str());
-            
-            // Fire the notification to the connected phone
-            pTxCharacteristic->notify();
-            
-            Serial.print("Sent to Tasker: ");
-            Serial.println(message);
-          }
-
-
-        }
-        for (int i = 0; i < totalKeys; i++) {
-          btMessages[keysToDelete[i]] = undefined;
-        }
-      }
-    
+      // btMessages used to be drained here; taps now go out on the wire
+      // directly from when_i_get_in()/ble_flush_wigi() with a local envelope,
+      // because this shared map was only ever touched safely from one core at
+      // a time and cross-core use of it panicked the chip (StoreProhibited)
       int taskCount = dualCoreTasks.length();
       if (taskCount > 0) {
         for (int i = 0; i < taskCount; i++) {
@@ -2358,12 +2328,15 @@ void when_i_get_in(JSONVar wigi_item, String url) {
   Serial.print("Defice connected: ");
   Serial.println(deviceConnected);
   if (deviceConnected) {
-    String r = generateRandomString(7);
-    btMessages[r]["type"] = "button";
-    btMessages[r]["payload"] = wigi_item;
+    // a local envelope: btMessages was shared with loop2 on core 0, and staging
+    // a tap into it from here raced with that reader until resetting it from
+    // this side panicked the chip (StoreProhibited)
+    JSONVar envelope = JSON.parse("{}");
+    envelope["type"] = "button";
+    envelope["payload"] = wigi_item;
     url = url_maker(url);
-    btMessages[r]["url"] = url;
-    String payload = JSON.stringify(btMessages[r]);
+    envelope["url"] = url;
+    String payload = JSON.stringify(envelope);
     String message = "Hello from T-Watch!";
     Serial.println(message);
     // Set the character value to your message
@@ -2374,10 +2347,6 @@ void when_i_get_in(JSONVar wigi_item, String url) {
     
     Serial.print("Sent to Tasker: ");
     Serial.println(message);
-    // the message is on the wire: clear the staging map, or every tap leaves
-    // its payload behind and the heap bleeds until the display's DMA buffers
-    // stop allocating (which is when the room artifacts show up)
-    btMessages = JSON.parse("{}");
   } else {
     wigi[l] = wigi_item;
   }
@@ -2436,18 +2405,19 @@ void ble_flush_wigi() {
       "/watch/button?room=" + room_n +
       "&button=" + button_n +
       "&toggle=" + toggle_n;
-    String r = generateRandomString(7);
-    btMessages[r]["type"] = "button";
-    btMessages[r]["payload"] = item;
-    btMessages[r]["url"] = url_maker(url);
-    String payload = JSON.stringify(btMessages[r]);
+    // a local envelope, same reason as when_i_get_in(): the shared btMessages
+    // map is what raced with loop2 and panicked the chip
+    JSONVar envelope = JSON.parse("{}");
+    envelope["type"] = "button";
+    envelope["payload"] = item;
+    envelope["url"] = url_maker(url);
+    String payload = JSON.stringify(envelope);
     pTxCharacteristic->setValue(payload.c_str());
     pTxCharacteristic->notify();
     Serial.println("Flushed a queued tap over BLE");
     delay(50);
   }
   wigi = remainder;
-  btMessages = JSON.parse("{}");
 }
 
 void mb1(lv_event_t *e) {
@@ -3275,7 +3245,7 @@ void lowPowerEnergyHandler()
 
   sportsIrq = false;
   pmuIrq = false;
-  if (WiFi.status() == WL_CONNECTED && buttoned_before) {
+  if (WiFi.status() == WL_CONNECTED && buttoned_before && homebaseIP.length() > 0) {
     String req = "https://" + homebaseIP + "/watch/next_appt?format=sleep";
     Serial.println(req);
     wakeup_time = 0;
@@ -3517,13 +3487,39 @@ void net_room() {
   full_refresh();
 }
 
+// a config file is only worth restoring (or backing up) if it says the watch
+// has been set up at all; a clobbered or half-written one parses fine but every
+// field is null/zero, and that picture must never win
+static bool config_is_live(JSONVar conf) {
+  if (String((const char *)conf["homebaseIP"]).length() > 0) return true;
+  if (String((const char *)conf["ssid"]).length() > 0) return true;
+  if (String((const char *)conf["authorization"]).length() > 0) return true;
+  if (String((const char *)conf["buttoned_before"]) == "on") return true;
+  return false;
+}
+
 void configSaveBackup() {
+  // returner is a global that readFile() appends to: a stale boot report or an
+  // earlier read would otherwise concatenate onto the config text
+  returner = "";
   readFile(FFat, "/config.json");
+  if (!config_is_live(JSON.parse(returner))) {
+    Serial.println("[config] refusing to back up a blank config");
+    return;
+  }
   writeFile(FFat, "/config_backup.json", returner.c_str());  
 }
 
 void configRestoreBackup() {
+  // returner is a global that readFile() appends to: without the reset, a
+  // missing backup left the boot report text in it and this wrote that over
+  // config.json -- one of the ways the watch's settings were erased
+  returner = "";
   readFile(FFat, "/config_backup.json");
+  if (!config_is_live(JSON.parse(returner))) {
+    Serial.println("[config] no live backup to restore; leaving config.json alone");
+    return;
+  }
   writeFile(FFat, "/config.json", returner.c_str());  
 }
 
@@ -3607,20 +3603,31 @@ void configSave() {
   conf["room_count"] = room_count;
   conf["offset"] = offset;
   returner = JSON.stringify(conf);
+  // a watch that has nothing configured must not write the empty picture over
+  // its own flash: the doze save used to cement a wiped config for good
+  if (homebaseIP.length() == 0 && authorization.length() == 0 &&
+      ssid.length() == 0 && buttoned_before == false) {
+    Serial.println("[config] nothing configured yet; not saving");
+    return;
+  }
   // LittleFS truncates in place, so a reset mid-save used to leave a clobbered
   // config.json (the panic reboots did exactly that, and the watch came back
-  // with factory settings). Stage in a temp file and rename over the old one.
+  // with factory settings). Stage in a temp file and rename over the old one --
+  // and FFat.rename() will not clobber an existing file, so that file has to be
+  // removed first; the fresh copy is already safe in /config.tmp by then.
   writeFile(FFat, "/config.tmp", returner.c_str());
+  if (FFat.exists("/config.json")) {
+    FFat.remove("/config.json");
+  }
   if (!FFat.rename("/config.tmp", "/config.json")) {
     writeFile(FFat, "/config.json", returner.c_str());
   }
 }
 
-void configDelete() {
-  deleteFile(FFat, "/config.json");
-  deleteFile(FFat, "/config_backup.json");
-
-  writeFile(FFat, "/bootreport.txt", "deleting");
+// the picture a never-configured watch comes up with: a boot with nothing
+// usable to restore, and the Configure room's Delete, both start from here, and
+// configRestore() overlays whatever the file actually holds on top
+void configDefaults() {
   before_me = "";
   jw_room = "watch";
   homebase = "";
@@ -3628,11 +3635,12 @@ void configDelete() {
   computer_name = "";
   authorization = "";
   ssid = "";
-  brightnessLevel = 12;
   password = "";
   ap_ssid = base_ap_ssid;
-  room_count = 6;
   ap_password = base_ap_password;
+  // 0/1 would leave the screen dark and the watch looking bricked
+  brightnessLevel = 80;
+  room_count = 6;
   buttoned_before = false;
   wifi_ap_enabled = false;
   wifi_enabled = false;
@@ -3645,18 +3653,49 @@ void configDelete() {
   notifications = JSON.parse("[]");
   DEFAULT_SCREEN_TIMEOUT = 30*1000;
   screenRotation = 0;
+  offset = 0;
+  rtc.offset = 0;
+}
+
+void configDelete() {
+  deleteFile(FFat, "/config.json");
+  deleteFile(FFat, "/config_backup.json");
+
+  writeFile(FFat, "/bootreport.txt", "deleting");
+  configDefaults();
+  brightnessLevel = 12;
   watch.setRotation(screenRotation);
 }
 void configRestore() {
+  // start from the factory picture and let the file overlay it: a clobbered
+  // field then falls back to its default instead of dragging the watch to zero
+  configDefaults();
   returner = "";
   Serial.println(returner);
   writeFile(FFat, "/bootreport.txt", "saving");
 
   readFile(FFat, "/config.json");
-  Serial.println(returner);
-  Serial.println("ok");
-  if (returner != "failure") {
-    JSONVar conf = JSON.parse(returner);
+  JSONVar conf = JSON.parse(returner);
+  if (!config_is_live(conf)) {
+    // an empty or clobbered config.json parses into a picture with every field
+    // null (readFile() only says "failure" when the file cannot be opened at
+    // all); the backup the Configure room keeps is the next best thing
+    returner = "";
+    readFile(FFat, "/config_backup.json");
+    JSONVar backup = JSON.parse(returner);
+    if (config_is_live(backup)) {
+      conf = backup;
+      Serial.println("[config] config.json was blank; restored the backup");
+    }
+    else {
+      conf = JSONVar();
+      Serial.println("[config] nothing live on the flash; defaults stand");
+    }
+  }
+  else {
+    Serial.println("[config] live config restored");
+  }
+  if (config_is_live(conf)) {
     before_me = (const char *)conf["before_me"];
     offset = conf["offset"];
     rtc.offset = offset;
@@ -3669,6 +3708,10 @@ void configRestore() {
     authorization = (const char *)conf["authorization"];
      
     brightnessLevel = conf["brightness"];
+    // a restored 0 or 1 leaves the screen dark and the watch looking bricked
+    if (brightnessLevel <= 1) {
+      brightnessLevel = 20;
+    }
     watch.setBrightness(brightnessLevel);
     
     vibrateLevel = conf["vibrate"];
@@ -3685,6 +3728,9 @@ void configRestore() {
     
     ap_ssid =(const char *)conf["ap_ssid"];
     ap_password = (const char *)conf["ap_password"];
+    if (ap_ssid == "") {
+      ap_ssid = base_ap_ssid;
+    }
    
     String bb = (const char *)conf["buttoned_before"];
     if (bb == "on") {
@@ -3719,7 +3765,6 @@ void configRestore() {
     else {
       wifi_enabled = false;
     }
-    wifi_server();
     String lcb = (const char *)conf["loraChatBroadcaster"];
     if (lcb == "on") {
       loraChatBroadcaster = true;
@@ -3753,28 +3798,43 @@ void configRestore() {
     jw_room = (const char *)conf["jw_room"];
     Serial.print(jw_room);
     Serial.println(" is the room");
-    if (jw_room == "room") {
-      remote_room();
-    }
-    else if (jw_room == "watch") {
-      clock_writer();
-    }
-    else if (jw_room == "configure") {
-      setting_room();  
-    }
-    else if (jw_room == "net") {
-      net_room();
-    }
     String wigi_wah = conf["wigi"];
     wigi = JSON.parse(wigi_wah);
+    if (JSON.typeof(wigi) != "array") {
+      wigi = JSON.parse("[]");
+    }
     String notifications_list = conf["notifications"];
-    notifications = JSON.parse(notifications_list);   
+    notifications = JSON.parse(notifications_list);
+    if (JSON.typeof(notifications) != "array") {
+      notifications = JSON.parse("[]");
+    }
     if (conf.hasOwnProperty("steps")) {
       String step_list = (const char *)conf["steps"];
       if (step_list.startsWith("[")) {
         stepped = JSON.parse(step_list);
       }
     }
+  }
+  // nothing to talk to means the buttons room draws empty and fetches nowhere;
+  // the clock still works and the net/configure rooms still allow a fresh
+  // "Now Me" once WiFi is back
+  if ((jw_room == "room" || jw_room == "message") &&
+      (homebaseIP.length() == 0 || authorization.length() == 0 || room_count <= 0)) {
+    Serial.println("[config] no homebase to talk to; staying on the clock");
+    jw_room = "watch";
+  }
+  wifi_server();
+  if (jw_room == "room") {
+    remote_room();
+  }
+  else if (jw_room == "watch") {
+    clock_writer();
+  }
+  else if (jw_room == "configure") {
+    setting_room();  
+  }
+  else if (jw_room == "net") {
+    net_room();
   }
 }
 
