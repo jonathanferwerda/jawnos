@@ -977,6 +977,62 @@ $(document).on('click', '.mail_email', function() {
 	});
 });
 
+// The envelope in an appointment's details opens the mailbox right where that
+// message lives: the window comes up if it wasn't already, the conversation
+// with the address is loaded, and the message itself is scrolled to and
+// flashed so the eye lands on it.
+$(document).on('click', '.mail_open', function() {
+	mailOpener($(this).attr('mail_uuid'), $(this).attr('email'));
+});
+
+function mailSectionOpen(email, timestamp, done) {
+	$.ajax({
+		url: '/manager/mail/email',
+		type: 'GET',
+		data: { email: email, timestamp: timestamp },
+		success: function(response) {
+			windowMaker(response.html);
+			localStorage.removeItem('mail_phone');
+			localStorage.setItem('mail_email', email);
+			mailScrollBottom('load');
+			mailScroll = { topLoad: 0 };
+			mailWebSocketStop();
+			if (typeof done == 'function') { done(); }
+		}
+	});
+}
+
+function mailOpener(uuid, email) {
+	var timestamp = Date.now();
+	var reveal = function() { setTimeout(function() { mailMessageReveal(uuid); }, 300); };
+	if ($('.wind[app="mailbox"]').length > 0) {
+		mailSectionOpen(email, timestamp, reveal);
+	}
+	else {
+		$.ajax({
+			url: '/manager/mailbox',
+			type: 'GET',
+			data: { window_maker: 'yes', timestamp: timestamp, email: email, phone: localStorage.getItem('mail_phone'), mail_contact: localStorage.getItem('mail_contact'), picker: localStorage.getItem('mail_picker'), incoming_data: JSON.stringify({}) },
+			success: function(response) {
+				windowMaker(response);
+				windowDrawerCloser('mailbox');
+				mailDotClear();
+				mailSectionOpen(email, Date.now(), reveal);
+			}
+		});
+	}
+}
+
+function mailMessageReveal(uuid) {
+	if (!uuid) { return; }
+	var m = $('.mailbox_message[uuid="' + uuid + '"]');
+	if (m.length == 0) { return; }
+	var scroller = $('#mailbox');
+	scroller.scrollTop(scroller.scrollTop() + m.position().top - 80);
+	m.stop(true, true).css({ 'background-color': 'yellow' });
+	setTimeout(function() { m.css({ 'background-color': '' }); }, 2500);
+}
+
 $(document).on('change', '.mail_picker', function() {
 	var picker = $(this);
 	var val = picker.val();

@@ -6991,6 +6991,9 @@ sub email_receiver() {
 
 
 						my $files = [];
+						# the uuid the mailbox row will wear, so the appointment and its
+						# files can point back at the very message
+						my $mailbox_uuid = &subs::random_string_creator(44);
 						foreach my $part ($entity->parts) {
 
 							my $filename = $part->head->recommended_filename;
@@ -6999,7 +7002,7 @@ sub email_receiver() {
 
 								my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $filename, app => $ca->{'app'}, is_thumb => 0 });
 								copy($gb::tmp_dir . '/' . $filename, $destination . $asset);
-								my $u_data = { server_time => &subs::rightNow(), f => $destination . $asset, uuid => &subs::random_string_creator(28), type => $type };
+								my $u_data = { server_time => &subs::rightNow(), f => $destination . $asset, uuid => &subs::random_string_creator(28), type => $type, mail_uuid => $mailbox_uuid };
 								my $thumb = $destination . '/thumbs';
 								if ($type eq 'image') {
 									`mkdir -p $thumb` unless -e $thumb;
@@ -7010,17 +7013,6 @@ sub email_receiver() {
 
 							}
 						}
-						my $app_uuid = &subs::random_string_creator(31);
-						my $jfile = scalar @{$files} > 0 ? encode_json $files : undef;
-						my $appt_data = {
-							app => $ca->{'app'},
-							type => 'email',
-							timestamp => $timestamp,
-							notes => &subs::note_encrypter(&subs::suds_grabber(), $body),
-							file => $jfile
-						};
-						&Manager::appointment_writer($c,$appt_data);
-
 						my $status = 'inbox';
 						my $email = $from;
 						if ($to ne $es->{'email'}) {
@@ -7029,8 +7021,23 @@ sub email_receiver() {
 						} elsif (lc $f eq 'drafts') {
 							$status = 'draft';
 						}
+						my $app_uuid = &subs::random_string_creator(31);
+						my $jfile = scalar @{$files} > 0 ? encode_json $files : undef;
+						# the appointment wears the mailbox row's uuid and the address the
+						# conversation is with, so the envelope in the details can open the
+						# very message
+						my $appt_data = {
+							app => $ca->{'app'},
+							type => 'email',
+							timestamp => $timestamp,
+							notes => &subs::note_encrypter(&subs::suds_grabber(), $body),
+							file => $jfile,
+							data => encode_json({ mail_uuid => $mailbox_uuid, email => $email })
+						};
+						&Manager::appointment_writer($c,$appt_data);
+
 						my $email_data = {
-							uuid => &subs::random_string_creator(44),
+							uuid => $mailbox_uuid,
 							timestamp => $timestamp,
 							server_time => &subs::rightNow(),
 							body => &subs::note_encrypter(&subs::suds_grabber(), $body),
@@ -7170,6 +7177,47 @@ sub mail_arrival {
 }
 
 
+# A letter that leaves is filed like one that arrives: an appointment on the
+# app of the address it went to, so that app's details show both sides of the
+# conversation. The attachments are copied into that app's own folders and
+# written into the row's file column, and the mailbox row's uuid rides in the
+# data so the envelope in the details can open the very message.
+sub sent_mail_filer {
+	my $data = shift;
+	return unless $data->{'to'};
+	my $c = $data->{'c'} || &subs::c_maker();
+	my $device = &subs::device_setter();
+	my $app_row = &subs::db_query('select app from settings where setting = ? and value = ? and device = ? order by app limit 1', 'email', $data->{'to'}, $device)->hashes->[0];
+	return unless $app_row && $app_row->{'app'};
+	my $app = $app_row->{'app'};
+	my $files = [];
+	foreach my $f ( @{$data->{'files'} || []} ) {
+		next unless $f->{'src'} && -e $f->{'src'};
+		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => ($f->{'name'} || $f->{'src'}), app => $app, is_thumb => 0 });
+		`mkdir -p "$destination"` unless -e $destination;
+		copy($f->{'src'}, $destination . $asset);
+		push @{$files}, {
+			server_time => &subs::rightNow(),
+			f => $destination . $asset,
+			uuid => &subs::random_string_creator(28),
+			type => $f->{'type'} || $type,
+			name => $f->{'name'},
+			mail_uuid => $data->{'mail_uuid'}
+		};
+	}
+	my $jfile = scalar @{$files} > 0 ? encode_json $files : undef;
+	my $appt = &Manager::appointment_writer($c, {
+		app => $app,
+		type => 'email',
+		timestamp => $data->{'timestamp'} || &subs::rightNow(),
+		notes => &subs::note_encrypter(&subs::suds_grabber(), $data->{'body'}),
+		file => $jfile,
+		data => encode_json({ mail_uuid => $data->{'mail_uuid'}, email => $data->{'to'} })
+	});
+	&file_encrypter({ app => $app, timestamp => $appt->{'timestamp'}, suds => &subs::suds_grabber() }) if $appt && $appt->{'uuid'};
+	return $appt;
+}
+
 sub email_send() {
 	my $data = shift;
 
@@ -7205,14 +7253,19 @@ sub email_send() {
 	}
 	$data->{'attachments'} = eval { return decode_json $data->{'attachments'} } || [];
 	my @locations;
+	# the files ride along twice: once for the letter itself, and once to be
+	# filed into the recipient's app once the send lands
+	my @mail_files;
 	foreach my $att ( @{$data->{'attachments'}} ) {
 		if ($att->{'type'} eq 'printer') {
 			my $att_url = $att->{'printer'}->{'qr_code'};
-			my $loc = $gb::tmp_dir . '/' . &subs::format_name($att->{'printer'}->{'type'}) . ' ' . $att->{'printer'}->{'id'} . '.pdf';
+			my $loc_name = &subs::format_name($att->{'printer'}->{'type'}) . ' ' . $att->{'printer'}->{'id'} . '.pdf';
+			my $loc = $gb::tmp_dir . '/' . $loc_name;
 			push @locations, $loc;
 			my $command = 'weasyprint "' . $att_url . '" "' . $loc . '"';
 			`$command`;
 			$stuffer->attach_file($loc);
+			push @mail_files, { src => $loc, name => $loc_name, type => 'document' };
 		}
 		else {
 
@@ -7225,6 +7278,7 @@ sub email_send() {
 			my $job = &Manager::rock_and_roll($c);
 
 			$stuffer->attach($job->{'data'}, filename => $file->{'of'} || $asset, content_type => $job->{'fd'});
+			push @mail_files, { src => $destination . $asset, name => ($file->{'of'} || $asset), type => ($file->{'type'} || $type) };
 		}
 	}
 
@@ -7234,6 +7288,18 @@ sub email_send() {
 		$result = 'success';
 		&subs::db_delete('mailbox', { status => 'draft', uuid => $data->{'uuid'} });
 		&subs::db_update('mailbox', { status => 'sent', timestamp => &subs::rightNow(), server_time => &subs::rightNow() }, { uuid => $data->{'uuid'} });
+		# the letter leaves a record like the received ones: an appointment on
+		# the address's own app, the attachments saved in its folders, and the
+		# mailbox row's uuid in the data for an envelope to open
+		&subs::sent_mail_filer({
+			c => $c,
+			to => $data->{'email'},
+			manager_file => $es->{'email'},
+			body => &subs::note_decrypter($suds, $data->{'body'}),
+			mail_uuid => $data->{'uuid'},
+			files => \@mail_files,
+			timestamp => &subs::rightNow()
+		});
 	} else {
 		$result = 'fail';
 	}

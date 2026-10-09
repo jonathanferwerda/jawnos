@@ -34,6 +34,8 @@
 						<td><img style="left:0px;"><img class="little_thumb
 							<% if ($l->{'type'} eq 'studio') { %>
 								hover" onclick="studioInit({ last_song: '<%= $l->{'uuid'} %>' })
+							<% } elsif ($l->{'type'} eq 'email' && ref $l->{'data'} eq 'HASH' && $l->{'data'}->{'mail_uuid'}) { %>
+								mail_open hover" mail_uuid="<%= $l->{'data'}->{'mail_uuid'} %>" email="<%= $l->{'data'}->{'email'} %>"
 							<% } %>
 							" hint="<%= $l->{'formatted_type'} %>" src="<%= $l->{'pseudonym'}->{'icon'} %>"
 						></td>
