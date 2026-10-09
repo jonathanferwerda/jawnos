@@ -1384,7 +1384,10 @@ sub device_lister() {
 					if ($load_type ne 'ping_scan') {
 						@neighbourinos = (split "\n", $neighbour_check);
 					}
-					if ($neighbour_check eq '' && $ip_range) {
+					if ($ip_range) {
+						# a host or range typed into the box is honoured even when the
+						# neighbour table has entries: the device that pings but sleeps
+						# its wifi (an esp32) is exactly the one missing from the table
 						my $sip = $ip_range;
 						$sip =~ s/[0-9]//gi;
 						$home_ip = $address->{$nic}->{'ip'};
@@ -1427,7 +1430,8 @@ sub device_lister() {
 							uuid => &subs::random_string_creator(25)
 						};
 						my $ping_ip = $n->{'ip'};
-						my $alive = `timeout .4 ping -c 1 $ping_ip`;
+						# a sleeping esp32 can take a second to answer the first packet
+						my $alive = `timeout 1.2 ping -c 1 -W 1 $ping_ip`;
 						my $ip_addresses = [ ];
 						if ($n->{'ip'} eq '127.0.0.1') {
 							push @{$ip_addresses}, $n;
