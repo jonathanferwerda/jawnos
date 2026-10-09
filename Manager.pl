@@ -4771,7 +4771,9 @@ post '/manager/start_menu/forget' => sub($c) {
 # The apps the start menu was last used to open, freshest first. The app menu
 # is a recent list and the shelf rail is how everything else is reached, so
 # it lives in the president's cache like the htop snapshot; cache entries are
-# per device, so each screen keeps its own list.
+# per device, so each screen keeps its own list. The warranty is asked for
+# outright: __president has no warranty setting, and the fallback resolves to
+# "now", which the alarm's cache purge then deletes a minute later.
 sub start_menu_recent() {
 	my $recent = &subs::cache_get({ app => '__president', context => 'start_menu', subcontext => 'recent' });
 	return [ ref $recent eq 'ARRAY' ? @{$recent} : () ];
@@ -4794,7 +4796,7 @@ sub start_menu_used($key) {
 	@{$recent} = grep { $_ ne $key } @{$recent};
 	unshift @{$recent}, $key;
 	pop @{$recent} while scalar @{$recent} > 10;
-	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent' }, $recent);
+	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent', warranty => '-1y' }, $recent);
 	return $recent;
 }
 
@@ -4803,7 +4805,7 @@ sub start_menu_forget($key) {
 	$key = &start_menu_key_clean($key);
 	return &start_menu_recent() unless length $key;
 	my $recent = [ grep { $_ ne $key } @{ &start_menu_recent() } ];
-	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent' }, $recent);
+	&subs::cache_set({ app => '__president', context => 'start_menu', subcontext => 'recent', warranty => '-1y' }, $recent);
 	return $recent;
 }
 
