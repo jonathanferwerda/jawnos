@@ -60,17 +60,15 @@ double wakeup_time = 0;
 // Flag used for acceleration interrupt status
 static bool sportsIrq = false;
 // Wrist-raise wake. The BMA423's interrupt line wakes the chip when it notices
-// movement even with the screen off; every wake then has to pass the gesture
-// check below before the screen comes back, or fidgeting would light it up.
+// movement even with the screen off; the doze loop then feeds each pose to the
+// gesture check below, and only a look brings the screen back -- fidgeting
+// does not.
 static bool tiltWake = true;
 // Streams raw accelerometer samples over USB for tuning ("tiltdbg on").
 static bool tiltDbg = false;
-// Rate limiter for the gesture check: a storm of movement is not a queue of checks.
-static uint32_t tilt_next_eval = 0;
-static uint8_t tilt_storm = 0;
 // A wrist raise earns a glance, not the full screen timeout; a touch inside it
 // hands the wake back to the usual timeout (see the wake block in loop()).
-#define TILT_WAKE_LOOK_MS 10000
+#define TILT_WAKE_LOOK_MS 5000
 static bool tilt_wake_short = false;
 // Flag used to indicate whether recording is enabled
 static bool recordFlag = false;
@@ -193,7 +191,6 @@ int vibrateLevel = 50;
 int volumeLevel = 50;
 void lowPowerEnergyHandler();
 static bool accel_sample(float &x, float &y, float &z);
-static bool wristRaiseGate();
 static void tilt_serial_poll();
 static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
@@ -3887,12 +3884,11 @@ static void doze_until_crown() {
 // ---- wrist-raise wake --------------------------------------------------------
 //
 // The BMA423 hands over samples in m/s2 with the board remap applied: x and y
-// lie in the screen plane, z points out of the screen. So "the screen faces the
-// sky" is a large positive z, the watch hanging at the side is z near zero, and
-// face down is negative z. Looking at the watch is then: z climbs from sideways
-// to facing up within a second, stays there, and the arm holds still. Fidgeting,
-// typing and lowering the arm fail at least one of the three, and going by z
-// alone also makes it work the same on either wrist.
+// lie in the screen plane, z points out of the screen. Reading the watch leaves
+// the screen tilted toward the face: the 2026-10-09 captures settled a worn look
+// around z=7.4 and an in-hand look at z=2-4.6, while a rest on a desk reads
+// z>=9.2 and an arm hanging at the side z~-1. A look is a fast turn out of a
+// quiet pose that then settles held inside that z window (see wristPollStep).
 
 static bool accel_sample(float &x, float &y, float &z) {
   if (!watch.sensor) {
@@ -3908,102 +3904,40 @@ static bool accel_sample(float &x, float &y, float &z) {
   return true;
 }
 
-// Waits up to ~1.6 s for the pose to say "being looked at".
-static bool wristRaiseCheck() {
-  const uint32_t started = millis();
-  float lx = 0, ly = 0, lz = 0;        // low-passed gravity vector
-  bool have = false;
-  float sx = 0, sy = 0, sz = 0;        // the pose when the movement began
-  bool have_start = false;
-  bool rose = false;
-  uint32_t still_since = 0;
-  float px = 0, py = 0, pz = 0;        // the pose at the last sign of movement
-  uint32_t samples = 0;
-
-  while (millis() - started < 1600) {
-    float x, y, z;
-    if (accel_sample(x, y, z)) {
-      if (!have) {
-        lx = x; ly = y; lz = z; have = true;
-      }
-      else {
-        // ~3 Hz tracker at ~50 Hz sampling: follows the arm, ignores the shake
-        lx += (x - lx) * 0.35f;
-        ly += (y - ly) * 0.35f;
-        lz += (z - lz) * 0.35f;
-      }
-      samples++;
-      if (!have_start && samples >= 6) {   // where the arm was before the raise
-        sx = lx; sy = ly; sz = lz; have_start = true;
-      }
-      if (have_start && !rose && lz > 4.4f && (lz - sz) > 3.0f) {
-        // 0.45 g of screen-normal gravity: past sideways, which the arm-down
-        // pose and a hand at a keyboard never produce
-        rose = true;
-        still_since = millis();
-        px = lx; py = ly; pz = lz;
-        if (tiltDbg) {
-          Serial.printf("[tilt] rising z=%.1f (from %.1f)\n", lz, sz);
-        }
-      }
-      if (rose) {
-        float moved = fabsf(lx - px) + fabsf(ly - py) + fabsf(lz - pz);
-        if (moved > 1.2f) {
-          if (lz < 2.0f) {                 // put back down: not a look
-            if (tiltDbg) {
-              Serial.println("[tilt] rejected: put back down");
-            }
-            return false;
-          }
-          px = lx; py = ly; pz = lz;
-          still_since = millis();
-        }
-        if (millis() - still_since >= 250) {
-          // a real raise also turned the watch by a good angle; a slow drift
-          // to the same z does not count
-          float dot = sx * lx + sy * ly + sz * lz;
-          float n1 = sqrtf(sx * sx + sy * sy + sz * sz);
-          float n2 = sqrtf(lx * lx + ly * ly + lz * lz);
-          float angle = (n1 > 0.1f && n2 > 0.1f) ? acosf(dot / (n1 * n2)) * 57.3f : 0.0f;
-          if (angle > 40.0f && lz > 3.4f) {
-            return true;
-          }
-        }
-      }
-      // nothing is happening at all: no raise is coming, stop paying for samples
-      if (!rose && samples >= 40 &&
-          fabsf(lx - sx) + fabsf(ly - sy) + fabsf(lz - sz) < 0.6f) {
-        if (tiltDbg) {
-          Serial.println("[tilt] rejected: no movement");
-        }
-        return false;
-      }
-    }
-    delay(20);
-  }
-  if (tiltDbg) {
-    Serial.printf("[tilt] rejected: timeout (z0=%.1f z=%.1f)\n", sz, lz);
-  }
-  return false;
-}
 
 // The wrist raise as a state machine, fed by the doze loop's polling. The
 // sensor's interrupt line cannot announce this (any-motion detection crashed
-// the radio, see settingSensor), and the blocking wristRaiseCheck would hold
-// the crown for its whole window; here a sample every 40 ms rides along the
-// loop, and the settled pose is remembered as the "before". The rules are the
-// blocking check's: the screen turned up, a settle, and a real angle moved.
+// the radio, see settingSensor) and a blocking check would hold the crown for
+// its whole window; a sample every 100 ms rides along the loop instead (40 ms
+// while the arm is doing something). Rules, replayed against the 2026-10-09
+// captures:
+//   * movement is the change *between samples* -- never the distance from the
+//     settled pose, which stranded on a fast move and then read every still
+//     sample as movement, so the machine could not arm again until the pose
+//     drifted back to where it had latched (raises after a pickup were
+//     invisible);
+//   * a pose held still for a moment becomes the "before"; a turn of 50 deg or
+//     more out of it that then settles for 200 ms with the screen off the desk
+//     and off the hip (z between 0.5 and 8 -- worn look ~7.4, in-hand look
+//     2-4.6, desk 9.2+, arm hanging ~-1) is a look.
+#define WRIST_MOVE_EPS   0.4f   // low-passed change per sample that is movement
+#define WRIST_FAST_EPS   1.5f   // a real turn: sample at 40 ms again
+#define WRIST_SETTLE_EPS 1.6f   // a held pose may still wobble this much
+#define WRIST_REST_MS    250    // still this long: the pose becomes "before"
+#define WRIST_ARM_MS     500    // still this long: a turn out of it can be a look
+#define WRIST_TURN_DEG   50.0f
+#define WRIST_LOOK_ZLOW  0.5f   // screen off the desk (z 9.2+) and the hip (z -1)
+#define WRIST_LOOK_ZHIGH 8.0f
 static bool wrist_have = false;
 static bool wrist_rose = false;
 static float wrist_lx = 0, wrist_ly = 0, wrist_lz = 0;     // low-passed pose
 static float wrist_sx = 0, wrist_sy = 0, wrist_sz = 0;     // the settled pose
-static float wrist_px = 0, wrist_py = 0, wrist_pz = 0;     // pose at last movement
 static uint32_t wrist_moved_at = 0;
 static uint32_t wrist_still_since = 0;
 static uint32_t wrist_last_sample = 0;
 static uint32_t wrist_fast_until = 0;      // a sign of movement buys quick samples
 static bool wrist_sim = false;             // tiltsim drives the machine by hand
-static bool wrist_armed = false;           // a long still pose is where a look can begin
+static bool wrist_armed = false;           // a moment of stillness arms the next turn
 
 // The angle between two gravity vectors, in degrees.
 static float wrist_angle(float ax, float ay, float az, float bx, float by, float bz) {
@@ -4018,13 +3952,14 @@ static void wristPollReset() {
   wrist_rose = false;
   wrist_armed = false;
   wrist_last_sample = 0;
+  wrist_fast_until = 0;
 }
 
 static bool wristPollStep(float x, float y, float z, uint32_t now);
 
 static bool wristPoll() {
-  if (wrist_sim) {
-    return false;              // tiltsim is feeding the machine itself
+  if (!tiltWake || wrist_sim) {
+    return false;              // the preference is off (or tiltsim drives the machine itself)
   }
   uint32_t now = millis();
   // 10 samples a second while the arm is still, 25 while it is doing
@@ -4045,45 +3980,43 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
   if (!wrist_have) {
     wrist_lx = x; wrist_ly = y; wrist_lz = z;
     wrist_sx = x; wrist_sy = y; wrist_sz = z;
-    wrist_px = x; wrist_py = y; wrist_pz = z;
     wrist_moved_at = now;
     wrist_have = true;
     return false;
   }
+  float plx = wrist_lx, ply = wrist_ly, plz = wrist_lz;
   wrist_lx += (x - wrist_lx) * 0.35f;
   wrist_ly += (y - wrist_ly) * 0.35f;
   wrist_lz += (z - wrist_lz) * 0.35f;
 
-  float moved = fabsf(wrist_lx - wrist_sx) + fabsf(wrist_ly - wrist_sy) + fabsf(wrist_lz - wrist_sz);
-  if (moved > 1.2f) {
+  // Movement is the change *this sample*. Measuring from the settled pose
+  // instead let one fast move strand it, after which every still sample read
+  // as movement and the machine could never arm again (found replaying the
+  // captures: armed stayed 0 through minutes on a desk and through every
+  // raise that followed a pickup).
+  float step = fabsf(wrist_lx - plx) + fabsf(wrist_ly - ply) + fabsf(wrist_lz - plz);
+  if (step > WRIST_MOVE_EPS) {
     wrist_moved_at = now;
-    // a sign of movement buys quick samples: the turn itself is brief
-    if (moved > 2.0f) {
+    if (step > WRIST_FAST_EPS) {
       wrist_fast_until = now + 2000;
     }
   }
-  else if (!wrist_rose) {
-    if (now - wrist_moved_at > 400) {
+
+  if (!wrist_rose) {
+    if (now - wrist_moved_at > WRIST_REST_MS) {
       // settled: this pose becomes the "before" the next turn is measured from
       wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
     }
-    if (now - wrist_moved_at > 800) {
-      wrist_armed = true;      // a long still pose: a turn out of it can be a look
+    if (now - wrist_moved_at > WRIST_ARM_MS) {
+      wrist_armed = true;      // a moment of stillness: a turn out of it can be a look
     }
   }
 
-  // A look is a large, deliberate turn of the watch that ends held in front of
-  // the face. The pose says it better than the direction of the turn: reading
-  // the watch has the screen facing the eyes, so gravity stays in the screen
-  // plane (|z| small), while lying on a desk or in a pocket is the screen
-  // facing up or down (|z| large) -- which is where the old rule fired, so the
-  // watch lit up when it was set down and never when it was read (2026-10-09).
   if (!wrist_rose && wrist_armed) {
     float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
-    if (angle > 50.0f) {
+    if (angle > WRIST_TURN_DEG) {
       wrist_rose = true;
       wrist_still_since = now;
-      wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
       if (tiltDbg) {
         Serial.printf("[tilt] turn %.0f deg (z=%.1f)\n", angle, wrist_lz);
       }
@@ -4091,17 +4024,20 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
   }
 
   if (wrist_rose) {
-    float moved_now = fabsf(wrist_lx - wrist_px) + fabsf(wrist_ly - wrist_py) + fabsf(wrist_lz - wrist_pz);
-    if (moved_now > 1.2f) {
-      wrist_px = wrist_lx; wrist_py = wrist_ly; wrist_pz = wrist_lz;
+    if (step > WRIST_SETTLE_EPS) {
       wrist_still_since = now;
     }
-    if (now - wrist_still_since >= 250) {
+    if (now - wrist_still_since >= 200) {
       float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
       wrist_rose = false;
-      if (angle > 45.0f && fabsf(wrist_lz) < 6.5f) {
-        // held up in front of the face. The arm coming back down is not another
-        // look, so the next one has to wait for the next long still pose.
+      // The z window is what separates a look from the watch set down or the
+      // arm dropping back to the side: the worn look settled at 7.4 and the
+      // in-hand look at 2-4.6 in the captures, while every desk pose measured
+      // z >= 9.2 and a hanging arm z ~-1 (which the old fabs(z) < 8 let
+      // through, so lowering the arm after a look lit the screen again).
+      if (wrist_lz > WRIST_LOOK_ZLOW && wrist_lz < WRIST_LOOK_ZHIGH) {
+        // held where it can be read. The arm coming back down is not another
+        // look, so the next one waits for the next moment of stillness.
         wrist_armed = false;
         wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
         if (tiltDbg) {
@@ -4117,29 +4053,6 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
   return false;
 }
 
-// Runs the check only when it is worth the samples: movement storms (walking,
-// riding in a car) space the evaluations out instead of queueing them.
-static bool wristRaiseGate() {
-  if (!tiltWake) {
-    return false;
-  }
-  if (millis() < tilt_next_eval) {
-    return false;
-  }
-  if (wristRaiseCheck()) {
-    tilt_storm = 0;
-    tilt_next_eval = millis() + 3000;     // the lower-arm motion that follows
-    return true;
-  }
-  if (tilt_storm < 6) {
-    tilt_storm++;
-  }
-  tilt_next_eval = millis() + (tilt_storm >= 4 ? 8000 : 1200);
-  if (tiltDbg && tilt_storm == 4) {
-    Serial.println("[tilt] rejecting a lot: spacing the checks out");
-  }
-  return false;
-}
 
 // Raw x/y/z at ~50 Hz over USB: what the pose thresholds are tuned against.
 static void tilt_dbg_stream() {
@@ -4211,59 +4124,81 @@ static void tilt_serial_command(String line) {
     Serial.println("[tilt] wrist wake off");
   }
   else if (line == "tiltsim") {
-    // feed the state machine a raise without moving the watch: the arm-down
-    // pose, the screen turning up over ~half a second, then holding still;
-    // the real sensor samples are ignored while this runs. If it says look
-    // while dozing, the doze should end and the screen sit for ten seconds.
+    // feed the machine raises without moving the watch, using the poses the
+    // 2026-10-09 captures actually held; the real sensor samples are ignored
+    // while this runs. If a raise is said while dozing, the doze should end
+    // and the screen sit for a short look.
     wrist_sim = true;
+    // phase 1: the worn raise -- arm hanging at the side, then a fast turn up
+    // to the face (the real dwell settled at z 7.4). Must detect.
     wristPollReset();
-    // the desk pose, long enough to settle and arm, then the turn up to the
-    // face: gravity leaves z for y, the pose the 2026-10-09 samples showed
-    for (int i = 0; i < 40; i++) { wristPollStep(-1.0f, 0.0f, 9.8f, millis()); delay(30); }
-    for (int i = 0; i <= 12; i++) {
-      float t = i / 12.0f;
-      wristPollStep(-1.0f, 9.2f * t, 9.8f * (1.0f - t), millis());
+    for (int i = 0; i < 40; i++) { wristPollStep(-0.6f, 9.6f, -1.1f, millis()); delay(30); }
+    for (int i = 0; i <= 8; i++) {
+      float t = i / 8.0f;
+      wristPollStep(-0.6f - 5.6f * t, 9.6f - 8.0f * t, -1.1f + 8.5f * t, millis());
       delay(30);
     }
     bool look = false;
     for (int i = 0; i < 20; i++) {
-      if (wristPollStep(-1.0f, 9.2f, 0.0f, millis())) { look = true; }
+      if (wristPollStep(-6.2f, 1.6f, 7.4f, millis())) { look = true; }
       delay(30);
     }
-    wrist_sim = false;
-    Serial.printf("[tiltsim] look=%s", look ? "detected" : "no");
-    // and back down to the desk: not a look, and this is exactly what used to
-    // be the only thing that lit the screen
-    bool set_down = false;
-    wrist_sim = true;
-    for (int i = 0; i <= 12; i++) {
-      float t = i / 12.0f;
-      wristPollStep(-1.0f, 9.2f * (1.0f - t), 9.8f * t, millis());
+    // phase 2: the pickup -- sitting on the desk, then the turn up to an
+    // in-hand look (z 3.4). Must detect.
+    wristPollReset();
+    for (int i = 0; i < 40; i++) { wristPollStep(-1.0f, 0.2f, 9.8f, millis()); delay(30); }
+    for (int i = 0; i <= 8; i++) {
+      float t = i / 8.0f;
+      wristPollStep(-1.0f + 1.9f * t, 0.2f + 9.0f * t, 9.8f - 6.4f * t, millis());
       delay(30);
     }
+    bool pickup = false;
     for (int i = 0; i < 20; i++) {
-      if (wristPollStep(-1.0f, 0.0f, 9.8f, millis())) { set_down = true; }
+      if (wristPollStep(0.9f, 9.2f, 3.4f, millis())) { pickup = true; }
+      delay(30);
+    }
+    // phase 3: the set-down -- the in-hand look turning back to the desk. Must
+    // stay quiet; this is what used to light the screen.
+    wristPollReset();
+    for (int i = 0; i < 40; i++) { wristPollStep(0.9f, 9.2f, 3.4f, millis()); delay(30); }
+    for (int i = 0; i <= 8; i++) {
+      float t = i / 8.0f;
+      wristPollStep(0.9f - 0.9f * t, 9.2f - 9.5f * t, 3.4f + 6.5f * t, millis());
+      delay(30);
+    }
+    bool set_down = false;
+    for (int i = 0; i < 20; i++) {
+      if (wristPollStep(0.0f, -0.3f, 9.9f, millis())) { set_down = true; }
       delay(30);
     }
     wrist_sim = false;
-    Serial.printf(" set-down=%s (lz=%.1f sz=%.1f)\n",
-                  set_down ? "FIRED" : "quiet", wrist_lz, wrist_sz);
-    if (look && dozing) {
+    Serial.printf("[tiltsim] worn raise=%s pickup=%s set-down=%s\n",
+                  look ? "detected" : "MISSED", pickup ? "detected" : "MISSED",
+                  set_down ? "FIRED" : "quiet");
+    if ((look || pickup) && dozing) {
       Serial.println("[tilt] wrist raise: lighting the screen (sim)");
       tilt_wake_short = true;
       pmuIrq = true;
     }
   }
   else if (line == "tilt now") {
+    // a short blocking capture on the same machine the doze loop feeds: move
+    // the arm during it and the answer is whatever the machine decides
     bool was = tiltDbg;
     tiltDbg = true;
-    Serial.println(wristRaiseCheck() ? "[tilt] now: raise detected" : "[tilt] now: no raise");
+    uint32_t until = millis() + 3000;
+    bool got = false;
+    while ((int32_t)(until - millis()) > 0) {
+      if (wristPoll()) { got = true; break; }
+      delay(20);
+    }
+    Serial.println(got ? "[tilt] now: raise detected" : "[tilt] now: no raise");
     tiltDbg = was;
   }
   else if (line == "tilt status") {
-    int32_t next = (tilt_next_eval > millis()) ? (int32_t)(tilt_next_eval - millis()) : 0;
-    Serial.printf("[tilt] wake=%d dbg=%d next=%d storm=%u\n",
-                  (int)tiltWake, (int)tiltDbg, (int)next, (unsigned)tilt_storm);
+    Serial.printf("[tilt] wake=%d dbg=%d armed=%d rose=%d have=%d lz=%.1f sz=%.1f\n",
+                  (int)tiltWake, (int)tiltDbg, (int)wrist_armed, (int)wrist_rose,
+                  (int)wrist_have, wrist_lz, wrist_sz);
   }
   else if (line == "crumb") {
     crumbs_dump();
@@ -4387,6 +4322,7 @@ void lowPowerEnergyHandler()
   // that ends a real light sleep is still latched in the PMU, and without this it
   // would read as a click while awake and put the watch straight back to sleep
   dozing = true;
+  wristPollReset();    // both sleep paths start their pose from scratch
 
   if (lightSleep && !watch.isUsbIn()) {
     
@@ -4411,61 +4347,83 @@ void lowPowerEnergyHandler()
     }
  
     int default_wakeup = (60 * 60 * 3);
+    int64_t notify_us = -1;      // no notification scheduled: sleep until a pin moves
     if (wakeup_time != 0) {
-      Serial.print("Waking in ");
       if (wakeup_time > default_wakeup) {
         wakeup_time = default_wakeup;
       }
-      Serial.print(wakeup_time);
-      Serial.println(" seconds");
-      esp_sleep_enable_timer_wakeup(wakeup_time * 1000000ULL);
-    }
-    else {
-      wakeup_time = default_wakeup;
+      Serial.printf("Waking in %ld seconds\n", (long)wakeup_time);
+      notify_us = (int64_t)wakeup_time * 1000000LL;
     }
     bool temp_bt_enabled = bt_enabled;
     stop_ble_transfer();
 
-    // Naps here are interruptible by the sensor line: something moved. Only a
-    // wrist raise that passes the gesture check earns the screen; anything else
-    // clears the latched line and sinks back down, so fidgeting cannot light it.
+    // The naps are interruptible by the crown (EXT1) and the sensor line; with
+    // the wrist raise on there is also a short timer, because nothing announces
+    // a raise but the pose, and the pose needs samples (2026-10-09). Only a
+    // raise that passes the state machine earns the screen; a step or a tap
+    // clears the latched line and sinks back down.
     bool wrist_wake = false;
     uint32_t sleep_began = millis();
     esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED;
     while (true) {
-      esp_light_sleep_start();
-      wakeup_reason = esp_sleep_get_wakeup_cause();
-      if (wakeup_reason != ESP_SLEEP_WAKEUP_GPIO) {
-        break;                    // the crown, the timer, or a refused sleep
+      int64_t remaining_us = notify_us;
+      if (notify_us > 0) {
+        remaining_us = notify_us - (int64_t)(millis() - sleep_began) * 1000LL;
+        if (remaining_us <= 0) {
+          wakeup_reason = ESP_SLEEP_WAKEUP_TIMER;
+          break;                  // the notification is due
+        }
       }
-      // reading the interrupt status clears the latched line; without that the
-      // wake would be armed against a pin that is still held up
-      watch.loopSensor();
-      if (wristRaiseGate()) {
-        wrist_wake = true;
-        break;
+      int64_t nap_us = remaining_us;
+      if (tiltWake) {
+        int64_t poll_us = (millis() < wrist_fast_until) ? 60000LL : 200000LL;
+        if (nap_us < 0 || poll_us < nap_us) {
+          nap_us = poll_us;
+        }
       }
-      // not a raise: the arm may still be moving and holding the line up, so
-      // give it a moment to fall before napping again
-      uint32_t settling = millis();
-      while (digitalRead(SENSOR_INT) == HIGH && millis() - settling < 500) {
-        watch.loopSensor();
-        delay(20);
+      if (nap_us > 0) {
+        esp_sleep_enable_timer_wakeup((uint64_t)nap_us);
       }
-      // the notification timer keeps its schedule across the extra naps
-      int64_t remaining_us = (int64_t)wakeup_time * 1000000LL
-                             - (int64_t)(millis() - sleep_began) * 1000LL;
-      if (remaining_us < 1000000LL) {
-        wakeup_reason = ESP_SLEEP_WAKEUP_TIMER;
-        break;
-      }
-      esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
       rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
       esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
       if (tiltWake) {
         gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
         esp_sleep_enable_gpio_wakeup();
       }
+      esp_light_sleep_start();
+      wakeup_reason = esp_sleep_get_wakeup_cause();
+      if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+        break;                    // the crown
+      }
+      if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
+        // reading the interrupt status clears the latched line; without that the
+        // wake would be armed against a pin that is still held up
+        watch.loopSensor();
+        if (wristPoll()) {
+          wrist_wake = true;
+          break;
+        }
+        // not a raise: the arm may still be moving and holding the line up, so
+        // give it a moment to fall before napping again
+        uint32_t settling = millis();
+        while (digitalRead(SENSOR_INT) == HIGH && millis() - settling < 500) {
+          watch.loopSensor();
+          delay(20);
+        }
+        continue;
+      }
+      if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && tiltWake) {
+        // a nap, not the notification (that is checked at the top): sample the
+        // wrist and sink back down
+        watch.loopSensor();
+        if (wristPoll()) {
+          wrist_wake = true;
+          break;
+        }
+        continue;
+      }
+      break;                      // the notification timer, or a refused sleep
     }
     Serial.println("right after sleep");
     // the screen comes back before the radio: the BLE stack takes seconds to
@@ -4560,13 +4518,10 @@ void settingSensor()
     }
   });
   // Wake the chip at the start of the movement, not only when the tilt feature
-  // finally agrees: its verdict lands after the arm is already up, too late for
-  // the gesture check to see z climb. Any-motion rides the same interrupt pin.
-  // Any-motion mapped to INT1 crashed the watch seconds after boot (reset
-  // reason 4, twice in a row, on 2026-10-09), so the wake stays with the
-  // tilt/tap/step events the library already maps. If the raise has to be
-  // caught earlier, the detector has to accept a trigger that arrives after
-  // the arm is up (see wristRaiseCheck's rise rule).
+  // finally agrees: its verdict lands after the arm is already up. Any-motion
+  // rides the same interrupt pin. Any-motion mapped to INT1 crashed the watch
+  // seconds after boot (reset reason 4, twice in a row, on 2026-10-09), so the
+  // wake stays with the tilt/tap/step events the library already maps.
   // if (watch.sensor) {
   //   watch.sensor->enableAnyMotionDetection(SensorBMA4XX::MotionAxesConfig(1, 1, 1), true, true);
   //   Serial.println("[tilt] motion wake armed");
