@@ -312,12 +312,19 @@ function windowMaker(response) {
 	return window_id;
 }
 
+// Where a window's top may sit: under the reserved line, and under the
+// clothesline too when the desk wears one - on every device, not only phones.
+function windowTopLimit() {
+	var limit = reservedSpots['header'] || 0;
+	if (clothesLinePos['exists'] == 1) {
+		limit = limit + clothesLineHeight + clothesLinePos['bordersize'];
+	}
+	return limit;
+}
+
 function windowReorganizer(window_id) {
 	var windows = [];
-	var startingV = reservedSpots['header'];
-	if (clothesLinePos['exists'] == 1 && windowPhoneChecker()) {
-		startingV = (startingV + clothesLineHeight + clothesLinePos['bordersize']);
-	}
+	var startingV = windowTopLimit();
 	var vSpace = 40;
 	var hSpace = 50;
 	if (!window_id) { 
@@ -934,7 +941,7 @@ function windowMaximizer(timestamp, app) {
 			'height': '80%', 
 			'width': '98%',
 			'left': '0px',
-			'top': reservedSpots['header']
+			'top': windowTopLimit()
 		});
 	}
 	else {
@@ -943,7 +950,7 @@ function windowMaximizer(timestamp, app) {
 			'height': '90%', 
 			'width': '100%',
 			'left': '0px',
-			'top': reservedSpots['header']
+			'top': windowTopLimit()
 		});
 	}
 	$('#window_contents_' + timestamp ).css({ 'width': '100%' });
@@ -1031,11 +1038,8 @@ function windowDraggable(win) {
 				if (halfski == 'ya') {
 
 				}
-				else if (d.y < reservedSpots['header'] + 10) {
-					var ok = reservedSpots['header'];
-					if (clothesLinePos['exists'] == 1 && windowPhoneChecker()) {
-						ok = (ok + clothesLineHeight + clothesLinePos['bordersize']);
-					}
+				else if (d.y < windowTopLimit() + 10) {
+					var ok = windowTopLimit();
 					var point = document.elementFromPoint(d.x, d.y) || 'null';
 					var pd = $('#' + p.target.id).closest('.wind');
 					
