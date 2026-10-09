@@ -326,7 +326,7 @@ html, body {
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;
-	padding: 0px 10px;
+	padding: 3px 10px;
 	margin: 0px 4px;
 	/* a plate sunk into the bar: a muted edge, a lighter face and a shadow down
 	   its inside */
@@ -517,7 +517,7 @@ canvas { overflow: scroll; z-index: 99; }
 	#header { font-size: 16px; padding-top:6px; }
 	/* the phone's clock: the date over the time, small enough to leave the bar
 	   to the windows */
-	#taskbar_clock { font-size: calc(var(--taskbar_h, 44px) * 0.3); line-height: 1.12; text-align: center; padding: 0px 4px; }
+	#taskbar_clock { font-size: calc(var(--taskbar_h, 44px) * 0.3); line-height: 1.12; text-align: center; padding: 2px 6px; }
 	/* the phone's window buttons: the icon with its shorthand under it, since
 	   the bar has no room for whole names; everything follows the bar's height */
 	#taskbar .window_toggle { flex-direction: column; gap: 1px; padding: 0px 8px; height: calc(var(--taskbar_h, 44px) - 4px); justify-content: center; }
