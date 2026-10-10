@@ -116,7 +116,13 @@ function jawnosTaskbarPinPress(pin) {
 		else { topLevelNow(win); }
 		return;
 	}
-	if (app) { appointmentGrabber(app, timestamp); return; }
+	if (app) {
+		// open the app the way its own opener does (a centre view is the
+		// fallback for a bare appointment, which is not what a pinned app is)
+		if (typeof appWindowOpener == 'function') { appWindowOpener(app, timestamp); }
+		else { appointmentGrabber(app, timestamp); }
+		return;
+	}
 	var sel = pin.attr('sel');
 	if (sel) { jawnosTaskbarPress(sel); }
 }
