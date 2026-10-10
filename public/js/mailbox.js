@@ -821,8 +821,15 @@ function mailWebSocketStart() {
 		if (data.type == 'message') {
 			if (data.envelope) {
 				// the pen's reply arrives after its placeholder, so a uuid already
-				// on screen is replaced instead of doubled
-				var existing = $('.mailbox_message[uuid="' + data.uuid + '"]');
+				// on screen is replaced instead of doubled. A delivery that carries
+				// no top-level uuid (a depublicizer pass, say) still names the
+				// message inside the envelope, so read the uuid from there rather
+				// than appending a twin.
+				var uuid = data.uuid;
+				if (!uuid) {
+					uuid = $('<div>').html(data.envelope).find('.mailbox_message').attr('uuid');
+				}
+				var existing = uuid ? $('.mailbox_message[uuid="' + uuid + '"]') : $();
 				if (existing.length > 0) {
 					existing.replaceWith(data.envelope);
 				}
