@@ -780,20 +780,26 @@ function jawnosApplyInk() {
 	var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 	var hsl = jawnosRgbToHsl(r, g, b);
 	var tint = hsl[1] < 0.18 ? hsl[1] : 0.18;
-	var panel, panel2, ink, ink_muted;
+	// keep in step with subroutines.pl::theme_panel_css: --line is the chrome
+	// border (a shade off --panel), --ink the text (softened from near-white so
+	// a dark theme does not glare), and --ink-muted the fainter text/state edge.
+	var panel, panel2, ink, ink_muted, line;
 	if (lum < 0.5) {
 		panel = jawnosHslToHex(hsl[0], tint, 0.16);
 		panel2 = jawnosHslToHex(hsl[0], tint, 0.23);
-		ink = '#f2f2f2'; ink_muted = '#cccccc';
+		line = jawnosHslToHex(hsl[0], tint, 0.32);
+		ink = '#d4d4d4'; ink_muted = '#8f8f8f';
 	}
 	else {
 		panel = jawnosHslToHex(hsl[0], tint, 0.88);
 		panel2 = jawnosHslToHex(hsl[0], tint, 0.80);
+		line = jawnosHslToHex(hsl[0], tint, 0.66);
 		ink = '#000000'; ink_muted = '#333333';
 	}
 	var style = document.body.style;
 	style.setProperty('--panel', panel);
 	style.setProperty('--panel-2', panel2);
+	style.setProperty('--line', line);
 	style.setProperty('--ink', ink);
 	style.setProperty('--ink-muted', ink_muted);
 	document.body.classList.toggle('dark_theme', lum < 0.5);

@@ -4941,9 +4941,16 @@ sub _rgb_to_hsl {
 
 sub _hsl_to_hex {
 	my ($h, $s, $l) = @_;
-	$h = (($h % 360) + 360) % 360;
+	# Perl's % truncates its operands to integers: (($h/60) % 2) would throw the
+	# hue's fraction away, collapse the interpolation and turn a blue into a cyan
+	# (the JS mirror jawnosHslToHex uses a float %, so server and client panels
+	# disagreed). Do the fractional wrap by hand.
+	$h -= 360 * int($h / 360);
+	$h += 360 if $h < 0;
 	my $c = (1 - abs(2 * $l - 1)) * $s;
-	my $x = $c * (1 - abs((($h / 60) % 2) - 1));
+	my $seg = $h / 60;
+	$seg -= 2 * int($seg / 2);
+	my $x = $c * (1 - abs($seg - 1));
 	my $m = $l - $c / 2;
 	my ($r, $g, $b);
 	if ($h < 60) { ($r, $g, $b) = ($c, $x, 0); }
@@ -4992,19 +4999,26 @@ sub theme_panel_css {
 		}
 	}
 	unless (defined $r) {
-		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;';
+		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;--line:#c9c9c9;';
 	}
 	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
 	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
 	my $tint = $s < 0.18 ? $s : 0.18;
+	# --line is the chrome border colour, kept a shade off --panel so frames and
+	# seams read as an edge rather than a bright white outline. --ink is the text;
+	# it was #f2f2f2 (near white) which glares on a dark panel, and it used to be
+	# the border colour too (borders with no colour inherit currentColor), which
+	# is why every dark window wore a white outline.
 	if ($lum < 0.5) {
 		my $panel = &_hsl_to_hex($h, $tint, 0.16);
 		my $panel2 = &_hsl_to_hex($h, $tint, 0.23);
-		return "--ink:#f2f2f2;--ink-muted:#cccccc;--panel:$panel;--panel-2:$panel2;";
+		my $line = &_hsl_to_hex($h, $tint, 0.32);
+		return "--ink:#d4d4d4;--ink-muted:#8f8f8f;--panel:$panel;--panel-2:$panel2;--line:$line;";
 	}
 	my $panel = &_hsl_to_hex($h, $tint, 0.88);
 	my $panel2 = &_hsl_to_hex($h, $tint, 0.80);
-	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;";
+	my $line = &_hsl_to_hex($h, $tint, 0.66);
+	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;--line:$line;";
 }
 
 # The colours the current theme is built from: the distinct *_background_colour

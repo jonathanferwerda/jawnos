@@ -34,20 +34,20 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --line: #c9c9c9; }
 body { background-color: var(--panel); color: var(--ink); }
-body.dark_theme { --ink: #f2f2f2; --ink-muted: #cccccc; --panel: #1e1e1e; --panel-2: #262626; }
+body.dark_theme { --ink: #d4d4d4; --ink-muted: #8f8f8f; --panel: #1e1e1e; --panel-2: #262626; --line: #525252; }
 body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
 body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .huge_thumb,
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
 	background-color: var(--panel-2);
 }
-select { text-align:center; height: 36px; font-size: 20px; border-width 1px; border: solid; border-radius: 5px; }
-button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }
+select { text-align:center; height: 36px; font-size: 20px; border-width 1px; border: solid; border-color: var(--line); border-radius: 5px; }
+button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }
 button.active { background-color: green; }
-input { text-align:left; height: 28px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }	
-textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; border: solid; border-radius: 5px; }
-.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-radius: 5px; width: 100%; }
+input { text-align:left; height: 28px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }	
+textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }
+.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);

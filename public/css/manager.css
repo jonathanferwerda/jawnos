@@ -72,7 +72,7 @@ html, body {
    rounded corners, and a lift under the pointer */
 .pseudonym.bar {
 	border: solid 2px;
-	border-color: var(--ink);
+	border-color: var(--line);
 	border-radius: 10px;
 	transition: border-color .15s ease, transform .12s ease;
 }
@@ -130,7 +130,7 @@ html, body {
 	pointer-events: none;
 	transition: transform .22s ease, opacity .22s ease;
 	background-color: var(--panel);
-	border: solid; border-width: 3px; border-radius: 10px;
+	border: solid; border-width: 3px; border-color: var(--line); border-radius: 10px;
 	padding: 8px;
 	z-index: 40000;
 }
@@ -269,7 +269,7 @@ html, body {
 }
 .detail_area { overflow: scroll;}
 #appointment_wrapper { bottom: 0px; position: fixed; overflow:scroll; width: 100%; right: 0px;} 
-.appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-radius: 5px;}
+.appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px;}
 .appointment_header { vertical-align:top; text-align: left; float: left; }
 /* the type icons are pictures of their own and the strip they sit in is not a
    box, so neither wears a frame; the time and the status text make their
@@ -307,7 +307,7 @@ html, body {
 	padding: 2px 0px 2px 0px;
 	font-size: calc(var(--taskbar_h, 44px) * 0.45);
 	background-color: var(--panel-2);
-	border: solid; border-width: 0px;
+	border: solid; border-width: 0px; border-color: var(--line);
 	overflow: hidden;
 }
 #taskbar[position=top] { top: 0px; border-bottom-width: 3px; }
@@ -317,7 +317,7 @@ html, body {
 /* One button per open window: its icon and its name in a rounded tile that
    lifts under the pointer. The shorthand stands where the name would when the
    bar is too narrow to spell it out (see the phone's own rules). */
-#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-radius: 10px; transition: background-color .15s ease, transform .12s ease; }
+#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-color: var(--line); border-radius: 10px; transition: background-color .15s ease, transform .12s ease; }
 #taskbar .window_toggle:hover { background-color: var(--panel-2); }
 #taskbar .window_toggle:active { transform: translateY(1px); }
 #taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
@@ -437,6 +437,7 @@ html, body {
 	z-index: 60000;
 	background-color: var(--panel-2);
 	border: solid 2px;
+	border-color: var(--line);
 	border-radius: 6px;
 	padding: 4px;
 	font-size: 18px;
@@ -498,6 +499,7 @@ html, body {
 	text-align:center;
 	border: solid;
 	border-width: 3px;
+	border-color: var(--line);
 	padding-top:-25px;
 	z-index:6000;
 }
@@ -600,7 +602,7 @@ canvas { overflow: scroll; z-index: 99; }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
-.window_icon { vertical-align:top; border:solid; border-radius:2px; border-width:2px; font-size:26px; }
+.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:2px; border-width:2px; font-size:26px; }
 /* Every window wears the same frame. It is an inset ring painted over the
    window (pointer-events: none, so nothing under it stops being clickable)
    rather than a real border on .wind: a border would be counted in the box and
@@ -614,6 +616,7 @@ canvas { overflow: scroll; z-index: 99; }
 	position: absolute;
 	top: 0; right: 0; bottom: 0; left: 0;
 	border: solid;
+	border-color: var(--line);
 	border-radius: inherit;
 	pointer-events: none;
 	z-index: 2147483000;
@@ -661,11 +664,12 @@ canvas { overflow: scroll; z-index: 99; }
 }
 .ticket_input { 
 	font-size: 23px; 
-	text-align:center; 
+	text-align:center;
 	width: 30px; 
 	height: 30px; 
 	border-width: 2px; 
 	border: solid; 
+	border-color: var(--line);
 	border-radius: 3px;
 }
 @media screen and (max-width:600px) {
@@ -771,6 +775,7 @@ canvas { overflow: scroll; z-index: 99; }
 	z-index: 40001;
 	border: solid;
 	border-width: 4px;
+	border-color: var(--line);
 	border-radius: 5px;
 }
 
@@ -979,6 +984,7 @@ canvas { overflow: scroll; z-index: 99; }
 	width: 100%;
 	border: solid;
 	border-width: 2px;
+	border-color: var(--line);
 	border-radius: 3px;
 	display:inline-flex;
 	position:relative;
@@ -1047,6 +1053,7 @@ canvas { overflow: scroll; z-index: 99; }
 
 .bubble {
 	border: solid;
+	border-color: var(--line);
 	border-radius: 8px;
 	border-width: 3px;
 	font-size: 26px;
