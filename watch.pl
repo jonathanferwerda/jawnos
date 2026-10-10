@@ -54,14 +54,11 @@ sub embeddedAuthorizer($c) {
 
 get '/watch/time' => sub($c) {
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
-		my $edt = $c->param('edt');
 		my $server_time = time();
 		my @t = localtime(time);
-		my $is_dst = $t[8];
+		# see now_me() in Manager.pl: $offset already carries DST, and the old
+		# winter branch added a millisecond-hour (1000*3600) to a seconds epoch
 		my $offset = timegm(@t) - timelocal(@t);
-		if ($is_dst == 0 && $edt eq 'watch') { 
-			$server_time = $server_time + (1000 * 3600);
-		}
 		my $returner = encode_json { timestamp => $server_time, offset => $offset };
 		$c->render(text => $returner);
 	}

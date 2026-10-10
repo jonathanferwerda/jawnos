@@ -18864,11 +18864,11 @@ sub now_me($data) {
 	$op_d->{'__specs'}->{'edt'} = $edt;
 	$op_d->{'__specs'}->{'name'} = $name;
 	my @t = localtime(time);
-	my $is_dst = $t[8];
+	# $offset already carries DST: timelocal() honours the zone's DST rules, so
+	# it is -4 h in summer and -5 h in winter here. The old winter branch added
+	# 1000*3600 (the milliseconds in an hour) to a seconds epoch -- about 42
+	# days, not an hour -- so it never did what it looked like; drop it.
 	my $offset = timegm(@t) - timelocal(@t);
-	if ($is_dst == 0 && $edt eq 'watch') {
-		$server_time = $server_time + (1000 * 3600);
-	}
 	$op_d->{'__specs'}->{'time'} = {
 		sec => $t[0],
 		min => $t[1],

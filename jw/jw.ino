@@ -45,6 +45,7 @@ void saveFileToFolder(const char * folderPath, const char * fileName);
 String getContentType(String filename);
 String https_request_raw(String url, String method, String payloadData);
 void apply_president_payload();
+static void clock_apply_to_face();
 
 // The current LilyGoLib keeps its board object in a global reference called
 // `instance` (LilyGoWatch2022 for the T-Watch S3). The rest of this sketch was
@@ -1052,6 +1053,9 @@ void setup() {
     rtc.setTime(timestamp);
     offset = server.arg("offset").toInt();
     rtc.offset = offset;
+    // correct the face's hardware RTC now, not only when a room payload comes
+    // back (see clock_apply_to_face)
+    clock_apply_to_face();
     Serial.println("Homebase: " + homebase);
     Serial.println("homebase ip:" + homebaseIP);
     
@@ -1350,6 +1354,7 @@ void loop() {
     // the bridge pushed new params: land on the buttons room; remote_room()
     // asks for the buttons over BLE (see below)
     ble_now_me_ready = false;
+    clock_apply_to_face();   // the pushed params set rtc/offset; sync the chip
     room = 1;
     remote_room();
   }
@@ -2444,6 +2449,28 @@ static void president_fetch_task(void *pvParameters) {
   vTaskDelete(NULL);
 }
 
+// The watch face reads the hardware RTC chip (watch.rtc); the ESP32Time clock
+// (the global `rtc`) is a separate thing. A now_me carries a fresh time and the
+// homebase's UTC offset, so write the chip straight from them and the face is
+// right the moment Now Me is pressed -- instead of only when a room payload
+// happens to come back and apply_president_payload() sets it. That mattered:
+// with the BLE bridge up remote_room() asks the phone for the room over BLE and
+// the direct fetch (the old path that refreshed the chip) never runs, so the
+// face kept an old time while the server's clock was fine. The offset already
+// carries DST (it is timegm - timelocal on the homebase: -4 h in summer, -5 h
+// in winter here), and the ESP runs in UTC, so system clock + offset is the
+// local wall clock.
+static void clock_apply_to_face() {
+  struct tm local_tm = rtc.getTimeStruct();   // system clock + homebase offset
+  if (local_tm.tm_year + 1900 < 2024) {
+    return;   // the clock was never set; do not write junk into the chip
+  }
+  watch.rtc.setDateTime(RTC_DateTime(local_tm));
+  Serial.printf("[rtc] face <- %04d-%02d-%02d %02d:%02d:%02d (offset %ld)\n",
+                local_tm.tm_year + 1900, local_tm.tm_mon + 1, local_tm.tm_mday,
+                local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, (long)offset);
+}
+
 // Runs on core 1 with whatever the background fetch brought back: remember the
 // buttons, sync the clock to the homebase's time and redraw the room if we are
 // still standing in it.
@@ -2508,12 +2535,11 @@ void apply_president_payload() {
   // behind the clock, or a clock that was never set, is what earns a set.
   if (had_tm.tm_year + 1900 < 2024 || wanted + 60 >= had) {
     watch.rtc.setDateTime(RTC_DateTime(set_time));
-    // Reading time synchronization from RTC to system time
-    struct tm rtc_time = {};
-    watch.rtc.getDateTime(&rtc_time);
-    time_t sync_time = mktime(&rtc_time);
-    struct timeval now_tv = { .tv_sec = sync_time, .tv_usec = 0 };
-    settimeofday(&now_tv, NULL);
+    // Put the ESP's own clock in step with the chip too. wanted is the payload
+    // read through the ESP's UTC frame, so back the homebase offset out to
+    // recover the true epoch; the old code wrote wanted straight in and left
+    // this clock four hours off after every room draw.
+    rtc.setTime((unsigned long)(wanted - offset));
   }
   else {
     Serial.printf("[rtc] stale payload time ignored (%ld s behind)\n", (long)(had - wanted));
