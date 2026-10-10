@@ -3918,16 +3918,25 @@ static bool accel_sample(float &x, float &y, float &z) {
 //     invisible);
 //   * a pose held still for a moment becomes the "before"; a turn of 50 deg or
 //     more out of it that then settles for 200 ms with the screen off the desk
-//     and off the hip (z between 0.5 and 8 -- worn look ~7.4, in-hand look
-//     2-4.6, desk 9.2+, arm hanging ~-1) is a look.
+//     (z between 0.5 and 9 -- worn look ~7.4, in-hand look 2-4.6, an elbow bent
+//     up to the face ~8-9, desk 9.2+, arm hanging ~-1) is a look;
+//   * after a look the arm must swing 30 deg off the read pose before another
+//     turn can fire, or the hand dropping back to the side counts as a look and
+//     lit the screen on the way down (2026-10-10).
 #define WRIST_MOVE_EPS   0.4f   // low-passed change per sample that is movement
 #define WRIST_FAST_EPS   1.5f   // a real turn: sample at 40 ms again
 #define WRIST_SETTLE_EPS 1.6f   // a held pose may still wobble this much
 #define WRIST_REST_MS    250    // still this long: the pose becomes "before"
 #define WRIST_ARM_MS     500    // still this long: a turn out of it can be a look
 #define WRIST_TURN_DEG   50.0f
-#define WRIST_LOOK_ZLOW  0.5f   // screen off the desk (z 9.2+) and the hip (z -1)
-#define WRIST_LOOK_ZHIGH 8.0f
+#define WRIST_LOOK_ZLOW  0.5f   // screen off the desk and the hip
+// The upper bound has to admit the way most people read a watch: bringing it up
+// in front of the face by bending the elbow leaves the screen nearly up, so z
+// sits just under a flat desk (measured desk poses read z 9.2-9.9, a raised-
+// elbow read around 8-9). 8.0 rejected those reads, which is why the raise in
+// "hands in a pocket, lift to look" did nothing (2026-10-10).
+#define WRIST_LOOK_ZHIGH 9.0f
+#define WRIST_REARM_DEG  30.0f  // after a look, swing this far off it to re-arm
 static bool wrist_have = false;
 static bool wrist_rose = false;
 static float wrist_lx = 0, wrist_ly = 0, wrist_lz = 0;     // low-passed pose
@@ -3938,6 +3947,8 @@ static uint32_t wrist_last_sample = 0;
 static uint32_t wrist_fast_until = 0;      // a sign of movement buys quick samples
 static bool wrist_sim = false;             // tiltsim drives the machine by hand
 static bool wrist_armed = false;           // a moment of stillness arms the next turn
+static bool wrist_had_look = false;        // a look already fired this session
+static float wrist_gx = 0, wrist_gy = 0, wrist_gz = 0;     // the pose that look was read at
 
 // The angle between two gravity vectors, in degrees.
 static float wrist_angle(float ax, float ay, float az, float bx, float by, float bz) {
@@ -3951,6 +3962,7 @@ static void wristPollReset() {
   wrist_have = false;
   wrist_rose = false;
   wrist_armed = false;
+  wrist_had_look = false;
   wrist_last_sample = 0;
   wrist_fast_until = 0;
 }
@@ -4008,7 +4020,16 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
       wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
     }
     if (now - wrist_moved_at > WRIST_ARM_MS) {
-      wrist_armed = true;      // a moment of stillness: a turn out of it can be a look
+      // A moment of stillness arms the next turn -- but once a look has fired,
+      // the arm has to swing away from the pose that was read before it can arm
+      // again. Without that, holding the watch up after a look leaves the arm
+      // still (so it re-arms at the look pose), and the hand dropping back to
+      // the side is itself a 50-deg turn out of it that then settles in the
+      // look window: the screen lit on the way *down*. (2026-10-10)
+      if (!wrist_had_look ||
+          wrist_angle(wrist_gx, wrist_gy, wrist_gz, wrist_lx, wrist_ly, wrist_lz) > WRIST_REARM_DEG) {
+        wrist_armed = true;      // a moment of stillness: a turn out of it can be a look
+      }
     }
   }
 
@@ -4037,8 +4058,11 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
       // through, so lowering the arm after a look lit the screen again).
       if (wrist_lz > WRIST_LOOK_ZLOW && wrist_lz < WRIST_LOOK_ZHIGH) {
         // held where it can be read. The arm coming back down is not another
-        // look, so the next one waits for the next moment of stillness.
+        // look, so the next one waits until the arm has swung off this pose
+        // (see the arm gate above).
         wrist_armed = false;
+        wrist_had_look = true;
+        wrist_gx = wrist_lx; wrist_gy = wrist_ly; wrist_gz = wrist_lz;
         wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
         if (tiltDbg) {
           Serial.printf("[tilt] look: turn %.0f deg z=%.1f\n", angle, wrist_lz);
