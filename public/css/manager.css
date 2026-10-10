@@ -342,6 +342,14 @@ html, body {
 /* the start button is the bar's own height, a couple of pixels short: the
    border and the bar's air make the gap */
 #taskbar_icons img { box-sizing: border-box; width: calc(var(--taskbar_h, 44px) - 4px); height: calc(var(--taskbar_h, 44px) - 4px); max-width: none; object-fit: contain; }
+/* The start button always wears its own frame - on the bar or in the corner -
+   so it reads as a button rather than a loose picture. (The class raises the
+   specificity past the corner's transparent border.) */
+#start_menu_toggle.start {
+	border: solid 3px;
+	border-color: var(--ink-muted, rgba(0, 0, 0, 0.5));
+	border-radius: 9px;
+}
 /* the search, when the taskbar is its home: it rides on the right of the
    window list but takes a fifth of the bar at most, so the windows keep the
    room; the input and its toggle share that fifth on one line */
@@ -390,6 +398,13 @@ html, body {
    themselves still take the drag. */
 #taskbar.taskbar_edit { outline: dashed 2px var(--ink-muted, #888); outline-offset: -3px; }
 #taskbar.taskbar_edit > * { cursor: move; }
+/* the open-window slot wears a frame of its own, so it reads as the drop zone
+   it is rather than a bare stretch of the bar */
+#taskbar.taskbar_edit #taskbar_windows {
+	border: dashed 2px var(--ink-muted, rgba(0, 0, 0, 0.4));
+	border-radius: 10px;
+	background-color: rgba(0, 0, 0, 0.05);
+}
 #taskbar.taskbar_edit > * > * { pointer-events: none; }
 /* a picture dragged inside the bar must not raise the browser's own ghost image
    on top of the sortable's move - that was the artifact of dragging a pin */
