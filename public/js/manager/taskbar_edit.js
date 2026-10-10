@@ -494,8 +494,12 @@ function jawnosTaskbarContextBuild() {
 function jawnosWindowContextBuild(app) {
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
+	// a maximized window shows its Restore control, so the same slot offers
+	// Restore rather than Maximize (the view attribute is only kept off phones,
+	// so the button's own state is the reliable tell)
+	var maximized = $('.wind[app="' + app + '"]').find('.restore_button').is(':visible');
 	context.append('<div class="taskbar_context_selection" act="win_close" app="' + app + '">Close</div>');
-	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">Maximize</div>');
+	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">' + (maximized ? 'Restore' : 'Maximize') + '</div>');
 	context.append('<div class="taskbar_context_selection" act="win_min" app="' + app + '">Minimize</div>');
 	var moving = (typeof jawnos_move_app != 'undefined' && jawnos_move_app == app);
 	context.append('<div class="taskbar_context_selection" act="win_move" app="' + app + '">Move<span class="taskbar_context_check">' + selected(moving) + '</span></div>');
@@ -579,7 +583,12 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		var wapp = $(this).attr('app');
 		var wind = $('.wind[app="' + wapp + '"]');
 		if (act == 'win_close') { wind.find('.close_button').trigger('click'); }
-		else if (act == 'win_max') { wind.find('.maximize_button').trigger('click'); }
+		else if (act == 'win_max') {
+			// press whichever control the window is showing: a maximized one
+			// restores, an ordinary one maximizes
+			if (wind.find('.restore_button').is(':visible')) { wind.find('.restore_button').trigger('click'); }
+			else { wind.find('.maximize_button').trigger('click'); }
+		}
 		else { windowMinimizer(Date.now(), wapp); }
 		jawnosTaskbarContextClose();
 	}

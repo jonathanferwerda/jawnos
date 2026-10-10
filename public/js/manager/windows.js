@@ -92,7 +92,7 @@ function taskbarDisplayer(destination) {
 		// like something other than a window manager's.
 		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" style="text-align:center;"></span>');
 		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
-		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 3) + '</span>');
+		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 5) + '</span>');
 	});
 
 
