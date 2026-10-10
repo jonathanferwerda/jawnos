@@ -532,6 +532,54 @@ sub utility_stopper() {
 
 &manager_starter();
 
+# One schedule for every utility. The old design armed a Mojo::IOLoop->recurring
+# timer per utility and gated it on an in-memory "lasted_run": on a machine whose
+# servers restart every few minutes that either never fired (a long interval's
+# timer was re-armed before it ever elapsed) or fired at once (lasted_run reset
+# to undef on every boot). This runs each enabled utility when its own persisted
+# last_run says it is due, and throttles a failing one to its interval instead of
+# retrying it every tick. State lives in memory, so Ctrl+C or a restart-status
+# teardown (both kill this process) still stops every utility with it.
+sub utility_runner() {
+	return if $gb::utility_functions_watcher == 0;
+	my $now = &subs::rightNow();
+	foreach my $t ( keys %{$gb::timeouts} ) {
+		my $u = $gb::timeouts->{$t};
+		next unless $u->{'subroutine'} && $u->{'toggle'} eq 'on';
+		my $interval = $u->{'interval'} || 0;
+		next if $interval <= 0;
+		# last_run advances only on success, so a persisted attempt stamp also
+		# holds a failing utility to its interval instead of retrying every tick
+		my $since = $u->{'last_run'} || 0;
+		$since = $u->{'last_attempt'} if ($u->{'last_attempt'} || 0) > $since;
+		next if $since && ($now - $since < $interval * 1000);
+
+		$u->{'last_attempt'} = $now;
+		local $SIG{ALRM} = sub { die "TIMEOUT_EXCEEDED\n" };
+		my $success = 0;
+		eval {
+			alarm($u->{'timeout'} || 90);
+			$u->{'subroutine'}->();
+			$success = 1;
+			alarm(0);
+		};
+		alarm(0);
+		if ($@) {
+			if ($@ eq "TIMEOUT_EXCEEDED\n") {
+				$log->error("Task '$t' took too long and was safely stopped.");
+			} else {
+				$log->error("Task '$t' threw an error but we caught it: $@");
+			}
+		}
+		if ($u->{'beacon'} eq 'on') {
+			&subs::beacon_appt_writer();
+		}
+		if ($success == 1) {
+			$u->{'last_run'} = &subs::rightNow();
+		}
+	}
+}
+
 sub utility_functions() {
 
 	$gb::utility_functions_watcher = 1;
@@ -596,40 +644,12 @@ sub utility_functions() {
 			if ($gb::utility_running == 0) {
 				$gb::utility_running = 1;
 				&utility_definer();
-				my %realtime_timeouts;
-
+				# The per-utility timers are gone: utility_runner (driven by the
+				# controller tick) does the running, keyed off the persisted last_run.
+				# Keep the manager interval floor set once here.
 				foreach my $t ( keys %{$gb::timeouts} ) {
 					if ($t eq 'manager' && (!$gb::timeouts->{$t}->{'interval'} || $gb::timeouts->{$t}->{'interval'} < (10 * 60)) ) {
 						$gb::timeouts->{$t}->{'interval'} = 10 * 60;
-					}
-					Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
-					if ($gb::timeouts->{$t}->{'subroutine'} && $gb::timeouts->{$t}->{'toggle'} eq 'on') {
-						$gb::timeouts->{$t}->{'loop'} = Mojo::IOLoop->recurring($gb::timeouts->{$t}->{'interval'} / ($gb::timeouts->{$t}->{'interval_divider'} ? $gb::timeouts->{$t}->{'interval_divider'} : 1 ) => sub() {
-    				  local $SIG{ALRM} = sub { die "TIMEOUT_EXCEEDED\n" };
-							my $success = 0;
-							eval {
-
-				        alarm($gb::timeouts->{$t}->{'timeout'});
-								$gb::timeouts->{$t}->{'subroutine'}->();
-								$success = 1;
-								alarm(0);
-							};
-							if ($@) {
-									alarm(0);
-									if ($@ eq "TIMEOUT_EXCEEDED\n") {
-										  $log->error("Task '$t' took too long and was safely stopped.");
-									} else {
-										  $log->error("Task '$t' threw an error but we caught it: $@");
-									}
-							}
-
-							if ($gb::timeouts->{$t}->{'beacon'} eq 'on') {
-								&subs::beacon_appt_writer();
-							}
-							if ($success == 1) {
-								$gb::timeouts->{$t}->{'last_run'} = &subs::rightNow();
-							}
-						});
 					}
 				}
 				Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
@@ -648,6 +668,7 @@ sub utility_functions() {
 						$writable = 1;
 					}
 					$controls->{$signatorial}->{$t}->{'last_run'} = $gb::timeouts->{$t}->{'last_run'};
+					$controls->{$signatorial}->{$t}->{'last_attempt'} = $gb::timeouts->{$t}->{'last_attempt'};
 				}
 				else {
 					$controls->{$signatorial}->{$t}->{'last_run'} = undef;
@@ -679,10 +700,11 @@ sub utility_functions() {
 
 
 			my $data = &utility_controller();
-		
+			&utility_runner();
 
 	});
 	&utility_controller();
+	&utility_runner();
 
 	$gb::utility_functions_watcher = 1;
 	return 1;

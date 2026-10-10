@@ -10111,18 +10111,27 @@ post '/manager/configure/utility_controller/save' => sub($c) {
 		}
 	}
 	if ($setting eq 'interval') {
-		$value = &subs::time_abbrev_translator($value,$timestamp) / 1000;
+		# the field shows a duration such as "2m"; a bare number is seconds, so
+		# typing 120 cannot silently become 120 minutes
+		$value = ($value =~ /^\s*-?\d+(\.\d+)?\s*$/)
+			? ($value + 0)
+			: &subs::time_abbrev_translator($value,$timestamp) / 1000;
 	}
 
-
-
-	if ($device eq $real_device) {
-		$controls->{$signatorial}->{$control}->{$setting} = $value;
-	}
+	# Write the row that was edited and stamp its own last_change. The runtime
+	# reads only the signatorial key, and the old code always bumped the
+	# signatorial's last_change even when a device-type row was what changed.
 	$controls->{$device}->{$control}->{$setting} = $value;
 	my $now = &subs::rightNow();
-	$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
-	$controls->{$signatorial}->{'__settings'}->{$setting}->{'last_change'} = $now;
+	$controls->{$device}->{'__settings'}->{'last_change'} = $now;
+	$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
+	# a stale page may still post a device-type row; on the machine that owns that
+	# type, fold it onto the signatorial key the runtime reads
+	if ($device ne $signatorial && $device eq $real_device) {
+		$controls->{$signatorial}->{$control}->{$setting} = $value;
+		$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
+		$controls->{$signatorial}->{'__settings'}->{$setting}->{'last_change'} = $now;
+	}
 	my $jcontrols = encode_json $controls;
 
 	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });

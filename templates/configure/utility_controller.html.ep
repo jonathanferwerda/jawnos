@@ -21,9 +21,16 @@
 	</thead>
 	<tbody>
 
-		<% foreach my $dt ( ( $signatorial, @gb::device_types ) ) { %>
+		% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
+		% my %machine_name;
+		% foreach my $mk ( @machine_keys ) {
+		% 	next if $mk eq $signatorial;
+		% 	my $rm = &subs::db_select('remote_machines', ['hostname'], { signatorial => $mk })->hashes->[0];
+		% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
+		% }
+		<% foreach my $dt ( sort @machine_keys ) { %>
 			<tr>
-				<td><b><%= $signatorial eq $dt ? 'Me' : $dt %></b></td>
+				<td><b><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></b></td>
 				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
 					% next unless $controls->{$dt}->{$t}; 
 					<td style="border:solid;border-radius:3px;">
