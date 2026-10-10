@@ -230,6 +230,7 @@ static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
 static bool room_has_buttons(int r);
 static void screen_gesture(lv_event_t *e);
+void setting_room();
 String chat_room;
 bool loraChatBroadcaster = false;
 bool loraChatReceiver = false;
@@ -3607,177 +3608,102 @@ void notification_review() {
 static void touch_button3(lv_event_t *e) {
   setting_room();
 }
+// The Set room used to be one 240x240 screen holding three sliders and a
+// dozen 40x40 buttons labelled LAP/LWI/cS/cR/cD/... all at once. It is grouped
+// now: a tab row picks a page and each page holds only its own controls, with
+// room to hit them.
+void setting_room();   // the tab callback rebuilds the room
+
+static int configure_page = 0;
+
+static void configure_page_select(lv_event_t *e) {
+  int page = (int)(intptr_t)lv_event_get_user_data(e);
+  if (page == configure_page) {
+    return;
+  }
+  configure_page = page;
+  setting_room();
+}
+
+// a labelled button in the Set room's content area
+static lv_obj_t *configure_button(const char *text, void (*cb)(lv_event_t *),
+                                  int x, int y, int w, int h, lv_color_t colour) {
+  lv_obj_t *b = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_set_pos(b, x, y);
+  lv_obj_set_size(b, w, h);
+  lv_obj_set_style_bg_color(b, colour, LV_PART_MAIN);
+  lv_obj_t *l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(0, 0, 0), LV_PART_MAIN);
+  lv_obj_center(l);
+  return b;
+}
+
+// a labelled slider: the name sits at the left, the track fills the rest
+static lv_obj_t *configure_slider(const char *text, int y, int value,
+                                  void (*cb)(lv_event_t *)) {
+  lv_obj_t *l = lv_label_create(lv_scr_act());
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  lv_obj_set_pos(l, 6, y + 4);
+  lv_obj_t *s = lv_slider_create(lv_scr_act());
+  lv_obj_set_pos(s, 50, y);
+  lv_obj_set_width(s, 184);
+  lv_slider_set_range(s, 0, 100);
+  lv_slider_set_value(s, value, LV_ANIM_OFF);
+  lv_obj_add_event_cb(s, cb, LV_EVENT_VALUE_CHANGED, NULL);
+  return s;
+}
+
+// one tab in the top row; the active page's tab is blue
+static void configure_tab(const char *text, int index, int x) {
+  lv_obj_t *b = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(b, configure_page_select, LV_EVENT_CLICKED, (void *)(intptr_t)index);
+  lv_obj_set_pos(b, x, 2);
+  lv_obj_set_size(b, 76, 26);
+  lv_obj_set_style_bg_color(b, lv_color_hex(index == configure_page ? 0x61b3ff : 0x333333), LV_PART_MAIN);
+  lv_obj_t *l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  lv_obj_center(l);
+}
+
 void setting_room() {
   display_exit();
   jw_room = "configure";
-  lv_obj_t *slider = lv_slider_create(lv_scr_act());
-  lv_slider_set_value(slider, brightnessLevel, LV_ANIM_ON);
-  lv_obj_set_width(slider, 150);
-  lv_obj_set_pos(slider, 10, 20);
-  lv_obj_add_event_cb(slider, brightness_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+  configure_tab("Screen", 0, 2);
+  configure_tab("Radio", 1, 82);
+  configure_tab("System", 2, 162);
 
-  lv_obj_t *slider1 = lv_slider_create(lv_scr_act());
-  lv_slider_set_value(slider1, vibrateLevel, LV_ANIM_ON);
-
-  lv_obj_set_width(slider1, 150);
-  lv_obj_set_pos(slider1, 10, 45);
-  lv_obj_add_event_cb(slider1, vibrate_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-  lv_obj_t *slider2 = lv_slider_create(lv_scr_act());
-  lv_obj_set_width(slider2, 150);
-  lv_obj_set_pos(slider2, 10, 70);
-  lv_obj_add_event_cb(slider2, volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-  lv_slider_set_value(slider2, volumeLevel, LV_ANIM_ON);
-  lv_slider_set_range(slider2, 0, 100);
-
-  lv_obj_t * pd_button = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(pd_button, step_control, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(pd_button, 10, 100 );
-  lv_obj_set_size(pd_button, 40, 40 );
-  if (stepCounter == true) {
-    lv_obj_set_style_bg_color(pd_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
+  switch (configure_page) {
+    case 0:
+      // what the watch feels like: the three level sliders, plus two toggles
+      configure_slider("Bri", 38, brightnessLevel, brightness_event_cb);
+      configure_slider("Vol", 72, volumeLevel, volume_event_cb);
+      configure_slider("Vib", 106, vibrateLevel, vibrate_event_cb);
+      configure_button("Rotate", screenRotate, 10, 142, 70, 44, lv_color_hex(0xff8923));
+      configure_button("Steps", step_control, 90, 142, 70, 44,
+                       lv_color_hex(stepCounter ? 0x5afcdd : 0xb0b0b0));
+      break;
+    case 1:
+      // the LoRa radio: broadcast/receive, and blasting the AP or wifi creds
+      configure_button("LoRa Tx", loraBroadcastToggle, 10, 40, 105, 54,
+                       lv_color_hex(loraChatBroadcaster ? 0x53ff24 : 0xb0b0b0));
+      configure_button("LoRa Rx", loraReceiveToggle, 125, 40, 105, 54,
+                       lv_color_hex(loraChatReceiver ? 0x53ff24 : 0xb0b0b0));
+      configure_button("AP Send", ap_lora_send, 10, 105, 105, 54, lv_color_hex(0xdafc5d));
+      configure_button("WiFi Send", wifi_lora_send, 125, 105, 105, 54, lv_color_hex(0xdafc5d));
+      break;
+    default:
+      // power and the config file
+      configure_button("Sleep", lightSleep_toggle, 10, 40, 105, 54,
+                       lv_color_hex(lightSleep ? 0x5afcdd : 0xb0b0b0));
+      configure_button("Save", configSaveButton, 125, 40, 105, 54, lv_color_hex(0x61b3ff));
+      configure_button("Restore", configRestoreButton, 10, 105, 105, 54, lv_color_hex(0xffca38));
+      configure_button("Delete", configDeleteButton, 125, 105, 105, 54, lv_color_hex(0xde2716));
+      break;
   }
-  else {
-    lv_obj_set_style_bg_color(pd_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-  }
-  lv_obj_t *lwi1;
-  lv_color_t twi1;
-  twi1 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(pd_button, twi1, LV_PART_MAIN);
-  lwi1 = lv_label_create(pd_button);
-  lv_label_set_text(lwi1, "PD");
-  lv_obj_center(lwi1);
-
-
-  lv_obj_t * btn1 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn1, ap_lora_send, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn1, 190, 10 );
-  lv_obj_set_size(btn1, 40, 40 );
-  lv_obj_set_style_bg_color(btn1, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_task_handler();
-  lv_obj_t *l1;
-  lv_color_t t1;
-  t1 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn1, t1, LV_PART_MAIN);
-  l1 = lv_label_create(btn1);
-  lv_label_set_text(l1, "LAP");
-  lv_obj_center(l1);
-
-  lv_obj_t * btn2 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn2, wifi_lora_send, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn2, 190, 50 );
-  lv_obj_set_size(btn2, 40, 40 );
-  lv_obj_set_style_bg_color(btn2, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_t *l2;
-  lv_color_t t2;
-  t2 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn2, t2, LV_PART_MAIN);
-  l2 = lv_label_create(btn2);
-  lv_label_set_text(l2, "LWI");
-  lv_obj_center(l2);
-
-  lv_color_t t51;
-  t51 = lv_color_make(0,0,0);
-  lv_obj_t * btn51 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn51, screenRotate, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn51, 90, 100 );
-  lv_obj_set_size(btn51, 40, 40 );
-  lv_obj_set_style_bg_color(btn51, lv_color_hex(0xff8923), LV_PART_MAIN);
-  lv_obj_t *l51;
-  lv_obj_set_style_text_color(btn51, t51, LV_PART_MAIN);
-  l51 = lv_label_create(btn51);
-  lv_label_set_text(l51, "Rot");
-  lv_obj_center(l51);
-  
-  lv_color_t t5;
-  t5 = lv_color_make(0,0,0);
-  lv_obj_t * btn5 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn5, loraBroadcastToggle, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn5, 190, 100 );
-  lv_obj_set_size(btn5, 40, 40 );
-  if (loraChatBroadcaster == false) {
-    lv_obj_set_style_bg_color(btn5, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-  }
-  else {
-    lv_obj_set_style_bg_color(btn5, lv_color_hex(0x53ff24), LV_PART_MAIN);
-  }  
-  lv_obj_t *l5;
-  lv_obj_set_style_text_color(btn5, t5, LV_PART_MAIN);
-  l5 = lv_label_create(btn5);
-  lv_label_set_text(l5, "LB");
-  lv_obj_center(l5);  
-
-
-  lv_obj_t * btn6 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn6, loraReceiveToggle, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn6, 140, 100 );
-  lv_obj_set_size(btn6, 40, 40 );
-  if (loraChatReceiver == true) {
-    lv_obj_set_style_bg_color(btn6, lv_color_hex(0x53ff24), LV_PART_MAIN);
-  }
-  else {
-    lv_obj_set_style_bg_color(btn6, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-  }  
-  lv_obj_t *l6;
-  lv_obj_set_style_text_color(btn6, t5, LV_PART_MAIN);
-  l6 = lv_label_create(btn6);
-  lv_label_set_text(l6, "LR");
-  lv_obj_center(l6); 
-
-  lv_color_t t50;
-  t50 = lv_color_make(0,0,0);
-  lv_obj_t * btn50 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn50, configSaveButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn50, 190, 140 );
-  lv_obj_set_size(btn50, 40, 40 );
-  lv_obj_t *l50;
-  lv_obj_set_style_text_color(btn50, t50, LV_PART_MAIN);
-  l50 = lv_label_create(btn50);
-  lv_label_set_text(l50, "cS");
-  lv_obj_center(l50);  
-
-
-  lv_obj_t * btn60 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn60, configRestoreButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn60, 140, 140 );
-  lv_obj_set_size(btn60, 40, 40 );
-  lv_obj_t *l60;
-  lv_obj_set_style_bg_color(btn60, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_set_style_text_color(btn60, t50, LV_PART_MAIN);
-  l60 = lv_label_create(btn60);
-  lv_label_set_text(l60, "cR");
-  lv_obj_center(l60);
-
-  lv_obj_t * btn601 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn601, configDeleteButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn601, 90, 140 );
-  lv_obj_set_size(btn601, 40, 40 );
-  lv_obj_t *l601;
-  lv_obj_set_style_bg_color(btn601, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_set_style_text_color(btn601, t50, LV_PART_MAIN);
-  l601 = lv_label_create(btn601);
-  lv_label_set_text(l601, "cD");
-  lv_obj_center(l601);
-
-  lv_obj_t * btn6012 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn6012, lightSleep_toggle, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn6012, 10, 140 );
-  lv_obj_set_size(btn6012, 40, 40 );
-  lv_obj_t *l6012;
-  if (lightSleep == true) {
-    lv_obj_set_style_bg_color(btn6012, lv_color_hex(0x5afcdd), LV_PART_MAIN);
-  }
-  else {
-    lv_obj_set_style_bg_color(btn6012, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-  }
-  lv_obj_set_style_text_color(btn6012, t50, LV_PART_MAIN);
-  l6012 = lv_label_create(btn6012);
-  lv_label_set_text(l6012, "LS");
-  lv_obj_center(l6012);   
-
   full_refresh();
 }
 
