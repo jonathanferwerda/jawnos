@@ -22,24 +22,34 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	'Impact, sans-serif'
 ); %>
 
-<%# ---- colour schemes: five themes after the desktops people know, each
+<%# ---- colour schemes: five desktop looks, each in a light and a dark cut,
     named for its colour. The old twenty generated hue ramps (and their ten
-    dark twins) are gone; these are hand-picked and muted, so the picker reads
-    as five deliberate looks rather than a rainbow:
-      Blue     - Windows 11   (#0078d4 accent)
+    dark twins) are gone; these are hand-picked and muted:
+      Blue     - Windows 11   (#0078d4 / dark #4cc2ff accent)
       Graphite - macOS        (#6e6e73 chrome)
       Green    - Manjaro      (#35bf8b accent)
       Indigo   - GNOME        (#3584e4 Adwaita accent)
       Steel    - XFCE         (#3b6ea5 Greybird accent)
-    Each palette is a light-to-deep ramp the window surfaces cycle through. %>
+    Each palette is a ramp the window surfaces cycle through. The dark cuts
+    matter more than the light ones: the chrome (--panel/--ink) is derived from
+    the *manager* surface, and theme_panel_css forces near-white panels (L 0.88)
+    for any light manager colour - so only a dark manager gives dark windows. %>
 <% my %schemes = (
-	'Blue'     => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
-	'Graphite' => [ '#f5f5f7', '#e8e8ed', '#d2d2d7', '#aeaeb2', '#8e8e93', '#6e6e73' ],
-	'Green'    => [ '#e8f7f1', '#c9ecdf', '#a2dec8', '#74ceac', '#45b98d', '#1e9e6f' ],
-	'Indigo'   => [ '#eaf1fc', '#d6e3f8', '#b5ccf2', '#8fade8', '#6690dd', '#3584e4' ],
-	'Steel'    => [ '#edf1f5', '#dbe3ea', '#c4d0db', '#a6b7c6', '#7e95ab', '#4e7ba8' ],
+	'Blue'         => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
+	'Blue Dark'    => [ '#1b1b1c', '#232324', '#2b2b2d', '#353538', '#2f5f86', '#3f83b5' ],
+	'Graphite'     => [ '#f5f5f7', '#e8e8ed', '#d2d2d7', '#aeaeb2', '#8e8e93', '#6e6e73' ],
+	'Graphite Dark'=> [ '#1c1c1e', '#242426', '#2c2c2e', '#38383a', '#48484a', '#6e6e73' ],
+	'Green'        => [ '#e8f7f1', '#c9ecdf', '#a2dec8', '#74ceac', '#45b98d', '#1e9e6f' ],
+	'Green Dark'   => [ '#16201c', '#1e2a24', '#26332c', '#30413a', '#2f6b52', '#3f9d76' ],
+	'Indigo'       => [ '#eaf1fc', '#d6e3f8', '#b5ccf2', '#8fade8', '#6690dd', '#3584e4' ],
+	'Indigo Dark'  => [ '#1b1e26', '#232734', '#2b3140', '#353c4d', '#37528f', '#4f78c2' ],
+	'Steel'        => [ '#edf1f5', '#dbe3ea', '#c4d0db', '#a6b7c6', '#7e95ab', '#4e7ba8' ],
+	'Steel Dark'   => [ '#1b2026', '#232a31', '#2b343c', '#354049', '#3a5d80', '#4f82ab' ],
 ); %>
-<% my @scheme_order = ( 'Blue', 'Graphite', 'Green', 'Indigo', 'Steel' ); %>
+<% my @scheme_order = (
+	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
+	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark'
+); %>
 
 <style>
 	.misc_device_tab { padding:10px 24px; cursor:pointer; border-radius:8px; border:solid 2px; background:transparent; font-size:22px; }
