@@ -3640,16 +3640,16 @@ static lv_obj_t *configure_button(const char *text, void (*cb)(lv_event_t *),
   return b;
 }
 
-// a labelled slider: the name sits at the left, the track fills the rest
+// a labelled slider: the name sits above a full-width track (easy to drag)
 static lv_obj_t *configure_slider(const char *text, int y, int value,
                                   void (*cb)(lv_event_t *)) {
   lv_obj_t *l = lv_label_create(lv_scr_act());
   lv_label_set_text(l, text);
   lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
-  lv_obj_set_pos(l, 6, y + 4);
+  lv_obj_set_pos(l, 10, y);
   lv_obj_t *s = lv_slider_create(lv_scr_act());
-  lv_obj_set_pos(s, 50, y);
-  lv_obj_set_width(s, 184);
+  lv_obj_set_pos(s, 10, y + 18);
+  lv_obj_set_width(s, 220);
   lv_slider_set_range(s, 0, 100);
   lv_slider_set_value(s, value, LV_ANIM_OFF);
   lv_obj_add_event_cb(s, cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -3679,9 +3679,9 @@ void setting_room() {
   switch (configure_page) {
     case 0:
       // what the watch feels like: the three level sliders, plus two toggles
-      configure_slider("Bri", 38, brightnessLevel, brightness_event_cb);
-      configure_slider("Vol", 72, volumeLevel, volume_event_cb);
-      configure_slider("Vib", 106, vibrateLevel, vibrate_event_cb);
+      configure_slider("Bright", 32, brightnessLevel, brightness_event_cb);
+      configure_slider("Volume", 62, volumeLevel, volume_event_cb);
+      configure_slider("Vibrate", 92, vibrateLevel, vibrate_event_cb);
       configure_button("Rotate", screenRotate, 10, 142, 70, 44, lv_color_hex(0xff8923));
       configure_button("Steps", step_control, 90, 142, 70, 44,
                        lv_color_hex(stepCounter ? 0x5afcdd : 0xb0b0b0));
