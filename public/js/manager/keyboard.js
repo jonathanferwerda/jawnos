@@ -38,8 +38,10 @@ function pseudonymFreeSpaceFinder(type) {
 	var visible = [];
 
 	// 60px is the comfortable size; past that the icons share what the screen
-	// has, down to a floor so they stay recognisable
-	var full = 60;
+	// has, down to a floor so they stay recognisable. The comfortable size is a
+	// misc setting (a slider in the Bars group), read through the taskbar's own
+	// accessor so the fallback is right before the taskbar script has loaded.
+	var full = (typeof jawnosDockIconFull == 'function') ? jawnosDockIconFull() : 60;
 	var floor = 14;
 	var gap = 4;
 	var home_chrome = 68; // #pseudonym_home padding + border
@@ -213,9 +215,10 @@ function pseudonymFreeSpaceFinder(type) {
 			// the row hugs its edge 15px up; the search, when it rides the dock,
 			// takes the top of the box above the icons. With the search away the box
 			// wraps the row evenly - the same 15px above it as below - so the icons
-			// sit centred rather than jammed against the top.
+			// sit centred rather than jammed against the top. The plate's own cap
+			// follows the icon size so a larger row still gets a box that wraps it.
 			var row_pad = search_in_dock ? 0 : 15;
-			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + (icons_hidden ? 0 : size) + 15 + row_pad) + 'px' });
+			home.css({ 'padding-top': '', 'height': Math.min(Math.max(120, full + 30), search_row + (icons_hidden ? 0 : size) + 15 + row_pad) + 'px' });
 		}
 	}
 

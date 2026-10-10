@@ -13182,7 +13182,7 @@ sub window_maker($type,$timestamp) {
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--panel);
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
-			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="max-height:36px;position:absolute;width:100%;border:solid;background-color:'. ($settings->{'colour'} || '#ffec1f') .
+			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:solid;background-color:'. ($settings->{'colour'} || '#ffec1f') .
 				';" app="' . $unformatted_name .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
 				<span class="appointment_name">
@@ -13203,10 +13203,10 @@ sub window_maker($type,$timestamp) {
 					</span>
 				</span>
 			</div>
-			<div id="window_drawer_' . $timestamp . '" class="window_drawer" style="position:absolute;top:34px;background-color:' . ($settings->{'colour'} || '#ffec1f') . ';width:100%;display:none;height:calc(100% - 34.8317px);overflow:scroll;">
+			<div id="window_drawer_' . $timestamp . '" class="window_drawer" style="position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . ($settings->{'colour'} || '#ffec1f') . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
 			<img src="/images/make believe/space.png" style="position:absolute;left:30%;height:24px;width:30%;" class="window_drawer_closer hover">
 			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--panel);">' . $drawer . '</div></div>
-			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--panel);height:calc(100% - 34.0317px);">' . $contents . '</div>
+			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--panel);height:calc(100% - var(--navbar_h, 36px) + 2px);">' . $contents . '</div>
 
 		<script id="window_script_' . $timestamp .'">
 			jopen = \'' . $settings->{'jopen'} . '\';
@@ -13214,8 +13214,9 @@ sub window_maker($type,$timestamp) {
 			var w = $("#window_' . $timestamp . '");
 			var wc = $("#window_contents_' . $timestamp . '");
 			var t = $("#top_navbar_' . $timestamp . '");
-			var th = t.height() + 5;
-			wc.css({ \'padding-top\': th });
+			// the contents clear the title bar by its own height; reading the same
+			// variable keeps the padding right when the navbar slider moves it
+			wc.css({ \'padding-top\': \'calc(var(--navbar_h, 36px) + 5px)\' });
 			$(\'#main_display\').css({ \'display\':\'flex\', \'height\':\'83%\', \'width\': \'93%\' });
 			var wl = $("#little_window_' . $timestamp . '");
 		</script>		</div>';

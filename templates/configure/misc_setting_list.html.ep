@@ -175,6 +175,8 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],
 				# a range rather than a list: [ key, label, 'range', min, max, step, default ]
 				[ 'taskbar_height', 'Taskbar Height', 'range', 24, 72, 4, 44 ],
+				[ 'navbar_height', 'Navbar Height', 'range', 28, 64, 4, 36 ],
+				[ 'dock_icon_size', 'Dock Icon Size', 'range', 30, 100, 4, 60 ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
 			); %>
 			<% foreach my $g ( @bars ) { %>

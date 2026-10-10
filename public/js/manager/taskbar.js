@@ -15,6 +15,10 @@ var jawnosBars = {
 	start_side: jawnos_bar_settings['start_button_side'] || 'right',
 	icons: jawnos_bar_settings['dock_icons'] || 'shown',
 	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
+	// the window title bar's own thickness, and the comfortable size of a dock
+	// icon before the row shares what is left (see pseudonymFreeSpaceFinder)
+	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
+	dockIcon: parseInt(jawnos_bar_settings['dock_icon_size']) || 60,
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
 	// the bar tucks itself away when idle
 	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
@@ -47,6 +51,26 @@ function jawnosTaskbarHeight() {
 // What the taskbar takes from the edge named, when it lives on that edge.
 function jawnosTaskbarEdge(edge) {
 	return (jawnosBars.taskbar == edge) ? jawnosTaskbarHeight() : 0;
+}
+// The window title bar's thickness: the CSS variable the navbar scales against
+// and every open window's per-window geometry reads. A slider previews it live.
+function jawnosWindowNavbarApply(px) {
+	var v = parseInt(px, 10);
+	if (isNaN(v)) { return; }
+	jawnosBars.navbar = Math.max(28, v);
+	document.documentElement.style.setProperty('--navbar_h', jawnosBars.navbar + 'px');
+}
+// The comfortable size of a dock icon before the row starts sharing what the
+// screen has; the dock's own finder reads it through jawnosDockIconFull().
+function jawnosDockIconFull() {
+	var v = parseInt(jawnosBars.dockIcon);
+	return (isFinite(v) && v > 0) ? v : 60;
+}
+function jawnosDockIconApply(px) {
+	var v = parseInt(px, 10);
+	if (isNaN(v)) { return; }
+	jawnosBars.dockIcon = Math.max(16, v);
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 }
 function jawnosDockTop() {
 	return jawnosBars.dock == 'top';
@@ -225,6 +249,9 @@ function jawnosBarsApply() {
 	// the bar's height is a misc setting: the CSS reads this property for the
 	// bar's own height and for everything that sizes itself against it
 	root.setProperty('--taskbar_h', Math.max(24, jawnosBars.height) + 'px');
+	// the window title bar's height rides the same way: the navbar's own CSS and
+	// the per-window geometry window_maker writes both measure against it
+	root.setProperty('--navbar_h', Math.max(28, jawnosBars.navbar) + 'px');
 	root.setProperty('--taskbar_top_h', jawnosTaskbarEdge('top') + 'px');
 	root.setProperty('--taskbar_bottom_h', jawnosTaskbarEdge('bottom') + 'px');
 	root.setProperty('--dock_top_h', jawnosDockTopOffset() + 'px');
@@ -326,6 +353,13 @@ function jawnosMiscRangeInput(input) {
 		// the bar scales at once; the full bars pass runs on release
 		document.documentElement.style.setProperty('--taskbar_h', Math.max(24, value) + 'px');
 	}
+	else if (setting == 'navbar_height') {
+		// every window title bar scales at once from the CSS variable
+		jawnosWindowNavbarApply(value);
+	}
+	else if (setting == 'dock_icon_size') {
+		jawnosDockIconApply(value);
+	}
 	else if (setting == 'clothesline_height') {
 		if (typeof jawnosClotheslineHeightApply == 'function') { jawnosClotheslineHeightApply(value); }
 	}
@@ -340,6 +374,8 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
+	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
+	else if (setting == 'dock_icon_size') { jawnosDockIconApply($(this).val()); return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set

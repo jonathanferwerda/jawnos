@@ -622,28 +622,29 @@ canvas { overflow: scroll; z-index: 99; }
 	z-index: 2147483000;
 }
 /* the window title bar is a thin strip: the icon, the name and the window
-   controls all answer to the one 30px figure, so the bar closes up around
-   them instead of standing 45 deep, and the extras the line-height would
-   add above and below are dropped.
+   controls all answer to the one figure, so the bar closes up around them
+   instead of standing 45 deep, and the extras the line-height would add above
+   and below are dropped. That figure is the misc navbar height (--navbar_h),
+   which scales the bar and everything inside it together.
    The bar is width:100% with a border (set inline in window_maker), so it has
    to be border-box: content-box would add the two 3px edges on top of the
    full width and push the bar 6px past the window's right edge, out of line
    with .window_contents. */
-.top_navbar { line-height: 0; box-sizing: border-box; }
-/* the icon sits in a bare 26px tile with a 2px collar of the bar's colour
-   around it: the holder pads the top, left and bottom, and being the tallest
-   thing on the line it keeps the name's middle on the bar's middle. The
-   corners of the tile are rounded */
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); }
+/* the icon sits in a bare tile with a 2px collar of the bar's colour around
+   it: the holder pads the top, left and bottom, and being the tallest thing
+   on the line it keeps the name's middle on the bar's middle. The corners of
+   the tile are rounded */
 .top_navbar .window_icon_holder { display: inline-block; vertical-align: middle; padding: 2px 0 2px 2px; }
-.top_navbar .window_icon_holder .window_icon { display: inline-block; height: 26px; line-height: 26px; font-size: 16px; vertical-align: middle; border: none; border-radius: 6px; }
+.top_navbar .window_icon_holder .window_icon { display: inline-block; height: calc(var(--navbar_h, 36px) - 10px); line-height: calc(var(--navbar_h, 36px) - 10px); font-size: calc(var(--navbar_h, 36px) * 0.44); vertical-align: middle; border: none; border-radius: 6px; }
 /* the name rides straight on the bar's own colour: the panel chip it sat in
    answered to the theme while the ink answered to the app's colour, so one of
    the two always clashed - the ink contrast_ink picks reads on the bar in
    either theme */
 .top_navbar .appointment_name { vertical-align: middle; background: none; border: none; }
-.top_navbar .appointment_name .name_text { line-height: 24px; vertical-align: middle; }
+.top_navbar .appointment_name .name_text { line-height: calc(var(--navbar_h, 36px) - 12px); vertical-align: middle; }
 .top_navbar .navbar_buttons { display: inline-flex; align-items: center; }
-.top_navbar .navbar_buttons .window_action { width: 30px; height: 30px; min-width: 30px; }
+.top_navbar .navbar_buttons .window_action { width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
 .keyboard { z-index: 9100; border:solid;border-radius:10px;border-width:3px; }
