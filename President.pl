@@ -186,6 +186,10 @@ sub manager_starter() {
 	# have left the "running" lock behind (this machine's servers restart every
 	# few minutes under memory pressure), which blocked the next sync for minutes.
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+	# Data backfills run at boot, so a code sync followed by the restart the
+	# sync itself triggers heals the data without waiting for a login. Ones whose
+	# prerequisites are not ready yet are left for the login / merge pass.
+	&subs::run_backfills();
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {

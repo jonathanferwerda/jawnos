@@ -1648,47 +1648,7 @@ sub warehouse_moves($opts) {
 # by the source transaction's uuid, so a re-write or a backfill cannot double it.
 # kind='money' marks it; type and movement keep what the transaction was.
 sub warehouse_money_mirror($row) {
-	return unless $row && $row->{'uuid'};
-	my $type = $row->{'type'} || '';
-	return unless ($type eq 'transaction' || $type eq 'purchase');
-	return unless $row->{'account'} && $row->{'account'} ne '';
-	# an inventory row is a balance anchor, not a move; it already has its own
-	# warehouse row (kind inventory)
-	return if ($row->{'movement'} || '') eq 'inventory';
-	my $exists = &subs::db_query('select uuid from warehouse where kind=? and uuid=? limit 1', 'money', $row->{'uuid'})->hashes->[0];
-	return if $exists;
-	my $movement = $row->{'movement'};
-	$movement = 'expense' if (!defined $movement || $movement eq '') && $type eq 'purchase';
-	&subs::db_insert('warehouse', {
-		kind => 'money',
-		type => $type,
-		movement => $movement,
-		app => $row->{'app'},
-		account => $row->{'account'},
-		project => $row->{'project'},
-		item => $row->{'item'},
-		model => $row->{'model'},
-		quantity => $row->{'quantity'},
-		unit => $row->{'unit'},
-		amount => $row->{'amount'},
-		tax => $row->{'tax'},
-		aux => $row->{'aux'},
-		total => $row->{'total'},
-		duration => $row->{'duration'},
-		vendor => $row->{'vendor'},
-		manufacturer => $row->{'manufacturer'},
-		currency => $row->{'currency'},
-		notes => $row->{'notes'},
-		state => $row->{'state'},
-		warranty => $row->{'warranty'},
-		place => $row->{'place'},
-		data => $row->{'data'},
-		uuid => $row->{'uuid'},
-		app_uuid => $row->{'uuid'},
-		source_uuid => $row->{'source_uuid'},
-		timestamp => $row->{'timestamp'},
-		server_time => &subs::rightNow(),
-	});
+	return &subs::warehouse_money_mirror($row);
 }
 
 get '/manager/warehouse' => sub($c) {
@@ -19465,6 +19425,14 @@ get '/manager/update_database' => sub ($c) {
 	&update_database($c);
 };
 
+# The code this machine is running: a content fingerprint of the source tree,
+# plus the git commit when there is one. Lets any machine (or the device list)
+# see whether a peer is on the same code - the remotes have no .git, so the
+# fingerprint is what actually detects drift.
+get '/manager/version' => sub ($c) {
+	$c->render(json => &subs::code_revision());
+};
+
 
 # A lot of the migration list below predates the schema, so on a database built from
 # database/schema.sql the column or index it wants to add is already there and
@@ -19673,6 +19641,9 @@ sub update_database($data) {
 		# the same pair, for installs that have that utility switched on.
 		eval { $db->query('PRAGMA analysis_limit=400;'); };
 		eval { $db->query('PRAGMA optimize;'); };
+		# data backfills ride the schema migration: any machine that receives the
+		# new code runs the ones it has not recorded, at its next login / merge.
+		&subs::run_backfills();
 	}
 
 	if (1 == 0) {
@@ -20303,6 +20274,7 @@ get '/manager/remote_auth_test' => sub($c) {
 					location => $location,
 					same_net => &subs::same_net_test($home_ip,$ip),
 					network => &subs::network_interface_reporter(),
+					revision => &subs::code_revision(),
 				};
 				$c->render(json => $json);
 

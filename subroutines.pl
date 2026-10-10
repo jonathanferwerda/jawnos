@@ -9557,4 +9557,153 @@ sub log_writer() {
 	return $data;
 }
 
+# A fingerprint of the code this machine is actually running. There is no
+# .git on the remote machines (remote_rsync excludes it), so the source files
+# themselves are hashed; when a .git is present the commit is reported too.
+# Computed once per process and memoised - the app only re-reads its code on a
+# restart, so the values cannot change under it.
+our $code_revision_cache;
+sub code_revision() {
+	return $code_revision_cache if $code_revision_cache;
+	my @files;
+	find({ no_chdir => 1, wanted => sub {
+		my $n = $File::Find::name;
+		return unless -f $n;
+		return if $n =~ m{(^|/)\.git/} || $n =~ m{node_modules};
+		push @files, $n if $n =~ /\.(pl|pm|ep|js|css)$/ || $n =~ m{(^|/)jawn$};
+	} }, '.');
+	@files = sort @files;
+	my $canon = '';
+	foreach my $f ( @files ) {
+		my $c = eval { read_file($f) };
+		$canon .= $f . ':' . md5_sum(defined $c ? $c : '') . "\n";
+	}
+	my $fingerprint = md5_sum($canon);
+	my ($commit,$branch,$dirty) = ('','',0);
+	if (-e '.git') {
+		$commit = `git rev-parse HEAD 2>/dev/null`; chomp $commit;
+		$branch = `git rev-parse --abbrev-ref HEAD 2>/dev/null`; chomp $branch;
+		$dirty = 1 if (`git status --porcelain 2>/dev/null` =~ /\S/);
+	}
+	my $hostname = `hostname`; chomp $hostname;
+	$code_revision_cache = {
+		fingerprint => $fingerprint,
+		commit => $commit,
+		branch => $branch,
+		dirty => $dirty,
+		files => scalar @files,
+		hostname => $hostname,
+		signatorial => &subs::signatorial_designer(),
+	};
+	return $code_revision_cache;
+}
+
+# A money move is a warehouse row. Every transaction with an account is written
+# to the warehouse as it is recorded - the same fields under the same names, so
+# the budget can read the ledger without knowing it moved - and the row is keyed
+# by the source transaction's uuid, so a re-write or a backfill cannot double it.
+# kind='money' marks it; type and movement keep what the transaction was.
+# (Lives here, not in Manager.pl, so the boot process can run backfills.)
+sub warehouse_money_mirror {
+	my $row = shift;
+	return unless $row && $row->{'uuid'};
+	my $type = $row->{'type'} || '';
+	return unless ($type eq 'transaction' || $type eq 'purchase');
+	return unless $row->{'account'} && $row->{'account'} ne '';
+	# an inventory row is a balance anchor, not a move; it already has its own
+	# warehouse row (kind inventory)
+	return if ($row->{'movement'} || '') eq 'inventory';
+	my $exists = &subs::db_query('select uuid from warehouse where kind=? and uuid=? limit 1', 'money', $row->{'uuid'})->hashes->[0];
+	return if $exists;
+	my $movement = $row->{'movement'};
+	$movement = 'expense' if (!defined $movement || $movement eq '') && $type eq 'purchase';
+	&subs::db_insert('warehouse', {
+		kind => 'money',
+		type => $type,
+		movement => $movement,
+		app => $row->{'app'},
+		account => $row->{'account'},
+		project => $row->{'project'},
+		item => $row->{'item'},
+		model => $row->{'model'},
+		quantity => $row->{'quantity'},
+		unit => $row->{'unit'},
+		amount => $row->{'amount'},
+		tax => $row->{'tax'},
+		aux => $row->{'aux'},
+		total => $row->{'total'},
+		duration => $row->{'duration'},
+		vendor => $row->{'vendor'},
+		manufacturer => $row->{'manufacturer'},
+		currency => $row->{'currency'},
+		notes => $row->{'notes'},
+		state => $row->{'state'},
+		warranty => $row->{'warranty'},
+		place => $row->{'place'},
+		data => $row->{'data'},
+		uuid => $row->{'uuid'},
+		app_uuid => $row->{'uuid'},
+		source_uuid => $row->{'source_uuid'},
+		timestamp => $row->{'timestamp'},
+		server_time => &subs::rightNow(),
+	});
+}
+
+# ---------------------------------------------------------------------------
+# Data backfills. Schema migrations can be detected by inspecting the schema
+# (Manager::migration_already_applied); a data backfill cannot, so it is named
+# here and recorded in the `backfills` table once it has run. A machine that
+# receives this code runs any names it has not recorded - from the boot process
+# (President) and from update_database (login / remote auth / merge) - so a
+# code sync followed by the usual restart heals the data without a manual step.
+#
+# An entry returns true when it has run (recorded), false when its
+# prerequisites are not ready yet (left for the next pass, e.g. the column the
+# schema migration adds is not there), and dies on a real error (logged).
+# ---------------------------------------------------------------------------
+sub backfills() {
+	return {
+		'warehouse_money_ledger' => sub {
+			# needs the ledger column; defer until the schema migration has run
+			my $has = &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'warehouse', 'kind')->hashes->[0];
+			return 0 unless $has;
+			&subs::db_query("update warehouse set kind = 'inventory' where (kind is null or kind = '') and type = 'inventory'");
+			&subs::db_query("update warehouse set kind = 'stock' where (kind is null or kind = '')");
+			&subs::db_query("update warehouse set movement = 'inventory' where kind = 'inventory' and (movement is null or movement = '')");
+			my $rows = &subs::db_query("select * from appointments where type in ('transaction','purchase') and account is not null and account != '' and (movement is null or movement != 'inventory')")->hashes;
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				next if &subs::db_query('select uuid from warehouse where kind=? and uuid=? limit 1', 'money', $row->{'uuid'})->hashes->[0];
+				&subs::warehouse_money_mirror($row);
+				$n++;
+			}
+			&subs::say_it("backfill warehouse_money_ledger: mirrored $n money transactions");
+			return 1;
+		},
+	};
+}
+
+our $backfills_running;
+sub run_backfills() {
+	return if $backfills_running;
+	$backfills_running = 1;
+	my $ok = eval {
+		&subs::db_query('create table if not exists backfills (name VARCHAR(255), server_time VARCHAR(255))');
+		my $registry = &subs::backfills();
+		my %done = map { $_->{'name'} => 1 } @{ &subs::db_query('select name from backfills')->hashes || [] };
+		foreach my $name ( sort keys %{$registry} ) {
+			next if $done{$name};
+			my $status = eval { $registry->{$name}->() };
+			if ($@) { &subs::say_it("backfill '$name' failed: $@"); next; }
+			next unless $status;
+			&subs::db_query('insert into backfills (name, server_time) values (?,?)', $name, &subs::rightNow());
+			&subs::say_it("backfill '$name' recorded");
+		}
+		1;
+	};
+	&subs::say_it("run_backfills error: $@") if !$ok && $@;
+	$backfills_running = 0;
+	return $ok;
+}
+
 1;
