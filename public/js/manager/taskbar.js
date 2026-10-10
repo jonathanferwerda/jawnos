@@ -14,8 +14,30 @@ var jawnosBars = {
 	search: jawnos_bar_settings['search_placement'] || 'dock',
 	start_side: jawnos_bar_settings['start_button_side'] || 'right',
 	icons: jawnos_bar_settings['dock_icons'] || 'shown',
-	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44
+	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
+	// the bar's furniture in order (drag/drop edit mode writes it), and whether
+	// the bar tucks itself away when idle
+	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
+	autohide: jawnos_bar_settings['taskbar_autohide'] || 'off'
 };
+
+// The order rides as JSON. The layout embeds it as a real array; an older or
+// hand-set value may still be a string. Either way a bad value falls back to the
+// default (null) so the bar is never left empty.
+function jawnosTaskbarOrderSetting(value) {
+	if (Array.isArray(value)) { return value.length ? value : null; }
+	return jawnosTaskbarParseOrder(value);
+}
+
+// A string form of the order setting, if that is what came through.
+function jawnosTaskbarParseOrder(text) {
+	if (!text || typeof text != 'string') { return null; }
+	try {
+		var parsed = JSON.parse(text);
+		return (Array.isArray(parsed) && parsed.length) ? parsed : null;
+	}
+	catch (e) { return null; }
+}
 
 // How tall the taskbar stands while it is up; the CSS gives it one height.
 function jawnosTaskbarHeight() {
@@ -97,22 +119,50 @@ function jawnosClockInTaskbar() {
 function jawnosClockText(timestamp) {
 	var date = new Date(timestamp);
 	var pad = function (n) { return (n < 10 ? '0' : '') + n; };
-	var hours = date.getHours();
+	// the zone is a setting: blank means the machine's own clock, otherwise a
+	// named IANA zone Intl knows. Either way the parts come from Intl, so a
+	// zone change shows at once without a page reload.
+	var zone = (typeof jawnos_clock_timezone != 'undefined' && jawnos_clock_timezone && jawnos_clock_timezone != 'local') ? jawnos_clock_timezone : undefined;
+	var parts = null;
+	try {
+		var fmt = new Intl.DateTimeFormat('en-US', {
+			timeZone: zone, hour12: false,
+			weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+			hour: '2-digit', minute: '2-digit', second: '2-digit'
+		});
+		parts = {};
+		fmt.formatToParts(date).forEach(function (p) { parts[p.type] = p.value; });
+	}
+	catch (e) { parts = null; }
+	// an engine without the named zone (or Intl at all) falls back to local
+	if (!parts || !parts.hour) {
+		parts = {
+			weekday: dayProcessor(date.getDay()),
+			year: String(date.getFullYear()),
+			month: pad(date.getMonth() + 1),
+			day: pad(date.getDate()),
+			hour: pad(date.getHours()),
+			minute: pad(date.getMinutes()),
+			second: pad(date.getSeconds())
+		};
+	}
+	var hours = parseInt(parts.hour, 10);
+	if (hours == 24) { hours = 0; }
 	var time;
 	if (typeof jawnos_clock_format != 'undefined' && jawnos_clock_format == '12') {
 		var meridiem = hours < 12 ? 'am' : 'pm';
-		hours = hours % 12;
-		if (hours == 0) { hours = 12; }
-		time = hours + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + meridiem;
+		var face = hours % 12;
+		if (face == 0) { face = 12; }
+		time = face + ':' + parts.minute + ':' + parts.second + meridiem;
 	}
 	else {
-		time = pad(hours) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+		time = pad(hours) + ':' + parts.minute + ':' + parts.second;
 	}
-	var date_text = pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + '/';
+	var date_text = parts.month + '/' + parts.day + '/';
 	if (windowPhoneChecker()) {
-		return date_text + String(date.getFullYear()).slice(-2) + '<br>' + time;
+		return date_text + String(parts.year).slice(-2) + '<br>' + time;
 	}
-	return dayProcessor(date.getDay()) + ' ' + date_text + date.getFullYear() + ' ' + time;
+	return parts.weekday + ' ' + date_text + parts.year + ' ' + time;
 }
 // The clock is redrawn from the last timestamp it was given, so a change to its
 // format shows at once rather than at the next view refresh.
@@ -153,6 +203,7 @@ function jawnosBarsApply() {
 	if (!bar.length) { return; }
 
 	bar.attr('position', jawnosBars.taskbar);
+	bar.attr('autohide', jawnosBars.autohide);
 	if (dock.attr('position') != jawnosBars.dock) {
 		// a move between edges drops the tuck the old edge left behind
 		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '', left: '', right: '' });
@@ -183,9 +234,10 @@ function jawnosBarsApply() {
 	// setting says
 	jawnosSearchPlace();
 
-	// the icons take their end after the search has taken its place, so a start
-	// button set to the left leads the bar with nothing before it
-	jawnosTaskbarIconsSideApply();
+	// then the bar's furniture takes its order: the search, the window list, the
+	// clock and the start button are slots the edit mode drags around, and a
+	// pinned app or keyboard rides among them
+	jawnosTaskbarOrderApply();
 
 	// the top dock rests tucked away - its icons above the visible edge, its
 	// search strip on screen - so a fresh layout settles it there; every other
@@ -249,22 +301,9 @@ function jawnosTopIconsApply() {
 	}
 }
 
-// The start button (and the lock beside it) answers to its own setting: on the
-// right end it stands after the clock, at the very end of the bar, and on the
-// left it leads the bar. It also hugs its own edge - two pixels of the bar's
-// air on the outside, a hand's width on the inside.
-function jawnosTaskbarIconsSideApply() {
-	var icons = $('#taskbar_icons');
-	if (!icons.length || !$('#taskbar').length) { return; }
-	if (jawnosBars.start_side == 'left') {
-		icons.prependTo('#taskbar');
-		icons.css({ 'padding-left': '2px', 'padding-right': '6px' });
-	}
-	else {
-		icons.appendTo('#taskbar');
-		icons.css({ 'padding-left': '6px', 'padding-right': '2px' });
-	}
-}
+// The start button (and the lock beside it) is now just one of the bar's slots:
+// where it stands is the order the edit mode drags it into (see taskbar_edit.js),
+// so there is no side setting to apply here any more.
 
 // the cancel beside a side dock's input sends the panel away
 $(document).on('click', '#search_cancel', function () {
@@ -282,7 +321,6 @@ $(document).on('change', '.misc_setting', function () {
 	if (setting == 'dock_position') { jawnosBars.dock = $(this).val(); }
 	else if (setting == 'taskbar_position') { jawnosBars.taskbar = $(this).val(); }
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
-	else if (setting == 'start_button_side') { jawnosBars.start_side = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
 	else if (setting == 'start_menu_icon') {

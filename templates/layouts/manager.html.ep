@@ -1,3 +1,4 @@
+% use Mojo::JSON qw/decode_json encode_json/;
 <!DOCTYPE html>
 <html>
   <head>
@@ -71,9 +72,15 @@
 				search_placement: '<%= &subs::misc_setting('search_placement') || 'dock' %>',
 				start_button_side: '<%= &subs::misc_setting('start_button_side') || 'right' %>',
 				dock_icons: '<%= &subs::misc_setting('dock_icons') || 'shown' %>',
-				taskbar_height: '<%= &subs::misc_setting('taskbar_height') || 44 %>'
+				taskbar_height: '<%= &subs::misc_setting('taskbar_height') || 44 %>',
+				// the bar's furniture and order ride as JSON so a quoted value does
+				// not come back HTML-escaped; a bad value falls back to null (default)
+				taskbar_order: <%== encode_json(eval { decode_json(&subs::misc_setting('taskbar_order')) } || undef) %>,
+				taskbar_autohide: '<%= &subs::misc_setting('taskbar_autohide') || 'off' %>'
 			};
 			var jawnos_clock_format = '<%= &subs::misc_setting('clock_format') || '24' %>';
+			var jawnos_clock_timezone = '<%= &subs::misc_setting('clock_timezone') || '' %>';
+			var jawnos_clock_notifications = '<%= &subs::misc_setting('clock_notifications') || 'on' %>';
 		</script>
 		<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
 		<script src="/js/jquery-ui.js"></script>
@@ -102,6 +109,7 @@
 		<script src="/js/manager/timelineprinter.js?string=<%= $string %>"></script>
 		<script src="/js/manager/backgroundprinter.js?string=<%= $string %>"></script>
 		<script src="/js/manager/taskbar.js?string=<%= $string %>"></script>
+		<script src="/js/manager/taskbar_edit.js?string=<%= $string %>"></script>
 		<script src="/js/manager/narratorprinter.js?string=<%= $string %>"></script>
 		<script src="/js/manager/marker.js?string=<%= $string %>"></script>
 		<script src="/js/pm.js?string=<%= $string %>"></script>

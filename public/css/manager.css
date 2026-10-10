@@ -348,6 +348,75 @@ html, body {
 #taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; margin-left: 6px; }
 #taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; height: calc(var(--taskbar_h, 44px) - 9px); }
 #taskbar #search_toggle { flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 12px); height: calc(var(--taskbar_h, 44px) - 12px); max-width: none; object-fit: contain; }
+
+/* A pinned app or keyboard: the same bare tile the bar's own buttons wear. */
+#taskbar .taskbar_pin {
+	box-sizing: border-box;
+	flex: 0 0 auto;
+	width: calc(var(--taskbar_h, 44px) - 4px);
+	height: calc(var(--taskbar_h, 44px) - 4px);
+	max-width: none;
+	object-fit: contain;
+}
+
+/* Edit mode: the slots drag along the bar. While it is on the furniture ignores
+   the pointer (a press would open a window or a menu mid-drag), but the slots
+   themselves still take the drag. */
+#taskbar.taskbar_edit { outline: dashed 2px var(--ink-muted, #888); outline-offset: -3px; }
+#taskbar.taskbar_edit > * { cursor: move; }
+#taskbar.taskbar_edit > * > * { pointer-events: none; }
+#taskbar.taskbar_edit .taskbar_slot_placeholder { opacity: 0.35; border: dashed 2px var(--ink-muted, #888); border-radius: 6px; }
+
+/* Autohide: the bar tucks off its edge, a sliver left to reach for; the pointer
+   on the sliver brings it back. Pure CSS, so no timer has to chase it. */
+#taskbar[autohide=on] { transition: transform .22s ease; }
+#taskbar[autohide=on][position=bottom] { transform: translateY(calc(100% - 6px)); }
+#taskbar[autohide=on][position=bottom]:hover { transform: translateY(0); }
+#taskbar[autohide=on][position=top] { transform: translateY(calc(-100% + 6px)); }
+#taskbar[autohide=on][position=top]:hover { transform: translateY(0); }
+
+/* The bar's context menu, shaped like the folders one. */
+.taskbar_context {
+	position: fixed;
+	z-index: 60000;
+	background-color: var(--panel-2);
+	border: solid 2px;
+	border-radius: 6px;
+	padding: 4px;
+	font-size: 18px;
+	min-width: 200px;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.taskbar_context_selection {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 10px;
+	border-radius: 5px;
+	cursor: pointer;
+}
+.taskbar_context_selection:hover { background-color: rgba(0, 0, 0, 0.1); }
+.taskbar_context_label {
+	padding: 8px 10px 2px;
+	font-size: 12px;
+	opacity: 0.6;
+	text-transform: uppercase;
+	letter-spacing: .05em;
+}
+.taskbar_context_check { margin-left: auto; }
+.taskbar_context_sub { display: flex; flex-direction: column; gap: 5px; padding: 4px 10px 8px 16px; }
+.taskbar_context_sub select { font-size: 15px; max-width: 240px; }
+.taskbar_context_apps { max-height: 280px; overflow: auto; }
+.taskbar_context_app {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 6px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.taskbar_context_app:hover { background-color: rgba(0, 0, 0, 0.1); }
+.taskbar_context_app img { width: 26px; height: 26px; max-width: 26px; object-fit: contain; }
 #timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
 #clockface { z-index: 2; overscroll-behavior: contain; position:absolute; right: 0px; top: 0px; width: 100% }
 #leaderboard { z-index: 2; position:absolute; left:0px; width: 100%;}

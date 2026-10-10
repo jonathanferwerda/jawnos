@@ -165,7 +165,6 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
 				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar', 'start_menu' ] ],
-				[ 'start_button_side', 'Start Button', [ 'right', 'left' ] ],
 				[ 'dock_icons', 'Dock Icons', [ 'shown', 'hidden' ] ],
 				[ 'taskbar_height', 'Taskbar Height', [ 44, 32, 36, 40, 48, 52, 56, 64, 72 ] ],
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],
