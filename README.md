@@ -105,40 +105,29 @@ furniture around them is largely user-defined:
 
 ## Screenshots
 
-The desktop, with the day's routines hung on the clothesline and the bars around the edge:
+**The desktop.** The clothesline runs along the top, hanging the routines that belong at the
+current hour; the taskbar and the dock share the edges.
 
 ![The JawnOS desktop](docs/screenshots/desktop.png)
 
-*The desktop. The clothesline runs along the top of the screen, hanging the routines that belong
-at the current hour; the taskbar and the dock share the edges.*
-
-The start menu, with the recently used list and the category rail:
+**The start menu.** It opens on the recent apps, with a category rail for the whole catalogue and
+a search that can ride the menu, the taskbar or the dock.
 
 ![The start menu](docs/screenshots/start-menu.png)
 
-*The start menu. It opens on the recents, with a category rail for the whole catalogue and a
-search that can ride the menu, the taskbar or the dock.*
-
-The taskbar's context menu, opened by right-click or a long press on touch:
+**The taskbar's context menu.** From here the bar is rearranged, repositioned, set to auto-hide
+and repopulated with pinned apps and keyboards; the clock's format and time zone live here too.
 
 ![The taskbar's context menu](docs/screenshots/taskbar-menu.png)
 
-*The taskbar's own menu. From here the bar is rearranged, repositioned, set to auto-hide and
-repopulated with pinned apps and keyboards; the clock's format and time zone live here too.*
+**Process Monitor.** Live CPU and memory readings, per-core graphs and a sortable process list.
 
-The music app:
+![The Process Monitor](docs/screenshots/monitor.png)
 
-![The music app](docs/screenshots/music.png)
-
-*The music player. The library and the queue sit side by side, with the transport in reach of a
-thumb.*
-
-The same desktop on a phone:
+**On a phone.** The bars can be moved, hidden or set to auto-hide, and the interface scales to
+the screen.
 
 ![JawnOS on a phone](docs/screenshots/phone.png)
-
-*The desktop on a phone. The bars can be moved, hidden or set to auto-hide, and the whole
-interface scales to the screen.*
 
 ## How it's built
 
