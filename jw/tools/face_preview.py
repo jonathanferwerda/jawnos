@@ -19,7 +19,7 @@ except ImportError:                      # when run from another directory
     from lv_font_digits import rasterise
 
 HERE = __file__.rsplit("/", 1)[0]
-CLOCK = HERE + "/../fonts/clock_font_54.c"
+CLOCK = HERE + "/../fonts/clock_font_72.c"
 TTF = ("/home/jawn/jawnos-fw/watch-libs/lvgl/scripts/generators/"
        "built_in_font/Montserrat-Medium.ttf")
 
@@ -30,7 +30,7 @@ YELLOW = (0xFF, 0xE0, 0x00)
 CYAN = (0x5a, 0xfc, 0xdd)
 WHITE = (255, 255, 255)
 # line_height / base_line of the montserrat sizes the face uses
-LVGL_METRICS = {16: (19, 3), 20: (24, 4), 24: (26, 4), 48: (52, 9)}
+LVGL_METRICS = {14: (17, 3), 16: (19, 3), 20: (24, 4), 24: (26, 4), 48: (52, 9)}
 
 
 def load_clock_font(path):
@@ -131,11 +131,11 @@ def face(net_room=False, buttons=False, output="face_preview.png"):
     draw_lvgl_label(draw, "Wed Oct 07 2026", 10, 26, 16, YELLOW, width=220)
 
     data, glyphs, lh, bl, first, length, gid_start = load_clock_font(CLOCK)
-    draw_clock_text(draw, "12:34", 120, 44, data, glyphs, lh, bl, first, length, gid_start)
+    draw_clock_text(draw, "12:34", 110, 44, data, glyphs, lh, bl, first, length, gid_start)
 
-    # seconds and steps share a line
-    draw_lvgl_label(draw, "56", -38 + 120 - 40, 112, 24, YELLOW, width=80)
-    draw_lvgl_label(draw, "12345", 38 + 120 - 40, 112, 24, CYAN, width=80)
+    # seconds right beside the clock, steps small in the top-right corner
+    draw_lvgl_label(draw, "56", 196, 70, 24, YELLOW, align="right", width=40)
+    draw_lvgl_label(draw, "12345", 192, 26, 14, CYAN, align="right", width=40)
 
     if net_room:
         draw_lvgl_label(draw, "192.168.1.44", 20, 140, 16, WHITE)
