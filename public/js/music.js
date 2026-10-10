@@ -897,41 +897,57 @@ function searchMusic(data) {
 			$('body').css({ 'cursor': 'auto' });
 
 			var v = document.getElementById('video');
-			var src = v.src;
-			var currentTime = v.currentTime;
 			var timestamp = Date.now();
 			var state = v.state;
-			// A search re-renders the whole window, which would tear the <video>
-			// element down and restart the track. While something is loaded, park
-			// the live element outside the window across the render and put it back
-			// afterwards: the media element is never destroyed, so a search (or an
-			// artist/album pick) no longer interrupts playback.
+			// A search only ever changes the library lists (and, on a library
+			// switch, the configuration panel). Swapping just those keeps the
+			// player and the rest of the window untouched: no flash, and the
+			// <video> element is never destroyed, so playback is not interrupted.
+			var fragment = $('<div></div>').html(response.html);
+			var in_place = fragment.find('#music_files').length > 0 && $('#music_files').length > 0;
+			// a full render would tear the <video> down; park a loaded one first
 			var keep_video = !!v.src;
 			var parking = $('#temporary_workspace');
 			if (!parking.length) {
 				parking = $('<div style="display:none;"></div>').appendTo('body');
 			}
 
-
 			treeMaker();
 
 			var configOpen = $('#music_configuration').is(':visible');
-			var oldMusic = $('#music').html();
-			musicWindowResizes();
-			if (keep_video) {
-				// out of the window before the render...
-				parking.append(v);
-			}
-			windowMaker(response.html);
-			if (keep_video) {
-				// ...and back into the fresh .media_window, replacing the empty
-				// <video> the render produced
-				var fresh = $('#music').find('#video');
-				if (fresh.length) {
-					fresh[0].replaceWith(v);
+			if (in_place) {
+				// the list elements come back fresh, so musicInit rebuilds their
+				// jQuery UI resizable state below
+				$('#music_artists').replaceWith(fragment.find('#music_artists'));
+				$('#music_albums').replaceWith(fragment.find('#music_albums'));
+				$('#music_files').replaceWith(fragment.find('#music_files'));
+				var new_music = fragment.find('#music');
+				var new_unlock = new_music.attr('unlock');
+				if (new_unlock !== undefined) {
+					$('#music').attr('unlock', new_unlock);
 				}
-				else {
-					$('#music').find('.media_window').append(v);
+				// the configuration panel carries the library's own controls and
+				// its remote_uuid, so it moves with a library switch
+				if (fragment.find('#music_configuration').length) {
+					$('#music_configuration').replaceWith(fragment.find('#music_configuration'));
+				}
+			}
+			else {
+				if (keep_video) {
+					// out of the window before the render...
+					parking.append(v);
+				}
+				windowMaker(response.html);
+				if (keep_video) {
+					// ...and back into the fresh .media_window, replacing the empty
+					// <video> the render produced
+					var fresh = $('#music').find('#video');
+					if (fresh.length) {
+						fresh[0].replaceWith(v);
+					}
+					else {
+						$('#music').find('.media_window').append(v);
+					}
 				}
 			}
 			$.each(response.artist, function(i,v) {
@@ -943,19 +959,10 @@ function searchMusic(data) {
 			
 			if (state == 1) {
 				var v = document.getElementById('video');
-				if (!keep_video) {
-					v.src = src;
-					var now = Date.now();
-					currentTime = ((now - timestamp) / 1000) + currentTime;
-					v.currentTime = currentTime;
-				}
 				v.state = 1;
 				var playing = $('.playing');
-				if (!keep_video) {
-					// a preserved element already wears the right style, so leave it
-					var ts = $('#video').attr('thumb_style');
-					$('#video').attr('style', ts);
-				}
+				// the media element is the one that has been playing all along, so
+				// its src, position and style need no restore
 				$('#video').attr('type', nowPlaying['type']);
 				if (nowPlaying['type'] == 'audio') {
 					$('#video').hide();
@@ -973,9 +980,6 @@ function searchMusic(data) {
 			else {
 				$('#video').hide();
 			}
-			var wind_id = $('#music').closest('.wind').attr('id');
-
-
 			playing_now('update');
 
 			$('#music_albums').scrollTop(albumScroll);
