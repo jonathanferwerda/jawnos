@@ -81,6 +81,10 @@ static uint32_t tilt_log_bytes = 0;
 // hands the wake back to the usual timeout (see the wake block in loop()).
 #define TILT_WAKE_LOOK_MS 5000
 static bool tilt_wake_short = false;
+// A tilt raise lights the screen for a glance at most TILT_WAKE_LOOK_MS; while
+// the glance is up the arm is watched so it can end early, and a touch hands the
+// wake back to the usual timeout (see wrist_look_monitor).
+static bool wrist_look_watch = false;
 // Flag used to indicate whether recording is enabled
 static bool recordFlag = false;
 // Flag used for PMU interrupt trigger status
@@ -154,6 +158,9 @@ char *bufapgwIP = new char[40]();
 IPAddress apIP;
 String homebase;
 String homebaseIP;
+// While the homebase is away every https_request is a TLS connect that times
+// out; after one fails, skip the attempts for a while (see https_request_raw).
+static uint32_t homebase_down_until = 0;
 String homebaseIPArray[10];
 String wifi_update;
 JSONVar wigi;
@@ -2308,12 +2315,22 @@ String https_request_raw(String url, String method, String payloadData) {
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
     return "failure";
   }
+  // A homebase that has gone away (a sleeping laptop) turns every request into a
+  // TLS connect that times out. Hammering it -- a button press each time --
+  // asserts inside lwip's thread/mbox setup and reboots the watch (the longer it
+  // is tried, the more likely). Back off after a failure: the caller's fallback
+  // (queue the tap, or hand it over BLE) is what a press should do while the
+  // homebase is away.
+  if ((int32_t)(millis() - homebase_down_until) < 0) {
+    return "failure";
+  }
   url = url_maker(url);
   Serial.println(url);
   // A stack client, not "new": one leaked WiFiClientSecure per request is what
   // ground the heap down until the panel's SPI DMA buffers stopped allocating.
   WiFiClientSecure connexion;
   connexion.setInsecure();
+  bool reached = false;
   {
     HTTPClient https;
     https.setTimeout(4000);   // a slow homebase must not freeze the loop for long
@@ -2326,6 +2343,7 @@ String https_request_raw(String url, String method, String payloadData) {
       }
       String answer = "failure";
       if (httpCode > 0) {
+        reached = true;
          Serial.printf("HTTPS GET code: %d\n", httpCode);
         if (httpCode == HTTP_CODE_OK) {
           answer = https.getString();
@@ -2337,9 +2355,11 @@ String https_request_raw(String url, String method, String payloadData) {
         writeFile(FFat, "/bootreport.txt", "failure");
       }
       https.end();
+      homebase_down_until = reached ? 0 : millis() + 20000;
       return answer;
     }
   }
+  homebase_down_until = millis() + 20000;
   return "failure";
 }
 
@@ -3810,6 +3830,7 @@ void touch_watch() {
   // a slider keeps the screen awake; the board's touch IRQ bit alone would not.
   if (lv_display_get_inactive_time(NULL) < 1000) {
     buttonMillis = millis();
+    wrist_look_watch = false;   // a touch hands the glance back to the timeout
   }
 }
 
@@ -3998,11 +4019,13 @@ static float wrist_gx = 0, wrist_gy = 0, wrist_gz = 0;     // the pose that look
 // While a look's screen is up the wrist is watched: the glance is held for as
 // long as the watch stays where it can be read and handed back to sleep the
 // moment the arm drops (see wrist_look_monitor).
-static bool wrist_look_watch = false;      // a raise lit the screen; watch the arm
 static uint32_t wrist_look_since = 0;      // when that look began
 static uint32_t wrist_look_release = 0;    // when the pose last left the read pose
 static uint32_t wrist_cooldown_until = 0;  // no wake right after a look is released
-#define WRIST_LOOK_EXTEND_MS 90000         // a look never holds the screen past this
+// A tilt wake holds the glance at most this long without a button/touch press;
+// after that it sleeps even if the arm is still up (the user: "the maximum a
+// tilt wakeup without a button press can keep the screen on 5 seconds").
+#define WRIST_LOOK_EXTEND_MS 5000
 #define WRIST_LOOK_RELEASE_MS 350          // off the read pose this long: the arm went down
 #define WRIST_LOOK_RELEASE_DEG 45.0f       // this far from the read pose is "not looking"
 
@@ -4155,8 +4178,11 @@ static void wrist_look_monitor() {
     return;
   }
   if (millis() - wrist_look_since > WRIST_LOOK_EXTEND_MS) {
-    // held implausibly long to be a look: let it sleep rather than pin the screen
+    // the glance is spent: a tilt wake keeps the screen for five seconds at
+    // most without a button press, even if the arm is still held up
     wrist_look_watch = false;
+    Serial.println("[tilt] glance spent: screen off");
+    lowPowerEnergyHandler();
     return;
   }
   static uint32_t last = 0;
