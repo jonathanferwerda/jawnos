@@ -930,13 +930,22 @@ function windowHalfski(win,side) {
 	if (!windowPhoneChecker()) {
 		var ok = reservedSpots['header'] + 2;
 		var ww = $(window).width();
-		// with the dock's icons switched off the old allowance for the search box
-		// is wrong - the dock may be gone entirely - so the window measures itself
-		// against the bar and whatever the dock still keeps
-		var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
-		var height = hidden
-			? $(window).height() - ok - windowBottomClearance() - 10
-			: $(window).height() - headerHeight - $('#search').height() - 10;
+		// The half window reaches the foot of the screen. The old code always left
+		// room for the search box, which only makes sense while the search rides
+		// the dock - with it up in the taskbar the window was left short of the
+		// bottom. So it goes to the bottom, and stops short only when the search is
+		// in the dock: then its foot sits on the dock's top edge, so the search
+		// (and the pill) stays clear.
+		var foot = $(window).height() - windowBottomClearance();
+		var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+		var dock_on_bottom = (typeof jawnosDockTop == 'function' && !jawnosDockTop())
+			&& (typeof jawnosSideDock == 'function' && !jawnosSideDock())
+			&& (typeof jawnosDockHidden == 'function' && !jawnosDockHidden());
+		if (search_in_dock && dock_on_bottom) {
+			var dock = $('#pseudonym_home');
+			if (dock.length) { foot = Math.min(foot, dock.offset().top); }
+		}
+		var height = foot - ok;
 		if (mouse.x > (ww - (ww / 10)) || side == 'right') {
 
 			win.css({ 
