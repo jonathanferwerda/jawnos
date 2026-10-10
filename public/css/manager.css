@@ -604,8 +604,12 @@ canvas { overflow: scroll; z-index: 99; }
 /* the window title bar is a thin strip: the icon, the name and the window
    controls all answer to the one 30px figure, so the bar closes up around
    them instead of standing 45 deep, and the extras the line-height would
-   add above and below are dropped */
-.top_navbar { line-height: 0; }
+   add above and below are dropped.
+   The bar is width:100% with a border (set inline in window_maker), so it has
+   to be border-box: content-box would add the two 3px edges on top of the
+   full width and push the bar 6px past the window's right edge, out of line
+   with .window_contents. */
+.top_navbar { line-height: 0; box-sizing: border-box; }
 /* the icon sits in a bare 26px tile with a 2px collar of the bar's colour
    around it: the holder pads the top, left and bottom, and being the tallest
    thing on the line it keeps the name's middle on the bar's middle. The
