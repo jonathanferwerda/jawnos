@@ -84,6 +84,14 @@ function timelinePrinter(appts,sort,offset) {
 		// so the row's extent is measured while it is drawn.
 		var rowLeft;
 		var rowRight;
+		// the box the press grows: the dots and the words drawn beside them, but
+		// never the duration band. A band can reach the rail, making the row
+		// hundreds of pixels wide, and a uniform scale of a box that wide reads as
+		// a horizontal stretch that drags the icon and the name off the edge; the
+		// item itself (the dot, its icon and its label) is compact, so it grows
+		// the way a garment does
+		var magLeft;
+		var magRight;
 
 		$.each(v.list, function(n,l) {
 			if ( !l ) { return true; }
@@ -101,6 +109,9 @@ function timelinePrinter(appts,sort,offset) {
 			var x = dotEdge + (column * pct / 2);
 			rowLeft = (rowLeft == undefined) ? (x - dotRadius) : Math.min(rowLeft, x - dotRadius);
 			rowRight = (rowRight == undefined) ? (x + dotRadius) : Math.max(rowRight, x + dotRadius);
+			var dotMag = dotRadius + ((halo ? dotHalo : dotRing) / 2);
+			magLeft = (magLeft == undefined) ? (x - dotMag) : Math.min(magLeft, x - dotMag);
+			magRight = (magRight == undefined) ? (x + dotMag) : Math.max(magRight, x + dotMag);
 
 			var startX;
 			var startPct = parseFloat(l[scope + '_start_percent']);
@@ -176,10 +187,13 @@ function timelinePrinter(appts,sort,offset) {
 				labelEnd = amountX + ctx.measureText(amount).width;
 			}
 			rowRight = Math.max(rowRight, labelEnd);
+			magRight = Math.max(magRight, labelEnd);
 		});
 		// a row with nothing drawn has nothing to answer for
 		if (rowLeft == undefined) { return true; }
-		appPosition.push([rowLeft, rowY - 16, rowRight, rowY + 16, v]);
+		// the entry carries its own magnify box: the click answers over the whole
+		// row, but only the compact item grows
+		appPosition.push([rowLeft, rowY - 16, rowRight, rowY + 16, v, [magLeft, rowY - 18, magRight, rowY + 18]]);
 	});
 
 	$.each(textPrinter, function(i,t) {

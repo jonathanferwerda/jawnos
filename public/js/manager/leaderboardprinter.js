@@ -203,9 +203,12 @@ $(document).on('click', '.background', function (e) {
 			var timestamp = Date.now();
 			// the press grows the thing it landed on - the dot and its words, the
 			// clockface dot and label, or the garment, which also wears a thicker
-			// edge - for half a second
+			// edge - for half a second. An entry may carry its own magnify box as a
+			// sixth element (the timeline's rows do: the whole row answers the click,
+			// but only its compact dot-and-words item should grow)
 			if (typeof jawnosClickMagnify == 'function') {
-				jawnosClickMagnify(document.getElementById(printer), o, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0);
+				var magnify_rect = (o.length > 5 && o[5]) ? o[5] : o;
+				jawnosClickMagnify(document.getElementById(printer), magnify_rect, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0);
 			}
 			appointmentGrabber(o[4]['name'],timestamp);
 			return false;
