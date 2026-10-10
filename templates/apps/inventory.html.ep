@@ -136,22 +136,6 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 	    button shares the report's own block, so the answer lands in place %>
 	<button class="system_evaluation hover" app="<%= $app %>" hint="Run the evaluation now with the chosen model">Evaluate</button>
 	<%= include 'apps/evaluation', evaluation => $evaluation, app => $app %>
-	<% my @statistics = qw/first_seen last_seen first_recorded last_recorded shortest longest shortest_between longest_between/; %>
-	<table>
-		<thead>
-			<th>Stat</th><th>Dur</th><th>T</th><th>ST</th>
-		</thead>
-		<tbody>
-			<% foreach my $s (@statistics) { %>
-				<tr>
-					<td><%= &subs::format_name($s) %></td>
-					<td><%= &subs::duration_sayer($returner->{$s}->{'duration'} / 1000 ) %></td>
-					<td><span class="time" timestamp="<%= $returner->{$s}->{'timestamp'} %>"></span></td>
-					<td><span class="time" timestamp="<%= $returner->{$s}->{'server_time'} %>"></span></td>
-			<% } %>
-		</tbody>	
-	</table>
-	<br>
 	<span class="statistic_information_container" app="<%= $app %>"></span>
 <% } else { %>
 	<h4>None</h4>
