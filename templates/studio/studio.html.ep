@@ -223,6 +223,19 @@
 						</td>
 					</tr>
 					<tr>
+						<td>Latency hint<br><span style="font-size:12px;">how small a buffer to ask the browser for; too low crackles. Fixed when the window opens, so it rebuilds (save first)</span></td>
+						<td>
+							<select class="studio_config" setting="latency_hint">
+								<option value="interactive"<%= (($settings->{'latency_hint'} || 'interactive') eq 'interactive') ? ' selected' : '' %>>interactive (default)</option>
+								<option value="balanced"<%= (($settings->{'latency_hint'} || '') eq 'balanced') ? ' selected' : '' %>>balanced</option>
+								<option value="playback"<%= (($settings->{'latency_hint'} || '') eq 'playback') ? ' selected' : '' %>>playback (most robust)</option>
+								<option value="0.01"<%= (($settings->{'latency_hint'} || '') eq '0.01') ? ' selected' : '' %>>low &mdash; 10 ms target</option>
+								<option value="0.005"<%= (($settings->{'latency_hint'} || '') eq '0.005') ? ' selected' : '' %>>lower &mdash; 5 ms target</option>
+								<option value="0.003"<%= (($settings->{'latency_hint'} || '') eq '0.003') ? ' selected' : '' %>>lowest &mdash; 3 ms target</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
 						<td>Latency<br><span style="font-size:12px;">what the browser reports for this session</span></td>
 						<td><span id="studio_latency_info">&mdash;</span></td>
 					</tr>

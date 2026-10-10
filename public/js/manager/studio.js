@@ -46,12 +46,13 @@ function studioContext() {
 	if (!studioAudio.ctx) {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
-		var options = { latencyHint: 'interactive' };
+		var hint = studioLatencyHint();
+		var options = { latencyHint: hint };
 		var rate = studioSampleRate();
 		if (rate > 0) { options.sampleRate = rate; }
 		var ctx;
 		try { ctx = new Ctor(options); }
-		catch (e) { ctx = new Ctor({ latencyHint: 'interactive' }); }
+		catch (e) { ctx = new Ctor({ latencyHint: hint }); }
 		studioAudio.ctx = ctx;
 		studioAudio.master = ctx.createGain();
 		studioAudio.masterAnalyser = ctx.createAnalyser();
@@ -91,6 +92,30 @@ function studioSettingNumber(setting, fallback) {
 function studioSampleRate() {
 	var rate = studioSettingNumber('sample_rate', 0);
 	return rate >= 8000 ? Math.round(rate) : 0;
+}
+
+// How small an audio buffer to ask the browser for. The named hints map straight
+// through; a bare number is a target in seconds, and the browser may quietly give
+// a larger one - too small a buffer crackles. Fixed when the AudioContext is
+// built, so changing it rebuilds the studio window.
+function studioLatencyHint() {
+	var raw = mixer['settings'] ? mixer['settings']['latency_hint'] : undefined;
+	if (raw === undefined || raw === null || String(raw).length == 0) { return 'interactive'; }
+	var s = String(raw);
+	if (s == 'interactive' || s == 'balanced' || s == 'playback') { return s; }
+	var n = numeral(s).value();
+	return (n > 0) ? n : 'interactive';
+}
+
+// The buffer hint and the sample rate are fixed when the AudioContext is built,
+// so a change to either tears the window down and brings it back up.
+function studioRebuildWindow(setting, value) {
+	studioFlushSources();
+	if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
+	studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+	setTimeout(function () {
+		studioInit({ settings: [{ setting: setting, value: value }] });
+	}, 500);
 }
 
 // ---- effect factories ------------------------------------------------------
@@ -330,6 +355,7 @@ function studioUpdateLatencyInfo() {
 	var parts = ['output ' + Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000) + ' ms'];
 	if (m && m.latency > 0) { parts.push('input ' + Math.round(m.latency * 1000) + ' ms'); }
 	parts.push('offset ' + Math.round(studioRecordOffset(ch) * 1000) + ' ms');
+	parts.push('hint ' + studioLatencyHint());
 	el.text(parts.join(' · '));
 }
 
@@ -3113,12 +3139,15 @@ $(document).on('change', '.studio_config', function() {
 		// the audio context is built with one fixed rate, so it has to be rebuilt
 		mixer['settings'] = mixer['settings'] || {};
 		mixer['settings'][setting] = value;
-		studioFlushSources();
-		if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
-		studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
-		setTimeout(function() {
-			studioInit({ 'settings': [{ 'setting': setting, 'value': value }] });
-		}, 500);
+		studioRebuildWindow(setting, value);
+		return;
+	}
+	if (setting == 'latency_hint') {
+		// the buffer hint is fixed when the AudioContext is built, so rebuild
+		mixer['settings'] = mixer['settings'] || {};
+		mixer['settings'][setting] = value;
+		if (String(value).length > 0) { studioSaveSettings([{ 'setting': setting, 'value': value }]); }
+		studioRebuildWindow(setting, value);
 		return;
 	}
 	if (setting == 'video_height' || setting == 'video_fps' || setting == 'video_mbps' ||
