@@ -337,8 +337,8 @@ function windowTopLimit() {
 }
 
 // The foot of the screen a window in a half or maximized state leaves free: a
-// bottom taskbar first, then whatever the dock still keeps on screen when its
-// icons are switched permanently off.
+// bottom taskbar first, then the strip a bottom dock keeps on screen while it is
+// tucked (its search, or the sliver the pointer rests on to call it back).
 function windowBottomClearance() {
 	var bar = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('bottom') : 0;
 	if (typeof jawnosDockWindowReserve == 'function') { bar += jawnosDockWindowReserve(); }
@@ -928,14 +928,18 @@ function windowHalfski(win,side) {
 		mouse = mouse_position();
 	}
 	if (!windowPhoneChecker()) {
-		var ok = reservedSpots['header'] + 2;
+		// the top sits flush under a taskbar on the top edge - headerHeight is the
+		// bar's own height - so the titlebar is not tucked under the bar. (The old
+		// reservedSpots['header'] + 2 left a 2px overlap.)
+		var ok = (typeof headerHeight != 'undefined') ? headerHeight : (reservedSpots['header'] || 0);
 		var ww = $(window).width();
-		// The half window reaches the foot of the screen. The old code always left
-		// room for the search box, which only makes sense while the search rides
-		// the dock - with it up in the taskbar the window was left short of the
-		// bottom. So it goes to the bottom, and stops short only when the search is
-		// in the dock: then its foot sits on the dock's top edge, so the search
-		// (and the pill) stays clear.
+		// The half window reaches the foot of the screen, stopping only for what
+		// holds the bottom edge: a bottom taskbar, and the strip a bottom dock keeps
+		// on screen while it is tucked (windowBottomClearance carries both). That
+		// leaves the dock's reach on screen instead of burying it - and the window's
+		// own foot controls, which sit at its very bottom, clear the dock instead of
+		// hiding under it. While the search rides the dock its panel may be out, so
+		// the foot also stops on the dock's own top edge.
 		var foot = $(window).height() - windowBottomClearance();
 		var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
 		var dock_on_bottom = (typeof jawnosDockTop == 'function' && !jawnosDockTop())
@@ -979,11 +983,14 @@ function windowMaximizer(timestamp, app) {
 	var win = $('#window_' + timestamp );
 	$('#window_' + timestamp + '_restore').show();
 	$('#window_' + timestamp + '_maximize').hide();
-	// with the dock's icons off the foot is measured, not guessed: the fixed
-	// percentages left the dock's dead room unclaimed
+	// A maximized window fills the space between the top limit and the foot
+	// clearance - a bottom taskbar and the strip a bottom dock keeps on screen - so
+	// no band of desktop shows beneath it and its own foot controls clear the dock.
+	// The old fixed percentages left that band (and overran the foot on a short
+	// screen). The phone keeps its own shorter face.
 	var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
-	var tall = hidden ? Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance() - 6) + 'px' : null;
 	if (windowPhoneChecker()) {
+		var tall = hidden ? Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance() - 6) + 'px' : null;
 		win.css({ 
 			'position':'fixed', 
 			'height': tall || '80%', 
@@ -995,7 +1002,7 @@ function windowMaximizer(timestamp, app) {
 	else {
 		win.css({ 
 			'position':'fixed', 
-			'height': tall || '90%', 
+			'height': Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance()) + 'px', 
 			'width': '100%',
 			'left': '0px',
 			'top': windowTopLimit()

@@ -67,16 +67,15 @@ function jawnosDockLeft() {
 function jawnosDockIconsHidden() {
 	return jawnosBars.icons == 'hidden';
 }
-// What a window in a half or maximized state leaves at the foot for the dock.
-// While the icons are on, nothing: those states measured themselves against the
-// search strip, and the dock is the user's to call out over the window's own
-// foot, as it always was. With the icons off, whatever the dock still keeps on
-// screen - the search's strip, or nothing at all.
+// What a window in a half or maximized state leaves at the foot for the dock:
+// the strip a bottom dock keeps on screen while it is tucked - the search while
+// the input rides the dock, otherwise the sliver the pointer rests on to call the
+// icons back. A window that reached the foot would bury that strip under its own
+// backing, and its own foot controls (the music player's transport row, say)
+// under the dock. Nothing for any other edge, or a hidden dock.
 function jawnosDockWindowReserve() {
-	if (!jawnosDockIconsHidden()) { return 0; }
 	if (jawnosBars.dock == 'hidden' || jawnosSideDock() || jawnosDockTop()) { return 0; }
-	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
-	return search_in_dock ? ((typeof pseudonymDockReach != 'undefined') ? pseudonymDockReach : 47) : 0;
+	return (typeof pseudonymDockStrip == 'function') ? pseudonymDockStrip() : 0;
 }
 function jawnosSideSearchVisible() {
 	return $('#pseudonym_home').hasClass('search_open');
