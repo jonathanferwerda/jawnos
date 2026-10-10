@@ -843,12 +843,6 @@ function studioSyncTakes() {
 		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
 		if (!armed) { return; }
 
-		var c = studioAudio.channels[ch];
-		if (c) {
-			c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val());
-			c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
-		}
-
 		var xf = studioCrossfade();
 		var ordered = studioChannelTakes(ch);
 		ordered.forEach(function (take, i) {
@@ -1138,6 +1132,9 @@ function studioDrawMetre(ch) {
 }
 
 function studioDrawTracks() {
+	// the transport keeps running while the tab is hidden, but there is no point
+	// repainting canvases nobody can see
+	if (document.hidden) { return; }
 	$.each(mixer, function (ch) {
 		if (!/^[0-9]+$/.test(ch)) { return; }
 		studioDrawChannel(ch);
@@ -1516,16 +1513,28 @@ $(document).on('click', '.channel', function (e) {
 	if (ch) { studioSelectedChannel = ch[1]; }
 });
 
-$(document).on('click', '.pedal_background', function () {
+$(document).on('click', '.channel_fx_pedal', function () {
 	var name = $(this).attr('hint');
-	if (!name) { return; }
-	var ch = studioSelectedChannel;
-	var c = studioAudio.channels[ch];
-	var on = !(c && c.insertByName[name]);
-	studioSetInsert(ch, name, on);
-	$(this).css({ opacity: on ? 1 : 0.45 });
-	studioSaver();
+	if (name) { studioRevealPedal(name); }
 });
+
+// Bring an inserted pedal's controls into view: open the pedalboard, scroll it
+// to the pedal and flag it, so a channel badge leads you to its settings.
+function studioRevealPedal(name) {
+	var pedal = $('#pedal_' + name);
+	if (!pedal.length) { return; }
+	var board = $('#pedalboard');
+	if (!board.is(':visible')) {
+		board.show();
+		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
+		board.css({ 'z-index': (z + 100) });
+	}
+	var left = pedal.position().left + board.scrollLeft() - 40;
+	board.stop().animate({ scrollLeft: Math.max(0, left) }, 200);
+	pedal.addClass('pedal_revealed');
+	clearTimeout(studioRevealPedal.timer);
+	studioRevealPedal.timer = setTimeout(function () { pedal.removeClass('pedal_revealed'); }, 1600);
+}
 
 $(document).on('click', '#studio_new', function() {
 	$('#studio').attr('uuid','').attr('name','');
@@ -1667,39 +1676,111 @@ $(document).on('click', '.studio_close_button', function() {
 
 
 
-$(document).on('click','.knob',function() {
-	var knob = $(this);
-	var control = knob.attr('control');
-	var channel = knob.attr('channel');
-	var input = $('.knob_control[control="' + control + '"][channel="' + channel + '"]');
-	var current_value = input.val();
-	var vis = input.is(':visible');
-	if (vis) {
-		input.hide();
-		$('.knob[channel="' + channel + '"]').show();
-	}
-	else {
-		input.show();
-		$('.knob[channel="' + channel + '"]').hide();
-		$('.knob[control="' + control + '"][channel="' + channel + '"]').show();
-	}
-	studioSaver();
-});
+// ---- knobs ------------------------------------------------------------------
+// A knob is dragged up/down, or rolled, to change its value. Its hidden
+// <input class="knob_control"> stays in the DOM as the value store - the song
+// saver, the channel and pedal appliers, and the tooltips all read it - but it
+// is never shown: the old click-to-reveal slider was laid out below the pedal's
+// full-width artwork, so it was hidden under the pedal.
+var studioKnobDrag = null;
 
-$(document).on('mousewheel', '.knob', function(e) {
-	var mvmt = numeral(e.originalEvent.wheelDelta).value();
+function studioKnobInput(knob) {
+	return $('.knob_control[control="' + knob.attr('control') + '"][channel="' + knob.attr('channel') + '"]');
+}
 
-	mvmt = numeral(mvmt / 30).value() ;
+function studioKnobReadout(knob, value) {
+	var el = $('#studio_knob_readout');
+	if (!el.length) { el = $('<div id="studio_knob_readout"></div>').appendTo('body'); }
+	var at = knob.offset() || { left: 0, top: 0 };
+	el.text(Math.round(value)).css({ display: 'block', left: at.left + 'px', top: (at.top - 24) + 'px' });
+	clearTimeout(studioKnobReadout.timer);
+	studioKnobReadout.timer = setTimeout(function () { el.hide(); }, 1000);
+}
 
-	var knob = $(this);
-	var control = knob.attr('control');
-	var channel = knob.attr('channel');
-	var input = $('.knob_control[control="' + control + '"][channel="' + channel + '"]');
-	var current_value = input.val();
-	input.val((numeral(current_value).value() + mvmt) );
+// Set the input, apply it (its `change` handler rotates the knob and pushes the
+// value into the audio graph) and show the value.
+function studioKnobSet(knob, value) {
+	var input = studioKnobInput(knob);
+	if (!input.length) { return; }
+	value = Math.max(0, Math.min(100, value));
+	input.val(value);
 	input.trigger('change');
-	studioSaver();
+	studioKnobReadout(knob, value);
+}
+
+$(document).on('pointerdown', '.knob', function (e) {
+	if (e.originalEvent.button) { return; }
+	var knob = $(this);
+	var input = studioKnobInput(knob);
+	if (!input.length) { return; }
+	studioKnobDrag = { knob: knob, y: e.originalEvent.clientY, value: studioKnobNumber(input.val(), 0) };
+	knob.addClass('knob_active');
+	e.preventDefault();
 });
+
+$(document).on('pointermove', function (e) {
+	if (!studioKnobDrag) { return; }
+	var y = e.originalEvent.clientY;
+	var dy = studioKnobDrag.y - y;
+	if (!dy) { return; }
+	studioKnobDrag.y = y;
+	studioKnobDrag.value = Math.max(0, Math.min(100, studioKnobDrag.value + (dy * 0.7)));
+	studioKnobSet(studioKnobDrag.knob, studioKnobDrag.value);
+	e.preventDefault();
+});
+
+$(document).on('pointerup pointercancel', function () {
+	if (!studioKnobDrag) { return; }
+	studioKnobDrag.knob.removeClass('knob_active');
+	studioKnobDrag = null;
+});
+
+// A wheel event, normalised to the old positive-up wheelDelta scale.
+function studioWheelDelta(event) {
+	var d = ('deltaY' in event) ? event.deltaY : (-event.wheelDelta);
+	if (event.deltaMode === 1) { d *= 16; }
+	else if (event.deltaMode === 2) { d *= 100; }
+	return -d;
+}
+
+// Bound natively and non-passively so preventDefault actually stops the
+// pedalboard scrolling under a knob; a delegated jQuery listener on document is
+// passive in Chrome and cannot cancel the scroll.
+function studioWheelHandler(event) {
+	var target = event.target;
+	if (!target || !target.closest) { return; }
+
+	var knob = target.closest('.knob');
+	if (knob) {
+		var input = studioKnobInput($(knob));
+		if (input.length) {
+			studioKnobSet($(knob), studioKnobNumber(input.val(), 0) + (studioWheelDelta(event) / 30));
+			event.preventDefault();
+		}
+		return;
+	}
+
+	var vol = target.closest('.channel_volume');
+	if (vol) {
+		$(vol).val(numeral($(vol).val()).value() + (studioWheelDelta(event) / 30));
+		studioSaver();
+		event.preventDefault();
+		return;
+	}
+
+	var jog = target.closest('#studio_jog_wheel');
+	if (jog) {
+		var diff = studioWheelDelta(event) / 30;
+		studio_jw_deg = (studio_jw_deg + diff);
+		$(jog).css({ 'rotate': studio_jw_deg + 'deg' });
+		mixer['time']['position'] = mixer['time']['position'] + diff / 10;
+		studioTime('scroll');
+		event.preventDefault();
+	}
+}
+
+if ('onwheel' in document) { document.addEventListener('wheel', studioWheelHandler, { passive: false }); }
+else { document.addEventListener('mousewheel', studioWheelHandler, { passive: false }); }
 
 $(document).on('change mousemove touchmove','.knob_control',function() {
 	var input = $(this);
@@ -1740,13 +1821,7 @@ $(document).on('click', '.button_control', function() {
 	studioSaver();
 });
 
-$(document).on('mousewheel', '.channel_volume', function(e) {
-	var vol = $(this);
-	var mvmt = numeral(e.originalEvent.wheelDelta).value() / 30;
-	var newVol = (numeral(vol.val()).value() + mvmt);
-	vol.val(newVol);
-	studioSaver();
-});
+// (channel fader and jog wheel wheels are handled by studioWheelHandler)
 
 $(document).on('change', '.channel_volume', function() {
 	studioSaver();
@@ -1934,16 +2009,7 @@ $(document).on('mouseout touchend mouseup', '#studio_jog_wheel', function() {
 	studio_last = 'out';
 });
 
-$(document).on('mousewheel', '#studio_jog_wheel', function(e) {
-	var j = $(this);
-	var mvmt = numeral(e.originalEvent.wheelDelta).value();
-
-	var diff = numeral(mvmt / 30).value() ;
-	studio_jw_deg = (studio_jw_deg + diff);
-	j.css({'rotate': studio_jw_deg + 'deg' });
-	mixer['time']['position'] = mixer['time']['position'] + diff / 10;
-	studioTime('scroll');
-});
+// (the jog wheel's wheel is handled by studioWheelHandler)
 
 $(document).on('click', '#studio_video_toggle', function() {
 	var toggle = $(this).attr('toggled');

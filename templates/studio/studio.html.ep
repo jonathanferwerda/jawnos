@@ -310,6 +310,32 @@
 	.pedal_background {
 		cursor: grab;
 	}
+	.knob {
+		cursor: ns-resize;
+		touch-action: none;
+	}
+	.knob.knob_active {
+		filter: brightness(1.3);
+	}
+	/* the value bubble a knob shows while it is dragged or rolled */
+	#studio_knob_readout {
+		position: absolute;
+		display: none;
+		z-index: 70000;
+		padding: 1px 6px;
+		background: #04325f;
+		color: #fff;
+		border-radius: 4px;
+		font-size: 12px;
+		pointer-events: none;
+	}
+	/* a channel's inserted-pedal badge jumps the pedalboard to that pedal */
+	.channel_fx_pedal {
+		cursor: pointer;
+	}
+	.pedal.pedal_revealed {
+		box-shadow: 0 0 0 4px #ffd21e;
+	}
 	.knob_control {
 		appearance:none;
 		width: 30px;
