@@ -190,16 +190,26 @@ function pseudonymFreeSpaceFinder(type) {
 		}
 		if (dock_top) {
 			// the row hangs from the padding, the search below it in the last 47px;
-			// with no icon row the search takes the box itself
+			// with no icon row the search takes the box itself. With the search
+			// riding elsewhere there is nothing under the row, so the box wraps it
+			// with the same 15px above and below instead of reserving a strip.
 			if (icons_hidden) {
 				home.css({ 'padding-top': '', 'height': (search_row + 15) + 'px' });
 			}
-			else {
+			else if (search_in_dock) {
 				home.css({ 'padding-top': (15 + size + 12) + 'px', 'height': (15 + size + 12 + 40) + 'px' });
+			}
+			else {
+				home.css({ 'padding-top': '0px', 'height': (15 + size + 15) + 'px' });
 			}
 		}
 		else {
-			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + (icons_hidden ? 0 : size) + 15) + 'px' });
+			// the row hugs its edge 15px up; the search, when it rides the dock,
+			// takes the top of the box above the icons. With the search away the box
+			// wraps the row evenly - the same 15px above it as below - so the icons
+			// sit centred rather than jammed against the top.
+			var row_pad = search_in_dock ? 0 : 15;
+			home.css({ 'padding-top': '', 'height': Math.min(120, search_row + (icons_hidden ? 0 : size) + 15 + row_pad) + 'px' });
 		}
 	}
 
