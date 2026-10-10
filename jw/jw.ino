@@ -3945,8 +3945,8 @@ static void tilt_log_marker(const char *tag, long value) {
     return;
   }
   tilt_log_flush();          // keep the marker in order with the samples
-  char b[56];
-  int n = snprintf(b, sizeof(b), "# %s %ld\n", tag, value);
+  char b[72];
+  int n = snprintf(b, sizeof(b), "# t=%lu %s %ld\n", (unsigned long)millis(), tag, value);
   if (n > 0) {
     appendFile(FFat, TILT_LOG_PATH, b);
     tilt_log_bytes += (uint32_t)n;
