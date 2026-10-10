@@ -1238,12 +1238,6 @@ function studioCountInBeats() {
 	return n > 0 ? Math.floor(n) : 0;
 }
 
-// True while the transport is running up to a pending punch-in.
-function studioCountingIn() {
-	var punch = mixer['time']['punch_in'];
-	return mixer['time']['status'] == 'record' && punch !== undefined && punch !== null && mixer['time']['position'] < punch;
-}
-
 // The committed region: where the last loop take was recorded, which is also
 // the section the transport repeats while "ongoing". Stored as a bar, so a
 // tempo change keeps it musical.
