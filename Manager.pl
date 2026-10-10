@@ -9914,6 +9914,12 @@ post '/manager/configure/permissions' => sub($c) {
 			$av->{'icon'} = 'speaker';
 		}
 	}
+	# On the phone the browser prompts are not the whole story: the termux-*
+	# commands need Android runtime permissions too, so also raise the JawnOS API
+	# grant-all screen, which owns them (it is exported for exactly this).
+	if (&subs::device_setter() eq 'mobile') {
+		system('/system/bin/am', 'start', '-n', 'com.termux.api/com.termux.api.JawnGrantAllActivity');
+	}
 	$c->render(json => { av_data => $av_data, constraints => $constraints });
 };
 
