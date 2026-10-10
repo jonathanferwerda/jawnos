@@ -180,7 +180,13 @@ function pseudonymFreeSpaceFinder(type) {
 		// off a moment ago).
 		if (search_in_dock) { home.show(); }
 		var search_row = search_in_dock ? Math.round(($('#search_entanglement').outerHeight() || 0) + 6) : 0;
-		var home_width = Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320));
+		// the home wraps the row. While the search rides the dock the box keeps
+		// room for it (the 320px floor is the search's own); with the search away
+		// there is nothing else to hold, so the box just hugs the row - the same
+		// 15px of air at its sides as above and below, not a wide strip of backing.
+		var home_width = search_in_dock
+			? Math.min(Math.min(w - 8, 720), Math.max(total + home_chrome, 320))
+			: Math.min(Math.min(w - 8, 720), total + 30);
 		home.css({ 'width': home_width + 'px', 'left': Math.round((w - home_width) / 2) + 'px', 'right': 'auto' });
 		$('#search_entanglement').css({ 'top': '', 'left': '', 'right': '' });
 		// the button comes back to the search's own row: the nudge the row wears,
