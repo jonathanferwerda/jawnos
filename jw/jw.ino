@@ -153,6 +153,11 @@ static volatile bool president_fetch_running = false;
 static volatile bool president_data_ready = false;
 static String president_payload;
 static int president_fetch_room = 1;
+// Set when a BLE room_request goes out, cleared when a payload lands (or when
+// we leave the room). If the bridge never answers it (a sleeping phone, an app
+// that does not forward it) loop() falls back to the direct http fetch.
+static volatile uint32_t ble_room_requested_at = 0;
+static volatile int ble_room_requested_room = 0;
 // loop2 sets these when a BLE message changed what belongs on screen; the LVGL
 // work itself stays on core 1 in loop()
 static volatile bool ble_toggle_refresh = false;
@@ -1347,6 +1352,7 @@ void loop() {
   if (president_data_ready) {
     // the fetch ran on core 0; the JSON and the screen belong to this core
     president_data_ready = false;
+    ble_room_requested_at = 0;   // whatever asked for the room, it arrived
     crumb("c0 apply loop");
     apply_president_payload();
   }
@@ -1373,6 +1379,19 @@ void loop() {
       crumb("c1 redraw");
       remote_room();
     }
+  }
+  // the phone may not answer a room_request (a sleeping bridge, an app that
+  // does not forward it): fetch the room directly instead of leaving the room
+  // blank. Resets on the payload's own arrival above.
+  if (ble_room_requested_at != 0 && !president_fetch_running
+      && homebaseIP.length() > 0
+      && !room_has_buttons(ble_room_requested_room)
+      && millis() - ble_room_requested_at > 2500) {
+    ble_room_requested_at = 0;
+    president_fetch_room = ble_room_requested_room;
+    president_fetch_running = true;
+    Serial.println("[ble] room_request unanswered; fetching over http");
+    xTaskCreatePinnedToCore(president_fetch_task, "PresTask", 12288, NULL, 1, NULL, 0);
   }
   // taps queued while the link was down go out shortly after a fresh central
   // arrives: notify() before its CCCD subscription lands is dropped
@@ -2103,6 +2122,7 @@ void display_exit( void ) {
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
   face_forget();
   wigi_count_label = nullptr;   // the Wigi button died with lv_obj_clean
+  ble_room_requested_at = 0;    // leaving the room: cancel an unanswered request
   button_writer();
 //  time_writer("now");
 }
@@ -2442,7 +2462,10 @@ static void president_fetch_task(void *pvParameters) {
       xSemaphoreGive(taskMutex);
     }
   }
-  else {
+  else if (homebaseIP.length() > 0) {
+    // only a real attempt that failed is worth recording: an empty homebase
+    // (before the first now_me) would otherwise clobber the boot report and
+    // make the next boot restore from the backup config
     writeFile(FFat, "/bootreport.txt", "failure");
   }
   president_fetch_running = false;
@@ -2780,6 +2803,7 @@ static void touch_button1(lv_event_t *e) {
   remote_room();
 }
 void remote_room() {
+  uint32_t draw_started = millis();
   crumb("r0 room");
   jw_room = "room";
   display_exit();
@@ -2805,6 +2829,10 @@ void remote_room() {
         req["edt"] = "watch";
         req["room"] = room;
         ble_send(req);
+        // arm the timeout: if the phone never pushes the room back, loop()
+        // fetches it directly (see ble_room_requested_at)
+        ble_room_requested_room = room;
+        ble_room_requested_at = millis();
         Serial.println("[ble] room requested");
       }
       else {
@@ -2819,6 +2847,9 @@ void remote_room() {
   button_writer();
   full_refresh();
   crumb("r9 room done");
+  if (millis() - draw_started > 80) {
+    Serial.printf("[draw] room %u ms\n", millis() - draw_started);
+  }
 }
 
 unsigned long getTime() {
@@ -3090,6 +3121,24 @@ void when_i_get_in(JSONVar wigi_item, String url) {
     wigi[l] = wigi_item;
   }
 }
+
+// Hand a button tap to the phone bridge when it is up: the homebase fetches the
+// same url the tap would have (ble_message_processor's queued-tap fetch), but
+// the watch does not block the UI on a 1-2 s TLS round trip, so a press
+// (vol +/-, play, ...) lands at once. Returns true when it went over BLE, so
+// the caller skips https_request().
+static bool tap_over_ble(int which, int toggle, const String &url) {
+  if (!deviceConnected) {
+    return false;
+  }
+  JSONVar updater;
+  updater["room"] = room;
+  updater["button"] = which;
+  updater["toggle"] = toggle;
+  when_i_get_in(updater, url);
+  return true;
+}
+
 String generateRandomString(int length) {
   // Define the pool of characters you want to use
   const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -3168,6 +3217,9 @@ void mb1(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=1&toggle=" + b1_toggle;
+  if (tap_over_ble(1, b1_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3209,6 +3261,9 @@ void mb2(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=2&toggle=" + b2_toggle;
+  if (tap_over_ble(2, b2_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3246,6 +3301,9 @@ void mb3(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=3&toggle=" + b3_toggle;
+  if (tap_over_ble(3, b3_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3285,6 +3343,9 @@ void mb4(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=4&toggle=" + b4_toggle;
+  if (tap_over_ble(4, b4_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3323,6 +3384,9 @@ void mb5(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=5&toggle=" + b5_toggle;
+  if (tap_over_ble(5, b5_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3360,6 +3424,9 @@ void mb6(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=6&toggle=" + b6_toggle;
+  if (tap_over_ble(6, b6_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3396,7 +3463,7 @@ static void touch_button2(lv_event_t *e) {
 }
 
 void clock_writer() {
-  
+  uint32_t draw_started = millis();
   display_exit();
 
   delay(5);
@@ -3467,6 +3534,9 @@ void clock_writer() {
 
   }
   full_refresh();
+  if (millis() - draw_started > 80) {
+    Serial.printf("[draw] clock %u ms\n", millis() - draw_started);
+  }
 }
 static void wigi_button(lv_event_t *e) {
   homebasePing();
