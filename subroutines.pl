@@ -5748,8 +5748,15 @@ sub navigation_automation() {
 						else {
 							if ($tog eq 'on') {
 								my $stoppable = 0;
-								my $lappts = &subs::db_query('select uuid,app,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
+								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
 								foreach my $lappt ( @{$lappts} ) {
+									# an appointment the navigation itself started was started
+									# here, so leaving the plate closes it; a hand-started one
+									# still needs a recorded in-plate fix before it is touched
+									if ($lappt->{'subtype'} eq 'navigation') {
+										$stoppable = 1;
+										next;
+									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
 										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
@@ -5778,8 +5785,15 @@ sub navigation_automation() {
 						else {
 							if ($tog eq 'on') {
 								my $stoppable = 0;
-								my $lappts = &subs::db_query('select uuid,app,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
+								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
 								foreach my $lappt ( @{$lappts} ) {
+									# an appointment the navigation itself started was started
+									# here, so leaving the plate closes it; a hand-started one
+									# still needs a recorded in-plate fix before it is touched
+									if ($lappt->{'subtype'} eq 'navigation') {
+										$stoppable = 1;
+										next;
+									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
 										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
