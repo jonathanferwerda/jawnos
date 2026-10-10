@@ -5940,11 +5940,22 @@ sub hang_to_dry() {
 			$auto_hung{&unformat_name($t->{'task'})} = 1;
 		}
 	}
+	# ...but a task or default the user also runs on their own is still theirs to
+	# hang: a meaningful share of an app's own appointments carry no source (they
+	# were not spawned by a parent). wash_hands is run by hand about half the time
+	# and must stay; a flush that mostly follows a pee does not.
+	my $auto_since = $server_time - (14 * 86400 * 1000);
+	my $run_rows = &db_query(q{select app, count(*) total, sum(case when source_uuid is null or source_uuid = '' then 1 else 0 end) direct from appointments where type in ('usual','stop') and timestamp >= ? group by app}, $auto_since)->hashes;
+	my %user_run;
+	foreach my $r ( @{$run_rows} ) {
+		next unless $r->{'total'};
+		$user_run{$r->{'app'}} = 1 if ($r->{'direct'} / $r->{'total'}) >= 0.25;
+	}
 	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
 	unless (defined $auto && lc($auto) eq 'off') {
 		foreach my $app ( sort keys %{$daily} ) {
 			next if $configured{$app};
-			next if $auto_hung{$app};
+			next if $auto_hung{$app} && !$user_run{$app};
 			my $routine = $daily->{$app};
 			next unless $routine->{'hour_days'} >= 7;
 			next unless $routine->{'hour'} == $cur_hour;
