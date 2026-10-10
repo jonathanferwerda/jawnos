@@ -314,6 +314,24 @@ $(document).ready(function () {
 	jawnosBarsApply();
 });
 
+// A misc slider (the bar heights): the input event previews on the live screen
+// while the change handler below writes the setting away on release. The readout
+// beside the label is refreshed for every slider that carries one.
+function jawnosMiscRangeInput(input) {
+	var setting = $(input).attr('setting');
+	var value = parseInt(input.value, 10);
+	if (isNaN(value)) { return; }
+	var readout = document.getElementById(setting + '_value_' + $(input).attr('device'));
+	if (readout) { readout.textContent = value; }
+	if (setting == 'taskbar_height') {
+		// the bar scales at once; the full bars pass runs on release
+		document.documentElement.style.setProperty('--taskbar_h', Math.max(24, value) + 'px');
+	}
+	else if (setting == 'clothesline_height') {
+		if (typeof jawnosClotheslineHeightApply == 'function') { jawnosClotheslineHeightApply(value); }
+	}
+}
+
 // the configure panel writes the setting away as it changes; the bars follow
 // here at once, so the screen shows what was picked
 $(document).on('change', '.misc_setting', function () {
@@ -323,6 +341,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
+	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set
 		// that is showing, the same way a set change re-maps every jawnos_icon

@@ -1,4 +1,8 @@
-var clothesLineHeight = 40;
+// The rail's band height is a misc setting (seeded into jawnos_bar_settings by
+// the layout); clothesLineHeight is what the printers actually read, and it is
+// held at 0 whenever the desk wears no rail at all.
+var clothesLineBaseHeight = (typeof jawnos_bar_settings != 'undefined' && parseInt(jawnos_bar_settings['clothesline_height'])) || 40;
+var clothesLineHeight = clothesLineBaseHeight;
 var clothesLinePos = {
 	x: 0, 
 	y: 0, 
@@ -39,6 +43,18 @@ function keyboardSensitivity(setting, fallback) {
 }
 var trackpadSensitivity = keyboardSensitivity('trackpad', .02);
 var clotheslineSensitivity = keyboardSensitivity('clothesline', .4);
+
+// The rail-height slider previews here as it is dragged: the configured value is
+// kept and the rail redrawn at once. A desk with no rail stays at 0 - the height
+// only matters once something is hanging.
+function jawnosClotheslineHeightApply(px) {
+	px = parseInt(px, 10);
+	clothesLineBaseHeight = (isFinite(px) && px > 0) ? px : 40;
+	if (wardrobe && wardrobe.length) {
+		clothesLineHeight = clothesLineBaseHeight;
+		if (typeof clotheslineHanger == 'function') { clotheslineHanger(wardrobe); }
+	}
+}
 function clotheslineHanger(clothes) {
 
 	if (hangingClothes == 0) {

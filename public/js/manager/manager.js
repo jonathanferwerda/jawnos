@@ -2249,12 +2249,9 @@ function graphicalize(respons) {
 	else {
 		response = respons;
 	}
-	if (respons.clothesline.length == 0) {
-		clothesLineHeight = 0;
-	}
-	else {
-		clothesLineHeight = 40;
-	}
+	// the rail's band is the configured height, unless the desk wears no rail at
+	// all (then the printers below reserve nothing for it)
+	clothesLineHeight = (respons.clothesline.length == 0) ? 0 : clothesLineBaseHeight;
 	appts = respons.appts;
 
 	timestamp = appts['__specs']['timestamp'];

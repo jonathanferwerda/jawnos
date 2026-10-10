@@ -172,8 +172,10 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
 				[ 'search_placement', 'Search Bar', [ 'dock', 'taskbar', 'start_menu' ] ],
 				[ 'dock_icons', 'Dock Icons', [ 'shown', 'hidden' ] ],
-				[ 'taskbar_height', 'Taskbar Height', [ 44, 32, 36, 40, 48, 52, 56, 64, 72 ] ],
 				[ 'clock_format', 'Clock', [ '24', '12' ] ],
+				# a range rather than a list: [ key, label, 'range', min, max, step, default ]
+				[ 'taskbar_height', 'Taskbar Height', 'range', 24, 72, 4, 44 ],
+				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
 			); %>
 			<% foreach my $g ( @bars ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
@@ -181,14 +183,27 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				    is handed does not carry them, and the lying dropdown showed the first
 				    option rather than what was stored. Falls back to Me, then nothing. %>
 				<% my $chosen = &subs::misc_setting($key, $dt); %>
-				<label style="display:flex;flex-direction:column;">
-					<b><%= $label %></b>
-					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
-						<% foreach my $o ( @{$opts} ) { %>
-							<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
-						<% } %>
-					</select>
-				</label>
+				<% if (ref $opts eq 'ARRAY') { %>
+					<label style="display:flex;flex-direction:column;">
+						<b><%= $label %></b>
+						<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
+							<% foreach my $o ( @{$opts} ) { %>
+								<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
+							<% } %>
+						</select>
+					</label>
+				<% } else { %>
+					<% my ($tag, $min, $max, $step, $def) = @{$g}[2 .. 6]; %>
+					<% my $value = (defined $chosen && length $chosen) ? $chosen : $def; %>
+					<%# a range's value rides a readout beside the label; the input event previews
+					    the change on the live screen and the usual change handler writes it away --%>
+					<label style="display:flex;flex-direction:column;min-width:220px;">
+						<b><%= $label %> <span id="<%= $key %>_value_<%= $dt %>"><%= $value %></span>px</b>
+						<input type="range" id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>"
+							min="<%= $min %>" max="<%= $max %>" step="<%= $step %>" value="<%= $value %>"
+							oninput="jawnosMiscRangeInput(this);">
+					</label>
+				<% } %>
 			<% } %>
 		</div>
 
