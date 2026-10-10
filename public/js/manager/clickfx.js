@@ -18,7 +18,7 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 	var t = Math.min(rect[1], rect[3]), b = Math.max(rect[1], rect[3]);
 	var w0 = r - l, h0 = b - t;
 	if (w0 <= 0 || h0 <= 0) { return; }
-	// pad the captured region so the magnified item (up to 10% larger) stays
+	// pad the captured region so the magnified item (up to 6% larger) stays
 	// inside it; only the item's own box is scaled, so whatever shares the
 	// captured ring with it is restored untouched and the item's neighbours in a
 	// crowded background (a timeline row above or below, the next garment along)
@@ -47,7 +47,7 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 		// restore the whole capture, then lay the item's box back, grown about its
 		// own centre
 		ctx.putImageData(shot, x, y);
-		var scale = 1 + 0.10 * Math.sin(Math.PI * p);
+		var scale = 1 + 0.06 * Math.sin(Math.PI * p);
 		var dw = w0 * scale, dh = h0 * scale;
 		var dx = cx - dw / 2, dy = cy - dh / 2;
 		ctx.drawImage(off, sx, sy, w0, h0, dx, dy, dw, dh);
