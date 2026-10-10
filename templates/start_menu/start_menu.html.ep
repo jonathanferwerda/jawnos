@@ -28,6 +28,7 @@
 	</span>
 	<span class="start_menu_body">
 		<% if ($menu eq 'view') { %>
+			<span class="start_menu_view_content">
 			<!--
 			<img src="<%= &subs::icon_for('/images/make believe/eye.png') %>" hint="Webcam" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
 			-->
@@ -38,6 +39,7 @@
 					<span class="past_life hover" direction="load" start_menu="yes" timestamp="<%= $parking_lot->{$pl}->{'timestamp'} %>"><h4><%= &subs::format_name($pl) %></h4></span>
 				<% } %>
 			</div>
+			</span>
 		<% } elsif ($menu eq 'app') { %>
 			<%# the shelf icons the category rail wears: media keeps the photo the
 			    social construct already has, the other four were added to the sets %>

@@ -362,7 +362,17 @@ html, body {
 }
 /* An app pin is a window button that survives the window being closed: with the
    window open it shows the name and follows the state rules below. */
-#taskbar .taskbar_app_pin { flex: 0 0 auto; }
+/* An app pin is a slot that survives the window being closed: with the window
+   open the window button is parked inside it (see jawnosTaskbarPinsRefresh),
+   otherwise it shows the app's own picture. */
+#taskbar .taskbar_app_pin { display: inline-flex; align-items: center; flex: 0 0 auto; }
+#taskbar .taskbar_app_pin > img.taskbar_app_pin_icon {
+	box-sizing: border-box;
+	width: calc(var(--taskbar_h, 44px) - 4px);
+	height: calc(var(--taskbar_h, 44px) - 4px);
+	max-width: none;
+	object-fit: contain;
+}
 
 /* The window tiles' states, the clock's sunk plate for the one on top and a
    raised edge for the rest that are open: the same bevel reads at a glance. */
@@ -778,10 +788,15 @@ canvas { overflow: scroll; z-index: 99; }
 	display: block;
 	/* the search's own row, while the menu is its home; without it the list is
 	   pushed up to the menu's top */
-	padding-top: 44px;
+	padding-top: 50px;
 }
 #start_menu:not(.search_home) .start_menu_main_display,
 #start_menu:not(.search_home) .start_menu_categories { padding-top: 0px; }
+/* the search's row sits at the menu's top, so every tab's content clears it: the
+   running/upcoming/expiring table and the System view as well as the app list */
+#start_menu.search_home .start_menu_body > #running_start,
+#start_menu.search_home .start_menu_body > .start_menu_view_content { padding-top: 50px; }
+.start_menu_view_content { display: block; }
 
 /* The app menu is a list: one icon and its name per row, instead of rows of icons
    broken up with <br>. startMenuListify() in manager.js builds and orders the rows,
@@ -832,7 +847,7 @@ canvas { overflow: scroll; z-index: 99; }
 	flex-direction: column;
 	flex: 0 0 auto;
 	gap: 8px;
-	padding-top: 44px;
+	padding-top: 50px;
 	padding-bottom: 6px;
 	/* the list scrolls under the rail; the rail itself stands still */
 	position: sticky;
@@ -874,7 +889,7 @@ canvas { overflow: scroll; z-index: 99; }
 	top: 2px;
 	left: 8px;
 	right: 84px;
-	height: 40px;
+	height: 46px;
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -884,14 +899,16 @@ canvas { overflow: scroll; z-index: 99; }
 	flex: 1 1 auto;
 	width: auto;
 	min-width: 0 !important;
-	height: 34px;
+	height: 40px;
 	box-sizing: border-box;
 }
+/* the toggle matches the menu's other icons (the app rows are 40px of picture
+   plus the 3px little_thumb frame, 46 in all) */
 #start_menu #search_toggle {
 	flex: 0 0 auto;
-	width: 34px;
-	height: 34px;
-	max-width: 34px;
+	width: 40px;
+	height: 40px;
+	max-width: 40px;
 	object-fit: contain;
 }
 

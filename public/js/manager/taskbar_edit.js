@@ -33,63 +33,98 @@ function jawnosTaskbarEditing() {
 	return $('#taskbar').hasClass('taskbar_edit');
 }
 
-// A press on a pin hands the press to the thing it was cloned from, so the pin
-// opens the app exactly as its menu row would. The start menu's content is only
-// in the DOM after it has been opened once; if it is not there, the menu is
-// fetched (the same call the menu itself makes) and the press happens after.
+// A press on a plain launcher pin hands the press to the thing it was cloned
+// from. The start menu's content is only in the DOM after it has been opened
+// once; if it is not there, the menu is fetched (the same call the menu makes),
+// rendered without ever being shown, pressed, and put away - so an action pin
+// does not flash the menu on the screen for a moment.
 function jawnosTaskbarPress(sel) {
 	var target = $(document).find(sel).first();
 	if (target.length) { target.trigger('click'); return; }
+	var was_open = $('#start_menu').is(':visible');
 	$.ajax({
 		url: '/manager/start_menu', type: 'GET', data: { menu: 'app' },
 		success: function (response) {
 			if (typeof startMenuRender == 'function') { startMenuRender(response.html, $('#start_menu_toggle')); }
+			// startMenuRender shows the menu; keep it invisible for the press unless it
+			// was already up (no paint happens between here and the timeout)
+			if (!was_open) { $('#start_menu').css('visibility', 'hidden'); }
 			setTimeout(function () {
 				var t2 = $(document).find(sel).first();
 				if (t2.length) { t2.trigger('click'); }
-			}, 250);
+				if (!was_open) { $('#start_menu').hide().css('visibility', ''); }
+			}, 60);
 		}
 	});
 }
 
-// One pinned tile. A menu pin (a start-menu row or a keyboard) is a plain
-// picture that hands its press over to the live icon. An app pin (a window the
-// user pinned) is a window button: when its window is open it wears the name and
-// the same states as the open windows, so pin and window are one tile, not two.
+// The app a start-menu toggle opens, when it can be named. Its id is the app in
+// nearly every case (music_toggle -> music); a few are actions rather than apps,
+// and one or two wear a different name, so those are spelled out here.
+function jawnosTaskbarAppForToggle(id) {
+	if (!id) { return null; }
+	var action = { backup_now: 1, stop_all: 1, upload: 1, voice_prompt: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1 };
+	if (action[id]) { return null; }
+	var alias = { image_toggle: 'gallery' };
+	if (alias[id]) { return alias[id]; }
+	var m = /^(.*)_toggle$/.exec(id);
+	if (m) { return m[1]; }
+	if (id == 'budget' || id == 'folders') { return id; }
+	return null;
+}
+
+// One pinned tile. A launcher pin (an action, or a toggle with no app name) is a
+// plain picture. An app pin is a slot: closed it shows the app's icon, and while
+// its window is open the window button is parked here in its place (see
+// jawnosTaskbarPinsRefresh), so a pinned app and its window are never two tiles.
 function jawnosTaskbarPinMake(item) {
-	if (item.app) { return jawnosTaskbarAppPinMake(item); }
-	var pin = $('<img class="taskbar_pin little_thumb hover" draggable="false">');
-	pin.attr('sel', item.sel).attr('hint', item.hint || '').attr('src', item.src || '');
-	pin.on('click', function () {
+	if (item.app) {
+		var pin = $('<span class="taskbar_pin taskbar_app_pin" draggable="false"></span>');
+		pin.attr('app', item.app).attr('sel', item.sel || '').attr('hint', item.hint || '');
+		var icon = $('<img class="taskbar_app_pin_icon little_thumb hover" draggable="false">').attr('src', item.src || '');
+		pin.append(icon);
+		icon.on('click', function () {
+			if (jawnosTaskbarEditing()) { return; }
+			// while the window is parked here its own button answers
+			if (pin.children('.window_toggle').length) { return; }
+			jawnosTaskbarPinPress(pin);
+		});
+		return pin;
+	}
+	var launcher = $('<img class="taskbar_pin little_thumb hover" draggable="false">');
+	launcher.attr('sel', item.sel).attr('hint', item.hint || '').attr('src', item.src || '');
+	launcher.on('click', function () {
 		if (jawnosTaskbarEditing()) { return; }
-		jawnosTaskbarPress(pin.attr('sel'));
+		jawnosTaskbarPress(launcher.attr('sel'));
 	});
-	return pin;
+	return launcher;
 }
 
-function jawnosTaskbarAppPinMake(item) {
-	var pin = $('<span class="window_toggle taskbar_pin taskbar_app_pin" draggable="false"></span>');
-	pin.attr('app', item.app).attr('hint', item.hint || '');
-	pin.append($('<img class="window_toggle_icon little_thumb" draggable="false">').attr('src', item.src || ''));
-	pin.append($('<span class="window_toggle_name_text" style="display:none;"></span>').text(item.hint || item.app));
-	return pin;
-}
-
-// A press on an app pin is a press on its window when one is open (raise, step
-// down or restore - the window button's own manners), and a launch when it is
-// not.
-function jawnosTaskbarAppPinPress(app) {
+// A press on a closed app pin: the app opens by name - no menu is fetched, so
+// there is no flash. (An app-less launcher uses jawnosTaskbarPress above.)
+function jawnosTaskbarPinPress(pin) {
 	if (jawnosTaskbarEditing()) { return; }
+	var app = pin.attr('app');
 	var win = $('.wind[app="' + app + '"]');
 	var timestamp = Date.now();
-	if (!win.length || !win.is(':visible')) {
-		if (win.length) { windowRestorer(timestamp, app); }
-		else { appointmentGrabber(app, timestamp); }
+	if (win.length) {
+		// the button should be parked here already; this is a safety net
+		if (!win.is(':visible')) { windowRestorer(timestamp, app); }
+		else if (app == topWindow()) { windowMinimizer(timestamp, app); }
+		else { topLevelNow(win); }
 		return;
 	}
-	var topApp = topWindow();
-	if (app == topApp) { windowMinimizer(timestamp, app); }
-	else { topLevelNow(win); }
+	if (app) { appointmentGrabber(app, timestamp); return; }
+	var sel = pin.attr('sel');
+	if (sel) { jawnosTaskbarPress(sel); }
+}
+
+// The app a pin names, if its start-menu selector has one (an older pin stores
+// only the selector; this lets it merge with its window like a newer one).
+function jawnosTaskbarDeriveApp(sel) {
+	var m = /#start_menu #(.+)$/.exec(sel || '');
+	if (!m) { return null; }
+	return jawnosTaskbarAppForToggle(m[1]);
 }
 
 // Lay the bar's furniture along the order, building pins as they come. Slots
@@ -99,6 +134,15 @@ function jawnosTaskbarOrderApply() {
 	if (!bar.length) { return; }
 	var slots = jawnosTaskbarSlots();
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
+	// upgrade a pin that names a start-menu row but not the app behind it
+	order = order.map(function (item) {
+		if (item && typeof item === 'object' && item.k == 'pin' && !item.app) {
+			var derived = jawnosTaskbarDeriveApp(item.sel);
+			if (derived) { return { k: 'pin', app: derived, sel: item.sel, hint: item.hint, src: item.src }; }
+		}
+		return item;
+	});
+	jawnosBars.order = order;
 	// the three fixed slots never fall off the bar; the search only counts while
 	// the taskbar is its home
 	['windows', 'clock', 'icons'].forEach(function (k) {
@@ -136,7 +180,7 @@ function jawnosTaskbarOrderSave() {
 		else if (el.is('#search_entanglement')) { order.push('search'); }
 		else if (el.hasClass('taskbar_pin')) {
 			if (el.hasClass('taskbar_app_pin')) {
-				order.push({ k: 'pin', app: el.attr('app'), hint: el.attr('hint'), src: el.find('img').attr('src') });
+				order.push({ k: 'pin', app: el.attr('app'), sel: el.attr('sel') || undefined, hint: el.attr('hint'), src: el.children('img').first().attr('src') });
 			}
 			else {
 				order.push({ k: 'pin', sel: el.attr('sel'), hint: el.attr('hint'), src: el.attr('src') });
@@ -189,8 +233,9 @@ function jawnosTaskbarContextClose() {
 }
 
 // The app rows a start menu carries, read out of whatever root holds them (the
-// live menu, or a fetched copy). Each pin is a picture and the selector that
-// finds the live icon, so a press can hand itself over.
+// live menu, or a fetched copy). Each pin is a picture, the selector that finds
+// the live icon, and - when the toggle opens a window - the app name, so the pin
+// merges with that window.
 function jawnosTaskbarPinsFrom(root) {
 	var pins = [];
 	root.find('.start_menu_main_display img').each(function () {
@@ -201,7 +246,7 @@ function jawnosTaskbarPinsFrom(root) {
 		var sel = id ? ('#start_menu #' + id) : ('#start_menu .start_menu_main_display img[hint="' + hint + '"]');
 		var src = img.attr('src') || '';
 		if (pins.some(function (p) { return p.sel == sel; })) { return; }
-		pins.push({ sel: sel, hint: hint, src: src });
+		pins.push({ sel: sel, hint: hint, src: src, app: jawnosTaskbarAppForToggle(id) });
 	});
 	return pins;
 }
@@ -222,9 +267,10 @@ function jawnosTaskbarKeyboardPins() {
 	return pins;
 }
 
-// Is this pin already on the bar?
+// Is this pin already on the bar? A launcher pin has no app; an app pin is keyed
+// by app (and may also carry a sel for launching).
 function jawnosTaskbarPinned(sel) {
-	return $('#taskbar').children('.taskbar_pin[sel="' + sel + '"]').length > 0;
+	return $('#taskbar').children('img.taskbar_pin[sel="' + sel + '"]').length > 0;
 }
 function jawnosTaskbarAppPinned(app) {
 	return $('#taskbar').children('.taskbar_app_pin[app="' + app + '"]').length > 0
@@ -233,7 +279,8 @@ function jawnosTaskbarAppPinned(app) {
 
 function jawnosTaskbarAddPin(pin) {
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
-	order.push({ k: 'pin', sel: pin.sel, hint: pin.hint, src: pin.src });
+	if (pin.app) { order.push({ k: 'pin', app: pin.app, sel: pin.sel || undefined, hint: pin.hint, src: pin.src }); }
+	else { order.push({ k: 'pin', sel: pin.sel, hint: pin.hint, src: pin.src }); }
 	jawnosBars.order = order;
 	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
 	jawnosBarsApply();
@@ -266,19 +313,29 @@ function jawnosTaskbarRemoveAppPin(app) {
 	jawnosBarsApply();
 }
 
-// Keep the bar truthful about the windows: an app pin whose window exists (open
-// or minimized) shows the name and stands in for the window button - the
-// duplicate is hidden - and every window tile wears its state: the top one sunk,
-// the rest that are open raised.
+// Keep the bar truthful about the windows. An app pin whose window exists has the
+// window button parked in its place (the pin's icon hides), so a pinned app and
+// its window are one tile; when the window closes the button goes and the pin's
+// icon returns. Every window tile wears its state: the top one sunk, the rest of
+// the open ones raised.
 function jawnosTaskbarPinsRefresh() {
 	var bar = $('#taskbar');
 	if (!bar.length) { return; }
+	var windows = bar.find('#taskbar_windows');
+	// drop the button parked by the previous pass; the fresh list is what is moved
+	bar.find('.taskbar_app_pin > .window_toggle').remove();
 	bar.find('.taskbar_app_pin').each(function () {
 		var pin = $(this);
 		var app = pin.attr('app');
 		var win = $('.wind[app="' + app + '"]');
-		pin.find('.window_toggle_name_text').toggle(win.length > 0);
-		if (win.length) { bar.find('#taskbar_windows .window_toggle[app="' + app + '"]').hide(); }
+		var btn = windows.find('.window_toggle[app="' + app + '"]');
+		if (win.length && btn.length) {
+			btn.appendTo(pin);
+			pin.children('.taskbar_app_pin_icon').hide();
+		}
+		else {
+			pin.children('.taskbar_app_pin_icon').show();
+		}
 	});
 	var top = (typeof topWindow == 'function') ? topWindow() : null;
 	bar.find('.window_toggle').each(function () {
@@ -352,9 +409,10 @@ function jawnosTaskbarContextBuild(app) {
 	var add_label = function (text) { list.append('<div class="taskbar_context_label">' + text + '</div>'); };
 	var add_rows = function (pins) {
 		pins.forEach(function (pin) {
-			var on = jawnosTaskbarPinned(pin.sel);
+			var on = pin.app ? jawnosTaskbarAppPinned(pin.app) : jawnosTaskbarPinned(pin.sel);
 			var row = $('<div class="taskbar_context_app"></div>');
 			row.attr('pin_sel', pin.sel).attr('pin_hint', pin.hint).attr('pin_src', pin.src);
+			if (pin.app) { row.attr('pin_app', pin.app); }
 			row.append($('<img>').attr('src', pin.src));
 			row.append($('<span></span>').text(pin.hint || pin.sel));
 			row.append('<span class="taskbar_context_check">' + selected(on) + '</span>');
@@ -468,12 +526,6 @@ $(document).on('click', '.taskbar_context_selection', function () {
 	}
 });
 
-// an app pin answers as its window would
-$(document).on('click', '.taskbar_app_pin', function () {
-	if (jawnosTaskbarEditing()) { return; }
-	jawnosTaskbarAppPinPress($(this).attr('app'));
-});
-
 // the clock's own face, written where it is changed
 $(document).on('change', '.taskbar_clock_format', function () {
 	jawnos_clock_format = $(this).val();
@@ -493,12 +545,14 @@ $(document).on('change', '.taskbar_clock_notifications', function () {
 // a press on an app in the add list pins it, or unpins a pinned one
 $(document).on('click', '.taskbar_context_app', function () {
 	var sel = $(this).attr('pin_sel');
-	if (jawnosTaskbarPinned(sel)) {
-		jawnosTaskbarRemovePin(sel);
+	var app = $(this).attr('pin_app') || '';
+	var on = app ? jawnosTaskbarAppPinned(app) : jawnosTaskbarPinned(sel);
+	if (on) {
+		if (app) { jawnosTaskbarRemoveAppPin(app); } else { jawnosTaskbarRemovePin(sel); }
 		$(this).find('.taskbar_context_check').text('');
 	}
 	else {
-		jawnosTaskbarAddPin({ sel: sel, hint: $(this).attr('pin_hint'), src: $(this).attr('pin_src') });
+		jawnosTaskbarAddPin({ sel: sel, app: app || null, hint: $(this).attr('pin_hint'), src: $(this).attr('pin_src') });
 		$(this).find('.taskbar_context_check').text('✓');
 	}
 });
