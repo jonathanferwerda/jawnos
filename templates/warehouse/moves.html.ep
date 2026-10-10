@@ -1,0 +1,37 @@
+% no warnings 'uninitialized';
+%# the warehouse as a ledger of moves: stock and money together, each signed the
+%# way it moved - a pull or an expense is negative, an addition or an income is
+%# positive - so the sign is the direction and the value is the size
+<div class="warehouse_moves" search="<%= $search || '' %>">
+	<% if (scalar @{$moves} == 0) { %>
+		<i>No moves recorded.</i>
+	<% } else { %>
+		<table class="warehouse_moves_table" style="width:100%;text-align:left;">
+			<thead>
+				<th>When</th><th>Kind</th><th>What</th><th>Place</th><th>Amount</th><th>Reason</th><th>Source</th>
+			</thead>
+			<tbody>
+				<% foreach my $m ( @{$moves} ) { %>
+					% my $q = $m->{'quantity'} + 0;
+					<tr class="warehouse_move warehouse_move_<%= $m->{'kind'} %>">
+						<td class="time" timestamp="<%= $m->{'timestamp'} %>"></td>
+						<td><%= &subs::format_name($m->{'kind'}) %></td>
+						<td>
+							<% if ($m->{'item'}) { %>
+								<span class="hover" onclick="appointmentGrabber('<%= $m->{'item'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($m->{'item'}) %></span>
+							<% } %>
+						</td>
+						<td><%= $m->{'place'} ? &subs::format_name($m->{'place'}) : '' %></td>
+						<td class="warehouse_move_amount <%= $q < 0 ? 'negative' : ($q > 0 ? 'positive' : '') %>"><% if ($m->{'money'}) { %><%== ($q > 0 ? '+' : '') . &subs::price_formatter($q) %><% } else { %><%= ($q > 0 ? '+' : '') . &subs::numeric_formatter($q) . ($m->{'unit'} ? '&#160;' . $m->{'unit'} : '') %><% } %></td>
+						<td><%= &subs::format_name($m->{'reason'}) %></td>
+						<td>
+							<% if ($m->{'source'}) { %>
+								<span class="hover" onclick="appointmentGrabber('<%= $m->{'source'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($m->{'source'}) %></span>
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } %>
+</div>

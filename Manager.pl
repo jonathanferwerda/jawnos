@@ -1568,22 +1568,92 @@ sub warehouse_grabber($opts) {
 	return $warehouse;
 }
 
+# The warehouse as one ledger of moves, stock and money together. A stock row is
+# already signed - a pull is negative, an addition positive - and a money move is
+# read from the transaction that carried it (an expense is stored negative, an
+# income positive, a transfer as both), so a single list says what left and what
+# came in. The balance snapshots (type inventory) are anchors, not moves, and are
+# left out. Filters: places (stock only - money carries none), search, limit.
+sub warehouse_moves($opts) {
+	my $limit = $opts->{'limit'} || 300;
+	my $search = $opts->{'search'};
+	my @places = grep { defined $_ && $_ ne '' } @{ $opts->{'places'} || [] };
+	my @moves;
+	# stock moves from the warehouse (already signed)
+	my $wfilter = 'where (type is null or type != ?)';
+	my @wargs = ('inventory');
+	if (scalar @places) {
+		$wfilter .= ' and place in (' . join(',', map { '?' } @places) . ')';
+		push @wargs, @places;
+	}
+	if (defined $search && $search ne '') { $wfilter .= ' and item like ?'; push @wargs, '%' . $search . '%'; }
+	push @wargs, $limit;
+	foreach my $r ( @{ &subs::db_query('select * from warehouse ' . $wfilter . ' order by timestamp desc limit ?', @wargs)->hashes } ) {
+		my $j = eval { return decode_json($r->{'data'}) } || {};
+		push @moves, {
+			timestamp => &subs::numeric_formatter($r->{'timestamp'}) + 0,
+			kind => 'stock',
+			item => $r->{'item'},
+			place => $r->{'place'},
+			quantity => &subs::numeric_formatter($r->{'quantity'}) + 0,
+			unit => $r->{'unit'} || 'each',
+			reason => $j->{'reason'} || $r->{'type'} || 'stock',
+			source => $j->{'source'},
+			source_uuid => $j->{'source_uuid'} || $r->{'app_uuid'},
+		};
+	}
+	# money moves from the transactions that carry them
+	my $tfilter = '';
+	my @targs = ('transaction');
+	if (defined $search && $search ne '') { $tfilter = ' and account like ?'; push @targs, '%' . $search . '%'; }
+	push @targs, $limit;
+	foreach my $t ( @{ &subs::db_query("select * from appointments where type = ? and movement in ('income','expense','transfer')" . $tfilter . ' order by timestamp desc limit ?', @targs)->hashes } ) {
+		my $amt = $t->{'total'};
+		$amt = $t->{'amount'} unless defined $amt && $amt =~ /[0-9]/;
+		$amt = &subs::numeric_formatter($amt) + 0;
+		# a transaction that carried no money (a stock move only) is not a money move
+		next unless $amt;
+		push @moves, {
+			timestamp => &subs::numeric_formatter($t->{'timestamp'}) + 0,
+			kind => 'money',
+			item => $t->{'account'},
+			place => '',
+			quantity => $amt,
+			unit => $t->{'currency'} || 'CAD',
+			reason => $t->{'movement'},
+			source => $t->{'app'},
+			source_uuid => $t->{'uuid'},
+			money => 1,
+		};
+	}
+	@moves = sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @moves;
+	# each source is capped at $limit before the merge; the list is not capped
+	# again, or a busy money stream would crowd out the stock moves behind it
+	return \@moves;
+}
+
 get '/manager/warehouse' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $settings = &subs::settings_grabber({ app => 'warehouse' });
-	my $places = eval { return decode_json $settings->{'place'} } || ['all'];
-	# default the view to wherever we currently are
+	my $chosen = eval { return decode_json $settings->{'place'} } || ['all'];
+	my $places = [ @{$chosen} ];
+	# default the levels view to wherever we currently are; the moves ledger
+	# reads the places the user actually picked, so it does not hide older stock
 	unless (grep { $_ ne 'all' } @{$places}) {
 		my $current = &subs::current_place();
 		$places = [ $current ] if $current;
 	}
 	$settings->{'place'} = $places;
 	my $warehouse = &warehouse_grabber({ places => $places });
+	# the ledger's other face: Moves lists every move (stock and money), Levels
+	# the current sums; the window opens on whichever the setting names
+	my $moves = (($settings->{'display'} || 'levels') eq 'moves') ? &warehouse_moves({ places => [ grep { $_ ne 'all' } @{$chosen} ], limit => 300 }) : undef;
 	my $contents = $c->render_to_string(
 		template => 'warehouse/warehouse',
 		timestamp => $timestamp,
 		settings => $settings,
 		warehouse => $warehouse,
+		moves => $moves,
 		search => ''
 	);
 	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'warehouse', contents => $contents }, $timestamp);
@@ -1594,6 +1664,19 @@ get '/manager/warehouse/listing' => sub($c) {
 	my $search = &subs::unformat_name($c->param('search'));
 	my $settings = &subs::settings_grabber({ app => 'warehouse' });
 	my $places = eval { return decode_json $settings->{'place'} } || ['all'];
+	# the ledger's other face: Levels is what is on hand now, Moves is every move
+	# (stock and money) as it happened, signed
+	if (($settings->{'display'} || 'levels') eq 'moves') {
+		my @picked = grep { $_ ne 'all' } @{$places};
+		my $moves = &warehouse_moves({ places => \@picked, search => $search, limit => 300 });
+		my $html = $c->render_to_string(
+			template => 'warehouse/moves',
+			moves => $moves,
+			search => $search || ''
+		);
+		$c->render(json => { html => $html, search => $search });
+		return;
+	}
 	my $warehouse;
 	if (defined $search && $search ne '') {
 		$warehouse = &warehouse_grabber({ search => $search });
