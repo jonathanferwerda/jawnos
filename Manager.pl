@@ -18358,7 +18358,10 @@ sub embedded_toggle($data) {
 	}
 
 	if ($state !~ /[0-9]/) {
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' .$save_state . '\').attr(\'src\', \'/images/decipherable/' . $save_state . '.png\');' });
+		# the enabler is drawn through icon_path in the wrapper; use the set's own
+		# glyph here too rather than the hand-drawn fallback
+		my $toggle_src = &subs::icon_path($save_state, '/images/decipherable/' . $save_state . '.png');
+		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' .$save_state . '\').attr(\'src\', \'' . $toggle_src . '\');' });
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle' }) if $data->{'counted'} == 0 || !$data->{'counted'};
 	}
 

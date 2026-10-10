@@ -2699,12 +2699,15 @@ sub setting_setter() {
 
 	}
 	if ($setting eq 'toggle') {
-		if ($value eq 'on') {
-			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'/images/decipherable/' . $value . '.png\').css({\'background-color\': \'yellow\' });' });
-		}
-		else {
-			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'/images/decipherable/' . $value . '.png\').css({\'background-color\': \'yellow\' });' });
-		}
+		# The wrapper draws this enabler through icon_path, so the pushed update has
+		# to as well: the /images/decipherable on/off pictures are only the fallback,
+		# and pushing them here dropped a started or stopped appointment back to the
+		# hand-drawn glyphs whatever set was showing.
+		my $toggle_src = &icon_path($value, '/images/decipherable/' . $value . '.png');
+		my $toggle_style = ($value eq 'on')
+			? 'background-color:green;border-color:green;box-shadow:0 0 8px 2px green;'
+			: 'background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);';
+		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'' . $toggle_src . '\').attr(\'style\', \'' . $toggle_style . '\');' });
 		&subs::watch_toggle_pusher({ app => $app, value => $value });
 	}
 	if ($setting eq 'site_type') {
