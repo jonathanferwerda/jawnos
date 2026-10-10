@@ -3972,12 +3972,15 @@ static bool accel_sample(float &x, float &y, float &z) {
 #define WRIST_REST_MS    250    // still this long: the pose becomes "before"
 #define WRIST_ARM_MS     500    // still this long: a turn out of it can be a look
 #define WRIST_TURN_DEG   50.0f
-#define WRIST_LOOK_ZLOW  0.5f   // screen off the desk and the hip
-// The upper bound has to admit the way most people read a watch: bringing it up
-// in front of the face by bending the elbow leaves the screen nearly up, so z
-// sits just under a flat desk (measured desk poses read z 9.2-9.9, a raised-
-// elbow read around 8-9). 8.0 rejected those reads, which is why the raise in
-// "hands in a pocket, lift to look" did nothing (2026-10-10).
+// The look band. The lower bound has to sit ABOVE the arm's swing/rest poses,
+// which read low z (the walking swing is z ~1-3.5, the bench arm-down ~-1): the
+// waking machine no longer waits for a moment of stillness (see wristPollStep),
+// so a swing that settled inside the band would light the screen. The worn
+// reading pose reads z ~7-8.8, so 4.0 clears the swing and keeps the read.
+#define WRIST_LOOK_ZLOW  4.0f
+// The upper bound admits the way the watch is read -- brought up in front of the
+// face -- which leaves the screen nearly up (measured 6.9-8.8), so it sits just
+// under a flat desk (measured desk poses read 9.2-9.9).
 #define WRIST_LOOK_ZHIGH 9.0f
 #define WRIST_REARM_DEG  30.0f  // after a look, swing this far off it to re-arm
 static bool wrist_have = false;
@@ -4075,21 +4078,17 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
       // settled: this pose becomes the "before" the next turn is measured from
       wrist_sx = wrist_lx; wrist_sy = wrist_ly; wrist_sz = wrist_lz;
     }
-    if (now - wrist_moved_at > WRIST_ARM_MS) {
-      // A moment of stillness arms the next turn -- but once a look has fired,
-      // the arm has to swing away from the pose that was read before it can arm
-      // again. Without that, holding the watch up after a look leaves the arm
-      // still (so it re-arms at the look pose), and the hand dropping back to
-      // the side is itself a 50-deg turn out of it that then settles in the
-      // look window: the screen lit on the way *down*. (2026-10-10)
-      if (!wrist_had_look ||
-          wrist_angle(wrist_gx, wrist_gy, wrist_gz, wrist_lx, wrist_ly, wrist_lz) > WRIST_REARM_DEG) {
-        wrist_armed = true;      // a moment of stillness: a turn out of it can be a look
-      }
-    }
+    wrist_armed = (now - wrist_moved_at > WRIST_ARM_MS);   // reported by "tilt status"
   }
 
-  if (!wrist_rose && wrist_armed) {
+  // A look is a turn out of the settled pose that then settles in the window.
+  // Deliberately no stillness gate: while walking the arm never holds still, so
+  // gating the turn on a moment of stillness meant a wrist raise while walking
+  // was never even looked for (the user: "at a standstill it works every time,
+  // walking it never lights", 2026-10-10). The window plus the 200 ms settle
+  // keep the swing quiet, because the resting and swinging poses read outside
+  // the window while the reading pose is inside it.
+  if (!wrist_rose) {
     float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
     if (angle > WRIST_TURN_DEG) {
       wrist_rose = true;
@@ -4281,36 +4280,37 @@ static void tilt_serial_command(String line) {
       if (wristPollStep(-6.2f, 1.6f, 7.4f, millis())) { look = true; }
       delay(30);
     }
-    // phase 2: the pickup -- sitting on the desk, then the turn up to an
-    // in-hand look (z 3.4). Must detect.
+    // phase 2: the walk -- the arm swinging (the pose it holds while walking)
+    // turning up to a reading look (z 7.0, the worn pose on the user's right
+    // arm). Must detect even though the arm was moving.
     wristPollReset();
-    for (int i = 0; i < 40; i++) { wristPollStep(-1.0f, 0.2f, 9.8f, millis()); delay(30); }
+    for (int i = 0; i < 40; i++) { wristPollStep(8.0f, -3.0f, 1.0f, millis()); delay(30); }
     for (int i = 0; i <= 8; i++) {
       float t = i / 8.0f;
-      wristPollStep(-1.0f + 1.9f * t, 0.2f + 9.0f * t, 9.8f - 6.4f * t, millis());
+      wristPollStep(8.0f - 7.5f * t, -3.0f + 9.5f * t, 1.0f + 6.0f * t, millis());
       delay(30);
     }
     bool pickup = false;
     for (int i = 0; i < 20; i++) {
-      if (wristPollStep(0.9f, 9.2f, 3.4f, millis())) { pickup = true; }
+      if (wristPollStep(0.5f, 6.5f, 7.0f, millis())) { pickup = true; }
       delay(30);
     }
-    // phase 3: the set-down -- the in-hand look turning back to the desk. Must
-    // stay quiet; this is what used to light the screen.
+    // phase 3: the reading look coming back down to the arm-at-side (the
+    // walking swing). Must stay quiet: it settles outside the look window.
     wristPollReset();
-    for (int i = 0; i < 40; i++) { wristPollStep(0.9f, 9.2f, 3.4f, millis()); delay(30); }
+    for (int i = 0; i < 40; i++) { wristPollStep(0.5f, 6.5f, 7.0f, millis()); delay(30); }
     for (int i = 0; i <= 8; i++) {
       float t = i / 8.0f;
-      wristPollStep(0.9f - 0.9f * t, 9.2f - 9.5f * t, 3.4f + 6.5f * t, millis());
+      wristPollStep(0.5f + 7.5f * t, 6.5f - 9.5f * t, 7.0f - 6.0f * t, millis());
       delay(30);
     }
     bool set_down = false;
     for (int i = 0; i < 20; i++) {
-      if (wristPollStep(0.0f, -0.3f, 9.9f, millis())) { set_down = true; }
+      if (wristPollStep(8.0f, -3.0f, 1.0f, millis())) { set_down = true; }
       delay(30);
     }
     wrist_sim = false;
-    Serial.printf("[tiltsim] worn raise=%s pickup=%s set-down=%s\n",
+    Serial.printf("[tiltsim] worn raise=%s walk=%s back=%s\n",
                   look ? "detected" : "MISSED", pickup ? "detected" : "MISSED",
                   set_down ? "FIRED" : "quiet");
     if ((look || pickup) && dozing) {
