@@ -106,6 +106,12 @@ static bool btStartPending = false;
 // and the net room button shows); it can be true while a start is still pending,
 // so the start/stop guards must not key off it or the radio never comes up.
 static bool ble_radio_up = false;
+// BLE comes back after a light sleep, but never on the wake's critical path:
+// the stack bring-up blocks the loop for seconds, and waking straight into it
+// left the clock frozen while the radio came up (user, 2026-10-10). The sleep
+// handler only schedules the restore; loop() runs it once the display is back.
+// Zero means nothing is pending, and a new sleep cancels a pending restore.
+static uint32_t ble_restore_at = 0;
 char standby_en = 1;
 long DEFAULT_SCREEN_TIMEOUT = 60*1000;
 String jw_room = "watch";
@@ -616,7 +622,10 @@ void stop_ble_transfer() {
   }
   Serial.println("Shutting down BLE Radio...");
   ble_radio_up = false;
-  bt_enabled = false;
+  // bt_enabled is the user's *preference* (configSave writes it and the net room
+  // button shows it), not the radio's state. Clearing it here made a light sleep
+  // that skipped the restore read as "the user turned BLE off", so the radio was
+  // never brought back. The preference is left alone; only the button changes it.
   if (pServer) {
     // Close the link before tearing the stack down. Deinit used to run while a
     // disconnect event was still in flight, and BLEServer's callback then
@@ -1201,6 +1210,15 @@ void loop() {
   if (btStartPending && millis() > 2000) {
     btStartPending = false;
     start_ble_transfer();
+  }
+  // the radio, restored off the sleep-wake path (see ble_restore_at): the screen
+  // and the clock have already come up by the time this runs, so the bring-up
+  // no longer freezes the face the user is looking at
+  if (ble_restore_at != 0 && (int32_t)(millis() - ble_restore_at) >= 0) {
+    ble_restore_at = 0;
+    if (bt_enabled && !dozing) {
+      start_ble_transfer();
+    }
   }
 
   if (jw_room == "watch") {
@@ -2698,6 +2716,12 @@ void remote_room() {
   crumb("r0 room");
   jw_room = "room";
   display_exit();
+  if (bt_enabled && ble_restore_at == 0 && !ble_radio_up) {
+    // a wrist glance skipped the radio bring-up; entering a room is when the
+    // bridge is actually wanted, so ask for it now and let loop() run it (never
+    // block the room draw on the stack coming up)
+    ble_restore_at = millis();
+  }
   if (!room_has_buttons(room) && !president_fetch_running) {
     // this used to block the screen for the length of the TLS handshake; ask in
     // the background instead and draw the room straight away. The throttle stops
@@ -3702,11 +3726,16 @@ static void wifi_lora_send(lv_event_t *e) {
 
 static void bt_control(lv_event_t *e) {
   lv_obj_t * bt_button = lv_event_get_target_obj(e);
-  if (ble_radio_up == true) {
+  // key on the preference, not the radio: a light sleep can leave the radio down
+  // while the preference is still on, and the button must be able to turn it off
+  if (bt_enabled == true) {
+    bt_enabled = false;
+    ble_restore_at = 0;       // a pending restore must not undo the press
     stop_ble_transfer();
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
   }
   else {
+    bt_enabled = true;
     start_ble_transfer();
 
     lv_obj_set_style_bg_color(bt_button, lv_color_hex(0x61b3ff), LV_PART_MAIN);
@@ -4548,6 +4577,9 @@ void lowPowerEnergyHandler()
   pmuIrq = false;
   // any marker from a past raise is about that wake, not this one
   tilt_wake_short = false;
+  // going back down cancels a radio restore the last wake scheduled: a glance
+  // that ended before it came due should never pay the bring-up
+  ble_restore_at = 0;
   if (WiFi.status() == WL_CONNECTED && buttoned_before && homebaseIP.length() > 0) {
     String req = "https://" + homebaseIP + "/watch/next_appt?format=sleep";
     Serial.println(req);
@@ -4721,6 +4753,12 @@ void lowPowerEnergyHandler()
         // a nap, not the notification (that is checked at the top): sample the
         // wrist and sink back down
         watch.loopSensor();
+        // The nap paces the sampling here, but wristPoll's throttle is the same
+        // 100 ms as the nap: a nap that returned a hair early failed `now -
+        // wrist_last_sample < interval` and skipped its sample, so the arm's
+        // turn could fall between two of them. The pose log replays a look on
+        // every sample while the wrist missed it -- so take this nap's sample.
+        wrist_last_sample = 0;
         if (wristPoll()) {
           wrist_wake = true;
           tilt_log_marker("ls raise", (long)(wrist_lz * 10));
@@ -4750,8 +4788,13 @@ void lowPowerEnergyHandler()
     // come up, and waking it first left the display dark while it did
     watch.incrementalBrightness(brightnessLevel);
     tilt_log_marker("ls wake br", watch.getBrightness());
-    if (temp_bt_enabled == true) {
-      start_ble_transfer();
+    if (temp_bt_enabled == true && !wrist_wake) {
+      // off the wake's critical path: the screen is already back, and a wrist
+      // glance (five seconds at the clock) does not need the radio at all, so
+      // it never pays the bring-up -- which is also what the watch was dying on
+      // (a stop/init cycle every glance). A real wake arms it a moment later,
+      // and the next sleep cancels it if the watch goes back down first.
+      ble_restore_at = millis() + 1200;
     }
 
     if (wrist_wake) {
