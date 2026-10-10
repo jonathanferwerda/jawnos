@@ -1,23 +1,12 @@
 <div id="htop_viewer">
 
-	<h4 style="float:left;">htop <span class="htop_view time" view="timestamp" timestamp="<%= $cache->{'current'}->{'timestamp'} %>"></span>
+	<h4 style="float:left;">System <span class="htop_view time" view="timestamp" timestamp="<%= $cache->{'current'}->{'timestamp'} %>"></span>
 
 		<button class="president_restart_trigger" style="">Restart</button>
 		<button class="president_restart_trigger" restart="yes" style="">ReRestart</button>
 	</h4>
-	<table style="width:100%;">
-		<thead><th>Scope</th><th>User</th><th>Sys</th><th>Total</th></thead>
-		<tbody>
-			<% foreach my $scope ( qw/current average/ ) { %>
-				<tr>
-					<td><%= &subs::format_name($scope) %></td>
-					<td class="htop_view" view="user"><%= $cache->{$scope}->{'p_user'} %>%</td>
-					<td class="htop_view" view="system"><%= $cache->{$scope}->{'p_system'} %>%</td>
-					<td class="htop_view" view="total"><%= $cache->{$scope}->{'p_total'} %>%</td>
-				</tr>
-			<% } %>
-		</tbody>
-	</table>
+	<%# the CPU rows that used to live here measured the utility worker's own
+	    time, not the machine's, so they were removed; the battery readout stays %>
 	<% if ($cache->{'current'}->{'battery'}) { %>
 		<h4 style="float:left;">Battery</h4>
 		<table style="width:100%;">

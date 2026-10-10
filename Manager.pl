@@ -1430,6 +1430,93 @@ get '/manager/market' => sub($c) {
 	$c->render(json => { window => $window });
 };
 
+# A process viewer for the machine (the Monitor app): CPU/memory graphs plus the
+# process list, read straight from /proc. The old start-menu htop figure came
+# from `times` inside a prefork master that spent its life blocked in run(), so
+# its numbers were nonsense; cumulative jiffies per pid plus a difference taken
+# in the browser are correct no matter which prefork worker answers. On Termux
+# the same reads work for JawnOS's own processes (shared UID); other apps'
+# states are hidden and are simply skipped.
+get '/manager/process_monitor' => sub($c) {
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(
+		template => 'monitor/monitor',
+		timestamp => $timestamp
+	);
+	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'process_monitor', contents => $contents }, $timestamp);
+	$c->render(json => { window => $window });
+};
+
+get '/manager/process_monitor/data' => sub($c) {
+	my $clk = 100;   # CLK_TCK
+
+	# memory (KB)
+	my ($mem_total, $mem_avail) = (0, 0);
+	if (open(my $mf, '<', '/proc/meminfo')) {
+		while (my $l = <$mf>) {
+			$mem_total = $1 if $l =~ /^MemTotal:\s+(\d+)/;
+			$mem_avail = $1 if $l =~ /^MemAvailable:\s+(\d+)/;
+			last if $mem_total && $mem_avail;
+		}
+		close $mf;
+	}
+
+	# uptime, to turn each pid's starttime into an age. Android denies
+	# /proc/uptime to apps, so the age is simply unknown there (-1).
+	my $uptime;
+	if (open(my $uf, '<', '/proc/uptime')) {
+		my $ul = <$uf>;
+		close $uf;
+		$uptime = $1 if $ul && $ul =~ /^([\d.]+)/;
+	}
+
+	# per-core CPU: cumulative total and idle jiffies
+	my @cpus;
+	if (open(my $st, '<', '/proc/stat')) {
+		while (my $l = <$st>) {
+			next if $l =~ /^cpu\s/;               # the aggregate line
+			last unless $l =~ /^cpu(\d+)\s+(.*)$/;
+			my @v = split ' ', $2;
+			my $idle = ($v[3] // 0) + ($v[4] // 0);   # idle + iowait
+			my $total = 0;
+			$total += ($_ // 0) for @v;
+			push @cpus, { t => $total, i => $idle };
+		}
+		close $st;
+	}
+
+	my @procs;
+	for my $d (glob('/proc/[0-9]*')) {
+		(my $pid = $d) =~ s{.*/}{};
+		open(my $sf, '<', "$d/stat") or next;
+		my $line = <$sf>;
+		close $sf;
+		next unless defined $line;
+		my $open = index($line, '(');
+		my $close = rindex($line, ')');
+		next if $open < 0 || $close < 0;
+		my $comm = substr($line, $open + 1, $close - $open - 1);
+		my @f = split ' ', substr($line, $close + 2);
+		my $cmd = '';
+		if (open(my $cf, '<', "$d/cmdline")) {
+			local $/;
+			$cmd = <$cf>;
+			close $cf;
+			$cmd =~ s/\0/ /g;
+			$cmd =~ s/\s+$//;
+		}
+		$cmd = $comm if !defined $cmd || $cmd eq '';
+		$cmd = substr($cmd, 0, 90);
+		my $age = -1;
+		if (defined $uptime && defined $f[19]) {
+			$age = int($uptime - $f[19] / $clk);
+			$age = 0 if $age < 0;
+		}
+		push @procs, { p => $pid, pp => $f[1], t => ($f[11] + $f[12]), r => $f[21], a => $age, n => $cmd };
+	}
+	$c->render(json => { at => &subs::rightNow(), clk => $clk, mem_total => $mem_total, mem_avail => $mem_avail, cpus => \@cpus, procs => \@procs });
+};
+
 
 # Group warehouse rows for the warehouse app. The warehouse holds both money
 # and stock: a money row is one that names an account (or is denominated in a
@@ -4783,7 +4870,7 @@ post '/manager/start_menu/forget' => sub($c) {
 
 # The apps the start menu was last used to open, freshest first. The app menu
 # is a recent list and the shelf rail is how everything else is reached, so
-# it lives in the president's cache like the htop snapshot; cache entries are
+# it lives in the president's cache like the System view's snapshot; cache entries are
 # per device, so each screen keeps its own list. The warranty is asked for
 # outright: __president has no warranty setting, and the fallback resolves to
 # "now", which the alarm's cache purge then deletes a minute later.
@@ -9809,8 +9896,11 @@ get '/manager/configure/system_list' => sub($c) {
 		$settings->{$dt} = &subs::settings_grabber({ app => '__president', device => $dt });
 	}
 	my $stats = [];
-	my $tables = `sqlite3 $database .tables`;
-	foreach my $d ( sort split ' ', $tables ) {
+	# list the tables from the metadata table instead of shelling out to the
+	# sqlite3 binary on every load of the system settings page
+	my $table_names = &subs::db_query("select name from sqlite_master where type = 'table' order by name")->hashes;
+	foreach my $row ( @{$table_names} ) {
+		my $d = $row->{'name'};
 		my $results = &subs::db_query('select count(*) from ' . $d);
 		push @{$stats}, { formatted_table => &subs::format_name($d), table => $d, count => $results->hash->{'count(*)'} };
 	}
@@ -20871,7 +20961,11 @@ websocket '/manager/ws' => sub ($c) {
 		# out and log the stop, or the fresh socket goes deaf.
 		my $on_duty = $gb::ws->{$app}->{$browser_tab_id};
 		if ($on_duty && $on_duty == $c->tx) {
-			&subs::db_update('websockets', { 'type' => 'closed'}, { app => $app, browser_tab_id => $browser_tab_id });
+			# A socket that is gone leaves no row behind unless it was parked in a
+			# named room - the parking lot keeps those on purpose. It used to be
+			# marked type=closed instead, and with a warranty years out those rows
+			# were never culled (about 870 dead rows had piled up).
+			&subs::db_query('delete from websockets where app = ? and browser_tab_id = ? and room is null', $app, $browser_tab_id);
 			delete $gb::ws->{$app}->{$browser_tab_id};
 			&Websocket::send('server', { magic_wand => $browser_tab_id, action => 'closed', timestamp => $timestamp });
 			if ($app eq 'music') {

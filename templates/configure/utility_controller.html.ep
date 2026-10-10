@@ -48,8 +48,3 @@
 		<% } %>
 	</tbody>
 </table>
-
-% my $subtree = &subs::subprocess_tree_viewer();
-% if ($subtree->{'html'}) {
-	<%== $subtree->{'html'} %>
-% }

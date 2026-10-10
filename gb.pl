@@ -257,7 +257,8 @@ our $known_appts = {
 	web => { icon => "/images/make believe/web_button.png" },
 	warehouse => { icon => '/icons/pos/manufacturer.png' },
 	measures => { icon => '/images/decipherable/measures.png' },
-	folders => { icon => '/images/decipherable/folder.png' }
+	folders => { icon => '/images/decipherable/folder.png' },
+	process_monitor => { icon => '/images/decipherable/server.png' }
 };
 
 our $known_icons = {

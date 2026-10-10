@@ -439,7 +439,6 @@ sub alarm_server() {
 	          next;
 	      }
 				#$log->info(Dumper $appt);
-				$log->info($appt->{'timestamp'} . ' ' . $next_run);
 				my @times = sort { $a <=> $b } (
 					$appt->{'timestamp'},
 					$appt->{'stop_timestamp'},
@@ -470,7 +469,6 @@ sub alarm_timer() {
 	# a poke can name a moment that has just gone by, and a negative delay must
 	# not become a timer; either way the alarm stands its usual two seconds
 	$next_time = 2 unless $next_time && $next_time > 0;
-	$log->info($next_time .  ' for alarm');
 	$alarm_id = Mojo::IOLoop->timer($next_time => sub() {
 		my $alarm = &alarm_clock();
 

@@ -288,44 +288,10 @@ sub process_watch() {
 						$log->info('i see the report');
 					}
 					else {
-					#	$subprocesses->{$process->{'pid'}} = $process;
-
-						my $cpu_worker = $subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}}->{'cpu_worker'} || [];
-
 						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;
-
-						my $cpu = $process->{'htop'};
-						if (scalar @{$cpu_worker} > 0) {
-							my $count = scalar @{$cpu_worker} - 1;
-							foreach my $t ( qw/user system total/) {
-								$cpu->{'c_' . $t} = $cpu->{$t} - $cpu_worker->[$count]->{$t};
-								my $percentage = 0;
-								if (defined $cpu_worker->[$count]->{'timestamp'} && defined $cpu->{'c_' . $t} && $cpu->{'c_' . $t} > 0) {
-									eval {
-										$percentage = sprintf("%.3f", $cpu->{'c_' . $t} / (($cpu->{'timestamp'} - $cpu_worker->[$count]->{'timestamp'}) / 1000) * 100);
-									};
-								}
-								$cpu->{'p_' . $t} = $percentage;
-							}
-							splice @{$cpu_worker}, 2;
-
-						}
-						push @{$cpu_worker}, $cpu;
-						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}}->{'cpu_worker'} = $cpu_worker;
-						$process->{'htop'} = $cpu;
-						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;
-				#		$log->info(Dumper $cpu);
-
-
-
 
 						if ($process->{'status'} eq 'stop') {
 							delete $subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}};
-						#	foreach my $k ( keys %{$subprocesses} ) {
-						#		unless (scalar keys %{$subprocesses->{$k}->{'subprocesses'}}) {
-						#			delete $subprocesses->{$k};
-						#		}
-						#	}
 						}
 
 						# Ordinary updates get no reply. A bare uuid write here used to pile up

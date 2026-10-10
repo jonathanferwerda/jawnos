@@ -623,7 +623,7 @@ function appWindowOpener(i,timestamp,v) {
 			} catch (e) {}
 		}
 	}
-	if (i == 'budget' || i == 'folders' || i == 'relational' || i == 'warehouse' || i == 'measures' || i == 'market' || i == 'music' || i == 'web' || i == 'handbook' || i == 'video' || i == 'security' || i == 'library' || i == 'gallery' || i == 'twirl' || i == 'store' || i == 'studio' || i == 'marker' || i == 'ide' || i == 'terminal' || i == 'travel' || i == 'mailbox' || i == 'editor' || i == 'tetris' || i == 'synth' || i == 'cards' || i == 'embedded' || i == 'terminal' || i == 'configure' || i == 'box_office' ) {
+	if (i == 'budget' || i == 'folders' || i == 'relational' || i == 'warehouse' || i == 'measures' || i == 'market' || i == 'music' || i == 'web' || i == 'handbook' || i == 'video' || i == 'security' || i == 'library' || i == 'gallery' || i == 'twirl' || i == 'store' || i == 'studio' || i == 'marker' || i == 'ide' || i == 'terminal' || i == 'travel' || i == 'mailbox' || i == 'editor' || i == 'tetris' || i == 'synth' || i == 'cards' || i == 'embedded' || i == 'terminal' || i == 'configure' || i == 'box_office' || i == 'process_monitor' ) {
 //				var preload = sessionStorage.getItem('preload_' + i);
 		var scope = localStorage.getItem('scope');
 		var article_uuid = localStorage.getItem('editor_article');
@@ -664,6 +664,11 @@ function appWindowOpener(i,timestamp,v) {
 		}
 		else if (i == 'folders') {
 			foldersOpener();
+		}
+		// Process Monitor is an app, not an appointment: a refresh restores the
+		// window through its own route instead of opening a centre view.
+		else if (i == 'process_monitor') {
+			monitorOpener();
 		}
 		else {
 			$.ajax({

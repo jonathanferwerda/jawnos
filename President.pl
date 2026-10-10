@@ -801,33 +801,16 @@ sub utility_functions() {
 				};
 			}
 		};
-		my $cpu_worker = [];
+		# Battery sampling for the start menu's System view. This task used to
+		# clock the utility worker's own CPU time - after a ten-million-iteration
+		# spin loop to give the chart a signal - as if it were the machine's load.
+		# Those numbers were meaningless, so only the battery readout remains.
 		$gb::timeouts->{'htop'}->{'subroutine'} = sub {
 			eval {
 				my $device = &subs::device_setter();
-				my $total = 0;
-				$total += $_ for (1 .. 10_000_000);
-				my ($user, $system, $cuser, $csystem) = times;
-				my $cpu = {
-					timestamp => &subs::rightNow(),
-					user => $user,
-					'system' => $system,
-					total => $user + $system
-				};
-
-				my $cache_change = 0;
-				if (scalar @{$cpu_worker} > 0) {
-					my $count = scalar @{$cpu_worker} - 1;
-					foreach my $t ( qw/user system total/) {
-						$cpu->{'c_' . $t} = $cpu->{$t} - $cpu_worker->[$count]->{$t};
-						my $percentage = sprintf("%.3f", $cpu->{'c_' . $t} / (($cpu->{'timestamp'} - $cpu_worker->[$count]->{'timestamp'}) / 1000) * 100);
-						$cpu->{'p_' . $t} = $percentage;
-						$cache_change = 1;
-					}
-					splice @{$cpu_worker}, 2;
-				} else {
-				}
-				push @{$cpu_worker}, $cpu;
+				my $cpu = { timestamp => &subs::rightNow() };
+				# only sample when there is a battery to report
+				my $cache_change = ($device eq 'mobile' || -e '/sys/class/power_supply/BAT0/capacity') ? 1 : 0;
 				if ($cache_change == 1) {
 					my ($db,$database) = &subs::database_grabber();
 					if ($db) {
@@ -893,16 +876,6 @@ sub utility_functions() {
 
 						$cache_data->{'current'} = $cpu;
 						push @{$cache_data->{'history'}}, $cpu;
-						my $sums = {};
-						foreach my $hist ( @{$cache_data->{'history'}} ) {
-							foreach my $col ( qw/p_user p_system p_total/ ) {
-									$hist->{$col} =~ s/[^0-9.]//gi;
-									$sums->{$col} += $hist->{$col};
-							}
-						}
-						foreach my $col ( qw/p_user p_system p_total/ ) {
-							$cache_data->{'average'}->{$col} = sprintf("%.3f", $sums->{$col} / scalar @{$cache_data->{'history'}});
-						}
 
 						splice @{$cache_data->{'history'}}, 10;
 						&subs::cache_set({ app => '__president', context => 'htop', subcontext => 'current', warranty => '-1d' }, $cache_data);

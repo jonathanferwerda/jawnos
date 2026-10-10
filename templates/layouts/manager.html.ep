@@ -1,6 +1,6 @@
 % use Mojo::JSON qw/decode_json encode_json/;
 <!DOCTYPE html>
-<html>
+<html style="zoom: <%= &subs::misc_setting('ui_zoom') || 100 %>%;">
   <head>
     <title><%= $title %></title>
 		<link rel="manifest" type="application/json" href="/manifest.json">
@@ -28,6 +28,14 @@
 			}
 			var device = "<%= $device %>";
 			var signatorial = "<%= $signatorial %>";
+			// Windows-style display zoom. 100% is the size everything was designed
+			// at; the misc settings' slider runs 25%–200% in 5% steps. Applied on the
+			// root element so fixed-position windows and bars scale with the rest.
+			function jawnosZoomApply(pct) {
+				pct = parseInt(pct, 10);
+				if (isNaN(pct) || pct < 1) { pct = 100; }
+				document.documentElement.style.zoom = pct + '%';
+			}
 			var paperboy_url = '<%= $paperboy_url %>';
 			var ws_url = '<%= $ws_url %>';
 			var mail_ws_url = '<%= $mail_ws_url %>';
@@ -131,6 +139,7 @@
 		<script src="/js/manager/warehouse.js?string=<%= $string %>"></script>
 		<script src="/js/manager/market.js?string=<%= $string %>"></script>
 		<script src="/js/manager/measures.js?string=<%= $string %>"></script>
+		<script src="/js/manager/monitor.js?string=<%= $string %>"></script>
 		<script src="/js/manager/folders.js?string=<%= $string %>"></script>
 	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />

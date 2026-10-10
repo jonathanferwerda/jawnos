@@ -646,32 +646,11 @@ sub subprocessor() {
 			uuid      => &subs::random_string_creator(10),
 			status    => 'start',
 		};
-		my ($user, $system, $cuser, $csystem) = times;
-		my $cpu = {
-			timestamp => &subs::rightNow(),
-			user => $user,
-			'system' => $system,
-			total => $user + $system
-		};
 		&subs::unix_socket_sender($file,$subprocess);
 
 		if ($@) { warn "Worker $$: Failed to send 'start' state: $@" }
-		my $pinger = Mojo::IOLoop->recurring(5 => sub {
-			$subprocess->{'status'} = 'running';
-			$subprocess->{'timestamp'} = &subs::rightNow();
-			my ($user, $system, $cuser, $csystem) = times;
-			my $cpu = {
-				timestamp => &subs::rightNow(),
-				user => $user,
-				'system' => $system,
-				total => $user + $system
-			};
-			$subprocess->{'htop'} = $cpu;
-			&subs::unix_socket_sender($file,$subprocess);
-		});
 		eval {
 			$subroutine->();
-			Mojo::IOLoop->remove($pinger);
 		};
 		my $sub_error = $@; # Capture error if the main task fails
 		eval {
@@ -693,32 +672,6 @@ sub subprocessor() {
 
 }
 
-
-sub subprocess_tree_viewer() {
-	my $tmp_dir = &subs::home('~/.process_watch');
-	my $file = $tmp_dir;
-	my $returner = { data => {}, html => '' };
-
-	my $response_data = &subs::unix_socket_sender($file,{ 'query' => 'subprocesses' },1);
-
-	# The process list lives in the launcher (jawn); if it is busy or the reply is
-	# unreadable, fall back to an empty tree rather than breaking the whole
-	# system settings page.
-	return $returner unless ref $response_data eq 'HASH';
-
-	my $c = &subs::controller_builder(undef,{ cache => 'no' });
-	delete $response_data->{'status'};
-	my $html = eval {
-		$c->render_to_string(
-			template => 'configure/process_tree',
-			subprocesses => $response_data
-		);
-	} || '';
-
-	$returner = { data => $response_data, html => $html };
-
-	return $returner
-}
 
 
 sub random_string_creator() {
