@@ -333,6 +333,135 @@ function studioUpdateLatencyInfo() {
 	el.text(parts.join(' · '));
 }
 
+// ---- round-trip latency meter ----------------------------------------------
+// Plays a few clicks out of the speakers and times the echo on the microphone
+// on the AudioContext clock. What it reports is the monitoring round trip -
+// output + air + input - which is the number that decides whether playing along
+// through the app feels late. Speakers, not headphones, and a quiet room.
+
+var studioLatencyProbeSource = [
+	"class StudioLatencyProbe extends AudioWorkletProcessor {",
+	"  constructor() {",
+	"    super();",
+	"    this.phase = 'idle'; this.after = 0; this.threshold = 0.05; this.fired = false;",
+	"    this.port.onmessage = (e) => {",
+	"      const d = e.data || {};",
+	"      if (d.phase === 'ambient' || d.phase === 'idle') { this.phase = d.phase; }",
+	"      else if (d.phase === 'arm') { this.phase = 'arm'; this.after = d.after || 0; this.threshold = d.threshold || 0.05; this.fired = false; }",
+	"    };",
+	"  }",
+	"  process(inputs) {",
+	"    const ch = inputs[0] && inputs[0][0];",
+	"    if (ch) {",
+	"      let peak = 0, at = 0;",
+	"      for (let i = 0; i < ch.length; i++) { const v = ch[i] < 0 ? -ch[i] : ch[i]; if (v > peak) { peak = v; at = i; } }",
+	"      if (this.phase === 'ambient') { this.port.postMessage({ level: peak, ambient: 1 }); }",
+	"      else if (this.phase === 'arm' && !this.fired && peak > this.threshold && currentTime >= this.after) {",
+	"        this.fired = true;",
+	"        this.port.postMessage({ hit: currentTime + at / sampleRate });",
+	"      }",
+	"    }",
+	"    return true;",
+	"  }",
+	"}",
+	"registerProcessor('studio-latency-probe', StudioLatencyProbe);"
+].join('\n');
+
+var studioLatencyProbeLoaded = false;
+
+function studioSleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+// A short broadband click (a decaying noise burst) with a sharp onset.
+function studioLatencyClick(ctx) {
+	var rate = ctx.sampleRate;
+	var len = Math.max(1, Math.floor(rate * 0.004));
+	var buf = ctx.createBuffer(1, len, rate);
+	var d = buf.getChannelData(0);
+	for (var i = 0; i < len; i++) { d[i] = (Math.random() * 2 - 1) * Math.pow(1 - (i / len), 2); }
+	return buf;
+}
+
+async function studioLatencyMeter() {
+	var out = $('#studio_latency_result');
+	var ctx = studioContext();
+	if (!ctx) { return; }
+	if (!ctx.audioWorklet) { out.text('this browser cannot measure'); return; }
+	out.text('measuring\u2026');
+
+	var stream;
+	try {
+		stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+	} catch (e) {
+		out.text('microphone refused');
+		return;
+	}
+
+	try {
+		if (!studioLatencyProbeLoaded) {
+			var url = URL.createObjectURL(new Blob([studioLatencyProbeSource], { type: 'application/javascript' }));
+			await ctx.audioWorklet.addModule(url);
+			URL.revokeObjectURL(url);
+			studioLatencyProbeLoaded = true;
+		}
+	} catch (e) {
+		out.text('probe failed to load');
+		stream.getTracks().forEach(function (t) { t.stop(); });
+		return;
+	}
+
+	var source = ctx.createMediaStreamSource(stream);
+	var node = new AudioWorkletNode(ctx, 'studio-latency-probe');
+	var sink = ctx.createGain();
+	sink.gain.value = 0;
+	source.connect(node);
+	node.connect(sink).connect(ctx.destination);
+
+	var ambient = 0;
+	var hits = [];
+	node.port.onmessage = function (e) {
+		var d = e.data || {};
+		if (d.ambient && d.level > ambient) { ambient = d.level; }
+		if (d.hit !== undefined) { hits.push(d.hit); }
+	};
+
+	// learn the room noise, so the echo threshold sits above it
+	node.port.postMessage({ phase: 'ambient' });
+	await studioSleep(500);
+	node.port.postMessage({ phase: 'idle' });
+
+	var threshold = Math.max(0.05, ambient * 4);
+	var click = studioLatencyClick(ctx);
+	var delays = [];
+
+	for (var n = 0; n < 3; n++) {
+		var when = ctx.currentTime + 0.25;
+		node.port.postMessage({ phase: 'arm', after: when, threshold: threshold });
+		var src = ctx.createBufferSource();
+		src.buffer = click;
+		var gain = ctx.createGain();
+		gain.gain.value = 0.6;
+		src.connect(gain).connect(ctx.destination);
+		src.start(when);
+		var seen = hits.length;
+		await studioSleep(500);
+		if (hits.length > seen) { delays.push(hits[hits.length - 1] - when); }
+	}
+
+	source.disconnect();
+	node.disconnect();
+	sink.disconnect();
+	stream.getTracks().forEach(function (t) { t.stop(); });
+
+	if (!delays.length) {
+		out.text('no echo heard \u2014 use speakers, not headphones, and stay quiet');
+		return;
+	}
+	delays.sort(function (a, b) { return a - b; });
+	out.text(Math.round(delays[Math.floor(delays.length / 2)] * 1000) + ' ms (' + delays.length + '/3 echoes)');
+}
+
+$(document).on('click', '#studio_latency_measure', function () { studioLatencyMeter(); });
+
 function studioDetachInput(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
@@ -1595,6 +1724,7 @@ function studioInit(data) {
 			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {}, sources: [], lookahead: studioAudio.lookahead || 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 			studioSelectedTake = null;
 			studioTakeDrag = null;
+			studioSongCache = null;
 			$('#studio_track_container').html('');
 
 			var pd = $('#pedalboard');
@@ -1851,6 +1981,28 @@ $(document).on('click', '#studio_loop', function() {
 	studioSaver();
 });
 
+// The song lives in memory as well as in localStorage. studioSaver runs on
+// every knob move, and a synchronous localStorage write per move janks the
+// drag; so the write is deferred a moment while the in-memory copy stays
+// authoritative for studioRetriever, which reads it right after a save.
+var studioSongCache = null;
+var studioSongWrite = 0;
+
+function studioSongStore(song) {
+	studioSongCache = song;
+	clearTimeout(studioSongWrite);
+	studioSongWrite = setTimeout(function () {
+		try { localStorage.setItem('studio', JSON.stringify(song)); } catch (e) {}
+	}, 250);
+}
+
+// A song loaded from or saved to the server wants the disk copy right away.
+function studioSongSet(song) {
+	studioSongCache = song;
+	clearTimeout(studioSongWrite);
+	try { localStorage.setItem('studio', JSON.stringify(song)); } catch (e) {}
+}
+
 function studioSaver() {
 	var song = {};
 	var name = $('#studio').attr('name');
@@ -1908,12 +2060,12 @@ function studioSaver() {
 	var video_toggle = $('#studio_video_toggle').attr('toggled');
 	song['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle,
 		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'] };
-	localStorage.setItem('studio', JSON.stringify(song));
+	studioSongStore(song);
 	return song;
 }
 
 function studioRetriever() {
-	var song = JSON.parse(localStorage.getItem('studio') || '{}');
+	var song = studioSongCache || JSON.parse(localStorage.getItem('studio') || '{}');
 
 	$.each(song, function(i,v) {
 		if (i == 'admin') {
@@ -2701,7 +2853,7 @@ function studioSave() {
 					}
 				});
 			});
-			localStorage.setItem('studio', JSON.stringify(response.studio));
+			studioSongSet(response.studio);
 			continent_record({'uuid':response['uuid'], 'app':response['app'],'timestamp':response['timestamp']});
 			$('#studio_song_select').replaceWith(response.song_select);
 			appointment_chron();
@@ -2819,7 +2971,7 @@ function studioLoad(uuid) {
 				});
 			});
 
-			localStorage.setItem('studio', JSON.stringify(response.studio));
+			studioSongSet(response.studio);
 			studioRetriever();
 			mixer['buttons'] = buttons;
 			studioTimeDisplay();

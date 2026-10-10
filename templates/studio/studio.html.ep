@@ -226,6 +226,10 @@
 						<td>Latency<br><span style="font-size:12px;">what the browser reports for this session</span></td>
 						<td><span id="studio_latency_info">&mdash;</span></td>
 					</tr>
+					<tr>
+						<td>Round trip<br><span style="font-size:12px;">plays a few clicks through the speakers and times the echo on the mic; use speakers (not headphones) and stay quiet</span></td>
+						<td><button id="studio_latency_measure">Measure</button> <span id="studio_latency_result">&mdash;</span></td>
+					</tr>
 				</tbody>
 			</table>
 						
