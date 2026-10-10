@@ -715,6 +715,13 @@ void ota_upload() {
 
 void setup() {
   Serial.begin(921600);
+  // Never let the console block the UI. The USB-Serial/JTAG CDC write waits up
+  // to 20 x 100 ms (2 s) per call when the host is not reading -- which is
+  // exactly the state of a watch plugged into a computer with no serial monitor
+  // open. The screen builders and the tap path print a few lines each, so a
+  // switch or a press froze for seconds; a zero timeout drops the output
+  // instead (best-effort logging).
+  Serial.setTxTimeoutMs(0);
 
   watch.begin();
   watch.initMicrophone();
@@ -1523,6 +1530,18 @@ static String raw_json_field(const String &src, const char *key) {
   return src.substring(start, start + len);
 }
 
+// The homebase sends room_count as a JSON string ("2"), and Arduino_JSON's
+// operator int() only reads JSON numbers (a string silently became 0). That 0
+// then clamped every room back to 1 in presidents_buttons()/touch_button1(), so
+// room 2 was unreachable. Read a value whether it is a string or a number.
+static int json_int(JSONVar v) {
+  const char *s = (const char *)v;   // NULL unless it is a JSON string
+  if (s) {
+    return String(s).toInt();
+  }
+  return (int)v;
+}
+
 void loop2(void * pvParameters) {
   esp_task_wdt_add(NULL);   // feed it below; a stalled loop2 reboots the chip
   for(;;) {
@@ -1629,8 +1648,8 @@ void loop2(void * pvParameters) {
               rtc.setTime(timestamp);
               offset = params["offset"];
               rtc.offset = offset;
-              room_count = params["room_count"];
-              room_max = params["room_max"] || room_max;
+              room_count = json_int(params["room_count"]);
+              room_max = json_int(params["room_max"]) || room_max;
               if (DEFAULT_SCREEN_TIMEOUT < 30000) {
                 DEFAULT_SCREEN_TIMEOUT = 30000;
               }
@@ -2431,8 +2450,9 @@ String https_request_raw(String url, String method, String payloadData) {
          Serial.printf("HTTPS GET code: %d\n", httpCode);
         if (httpCode == HTTP_CODE_OK) {
           answer = https.getString();
-           Serial.print(answer);
-           Serial.println(answer);
+          // a room fetch is tens of KB: do not push the whole body at the
+          // console (it wedged the USB-JTAG TX when nothing was reading)
+          Serial.printf("[https] answer %u bytes\n", (unsigned)answer.length());
         }
       }
       else {
