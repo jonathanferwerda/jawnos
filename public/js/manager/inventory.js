@@ -537,10 +537,11 @@ $(document).on('change', '.evaluation_machine', function() {
 	settingSetter({ app: pick.attr('app'), setting: 'evaluation_machine', value: pick.val() });
 });
 
-$(document).on('change', '.evaluation_period', function() {
+$(document).on('change', '.evaluation_depth', function() {
 	var pick = $(this);
-	// the window is remembered per scope; the nightly run reads the same setting
-	settingSetter({ app: pick.attr('app'), setting: 'evaluation_period', value: pick.val() });
+	// how much the next run writes: brief (a headline line) or full; the nightly
+	// run reads the same setting
+	settingSetter({ app: pick.attr('app'), setting: 'evaluation_depth', value: pick.val() });
 });
 
 function evaluationStation(b) {

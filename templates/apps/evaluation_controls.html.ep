@@ -4,6 +4,14 @@
     note of what the last night did. They sit in the app's configuration and in
     the system settings, and the report they fill lives beside them. %>
 <button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
+<%# how much the answer carries: brief is a single headline line (cheap, for a
+    daily run), full is the whole report %>
+<% my $eval_depth = (&subs::setting_grabber({ app => $app || '__president', setting => 'evaluation_depth' }) || 'full'); %>
+<select class="evaluation_depth" app="<%= $app || '__president' %>" hint="brief: a single headline line (cheap, for a daily run); full: the whole report" style="vertical-align:bottom;">
+	<% foreach my $d ( qw/full brief/ ) { %>
+		<option value="<%= $d %>" <% if ($eval_depth eq $d) { %>selected<% } %>><%= &subs::format_name($d) %></option>
+	<% } %>
+</select>
 <%# the setting is the wish and the schedule is the mechanism: the worker puts
     the schedule back from the setting at boot, so checked means the evaluation
     will be re-run each night even across a restart %>
