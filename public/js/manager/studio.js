@@ -2123,10 +2123,13 @@ async function studioInputStreamGrabber(channel,state) {
 
 	if (mixer[ch].media.active) { return; }
 
-	// If the channel has an input plug selected, honour its audio/video kind.
+	// If the channel has an input plug selected, honour its audio/video kind, but
+	// default to audio only: the camera is requested only when the plug is a
+	// video source ('av' = a camera or video app, 'v' = the marker). Nothing
+	// chosen means no camera.
 	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]');
 	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
-	var video = (plug['av'] != 'a');
+	var video = (plug['av'] == 'av' || plug['av'] == 'v');
 
 	var audio = {
 		echoCancellation: false,  // Disables echo suppression
