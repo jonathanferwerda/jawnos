@@ -63,7 +63,7 @@ function jawnosTaskbarPress(sel) {
 // and one or two wear a different name, so those are spelled out here.
 function jawnosTaskbarAppForToggle(id) {
 	if (!id) { return null; }
-	var action = { backup_now: 1, stop_all: 1, upload: 1, voice_prompt: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1 };
+	var action = { backup_now: 1, stop_all: 1, upload: 1, voice_prompt: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1 };
 	if (action[id]) { return null; }
 	var alias = { image_toggle: 'gallery' };
 	if (alias[id]) { return alias[id]; }
@@ -142,11 +142,13 @@ function jawnosTaskbarOrderApply() {
 	if (!bar.length) { return; }
 	var slots = jawnosTaskbarSlots();
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
-	// upgrade a pin that names a start-menu row but not the app behind it
+	// upgrade a pin that names a start-menu row but not the app behind it, and
+	// undo an older pin that mistook an action (now) for an app
 	order = order.map(function (item) {
-		if (item && typeof item === 'object' && item.k == 'pin' && !item.app) {
+		if (item && typeof item === 'object' && item.k == 'pin' && item.sel) {
 			var derived = jawnosTaskbarDeriveApp(item.sel);
-			if (derived) { return { k: 'pin', app: derived, sel: item.sel, hint: item.hint, src: item.src }; }
+			if (derived && !item.app) { return { k: 'pin', app: derived, sel: item.sel, hint: item.hint, src: item.src }; }
+			if (!derived && item.app && /#start_menu #/.test(item.sel)) { return { k: 'pin', sel: item.sel, hint: item.hint, src: item.src }; }
 		}
 		return item;
 	});
@@ -271,6 +273,27 @@ function jawnosTaskbarKeyboardPins() {
 		var id = p.attr('id');
 		if (!id) { return; }
 		pins.push({ sel: '#pseudonym_home #' + id, hint: p.attr('hint') || p.attr('name') || id, src: p.attr('src') || '' });
+	});
+	return pins;
+}
+
+// The start menu's foot buttons - leave, the site type, now, the assistant and
+// the bird. They are launchers (an action, not an app window), keyed by a
+// selector into the live menu.
+function jawnosTaskbarFootPinsFrom(root) {
+	var pins = [];
+	root.find('.leave, .site_type_manual_changer_toggle, #now_toggle, #assistant, .fuck_you').each(function () {
+		var img = $(this);
+		var id = img.attr('id');
+		var sel;
+		if (id) { sel = '#start_menu #' + id; }
+		else if (img.hasClass('leave')) { sel = '#start_menu .leave'; }
+		else if (img.hasClass('site_type_manual_changer_toggle')) { sel = '#start_menu .site_type_manual_changer_toggle'; }
+		else if (img.hasClass('fuck_you')) { sel = '#start_menu .fuck_you'; }
+		else { return; }
+		if (pins.some(function (p) { return p.sel == sel; })) { return; }
+		var hint = img.attr('hint') || (id == 'assistant' ? 'Assistant' : (id || ''));
+		pins.push({ sel: sel, hint: hint, src: img.attr('src') || '' });
 	});
 	return pins;
 }
@@ -429,23 +452,37 @@ function jawnosTaskbarContextBuild() {
 		add_label('Apps');
 		add_rows(pins);
 	};
-	// the apps are only in the DOM once the start menu has been opened; otherwise
-	// they are fetched the way the menu itself fetches them
+	var fill_foot = function (pins) {
+		if (!pins.length) { return; }
+		add_label('Start Menu');
+		add_rows(pins);
+	};
+	var fill_keyboards = function () {
+		var keyboards = jawnosTaskbarKeyboardPins();
+		if (keyboards.length) { add_label('Keyboards'); add_rows(keyboards); }
+	};
+	// the menu's markup is only in the DOM once it has been opened; otherwise it
+	// is fetched the way the menu itself fetches it
 	var live = jawnosTaskbarAppPins();
-	if (live.length) { fill_apps(live); }
+	if (live.length) {
+		fill_apps(live);
+		fill_foot(jawnosTaskbarFootPinsFrom($('#start_menu')));
+		fill_keyboards();
+	}
 	else {
 		var loading = $('<div class="taskbar_context_label">Loading apps…</div>').appendTo(list);
 		$.ajax({
 			url: '/manager/start_menu', type: 'GET', data: { menu: 'app' },
 			success: function (response) {
 				loading.remove();
-				fill_apps(jawnosTaskbarPinsFrom($('<div>').html(response.html || '')));
+				var root = $('<div>').html(response.html || '');
+				fill_apps(jawnosTaskbarPinsFrom(root));
+				fill_foot(jawnosTaskbarFootPinsFrom(root));
+				fill_keyboards();
 			},
 			error: function () { loading.text('Could not load the apps'); }
 		});
 	}
-	var keyboards = jawnosTaskbarKeyboardPins();
-	if (keyboards.length) { add_label('Keyboards'); add_rows(keyboards); }
 	context.append(add);
 
 	return context;
