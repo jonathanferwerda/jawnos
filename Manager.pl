@@ -31,6 +31,7 @@ use File::Find;
 use File::Slurp;
 use File::Type;
 use File::Copy;
+use Fcntl qw(:flock);
 use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
@@ -11921,6 +11922,14 @@ post '/manager/tasks' => sub ($c) {
 	}, { name => 'task remote relay' });
 	my $papp = &subs::unformat_name($c->param('papp'));
 	my $app = &subs::unformat_name($c->param('app'));
+	# A checkbox change reads the whole tasks row, edits it and writes it back,
+	# and the prefork workers can run two at once: one would read before the
+	# other wrote and drop the other's check. A per-app lock serializes them on
+	# this machine; the shared server_time does the same across machines.
+	my $task_lock = &subs::home('~/.president/.task_lock_' . &subs::shorthand_name($app || 'app', 20));
+	my $task_lock_fh;
+	open($task_lock_fh, '>>', $task_lock);
+	flock($task_lock_fh, LOCK_EX) if $task_lock_fh;
 
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
@@ -11946,6 +11955,8 @@ post '/manager/tasks' => sub ($c) {
 	# so a later database merge compares like with like and cannot let one
 	# machine's older copy win a tie the clocks decided
 	&subs::setting_setter({ app => $app, setting => 'tasks', value => $tasks_json, server_time => $server_time });
+	flock($task_lock_fh, LOCK_UN) if $task_lock_fh;
+	close($task_lock_fh) if $task_lock_fh;
 	$c->render(json => &subs::task_grabber($papp));
 
 };
