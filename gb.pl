@@ -138,9 +138,12 @@ our @misc_settings = qw/homepage homepage_content manager start_menu gate config
 
 # selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg
 # 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
-our @icon_sets = qw/handdrawn cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
+our @icon_sets = qw/handdrawn windows mac gnome cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
 our %icon_set_labels = (
 	handdrawn    => 'Hand-drawn (original)',
+	windows      => 'Windows',
+	mac          => 'macOS',
+	gnome        => 'GNOME',
 	cartoon      => 'Cartoon',
 	dark         => 'Dark',
 	light        => 'Light',

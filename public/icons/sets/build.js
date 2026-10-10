@@ -503,6 +503,51 @@ const STYLES = {
 		label: 'Outline',
 		render: (h, inner) => svgWrap(wrap(sub(inner, hsl(h, 0.6, 0.45), hsl(h, 0.7, 0.72)))),
 	},
+	// --- the desktop looks: the shapes Windows, macOS and GNOME users know ---
+	// Windows 11 Fluent: a flat rounded square with a soft vertical lift, a light
+	// rim and a white glyph. Squared corners, calm, no gloss.
+	windows: {
+		label: 'Windows',
+		render: (h, inner) => {
+			const top = hsl(h, 0.66, 0.58), bot = hsl(h, 0.68, 0.42);
+			const defs = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>';
+			return svgWrap(defs
+				+ frame('url(#bg)', { inset: 26, rx: 80, stroke: 'rgba(255,255,255,0.35)', sw: 3 })
+				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.14)', 'rgba(0,0,0,0.22)', 0, 5));
+		},
+	},
+	// macOS Big Sur: a glossy squircle - a strong vertical gradient, a diagonal
+	// sheen over the top half and a bright rim, with a white glyph.
+	mac: {
+		label: 'macOS',
+		render: (h, inner) => {
+			const top = hsl(h, 0.78, 0.68), bot = hsl(h, 0.82, 0.46);
+			const defs = '<defs>'
+				+ '<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient>'
+				+ '<linearGradient id="sheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,0.55)"/><stop offset="0.55" stop-color="rgba(255,255,255,0.06)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient>'
+				+ '<clipPath id="plate"><rect x="22" y="22" width="468" height="468" rx="118"/></clipPath>'
+				+ '</defs>';
+			return svgWrap(defs
+				+ '<g clip-path="url(#plate)">'
+				+ frame('url(#bg)', { inset: 22, rx: 118 })
+				+ '<rect x="22" y="22" width="468" height="250" fill="url(#sheen)"/>'
+				+ '</g>'
+				+ frame('none', { inset: 22, rx: 118, stroke: 'rgba(255,255,255,0.5)', sw: 3 })
+				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.18)', 'rgba(0,0,0,0.22)', 3, 6));
+		},
+	},
+	// GNOME Adwaita: a flat, muted tile with a gentle top-to-bottom lift and a
+	// dark symbolic glyph. Quiet, no gloss - the calm one of the three.
+	gnome: {
+		label: 'GNOME',
+		render: (h, inner) => {
+			const top = hsl(h, 0.34, 0.93), bot = hsl(h, 0.40, 0.80);
+			const defs = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>';
+			return svgWrap(defs
+				+ frame('url(#bg)', { inset: 30, rx: 90, stroke: 'rgba(0,0,0,0.12)', sw: 3 })
+				+ wrap(sub(inner, hsl(h, 0.6, 0.36), hsl(h, 0.45, 0.58))));
+		},
+	},
 	// dark panel with a glowing neon glyph
 	neon: {
 		label: 'Neon',
