@@ -1188,6 +1188,9 @@ sub appointment_writer($c,$app) {
 			&subs::db_insert('appointments', $app);
 		}
 	}
+	# a transaction with an account is a money move, so it is written to the
+	# warehouse ledger too; the budget and the warehouse then read one store
+	&warehouse_money_mirror($app);
 	&Websocket::send('tab', { console => 'calculator();' });
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
 	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
@@ -1544,11 +1547,17 @@ sub warehouse_grabber($opts) {
 	foreach my $r ( @{$rows} ) {
 		my $unit = $r->{'unit'} || 'each';
 		my $qty = &subs::numeric_formatter($r->{'quantity'}) + 0;
-		my $types = $gb::measures->{$unit}->{'types'} || [];
-		my $is_money = ($r->{'account'} && $r->{'account'} ne '') || (grep { $_ eq 'currency' } @{$types});
-		if ($is_money) {
+		# the three faces: stock on a place, a money move, and the balance anchors
+		# (inventory). The anchors and stock belong to the Levels view; the money
+		# moves are the Moves view's, so they are left out here to keep a
+		# snapshot from being counted twice.
+		my $kind = $r->{'kind'};
+		$kind = ($r->{'type'} eq 'inventory' ? 'inventory' : (($r->{'account'} && $r->{'account'} ne '') ? 'money' : 'stock')) if !defined $kind || $kind eq '';
+		if ($kind eq 'money') { next; }
+		if ($kind eq 'inventory') {
 			my $acct = $r->{'account'} || $r->{'item'} || 'cash';
-			$warehouse->{'accounts'}->{$acct}->{$unit} = ($warehouse->{'accounts'}->{$acct}->{$unit} || 0) + $qty;
+			my $cur = $r->{'currency'} || $unit;
+			$warehouse->{'accounts'}->{$acct}->{$cur} = ($warehouse->{'accounts'}->{$acct}->{$cur} || 0) + $qty;
 		}
 		elsif ($r->{'item'}) {
 			my $item = $r->{'item'};
@@ -1570,18 +1579,19 @@ sub warehouse_grabber($opts) {
 
 # The warehouse as one ledger of moves, stock and money together. A stock row is
 # already signed - a pull is negative, an addition positive - and a money move is
-# read from the transaction that carried it (an expense is stored negative, an
-# income positive, a transfer as both), so a single list says what left and what
-# came in. The balance snapshots (type inventory) are anchors, not moves, and are
-# left out. Filters: places (stock only - money carries none), search, limit.
+# the ledger row mirrored from the transaction that produced it (an expense is
+# stored negative, an income positive, a transfer as both), so a single list says
+# what left and what came in. The balance snapshots (kind inventory) are anchors,
+# not moves, and are left out. Filters: places (stock only - money carries none),
+# search, limit.
 sub warehouse_moves($opts) {
 	my $limit = $opts->{'limit'} || 300;
 	my $search = $opts->{'search'};
 	my @places = grep { defined $_ && $_ ne '' } @{ $opts->{'places'} || [] };
 	my @moves;
-	# stock moves from the warehouse (already signed)
-	my $wfilter = 'where (type is null or type != ?)';
-	my @wargs = ('inventory');
+	# stock moves: a stock row on a place, already signed
+	my $wfilter = "where kind = 'stock'";
+	my @wargs;
 	if (scalar @places) {
 		$wfilter .= ' and place in (' . join(',', map { '?' } @places) . ')';
 		push @wargs, @places;
@@ -1602,27 +1612,27 @@ sub warehouse_moves($opts) {
 			source_uuid => $j->{'source_uuid'} || $r->{'app_uuid'},
 		};
 	}
-	# money moves from the transactions that carry them
-	my $tfilter = '';
-	my @targs = ('transaction');
-	if (defined $search && $search ne '') { $tfilter = ' and account like ?'; push @targs, '%' . $search . '%'; }
-	push @targs, $limit;
-	foreach my $t ( @{ &subs::db_query("select * from appointments where type = ? and movement in ('income','expense','transfer')" . $tfilter . ' order by timestamp desc limit ?', @targs)->hashes } ) {
-		my $amt = $t->{'total'};
-		$amt = $t->{'amount'} unless defined $amt && $amt =~ /[0-9]/;
+	# money moves: the ledger's own rows, mirrored from the transactions that
+	# carried them, so both this view and the budget read one store
+	my $mfilter = "where kind = 'money'";
+	my @margs;
+	if (defined $search && $search ne '') { $mfilter .= ' and (account like ? or app like ?)'; push @margs, ('%' . $search . '%') x 2; }
+	push @margs, $limit;
+	foreach my $r ( @{ &subs::db_query('select * from warehouse ' . $mfilter . ' order by timestamp desc limit ?', @margs)->hashes } ) {
+		my $amt = $r->{'total'};
+		$amt = $r->{'amount'} unless defined $amt && $amt =~ /[0-9]/;
 		$amt = &subs::numeric_formatter($amt) + 0;
-		# a transaction that carried no money (a stock move only) is not a money move
 		next unless $amt;
 		push @moves, {
-			timestamp => &subs::numeric_formatter($t->{'timestamp'}) + 0,
+			timestamp => &subs::numeric_formatter($r->{'timestamp'}) + 0,
 			kind => 'money',
-			item => $t->{'account'},
+			item => $r->{'account'},
 			place => '',
 			quantity => $amt,
-			unit => $t->{'currency'} || 'CAD',
-			reason => $t->{'movement'},
-			source => $t->{'app'},
-			source_uuid => $t->{'uuid'},
+			unit => $r->{'currency'} || 'CAD',
+			reason => $r->{'movement'},
+			source => $r->{'app'},
+			source_uuid => $r->{'uuid'},
 			money => 1,
 		};
 	}
@@ -1630,6 +1640,55 @@ sub warehouse_moves($opts) {
 	# each source is capped at $limit before the merge; the list is not capped
 	# again, or a busy money stream would crowd out the stock moves behind it
 	return \@moves;
+}
+
+# A money move is a warehouse row. Every transaction with an account is written
+# to the warehouse as it is recorded - the same fields under the same names, so
+# the budget can read the ledger without knowing it moved - and the row is keyed
+# by the source transaction's uuid, so a re-write or a backfill cannot double it.
+# kind='money' marks it; type and movement keep what the transaction was.
+sub warehouse_money_mirror($row) {
+	return unless $row && $row->{'uuid'};
+	my $type = $row->{'type'} || '';
+	return unless ($type eq 'transaction' || $type eq 'purchase');
+	return unless $row->{'account'} && $row->{'account'} ne '';
+	# an inventory row is a balance anchor, not a move; it already has its own
+	# warehouse row (kind inventory)
+	return if ($row->{'movement'} || '') eq 'inventory';
+	my $exists = &subs::db_query('select uuid from warehouse where kind=? and uuid=? limit 1', 'money', $row->{'uuid'})->hashes->[0];
+	return if $exists;
+	my $movement = $row->{'movement'};
+	$movement = 'expense' if (!defined $movement || $movement eq '') && $type eq 'purchase';
+	&subs::db_insert('warehouse', {
+		kind => 'money',
+		type => $type,
+		movement => $movement,
+		app => $row->{'app'},
+		account => $row->{'account'},
+		project => $row->{'project'},
+		item => $row->{'item'},
+		model => $row->{'model'},
+		quantity => $row->{'quantity'},
+		unit => $row->{'unit'},
+		amount => $row->{'amount'},
+		tax => $row->{'tax'},
+		aux => $row->{'aux'},
+		total => $row->{'total'},
+		duration => $row->{'duration'},
+		vendor => $row->{'vendor'},
+		manufacturer => $row->{'manufacturer'},
+		currency => $row->{'currency'},
+		notes => $row->{'notes'},
+		state => $row->{'state'},
+		warranty => $row->{'warranty'},
+		place => $row->{'place'},
+		data => $row->{'data'},
+		uuid => $row->{'uuid'},
+		app_uuid => $row->{'uuid'},
+		source_uuid => $row->{'source_uuid'},
+		timestamp => $row->{'timestamp'},
+		server_time => &subs::rightNow(),
+	});
 }
 
 get '/manager/warehouse' => sub($c) {
@@ -8473,6 +8532,9 @@ post '/manager/transaction/record' => sub($c) {
 		};
 		&subs::db_insert('appointments', $write1);
 		&subs::db_insert('appointments', $write2);
+		# a transfer is two money moves, one out and one in; the ledger mirrors both
+		&warehouse_money_mirror($write1);
+		&warehouse_money_mirror($write2);
 	}
 	elsif ($movement eq 'inventory') {
 
@@ -8503,9 +8565,16 @@ post '/manager/transaction/record' => sub($c) {
 			server_time => &subs::rightNow(),
 			timestamp => $timestamp,
 			item => &subs::unformat_name($app),
-			type => 'inventory',
+			# kind names the face; type stays 'transaction' so the budget's movement
+			# filter (which reads type) keeps the anchor, exactly as the appointment did
+			type => 'transaction',
+			kind => 'inventory',
+			movement => 'inventory',
+			app => &subs::unformat_name($app),
 			unit => &subs::setting_grabber({ app => $account, setting => 'currency' }),
 			quantity => $amount,
+			amount => $amount,
+			total => $amount,
 			uuid => &subs::random_string_creator(40),
 			app_uuid => $uuid,
 			account => &subs::unformat_name($app),
@@ -10974,9 +11043,14 @@ get '/manager/budget' => sub($c) {
 			}
 		}
 #		push @{$transactions}, $final_t if $final_t->{'timestamp'};
-		my $transactional = &subs::db_query("select * from appointments where account = ? and type != ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
-			$accounting->{'app'}, 'inventory',$last_inventory,$t2);
-		push @{$transactions}, @{$transactional->hashes};
+		# the money moves now come from the warehouse ledger; the balance anchors
+		# (inventory-movement appointments) are kept where they are for now, so the
+		# statement is unchanged while the money it tallies lives on the ledger
+		my $money_moves = &subs::db_query("select * from warehouse where kind = 'money' and account = ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
+			$accounting->{'app'},$last_inventory,$t2)->hashes;
+		my $money_anchors = &subs::db_query("select * from appointments where account = ? and type != ? and movement = ? and timestamp >= ? and timestamp $t2_comp ? order by timestamp",
+			$accounting->{'app'}, 'inventory', 'inventory', $last_inventory,$t2)->hashes;
+		push @{$transactions}, sort { $a->{'timestamp'} <=> $b->{'timestamp'} } (@{$money_moves}, @{$money_anchors});
 		if (grep { $_ eq 'all' } @{$movement}) {
 
 		}
@@ -16570,6 +16644,11 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 				}
 			}
 			&subs::db_delete('appointments', { uuid => $app->{'uuid'} });
+			# the warehouse ledger mirrors money moves and guards balance snapshots, so
+			# a deleted row takes its ledger rows with it (stock rows are reversed where
+			# they were written, not here)
+			&subs::db_query('delete from warehouse where kind = ? and uuid = ?', 'money', $app->{'uuid'});
+			&subs::db_query("delete from warehouse where kind = 'inventory' and app_uuid = ?", $app->{'uuid'});
 		}
 
 		&embedded_app_deleter({ appt_uuid => $uuid });
@@ -19460,6 +19539,25 @@ sub update_database($data) {
 		'alter table warehouse add column project VARCHAR(255)',
 		'alter table warehouse add column account VARCHAR(255)',
 		'alter table warehouse add column warranty VARCHAR(25)',
+		# the warehouse is the ledger for money as well as stock now: a money move
+		# carries the same fields the transaction did, so the budget can read it
+		# without knowing it moved. kind names the three faces (stock/money/inventory)
+		# so a row's purpose no longer rests on whether it happens to name an account.
+		'alter table warehouse add column kind VARCHAR(25)',
+		'alter table warehouse add column app VARCHAR(255)',
+		'alter table warehouse add column movement VARCHAR(25)',
+		'alter table warehouse add column vendor VARCHAR(255)',
+		'alter table warehouse add column manufacturer VARCHAR(255)',
+		'alter table warehouse add column currency VARCHAR(25)',
+		'alter table warehouse add column amount VARCHAR(25)',
+		'alter table warehouse add column tax VARCHAR(25)',
+		'alter table warehouse add column aux VARCHAR(25)',
+		'alter table warehouse add column total VARCHAR(25)',
+		'alter table warehouse add column duration VARCHAR(25)',
+		'alter table warehouse add column notes LONGTEXT',
+		'alter table warehouse add column state VARCHAR(25)',
+		'alter table warehouse add column source_uuid VARCHAR(255)',
+		'CREATE INDEX IF NOT EXISTS idx6_warehouse on warehouse (kind)',
 		'CREATE INDEX idx1_tunnels on tunnels (signatorial)',
 		'CREATE INDEX idx2_settings on settings (setting,device)',
 		'CREATE INDEX idx3_settings on settings (setting,value)',
