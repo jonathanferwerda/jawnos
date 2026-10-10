@@ -85,7 +85,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin-top:6px;">
 		<label style="display:flex;flex-direction:column;min-width:240px;">
 			<b>Zoom <span id="ui_zoom_value"><%= &subs::misc_setting('ui_zoom') || 100 %></span>%</b>
-			<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="25" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
+			<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="20" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
 		</label>
 		<label style="display:flex;flex-direction:column;max-width:260px;">
 			<b>Font</b>
