@@ -601,6 +601,23 @@ canvas { overflow: scroll; z-index: 99; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
 .window_icon { vertical-align:top; border:solid; border-radius:2px; border-width:2px; font-size:26px; }
+/* Every window wears the same frame. It is an inset ring painted over the
+   window (pointer-events: none, so nothing under it stops being clickable)
+   rather than a real border on .wind: a border would be counted in the box and
+   shift every window's saved width/height and its resizable/drag math by its
+   own width. The ring lands on the navbar's own border along the top and sides
+   and is what closes the window at the foot. The z-index is huge on purpose -
+   topLevelNow hands the contents and the navbar their own z-index inside the
+   window's own stacking context, and the ring has to sit over them. */
+.wind::after {
+	content: '';
+	position: absolute;
+	top: 0; right: 0; bottom: 0; left: 0;
+	border: solid;
+	border-radius: inherit;
+	pointer-events: none;
+	z-index: 2147483000;
+}
 /* the window title bar is a thin strip: the icon, the name and the window
    controls all answer to the one 30px figure, so the bar closes up around
    them instead of standing 45 deep, and the extras the line-height would
