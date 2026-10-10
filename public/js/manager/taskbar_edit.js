@@ -257,7 +257,10 @@ function jawnosTaskbarContextBuild() {
 
 	context.append('<div class="taskbar_context_selection" act="add">Add items<span class="taskbar_context_check">▸</span></div>');
 	var add = $('<div class="taskbar_context_sub" sub="add" style="display:none;"></div>');
-	var add_label = function (text) { add.append('<div class="taskbar_context_label">' + text + '</div>'); };
+	// the rows live in their own fixed-height scroller, so a long list is read by
+	// scrolling rather than running off the screen
+	var list = $('<div class="taskbar_context_apps"></div>').appendTo(add);
+	var add_label = function (text) { list.append('<div class="taskbar_context_label">' + text + '</div>'); };
 	var add_rows = function (pins) {
 		pins.forEach(function (pin) {
 			var on = jawnosTaskbarPinned(pin.sel);
@@ -266,7 +269,7 @@ function jawnosTaskbarContextBuild() {
 			row.append($('<img>').attr('src', pin.src));
 			row.append($('<span></span>').text(pin.hint || pin.sel));
 			row.append('<span class="taskbar_context_check">' + selected(on) + '</span>');
-			add.append(row);
+			list.append(row);
 		});
 	};
 	var fill_apps = function (pins) {
@@ -279,7 +282,7 @@ function jawnosTaskbarContextBuild() {
 	var live = jawnosTaskbarAppPins();
 	if (live.length) { fill_apps(live); }
 	else {
-		var loading = $('<div class="taskbar_context_label">Loading apps…</div>').appendTo(add);
+		var loading = $('<div class="taskbar_context_label">Loading apps…</div>').appendTo(list);
 		$.ajax({
 			url: '/manager/start_menu', type: 'GET', data: { menu: 'app' },
 			success: function (response) {
