@@ -22,7 +22,7 @@ function appointmentEventMaker(appts,sort) {
 						'value': value,
 						'size': (v[val] || []).length,
 						'colour': v['setting'] ? v['setting']['colour'] : undefined,
-						'name': v['formatted_name'],
+						'name': v['name'] || v['formatted_name'],
 						'formatted_name': v['formatted_name']
 					});
 				});
@@ -135,6 +135,10 @@ function clockfacePrinter(appts) {
 			ctx.stroke();
 			ctx.restore();
 
+			// the dot answers a press (and the label widens the hit below)
+			var hit = [dx - 9, dy - 9, dx + 9, dy + 9, e];
+			appPosition.push(hit);
+
 			// the label radiates outward on the open side, if it fits alone
 			var text = e['formatted_name'] || e['name'];
 			if (!text) { return true; }
@@ -151,6 +155,10 @@ function clockfacePrinter(appts) {
 			});
 			if (clash) { return true; }
 			placed.push(box);
+			hit[0] = Math.min(hit[0], box[0]);
+			hit[1] = Math.min(hit[1], box[1]);
+			hit[2] = Math.max(hit[2], box[2]);
+			hit[3] = Math.max(hit[3], box[3]);
 			jawnosPrinterText(ctx, text, lx, ly, { font: '400 13px Arial', align: align, colour: ink, halo: halo });
 		});
 	});

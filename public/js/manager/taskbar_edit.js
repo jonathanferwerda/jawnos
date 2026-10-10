@@ -87,6 +87,7 @@ function jawnosTaskbarPinMake(item) {
 			if (jawnosTaskbarEditing()) { return; }
 			// while the window is parked here its own button answers
 			if (pin.children('.window_toggle').length) { return; }
+			if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse(pin); }
 			jawnosTaskbarPinPress(pin);
 		});
 		return pin;
@@ -95,6 +96,7 @@ function jawnosTaskbarPinMake(item) {
 	launcher.attr('sel', item.sel).attr('hint', item.hint || '').attr('src', item.src || '');
 	launcher.on('click', function () {
 		if (jawnosTaskbarEditing()) { return; }
+		if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse(launcher); }
 		jawnosTaskbarPress(launcher.attr('sel'));
 	});
 	return launcher;

@@ -1068,6 +1068,8 @@ $(document).on('click', '.jonathan, .start_menu_list', function() {
 	// the toggle answers for itself in its own handler; closing here too would
 	// undo what that handler has just opened
 	if ($(this).closest('#start_menu_toggle').length) { return; }
+	// a start-menu row opening an appointment beats while the window comes up
+	if ($(this).hasClass('start_menu_list') && typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
 	if ($('#start_menu').is(':visible')) {
 		startMenuToggle();
 	}
@@ -1202,6 +1204,8 @@ $(document).on('click', '.start_menu_item_text', function () {
 // rather than landing on the gap and only closing the menu
 $(document).on('click', '.start_menu_item', function (e) {
 	if ($(e.target).closest('.start_menu_recent_clear').length > 0) { return; }
+	// the row beats while the app it opens loads
+	if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
 	startMenuUseRecord($(this));
 	if ((e.target.tagName || '').toUpperCase() == 'IMG') { return; }
 	if ($(e.target).hasClass('start_menu_item_text')) { return; }

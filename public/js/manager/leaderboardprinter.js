@@ -192,8 +192,6 @@ $(document).on('click', '.background', function (e) {
 
 	var printer = localStorage.getItem('layout');
 	var app_clicked = 0;
-	ctx.save('click');
-	ctx.moveTo(0,0);
 	// both glides run on requestAnimationFrame now; cancelAnimationFrame is how
 	// they stop (clearInterval on a frame handle does nothing)
 	cancelAnimationFrame(clothesLinePos['smoothScrolling']);
@@ -202,33 +200,14 @@ $(document).on('click', '.background', function (e) {
 		if (o[0] < x && o[2] > x &&
 					o[1] < y && o[3] > y) {
 			app_clicked = 1;
-			var app = JSON.stringify(o[4]);
 			var timestamp = Date.now();
-			var canvas = document.getElementById(printer);
-			var ctx = canvas.getContext('2d');
-			ctx.fillStyle = jawnosInk();
-			ctx.strokeStyle = jawnosInk();
-			ctx.globalAlpha = 1;
-
-			// at the point
-			var count = 0;
-
-			var move = setInterval(function(resp) {
-
-				ctx.arc(x, y, 0, count, (Math.PI*2), true);
-				ctx.stroke();
-			//	ctx.fill();
-
-
-				if (count > 45) {
-					ctx.restore('click');
-					clearInterval(move);
-				}
-				count++;
-			},13);
-			var sapp = JSON.stringify({ 'name': o[4]['name'] });
+			// the press grows the thing it landed on - the dot and its words, the
+			// clockface dot and label, or the garment, which also wears a thicker
+			// edge - for half a second
+			if (typeof jawnosClickMagnify == 'function') {
+				jawnosClickMagnify(document.getElementById(printer), o, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0);
+			}
 			appointmentGrabber(o[4]['name'],timestamp);
-
 			return false;
 		}
 	});

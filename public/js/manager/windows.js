@@ -141,6 +141,8 @@ $(document).on('click', '.window_toggle', function() {
 
 	var timestamp = Date.now();
 	var app = $(this).attr('app');
+	// the tile beats while the window it answers for comes up
+	if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
 	var win = $('.wind[app="' + app + '"]');
 	// a button on the taskbar answers for its window: a minimized one comes
 	// back, the top one steps down, and any other rises

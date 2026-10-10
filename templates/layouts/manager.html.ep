@@ -83,6 +83,7 @@
 			var jawnos_clock_notifications = '<%= &subs::misc_setting('clock_notifications') || 'on' %>';
 		</script>
 		<script src="/js/universal.js?string=<%= &subs::random_string_creator(25) %>"></script>
+		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
 		<script src="/js/numeral.min.js"></script>

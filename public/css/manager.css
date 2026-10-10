@@ -421,6 +421,13 @@ html, body {
 #taskbar[autohide=on][position=top]:hover { transform: translateY(0); }
 
 /* The bar's context menu, shaped like the folders one. */
+/* a press that opens a window beats while the server answers */
+.jawnos_loading { animation: jawnos_loading_pulse .7s ease-in-out infinite; }
+@keyframes jawnos_loading_pulse {
+	0%, 100% { box-shadow: 0 0 0 0 rgba(120, 170, 255, 0); }
+	50% { box-shadow: 0 0 0 3px rgba(120, 170, 255, 0.85); }
+}
+
 .taskbar_context {
 	position: fixed;
 	z-index: 60000;

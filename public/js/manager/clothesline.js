@@ -64,15 +64,6 @@ function clotheslineHanger(clothes) {
 		if (localStorage.getItem('background_images') == 'on' && typeof jawnosInkHalo == 'function') {
 			halo = jawnosInkHalo(ink);
 		}
-		if (halo) {
-			ctx.strokeStyle = halo;
-			ctx.lineWidth = clothesLinePos['bordersize'] + 3;
-		}
-		else {
-			ctx.strokeStyle = ink;
-			ctx.lineWidth = clothesLinePos['bordersize'];
-		}
-		ctx.beginPath();
 
 		var minHeight = headerHeight;
 		var maxHeight = minHeight + (clothesLineHeight);
@@ -81,20 +72,16 @@ function clotheslineHanger(clothes) {
 		if (clothes.length > 0) {
 			clothesLinePos['exists'] = 1;
 			ctx.clearRect(0,minHeight,canvas.width,clothesLineHeight);
-			ctx.moveTo(0,minHeight);
-			ctx.lineTo(canvas.width, minHeight);
-			ctx.moveTo(0,minHeight + clothesLineHeight);
-			ctx.lineTo(canvas.width, minHeight + clothesLineHeight);
-			ctx.stroke();
-			ctx.strokeStyle = ink;
-			ctx.lineWidth = clothesLinePos['bordersize'];
-			ctx.stroke();
 		}
 
 		ctx.strokeStyle = ink;
 		ctx.lineWidth = clothesLinePos['bordersize'];
 		ctx.font = "400 20px Times New Roman";
 
+		// each garment is its own rounded tile: no rail strung above and below it
+		// any more, so the clothesline reads as a row of buttons rather than a line
+		var gap = 4;
+		var pad = 3;
 		$.each(clothes, function(i,v) {
 
 			v['type'] = 'clothes';
@@ -109,26 +96,34 @@ function clotheslineHanger(clothes) {
 			});
 			var startW = (i * maxWidth) + clothesLinePos['x'];
 			var endW = startW + maxWidth;
+			var bx = startW + gap;
+			var by = minHeight + pad;
+			var bw = maxWidth - (gap * 2);
+			var bh = clothesLineHeight - (pad * 2);
 
+			ctx.save();
+			ctx.beginPath();
+			roundRectPath(ctx, bx, by, bw, bh, 10);
 			ctx.fillStyle = v.colour || 'yellow';
-			ctx.strokeRect(startW,minHeight,maxWidth,clothesLineHeight);
-			ctx.fillRect(startW,minHeight,maxWidth,clothesLineHeight);
 			ctx.fill();
+			ctx.lineWidth = clothesLinePos['bordersize'];
+			ctx.strokeStyle = ink;
+			ctx.stroke();
+			ctx.restore();
+
 			// outlined, so the name reads over any garment colour or picture
 			var textMeasure = ctx.measureText(v.formatted_name).width;
-			var textPos = ((maxWidth - textMeasure) / 2) + startW;
+			var textPos = ((bw - textMeasure) / 2) + bx;
+			var textY = by + (bh / 2) + 7;
 			if (halo) {
 				ctx.lineWidth = 3;
 				ctx.strokeStyle = halo;
-				ctx.strokeText(v.formatted_name, textPos, maxHeight - (clothesLineHeight / 3));
+				ctx.strokeText(v.formatted_name, textPos, textY);
 			}
 			ctx.fillStyle = ink;
-			ctx.fillText(v.formatted_name,  textPos ,  maxHeight - (clothesLineHeight / 3));
-			ctx.lineWidth = clothesLinePos['bordersize'];
-			ctx.fill();
-			ctx.stroke();
+			ctx.fillText(v.formatted_name, textPos, textY);
 
-			appPosition.push([startW , minHeight , endW, maxHeight, v]);
+			appPosition.push([bx , by , bx + bw, by + bh, v]);
 		});
 		hangingClothes = 0;
 	}
