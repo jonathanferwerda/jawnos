@@ -708,6 +708,26 @@ function jawnosInkHalo(ink) {
 	var lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 	return lum > 0.5 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
 }
+// Pick black or white for a label sitting on an arbitrary background colour, so
+// each item can decide its own text colour from its own fill (a garment tile, a
+// coloured chip) rather than trusting the themed ink - a dark theme's near-white
+// ink vanishes on a pale garment. WCAG-weighted, the same maths and the same
+// ~0.179 tie as subs::contrast_ink, so canvas and templates agree.
+function jawnosContrastInk(bg) {
+	var hex = ('' + (bg == null ? '' : bg)).replace(/^\s*#/, '').trim();
+	if (hex.length == 3) { hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]; }
+	if (!/^[0-9a-fA-F]{6}$/.test(hex)) { return '#000000'; }
+	var n = parseInt(hex, 16);
+	var part = [ (n >> 16) & 255, (n >> 8) & 255, n & 255 ];
+	var weight = [ 0.2126, 0.7152, 0.0722 ];
+	var lum = 0;
+	for (var i = 0; i < 3; i++) {
+		var c = part[i] / 255;
+		c = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+		lum += c * weight[i];
+	}
+	return lum < 0.179 ? '#ffffff' : '#000000';
+}
 // Canvas text for the manager printers. The themed ink alone vanishes over a
 // background picture, so when pictures are on the text is stroked with the
 // contrasting halo first, then filled. Vertical centring is the default -

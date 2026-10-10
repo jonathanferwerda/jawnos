@@ -130,7 +130,10 @@ function clotheslineHanger(clothes) {
 			ctx.stroke();
 			ctx.restore();
 
-			// outlined, so the name reads over any garment colour or picture
+			// the label reads on the garment's own colour, not the page's: a dark
+			// theme's near-white ink vanished on a pale garment. (Guard the helper:
+			// a browser holding an older universal.js must not lose the rail.)
+			var labelInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(v.colour || 'yellow') : ink;
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((bw - textMeasure) / 2) + bx;
 			var textY = by + (bh / 2) + 7;
@@ -139,7 +142,7 @@ function clotheslineHanger(clothes) {
 				ctx.strokeStyle = halo;
 				ctx.strokeText(v.formatted_name, textPos, textY);
 			}
-			ctx.fillStyle = ink;
+			ctx.fillStyle = labelInk;
 			ctx.fillText(v.formatted_name, textPos, textY);
 
 			appPosition.push([bx , by , bx + bw, by + bh, v]);

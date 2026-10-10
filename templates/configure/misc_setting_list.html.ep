@@ -22,14 +22,17 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	'Impact, sans-serif'
 ); %>
 
-<%# ---- colour schemes: five desktop looks, each in a light and a dark cut,
-    named for its colour. The old twenty generated hue ramps (and their ten
-    dark twins) are gone; these are hand-picked and muted:
+<%# ---- colour schemes: desktop looks in a light and a dark cut, named for
+    their colour. Hand-picked and muted:
       Blue     - Windows 11   (#0078d4 / dark #4cc2ff accent)
       Graphite - macOS        (#6e6e73 chrome)
       Green    - Manjaro      (#35bf8b accent)
       Indigo   - GNOME        (#3584e4 Adwaita accent)
       Steel    - XFCE         (#3b6ea5 Greybird accent)
+      Amber    - Ubuntu       (#e67e22 Yaru accent)
+      Teal     - Mint         (#0e837e accent)
+      Plum     - Pop!_OS      (#8b5cf6 accent)
+      Rose     - elementary   (#d64570 accent)
     Each palette is a ramp the window surfaces cycle through. The dark cuts
     matter more than the light ones: the chrome (--panel/--ink) is derived from
     the *manager* surface, and theme_panel_css forces near-white panels (L 0.88)
@@ -45,10 +48,19 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 	'Indigo Dark'  => [ '#1b1e26', '#232734', '#2b3140', '#353c4d', '#37528f', '#4f78c2' ],
 	'Steel'        => [ '#edf1f5', '#dbe3ea', '#c4d0db', '#a6b7c6', '#7e95ab', '#4e7ba8' ],
 	'Steel Dark'   => [ '#1b2026', '#232a31', '#2b343c', '#354049', '#3a5d80', '#4f82ab' ],
+	'Amber'        => [ '#fdf3e7', '#f8e3c8', '#f0cfa4', '#e0ab68', '#e67e22', '#c35e0a' ],
+	'Amber Dark'   => [ '#201812', '#2a1f16', '#34271b', '#453325', '#c35e0a', '#e67e22' ],
+	'Teal'         => [ '#e9f7f6', '#cdecea', '#a8dcd9', '#78c6c2', '#2fa8a2', '#0e837e' ],
+	'Teal Dark'    => [ '#12201f', '#1a2c2a', '#223836', '#2e4a47', '#0e837e', '#2fa8a2' ],
+	'Plum'         => [ '#f4eefb', '#e5d8f5', '#d0bcec', '#b393df', '#8b5cf6', '#6d3bd4' ],
+	'Plum Dark'    => [ '#1c1626', '#241c31', '#2e2440', '#3c2f52', '#6d3bd4', '#8b5cf6' ],
+	'Rose'         => [ '#fdf0f3', '#f9dbe3', '#f2c2d0', '#e79cb3', '#d64570', '#b02853' ],
+	'Rose Dark'    => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
 ); %>
 <% my @scheme_order = (
 	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
-	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark'
+	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
+	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark'
 ); %>
 
 <style>
