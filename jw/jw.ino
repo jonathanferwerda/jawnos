@@ -1312,6 +1312,7 @@ void loop() {
   if (loraChatReceiver) {
     readRadio();
   }
+  wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
   if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     lowPowerEnergyHandler();
   }
@@ -3949,6 +3950,14 @@ static bool wrist_sim = false;             // tiltsim drives the machine by hand
 static bool wrist_armed = false;           // a moment of stillness arms the next turn
 static bool wrist_had_look = false;        // a look already fired this session
 static float wrist_gx = 0, wrist_gy = 0, wrist_gz = 0;     // the pose that look was read at
+// While a look's screen is up the wrist is watched: the glance is held for as
+// long as the watch stays where it can be read and handed back to sleep the
+// moment the arm drops (see wrist_look_monitor).
+static bool wrist_look_watch = false;      // a raise lit the screen; watch the arm
+static uint32_t wrist_look_since = 0;      // when that look began
+static uint32_t wrist_look_release = 0;    // when the pose last left the look window
+#define WRIST_LOOK_EXTEND_MS 90000         // a look never holds the screen past this
+#define WRIST_LOOK_RELEASE_MS 350          // off the window this long: the arm went down
 
 // The angle between two gravity vectors, in degrees.
 static float wrist_angle(float ax, float ay, float az, float bx, float by, float bz) {
@@ -4089,6 +4098,45 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
   return false;
 }
 
+
+// A wrist raise lights the screen for a glance. While that glance's screen is
+// up, sample the wrist: keep the screen on for as long as the watch is still
+// held where it can be read (the pose in the look window), and put it back to
+// sleep the moment the arm drops out of it -- so the screen follows the look
+// instead of sitting on a fixed timer.
+static void wrist_look_monitor() {
+  if (!wrist_look_watch) {
+    return;
+  }
+  if (millis() - wrist_look_since > WRIST_LOOK_EXTEND_MS) {
+    // held implausibly long to be a look: let it sleep rather than pin the screen
+    wrist_look_watch = false;
+    return;
+  }
+  static uint32_t last = 0;
+  if (millis() - last < 30) {
+    return;
+  }
+  last = millis();
+  float x, y, z;
+  if (!accel_sample(x, y, z)) {
+    return;
+  }
+  if (z > WRIST_LOOK_ZLOW && z < WRIST_LOOK_ZHIGH) {
+    wrist_look_release = 0;
+    buttonMillis = millis();     // still being read: keep the glance up
+  }
+  else if (wrist_look_release == 0) {
+    wrist_look_release = millis();
+  }
+  else if (millis() - wrist_look_release > WRIST_LOOK_RELEASE_MS) {
+    // the arm went down: sleep now instead of waiting out the timeout
+    wrist_look_watch = false;
+    Serial.println("[tilt] look released: screen off");
+    crumb("look released");
+    lowPowerEnergyHandler();
+  }
+}
 
 // Raw x/y/z at ~50 Hz over USB: what the pose thresholds are tuned against.
 static void tilt_dbg_stream() {
@@ -4379,6 +4427,7 @@ void lowPowerEnergyHandler()
   // that ends a real light sleep is still latched in the PMU, and without this it
   // would read as a click while awake and put the watch straight back to sleep
   dozing = true;
+  wrist_look_watch = false;   // the glance ends with the screen
   wristPollReset();    // both sleep paths start their pose from scratch
 
   if (lightSleep && !watch.isUsbIn()) {
@@ -4611,6 +4660,11 @@ void lowPowerEnergyHandler()
       buttonMillis = millis() - (uint32_t)(DEFAULT_SCREEN_TIMEOUT - TILT_WAKE_LOOK_MS);
       Serial.printf("[tilt] short wake: %ld seconds\n", (long)TILT_WAKE_LOOK_MS / 1000);
     }
+    // the arm is up: keep the glance alive while it stays there and drop the
+    // screen the moment it comes down (wrist_look_monitor)
+    wrist_look_watch = true;
+    wrist_look_since = millis();
+    wrist_look_release = 0;
   }
   // the event that woke us is spent, loop() would only re-run wakeup() for it
   pmuIrq = false;
