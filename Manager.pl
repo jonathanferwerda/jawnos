@@ -8923,25 +8923,9 @@ post '/manager/inventory/evaluate' => sub ($c) {
 	# the picker's answer rides the request; the setting behind it is what the
 	# nightly run will read
 	my $period = $c->param('period');
-	my $timeslots = [ 's','m','h','mday','M','y','wday','yday','isdst'];
-	my $evaluation = { timeslots => {} };
-	# the counts need the timestamps one at a time: streaming them keeps a
-	# life's worth of appointments from being carried around in memory, and
-	# the localtime detail that used to ride along in the answer had no reader
-	my $rows = $app
-		? &subs::db_query('select timestamp from appointments where app = ?', $app)
-		: &subs::db_query('select timestamp from appointments');
-	my $stream = $rows->sth;
-	while (my $row = $stream->fetchrow_arrayref) {
-		my $ts = $row->[0];
-		next unless $ts =~ /^[0-9]+$/;
-		my @time = localtime($ts / 1000);
-		for (my $n = 0; $n < scalar @{$timeslots}; $n++) {
-			$evaluation->{'timeslots'}->{$timeslots->[$n]}->{$time[$n]}++;
-		}
-	}
-	$rows->finish;
-	&subs::cache_set({ app => $app || '__president', context => 'evaluation', warranty => '-6M' }, $evaluation);
+	# the timeslot counts that used to be tallied here (a scan of every
+	# appointment) had no reader left once the raw dump came off the page, so
+	# they are gone
 	# the numbers are rolled up; let the evaluation agent read them with the model,
 	# and hand the page the headline and the chunks the text splits into so its
 	# app names can be links

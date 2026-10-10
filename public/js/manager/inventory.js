@@ -491,10 +491,13 @@ $(document).on('click', '.system_evaluation', function() {
 	evaluationStation(b);
 });
 
-// a report is a headline until it is asked to be more: the tap opens or folds
-// the body beneath it
-$(document).on('click', '.evaluation_headline', function() {
-	$(this).siblings('.evaluation_body').toggle();
+// a report is a headline until it is asked to be more: a tap anywhere on the
+// report's header frame - the words or the space around them - opens or folds
+// the body beneath it, while a tap inside the open body is left to the body's
+// own links
+$(document).on('click', '.appointment_evaluation', function(e) {
+	if ($(e.target).closest('.evaluation_body').length) { return; }
+	$(this).find('.evaluation_body').first().toggle();
 });
 
 // an app the report named walks to that appointment like any other name

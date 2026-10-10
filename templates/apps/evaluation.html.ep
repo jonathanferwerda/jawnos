@@ -9,17 +9,5 @@
 	<%= include 'apps/evaluation_report', report => $report, app => $report_app %>
 <% } else { %>
 	<%# the block lives even with nothing to say, because a run fills it in place %>
-	<div class="appointment_evaluation evaluation_report" app="<%= $report_app %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;font-size:110%;"><b class="evaluation_headline">No report yet</b></div>
+	<div class="appointment_evaluation evaluation_report" app="<%= $report_app %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;font-size:110%;"><b class="evaluation_headline" style="display:block;">No report yet</b></div>
 <% } %>
-<br>
-<table id="timeslot_counter">
-	<% foreach my $e ( keys %{$evaluation->{'timeslots'}} ) { %>
-		<b><%= $e %></b>&nbsp;
-		<% foreach my $ed ( keys %{$evaluation->{'timeslots'}->{$e}} ) { %>
-			<%= $ed . ' ' . $evaluation->{'timeslots'}->{$e}->{$ed} %>
-		<% } %>
-
-		<br>
-	<% } %>
-</table>
-<br>
