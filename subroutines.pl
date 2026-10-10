@@ -5464,10 +5464,15 @@ sub rightNow() {
 
 sub headless_navigation() {
 	my $signatorial = &subs::signatorial_designer();
-	my $last_location = &subs::db_query('select * from continent order by server_time desc')->hashes->[0];
+	# This machine's own newest fix, not the newest row in the whole table. The
+	# continent table is shared by every app, every device and every machine (the
+	# browser writes a row on each appointment action and the rows are synced),
+	# so the global newest row is almost always fresh and used to starve this
+	# machine's own capture the moment anything else was writing.
+	my $last_location = &subs::db_query('select * from continent where signatorial = ? and latitude is not null and latitude != ? and timestamp is not null order by server_time desc', $signatorial, '')->hashes->[0];
 	my $now = &subs::rightNow();
 	my $navigation_due = [];
-	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where type = ? or type = ? and timestamp < ?', 'start', 'record', $now)->hashes;
+	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', $now)->hashes;
 	foreach my $appt ( @{$running_appts} ) {
 		my $navigation = &subs::setting_grabber({ app => $appt->{'app'}, setting => 'navigation' });
 		if ($navigation eq 'once' || $navigation eq 'none') {
@@ -5494,11 +5499,15 @@ sub headless_navigation() {
 			warranty => &subs::ago_calc('-' . &subs::duration_sayer($gb::timeouts->{'navigation'}->{'interval'} * 1000 * 3),$now),
 		};
 		my $written = 0;
-		if ($now - $last_location->{'server_time'} > $gb::timeouts->{'navigation'}->{'interval'} * 1000) {
+		if ($now - $last_location->{'timestamp'} >= $gb::timeouts->{'navigation'}->{'interval'} * 1000) {
 			if (&subs::device_setter() eq 'mobile') {
 				my $jloc = `termux-location`;
 				my $loc = eval { return decode_json $jloc } || {};
-				if ($loc->{'latitude'} && $loc->{'elapsedMs'} < 1000 && $loc->{'accuracy'} < 100) {
+				# A walk gives plenty of perfectly usable fixes that are a couple of
+				# seconds old or a little loose. The old 1s / 100m gates threw them
+				# away silently, so the location stopped moving with the person; keep
+				# the good ones and say when a fix was dropped.
+				if ($loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500) {
 					$returner->{'latitude'} = $loc->{'latitude'};
 					$returner->{'longitude'} = $loc->{'longitude'};
 					$returner->{'accuracy'} = sprintf("%.2F", $loc->{'accuracy'});
@@ -5507,6 +5516,9 @@ sub headless_navigation() {
 					$treturner->{'uuid'} = &subs::random_string_creator(31);
 					&subs::db_insert('continent', $treturner);
 					$written = 1;
+				}
+				else {
+					$log->info('navigation: termux-location gave no usable fix (' . ($loc->{'latitude'} ? 'elapsed ' . ($loc->{'elapsedMs'} || '?') . 'ms accuracy ' . ($loc->{'accuracy'} || '?') . 'm' : ($jloc || 'empty output')) . ')');
 				}
 			}
 			else {
