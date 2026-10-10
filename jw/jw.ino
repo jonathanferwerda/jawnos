@@ -5130,9 +5130,36 @@ void configRestoreBackup() {
   writeFile(FFat, "/config.json", returner.c_str());  
 }
 
+// configSave() runs on every sleep, but the picture usually has not changed:
+// flashing the whole config each time wore the flash and cost the user time.
+// config_saved is the picture last written; config_saved_sig is the same picture
+// with the step samples masked, so the ever-moving step data can be told from a
+// real settings change, and an unchanged picture is not written at all.
+static String config_saved;
+static String config_saved_sig;
+static uint32_t config_saved_at = 0;
+#define CONFIG_STEPS_SAVE_MS (60 * 1000UL)
+
+// The clean-boot marker, read without readFile() (which appends to the shared
+// `returner`). setup() writes "saving" while it restores, so the next save has to
+// put "success" back; a failed fetch writes "failure" for the same reason. A read
+// costs no flash wear, so only a dirty marker is rewritten.
+static bool bootreport_is_clean() {
+  File f = FFat.open("/bootreport.txt");
+  if (!f || f.isDirectory()) {
+    return false;
+  }
+  String r;
+  while (f.available()) {
+    r += (char)f.read();
+  }
+  f.close();
+  r.trim();
+  return r == "success";
+}
+
 void configSave() {
   JSONVar conf;
-  writeFile(FFat, "/bootreport.txt", "success");
   if (lightSleep == true) {
       conf["lightsleep"] = "on";
   }
@@ -5216,12 +5243,31 @@ void configSave() {
   conf["room_count"] = room_count;
   conf["offset"] = offset;
   returner = JSON.stringify(conf);
+  // keep the clean-boot marker honest even when the picture itself is unchanged:
+  // setup() wrote "saving" as it restored, and a failed fetch writes "failure",
+  // and a boot that reads either would restore from the backup. A tiny read, and
+  // a write only when the marker is not already clean.
+  if (!bootreport_is_clean()) {
+    writeFile(FFat, "/bootreport.txt", "success");
+  }
   // a watch that has nothing configured must not write the empty picture over
   // its own flash: the doze save used to cement a wiped config for good
   if (homebaseIP.length() == 0 && authorization.length() == 0 &&
       ssid.length() == 0 && buttoned_before == false) {
     Serial.println("[config] nothing configured yet; not saving");
     return;
+  }
+  // the same picture with the steps masked, so a step sample (which changes
+  // continuously while the watch moves) is not mistaken for a settings change
+  conf["steps"] = "";
+  String signature = JSON.stringify(conf);
+  if (signature == config_saved_sig) {
+    if (returner == config_saved) {
+      return;                        // the picture is unchanged: no write
+    }
+    if (millis() - config_saved_at < CONFIG_STEPS_SAVE_MS) {
+      return;                        // only the steps moved; wait for the next sleep
+    }
   }
   // LittleFS truncates in place, so a reset mid-save used to leave a clobbered
   // config.json (the panic reboots did exactly that, and the watch came back
@@ -5235,6 +5281,9 @@ void configSave() {
   if (!FFat.rename("/config.tmp", "/config.json")) {
     writeFile(FFat, "/config.json", returner.c_str());
   }
+  config_saved = returner;
+  config_saved_sig = signature;
+  config_saved_at = millis();
 }
 
 // the picture a never-configured watch comes up with: a boot with nothing
@@ -5276,6 +5325,8 @@ void configDelete() {
   deleteFile(FFat, "/config_backup.json");
 
   writeFile(FFat, "/bootreport.txt", "deleting");
+  config_saved = "";             // the files are gone: the next save must write
+  config_saved_sig = "";
   configDefaults();
   brightnessLevel = 12;
   watch.setRotation(screenRotation);
