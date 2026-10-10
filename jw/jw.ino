@@ -3937,6 +3937,21 @@ static void tilt_log_flush() {
   }
 }
 
+// A labelled line in the pose log, so a capture can interleave the screen's
+// brightness and the wake events with the samples (the USB console cannot be
+// used off the cable, where light sleep lives).
+static void tilt_log_marker(const char *tag, long value) {
+  if (!tiltLog) {
+    return;
+  }
+  tilt_log_flush();          // keep the marker in order with the samples
+  char b[56];
+  int n = snprintf(b, sizeof(b), "# %s %ld\n", tag, value);
+  if (n > 0) {
+    appendFile(FFat, TILT_LOG_PATH, b);
+    tilt_log_bytes += (uint32_t)n;
+  }
+}
 // Every raw sample the machine is fed goes here, so an off-cable capture can be
 // replayed exactly what the state machine saw.
 static void tilt_log_sample(float x, float y, float z) {
@@ -3992,7 +4007,13 @@ static bool accel_sample(float &x, float &y, float &z) {
 #define WRIST_SETTLE_EPS 1.6f   // a held pose may still wobble this much
 #define WRIST_REST_MS    250    // still this long: the pose becomes "before"
 #define WRIST_ARM_MS     500    // still this long: a turn out of it can be a look
-#define WRIST_TURN_DEG   50.0f
+#define WRIST_TURN_DEG   35.0f
+// The turn out of the settled pose that counts as a look. 50 was just above
+// the real arm-at-side -> reading turn: the worn capture read the rest at
+// (y 9.4, z 1.6) and the look at (z 7.4), only ~40 deg apart, so at 50 the
+// light-sleep machine (and the doze one in that pose) never saw a turn and the
+// screen stayed off (2026-10-10). 35 catches it; the look band still keeps the
+// swing and the rest quiet.
 // The look band. The lower bound has to sit ABOVE the arm's swing/rest poses,
 // which read low z (the walking swing is z ~1-3.5, the bench arm-down ~-1): the
 // waking machine no longer waits for a moment of stillness (see wristPollStep),
@@ -4520,6 +4541,7 @@ void lowPowerEnergyHandler()
  
   buttonMillis = 0;
   brightnessLevel = watch.getBrightness();
+  tilt_log_marker("sleep br", brightnessLevel);
   watch.decrementBrightness(0);
 
   sportsIrq = false;
@@ -4701,6 +4723,7 @@ void lowPowerEnergyHandler()
         watch.loopSensor();
         if (wristPoll()) {
           wrist_wake = true;
+          tilt_log_marker("ls raise", (long)(wrist_lz * 10));
           crumb("ls raise");
           break;
         }
@@ -4726,6 +4749,7 @@ void lowPowerEnergyHandler()
     // the screen comes back before the radio: the BLE stack takes seconds to
     // come up, and waking it first left the display dark while it did
     watch.incrementalBrightness(brightnessLevel);
+    tilt_log_marker("ls wake br", watch.getBrightness());
     if (temp_bt_enabled == true) {
       start_ble_transfer();
     }
@@ -4768,6 +4792,7 @@ void lowPowerEnergyHandler()
   watch.wakeupDisplay();
 
   watch.incrementalBrightness(brightnessLevel);
+  tilt_log_marker("wake br", watch.getBrightness());
   Serial.println("just before frequency");
   setCpuFrequencyMhz(240);
   step_writer();
