@@ -66,6 +66,17 @@ static bool sportsIrq = false;
 static bool tiltWake = true;
 // Streams raw accelerometer samples over USB for tuning ("tiltdbg on").
 static bool tiltDbg = false;
+// Raw pose logging to the flash filesystem: the USB console cannot be used for
+// the worn gesture (light sleep refuses the cable), so a capture done off-cable
+// is written to /tiltlog.txt and read back later ("tiltlog on", "tiltlog
+// dump").
+static bool tiltLog = false;
+static char tilt_log_buf[1024];
+static int tilt_log_len = 0;
+static uint32_t tilt_log_flushed_at = 0;
+static uint32_t tilt_log_bytes = 0;
+#define TILT_LOG_PATH "/tiltlog.txt"
+#define TILT_LOG_MAX  300000UL
 // A wrist raise earns a glance, not the full screen timeout; a touch inside it
 // hands the wake back to the usual timeout (see the wake block in loop()).
 #define TILT_WAKE_LOOK_MS 5000
@@ -3891,6 +3902,36 @@ static void doze_until_crown() {
 // z>=9.2 and an arm hanging at the side z~-1. A look is a fast turn out of a
 // quiet pose that then settles held inside that z window (see wristPollStep).
 
+static void tilt_log_flush() {
+  if (tilt_log_len == 0) {
+    return;
+  }
+  appendFile(FFat, TILT_LOG_PATH, tilt_log_buf);
+  tilt_log_bytes += (uint32_t)tilt_log_len;
+  tilt_log_len = 0;
+  tilt_log_buf[0] = '\0';
+  tilt_log_flushed_at = millis();
+  if (tilt_log_bytes >= TILT_LOG_MAX) {
+    tiltLog = false;      // full: stop rather than fill the partition
+  }
+}
+
+// Every raw sample the machine is fed goes here, so an off-cable capture can be
+// replayed exactly what the state machine saw.
+static void tilt_log_sample(float x, float y, float z) {
+  if (!tiltLog) {
+    return;
+  }
+  int room = (int)sizeof(tilt_log_buf) - tilt_log_len - 1;
+  int n = snprintf(tilt_log_buf + tilt_log_len, room, "[t] %.2f %.2f %.2f\n", x, y, z);
+  if (n > 0) {
+    tilt_log_len += (n < room ? n : room - 1);
+  }
+  if (tilt_log_len >= (int)sizeof(tilt_log_buf) - 64 || millis() - tilt_log_flushed_at > 2000) {
+    tilt_log_flush();
+  }
+}
+
 static bool accel_sample(float &x, float &y, float &z) {
   if (!watch.sensor) {
     return false;
@@ -3902,6 +3943,7 @@ static bool accel_sample(float &x, float &y, float &z) {
   x = d.mps2.x;
   y = d.mps2.y;
   z = d.mps2.z;
+  tilt_log_sample(x, y, z);
   return true;
 }
 
@@ -3955,9 +3997,11 @@ static float wrist_gx = 0, wrist_gy = 0, wrist_gz = 0;     // the pose that look
 // moment the arm drops (see wrist_look_monitor).
 static bool wrist_look_watch = false;      // a raise lit the screen; watch the arm
 static uint32_t wrist_look_since = 0;      // when that look began
-static uint32_t wrist_look_release = 0;    // when the pose last left the look window
+static uint32_t wrist_look_release = 0;    // when the pose last left the read pose
+static uint32_t wrist_cooldown_until = 0;  // no wake right after a look is released
 #define WRIST_LOOK_EXTEND_MS 90000         // a look never holds the screen past this
-#define WRIST_LOOK_RELEASE_MS 350          // off the window this long: the arm went down
+#define WRIST_LOOK_RELEASE_MS 350          // off the read pose this long: the arm went down
+#define WRIST_LOOK_RELEASE_DEG 45.0f       // this far from the read pose is "not looking"
 
 // The angle between two gravity vectors, in degrees.
 static float wrist_angle(float ax, float ay, float az, float bx, float by, float bz) {
@@ -3981,6 +4025,9 @@ static bool wristPollStep(float x, float y, float z, uint32_t now);
 static bool wristPoll() {
   if (!tiltWake || wrist_sim) {
     return false;              // the preference is off (or tiltsim drives the machine itself)
+  }
+  if ((int32_t)(millis() - wrist_cooldown_until) < 0) {
+    return false;              // the arm is still coming down from a released look
   }
   uint32_t now = millis();
   // 10 samples a second while the arm is still, 25 while it is doing
@@ -4122,7 +4169,11 @@ static void wrist_look_monitor() {
   if (!accel_sample(x, y, z)) {
     return;
   }
-  if (z > WRIST_LOOK_ZLOW && z < WRIST_LOOK_ZHIGH) {
+  // Release on how far the wrist has turned *from the pose that was read*, not
+  // on the absolute window: the arm-at-side pose and the reading pose are both
+  // inside the look window (~90 deg apart), so the window cannot tell them
+  // apart, and the screen stayed on with the arm at the side (2026-10-10).
+  if (wrist_angle(wrist_gx, wrist_gy, wrist_gz, x, y, z) < WRIST_LOOK_RELEASE_DEG) {
     wrist_look_release = 0;
     buttonMillis = millis();     // still being read: keep the glance up
   }
@@ -4130,8 +4181,11 @@ static void wrist_look_monitor() {
     wrist_look_release = millis();
   }
   else if (millis() - wrist_look_release > WRIST_LOOK_RELEASE_MS) {
-    // the arm went down: sleep now instead of waiting out the timeout
+    // the arm went down: sleep now instead of waiting out the timeout, and stay
+    // deaf while it finishes coming down so the tail of the drop is not read as
+    // a fresh look
     wrist_look_watch = false;
+    wrist_cooldown_until = millis() + 1200;
     Serial.println("[tilt] look released: screen off");
     crumb("look released");
     lowPowerEnergyHandler();
@@ -4307,6 +4361,48 @@ static void tilt_serial_command(String line) {
   }
   else if (line == "crumb") {
     crumbs_dump();
+  }
+  else if (line == "tiltlog on") {
+    tilt_log_flush();
+    deleteFile(FFat, TILT_LOG_PATH);
+    tilt_log_bytes = 0;
+    tiltLog = true;
+    Serial.println("[tiltlog] logging poses to " TILT_LOG_PATH);
+  }
+  else if (line == "tiltlog off") {
+    tiltLog = false;
+    tilt_log_flush();
+    Serial.printf("[tiltlog] stopped, %u bytes\n", (unsigned)tilt_log_bytes);
+  }
+  else if (line == "tiltlog clear") {
+    tiltLog = false;
+    tilt_log_len = 0;
+    tilt_log_buf[0] = '\0';
+    tilt_log_bytes = 0;
+    deleteFile(FFat, TILT_LOG_PATH);
+    Serial.println("[tiltlog] cleared");
+  }
+  else if (line == "tiltlog dump") {
+    // printed in chunks: one huge Serial.print has wedged the USB console before
+    File f = FFat.open(TILT_LOG_PATH, "r");
+    if (!f) {
+      Serial.println("[tiltlog] none");
+    }
+    else {
+      Serial.printf("[tiltlog] %u bytes\n", (unsigned)f.size());
+      char buf[256];
+      while (f.available()) {
+        int k = f.read((uint8_t *)buf, sizeof(buf) - 1);
+        if (k <= 0) {
+          break;
+        }
+        buf[k] = '\0';
+        Serial.print(buf);
+        delay(2);
+      }
+      Serial.println("[tiltlog] end");
+      f.close();
+    }
   }
   else if (line == "crash") {
     // test the breadcrumb path: the next boot should say "crash test"
