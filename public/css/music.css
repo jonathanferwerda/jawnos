@@ -466,16 +466,15 @@ body.dark_theme #music {
 
 /* ---- the search's loading hint --------------------------------------------
 
-   A search swaps the library lists in place, so there is nothing to flash - but
+   A search swaps the track list in place, so there is nothing to flash - but
    the request itself takes a beat, and a stale list is clickable in that beat.
-   Dim just the library (the shelves and the track list, i.e. what a search
-   changes) and swallow the pointer, while the player and the interface stay at
-   full strength. searchMusic adds/removes the class; the transition makes the
-   return gentle. */
-#music #music_library {
+   Dim just the track list (what a text search changes) and swallow the pointer,
+   while the player, the interface and the shelves stay at full strength.
+   searchMusic adds/removes the class; the transition makes the return gentle. */
+#music #music_files {
 	transition: opacity .15s;
 }
-#music #music_library.music_loading {
+#music #music_files.music_loading {
 	opacity: .45;
 	pointer-events: none;
 }

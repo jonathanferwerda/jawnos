@@ -861,9 +861,9 @@ function searchMusic(data) {
 	var search = searching || $('#music_search').val();
 	var unlock = $('#music').attr('unlock');
 	$('body').css({ 'cursor': 'progress' });
-	// a search swaps the library lists; dim them (and drop the pointer) until the
-	// reply lands, so the stale rows cannot be clicked in the meantime
-	$('#music_library').addClass('music_loading');
+	// a search swaps the track list; dim it (and drop the pointer) until the reply
+	// lands, so the stale rows cannot be clicked in the meantime
+	$('#music_files').addClass('music_loading');
 	var folders = musicFolderChecker();
 	var nowPlaying = {};
 	if (tree.sound) {
@@ -997,9 +997,9 @@ function searchMusic(data) {
 		},
 		complete: function() {
 			// however the search ended (even a dropped connection), put the cursor
-			// and the library back
+			// and the track list back
 			$('body').css({ 'cursor': 'auto' });
-			$('#music_library').removeClass('music_loading');
+			$('#music_files').removeClass('music_loading');
 		}
 	});
 }
