@@ -7774,6 +7774,22 @@ sub appointment_rollup() {
 			$roll->{'kinds'}->{$owner}->{$column}->{substr($name, 0, 40)} += $count;
 		}
 	}
+	# how much, not just how often: the quantity column is the number of units
+	# logged (glasses of water, pumps of soap, spoons of sugar). The database sums
+	# it per owner; an owner with no quantities simply carries none.
+	my $qconj = length($filter) ? ' and ' : ' where ';
+	my $quantities = &subs::db_query(
+		"select app, count(*) as n, sum(cast(quantity as real)) as total, avg(cast(quantity as real)) as avg from appointments" . $filter . $qconj . "quantity is not null and quantity != '' group by app",
+		@args)->hashes;
+	foreach my $row ( @{$quantities} ) {
+		my $n = ($row->{'n'} || 0) + 0;
+		next unless $n;
+		$roll->{'quantity'}->{$owner_of->($row)} = {
+			count => $n,
+			total => ($row->{'total'} || 0) + 0,
+			average => ($row->{'avg'} || 0) + 0,
+		};
+	}
 	return $roll;
 }
 
@@ -8236,6 +8252,27 @@ sub evaluation_agent() {
 	my $model = $settings->{'eval_assistant'};
 	my $now = &subs::rightNow();
 	my $machine = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
+	# where we are in time: a run reads a moment, and the month and the year have
+	# a position as real as the weekday
+	my @lt = localtime($now / 1000);
+	my $leap = (($lt[5] + 1900) % 4 == 0 && (($lt[5] + 1900) % 100 != 0 || ($lt[5] + 1900) % 400 == 0));
+	my @mon = qw/January February March April May June July August September October November December/;
+	my @wd = qw/Sunday Monday Tuesday Wednesday Thursday Friday Saturday/;
+	my $dim = ( 31, $leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 )[$lt[4]];
+	my $doy = $lt[7] + 1;
+	my $diy = $leap ? 366 : 365;
+	my $hour = $lt[2];
+	my $now_block = {
+		time_of_day => ($hour < 5 ? 'night' : $hour < 12 ? 'morning' : $hour < 17 ? 'afternoon' : $hour < 21 ? 'evening' : 'night'),
+		hour => $hour,
+		weekday => $wd[$lt[6]],
+		day_of_month => $lt[3],
+		days_in_month => $dim,
+		month => $mon[$lt[4]],
+		day_of_year => $doy,
+		days_in_year => $diy,
+		position => 'day ' . $lt[3] . ' of ' . $dim . ' this month, month ' . ($lt[4] + 1) . ' of 12, day ' . $doy . ' of ' . $diy . ' this year',
+	};
 	# The windows the report reads, shortest first. A change of pace only shows
 	# against a longer one, so every run weighs them all rather than one: the
 	# per-day rate over a day against the week against the year against all time
@@ -8275,6 +8312,8 @@ sub evaluation_agent() {
 					per_day => sprintf('%.2f', ($act->{'count'} || 0) / $use_days->($act)),
 					total_duration => &subs::duration_sayer(($act->{'duration'} || 0) / 1000),
 				};
+				my $quant = $r->{'quantity'}->{$o};
+				$apps{$o}->{'quantity_total'} = sprintf('%.1f', $quant->{'total'}) if $quant && $quant->{'count'};
 			}
 			$windows->{ $wd->{'name'} } = { label => $wd->{'label'}, apps => \%apps };
 		}
@@ -8292,6 +8331,12 @@ sub evaluation_agent() {
 				average_duration => &subs::duration_sayer(($act->{'count'} ? int(($act->{'duration'} || 0) / $act->{'count'}) : 0) / 1000),
 				kinds => &subs::evaluation_kinds($r->{'kinds'}->{$app}, 4),
 			};
+			my $quant = $r->{'quantity'}->{$app};
+			$entry->{'quantity'} = {
+				times => $quant->{'count'},
+				total => sprintf('%.1f', $quant->{'total'}),
+				average => sprintf('%.2f', $quant->{'average'}),
+			} if $quant && $quant->{'count'};
 			if ($wd->{'name'} eq 'week' || $wd->{'name'} eq 'month') {
 				$entry->{'daily_counts'} = join ' ', map { $_ . ':' . $r->{'daily'}->{$app}->{$_} } @ad;
 			}
@@ -8305,6 +8350,7 @@ sub evaluation_agent() {
 				occurrences => $act->{'count'} || 0,
 				per_day => sprintf('%.2f', ($act->{'count'} || 0) / $days),
 				total_duration => int(($act->{'duration'} || 0) / 1000),
+				($quant && $quant->{'count'} ? (quantity_total => sprintf('%.1f', $quant->{'total'})) : ()),
 			};
 		}
 	}
@@ -8403,6 +8449,7 @@ sub evaluation_agent() {
 		scope => $global ? 'the whole house' : $app,
 		constructs => [ sort keys %{$gb::relationals} ],
 		windows => $windows,
+		now => $now_block,
 		depth => $depth,
 		%lives,
 		(!$global ? (related => \@related) : ()),
@@ -8413,10 +8460,10 @@ sub evaluation_agent() {
 		(scalar @recent ? (headlines => \@recent) : ()),
 		($since_last ? (since_last => $since_last) : ()),
 	};
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. Use only the numbers given.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. Each window also carries quantity where entries logged one - times (how many carried a quantity), total and average - and a now map says where the run stands in time: time_of_day, weekday, day_of_month and month, and the position in the month and year. Use only the numbers given.';
 	my $instructions = $depth eq 'brief'
 		? 'Write one line only - a headline, at most twenty words, no label and no headings - that states what changed in the pace, or that it held if nothing did. Nothing else.'
-		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Under Correlations weigh related and around together - pairs with |r| >= 0.5 - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
+		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds, and set the whole reading in now: the time of day, the weekday, and how far through the month and year it is. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity - a total and an average per entry - is an amount: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where what was logged sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Under Correlations weigh related and around together - pairs with |r| >= 0.5 - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
