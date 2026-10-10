@@ -5812,6 +5812,37 @@ sub navigation_automation() {
 }
 
 
+# The hour of the day each app most often happens at, over the recent past, in
+# one query for every app. The clothesline reads in the order the day does, so
+# this gives it that order; it also names the apps whose routine is regular
+# enough to hang themselves, and the hour to hang them at. `hour_days` is how
+# many of the days the anchor hour was seen on, `days` how many days the app was
+# seen at all.
+sub clothesline_daily_hours() {
+	my $days = 14;
+	my $now = &rightNow();
+	my $since = $now - ($days * 86400 * 1000);
+	my $rows = &db_query('select app, timestamp from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?)', $since, $now, 'usual', 'stop')->hashes;
+	my (%hour_days, %app_days);
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'timestamp'};
+		my $time = localtime($r->{'timestamp'} / 1000);
+		my ($hour, $yday) = ($time->[2], $time->[7]);
+		$hour_days{$r->{'app'}}->{$hour}->{$yday} = 1;
+		$app_days{$r->{'app'}}->{$yday} = 1;
+	}
+	my $out = {};
+	foreach my $app ( keys %hour_days ) {
+		my ($best, $bestc) = (undef, -1);
+		foreach my $h ( keys %{$hour_days{$app}} ) {
+			my $c = scalar keys %{$hour_days{$app}->{$h}};
+			if ($c > $bestc) { ($best, $bestc) = ($h, $c); }
+		}
+		$out->{$app} = { hour => $best, hour_days => $bestc, days => scalar keys %{$app_days{$app}} };
+	}
+	return $out;
+}
+
 sub hang_to_dry() {
 	my $server_time = &rightNow();
 	my $returner = [];
@@ -5883,7 +5914,34 @@ sub hang_to_dry() {
 
 
 	}
-	@{$returner} = sort { $a->{'app'} cmp $b->{'app'} } @{$returner};
+	# The day's order, and the apps regular enough to hang themselves. An app the
+	# user has never given a clothesline setting is offered at the hour its own
+	# history keeps it, when that hour holds on most of the last fortnight and the
+	# app is in its visible state. A setting of `off` in `clothesline_daily_auto`
+	# turns the automatic hanging off; it is on when unset.
+	my $daily = &clothesline_daily_hours();
+	my $cur_time = localtime($server_time / 1000);
+	my $cur_hour = $cur_time->[2];
+	my %configured = map { &unformat_name($_->{'app'}) => 1 } @{$cls};
+	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
+	unless (defined $auto && lc($auto) eq 'off') {
+		foreach my $app ( sort keys %{$daily} ) {
+			next if $configured{$app};
+			my $routine = $daily->{$app};
+			next unless $routine->{'hour_days'} >= 7;
+			next unless $routine->{'hour'} == $cur_hour;
+			my $aset = &settings_grabber({ app => $app });
+			next unless (($aset->{'visible'} || '') eq 'checked');
+			push @{$returner}, { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $aset->{'colour'} };
+		}
+	}
+	# left to right, the order the day happens in; apps with no time of their own
+	# (no history yet) fall to the end rather than shuffling those that have one
+	@{$returner} = sort {
+		my $ha = (defined $daily->{$a->{'app'}} && defined $daily->{$a->{'app'}}->{'hour'}) ? $daily->{$a->{'app'}}->{'hour'} : 24;
+		my $hb = (defined $daily->{$b->{'app'}} && defined $daily->{$b->{'app'}}->{'hour'}) ? $daily->{$b->{'app'}}->{'hour'} : 24;
+		$ha <=> $hb || $a->{'app'} cmp $b->{'app'};
+	} @{$returner};
 	&subs::subprocessor(sub {
 		foreach my $clothes ( @{$returner} ) {
 			&Manager::centre_view_grabber({ app => &subs::unformat_name($clothes->{'app'}), timestamp => &subs::rightNow() });

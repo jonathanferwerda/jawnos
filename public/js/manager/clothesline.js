@@ -82,6 +82,9 @@ function clotheslineHanger(clothes) {
 		// any more, so the clothesline reads as a row of buttons rather than a line
 		var gap = 4;
 		var pad = 3;
+		// air between the top edge - or the taskbar when it takes the top edge - and
+		// the garments, so a top bar never tucks the rail under itself
+		var topGap = (typeof clothesLineTopGap != 'undefined') ? clothesLineTopGap : 6;
 		$.each(clothes, function(i,v) {
 
 			v['type'] = 'clothes';
@@ -97,9 +100,9 @@ function clotheslineHanger(clothes) {
 			var startW = (i * maxWidth) + clothesLinePos['x'];
 			var endW = startW + maxWidth;
 			var bx = startW + gap;
-			var by = minHeight + pad;
+			var by = minHeight + pad + topGap;
 			var bw = maxWidth - (gap * 2);
-			var bh = clothesLineHeight - (pad * 2);
+			var bh = clothesLineHeight - (pad * 2) - topGap;
 
 			ctx.save();
 			ctx.beginPath();
