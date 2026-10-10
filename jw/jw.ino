@@ -1302,7 +1302,9 @@ void loop() {
   // address on the screen right away instead of only while standing in net room.
   ip_writer();
   int volts = watch.getBatteryPercent();
-  if (face_battery) {
+  // the status strip belongs to the watch face; the Set room owns that space
+  // for its tab row, so leave the labels empty while we are in there
+  if (face_battery && jw_room != "configure") {
     lv_color_t status_colour;
     if (volts < 20) {
       status_colour = lv_color_hex(0xFF0000);
@@ -3660,11 +3662,12 @@ static lv_obj_t *configure_slider(const char *text, int y, int value,
 static void configure_tab(const char *text, int index, int x) {
   lv_obj_t *b = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(b, configure_page_select, LV_EVENT_CLICKED, (void *)(intptr_t)index);
-  lv_obj_set_pos(b, x, 2);
-  lv_obj_set_size(b, 76, 26);
+  lv_obj_set_pos(b, x, 1);
+  lv_obj_set_size(b, 78, 38);
   lv_obj_set_style_bg_color(b, lv_color_hex(index == configure_page ? 0x61b3ff : 0x333333), LV_PART_MAIN);
   lv_obj_t *l = lv_label_create(b);
   lv_label_set_text(l, text);
+  lv_obj_set_style_text_font(l, &lv_font_montserrat_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
   lv_obj_center(l);
 }
@@ -3679,29 +3682,29 @@ void setting_room() {
   switch (configure_page) {
     case 0:
       // what the watch feels like: the three level sliders, plus two toggles
-      configure_slider("Bright", 32, brightnessLevel, brightness_event_cb);
-      configure_slider("Volume", 62, volumeLevel, volume_event_cb);
-      configure_slider("Vibrate", 92, vibrateLevel, vibrate_event_cb);
+      configure_slider("Bright", 42, brightnessLevel, brightness_event_cb);
+      configure_slider("Volume", 74, volumeLevel, volume_event_cb);
+      configure_slider("Vibrate", 106, vibrateLevel, vibrate_event_cb);
       configure_button("Rotate", screenRotate, 10, 142, 70, 44, lv_color_hex(0xff8923));
       configure_button("Steps", step_control, 90, 142, 70, 44,
                        lv_color_hex(stepCounter ? 0x5afcdd : 0xb0b0b0));
       break;
     case 1:
       // the LoRa radio: broadcast/receive, and blasting the AP or wifi creds
-      configure_button("LoRa Tx", loraBroadcastToggle, 10, 40, 105, 54,
+      configure_button("LoRa Tx", loraBroadcastToggle, 10, 46, 105, 56,
                        lv_color_hex(loraChatBroadcaster ? 0x53ff24 : 0xb0b0b0));
-      configure_button("LoRa Rx", loraReceiveToggle, 125, 40, 105, 54,
+      configure_button("LoRa Rx", loraReceiveToggle, 125, 46, 105, 56,
                        lv_color_hex(loraChatReceiver ? 0x53ff24 : 0xb0b0b0));
-      configure_button("AP Send", ap_lora_send, 10, 105, 105, 54, lv_color_hex(0xdafc5d));
-      configure_button("WiFi Send", wifi_lora_send, 125, 105, 105, 54, lv_color_hex(0xdafc5d));
+      configure_button("AP Send", ap_lora_send, 10, 110, 105, 56, lv_color_hex(0xdafc5d));
+      configure_button("WiFi Send", wifi_lora_send, 125, 110, 105, 56, lv_color_hex(0xdafc5d));
       break;
     default:
       // power and the config file
-      configure_button("Sleep", lightSleep_toggle, 10, 40, 105, 54,
+      configure_button("Sleep", lightSleep_toggle, 10, 46, 105, 56,
                        lv_color_hex(lightSleep ? 0x5afcdd : 0xb0b0b0));
-      configure_button("Save", configSaveButton, 125, 40, 105, 54, lv_color_hex(0x61b3ff));
-      configure_button("Restore", configRestoreButton, 10, 105, 105, 54, lv_color_hex(0xffca38));
-      configure_button("Delete", configDeleteButton, 125, 105, 105, 54, lv_color_hex(0xde2716));
+      configure_button("Save", configSaveButton, 125, 46, 105, 56, lv_color_hex(0x61b3ff));
+      configure_button("Restore", configRestoreButton, 10, 110, 105, 56, lv_color_hex(0xffca38));
+      configure_button("Delete", configDeleteButton, 125, 110, 105, 56, lv_color_hex(0xde2716));
       break;
   }
   full_refresh();
