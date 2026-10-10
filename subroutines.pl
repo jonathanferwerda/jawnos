@@ -6661,8 +6661,17 @@ sub remote_machine_negotiator() {
 
 	my $remote_upgrade = &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' });
 	my $remote_connect_timer =  &subs::setting_grabber({ app => '__president', setting => 'remote_connect_timer' }) || 0;
-	if ($remote_connect_timer + (60 * 7 * 1000) < &subs::rightNow()) {
-		&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+	# A sync that dies mid-run leaves "running" behind. The old clear keyed off a
+	# different timer (remote_connect_timer) and waited a blind seven minutes -
+	# on a machine whose servers restart every few minutes that is most of the
+	# time, so the sync rarely got to run. Bound the lock by its own age instead.
+	if ($remote_upgrade eq 'running') {
+		my $lock = &subs::db_query('select server_time from settings where app = ? and setting = ?', '__president', 'remote_upgrade')->hashes->[0];
+		my $bound = (($gb::timeouts->{'remote_machine_sync'}->{'interval'} || 120) * 1000) * 2;
+		if (!$lock->{'server_time'} || $lock->{'server_time'} + $bound < &subs::rightNow()) {
+			&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+			$remote_upgrade = '';
+		}
 	}
 	if ($remote_upgrade ne 'running' && $remote_connect_timer + 10000 < &subs::rightNow()) {
 		&Manager::remote_machine_reconnector($c);

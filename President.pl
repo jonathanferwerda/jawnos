@@ -181,6 +181,10 @@ sub manager_starter() {
 	my $time_count = 0;
 	my $now = &subs::rightNow();
 	write_file($duty_file, $now);
+	# A fresh President has no remote sync in flight; the tree that just died may
+	# have left the "running" lock behind (this machine's servers restart every
+	# few minutes under memory pressure), which blocked the next sync for minutes.
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
