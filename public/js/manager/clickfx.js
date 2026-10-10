@@ -5,10 +5,11 @@
 // the same manners.
 
 // Magnify the canvas rectangle [left, top, right, bottom] for `seconds`. The
-// pixels are captured once, drawn scaled about the centre on each frame, and put
-// back at the end - so nothing leaks into the rest of the drawing and the item
-// settles exactly as it was. `thickness` draws a border of that width while it
-// grows (the clothesline's thicker edge).
+// item's own pixels are captured, drawn scaled about its centre on each frame,
+// and put back at the end - so nothing leaks into the rest of the drawing, the
+// items around it keep their size, and the item settles exactly as it was.
+// `thickness` draws a border of that width while it grows (the clothesline's
+// thicker edge).
 function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 	if (!canvas || !rect) { return; }
 	var ctx = canvas.getContext('2d');
@@ -17,8 +18,11 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 	var t = Math.min(rect[1], rect[3]), b = Math.max(rect[1], rect[3]);
 	var w0 = r - l, h0 = b - t;
 	if (w0 <= 0 || h0 <= 0) { return; }
-	// pad the captured region so the magnified copy (up to 10% larger) stays
-	// inside it; the final putImageData then restores every changed pixel
+	// pad the captured region so the magnified item (up to 10% larger) stays
+	// inside it; only the item's own box is scaled, so whatever shares the
+	// captured ring with it is restored untouched and the item's neighbours in a
+	// crowded background (a timeline row above or below, the next garment along)
+	// stay their size. The final putImageData restores every changed pixel.
 	var pad = Math.ceil(Math.max(16, w0 * 0.08));
 	var x = Math.max(0, Math.floor(l - pad));
 	var y = Math.max(0, Math.floor(t - pad));
@@ -31,26 +35,28 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 	var off = document.createElement('canvas');
 	off.width = w; off.height = h;
 	off.getContext('2d').putImageData(shot, 0, 0);
+	// the item's own box, sitting inside the padded capture: the only region that
+	// grows, so the ring around it is never scaled
+	var sx = l - x, sy = t - y;
+	var cx = l + w0 / 2, cy = t + h0 / 2;
 	var ink = (typeof jawnosInk == 'function') ? jawnosInk() : '#000';
 	var start = performance.now();
 	var ms = Math.max(140, seconds * 1000);
-	var cx = x + w / 2, cy = y + h / 2;
 	function frame(now) {
 		var p = Math.min(1, (now - start) / ms);
-		// restore, then lay the magnified copy over it
+		// restore the whole capture, then lay the item's box back, grown about its
+		// own centre
 		ctx.putImageData(shot, x, y);
 		var scale = 1 + 0.10 * Math.sin(Math.PI * p);
-		ctx.save();
-		ctx.translate(cx, cy);
-		ctx.scale(scale, scale);
-		ctx.drawImage(off, -w / 2, -h / 2, w, h);
-		ctx.restore();
+		var dw = w0 * scale, dh = h0 * scale;
+		var dx = cx - dw / 2, dy = cy - dh / 2;
+		ctx.drawImage(off, sx, sy, w0, h0, dx, dy, dw, dh);
 		if (thickness) {
 			ctx.save();
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = thickness;
 			ctx.beginPath();
-			roundRectPath(ctx, l, t, w0, h0, 10);
+			roundRectPath(ctx, dx, dy, dw, dh, 10);
 			ctx.stroke();
 			ctx.restore();
 		}

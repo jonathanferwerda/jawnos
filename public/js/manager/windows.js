@@ -113,7 +113,7 @@ function startMenuDisplayer(destination) {
     var valueA = numeral($(a).css('z-index')).value();
     var valueB = numeral($(b).css('z-index')).value();
 
-    return valueB - valueA; }).each(function(i,v) {
+    return valueA - valueB; }).each(function(i,v) {
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
 		var new_icon = icon.clone();
