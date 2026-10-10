@@ -8391,6 +8391,12 @@ sub evaluation_report_pieces {
 			last;
 		}
 	}
+	# the headline is one glance: hold it to twenty words even when the model
+	# writes past the instruction
+	my @head_words = split /\s+/, $headline;
+	if (scalar @head_words > 20) {
+		$headline = join(' ', @head_words[0 .. 19]) . '...';
+	}
 	if (length($headline) > 200) {
 		$headline = substr($headline, 0, 200);
 		$headline =~ s/\s+\S*$//;
