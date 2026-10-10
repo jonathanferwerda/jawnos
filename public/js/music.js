@@ -901,6 +901,16 @@ function searchMusic(data) {
 			var currentTime = v.currentTime;
 			var timestamp = Date.now();
 			var state = v.state;
+			// A search re-renders the whole window, which would tear the <video>
+			// element down and restart the track. While something is loaded, park
+			// the live element outside the window across the render and put it back
+			// afterwards: the media element is never destroyed, so a search (or an
+			// artist/album pick) no longer interrupts playback.
+			var keep_video = !!v.src;
+			var parking = $('#temporary_workspace');
+			if (!parking.length) {
+				parking = $('<div style="display:none;"></div>').appendTo('body');
+			}
 
 
 			treeMaker();
@@ -908,23 +918,21 @@ function searchMusic(data) {
 			var configOpen = $('#music_configuration').is(':visible');
 			var oldMusic = $('#music').html();
 			musicWindowResizes();
-			if (1 == 0 && v.src) {
-				$('#temporary_workspace').append(v);
-				$('#music').find('#video').remove();
-				windowMaker(response.html);
-				var nv = $('#music').find('#video');
-			//	var id = nv.attr('id');
-			//	$('#temporary_workspace').find('video').attr('id', id);
-
-				nv.remove();
-
-				$('#music').find('.video_container').append(v);
-
-				$('#temporary_workspace').find('#video').remove();
-
+			if (keep_video) {
+				// out of the window before the render...
+				parking.append(v);
 			}
-			else {
-				windowMaker(response.html);
+			windowMaker(response.html);
+			if (keep_video) {
+				// ...and back into the fresh .media_window, replacing the empty
+				// <video> the render produced
+				var fresh = $('#music').find('#video');
+				if (fresh.length) {
+					fresh[0].replaceWith(v);
+				}
+				else {
+					$('#music').find('.media_window').append(v);
+				}
 			}
 			$.each(response.artist, function(i,v) {
 				$('.music_artist[artist="' + v.artist + '"][path="' + v.path + '"]').attr('active', 'yes');
@@ -935,14 +943,20 @@ function searchMusic(data) {
 			
 			if (state == 1) {
 				var v = document.getElementById('video');
-				v.src = src;
-				var now = Date.now();
-				currentTime = ((now - timestamp) / 1000) + currentTime;
-				v.currentTime = currentTime;
+				if (!keep_video) {
+					v.src = src;
+					var now = Date.now();
+					currentTime = ((now - timestamp) / 1000) + currentTime;
+					v.currentTime = currentTime;
+				}
 				v.state = 1;
 				var playing = $('.playing');
-				var ts = $('#video').attr('thumb_style');
-				$('#video').attr('style', ts).attr('type', nowPlaying['type']);
+				if (!keep_video) {
+					// a preserved element already wears the right style, so leave it
+					var ts = $('#video').attr('thumb_style');
+					$('#video').attr('style', ts);
+				}
+				$('#video').attr('type', nowPlaying['type']);
 				if (nowPlaying['type'] == 'audio') {
 					$('#video').hide();
 				}
