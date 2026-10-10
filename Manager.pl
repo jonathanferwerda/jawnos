@@ -3800,6 +3800,7 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 	my $direction = $c->param('direction');
 	my $remote_device = $c->param('device');
 	my $signatorial = $c->param('signatorial');
+	$log->info('remote_rsync: direction=' . ($direction || '') . ' ip=' . $c->tx->remote_address . ' sig=' . ($signatorial || '')) if $log;
 	my $uuid = $c->param('uuid');
 	my $home = $c->param('home');
 	my $folder = $home || '~/jawnos';
