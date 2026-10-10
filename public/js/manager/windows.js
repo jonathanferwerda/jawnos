@@ -642,6 +642,12 @@ function appWindowOpener(i,timestamp,v) {
 		else if (i == 'mailbox') {
 			mailMaker();
 		}
+		else if (i == 'box_office') {
+			// box office runs its own opener: the ticket key and the chosen view
+			// come with it, so the pinned icon opens exactly what the start menu's
+			// Tickets row does
+			boxOffice();
+		}
 		else if (i == 'store') {
 			storeOpener();
 		}

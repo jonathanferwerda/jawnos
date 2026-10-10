@@ -65,7 +65,7 @@ function jawnosTaskbarAppForToggle(id) {
 	if (!id) { return null; }
 	var action = { backup_now: 1, stop_all: 1, upload: 1, voice_prompt: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1 };
 	if (action[id]) { return null; }
-	var alias = { image_toggle: 'gallery' };
+	var alias = { image_toggle: 'gallery', ticketmaker: 'box_office' };
 	if (alias[id]) { return alias[id]; }
 	var m = /^(.*)_toggle$/.exec(id);
 	if (m) { return m[1]; }
@@ -118,8 +118,11 @@ function jawnosTaskbarPinPress(pin) {
 	}
 	if (app) {
 		// open the app the way its own opener does (a centre view is the
-		// fallback for a bare appointment, which is not what a pinned app is)
-		if (typeof appWindowOpener == 'function') { appWindowOpener(app, timestamp); }
+		// fallback for a bare appointment, which is not what a pinned app is).
+		// Ask for it visible: the generic opener hides a window it was not told
+		// to show (that is how a restore keeps a minimized window down), so a
+		// fresh press would otherwise land minimized.
+		if (typeof appWindowOpener == 'function') { appWindowOpener(app, timestamp, { visible: 'yes' }); }
 		else { appointmentGrabber(app, timestamp); }
 		return;
 	}
@@ -352,23 +355,27 @@ function jawnosTaskbarRemoveAppPin(app) {
 // window button parked in its place (the pin's icon hides), so a pinned app and
 // its window are one tile; when the window closes the button goes and the pin's
 // icon returns. Every window tile wears its state: the top one sunk, the rest of
-// the open ones raised.
+// the open ones raised. It is idempotent: a pass that runs without a taskbar
+// rebuild (topLevelNow calls it) must leave an already-parked button alone rather
+// than remove it and find nothing to re-park.
 function jawnosTaskbarPinsRefresh() {
 	var bar = $('#taskbar');
 	if (!bar.length) { return; }
 	var windows = bar.find('#taskbar_windows');
-	// drop the button parked by the previous pass; the fresh list is what is moved
-	bar.find('.taskbar_app_pin > .window_toggle').remove();
 	bar.find('.taskbar_app_pin').each(function () {
 		var pin = $(this);
 		var app = pin.attr('app');
 		var win = $('.wind[app="' + app + '"]');
 		var btn = windows.find('.window_toggle[app="' + app + '"]');
-		if (win.length && btn.length) {
-			btn.appendTo(pin);
+		var parked = pin.children('.window_toggle');
+		if (win.length && (btn.length || parked.length)) {
+			// a fresh button (after a rebuild) replaces the parked copy; with no
+			// rebuild the parked one is the button, so it stays
+			if (btn.length) { parked.remove(); btn.appendTo(pin); }
 			pin.children('.taskbar_app_pin_icon').hide();
 		}
 		else {
+			parked.remove();
 			pin.children('.taskbar_app_pin_icon').show();
 		}
 	});
