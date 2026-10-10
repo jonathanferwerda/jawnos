@@ -488,9 +488,6 @@ function jawnosTaskbarContextBuild() {
 	return context;
 }
 
-// A window's own menu: the things a window manager offers, plus the pin the bar
-// already had. Right-clicking (or holding) a window button raises this instead
-// of the bar's menu.
 // A window is maximized when its own Restore control is showing, or when its
 // view is 'max' (a window dragged to 95%+ of the screen records the view even
 // though the buttons may not have flipped). The view attribute is only kept off
@@ -500,6 +497,9 @@ function jawnosWindowMaximized(app) {
 	return wind.find('.restore_button').is(':visible') || wind.attr('view') == 'max';
 }
 
+// A window's own menu: the things a window manager offers, plus the pin the bar
+// already had. Right-clicking (or holding) a window button raises this instead
+// of the bar's menu.
 function jawnosWindowContextBuild(app) {
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
