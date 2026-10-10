@@ -5923,10 +5923,18 @@ sub hang_to_dry() {
 	my $cur_time = localtime($server_time / 1000);
 	my $cur_hour = $cur_time->[2];
 	my %configured = map { &unformat_name($_->{'app'}) => 1 } @{$cls};
+	# an app another app adds on its own - a default option, or a default model -
+	# is not a thing the user clicks, so it never hangs itself (the coffee behind
+	# the cream, the lunch behind its eggs). Their parent carries the routine.
+	my $autos = &db_query(q{select distinct name from option where name is not null and name != app and lower(coalesce(def,'')) not in ('','off','false','0')
+		union
+		select distinct name from model where name is not null and name != app and lower(coalesce(def,'')) not in ('','off','false','0')})->hashes;
+	my %auto_hung = map { $_->{'name'} => 1 } @{$autos};
 	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
 	unless (defined $auto && lc($auto) eq 'off') {
 		foreach my $app ( sort keys %{$daily} ) {
 			next if $configured{$app};
+			next if $auto_hung{$app};
 			my $routine = $daily->{$app};
 			next unless $routine->{'hour_days'} >= 7;
 			next unless $routine->{'hour'} == $cur_hour;
@@ -6174,6 +6182,8 @@ sub warehouse_movement {
 		quantity => $quantity,
 		unit => $d->{'unit'} || 'each',
 		place => $d->{'place'},
+		# the warehouse has three faces now; this writer only ever moves stock
+		kind => $d->{'kind'} || 'stock',
 		type => $d->{'type'} || 'stock',
 		account => $d->{'account'},
 		project => $d->{'project'},
