@@ -20229,6 +20229,7 @@ post '/manager/president' => sub($c) {
 	my $remote_signatorial = $c->param('signatorial');
 
 	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $remote_signatorial })->hashes->[0];
+	$log->info('president route: command=' . ($command || '') . ' from=' . ($remote_signatorial || '') . ' ip=' . $c->tx->remote_address) if $log;
 	if ($rm->{'signatorial'} && $command eq 'restart') {
 		&president_restarter();
 	}
@@ -20241,6 +20242,8 @@ post '/manager/president/restart' => sub($c) {
 };
 
 sub president_restarter() {
+	my $trace = do { require Carp; Carp::longmess('president_restarter') };
+	$log->info("president_restarter called from:\n" . $trace) if $log;
 	my $status_file = &subs::home('~/.president/status');
 	write_file($status_file, 'restart');
 }

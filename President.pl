@@ -94,6 +94,7 @@ if ($archive_root->{'enabled'}) {
 
 $SIG{INT} = sub {
 	print "President Died, Ctrl+C! Performing cleanup logic...\n";
+	$log->info('President caught SIGINT') if $log;
 	#`rm -R $dump_dir/*` if -e $dump_dir;
 	exit 0;
 };
@@ -257,7 +258,7 @@ sub manager_starter() {
 			my $prefork = Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Manager.pl');
-			$prefork->workers(7);
+			$prefork->workers(4);
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
@@ -295,7 +296,7 @@ sub manager_starter() {
 				my $prefork = Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./watch.pl');
-				$prefork->workers(4);
+				$prefork->workers(2);
 				$prefork->run;
 			}
 		}, { name => 'Watch Server' });
