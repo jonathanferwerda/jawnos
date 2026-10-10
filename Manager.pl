@@ -6971,7 +6971,10 @@ sub remote_relay_request($c, $extra_params = {}) {
 
 			my $path = $c->req->url->path;
 			my $uuid = $c->param('uuid');
-			my $server_time = &subs::rightNow();
+			# a caller that already stamped the request (the task checkbox does)
+			# hands its server_time in, so every machine applies and records the
+			# change under one clock instead of each guessing its own
+			my $server_time = $extra_params->{'server_time'} || &subs::rightNow();
 			my $source_signatorial = $c->param('source_signatorial');
 			my $remote_machines;
 			if ($remote_uuid) {
@@ -11914,7 +11917,7 @@ post '/manager/tasks' => sub ($c) {
 	$c->param('server_time' => $server_time);
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
-		&remote_relay_request($c, { dissemination => 'yes' });
+		&remote_relay_request($c, { dissemination => 'yes', server_time => $server_time });
 	}, { name => 'task remote relay' });
 	my $papp = &subs::unformat_name($c->param('papp'));
 	my $app = &subs::unformat_name($c->param('app'));
@@ -11939,7 +11942,10 @@ post '/manager/tasks' => sub ($c) {
 	});
 
 	my $tasks_json = encode_json $tasks;
-	&subs::setting_setter({ app => $app, setting => 'tasks', value => $tasks_json });
+	# the row wears the same server_time every machine recorded the change under,
+	# so a later database merge compares like with like and cannot let one
+	# machine's older copy win a tie the clocks decided
+	&subs::setting_setter({ app => $app, setting => 'tasks', value => $tasks_json, server_time => $server_time });
 	$c->render(json => &subs::task_grabber($papp));
 
 };

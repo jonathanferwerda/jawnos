@@ -8093,6 +8093,28 @@ sub evaluation_model_call() {
 	return ($text, $text ? undef : 'the model returned nothing readable');
 }
 
+# Whether this machine can actually run the evaluation right now. The wish to
+# evaluate is shared but the queue is per-machine, so a machine with no ollama
+# or not carrying the chosen model would otherwise run the night and answer
+# with a connection error. A blank model is never available.
+sub evaluation_model_available {
+	my ($model) = @_;
+	return 0 unless $model;
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token' ] });
+	if ($model =~ /^\@cf/) {
+		return ($settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) ? 1 : 0;
+	}
+	# ollama: the daemon has to answer and the model has to be one it knows
+	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 5, request_timeout => 8);
+	my $res = eval { $ua->get('http://localhost:11434/api/tags')->result };
+	return 0 unless $res && $res->is_success;
+	my $body = eval { $res->json } || {};
+	foreach my $m ( @{ $body->{'models'} || [] } ) {
+		return 1 if ($m->{'name'} || '') eq $model || ($m->{'model'} || '') eq $model;
+	}
+	return 0;
+}
+
 sub evaluation_period_span {
 	my ($period) = @_;
 	return 7 * 86400000 if ($period || '') eq 'week';
@@ -8322,10 +8344,16 @@ sub evaluation_agent() {
 		$linked ? (linked => $linked) : (),
 		timestamp => &subs::rightNow(),
 	};
-	&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
-	# the cache lives on the machine that ran the evaluation; a setting is what
-	# the rest of the house reads, so the report is written both places
-	&subs::setting_setter({ app => $app, setting => 'evaluation_report', value => encode_json($report) });
+	# a run that could not reach the model must not erase the last report that
+	# did: the failed text is still returned to whoever asked, but the house
+	# keeps the good report until a run actually answers
+	my $previous = &subs::evaluation_report_for($app);
+	if (!$error || $previous->{'error'} || !(($previous->{'text'} || '') =~ /\S/)) {
+		&subs::cache_set({ app => $app, context => 'evaluation_report', warranty => '-1M' }, $report);
+		# the cache lives on the machine that ran the evaluation; a setting is what
+		# the rest of the house reads, so the report is written both places
+		&subs::setting_setter({ app => $app, setting => 'evaluation_report', value => encode_json($report) });
+	}
 	return $report;
 }
 
@@ -8573,6 +8601,14 @@ sub appointment_evaluation_job {
 	my $machine = &subs::evaluation_machine();
 	if ($machine && $machine ne &subs::signatorial_designer()) {
 		$job->finish({ app => $app, skipped => 'not the evaluation machine' });
+		return;
+	}
+	# the wish is shared and the queue is per-machine: a machine that cannot
+	# reach the model would run the night and answer with an error, so it steps
+	# aside and lets a machine that can carry the wish instead
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
+	unless (&subs::evaluation_model_available($settings->{'eval_assistant'})) {
+		$job->finish({ app => $app, skipped => 'no evaluation model reachable here' });
 		return;
 	}
 	my $report = &subs::evaluation_agent($app);
