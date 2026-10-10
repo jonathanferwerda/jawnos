@@ -5930,6 +5930,16 @@ sub hang_to_dry() {
 		union
 		select distinct name from model where name is not null and name != app and lower(coalesce(def,'')) not in ('','off','false','0')})->hashes;
 	my %auto_hung = map { $_->{'name'} => 1 } @{$autos};
+	# the tasks an app carries: starting it records them as well, so they are not
+	# clicks of the user's either (the flush and wash hands behind a pee or dump)
+	my $task_rows = &db_query('select value from settings where setting = ? and value is not null', 'tasks')->hashes;
+	foreach my $tr ( @{$task_rows} ) {
+		my $list = eval { return decode_json $tr->{'value'} } || [];
+		foreach my $t ( @{$list} ) {
+			next unless $t->{'task'};
+			$auto_hung{&unformat_name($t->{'task'})} = 1;
+		}
+	}
 	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
 	unless (defined $auto && lc($auto) eq 'off') {
 		foreach my $app ( sort keys %{$daily} ) {
