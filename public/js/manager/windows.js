@@ -42,10 +42,11 @@ function window_initializer(id) {
 	wind.css({ 'left': '30%', 'bottom': 0, 'background-color': 'red', 'height': '80%', 'width': '70%' }).show();
 }
 
-// The taskbar's window list: one button per open window, newest on top, each
-// wearing the window's own icon and name. This is the list the start menu used
-// to carry at its foot, so every caller that kept the menu's strip fresh keeps
-// the bar fresh by the same name.
+// The taskbar's window list: one button per open window, oldest on the left and
+// newest on the right (ascending z-index, so the most recently raised window
+// sits at the right hand end), each wearing the window's own icon and name.
+// This is the list the start menu used to carry at its foot, so every caller
+// that kept the menu's strip fresh keeps the bar fresh by the same name.
 function taskbarDisplayer(destination) {
 	if (!destination) {
 		destination = '#taskbar_windows';
@@ -58,7 +59,7 @@ function taskbarDisplayer(destination) {
     var valueA = numeral($(a).css('z-index')).value();
     var valueB = numeral($(b).css('z-index')).value();
 
-    return valueB - valueA; }).each(function(i,v) {
+    return valueA - valueB; }).each(function(i,v) {
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
 		var new_icon = icon.clone();
