@@ -17,7 +17,11 @@ function jawnosStudioButtonIcon(state, colour) {
 //
 //   live input -> trim -> bass -> mid -> treble -> [inserts] -> recGain -> recDest
 //                                                              -> recAnalyser
-//   take element -> takeGain -> takePan -> master -> speakers
+//   take -> playGain -> playBus -> playPan -> master -> speakers
+//
+// Audio takes are decoded to AudioBuffers and scheduled on the AudioContext's
+// own clock (see the scheduler further down), so they sit exactly under the
+// metronome. Only video and undecodable takes still ride a hidden media element.
 //
 // Takes are captured *after* the inserts, so pedals are printed into the
 // recording (a guitar tracks through its pedals). Playback runs through the
@@ -35,7 +39,7 @@ function jawnosStudioButtonIcon(state, colour) {
 // The live input can be monitored through the pedals into the speakers when the
 // song asks for it (headphones only — an open mic plus speakers will howl).
 
-var studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {} };
+var studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 var studioSelectedChannel = 1;
 
 function studioContext() {
@@ -54,6 +58,7 @@ function studioContext() {
 		studioAudio.masterAnalyser.fftSize = 2048;
 		studioAudio.master.connect(studioAudio.masterAnalyser);
 		studioAudio.masterAnalyser.connect(ctx.destination);
+		if (!studioAudio.sources) { studioAudio.sources = []; }
 	}
 	if (studioAudio.ctx.state == 'suspended') { studioAudio.ctx.resume(); }
 	return studioAudio.ctx;
@@ -458,6 +463,372 @@ function studioSyncTakeClock(take, el, target, period) {
 	}
 }
 
+// ---- audio-clock transport + lookahead scheduler ---------------------------
+//
+// The transport runs on the AudioContext's own clock. Takes are decoded to
+// AudioBuffers once and scheduled ahead with AudioBufferSourceNodes, so the
+// metronome click and every take are placed on the very same sample clock.
+// Playing takes through an HTMLMediaElement instead leaves them sitting a fixed
+// buffer behind the click (the element's own pipeline latency, chased by a 25 ms
+// timer), which is exactly what made the backing track sound late.
+//
+// The transport is a chain of pieces. Each piece maps a span of transport time
+// [pos0, pos1) onto a span of AudioContext time beginning at ctx0 and names the
+// position the next piece starts at (nextPos). A loop is simply a piece whose
+// nextPos is its own start, so AudioContext time stays continuous across a wrap
+// while the transport position jumps.
+
+function studioSegmentFrom(pos, ctx0) {
+	var end = mixer['time']['duration'] || 0;
+	var mode = mixer['time']['loop'] || 'off';
+	// while recording the transport never wraps; it runs on to the punch-out
+	if (mixer['time']['status'] == 'record') {
+		return { pos0: pos, pos1: Infinity, ctx0: ctx0, nextPos: null };
+	}
+	if (mode == 'ongoing') {
+		var region = studioLoopRegion();
+		if (region && region.end > region.start && pos < region.end) {
+			return { pos0: pos, pos1: region.end, ctx0: ctx0, nextPos: region.start };
+		}
+		if (end > pos) {
+			return { pos0: pos, pos1: end, ctx0: ctx0, nextPos: 0 };
+		}
+	}
+	else if (mode == 'on' && end > pos) {
+		return { pos0: pos, pos1: end, ctx0: ctx0, nextPos: null };
+	}
+	return { pos0: pos, pos1: Infinity, ctx0: ctx0, nextPos: null };
+}
+
+function studioSegmentNext(seg) {
+	if (!seg || seg.nextPos === null || seg.pos1 === Infinity) { return null; }
+	return studioSegmentFrom(seg.nextPos, seg.ctx0 + (seg.pos1 - seg.pos0));
+}
+
+function studioSegmentCopy(seg) {
+	return seg ? { pos0: seg.pos0, pos1: seg.pos1, ctx0: seg.ctx0, nextPos: seg.nextPos } : null;
+}
+
+// Transport position -> AudioContext time within one piece.
+function studioTimeAt(pos, p0, ctx0) {
+	return ctx0 + (pos - p0);
+}
+
+function studioFlushSources() {
+	var list = studioAudio.sources || [];
+	list.forEach(function (entry) {
+		try { entry.src.stop(0); } catch (e) {}
+		try { entry.src.disconnect(); } catch (e) {}
+		if (entry.gain) { try { entry.gain.disconnect(); } catch (e) {} }
+	});
+	studioAudio.sources = [];
+}
+
+// A take was added, moved, trimmed or removed while the transport runs: drop
+// what was queued for the rest of this pass and re-anchor scheduling at the
+// playhead, so the edit is heard on the next tick instead of at the next wrap.
+function studioTakesChanged() {
+	if (mixer['time']['status'] != 'play' && mixer['time']['status'] != 'record') { return; }
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	if (!ctx || !seg) { return; }
+	var pos = seg.pos0 + (ctx.currentTime - seg.ctx0);
+	studioFlushSources();
+	seg = studioSegmentFrom(pos, ctx.currentTime);
+	studioAudio.playSeg = seg;
+	studioAudio.schedSeg = studioSegmentCopy(seg);
+	studioAudio.clickSeg = studioSegmentCopy(seg);
+	studioScheduleTick();
+}
+
+// Park a scheduled source so it can be flushed on a stop, seek or wrap.
+function studioTrackSource(src, gain) {
+	var entry = { src: src, gain: gain };
+	src.onended = function () {
+		var list = studioAudio.sources;
+		var at = list.indexOf(entry);
+		if (at != -1) { list.splice(at, 1); }
+		try { src.disconnect(); } catch (e) {}
+		if (gain) { try { gain.disconnect(); } catch (e) {} }
+	};
+	studioAudio.sources.push(entry);
+}
+
+// Begin (or restart) the transport at a transport position, anchored to now.
+function studioClockStart(pos) {
+	var ctx = studioContext();
+	if (!ctx) { return; }
+	// resuming past a committed loop lands back on its in-point, so the section
+	// repeats instead of running on past its end
+	var region = studioLoopRegion();
+	if ((mixer['time']['loop'] == 'ongoing') && region && pos >= region.end) { pos = region.start; }
+	studioFlushSources();
+	var seg = studioSegmentFrom(pos, ctx.currentTime);
+	studioAudio.playSeg = seg;
+	studioAudio.schedSeg = studioSegmentCopy(seg);
+	studioAudio.clickSeg = studioSegmentCopy(seg);
+	mixer['time']['position'] = pos;
+	studioScheduleTick();
+}
+
+// Move the playhead along the clock, wrapping or finishing at a piece boundary.
+function studioClockAdvance() {
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	if (!ctx || !seg) { return; }
+	var now = ctx.currentTime;
+	var pos = seg.pos0 + (now - seg.ctx0);
+	if (seg.pos1 !== Infinity && pos >= seg.pos1 - 1e-9) {
+		var next = studioSegmentNext(seg);
+		if (next) {
+			studioAudio.playSeg = next;
+			seg = next;
+			pos = seg.pos0 + (now - seg.ctx0);
+		}
+		else {
+			mixer['time']['position'] = seg.pos1;
+			studioStop();
+			mixer['time']['status'] = 'stop';
+			return;
+		}
+	}
+	mixer['time']['position'] = pos;
+}
+
+// Place everything that will be heard in the next `lookahead` seconds.
+function studioScheduleTick() {
+	var ctx = studioAudio.ctx;
+	if (!ctx || !studioAudio.schedSeg) { return; }
+	var horizon = ctx.currentTime + (studioAudio.lookahead || 0.12);
+	var guard = 0;
+
+	// Takes: a bounded piece (one loop pass, or the run to the song's end) is
+	// committed whole, so a looping take is a single grid-locked block per pass
+	// with no seams. An open-ended run (recording) is committed in chunks.
+	while (studioAudio.schedSeg && guard++ < 256) {
+		var seg = studioAudio.schedSeg;
+		if (seg.ctx0 > horizon) { break; }
+		if (seg.pos1 === Infinity) {
+			var to = seg.pos0 + (studioAudio.chunk || 1.0);
+			studioScheduleTakes(seg.pos0, to, seg.ctx0);
+			seg.ctx0 += (to - seg.pos0);
+			seg.pos0 = to;
+		}
+		else {
+			studioScheduleTakes(seg.pos0, seg.pos1, seg.ctx0);
+			studioAudio.schedSeg = studioSegmentNext(seg);
+		}
+	}
+
+	// Clicks: placed in short chunks so the metronome answers a toggle or a
+	// tempo change quickly, and so a wrap never schedules a beat on the wrong
+	// side of the loop point.
+	var cguard = 0;
+	while (studioAudio.clickSeg && cguard++ < 256) {
+		var c = studioAudio.clickSeg;
+		if (c.ctx0 > horizon) { break; }
+		var span = (c.pos1 === Infinity) ? Infinity : (c.pos1 - c.pos0);
+		var step = 0.5;
+		var to2 = (span === Infinity) ? (c.pos0 + step) : Math.min(c.pos1, c.pos0 + step);
+		studioScheduleClicks(c.pos0, to2, c.ctx0);
+		if (span !== Infinity && to2 >= c.pos1 - 1e-9) {
+			studioAudio.clickSeg = studioSegmentNext(c);
+		}
+		else {
+			c.ctx0 += (to2 - c.pos0);
+			c.pos0 = to2;
+		}
+	}
+}
+
+// The channel fader / pan feed the take bus, so set them once per pass rather
+// than per take.
+function studioApplyPlaybackMix() {
+	$.each(studioAudio.channels, function (ch, c) {
+		if (!c) { return; }
+		c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val());
+		c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+	});
+}
+
+// The clip-edge gain, matching the media-element path's ramps: fade in over the
+// first 2*fIn of the window, fade out over the last 2*fOut.
+function studioTakeGain(winStart, fadeIn, winEnd, fadeOut, pos) {
+	var g = 1;
+	if (fadeIn > 0) { g *= Math.max(0, Math.min(1, (pos - winStart) / fadeIn)); }
+	if (fadeOut > 0 && isFinite(winEnd)) { g *= Math.max(0, Math.min(1, (winEnd - pos) / fadeOut)); }
+	return g;
+}
+
+function studioScheduleTakes(p0, p1, ctx0) {
+	if (!(p1 > p0)) { return; }
+	studioApplyPlaybackMix();
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
+		if (!armed) { return; }
+		var ordered = studioChannelTakes(ch);
+		ordered.forEach(function (take, i) {
+			if (!take || take.status == 'recording') { return; }
+			if (take.encoding && take.encoding.indexOf('video') !== -1) { return; }
+			if (!take.buffer) { studioTakeRequestBuffer(take); return; }
+			studioScheduleTake(ch, take, ordered, i, p0, p1, ctx0);
+		});
+	});
+}
+
+function studioScheduleTake(ch, take, ordered, i, p0, p1, ctx0) {
+	var c = studioAudio.channels[ch];
+	if (!c || !c.playBus) { return; }
+	var buf = take.buffer;
+	if (!buf) { return; }
+	var off = take.offset || 0;
+	var ts = take.startTime;
+	var dom = take.duration || 0;
+	if (!(dom > 0)) { dom = buf.duration || 0; }
+	if (!(dom > 0)) { return; }
+	var looping = !!take.loop;
+	var end = ts + dom;
+
+	var xf = studioCrossfade();
+	var prev = ordered[i - 1];
+	var next = ordered[i + 1];
+	var fIn = 0, fOut = 0;
+	if (prev) {
+		var fi = Math.min(xf, prev.duration || 0, dom) / 2;
+		if (fi > 0 && prev.src !== take.src && Math.abs(ts - (prev.startTime + (prev.duration || 0))) <= fi * 2) { fIn = fi; }
+	}
+	if (next && !looping) {
+		var fo = Math.min(xf, dom, next.duration || 0) / 2;
+		if (fo > 0 && next.src !== take.src && Math.abs(next.startTime - end) <= fo * 2) { fOut = fo; }
+	}
+	var winStart = ts - fIn;
+	var winEnd = looping ? Infinity : end + fOut;
+	var timeAt = function (p) { return studioTimeAt(p, p0, ctx0); };
+
+	var scheduleOne = function (a, b, bufferOffset) {
+		if (!(b > a)) { return; }
+		var when = timeAt(a);
+		var dur = b - a;
+		var now = studioAudio.ctx.currentTime;
+		// scheduling fell behind (a throttled timer): start late instead of in
+		// the past, trimming the buffer offset by however much was skipped
+		if (when < now) {
+			var trim = now - when;
+			if (trim >= dur) { return; }
+			when = now; bufferOffset += trim; dur -= trim;
+		}
+		if (bufferOffset < 0) { bufferOffset = 0; }
+		if (isFinite(buf.duration) && bufferOffset >= buf.duration - 1e-4) { return; }
+		var src = studioAudio.ctx.createBufferSource();
+		src.buffer = buf;
+		var g = studioAudio.ctx.createGain();
+		src.connect(g).connect(c.playBus);
+		g.gain.setValueAtTime(studioTakeGain(winStart, 2 * fIn, winEnd, 2 * fOut, a), when);
+		var fiEnd = winStart + (2 * fIn);
+		if (fIn > 0 && fiEnd > a && fiEnd <= b) { g.gain.linearRampToValueAtTime(1, timeAt(fiEnd)); }
+		if (fOut > 0 && isFinite(winEnd)) {
+			var foStart = winEnd - (2 * fOut);
+			if (foStart > a && foStart < b) { g.gain.setValueAtTime(1, timeAt(foStart)); }
+			g.gain.linearRampToValueAtTime(0, timeAt(winEnd));
+		}
+		src.start(when, bufferOffset, dur);
+		studioTrackSource(src, g);
+	};
+
+	if (looping) {
+		// a looping sample repeats every `dom` seconds from its in-point
+		var k = Math.floor((p0 - ts) / dom);
+		if (!isFinite(k) || k < 0) { k = 0; }
+		var cs = ts + (k * dom);
+		var guard = 0;
+		while (cs < p1 && guard++ < 4096) {
+			var a = Math.max(p0, cs);
+			var b = Math.min(p1, cs + dom);
+			scheduleOne(a, b, off + (a - cs));
+			cs += dom;
+		}
+	}
+	else {
+		var a2 = Math.max(p0, ts);
+		var b2 = Math.min(p1, end);
+		scheduleOne(a2, b2, off + (a2 - ts));
+	}
+}
+
+function studioScheduleClicks(p0, p1, ctx0) {
+	var ctx = studioAudio.ctx;
+	if (!ctx || !mixer['time']['bpm']) { return; }
+	var beat = studioBeatSeconds();
+	if (!(beat > 0)) { return; }
+	var on = mixer['time']['metronome'] == 'yes';
+	var punch = mixer['time']['punch_in'];
+	var counting = mixer['time']['status'] == 'record' && punch !== undefined && punch !== null;
+	if (!on && !counting) { return; }
+	var beatsPerBar = studioKnobNumber(String(mixer['time']['sig'] || '4/4').split('/')[0], 4) || 4;
+	var volume = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50) / 100;
+	var k0 = Math.ceil((p0 / beat) - 1e-6);
+	var k1 = Math.floor(((p1 - 1e-6) / beat));
+	var guard = 0;
+	for (var k = k0; k <= k1 && guard++ < 1024; k++) {
+		var pos = k * beat;
+		// a count-in clicks even with the metronome off, but only up to the punch
+		if (counting && !on && pos >= punch) { continue; }
+		var when = studioTimeAt(pos, p0, ctx0);
+		if (when < ctx.currentTime) { continue; }
+		var accent = (Math.abs(k) % beatsPerBar) ? 0 : 1;
+		var osc = ctx.createOscillator();
+		var gain = ctx.createGain();
+		osc.frequency.value = accent ? 1100 : 900;
+		osc.type = 'triangle';
+		gain.gain.value = volume;
+		osc.connect(gain).connect(ctx.destination);
+		osc.start(when);
+		osc.stop(when + 0.02);
+		studioTrackSource(osc, gain);
+	}
+}
+
+// Decode a take's blob (or file) into an AudioBuffer so it can be scheduled.
+function studioTakeArrayBuffer(take) {
+	if (take.data && take.data.arrayBuffer) { return take.data.arrayBuffer(); }
+	if (take.src) { return fetch(take.src).then(function (r) { return r.arrayBuffer(); }); }
+	return Promise.reject(new Error('no source'));
+}
+
+function studioTakeRequestBuffer(take) {
+	if (!take || take.buffer || take.bufferFailed || take.bufferLoading) { return; }
+	if (take.encoding && take.encoding.indexOf('video') !== -1) { return; }
+	if (!take.data && !take.src) { return; }
+	var ctx = studioAudio.ctx || studioContext();
+	if (!ctx) { return; }
+	take.bufferLoading = true;
+	studioTakeArrayBuffer(take).then(function (ab) {
+		return new Promise(function (resolve, reject) { ctx.decodeAudioData(ab, resolve, reject); });
+	}).then(function (audio) {
+		take.buffer = audio;
+		delete take.bufferLoading;
+		if (!(take.duration > 0)) { take.duration = audio.duration || 0; }
+		// if the transport is already past this take for the current pass, re-anchor
+		// so the freshly decoded audio joins now rather than at the next wrap
+		studioTakesChanged();
+	}).catch(function (e) {
+		take.bufferFailed = true;
+		delete take.bufferLoading;
+		console.log('studio: could not decode take, falling back to its element', e);
+	});
+}
+
+// Audio takes ride the audio clock; video (and undecodable) takes keep a media
+// element, whose own pipeline latency cannot be removed.
+function studioTakeUsesBuffer(take) {
+	if (!take) { return false; }
+	if (take.buffer) { return true; }
+	if (take.bufferFailed) { return false; }
+	if (take.encoding && take.encoding.indexOf('video') !== -1) { return false; }
+	return true;
+}
+
 // Keep every take aligned to the transport. A take maps timeline position to
 // its own source time as  source = (position - startTime) + offset, where
 // `offset` is the in-point after any left trim or split. Where a clip meets a
@@ -466,6 +837,7 @@ function studioSyncTakeClock(take, el, target, period) {
 // Looping takes never ramp out; they wrap to their in-point instead.
 function studioSyncTakes() {
 	var pos = mixer['time']['position'];
+	studioApplyPlaybackMix();
 	$.each(mixer, function (ch, m) {
 		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
 		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
@@ -480,6 +852,9 @@ function studioSyncTakes() {
 		var xf = studioCrossfade();
 		var ordered = studioChannelTakes(ch);
 		ordered.forEach(function (take, i) {
+			// audio takes are placed by the scheduler on the audio clock; only
+			// video / undecodable takes ride a media element
+			if (studioTakeUsesBuffer(take)) { return; }
 			var el = take.track;
 			if (!el || !el.src) { return; }
 			var offset = take.offset || 0;
@@ -1005,6 +1380,7 @@ function studioRemoveTake(ch, take) {
 	if (studioSelectedTake && studioSelectedTake.take === take) { studioSelectedTake = null; }
 	studioDrawChannel(ch);
 	studioSaver();
+	studioTakesChanged();
 }
 
 function studioReindexTakes(ch) {
@@ -1051,6 +1427,7 @@ function studioSplitTake(ch, take, t) {
 	take.duration = t - take.startTime;
 	media.out.splice(index + 1, 0, right);
 	studioReindexTakes(ch);
+	studioTakesChanged();
 	return right;
 }
 
@@ -1078,7 +1455,10 @@ $(document).on('pointermove', function (e) {
 		take.startTime = Math.max(0, studioSnap(d.startTime + dt, targets, threshold));
 	}
 	else if (d.mode == 'trim-end') {
-		var maxDur = (take.track && isFinite(take.track.duration)) ? (take.track.duration - (take.offset || 0)) : Infinity;
+		var srcDur = Infinity;
+		if (take.buffer && isFinite(take.buffer.duration)) { srcDur = take.buffer.duration; }
+		else if (take.track && isFinite(take.track.duration)) { srcDur = take.track.duration; }
+		var maxDur = isFinite(srcDur) ? (srcDur - (take.offset || 0)) : Infinity;
 		var end = studioSnap(d.startTime + d.startDur + dt, targets, threshold);
 		take.duration = Math.max(0.05, Math.min(maxDur, end - take.startTime));
 	}
@@ -1102,6 +1482,7 @@ $(document).on('pointerup', function () {
 	studioTakeDrag = null;
 	studioDrawChannel(ch);
 	studioSaver();
+	studioTakesChanged();
 });
 
 // double-click = razor cut at the clicked point
@@ -1207,7 +1588,8 @@ function studioInit(data) {
 				automations: {}
 			};
 			// fresh channel graphs, but keep the shared AudioContext
-			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {} };
+			studioFlushSources();
+			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {}, sources: [], lookahead: studioAudio.lookahead || 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 			studioSelectedTake = null;
 			studioTakeDrag = null;
 			$('#studio_track_container').html('');
@@ -1870,6 +2252,7 @@ function studioStartTake(ch, looping, at) {
 		if (take.src) { try { URL.revokeObjectURL(take.src); } catch (e) {} }
 		take.src = URL.createObjectURL(event.data);
 		take.track.src = take.src;
+		studioTakeRequestBuffer(take);
 	};
 	media.rec[ir] = recorder;
 	recorder.start();
@@ -1987,6 +2370,10 @@ async function studioStop() {
 	// a stop during the count-in cancels the take that never started
 	mixer['time']['punch_in'] = null;
 	mixer['time']['pending_takes'] = null;
+	studioFlushSources();
+	studioAudio.playSeg = null;
+	studioAudio.schedSeg = null;
+	studioAudio.clickSeg = null;
 
 	$.each(mixer, function(i,v) {
 		if (!/^[0-9]+$/.test(i) || !mixer[i].media) { return; }
@@ -2012,6 +2399,9 @@ function studioTime(command) {
 	if (command == 'start') {
 		mixer['time']['lastMetronome'] = null;
 		mixer['time']['startTime'] = Date.now() - (mixer['time']['position'] * 1000);
+		// the transport runs on the AudioContext clock; takes and clicks are
+		// placed a little ahead of now so timer jitter never reaches the ear
+		studioClockStart(mixer['time']['position']);
 		clearInterval(mixer['time']['interval']);
 		mixer['time']['interval'] = setInterval(studioTransportTick, 25);
 		studioTransportTick();
@@ -2066,16 +2456,29 @@ function studioLoopPunchOut() {
 	});
 	if (!stopped || pending || mixer['time']['status'] != 'record') { return; }
 	mixer['time']['status'] = 'play';
+	// the record transport ran straight through; re-anchor it on the play
+	// timeline so the committed region now repeats
+	studioClockStart(mixer['time']['position']);
 	studioTime('play');
 }
 
 function studioTransportTick() {
-	var now = Date.now();
-	mixer['time']['position'] = (now - mixer['time']['startTime']) / 1000;
 	var status = mixer['time']['status'];
-	var end = mixer['time']['duration'] || 0;
 
-	if (status == 'record') {
+	if (status == 'play' || status == 'record') {
+		studioClockAdvance();
+		if (mixer['time']['status'] == 'stop') {
+			studioTimeDisplay();
+			studioDrawTracks();
+			return;
+		}
+		// everything that will be heard in the next lookahead window is placed
+		// on the audio clock here, so the click and the takes share one clock
+		studioScheduleTick();
+	}
+
+	var end = mixer['time']['duration'] || 0;
+	if (mixer['time']['status'] == 'record') {
 		if (mixer['time']['position'] > end) {
 			mixer['time']['duration'] = mixer['time']['position'];
 			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
@@ -2083,56 +2486,10 @@ function studioTransportTick() {
 		studioLoopPunchOut();
 		studioStartPendingTakes();
 	}
-	else if (status == 'play') {
-		var region = studioLoopRegion();
-		if (mixer['time']['loop'] == 'ongoing' && region && mixer['time']['position'] >= region.end) {
-			// repeat the section the loop was built in, not the whole song
-			mixer['time']['position'] = region.start;
-			mixer['time']['startTime'] = Date.now() - (region.start * 1000);
-		}
-		else if (end > 0 && mixer['time']['position'] >= end) {
-			if (mixer['time']['loop'] == 'ongoing') {
-				mixer['time']['position'] = 0;
-				mixer['time']['startTime'] = Date.now();
-			}
-			else if (mixer['time']['loop'] == 'on') {
-				studioStop();
-				return;
-			}
-		}
-	}
 
 	studioTimeDisplay();
 	studioSyncTakes();
 	studioDrawTracks();
-	studioMetronomeTick();
-}
-
-function studioMetronomeTick() {
-	// a count-in clicks even when the metronome itself is off
-	var counting = studioCountingIn();
-	if (mixer['time']['metronome'] != 'yes' && !counting) { return; }
-	if (!mixer['time']['bpm']) { return; }
-	var tdisplay = studioTimeDisplay();
-	var beat = tdisplay['beat'];
-	var last = mixer['time']['lastMetronome'];
-	if (last !== null && last !== undefined && beat == last) { return; }
-	mixer['time']['lastMetronome'] = beat;
-	var ctx = studioContext();
-	if (!ctx) { return; }
-	var oscillator = ctx.createOscillator();
-	var gainNode = ctx.createGain();
-	var beats = studioKnobNumber(tdisplay['signature'][0], 4) || 4;
-	// accents land on the bar line, count-in beats included
-	var accent = (Math.abs(beat) % beats) ? 0 : 1;
-	oscillator.frequency.value = accent ? 1100 : 900;
-	oscillator.type = 'triangle';
-	gainNode.gain.value = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50) / 100;
-	oscillator.connect(gainNode).connect(ctx.destination);
-	oscillator.start();
-	setTimeout(function() {
-		oscillator.stop();
-	},20);
 }
 
 function studioTimeDisplay() {
@@ -2394,6 +2751,7 @@ function studioLoad(uuid) {
 						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el,
 						loop: vr['loop'] ? true : false
 					};
+					studioTakeRequestBuffer(mixer[i].media.out[ir]);
 					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);
 				});
 			});
@@ -2430,8 +2788,10 @@ function studioImport(files) {
 			studioDrawTracks();
 		});
 		mixer[ch].media.out[ir] = take;
+		studioTakeRequestBuffer(take);
 	});
 	studioDrawTracks();
+	studioTakesChanged();
 }
 
 $(document).on('change', '#studio_name', function() {
@@ -2512,6 +2872,7 @@ $(document).on('change', '.studio_config', function() {
 		mixer['time']['crossfade'] = value;
 		studioSaver();
 		studioDrawTracks();
+		studioTakesChanged();
 		return;
 	}
 	if (setting == 'loop_bars') {
@@ -2537,8 +2898,9 @@ $(document).on('change', '.studio_config', function() {
 		// the audio context is built with one fixed rate, so it has to be rebuilt
 		mixer['settings'] = mixer['settings'] || {};
 		mixer['settings'][setting] = value;
+		studioFlushSources();
 		if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
-		studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {} };
+		studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 		setTimeout(function() {
 			studioInit({ 'settings': [{ 'setting': setting, 'value': value }] });
 		}, 500);
