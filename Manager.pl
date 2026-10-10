@@ -19800,6 +19800,11 @@ websocket '/mail/ws' => sub ($c) {
 						server_time => &subs::rightNow(),
 						attachments => encode_json $attachments
 					}, { uuid => $mesg->{'uuid'} });
+					# the envelope delivered now must wear the reply: the template reads
+					# $mesg (not the row just written), so without this the live reply
+					# is blank and only the depublicizer's later pass carries the text
+					$mesg->{'body'} = $response_text;
+					$mesg->{'decrypted'} = 'yes';
 					$log->info(Dumper $mesg);
 					my $returner = encode_json $mesg;
 					print $returner;
@@ -19989,6 +19994,9 @@ sub mail_depublicizer($c) {
 		&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', $enc_body, $p->{'uuid'});
 
 		my $messenger = {
+			# the client replaces a message whose uuid is already on screen,
+			# so this envelope must wear the row's uuid or it only ever appends
+			uuid => $p->{'uuid'},
 			msg => $p->{'body'},
 			timestamp => $p->{'timestamp'},
 			type => 'message',
