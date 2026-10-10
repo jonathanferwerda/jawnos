@@ -1,75 +1,133 @@
 # JawnOS
 
-**A personal, self-hosted operating environment — "my operating system… kinda."**
+**A personal, self-hosted operating environment.**
 
-JawnOS is a long-running hobby project by Jon ("Jawn") Ferwerda that turns a single Perl web
-server into a personal command centre. It isn't really an operating system — it's a
-browser-based dashboard that pulls together the things one person actually does with a
-computer: managing files and media, keeping track of appointments and money, logging where
-you've been and what you've been doing, taking notes, sending mail, and driving a handful of
-handheld and wearable devices.
+JawnOS is a long-running personal software project by Jon ("Jawn") Ferwerda. It turns a single
+Perl web server into a browser-based command centre — a desktop-like environment that gathers
+the things one person actually does with a computer: files and media, appointments and tasks,
+budgets and invoices, inventory and mail, notes and location history, AI assistance, and a small
+fleet of handheld and wearable devices.
 
-It works with the **LilyGo T-Watch S3**, the **LilyGo T-Deck (Plus, with GPS)**, and the
-**Raspberry Pi Pico 2W**, and it has been wired into some home-automation bits and pieces.
+It is not an operating system in the kernel sense, but a self-hosted personal environment that
+runs as an ordinary application and presents itself through the browser. It integrates natively
+with the **LilyGo T-Watch S3**, the **LilyGo T-Deck (Plus, with GPS)** and the **Raspberry Pi
+Pico 2W**, and it can reach into the physical world through home-automation hardware and network
+devices.
 
-It's still under active development, and finishing it is a "someday, hopefully" kind of goal —
-but it's genuinely useful in the meantime, and I hope it's of some use to you too.
+JawnOS is under active development, and "finished" remains a moving target — but it is genuinely
+useful in the meantime, and I hope it is of some use to you too.
 
 ## Features
 
-- **Files & media** — browse folders with a full right-click menu (new file and folder,
-  rename, open, open with, copy/cut/paste, delete, shred, archive, properties), play video
-  and audio, and view photos through an on-the-fly thumbnailer with a disk cache. Files can
-  be sealed — encrypted with your suds under a name of their own — and opened again from the
-  same menu, with the long jobs running in the background and showing their progress. A move,
-  sealing, opening or deletion carries the appointments, mail attachments and store entries
-  that named the file along with it.
-- **Music & studio** — a multitrack studio with takes, crossfades, waveform clips and a
-  pedalboard routed onto channels, alongside the synth and the music player.
-- **Appointments & scheduling** — a full calendaring system with alarms, recurring
-  appointments, reminders, and calendar export.
-- **Money** — budgeting, invoicing and quotes, day-to-day accounting helpers, and a store
-  with items, models and options that each carry their own prices.
-- **Warehouse & stock** — money and goods tracked per place: what's where and how much of it,
-  packaging that carries real quantities (a carton of twelve, a box of nails by weight) and
-  shelf life, so expired stock is swept up on its own, and a journal of every stock movement
-  and the reason for it — shown inline on both warehouse items and appointments.
+### The desktop
+
+JawnOS is a windowed desktop that lives in a browser tab. Windows open, stack, minimise,
+maximise, snap to half the screen and enter a move mode from their own drop-down menu, and the
+furniture around them is largely user-defined:
+
+- **A configurable taskbar.** The bar is an ordered list of slots — the open windows, the clock,
+  the start button, the search box and any pinned apps or keyboards — that can be rearranged in
+  an edit mode. Right-clicking (or long-pressing on touch) opens a context menu for the bar, its
+  tiles and each window; the bar can be shown, hidden or set to auto-hide, and the clock offers
+  12- or 24-hour time and a choice of time zone.
+- **A start menu** with a recently used list, a category rail, and an optional search box that
+  can ride the menu, the taskbar or the dock.
+- **A dock** that can be placed on any edge and slides away when idle.
+- **A "clothesline"** — a rail along the top of the screen that hangs the routines and rituals
+  that belong at the current hour, in the order they usually happen.
+- **Global display zoom** (20%–200%) and adjustable bar heights, so the interface can be scaled
+  for a phone, a tablet or a large display.
+- **Fourteen selectable icon sets**, with the original hand-drawn artwork as the default.
+
+### Files, media & creation
+
+- **Files & folders** — browse with a full right-click menu (new file and folder, rename, open,
+  open with, copy/cut/paste, delete, shred, archive and properties), and play video and audio or
+  view photos through an on-the-fly thumbnailer backed by a disk cache. Files can be **sealed** —
+  encrypted with your credentials under a name of their own — and opened again from the same
+  menu, with the long jobs running in the background and reporting their progress. Moving,
+  sealing, opening or deleting a file carries the appointments, mail attachments and store
+  entries that named it along with it.
 - **Drawing (the marker)** — a layered paint board with pencil, paintbrush, spray, fill and
-  matching erase tools, undo/redo, zoom and pan (pinch, ctrl + scroll, or scroll-to-zoom) and
-  a toolbox that folds away. It reads stylus pressure and ignores your palm on a tablet, and
-  the board autosaves, so a refresh doesn't lose a painting.
-- **Location & activity** — location logging, travel history, distance/speed calculations,
+  matching erase tools, undo/redo, and zoom and pan. It reads stylus pressure, ignores your palm
+  on a tablet, and autosaves so a refresh does not lose a painting.
+- **Music and studio** — a multitrack studio with takes, crossfades, waveform clips and a
+  pedalboard routed onto channels, alongside a synthesiser and a music player.
+- **Text, code and shell** — a rich text editor with variables that can answer for an
+  appointment; a colour-coded IDE for Perl, JavaScript, HTML and templates; a web browser; and a
+  terminal.
+
+### Appointments, tasks & routines
+
+- **Appointments & scheduling** — a full calendaring system with alarms, recurring
+  appointments, reminders and calendar export.
+- **Tasks** — nested checklists whose items carry a colour, a priority, a renewal interval and a
+  budget, and that can record the matching appointment when you tick one off.
+- **The wardrobe (clothesline)** — apps and routines are "hung" on the rail for the hours they
+  belong to, with automatic hanging of the routines the history shows you actually perform.
+
+### Money, stock & documents
+
+- **Budgeting** — a statement, budgets, a document ledger of invoices and quotes, and a daily
+  sheet, all drawn from the same transaction history.
+- **Store & invoicing** — a store of items, models and options that each carry their own prices,
+  with quotes and invoices that print to a white, house-styled paper and can be delivered by
+  email. Recording a payment against a document updates its balance and closes it when the
+  balance reaches zero; deleting that transaction reopens it.
+- **Warehouse & stock** — money and goods tracked per place: what is where and how much of it,
+  packaging that carries real quantities (a carton of twelve, a box of nails by weight) and
+  shelf life so expired stock is swept up on its own, a journal of every stock movement and its
+  reason, and a **moves ledger** that folds stock and money into one signed list.
+- **Notes & documents** — note-taking, document scanning, OCR (Tesseract), barcode/QR scanning
+  (zbar) and PDF rendering (WeasyPrint).
+
+### Communication, location & assistance
+
+- **Mail & messages** — email over IMAP/SMTP, SMS, and an internal message and paper-route
+  system, with mail that arrives straight on the desktop.
+- **Location & activity** — location logging, travel history, distance and speed calculations,
   and a "father time" activity clock.
-- **Notes & documents** — note-taking, document scanning, OCR (Tesseract), barcode/QR
-  scanning (zbar), and PDF rendering (WeasyPrint).
-- **Communication** — email (IMAP/SMTP), SMS, and an internal message/paper-route system.
-- **AI** — chat and image generation through local [Ollama](https://ollama.com) models and
-  Cloudflare Workers AI, plus speech (espeak) and transcription (whisper.cpp).
+- **AI assistance** — chat and image generation through local [Ollama](https://ollama.com)
+  models and Cloudflare Workers AI, plus speech (espeak) and transcription (whisper.cpp).
+- **Evaluation** — a model-backed appraisal of any app's activity, run on demand or nightly,
+  that reads what the app is and what it has been doing, weighs day, week, month and year
+  together, and leaves a report beside the app with a headline and links to everything it names.
+
+### System, security & devices
+
+- **System & monitoring** — a **Process Monitor** with live CPU and memory readings, per-core
+  graphs and a sortable process list; network **device discovery** with a ping/`/device_query`
+  scan; backup and restore; and a utility controller for the background chores.
 - **Utilities & security** — password and pseudonym generation, QR codes, encryption helpers,
-  screen locking, and a keyring-style secret store.
-- **Devices** — first-class support for the T-Watch, T-Deck and Pico 2W, with remote control,
-  SSH tunnelling, and encrypted sync between machines.
+  screen locking and a keyring-style secret store.
+- **Devices & firmware** — first-class support for the T-Watch, T-Deck and Pico 2W, with remote
+  control, a Bluetooth Low Energy bridge, SSH tunnelling, and encrypted sync between machines.
 
 ## How it's built
 
 - **Backend:** Perl, using [Mojolicious::Lite](https://mojolicious.org) as the web framework.
   `jawn` is the launcher — it runs `President.pl` in a PTY and restarts it if it dies — and
-  `President.pl` is the Mojolicious app that boots the HTTP/WebSocket server, background workers
-  ([Minion](https://metacpan.org/pod/Minion)), and the rest of the machinery.
+  `President.pl` is the Mojolicious app that boots the servers, workers and sockets.
 - **Data:** SQLite (via `Mojo::SQLite` / `SQL::Abstract`). Most internal message passing between
-  processes is [Sereal](https://metacpan.org/pod/Sereal)-encoded over Unix sockets.
-- **Real-time:** WebSockets push updates to the browser so windows, notifications and status
-  stay live without polling.
+  processes is [Sereal](https://metacpan.org/pod/Sereal)-encoded over Unix sockets, and
+  [Minion](https://metacpan.org/pod/Minion) carries the background jobs.
+- **Processes:** the app runs as a set of purpose-specific servers. `President.pl` starts a dock
+  server, a WebSocket server, the main prefork server, an alarm worker, the watch and teletype
+  servers, each identified by `PURPOSE` and each loading the module that suits it. In development
+  they run under Morbo for hot reloading; in production they run as prefork workers.
+- **Real-time:** WebSockets push updates to the browser so windows, notifications and status stay
+  live without polling.
 - **Front end:** Embedded-Perl (`.ep`) templates in `templates/`, rendered into a jQuery-driven
   "desktop in a browser" UI in `public/`.
-- **Firmware:** Arduino sketches under `jp/`, `jt/` and `jw/` for the handheld/wearable devices.
+- **Firmware:** Arduino sketches under `jp/`, `jt/` and `jw/` for the handheld and wearable
+  devices.
 
 ### Repository layout
 
 | Path | What it is |
 | --- | --- |
 | `jawn` | Launcher/supervisor — starts `President.pl` in a PTY and restarts it on crash |
-| `President.pl` | The Mojolicious app — HTTP/WebSocket server, workers and sockets |
+| `President.pl` | The Mojolicious app — boots the servers, workers and sockets |
 | `Manager.pl` | The main application: routes and the bulk of the features |
 | `gb.pl` | Global state shared across the app |
 | `subroutines.pl` | Shared helper library |
@@ -78,25 +136,27 @@ but it's genuinely useful in the meantime, and I hope it's of some use to you to
 | `templates/` | Embedded-Perl page templates |
 | `public/` | Front-end JavaScript, CSS and images (including the icon sets in `public/icons/sets/`) |
 | `jp/`, `jt/`, `jw/` | Device firmware (Pico 2W, T-Deck, T-Watch) |
-| `scripts/` | Supporting scripts — the dependency checker and the first-run setup wizard |
+| `scripts/` | Supporting scripts — the dependency checker, the first-run wizard, the process killer, the BLE bridge and the store invoice driver |
 | `database/` | `schema.sql` (used to build a fresh database) and a starting encrypted database |
 
 ## Requirements
 
 - Perl 5 with the CPAN modules listed in the installation section below
-  (`Mojolicious`, `Mojo::SQLite`, `Minion`, `Sereal`, `Crypt::Simple`, and friends).
+  (`Mojolicious`, `Mojo::SQLite`, `Minion`, `Sereal`, `Crypt::Simple` and friends).
 - A handful of command-line tools: `ffmpeg`, `imagemagick`, `tesseract`, `sqlite3`, `qrencode`,
   `zbar`, `espeak`, `curl`, `rsync`, `openssl`, `sshpass` and `autossh` (see below).
+- Optional, for the full feature set: Python `weasyprint` (PDF rendering), `ollama` (local AI
+  models), and a `whisper.cpp` build with the base model (audio transcription).
 
-You don't have to install any of that by hand. The first time you run `./jawn` it checks for
+You do not have to install any of this by hand. The first time you run `./jawn` it checks for
 every dependency and offers to install whatever is missing. The per-platform sections below are
 the do-it-yourself fallback.
 
 ## Installation
 
-The first run of `./jawn` drives the whole install: it gets missing dependencies, then opens a
-web wizard that writes `config.json` and builds you an encrypted database (see
-[First run](#first-run)). If you'd rather do the dependency install yourself first, the
+The first run of `./jawn` drives the whole install: it gets missing dependencies, then opens a web
+wizard that writes `config.json` and builds you an encrypted database (see
+[First run](#first-run)). If you would rather install the dependencies yourself first, the
 per-platform instructions below will do it — the wizard still handles the config and database.
 
 To check (and optionally install) dependencies on their own:
@@ -109,10 +169,7 @@ perl scripts/jawnos_deps.pl --sh      # print the install commands as a shell sc
 
 ### Android (Termux)
 
-Download and install F-Droid.
-
-Install Termux.
-Install Termux:api.
+Install F-Droid, then install **Termux** and **Termux:api** from it.
 
 In Termux:
 
@@ -146,11 +203,9 @@ cpanm --notest --force Mojolicious::Lite \
 pip install weasyprint
 ```
 
-Activate developer settings by going to Settings -> About Device -> Software Information.
-Tap Build Number 7 times.
-
-In Developer options turn on Wireless debugging.
-Tap it, then pair device.
+Activate developer settings: go to **Settings → About Device → Software Information** and tap
+**Build Number** seven times. In **Developer options**, turn on **Wireless debugging**, tap it,
+then pair the device:
 
 ```
 adb pair ip:port
@@ -163,8 +218,6 @@ adb shell settings put global max_phantom_processes 2147483647
 cd jawnos
 
 chmod +x jawn President.pl
-
-To run
 
 ./jawn
 ```
@@ -202,7 +255,7 @@ Edit `/etc/ssh/sshd_config`:
 MaxSessions 1000000
 ```
 
-Make swap (if not already created):
+Create swap, if you have not already:
 
 ```
 sudo fallocate -l 2G /swapfile
@@ -263,13 +316,13 @@ chmod +x jawn President.pl
 
 On the first run — or any time `config.json` is missing — JawnOS walks you through setup:
 
-1. **Dependencies.** `scripts/jawnos_deps.pl` checks for the required command-line tools and
-   Perl modules and offers to install anything that's missing (using `apt`, `pacman` or Termux's
+1. **Dependencies.** `scripts/jawnos_deps.pl` checks for the required command-line tools and Perl
+   modules and offers to install anything that is missing (using `apt`, `pacman` or Termux's
    `pkg`, plus `cpanm`).
 2. **`config.json`.** A web wizard opens at <http://127.0.0.1:3210/wizard> where you fill in your
-   name, device, start directory, port and media folders; it writes `config.json` for you. The
-   `signatorial` is a file that won't change — JawnOS reads it at start-up, hashes it and uses it
-   to encrypt cookies. Leave that field blank and the wizard generates one for you.
+   name, device, start directory, ports and media folders; it writes `config.json` for you. The
+   `signatorial` is a file that will not change — JawnOS reads it at start-up, hashes it and uses
+   it to encrypt cookies. Leave that field blank and the wizard generates one for you.
 3. **Database.** The wizard builds a brand-new database from `database/schema.sql` and encrypts
    it with a numeric unlock code you choose (it can generate one). Write that code down — you
    type it at the gate screen to unlock JawnOS.
@@ -287,11 +340,12 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 
 ## Status
 
-JawnOS is a work in progress. It ships with ten selectable icon sets and hover/long-press hints
-throughout the interface; the original hand-drawn icons are still the default. The folders app
-has had most of the attention lately — the right-click menu now does everything it lists, and
-files can be sealed and opened — along with the warehouse, the marker and battery use on
-phones.
+JawnOS is a work in progress. It ships with fourteen selectable icon sets and hover or long-press
+hints throughout the interface, with the original hand-drawn icons still the default. Recent
+attention has gone to the desktop itself — configurable bars, pins and context menus — and to the
+apps around it: the folders and sealed files, the warehouse's new move ledger, the store's
+invoice and email flow, the evaluation reports, and the battery behaviour and tilt-to-wake
+handling of the wristwatch.
 
 ## License
 
