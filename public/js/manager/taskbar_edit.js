@@ -52,15 +52,44 @@ function jawnosTaskbarPress(sel) {
 	});
 }
 
-// One pinned tile: an app out of the start menu or a keyboard off the dock.
+// One pinned tile. A menu pin (a start-menu row or a keyboard) is a plain
+// picture that hands its press over to the live icon. An app pin (a window the
+// user pinned) is a window button: when its window is open it wears the name and
+// the same states as the open windows, so pin and window are one tile, not two.
 function jawnosTaskbarPinMake(item) {
-	var pin = $('<img class="taskbar_pin little_thumb hover">');
+	if (item.app) { return jawnosTaskbarAppPinMake(item); }
+	var pin = $('<img class="taskbar_pin little_thumb hover" draggable="false">');
 	pin.attr('sel', item.sel).attr('hint', item.hint || '').attr('src', item.src || '');
 	pin.on('click', function () {
 		if (jawnosTaskbarEditing()) { return; }
 		jawnosTaskbarPress(pin.attr('sel'));
 	});
 	return pin;
+}
+
+function jawnosTaskbarAppPinMake(item) {
+	var pin = $('<span class="window_toggle taskbar_pin taskbar_app_pin" draggable="false"></span>');
+	pin.attr('app', item.app).attr('hint', item.hint || '');
+	pin.append($('<img class="window_toggle_icon little_thumb" draggable="false">').attr('src', item.src || ''));
+	pin.append($('<span class="window_toggle_name_text" style="display:none;"></span>').text(item.hint || item.app));
+	return pin;
+}
+
+// A press on an app pin is a press on its window when one is open (raise, step
+// down or restore - the window button's own manners), and a launch when it is
+// not.
+function jawnosTaskbarAppPinPress(app) {
+	if (jawnosTaskbarEditing()) { return; }
+	var win = $('.wind[app="' + app + '"]');
+	var timestamp = Date.now();
+	if (!win.length || !win.is(':visible')) {
+		if (win.length) { windowRestorer(timestamp, app); }
+		else { appointmentGrabber(app, timestamp); }
+		return;
+	}
+	var topApp = topWindow();
+	if (app == topApp) { windowMinimizer(timestamp, app); }
+	else { topLevelNow(win); }
 }
 
 // Lay the bar's furniture along the order, building pins as they come. Slots
@@ -106,7 +135,12 @@ function jawnosTaskbarOrderSave() {
 		else if (el.is('#taskbar_icons')) { order.push('icons'); }
 		else if (el.is('#search_entanglement')) { order.push('search'); }
 		else if (el.hasClass('taskbar_pin')) {
-			order.push({ k: 'pin', sel: el.attr('sel'), hint: el.attr('hint'), src: el.attr('src') });
+			if (el.hasClass('taskbar_app_pin')) {
+				order.push({ k: 'pin', app: el.attr('app'), hint: el.attr('hint'), src: el.find('img').attr('src') });
+			}
+			else {
+				order.push({ k: 'pin', sel: el.attr('sel'), hint: el.attr('hint'), src: el.attr('src') });
+			}
 		}
 	});
 	jawnosBars.order = order;
@@ -192,6 +226,10 @@ function jawnosTaskbarKeyboardPins() {
 function jawnosTaskbarPinned(sel) {
 	return $('#taskbar').children('.taskbar_pin[sel="' + sel + '"]').length > 0;
 }
+function jawnosTaskbarAppPinned(app) {
+	return $('#taskbar').children('.taskbar_app_pin[app="' + app + '"]').length > 0
+		|| (jawnosBars.order || []).some(function (it) { return it && it.app == app; });
+}
 
 function jawnosTaskbarAddPin(pin) {
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
@@ -201,12 +239,56 @@ function jawnosTaskbarAddPin(pin) {
 	jawnosBarsApply();
 }
 
-function jawnosTaskbarRemovePin(sel) {
+// Pin a window's app: an app-keyed pin, so when the window is open the tile
+// doubles as its window button instead of standing beside it.
+function jawnosTaskbarAddAppPin(pin) {
+	if (jawnosTaskbarAppPinned(pin.app)) { return; }
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
-	order = order.filter(function (item) { return !(item && typeof item === 'object' && item.sel == sel); });
+	order.push({ k: 'pin', app: pin.app, hint: pin.hint, src: pin.src });
 	jawnosBars.order = order;
 	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
 	jawnosBarsApply();
+}
+
+function jawnosTaskbarRemovePin(sel) {
+	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
+	order = order.filter(function (item) { return !(item && typeof item === 'object' && item.sel == sel && !item.app); });
+	jawnosBars.order = order;
+	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
+	jawnosBarsApply();
+}
+
+function jawnosTaskbarRemoveAppPin(app) {
+	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
+	order = order.filter(function (item) { return !(item && typeof item === 'object' && item.app == app); });
+	jawnosBars.order = order;
+	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
+	jawnosBarsApply();
+}
+
+// Keep the bar truthful about the windows: an app pin whose window exists (open
+// or minimized) shows the name and stands in for the window button - the
+// duplicate is hidden - and every window tile wears its state: the top one sunk,
+// the rest that are open raised.
+function jawnosTaskbarPinsRefresh() {
+	var bar = $('#taskbar');
+	if (!bar.length) { return; }
+	bar.find('.taskbar_app_pin').each(function () {
+		var pin = $(this);
+		var app = pin.attr('app');
+		var win = $('.wind[app="' + app + '"]');
+		pin.find('.window_toggle_name_text').toggle(win.length > 0);
+		if (win.length) { bar.find('#taskbar_windows .window_toggle[app="' + app + '"]').hide(); }
+	});
+	var top = (typeof topWindow == 'function') ? topWindow() : null;
+	bar.find('.window_toggle').each(function () {
+		var el = $(this);
+		var app = el.attr('app');
+		var win = $('.wind[app="' + app + '"]');
+		var visible = win.length > 0 && win.is(':visible');
+		el.removeAttr('state');
+		if (visible) { el.attr('state', (app == top) ? 'active' : 'open'); }
+	});
 }
 
 function jawnosTaskbarClockZones() {
@@ -223,10 +305,17 @@ function jawnosTaskbarClockZones() {
 	return zones;
 }
 
-function jawnosTaskbarContextBuild() {
+function jawnosTaskbarContextBuild(app) {
 	var editing = jawnosTaskbarEditing();
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
+
+	// a right-click on a window button can pin that app to the bar
+	if (app) {
+		var pinned = jawnosTaskbarAppPinned(app);
+		context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
+		context.append('<div class="taskbar_context_label">Taskbar</div>');
+	}
 
 	context.append('<div class="taskbar_context_selection" act="edit">Edit mode<span class="taskbar_context_check">' + selected(editing) + '</span></div>');
 
@@ -299,9 +388,9 @@ function jawnosTaskbarContextBuild() {
 	return context;
 }
 
-function jawnosTaskbarContextOpen(x, y) {
+function jawnosTaskbarContextOpen(x, y, app) {
 	jawnosTaskbarContextClose();
-	var context = jawnosTaskbarContextBuild();
+	var context = jawnosTaskbarContextBuild(app);
 	$('body').append(context);
 	// keep it on screen
 	var w = context.outerWidth();
@@ -313,7 +402,10 @@ function jawnosTaskbarContextOpen(x, y) {
 
 $(document).on('contextmenu', '#taskbar', function (e) {
 	e.preventDefault();
-	jawnosTaskbarContextOpen(e.clientX, e.clientY);
+	// the app under the pointer, if the press landed on a window button
+	var win = $(e.target).closest('.window_toggle');
+	var app = win.length ? win.attr('app') : null;
+	jawnosTaskbarContextOpen(e.clientX, e.clientY, app);
 });
 
 // long press on a touch screen opens the same menu
@@ -363,6 +455,23 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		$('.taskbar_context_sub[sub="add"]').toggle();
 		$('.taskbar_context_sub[sub="clock"]').hide();
 	}
+	else if (act == 'pin_app') {
+		var app = $(this).attr('app');
+		if (jawnosTaskbarAppPinned(app)) { jawnosTaskbarRemoveAppPin(app); }
+		else {
+			var btn = $('#taskbar .window_toggle[app="' + app + '"]').first();
+			var hint = btn.attr('formatted_name') || ((typeof format_name == 'function') ? format_name(app) : app);
+			var src = btn.find('.window_toggle_icon').attr('src') || '';
+			jawnosTaskbarAddAppPin({ app: app, hint: hint, src: src });
+		}
+		jawnosTaskbarContextClose();
+	}
+});
+
+// an app pin answers as its window would
+$(document).on('click', '.taskbar_app_pin', function () {
+	if (jawnosTaskbarEditing()) { return; }
+	jawnosTaskbarAppPinPress($(this).attr('app'));
 });
 
 // the clock's own face, written where it is changed
@@ -394,7 +503,19 @@ $(document).on('click', '.taskbar_context_app', function () {
 	}
 });
 
-// The bar is laid out afresh on every apply, so it takes the order again.
+// The bar is laid out afresh on every apply, so it takes the order again. The
+// window displayer is wrapped so the pins and the states are refreshed every
+// time the window list is rebuilt, whatever rebuilt it.
 $(document).ready(function () {
+	if (typeof taskbarDisplayer == 'function' && !taskbarDisplayer.__jawnos_wrapped) {
+		var base = taskbarDisplayer;
+		taskbarDisplayer = function () {
+			var result = base.apply(this, arguments);
+			if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
+			return result;
+		};
+		taskbarDisplayer.__jawnos_wrapped = true;
+	}
 	if (typeof jawnosTaskbarOrderApply == 'function') { jawnosTaskbarOrderApply(); }
+	if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
 });

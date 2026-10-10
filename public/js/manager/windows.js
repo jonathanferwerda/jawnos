@@ -1288,6 +1288,8 @@ function topLevelNow(win) {
 			}
 		});
 	}
+	// the taskbar's window tiles wear the state: the raised one sinks
+	if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
 	return top_level_now;
 }
 
