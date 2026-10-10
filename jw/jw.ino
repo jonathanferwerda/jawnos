@@ -4398,7 +4398,41 @@ void lowPowerEnergyHandler()
     uint32_t last_real_nap = millis();
     uint32_t sleep_began = millis();
     esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED;
+    // A short waking window that samples the raise machine at the doze loop's
+    // rate. The naps alone cannot *find* a raise: a wrist raise sweeps through
+    // its turn in ~280 ms, which is between two 200 ms samples, so the pose
+    // jumped and the turn was rejected. Called when the sensor line says the
+    // arm is moving. Returns true on a raise; a crown seen meanwhile sets
+    // wakeup_reason and returns false so the caller's check breaks with the
+    // screen coming back on.
+    auto ls_listen = [&](uint32_t ms) -> bool {
+      uint32_t until = millis() + ms;
+      while ((int32_t)(until - millis()) > 0) {
+        if (wristPoll()) {
+          return true;
+        }
+        if (crown_irq_pending()) {
+          Serial.println("[tilt] crown during the listen window");
+          crumb("ls crown listen");
+          wakeup_reason = ESP_SLEEP_WAKEUP_EXT1;
+          return false;
+        }
+        delay(15);
+      }
+      return false;
+    };
     while (true) {
+      // Pump the library's own event path before the sleep decision: the doze
+      // loop catches the crown through it, and here it is a second, independent
+      // way to see a press alongside the direct PMU status read below.
+      watch.loop();
+      if (pmuIrq) {
+        pmuIrq = false;
+        Serial.println("[tilt] crown latched between naps");
+        crumb("ls crown latched");
+        wakeup_reason = ESP_SLEEP_WAKEUP_EXT1;
+        break;
+      }
       // A crown press latched while the chip was up between naps must not be
       // slept through: reading the status reports it and clears the latch, so
       // EXT1 is armed against a clean line. The doze path catches presses the
@@ -4428,7 +4462,14 @@ void lowPowerEnergyHandler()
       }
       int64_t nap_us = remaining_us;
       if (tiltWake) {
-        int64_t poll_us = (millis() < wrist_fast_until) ? 60000LL : 200000LL;
+        // The raise machine needs a sample every ~100 ms at rest and every
+        // ~40 ms while the arm is doing something (WRIST_REST_MS/WRIST_ARM_MS).
+        // A 200 ms nap only gave it 5 Hz, and a raise whose turn happened
+        // between two samples was rejected — that is why wrist wake worked
+        // with light sleep off (the doze loop polls at ~15 ms) and not with it
+        // on. 100 ms is the machine's own "still" rate; the sensor wake below
+        // drops it to 40 ms while the arm moves.
+        int64_t poll_us = (millis() < wrist_fast_until) ? 40000LL : 100000LL;
         if (nap_us < 0 || poll_us < nap_us) {
           nap_us = poll_us;
         }
@@ -4476,10 +4517,20 @@ void lowPowerEnergyHandler()
         // reading the interrupt status clears the latched line; without that the
         // wake would be armed against a pin that is still held up
         watch.loopSensor();
-        if (wristPoll()) {
-          wrist_wake = true;
-          crumb("ls raise");
-          break;
+        if (tiltWake) {
+          // the line is telling us the arm is moving: stay awake just long
+          // enough to let the state machine see the turn and its settle, and
+          // keep the next naps short so the follow-through is not missed
+          wrist_fast_until = millis() + 1500;
+          bool raised = ls_listen(500);
+          if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+            break;                     // a crown arrived in the listen window
+          }
+          if (raised) {
+            wrist_wake = true;
+            crumb("ls raise");
+            break;
+          }
         }
         // not a raise: the arm may still be moving and holding the line up, so
         // give it a moment to fall before napping again
@@ -4490,11 +4541,14 @@ void lowPowerEnergyHandler()
         }
         if (digitalRead(SENSOR_INT) == HIGH) {
           // a line that never falls wakes the next nap the instant it starts:
-          // leave the sensor out until a quiet nap proves it let go (the poll
-          // timer still feeds the raise machine)
+          // take the pin out of the wake config until a quiet nap shows it let
+          // go (the poll timer still feeds the raise machine). gpio_wakeup_
+          // enable only ever added it, so without the disable the line stays
+          // armed and the loop degenerates into a wake-settle-wake bounce.
           if (!sensor_line_stuck) {
             Serial.println("[tilt] sensor line stuck; napping without it");
             crumb("ls sensor stuck");
+            gpio_wakeup_disable((gpio_num_t)SENSOR_INT);
           }
           sensor_line_stuck = true;
         }
@@ -4505,6 +4559,8 @@ void lowPowerEnergyHandler()
         // wrist and sink back down
         if (sensor_line_stuck && digitalRead(SENSOR_INT) == LOW) {
           sensor_line_stuck = false;   // it let go; the sensor may wake us again
+          gpio_wakeup_enable((gpio_num_t)SENSOR_INT, GPIO_INTR_HIGH_LEVEL);
+          esp_sleep_enable_gpio_wakeup();
         }
         watch.loopSensor();
         if (wristPoll()) {
