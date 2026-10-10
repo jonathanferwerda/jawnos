@@ -861,6 +861,9 @@ function searchMusic(data) {
 	var search = searching || $('#music_search').val();
 	var unlock = $('#music').attr('unlock');
 	$('body').css({ 'cursor': 'progress' });
+	// a search swaps the library lists; dim them (and drop the pointer) until the
+	// reply lands, so the stale rows cannot be clicked in the meantime
+	$('#music_library').addClass('music_loading');
 	var folders = musicFolderChecker();
 	var nowPlaying = {};
 	if (tree.sound) {
@@ -894,7 +897,6 @@ function searchMusic(data) {
 		},
 		success: function(response) {
 			clearInterval(vidControls['video_video_interval']);
-			$('body').css({ 'cursor': 'auto' });
 
 			var v = document.getElementById('video');
 			var timestamp = Date.now();
@@ -992,6 +994,12 @@ function searchMusic(data) {
 			if (theatreMode == 'on') {
 				theatreModeOn();
 			}
+		},
+		complete: function() {
+			// however the search ended (even a dropped connection), put the cursor
+			// and the library back
+			$('body').css({ 'cursor': 'auto' });
+			$('#music_library').removeClass('music_loading');
 		}
 	});
 }

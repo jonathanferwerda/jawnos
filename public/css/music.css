@@ -463,3 +463,19 @@ body.dark_theme #music {
 #video_subtitle_toggle[status=showing] {
 	background-color: lightgreen;
 }
+
+/* ---- the search's loading hint --------------------------------------------
+
+   A search swaps the library lists in place, so there is nothing to flash - but
+   the request itself takes a beat, and a stale list is clickable in that beat.
+   Dim just the library (the shelves and the track list, i.e. what a search
+   changes) and swallow the pointer, while the player and the interface stay at
+   full strength. searchMusic adds/removes the class; the transition makes the
+   return gentle. */
+#music #music_library {
+	transition: opacity .15s;
+}
+#music #music_library.music_loading {
+	opacity: .45;
+	pointer-events: none;
+}
