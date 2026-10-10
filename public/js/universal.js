@@ -962,6 +962,8 @@ if (jawnos_hover_capable) {
 $(document).on('touchstart', '[hint]', function (e) {
 	var el = this;
 	if ($(el).hasClass('draggable') || $(el).closest('.draggable').length > 0) { return; }
+	// where a context menu is registered the hold belongs to it, not the hint
+	if (typeof jawnosHasContextMenu == 'function' && jawnosHasContextMenu(el)) { return; }
 	// the start menu rows wear their name already; a long press there must not
 	// swallow the tap that would open the app
 	if ($(el).closest('.start_menu_item').length > 0) { return; }
@@ -985,4 +987,41 @@ $(document).on('touchend touchcancel', function () {
 });
 $(document).on('touchmove', function () {
 	if (!jawnos_touch_hint_active) { clearTimeout(jawnos_hint_timer); }
+});
+
+// ---- long press opens the context menus on touch --------------------------
+// A hold on a registered surface dispatches the very contextmenu event the right
+// button raises on a desk, at the finger, so every handler that answers a
+// right-click answers a hold too. The hint's own long press stands down on those
+// surfaces (see jawnosHasContextMenu above), so a menu and a label never race.
+var jawnos_context_selectors = [];
+var jawnos_context_timer = null;
+function jawnosContextMenuOn(selector) {
+	if (jawnos_context_selectors.indexOf(selector) < 0) { jawnos_context_selectors.push(selector); }
+}
+function jawnosHasContextMenu(el) {
+	for (var i = 0; i < jawnos_context_selectors.length; i++) {
+		if ($(el).closest(jawnos_context_selectors[i]).length) { return true; }
+	}
+	return false;
+}
+$(document).on('touchstart', function (e) {
+	for (var i = 0; i < jawnos_context_selectors.length; i++) {
+		if (!$(e.target).closest(jawnos_context_selectors[i]).length) { continue; }
+		var t = e.originalEvent.touches && e.originalEvent.touches[0];
+		if (!t) { return; }
+		var target = e.target;
+		var x = t.clientX, y = t.clientY;
+		clearTimeout(jawnos_context_timer);
+		jawnos_context_timer = setTimeout(function () {
+			jawnosHintHide();
+			jawnos_touch_hint_active = false;
+			jawnosSuppressClick(x, y);
+			target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
+		}, 550);
+		return;
+	}
+});
+$(document).on('touchend touchcancel touchmove', function () {
+	clearTimeout(jawnos_context_timer);
 });

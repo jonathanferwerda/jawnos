@@ -9,6 +9,8 @@ var folders = {
 	path: undefined,
 	remote_uuid: undefined
 };
+// a long press on a file, folder or the listing background opens its menu on touch
+if (typeof jawnosContextMenuOn == 'function') { jawnosContextMenuOn('.folders_file, .folders_contents'); }
 $(document).on('click', '#folders_toggle', function() {
 	foldersOpener();
 });
@@ -183,6 +185,9 @@ function folderSelection() {
 
 $(document).on('contextmenu', '.folders_file, .folders_contents', function(e) {
   e.preventDefault();
+	// a hold on touch dispatches this same event with the finger's point, so the
+	// menu lands under the press rather than wherever the mouse last was
+	var press_x = e.clientX, press_y = e.clientY;
 	// a remote listing is read-only: every command here would run on this
 	// machine against a path that only exists on the other one
 	if (folders.remote_uuid) { return; }
@@ -219,7 +224,7 @@ $(document).on('contextmenu', '.folders_file, .folders_contents', function(e) {
 		data: { path: folders.path, type: folders.type, folders: jfolders, context: context },
 		success:function(response) {
 			console.log(response);
-			var m = mouse_position();
+			var m = { x: press_x, y: press_y };
 			$('#folders_contents').append(response.html);
 			var menu = $('.folders_context[uuid="'+ response.call_uuid + '"]');
 			menu.css({ 'left': m.x, 'top': m.y, 'position':'fixed' });

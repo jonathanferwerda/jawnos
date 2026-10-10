@@ -106,7 +106,7 @@ function clotheslineHanger(clothes) {
 			roundRectPath(ctx, bx, by, bw, bh, 10);
 			ctx.fillStyle = v.colour || 'yellow';
 			ctx.fill();
-			ctx.lineWidth = clothesLinePos['bordersize'];
+			ctx.lineWidth = 3;
 			ctx.strokeStyle = ink;
 			ctx.stroke();
 			ctx.restore();

@@ -1045,6 +1045,29 @@ function windowRestorer(timestamp,app) {
 
 var reservedSpots = {};
 
+// Move mode: a window put into it is dragged from anywhere on it (not just its
+// navbar) for one move, or until it is turned off again from the window's menu.
+// Only one window moves at a time.
+var jawnos_move_app = null;
+function jawnosWindowMoveMode(app) {
+	if (jawnos_move_app && jawnos_move_app != app) { jawnosWindowMoveModeOff(jawnos_move_app); }
+	if (jawnos_move_app == app) { jawnosWindowMoveModeOff(app); return; }
+	var win = $('.wind[app="' + app + '"]');
+	if (!win.length) { return; }
+	jawnos_move_app = app;
+	windowDraggable(win);
+	if (win.hasClass('ui-draggable')) { win.draggable('option', 'handle', false); }
+	win.addClass('window_move_mode');
+	win.off('dragstop.jawnos_move').on('dragstop.jawnos_move', function () { jawnosWindowMoveModeOff(app); });
+}
+function jawnosWindowMoveModeOff(app) {
+	var win = $('.wind[app="' + app + '"]');
+	win.removeClass('window_move_mode');
+	if (win.hasClass('ui-draggable')) { win.draggable('option', 'handle', '.top_navbar'); }
+	win.off('dragstop.jawnos_move');
+	if (jawnos_move_app == app) { jawnos_move_app = null; }
+}
+
 function windowDraggable(win) {
 	if (!win.hasClass('ui-draggable')) {
 

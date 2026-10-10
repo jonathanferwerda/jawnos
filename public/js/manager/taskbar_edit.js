@@ -269,10 +269,14 @@ function jawnosTaskbarKeyboardPins() {
 	return pins;
 }
 
-// Is this pin already on the bar? A launcher pin has no app; an app pin is keyed
-// by app (and may also carry a sel for launching).
+// Is this launcher pin already on the bar? (Compare the attribute rather than
+// build an attribute selector: a hint-only pin's sel carries its own quotes.)
 function jawnosTaskbarPinned(sel) {
-	return $('#taskbar').children('img.taskbar_pin[sel="' + sel + '"]').length > 0;
+	var found = false;
+	$('#taskbar').children('img.taskbar_pin').each(function () {
+		if ($(this).attr('sel') === sel) { found = true; }
+	});
+	return found;
 }
 function jawnosTaskbarAppPinned(app) {
 	return $('#taskbar').children('.taskbar_app_pin[app="' + app + '"]').length > 0
@@ -364,17 +368,10 @@ function jawnosTaskbarClockZones() {
 	return zones;
 }
 
-function jawnosTaskbarContextBuild(app) {
+function jawnosTaskbarContextBuild() {
 	var editing = jawnosTaskbarEditing();
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
-
-	// a right-click on a window button can pin that app to the bar
-	if (app) {
-		var pinned = jawnosTaskbarAppPinned(app);
-		context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
-		context.append('<div class="taskbar_context_label">Taskbar</div>');
-	}
 
 	context.append('<div class="taskbar_context_selection" act="edit">Edit mode<span class="taskbar_context_check">' + selected(editing) + '</span></div>');
 
@@ -448,9 +445,26 @@ function jawnosTaskbarContextBuild(app) {
 	return context;
 }
 
+// A window's own menu: the things a window manager offers, plus the pin the bar
+// already had. Right-clicking (or holding) a window button raises this instead
+// of the bar's menu.
+function jawnosWindowContextBuild(app) {
+	var selected = function (on) { return on ? '✓' : ''; };
+	var context = $('<div class="taskbar_context"></div>');
+	context.append('<div class="taskbar_context_selection" act="win_close" app="' + app + '">Close</div>');
+	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">Maximize</div>');
+	context.append('<div class="taskbar_context_selection" act="win_min" app="' + app + '">Minimize</div>');
+	var moving = (typeof jawnos_move_app != 'undefined' && jawnos_move_app == app);
+	context.append('<div class="taskbar_context_selection" act="win_move" app="' + app + '">Move<span class="taskbar_context_check">' + selected(moving) + '</span></div>');
+	context.append('<div class="taskbar_context_label">Taskbar</div>');
+	var pinned = jawnosTaskbarAppPinned(app);
+	context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
+	return context;
+}
+
 function jawnosTaskbarContextOpen(x, y, app) {
 	jawnosTaskbarContextClose();
-	var context = jawnosTaskbarContextBuild(app);
+	var context = app ? jawnosWindowContextBuild(app) : jawnosTaskbarContextBuild();
 	$('body').append(context);
 	// keep it on screen
 	var w = context.outerWidth();
@@ -468,18 +482,9 @@ $(document).on('contextmenu', '#taskbar', function (e) {
 	jawnosTaskbarContextOpen(e.clientX, e.clientY, app);
 });
 
-// long press on a touch screen opens the same menu
-(function () {
-	var timer = null;
-	$(document).on('touchstart', '#taskbar', function (e) {
-		var t = e.originalEvent.touches[0];
-		var x = t.clientX, y = t.clientY;
-		timer = setTimeout(function () { timer = null; jawnosTaskbarContextOpen(x, y); }, 550);
-	});
-	$(document).on('touchend touchmove touchcancel', '#taskbar', function () {
-		if (timer) { clearTimeout(timer); timer = null; }
-	});
-})();
+// a long press opens the same menu on touch: the shared handler dispatches a
+// contextmenu at the finger, which the handler above catches
+if (typeof jawnosContextMenuOn == 'function') { jawnosContextMenuOn('#taskbar'); }
 
 // any press elsewhere, or Escape, puts it away
 $(document).on('click', function (e) {
@@ -524,6 +529,21 @@ $(document).on('click', '.taskbar_context_selection', function () {
 			var src = btn.find('.window_toggle_icon').attr('src') || '';
 			jawnosTaskbarAddAppPin({ app: app, hint: hint, src: src });
 		}
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'win_close' || act == 'win_max' || act == 'win_min') {
+		// press the window's own button, so its handler does the work
+		var wapp = $(this).attr('app');
+		var wind = $('.wind[app="' + wapp + '"]');
+		if (act == 'win_close') { wind.find('.close_button').trigger('click'); }
+		else if (act == 'win_max') { wind.find('.maximize_button').trigger('click'); }
+		else { windowMinimizer(Date.now(), wapp); }
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'win_move') {
+		// the window is dragged from anywhere for one move, or until pressed again
+		var mapp = $(this).attr('app');
+		if (typeof jawnosWindowMoveMode == 'function') { jawnosWindowMoveMode(mapp); }
 		jawnosTaskbarContextClose();
 	}
 });

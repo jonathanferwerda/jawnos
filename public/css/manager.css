@@ -421,6 +421,10 @@ html, body {
 #taskbar[autohide=on][position=top]:hover { transform: translateY(0); }
 
 /* The bar's context menu, shaped like the folders one. */
+/* a window in move mode is dragged from anywhere on it */
+.window_move_mode,
+.window_move_mode * { cursor: move !important; }
+
 /* a press that opens a window beats while the server answers */
 .jawnos_loading { animation: jawnos_loading_pulse .7s ease-in-out infinite; }
 @keyframes jawnos_loading_pulse {
