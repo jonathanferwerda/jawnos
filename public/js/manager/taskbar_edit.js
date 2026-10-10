@@ -491,15 +491,20 @@ function jawnosTaskbarContextBuild() {
 // A window's own menu: the things a window manager offers, plus the pin the bar
 // already had. Right-clicking (or holding) a window button raises this instead
 // of the bar's menu.
+// A window is maximized when its own Restore control is showing, or when its
+// view is 'max' (a window dragged to 95%+ of the screen records the view even
+// though the buttons may not have flipped). The view attribute is only kept off
+// phones, so the control's own state is the tell there.
+function jawnosWindowMaximized(app) {
+	var wind = $('.wind[app="' + app + '"]');
+	return wind.find('.restore_button').is(':visible') || wind.attr('view') == 'max';
+}
+
 function jawnosWindowContextBuild(app) {
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
-	// a maximized window shows its Restore control, so the same slot offers
-	// Restore rather than Maximize (the view attribute is only kept off phones,
-	// so the button's own state is the reliable tell)
-	var maximized = $('.wind[app="' + app + '"]').find('.restore_button').is(':visible');
 	context.append('<div class="taskbar_context_selection" act="win_close" app="' + app + '">Close</div>');
-	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">' + (maximized ? 'Restore' : 'Maximize') + '</div>');
+	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">' + (jawnosWindowMaximized(app) ? 'Restore' : 'Maximize') + '</div>');
 	context.append('<div class="taskbar_context_selection" act="win_min" app="' + app + '">Minimize</div>');
 	var moving = (typeof jawnos_move_app != 'undefined' && jawnos_move_app == app);
 	context.append('<div class="taskbar_context_selection" act="win_move" app="' + app + '">Move<span class="taskbar_context_check">' + selected(moving) + '</span></div>');
@@ -586,7 +591,7 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		else if (act == 'win_max') {
 			// press whichever control the window is showing: a maximized one
 			// restores, an ordinary one maximizes
-			if (wind.find('.restore_button').is(':visible')) { wind.find('.restore_button').trigger('click'); }
+			if (jawnosWindowMaximized(wapp)) { wind.find('.restore_button').trigger('click'); }
 			else { wind.find('.maximize_button').trigger('click'); }
 		}
 		else { windowMinimizer(Date.now(), wapp); }
