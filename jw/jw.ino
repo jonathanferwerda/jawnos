@@ -2041,9 +2041,9 @@ void watch_face_maker()
   face_date = face_label_maker(0, 26, &lv_font_montserrat_16, lv_color_hex(0xFFE000), 220, LV_ALIGN_TOP_MID);
   face_time = face_label_maker(0, 44, &clock_font, lv_color_hex(0xFFE000), 220, LV_ALIGN_TOP_MID);
 
-  // seconds and steps share a line
-  face_sec = face_label_maker(-38, 112, &lv_font_montserrat_24, lv_color_hex(0xFFE000), 80, LV_ALIGN_TOP_MID);
-  face_steps = face_label_maker(38, 112, &lv_font_montserrat_24, lv_color_hex(0x5afcdd), 80, LV_ALIGN_TOP_MID);
+  // steps on the clock's left, seconds on its right
+  face_steps = face_label_maker(-38, 112, &lv_font_montserrat_24, lv_color_hex(0x5afcdd), 80, LV_ALIGN_TOP_MID);
+  face_sec = face_label_maker(38, 112, &lv_font_montserrat_24, lv_color_hex(0xFFE000), 80, LV_ALIGN_TOP_MID);
 
   // the net room; ip_writer() blanks these rows everywhere else
   face_ip = face_label_maker(20, 140, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
@@ -3340,8 +3340,10 @@ void clock_writer() {
 
   notification_btn = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(notification_btn, notification_button, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(notification_btn, 190, 150 );
-  lv_obj_set_size(notification_btn, 50, 30 );
+  // square, and raised to y=140 so the 50-tall row still clears the app row at
+  // y=190 (it sat at y=150 when it was 30 tall)
+  lv_obj_set_pos(notification_btn, 190, 140 );
+  lv_obj_set_size(notification_btn, 50, 50 );
   lv_obj_set_style_bg_color(notification_btn, lv_color_hex(0xde2716), LV_PART_MAIN);
 
   lv_obj_t *l1;
@@ -3354,8 +3356,8 @@ void clock_writer() {
 
 
   recbtn1 = lv_btn_create(lv_scr_act());
-  lv_obj_set_size(recbtn1, 50, 30);
-  lv_obj_set_pos(recbtn1, 0, 150 );
+  lv_obj_set_size(recbtn1, 50, 50);
+  lv_obj_set_pos(recbtn1, 0, 140 );
   lv_obj_add_event_cb(recbtn1, audio_button, LV_EVENT_ALL, NULL);
   lv_obj_set_style_bg_color(recbtn1, lv_color_hex(0x5ec1ff), LV_PART_MAIN);
 
@@ -3365,8 +3367,8 @@ void clock_writer() {
   lv_obj_center(label);
 
   playbtn1 = lv_btn_create(lv_scr_act());
-  lv_obj_set_size(playbtn1, 50, 30);
-  lv_obj_set_pos(playbtn1, 60, 150 );
+  lv_obj_set_size(playbtn1, 50, 50);
+  lv_obj_set_pos(playbtn1, 60, 140 );
   lv_obj_add_event_cb(playbtn1, audio_button, LV_EVENT_ALL, NULL);
   lv_obj_set_style_bg_color(playbtn1, lv_color_hex(0x5df796), LV_PART_MAIN);
 
@@ -3376,8 +3378,8 @@ void clock_writer() {
 
   wigi_btn = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wigi_btn, wigi_button, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(wigi_btn, 130, 150 );
-  lv_obj_set_size(wigi_btn, 50, 30 );
+  lv_obj_set_pos(wigi_btn, 130, 140 );
+  lv_obj_set_size(wigi_btn, 50, 50 );
   lv_obj_set_style_bg_color(wigi_btn, lv_color_hex(0x27de16), LV_PART_MAIN);
 
   lv_obj_t *l2;
