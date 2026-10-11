@@ -78,6 +78,69 @@ sway -c ~/.config/sway/config
 For a true kiosk (no TTY, auto-login into Sway), add `greetd` with an
 auto-login `sway` session — but get the session working first.
 
+## Getting it onto the box (bootable USB)
+
+Two routes; both use everything above.
+
+### A. Install to disk, then bootstrap (recommended)
+
+JawnOS keeps state — a `config.json` and an encrypted SQLite database — so a
+read-only live system forgets it all on reboot. For a real test box, install:
+
+1. Write the **stock Arch ISO** to a USB and boot it (UEFI; Secure Boot off):
+
+   ```sh
+   sudo dd if=archlinux-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   ```
+
+2. Install Arch to the disk (`archinstall`, or the manual guide). No desktop
+   profile needed — this repo provides the session.
+3. Reboot, log in, get this repo onto the box, then:
+
+   ```sh
+   ./desktop/wayland/bootstrap.sh
+   ```
+
+4. `./jawn` once to create the config + database (the first-run wizard), then
+   `exec sway`.
+
+`bootstrap.sh` installs the graphics/session packages, the app's and server's
+deps, Zed, the app itself, and the sway/waybar config. It touches nothing about
+the disk layout, the bootloader, or auto-login.
+
+### B. A custom live ISO (archiso)
+
+To boot straight from the flash drive, build an archiso profile. Do **not**
+write one from scratch — start from the releng profile archiso ships and add to
+it:
+
+```sh
+sudo pacman -S archiso
+cp -r /usr/share/archiso/configs/releng ~/jawnos-iso
+# 1. append the packages listed under "Packages" above to packages.x86_64
+# 2. copy an overlay into airootfs/: this repo's sway/waybar configs and the
+#    session script, plus a ~/.bash_profile that execs sway on tty1
+# 3. autologin: airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf
+sudo mkarchiso -v -w ~/jawnos-work -o ~/out ~/jawnos-iso
+```
+
+Caveats specific to JawnOS:
+
+- The live root is a **read-only squashfs with a RAM overlay**, so jawn's
+  database is lost on reboot. Add a partition labelled **`persistent`** on the
+  USB for a surviving overlay, or bake a `config.json` + database into
+  `airootfs/`.
+- With no baked-in config, the first run still needs the setup wizard — so a
+  live ISO is best for a **demo of the shell**, not a daily driver.
+- Size: WebKitGTK + GStreamer + Zed put it around **2–4 GB**.
+
+### Either way
+
+- **Secure Boot off** (or sign the kernel), UEFI boot, and confirm the NIC works
+  before relying on a network install.
+- Write the USB with `dd` (above) or balenaEtcher.
+- On that HP, install `intel-media-driver` (iHD), not `libva-intel-driver`.
+
 ## What is still open
 
 1. **JawnOS's own bar.** Replace waybar with a thin **layer-shell** surface that
