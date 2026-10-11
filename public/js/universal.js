@@ -728,10 +728,12 @@ function jawnosContrastInk(bg) {
 	}
 	return lum < 0.179 ? '#ffffff' : '#000000';
 }
-// Canvas text for the manager printers. The themed ink alone vanishes over a
-// background picture, so when pictures are on the text is stroked with the
-// contrasting halo first, then filled. Vertical centring is the default -
-// the printers reason about marker rows, not baselines.
+// Canvas text for the manager printers. The themed ink alone can vanish over a
+// background picture, so when pictures are on the text gets a contrasting SOFT
+// SHADOW to sit on. It used to be stroked (ctx.strokeText) instead, which read
+// as a hard white/black border around every glyph; the shadow keeps the same
+// legibility over a picture without the fringe. Vertical centring is the default
+// - the printers reason about marker rows, not baselines.
 function jawnosPrinterText(ctx, text, x, y, opts) {
 	opts = opts || {};
 	ctx.save();
@@ -740,9 +742,8 @@ function jawnosPrinterText(ctx, text, x, y, opts) {
 	ctx.textBaseline = opts.baseline || 'middle';
 	if (opts.alpha != null) { ctx.globalAlpha = opts.alpha; }
 	if (opts.halo) {
-		ctx.lineWidth = opts.haloWidth || 3;
-		ctx.strokeStyle = opts.halo;
-		ctx.strokeText('' + text, x, y);
+		ctx.shadowColor = opts.halo;
+		ctx.shadowBlur = opts.haloBlur || 4;
 	}
 	ctx.fillStyle = opts.colour || jawnosInk();
 	ctx.fillText('' + text, x, y);
