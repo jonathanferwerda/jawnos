@@ -3765,83 +3765,90 @@ get '/manager/configure/ping' => sub($c) {
 	$c->render(text => $html);
 };
 
+# HTTP rail for the sync buttons: a peer serves its tree and receives one, so
+# remote_rsync never needs ssh or a stored system password. The caller
+# authorizes as a known remote_machine (signatorial) and rides the session
+# cookie remote_useragent_maker already holds for it.
+get '/manager/rsync_pack' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $folder = $c->param('folder') || 'jawnos';
+	$folder =~ s{.*/}{};
+	my $home = &subs::home('~/');
+	my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" "$folder" 2>/dev/null`;
+	$c->res->headers->content_type('application/x-gtar');
+	$c->render(data => $tar);
+};
+
+post '/manager/rsync_unpack' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $folder = $c->param('folder') || 'jawnos';
+	$folder =~ s{.*/}{};
+	my $body = $c->req->body;
+	$body = $body->slurp if ref $body;
+	my $home = &subs::home('~/');
+	my $tmp = &subs::home('~/.president/rsync_recv_' . &subs::random_string_creator(8) . '.tgz');
+	write_file($tmp, $body);
+	`tar xzf "$tmp" -C "$home" 2>/dev/null`;
+	unlink $tmp;
+	$c->render(text => 'unpacked ' . length($body));
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
-	my $ip = $c->param('ip');
-	my $port = $c->param('ssh_port');
-
-
+	my $direction = $c->param('direction');
+	my $signatorial = $c->param('signatorial');
+	my $uuid = $c->param('uuid');
 	my $hostname = `hostname`;
 	chomp $hostname;
-
-
-	my $direction = $c->param('direction');
-	my $remote_device = $c->param('device');
-	my $signatorial = $c->param('signatorial');
-	$log->info('remote_rsync: direction=' . ($direction || '') . ' ip=' . $c->tx->remote_address . ' sig=' . ($signatorial || '')) if $log;
-	my $uuid = $c->param('uuid');
-	my $home = $c->param('home');
-	my $folder = $home || '~/jawnos';
-	my $rm = &subs::db_select('remote_machines', undef, { uuid => $uuid, signatorial => $signatorial })->hashes;
-	$ip = $rm->[0]->{'ip'};
-	if ($rm->[0]->{'tunnel'} eq 'yes') {
-		my $tuns = &subs::tunnel_port_mapper({ ip => $rm->[0]->{'ip'} });
-		$port = $tuns->{'PORT_SSH'};
-		$ip = '127.0.0.1';
-	}
-
-
-	my $username = $rm->[0]->{'username'};
-	my $password = &subs::decrypter($c->{'suds'},$rm->[0]->{'password'});
-	my $connector;
-	if ($direction eq 'from') {
-		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ' . $username . '@' . $ip . ':' . $home . ' ~/ --delete --exclude=public/images/jonathans --exclude=config.json --exclude=.git';
-	}
-	elsif ($direction eq 'to') {
-		$connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ~/jawnos ' . $username . '@' . $ip . ':~/ --delete --exclude=public/images/jonathans --exclude=config.json --exclude=.git';
-	}
-	my @ldomain = split /\./, $config->{'domain'};
-	my @rdomain = split /\./, $ip;
-	my $domain_match = 0;
-	if (@ldomain >= 2 && @rdomain >= 2) {
-    if ($ldomain[-2] eq $rdomain[-2] && $ldomain[-1] eq $rdomain[-1]) {
-			$domain_match = 1;
-    }
-	}
-	if ($domain_match == 0) {
-		$connector .= ' --exclude="server/*"';
-	}
-	&ssh_known_host_adder($ip,$port);
-	my $result = `$connector`;
-	my @result = split "\r", $result;
-	if ($direction eq 'to') {
-		$rm = &Manager::remote_useragent_maker({ signatorial => $signatorial, rm => $rm->[0] });
-		my $url = $rm->{'manager'} . '/manager/president';
-		my $form_data = {
-			signatorial => &subs::signatorial_designer(),
-			command => 'restart'
-		};
-		$rm->{'ua'}->inactivity_timeout(23);
-
-		my $res;
-		eval { $res = $rm->{'ua'}->post($url => form => $form_data)->result->body; };
-		if ($res) {
-			push @result, 'Triggered Remote Restart';
+	my $folder = $c->param('home') || 'jawnos';
+	$folder =~ s{.*/}{};
+	my $home = &subs::home('~/');
+	my $me = &subs::signatorial_designer();
+	my $rm = &subs::db_select('remote_machines', undef, { uuid => $uuid, signatorial => $signatorial })->hashes->[0];
+	my @result;
+	my $summary;
+	if ($rm->{'signatorial'}) {
+		$rm = &Manager::remote_useragent_maker({ signatorial => $signatorial, rm => $rm });
+		$rm->{'ua'}->inactivity_timeout(300);
+		if ($direction eq 'from') {
+			# pull the peer's tree down over http, unpack it into ~, restart
+			my $url = $rm->{'manager'} . '/manager/rsync_pack?signatorial=' . $me . '&folder=' . $folder;
+			my $res = eval { $rm->{'ua'}->get($url)->result };
+			if ($res && $res->is_success && length $res->body) {
+				my $tmp = &subs::home('~/.president/rsync_pull_' . &subs::random_string_creator(8) . '.tgz');
+				write_file($tmp, $res->body);
+				`tar xzf "$tmp" -C "$home" 2>/dev/null`;
+				unlink $tmp;
+				$summary = 'Pulled ' . &subs::data_size(length $res->body);
+				write_file(&subs::home('~/.president/status'), 'restart');
+				push @result, 'Triggered Local Restart';
+			}
+			else { $summary = 'Pull failed'; }
+		}
+		elsif ($direction eq 'to') {
+			# pack our tree and push it to the peer, then ask it to restart
+			my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" "$folder" 2>/dev/null`;
+			my $url = $rm->{'manager'} . '/manager/rsync_unpack?signatorial=' . $me . '&folder=' . $folder;
+			my $res = eval { $rm->{'ua'}->post($url => { 'Content-Type' => 'application/x-gtar' } => $tar)->result };
+			if ($res && $res->is_success) {
+				$summary = 'Pushed ' . &subs::data_size(length $tar);
+				my $rurl = $rm->{'manager'} . '/manager/president';
+				eval { $rm->{'ua'}->inactivity_timeout(23)->post($rurl => form => { signatorial => $me, command => 'restart' })->result };
+				push @result, 'Triggered Remote Restart';
+			}
+			else { $summary = 'Push failed'; }
 		}
 	}
-	elsif ($direction eq 'from') {
-		if ($rm->[0]->{'signatorial'}) {
-			my $status_file = &subs::home('~/.president/status');
-			write_file($status_file, 'restart');
-			push @result, 'Triggered Local Restart';
-		}
-	}
+	else { $summary = 'No such remote machine'; }
 
-	$result = (join "<br>", @result) . "\n";
+	my $result = ($summary ? $summary . '<br>' : '') . join('<br>', @result) . "\n";
 	my $whoami = `whoami`;
 	chomp $whoami;
-	$connector =~ s/$password/_________/gi;
-	my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => $connector, 'return' => $result, timestamp => $timestamp };
+	my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => 'remote_rsync ' . ($direction || ''), 'return' => $result, timestamp => $timestamp };
 
 	&Websocket::send('server', $json);
 	&subs::db_update('remote_machines', { server_time => &subs::rightNow(), connection => 'inactive' }, { uuid => $uuid, signatorial => $signatorial });
