@@ -5862,6 +5862,18 @@ sub original_timestamp() {
 
 sub log_reader {
 	my $disallowable = [];
+
+	# Per-request memo for the pure transforms the per-row loop hammers: app names
+	# repeat for every row of the same app and setting values repeat across rows.
+	# None of these has side effects, so cached results are identical.
+	my (%nmemo, %tmemo, %dmemo);
+	my $fname = sub { my $k = $_[0] // ''; $nmemo{f}{$k} //= &subs::format_name($k) };
+	my $uname = sub { my $k = $_[0] // ''; $nmemo{u}{$k} //= &subs::unformat_name($k) };
+	my $hname = sub { my $k = $_[0] // ''; $nmemo{h}{$k} //= &subs::html_name($k) };
+	my $pname = sub { my $k = $_[0] // ''; $nmemo{p}{$k} //= &subs::http_name($k) };
+	my $sname = sub { my $k = $_[0] // ''; $nmemo{s}{$k} //= &subs::apostrophe_escape($k) };
+	my $tabbr = sub { $tmemo{$_[0] // ''} //= &subs::time_abbrev_translator($_[0]) };
+	my $dsay  = sub { $dmemo{$_[0] // ''} //= &subs::duration_sayer($_[0]) };
 	my $data = $_[0] || {};
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $chosen_app = $data->{'app'};
@@ -6245,7 +6257,7 @@ sub log_reader {
 		my (%seen_app, @lookup_apps);
 		foreach my $a (@{$appointments}) {
 			next unless $a->{'app'};
-			my $lookup_app = &subs::unformat_name($a->{'app'});
+			my $lookup_app = $uname->($a->{'app'});
 			next if $seen_app{$lookup_app}++;
 			push @lookup_apps, $lookup_app;
 		}
@@ -6279,7 +6291,7 @@ sub log_reader {
 		#	#	next;
 		#	}
 		#}
-		$a->{'app'} = &subs::unformat_name($a->{'app'});
+		$a->{'app'} = $uname->($a->{'app'});
 		my @a_settings = @{ $settings_by_app{$a->{'app'}} || [] };
 		foreach my $s (@{ $settings_by_app{$a->{'app'}} || [] }) {
 			if ($s->{'setting'} eq 'colour' && !length $s->{'value'}) {
@@ -6290,13 +6302,13 @@ sub log_reader {
 			$appts->{$a->{'app'}}->{'setting'}->{$s->{'setting'}} = $s->{'value'};
 			foreach my $oi ( ($scope) ) {
 				if ($s->{'setting'} =~ /warranty|duration/gi) {
-					$appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}} = &subs::time_abbrev_translator($s->{'value'});
+					$appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}} = $tabbr->($s->{'value'});
 					if (($a->{'type'} eq 'start' || $a->{'type'} eq 'record') && $a->{'timestamp'} < $timestamp) {# && (!$a->{'duration'} || ($a->{'duration'} >= $a->{'timestamp'} - $timestamp))) {
 						$a->{'duration'} = $a->{'timestamp'} - $timestamp;
 					}
 					unless ($a->{'type'} =~ /record|start/) {
 						if (my $dur = $a->{'duration'} || $appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}}) {
-							$a->{'formatted_' . $s->{'setting'}} = &subs::duration_sayer(($dur / 1000));
+							$a->{'formatted_' . $s->{'setting'}} = $dsay->(($dur / 1000));
 						}
 					}
 				}
@@ -6323,35 +6335,36 @@ sub log_reader {
 
 		if ($a->{'duration'} !~ /[0-9]/) { $a->{'duration'} = 0; }
 		$appts->{$a->{'app'}}->{'timestamp'} = $a->{'timestamp'};
-		$appts->{$a->{'app'}}->{'name'} = &subs::unformat_name($a->{'app'});
-		$appts->{$a->{'app'}}->{'html_name'} = &subs::html_name($a->{'app'});
-		$appts->{$a->{'app'}}->{'http_name'} = &subs::http_name($a->{'app'});
-		$appts->{$a->{'app'}}->{'apostrophe_escape'} = &subs::apostrophe_escape($a->{'app'});
+		$appts->{$a->{'app'}}->{'name'} = $uname->($a->{'app'});
+		$appts->{$a->{'app'}}->{'html_name'} = $hname->($a->{'app'});
+		$appts->{$a->{'app'}}->{'http_name'} = $pname->($a->{'app'});
+		$appts->{$a->{'app'}}->{'apostrophe_escape'} = $sname->($a->{'app'});
 		$appts->{$a->{'app'}}->{'setting'}->{'wiki'} = 'https://en.wikipedia.org/wiki/' . &subs::wiki_name($a->{'app'});
 		unless ($data->{'notes'} && $data->{'notes'} eq 'on') {
 			$a->{'start_notes'} = 'redacted' if $a->{'start_notes'};
 			$a->{'notes'} = 'redacted' if $a->{'notes'};
 			$a->{'end_notes'} = 'redacted' if $a->{'end_notes'};
 		}
-		$appts->{$a->{'app'}}->{'formatted_name'} = &subs::format_name($a->{'app'});
+		$appts->{$a->{'app'}}->{'formatted_name'} = $fname->($a->{'app'});
 		$appts->{$a->{'app'}}->{'shorthand_name'} = &subs::shorthand_name($appts->{$a->{'app'}}->{'formatted_name'});
-		$a->{'formatted_time'} = localtime($a->{'timestamp'} / 1000 )->strftime('%a %b %d %Y - %I:%M:%S%P');
+		my $lt = localtime($a->{'timestamp'} / 1000 );
+		$a->{'formatted_time'} = $lt->strftime('%a %b %d %Y - %I:%M:%S%P');
 		$a->{'formatted_server_time'} = localtime($a->{'server_time'} / 1000 )->strftime('%a %b %d %Y - %I:%M:%S%P %Z');
-		$appts->{$a->{'app'}}->{'just_time'} = localtime($a->{'timestamp'} / 1000 )->strftime('%I:%M%P');
-		$appts->{$a->{'app'}}->{'just_date'} = localtime($a->{'timestamp'} / 1000 )->strftime('%a %b %d %Y');
+		$appts->{$a->{'app'}}->{'just_time'} = $lt->strftime('%I:%M%P');
+		$appts->{$a->{'app'}}->{'just_date'} = $lt->strftime('%a %b %d %Y');
 
 		if (!$a->{'duration'} && grep { 'duration' eq $_->{'setting'} } @a_settings ) {
-			$a->{'duration'} = &subs::time_abbrev_translator($appts->{$a->{'app'}}->{'setting'}->{'duration'});
+			$a->{'duration'} = $tabbr->($appts->{$a->{'app'}}->{'setting'}->{'duration'});
 		}
 		if ($a->{'timestamp'} < $timestamp && ($a->{'type'} eq 'start' || $a->{'type'} eq 'record')) {
 			$a->{'duration'} = $a->{'timestamp'} - $timestamp;
 		}
 		$appts->{$a->{'app'}}->{'duration'} = $a->{'duration'};
 
-		$a->{'formatted_duration'} = &subs::duration_sayer(abs $a->{'duration'} / 1000);
+		$a->{'formatted_duration'} = $dsay->(abs $a->{'duration'} / 1000);
 		$a->{'warranty'} = $a->{'warranty'} || $appts->{$a->{'app'}}->{'setting'}->{'warranty'};
-		$appts->{$a->{'app'}}->{'formatted_duration'} = &subs::duration_sayer($a->{'duration'});
-		$appts->{$a->{'app'}}->{'formatted_duration'} = &subs::duration_sayer((time()  - $a->{'timestamp'})) unless $a->{'duration'};
+		$appts->{$a->{'app'}}->{'formatted_duration'} = $dsay->($a->{'duration'});
+		$appts->{$a->{'app'}}->{'formatted_duration'} = $dsay->((time()  - $a->{'timestamp'})) unless $a->{'duration'};
 		$appts->{$a->{'app'}}->{'file'} = $a->{'file'};
 		if ($a->{'file'} ) {
 			if ($a->{'type'} eq 'snapshot') {
@@ -6368,8 +6381,8 @@ sub log_reader {
 			}
 		}
 
-		@appointments = grep { $_ ne $a->{'app'} } @appointments;
-		unshift @appointments, $a->{'app'};
+		# the old write-only @appointments grep/unshift here grew O(n^2) per view;
+		# nothing ever read it, so it is gone
 		if ($appts->{$a->{'app'}}->{'total'} || $appts->{$a->{'app'}}->{'amount'}) {
 			$a->{'label'} = "transaction";
 			$a->{'type'} = "transaction";
@@ -6388,12 +6401,12 @@ sub log_reader {
 		}
 		my $timestamp = $a->{'timestamp'};
 		my $type = $a->{'type'};
-		$a->{'formatted_name'} = &subs::format_name($a->{'app'});
+		$a->{'formatted_name'} = $fname->($a->{'app'});
 		push @{$appts->{$a->{'app'}}->{'list'}}, $a;
 		$appts->{$a->{'app'}}->{'last_event'} = $timestamp;
-		$a->{'formatted_account'} = &subs::format_name($a->{'account'});
-		$a->{'formatted_type'} = &subs::format_name($a->{'type'});
-		$a->{'formatted_project'} = &subs::format_name($a->{'project'});
+		$a->{'formatted_account'} = $fname->($a->{'account'});
+		$a->{'formatted_type'} = $fname->($a->{'type'});
+		$a->{'formatted_project'} = $fname->($a->{'project'});
 		if ($project && $project ne 'all') {
 			$appts->{$a->{'app'}}->{'last_project'} = $project;
 		}
