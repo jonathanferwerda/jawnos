@@ -131,6 +131,7 @@ class Bridge(object):
         self.reconnect_delay = RECONNECT_START
         self.next_attempt = 0.0
         self.connecting = False
+        self.pending_connect = False
         self.discovery_owner = None
         self._char_signal = None
         self._device_signal = None
@@ -306,7 +307,10 @@ class Bridge(object):
         self._begin_connect()
 
     def _begin_connect(self):
-        if self.connecting or self.connected():
+        # pending_connect covers the whole flow (discovery then connect), so a
+        # second queued connect -- our explicit one plus the startup
+        # auto-connect, say -- does not spawn a rival discovery timer.
+        if self.connecting or self.connected() or self.pending_connect:
             return
         mac = self.target.get("mac")
         if not mac:
@@ -314,6 +318,7 @@ class Bridge(object):
         if self._bluetooth_ready() is None:
             self._schedule_reconnect()
             return
+        self.pending_connect = True
         path = self.find_device(mac)
         if path:
             self._connect_device(path)
@@ -335,6 +340,7 @@ class Bridge(object):
             return False
         if time.time() > deadline:
             self._stop_discovery("connect")
+            self.pending_connect = False
             self.emit_error("device %s not found" % self.target.get("mac"))
             self._schedule_reconnect()
             return False
@@ -353,6 +359,7 @@ class Bridge(object):
 
     def _connect_failed(self, exc):
         self.connecting = False
+        self.pending_connect = False
         self.emit_error("connect failed: %s" % exc)
         self._schedule_reconnect()
 
@@ -386,6 +393,7 @@ class Bridge(object):
             self._iface(self.bus, notify_char, GATT_CHAR_IFACE).StartNotify()
         except (dbus.exceptions.DBusException, RuntimeError) as exc:
             self.connecting = False
+            self.pending_connect = False
             self.emit_error("enable notifications: %s" % exc)
             self.close_link(emit=False)
             self._schedule_reconnect()
@@ -394,6 +402,7 @@ class Bridge(object):
             self._on_char_props, bus_name=BLUEZ,
             dbus_interface=GATT_CHAR_IFACE, signal_name="PropertiesChanged", path=notify_char)
         self.connecting = False
+        self.pending_connect = False
         # Say who is on the other end; the watch prints this in the net room.
         try:
             self._write_raw(json.dumps({"type": "hello", "name": socket.gethostname()}))
@@ -433,7 +442,8 @@ class Bridge(object):
 
     def _maintain(self):
         if (self.auto_reconnect and self.target.get("mac") and not self.connected()
-                and not self.connecting and time.time() >= self.next_attempt):
+                and not self.connecting and not self.pending_connect
+                and time.time() >= self.next_attempt):
             self._begin_connect()
         return True
 
@@ -506,6 +516,7 @@ class Bridge(object):
         self.notify_char = None
         self.device_path = None
         self.connecting = False
+        self.pending_connect = False
         if had:
             try:
                 self._iface(self.bus, had, DEVICE_IFACE).Disconnect()
@@ -549,7 +560,8 @@ class Bridge(object):
                 continue
             with self.clients_lock:
                 self.clients.add(conn)
-            self.info("client connected, total", len(self.clients))
+            # Not logged: the dashboard and `status` poll the port every couple of
+            # seconds, so a per-connection line would bury the real events.
             GLib.idle_add(self.status)
             threading.Thread(target=self._client_reader, args=(conn,), daemon=True).start()
 
@@ -577,7 +589,6 @@ class Bridge(object):
         finally:
             with self.clients_lock:
                 self.clients.discard(conn)
-            self.info("client removed, total", len(self.clients))
             try:
                 conn.close()
             except OSError:
