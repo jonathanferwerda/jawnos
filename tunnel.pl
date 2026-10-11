@@ -62,6 +62,14 @@ sub hub_session {
   my $sig    = $opts->{'signatorial'} || 'anonymous';
   my $listen = $opts->{'listen'} || {};
 
+  # A peer redials after any drop; retire the previous session for this
+  # signatorial first so its listeners release the ports before we rebind them.
+  if (my $old = $HUB{$sig}) {
+    Mojo::IOLoop->remove($old->{'listeners'}{$_}) for keys %{$old->{'listeners'}};
+    $_->{'tcp'}->close for values %{$old->{'channels'}};
+    delete $HUB{$sig};
+  }
+
   my $session = $HUB{$sig} = {
     ws => $ws, signatorial => $sig, channel_next => 1,
     channels => {}, listeners => {},
@@ -119,7 +127,9 @@ sub hub_session {
     _log('hub session %s down', $sig);
     Mojo::IOLoop->remove(delete $session->{'listeners'}{$_}) for keys %{$session->{'listeners'}};
     $_->{'tcp'}->close for values %{$session->{'channels'}};
-    delete $HUB{$sig};
+    # Only deregister if we are still the current session for this signatorial;
+    # a redial replaces $HUB{$sig} and its own finish will clean up.
+    delete $HUB{$sig} if $HUB{$sig} && $HUB{$sig} == $session;
   });
 }
 

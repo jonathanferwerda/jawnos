@@ -6891,9 +6891,12 @@ sub tunnel_starter() {
 	if ($res->is_success) {
 		if (eval { decode_json $res->body }) {
 			my $rb = decode_json $res->body;
-			my $password = &subs::decrypter(&subs::suds_grabber(), $rm->{'password'});
-			foreach my $r (@gb::ports ) {
 			my $wss = &subs::tunnel_transport() eq 'wss';
+			# The wss path carries every port over one websocket, so the password
+			# is only ever needed for the ssh data plane.
+			my $password = $wss ? undef : &subs::decrypter(&subs::suds_grabber(), $rm->{'password'});
+			my @batch_uuids;
+			foreach my $r (@gb::ports ) {
 				my $command = $wss ? undef : 'sshpass -p "' . $password . '" ssh -o "ServerAliveInterval 9" -o "ServerAliveCountMax 1" -N -R ' . $rb->{$r}->{'source'} . ':localhost:' . $rb->{$r}->{'dest'} . ' ' . $rm->{'username'} . '@' . $rm->{'ip'} . ' -p ' . $port;
 
 				my $uuid = $rb->{$r}->{'reservation_uuid'} || &subs::random_string_creator(26);
@@ -6915,6 +6918,7 @@ sub tunnel_starter() {
 					batch_uuid => $batch_uuid
 				};
 				&subs::db_insert('tunnels', $tunnel);
+				push @batch_uuids, $uuid;
 				$tunnel->{'ip'} = $config->{'domain'};
 				my $url = $rm->{'manager'} . '/manager/configure/remote_machine/tunnel/confirm';
 				my $jtunnel = encode_json $tunnel;
@@ -6925,7 +6929,9 @@ sub tunnel_starter() {
 					uuid => $uuid
 				};
 				my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
-				if ($res->is_success) {
+				# ssh needs one holder per port; wss keeps the whole batch in
+				# the single websocket holder forked after this loop.
+				if ($res->is_success && !$wss) {
 					my $pid;
 
 					&subs::subprocessor(sub {
@@ -6933,22 +6939,29 @@ sub tunnel_starter() {
 						$pid = $$;
 
 						&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $uuid });
-						if ($wss) {
-							# Password-less path (tunnel.pl): this device is the
-							# peer and dials the hub; the hub listens on the
-							# reserved ports. Gated by the tunnel_transport
-							# setting (default ssh) until validated live.
-							&subs::tunnel_wss_peer($rm->{'manager'});
-						} else {
-							my $old_ps = `ps -e`;
-							`$command`;
+						my $old_ps = `ps -e`;
+						`$command`;
 
-							my $new_ps = `ps -e`;
-						}
+						my $new_ps = `ps -e`;
 					}, { name => 'tunnel holder ' . $rb->{$r}->{'source'} . ':' . $rm->{'ip'} . ':' . $rb->{$r}->{'dest'} });
 
 				}
 
+			}
+			if ($wss) {
+				# tunnel.pl's hub_session reads this peer's tunnels rows ONCE, when
+				# the websocket arrives, and binds a listener per row. So the peer
+				# must dial a single connection AFTER every port is reserved and
+				# confirmed - one connection per port would leave the hub holding
+				# single-port snapshots, and each later dial would replace the
+				# session for this signatorial. One connection, all channels.
+				my @uuids = @batch_uuids;
+				my $pid;
+				&subs::subprocessor(sub {
+					$pid = $$;
+					&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
+					&subs::tunnel_wss_peer($rm->{'manager'});
+				}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
 			}
 
 
