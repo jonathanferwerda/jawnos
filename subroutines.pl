@@ -2752,11 +2752,11 @@ sub setting_setter() {
 	elsif ($setting eq 'tasks') {
 		&subs::task_checker($app);
 	}
-	# these two must run after the new value is the one on record: the schedule
-	# is built from what the settings say, not from what they said
-	if ($setting eq 'nightly_evaluation_days') {
-		# the nights changed under a standing wish: the schedule follows
-		&subs::nightly_evaluation_arrange($app, 1) if (&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation' }) || '') eq 'on';
+	# these run after the new value is the one on record: the schedule is built
+	# from what the settings say, not from what they said
+	if ($setting eq 'nightly_evaluation_days' || $setting eq 'evaluation_cadence') {
+		# the cadence or the days changed under a standing wish: the schedule follows
+		&subs::evaluation_schedule_arrange($app) if $app;
 	}
 	if ($setting eq 'evaluation_machine') {
 		# the machine changed: this queue follows right away, the other machines
@@ -8688,6 +8688,22 @@ sub evaluation_agent() {
 	# from the shape of the pace, not one span's total. The count is the app's own
 	# scope count (how many periods its graph walks).
 	my $trends = $global ? {} : &subs::evaluation_period_trends($app, &subs::setting_grabber({ app => $app, setting => 's_scope_count' }));
+	# the schedule this scope is on, so the report knows how often it is asked for
+	# on its own and when the next run is due - the configuration the controls show
+	my $schedule;
+	{
+		my $cadence = &subs::evaluation_cadence($app);
+		if ($cadence && $cadence ne 'off') {
+			my @day_names = qw/sunday monday tuesday wednesday thursday friday saturday/;
+			my @days = map { $day_names[$_] } @{ &subs::nightly_evaluation_days($app) };
+			my $sch = &subs::nightly_evaluation_schedule($app);
+			$schedule = {
+				cadence => $cadence,
+				(@days ? (days => \@days) : ()),
+				($sch && $sch->{'next_run'} ? (next_run => $sch->{'next_run'}) : ()),
+			};
+		}
+	}
 	foreach my $wd ( @window_defs ) {
 		my $since = $wd->{'span'} ? ($now - $wd->{'span'}) : 0;
 		my $r = &appointment_rollup($app, $since);
@@ -8894,6 +8910,7 @@ sub evaluation_agent() {
 		scope => $global ? 'the whole house' : $app,
 		constructs => [ sort keys %{$gb::relationals} ],
 		windows => $windows,
+		($schedule ? (schedule => $schedule) : ()),
 		($serving ? (serving => $serving) : ()),
 		(scalar keys %{$settings_brief} ? (settings => $settings_brief) : ()),
 		depth => $depth,
@@ -8907,7 +8924,7 @@ sub evaluation_agent() {
 		(scalar @recent ? (headlines => \@recent) : ()),
 		($since_last ? (since_last => $since_last) : ()),
 	};
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. Each window also carries quantity where entries logged one - times (how many carried a quantity). serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. A run for one app may also carry trends: for each clock the inventory graphs - minute, hour, day, week, month and year - the counts of the last several periods as label=count pairs, oldest first, so the pace is read period by period (a week that fell away, a month that doubled). A period with nothing rides along as 0, but a scope whose whole window is empty is left out - never read its absence as a fall to nothing. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Use only the numbers given.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. schedule, when it rides along, says how often this report is asked for on its own: cadence is one of hourly, daily, weekly, monthly, yearly or each_run (evaluated whenever the appointment itself runs), with days (the weekdays it runs on, for daily or weekly) and next_run (when a run is queued) when they apply. Each window also carries quantity where entries logged one - times (how many carried a quantity). serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. A run for one app may also carry trends: for each clock the inventory graphs - minute, hour, day, week, month and year - the counts of the last several periods as label=count pairs, oldest first, so the pace is read period by period (a week that fell away, a month that doubled). A period with nothing rides along as 0, but a scope whose whole window is empty is left out - never read its absence as a fall to nothing. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Use only the numbers given.';
 	my $instructions = $depth eq 'brief'
 		? 'Write one line only - a headline, at most twenty words, no label and no headings - that states what changed in the pace, or that it held if nothing did. Nothing else.'
 		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Under Correlations weigh related and around together - pairs with |r| >= 0.5 - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
@@ -9147,10 +9164,20 @@ sub nightly_evaluation_name {
 	return 'nightly_evaluation_' . $app;
 }
 
+# The schedule a scope now has, as Minion lists it. The configure page asks per
+# app, so the answer is memoised for a few seconds: one query serves a page of
+# apps instead of one per app. arrange() calls this right after a write, so the
+# memo is short enough that a just-made change is seen on the next repaint.
+my %schedule_memo;
 sub nightly_evaluation_schedule {
 	my ($app) = @_;
+	$app = '__president' unless $app && $app ne '';
+	my $now = time;
+	return $schedule_memo{$app}->{'schedule'} if exists $schedule_memo{$app} && $schedule_memo{$app}->{'at'} > $now - 3;
 	my $listed = eval { return &subs::minion_grabber()->list_schedules(0, 1, { names => [ &subs::nightly_evaluation_name($app) ] }) } || {};
-	return ($listed->{'schedules'} || [])->[0];
+	my $schedule = ($listed->{'schedules'} || [])->[0];
+	$schedule_memo{$app} = { at => $now, schedule => $schedule };
+	return $schedule;
 }
 
 # the days the nightly runs, as a comma list of cron weekdays (0 is Sunday);
@@ -9158,40 +9185,94 @@ sub nightly_evaluation_schedule {
 sub nightly_evaluation_days {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
-	my $days = &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' }) || '';
+	my $days = &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' });
+	# '0' is Sunday and is a value, not nothing: "|| ''" would drop it
+	$days = '' unless defined $days;
 	return [ grep { /^[0-6]$/ } split /\s*,\s*/, $days ];
 }
 
-sub nightly_evaluation_cron {
+# The cadence a scope runs on its own: off, hourly, daily, weekly, monthly,
+# yearly, or each_run (evaluated whenever the appointment itself runs). The old
+# nightly checkbox is read as daily, so a house that has not been reconfigured
+# keeps its nights. The timed cadences become a cron the worker carries out;
+# each_run has no schedule and rides the appointment writer instead.
+sub evaluation_cadence {
 	my ($app) = @_;
-	my $days = &subs::nightly_evaluation_days($app);
-	return '0 7 * * ' . (scalar @{$days} ? join(',', @{$days}) : '*');
+	$app = '__president' unless $app && $app ne '';
+	my $c = &subs::setting_grabber({ app => $app, setting => 'evaluation_cadence' });
+	return $c if defined $c && grep { $_ eq $c } qw/off hourly daily weekly monthly yearly each_run/;
+	return 'daily' if (&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation' }) || '') eq 'on';
+	return 'off';
 }
 
-# carry out one scope's wish: schedule it, or unschedule it
-sub nightly_evaluation_arrange {
-	my ($app, $on) = @_;
+# Minion reads cron in UTC, and 0 7 * * ... is the small hours of the house
+# (3am EDT, 2am EST). The days select narrows daily and weekly; nothing picked
+# means every night for daily and Sunday for weekly.
+sub evaluation_schedule_cron {
+	my ($app, $cadence) = @_;
+	$cadence = &subs::evaluation_cadence($app) unless defined $cadence;
+	return undef unless defined $cadence && $cadence ne 'off' && $cadence ne 'each_run';
+	my @days = @{ &subs::nightly_evaluation_days($app) };
+	return '0 * * * *' if $cadence eq 'hourly';
+	return '0 7 * * ' . (scalar @days ? join(',', @days) : '*') if $cadence eq 'daily';
+	return '0 7 * * ' . (scalar @days ? join(',', @days) : '0') if $cadence eq 'weekly';
+	return '0 7 1 * *' if $cadence eq 'monthly';
+	return '0 7 1 1 *' if $cadence eq 'yearly';
+	return undef;
+}
+
+# carry out one scope's cadence: schedule its cron, or clear it (off, each_run)
+sub evaluation_schedule_arrange {
+	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
 	my $minion = &subs::minion_grabber();
 	my $name = &subs::nightly_evaluation_name($app);
-	if ($on) {
+	my $cron = &subs::evaluation_schedule_cron($app);
+	if ($cron) {
 		# one retry, in case the model was only briefly unreachable
-		$minion->schedule($name, &subs::nightly_evaluation_cron($app), 'appointment_evaluation', [ { app => $app } ], { attempts => 2 });
+		$minion->schedule($name, $cron, 'appointment_evaluation', [ { app => $app } ], { attempts => 2 });
 	}
 	else {
 		$minion->unschedule($name);
 	}
+	# a change here is a change the next read should see, not the memo
+	delete $schedule_memo{$app};
 }
 
-# the checkbox writes both halves: the setting remembers the wish, the schedule
+# the controls write both halves: the setting remembers the wish, the schedule
 # carries it out, and the answer reports the schedule that now exists
+sub evaluation_cadence_apply {
+	my ($app, $cadence) = @_;
+	$app = '__president' unless $app && $app ne '';
+	$cadence = 'off' unless defined $cadence && grep { $_ eq $cadence } qw/off hourly daily weekly monthly yearly each_run/;
+	&subs::setting_setter({ app => $app, setting => 'evaluation_cadence', value => $cadence });
+	&subs::evaluation_schedule_arrange($app);
+	return &subs::nightly_evaluation_schedule($app);
+}
+
+# the old on/off checkbox, kept for anything that still speaks it
 sub nightly_evaluation_apply {
 	my ($app, $on) = @_;
-	$app = '__president' unless $app && $app ne '';
-	$on = $on ? 1 : 0;
-	&subs::setting_setter({ app => $app, setting => 'nightly_evaluation', value => $on ? 'on' : 'off' });
-	&subs::nightly_evaluation_arrange($app, $on);
-	return &subs::nightly_evaluation_schedule($app);
+	return &subs::evaluation_cadence_apply($app, $on ? 'daily' : 'off');
+}
+
+# Every run fires the evaluation when the scope's cadence is each_run. A Minion
+# lock throttles a burst of runs to one evaluation per window (300s), so a
+# morning of records does not queue a morning of model calls. Only a completed
+# run counts - a one-shot ('usual') or the end of a start/stop pair ('stop') -
+# and never a spawned child.
+sub evaluation_run_trigger {
+	my ($app, $appt) = @_;
+	return unless $app && $app ne '__president';
+	return unless ref $appt eq 'HASH';
+	my $type = $appt->{'type'} || '';
+	return unless $type eq 'usual' || $type eq 'stop';
+	return if $appt->{'source_uuid'};
+	return unless &subs::evaluation_cadence($app) eq 'each_run';
+	my $minion = &subs::minion_grabber();
+	return unless $minion->lock('evaluation_each_run_' . $app, 300);
+	$minion->enqueue('appointment_evaluation' => [ { app => $app } ] => { attempts => 2 });
+	return 1;
 }
 
 # The queue under ~/.president does not outlive the launcher, but the settings
@@ -9205,11 +9286,19 @@ sub nightly_evaluation_reconcile {
 		# habit of every queue carrying whatever wish its settings show
 		my $chosen = &subs::evaluation_machine();
 		my $mine = !$chosen || $chosen eq &subs::signatorial_designer();
-		my $rows = &subs::db_select('settings', undef, { setting => 'nightly_evaluation', device => &subs::device_setter() })->hashes || [];
+		# every scope ever given a cadence, or the old nightly checkbox: the
+		# effective cadence decides which of them wants a schedule
+		my %scope;
+		foreach my $setting ( qw/evaluation_cadence nightly_evaluation/ ) {
+			my $rows = &subs::db_select('settings', undef, { setting => $setting, device => &subs::device_setter() })->hashes || [];
+			foreach my $row ( @{$rows} ) {
+				$scope{ ($row->{'app'} && $row->{'app'} ne '') ? $row->{'app'} : '__president' } = 1;
+			}
+		}
 		my %wanted;
-		foreach my $row ( @{$rows} ) {
-			next unless ($row->{'value'} || '') eq 'on';
-			$wanted{ ($row->{'app'} && $row->{'app'} ne '') ? $row->{'app'} : '__president' } = 1;
+		foreach my $app ( keys %scope ) {
+			my $cadence = &subs::evaluation_cadence($app);
+			$wanted{$app} = 1 if $cadence ne 'off' && $cadence ne 'each_run';
 		}
 		my $listed = &subs::minion_grabber()->list_schedules(0, 1000) || {};
 		my %present;
@@ -9217,17 +9306,17 @@ sub nightly_evaluation_reconcile {
 			next unless $sch->{'name'} =~ /^nightly_evaluation_/;
 			$present{$sch->{'name'}} = 1;
 		}
-		foreach my $scope ( keys %wanted ) {
+		foreach my $app ( keys %wanted ) {
 			next unless $mine;
 			# schedule() is an upsert by name (and keeping the same expression
 			# keeps the firing time), so asking for every wanted scope also
-			# retunes one whose nights changed while nobody was looking
-			&subs::nightly_evaluation_arrange($scope, 1);
+			# retunes one whose cadence changed while nobody was looking
+			&subs::evaluation_schedule_arrange($app);
 		}
 		foreach my $name ( keys %present ) {
-			my ($scope) = $name =~ /^nightly_evaluation_(.*)$/;
-			next if $mine && $wanted{$scope};
-			&subs::nightly_evaluation_arrange($scope, 0);
+			my ($app) = $name =~ /^nightly_evaluation_(.*)$/;
+			next if $mine && $wanted{$app};
+			&subs::minion_grabber()->unschedule($name);
 		}
 	};
 	return;

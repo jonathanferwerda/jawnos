@@ -1,8 +1,9 @@
 <% use Mojo::JSON qw/decode_json/; %>
 <%# the evaluation's controls, kept apart from its report: the button that runs
-    one now, the wish for a nightly run, the nights it happens, and the durable
-    note of what the last night did. They sit in the app's configuration and in
-    the system settings, and the report they fill lives beside them. %>
+    one now, the cadence it runs on its own (hourly..yearly, or every run, with
+    the days for daily and weekly), and the durable note of what the last run
+    did. They sit in the app's configuration and in the system settings, and the
+    report they fill lives beside them. %>
 <button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
 <%# how much the answer carries: brief is a single headline line (cheap, for a
     daily run), full is the whole report %>
@@ -12,19 +13,32 @@
 		<option value="<%= $d %>" <% if ($eval_depth eq $d) { %>selected<% } %>><%= &subs::format_name($d) %></option>
 	<% } %>
 </select>
-<%# the setting is the wish and the schedule is the mechanism: the worker puts
-    the schedule back from the setting at boot, so checked means the evaluation
-    will be re-run each night even across a restart %>
-<% my $nightly = (&subs::setting_grabber({ app => $app || '__president', setting => 'nightly_evaluation' }) || '') eq 'on'; %>
-<label class="hover" hint="Evaluate every night so a fresh report is waiting in the morning" style="vertical-align:bottom;"><input type="checkbox" class="nightly_evaluation" app="<%= $app || '' %>"<% if ($nightly) { %> checked<% } %>> Nightly</label>
-<%# the nights it runs; nothing picked means every night %>
-<% my @nightly_days = @{ &subs::nightly_evaluation_days($app || '__president') }; %>
-<select multiple class="nightly_evaluation_days" app="<%= $app || '__president' %>" hint="The nights the evaluation runs; nothing picked means every night" style="vertical-align:bottom;height:70px;">
+<%# the setting is the wish and the schedule is the mechanism: the worker puts the
+    schedule back from the setting at boot, so the cadence survives a restart.
+    The timed cadences (hourly..yearly) become a cron; each_run queues a run
+    whenever the appointment itself runs. The old nightly checkbox reads as daily
+    through evaluation_cadence %>
+<% my $run_scope = $app || '__president'; %>
+<% my $cadence = &subs::evaluation_cadence($run_scope); %>
+<select class="evaluation_cadence" app="<%= $run_scope %>" hint="How often the evaluation runs on its own; Every Run queues one whenever the appointment runs" style="vertical-align:bottom;">
+	<% foreach my $c ( qw/off hourly daily weekly monthly yearly each_run/ ) { %>
+		<option value="<%= $c %>" <% if ($cadence eq $c) { %>selected<% } %>><%= $c eq 'each_run' ? 'Every Run' : &subs::format_name($c) %></option>
+	<% } %>
+</select>
+<%# the days it runs on when the cadence is daily or weekly; nothing picked means
+    every night for daily and Sunday for weekly %>
+<% my @nightly_days = @{ &subs::nightly_evaluation_days($run_scope) }; %>
+<select multiple class="nightly_evaluation_days" app="<%= $run_scope %>" hint="The days the evaluation runs on, for daily or weekly; nothing picked means every night (daily) or Sunday (weekly)" style="vertical-align:bottom;height:70px;">
 	<% my @day_names = qw/sunday monday tuesday wednesday thursday friday saturday/; %>
 	<% foreach my $d ( 0 .. 6 ) { %>
 		<option value="<%= $d %>" <% if (grep { $_ == $d } @nightly_days) { %>selected<% } %>><%= &subs::format_name($day_names[$d]) %></option>
 	<% } %>
 </select>
+<%# when the next scheduled run is due, so the cadence is easy to read at a glance %>
+<% my $eval_schedule = &subs::nightly_evaluation_schedule($run_scope); %>
+<% if ($eval_schedule && $eval_schedule->{'next_run'}) { %>
+	<span class="evaluation_next_run" style="font-size:80%;vertical-align:bottom;">Next run <b class="time" timestamp="<%= $eval_schedule->{'next_run'} * 1000 %>"></b></span>
+<% } %>
 <%# how much history the evaluation reads is no longer chosen: every run weighs
     day, week, month, year and all time together, since a change of pace only
     shows across the spans %>

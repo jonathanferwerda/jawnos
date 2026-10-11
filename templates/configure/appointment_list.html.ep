@@ -187,7 +187,7 @@
 					    the controls that run one and the report it last left, so an app's
 					    evaluation is configured where the app is %>
 					<span class="configuration_ability_container" setting="evaluation">
-						<button style="width:95%;" app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><b>Evaluation:</b> <%= ((($appts->{$a}->{'setting'}->{'nightly_evaluation'} || '') eq 'on') ? 'nightly' : 'on demand') %></button>
+						<button style="width:95%;" app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><b>Evaluation:</b> <%= do { my $c = &subs::evaluation_cadence($a); $c eq 'off' ? 'on demand' : ($c eq 'each_run' ? 'every run' : $c) } %></button>
 						<div style="display:none;" class="app_configure_input" setting="evaluation" app="<%= $a %>">
 							<%= include 'apps/evaluation_controls', app => $a %>
 							<%# the report the app last produced; a run that could not reach the

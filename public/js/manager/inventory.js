@@ -506,23 +506,21 @@ $(document).on('click', '.evaluation_app_link', function() {
 	appointmentGrabber(link.attr('app'), Date.now());
 });
 
-$(document).on('change', '.nightly_evaluation', function() {
-	var box = $(this);
-	var wanted = box.is(':checked');
-	box.prop('disabled', true);
+$(document).on('change', '.evaluation_cadence', function() {
+	var pick = $(this);
+	pick.prop('disabled', true);
 	$.ajax({
 		url: '/manager/inventory/evaluate/nightly',
 		type: 'POST',
-		data: { app: box.attr('app'), checked: wanted ? 1 : 0 },
+		data: { app: pick.attr('app'), cadence: pick.val() },
 		success: function(response) {
-			box.prop('disabled', false);
-			// the schedule that now exists, or doesn't, is the truth: paint what
-			// the server says rather than what was asked for
-			box.prop('checked', response['checked'] ? true : false);
+			pick.prop('disabled', false);
+			// the cadence that now exists is the truth: paint what the server says
+			// rather than what was asked for
+			if (response['cadence']) { pick.val(response['cadence']); }
 		},
 		error: function() {
-			box.prop('disabled', false);
-			box.prop('checked', !wanted);
+			pick.prop('disabled', false);
 		}
 	});
 });
@@ -530,7 +528,8 @@ $(document).on('change', '.nightly_evaluation', function() {
 $(document).on('change', '.nightly_evaluation_days', function() {
 	var pick = $(this);
 	var nights = pick.val() || [];
-	// which nights of the week it runs; none picked means every night
+	// which nights of the week it runs (for daily and weekly); none picked means
+	// every night for daily and Sunday for weekly
 	settingSetter({ app: pick.attr('app'), setting: 'nightly_evaluation_days', value: nights.join(',') });
 });
 

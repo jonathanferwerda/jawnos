@@ -1196,6 +1196,9 @@ sub appointment_writer($c,$app) {
 	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
 	my $cv = &centre_view_grabber({ c => $c, app => &subs::unformat_name($app->{'app'}), timestamp => &subs::rightNow(), cached => 'no' });
 	&budget_runner($app->{'app'});
+	# every run: a scope on the each_run cadence queues an evaluation as soon as it
+	# has run, throttled by a Minion lock so a burst is one run, not many
+	&subs::evaluation_run_trigger($app->{'app'}, $app);
 
 	if (1 == 1 && $app->{'app'}) {
 		my $params = Mojo::Parameters->new(%{$app});
@@ -9048,16 +9051,19 @@ post '/manager/inventory/evaluate' => sub ($c) {
 };
 
 post '/manager/inventory/evaluate/nightly' => sub ($c) {
-	# the setting remembers the wish, the schedule carries it out, so the
-	# checkbox cannot drift from the queue; the answer reports the schedule that
-	# now exists (or does not), and the page paints that
+	# the setting remembers the wish, the schedule carries it out, so the control
+	# cannot drift from the queue; the answer reports the cadence and schedule that
+	# now exist, and the page paints that. checked is the old checkbox, read as
+	# daily/off, so a stale control still works
 	my $app = &subs::unformat_name($c->param('app')) || '__president';
-	my $schedule = &subs::nightly_evaluation_apply($app, $c->param('checked'));
+	my $cadence = $c->param('cadence');
+	$cadence = ($c->param('checked') ? 'daily' : 'off') unless defined $cadence && $cadence ne '';
+	my $schedule = &subs::evaluation_cadence_apply($app, $cadence);
 	$c->render(json => {
 		ok => 'yes',
 		app => $app,
-		checked => $schedule ? 1 : 0,
-		next_run => $schedule ? $schedule->{'next_run'} : undef
+		cadence => &subs::evaluation_cadence($app),
+		next_run => $schedule ? $schedule->{'next_run'} : undef,
 	});
 };
 
