@@ -603,6 +603,11 @@ canvas { overflow: scroll; z-index: 99; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
 .window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:2px; border-width:2px; font-size:26px; }
+/* Windows round their corners a touch. .wind carries the radius so its own
+   panel background is clipped to it and the frame ring below inherits it; the
+   title bar rounds only its top corners to match, so its square ones don't show
+   through where the panel curves away. */
+.wind { border-radius: var(--window_radius, 8px); }
 /* Every window wears the same frame. It is an inset ring painted over the
    window (pointer-events: none, so nothing under it stops being clickable)
    rather than a real border on .wind: a border would be counted in the box and
@@ -635,7 +640,7 @@ canvas { overflow: scroll; z-index: 99; }
    to be border-box: content-box would add the two 3px edges on top of the
    full width and push the bar 6px past the window's right edge, out of line
    with .window_contents. */
-.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); }
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, 8px) var(--window_radius, 8px) 0 0; }
 /* the icon sits in a bare tile with a 2px collar of the bar's colour around
    it: the holder pads the top, left and bottom, and being the tallest thing
    on the line it keeps the name's middle on the bar's middle. The corners of
