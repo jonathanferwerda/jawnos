@@ -1,0 +1,25 @@
+#!/bin/sh
+# Start the JawnOS session on Sway: bring up jawn (server + BLE bridge), wait
+# for it to answer, then open the fullscreen embedded view. Meant to be run from
+# sway's `exec` (see sway.conf). See desktop/wayland/README.md.
+set -eu
+
+JAWNOSCTL=${JAWNOSCTL:-$HOME/.local/bin/jawnosctl}
+JAWNOS_APP=${JAWNOS_APP:-$HOME/.local/share/jawnos/desktop/jawnos-desktop}
+
+# jawn (and the Bluetooth bridge, per the "BLE with jawn" setting).
+"$JAWNOSCTL" start || true
+
+# Wait for jawn's working port to answer (max ~30 s), so the view's first load
+# is not a "connection refused" page.
+i=0
+while [ "$i" -lt 30 ]; do
+	if "$JAWNOSCTL" status 2>/dev/null | grep -q 'running'; then
+		break
+	fi
+	i=$((i + 1))
+	sleep 1
+done
+
+# The view on the JawnOS tab; Sway's window rule fullscreens it.
+exec "$JAWNOS_APP" --webview
