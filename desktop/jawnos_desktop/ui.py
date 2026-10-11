@@ -77,6 +77,7 @@ class Dashboard(Gtk.Window):
 
         self._header(box, "Open")
         self._button(box, "Open JawnOS UI", self.action_open_ui)
+        self._button(box, "Open JawnOS UI (embedded)", self.action_open_embedded)
         self._button(box, "Show jawn log", self.action_show_log)
         self._button(box, "Open console", self.action_open_console)
 
@@ -140,6 +141,17 @@ class Dashboard(Gtk.Window):
     def action_open_ui(self):
         if not core.open_ui(self.settings["jawn_dir"]):
             self._say("could not open a browser")
+
+    def action_open_embedded(self):
+        try:
+            from . import webview
+        except Exception as exc:  # WebKitGTK missing
+            self._say("embedded view unavailable: %s" % exc)
+            return
+        try:
+            webview.run_webview(self.settings)
+        except Exception as exc:
+            self._say("embedded view failed: %s" % exc)
 
     def action_open_console(self):
         ok, message = core.open_console(self.settings["jawn_dir"])
@@ -259,7 +271,14 @@ def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(prog="jawnos-desktop", description="JawnOS desktop dashboard")
     parser.add_argument("--tray", action="store_true", help="also show a status-tray icon")
+    parser.add_argument("--webview", action="store_true",
+                        help="open the embedded JawnOS UI instead of the dashboard")
     args = parser.parse_args(argv)
+    if args.webview:
+        from . import webview
+        webview.run_webview()
+        Gtk.main()
+        return 0
     return run_dashboard(tray=args.tray)
 
 
