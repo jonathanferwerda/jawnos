@@ -4888,7 +4888,13 @@ sub database_grabber() {
 	if ($holder->{'pid'} && $holder->{'pid'} == $$ && $holder->{'db'} && $holder->{'dbh'} && $holder->{'dev'}) {
 		my @stat = stat($holder->{'database'});
 		if (@stat && $stat[0] == $holder->{'dev'} && $stat[1] == $holder->{'ino'}) {
-			eval { $holder->{'dbh'}->visit_child_handles(sub { my $sth = shift; $sth->finish }) };
+			# Only when a statement is actually abandoned: ActiveKids is a cheap
+			# DBI counter, zero once every result has been fetched, while
+			# visit_child_handles walks every child handle ever made on the
+			# connection. The callers fetch their rows before the next call, so
+			# on the common path there is nothing here to finish.
+			eval { $holder->{'dbh'}->visit_child_handles(sub { my $sth = shift; $sth->finish }) }
+				if $holder->{'dbh'}->{ActiveKids};
 			return ($holder->{'db'}, $holder->{'database'}, $holder->{'sql'});
 		}
 	}
