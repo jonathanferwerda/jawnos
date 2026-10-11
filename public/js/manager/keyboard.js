@@ -439,6 +439,19 @@ function keyboardDragBarMaker(k) {
 	}
 }
 
+// Whether a hit-tested element belongs to the pseudonym dock. A tucked dock
+// rides its bars and keys outside #pseudonym_home's own box, so an id-only test
+// misses them and the dock slid away from under the pointer.
+function jawnosDockElement(el) {
+	el = $(el);
+	return el.attr('id') == 'pseudonym_home'
+		|| el.hasClass('pseudonym')
+		|| el.hasClass('keyboard')
+		|| el.hasClass('window_toggle')
+		|| el.hasClass('manager_search_result')
+		|| el.closest('#pseudonym_home').length > 0;
+}
+
 function pseudonymHomeShower(x,y,interval) { 
 	var was = 0;
 	var okay = 1;
@@ -459,7 +472,7 @@ function pseudonymHomeShower(x,y,interval) {
 	}
 	if (!interval) {
 		$.each(elements, function(i,v) {
-			if ($(v).attr('id') == 'pseudonym_home') {
+			if (jawnosDockElement(v)) {
 				was++;
 			}
 			if ($(v).attr('id') == 'search' || $(v).attr('id') == 'search_toggle' || $(v).attr('id') == 'manager_search_results') {
@@ -565,8 +578,7 @@ function pseudonymHomeHider(interval) {
 	if (isFinite(m.x) && isFinite(m.y)) {
 		var elements = document.elementsFromPoint(m.x, m.y);
 		$.each(elements, function(i,v) {
-			var has_it = $(v).hasClass('keyboard');
-			if ($(v).attr('id') == 'pseudonym_home' || $(v).hasClass('manager_search_result')) {
+			if (jawnosDockElement(v)) {
 				was++;
 			}
 		});
@@ -607,7 +619,8 @@ function pseudonymHomeHider(interval) {
 		}
 	}
 	else {
-		pseudonymInterval = Date.now();
+		// the pointer is on the dock: push the hide back instead of hiding
+		pseudonymIntervals = Date.now();
 	}
 }
 

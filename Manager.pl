@@ -20662,11 +20662,14 @@ sub remote_machine_reconnector($c) {
 							&deletion_performer(encode_json \@dels) if scalar @dels;
 							&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $rj->{'signatorial'} });
 						}
-						# the peer's self-reported version, so "who is behind" is a column,
-						# not a guess, without waiting for a full reconnect to refresh it
-						if ($rj->{'version'}) {
-							&subs::db_update('remote_machines', { version => $rj->{'version'} }, { signatorial => $rj->{'signatorial'} });
-						}
+						# Refresh the live flags on every successful tick: connection/status
+						# were only ever set on a full reconnect, so a row could read
+						# 'inactive' while the peer was answering every handshake (the hub
+						# showed that here). version rides along so "who is behind" is a
+						# column, not a guess.
+						my $flags = { connection => 'active', status => 'connected', server_time => &subs::rightNow() };
+						$flags->{'version'} = $rj->{'version'} if $rj->{'version'};
+						&subs::db_update('remote_machines', $flags, { signatorial => $rj->{'signatorial'} });
 						if ($rj->{'location'}) {
 							my $same_net = &subs::same_net_test($rj->{'you'},$rj->{'me'});
 							my $location_source = &subs::remote_machine_lister({ signatorial => $rj->{'location'}->{'signatorial'}, mirrors => 'none', limit => 1 });
