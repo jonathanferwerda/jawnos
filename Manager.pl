@@ -564,6 +564,11 @@ sub rock_and_roll($c) {
 
 		return;
 	}
+	# A thumbnail is a fixed frame of a file, so it can be cached; letting the
+	# browser hold it keeps a repeat visit to the music library (which asks for a
+	# thumbnail per song) from re-requesting every one. Kept short so a failed
+	# ('none') render heals quickly instead of sticking.
+	$c->res->headers->cache_control('private, max-age=3600') if $c->param('thumb');
 	my ($db,$database,$sql) = &subs::database_grabber();
 
 	my $mag;

@@ -69,12 +69,16 @@ packages (the base table alone will not play video well — see
 
 | Distro | embedded view + media |
 |---|---|
-| Arch / Manjaro | `webkit2gtk-4.1` `gst-plugins-base` `gst-plugins-good` `gst-plugins-bad` `gst-plugins-ugly` `gst-libav` `gst-plugin-va` `libva-utils` |
+| Arch / Manjaro | `webkit2gtk-4.1` `gst-plugins-base` `gst-plugins-good` `gst-plugins-bad` `gst-plugins-ugly` `gst-libav` `libva-utils` |
 | Debian / Ubuntu | `gir1.2-webkit2-4.1` `gstreamer1.0-plugins-base` `gstreamer1.0-plugins-good` `gstreamer1.0-plugins-bad` `gstreamer1.0-plugins-ugly` `gstreamer1.0-libav` `gstreamer1.0-vaapi` `vainfo` |
 | Fedora | `webkit2gtk4.1` `gstreamer1-plugins-base` `gstreamer1-plugins-good` `gstreamer1-plugins-bad-free` `gstreamer1-plugins-ugly` `gstreamer1-libav` `gstreamer1-vaapi` |
 
 `install.sh` checks for these and prints the right command for your distro if
-they are missing.
+they are missing. On Arch the VA-API plugin used to be a separate
+`gst-plugin-va` package; on current Arch it ships inside `gst-plugins-bad`.
+
+Every system also needs the **VA-API driver for its GPU** (below), or video
+decodes in software.
 
 ## Using it
 
@@ -156,22 +160,29 @@ not the app's:
 * Install the full plugin set listed above (`gst-plugins-base/good/bad/ugly` and
   `gst-libav`). Without them WebKit has only a software h264 decoder and HD video
   is choppy.
-* Install the **VA-API plugin** (`gst-plugin-va` / `gstreamer1.0-vaapi` /
-  `gstreamer1-vaapi`) so decode happens on the GPU. That is the single biggest
-  win. It also needs the driver for your GPU (`libva-intel-driver` or
-  `intel-media-driver` on Arch; `i965-va-driver` or
-  `intel-media-va-driver-non-free` on Debian).
-* Confirm with `gst-inspect-1.0 vaapi` (or `gst-inspect-1.0 va` on newer
-  GStreamer) — if it lists elements, hardware decode is available.
+* Install the **VA-API plugin** (`gstreamer1.0-vaapi`, or the `va` plugin that
+  ships inside `gst-plugins-bad` on newer GStreamer) so decode happens on the
+  GPU. That is the single biggest win.
+* It *also* needs the driver for your GPU (`intel-media-driver` or
+  `libva-intel-driver` on Arch; `intel-media-va-driver-non-free` or
+  `i965-va-driver` on Debian). Without a driver the plugin loads but registers
+  **zero** elements, so video quietly stays on software decode — this is the
+  usual reason a machine still stutters after the plugin is installed.
+* Confirm with `gst-inspect-1.0 vah264dec` (the element WebKit actually uses),
+  not just `gst-inspect-1.0 va` — the latter succeeds even on a plugin that
+  offers nothing, and `vainfo` should list H264/HEVC profiles.
 
-On Arch/Manjaro the plugin lives in its own package, `gst-plugin-va`, and it
-must be installed *with* the rest of the `gst-*` stack (they pin each other
-exactly, so a lone install is refused — upgrade them together):
+On Arch/Manjaro the plugin ships inside `gst-plugins-bad`, which must be
+installed *with* the rest of the `gst-*` stack (they pin each other exactly, so
+a lone install is refused — upgrade them together):
 
 ```sh
 sudo pacman -S gst-plugins-base gst-plugins-good gst-plugins-bad \
-  gst-plugins-ugly gst-libav gst-plugin-va
+  gst-plugins-ugly gst-libav
 ```
+
+(An older Arch split the plugin into a `gst-plugin-va` package; that no longer
+exists.)
 
 If video is still not right, the renderer can be tuned without touching code:
 write `KEY=VALUE` lines to `~/.config/jawnos/webkit.env` (WebKit reads them at

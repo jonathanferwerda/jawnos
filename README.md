@@ -200,8 +200,10 @@ the screen.
 - Optional, for the full feature set: Python `weasyprint` (PDF rendering), `ollama` (local AI
   models), and a `whisper.cpp` build with the base model (audio transcription).
 - Optional, for the Linux desktop app (`desktop/`, the phone's dashboard and BLE bridge on a
-  computer): `python3-gi`, `python3-dbus`, BlueZ, **WebKitGTK 4.1** (the embedded view) and the
-  **GStreamer** plugin set with a VA-API plugin for GPU video decode — see
+  computer): `python3-gi`, `python3-dbus`, BlueZ, **WebKitGTK 4.1** (the embedded view), the
+  **GStreamer** plugin set with the **VA-API** decode plugin, and — importantly — the **VA-API
+  driver for your GPU**. Without the driver the plugin exposes nothing and HD video falls back to
+  software decode (choppy, and heavy on the CPU). See
   [`desktop/README.md`](desktop/README.md#media-and-video).
 
 You do not have to install any of this by hand. The first time you run `./jawn` it checks for
@@ -290,11 +292,17 @@ perl tesseract-ocr imagemagick sqlite3 sshpass \
 ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
 tmux weasyprint autossh net-tools ollama
 
-# For the Linux desktop app (desktop/): the embedded view and smooth video
-# (gstreamer1.0-vaapi is the GPU decode plugin; add your GPU's VA driver too).
+# For the Linux desktop app (desktop/): the embedded view and smooth video.
+# gstreamer1.0-vaapi is the decode plugin; it ALSO needs the VA-API driver for
+# your GPU (pick one below), or HD video decodes in software and is choppy.
 sudo apt install python3-gi python3-dbus bluez gir1.2-webkit2-4.1 \
 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
 gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo
+#   Intel (Gen8+):  sudo apt install intel-media-va-driver-non-free
+#   Intel (older):  sudo apt install i965-va-driver
+#   AMD / Mesa:     sudo apt install mesa-va-drivers
+#   NVIDIA:         sudo apt install nvidia-vaapi-driver
+# Confirm hardware decode with:  vainfo && gst-inspect-1.0 vah264dec
 
 sudo cpanm --notest --force Mojolicious::Lite \
  WWW::Mechanize Time::Piece Time::Duration \
@@ -346,11 +354,17 @@ net-tools xdotool qrencode zbar fprintd python-weasyprint \
 autossh lm_sensors ollama cmake python-pip
 
 # For the Linux desktop app (desktop/): the embedded view and smooth video.
-# Without the GStreamer plugin set (and gst-plugin-va) HD video decodes in
-# software and is choppy. Install them together -- they pin each other exactly.
+# The VA-API plugin now ships inside gst-plugins-bad (older Arch had it as
+# gst-plugin-va); it ALSO needs the VA-API driver for your GPU (pick one below),
+# or HD video decodes in software and is choppy. Install the gst-* set together
+# -- they pin each other exactly.
 sudo pacman -S webkit2gtk-4.1 python-gobject python-dbus bluez bluez-utils \
 gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly \
-gst-libav gst-plugin-va libva-utils
+gst-libav libva-utils
+#   Intel Gen8+:  sudo pacman -S intel-media-driver
+#   Intel older:  sudo pacman -S libva-intel-driver
+#   AMD:          sudo pacman -S libva-mesa-driver
+# Confirm hardware decode with:  vainfo && gst-inspect-1.0 vah264dec
 
 git clone https://github.com/ggml-org/whisper.cpp
 cd whisper.cpp
