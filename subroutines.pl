@@ -6844,7 +6844,11 @@ sub tunnel_hub_url() {
 		$hub = $manager;
 		$hub =~ s{^http://}{ws://};
 		$hub =~ s{^https://}{wss://};
-		$hub =~ s{/manager/?$}{/manager/tunnel/ws};
+		# the manager URL is only the base (e.g. wss://host:port), so drop a
+		# trailing /manager if one is present and always point at the ws route.
+		$hub =~ s{/manager/?$}{};
+		$hub =~ s{/+$}{};
+		$hub .= '/manager/tunnel/ws';
 	}
 	else {
 		$hub = 'wss://' . $config->{'domain'} . '/manager/tunnel/ws';
