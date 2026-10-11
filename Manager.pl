@@ -3333,6 +3333,7 @@ post '/sesh_check' => sub ($c) {
 				browser_tab_id => $bti,
 				manager_file => &manager_file_maker($c->session('name')),
 				signatorial => $signatorial,
+				version => &subs::jawn_version(),
 				pwd => $pwd,
 				fqdn => $config->{'domain'},
 				ssh_port => $config->{'ssh_port'},
@@ -3879,6 +3880,22 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 	$c->render('text' => 'ok');
 };
 
+
+post '/manager/configure/deploy_neighbours' => sub($c) {
+	# Push the current code to every neighbour that has ssh credentials on file,
+	# using the same remote_machines passwords the backup path uses. Each device
+	# can also pull on its own (git_watcher_check); this is the force-it-now lever.
+	my $rms = &subs::db_select('remote_machines')->hashes;
+	my @results;
+	foreach my $rm ( @{$rms} ) {
+		next unless $rm->{'username'} && $rm->{'password'};
+		my $res = &subs::remote_deploy($rm);
+		push @results, ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}) . ': ' . $res->{'message'};
+	}
+	$c->render(json => { results => \@results });
+};
+
+
 sub remote_upgrade($c,$params) {
 	if ( &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' }) eq 'running' ) {
 		return;
@@ -4201,7 +4218,10 @@ sub remote_device_connect($rdata) {
 				{ name => '-> Me', class => 'remote_rsync', direction => 'from' },
 				{ name => 'Me ->', class => 'remote_rsync', direction => 'to' }
 			];
-			$returner->{'button'} .= '<a target="_blank" href="' . $manager . '/manager"><button>Go</button></a><br>';
+			$returner->{'button'} .= '<a target="_blank" href="' . $manager . '/manager"><button>Go</button></a> ';
+			# the peer's self-reported version, so a neighbour that is behind is
+			# obvious in the panel instead of a guess.
+			$returner->{'button'} .= '<span class="neighbour_version" hint="their version" style="opacity:0.6;">v' . ($returner->{'body'}->{'version'} || '?') . '</span><br>';
 			foreach my $b ( @{$buttons} ) {
 				$returner->{'button'} .= '<button direction="' . $b->{'direction'} . '" device="' . $remote_device .'"
 					home="' . $returner->{'body'}->{'pwd'} . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '"
@@ -4262,6 +4282,7 @@ sub remote_device_connect($rdata) {
 					manager_file => $returner->{'body'}->{'manager_file'},
 					device => $returner->{'body'}->{'device'},
 					hostname => $returner->{'body'}->{'hostname'},
+					version => $returner->{'body'}->{'version'},
 					tunnel => $tunnel,
 					mirrors => eval { return encode_json $returner->{'body'}->{'mirrors'} } || undef,
 					archive => eval { return encode_json $returner->{'body'}->{'archive'} } || undef,
@@ -19658,6 +19679,7 @@ sub update_database($data) {
 		'alter table remote_machines add column archive LONGTEXT',
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
 		'alter table remote_machines add column sync_cursor VARCHAR(50)',
+		'alter table remote_machines add column version VARCHAR(25)',
 		'create table if not exists sync_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			server_time VARCHAR(255),

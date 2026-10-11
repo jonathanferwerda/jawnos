@@ -10163,6 +10163,47 @@ sub run_backfills() {
 # browsers reload on their own: the websocket hands out the revision and the
 # client reloads when it changes.
 # ---------------------------------------------------------------------------
+# Push the current code to a neighbour over ssh, using the credentials the
+# remote_machines table already holds. Every device can also pull on its own
+# (git_watcher_check), so this is the "force it now" lever: fast-forward the
+# repo, reinstall the desktop app where one is installed, and ask jawn to
+# restart. Returns { ok, message, output }.
+sub remote_deploy {
+	my ($rm, %opts) = @_;
+	return { ok => 0, message => 'no credentials on file' }
+		unless $rm->{'username'} && $rm->{'password'};
+	my $suds = $gb::suds || &subs::suds_grabber();
+	my $password = eval { &subs::decrypter($suds, $rm->{'password'}) };
+	return { ok => 0, message => 'could not decrypt the stored password' }
+		unless defined $password && length $password;
+	my $data = eval { decode_json($rm->{'data'} || '{}') } || {};
+	my $host = $rm->{'fqdn'} || $rm->{'ip'};
+	my $port = $data->{'ssh_port'} || 22;
+	my $repo = $data->{'pwd'} || '~/jawnos';
+	# a peer that dials in through the hub is reached on its tunnel's ssh port
+	if ($rm->{'tunnel'} eq 'yes') {
+		my $tun = &subs::tunnel_port_mapper({ signatorial => $rm->{'signatorial'} });
+		$host = '127.0.0.1' if $tun->{'PORT_SSH'};
+		$port = $tun->{'PORT_SSH'} || $port;
+	}
+	# the desktop reinstall is guarded on the install actually being present, so a
+	# headless server skips it; `printf restart` is how jawn's master is rebooted
+	my $remote = 'cd ' . $repo . ' && git pull --ff-only && '
+		. '{ [ -d "$HOME/.local/share/jawnos/desktop" ] && ./desktop/install.sh >/dev/null 2>&1; true; } && '
+		. 'printf restart > ~/.president/status';
+	my $cmd = 'sshpass -p ' . quote($password)
+		. ' ssh -p ' . $port . ' -o StrictHostKeyChecking=no -o ConnectTimeout=12 '
+		. $rm->{'username'} . '@' . $host . ' ' . quote($remote);
+	my $output = `$cmd 2>&1`;
+	my $ok = ($? == 0) ? 1 : 0;
+	if ($subs::logfile) {
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " remote deploy " . ($rm->{'hostname'} || $host) . ": " . ($ok ? 'ok' : 'fail') . "\n";
+		close $fh;
+	}
+	return { ok => $ok, message => $ok ? 'deployed' : 'ssh or git failed', output => $output };
+}
+
 sub git_binary {
 	return $ENV{'GIT_BINARY'} if $ENV{'GIT_BINARY'} && -x $ENV{'GIT_BINARY'};
 	# the cloud runs git from a user-space install (no root)
@@ -10191,6 +10232,12 @@ sub git_watcher_check {
 		open(my $fh, '>>', $subs::logfile);
 		print $fh &subs::rightNow() . " git watcher: fast-forwarded " . substr($head,0,10) . " -> " . substr($new,0,10) . ", restarting\n";
 		close $fh;
+	}
+	# A desktop host keeps an installed copy of the app in
+	# ~/.local/share/jawnos/desktop; the pulled code has to land there too, or the
+	# old install keeps running. (An already-open GUI picks it up on next launch.)
+	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x './desktop/install.sh') {
+		`./desktop/install.sh >/dev/null 2>&1`;
 	}
 	write_file(&subs::home('~/.president/status'), 'restart');
 }
