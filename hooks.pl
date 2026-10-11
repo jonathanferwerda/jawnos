@@ -244,13 +244,48 @@ hook after_render => sub  {
   $c->res->headers->content_encoding('gzip');
 
   gzip $output, \my $compressed;
-  $$output = $compressed;
+  	$$output = $compressed;
 
-};
+  };
 
-hook after_dispatch => sub {
-	my ($c) = @_;
-	if ($c->res->code == 500) {
+  # gzip text-ish responses on the way out. This is the one chokepoint that sees
+  # both static assets (Mojolicious::Static calls $c->rendered, so after_dispatch
+  # fires for them too) and dynamic responses. Binary hazards are avoided two ways:
+  # an allowlist of compressible content types, and a skip for /file_open, where
+  # rock_and_roll serves raw image/video/relay bytes under the default text/html.
+  # A body already carrying a Content-Encoding (the after_render hook above) is
+  # left alone, so the two never double-encode.
+  hook after_dispatch => sub {
+  	my ($c) = @_;
+  	my $res = $c->res;
+
+  	return unless ($res->code // 0) == 200;
+  	return if $res->headers->content_encoding;
+  	return if $c->req->headers->range;
+  	return unless (($c->req->method // '') =~ /^(?:GET|HEAD)$/);
+  	return unless (($c->req->headers->accept_encoding // '') =~ /\bgzip\b/i);
+
+  	my $type = lc($res->headers->content_type // '');
+  	return unless $type =~ m{^text/(?:html|css|plain|xml|javascript)|^application/(?:json|javascript|xml)|^image/svg\+xml};
+
+  	return if ($c->req->url->path->to_string // '') eq '/file_open';
+
+  	my $body = $res->body;
+  	return unless defined $body && !ref $body && length($body) >= 512;
+
+  	gzip \$body, \my $gz;
+  	return unless defined $gz && length($gz) && length($gz) < length($body);
+
+  	$res->headers->content_encoding('gzip');
+  	$res->headers->append(Vary => 'Accept-Encoding');
+  	$res->headers->remove('Accept-Ranges');
+  	$res->body($gz);
+  	$res->headers->content_length(length $gz);
+  };
+
+  hook after_dispatch => sub {
+  	my ($c) = @_;
+  	if ($c->res->code == 500) {
 
 		foreach my $h (reverse sort @{$c->stash('mojo.log')->{'parent'}->{'history'}} ) {
 			if (eval { $h->[3]->{'message'} }) {
