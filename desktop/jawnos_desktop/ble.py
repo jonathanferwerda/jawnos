@@ -92,6 +92,23 @@ def _target_store():
     return os.path.join(config_dir(), "ble.json")
 
 
+def bridge_name():
+    """The name the watch shows for this machine.
+
+    Prefer JawnOS's own name for the computer (config.json's "name", e.g.
+    "Laptop") -- that is what the user recognises across their devices -- and
+    fall back to the hostname if the tree is not readable."""
+    try:
+        from . import core
+        config = core.read_app_config(core.load_settings()["jawn_dir"])
+        name = str(config.get("name") or "").strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return socket.gethostname()
+
+
 def load_target():
     try:
         with open(_target_store(), "r", encoding="utf-8") as fh:
@@ -129,6 +146,7 @@ class Bridge(object):
         self.notify_char = None
         self.mtu = DEFAULT_MTU
         self.target = {"mac": None, "service": None, "rx": None, "tx": None, "mtu": 0}
+        self.host_name = bridge_name()
         self.auto_reconnect = False
         self.reconnect_delay = RECONNECT_START
         self.next_attempt = 0.0
@@ -445,14 +463,16 @@ class Bridge(object):
         self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
         self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
         # Say who is on the other end; the watch prints this in the net room.
-        # Delayed a beat so the first write does not race the just-formed link.
-        GLib.timeout_add(300, self._send_hello)
+        # Sent at once, not after a delay: the watch's radio sleeps, so the link
+        # can be short and a late hello would miss it (the room then shows only
+        # the address). It is re-sent on every reconnect for the same reason.
+        GLib.timeout_add(120, self._send_hello)
 
     def _send_hello(self):
         if not self.connected():
             return False
         try:
-            self._write_raw(json.dumps({"type": "hello", "name": socket.gethostname()}))
+            self._write_raw(json.dumps({"type": "hello", "name": self.host_name}))
         except dbus.exceptions.DBusException as exc:
             self.info("hello write failed:", exc)
         return False
@@ -787,7 +807,8 @@ def main(argv=None):
     def log(*parts):
         # stderr is redirected to the daemon log by whoever started us, so
         # always write -- a silent bridge is impossible to debug.
-        sys.stderr.write("[jawnos-bt] " + " ".join(str(p) for p in parts) + "\n")
+        stamp = time.strftime("%H:%M:%S")
+        sys.stderr.write("[%s] [jawnos-bt] %s\n" % (stamp, " ".join(str(p) for p in parts)))
         sys.stderr.flush()
 
     return Bridge(port=args.port, log=log).run()
