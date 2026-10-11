@@ -348,9 +348,6 @@ sub process_watch() {
 }
 Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
 
-
-
-Mojo::IOLoop->start;
 sub terminal_pty_runner() {
 	return $fork if $status eq 'starting';
 	$status = 'starting';

@@ -139,22 +139,20 @@ hook before_dispatch => sub {
 		}
 	}
 
+	my $ug = Data::UUID->new;
 	unless ($c->param('browser_tab_id') || $c->session('browser_tab_id')) {
-		my $ug    = Data::UUID->new;
 		my $uuid = $ug->create_str();
 		$c->stash('browser_tab_id' => $uuid );
 		$c->session('browser_tab_id' => $uuid );
 		$c->stash('website' => '');
 	}
 	else {
-		my $ug    = Data::UUID->new;
 		my $uuid = $ug->create_str();
 		$c->stash('browser_tab_id' => $c->session('browser_tab_id'));
 		$c->session('browser_tab_id' => $uuid);
 	}
 
 	unless ($c->param('browser_tab')) {
-		my $ug    = Data::UUID->new;
 		my $uuid = $ug->create_str();
 		$c->stash('browser_tab' => $uuid );
 		$c->session('browser_tab' => $uuid );
@@ -195,7 +193,7 @@ hook before_dispatch => sub {
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();
-		$Manager::random_caching_string = &subs::newest_folder_checker();
+		$Manager::random_caching_string = &subs::jawn_version();
 		$c->stash('device' => $device);
 		$c->stash('string' => $Manager::random_caching_string);
 		if ($c->param('ws_auth') && $remote_address ne $local_address) {

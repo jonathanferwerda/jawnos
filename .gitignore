@@ -36,3 +36,4 @@ __pycache__/
 
 # --- Agent field notes: kept on disk, never committed ---
 AGENTS.md
+docs/AGENTS-notes.md
