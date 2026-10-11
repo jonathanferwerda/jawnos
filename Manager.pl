@@ -6865,11 +6865,15 @@ sub continent_record($c) {
 		}
 	}
 	if (my $alt = $c->param('latitude')) {
+		my $speed = $c->param('speed');
+		my $altitude = $c->param('altitude');
 		$returner = {
 			timestamp => $timestamp,
 			latitude => $c->param('latitude'),
 			longitude => $c->param('longitude'),
 			accuracy => sprintf("%.2F", $c->param('accuracy')),
+			(defined $speed && $speed =~ /\S/ ? (speed => $speed) : ()),
+			(defined $altitude && $altitude =~ /\S/ ? (altitude => $altitude) : ()),
 			server_time => $server_time,
 			uuid => $uuid,
 			type => $purpose,
@@ -6878,6 +6882,9 @@ sub continent_record($c) {
 			signatorial => $signatorial
 		};
 		&subs::db_insert('continent', $returner);
+		# the speed a fix carried is saved as a measure on the appointment it was
+		# recorded against, so the evaluation reads it with the rest of the readings
+		&subs::continent_speed_measure($app, $pre_uuid, $speed, $timestamp) if defined $speed && $speed =~ /\S/;
 		if ($returner->{'accuracy'} < 200) {
 			my $treturner = clone $returner;
 			$treturner->{'type'} = 'temporary';
@@ -19511,6 +19518,8 @@ sub update_database($data) {
 		'alter table remote_machines add column archive LONGTEXT',
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
 		'alter table continent add column signatorial VARCHAR(500)',
+		'alter table continent add column speed VARCHAR(25)',
+		'alter table continent add column altitude VARCHAR(25)',
 		'create table if not exists warehouse (
 			timestamp VARCHAR(255),
 			server_time VARCHAR(255),
