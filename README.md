@@ -2,6 +2,20 @@
 
 **A personal, self-hosted operating environment.**
 
+## Support
+
+JawnOS is free and open-source software, released under the [BSD 2-Clause licence](#license). It
+is a **multi-device system** — the Linux desktop app, the headless server daemon, and the Android
+build that runs under Termux — all driven from one shared Perl codebase, and it is built using
+**high-velocity agent workflows**: parallel, AI-assisted development loops that draft, review and
+test changes across the whole tree at once.
+
+Community backing through **[GitHub Sponsors](https://github.com/sponsors/jonathanferwerda)**
+directly funds that AI token budget, and that budget is what keeps the parallel dev loops active.
+If JawnOS is useful to you, sponsoring is the most direct way to keep it moving.
+
+## About
+
 JawnOS is a long-running personal software project by Jon ("Jawn") Ferwerda. It turns a single
 Perl web server into a browser-based command centre — a desktop-like environment that gathers
 the things one person actually does with a computer: files and media, appointments and tasks,
