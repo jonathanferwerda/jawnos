@@ -38,7 +38,11 @@ our $VERSION = '0.1';
 our $HUB_LISTEN = {};   # used by the CLI hub app below
 
 my %HUB;                # signatorial => hub session
+# The hub's manager serves https with a self-signed certificate, so a peer must
+# not reject it on the wss handshake.
 my $ua = Mojo::UserAgent->new;
+$ua->insecure(1);
+$ua->max_response_size(0);
 
 sub _log { my ($fmt, @a) = @_; warn sprintf("[tunnel] $fmt\n", @a) if $ENV{TUNNEL_DEBUG}; }
 

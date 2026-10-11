@@ -6818,19 +6818,36 @@ sub tunnel_transport() {
 	return &subs::setting_grabber({ app => '__president', setting => 'tunnel_transport' }) || 'ssh';
 }
 
-# The hub websocket endpoint a NAT'd peer dials out to. The peer names itself
-# with its own signatorial, matching the sibling tunnel routes.
+# The hub websocket endpoint a NAT'd peer dials out to. Preferred source is the
+# hub's OWN manager URL from the handshake (e.g. https://thejunderground.com:45545),
+# rewritten to wss -- so the peer dials the right host AND port instead of
+# guessing from its own domain. config tunnel_hub overrides; the last resort is
+# this machine's domain. The peer names itself with its own signatorial.
 sub tunnel_hub_url() {
+	my ($manager) = @_;
 	my $sig = &subs::signatorial_designer();
-	my $hub = $config->{'tunnel_hub'} || ('wss://' . $config->{'domain'} . '/manager/tunnel/ws');
-	return $hub . '?signatorial=' . Mojo::Util::url_escape($sig);
+	my $hub;
+	if ($config->{'tunnel_hub'}) {
+		$hub = $config->{'tunnel_hub'};
+	}
+	elsif ($manager && $manager =~ m{^https?://}) {
+		$hub = $manager;
+		$hub =~ s{^http://}{ws://};
+		$hub =~ s{^https://}{wss://};
+		$hub =~ s{/manager/?$}{/manager/tunnel/ws};
+	}
+	else {
+		$hub = 'wss://' . $config->{'domain'} . '/manager/tunnel/ws';
+	}
+	return $hub . (index($hub, '?') >= 0 ? '&' : '?') . 'signatorial=' . Mojo::Util::url_escape($sig);
 }
 
-# Run the peer half of the wss tunnel: dial the hub and serve its `open` frames.
+# Run the peer half of the wss tunnel: dial the hub's manager and serve its
+# `open` frames. $manager is the hub's manager URL from the handshake.
 sub tunnel_wss_peer() {
-	my ($sig) = @_;
-	$sig ||= &subs::signatorial_designer();
-	&Tunnel::peer_session(&subs::tunnel_hub_url(), { signatorial => $sig });
+	my ($manager) = @_;
+	my $sig = &subs::signatorial_designer();
+	&Tunnel::peer_session(&subs::tunnel_hub_url($manager), { signatorial => $sig });
 }
 
 sub tunnel_starter() {
@@ -6908,7 +6925,7 @@ sub tunnel_starter() {
 							# peer and dials the hub; the hub listens on the
 							# reserved ports. Gated by the tunnel_transport
 							# setting (default ssh) until validated live.
-							&subs::tunnel_wss_peer();
+							&subs::tunnel_wss_peer($rm->{'manager'});
 						} else {
 							my $old_ps = `ps -e`;
 							`$command`;

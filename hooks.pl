@@ -186,6 +186,9 @@ hook before_dispatch => sub {
 		$path eq '/denial' ||
 		$path eq '/js/jquery.ui.touch-punch.min.js' ||
 		$path eq '/play' || $path eq '/file_open' ||
+		# the tunnel websocket authorizes itself (signatorial vs remote_machines)
+		# and a websocket upgrade cannot carry the gate's session or ws_auth
+		$path eq '/manager/tunnel/ws' ||
 		$path eq '/payment' ||
 		$path eq '/box_office/ticket_request' ||
 		$path =~ '^/public_view' ||
