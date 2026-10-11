@@ -13390,7 +13390,7 @@ sub window_maker($type,$timestamp) {
 					<span class="name_text" style="color:' . &subs::contrast_ink($settings->{'colour'}) . ';"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
 					<span style="float:right;">
 
-						<span class="navbar_buttons" style="right:7px;">
+						<span class="navbar_buttons">
 							<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
 							<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
 							<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
