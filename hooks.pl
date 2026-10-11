@@ -183,6 +183,10 @@ hook before_dispatch => sub {
 		$path eq '/js/numeral.min.js' ||
 		$path eq '/js/universal.js' ||
 		$path eq '/manifest.json' ||
+		# the service worker script is fetched with no session cookie (the
+		# register fetch is not a document request), so gating it would answer
+		# with the gate AND revoke the session, logging the page straight out
+		$path eq '/service_worker.js' ||
 		$path eq '/css/universal.css' ||
 		$path eq '/css/store.css' ||
 		$path eq '/js/homepage.js' ||
@@ -281,6 +285,25 @@ hook after_render => sub  {
   	$res->headers->remove('Accept-Ranges');
   	$res->body($gz);
   	$res->headers->content_length(length $gz);
+  };
+
+  # A static asset fetched without a session - WebKit fetches the service-worker
+  # script cookielessly, and any cookieless <img>/<link> does it too - used to
+  # make the session hooks mint a brand-new session and set it on the response,
+  # overwriting the browser's authenticated cookie, so the page was logged out on
+  # its very next request. Static assets never need a session, so drop the cookie
+  # they would set. A request that did carry a session keeps its refresh. This
+  # runs around the dispatch because Mojolicious stores the session cookie after
+  # the after_dispatch hooks, so it cannot be undone from one of those.
+  hook around_dispatch => sub {
+  	my ($next, $c) = @_;
+  	$next->();
+  	my $path = $c->req->url->path->to_string // '';
+  	return unless $path =~ m{^/(?:js|css|images|icons|sounds)/}
+  		|| $path eq '/manifest.json'
+  		|| $path eq '/service_worker.js';
+  	return if $c->req->cookie($ENV{cookie_name} || 'president');
+  	$c->res->headers->remove('Set-Cookie');
   };
 
   hook after_dispatch => sub {
