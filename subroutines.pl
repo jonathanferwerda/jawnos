@@ -6825,6 +6825,10 @@ sub remote_machine_tunnel_processor() {
 sub peer_lan_address() {
 	my ($rm) = @_;
 	return undef unless $rm && $rm->{'manager'};
+	# The hub's 127.0.0.1 tunnel managers are correct there, and it is not on the
+	# peers' LAN - this fallback is only for a peer reaching another peer.
+	return undef if &subs::device_setter() eq 'server';
+	return undef unless $rm->{'network'};
 	my ($host) = $rm->{'manager'} =~ m{^https?://([^:/]+)};
 	return undef unless $host;
 	my $loopback = 0;
@@ -6836,7 +6840,13 @@ sub peer_lan_address() {
 	}
 	return undef unless $loopback;
 	my $you = eval { return decode_json $rm->{'network'} } || {};
-	my $me = &subs::network_interface_reporter();
+	# our own interfaces rarely change; don't run ifconfig per peer per call
+	our ($_ME_NETWORK, $_ME_NETWORK_AT);
+	unless ($_ME_NETWORK && $_ME_NETWORK_AT > &subs::rightNow() - 60000) {
+		$_ME_NETWORK = &subs::network_interface_reporter();
+		$_ME_NETWORK_AT = &subs::rightNow();
+	}
+	my $me = $_ME_NETWORK;
 	foreach my $nic ( sort keys %{$you} ) {
 		next if $nic eq 'public_address' || !$you->{$nic}->{'ip'};
 		my $you_ip = $you->{$nic}->{'ip'};
