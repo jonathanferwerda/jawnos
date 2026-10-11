@@ -615,7 +615,8 @@ canvas { overflow: scroll; z-index: 99; }
 	content: '';
 	position: absolute;
 	top: 0; right: 0; bottom: 0; left: 0;
-	border: solid;
+	border-style: solid;
+	border-width: var(--window_border, 3px);
 	border-color: var(--line);
 	border-radius: inherit;
 	pointer-events: none;
