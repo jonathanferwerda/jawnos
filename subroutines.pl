@@ -6745,6 +6745,29 @@ sub remote_machine_negotiator() {
 }
 
 
+# Which data plane the tunnels use: 'ssh' is the historic sshpass/ssh -R path,
+# 'wss' is the password-less websocket tunnel (tunnel.pl). The default stays ssh
+# until the wss path has been validated against live tunnels rows.
+sub tunnel_transport() {
+	return &subs::setting_grabber({ app => '__president', setting => 'tunnel_transport' }) || 'ssh';
+}
+
+# The hub websocket endpoint a NAT'd peer dials out to, carrying the same
+# encrypted signatorial token the homepage/remote_machine_online handshake uses.
+sub tunnel_hub_url() {
+	my $sig = &subs::signatorial_designer();
+	my $hub = $config->{'tunnel_hub'} || ('wss://' . $config->{'domain'} . '/manager/tunnel/ws');
+	my $token = &subs::encrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($sig, 5), $sig);
+	return $hub . '?signatorial=' . Mojo::Util::url_escape($token);
+}
+
+# Run the peer half of the wss tunnel: dial the hub and serve its `open` frames.
+sub tunnel_wss_peer() {
+	my ($sig) = @_;
+	$sig ||= &subs::signatorial_designer();
+	&Tunnel::peer_session(&subs::tunnel_hub_url(), { signatorial => $sig });
+}
+
 sub tunnel_starter() {
 	my $data = shift;
 	my $ip = $data->{'ip'};
@@ -6775,7 +6798,8 @@ sub tunnel_starter() {
 			my $rb = decode_json $res->body;
 			my $password = &subs::decrypter(&subs::suds_grabber(), $rm->{'password'});
 			foreach my $r (@gb::ports ) {
-				my $command = 'sshpass -p "' . $password . '" ssh -o "ServerAliveInterval 9" -o "ServerAliveCountMax 1" -N -R ' . $rb->{$r}->{'source'} . ':localhost:' . $rb->{$r}->{'dest'} . ' ' . $rm->{'username'} . '@' . $rm->{'ip'} . ' -p ' . $port;
+			my $wss = &subs::tunnel_transport() eq 'wss';
+				my $command = $wss ? undef : 'sshpass -p "' . $password . '" ssh -o "ServerAliveInterval 9" -o "ServerAliveCountMax 1" -N -R ' . $rb->{$r}->{'source'} . ':localhost:' . $rb->{$r}->{'dest'} . ' ' . $rm->{'username'} . '@' . $rm->{'ip'} . ' -p ' . $port;
 
 				my $uuid = $rb->{$r}->{'reservation_uuid'} || &subs::random_string_creator(26);
 				my $tunnel = {
@@ -6814,10 +6838,18 @@ sub tunnel_starter() {
 						$pid = $$;
 
 						&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $uuid });
-						my $old_ps = `ps -e`;
-						`$command`;
+						if ($wss) {
+							# Password-less path (tunnel.pl): this device is the
+							# peer and dials the hub; the hub listens on the
+							# reserved ports. Gated by the tunnel_transport
+							# setting (default ssh) until validated live.
+							&subs::tunnel_wss_peer();
+						} else {
+							my $old_ps = `ps -e`;
+							`$command`;
 
-						my $new_ps = `ps -e`;
+							my $new_ps = `ps -e`;
+						}
 					}, { name => 'tunnel holder ' . $rb->{$r}->{'source'} . ':' . $rm->{'ip'} . ':' . $rb->{$r}->{'dest'} });
 
 				}
