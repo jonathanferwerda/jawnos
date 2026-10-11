@@ -30,7 +30,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
-from . import DESKTOP_DIR, core  # noqa: E402
+from . import DESKTOP_DIR, core, keepawake  # noqa: E402
 
 
 # One shared context so the session cookie survives window closes and reloads.
@@ -146,6 +146,9 @@ class WebViewPanel(Gtk.Box):
         # Set by the dashboard: the page's admin-console icon calls it to come
         # back to the control panel.
         self.on_admin = None
+        # Holds the screensaver off while this view is playing media.
+        self._inhibitor = keepawake.ScreensaverInhibitor()
+        self.connect("destroy", lambda *_: self._inhibitor.uninhibit())
 
         self.view = WebKit2.WebView.new_with_context(_context_get())
         self._configure(self.view)
@@ -250,6 +253,14 @@ class WebViewPanel(Gtk.Box):
             ("enable-developer-extras", True),
             ("enable-html5-local-storage", True),
             ("javascript-can-open-windows-automatically", True),
+            # Closer to a desktop browser's feel: momentum scroll, a GPU 2d
+            # canvas, speculative DNS and the back/forward page cache.
+            ("enable-smooth-scrolling", True),
+            ("enable-accelerated-2d-canvas", True),
+            ("enable-dns-prefetching", True),
+            ("enable-page-cache", True),
+            ("enable-mediasource", True),
+            ("enable-webaudio", True),
         ):
             try:
                 s.set_property(prop, value)
@@ -271,6 +282,21 @@ class WebViewPanel(Gtk.Box):
         # A page (e.g. a video element) asking for fullscreen drives the window.
         view.connect("enter-fullscreen", self._on_enter_fullscreen)
         view.connect("leave-fullscreen", self._on_leave_fullscreen)
+        # Hold the screen awake while this view is playing audio or video.
+        try:
+            view.connect("notify::is-playing-audio", self._on_playing_audio)
+        except Exception:
+            pass
+
+    def _on_playing_audio(self, view, _param):
+        try:
+            playing = bool(view.get_property("is-playing-audio"))
+        except Exception:
+            playing = False
+        if playing:
+            self._inhibitor.inhibit("media playing")
+        else:
+            self._inhibitor.uninhibit()
 
     def _on_load_changed(self, view, event):
         if event != WebKit2.LoadEvent.FINISHED:

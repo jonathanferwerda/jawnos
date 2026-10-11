@@ -26,7 +26,7 @@ LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 
 
 class Dashboard(Gtk.Window):
-    def __init__(self, settings, start_requested=False, show_web=False):
+    def __init__(self, settings, start_requested=False, show_web=False, tray=True):
         super().__init__(title="JawnOS")
         self.settings = settings
         self.start_requested_at = 0.0
@@ -111,6 +111,10 @@ class Dashboard(Gtk.Window):
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self._on_key)
+        # The tray icon keeps the app alive when its window is closed -- closing
+        # is how it was being lost. With no tray available, closing quits.
+        self._tray = _make_tray(self) if tray else None
+        self.connect("delete-event", self._on_delete)
         self.refresh()
         GLib.timeout_add_seconds(2, self._tick)
         if show_web:
@@ -231,6 +235,14 @@ class Dashboard(Gtk.Window):
     def _show_dashboard(self):
         self.notebook.set_current_page(0)
 
+    def _on_delete(self, *_args):
+        # Close to the tray, not to death: hide the window and keep the tray
+        # (and the supervisor's status timer) running.
+        if self._tray is not None:
+            self.hide()
+            return True
+        return False
+
     def _on_key(self, _widget, event):
         # With the tab strip hidden, Ctrl+Shift+D is the keyboard way back to the
         # control panel (e.g. if the view ever lands somewhere without its
@@ -321,50 +333,72 @@ class LogWindow(Gtk.Window):
         return True
 
 
-def _make_tray(window):
-    """Optional status-tray icon, the analogue of the phone's overlay dot."""
-    try:
-        gi.require_version("AppIndicator3", "0.1")
-        from gi.repository import AppIndicator3
-    except Exception:
-        return None
-    indicator = AppIndicator3.Indicator.new(
-        "jawnos", "jawnos", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
-    indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+def _tray_menu(window):
     menu = Gtk.Menu()
     for label, callback in (
-        ("Dashboard", lambda _i: window.present()),
+        ("Show Dashboard", lambda _i: window.present()),
         ("Start jawn", lambda _i: window.action_start()),
         ("Stop jawn", lambda _i: window.action_stop()),
         ("Restart jawn", lambda _i: window.action_restart()),
-        ("Open UI", lambda _i: window.action_open_ui()),
         ("Quit", lambda _i: Gtk.main_quit()),
     ):
         item = Gtk.MenuItem(label=label)
         item.connect("activate", callback)
         menu.append(item)
     menu.show_all()
-    indicator.set_menu(menu)
-    return indicator
+    return menu
 
 
-def run_dashboard(settings=None, tray=False, show_web=False):
+def _make_tray(window):
+    """A status-tray icon, on any desktop.
+
+    Prefers the StatusNotifier/AppIndicator protocol (KDE, GNOME with an
+    extension, Xfce 4.16+, Cinnamon); falls back to the legacy system tray
+    (Gtk.StatusIcon), which Xfce's notification area still shows. Returns None if
+    neither is available, in which case closing the window quits as before."""
+    menu = _tray_menu(window)
+    try:
+        gi.require_version("AppIndicator3", "0.1")
+        from gi.repository import AppIndicator3
+        indicator = AppIndicator3.Indicator.new(
+            "jawnos", "jawnos", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
+        indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        indicator.set_menu(menu)
+        return indicator
+    except Exception:
+        pass
+    try:
+        icon = Gtk.StatusIcon.new_from_icon_name("jawnos")
+        icon.set_tooltip_text("JawnOS")
+        icon.set_visible(True)
+        icon.connect("activate", lambda _i: window.present())
+        icon.connect("popup-menu",
+                     lambda i, button, activate_time: menu.popup(
+                         None, None, None, None, button, activate_time))
+        return icon
+    except Exception:
+        return None
+
+
+def run_dashboard(settings=None, tray=True, show_web=False):
     settings = settings or core.load_settings()
-    window = Dashboard(settings, show_web=show_web)
-    indicator = _make_tray(window) if tray else None
+    window = Dashboard(settings, show_web=show_web, tray=tray)
     window.show_all()
     Gtk.main()
-    return indicator
+    return window
 
 
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(prog="jawnos-desktop", description="JawnOS desktop dashboard")
-    parser.add_argument("--tray", action="store_true", help="also show a status-tray icon")
+    parser.add_argument("--tray", action="store_true",
+                        help="(default) keep a status-tray icon")
+    parser.add_argument("--no-tray", action="store_true",
+                        help="no status-tray icon; closing the window quits")
     parser.add_argument("--webview", action="store_true",
                         help="open the app on the embedded JawnOS view")
     args = parser.parse_args(argv)
-    return run_dashboard(tray=args.tray, show_web=args.webview)
+    return run_dashboard(tray=not args.no_tray, show_web=args.webview)
 
 
 if __name__ == "__main__":
