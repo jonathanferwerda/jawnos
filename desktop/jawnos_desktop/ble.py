@@ -463,10 +463,10 @@ class Bridge(object):
         self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
         self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
         # Say who is on the other end; the watch prints this in the net room.
-        # Sent at once, not after a delay: the watch's radio sleeps, so the link
-        # can be short and a late hello would miss it (the room then shows only
-        # the address). It is re-sent on every reconnect for the same reason.
-        GLib.timeout_add(120, self._send_hello)
+        # Sent a few times: the watch's radio sleeps, so a single write can land
+        # in a gap. Re-sent on every reconnect for the same reason.
+        for delay in (150, 1200, 2500):
+            GLib.timeout_add(delay, self._send_hello)
 
     def _send_hello(self):
         if not self.connected():

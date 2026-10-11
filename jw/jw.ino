@@ -600,9 +600,16 @@ void start_ble_transfer() {
   pTxCharacteristic->addDescriptor(new BLE2902());
 
   // Create RX Characteristic (Phone sending data to Watch)
+  // WRITE_NR is added so a *desktop* bridge can reach it: BlueZ refuses to
+  // emit Write Requests to this watch (org.bluez.Error.NotPermitted, from
+  // bluetoothctl and the raw D-Bus WriteValue alike) and silently accepts Write
+  // Commands -- which this characteristic must advertise to receive them, or
+  // the command is dropped with no error. Android writes with Write Requests
+  // and is unaffected by the extra property.
   BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
                                            CHARACTERISTIC_UUID_RX,
-                                           BLECharacteristic::PROPERTY_WRITE
+                                           BLECharacteristic::PROPERTY_WRITE |
+                                           BLECharacteristic::PROPERTY_WRITE_NR
                                          );
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
