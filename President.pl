@@ -836,9 +836,17 @@ sub utility_functions() {
 				eval {
 					$gb::syncing = 1;
 					my $gimme;
-					my $hour = localtime( &subs::rightNow() / 1000 )->strftime( "%H");
+					my $lt = localtime( $now / 1000 );
+					my $hour = $lt->strftime("%H");
 					if ($hour == 4) {
-						$gimme = '3d';
+						# One deep three-day reconciliation a night, but not from every
+						# machine in the same minute: each machine takes its own slot in
+						# the four o'clock hour from its name, so the peers stop asking
+						# each other for three days of everything at once (that
+						# simultaneous export is what the phone ran out of memory on).
+						my $min = int($lt->strftime("%M"));
+						my $slot = (unpack('%32C*', &subs::signatorial_designer()) % 5) * 12;
+						$gimme = '3d' if abs($min - $slot) <= 1;
 					}
 					&subs::remote_machine_negotiator({ gimme => $gimme });
 					$gb::syncing = 0;

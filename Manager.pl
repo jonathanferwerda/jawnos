@@ -4516,6 +4516,9 @@ sub remote_useragent_maker($data) {
 				$url .= '&chip_chyea=' . $data->{'chip_chyea'};
 			}
 			$url .= '&domain=' . $config->{'domain'};
+			if ($auth_test eq 'yes' && defined $data->{'since'}) {
+				$url .= '&since=' . int($data->{'since'});
+			}
 			my $res = eval { return $rm->{'ua'}->insecure(1)->get($url => {Accept => '*/*'} => 'Content!')->result };
 			if (eval { $res->is_success }) {
 				$rm->{'res'} = $res;
@@ -19699,6 +19702,10 @@ sub update_database($data) {
 		# inventory_details matches appointments by app or model; without an index
 		# on model the model half of that or scans the whole table
 		'CREATE INDEX IF NOT EXISTS idx13_appts on appointments (model)',
+		# the peer sync check counts appointments above a watermark; server_time is
+		# not a prefix of idx11 (app,server_time,status), so that count was a full
+		# scan of the whole table on every two-minute tick
+		'CREATE INDEX IF NOT EXISTS idx14_appts on appointments (server_time)',
 		# remote machines are looked up by connection state and ip
 		'CREATE INDEX IF NOT EXISTS idx1_remote_machines on remote_machines (connection)',
 		'CREATE INDEX IF NOT EXISTS idx2_remote_machines on remote_machines (ip)',
@@ -20366,6 +20373,12 @@ get '/manager/remote_auth_test' => sub($c) {
 
 				my $location = &subs::db_query('select * from continent where signatorial=? and type=? and server_time >= ? order by server_time desc limit 1', $my_signatorial, 'temporary',&subs::rightNow() - (5 * 60 * 1000))->hashes->[0];
 
+				# The caller handed us the watermark it already holds (?since=); this
+				# is how many of our appointments sit above it, so the caller can tell
+				# whether it is behind (and by how much) without pulling the export,
+				# and can check the two machines' pictures against each other.
+				my $pending = &subs::appointments_since($c->param('since'));
+
 				my $json = {
 					server_time => $appt->{'server_time'},
 					app => $appt->{'app'},
@@ -20385,6 +20398,8 @@ get '/manager/remote_auth_test' => sub($c) {
 					same_net => &subs::same_net_test($home_ip,$ip),
 					network => &subs::network_interface_reporter(),
 					revision => &subs::code_revision(),
+					sync => &subs::appointment_watermark(),
+					pending => $pending,
 				};
 				$c->render(json => $json);
 
@@ -20471,7 +20486,11 @@ sub remote_machine_reconnector($c) {
 				if ($ping == 1) {
 
 					$ip = $rm->{'ip'};
-					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes' });
+					# Hand the peer the watermark we already hold from it, so its auth
+					# route can say (with a count) whether it has anything newer instead
+					# of our pulling its window on every tick.
+					my $peer_watermark = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0];
+					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', since => ($peer_watermark->{'server_time'} || 0) });
 					my $manager = $rm->{'manager'};
 					my $port = $rm->{'port'};
 					my $port_dock = $rm->{'dock_port'};
@@ -20575,12 +20594,20 @@ sub remote_machine_reconnector($c) {
 							#	my $update = `$uc`;
 							}
 						}
-						if ($rj->{'server_time'} > $backup->{'server_time'} && $rj->{'merging'} ne 'running') {
+						# The peer reports how many of its appointments sit above the
+						# watermark we handed it; zero means there is nothing to pull, so
+						# skip the export (and fall back to the timestamp compare for a peer
+						# running older code that sends no pending block). A deep (nightly)
+						# sync still runs - it reconciles a gap the watermark cannot see.
+						my $deep = $c->session('gimme') || $c->param('gimme');
+						my $has_new = $rj->{'server_time'} > $backup->{'server_time'};
+						$has_new = (($rj->{'pending'}->{'count'} || 0) > 0) if defined $rj->{'pending'};
+						if (($has_new || $deep) && $rj->{'merging'} ne 'running') {
 							my $whoami = `whoami`;
 							chomp $whoami;
 							my $hostname = `hostname`;
 							chomp $hostname;
-							my $gimme = $c->session('gimme') || $c->param('gimme');
+							my $gimme = $deep;
 							my $params = {
 								timestamp => $rj->{'now'},
 								ip => $rm->{'ip'},

@@ -1916,6 +1916,27 @@ sub backup_now() {
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid });
 	}
 	return unless $reason ne 'unknown';
+	# A nightly reconciliation makes every peer ask this machine for its last few
+	# days at the same moment; each request builds a windowed copy of every table
+	# in memory and vacuums it, so a phone gets several of those at once and the
+	# OOM killer takes the tree. One remote export at a time, here on the target:
+	# a second caller is told to come back on its next tick instead.
+	my $backup_lock;
+	if ($reason eq 'remote_update') {
+		my $held = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		# a worker that dies mid-export leaves the lock behind; bound it by age so
+		# the next caller recovers instead of wedging the sync for the day
+		my $stale = !$held->{'server_time'} || $held->{'server_time'} + (10 * 60 * 1000) < &subs::rightNow();
+		if (($held->{'value'} || '') ne '' && ($held->{'value'} || '') ne '0' && !$stale) {
+			return { status => 'busy', reason => $reason };
+		}
+		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => $auuid });
+		# two workers can pass the check above in the same instant; the last writer
+		# keeps the lock and the loser steps aside rather than run a second export
+		my $confirm = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		return { status => 'busy', reason => $reason } if ($confirm->{'value'} || '') ne $auuid;
+		$backup_lock = $auuid;
+	}
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my ($db,$database,$sql) = &subs::database_grabber();
@@ -2103,8 +2124,31 @@ sub backup_now() {
 	if ($reason eq 'remote_update') {
 		$returner->{'update_commands'} = &Manager::update_database({ duty => 'list' });
 	}
+	if ($backup_lock) {
+		my $lock_row = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if ($lock_row->{'value'} || '') eq $backup_lock;
+	}
 	&Websocket::send('tab', { yellow => 'close', 'close' => 'yes', uuid => $auuid, colour => $colour });
 	return $returner;
+}
+
+# A cheap, truthful picture of what this machine's appointments hold, so a peer
+# can tell whether it already has everything instead of pulling the window every
+# tick. Appointments are only inserted or re-stamped, so if the count and the
+# newest server_time are both unchanged there is nothing new to send.
+sub appointment_watermark() {
+	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments')->hashes->[0];
+	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0 };
+}
+
+# What this machine holds above the watermark a peer already has (its ?since=):
+# appointments with a newer server_time. A count, not the rows, so the check
+# stays cheap on the two-minute tick; the reconciliation is what moves data.
+sub appointments_since() {
+	my $since = shift;
+	return undef unless defined $since && $since =~ /^[0-9]+$/;
+	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments where server_time > ? and status != ?', $since, 'deleting')->hashes->[0];
+	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0, since => $since + 0 };
 }
 
 
