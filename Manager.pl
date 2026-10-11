@@ -1294,7 +1294,6 @@ sub homepage_maker($c) {
 		config => &subs::config_reader(),
 		device => &subs::device_setter(),
 		string => &subs::random_string_creator(),
-		newsstand => &subs::statement_grabber(),
 		pseudonyms => &pseudonym_maker('manager',''),
 		ws_url => $ws_url,
 		advertise_watching => &subs::setting_grabber({ app => 'me', setting => 'advertise_watching' })
@@ -1772,7 +1771,6 @@ sub store_maker($c) {
 			template => 'store/store',
 			string => $random_caching_string,
 			categories => $categories,
-			newsstand => &subs::statement_grabber(),
 			ws_url => $ws_url,
 			mail_ws_url => $mail_ws_url,
 			paperboy_url => $paperboy_url,
@@ -1790,7 +1788,6 @@ sub store_maker($c) {
 			layout => 'store',
 			string => $random_caching_string,
 			categories => $categories,
-			newsstand => &subs::statement_grabber(),
 			ws_url => $ws_url,
 			mail_ws_url => $mail_ws_url,
 			paperboy_url => $paperboy_url,
@@ -4920,7 +4917,6 @@ get '/manager' => sub ($c) {
 		layout => 'manager',
 		title => &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' }) || $hostname,
 		template => 'manager',
-		newsstand => &subs::statement_grabber(),
 		manager_file => &manager_file_maker($c->session('name')),
 		config => &subs::config_reader(),
 		website => $website,
@@ -12118,7 +12114,6 @@ get '/manager/appointment_viewer' => sub($c) {
 		json => {
 			appts => $appts,
 			timestamp => $timestamp,
-			newsstand => &subs::statement_grabber($appts),
 			clothesline => $clothesline
 		}
 	);

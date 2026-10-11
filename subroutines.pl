@@ -721,20 +721,6 @@ sub inventory_grabber() {
 	return $tree;
 }
 
-sub statement_grabber() {
-	my $appts = shift;
-
-	my $articles;
-
-	foreach my $a (keys %{$appts}) {
-		unless ($a =~ /^__/ ) {
-			$articles .= &format_name($a) . "---";
-		}
-	}
-	return $articles;
-}
-
-
 # Every span the app offers: a span is a count of a unit, so "2month" is two
 # of the 30 day months, and the odd ones do not read that way.  time_span() is
 # the one door into them, which is why a twenty two month can no longer mean

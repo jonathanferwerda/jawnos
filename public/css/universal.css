@@ -1,19 +1,5 @@
 
 
-#newsstand {
-	position:fixed;
-	bottom: 0px;
-	left:0px;
-	height: 46px;
-	z-index: 300;
-	color: black;
-	font-size: 32px;
-  vertical-align: middle;
-	opacity: 80%;
-	border-radius: 1%;
-	width: 100%;
-}
-
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
 	-webkit-appearance: none;
