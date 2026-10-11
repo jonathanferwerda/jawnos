@@ -27,7 +27,7 @@ $(document).on('keydown', '#terminal_interactive', function(e) {
 	var timestamp = Date.now();
 	var event = e;
 	console.log(e);
-	if (!e.metaKey) {
+	if (!jawnosSuperKey(e)) {
 	 	if (e.ctrlKey && !e.altKey && !e.shiftKey) {
 			const key = e.key.toUpperCase(); // Force uppercase to align with standard ASCII codes
 

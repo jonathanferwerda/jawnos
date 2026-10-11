@@ -16,8 +16,9 @@ import threading
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
 
 from . import DESKTOP_DIR, core  # noqa: E402
 
@@ -46,6 +47,9 @@ class Dashboard(Gtk.Window):
         self.notebook.append_page(scroller, Gtk.Label(label="Dashboard"))
         self.web_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.notebook.append_page(self.web_page, Gtk.Label(label="JawnOS"))
+        # No tab strip: the Dashboard's button and the view's start-menu admin
+        # icon are the two ways across (Ctrl+Shift+D is the keyboard backstop).
+        self.notebook.set_show_tabs(False)
         self.notebook.connect("switch-page", self._on_switch_page)
         self.add(self.notebook)
 
@@ -103,6 +107,7 @@ class Dashboard(Gtk.Window):
         self._button(box, "Save settings", self.action_save)
 
         self.connect("destroy", Gtk.main_quit)
+        self.connect("key-press-event", self._on_key)
         self.refresh()
         GLib.timeout_add_seconds(2, self._tick)
         if show_web:
@@ -222,6 +227,17 @@ class Dashboard(Gtk.Window):
 
     def _show_dashboard(self):
         self.notebook.set_current_page(0)
+
+    def _on_key(self, _widget, event):
+        # With the tab strip hidden, Ctrl+Shift+D is the keyboard way back to the
+        # control panel (e.g. if the view ever lands somewhere without its
+        # start-menu admin icon).
+        if (event.keyval == Gdk.KEY_d
+                and (event.state & Gdk.ModifierType.CONTROL_MASK)
+                and (event.state & Gdk.ModifierType.SHIFT_MASK)):
+            self._show_dashboard()
+            return True
+        return False
 
     # ---- async plumbing ----
 

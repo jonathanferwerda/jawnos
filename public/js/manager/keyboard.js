@@ -44,6 +44,14 @@ function jawnosKeyCode(e) {
 	return 0;
 }
 
+// Is Super/Meta held right now? e.metaKey is unreliable (WebKitGTK never sets
+// it), so fall back to the tracked key state -- keyboard.js's document keydown
+// runs before any other handler, so keysPressed[91] is current by the time a
+// later handler asks.
+function jawnosSuperKey(e) {
+	return !!(e.metaKey || keysPressed[91]);
+}
+
 // The desktop app's embedded view exposes a `jawnos` script-message handler.
 // Mark the document so CSS can show the admin-console icon only there (a plain
 // browser tab has no dashboard to go back to), and expose the press.
@@ -59,6 +67,21 @@ function jawnosAdminConsole() {
 // The dock at the bottom of the screen: one centred row of pseudonyms. Icons that
 // are switched off hide, and the rest share the row, shrinking below their full
 // size when there are too many to fit, so the dock never runs off the screen.
+//
+// An icon's on/off is this browser's own (dock_icons), but the server renders the
+// dock with exactly the pseudonyms whose status is 'on', so a name the browser
+// has never kept an entry for follows the server and is on. Persisting an absent
+// entry as 'on' is what makes that stick; before this, only names a toggle had
+// written ever showed, so a fresh browser - or one whose store predates a
+// pseudonym - hid most of the row until each was clicked off and on again.
+function jawnosDockIconState(toggle) {
+	var state = jawnosDockIconGet(toggle);
+	if (state === null || state === undefined) {
+		state = 'on';
+		jawnosDockIconSet(toggle, 'on');
+	}
+	return state;
+}
 function pseudonymFreeSpaceFinder(type) {
 	var w = $(window).width();
 	var h = $(window).height();
@@ -83,7 +106,7 @@ function pseudonymFreeSpaceFinder(type) {
 	$.each(icons, function(i,el) {
 		var icon = $(el);
 		var toggle = icon.attr('toggle');
-		if (!icons_hidden && jawnosDockIconGet(toggle) == 'on') {
+		if (!icons_hidden && jawnosDockIconState(toggle) == 'on') {
 			icon.show();
 			visible.push(el);
 		}
@@ -307,7 +330,7 @@ function pseudonymSideSlide() {
 	// ones come back, so a switched-off icon stays off.
 	$('#pseudonym_bar .pseudonym.bar').each(function () {
 		if (pseudonymSideTucked) { $(this).hide(); }
-		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden()) && jawnosDockIconGet($(this).attr('toggle')) == 'on') { $(this).show(); }
+		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden()) && jawnosDockIconState($(this).attr('toggle')) == 'on') { $(this).show(); }
 	});
 	if (L.search_in_dock) {
 		$('#search_toggle').css({ 'left': (L.icon_left + slide) + 'px' });
@@ -483,7 +506,7 @@ function pseudonymHomeShower(x,y,interval) {
 
 						}
 					}
-					var ls = jawnosDockIconGet(toggle);
+					var ls = jawnosDockIconState(toggle);
 					if (ls == 'on' && !(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())) {
 						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
 					}

@@ -32,8 +32,34 @@ from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
 from . import DESKTOP_DIR, core  # noqa: E402
 
+
 # One shared context so the session cookie survives window closes and reloads.
 _context = None
+
+
+def _apply_webkit_env():
+    """Apply optional WebKit environment overrides from webkit.env.
+
+    WebKit reads these at initialisation, so they have to be in the environment
+    before the first WebView is made. The file (one KEY=VALUE per line, '#'
+    comments) is an escape hatch for rendering and video tuning without editing
+    code -- e.g. WEBKIT_DISABLE_DMABUF_RENDERER=1 on a driver that mishandles
+    the DMABUF renderer. Existing environment variables always win."""
+    path = os.path.join(core.config_dir(), "webkit.env")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+_apply_webkit_env()
 
 
 def _context_get():
@@ -196,6 +222,16 @@ class WebViewPanel(Gtk.Box):
 
     def _configure(self, view):
         s = view.get_settings()
+        # Ask for the GPU path explicitly. Video and canvas get an accelerated
+        # compositing layer either way, but ALWAYS keeps the whole view on it.
+        # (Video *decode* is GStreamer's job: without a VA-API plugin such as
+        # gst-plugin-va, WebKit falls back to software decode and HD video is
+        # choppy however this is set.)
+        try:
+            s.set_property("hardware-acceleration-policy",
+                           WebKit2.HardwareAccelerationPolicy.ALWAYS)
+        except Exception:
+            pass
         for prop, value in (
             ("enable-media-stream", True),        # getUserMedia: camera + mic
             ("enable-webrtc", True),
