@@ -10186,10 +10186,15 @@ sub remote_deploy {
 		$host = '127.0.0.1' if $tun->{'PORT_SSH'};
 		$port = $tun->{'PORT_SSH'} || $port;
 	}
-	# the desktop reinstall is guarded on the install actually being present, so a
-	# headless server skips it; `printf restart` is how jawn's master is rebooted
-	my $remote = 'cd ' . $repo . ' && git pull --ff-only && '
-		. '{ [ -d "$HOME/.local/share/jawnos/desktop" ] && ./desktop/install.sh >/dev/null 2>&1; true; } && '
+	# No `$` or backticks anywhere in here on purpose: Mojo::Util::quote wraps in
+	# double quotes, and a `$VAR` would be expanded by the LOCAL shell before ssh
+	# ever ran. `~` and `command -v` say the same thing without a `$`. The git
+	# fallback covers the cloud, which runs git from a user-space install. The
+	# desktop reinstall is guarded on the install existing, so a headless server
+	# skips it; `printf restart` is how jawn's master is rebooted.
+	my $remote = 'cd ' . $repo . ' && '
+		. '{ command -v git >/dev/null 2>&1 && git pull --ff-only || ~/opt-git/git pull --ff-only; } && '
+		. '{ [ -d ~/.local/share/jawnos/desktop ] && ./desktop/install.sh >/dev/null 2>&1; true; } && '
 		. 'printf restart > ~/.president/status';
 	my $cmd = 'sshpass -p ' . quote($password)
 		. ' ssh -p ' . $port . ' -o StrictHostKeyChecking=no -o ConnectTimeout=12 '
