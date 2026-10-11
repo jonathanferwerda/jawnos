@@ -15,10 +15,8 @@ var jawnosBars = {
 	start_side: jawnos_bar_settings['start_button_side'] || 'right',
 	icons: jawnos_bar_settings['dock_icons'] || 'shown',
 	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
-	// the window title bar's own thickness, and the comfortable size of a dock
-	// icon before the row shares what is left (see pseudonymFreeSpaceFinder)
+	// the window title bar's own thickness
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
-	dockIcon: parseInt(jawnos_bar_settings['dock_icon_size']) || 60,
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
 	// the bar tucks itself away when idle
 	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
@@ -59,18 +57,6 @@ function jawnosWindowNavbarApply(px) {
 	if (isNaN(v)) { return; }
 	jawnosBars.navbar = Math.max(28, v);
 	document.documentElement.style.setProperty('--navbar_h', jawnosBars.navbar + 'px');
-}
-// The comfortable size of a dock icon before the row starts sharing what the
-// screen has; the dock's own finder reads it through jawnosDockIconFull().
-function jawnosDockIconFull() {
-	var v = parseInt(jawnosBars.dockIcon);
-	return (isFinite(v) && v > 0) ? v : 60;
-}
-function jawnosDockIconApply(px) {
-	var v = parseInt(px, 10);
-	if (isNaN(v)) { return; }
-	jawnosBars.dockIcon = Math.max(16, v);
-	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 }
 function jawnosDockTop() {
 	return jawnosBars.dock == 'top';
@@ -357,9 +343,6 @@ function jawnosMiscRangeInput(input) {
 		// every window title bar scales at once from the CSS variable
 		jawnosWindowNavbarApply(value);
 	}
-	else if (setting == 'dock_icon_size') {
-		jawnosDockIconApply(value);
-	}
 	else if (setting == 'clothesline_height') {
 		if (typeof jawnosClotheslineHeightApply == 'function') { jawnosClotheslineHeightApply(value); }
 	}
@@ -375,7 +358,6 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
 	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
-	else if (setting == 'dock_icon_size') { jawnosDockIconApply($(this).val()); return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set
