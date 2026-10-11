@@ -82,6 +82,16 @@ def default_jawn_dir():
     return os.path.join(home(), DEFAULT_DIRNAME)
 
 
+def jawn_version(jawn_dir):
+    """The human version from <jawn_dir>/VERSION, or None if unavailable."""
+    try:
+        with open(os.path.join(jawn_dir, "VERSION"), "r", encoding="utf-8") as fh:
+            value = fh.read().strip()
+        return value or None
+    except OSError:
+        return None
+
+
 def load_settings():
     data = {
         "jawn_dir": default_jawn_dir(),

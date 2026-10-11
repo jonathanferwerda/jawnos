@@ -6752,13 +6752,12 @@ sub tunnel_transport() {
 	return &subs::setting_grabber({ app => '__president', setting => 'tunnel_transport' }) || 'ssh';
 }
 
-# The hub websocket endpoint a NAT'd peer dials out to, carrying the same
-# encrypted signatorial token the homepage/remote_machine_online handshake uses.
+# The hub websocket endpoint a NAT'd peer dials out to. The peer names itself
+# with its own signatorial, matching the sibling tunnel routes.
 sub tunnel_hub_url() {
 	my $sig = &subs::signatorial_designer();
 	my $hub = $config->{'tunnel_hub'} || ('wss://' . $config->{'domain'} . '/manager/tunnel/ws');
-	my $token = &subs::encrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($sig, 5), $sig);
-	return $hub . '?signatorial=' . Mojo::Util::url_escape($token);
+	return $hub . '?signatorial=' . Mojo::Util::url_escape($sig);
 }
 
 # Run the peer half of the wss tunnel: dial the hub and serve its `open` frames.

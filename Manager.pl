@@ -4415,18 +4415,19 @@ post '/manager/configure/remote_machine/tunnel/close' => sub($c) {
 };
 
 websocket '/manager/tunnel/ws' => sub ($c) {
-	# A peer behind NAT dials out here and authenticates with the same encrypted
-	# signatorial token the homepage and remote_machine_online handshake use.
-	my $remote_signatorial = $c->param('signatorial');
-	my $signatorial = &subs::signatorial_designer();
-	my $rs = eval { &subs::decrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($signatorial, 5), $remote_signatorial) };
-	unless ($rs && $rs eq $signatorial) {
+	# A peer behind NAT dials out here and names itself with the same
+	# signatorial the sibling tunnel routes (request/confirm/close) use. The
+	# hub only serves a signatorial it already knows as a remote machine.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) {
 		$c->rendered(403);
 		return;
 	}
 	$c->rendered(101);
-	# The peer's reserved ports live in its tunnels rows: the hub listens on each
-	# `source` and forwards to the peer's `dest` (tunnel.pl hub_session).
+	# The peer's reserved ports live in its tunnels rows: in_port is the port
+	# reserved on this hub, out_port the service on the peer. The hub listens on
+	# in_port and forwards to the peer's out_port (tunnel.pl hub_session).
 	my $tuns = &subs::db_select('tunnels', undef, { signatorial => $signatorial, status => 'active' })->hashes || [];
 	my %listen;
 	foreach my $t ( @{$tuns} ) {
