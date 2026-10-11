@@ -25,8 +25,9 @@ import os
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import GLib, Gtk, Pango, WebKit2  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango, WebKit2  # noqa: E402
 
 from . import DESKTOP_DIR, core  # noqa: E402
 
@@ -46,11 +47,17 @@ def manager_url(jawn_dir):
 
 
 def ticket_url():
-    """The live login ticket, if the checkout has one.
+    """The stored login ticket, if any.
 
-    Loading it mints the session cookie and redirects to /manager, so the
-    embedded view is logged in without a password. The file is gitignored (it is
-    a live token); a plain /manager load is the fallback."""
+    Prefers the encrypted store (keyring, else a Fernet file); falls back to the
+    gitignored live token a checkout may keep in .shots/ticket.txt."""
+    try:
+        from . import secrets
+        stored = secrets.load()
+        if stored:
+            return stored
+    except Exception:
+        pass
     root = os.path.dirname(DESKTOP_DIR)
     path = os.path.join(root, ".shots", "ticket.txt")
     try:
@@ -75,6 +82,7 @@ class WebViewWindow(Gtk.Window):
         self.add(box)
 
         self._manager_url = manager_url(settings["jawn_dir"])
+        self._fullscreen = False
         # The ticket URL logs in and redirects; loading it and then heading to
         # /manager guarantees the session cookie is set even if the ticket page
         # does not redirect on its own.
@@ -82,6 +90,7 @@ class WebViewWindow(Gtk.Window):
         self._login_pending = bool(login)
         self._gate_retries = 0
         self.load(start_url or login or self._manager_url)
+        self.connect("key-press-event", self._on_key)
         self.show_all()
 
     # ---- chrome ----
@@ -91,7 +100,8 @@ class WebViewWindow(Gtk.Window):
         bar.set_border_width(4)
         for label, handler in (("\u2190", self.view_go_back),
                                ("\u21bb", self.view_reload),
-                               ("\u2302", self.view_home)):
+                               ("\u2302", self.view_home),
+                               ("\u26f6", self._toggle_fullscreen)):
             button = Gtk.Button(label=label)
             button.set_relief(Gtk.ReliefStyle.NONE)
             button.connect("clicked", lambda _b, h=handler: h())
@@ -110,6 +120,36 @@ class WebViewWindow(Gtk.Window):
 
     def view_home(self):
         self.load(manager_url(self.settings_data["jawn_dir"]))
+
+    # ---- fullscreen ----
+
+    def _toggle_fullscreen(self):
+        # content-requested fullscreen arrives via the WebView signals; a key or
+        # button press flips the flag here so the two paths agree.
+        self._fullscreen = not self._fullscreen
+        if self._fullscreen:
+            self.fullscreen()
+        else:
+            self.unfullscreen()
+
+    def _on_key(self, _widget, event):
+        if event.keyval == Gdk.KEY_F11:
+            self._toggle_fullscreen()
+            return True
+        if event.keyval == Gdk.KEY_Escape and self._fullscreen:
+            self.unfullscreen()
+            return True
+        return False
+
+    def _on_enter_fullscreen(self, _view):
+        self._fullscreen = True
+        self.fullscreen()
+        return False
+
+    def _on_leave_fullscreen(self, _view):
+        self._fullscreen = False
+        self.unfullscreen()
+        return False
 
     def load(self, url):
         self.view.load_uri(url)
@@ -135,6 +175,9 @@ class WebViewWindow(Gtk.Window):
         view.connect("load-changed", self._on_load_changed)
         view.connect("load-failed-with-tls-errors", self._on_tls_error)
         view.connect("permission-request", self._on_permission)
+        # A page (e.g. a video element) asking for fullscreen drives the window.
+        view.connect("enter-fullscreen", self._on_enter_fullscreen)
+        view.connect("leave-fullscreen", self._on_leave_fullscreen)
 
     def _on_load_changed(self, view, event):
         try:

@@ -81,6 +81,10 @@ class Dashboard(Gtk.Window):
         self._button(box, "Show jawn log", self.action_show_log)
         self._button(box, "Open console", self.action_open_console)
 
+        self._header(box, "Login")
+        self._button(box, "Import login ticket", self.action_import_ticket)
+        self._button(box, "Forget stored ticket", self.action_forget_ticket)
+
         self._header(box, "BLE bridge")
         self._button(box, "Start BLE bridge", lambda: self._async(core.start_ble))
         self._button(box, "Stop BLE bridge", lambda: self._async(core.stop_ble))
@@ -157,6 +161,29 @@ class Dashboard(Gtk.Window):
         ok, message = core.open_console(self.settings["jawn_dir"])
         self._say(message)
 
+    def action_import_ticket(self):
+        dialog = Gtk.Dialog(title="Import login ticket", transient_for=self)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("https://host:3000/box_office/<uuid>?s=<token>")
+        entry.set_width_chars(64)
+        dialog.get_content_area().add(entry)
+        dialog.show_all()
+        response = dialog.run()
+        url = entry.get_text().strip()
+        dialog.destroy()
+        if response == Gtk.ResponseType.OK and url:
+            from . import secrets
+            ok, message = secrets.store(url)
+            self._say(message)
+            self.refresh()
+
+    def action_forget_ticket(self):
+        from . import secrets
+        secrets.clear()
+        self._say("stored ticket cleared")
+        self.refresh()
+
     def action_show_log(self):
         LogWindow(core.jawn_log_path(self.settings["jawn_dir"]))
 
@@ -190,10 +217,16 @@ class Dashboard(Gtk.Window):
 
     def refresh(self):
         self._tick()
+        try:
+            from . import secrets
+            ticket = secrets.describe()
+        except Exception:
+            ticket = "?"
         self.env.set_text(
-            "folder: %s\nautostart: %s" % (
+            "folder: %s\nautostart: %s\nlogin ticket: %s" % (
                 self.settings.get("jawn_dir", ""),
-                "enabled" if core.autostart_enabled() else "disabled"))
+                "enabled" if core.autostart_enabled() else "disabled",
+                ticket))
 
     def _render(self, jawn_up, ble_up):
         if jawn_up:

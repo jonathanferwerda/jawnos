@@ -106,6 +106,28 @@ def cmd_autostart(args):
     return 0
 
 
+def cmd_ticket(args):
+    from . import secrets
+    if args.action == "import":
+        url = args.url
+        if url is None:
+            url = sys.stdin.read().strip()
+        ok, message = secrets.store(url)
+        print(message)
+        return 0 if ok else 1
+    if args.action == "clear":
+        secrets.clear()
+        print("ticket cleared")
+        return 0
+    if args.action == "show":
+        url = secrets.load()
+        print(secrets.mask(url) if url else "no ticket stored")
+        return 0 if url else 1
+    # status
+    print(secrets.describe())
+    return 0
+
+
 # --------------------------------------------------------------------------
 # ble passthrough: speak the bridge protocol directly
 # --------------------------------------------------------------------------
@@ -212,6 +234,11 @@ def build_parser():
     p = sub.add_parser("autostart", help="toggle the BLE bridge at login")
     p.add_argument("action", choices=["enable", "disable", "status"])
     p.set_defaults(func=cmd_autostart)
+
+    p = sub.add_parser("ticket", help="import/clear the stored (encrypted) login ticket")
+    p.add_argument("action", choices=["import", "show", "clear", "status"])
+    p.add_argument("url", nargs="?", help="the ticket URL (or pipe it on stdin)")
+    p.set_defaults(func=cmd_ticket)
 
     p = sub.add_parser("ble", help="drive the BLE bridge")
     p.add_argument("action", nargs="?", choices=["start", "stop", "status", "scan", "connect", "disconnect", "send"])
