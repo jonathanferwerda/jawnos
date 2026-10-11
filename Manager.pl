@@ -20810,6 +20810,7 @@ websocket '/manager/ws' => sub ($c) {
 	chomp($hostname);
 	my $connection_id = $c->tx;
 	$connection_id = $connection_id->connection;
+	my $code_rev = &subs::code_revision();
 	my $init_data = {
 		browser_tab_id => $browser_tab_id,
 		browser_tab => $browser_tab,
@@ -20824,6 +20825,8 @@ websocket '/manager/ws' => sub ($c) {
 		connection_id => $connection_id,
 		user_agent => $user_agent,
 		random_string => &subs::random_string_creator(25),
+		# the code this machine is running; the client reloads when it changes
+		revision => ($code_rev->{'commit'} || $code_rev->{'fingerprint'}),
 		href => $c->param('href'),
 		pathname => $c->param('pathname'),
 		ticket_uuid => $c->session('ticket_uuid')

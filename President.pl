@@ -190,6 +190,15 @@ sub manager_starter() {
 	# sync itself triggers heals the data without waiting for a login. Ones whose
 	# prerequisites are not ready yet are left for the login / merge pass.
 	&subs::run_backfills();
+	# Keep this machine on the current code without a hand: fetch origin and
+	# fast-forward when the tree is clean and strictly behind, then restart. Open
+	# tabs reload themselves - the websocket hands out the revision.
+	&subs::subprocessor(sub {
+		while (1) {
+			sleep 60;
+			eval { &subs::git_watcher_check(); };
+		}
+	}, { name => 'git watcher' });
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {

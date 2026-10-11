@@ -9797,4 +9797,44 @@ sub run_backfills() {
 	return $ok;
 }
 
+# ---------------------------------------------------------------------------
+# Auto-update. A machine that receives code by git can keep itself current: the
+# watcher fetches origin and fast-forwards when the tree is clean and strictly
+# behind (never clobbers local commits or a dirty tree), then asks jawn to
+# restart. Only one-way - a dev machine ahead of origin is left alone. Open
+# browsers reload on their own: the websocket hands out the revision and the
+# client reloads when it changes.
+# ---------------------------------------------------------------------------
+sub git_binary {
+	return $ENV{'GIT_BINARY'} if $ENV{'GIT_BINARY'} && -x $ENV{'GIT_BINARY'};
+	# the cloud runs git from a user-space install (no root)
+	my $local = ($ENV{'HOME'} || '') . '/opt-git/git';
+	return $local if -x $local;
+	return 'git';
+}
+
+sub git_watcher_check {
+	return unless -d '.git';
+	my $git = &subs::git_binary();
+	# never touch a tree with local modifications to tracked files
+	my $dirty = `$git status --porcelain --untracked-files=no 2>/dev/null`;
+	return if $dirty =~ /\S/;
+	`$git fetch origin --quiet 2>/dev/null`;
+	my $head = `$git rev-parse HEAD 2>/dev/null`; chomp $head;
+	my $origin = `$git rev-parse origin/main 2>/dev/null`; chomp $origin;
+	return unless $head && $origin && $head ne $origin;
+	# HEAD must be an ancestor of origin/main (we are only behind, not diverged)
+	my $rc = system("$git merge-base --is-ancestor HEAD origin/main >/dev/null 2>&1");
+	return if $rc != 0;
+	`$git merge --ff-only origin/main --quiet 2>/dev/null`;
+	my $new = `$git rev-parse HEAD 2>/dev/null`; chomp $new;
+	return if $new eq $head;
+	if ($subs::logfile) {
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " git watcher: fast-forwarded " . substr($head,0,10) . " -> " . substr($new,0,10) . ", restarting\n";
+		close $fh;
+	}
+	write_file(&subs::home('~/.president/status'), 'restart');
+}
+
 1;
