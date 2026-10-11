@@ -22,7 +22,7 @@
 							<% } %>
 						</td>
 						<td><%= $m->{'place'} ? &subs::format_name($m->{'place'}) : '' %></td>
-						<td class="warehouse_move_amount <%= $q < 0 ? 'negative' : ($q > 0 ? 'positive' : '') %>"><% if ($m->{'money'}) { %><%== ($q > 0 ? '+' : '') . &subs::price_formatter($q) %><% } else { %><%= ($q > 0 ? '+' : '') . &subs::numeric_formatter($q) . ($m->{'unit'} ? '&#160;' . $m->{'unit'} : '') %><% } %></td>
+						<td class="warehouse_move_amount <%= $q < 0 ? 'negative' : ($q > 0 ? 'positive' : '') %>"><% if ($m->{'money'}) { %><%== ($q > 0 ? '+' : '') . &subs::price_formatter($q) %><% } else { %><%= ($q > 0 ? '+' : '') . &subs::numeric_formatter($q) . ($m->{'unit'} ? "\x{a0}" . $m->{'unit'} : '') %><% } %></td>
 						<td><%= &subs::format_name($m->{'reason'}) %></td>
 						<td>
 							<% if ($m->{'source'}) { %>

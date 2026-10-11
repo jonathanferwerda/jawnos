@@ -16621,11 +16621,12 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 				}
 			}
 			&subs::db_delete('appointments', { uuid => $app->{'uuid'} });
-			# the warehouse ledger mirrors money moves and guards balance snapshots, so
-			# a deleted row takes its ledger rows with it (stock rows are reversed where
-			# they were written, not here)
+			# a deleted row takes its warehouse rows with it - the money move, the
+			# balance anchor, and the stock movement it recorded (each is keyed to the
+			# source uuid, so nothing else is touched)
 			&subs::db_query('delete from warehouse where kind = ? and uuid = ?', 'money', $app->{'uuid'});
 			&subs::db_query("delete from warehouse where kind = 'inventory' and app_uuid = ?", $app->{'uuid'});
+			&subs::db_query("delete from warehouse where kind = 'stock' and app_uuid = ?", $app->{'uuid'});
 		}
 
 		&embedded_app_deleter({ appt_uuid => $uuid });
