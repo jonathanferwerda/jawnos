@@ -15,6 +15,9 @@ our $log = Mojo::Log->new(path => $logfile);
 
 hook before_dispatch => sub {
 	my ($c) = @_;
+	# a fresh settings memo for this request (see subroutines::setting_grabber)
+	%subs::setting_memo = ();
+	$subs::setting_memo_on = 1;
 	$c->inactivity_timeout(300); 
 	my $path = $c->req->url->path;
 	# A relayed request carries a relay_id. If this machine has already handled
@@ -304,6 +307,12 @@ hook after_render => sub  {
   		|| $path eq '/service_worker.js';
   	return if $c->req->cookie($ENV{cookie_name} || 'president');
   	$c->res->headers->remove('Set-Cookie');
+  };
+
+  # The settings memo lives for one request only.
+  hook after_dispatch => sub {
+  	%subs::setting_memo = ();
+  	$subs::setting_memo_on = 0;
   };
 
   hook after_dispatch => sub {

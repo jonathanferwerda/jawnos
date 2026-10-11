@@ -54,6 +54,12 @@ our $log = Mojo::Log->new(path => $logfile);
 my $universal_splitter = $gb::universal_splitter;
 
 our $device = &device_setter();
+
+# Request-scoped settings read-through memo (see setting_grabber). Cleared at
+# each request boundary by hooks.pl; off outside requests so long-lived
+# utility processes never serve stale settings.
+our %setting_memo;
+our $setting_memo_on = 0;
 sub format_name() {
 	my $name = shift || "";
 	my $fname = lc $name;
@@ -2708,6 +2714,7 @@ sub intelligent_automation_toggle() {
 }
 
 sub setting_setter() {
+	%setting_memo = ();
 	my $settings = shift;
 	my $app = $settings->{'app'};
 	my $original_app = $app;
@@ -2892,6 +2899,16 @@ sub setting_grabber() {
 	my $params = { %{$settings} };
 	delete @{$params}{qw/benign settings/};
 
+	# request-scoped memo: the same scalar answer is recomputed zero times per
+	# request. A worker handles one request at a time, so this is private to it.
+	# colour is excluded (a blank one is filled from the theme) and any settings
+	# write flushes the whole memo.
+	my $memo_key;
+	if ($setting_memo_on && (($params->{'setting'} // '') ne 'colour')) {
+		$memo_key = join "\x1f", $app // '', map { "$_=" . ($params->{$_} // '') } sort keys %{$params};
+		return $setting_memo{$memo_key} if exists $setting_memo{$memo_key};
+	}
+
 	if (my $q = eval { return &db_select('settings', ['value'], $params) }) {
 		my $list = $q->hashes;
 
@@ -2908,6 +2925,7 @@ sub setting_grabber() {
 		# the button in configure/misc_setting_list does that on purpose instead.
 		$returner = &theme_colour_for_app($app, $returner, $settings->{'device'}) unless (length $returner);
 	}
+	$setting_memo{$memo_key} = $returner if defined $memo_key;
 	return $returner;
 }
 
@@ -2973,14 +2991,8 @@ sub settings_grabber() {
 	foreach my $s ( @{$list } ) {
 		$returner->{$s->{'setting'}} = $s->{'value'};
 	}
-	unless ($device_defined == 1 && $returner->{$settings->{'setting'}}) {
-		my $liste = $q->hashes;
-		foreach my $s (@{$liste}) {
-			unless ($returner->{$s->{'setting'}}) {
-				$returner->{$s->{'setting'}} = $s->{'value'};
-			}
-		}
-	}
+	# (the old fallback here re-called $q->hashes, which is exhausted by then and
+	# always empty - dead code; the loop above already set every fetched setting)
 	unless ($returner->{'uuid'}) {
 		if (($settings->{'benign'} || 0) != 1) {
 			my $uuid = &random_string_creator(25);
@@ -2997,6 +3009,7 @@ sub settings_grabber() {
 }
 
 sub setting_deleter() {
+	%setting_memo = ();
 	my $setting = shift;
 	$setting->{'device'} = $setting->{'device'} || &device_setter();
 	if ($setting->{'subsetting'}) {
@@ -4948,6 +4961,7 @@ sub dbs_insert {
 sub db_insert() {
 	my $table = shift;
 	my $data = shift;
+	%setting_memo = () if ($table // '') eq 'settings';
 	$data->{'ost'} = $data->{'ost'} || &rightNow();
 	$data->{'server_time'} = $data->{'server_time'} ? $data->{'server_time'} : $data->{'ost'};
 	$data->{'uuid'} = &random_string_creator(15) unless $data->{'uuid'};
@@ -4989,6 +5003,7 @@ sub db_update() {
 	my $table = shift;
 	my $data = shift;
 	my $params = shift;
+	%setting_memo = () if ($table // '') eq 'settings';
 	my ($db,$database,$sql) = &database_grabber();
 	$data->{'server_time'} = &subs::rightNow() unless $data->{'server_time'};
 	&db_cache_updater($table, $params);
@@ -5009,6 +5024,7 @@ sub dbs_delete {
 sub db_delete() {
 	my $table = shift;
 	my $params = shift;
+	%setting_memo = () if ($table // '') eq 'settings';
 
 	my ($db,$database,$sql) = &database_grabber();
 	my ($lid,$success);
