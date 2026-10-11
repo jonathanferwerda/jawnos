@@ -61,7 +61,13 @@ with_view=1
 "$PYTHON" -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || with_view=0
 with_va=0
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
-	if gst-inspect-1.0 vaapi >/dev/null 2>&1 || gst-inspect-1.0 va >/dev/null 2>&1; then
+	# The *plugin* loading is not enough: without a VA-API driver the "va"
+	# plugin registers zero features, so the old check passed on a build that
+	# could not decode a single frame and video stayed on software decode. Look
+	# for an element WebKit actually uses to decode.
+	if gst-inspect-1.0 vah264dec >/dev/null 2>&1 \
+		|| gst-inspect-1.0 vah265dec >/dev/null 2>&1 \
+		|| gst-inspect-1.0 vaapih264dec >/dev/null 2>&1; then
 		with_va=1
 	fi
 fi
@@ -72,7 +78,9 @@ if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
 	case "$os_id" in
 		*arch*|*manjaro*)
 			echo "  sudo pacman -S webkit2gtk-4.1 gst-plugins-base gst-plugins-good \\"
-			echo "      gst-plugins-bad gst-plugins-ugly gst-libav gst-plugin-va libva-utils"
+			echo "      gst-plugins-bad gst-plugins-ugly gst-libav intel-media-driver libva-utils"
+			echo "  (intel-media-driver for Gen8+ Intel GPUs; on older Intel use"
+			echo "   libva-intel-driver. Verify with: vainfo)"
 			;;
 		*debian*|*ubuntu*)
 			echo "  sudo apt install gir1.2-webkit2-4.1 gstreamer1.0-plugins-base \\"

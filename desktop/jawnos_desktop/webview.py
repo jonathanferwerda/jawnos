@@ -66,6 +66,14 @@ def _context_get():
     global _context
     if _context is None:
         _context = WebKit2.WebContext.get_default()
+        # Cache like a desktop browser, not a viewer (the default is the minimal
+        # document-viewer model). A heavy page -- the music library fires a
+        # thumbnail request per song -- then comes mostly from disk on the next
+        # visit instead of being fetched again.
+        try:
+            _context.set_cache_model(WebKit2.CacheModel.DOCUMENT_BROWSER)
+        except Exception:
+            pass
     return _context
 
 
