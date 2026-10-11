@@ -5849,28 +5849,44 @@ sub log_reader {
 		my $fetch_start = $in_view_only ? $t : $t - $t1;
 		# A finished appointment behind the view is left alone: it was over before
 		# anything on screen, so its dot would pile against the edge with no band to
-		# explain it. These terms are flat, so the planner can still reach each one
-		# by an index.
-		my $stick_where = "((stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp <= ?))";
+		# explain it. The line is "stopped inside the window" or "still running".
+		# Written as one OR the planner optimizes each branch by one index, and the
+		# second branch's "stop_timestamp is null" became a walk over every
+		# never-stopped appointment in the table - the one query the poll could not
+		# get cheap. Asked as two queries, the first rides the stop_timestamp index
+		# and the second reaches the few start/record rows by type. The merge below
+		# already de-duplicates and re-sorts whatever both hands back.
+		my @stick_clauses = (
+			[ 'appointments', '(stop_timestamp between ? and ?)', [ $t, $fetch_end ] ],
+			# the still-running line wants the type index: left to choose, the planner
+			# takes "stop_timestamp is null" for an equality and walks every
+			# never-stopped row (tens of thousands) instead of the dozen start/record
+			# rows. idx12_appts (type,app) is the one it should use.
+			[ 'appointments indexed by idx12_appts', '(stop_timestamp is null and type in (?,?) and timestamp <= ?)', [ 'start', 'record', $fetch_end ] ],
+		);
 		my $stick_suffix = '';
-		my @stick_variables = ( $t, $fetch_end, 'start', 'record', $fetch_end );
+		my @stick_suffix_variables;
 		if ($data->{'filter'} && $data->{'filter'} ne 'all') {
 			$stick_suffix .= " and type = ?";
-			push @stick_variables, $data->{'filter'};
+			push @stick_suffix_variables, $data->{'filter'};
 		}
 		if ($project && $project ne 'all') {
 			$stick_suffix .= " and project = ?";
-			push @stick_variables, $project;
+			push @stick_suffix_variables, $project;
 		}
 		if ($account && $account ne 'all') {
 			$stick_suffix .= " and account = ?";
-			push @stick_variables, $account;
+			push @stick_suffix_variables, $account;
 		}
-		my $stick_query = sub {
-			my ($for_app) = @_;
-			my $q = "select * from appointments where ";
-			$q .= "app = ? and " if $for_app;
-			return $q . $stick_where . $stick_suffix . " order by timestamp";
+		my $stick_run = sub {
+			my ($for_app, $app) = @_;
+			foreach my $clause (@stick_clauses) {
+				my ($from, $where, $vars) = @{$clause};
+				my $q = "select * from $from where " . ($for_app ? "app = ? and " : '')
+					. $where . $stick_suffix . " order by timestamp";
+				$results = &subs::db_query($q, ($for_app ? ($app) : ()), @{$vars}, @stick_suffix_variables);
+				push @{$appointments}, @{$results->hashes};
+			}
 		};
 
 		$appts->{'__specs'}->{'start'} = $t;
@@ -5903,8 +5919,7 @@ sub log_reader {
 				$temp_appointments = $results->hashes;
 				push @{$appointments}, @{$temp_appointments};
 				unless ($in_view_only) {
-					$results = &subs::db_query($stick_query->($a), $a, @stick_variables);
-					push @{$appointments}, @{$results->hashes};
+					$stick_run->(1, $a);
 				}
 			}
 		}
@@ -5932,8 +5947,7 @@ sub log_reader {
 			$results = &subs::db_query($query, @query_variables);
 			$appointments = $results->hashes;
 			unless ($in_view_only) {
-				$results = &subs::db_query($stick_query->(), @stick_variables);
-				push @{$appointments}, @{$results->hashes};
+				$stick_run->();
 			}
 		}
 		# a row inside the view can be a stop or a presence too, so both queries
@@ -6049,17 +6063,24 @@ sub log_reader {
 
 
 
-	my $db_settings = &subs::db_query('select * from settings where setting=? or setting=?', 'pos', 'mab');
-	my $settings = $db_settings->hashes;
-	foreach my $s (@{$settings}) {
-		if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'account') {
-			push @{$appts->{'__accounts'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__accounts'}};
-		}
-		if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'project') {
-			push @{$appts->{'__projects'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__projects'}};
-		}
-		if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'account') {
-			push @{$appts->{'__accounts'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__accounts'}};
+	# The pos/mab markers are the app's place in the world (idea, product, ...).
+	# This view reads them only to build __accounts/__projects, and the windows
+	# that consume those (account, project, transfer) are rendered server-side
+	# from their own fetch - the JSON viewer hands them to no one. The centre view
+	# polls once a second, so ~1600 rows were being materialized and formatted to
+	# be ignored. The other views keep them bit for bit.
+	my $settings = [];
+	my $db_settings;
+	unless (($data->{'view'} || '') eq 'appointment_viewer') {
+		$db_settings = &subs::db_query('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
+		$settings = $db_settings->hashes;
+		foreach my $s (@{$settings}) {
+			if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'account') {
+				push @{$appts->{'__accounts'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__accounts'}};
+			}
+			if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'project') {
+				push @{$appts->{'__projects'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__projects'}};
+			}
 		}
 	}
 	my @app_names = ( &subs::device_setter() );
@@ -6072,6 +6093,12 @@ sub log_reader {
 		}
 	}
 	$s_query .= ')';
+	# The subcategory selectors (sc_idea, sc_service, ...) belong to the POS
+	# person, and every browser reads them from the POS window itself when it
+	# needs them. In this window they are pure weight: two of them alone were
+	# 535 KB of the payload the centre view was re-fetching every second. The
+	# viewer never looks at them, so here they are neither read nor sent.
+	$s_query .= " and substr(setting,1,3) <> 'sc_'" if ($data->{'view'} || '') eq 'appointment_viewer';
 	if (scalar @app_names > 1) {
 		$db_settings = &subs::db_query($s_query, @app_names);
 		my @app_settings = @{$db_settings->hashes};
@@ -6087,8 +6114,8 @@ sub log_reader {
 		push @{$settings}, @app_settings;
 	}
 
-	$appts->{'__specs'}->{'stats'}->{'settings'}->{'first'} = $settings->[0]->{'server_time'};
-	$appts->{'__specs'}->{'stats'}->{'settings'}->{'last'} = $settings->[-1]->{'server_time'};
+	$appts->{'__specs'}->{'stats'}->{'settings'}->{'first'} = $settings->[0]->{'server_time'} if $settings->[0];
+	$appts->{'__specs'}->{'stats'}->{'settings'}->{'last'} = $settings->[-1]->{'server_time'} if $settings->[-1];
 	if ($stats) {
 		my $updateable = 0;
 		foreach my $table ( qw/appts settings/ ) {
@@ -6102,6 +6129,42 @@ sub log_reader {
 		$appts->{'__specs'}->{'stats'}->{'appts'}->{'count'} = scalar @{$appointments};
 	}
 
+	# The three little per-app tables below (model, option, option_category) were
+	# read for *every row*, and every row of the same app asked the same three
+	# questions again. The centre view polls once a second, so that was ~45
+	# SQL::Abstract round trips on every tick, each rebuilding its own statement -
+	# the single largest cost of the view. One query per table, asked once for the
+	# whole set of apps in the window, answers them all; the rows are grouped by
+	# app here and handed back to the loop below.
+	my %appt_table_lookup;
+	{
+		my (%seen_app, @lookup_apps);
+		foreach my $a (@{$appointments}) {
+			next unless $a->{'app'};
+			my $lookup_app = &subs::unformat_name($a->{'app'});
+			next if $seen_app{$lookup_app}++;
+			push @lookup_apps, $lookup_app;
+		}
+		if (@lookup_apps) {
+			my $placeholders = join ',', ('?') x scalar @lookup_apps;
+			foreach my $at ( qw/model option option_category/ ) {
+				my $rows = &subs::db_query("select * from $at where app in ($placeholders)", @lookup_apps);
+				foreach my $row ( @{ $rows->hashes } ) {
+					push @{ $appt_table_lookup{$at}->{$row->{'app'}} }, $row;
+				}
+			}
+		}
+	}
+
+	# The per-row loop below used to re-scan the whole settings list (the pos/mab
+	# markers plus every app in the window - better than two thousand rows) once or
+	# twice for every appointment. Bucketing by app once answers each lookup with
+	# its own short list, which is what the loop actually wanted.
+	my %settings_by_app;
+	foreach my $s (@{$settings}) {
+		push @{ $settings_by_app{$s->{'app'}} }, $s;
+	}
+
 	foreach my $a (@{$appointments}) {
 		next unless $a->{'app'};
 	#	$a->{'file'} = undef if $data->{'view'} eq 'appointment_viewer';
@@ -6113,8 +6176,8 @@ sub log_reader {
 		#	}
 		#}
 		$a->{'app'} = &subs::unformat_name($a->{'app'});
-		my @a_settings = grep { $_->{'app'} eq $a->{'app'} } @{$settings};
-		foreach my $s (grep { $_->{'app'} eq $a->{'app'} } @{$settings}) {
+		my @a_settings = @{ $settings_by_app{$a->{'app'}} || [] };
+		foreach my $s (@{ $settings_by_app{$a->{'app'}} || [] }) {
 			if ($s->{'setting'} eq 'colour' && !length $s->{'value'}) {
 				# blank only - an appointment keeps the colour it was given until the
 				# user re-themes them from configure/misc_setting_list
@@ -6141,7 +6204,7 @@ sub log_reader {
 		}
 
 		foreach my $at ( qw/model option option_category/ ) {
-			$appts->{$a->{'app'}}->{$at} = &subs::db_select($at, undef, { app=> $a->{'app'} })->hashes;
+			$appts->{$a->{'app'}}->{$at} = $appt_table_lookup{$at}->{$a->{'app'}} || [];
 		}
 		if ($data->{'view'} eq 'centre_view') {
 			my @bm = sort keys %{$gb::budget_modes};
@@ -19577,6 +19640,11 @@ sub update_database($data) {
 		'CREATE INDEX idx2_ws on websockets (browser_tab_id)',
 		'CREATE INDEX idx1_continent on continent (app)',
 		'CREATE INDEX idx2_continent on continent (app,uuid)',
+		# navigation_information asks continent for the current (type='temporary')
+		# positions on every centre-view poll; with only (app) indexed that was a
+		# full scan of the whole position history - 116k rows and growing - on
+		# every tick. (type, signatorial, warranty) turns it into a lookup.
+		'CREATE INDEX IF NOT EXISTS idx6_continent on continent (type, signatorial, warranty)',
 		'CREATE INDEX idx1_security on security (level)',
 		'CREATE INDEX idx2_security on security (level,server_time)',
 		'CREATE INDEX idx1_cache on cache (app,device,context,subcontext)',
