@@ -16,7 +16,8 @@ import threading
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, GLib, Gtk  # noqa: E402
 
 from . import DESKTOP_DIR, core  # noqa: E402
 
@@ -38,12 +39,14 @@ class Dashboard(Gtk.Window):
         self.add(scroller)
 
         if os.path.exists(LOGO):
-            logo = Gtk.Image.new_from_file(LOGO)
-            logo.set_pixel_size(104)
-            box.pack_start(logo, False, False, 4)
+            # Scale the pixbuf explicitly: set_pixel_size() does not reliably
+            # resize an image loaded from a file in GTK3, so a 358x526 logo
+            # rendered at full size and pushed the buttons off the panel.
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(LOGO, -1, 56, True)
+            box.pack_start(Gtk.Image.new_from_pixbuf(pixbuf), False, False, 2)
 
         title = Gtk.Label()
-        title.set_markup("<span size='x-large' weight='bold'>JawnOS</span>")
+        title.set_markup("<span size='large' weight='bold'>JawnOS</span>")
         title.set_xalign(0)
         box.pack_start(title, False, False, 0)
 

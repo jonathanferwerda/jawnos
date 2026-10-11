@@ -72,17 +72,19 @@ RECONNECT_MAX = 30.0
 def frame_payload(message, mtu):
     """Split *message* into the daemon's framed chunks.
 
-    Mirrors JawnBleService.sendText: the payload is cut to ``max(20, mtu-3-12)``
-    bytes per chunk and each chunk is prefixed with ``"<i>/<n>:"``. A message
-    that fits is still one framed write (the watch's parser expects it)."""
+    Framing matches the Android daemon and the watch firmware
+    (``<i>/<n>:`` + chunk). The sizes are pinned to the ATT limit, not the
+    Android long-write maths: the watch only accepts **Write Without
+    Response**, which cannot be fragmented, so one framed part must fit in
+    ``mtu - 3`` bytes. 12 covers the longest ``"<i>/<n>:"`` prefix."""
     data = message.encode("utf-8")
-    max_chunk = max(20, mtu - 3)
-    chunk = max(20, max_chunk - 12)
-    total = 1 if len(data) == 0 else (len(data) + chunk - 1) // chunk
+    max_part = max(20, mtu - 3)
+    body = max(1, max_part - 12)
+    total = 1 if len(data) == 0 else (len(data) + body - 1) // body
     parts = []
     for i in range(total):
-        body = data[i * chunk:(i + 1) * chunk]
-        parts.append(("%d/%d:" % (i, total)).encode("ascii") + body)
+        chunk = data[i * body:(i + 1) * body]
+        parts.append(("%d/%d:" % (i, total)).encode("ascii") + chunk)
     return parts
 
 
@@ -196,6 +198,15 @@ class Bridge(object):
     def _iface(bus, path, name):
         return dbus.Interface(bus.get_object(BLUEZ, path), name)
 
+    def _prop(self, path, name):
+        # Properties live on org.freedesktop.DBus.Properties, NOT on the
+        # org.bluez.Device1 interface: calling Device1.Get raises "Method Get
+        # ... doesn't exist", which silently stalled the service-resolution
+        # wait for its full 10 s timeout -- long enough for the watch to sleep
+        # and drop the link.
+        props = dbus.Interface(self.bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
+        return props.Get(DEVICE_IFACE, name)
+
     def _bluetooth_ready(self):
         adapter = self._adapter_path()
         if adapter is None:
@@ -298,6 +309,16 @@ class Bridge(object):
         if not mac:
             self.emit_error("connect: mac required")
             return
+        # Idempotent: a second connect for the same target (an explicit one on
+        # top of the startup auto-connect) must not tear down a connect that is
+        # already in flight -- that produced BlueZ "InProgress" churn.
+        same = (self.target.get("mac") == mac
+                and self.target.get("service") == service
+                and self.target.get("rx") == rx
+                and self.target.get("tx") == tx)
+        if same and (self.connected() or self.pending_connect or self.connecting):
+            self.status()
+            return
         self.close_link(emit=False)
         self.target = {"mac": mac, "service": service, "rx": rx, "tx": tx, "mtu": mtu}
         self.mtu = mtu if mtu and mtu > 0 else DEFAULT_MTU
@@ -325,11 +346,19 @@ class Bridge(object):
             return
         # Not known yet: discover until it shows up, then connect. Non-blocking
         # so the daemon stays responsive (and stoppable) the whole time.
-        self.info("device not known; discovering for", mac)
+        self.info("waiting for", mac, "to advertise")
         self._start_discovery("connect")
-        GLib.timeout_add(400, self._poll_for_device, time.time() + 12.0)
+        GLib.timeout_add(500, self._poll_for_device)
 
-    def _poll_for_device(self, deadline):
+    def _poll_for_device(self):
+        # Keep discovery running until the peripheral appears. The watch's radio
+        # sleeps, so it advertises only in bursts; a fixed 12 s window with a
+        # backoff would keep missing it. A desktop can afford to scan
+        # continuously, and stops the moment the device is found or the user
+        # disconnects.
+        if not self.auto_reconnect or not self.pending_connect:
+            self._stop_discovery("connect")
+            return False
         if self.connected() or self.connecting:
             self._stop_discovery("connect")
             return False
@@ -341,15 +370,11 @@ class Bridge(object):
             # still winding down aborts with le-connection-abort-by-local.
             GLib.timeout_add(400, self._connect_device, path)
             return False
-        if time.time() > deadline:
-            self._stop_discovery("connect")
-            self.pending_connect = False
-            self.emit_error("device %s not found" % self.target.get("mac"))
-            self._schedule_reconnect()
-            return False
         return True
 
     def _connect_device(self, path):
+        if self.connecting:
+            return
         self.connecting = True
         try:
             device = self._iface(self.bus, path, DEVICE_IFACE)
@@ -378,7 +403,7 @@ class Bridge(object):
         if self.device_path is None:
             return False
         try:
-            resolved = bool(self._iface(self.bus, path, DEVICE_IFACE).Get(DEVICE_IFACE, "ServicesResolved"))
+            resolved = bool(self._prop(path, "ServicesResolved"))
         except dbus.exceptions.DBusException:
             resolved = False
         if resolved or time.time() > deadline:
@@ -387,6 +412,17 @@ class Bridge(object):
         return True
 
     def _finish_connect(self, path):
+        # Connect() returning is not proof the link survived; check before
+        # trusting it, or a drop lands as a phantom "connected" state.
+        try:
+            if not self._prop(path, "Connected"):
+                self.connecting = False
+                self.pending_connect = False
+                self.close_link(emit=False)
+                self._schedule_reconnect()
+                return
+        except dbus.exceptions.DBusException:
+            pass
         try:
             write_char, notify_char = self._resolve_chars(
                 path, self.target.get("service"), self.target.get("rx"), self.target.get("tx"))
@@ -406,13 +442,20 @@ class Bridge(object):
             dbus_interface=GATT_CHAR_IFACE, signal_name="PropertiesChanged", path=notify_char)
         self.connecting = False
         self.pending_connect = False
+        self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
+        self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
         # Say who is on the other end; the watch prints this in the net room.
+        # Delayed a beat so the first write does not race the just-formed link.
+        GLib.timeout_add(300, self._send_hello)
+
+    def _send_hello(self):
+        if not self.connected():
+            return False
         try:
             self._write_raw(json.dumps({"type": "hello", "name": socket.gethostname()}))
         except dbus.exceptions.DBusException as exc:
             self.info("hello write failed:", exc)
-        self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
-        self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
+        return False
 
     def _resolve_chars(self, device_path, service, rx, tx):
         managed = self._managed()
@@ -444,6 +487,17 @@ class Bridge(object):
         self.next_attempt = time.time() + delay
 
     def _maintain(self):
+        # BlueZ is the truth about the link. Without this, a drop that we did
+        # not catch as a signal left write_char set and every send failed with
+        # "Not connected" against a link that was already gone.
+        if self.device_path:
+            try:
+                if not self._prop(self.device_path, "Connected"):
+                    self.info("link gone; reconnecting")
+                    self.close_link(emit=True)
+            except dbus.exceptions.DBusException as exc:
+                self.info("link check failed:", exc)
+                self.close_link(emit=False)
         if (self.auto_reconnect and self.target.get("mac") and not self.connected()
                 and not self.connecting and not self.pending_connect
                 and time.time() >= self.next_attempt):
@@ -468,9 +522,17 @@ class Bridge(object):
 
     def _write_raw(self, message):
         char = self._iface(self.bus, self.write_char, GATT_CHAR_IFACE)
-        for part in frame_payload(message, self.mtu):
+        # Write Without Response: this watch refuses every Write Request
+        # (org.bluez.Error.NotPermitted on the D-Bus WriteValue). It has no ATT
+        # ack to throttle us, so pace the chunks to avoid overrunning the
+        # peripheral's receive buffer on a big room push.
+        options = dbus.Dictionary({"type": "command"}, signature="sv")
+        parts = frame_payload(message, self.mtu)
+        for index, part in enumerate(parts):
             value = dbus.Array([dbus.Byte(b) for b in part], signature="y")
-            char.WriteValue(value, dbus.Dictionary({}, signature="sv"))
+            char.WriteValue(value, options)
+            if index + 1 < len(parts):
+                time.sleep(0.015)
 
     def send(self, message):
         if not self.connected():
