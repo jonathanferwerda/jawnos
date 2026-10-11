@@ -173,6 +173,10 @@ the screen.
   `zbar`, `espeak`, `curl`, `rsync`, `openssl`, `sshpass` and `autossh` (see below).
 - Optional, for the full feature set: Python `weasyprint` (PDF rendering), `ollama` (local AI
   models), and a `whisper.cpp` build with the base model (audio transcription).
+- Optional, for the Linux desktop app (`desktop/`, the phone's dashboard and BLE bridge on a
+  computer): `python3-gi`, `python3-dbus`, BlueZ, **WebKitGTK 4.1** (the embedded view) and the
+  **GStreamer** plugin set with a VA-API plugin for GPU video decode — see
+  [`desktop/README.md`](desktop/README.md#media-and-video).
 
 You do not have to install any of this by hand. The first time you run `./jawn` it checks for
 every dependency and offers to install whatever is missing. The per-platform sections below are
@@ -258,6 +262,12 @@ perl tesseract-ocr imagemagick sqlite3 sshpass \
 ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
 tmux weasyprint autossh net-tools ollama
 
+# For the Linux desktop app (desktop/): the embedded view and smooth video
+# (gstreamer1.0-vaapi is the GPU decode plugin; add your GPU's VA driver too).
+sudo apt install python3-gi python3-dbus bluez gir1.2-webkit2-4.1 \
+gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo
+
 sudo cpanm --notest --force Mojolicious::Lite \
  WWW::Mechanize Time::Piece Time::Duration \
  Date::Parse  Hash::Merge Encode Data::Dumper \
@@ -306,6 +316,13 @@ chromium xclip rsync sshpass certbot zip \
 imagemagick espeak-ng tesseract xsane sox \
 net-tools xdotool qrencode zbar fprintd python-weasyprint \
 autossh lm_sensors ollama cmake python-pip
+
+# For the Linux desktop app (desktop/): the embedded view and smooth video.
+# Without the GStreamer plugin set (and gst-plugin-va) HD video decodes in
+# software and is choppy. Install them together -- they pin each other exactly.
+sudo pacman -S webkit2gtk-4.1 python-gobject python-dbus bluez bluez-utils \
+gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly \
+gst-libav gst-plugin-va libva-utils
 
 git clone https://github.com/ggml-org/whisper.cpp
 cd whisper.cpp

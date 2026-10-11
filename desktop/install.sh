@@ -53,6 +53,44 @@ if ! command -v bluetoothctl >/dev/null 2>&1; then
 	echo "install.sh: warning - bluez not found; the BLE bridge needs it"
 fi
 
+# The embedded view (WebKitGTK 4.1) and smooth video (the GStreamer plugin set,
+# with a VA-API plugin for GPU decode) are distro packages. Warn with the exact
+# command; never fail -- the dashboard works without the view, and video merely
+# decodes in software.
+with_view=1
+"$PYTHON" -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || with_view=0
+with_va=0
+if command -v gst-inspect-1.0 >/dev/null 2>&1; then
+	if gst-inspect-1.0 vaapi >/dev/null 2>&1 || gst-inspect-1.0 va >/dev/null 2>&1; then
+		with_va=1
+	fi
+fi
+if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
+	echo "install.sh: the embedded view / video want WebKitGTK 4.1 and the"
+	echo "  GStreamer plugins (including a VA-API plugin for GPU decode):"
+	os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
+	case "$os_id" in
+		*arch*|*manjaro*)
+			echo "  sudo pacman -S webkit2gtk-4.1 gst-plugins-base gst-plugins-good \\"
+			echo "      gst-plugins-bad gst-plugins-ugly gst-libav gst-plugin-va libva-utils"
+			;;
+		*debian*|*ubuntu*)
+			echo "  sudo apt install gir1.2-webkit2-4.1 gstreamer1.0-plugins-base \\"
+			echo "      gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \\"
+			echo "      gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo"
+			;;
+		*fedora*|*rhel*)
+			echo "  sudo dnf install webkit2gtk4.1 gstreamer1-plugins-base \\"
+			echo "      gstreamer1-plugins-good gstreamer1-plugins-bad-free \\"
+			echo "      gstreamer1-plugins-ugly gstreamer1-libav gstreamer1-vaapi"
+			;;
+		*)
+			echo "  install WebKitGTK 4.1, the GStreamer plugin set, and your GPU's"
+			echo "  VA-API plugin (gst-plugin-va / gstreamer1.0-vaapi). See desktop/README.md."
+			;;
+	esac
+fi
+
 # --- copy the tree ----------------------------------------------------------
 echo "Installing to $DEST"
 mkdir -p "$DEST"

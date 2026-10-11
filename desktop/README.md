@@ -12,7 +12,9 @@ normal Linux desktop.
    against it with no changes.
 
 It runs on any distribution: the only requirements are `python3`, BlueZ, and —
-for the GUI — GTK 3 (`python3-gi`). Everything is per-user; nothing needs root.
+for the GUI — GTK 3 (`python3-gi`). The embedded JawnOS view (below) also wants
+WebKitGTK 4.1, and smooth video wants the GStreamer plugin set with a VA-API
+plugin. Everything is per-user; nothing needs root.
 
 ## Layout
 
@@ -25,7 +27,9 @@ desktop/
     core.py              the portable supervisor (ports, start/stop, settings)
     ble.py               the BlueZ BLE bridge
     cli.py               jawnosctl
-    ui.py                the GTK dashboard
+    ui.py                the GTK dashboard and its embedded-view tab
+    webview.py           the embedded JawnOS view (WebKitGTK)
+    secrets.py           encrypted storage for the login ticket
   systemd/               optional systemd --user units
   jawnos.desktop.in      the application-menu entry
   icons/jawnos.png       the launcher icon
@@ -53,11 +57,24 @@ install it at all — the tools run in place from the checkout:
 
 Distro packages, when you need them:
 
-| Distro | packages |
+| Distro | base |
 |---|---|
 | Arch / Manjaro | `python` `python-gobject` `python-dbus` `bluez` `bluez-utils` |
 | Debian / Ubuntu | `python3` `python3-gi` `python3-dbus` `bluez` |
 | Fedora | `python3` `python3-gobject` `python3-dbus` `bluez` |
+
+For the embedded view and for smooth media, add the WebKitGTK and GStreamer
+packages (the base table alone will not play video well — see
+[Media and video](#media-and-video)):
+
+| Distro | embedded view + media |
+|---|---|
+| Arch / Manjaro | `webkit2gtk-4.1` `gst-plugins-base` `gst-plugins-good` `gst-plugins-bad` `gst-plugins-ugly` `gst-libav` `gst-plugin-va` `libva-utils` |
+| Debian / Ubuntu | `gir1.2-webkit2-4.1` `gstreamer1.0-plugins-base` `gstreamer1.0-plugins-good` `gstreamer1.0-plugins-bad` `gstreamer1.0-plugins-ugly` `gstreamer1.0-libav` `gstreamer1.0-vaapi` `vainfo` |
+| Fedora | `webkit2gtk4.1` `gstreamer1-plugins-base` `gstreamer1-plugins-good` `gstreamer1-plugins-bad-free` `gstreamer1-plugins-ugly` `gstreamer1-libav` `gstreamer1-vaapi` |
+
+`install.sh` checks for these and prints the right command for your distro if
+they are missing.
 
 ## Using it
 
@@ -129,6 +146,36 @@ the `mobile` hub as long as the daemon is actually reachable on loopback
 (`subroutines.pl::ble_bridge_capable`). That is what lets a desktop with the
 bridge running reply to a `room_request` or push a toggle; on the phone the
 behaviour is unchanged.
+
+## Media and video
+
+Everything in the UI runs in the embedded **WebKitGTK** view, which decodes
+media through the system **GStreamer**. So the video experience is GStreamer's,
+not the app's:
+
+* Install the full plugin set listed above (`gst-plugins-base/good/bad/ugly` and
+  `gst-libav`). Without them WebKit has only a software h264 decoder and HD video
+  is choppy.
+* Install the **VA-API plugin** (`gst-plugin-va` / `gstreamer1.0-vaapi` /
+  `gstreamer1-vaapi`) so decode happens on the GPU. That is the single biggest
+  win. It also needs the driver for your GPU (`libva-intel-driver` or
+  `intel-media-driver` on Arch; `i965-va-driver` or
+  `intel-media-va-driver-non-free` on Debian).
+* Confirm with `gst-inspect-1.0 vaapi` (or `gst-inspect-1.0 va` on newer
+  GStreamer) — if it lists elements, hardware decode is available.
+
+On Arch/Manjaro the plugin lives in its own package, `gst-plugin-va`, and it
+must be installed *with* the rest of the `gst-*` stack (they pin each other
+exactly, so a lone install is refused — upgrade them together):
+
+```sh
+sudo pacman -S gst-plugins-base gst-plugins-good gst-plugins-bad \
+  gst-plugins-ugly gst-libav gst-plugin-va
+```
+
+If video is still not right, the renderer can be tuned without touching code:
+write `KEY=VALUE` lines to `~/.config/jawnos/webkit.env` (WebKit reads them at
+startup — the real environment wins over the file).
 
 ## Windows
 
