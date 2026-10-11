@@ -6056,25 +6056,6 @@ sub log_reader {
 		return 0;
 	}
 
-	# The markers the client echoes back so an unchanged tick can be answered
-	# "nothing new": how many rows the window holds and the span of server_time in
-	# them. min/max rather than the first and last of the list, because a row
-	# edited in the middle bumps its server_time without moving - that is a change
-	# too. Zero when the window is empty, so they are always there to be echoed.
-	my ($appt_server_first, $appt_server_last) = (0, 0);
-	foreach my $a (@{$appointments}) {
-		my $st = $a->{'server_time'};
-		next unless defined $st && $st =~ /[0-9]/;
-		$appt_server_first = $st if !$appt_server_first || $st < $appt_server_first;
-		$appt_server_last  = $st if $st > $appt_server_last;
-	}
-	$appts->{'__specs'}->{'stats'}->{'appts'}->{'first'} = $appt_server_first;
-	$appts->{'__specs'}->{'stats'}->{'appts'}->{'last'}  = $appt_server_last;
-	$appts->{'__specs'}->{'stats'}->{'appts'}->{'count'} = scalar @{$appointments};
-
-
-
-
 	# The pos/mab markers are the app's place in the world (idea, product, ...).
 	# This view reads them only to build __accounts/__projects, and the windows
 	# that consume those (account, project, transfer) are rendered server-side
@@ -6135,6 +6116,25 @@ sub log_reader {
 	}
 	$appts->{'__specs'}->{'stats'}->{'settings'}->{'first'} = $settings_server_first;
 	$appts->{'__specs'}->{'stats'}->{'settings'}->{'last'}  = $settings_server_last;
+	# The markers the client echoes back so an unchanged tick can be answered
+	# "nothing new": how many rows the window holds and the span of server_time in
+	# them. min/max rather than the first and last of the list, because a row
+	# edited in the middle bumps its server_time without moving - that is a change
+	# too. Zero when the window is empty, so they are always there to be echoed.
+	# They are read here, after the visible filter above, because that is the set
+	# the client draws: counting the raw window instead made the echoed count
+	# disagree whenever an invisible appointment was in the window, so the
+	# nothing-new short-circuit could never fire then.
+	my ($appt_server_first, $appt_server_last) = (0, 0);
+	foreach my $a (@{$appointments}) {
+		my $st = $a->{'server_time'};
+		next unless defined $st && $st =~ /[0-9]/;
+		$appt_server_first = $st if !$appt_server_first || $st < $appt_server_first;
+		$appt_server_last  = $st if $st > $appt_server_last;
+	}
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'first'} = $appt_server_first;
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'last'}  = $appt_server_last;
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'count'} = scalar @{$appointments};
 	if ($stats) {
 		# The client echoes the markers above while its view is fresh. When every
 		# one of them still matches, the rows and settings the window draws are

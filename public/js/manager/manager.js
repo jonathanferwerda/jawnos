@@ -2264,10 +2264,21 @@ function graphicalize(respons) {
 	// is, and those rows are the ones the left edge is holding on to
 	var fetch_start = appts['__specs']['fetch_start'];
 	if (fetch_start == undefined) { fetch_start = appts['__specs']['start']; }
+	var view_start = appts['__specs']['start'];
 	$.each(appts, function(i,v) {
 		$.each(v['list'], function(am,way) {
 			if (way != undefined) {
-				if (way['timestamp'] && way['timestamp'] >= fetch_start && way['timestamp'] <= appts['__specs']['end']) {
+				// The reach carries two kinds of row from the left that must not be
+				// pruned as the view slides: a still-running appointment's row (pure
+				// presence - its start may be far older than the reach, and its band is
+				// what the left edge holds on to) and one that stopped inside the view
+				// (it comes in with the span it ran). fetch_start travels with the view
+				// on a slide, but these rows are anchored in time, so the first unchanged
+				// poll would otherwise drop the running appointment and delete it.
+				var held = way['stop_timestamp']
+					? (way['stop_timestamp'] >= view_start)
+					: (way['type'] == 'start' || way['type'] == 'record');
+				if (held || (way['timestamp'] && way['timestamp'] >= fetch_start && way['timestamp'] <= appts['__specs']['end'])) {
 				}
 				else {
 					appts[i]['list'].splice(am, 1);
