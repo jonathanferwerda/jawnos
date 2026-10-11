@@ -20488,6 +20488,7 @@ get '/manager/remote_auth_test' => sub($c) {
 					same_net => &subs::same_net_test($home_ip,$ip),
 					network => &subs::network_interface_reporter(),
 					revision => &subs::code_revision(),
+					version => &subs::jawn_version(),
 					sync => &subs::appointment_watermark(),
 					tombstones => $tombstones,
 					sync_cursor => &subs::tombstone_max(),
@@ -20660,6 +20661,11 @@ sub remote_machine_reconnector($c) {
 							my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'} } } @{$rj->{'tombstones'}};
 							&deletion_performer(encode_json \@dels) if scalar @dels;
 							&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $rj->{'signatorial'} });
+						}
+						# the peer's self-reported version, so "who is behind" is a column,
+						# not a guess, without waiting for a full reconnect to refresh it
+						if ($rj->{'version'}) {
+							&subs::db_update('remote_machines', { version => $rj->{'version'} }, { signatorial => $rj->{'signatorial'} });
 						}
 						if ($rj->{'location'}) {
 							my $same_net = &subs::same_net_test($rj->{'you'},$rj->{'me'});
