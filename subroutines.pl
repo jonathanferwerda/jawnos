@@ -1928,13 +1928,17 @@ sub backup_now() {
 		# the next caller recovers instead of wedging the sync for the day
 		my $stale = !$held->{'server_time'} || $held->{'server_time'} + (10 * 60 * 1000) < &subs::rightNow();
 		if (($held->{'value'} || '') ne '' && ($held->{'value'} || '') ne '0' && !$stale) {
+			$log->info('remote backup busy; told ' . $c->tx->remote_address . ' to retry') if $log;
 			return { status => 'busy', reason => $reason };
 		}
 		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => $auuid });
 		# two workers can pass the check above in the same instant; the last writer
 		# keeps the lock and the loser steps aside rather than run a second export
 		my $confirm = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
-		return { status => 'busy', reason => $reason } if ($confirm->{'value'} || '') ne $auuid;
+		if (($confirm->{'value'} || '') ne $auuid) {
+			$log->info('remote backup claim lost to another worker; told ' . $c->tx->remote_address . ' to retry') if $log;
+			return { status => 'busy', reason => $reason };
+		}
 		$backup_lock = $auuid;
 	}
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
