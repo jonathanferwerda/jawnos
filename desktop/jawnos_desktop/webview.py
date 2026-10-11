@@ -21,6 +21,7 @@ we deny it by default.
 """
 
 import os
+from urllib.parse import urlparse
 
 import gi
 
@@ -42,8 +43,24 @@ def _context_get():
     return _context
 
 
-def manager_url(jawn_dir):
-    return "https://127.0.0.1:%d/manager" % core.jawn_working_port(jawn_dir)
+def manager_url(jawn_dir, ticket=None):
+    """Where the manager lives -- on the host the login happened on.
+
+    jawn mints a ticket for the machine's ``domain`` (e.g.
+    ``https://oldtop.example.com:3000/box_office/..``), and its ``/box_office``
+    route redirects to ``https://<that host>:<working port>/manager``. The
+    session cookie is scoped to that host, so the manager must be loaded from it
+    too: navigating on to the loopback address is a *different origin* with no
+    cookie, which shows the login gate. Fall back to loopback when there is no
+    ticket to read a host from (a plain local launch)."""
+    port = core.jawn_working_port(jawn_dir)
+    host = "127.0.0.1"
+    if ticket:
+        try:
+            host = urlparse(ticket).hostname or host
+        except ValueError:
+            pass
+    return "https://%s:%d/manager" % (host, port)
 
 
 def ticket_url():
@@ -81,12 +98,14 @@ class WebViewWindow(Gtk.Window):
         box.pack_start(self.view, True, True, 0)
         self.add(box)
 
-        self._manager_url = manager_url(settings["jawn_dir"])
         self._fullscreen = False
         # The ticket URL logs in and redirects; loading it and then heading to
         # /manager guarantees the session cookie is set even if the ticket page
-        # does not redirect on its own.
+        # does not redirect on its own. The manager is addressed on the ticket's
+        # own host, where that cookie is scoped (see manager_url).
         login = None if start_url else ticket_url()
+        self._manager_url = manager_url(settings["jawn_dir"], start_url or login)
+        self._manager_host = urlparse(self._manager_url).hostname or "127.0.0.1"
         self._login_pending = bool(login)
         self._gate_retries = 0
         self.load(start_url or login or self._manager_url)
@@ -119,7 +138,7 @@ class WebViewWindow(Gtk.Window):
         self.view.reload()
 
     def view_home(self):
-        self.load(manager_url(self.settings_data["jawn_dir"]))
+        self.load(self._manager_url)
 
     # ---- fullscreen ----
 
@@ -218,10 +237,11 @@ class WebViewWindow(Gtk.Window):
         return True
 
     def _on_permission(self, view, request):
-        # Granted only for our own loopback origin; anything else is denied.
-        # The origin is taken from the view's current URI: the request objects
-        # do not all expose get_origin() (UserMediaPermissionRequest does not),
-        # and reading it there raised and silently denied the camera/mic.
+        # Granted only for our own manager origin (loopback, or the ticket's
+        # host) and nothing else. The origin is taken from the view's current
+        # URI: the request objects do not all expose get_origin()
+        # (UserMediaPermissionRequest does not), and reading it there raised and
+        # silently denied the camera/mic.
         uri = ""
         try:
             uri = view.get_uri() or ""
@@ -235,7 +255,12 @@ class WebViewWindow(Gtk.Window):
                     break
                 except Exception:
                     continue
-        if "127.0.0.1" in uri or "localhost" in uri:
+        try:
+            host = urlparse(uri).hostname or ""
+        except ValueError:
+            host = ""
+        allowed = {"127.0.0.1", "localhost", "::1", self._manager_host}
+        if host in allowed:
             request.allow()
         else:
             request.deny()
