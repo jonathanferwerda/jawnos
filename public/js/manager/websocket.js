@@ -300,11 +300,13 @@ function wsMessageHandler(event) {
 	if (isJson(event.data)) {
 		var data = JSON.parse(event.data);
 		// the machine's code revision arrives on every connect; if it changed since
-		// this tab loaded, the tab is running stale assets and reloads once
+		// this tab loaded, the tab is running stale assets and reloads once. Store
+		// the new value BEFORE reloading - the reloaded page compares against what
+		// is in sessionStorage, so a value that is not stored first reloads forever.
 		if (data['revision']) {
 			var rv = sessionStorage.getItem('jawnos_revision');
-			if (rv && rv != data['revision']) { location.reload(); return; }
 			sessionStorage.setItem('jawnos_revision', data['revision']);
+			if (rv && rv != data['revision']) { location.reload(); return; }
 		}
 		var seenWs = $.grep(seenWsMessages, function(t,i) { return i.uuid == data.uuid });
 		if (seenWs.length > 0) {
