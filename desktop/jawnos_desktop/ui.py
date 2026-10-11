@@ -36,7 +36,8 @@ class Dashboard(Gtk.Window):
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_border_width(18)
-        box.set_halign(Gtk.Align.START)
+        # Each control is given hexpand + CENTER alignment (see _centre), so the
+        # panel reads as a centred column instead of hugging the left edge.
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.add(box)
@@ -61,41 +62,56 @@ class Dashboard(Gtk.Window):
             # resize an image loaded from a file in GTK3, so a 358x526 logo
             # rendered at full size and pushed the buttons off the panel.
             pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(LOGO, -1, 56, True)
-            box.pack_start(Gtk.Image.new_from_pixbuf(pixbuf), False, False, 2)
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            # A Gtk.Image cannot take a click on its own, so the logo rides in an
+            # EventBox with no visible window: clicking it opens the JawnOS view.
+            logo = Gtk.EventBox()
+            logo.set_visible_window(False)
+            logo.add(image)
+            logo.set_tooltip_text("Open the JawnOS view")
+            try:
+                logo.set_cursor(Gdk.Cursor.new_from_name(Gdk.Display.get_default(), "pointer"))
+            except Exception:
+                pass
+            logo.connect("button-press-event", self._on_logo_clicked)
+            box.pack_start(self._centre(logo), False, False, 2)
 
         title = Gtk.Label()
         title.set_markup("<span size='large' weight='bold'>JawnOS</span>")
-        title.set_xalign(0)
-        box.pack_start(title, False, False, 0)
+        title.set_xalign(0.5)
+        box.pack_start(self._centre(title), False, False, 0)
 
-        self.live = Gtk.Label(xalign=0)
-        box.pack_start(self.live, False, False, 4)
+        self.live = Gtk.Label(xalign=0.5)
+        box.pack_start(self._centre(self.live), False, False, 4)
 
-        self.env = Gtk.Label(xalign=0)
+        self.env = Gtk.Label(xalign=0.5)
         self.env.set_line_wrap(True)
-        box.pack_start(self.env, False, False, 0)
+        box.pack_start(self._centre(self.env), False, False, 0)
 
         self.dir_entry = Gtk.Entry()
         self.dir_entry.set_text(settings.get("jawn_dir", ""))
         self.dir_entry.set_placeholder_text("jawn folder (default ~/jawnos)")
-        box.pack_start(self.dir_entry, False, False, 4)
+        self.dir_entry.set_width_chars(46)
+        box.pack_start(self._centre(self.dir_entry), False, False, 4)
 
         self.autostart = Gtk.CheckButton(label="Start the BLE bridge at login")
         self.autostart.set_active(core.autostart_enabled())
-        box.pack_start(self.autostart, False, False, 0)
+        box.pack_start(self._centre(self.autostart), False, False, 0)
 
         self.ble_with_jawn = Gtk.CheckButton(label="Start/stop the BLE bridge with jawn")
         self.ble_with_jawn.set_active(bool(settings.get("ble_with_jawn", True)))
-        box.pack_start(self.ble_with_jawn, False, False, 0)
+        box.pack_start(self._centre(self.ble_with_jawn), False, False, 0)
 
         self._header(box, "Jawn")
         self._button(box, "Start jawn", self.action_start)
         self._button(box, "Stop jawn", self.action_stop)
         self._button(box, "Restart jawn", self.action_restart)
+        # The view is the everyday destination, so it sits right under Restart
+        # rather than down in the Open group.
+        self._button(box, "Open JawnOS view", self.action_open_embedded)
 
         self._header(box, "Open")
         self._button(box, "Open JawnOS UI", self.action_open_ui)
-        self._button(box, "Open JawnOS view", self.action_open_embedded)
         self._button(box, "Show jawn log", self.action_show_log)
         self._button(box, "Open console", self.action_open_console)
 
@@ -122,16 +138,23 @@ class Dashboard(Gtk.Window):
 
     # ---- widgets ----
 
+    @staticmethod
+    def _centre(widget):
+        """Give a widget the full row width but draw it centred in that width."""
+        widget.set_halign(Gtk.Align.CENTER)
+        widget.set_hexpand(True)
+        return widget
+
     def _header(self, box, text):
-        label = Gtk.Label(xalign=0)
+        label = Gtk.Label(xalign=0.5)
         label.set_markup("<b>%s</b>" % GLib.markup_escape_text(text))
         label.set_margin_top(10)
-        box.pack_start(label, False, False, 0)
+        box.pack_start(self._centre(label), False, False, 0)
 
     def _button(self, box, text, handler):
         button = Gtk.Button(label=text)
         button.connect("clicked", lambda _b: handler())
-        box.pack_start(button, False, False, 0)
+        box.pack_start(self._centre(button), False, False, 0)
 
     # ---- settings ----
 
@@ -235,6 +258,22 @@ class Dashboard(Gtk.Window):
     def _show_dashboard(self):
         self.notebook.set_current_page(0)
 
+    def present_dashboard(self):
+        # Closing to the tray hides the window. On Xfce a bare present() could
+        # leave it hidden or iconified, which made the tray's "Show Dashboard"
+        # look dead, so show, deiconify, return to the Dashboard tab, and only
+        # then present (which raises and focuses).
+        self.show_all()
+        self.deiconify()
+        self._show_dashboard()
+        self.present()
+
+    def _on_logo_clicked(self, _widget, event):
+        if event.button == 1:
+            self.action_open_embedded()
+            return True
+        return False
+
     def _on_delete(self, *_args):
         # Close to the tray, not to death: hide the window and keep the tray
         # (and the supervisor's status timer) running.
@@ -336,7 +375,7 @@ class LogWindow(Gtk.Window):
 def _tray_menu(window):
     menu = Gtk.Menu()
     for label, callback in (
-        ("Show Dashboard", lambda _i: window.present()),
+        ("Show Dashboard", lambda _i: window.present_dashboard()),
         ("Start jawn", lambda _i: window.action_start()),
         ("Stop jawn", lambda _i: window.action_stop()),
         ("Restart jawn", lambda _i: window.action_restart()),
@@ -357,6 +396,10 @@ def _make_tray(window):
     (Gtk.StatusIcon), which Xfce's notification area still shows. Returns None if
     neither is available, in which case closing the window quits as before."""
     menu = _tray_menu(window)
+    # AppIndicator and Gtk.StatusIcon do not hold a reference to the menu, so if
+    # nothing else does PyGObject collects it and every tray command goes
+    # silently dead. Keep the menu (and the indicator/status icon) on the window.
+    window._tray_menu = menu
     try:
         gi.require_version("AppIndicator3", "0.1")
         from gi.repository import AppIndicator3
@@ -364,6 +407,7 @@ def _make_tray(window):
             "jawnos", "jawnos", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         indicator.set_menu(menu)
+        window._tray_indicator = indicator
         return indicator
     except Exception:
         pass
@@ -371,10 +415,11 @@ def _make_tray(window):
         icon = Gtk.StatusIcon.new_from_icon_name("jawnos")
         icon.set_tooltip_text("JawnOS")
         icon.set_visible(True)
-        icon.connect("activate", lambda _i: window.present())
+        icon.connect("activate", lambda _i: window.present_dashboard())
         icon.connect("popup-menu",
                      lambda i, button, activate_time: menu.popup(
                          None, None, None, None, button, activate_time))
+        window._tray_statusicon = icon
         return icon
     except Exception:
         return None
