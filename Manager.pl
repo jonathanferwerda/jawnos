@@ -6057,8 +6057,21 @@ sub log_reader {
 		return 0;
 	}
 
-	$appts->{'__specs'}->{'stats'}->{'appts'}->{'first'} = $appointments->[0]->{'server_time'};
-	$appts->{'__specs'}->{'stats'}->{'appts'}->{'last'} = $appointments->[-1]->{'server_time'};
+	# The markers the client echoes back so an unchanged tick can be answered
+	# "nothing new": how many rows the window holds and the span of server_time in
+	# them. min/max rather than the first and last of the list, because a row
+	# edited in the middle bumps its server_time without moving - that is a change
+	# too. Zero when the window is empty, so they are always there to be echoed.
+	my ($appt_server_first, $appt_server_last) = (0, 0);
+	foreach my $a (@{$appointments}) {
+		my $st = $a->{'server_time'};
+		next unless defined $st && $st =~ /[0-9]/;
+		$appt_server_first = $st if !$appt_server_first || $st < $appt_server_first;
+		$appt_server_last  = $st if $st > $appt_server_last;
+	}
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'first'} = $appt_server_first;
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'last'}  = $appt_server_last;
+	$appts->{'__specs'}->{'stats'}->{'appts'}->{'count'} = scalar @{$appointments};
 
 
 
@@ -6114,19 +6127,32 @@ sub log_reader {
 		push @{$settings}, @app_settings;
 	}
 
-	$appts->{'__specs'}->{'stats'}->{'settings'}->{'first'} = $settings->[0]->{'server_time'} if $settings->[0];
-	$appts->{'__specs'}->{'stats'}->{'settings'}->{'last'} = $settings->[-1]->{'server_time'} if $settings->[-1];
+	my ($settings_server_first, $settings_server_last) = (0, 0);
+	foreach my $s (@{$settings}) {
+		my $st = $s->{'server_time'};
+		next unless defined $st && $st =~ /[0-9]/;
+		$settings_server_first = $st if !$settings_server_first || $st < $settings_server_first;
+		$settings_server_last  = $st if $st > $settings_server_last;
+	}
+	$appts->{'__specs'}->{'stats'}->{'settings'}->{'first'} = $settings_server_first;
+	$appts->{'__specs'}->{'stats'}->{'settings'}->{'last'}  = $settings_server_last;
 	if ($stats) {
-		my $updateable = 0;
-		foreach my $table ( qw/appts settings/ ) {
-			if (scalar @{$appointments} != $stats->{'appts'}->{'count'} || $appts->{'__specs'}->{'stats'}->{$table}->{'last'} > $stats->{$table}->{'last'} || $appts->{'__specs'}->{'stats'}->{$table}->{'first'} < $stats->{$table}->{'first'}) {
-				$updateable = 1;
-			}
-		}
-		if ($updateable == 0) {
+		# The client echoes the markers above while its view is fresh. When every
+		# one of them still matches, the rows and settings the window draws are
+		# exactly the ones it is already showing, and the whole per-app build below -
+		# the work a one-second poll would otherwise redo - can be skipped. Markers
+		# it did not send stay undefined, so a half-known request never reads as "no".
+		my $same =
+			   defined $stats->{'appts'}->{'count'} && defined $stats->{'appts'}->{'first'} && defined $stats->{'appts'}->{'last'}
+			&& defined $stats->{'settings'}->{'first'} && defined $stats->{'settings'}->{'last'}
+			&& scalar @{$appointments} == $stats->{'appts'}->{'count'}
+			&& $appt_server_last  <= $stats->{'appts'}->{'last'}
+			&& $appt_server_first >= $stats->{'appts'}->{'first'}
+			&& $settings_server_last  <= $stats->{'settings'}->{'last'}
+			&& $settings_server_first >= $stats->{'settings'}->{'first'};
+		if ($same) {
 			return { updateable => 'no', '__specs' => $appts->{'__specs'} };
 		}
-		$appts->{'__specs'}->{'stats'}->{'appts'}->{'count'} = scalar @{$appointments};
 	}
 
 	# The three little per-app tables below (model, option, option_category) were

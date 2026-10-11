@@ -1969,16 +1969,16 @@ function calculator() {
 	if (document.visibilityState == 'visible' && !document.hidden && clothesLineAtRest()) {
 		var data = deloreanBringer();
 		windowBackgroundAdjuster({ caller: 'calculator' });
-		if (appts['__specs']) {
-			if ((now - 35000) > appts['__specs']['server_time']) {
-				if (!data['stats']) { data['stats'] = {}; data['stats']['appts'] = {}; data['stats']['settings'] = {}; } 
-				data['stats']['appts']['first'] = appts['__specs']['stats']['appts']['first'];
-				data['stats']['appts']['last'] = appts['__specs']['stats']['appts']['last'];
-				data['stats']['settings']['first'] = appts['__specs']['stats']['settings']['first'];
-				data['stats']['settings']['last'] = appts['__specs']['stats']['settings']['last'];
-				data['stats']['appts']['count'] = appts['__specs']['stats']['appts']['count'];
-				data['stats'] = JSON.stringify(data['stats']);
-			}
+		// While the view is fresh, echo the markers of what we are showing so an
+		// unchanged second can be answered "nothing new" - the server then skips the
+		// whole per-app build. Past 35s (or before the first render) we send none,
+		// which forces the full pass: the safety net against anything the markers
+		// missed, and it is what resets the 35s clock.
+		if (appts['__specs'] && appts['__specs']['stats'] && (now - 35000) <= appts['__specs']['server_time']) {
+			data['stats'] = JSON.stringify({
+				appts: appts['__specs']['stats']['appts'],
+				settings: appts['__specs']['stats']['settings']
+			});
 		}
 
 		$.ajax({
