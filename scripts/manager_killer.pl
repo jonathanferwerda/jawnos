@@ -1,5 +1,28 @@
 #!/usr/bin/perl
 
+# A GUI launch or a bare desktop launcher never sources ~/.zshrc, so this would
+# run with only the system @INC and die on 'Can't locate File::Slurp'. Find the
+# same local::lib tree the shell would before the first 'use'.
+BEGIN {
+	my $base = (($ENV{HOME} || (getpwuid $<)[7] || '') . '/perl5/lib/perl5');
+	if ($base =~ m{/} && -d $base) {
+		my @dirs = ($base);
+		if (opendir(my $dh, $base)) {
+			for my $name (sort readdir $dh) {
+				my $dir = "$base/$name";
+				push @dirs, $dir
+					if $name ne '.' && $name ne '..' && -d $dir
+					&& ($name =~ /-linux-/ || $name =~ /^[0-9]+\.[0-9]+/);
+			}
+			closedir $dh;
+		}
+		my %in_inc = map { $_ => 1 } @INC;
+		unshift @INC, grep { !$in_inc{$_} } @dirs;
+		my $lib = join ':', @dirs;
+		$ENV{PERL5LIB} = $ENV{PERL5LIB} ? "$lib:$ENV{PERL5LIB}" : $lib;
+	}
+}
+
 use File::Slurp;
 use Mojo::JSON qw/decode_json encode_json/;
 

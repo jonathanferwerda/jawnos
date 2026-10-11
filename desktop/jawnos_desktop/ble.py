@@ -63,6 +63,12 @@ DEVICE_IFACE = "org.bluez.Device1"
 GATT_SERVICE_IFACE = "org.bluez.GattService1"
 GATT_CHAR_IFACE = "org.bluez.GattCharacteristic1"
 
+# The JawnOS watches and boards all speak the Nordic UART Service. These are
+# the fallback when a connect names no characteristics of its own.
+NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+
 DEFAULT_MTU = 23          # ATT default, as in the Android daemon
 CONNECT_TIMEOUT_MS = 20000
 RECONNECT_START = 3.0     # seconds; doubles to RECONNECT_MAX
@@ -327,6 +333,17 @@ class Bridge(object):
         if not mac:
             self.emit_error("connect: mac required")
             return
+        # A connect need not repeat the characteristics every time. An omitted
+        # one falls back to the stored target, then to the NUS defaults this
+        # bridge exists for. Without this a bare "connect <mac>" overwrote a
+        # good stored target with nulls, which service resolution can never
+        # match, so the watch stayed unlinked from then on.
+        stored = load_target()
+        service = service or stored.get("service") or NUS_SERVICE
+        rx = rx or stored.get("rx") or NUS_RX
+        tx = tx or stored.get("tx") or NUS_TX
+        if not mtu:
+            mtu = stored.get("mtu") or 512
         # Idempotent: a second connect for the same target (an explicit one on
         # top of the startup auto-connect) must not tear down a connect that is
         # already in flight -- that produced BlueZ "InProgress" churn.

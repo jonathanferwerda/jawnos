@@ -37,25 +37,22 @@ def cmd_status(args):
 
 
 def cmd_start(args):
-    ok, message = core.start_jawn(core.load_settings()["jawn_dir"])
+    settings = core.load_settings()
+    ok, message = core.start_all(settings["jawn_dir"], settings.get("ble_with_jawn", True))
     print(message)
-    if ok and core.load_settings().get("ble_with_jawn"):
-        ble_ok, ble_msg = core.start_ble()
-        print(ble_msg)
     return 0 if ok else 1
 
 
 def cmd_stop(args):
     settings = core.load_settings()
-    if settings.get("ble_with_jawn"):
-        print(core.stop_ble()[1])
-    ok, message = core.stop_jawn(settings["jawn_dir"])
+    ok, message = core.stop_all(settings["jawn_dir"], settings.get("ble_with_jawn", True))
     print(message)
     return 0 if ok else 1
 
 
 def cmd_restart(args):
-    ok, message = core.restart_jawn(core.load_settings()["jawn_dir"])
+    settings = core.load_settings()
+    ok, message = core.restart_all(settings["jawn_dir"], settings.get("ble_with_jawn", True))
     print(message)
     return 0 if ok else 1
 

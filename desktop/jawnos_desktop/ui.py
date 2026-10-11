@@ -126,21 +126,21 @@ class Dashboard(Gtk.Window):
     def action_start(self):
         self._save()
         self.start_requested_at = GLib.get_monotonic_time() / 1e6
-        self._async(lambda: core.start_jawn(self.settings["jawn_dir"]))
+        # jawn *and* the bridge: the checkbox promises they move together, and
+        # starting jawn alone left the watch with nothing to talk to.
+        self._async(lambda: core.start_all(
+            self.settings["jawn_dir"], self.settings.get("ble_with_jawn", True)))
 
     def action_stop(self):
         self.start_requested_at = 0.0
-        settings = self.settings
-        def work():
-            if settings.get("ble_with_jawn"):
-                core.stop_ble()
-            return core.stop_jawn(settings["jawn_dir"])
-        self._async(work)
+        self._async(lambda: core.stop_all(
+            self.settings["jawn_dir"], self.settings.get("ble_with_jawn", True)))
 
     def action_restart(self):
         self._save()
         self.start_requested_at = GLib.get_monotonic_time() / 1e6
-        self._async(lambda: core.restart_jawn(self.settings["jawn_dir"]))
+        self._async(lambda: core.restart_all(
+            self.settings["jawn_dir"], self.settings.get("ble_with_jawn", True)))
 
     def action_open_ui(self):
         if not core.open_ui(self.settings["jawn_dir"]):

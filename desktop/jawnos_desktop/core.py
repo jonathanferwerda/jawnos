@@ -19,6 +19,7 @@ The start/stop semantics deliberately match the phone:
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -194,7 +195,35 @@ def _perl():
     return shutil.which("perl") or "perl"
 
 
-def spawn_detached(argv, cwd, log_path):
+def _perl_env():
+    """Environment for the spawned perl, with the user's local::lib on @INC.
+
+    The user's PERL5LIB lives in ~/.zshrc, which a desktop-launched app never
+    sources -- so jawn (and the killer, which also uses local modules) came up
+    with only the system @INC and died on 'Can't locate Mojo/...'. Mirror the
+    shell: put ~/perl5/lib/perl5 (and its arch/version subdirs) first."""
+    env = dict(os.environ)
+    roots = [os.path.join(home(), "perl5", "lib", "perl5")]
+    extra = []
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for entry in os.listdir(root):
+            if "-linux-" in entry or re.match(r"^\d+\.\d+", entry):
+                candidate = os.path.join(root, entry)
+                if os.path.isdir(candidate):
+                    extra.append(candidate)
+    existing = [p for p in env.get("PERL5LIB", "").split(os.pathsep) if p]
+    merged = []
+    for path in roots + extra + existing:
+        if path and path not in merged:
+            merged.append(path)
+    if merged:
+        env["PERL5LIB"] = os.pathsep.join(merged)
+    return env
+
+
+def spawn_detached(argv, cwd, log_path, env=None):
     """Start a process in its own session, output appended to log_path.
 
     Its own session means it survives this call and is not killed when a
@@ -206,7 +235,7 @@ def spawn_detached(argv, cwd, log_path):
         proc = subprocess.Popen(
             argv, cwd=cwd, stdin=subprocess.DEVNULL,
             stdout=logf, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True,
+            start_new_session=True, close_fds=True, env=env,
         )
     finally:
         logf.close()
@@ -220,7 +249,7 @@ def start_jawn(jawn_dir):
     if not os.path.exists(os.path.join(jawn_dir, "jawn")):
         return False, "no 'jawn' launcher in %s" % jawn_dir
     argv = [_perl(), "./jawn"]
-    spawn_detached(argv, jawn_dir, jawn_stdout_log_path())
+    spawn_detached(argv, jawn_dir, jawn_stdout_log_path(), env=_perl_env())
     return True, "starting jawn"
 
 
@@ -229,7 +258,7 @@ def stop_jawn(jawn_dir, wait=12.0):
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir
-    subprocess.run([_perl(), "scripts/manager_killer.pl", "master"], cwd=jawn_dir)
+    subprocess.run([_perl(), "scripts/manager_killer.pl", "master"], cwd=jawn_dir, env=_perl_env())
     deadline = time.time() + wait
     while time.time() < deadline:
         if not jawn_up(jawn_dir):
@@ -329,6 +358,41 @@ def _remove_stale_pidfile():
 
 
 # --------------------------------------------------------------------------
+# the combined lifecycle the Start/Stop/Restart buttons drive
+# --------------------------------------------------------------------------
+#
+# The checkbox says "Start/stop the BLE bridge with jawn", so jawn and the
+# bridge move together through one call. The dashboard used to start jawn
+# alone, so its Start left the watch with no bridge while the CLI's start did
+# not -- the two now share these wrappers.
+
+def start_all(jawn_dir, with_ble=True):
+    ok, message = start_jawn(jawn_dir)
+    if ok and with_ble:
+        _ok, ble_message = start_ble()
+        message = "%s; %s" % (message, ble_message)
+    return ok, message
+
+
+def stop_all(jawn_dir, with_ble=True, wait=12.0):
+    message = ""
+    if with_ble:
+        message = stop_ble()[1]
+    ok, jawn_message = stop_jawn(jawn_dir, wait=wait)
+    return ok, (message + "; " + jawn_message) if message else jawn_message
+
+
+def restart_all(jawn_dir, with_ble=True):
+    ok, message = restart_jawn(jawn_dir)
+    # A queued status-file restart leaves the bridge alone; only bring it back
+    # if the checkbox asks for it and it is actually down.
+    if ok and with_ble and not ble_up():
+        _ok, ble_message = start_ble()
+        message = "%s; %s" % (message, ble_message)
+    return ok, message
+
+
+# --------------------------------------------------------------------------
 # autostart (the XDG analogue of the Android boot receiver)
 # --------------------------------------------------------------------------
 
@@ -400,7 +464,7 @@ def open_console(jawn_dir):
             continue
         argv = [binary] + extra + [_perl(), "./jawn"]
         try:
-            spawn_detached(argv, jawn_dir, jawn_stdout_log_path())
+            spawn_detached(argv, jawn_dir, jawn_stdout_log_path(), env=_perl_env())
             return True, "opened %s" % name
         except OSError:
             continue
