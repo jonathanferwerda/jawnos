@@ -5080,6 +5080,23 @@ sub contrast_ink {
 	return $lum < 0.179 ? '#ffffff' : '#000000';
 }
 
+# The mark a budget light wears, as inner SVG for a 24x24 viewBox. The four
+# built-in budget modes each get something that reads at chip size - a repeat
+# for a count of times, a clock for a duration, a price tag for a money total,
+# a hash for a quantity. A user's special budget has no mark and falls back to
+# its initial. Paths only: the caller owns the <svg> element and its fill.
+sub budget_icon {
+	my ($circumstance) = @_;
+	return '' unless defined $circumstance;
+	my %glyph = (
+		occurences => '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>',
+		duration   => '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>',
+		total      => '<path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/>',
+		quantity   => '<path d="M15.5 3l-.86 5H10.4l.86-5H9.2l-.86 5H5v2.1h3.1l-.7 4H4v2.1h3.17L6.5 21h2.06l.86-5h4.24l-.86 5h2.06l.86-5H20v-2.1h-4.1l.7-4H20V7.9h-3.2l.86-5zM13.05 10.1l-.7 4H8.1l.7-4z"/>',
+	);
+	return $glyph{$circumstance} || '';
+}
+
 # Render the CSS custom properties for a theme, given its background colour.
 # Light themes get a light grey, dark themes a dark grey; both keep a whisper of
 # the theme's hue. Returned as a declaration string so a layout can fold it into

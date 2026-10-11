@@ -69,17 +69,12 @@ function clotheslineHanger(clothes) {
 		var canvas = layout ? document.getElementById(layout) : undefined;
 		if (!canvas) { hangingClothes = 0; return; }
 		ctx = canvas.getContext('2d');
-		// the rail hangs over whatever is behind it - a background picture, a
-		// window - so the themed ink is laid over a contrasting halo instead of
-		// being trusted to show up on its own. Only worth it over a picture: on the
-		// page itself the halo reads as a white (or black) fringe around the rail.
-		// (Guard the helper: a browser holding an older universal.js must not lose
-		// the whole clothesline.)
+		// Each garment is now its own solid coloured tile, so it no longer floats
+		// over the page: a tile border wears the themed ink and the label wears
+		// jawnosContrastInk of the tile's own fill. No halo here - a label that
+		// already sits on an opaque fill does not need a stroke, and the stroke
+		// just reads as a white (or black) fringe around the text.
 		var ink = jawnosInk();
-		var halo = undefined;
-		if (localStorage.getItem('background_images') == 'on' && typeof jawnosInkHalo == 'function') {
-			halo = jawnosInkHalo(ink);
-		}
 
 		var minHeight = headerHeight;
 		var maxHeight = minHeight + (clothesLineHeight);
@@ -137,11 +132,6 @@ function clotheslineHanger(clothes) {
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((bw - textMeasure) / 2) + bx;
 			var textY = by + (bh / 2) + 7;
-			if (halo) {
-				ctx.lineWidth = 3;
-				ctx.strokeStyle = halo;
-				ctx.strokeText(v.formatted_name, textPos, textY);
-			}
 			ctx.fillStyle = labelInk;
 			ctx.fillText(v.formatted_name, textPos, textY);
 
