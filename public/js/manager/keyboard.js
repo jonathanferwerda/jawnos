@@ -28,6 +28,34 @@ var pseudonymSideLayout = null;
 var text_editor = {};
 var keysPressed = {};
 var appSwitcherSelected = 0;
+
+// The Super/Meta key as the shortcuts below expect it: they track it as
+// keysPressed[91]. Chrome and Firefox report keyCode 91 for it, but WebKitGTK --
+// the desktop app's embedded view -- reports keyCode 0 with key "Super" and
+// never sets metaKey, so the Super shortcuts silently did nothing there. Map it
+// to 91 so `keysPressed[91]` works on every engine.
+function jawnosKeyCode(e) {
+	if (e.keyCode) { return e.keyCode; }
+	if (e.key === 'Super' || e.key === 'Meta'
+		|| e.code === 'MetaLeft' || e.code === 'MetaRight'
+		|| e.code === 'OSLeft' || e.code === 'OSRight') {
+		return 91;
+	}
+	return 0;
+}
+
+// The desktop app's embedded view exposes a `jawnos` script-message handler.
+// Mark the document so CSS can show the admin-console icon only there (a plain
+// browser tab has no dashboard to go back to), and expose the press.
+$(function () {
+	if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.jawnos) {
+		$('html').addClass('jawnos_webview');
+	}
+});
+
+function jawnosAdminConsole() {
+	try { window.webkit.messageHandlers.jawnos.postMessage('admin_console'); } catch (e) {}
+}
 // The dock at the bottom of the screen: one centred row of pseudonyms. Icons that
 // are switched off hide, and the rest share the row, shrinking below their full
 // size when there are too many to fit, so the dock never runs off the screen.
@@ -1630,7 +1658,7 @@ function markerShortcut(e) {
 
 $(document).on('keydown', function(e) {
 	var timestamp = Date.now();
-	keysPressed[e.keyCode] = { key: e.key, timestamp: timestamp };
+	keysPressed[jawnosKeyCode(e)] = { key: e.key, timestamp: timestamp };
 	var app = topWindow();
 	var dialog = topDialog();
 	var win = $('.wind[app="' + app + '"]');
@@ -1811,8 +1839,9 @@ $(document).on('keydown', function(e) {
 });
 
 $(document).on('keyup', function(e) {
-	delete keysPressed[e.keyCode];
-	if (e.keyCode == 91) {
+	var jawnos_code = jawnosKeyCode(e);
+	delete keysPressed[jawnos_code];
+	if (jawnos_code == 91) {
 		appSwitcher('chose');
 	}
 });

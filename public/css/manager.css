@@ -825,6 +825,16 @@ canvas { overflow: scroll; z-index: 99; }
 	height: calc(100% - 52px);
 }
 
+/* The admin-console icon belongs only to the desktop app's embedded view: it
+   asks the app to switch back to its dashboard tab. A browser tab has no such
+   handler, so the icon is hidden there (see keyboard.js's webview probe). */
+#admin_console_toggle {
+	display: none;
+}
+html.jawnos_webview #admin_console_toggle {
+	display: inline-block;
+}
+
 /* the menu's body: the lists scroll inside it, and the rail keeps its 18% at
    the right. It is not a positioned box: the corner buttons ride the menu's own
    frame (they are absolutely placed and their containing block is #start_menu),

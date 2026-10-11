@@ -213,11 +213,15 @@ class Dashboard(Gtk.Window):
                 Gtk.Label(label="embedded view unavailable: %s" % exc), True, True, 0)
             self.web_page.show_all()
             return None
+        panel.on_admin = self._show_dashboard
         panel.attach_keys(self)
         self.web_page.pack_start(panel, True, True, 0)
         self.web_page.show_all()
         self._web_panel = panel
         return panel
+
+    def _show_dashboard(self):
+        self.notebook.set_current_page(0)
 
     # ---- async plumbing ----
 

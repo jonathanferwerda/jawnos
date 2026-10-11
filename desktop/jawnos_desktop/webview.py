@@ -54,13 +54,30 @@ def manager_url(jawn_dir, ticket=None):
     cookie, which shows the login gate. Fall back to loopback when there is no
     ticket to read a host from (a plain local launch)."""
     port = core.jawn_working_port(jawn_dir)
-    host = "127.0.0.1"
     if ticket:
         try:
-            host = urlparse(ticket).hostname or host
+            host = urlparse(ticket).hostname or "127.0.0.1"
         except ValueError:
-            pass
+            host = "127.0.0.1"
+    else:
+        host = core.manager_host()
     return "https://%s:%d/manager" % (host, port)
+
+
+def _js_string(result):
+    """The JS value a script-message handler received, as text.
+
+    WebKit2's signal passes a WebKitJavascriptResult (<= 2.39) or a JSCValue
+    (>= 2.40); accept either."""
+    for getter in ("get_js_value", "get_value"):
+        try:
+            return getattr(result, getter)().to_string()
+        except Exception:
+            continue
+    try:
+        return result.to_string()
+    except Exception:
+        return ""
 
 
 def ticket_url():
@@ -97,8 +114,9 @@ class WebViewPanel(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.settings_data = settings
         self._fullscreen = False
-
-        self.pack_start(self._toolbar(), False, False, 0)
+        # Set by the dashboard: the page's admin-console icon calls it to come
+        # back to the control panel.
+        self.on_admin = None
 
         self.view = WebKit2.WebView.new_with_context(_context_get())
         self._configure(self.view)
@@ -107,29 +125,18 @@ class WebViewPanel(Gtk.Box):
         # The ticket URL logs in and redirects; loading it and then heading to
         # /manager guarantees the session cookie is set even if the ticket page
         # does not redirect on its own. The manager is addressed on the ticket's
-        # own host, where that cookie is scoped (see manager_url).
+        # own host, where that cookie is scoped (see manager_url). The ticket URL
+        # is kept so a gated landing can go through it again for a fresh session.
         login = None if start_url else ticket_url()
+        self._login_url = login
         self._manager_url = manager_url(settings["jawn_dir"], start_url or login)
         self._manager_host = urlparse(self._manager_url).hostname or "127.0.0.1"
         self._login_pending = bool(login)
         self._gate_retries = 0
         self.load(start_url or login or self._manager_url)
 
-    # ---- chrome ----
-
-    def _toolbar(self):
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        bar.set_border_width(2)
-        for label, tip, handler in (("\u2190", "Back", self.view_go_back),
-                                    ("\u21bb", "Reload", self.view_reload),
-                                    ("\u2302", "Home", self.view_home),
-                                    ("\u26f6", "Full screen (F11)", self._toggle_fullscreen)):
-            button = Gtk.Button(label=label)
-            button.set_relief(Gtk.ReliefStyle.NONE)
-            button.set_tooltip_text(tip)
-            button.connect("clicked", lambda _b, h=handler: h())
-            bar.pack_start(button, False, False, 0)
-        return bar
+    # ---- navigation (no toolbar: the start menu's admin icon comes back here,
+    # and the notebook's own tabs are always present) ----
 
     def view_go_back(self):
         if self.view.can_go_back():
@@ -203,6 +210,16 @@ class WebViewPanel(Gtk.Box):
                 s.set_property(prop, value)
             except Exception:
                 pass
+        # A channel for the page: this view exposes a `jawnos` script-message
+        # handler, which the manager's start menu uses to offer a way back to
+        # the dashboard. A plain browser has no such handler, so the page hides
+        # its icon there.
+        try:
+            content = view.get_user_content_manager()
+            content.register_script_message_handler("jawnos")
+            content.connect("script-message-received::jawnos", self._on_message)
+        except Exception:
+            pass
         view.connect("load-changed", self._on_load_changed)
         view.connect("load-failed-with-tls-errors", self._on_tls_error)
         view.connect("permission-request", self._on_permission)
@@ -220,13 +237,28 @@ class WebViewPanel(Gtk.Box):
             self._login_pending = False
             GLib.timeout_add(1500, self._after_login)
             return
-        # If we still hit the gate (a slow cookie commit), try again a beat later.
-        if (view.get_title() or "").strip().lower() == "gate" and self._gate_retries < 2:
+        # Landing on the gate means the session cookie did not take. Go through
+        # the ticket again (which mints a fresh session) rather than re-asking for
+        # the manager, which would only gate again.
+        if (view.get_title() or "").strip().lower() == "gate" and self._gate_retries < 3:
             self._gate_retries += 1
-            GLib.timeout_add(2000, self._after_login)
+            GLib.timeout_add(2000, self._retry_login)
 
     def _after_login(self):
         self.load(self._manager_url)
+        return False
+
+    def _retry_login(self):
+        if self._login_url:
+            self._login_pending = True
+        self.load(self._login_url or self._manager_url)
+        return False
+
+    # ---- the page -> app channel ----
+
+    def _on_message(self, _content, result):
+        if "admin" in _js_string(result) and self.on_admin:
+            self.on_admin()
         return False
 
     def _on_tls_error(self, view, failing_uri, certificate, errors):

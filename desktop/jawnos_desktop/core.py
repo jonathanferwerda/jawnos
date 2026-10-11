@@ -439,9 +439,39 @@ X-GNOME-Autostart-enabled=true
 # opening things
 # --------------------------------------------------------------------------
 
+def manager_host():
+    """The host the stored ticket logs in on.
+
+    The ticket's session cookie is scoped to that host, so the manager must be
+    opened from it too -- the loopback address is a different origin and shows
+    the login gate. Falls back to loopback when there is no stored ticket."""
+    try:
+        from urllib.parse import urlparse
+        from . import secrets
+        ticket = secrets.load()
+        if ticket:
+            return urlparse(ticket).hostname or "127.0.0.1"
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
 def open_ui(jawn_dir):
+    """Open the manager in the user's browser.
+
+    Prefer the stored ticket: it is addressed on the machine's own domain and
+    mints the session cookie on the way, so the browser lands on the manager
+    instead of the gate on a host it has not logged in to. Fall back to the
+    manager on the ticket's host, then loopback."""
+    try:
+        from . import secrets
+        ticket = secrets.load()
+        if ticket:
+            return webbrowser.open(ticket)
+    except Exception:
+        pass
     port = jawn_working_port(jawn_dir)
-    return webbrowser.open("https://127.0.0.1:%d/manager" % port)
+    return webbrowser.open("https://%s:%d/manager" % (manager_host(), port))
 
 
 _TERMINALS = [
