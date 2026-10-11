@@ -4148,17 +4148,6 @@ get '/manager/configure/remote_device_connect' => sub ($c) {
 	$c->render(json => $returner);
 };
 
-sub ssh_known_host_adder($ip,$port) {
-	my $known = &subs::home('~/.ssh/known_hosts');
-	my $known_hosts_cmd = 'cat ' . $known;
-	my $known_hosts = `$known_hosts_cmd`;
-	my @kh = split /\n/, $known_hosts;
-	unless (grep { $_ =~ /\Q$ip/gi && $_ =~ /\Q$port/gi } @kh) {
-		my $rest = 'ssh-keyscan -p ' . $port . ' ' . $ip . ' >> ' . $known;
-		`$rest`;
-	}
-}
-
 sub remote_device_connect($rdata) {
 	my $manager = $rdata->{'manager'};
 	my $filename = $rdata->{'filename'};
@@ -17822,15 +17811,19 @@ sub authentication_passer($c) {
 	my $visitor = $c->tx->local_address eq $c->tx->remote_address ? 'Me' : ($c->param('manager_file') || $c->tx->remote_address);
 	my $string = $c->tx->req->url->to_string;
 	unless ($c->stash('browser_tab_id') && ($authentication eq 'approved' || $authentication eq 'revoked')) {
-		#&subs::say_it($visitor);
+		# Not every retry deserves a Dingaling: a browser reconnecting after a
+		# network change hammers this, so alert at most once per visitor per
+		# few minutes. The cache row is the throttle stamp (local, unsynced).
 		my ($db,$database) = &subs::database_grabber();
-		if ($db) {
-			my $time = &subs::rightNow();
-			my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'customs', setting => 'warranty' }) || '-10d', $time);
-			my $data = { warranty => $warranty, uuid => &subs::random_string_creator(40), app => 'customs', timestamp => $time, server_time => $time, type => 'dingaling', data => $visitor };
-		#	my $insert = &subs::db_insert('appointments', $data );
+		my $now = &subs::rightNow();
+		my $seen = $db ? &subs::db_query('select server_time from cache where context=? and uuid=? order by server_time desc limit 1', 'dingaling', $visitor)->hashes->[0] : undef;
+		unless ($seen->{'server_time'} && $seen->{'server_time'} > $now - 300000) {
+			if ($db) {
+				&subs::db_query('delete from cache where context=? and uuid=?', 'dingaling', $visitor);
+				&subs::db_query('insert into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $visitor, 'dingaling', '__president', $now, $now);
+			}
+			&notification_sender({ app => 'customs', role => 'citizen', type => 'authentication', title => 'Dingaling', message => $visitor . ' ' . $string, image => "/images/make believe/lock.png" },$dob);
 		}
-		&notification_sender({ app => 'customs', role => 'citizen', type => 'authentication', title => 'Dingaling', message => $visitor . ' ' . $string, image => "/images/make believe/lock.png" },$dob);
 	}
 	if (! -e $dob) {
 		$authentication = "revoked";

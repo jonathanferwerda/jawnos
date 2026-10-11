@@ -6804,7 +6804,51 @@ sub remote_machine_tunnel_processor() {
 			}, { uuid => $rm->{'uuid'} });
 		}
 	}
+	# If reaching the peer by its stored manager would loop back home (its name
+	# resolves to 127.0.0.1 on this box, or the hub tunnel points at 127.0.0.1
+	# while we are not the hub), use the LAN address it advertised instead.
+	my $lan = &subs::peer_lan_address($rm);
+	if ($lan) {
+		$rm->{'ip'} = $lan->{'ip'};
+		$rm->{'manager'} = $lan->{'manager'};
+		$rm->{'port'} = $lan->{'port'} || $rm->{'port'};
+		$rm->{'vip'} = $lan->{'ip'};
+	}
 	return $rm;
+}
+
+# A peer advertises its own name as its manager. On a machine whose dnsmasq or
+# hosts map that name back to itself - or when a hub-tunnel manager sits at
+# 127.0.0.1 while we are a peer, not the hub - reaching it that way loops home.
+# When the manager host resolves to loopback, fall back to the LAN address the
+# peer reported in its network map, so same-net peers talk directly.
+sub peer_lan_address() {
+	my ($rm) = @_;
+	return undef unless $rm && $rm->{'manager'};
+	my ($host) = $rm->{'manager'} =~ m{^https?://([^:/]+)};
+	return undef unless $host;
+	my $loopback = 0;
+	if ($host =~ /^127\./) { $loopback = 1; }
+	elsif ($host =~ /[a-zA-Z]/) {
+		require Socket;
+		my $packed = gethostbyname($host);
+		$loopback = 1 if $packed && Socket::inet_ntoa($packed) =~ /^127\./;
+	}
+	return undef unless $loopback;
+	my $you = eval { return decode_json $rm->{'network'} } || {};
+	my $me = &subs::network_interface_reporter();
+	foreach my $nic ( sort keys %{$you} ) {
+		next if $nic eq 'public_address' || !$you->{$nic}->{'ip'};
+		my $you_ip = $you->{$nic}->{'ip'};
+		next if $you_ip =~ /^127\./;
+		foreach my $nicc ( sort keys %{$me} ) {
+			next if $nicc eq 'public_address' || !$me->{$nicc}->{'ip'};
+			next unless &subs::same_net_test($you_ip, $me->{$nicc}->{'ip'}) eq 'yes';
+			my $port = $you->{$nic}->{'port'} || $rm->{'port'} || 45545;
+			return { ip => $you_ip, port => $port, manager => 'https://' . $you_ip . ':' . $port };
+		}
+	}
+	return undef;
 }
 
 sub remote_machine_negotiator() {
@@ -6837,13 +6881,6 @@ sub remote_machine_negotiator() {
 	#});
 }
 
-
-# Which data plane the tunnels use: 'ssh' is the historic sshpass/ssh -R path,
-# 'wss' is the password-less websocket tunnel (tunnel.pl). The default stays ssh
-# until the wss path has been validated against live tunnels rows.
-sub tunnel_transport() {
-	return &subs::setting_grabber({ app => '__president', setting => 'tunnel_transport' }) || 'ssh';
-}
 
 # The hub websocket endpoint a NAT'd peer dials out to. Preferred source is the
 # hub's OWN manager URL from the handshake (e.g. https://thejunderground.com:45545),
