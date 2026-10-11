@@ -68,6 +68,17 @@ require "./hooks.pl";
 require "./tunnel.pl";
 { package gb; }
 
+# Run the schema migrations once per worker when the app comes up: a git pull
+# (which the watcher follows with a restart) then lands its new schema on boot
+# instead of waiting for a login. update_database is idempotent
+# (migration_already_applied), so a restart with no schema change is cheap.
+app->hook(before_dispatch => sub {
+	unless ($Manager::schema_checked) {
+		$Manager::schema_checked = 1;
+		eval { &update_database({}); };
+	}
+});
+
 my $tuuid    = Data::UUID->new;
 my $thread_uuid = $tuuid->create_str();
 my $universal_splitter = $gb::universal_splitter;
