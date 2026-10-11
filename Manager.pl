@@ -3184,6 +3184,87 @@ hook after_static => sub {
 	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
 };
 
+# The manager view used to open ~44 separate <script> tags, a request each over
+# HTTP/1.1. They are concatenated here in the order the layout wants and the
+# result is memoised until a file changes (an mtime+size signature recomputed
+# per request; the concat is redone only on a change). The individual files stay
+# the source of truth - nothing is generated on disk. With a stable ?string= and
+# the ETag below a repeat load revalidates to a 304, while a changed file (or a
+# version bump) is served at once.
+my @manager_bundle_files = qw(
+	/js/manager/stored.js
+	/js/manager/keyboard.js
+	/js/manager/text_editor_variables.js
+	/js/manager/clothesline.js
+	/js/manager/manager.js
+	/js/music.js
+	/js/images.js
+	/js/manager/configure.js
+	/js/manager/windows.js
+	/js/manager/editor.js
+	/js/manager/ide.js
+	/js/manager/ide_code.js
+	/js/mailbox.js
+	/js/manager/clockfaceprinter.js
+	/js/manager/leaderboardprinter.js
+	/js/manager/calendarprinter.js
+	/js/manager/continentprinter.js
+	/js/manager/timelineprinter.js
+	/js/manager/backgroundprinter.js
+	/js/manager/taskbar.js
+	/js/manager/taskbar_edit.js
+	/js/manager/narratorprinter.js
+	/js/manager/marker.js
+	/js/pm.js
+	/js/manager/terminal.js
+	/js/manager/budget.js
+	/js/manager/embedded.js
+	/js/manager/travel.js
+	/js/manager/studio.js
+	/js/manager/synth.js
+	/js/manager/attributes.js
+	/js/manager/inventory.js
+	/js/manager/security.js
+	/js/manager/tasks.js
+	/js/store.js
+	/js/manager/twirl.js
+	/js/manager/transaction.js
+	/js/manager/relational.js
+	/js/manager/warehouse.js
+	/js/manager/market.js
+	/js/manager/measures.js
+	/js/manager/monitor.js
+	/js/manager/folders.js
+);
+my $manager_bundle_cache;
+get '/js/manager/bundle.js' => sub ($c) {
+	my $dir = 'public';
+	my $sig = '';
+	foreach my $rel (@manager_bundle_files) {
+		my @st = stat($dir . $rel);
+		$sig .= $rel . ':' . ($st[9] // 0) . ':' . ($st[7] // 0) . ';';
+	}
+	my $etag = '"' . &subs::md5_sum($sig) . '"';
+	$c->res->headers->etag($etag);
+	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
+	$c->res->headers->content_type('application/javascript');
+	if (($c->req->headers->if_none_match // '') =~ /\Q$etag\E/) {
+		$c->res->code(304);
+		$c->res->body('');
+		return $c->rendered(304);
+	}
+	unless ($manager_bundle_cache && $manager_bundle_cache->[0] eq $sig) {
+		my $body = '';
+		foreach my $rel (@manager_bundle_files) {
+			my $src = eval { read_file($dir . $rel) } // '';
+			$body .= "\n;/* $rel */\n" . $src . "\n;\n";
+		}
+		$manager_bundle_cache = [$sig, $body];
+	}
+	$c->res->body($manager_bundle_cache->[1]);
+	return $c->rendered(200);
+};
+
 sub password_maker($c) {
 	my $sacred = $c->param('numerics');
 	my @uploads = @{$c->req->uploads};
