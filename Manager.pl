@@ -3797,6 +3797,20 @@ post '/manager/rsync_unpack' => sub($c) {
 	$c->render(text => 'unpacked ' . length($body));
 };
 
+# The peer half of the DB backup: serve an encrypted archive by path, so the
+# backup can ride http instead of sshpass+rsync. Authorized by the caller's
+# signatorial; only *.enc files are ever served.
+get '/manager/backup_serve' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $path = &subs::home($c->param('file') || '');
+	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
+	$c->res->headers->content_type('application/octet-stream');
+	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+	$c->rendered(200);
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $direction = $c->param('direction');
@@ -3932,7 +3946,7 @@ sub remote_upgrade($c,$params) {
 
 	$remote_machine = &remote_useragent_maker({ signatorial => $remote_signatorial });
 	my $auuid = &subs::random_string_creator(10);
-	if ($remote_machine->{'username'} && $remote_machine->{'password'}) {
+	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'} });
 
@@ -3977,17 +3991,14 @@ sub remote_upgrade($c,$params) {
 						my $html = '<h2>Syncing Remote Backup ' . &subs::data_size($body->{'size'}) . '</h2>';
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}  });
 
-						my $username = $remote_machine->{'username'};
-						my $password = &subs::decrypter($c->session('suds'), $remote_machine->{'password'});
-
-						my $connector = 'sshpass -p "' . $password . '" rsync -avr -e "ssh -p ' . $port . ' -o StrictHostKeyChecking=no" ' . $username . '@' . $vip . ':' . $body->{'archive_path'} . ' ' . $temporary_file;
-						if (&subs::device_setter() eq 'server') {
-							my $known_host = &subs::home('~/.ssh/known_hosts');
-							`rm -R $known_host`;
-						} else {
-							&ssh_known_host_adder($ip,$port);
+						# pull the encrypted archive over http - no ssh, no stored
+						# password. The peer serves it through the same tunnel and
+						# session as every other manager-to-manager request.
+						my $turl = $remote_machine->{'manager'} . '/manager/backup_serve?signatorial=' . $signatorial . '&file=' . Mojo::Util::url_escape($body->{'archive_path'});
+						my $tres = eval { $remote_machine->{'ua'}->inactivity_timeout(300)->get($turl)->result };
+						if ($tres && $tres->is_success && length $tres->body) {
+							write_file($temporary_file, $tres->body);
 						}
-						my $connected = `$connector`;
 					}
 					if (-e $temporary_file) {
 						my $disposition = &merge_database($c,{
