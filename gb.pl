@@ -32,7 +32,10 @@ our $pen = { '__statements' => [], '__lexicon' => [] };
 our $universal_splitter = "--simple--split--and--whatnot--";
 our $jcache = Mojo::Cache->new(max_keys => 100);
 our $user_agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36';
-our $last_update = &subs::newest_folder_checker();
+# $last_update / $last_updater are not read anywhere; they used to sweep the
+# whole project tree at every process start for nothing. Fill them lazily from
+# the cached version instead, so no boot pays for a filesystem walk.
+our $last_update;
 our $database_holder = {};
 our $gallery_thumbnails = 75;
 our $tmp_dir = &subs::home('~/.president');
@@ -52,7 +55,7 @@ our $site_types = {
 };
 
 our $last_updater = sub() {
-	return &subs::newest_folder_checker();
+	return $last_update ||= &subs::jawn_version();
 };
 our $forbidden = {
 	tables => ['cache', 'magazine', 'devices', 'remote_machines', 'neighbour_link', 'websocket_messages', 'websockets', 'security', 'tickets', 'tunnels', 'backfills', 'sync_cursors', 'sync_log' ]

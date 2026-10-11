@@ -90,7 +90,7 @@ our $logfile = &subs::home($config->{'logfile'});
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 my $environment = $config->{'environment'};
-our $random_caching_string = &subs::random_string_creator(10);
+our $random_caching_string = &subs::jawn_version();
 my $duty_file = &subs::home('~/.president/on_duty');
 write_file($duty_file, &subs::rightNow());
 $gb::database_holder->{'last_restart'} = &subs::rightNow();

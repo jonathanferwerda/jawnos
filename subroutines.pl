@@ -4797,14 +4797,22 @@ sub home() {
 	return $inhabitant;
 }
 
+# The newest mtime the app cares about, for the homepage "Last Update" label.
+# This used to reuse ide_files(), which walks and stats the whole tree - about
+# 9,400 files, most of them .pio/build artifacts and the public/icons set. It now
+# walks only the project's own files, pruning the generated and bulk-media
+# directories before descending: a few hundred stats instead of thousands.
 sub newest_folder_checker() {
-	my $files = &ide_files('./');
 	my $newest = 0;
-	foreach my $l ( @{$files} ) {
-		if ($l->{'modified'} > $newest) {
-			$newest = $l->{'modified'};
-		}
-	}
+	my %skip = map { $_ => 1 } qw(.git .pio build node_modules .shots icons);
+	find({
+		preprocess => sub { return grep { !$skip{$_} } @_ },
+		wanted     => sub {
+			return unless -f $_;
+			my $m = (stat($_))[9] || 0;
+			$newest = $m if $m > $newest;
+		},
+	}, './');
 	return $newest * 1000;
 }
 
