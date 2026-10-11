@@ -25,18 +25,29 @@ LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 
 
 class Dashboard(Gtk.Window):
-    def __init__(self, settings, start_requested=False):
+    def __init__(self, settings, start_requested=False, show_web=False):
         super().__init__(title="JawnOS")
         self.settings = settings
         self.start_requested_at = 0.0
-        self.set_default_size(430, 700)
+        self._web_panel = None
+        self._web_failed = False
+        self.set_default_size(1080, 820)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_border_width(18)
+        box.set_halign(Gtk.Align.START)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.add(box)
-        self.add(scroller)
+
+        # One app: the control panel and the embedded JawnOS view as tabs. The
+        # view is built on first use -- WebKit is heavy and it logs in.
+        self.notebook = Gtk.Notebook()
+        self.notebook.append_page(scroller, Gtk.Label(label="Dashboard"))
+        self.web_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.notebook.append_page(self.web_page, Gtk.Label(label="JawnOS"))
+        self.notebook.connect("switch-page", self._on_switch_page)
+        self.add(self.notebook)
 
         if os.path.exists(LOGO):
             # Scale the pixbuf explicitly: set_pixel_size() does not reliably
@@ -77,7 +88,7 @@ class Dashboard(Gtk.Window):
 
         self._header(box, "Open")
         self._button(box, "Open JawnOS UI", self.action_open_ui)
-        self._button(box, "Open JawnOS UI (embedded)", self.action_open_embedded)
+        self._button(box, "Open JawnOS view", self.action_open_embedded)
         self._button(box, "Show jawn log", self.action_show_log)
         self._button(box, "Open console", self.action_open_console)
 
@@ -94,6 +105,8 @@ class Dashboard(Gtk.Window):
         self.connect("destroy", Gtk.main_quit)
         self.refresh()
         GLib.timeout_add_seconds(2, self._tick)
+        if show_web:
+            self.notebook.set_current_page(1)
 
     # ---- widgets ----
 
@@ -147,15 +160,9 @@ class Dashboard(Gtk.Window):
             self._say("could not open a browser")
 
     def action_open_embedded(self):
-        try:
-            from . import webview
-        except Exception as exc:  # WebKitGTK missing
-            self._say("embedded view unavailable: %s" % exc)
-            return
-        try:
-            webview.run_webview(self.settings)
-        except Exception as exc:
-            self._say("embedded view failed: %s" % exc)
+        # The embedded view is the app's JawnOS tab now, not a separate window.
+        self._ensure_web_view()
+        self.notebook.set_current_page(self.notebook.page_num(self.web_page))
 
     def action_open_console(self):
         ok, message = core.open_console(self.settings["jawn_dir"])
@@ -186,6 +193,31 @@ class Dashboard(Gtk.Window):
 
     def action_show_log(self):
         LogWindow(core.jawn_log_path(self.settings["jawn_dir"]))
+
+    # ---- the embedded JawnOS view tab ----
+
+    def _on_switch_page(self, _notebook, page, _index):
+        if page is self.web_page:
+            self._ensure_web_view()
+
+    def _ensure_web_view(self):
+        """Build the embedded view the first time its tab is shown."""
+        if self._web_panel is not None or self._web_failed:
+            return self._web_panel
+        try:
+            from . import webview
+            panel = webview.WebViewPanel(self.settings)
+        except Exception as exc:  # WebKitGTK missing
+            self._web_failed = True
+            self.web_page.pack_start(
+                Gtk.Label(label="embedded view unavailable: %s" % exc), True, True, 0)
+            self.web_page.show_all()
+            return None
+        panel.attach_keys(self)
+        self.web_page.pack_start(panel, True, True, 0)
+        self.web_page.show_all()
+        self._web_panel = panel
+        return panel
 
     # ---- async plumbing ----
 
@@ -291,9 +323,9 @@ def _make_tray(window):
     return indicator
 
 
-def run_dashboard(settings=None, tray=False):
+def run_dashboard(settings=None, tray=False, show_web=False):
     settings = settings or core.load_settings()
-    window = Dashboard(settings)
+    window = Dashboard(settings, show_web=show_web)
     indicator = _make_tray(window) if tray else None
     window.show_all()
     Gtk.main()
@@ -305,14 +337,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="jawnos-desktop", description="JawnOS desktop dashboard")
     parser.add_argument("--tray", action="store_true", help="also show a status-tray icon")
     parser.add_argument("--webview", action="store_true",
-                        help="open the embedded JawnOS UI instead of the dashboard")
+                        help="open the app on the embedded JawnOS view")
     args = parser.parse_args(argv)
-    if args.webview:
-        from . import webview
-        webview.run_webview()
-        Gtk.main()
-        return 0
-    return run_dashboard(tray=args.tray)
+    return run_dashboard(tray=args.tray, show_web=args.webview)
 
 
 if __name__ == "__main__":

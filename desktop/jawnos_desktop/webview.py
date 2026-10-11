@@ -28,7 +28,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import Gdk, GLib, Gtk, Pango, WebKit2  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
 from . import DESKTOP_DIR, core  # noqa: E402
 
@@ -84,21 +84,26 @@ def ticket_url():
         return None
 
 
-class WebViewWindow(Gtk.Window):
-    def __init__(self, settings, start_url=None):
-        super().__init__(title="JawnOS")
-        self.settings_data = settings
-        self.set_default_size(1100, 820)
+class WebViewPanel(Gtk.Box):
+    """The embedded JawnOS view: a compact nav strip over the WebView.
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.pack_start(self._toolbar(), False, False, 0)
+    A Gtk.Box, not a window, so it can be the main area of the dashboard (the
+    "one app": Dashboard and JawnOS tabs) as well as a window of its own. There
+    is deliberately no address bar -- the session comes from the stored ticket,
+    so there is no URL for the user to type or read.
+    """
+
+    def __init__(self, settings, start_url=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.settings_data = settings
+        self._fullscreen = False
+
+        self.pack_start(self._toolbar(), False, False, 0)
 
         self.view = WebKit2.WebView.new_with_context(_context_get())
         self._configure(self.view)
-        box.pack_start(self.view, True, True, 0)
-        self.add(box)
+        self.pack_start(self.view, True, True, 0)
 
-        self._fullscreen = False
         # The ticket URL logs in and redirects; loading it and then heading to
         # /manager guarantees the session cookie is set even if the ticket page
         # does not redirect on its own. The manager is addressed on the ticket's
@@ -109,25 +114,21 @@ class WebViewWindow(Gtk.Window):
         self._login_pending = bool(login)
         self._gate_retries = 0
         self.load(start_url or login or self._manager_url)
-        self.connect("key-press-event", self._on_key)
-        self.show_all()
 
     # ---- chrome ----
 
     def _toolbar(self):
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        bar.set_border_width(4)
-        for label, handler in (("\u2190", self.view_go_back),
-                               ("\u21bb", self.view_reload),
-                               ("\u2302", self.view_home),
-                               ("\u26f6", self._toggle_fullscreen)):
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bar.set_border_width(2)
+        for label, tip, handler in (("\u2190", "Back", self.view_go_back),
+                                    ("\u21bb", "Reload", self.view_reload),
+                                    ("\u2302", "Home", self.view_home),
+                                    ("\u26f6", "Full screen (F11)", self._toggle_fullscreen)):
             button = Gtk.Button(label=label)
             button.set_relief(Gtk.ReliefStyle.NONE)
+            button.set_tooltip_text(tip)
             button.connect("clicked", lambda _b, h=handler: h())
             bar.pack_start(button, False, False, 0)
-        self.url_label = Gtk.Label(xalign=0)
-        self.url_label.set_ellipsize(Pango.EllipsizeMode.END)
-        bar.pack_start(self.url_label, True, True, 4)
         return bar
 
     def view_go_back(self):
@@ -140,34 +141,45 @@ class WebViewWindow(Gtk.Window):
     def view_home(self):
         self.load(self._manager_url)
 
-    # ---- fullscreen ----
+    # ---- fullscreen (drives whichever top-level window holds us) ----
+
+    def _set_fullscreen(self, on):
+        top = self.get_toplevel()
+        if not isinstance(top, Gtk.Window):
+            return
+        if on:
+            top.fullscreen()
+        else:
+            top.unfullscreen()
 
     def _toggle_fullscreen(self):
         # content-requested fullscreen arrives via the WebView signals; a key or
         # button press flips the flag here so the two paths agree.
         self._fullscreen = not self._fullscreen
-        if self._fullscreen:
-            self.fullscreen()
-        else:
-            self.unfullscreen()
+        self._set_fullscreen(self._fullscreen)
+
+    def attach_keys(self, window):
+        """Handle F11 / Esc on the window that hosts this panel."""
+        window.connect("key-press-event", self._on_key)
 
     def _on_key(self, _widget, event):
         if event.keyval == Gdk.KEY_F11:
             self._toggle_fullscreen()
             return True
         if event.keyval == Gdk.KEY_Escape and self._fullscreen:
-            self.unfullscreen()
+            self._fullscreen = False
+            self._set_fullscreen(False)
             return True
         return False
 
     def _on_enter_fullscreen(self, _view):
         self._fullscreen = True
-        self.fullscreen()
+        self._set_fullscreen(True)
         return False
 
     def _on_leave_fullscreen(self, _view):
         self._fullscreen = False
-        self.unfullscreen()
+        self._set_fullscreen(False)
         return False
 
     def load(self, url):
@@ -199,10 +211,6 @@ class WebViewWindow(Gtk.Window):
         view.connect("leave-fullscreen", self._on_leave_fullscreen)
 
     def _on_load_changed(self, view, event):
-        try:
-            self.url_label.set_text(view.get_uri() or "")
-        except Exception:
-            pass
         if event != WebKit2.LoadEvent.FINISHED:
             return
         if self._login_pending:
@@ -265,6 +273,18 @@ class WebViewWindow(Gtk.Window):
         else:
             request.deny()
         return True
+
+
+class WebViewWindow(Gtk.Window):
+    """The embedded view on its own, for a one-off or a debug launch."""
+
+    def __init__(self, settings, start_url=None):
+        super().__init__(title="JawnOS")
+        self.set_default_size(1100, 820)
+        self.panel = WebViewPanel(settings, start_url=start_url)
+        self.add(self.panel)
+        self.panel.attach_keys(self)
+        self.show_all()
 
 
 def run_webview(settings=None, start_url=None):
