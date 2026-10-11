@@ -4543,6 +4543,7 @@ sub remote_useragent_maker($data) {
 			if ($auth_test eq 'yes' && defined $data->{'since'}) {
 				$url .= '&since=' . int($data->{'since'});
 			}
+			$url .= '&tombstone_cursor=' . int($data->{'tombstone_cursor'} || 0) if $auth_test eq 'yes';
 			my $res = eval { return $rm->{'ua'}->insecure(1)->get($url => {Accept => '*/*'} => 'Content!')->result };
 			if (eval { $res->is_success }) {
 				$rm->{'res'} = $res;
@@ -16909,6 +16910,14 @@ post '/manager/delete_file' => sub($c) {
 };
 
 sub deletion_registration($data) {
+	# Record one durable tombstone. It stays in sync_log until every remote
+	# machine has confirmed reading past it, so an offline machine still learns
+	# of the deletion whenever it next connects.
+	&subs::tombstone_writer({
+		table => $data->{'table'}, app => $data->{'app'},
+		uuid => $data->{'uuid'}, scope => $data->{'scope'},
+		additional => $data->{'additional'},
+	});
 	my $app = $data->{'app'};
 	my $uuid = $data->{'uuid'};
 	my $scope = $data->{'scope'};
@@ -19632,6 +19641,21 @@ sub update_database($data) {
 		'alter table remote_machines add column dock_port VARCHAR(15)',
 		'alter table remote_machines add column archive LONGTEXT',
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
+		'alter table remote_machines add column sync_cursor VARCHAR(50)',
+		'create table if not exists sync_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			server_time VARCHAR(255),
+			signatorial VARCHAR(500),
+			tbl VARCHAR(255),
+			app VARCHAR(255),
+			uuid VARCHAR(255),
+			scope VARCHAR(255),
+			additional LONGTEXT
+		)',
+		'create table if not exists sync_cursors (
+			signatorial VARCHAR(500) PRIMARY KEY,
+			cursor VARCHAR(50)
+		)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',
@@ -20402,6 +20426,10 @@ get '/manager/remote_auth_test' => sub($c) {
 				# whether it is behind (and by how much) without pulling the export,
 				# and can check the two machines' pictures against each other.
 				my $pending = &subs::appointments_since($c->param('since'));
+				# Everything deleted here above the caller's confirmed cursor; the
+				# caller applies these and reports its new cursor on the next request.
+				my $reader_cursor = $c->param('tombstone_cursor');
+				my $tombstones = &subs::tombstones_since($reader_cursor);
 
 				my $json = {
 					server_time => $appt->{'server_time'},
@@ -20423,6 +20451,8 @@ get '/manager/remote_auth_test' => sub($c) {
 					network => &subs::network_interface_reporter(),
 					revision => &subs::code_revision(),
 					sync => &subs::appointment_watermark(),
+					tombstones => $tombstones,
+					sync_cursor => &subs::tombstone_max(),
 					pending => $pending,
 				};
 				$c->render(json => $json);
@@ -20432,6 +20462,13 @@ get '/manager/remote_auth_test' => sub($c) {
 				$deletions = eval { return encode_json $deletions };
 
 				&subs::db_update('remote_machines', { deletions => $deletions }, { signatorial => $rm->[-1]->{'signatorial'} }) if eval { decode_json $rm->[-1]->{'deletions'} };
+
+				# Advance this reader's confirmed cursor to what it last reported,
+				# then drop any tombstone every machine has now read past.
+				if (defined $reader_cursor && $reader_cursor =~ /^[0-9]+$/) {
+					&subs::db_query('insert or replace into sync_cursors (signatorial, cursor) values (?, ?)', $rm->[-1]->{'signatorial'}, $reader_cursor);
+				}
+				&subs::tombstone_purge();
 
 
 			}
@@ -20514,7 +20551,7 @@ sub remote_machine_reconnector($c) {
 					# route can say (with a count) whether it has anything newer instead
 					# of our pulling its window on every tick.
 					my $peer_watermark = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0];
-					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', since => ($peer_watermark->{'server_time'} || 0) });
+					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0) });
 					my $manager = $rm->{'manager'};
 					my $port = $rm->{'port'};
 					my $port_dock = $rm->{'dock_port'};
@@ -20578,6 +20615,13 @@ sub remote_machine_reconnector($c) {
 							'remote_upgraded',$rj->{'signatorial'},$signatorial)->hashes->[0];
 						if ($rj->{'deletions'}) {
 							&deletion_performer($rj->{'deletions'});
+						}
+						# Apply the peer's durable tombstones and record how far we have
+						# read its log, so its next purge can drop what we have seen.
+						if ($rj->{'tombstones'}) {
+							my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'} } } @{$rj->{'tombstones'}};
+							&deletion_performer(encode_json \@dels) if scalar @dels;
+							&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $rj->{'signatorial'} });
 						}
 						if ($rj->{'location'}) {
 							my $same_net = &subs::same_net_test($rj->{'you'},$rj->{'me'});

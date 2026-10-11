@@ -2156,6 +2156,55 @@ sub appointments_since() {
 }
 
 
+# --- durable deletion tombstones -------------------------------------------
+# A deletion is permanent for any machine that has not yet seen it. Each
+# tombstone carries a monotonic id; a machine only drops a tombstone once every
+# remote machine has *confirmed* reading past it (sync_cursors), so a desktop
+# left off for weeks still receives the whole backlog when it reconnects. The
+# owner advances a reader's cursor only from the cursor that reader sends on its
+# next request, so a lost response can never purge a deletion early.
+sub tombstone_writer() {
+	my $data = shift;
+	&db_insert('sync_log', {
+		server_time => &subs::rightNow(),
+		signatorial => &subs::signatorial_designer(),
+		tbl => $data->{'table'},
+		app => $data->{'app'},
+		uuid => $data->{'uuid'},
+		scope => $data->{'scope'},
+		additional => (ref $data->{'additional'} ? encode_json($data->{'additional'}) : $data->{'additional'}),
+	});
+	return &tombstone_max();
+}
+
+sub tombstones_since() {
+	my $cursor = shift;
+	$cursor = 0 unless defined $cursor && $cursor =~ /^[0-9]+$/;
+	return &db_query('select * from sync_log where id > ? order by id asc', $cursor)->hashes || [];
+}
+
+sub tombstone_max() {
+	my $row = &db_query('select coalesce(max(id),0) as m from sync_log')->hashes->[0];
+	return ($row->{'m'} || 0) + 0;
+}
+
+# Drop tombstones every known machine has confirmed reading. With no remote
+# machines there is nothing to sync, so the log clears wholesale; if any machine
+# has never confirmed (no cursor yet) the whole backlog is kept.
+sub tombstone_purge() {
+	my $rms = &db_select('remote_machines', ['signatorial'])->hashes || [];
+	if (!scalar @{$rms}) { &db_query('delete from sync_log'); return; }
+	my $floor;
+	foreach my $rm ( @{$rms} ) {
+		my $row = &db_query('select cursor from sync_cursors where signatorial = ?', $rm->{'signatorial'})->hashes->[0];
+		my $c = $row && $row->{'cursor'};
+		return unless defined $c && $c =~ /^[0-9]+$/;
+		$floor = $c if !defined $floor || $c < $floor;
+	}
+	&db_query('delete from sync_log where id <= ?', $floor) if defined $floor && $floor > 0;
+}
+
+
 
 
 sub sms_list_check() {
