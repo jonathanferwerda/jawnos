@@ -55,7 +55,7 @@ our $last_updater = sub() {
 	return &subs::newest_folder_checker();
 };
 our $forbidden = {
-	tables => ['cache', 'magazine', 'devices', 'remote_machines', 'neighbour_link', 'websocket_messages', 'websockets', 'security', 'tickets', 'tunnels', 'backfills' ]
+	tables => ['cache', 'magazine', 'devices', 'remote_machines', 'neighbour_link', 'websocket_messages', 'websockets', 'security', 'tickets', 'tunnels', 'backfills', 'sync_cursors', 'sync_log' ]
 };
 
 our $capabilities = {

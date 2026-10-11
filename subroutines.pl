@@ -2019,6 +2019,16 @@ sub backup_now() {
 
 		foreach my $d ( @tables ) {
 			next if grep { $_ eq $d } @{$gb::forbidden->{'tables'}};
+			# A table without a server_time column cannot be windowed, and the query
+			# below would die -- which killed the export, left its lock held, and
+			# wedged every peer's sync until the ten-minute stale re-claim, over and
+			# over. sync_cursors is such a table; guard generically rather than trust
+			# every CREATE to carry the column.
+			my $has_server_time = &subs::db_query('select name from pragma_table_info(?) where name = ?', $d, 'server_time')->hashes->[0];
+			unless ($has_server_time) {
+				$tdb->query('DROP TABLE ' . $d);
+				next;
+			}
 			my $new_data = &subs::db_query('select * from ' . $d . ' where server_time >= ?', $ld_server_time)->hashes;
 			if (scalar @{$new_data} > 0) {
 	#			$tdb->query('delete from ' . $d . ' where server_time < ?', $ld_server_time);
