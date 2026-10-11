@@ -17,6 +17,13 @@ hook before_dispatch => sub {
 	my ($c) = @_;
 	$c->inactivity_timeout(300); 
 	my $path = $c->req->url->path;
+	# A relayed request carries a relay_id. If this machine has already handled
+	# that id, the copy arrived via another path through the mesh: acknowledge it
+	# and stop here, before the route handler can apply the change a second time.
+	if ($c->param('relay_id') && !&subs::relay_fresh($c->param('relay_id'))) {
+		$c->render(text => 'ok');
+		return;
+	}
 	my $port = $c->req->url->base->port;
 	my $local_address = $c->tx->local_address;
 	my $remote_address = $c->tx->remote_address;

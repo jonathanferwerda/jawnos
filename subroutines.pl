@@ -3272,6 +3272,23 @@ sub cache_get() {
 	}
 }
 
+# Gossip dedupe for relayed requests. A relay carries a relay_id, minted once by
+# the machine that first sent it, and every machine that handles it claims the
+# id here. INSERT OR IGNORE makes claim-and-check atomic, so of two copies that
+# race in exactly one is "fresh" and the rest are dropped. cache is local (never
+# synced), and the rows are pruned by age, so a machine forgets a relay only
+# long after it has stopped circulating.
+sub relay_fresh() {
+	my ($id) = @_;
+	return 1 unless $id;
+	my $now = &subs::rightNow();
+	my $q = &subs::db_query('insert or ignore into cache (uuid, context, app, device, server_time, timestamp) values (?,?,?,?,?,?)',
+		$id, 'relay', '__president', &subs::device_setter(), $now, $now);
+	my $fresh = ($q && $q->rows) ? 1 : 0;
+	&subs::db_query('delete from cache where context=? and server_time < ?', 'relay', $now - 600000) if $fresh;
+	return $fresh;
+}
+
 sub file_device_renamer() {
 	my $data = shift;
 	my $file = $data->{'file'};

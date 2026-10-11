@@ -7240,33 +7240,35 @@ sub remote_relay_request($c, $extra_params = {}) {
 			# change under one clock instead of each guessing its own
 			my $server_time = $extra_params->{'server_time'} || &subs::rightNow();
 			my $source_signatorial = $c->param('source_signatorial');
+			# Gossip id + the machine that handed us this request (never echoed
+			# back to it). A broadcast mints the id here (origin); a machine that
+			# received one carries it forward. Single-target proxies are neither.
+			my $relay_id = $c->param('relay_id');
+			my $relay_from = $c->param('relay_from') || $source_signatorial;
+			unless ($remote_uuid) {
+				if ($relay_id) {
+					# receiver: before_dispatch already claimed the id
+				}
+				else {
+					$relay_id = &subs::random_string_creator(30);
+					&subs::relay_fresh($relay_id);
+				}
+			}
 			my $remote_machines;
 			if ($remote_uuid) {
 				$remote_machines = &subs::remote_machine_lister({ connection => 'active', uuid => $remote_uuid });
-				my $rms;
-				if (scalar @{$remote_machines} > 1) {
-
-				}
-			}
-			elsif ($extra_params->{'mode'} eq 'emergency') {
-				$remote_machines = &subs::db_query('select * from remote_machines where connection=?', 'active')->hashes;
-			}
-			elsif ($extra_params->{'dissemination'} eq 'yes' || $c->param('dissemination') eq 'yes') {
-				if (&subs::device_setter() eq 'server') {
-					if ($c->param('source_signatorial')) {
-						$remote_machines = &subs::db_query('select * from remote_machines where connection=? and signatorial != ?', 'active', $source_signatorial)->hashes;
-					}
-					else {
-						$remote_machines = &subs::db_query('select * from remote_machines where connection=?', 'active')->hashes;
-					}
-				} elsif ($c->param('dissemination') eq 'yes') {
-					$remote_machines = [];
-				} else {
-					$remote_machines = &subs::db_query('select * from remote_machines where connection=? and device = ?', 'active', 'server')->hashes;
-				}
 			}
 			else {
+				# Flood: hand it to every machine we can currently reach, bar
+				# ourselves and whoever handed it to us. The hub is just one peer
+				# here, so the fleet still converges while the hub is down;
+				# relay_id makes each machine handle the request only once.
 				$remote_machines = &subs::db_query('select * from remote_machines where connection=?', 'active')->hashes;
+				$remote_machines = [ grep {
+						($_->{'signatorial'} || '') ne $signatorial
+						&& ($_->{'signatorial'} || '') ne ($relay_from || '')
+						&& ($_->{'signatorial'} || '') ne ($source_signatorial || '')
+					} @{$remote_machines} ];
 			}
 
 
@@ -7317,12 +7319,13 @@ sub remote_relay_request($c, $extra_params = {}) {
 					foreach my $p ( keys %{$params} ) {
 						$extra_params->{$p} = $params->{$p};
 					}
-					if ($extra_params->{'dissemination'} || &subs::device_setter() eq 'server') {
+					if ($remote_uuid) {
+						$extra_params->{'remoted'} = 'yes';
+					} else {
 						$extra_params->{'dissemination'} = 'yes';
 						$extra_params->{'source_signatorial'} = $signatorial;
-					} else {
-						$extra_params->{'remoted'} = 'yes';
-
+						$extra_params->{'relay_from'} = $signatorial;
+						$extra_params->{'relay_id'} = $relay_id if $relay_id;
 					}
 					$extra_params->{'server_time'} = $server_time;
 					$extra_params->{'uuid'} = $uuid;
@@ -7359,12 +7362,13 @@ sub remote_relay_request($c, $extra_params = {}) {
 						$params .= '&' . $all_params->{'pairs'}->[$n] . '=' . $all_params->{'pairs'}->[$n + 1];
 						$n++;
 					}
-					if ($extra_params->{'dissemination'} || &subs::device_setter() eq 'server') {
+					if ($remote_uuid) {
+						$extra_params->{'remoted'} = 'yes';
+					} else {
 						$extra_params->{'dissemination'} = 'yes';
 						$extra_params->{'source_signatorial'} = $signatorial;
-					} else {
-						$extra_params->{'remoted'} = 'yes';
-
+						$extra_params->{'relay_from'} = $signatorial;
+						$extra_params->{'relay_id'} = $relay_id if $relay_id;
 					}
 					$extra_params->{'server_time'} = $server_time;
 					$extra_params->{'uuid'} = $uuid;
