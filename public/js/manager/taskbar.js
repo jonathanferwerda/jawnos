@@ -26,6 +26,8 @@ var jawnosBars = {
 	// the window title bar's own thickness, and the frame every window wears
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
 	border: jawnosBarSettingNumber('window_border', 3),
+	// the frame's colour: blank means follow the theme (the ring's own --line)
+	border_colour: jawnos_bar_settings['window_border_colour'] || '',
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
 	// the bar tucks itself away when idle
 	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
@@ -74,6 +76,16 @@ function jawnosWindowBorderApply(px) {
 	if (isNaN(v)) { return; }
 	jawnosBars.border = Math.max(0, v);
 	document.documentElement.style.setProperty('--window_border', jawnosBars.border + 'px');
+}
+// The colour of that frame, independent of the theme's chrome. A blank value
+// leaves the property unset, so the ring and the title bar fall back to --line
+// (the theme). Anything else rides the root as --window_border_colour.
+function jawnosWindowBorderColourApply(colour) {
+	colour = colour || '';
+	jawnosBars.border_colour = colour;
+	var root = document.documentElement.style;
+	if (colour) { root.setProperty('--window_border_colour', colour); }
+	else { root.removeProperty('--window_border_colour'); }
 }
 function jawnosDockTop() {
 	return jawnosBars.dock == 'top';
@@ -257,6 +269,8 @@ function jawnosBarsApply() {
 	root.setProperty('--navbar_h', Math.max(28, jawnosBars.navbar) + 'px');
 	// the window frame's own thickness, read by every window's ring and title bar
 	root.setProperty('--window_border', Math.max(0, jawnosBars.border) + 'px');
+	// and its colour, unless the theme's --line is asked for (a blank setting)
+	jawnosWindowBorderColourApply(jawnosBars.border_colour);
 	root.setProperty('--taskbar_top_h', jawnosTaskbarEdge('top') + 'px');
 	root.setProperty('--taskbar_bottom_h', jawnosTaskbarEdge('bottom') + 'px');
 	root.setProperty('--dock_top_h', jawnosDockTopOffset() + 'px');
@@ -382,6 +396,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
 	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
 	else if (setting == 'window_border') { jawnosWindowBorderApply($(this).val()); }
+	else if (setting == 'window_border_colour') { jawnosWindowBorderColourApply($(this).val()); return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set

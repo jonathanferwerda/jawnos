@@ -610,14 +610,18 @@ canvas { overflow: scroll; z-index: 99; }
    own width. The ring lands on the navbar's own border along the top and sides
    and is what closes the window at the foot. The z-index is huge on purpose -
    topLevelNow hands the contents and the navbar their own z-index inside the
-   window's own stacking context, and the ring has to sit over them. */
+   window's own stacking context, and the ring has to sit over them.
+   The colour follows the theme's chrome (--line) unless the misc setting
+   window_border_colour overrides it, which rides the root as
+   --window_border_colour so every window - and the title bar's own edge below -
+   takes the one colour. */
 .wind::after {
 	content: '';
 	position: absolute;
 	top: 0; right: 0; bottom: 0; left: 0;
 	border-style: solid;
 	border-width: var(--window_border, 3px);
-	border-color: var(--line);
+	border-color: var(--window_border_colour, var(--line));
 	border-radius: inherit;
 	pointer-events: none;
 	z-index: 2147483000;

@@ -177,8 +177,15 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				[ 'taskbar_height', 'Taskbar Height', 'range', 24, 72, 4, 44 ],
 				[ 'navbar_height', 'Navbar Height', 'range', 28, 64, 4, 36 ],
 				[ 'window_border', 'Window Border', 'range', 0, 8, 1, 3 ],
+				# the frame's colour, on its own: blank follows the theme (--line)
+				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
 			); %>
+			<%# the colour picker starts on the theme's own line colour when the setting
+			    is blank, so opening the panel never changes the look by itself %>
+			<% my $theme_css = eval { &subs::theme_panel_css($config->{&subs::signatorial_designer()}->{'manager'}->{'background_colour'}) } || ''; %>
+			<% my ($theme_line) = $theme_css =~ /--line:(#[0-9a-fA-F]{6})/; %>
+			<% $theme_line ||= '#c9c9c9'; %>
 			<% foreach my $g ( @bars ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
 				<%# the bars are read straight from the settings table: the list this template
@@ -193,6 +200,14 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 								<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
 							<% } %>
 						</select>
+					</label>
+				<% } elsif ($opts eq 'colour') { %>
+					<% my $value = (defined $chosen && $chosen =~ /^#/) ? $chosen : $theme_line; %>
+					<label style="display:flex;flex-direction:column;align-items:center;font-size:15px;">
+						<b><%= $label %></b>
+						<input type="color" id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>"
+							value="<%= $value %>" style="width:110px;height:34px;"
+							oninput="jawnosWindowBorderColourApply(this.value);">
 					</label>
 				<% } else { %>
 					<% my ($tag, $min, $max, $step, $def) = @{$g}[2 .. 6]; %>

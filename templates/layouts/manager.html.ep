@@ -85,6 +85,9 @@
 				// a border width whose 0 is meaningful: seed it empty when unset so the
 				// script's own default (3) applies, rather than turning 0 into 3
 				window_border: '<%= &subs::misc_setting('window_border') // '' %>',
+				// the frame's colour, independent of the theme's --line; blank follows
+				// the theme (the ring's own fallback)
+				window_border_colour: '<%= &subs::misc_setting('window_border_colour') || '' %>',
 				clothesline_height: '<%= &subs::misc_setting('clothesline_height') || 40 %>',
 				// the bar's furniture and order ride as JSON so a quoted value does
 				// not come back HTML-escaped; a bad value falls back to null (default)
