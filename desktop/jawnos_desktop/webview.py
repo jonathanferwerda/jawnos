@@ -176,13 +176,23 @@ class WebViewWindow(Gtk.Window):
 
     def _on_permission(self, view, request):
         # Granted only for our own loopback origin; anything else is denied.
-        origin = ""
+        # The origin is taken from the view's current URI: the request objects
+        # do not all expose get_origin() (UserMediaPermissionRequest does not),
+        # and reading it there raised and silently denied the camera/mic.
+        uri = ""
         try:
-            value = request.get_origin()
-            origin = value.to_string() if hasattr(value, "to_string") else str(value)
+            uri = view.get_uri() or ""
         except Exception:
             pass
-        if "127.0.0.1" in origin or "localhost" in origin:
+        if not uri:
+            for attr in ("get_origin", "get_uri"):
+                try:
+                    value = getattr(request, attr)()
+                    uri = value.to_string() if hasattr(value, "to_string") else str(value)
+                    break
+                except Exception:
+                    continue
+        if "127.0.0.1" in uri or "localhost" in uri:
             request.allow()
         else:
             request.deny()
