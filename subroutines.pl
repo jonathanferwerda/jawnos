@@ -8245,6 +8245,97 @@ sub evaluation_measures {
 	return $out;
 }
 
+# The clocks a trend is read from, the same scopes the inventory graphs. Each is
+# summarised for the last few periods (oldest first) rather than one span's
+# total, so a week that fell away or a month that doubled shows in the shape.
+# A period with nothing is kept, because a gap is a trend too.
+my %PERIOD_TREND = (
+	minute => { seconds => 60,      cap => 60, bucket => "strftime('%Y-%m-%dT%H:%M', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime')" },
+	hour   => { seconds => 3600,    cap => 24, bucket => "strftime('%Y-%m-%dT%H', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime')" },
+	day    => { seconds => 86400,   cap => 31, bucket => "date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime')" },
+	week   => { seconds => 604800,  cap => 26, bucket => "date(cast(timestamp as integer) / 1000, 'unixepoch', 'localtime', 'weekday 0', '-6 days')" },
+	month  => { seconds => 2678400, cap => 24, bucket => "strftime('%Y-%m', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime')" },
+	year   => { seconds => 31622400, cap => 12, bucket => "strftime('%Y', cast(timestamp as integer) / 1000, 'unixepoch', 'localtime')" },
+);
+
+# the label of each of the last $n periods of a scope, oldest first, in the same
+# form the SQL bucket produces
+sub period_trend_labels {
+	my ($unit, $n, $now) = @_;
+	my @labels;
+	if ($unit eq 'minute') {
+		for (my $i = $n - 1; $i >= 0; $i--) {
+			my @lt = localtime(($now - $i * 60000) / 1000);
+			push @labels, sprintf('%04d-%02d-%02dT%02d:%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3], $lt[2], $lt[1]);
+		}
+	}
+	elsif ($unit eq 'hour') {
+		for (my $i = $n - 1; $i >= 0; $i--) {
+			my @lt = localtime(($now - $i * 3600000) / 1000);
+			push @labels, sprintf('%04d-%02d-%02dT%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3], $lt[2]);
+		}
+	}
+	elsif ($unit eq 'day') {
+		for (my $i = $n - 1; $i >= 0; $i--) {
+			my @lt = localtime(($now - $i * 86400000) / 1000);
+			push @labels, sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
+		}
+	}
+	elsif ($unit eq 'week') {
+		my $dow = (localtime($now / 1000))[6];
+		my $monday = $now - (($dow + 6) % 7) * 86400000;
+		for (my $i = $n - 1; $i >= 0; $i--) {
+			my @m = localtime(($monday - $i * 7 * 86400000) / 1000);
+			push @labels, sprintf('%04d-%02d-%02d', $m[5] + 1900, $m[4] + 1, $m[3]);
+		}
+	}
+	elsif ($unit eq 'month') {
+		my @lt = localtime($now / 1000);
+		my ($y, $mo) = ($lt[5] + 1900, $lt[4]);
+		my @rev;
+		for (my $i = 0; $i < $n; $i++) {
+			my $mm = $mo - $i;
+			my $yy = $y;
+			while ($mm < 0) { $mm += 12; $yy--; }
+			push @rev, sprintf('%04d-%02d', $yy, $mm + 1);
+		}
+		@labels = reverse @rev;
+	}
+	elsif ($unit eq 'year') {
+		my $y = (localtime($now / 1000))[5] + 1900;
+		for (my $i = $n - 1; $i >= 0; $i--) { push @labels, sprintf('%04d', $y - $i); }
+	}
+	return @labels;
+}
+
+# The last few periods of every scope, oldest first, as "label=count ..." - the
+# same compact shape as a window's daily_counts, but for month, week, day, hour
+# and minute as well, so the model reads the pace period by period. $count is the
+# app's own scope count (how many periods its graph walks), capped per scope so
+# the short clocks do not swamp the prompt.
+sub evaluation_period_trends {
+	my ($app, $count) = @_;
+	return {} unless $app && $app ne '__president';
+	$count = 30 unless $count && $count =~ /^[0-9]+$/ && $count > 0;
+	my $now = &subs::rightNow();
+	my $out = {};
+	foreach my $unit ( qw/minute hour day week month year/ ) {
+		my $spec = $PERIOD_TREND{$unit};
+		my $n = $count < $spec->{'cap'} ? $count : $spec->{'cap'};
+		my @labels = &subs::period_trend_labels($unit, $n, $now);
+		next unless scalar @labels;
+		# a period ahead of the oldest label can still start within a week/month
+		# of it, so the scan reaches back one period further than the labels
+		my $since = $now - ($n + 1) * $spec->{'seconds'} * 1000;
+		my $rows = &subs::db_query(
+			'select ' . $spec->{'bucket'} . ' as bucket, count(*) as c from appointments where app = ? and cast(timestamp as integer) >= ? group by bucket',
+			$app, $since)->hashes;
+		my %c = map { $_->{'bucket'} => ($_->{'c'} + 0) } @{$rows};
+		$out->{$unit} = join ' ', map { $_ . '=' . ($c{$_} || 0) } @labels;
+	}
+	return $out;
+}
+
 # every day of the window, so a lag stays a lag in calendar days even when a
 # series has holes in it
 sub evaluation_window_days {
@@ -8597,6 +8688,11 @@ sub evaluation_agent() {
 	# the app's own measure definitions carry each reading's unit and the range it
 	# is set to expect; read once, so every window speaks its readings the same way
 	my $measure_defs = $global ? {} : (eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'app_measures' }) } || {});
+	# the last few periods of every clock the inventory graphs - month by month,
+	# week by week, day by day, hour by hour, minute by minute - so a trend is read
+	# from the shape of the pace, not one span's total. The count is the app's own
+	# scope count (how many periods its graph walks).
+	my $trends = $global ? {} : &subs::evaluation_period_trends($app, &subs::setting_grabber({ app => $app, setting => 's_scope_count' }));
 	foreach my $wd ( @window_defs ) {
 		my $since = $wd->{'span'} ? ($now - $wd->{'span'}) : 0;
 		my $r = &appointment_rollup($app, $since);
@@ -8810,16 +8906,17 @@ sub evaluation_agent() {
 		%lives,
 		(!$global ? (related => \@related) : ()),
 		around => $around,
+		(!$global && scalar keys %{$trends} ? (trends => $trends) : ()),
 		(!$global && $different && scalar @{$different} ? (different => $different) : ()),
 		(!$global && scalar @open ? (tasks => \@open) : ()),
 		($last_report ? (previous => $last_report) : ()),
 		(scalar @recent ? (headlines => \@recent) : ()),
 		($since_last ? (since_last => $since_last) : ()),
 	};
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. Each window also carries quantity where entries logged one - times (how many carried a quantity) - and a now map says where the run stands in time: time_of_day, weekday, day_of_month and month, and the position in the month and year. serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Use only the numbers given.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (other apps\' daily counts and the numeric measures any app logged that move with this one over the same 30 days - sources that run on nearly every day are already filtered out, since a daily schedule is not a signal), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. Each window also carries quantity where entries logged one - times (how many carried a quantity) - and a now map says where the run stands in time: time_of_day, weekday, day_of_month and month, and the position in the month and year. serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. A run for one app may also carry trends: for each clock the inventory graphs - minute, hour, day, week, month and year - the counts of the last several periods as label=count pairs, oldest first, so the pace is read period by period (a week that fell away, a month that doubled) and a period with nothing rides along as 0. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Use only the numbers given.';
 	my $instructions = $depth eq 'brief'
 		? 'Write one line only - a headline, at most twenty words, no label and no headings - that states what changed in the pace, or that it held if nothing did. Nothing else.'
-		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds, and set the whole reading in now: the time of day, the weekday, and how far through the month and year it is. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Under Correlations weigh related and around together - pairs with |r| >= 0.5 - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
+		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds, and set the whole reading in now: the time of day, the weekday, and how far through the month and year it is. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Under Correlations weigh related and around together - pairs with |r| >= 0.5 - and treat a measure in different as a suspect even when no pair clears the bar: say what r means here and whether the lag suggests one follows the other, name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
