@@ -10,9 +10,9 @@
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<% if ($window_maker ne 'yes') { %>
-			<script src="/js/manager.js"></script>
-			<link rel="stylesheet" href="/css/manager.css" />
-			<link rel="stylesheet" href="/css/music.css" />
+			<script src="/js/manager.js?string=<%= $string %>"></script>
+			<link rel="stylesheet" href="/css/manager.css?string=<%= $string %>" />
+			<link rel="stylesheet" href="/css/music.css?string=<%= $string %>" />
 
 		<% } %>
 			

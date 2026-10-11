@@ -1,5 +1,5 @@
 <html>
-	<% my $string = &subs::random_string_creator(25); %>
+	<% my $string = &subs::jawn_version(); %>
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="initial-scale=1.0">

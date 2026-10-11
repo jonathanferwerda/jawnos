@@ -141,6 +141,7 @@ get '/manager/music' => sub ($c) {
 			template => 'apps/music/music',
 			layout => 'music',
 			window_maker => 'no',
+			string => &subs::jawn_version(),
 			folders => $misc_settings,
 			device => &subs::device_setter(),
 			mao => eval { return decode_json $jmao } || {},

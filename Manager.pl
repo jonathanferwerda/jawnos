@@ -1310,7 +1310,7 @@ sub homepage_maker($c) {
 		magazine_categories => $magazine_categories,
 		config => &subs::config_reader(),
 		device => &subs::device_setter(),
-		string => &subs::random_string_creator(),
+		string => $random_caching_string,
 		pseudonyms => &pseudonym_maker('manager',''),
 		ws_url => $ws_url,
 		advertise_watching => &subs::setting_grabber({ app => 'me', setting => 'advertise_watching' })
@@ -3175,7 +3175,10 @@ hook before_render => sub {
 
 # Static files (icons, css, js) get an ETag/Last-Modified but no Cache-Control,
 # so browsers cached them heuristically and kept showing stale icons. Force a
-# revalidation on every request so changed files are picked up.
+# revalidation on every request: an unchanged file answers 304, a changed one a
+# fresh 200, so a refresh always sees the latest. A STABLE ?string= is what lets
+# the 304 happen - a random buster made every load a fresh URL and a full
+# re-download.
 hook after_static => sub {
 	my ($c) = @_;
 	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
