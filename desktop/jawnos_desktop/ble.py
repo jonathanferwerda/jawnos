@@ -336,7 +336,10 @@ class Bridge(object):
         path = self.find_device(self.target.get("mac"))
         if path:
             self._stop_discovery("connect")
-            self._connect_device(path)
+            # Let bluetoothd actually stop scanning before initiating the link:
+            # on some controllers (Intel) a connect issued while the scanner is
+            # still winding down aborts with le-connection-abort-by-local.
+            GLib.timeout_add(400, self._connect_device, path)
             return False
         if time.time() > deadline:
             self._stop_discovery("connect")
