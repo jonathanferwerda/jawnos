@@ -9887,7 +9887,9 @@ sub code_revision() {
 	if (-e '.git') {
 		$commit = `git rev-parse HEAD 2>/dev/null`; chomp $commit;
 		$branch = `git rev-parse --abbrev-ref HEAD 2>/dev/null`; chomp $branch;
-		$dirty = 1 if (`git status --porcelain 2>/dev/null` =~ /\S/);
+		# untracked files are not what the app runs (and the auto-update watcher
+		# ignores them too), so `dirty` means tracked files were modified
+		$dirty = 1 if (`git status --porcelain --untracked-files=no 2>/dev/null` =~ /\S/);
 	}
 	my $hostname = `hostname`; chomp $hostname;
 	$code_revision_cache = {
