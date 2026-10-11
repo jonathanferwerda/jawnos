@@ -3902,14 +3902,28 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 };
 
 
+# The peer half of remote_deploy: pull, reinstall the desktop app and restart,
+# authorized by the caller's signatorial - deploys over http now, no ssh.
+post '/manager/self_deploy' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $git = &subs::git_binary();
+	my $repo = &subs::home('~/jawnos');
+	my $out = `cd "$repo" && "$git" pull --ff-only 2>&1`;
+	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x "$repo/desktop/install.sh") {
+		`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
+	}
+	write_file(&subs::home('~/.president/status'), 'restart');
+	$c->render(text => "deployed\n" . ($out || ''));
+};
+
 post '/manager/configure/deploy_neighbours' => sub($c) {
-	# Push the current code to every neighbour that has ssh credentials on file,
-	# using the same remote_machines passwords the backup path uses. Each device
-	# can also pull on its own (git_watcher_check); this is the force-it-now lever.
+	# Ask every neighbour to pull + restart (the http deploy route). Each device
+	# also pulls on its own (git_watcher_check); this is the force-it-now lever.
 	my $rms = &subs::db_select('remote_machines')->hashes;
 	my @results;
 	foreach my $rm ( @{$rms} ) {
-		next unless $rm->{'username'} && $rm->{'password'};
 		my $res = &subs::remote_deploy($rm);
 		push @results, ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}) . ': ' . $res->{'message'};
 	}
@@ -20560,7 +20574,6 @@ sub remote_machine_reconnector($c) {
 		my @accomplished;
 		foreach my $rm ( @{$remote_machines} ) {
 			next if grep { $_ eq $rm->{'signatorial'} } @accomplished;
-			next unless $rm->{'username'} && $rm->{'password'};
 			eval {
 
 				my $ip = $rm->{'ip'};

@@ -1,11 +1,10 @@
 #!/usr/bin/env perl
-# Push the current code to the neighbour machines over ssh, using the encrypted
-# credentials the remote_machines table already holds. Every device also pulls
-# on its own (the 60-second git watcher in President.pl), so this is the
-# force-it-now lever: fast-forward the repo, reinstall the desktop app where one
-# is installed, and ask jawn to restart.
+# Ask the neighbour machines to pull + restart, over http (the self_deploy
+# route), rather than pushing code to them over ssh. Every device also pulls on
+# its own (the 60-second git watcher in President.pl), so this is the
+# force-it-now lever.
 #
-#   perl scripts/deploy_neighbours.pl              # every machine with creds
+#   perl scripts/deploy_neighbours.pl              # every machine
 #   perl scripts/deploy_neighbours.pl Table Fe     # only these hostnames
 #   perl scripts/deploy_neighbours.pl --dry-run    # list, change nothing
 #
@@ -16,6 +15,8 @@ use FindBin;
 
 chdir "$FindBin::Bin/.." or die "cannot chdir to the jawn tree: $!\n";
 require './subroutines.pl';
+$ENV{PURPOSE} = '';
+require './Manager.pl';
 
 my @wanted;
 my $dry_run = 0;
@@ -38,12 +39,8 @@ else {
 
 foreach my $rm (@machines) {
 	my $label = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'};
-	unless ($rm->{'username'} && $rm->{'password'}) {
-		print "$label: no ssh credentials on file\n";
-		next;
-	}
 	if ($dry_run) {
-		print "$label: would deploy as $rm->{'username'}\n";
+		print "$label: would deploy\n";
 		next;
 	}
 	my $res = &subs::remote_deploy($rm);

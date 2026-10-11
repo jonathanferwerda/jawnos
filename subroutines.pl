@@ -10234,43 +10234,24 @@ sub run_backfills() {
 # restart. Returns { ok, message, output }.
 sub remote_deploy {
 	my ($rm, %opts) = @_;
-	return { ok => 0, message => 'no credentials on file' }
-		unless $rm->{'username'} && $rm->{'password'};
-	my $suds = $gb::suds || &subs::suds_grabber();
-	my $password = eval { &subs::decrypter($suds, $rm->{'password'}) };
-	return { ok => 0, message => 'could not decrypt the stored password' }
-		unless defined $password && length $password;
-	my $data = eval { decode_json($rm->{'data'} || '{}') } || {};
-	my $host = $rm->{'fqdn'} || $rm->{'ip'};
-	my $port = $data->{'ssh_port'} || 22;
-	my $repo = $data->{'pwd'} || '~/jawnos';
-	# a peer that dials in through the hub is reached on its tunnel's ssh port
-	if ($rm->{'tunnel'} eq 'yes') {
-		my $tun = &subs::tunnel_port_mapper({ signatorial => $rm->{'signatorial'} });
-		$host = '127.0.0.1' if $tun->{'PORT_SSH'};
-		$port = $tun->{'PORT_SSH'} || $port;
+	# Deploy over http: ask the peer to pull, reinstall its desktop app and
+	# restart - the same work the old ssh command did, minus ssh and the stored
+	# password. remote_useragent_maker hands back the peer's tunnel-aware
+	# manager url and the session cookie we already hold for it.
+	my $r = eval { &Manager::remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, ip => $rm->{'ip'} }) };
+	my $manager = ($r && $r->{'manager'}) || $rm->{'manager'};
+	unless ($manager && $r && $r->{'ua'}) {
+		return { ok => 0, message => 'no route to peer' };
 	}
-	# No `$` or backticks anywhere in here on purpose: Mojo::Util::quote wraps in
-	# double quotes, and a `$VAR` would be expanded by the LOCAL shell before ssh
-	# ever ran. `~` and `command -v` say the same thing without a `$`. The git
-	# fallback covers the cloud, which runs git from a user-space install. The
-	# desktop reinstall is guarded on the install existing, so a headless server
-	# skips it; `printf restart` is how jawn's master is rebooted.
-	my $remote = 'cd ' . $repo . ' && '
-		. '{ command -v git >/dev/null 2>&1 && git pull --ff-only || ~/opt-git/git pull --ff-only; } && '
-		. '{ [ -d ~/.local/share/jawnos/desktop ] && ./desktop/install.sh >/dev/null 2>&1; true; } && '
-		. 'printf restart > ~/.president/status';
-	my $cmd = 'sshpass -p ' . quote($password)
-		. ' ssh -p ' . $port . ' -o StrictHostKeyChecking=no -o ConnectTimeout=12 '
-		. $rm->{'username'} . '@' . $host . ' ' . quote($remote);
-	my $output = `$cmd 2>&1`;
-	my $ok = ($? == 0) ? 1 : 0;
+	my $url = $manager . '/manager/self_deploy?signatorial=' . &subs::signatorial_designer();
+	my $res = eval { $r->{'ua'}->inactivity_timeout(60)->post($url)->result };
+	my $ok = ($res && $res->is_success) ? 1 : 0;
 	if ($subs::logfile) {
 		open(my $fh, '>>', $subs::logfile);
-		print $fh &subs::rightNow() . " remote deploy " . ($rm->{'hostname'} || $host) . ": " . ($ok ? 'ok' : 'fail') . "\n";
+		print $fh &subs::rightNow() . " remote deploy " . ($rm->{'hostname'} || $rm->{'ip'}) . ": " . ($ok ? 'ok' : 'fail') . "\n";
 		close $fh;
 	}
-	return { ok => $ok, message => $ok ? 'deployed' : 'ssh or git failed', output => $output };
+	return { ok => $ok, message => $ok ? 'deployed' : 'http deploy failed', output => ($res ? $res->body : '') };
 }
 
 sub git_binary {
