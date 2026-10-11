@@ -74,6 +74,146 @@ sub auth_check($c) {
 	}
 };
 
+# --- input injection --------------------------------------------------------
+#
+# X11 lets any client move the pointer and press keys, which is what xdotool
+# does. Wayland *deliberately* does not: an ordinary client (or a sandboxed one)
+# cannot inject input into the compositor. The compositor-independent Wayland
+# route is a virtual *kernel* input device (uinput), which is what the
+# xdotool-for-Wayland tools are built on:
+#
+#   dotool   reads xdotool-shaped commands on stdin ("key ctrl+alt+t", "type
+#            hi", "mousemove 10 20", "buttondown 1"). Closest drop-in; needs
+#            access to /dev/uinput (AUR on Arch).
+#   wtype    the compositor's virtual-keyboard protocol -- typing and keys only
+#            (no pointer), and only where the protocol exists (wlroots: sway,
+#            Hyprland; not GNOME or KDE).
+#   ydotool  also uinput, but its `key` takes Linux input *keycodes*, not
+#            keysyms, so the key names below are awkward there; pointer and
+#            typing work. Supported for those, not for key names.
+#
+# The backend is chosen from the session and can be forced with the `teletype`
+# setting `input_backend` (x11 | dotool | wtype | ydotool | none) or the
+# JAWNOS_INPUT_BACKEND environment variable, for a compositor we have not
+# covered. With nothing installed the injection is a logged no-op rather than a
+# broken keystroke.
+
+sub which($cmd) {
+	for my $dir ( split /:/, ($ENV{PATH} || '/usr/local/bin:/usr/bin:/bin') ) {
+		return "$dir/$cmd" if -x "$dir/$cmd";
+	}
+	return undef;
+}
+
+sub wayland_session() {
+	return (($ENV{XDG_SESSION_TYPE} || '') eq 'wayland' || $ENV{WAYLAND_DISPLAY}) ? 1 : 0;
+}
+
+sub input_backend() {
+	my $forced = $ENV{JAWNOS_INPUT_BACKEND}
+		|| &subs::setting_grabber({ app => 'teletype', setting => 'input_backend' });
+	if ($forced && $forced ne 'auto') {
+		return 'xdotool' if $forced eq 'x11' || $forced eq 'xdotool';
+		return $forced if $forced =~ /^(dotool|wtype|ydotool|none)$/;
+	}
+	if (wayland_session()) {
+		return 'dotool' if which('dotool');
+		return 'wtype'  if which('wtype');
+		return 'none';          # xdotool cannot reach native Wayland clients
+	}
+	return 'xdotool' if which('xdotool');
+	return 'none';
+}
+
+# wtype wants modifiers as -M/-m around a -k key, so "ctrl+alt+t" becomes
+# -M ctrl -M alt -k t -m alt -m ctrl.
+sub wtype_key_args($spec) {
+	my @parts = split /\+/, $spec;
+	my $key = pop @parts;
+	my @argv;
+	push @argv, '-M', $_ for @parts;
+	push @argv, '-k', $key;
+	push @argv, '-m', $_ for reverse @parts;
+	return @argv;
+}
+
+our $input_warned = 0;
+
+# The argv (plus any stdin) for one injected action, or {} when the backend
+# cannot do it. Kept separate from running it so the mapping is testable.
+sub input_command($action, @args) {
+	my $b = input_backend();
+	if ($b eq 'xdotool') {
+		return { argv => ['xdotool', 'mousedown', '1'] } if $action eq 'mousedown';
+		return { argv => ['xdotool', 'mouseup',  '1'] } if $action eq 'mouseup';
+		return { argv => ['xdotool', 'key',  $args[0]] } if $action eq 'key';
+		return { argv => ['xdotool', 'type', $args[0]] } if $action eq 'type';
+		return { argv => ['xdotool', 'mousemove', $args[0], $args[1]] } if $action eq 'move';
+		return { argv => ['xdotool', 'mousemove_relative', '--', $args[0], $args[1]] } if $action eq 'move_rel';
+		return {};
+	}
+	if ($b eq 'dotool') {
+		my $line =
+			  $action eq 'mousedown' ? 'buttondown 1'
+			: $action eq 'mouseup'   ? 'buttonup 1'
+			: $action eq 'key'       ? "key $args[0]"
+			: $action eq 'type'      ? "type $args[0]"
+			: $action eq 'move'      ? "mousemove $args[0] $args[1]"
+			: $action eq 'move_rel'  ? "mousemove_relative $args[0] $args[1]"
+			: undef;
+		return {} unless defined $line;
+		return { argv => ['dotool'], stdin => "$line\n" };
+	}
+	if ($b eq 'wtype') {
+		return { argv => ['wtype', '--', $args[0]] } if $action eq 'type';
+		return { argv => [ 'wtype', wtype_key_args($args[0]) ] } if $action eq 'key';
+		return {};              # wtype has no pointer control
+	}
+	if ($b eq 'ydotool') {
+		return { argv => ['ydotool', 'type', '--', $args[0]] } if $action eq 'type';
+		return {};              # key names need keycodes ydotool does not take
+	}
+	if (!$input_warned) {
+		$input_warned = 1;
+		$log->warn('teletype input: no backend (install dotool, wtype or ydotool, or set teletype: input_backend)') if $log;
+	}
+	return {};
+}
+
+sub inject($action, @args) {
+	my $c = &input_command($action, @args);
+	return unless $c->{'argv'} && @{$c->{'argv'}};
+	if (defined $c->{'stdin'}) {
+		open(my $fh, '|-', @{$c->{'argv'}}) or return;
+		print {$fh} $c->{'stdin'};
+		close $fh;
+		return;
+	}
+	system(@{$c->{'argv'}});
+}
+
+# The screen the pointer is measured against. X11 answers xprop; on Wayland the
+# compositor owns the outputs, so try sway's IPC, then a `teletype:
+# screen_size` setting ("1920x1080") as the fallback.
+sub screen_geometry() {
+	unless (wayland_session()) {
+		my $s = `xprop -notype -len 16 -root _NET_DESKTOP_GEOMETRY 2>/dev/null`;
+		chomp $s;
+		return [ $1, $2 ] if $s =~ /=\s*(\d+)\s*,\s*(\d+)/;
+	}
+	if (which('swaymsg')) {
+		my $j = `swaymsg -t get_outputs 2>/dev/null`;
+		my $outputs = eval { decode_json $j } || [];
+		for my $o (@{$outputs}) {
+			my $r = $o->{'rect'} || {};
+			return [ $r->{'width'}, $r->{'height'} ] if $r->{'width'} && $r->{'height'};
+		}
+	}
+	my $set = &subs::setting_grabber({ app => 'teletype', setting => 'screen_size' });
+	return [ $1, $2 ] if defined $set && $set =~ /^\s*(\d+)\s*x\s*(\d+)\s*$/;
+	return undef;
+}
+
 get '/teletype/information' => sub($c) {
 	my $auth_check = &auth_check($c);
 	if ( $auth_check->{'result'} eq 'approved') {
@@ -111,19 +251,14 @@ websocket '/teletype/ws' => sub($c) {
 			else { #if (	&subs::setting_grabber({ app => 'teletype', setting => 'enabled' }) eq 1) {
 				my ($db,$database) = &subs::database_grabber();
 				my $m = eval { return decode_json $msg } || {};
-				my $screen_size = `xprop -notype -len 16 -root _NET_DESKTOP_GEOMETRY | cut -c 25-`;
-				chomp $screen_size;
-				my @resolution = split ", ", $screen_size;
-				my $resolution = [ $resolution[0], $resolution[1] ];
-				my $display = ":0.0";
+				my $resolution = &screen_geometry();
 				if ($m->{'command'} eq 'mouse') {
 					if ($m->{'movement'} eq "button") {
 						if ($m->{'value'} == 0) {
-							
-							`xdotool mousedown 1` if $device eq 'computer';
+							&inject('mousedown') if $device eq 'computer';
 						}
 						elsif ($m->{'value'} == 1) {
-							`xdotool mouseup 1` if $device eq 'computer';
+							&inject('mouseup') if $device eq 'computer';
 						}
 					}
 					if ($device eq 'mobile') {
@@ -136,46 +271,34 @@ websocket '/teletype/ws' => sub($c) {
 					my @keyboard = grep { $_->{'num'} eq $key } @{$gb::inputs};
 
 					if ($keyboard[0]->{'trigger'} eq 'key') {
-						my $master = $keyboard[0]->{'img'};
-						`xdotool key "$master"`;
+						&inject('key', $keyboard[0]->{'img'});
 					}
 					else {
-						my $master = $keyboard[0]->{'c'};
-						`xdotool type "$master"`;
+						&inject('type', $keyboard[0]->{'c'});
 					}
 				}
 				elsif ($m->{'command'} eq 'touch') {
-
-					my $resolution_x = $m->{'res_x'};
-					my $resolution_y = $m->{'res_y'};
-					my ($screen_x,$screen_y) = @resolution;
-					my $x = $m->{'y'};
-					my $y = $resolution_y - $m->{'x'};
-
-					$x = ($screen_x / $resolution_x) * $x;
-					$y = ($screen_y / $resolution_y) * $y;
 					if ($device eq 'mobile') {
 						my $ms = {
 							'x' => $m->{'x'},
 							'y' => $m->{'y'},
-							'res_x' => $resolution_x,
-							'res_y' => $resolution_y,
+							'res_x' => $m->{'res_x'},
+							'res_y' => $m->{'res_y'},
 							'command' => 'touch'
 						};
 						&Websocket::send('tab', $ms);
-
 					}
-					elsif ($device eq 'computer') {
+					elsif ($device eq 'computer' && $resolution && $m->{'res_x'} && $m->{'res_y'}) {
+						my ($screen_x,$screen_y) = @{$resolution};
+						my $x = ($screen_x / $m->{'res_x'}) * $m->{'y'};
+						my $y = ($screen_y / $m->{'res_y'}) * ($m->{'res_y'} - $m->{'x'});
 						if ($m->{'mmr'} eq "off") {
-							`xdotool mousemove $x $y`;
+							&inject('move', $x, $y);
 						}
-						else {
-							if ($m->{'last_y'} && $m->{'last_x'} && $m->{'touching'} == 1) {
-								my $new_x = ($m->{'y'} - $m->{'last_y'} ) * 3;
-								my $new_y = ($m->{'last_x'} - $m->{'x'} ) * 3;
-								`xdotool mousemove_relative -- $new_x $new_y`;
-							}
-
+						elsif ($m->{'last_y'} && $m->{'last_x'} && $m->{'touching'} == 1) {
+							my $new_x = ($m->{'y'} - $m->{'last_y'} ) * 3;
+							my $new_y = ($m->{'last_x'} - $m->{'x'} ) * 3;
+							&inject('move_rel', $new_x, $new_y);
 						}
 					}
 				}
