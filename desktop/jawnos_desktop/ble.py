@@ -1,0 +1,721 @@
+"""The JawnOS BLE bridge for Linux.
+
+This is the Linux twin of ``JawnBleService.java`` in the JawnOS Android API app.
+It is a real Bluetooth LE *central* (built on BlueZ over D-Bus) that links to an
+NUS peripheral -- the watch or a board -- and relays newline-delimited JSON to
+and from the rest of jawn.
+
+The wire protocol on the loopback control socket is byte-for-byte the Android
+one, so ``scripts/jawn-bt`` and jawn's own Perl listener (``ble_listener_start``)
+work against it unchanged:
+
+    listen on 127.0.0.1:45999
+
+    commands (one JSON object per line, from any client):
+        {"cmd":"scan","seconds":8}
+        {"cmd":"connect","mac":"..","service":"..","rx":"..","tx":"..","mtu":512}
+        {"cmd":"send","message":".."}
+        {"cmd":"disconnect"} | {"cmd":"status"} | {"cmd":"shutdown"}
+
+    events (one JSON object per line, to every client):
+        {"event":"status","connected":bool,"mac":..|null,"mtu":n}
+        {"event":"scan","mac":..,"name":..|null,"rssi":n}
+        {"event":"scan_done"}
+        {"event":"error","message":".."}
+        {"event":"connected","mac":..,"mtu":n}
+        {"event":"disconnected","status":n}
+        {"event":"message","data":".."}
+        {"event":"sent"}
+
+Payload framing matches the Android daemon and the watch firmware exactly: a
+payload too big for one write is split as ``<i>/<n>:`` + chunk (0-based), and the
+watch reassembles it (see jw.ino::ble_frame_ingest).
+
+All Bluetooth work runs on the GLib main loop; the only threads are the socket
+accept loop and one reader per client, which hand commands to the loop. The
+D-Bus connect is asynchronous, so a slow or absent device never freezes the
+daemon -- the Android bug this avoids is a worker blocked in a 25 s connect that
+could not answer ``shutdown``.
+"""
+
+import argparse
+import json
+import os
+import socket
+import sys
+import threading
+import time
+
+from .core import BRIDGE_PORT, ble_pid_path, config_dir
+
+try:
+    import dbus
+    import dbus.mainloop.glib
+    from gi.repository import GLib
+    HAVE_BLUEZ = True
+except Exception:  # pragma: no cover - reported to the user at runtime
+    HAVE_BLUEZ = False
+
+BLUEZ = "org.bluez"
+OM_IFACE = "org.freedesktop.DBus.ObjectManager"
+ADAPTER_IFACE = "org.bluez.Adapter1"
+DEVICE_IFACE = "org.bluez.Device1"
+GATT_SERVICE_IFACE = "org.bluez.GattService1"
+GATT_CHAR_IFACE = "org.bluez.GattCharacteristic1"
+
+DEFAULT_MTU = 23          # ATT default, as in the Android daemon
+CONNECT_TIMEOUT_MS = 20000
+RECONNECT_START = 3.0     # seconds; doubles to RECONNECT_MAX
+RECONNECT_MAX = 30.0
+
+
+def frame_payload(message, mtu):
+    """Split *message* into the daemon's framed chunks.
+
+    Mirrors JawnBleService.sendText: the payload is cut to ``max(20, mtu-3-12)``
+    bytes per chunk and each chunk is prefixed with ``"<i>/<n>:"``. A message
+    that fits is still one framed write (the watch's parser expects it)."""
+    data = message.encode("utf-8")
+    max_chunk = max(20, mtu - 3)
+    chunk = max(20, max_chunk - 12)
+    total = 1 if len(data) == 0 else (len(data) + chunk - 1) // chunk
+    parts = []
+    for i in range(total):
+        body = data[i * chunk:(i + 1) * chunk]
+        parts.append(("%d/%d:" % (i, total)).encode("ascii") + body)
+    return parts
+
+
+def _target_store():
+    return os.path.join(config_dir(), "ble.json")
+
+
+def load_target():
+    try:
+        with open(_target_store(), "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_target(target):
+    try:
+        os.makedirs(config_dir(), exist_ok=True)
+        with open(_target_store(), "w", encoding="utf-8") as fh:
+            json.dump(target, fh, indent=2, sort_keys=True)
+    except OSError:
+        pass
+
+
+class Bridge(object):
+    def __init__(self, port=BRIDGE_PORT, log=None):
+        self.port = port
+        self.log = log or (lambda *a: None)
+        self.running = True
+        self.server = None
+        self.clients = set()
+        self.clients_lock = threading.Lock()
+
+        self.scanning = False
+        self.scan_seen = set()
+
+        self.bus = None
+        self.loop = None
+        self.om = None
+        self.device_path = None
+        self.write_char = None
+        self.notify_char = None
+        self.mtu = DEFAULT_MTU
+        self.target = {"mac": None, "service": None, "rx": None, "tx": None, "mtu": 0}
+        self.auto_reconnect = False
+        self.reconnect_delay = RECONNECT_START
+        self.next_attempt = 0.0
+        self.connecting = False
+        self.discovery_owner = None
+        self._char_signal = None
+        self._device_signal = None
+
+    # ---- logging / emit ----
+
+    def info(self, *parts):
+        self.log(" ".join(str(p) for p in parts))
+
+    def emit(self, obj):
+        line = (json.dumps(obj) + "\n").encode("utf-8")
+        with self.clients_lock:
+            dead = []
+            for sock in self.clients:
+                try:
+                    sock.sendall(line)
+                except OSError:
+                    dead.append(sock)
+            for sock in dead:
+                self.clients.discard(sock)
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def emit_error(self, message):
+        self.info("error:", message)
+        self.emit({"event": "error", "message": message})
+
+    def connected(self):
+        return bool(self.write_char and self.device_path)
+
+    # ---- BlueZ setup ----
+
+    def start_bluez(self):
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        try:
+            dbus.mainloop.glib.threads_init()
+        except Exception:
+            pass
+        self.bus = dbus.SystemBus()
+        self.om = dbus.Interface(self.bus.get_object(BLUEZ, "/"), OM_IFACE)
+        self.bus.add_signal_receiver(
+            self._on_interfaces_added, bus_name=BLUEZ,
+            dbus_interface=OM_IFACE, signal_name="InterfacesAdded")
+        self.info("bluez ready")
+
+    def _managed(self):
+        try:
+            return self.om.GetManagedObjects()
+        except dbus.exceptions.DBusException as exc:
+            self.info("GetManagedObjects failed:", exc)
+            return {}
+
+    def _adapter_path(self):
+        for path, ifaces in self._managed().items():
+            if ADAPTER_IFACE in ifaces:
+                return str(path)
+        return None
+
+    @staticmethod
+    def _iface(bus, path, name):
+        return dbus.Interface(bus.get_object(BLUEZ, path), name)
+
+    def _bluetooth_ready(self):
+        adapter = self._adapter_path()
+        if adapter is None:
+            self.emit_error("no bluetooth adapter (is bluetoothd running?)")
+            return None
+        props = self._managed().get(dbus.ObjectPath(adapter), {}).get(ADAPTER_IFACE, {})
+        if not props.get("Powered"):
+            self.emit_error("bluetooth adapter is powered off")
+            return None
+        return adapter
+
+    # ---- discovery (shared by scan and connect) ----
+
+    def _start_discovery(self, owner):
+        if self.discovery_owner is not None:
+            return
+        adapter = self._adapter_path()
+        if adapter is None:
+            return
+        try:
+            self._iface(self.bus, adapter, ADAPTER_IFACE).StartDiscovery()
+            self.discovery_owner = owner
+        except dbus.exceptions.DBusException as exc:
+            if "InProgress" in str(exc):
+                self.discovery_owner = owner
+            else:
+                self.info("start discovery failed:", exc)
+
+    def _stop_discovery(self, owner):
+        if self.discovery_owner != owner:
+            return
+        self.discovery_owner = None
+        adapter = self._adapter_path()
+        if adapter is None:
+            return
+        try:
+            self._iface(self.bus, adapter, ADAPTER_IFACE).StopDiscovery()
+        except dbus.exceptions.DBusException:
+            pass
+
+    # ---- scan ----
+
+    def _on_interfaces_added(self, path, interfaces):
+        if self.scanning and DEVICE_IFACE in interfaces:
+            self._emit_scan(interfaces[DEVICE_IFACE])
+
+    def _emit_scan(self, props):
+        address = str(props.get("Address", "")).upper()
+        if not address or address in self.scan_seen:
+            return
+        self.scan_seen.add(address)
+        name = props.get("Alias") or props.get("Name")
+        self.emit({
+            "event": "scan",
+            "mac": address,
+            "name": str(name) if name else None,
+            "rssi": int(props.get("RSSI", 0) or 0),
+        })
+
+    def _start_scan(self, seconds):
+        if self.scanning:
+            return
+        if self._bluetooth_ready() is None:
+            return
+        self.scanning = True
+        self.scan_seen = set()
+        # Devices BlueZ already knows count too: discovery reports only new ones.
+        for _path, ifaces in self._managed().items():
+            if DEVICE_IFACE in ifaces:
+                self._emit_scan(ifaces[DEVICE_IFACE])
+        self._start_discovery("scan")
+        GLib.timeout_add_seconds(max(1, seconds), self._stop_scan)
+
+    def _stop_scan(self):
+        if not self.scanning:
+            return False
+        self.scanning = False
+        self._stop_discovery("scan")
+        self.info("scan finished,", len(self.scan_seen), "device(s)")
+        self.emit({"event": "scan_done"})
+        return False
+
+    # ---- connect ----
+
+    def _devices(self):
+        out = {}
+        for path, ifaces in self._managed().items():
+            if DEVICE_IFACE in ifaces:
+                out[str(path)] = ifaces[DEVICE_IFACE]
+        return out
+
+    def find_device(self, mac):
+        want = mac.upper()
+        for path, props in self._devices().items():
+            if str(props.get("Address", "")).upper() == want:
+                return path
+        return None
+
+    def connect(self, mac, service=None, rx=None, tx=None, mtu=0):
+        if not mac:
+            self.emit_error("connect: mac required")
+            return
+        self.close_link(emit=False)
+        self.target = {"mac": mac, "service": service, "rx": rx, "tx": tx, "mtu": mtu}
+        self.mtu = mtu if mtu and mtu > 0 else DEFAULT_MTU
+        self.auto_reconnect = True
+        self.reconnect_delay = RECONNECT_START
+        save_target(self.target)
+        self._begin_connect()
+
+    def _begin_connect(self):
+        if self.connecting or self.connected():
+            return
+        mac = self.target.get("mac")
+        if not mac:
+            return
+        if self._bluetooth_ready() is None:
+            self._schedule_reconnect()
+            return
+        path = self.find_device(mac)
+        if path:
+            self._connect_device(path)
+            return
+        # Not known yet: discover until it shows up, then connect. Non-blocking
+        # so the daemon stays responsive (and stoppable) the whole time.
+        self.info("device not known; discovering for", mac)
+        self._start_discovery("connect")
+        GLib.timeout_add(400, self._poll_for_device, time.time() + 12.0)
+
+    def _poll_for_device(self, deadline):
+        if self.connected() or self.connecting:
+            self._stop_discovery("connect")
+            return False
+        path = self.find_device(self.target.get("mac"))
+        if path:
+            self._stop_discovery("connect")
+            self._connect_device(path)
+            return False
+        if time.time() > deadline:
+            self._stop_discovery("connect")
+            self.emit_error("device %s not found" % self.target.get("mac"))
+            self._schedule_reconnect()
+            return False
+        return True
+
+    def _connect_device(self, path):
+        self.connecting = True
+        try:
+            device = self._iface(self.bus, path, DEVICE_IFACE)
+            device.Connect(
+                reply_handler=lambda: self._after_connect(path),
+                error_handler=lambda exc: self._connect_failed(exc),
+                timeout=CONNECT_TIMEOUT_MS)
+        except dbus.exceptions.DBusException as exc:
+            self._connect_failed(exc)
+
+    def _connect_failed(self, exc):
+        self.connecting = False
+        self.emit_error("connect failed: %s" % exc)
+        self._schedule_reconnect()
+
+    def _after_connect(self, path):
+        self.device_path = path
+        self.reconnect_delay = RECONNECT_START
+        self._device_signal = self.bus.add_signal_receiver(
+            self._on_device_props, bus_name=BLUEZ,
+            dbus_interface=DEVICE_IFACE, signal_name="PropertiesChanged", path=path)
+        GLib.timeout_add(200, self._wait_services, path, time.time() + 10.0)
+
+    def _wait_services(self, path, deadline):
+        if self.device_path is None:
+            return False
+        try:
+            resolved = bool(self._iface(self.bus, path, DEVICE_IFACE).Get(DEVICE_IFACE, "ServicesResolved"))
+        except dbus.exceptions.DBusException:
+            resolved = False
+        if resolved or time.time() > deadline:
+            self._finish_connect(path)
+            return False
+        return True
+
+    def _finish_connect(self, path):
+        try:
+            write_char, notify_char = self._resolve_chars(
+                path, self.target.get("service"), self.target.get("rx"), self.target.get("tx"))
+            if not write_char or not notify_char:
+                raise RuntimeError("characteristics not found (service/rx/tx)")
+            self.write_char, self.notify_char = write_char, notify_char
+            self._iface(self.bus, notify_char, GATT_CHAR_IFACE).StartNotify()
+        except (dbus.exceptions.DBusException, RuntimeError) as exc:
+            self.connecting = False
+            self.emit_error("enable notifications: %s" % exc)
+            self.close_link(emit=False)
+            self._schedule_reconnect()
+            return
+        self._char_signal = self.bus.add_signal_receiver(
+            self._on_char_props, bus_name=BLUEZ,
+            dbus_interface=GATT_CHAR_IFACE, signal_name="PropertiesChanged", path=notify_char)
+        self.connecting = False
+        # Say who is on the other end; the watch prints this in the net room.
+        try:
+            self._write_raw(json.dumps({"type": "hello", "name": socket.gethostname()}))
+        except dbus.exceptions.DBusException as exc:
+            self.info("hello write failed:", exc)
+        self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
+        self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
+
+    def _resolve_chars(self, device_path, service, rx, tx):
+        managed = self._managed()
+        write_char = notify_char = None
+        service_l = service.lower() if service else None
+        rx_l = rx.lower() if rx else None
+        tx_l = tx.lower() if tx else None
+        for path, ifaces in managed.items():
+            char = ifaces.get(GATT_CHAR_IFACE)
+            if not char:
+                continue
+            svc = managed.get(dbus.ObjectPath(str(char.get("Service"))), {}).get(GATT_SERVICE_IFACE, {})
+            if str(svc.get("Device")) != device_path:
+                continue
+            if service_l and str(svc.get("UUID", "")).lower() != service_l:
+                continue
+            uuid_l = str(char.get("UUID", "")).lower()
+            if rx_l and uuid_l == rx_l:
+                write_char = str(path)
+            if tx_l and uuid_l == tx_l:
+                notify_char = str(path)
+        return write_char, notify_char
+
+    def _schedule_reconnect(self):
+        if not self.auto_reconnect:
+            return
+        delay = self.reconnect_delay
+        self.reconnect_delay = min(self.reconnect_delay * 2, RECONNECT_MAX)
+        self.next_attempt = time.time() + delay
+
+    def _maintain(self):
+        if (self.auto_reconnect and self.target.get("mac") and not self.connected()
+                and not self.connecting and time.time() >= self.next_attempt):
+            self._begin_connect()
+        return True
+
+    def _on_device_props(self, interface, changed, invalidated, **kw):
+        if "Connected" in changed and not changed["Connected"]:
+            self.info("device disconnected")
+            self.close_link(emit=True)
+
+    def _on_char_props(self, interface, changed, invalidated, **kw):
+        if "Value" not in changed:
+            return
+        try:
+            text = bytes(bytearray(changed["Value"])).decode("utf-8", "replace")
+        except Exception:
+            return
+        self.emit({"event": "message", "data": text})
+
+    # ---- send ----
+
+    def _write_raw(self, message):
+        char = self._iface(self.bus, self.write_char, GATT_CHAR_IFACE)
+        for part in frame_payload(message, self.mtu):
+            value = dbus.Array([dbus.Byte(b) for b in part], signature="y")
+            char.WriteValue(value, dbus.Dictionary({}, signature="sv"))
+
+    def send(self, message):
+        if not self.connected():
+            self.emit_error("not connected")
+            return
+        try:
+            self._write_raw(message)
+        except dbus.exceptions.DBusException as exc:
+            self.emit_error("write: %s" % exc)
+            return
+        self.emit({"event": "sent"})
+
+    # ---- status / disconnect ----
+
+    def status(self):
+        self.emit({
+            "event": "status",
+            "connected": self.connected(),
+            "mac": self.target.get("mac"),
+            "mtu": self.mtu,
+        })
+
+    def disconnect(self):
+        self.auto_reconnect = False
+        self.close_link(emit=True)
+
+    def close_link(self, emit):
+        if self._char_signal is not None:
+            try:
+                self.bus.remove_signal_receiver(
+                    self._char_signal, dbus_interface=GATT_CHAR_IFACE,
+                    signal_name="PropertiesChanged", path=self.notify_char)
+            except Exception:
+                pass
+            self._char_signal = None
+        if self._device_signal is not None:
+            try:
+                self.bus.remove_signal_receiver(
+                    self._device_signal, dbus_interface=DEVICE_IFACE,
+                    signal_name="PropertiesChanged", path=self.device_path)
+            except Exception:
+                pass
+            self._device_signal = None
+        had = self.device_path
+        self.write_char = None
+        self.notify_char = None
+        self.device_path = None
+        self.connecting = False
+        if had:
+            try:
+                self._iface(self.bus, had, DEVICE_IFACE).Disconnect()
+            except dbus.exceptions.DBusException:
+                pass
+            if emit:
+                self.emit({"event": "disconnected", "status": 0})
+            self._schedule_reconnect()
+
+    # ---- command dispatch (always on the GLib loop) ----
+
+    def _handle(self, cmd):
+        name = cmd.get("cmd", "")
+        self.info("cmd:", name)
+        if name == "scan":
+            self._start_scan(int(cmd.get("seconds", 8) or 8))
+        elif name == "connect":
+            self.connect(cmd.get("mac"), cmd.get("service"), cmd.get("rx"),
+                         cmd.get("tx"), int(cmd.get("mtu", 0) or 0))
+        elif name == "send":
+            self.send(cmd.get("message", ""))
+        elif name == "disconnect":
+            self.disconnect()
+        elif name == "status":
+            self.status()
+        elif name == "shutdown":
+            self.shutdown()
+        else:
+            self.emit_error("unknown command: %s" % name)
+
+    # ---- sockets ----
+
+    def _accept_loop(self):
+        while self.running:
+            try:
+                conn, _addr = self.server.accept()
+            except OSError:
+                if not self.running:
+                    return
+                time.sleep(0.2)
+                continue
+            with self.clients_lock:
+                self.clients.add(conn)
+            self.info("client connected, total", len(self.clients))
+            GLib.idle_add(self.status)
+            threading.Thread(target=self._client_reader, args=(conn,), daemon=True).start()
+
+    def _client_reader(self, conn):
+        buf = b""
+        try:
+            while self.running:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        cmd = json.loads(line.decode("utf-8"))
+                    except ValueError as exc:
+                        GLib.idle_add(self.emit_error, "bad command: %s" % exc)
+                        continue
+                    GLib.idle_add(self._handle, cmd)
+        except OSError:
+            pass
+        finally:
+            with self.clients_lock:
+                self.clients.discard(conn)
+            self.info("client removed, total", len(self.clients))
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    # ---- lifecycle ----
+
+    def write_pidfile(self):
+        try:
+            os.makedirs(os.path.dirname(ble_pid_path()), exist_ok=True)
+            with open(ble_pid_path(), "w", encoding="utf-8") as fh:
+                fh.write(str(os.getpid()))
+        except OSError:
+            pass
+
+    def remove_pidfile(self):
+        try:
+            os.remove(ble_pid_path())
+        except OSError:
+            pass
+
+    def shutdown(self):
+        self.info("shutting down")
+        self.running = False
+        self.auto_reconnect = False
+        try:
+            self.close_link(emit=False)
+        except Exception:
+            pass
+        try:
+            self._stop_discovery(self.discovery_owner)
+        except Exception:
+            pass
+        try:
+            if self.server:
+                self.server.close()
+        except OSError:
+            pass
+        with self.clients_lock:
+            for sock in list(self.clients):
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            self.clients.clear()
+        if self.loop is not None:
+            self.loop.quit()
+
+    def run(self):
+        if not HAVE_BLUEZ:
+            sys.stderr.write("jawnos-bt-daemon: needs python3-dbus and PyGObject\n")
+            return 2
+        self.start_bluez()
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Bind IPv4 loopback explicitly, like the Android daemon.
+        self.server.bind(("127.0.0.1", self.port))
+        self.server.listen(8)
+        self.write_pidfile()
+        self.info("listening on 127.0.0.1:%d" % self.port)
+
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        GLib.timeout_add(1000, self._maintain)
+
+        # Hands-free receive: re-acquire the last device, as the Android daemon
+        # does with its stored target.
+        stored = load_target()
+        if stored.get("mac"):
+            GLib.timeout_add(1500, lambda: (self.connect(stored.get("mac"),
+                           stored.get("service"), stored.get("rx"),
+                           stored.get("tx"), stored.get("mtu", 0)), False)[1])
+
+        self.loop = GLib.MainLoop()
+        try:
+            self.loop.run()
+        finally:
+            self.remove_pidfile()
+        self.info("stopped")
+        return 0
+
+
+# --------------------------------------------------------------------------
+# a one-shot client (used by core.stop_ble and the CLI)
+# --------------------------------------------------------------------------
+
+def send_command(command, wait_event=None, timeout=5.0):
+    """Connect briefly, send one command, optionally wait for an event."""
+    try:
+        sock = socket.create_connection(("127.0.0.1", BRIDGE_PORT), timeout=timeout)
+    except OSError:
+        return None
+    sock.settimeout(timeout)
+    result = None
+    try:
+        sock.sendall((json.dumps(command) + "\n").encode("utf-8"))
+        if wait_event is None:
+            return None
+        deadline = time.time() + timeout
+        buf = b""
+        while time.time() < deadline:
+            try:
+                chunk = sock.recv(65536)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                try:
+                    event = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue
+                result = event
+                if event.get("event") == wait_event:
+                    return result
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="JawnOS BLE bridge (Linux)")
+    parser.add_argument("--port", type=int, default=BRIDGE_PORT,
+                        help="loopback control port (default %d)" % BRIDGE_PORT)
+    args = parser.parse_args(argv)
+
+    def log(*parts):
+        # stderr is redirected to the daemon log by whoever started us, so
+        # always write -- a silent bridge is impossible to debug.
+        sys.stderr.write("[jawnos-bt] " + " ".join(str(p) for p in parts) + "\n")
+        sys.stderr.flush()
+
+    return Bridge(port=args.port, log=log).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=JawnOS
+GenericName=Personal environment
+Comment=Control the JawnOS server and its Bluetooth LE bridge
+Exec=@DESKTOP@/jawnos-desktop
+Icon=jawnos
+Terminal=false
+Categories=Utility;System;
+Keywords=jawnos;jawn;dashboard;

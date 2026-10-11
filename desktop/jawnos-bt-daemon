@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""jawnos-bt-daemon -- the JawnOS Bluetooth LE bridge for Linux.
+
+Listens on 127.0.0.1:45999 and speaks the same JSON protocol as the Android
+JawnBleService, so scripts/jawn-bt (and jawn's own listener) need no change.
+"""
+import os
+import sys
+
+_here = os.path.dirname(os.path.realpath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+from jawnos_desktop.ble import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

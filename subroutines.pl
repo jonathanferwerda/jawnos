@@ -1709,6 +1709,21 @@ sub ble_bridge_enabled() {
 	return $config->{'ble_bridge'} ? 1 : 0;
 }
 
+sub ble_bridge_capable() {
+	# Can this machine drive the wrist/board bridge? It is the mobile hub when
+	# config says so (the original rule), or any machine that actually runs the
+	# bridge daemon on its own loopback (the Linux/desktop port). The gate used
+	# to be `device_setter() eq 'mobile'` alone, which left a desktop with a
+	# live daemon unable to answer a watch's room_request or push a toggle.
+	return 1 if &subs::device_setter() eq 'mobile';
+	return 0 unless &subs::ble_bridge_enabled();
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => 45999, Proto => 'tcp', Timeout => 1);
+	return 0 unless $sock;
+	close $sock;
+	return 1;
+}
+
 sub ble_bridge_client() {
 	# jawn-bt client of the JawnOS BLE bridge daemon (JawnBleService in the
 	# JawnOS API app). Prefer the copy that ships with the repo.
@@ -1720,7 +1735,7 @@ sub ble_bridge_client() {
 
 sub bluetooth_sender() {
 	my $data = shift;
-	return unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::device_setter() eq 'mobile';
+	return unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::ble_bridge_capable();
 	my $intent = $data->{'intent'};
 	my $message = $data->{'message'};
 	my $embedded = &subs::device_lister(&subs::rightNow(),$data->{'edt'},undef,$data->{'chip_id'});
@@ -1776,7 +1791,7 @@ sub watch_toggle_pusher() {
 	# lights its button up right away; a watch that slept through it asks for
 	# the whole picture on its next state_request.
 	my $data = shift;
-	return unless &subs::device_setter() eq 'mobile';
+	return unless &subs::ble_bridge_capable();
 	return unless &subs::ble_bridge_enabled();
 	my $app = $data->{'app'} || return;
 	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';

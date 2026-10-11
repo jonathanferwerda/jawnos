@@ -1,0 +1,19 @@
+[Unit]
+Description=JawnOS server (jawn)
+Documentation=https://github.com/jonathanferwerda/jawnos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@JAWN_DIR@
+ExecStart=@PERL@ ./jawn
+Restart=on-failure
+RestartSec=5
+
+# jawn writes its own ~/manager.log; keep the service log separate.
+StandardOutput=append:%h/.local/state/jawnos/jawn-stdout.log
+StandardError=append:%h/.local/state/jawnos/jawn-stdout.log
+
+[Install]
+WantedBy=default.target
