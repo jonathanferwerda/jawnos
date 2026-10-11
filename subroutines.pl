@@ -6848,6 +6848,9 @@ sub tunnel_wss_peer() {
 	my ($manager) = @_;
 	my $sig = &subs::signatorial_designer();
 	&Tunnel::peer_session(&subs::tunnel_hub_url($manager), { signatorial => $sig });
+	# peer_session is async and reconnects itself, so the loop has to run HERE or
+	# the forked tunnel holder returns at once and the tunnel dies with it.
+	Mojo::IOLoop->start;
 }
 
 sub tunnel_starter() {
