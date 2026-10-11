@@ -3,10 +3,13 @@
 # JawnOS dependency checker / installer.
 #
 #   perl scripts/jawnos_deps.pl            # report, then offer to install
-#   perl scripts/jawnos_deps.pl --report   # report only, exit 1 if anything missing
+#   perl scripts/jawnos_deps.pl --report   # report only, exit 1 if anything is missing
 #   perl scripts/jawnos_deps.pl --json     # machine-readable status
 #   perl scripts/jawnos_deps.pl --sh       # print the install commands as a shell script
 #   perl scripts/jawnos_deps.pl --install  # install without prompting
+#   perl scripts/jawnos_deps.pl --desktop  # also check/install the desktop app's
+#                                          # WebKitGTK + GStreamer media packages
+#                                          # (optional: their absence is not fatal)
 #
 # Deliberately uses only core Perl so it runs before any CPAN module is present.
 
@@ -15,13 +18,14 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
 
-my ($report_only, $json, $sh, $install, $yes);
+my ($report_only, $json, $sh, $install, $yes, $desktop);
 GetOptions(
 	'report'  => \$report_only,
 	'json'    => \$json,
 	'sh'      => \$sh,
 	'install' => \$install,
 	'yes|y'   => \$yes,
+	'desktop' => \$desktop,
 ) or die "bad options\n";
 
 $install = 1 if $yes;
@@ -88,6 +92,21 @@ my @modules = qw(
 	WebService::Ollama
 );
 
+# --- desktop extras (opt-in: --desktop) -------------------------------------
+# The Linux desktop app's embedded view needs WebKitGTK, and it decodes media
+# through system GStreamer (without a VA-API plugin, HD video is software-
+# decoded and choppy). These are optional -- a headless server or the phone does
+# not need them -- so a missing extra never fails the check. They are only
+# checked where there is a desktop and a package manager to install them.
+my @desktop = (
+	{ label => 'WebKitGTK 4.1 (embedded view)', check => \&have_webkit,
+	  apt => 'gir1.2-webkit2-4.1', pacman => 'webkit2gtk-4.1', termux => '' },
+	{ label => 'GStreamer VA-API plugin (GPU video decode)', check => \&have_gst_va,
+	  apt => 'gstreamer1.0-vaapi', pacman => 'gst-plugin-va', termux => '' },
+	{ label => 'GStreamer tools', check => \&have_gst_tools,
+	  apt => 'gstreamer1.0-tools', pacman => 'gstreamer', termux => '' },
+);
+
 # --- checks ------------------------------------------------------------------
 sub which {
 	my $cmd = shift;
@@ -100,6 +119,26 @@ sub have_command {
 	my $t = shift;
 	return 1 if which($t->{'cmd'});
 	return 1 if $t->{'alt'} && which($t->{'alt'});
+	return 0;
+}
+
+# --- desktop extra probes ----------------------------------------------------
+sub have_webkit {
+	my $py = which('python3') || which('python');
+	return 0 unless $py;
+	my $code = 'import gi; gi.require_version("WebKit2", "4.1")';
+	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
+}
+
+sub have_gst_tools {
+	return which('gst-inspect-1.0') ? 1 : 0;
+}
+
+sub have_gst_va {
+	return 0 unless have_gst_tools();
+	# 'vaapi' is the older plugin name, 'va' the newer one; either means GPU decode.
+	return 1 if system('gst-inspect-1.0 vaapi >/dev/null 2>&1') == 0;
+	return 1 if system('gst-inspect-1.0 va >/dev/null 2>&1') == 0;
 	return 0;
 }
 
@@ -116,12 +155,17 @@ sub detect_platform {
 	return 'unknown';
 }
 
-my (@missing_tools, @missing_modules);
+my (@missing_tools, @missing_modules, @missing_desktop);
 foreach my $t (@tools) {
 	push @missing_tools, $t unless have_command($t);
 }
 foreach my $m (@modules) {
 	push @missing_modules, $m unless have_module($m);
+}
+if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
+	foreach my $d (@desktop) {
+		push @missing_desktop, $d unless $d->{'check'}->();
+	}
 }
 
 if ($json) {
@@ -130,6 +174,7 @@ if ($json) {
 		ok              => (@missing_tools + @missing_modules == 0) ? 1 : 0,
 		missing_tools   => [ map { { cmd => $_->{'cmd'}, label => $_->{'label'}, package => pkg_for($_) } } @missing_tools ],
 		missing_modules => [ @missing_modules ],
+		missing_desktop => [ map { { label => $_->{'label'}, package => pkg_for($_) } } @missing_desktop ],
 	};
 	print JSON::PP->new->canonical->pretty->encode($data);
 	exit((@missing_tools + @missing_modules == 0) ? 0 : 1);
@@ -161,13 +206,29 @@ else {
 		print "  - $m\n";
 	}
 }
+if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
+	if (!@missing_desktop) {
+		print "desktop extras: all present\n";
+	}
+	else {
+		print "desktop extras missing (optional -- the dashboard works without the view,\n";
+		print "and video merely decodes in software):\n";
+		foreach my $d (@missing_desktop) {
+			printf "  - %-44s (%s)\n", $d->{'label'}, pkg_for($d);
+		}
+	}
+}
 
-my $everything = (@missing_tools + @missing_modules == 0);
-if ($everything) {
+my $core_missing = (@missing_tools + @missing_modules) > 0;
+my $desktop_missing = @missing_desktop > 0;
+if (!$core_missing && !$desktop_missing) {
 	print "\nEverything is installed. You're good to go.\n";
 	exit 0;
 }
-exit 1 if $report_only;
+if ($report_only) {
+	# The desktop extras are optional: only a missing core dependency fails --report.
+	exit($core_missing ? 1 : 0);
+}
 exit 1 if $platform eq 'unknown';
 
 unless ($install) {
@@ -192,9 +253,9 @@ sub sudo {
 	return ();
 }
 
-if (@missing_tools) {
-	my @pkgs = map { pkg_for($_) } @missing_tools;
-	@pkgs = grep { defined $_ && $_ ne '' } @pkgs;
+{
+	# Core tools and any opted-in desktop extras in one transaction.
+	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
 	if (@pkgs) {
 		if ($platform eq 'debian') {
 			run( sudo(), 'apt-get', 'update' );
@@ -226,13 +287,17 @@ if (@missing_modules) {
 # --- final verdict -----------------------------------------------------------
 my @still_tools = grep { !have_command($_) } @tools;
 my @still_modules = grep { !have_module($_) } @modules;
-if (!@still_tools && !@still_modules) {
+my @still_desktop = grep { !$_->{'check'}->() } @missing_desktop;
+if (!@still_tools && !@still_modules && !@still_desktop) {
 	print "\nAll dependencies installed.\n";
 	exit 0;
 }
 print "\nStill missing " . scalar(@still_tools) . " tool(s) and " . scalar(@still_modules) . " module(s).\n";
+if (@still_desktop) {
+	print "Desktop extras still missing (optional): " . join(', ', map { $_->{'label'} } @still_desktop) . ".\n";
+}
 print "You may need to install them by hand (see the README).\n";
-exit 1;
+exit( (@still_tools || @still_modules) ? 1 : 0 );
 
 sub pkg_for {
 	my $t = shift;
@@ -250,9 +315,9 @@ sub install_script {
 	push @lines, '# Generated by scripts/jawnos_deps.pl --sh';
 	push @lines, '';
 
-	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } @missing_tools;
+	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
 	if (@pkgs) {
-		push @lines, '# command line tools';
+		push @lines, '# command line tools' . (@missing_desktop ? ' and desktop extras' : '');
 		if ($platform eq 'debian') {
 			push @lines, join(' ', sudo(), 'apt-get', 'update');
 			push @lines, join(' ', sudo(), 'apt-get', 'install', '-y', @pkgs);

@@ -195,6 +195,8 @@ To check (and optionally install) dependencies on their own:
 perl scripts/jawnos_deps.pl           # report, then offer to install
 perl scripts/jawnos_deps.pl --report  # report only; exits non-zero if anything is missing
 perl scripts/jawnos_deps.pl --sh      # print the install commands as a shell script
+perl scripts/jawnos_deps.pl --desktop # also check/install the desktop app's WebKitGTK
+                                      # and GStreamer media plugins (optional)
 ```
 
 ### Android (Termux)
