@@ -49,7 +49,10 @@ class Dashboard(Gtk.Window):
         self.notebook.append_page(self.web_page, Gtk.Label(label="JawnOS"))
         # No tab strip: the Dashboard's button and the view's start-menu admin
         # icon are the two ways across (Ctrl+Shift+D is the keyboard backstop).
+        # The notebook's frame is off too -- with the tabs gone it is just a
+        # bevel, and it showed as a silver border around a fullscreen view.
         self.notebook.set_show_tabs(False)
+        self.notebook.set_show_border(False)
         self.notebook.connect("switch-page", self._on_switch_page)
         self.add(self.notebook)
 

@@ -140,6 +140,9 @@ class WebViewPanel(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.settings_data = settings
         self._fullscreen = False
+        # True when the window's fullscreen was asked for by the page (a video),
+        # so leaving the video restores it -- but an F11 fullscreen survives.
+        self._page_fullscreen = False
         # Set by the dashboard: the page's admin-console icon calls it to come
         # back to the control panel.
         self.on_admin = None
@@ -186,33 +189,39 @@ class WebViewPanel(Gtk.Box):
             top.unfullscreen()
 
     def _toggle_fullscreen(self):
-        # content-requested fullscreen arrives via the WebView signals; a key or
-        # button press flips the flag here so the two paths agree.
         self._fullscreen = not self._fullscreen
+        self._page_fullscreen = False
         self._set_fullscreen(self._fullscreen)
 
     def attach_keys(self, window):
-        """Handle F11 / Esc on the window that hosts this panel."""
+        """Handle F11 on the window that hosts this panel."""
         window.connect("key-press-event", self._on_key)
 
     def _on_key(self, _widget, event):
+        # F11 is the only way out of the app's fullscreen. Esc must not drop it:
+        # Esc belongs to the page (it leaves a video's own fullscreen), and
+        # while a video is fullscreen, Esc was taking the whole app with it.
         if event.keyval == Gdk.KEY_F11:
             self._toggle_fullscreen()
-            return True
-        if event.keyval == Gdk.KEY_Escape and self._fullscreen:
-            self._fullscreen = False
-            self._set_fullscreen(False)
             return True
         return False
 
     def _on_enter_fullscreen(self, _view):
-        self._fullscreen = True
-        self._set_fullscreen(True)
+        # A page (a video) asked for fullscreen. Escalate the window only if the
+        # app is not already fullscreen, and remember who did it.
+        if not self._fullscreen:
+            self._page_fullscreen = True
+            self._fullscreen = True
+            self._set_fullscreen(True)
         return False
 
     def _on_leave_fullscreen(self, _view):
-        self._fullscreen = False
-        self._set_fullscreen(False)
+        # Only undo the window's fullscreen if the page put it there -- leaving a
+        # video must not close an F11 fullscreen.
+        if self._page_fullscreen:
+            self._page_fullscreen = False
+            self._fullscreen = False
+            self._set_fullscreen(False)
         return False
 
     def load(self, url):
