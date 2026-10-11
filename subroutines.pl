@@ -9901,6 +9901,18 @@ sub log_writer() {
 # Computed once per process and memoised - the app only re-reads its code on a
 # restart, so the values cannot change under it.
 our $code_revision_cache;
+my $jawn_version_cache;
+
+# The human version shown in the System view (and available to the peer
+# handshake). Bumped per commit by scripts/version_bump.pl; stored in ./VERSION.
+sub jawn_version() {
+	return $jawn_version_cache if $jawn_version_cache;
+	my $v = eval { read_file('./VERSION') } || '';
+	$v =~ s/\s+$//;
+	$v = '0.0.0' unless $v =~ /\d/;
+	return $jawn_version_cache = $v;
+}
+
 sub code_revision() {
 	return $code_revision_cache if $code_revision_cache;
 	my @files;

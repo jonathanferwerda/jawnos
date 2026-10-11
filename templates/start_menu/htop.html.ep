@@ -1,6 +1,7 @@
 <div id="htop_viewer">
 
 	<h4 style="float:left;">System <span class="htop_view time" view="timestamp" timestamp="<%= $cache->{'current'}->{'timestamp'} %>"></span>
+		<span class="jawn_version" style="margin-left:8px;opacity:0.6;font-weight:normal;">v<%= &subs::jawn_version() %></span>
 
 		<button class="president_restart_trigger" style="">Restart</button>
 		<button class="president_restart_trigger" restart="yes" style="">ReRestart</button>
