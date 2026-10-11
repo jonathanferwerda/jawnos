@@ -35,9 +35,19 @@ furniture around them is largely user-defined:
 - **A dock** that can be placed on any edge and slides away when idle.
 - **A "clothesline"** — a rail along the top of the screen that hangs the routines and rituals
   that belong at the current hour, in the order they usually happen.
-- **Global display zoom** (20%–200%) and adjustable bar heights, so the interface can be scaled
-  for a phone, a tablet or a large display.
-- **Fourteen selectable icon sets**, with the original hand-drawn artwork as the default.
+- **Global display zoom** (20%–200%), adjustable bar heights and a configurable window border
+  (width and colour), so the interface can be scaled for a phone, a tablet or a large display.
+- **Five desktop themes**, each with a dark cut and a matching colour scheme, and **sixteen
+  selectable icon sets**, with the original hand-drawn artwork as the default.
+
+### The desktop app (a computer)
+
+The phone's app has a Linux counterpart: a per-user dashboard that starts, stops and restarts
+jawn, opens its UI, tails the log and drives the Bluetooth bridge — the same two jobs, on a
+computer. It embeds the whole JawnOS UI in the same window through **WebKitGTK**, logging in with
+a ticket you import once (kept encrypted in your keyring), with camera and microphone access,
+F11 fullscreen and hardware-accelerated video. Its Bluetooth LE bridge is a real BlueZ central
+speaking the phone's protocol, so a watch links to whichever machine is in range.
 
 ### Files, media & creation
 
@@ -98,6 +108,8 @@ furniture around them is largely user-defined:
 - **System & monitoring** — a **Process Monitor** with live CPU and memory readings, per-core
   graphs and a sortable process list; network **device discovery** with a ping/`/device_query`
   scan; backup and restore; and a utility controller for the background chores.
+- **Self-updating** — a git watcher fast-forwards the checkout and reloads open tabs onto the new
+  revision, keeping each tab's code and data in step.
 - **Utilities & security** — password and pseudonym generation, QR codes, encryption helpers,
   screen locking and a keyring-style secret store.
 - **Devices & firmware** — first-class support for the T-Watch, T-Deck and Pico 2W, with remote
