@@ -4261,8 +4261,7 @@ sub remote_device_connect($rdata) {
 					database="' . $returner->{'body'}->{'database'} .  '" nic="' . $nic . '"
 					class="' . $b->{'class'} . '">' . $b->{'name'} . '</button>';
 			}
-			$returner->{'button'} .= '<span class="remote_machine_specials"><br>U: <input class="remote_machine_input" type="text" name="username" signatorial="' . $returner->{'body'}->{'signatorial'} . '" ip="' . $ip . '" uuid="' . $uuid . '" value=""><br>' .
-				'P: <input type="password" name="password" class="remote_machine_input" uuid="' . $uuid . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '" value="" ip="' . $ip . '"><br>' .
+			$returner->{'button'} .= '<span class="remote_machine_specials"><br>' .
 				'G: <input type="text" name="gimme" class="gimme_input" uuid="' . $uuid . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '"></span>';
 			$returner->{'status'} = 'Connected';
 
@@ -4337,17 +4336,14 @@ sub remote_device_connect($rdata) {
 
 
 post '/manager/configure/remote_machine_input' => sub($c) {
-	my $timestamp = $c->param('timestamp');
 	my $signatorial = $c->param('signatorial');
-	my $ip = $c->param('ip');
 	my $uuid = $c->param('uuid');
 	my $value = $c->param('value');
 	my $name = $c->param('name');
-	if ($name eq 'password') {
-		$value = &subs::encrypter($c->session('suds'), $value);
+	# ssh credentials are gone - only benign fields ride this route now
+	if ($name && $name ne 'username' && $name ne 'password') {
+		&subs::db_update('remote_machines', { $name => $value }, { signatorial => $signatorial, uuid => $uuid });
 	}
-	&subs::db_update('remote_machines', { $name => $value }, { signatorial => $signatorial, uuid => $uuid });
-	my $remote_machine = &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0];
 
 	$c->render(text => 'ok');
 };
@@ -19684,6 +19680,10 @@ sub update_database($data) {
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
 		'drop table firewall',
+		# ssh credentials are gone: transports, deploy and backup are all
+		# password-less http/websocket now.
+		'alter table remote_machines drop column username',
+		'alter table remote_machines drop column password',
 		'create table if not exists tunnels (
 			server_time VARCHAR(255),
 			ost VARCHAR(255),

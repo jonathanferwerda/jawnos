@@ -6912,14 +6912,11 @@ sub tunnel_starter() {
 	if ($res->is_success) {
 		if (eval { decode_json $res->body }) {
 			my $rb = decode_json $res->body;
-			my $wss = &subs::tunnel_transport() eq 'wss';
-			# The wss path carries every port over one websocket, so the password
-			# is only ever needed for the ssh data plane.
-			my $password = $wss ? undef : &subs::decrypter(&subs::suds_grabber(), $rm->{'password'});
+			# The tunnel data plane is the password-less websocket (tunnel.pl):
+			# this device is the peer and dials the hub, which listens on the
+			# reserved ports. One websocket carries every channel.
 			my @batch_uuids;
 			foreach my $r (@gb::ports ) {
-				my $command = $wss ? undef : 'sshpass -p "' . $password . '" ssh -o "ServerAliveInterval 9" -o "ServerAliveCountMax 1" -N -R ' . $rb->{$r}->{'source'} . ':localhost:' . $rb->{$r}->{'dest'} . ' ' . $rm->{'username'} . '@' . $rm->{'ip'} . ' -p ' . $port;
-
 				my $uuid = $rb->{$r}->{'reservation_uuid'} || &subs::random_string_creator(26);
 				my $tunnel = {
 					server_time => &subs::rightNow(),
@@ -6949,41 +6946,19 @@ sub tunnel_starter() {
 					status => $status,
 					uuid => $uuid
 				};
-				my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
-				# ssh needs one holder per port; wss keeps the whole batch in
-				# the single websocket holder forked after this loop.
-				if ($res->is_success && !$wss) {
-					my $pid;
-
-					&subs::subprocessor(sub {
-
-						$pid = $$;
-
-						&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $uuid });
-						my $old_ps = `ps -e`;
-						`$command`;
-
-						my $new_ps = `ps -e`;
-					}, { name => 'tunnel holder ' . $rb->{$r}->{'source'} . ':' . $rm->{'ip'} . ':' . $rb->{$r}->{'dest'} });
-
-				}
-
+				$rm->{'ua'}->post($url => form => $form_data)->result;
 			}
-			if ($wss) {
-				# tunnel.pl's hub_session reads this peer's tunnels rows ONCE, when
-				# the websocket arrives, and binds a listener per row. So the peer
-				# must dial a single connection AFTER every port is reserved and
-				# confirmed - one connection per port would leave the hub holding
-				# single-port snapshots, and each later dial would replace the
-				# session for this signatorial. One connection, all channels.
-				my @uuids = @batch_uuids;
-				my $pid;
-				&subs::subprocessor(sub {
-					$pid = $$;
-					&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
-					&subs::tunnel_wss_peer($rm->{'manager'});
-				}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
-			}
+			# One holder holds the whole batch: hub_session reads this peer's
+			# tunnels rows once, when the websocket arrives, and binds a listener
+			# per row, so the peer dials a single connection after every port is
+			# reserved and confirmed - one connection, all channels.
+			my @uuids = @batch_uuids;
+			my $pid;
+			&subs::subprocessor(sub {
+				$pid = $$;
+				&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
+				&subs::tunnel_wss_peer($rm->{'manager'});
+			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
 
 
 		}
