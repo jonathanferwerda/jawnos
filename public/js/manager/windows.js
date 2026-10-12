@@ -383,14 +383,19 @@ function windowReorganizer(window_id) {
 			// thinning to 36 and left a sliver of the window underneath showing
 			// between one bar and the next.
 			var vStep = win.find('.top_navbar').outerHeight() || vSpace;
+			// The bars cascade flush, so a bar's foot and the frame of the window
+			// below would both draw at the seam and read as a double line. Step each
+			// window down by the bar less its border, so the two frames land on one
+			// another as a single line.
+			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
 			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
-				win.css({ 'left': winCount * 50, 'top': winCount * vStep + startingV });
+				win.css({ 'left': winCount * 50, 'top': winCount * vAdvance + startingV });
 				win.show();
 
 
 				if (thisWinLeft > $(window).width()) {
 					winLine = winLine + 1;
-					win.css({ 'top': thisWinTop + ( vStep * winLine + startingV) });
+					win.css({ 'top': thisWinTop + ( vAdvance * winLine + startingV) });
 					fullXCount = winCount
 				}
 				if (fullXCount * (winLine ) > winCount) {
@@ -398,10 +403,6 @@ function windowReorganizer(window_id) {
 				}
 			}
 			else {
-				// a phone cascades its bars flush; pull each up by the bar's border so
-				// the foot of this window and the frame of the one above meet as one
-				// line rather than two
-				var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
 				var temp_placement = ( vAdvance * winCount ) + startingV;
 				win.css({'top': temp_placement });
 
