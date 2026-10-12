@@ -4,7 +4,7 @@
 		<h1><input type="checkbox" class="relational_autocalc_header_checkbox" checked style="height:30px;width:30px;" category="<%= $d %>"><%= &subs::format_name($d) %> (<%= scalar @{$returner->{$d}} %>)</h1>
 		<% foreach my $b ( @{$returner->{$d}} ) { %>
 			<div class="relational_autocalc_item" uuid="<%= $b->{'uuid'} %>" b_uuid="<%= $uuid %>" construct="<%= $b->{'settings'}->{'pos'} %>" b_construct="<%= $construct %>">
-				<input type="checkbox" checked class="relational_autocalc_checkbox" category="<%= $d %>"> <%= &subs::format_name($b->{'app'}) %>
+				<input type="checkbox" checked class="relational_autocalc_checkbox" category="<%= $d %>"> <%= &subs::format_name($b->{'app'}) %><% if ($b->{'lift'}) { %> <span style="opacity:.6;font-size:85%;">&times;<%= $b->{'lift'} %> &middot; <%= $b->{'hits'} %>&times;</span><% } %>
 			</div>
 
 		<% } %>

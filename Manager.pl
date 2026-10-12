@@ -14731,6 +14731,20 @@ post '/manager/relational/autocalc' => sub($c) {
 		}
 	}
 
+	# What the house has noticed running beside this app, so a relationship it
+	# found can be filed by hand: the apps whose occurrences the evaluation's
+	# event scan puts around this one more than chance would, each shown with the
+	# lift and ticked to relate right here.
+	my @noticed;
+	my %noticed_seen = ( $rel->{'app'} => 1 );
+	foreach my $entry ( @{ &subs::evaluation_context_scan($rel->{'app'}, &subs::rightNow() - 60 * 86400000, 30 * 60000, 6) } ) {
+		next if $noticed_seen{ $entry->{'app'} }++;
+		my $set = &subs::settings_grabber({ app => $entry->{'app'} });
+		next unless $set->{'uuid'};
+		push @noticed, { uuid => $set->{'uuid'}, app => $set->{'app'}, settings => $set, lift => $entry->{'lift'}, hits => $entry->{'hits'} };
+	}
+	$returner->{'noticed'} = \@noticed;
+
 	$returner->{'html'} = $c->render_to_string(
 		template => 'relational/autocalc',
 		returner => $returner,
