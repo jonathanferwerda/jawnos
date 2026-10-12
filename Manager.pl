@@ -22152,6 +22152,7 @@ websocket '/manager/ws' => sub ($c) {
 				}
 				$n->{'windows'} = encode_json $neighbourhood;
 			}
+			&ws_mem_probe('sa-db');
 
 			my $return_data = {
 				browser_tab_id => $browser_tab_id,
@@ -22176,8 +22177,10 @@ websocket '/manager/ws' => sub ($c) {
 				);
 				if ($app eq 'server') { delete $return_data->{'remote'}; }
 			}
+			&ws_mem_probe('sa-render');
 
 			&Websocket::send($app,$return_data);
+			&ws_mem_probe('sa-send');
 
 		}
 		elsif ($data->{'pty'} && $app eq 'server') {
