@@ -11907,15 +11907,17 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		percentage => eval { return &subs::percent_formatter(($budget->{'value'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'}) } || 0,
 		overall_percentage => eval { return &subs::percent_formatter(($autocalc->{$budget->{'scope_name'}}->{'result'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'})} || 0
 	};
+	my $goal = &goal_reading($app, $circumstance);
 	my $c = &subs::controller_builder();
 	my $template = $c->render_to_string(
 		template => 'apps/budget_current_information',
 		circumstance => $circumstance,
 		improvement => $improvement,
 		budget => $budget,
-		autocalc => $autocalc
+		autocalc => $autocalc,
+		goal => $goal
 	);
-	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget };
+	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal };
 }
 
 sub budget_runner($app) {
@@ -11985,6 +11987,96 @@ sub measure_calc_for {
 	my $calc = &subs::setting_grabber({ app => $app, setting => 'measure_calc', subsetting => $measure });
 	$calc = $fallback unless (defined $calc && length $calc);
 	return (defined $calc && length $calc) ? $calc : 'sum';
+}
+
+
+# One budget/goal entry read apart: a leading "<=" or ">=" says which way it
+# runs (under is good, or over is good), the number is the target, the name that
+# follows is the measure ($ for money, absent for occurences), and "/<scope>"
+# makes it a rate rather than a fixed level.
+sub budget_entry_parse {
+	my $entry = shift;
+	my $direction = 'floor';
+	my $e = $entry;
+	if ($e =~ s/^<=//) { $direction = 'ceiling'; }
+	elsif ($e =~ s/^>=//) { $direction = 'floor'; }
+	my ($body, $scope) = split '/', $e, 2;
+	my ($value, $measure);
+	if ($body =~ /^\$(.*)$/) { $measure = '$'; $value = $1; }
+	elsif ($body =~ /^([0-9.\-]+)([a-zA-Z_]*)$/) { $value = $1; $measure = $2; }
+	else { $value = $body; $measure = ''; }
+	return { raw => $entry, direction => $direction, value => $value, measure => $measure, scope => $scope, fixed => (defined $scope ? 0 : 1) };
+}
+
+# The measure's own trend: a least-squares line through its readings over the
+# last stretch, as value-per-day, with the latest reading and the reading count.
+# Times are measured from the first reading so the huge millisecond stamps do not
+# cancel the fit.
+sub measure_trend($app, $measure, $days) {
+	my $since = &subs::rightNow() - $days * 86400000;
+	my $appts = &subs::db_query('select timestamp,measures from appointments where app = ? and measures is not null and timestamp >= ? order by timestamp', $app, $since)->hashes;
+	my @pts;
+	foreach my $a ( @{$appts} ) {
+		my $ms = eval { return decode_json $a->{'measures'} } || [];
+		foreach my $m ( @{$ms} ) {
+			next unless defined $m->{$measure} && $m->{$measure} =~ /[0-9]/;
+			push @pts, [ ($a->{'timestamp'} + 0), ($m->{$measure} + 0) ];
+		}
+	}
+	return (undef, undef, scalar @pts) if scalar @pts < 2;
+	my $t0 = $pts[0][0];
+	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+	foreach my $p ( @pts ) {
+		my $x = $p->[0] - $t0;
+		$n++; $sx += $x; $sy += $p->[1]; $sxx += $x * $x; $sxy += $x * $p->[1];
+	}
+	my $denom = $n * $sxx - $sx * $sx;
+	return (undef, $pts[-1][1], $n) if $denom == 0;
+	my $slope = ($n * $sxy - $sx * $sy) / $denom;
+	return ($slope * 86400000, $pts[-1][1], $n);
+}
+
+# A goal read for one circumstance: the target, where the measure stands now, and
+# - the part a budget cannot give a scopeless entry - when the current trend
+# carries it to the goal. A trend moving the wrong way has no date.
+sub goal_reading($app, $circumstance) {
+	my $raw = &subs::setting_grabber({ app => $app, setting => 'goals' });
+	return undef unless ($raw || '') =~ /\S/;
+	my $entry;
+	foreach my $e ( split ',', $raw ) {
+		my $p = &budget_entry_parse($e);
+		if ($p->{'measure'} eq $circumstance) { $entry = $e; last; }
+	}
+	return undef unless defined $entry;
+	my $reading = &budget_calculator({ app => $app, circumstance => $circumstance, budget => $entry });
+	my $target = $reading->{'budgeted'};
+	my $current = $reading->{'value'};
+	my $dir = $reading->{'direction'} || 'floor';
+	my ($slope, $last, $samples) = &measure_trend($app, $circumstance, 90);
+	my ($eta_days, $reached);
+	# a scoped goal is a rate and already has a period pace; the date-to-goal is
+	# what a fixed (scopeless) level is missing
+	if ($reading->{'fixed'} && defined $target) {
+		my $need = ($dir eq 'ceiling') ? ($current - $target) : ($target - $current);
+		if ($need <= 0) { $reached = 1; $eta_days = 0; }
+		elsif ($slope) {
+			my $toward = ($dir eq 'ceiling') ? -$slope : $slope;
+			$eta_days = ($toward > 0) ? ($need / $toward) : undef;
+		}
+	}
+	my $eta_text;
+	if ($reached) { $eta_text = 'reached'; }
+	elsif (defined $eta_days) { $eta_text = localtime((&subs::rightNow() + $eta_days * 86400000) / 1000)->strftime('%b %d, %Y at %l:%M%P'); $eta_text =~ s/\s+/ /g; }
+	return {
+		entry => $entry,
+		direction => $dir,
+		target => $target,
+		current => $current,
+		slope => $slope,
+		samples => ($samples || 0),
+		eta_days => $eta_days,
+		eta_text => $eta_text,
+	};
 }
 
 

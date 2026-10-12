@@ -62,6 +62,22 @@
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'percentage'}) %></td>
 		</tr>
 	</table>
+	<%# a goal is the long target, and for a fixed level it is the only thing
+	    that can give a pace: read the measure's own trend and name the day the
+	    current pace carries it to the goal. The autocalc needs the value known,
+	    so it sits here in the panel and waits on nothing. %>
+	<% if ($goal) { %>
+		<div style="border-top:1px solid rgba(128,128,128,.35);margin:6px 0;"></div>
+		<div>
+			<% my $gt = $goal->{'target'}; my $gc; if (defined $gt) { $gc = $gt; $gc =~ s/(\d+\.\d)\d+/$1/g; } %>
+			<b>Goal:</b> <%= defined $gc ? $gc . $circumstance : '-' %>
+			<% if (defined $goal->{'eta_text'}) { %>
+				<span style="opacity:.75;"> - at the current pace, by <b><%= $goal->{'eta_text'} %></b></span>
+			<% } elsif ($goal->{'samples'}) { %>
+				<span style="opacity:.6;"> - not trending toward it</span>
+			<% } %>
+		</div>
+	<% } %>
 	<div style="opacity:.5;font-size:88%;margin-top:6px;">
 		Autocalc <span class="time" timestamp="<%= $autocalc->{'data'}->{'timestamp'} %>"></span> - budget set <span class="time" timestamp="<%= $budget->{'timestamp'} %>"></span>
 	</div>
