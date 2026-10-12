@@ -44,17 +44,23 @@ our %topic = (
 	},
 	'gallery' => {
 		title => 'Gallery', category => 'apps', app => 'gallery',
-		summary => 'View and organise photos, with albums and editing.',
+		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
 		body => [
-			'Gallery lays your images out for viewing. It reads from the same media folders as Folders and adds album grouping and a viewing surface with pan and zoom.',
-			'Image functions live alongside it — cropping, resizing and the like — and a map view for images that carry a location.'
+			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
+			'Which photos appear is decided by the **sources** — the apps whose galleries are open. Open the apps you want to look through and their photos join the Gallery; a source app also has to be marked visible (or the gallery unlocked) to be shown.',
+			'In the single-photo view you can walk the whole set, shuffle or loop it, read a photo\'s details, or make it the cover the app uses. In the Album view you can search, flip the order, and include photos whose local copy has moved to the archive.'
 		],
 		steps => [
-			'Open Gallery; it loads the images from your media folders.',
-			'Click an image to view it full-size; drag to pan and scroll to zoom.',
-			'Use the toolbar for the image functions — crop, rotate, resize — and the map for located shots.'
+			'Open the apps whose photos you want to browse — Gallery shows the galleries of the windows you have open.',
+			'Open Gallery from the start menu (the photo icon). It lands on Home, one album cover per app.',
+			'Use the Home button for the album covers and the Albums button for the full grid of every photo; as you scroll the grid it keeps loading more.',
+			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle and Repeat (loop a slideshow), File information, Fetch home, and Set as main image.',
+			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
+			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
+			'The lock covers the gallery when you want it out of the way; unlock it with the combination.'
 		],
-		related => [ 'folders', 'marker' ]
+		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. Never describe or guess the content of their photos.',
+		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
 	},
 	'marker' => {
 		title => 'Marker', category => 'apps', app => 'marker',
