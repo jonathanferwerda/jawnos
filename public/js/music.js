@@ -24,8 +24,31 @@ function musicVolumeApply() {
 // open; key that cache to the code revision, so a template change (which ships
 // with a version bump) is never served stale - the tools toggle went missing
 // this way once already.
+var lastMusicRawHtml, lastMusicCacheHtml;
+// The window is cached server-side and replayed on the next open, so strip the
+// player-specific parts before storing it: the playing row, the inline player
+// snapshot, the media source and the title. They all come back from the live
+// player cache on restore - a frozen copy made the browser load the old source
+// first and showed a stale row until the restore caught up. Nothing is sent
+// unless the stored shell actually changed.
 function musicContentCache(html) {
-	cacheSet({ 'app': 'music', 'context': 'content', 'subcontext': (typeof jawnos_version != 'undefined' ? jawnos_version : '') }, { contents: html });
+	if (html == lastMusicRawHtml) { return; }
+	lastMusicRawHtml = html;
+	// innerHTML never runs scripts; $('<div/>').html(html) would execute the
+	// window's inline <script> a second time
+	var doc = document.implementation.createHTMLDocument('music_cache');
+	doc.body.innerHTML = html;
+	var shell = $(doc.body);
+	shell.find('.playing').removeClass('playing holla');
+	shell.find('#music_player_data').empty();
+	shell.find('video.media_out').removeAttr('src');
+	shell.find('#video_subtitles').removeAttr('src');
+	shell.find('[id$="_full_title"]').text('');
+	shell.find('#play_logo').each(function() { var el = $(this), p = el.attr('play_icon'); if (p) { el.attr('src', p); } });
+	shell = shell.html();
+	if (shell == lastMusicCacheHtml) { return; }
+	lastMusicCacheHtml = shell;
+	cacheSet({ 'app': 'music', 'context': 'content', 'subcontext': (typeof jawnos_version != 'undefined' ? jawnos_version : '') }, { contents: shell });
 }
 // The mute button carries both glyphs; which one shows follows the same rule as
 // the volume itself: muted when the user muted it or the machine's own output is
@@ -49,7 +72,6 @@ function musicToggle(files) {
 	var timestamp = Date.now();
 	var jmiss = JSON.stringify(misses);
 	if ($('#music').length == 0 || files ) {
-		console.log(files);
 		var jfiles;
 		if (files) {
 			jfiles = JSON.stringify(files);
@@ -122,6 +144,7 @@ async function musicInit(method) {
 		tree.current_track = playing.attr('number');
 	//	tree.sound.volume = 1;
 		thisTrack(playing.closest('.track_item'));
+		$('#video_full_title').text(playing.find('.full_title').text());
 
 		// only a saved track is restored: a first-ever open (no player cache) must
 		// not start playing on its own
@@ -195,7 +218,6 @@ async function musicInit(method) {
 		mc.css({ 'z-index': z_index });
 	}
 }
-var lastMusicCacheHtml;
 function playerCacheSaver(type) {
 	var timestamp = Date.now();
 	var jpd;
@@ -203,7 +225,7 @@ function playerCacheSaver(type) {
 		var unlocked = 0;
 		if ($('#music').attr('unlock')) { unlocked = 1; }
 		var playerData = { 
-			number: tree.sound.current_track, 
+			number: tree.current_track, 
 			'currentTime': tree.sound.currentTime, 
 			file: tree.songs[0].file, 
 			volume: master_volume, 
@@ -225,21 +247,18 @@ function playerCacheSaver(type) {
 
 		if (type == 'ajax' || ws['music'].readyState != 1) {
 			cacheSet({ 'app': 'music', 'context': 'player'}, playerData);
-			var html = $('#music').parent().html();
-			if (html != lastMusicCacheHtml) {
-				musicContentCache(html);
-			}
+			musicContentCache($('#music').parent().html());
 		}
 		else {
 			ws['music'].send(jpd);
 		}
 		$('#music_player_data').text(jpd);
+		tree.lastCache = timestamp;
 	}
 	return jpd;
 }
 
 function treeMaker() {
-	var sound = tree.sound;
 	tree = {
 		files: $('#files').find('.file'),
 		songs: [],
@@ -253,19 +272,6 @@ function treeMaker() {
 		sound: document.getElementById('video'),
 		lastCache: 0
 	};
-	if (sound) {
-	//	tree.sound = sound;
-	}
-	if (tree.sound) {
-		tree.sound.onstatechange = function(i) {
-			if (tree.sound.state == 1) {
-				$('#play_logo').attr('src', jawnosPlayIcon());
-			}
-			else {
-				$('#play_logo').attr('src', jawnosPauseIcon());
-			}
-		};
-	}
 	for (n = 0; n <= tree.files.length - 1; n++) {
 		if (tree.files[n].textContent !== undefined) {
 //			JSON.parse($(tree.files[n]).val());
@@ -1107,7 +1113,6 @@ function playing_now(movement) {
 		musicAppointmentWriter('stop');
 		$('.playing').removeClass('playing');
 	}
-	$('#track_' + tree.current_track).parent().addClass('playing');
 	$('#track_' + tree.current_track).parent().addClass('playing');
 	$('.track_description').each(function() { $(this).hide() });
 	$('#track_' + tree.current_track).parent().find('.track_description').show();

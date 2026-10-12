@@ -8,9 +8,9 @@
     search render comes back the size it went out (see musicWindowResizes) %>
 <% my $shelf_height = eval { $resizes->{'music_albums'}->{'height'} } || 125; %>
 <div id="music" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
-	<div id="music_player_data" style="display:none;">
-		<%= eval { return encode_json &subs::cache_get({ app => 'music', context => 'player' }) } || {} %>
-	</div>
+	<%# left empty on purpose: the player is restored from the live cache, not a
+	    snapshot frozen into this cached window (see musicContentCache in music.js) %>
+	<div id="music_player_data" style="display:none;"></div>
 	<div id="interface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">

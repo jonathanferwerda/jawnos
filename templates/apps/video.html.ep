@@ -258,7 +258,7 @@
 			<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
 			<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
 			<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
-			<span id="<%= $id %>_full_title" class="music_now_title"></span>
+			<span id="<%= $id %>_full_title"></span>
 			<img id="<%= $miss %>_tools_toggle" hint="More tools" class="little_thumb hover media_tools_toggle" src="<%= &subs::icon_path('wrench', '/images/decipherable/gear.png') %>">
 			<span id="<%= $miss %>_tools_panel" class="media_tools_panel">
 				<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1">
