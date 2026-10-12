@@ -464,7 +464,8 @@ $(document).on('change', '.embedded_setting', function() {
 			setting: setting,
 			value: value,
 			edt: edt,
-			chip_id: chip_id
+			chip_id: chip_id,
+			push: $(this).attr('push') || ''
 		},
 		success: function(response) {
 			embeddedDevicesOpener()

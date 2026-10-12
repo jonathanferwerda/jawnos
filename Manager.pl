@@ -4115,6 +4115,33 @@ sub app_release_lister {
 	return \@out;
 }
 
+# A peer's code as a git bundle: the other half of "whoever has the newest is
+# it". The caller sends the commit it holds, and the bundle carries only what is
+# new since then when this tree knows it (a fast delta), else the whole history.
+# Gated by the signatorial the way the app_release routes are.
+get '/manager/code_bundle' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $repo = &subs::home('~/jawnos');
+	my $git = &subs::git_binary();
+	my $base = $c->param('base') || '';
+	require File::Temp;
+	my ($fh, $path) = File::Temp::tempfile(SUFFIX => '.bundle', UNLINK => 1);
+	close $fh;
+	my $delta = '';
+	if ($base =~ /^[0-9a-f]{7,40}$/ && system("cd \"$repo\" && \"$git\" cat-file -e $base 2>/dev/null") == 0) {
+		$delta = " ^$base";
+	}
+	`cd "$repo" && "$git" bundle create "$path" HEAD$delta 2>&1`;
+	my $data = '';
+	if (open(my $bf, '<', $path)) { binmode $bf; local $/; $data = <$bf>; close $bf; }
+	unlink $path;
+	unless (length $data) { $c->rendered(500); return; }
+	$c->res->headers->content_type('application/octet-stream');
+	$c->render(data => $data);
+};
+
 get '/manager/app_release' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
@@ -18812,6 +18839,14 @@ post '/manager/embedded/setting' => sub($c) {
 	my $jop = encode_json $op;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', subsetting => $chip_id, value => $jop });
 
+	# A setting that changes what the watch should be doing right now (the voice
+	# mode) carries push="now_me": the panel asks for a fresh Now Me so the device
+	# picks the change up at once rather than on its next poll. now_me picks the
+	# link itself - the watch's LAN when it answers, the BLE bridge when it cannot.
+	if ($c->param('push')) {
+		&now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') });
+	}
+
 	$c->render(json => { $setting => $value });
 
 };
@@ -19898,6 +19933,9 @@ sub now_me($data) {
 		room_count     => $room_count,
 		browser_tab_id => $data->{browser_tab_id},
 		room_max       => $room_max,
+		# how the watch should start a voice capture: off / vad / a wake word. The
+		# watch defaults to off when it is absent.
+		voice_trigger  => $op_d->{'__specs'}->{'voice_trigger'},
 		twshomebase    => "$watch->{homebase}:$ENV{PORT_COMS}",
 		thomebase      => "$watch->{homebase}:$ENV{PORT_BESTOW}",
 	};

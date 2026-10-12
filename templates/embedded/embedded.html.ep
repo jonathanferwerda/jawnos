@@ -40,6 +40,23 @@
 					<% } %>
 				</select><br>
 				Screen Timeout: <input class="embedded_setting" setting="screen_timeout" style="width:90px;" value="<%= $operator_door->{'__specs'}->{'screen_timeout'} %>" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+				<% if ($edt eq 'watch') { %>
+					<br>
+					<%# how the watch starts a voice capture. 'vad' is the neural voice-activity
+					    model (capture on any speech); the rest are wake words. Pushed to the
+					    watch on change (push="now_me"), which now_me sends over the LAN if the
+					    watch answers, else the BLE bridge. hey_jawn joins once its model exists. %>
+					<% my %voice_modes = (
+						off       => 'Voice: Off',
+						vad       => 'Voice: Any speech (VAD)',
+						okay_nabu => 'Voice: Wake word - Okay Nabu',
+					); %>
+					<select class="embedded_setting" setting="voice_trigger" push="now_me" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+						<% foreach my $vm ( qw/off vad okay_nabu/ ) { %>
+							<option value="<%= $vm %>" <% if (($operator_door->{'__specs'}->{'voice_trigger'} || 'off') eq $vm) { %>selected<% } %>><%= $voice_modes{$vm} %></option>
+						<% } %>
+					</select>
+				<% } %>
 			<% } else { %>
 
 			<% } %>
