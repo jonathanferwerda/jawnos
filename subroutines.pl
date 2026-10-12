@@ -7072,13 +7072,30 @@ sub remote_machine_lister() {
 	my $data = shift;
 	my $remote_machines = &subs::db_select('remote_machines')->hashes || [];
 
+	# A machine must never carry itself as a remote. A self row is poison: the
+	# reconnecter keeps a turn for it, and because the hub's own sesh_check hands
+	# out every remote row (with its own data blob) as `mirrors`, each self-touch
+	# nests the previous blob - the row grows without bound and the turn the real
+	# peers needed is spent decoding it. Drop the row here so a hub that grew one
+	# heals, and keep the current call clean too.
+	my $self_signatorial = &signatorial_designer();
+	if ($self_signatorial) {
+		my @self = grep { ($_->{'signatorial'} || '') eq $self_signatorial } @{$remote_machines};
+		if (scalar @self) {
+			&subs::db_delete('remote_machines', { signatorial => $self_signatorial });
+			@{$remote_machines} = grep { ($_->{'signatorial'} || '') ne $self_signatorial } @{$remote_machines};
+		}
+	}
+
 	# a mirror entry is how a machine the source knows about is reached through
 	# it; when that machine already has a row of its own the list would show the
 	# same machine twice (once, three times, with overlapping mirror sources),
 	# so a mirror is only added when it is not otherwise present. One identity
 	# per machine - uuid beats signatorial beats ip, so a tunnelled machine's
-	# 127.0.0.1 can never collide with another entry.
+	# 127.0.0.1 can never collide with another entry. Our own signatorial counts
+	# as present so a mirror that is this machine is never appended either.
 	my %already;
+	$already{$self_signatorial} = 1 if $self_signatorial;
 	foreach my $rm ( @{$remote_machines} ) {
 		my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
 		$already{$key} = 1 if $key;

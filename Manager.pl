@@ -4380,6 +4380,11 @@ sub remote_device_connect($rdata) {
 
 		my $signatorial = &subs::signatorial_designer();
 		if ($returner->{'body'}->{'authentication'} eq 'approved') {# && $returner->{'body'}->{'signatorial'} eq &subs::signatorial_designer()) {
+			# A peer that answers with our own signatorial is this machine. Filing a
+			# remote machine for ourselves is what let the hub try to sync with itself
+			# (and its own mirrors then doubled the stored blob every pass), so never
+			# record a self row.
+			return $returner if ($returner->{'body'}->{'signatorial'} || '') eq $signatorial;
 			my $nd = &subs::db_select('remote_machines', undef, { signatorial => $returner->{'body'}->{'signatorial'} })->hashes;
 			my $uuid = $nd->[0]->{'uuid'} ? $nd->[0]->{'uuid'} : &subs::random_string_creator(15);
 
@@ -20986,6 +20991,10 @@ sub remote_machine_reconnector($c) {
 
 		my @accomplished;
 		foreach my $rm ( @{$remote_machines} ) {
+			# never a turn for ourselves: the 'me' pseudo and any self row that
+			# slipped in would otherwise burn the tick (and decode the hub's own
+			# giant data blob) before a real peer is reached.
+			next if ($rm->{'signatorial'} || '') eq $signatorial;
 			next if grep { $_ eq $rm->{'signatorial'} } @accomplished;
 			eval {
 
