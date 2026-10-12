@@ -12011,17 +12011,38 @@ sub budget_calculator($data) {
 	foreach my $b ( @budgets ) {
 		$returner->{'app'} = $app;
 		$returner->{'budget'} = $b;
+		# A leading "<=" or ">=" says which way the goal runs: under is good (a
+		# ceiling, like a weight to hold at or below) or over is good (a floor, like
+		# steps to reach). Nothing, and a bare number, is a floor.
+		my $direction = 'floor';
+		if ($b =~ s/^<=//) { $direction = 'ceiling'; }
+		elsif ($b =~ s/^>=//) { $direction = 'floor'; }
+		$returner->{'direction'} = $direction;
 		my @bud = split '/', $b;
 		next unless $bud[-1];
-		$bud[-1] = 1 . $bud[-1] unless $bud[-1] =~ /[0-9]/;
-		$returner->{'scope_name'} = &subs::timespan_widener($bud[-1]);
-		$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1],&subs::rightNow());
-		unless ($scope) {
-			$returner->{'scope'} = $returner->{'duration'} ;
+		# No "/scope" is a fixed level, not a rate: a weight sits at a target, it
+		# does not accumulate, so it is read against the column's own window and is
+		# never prorated (the pace is what made a 160 lb budget project 756 lb).
+		my $fixed = scalar(@bud) == 1 ? 1 : 0;
+		$returner->{'fixed'} = $fixed;
+		if ($fixed) {
+			my $window = ($scope && $scope =~ /^[0-9]*[a-zA-Z]+$/ && &subs::time_abbrev_translator($scope, $server_time)) ? $scope : 'month';
+			$window = 1 . $window unless $window =~ /^[0-9]/;
+			$returner->{'scope_name'} = &subs::timespan_widener($window);
+			$returner->{'duration'} = &subs::time_abbrev_translator($window, $server_time);
+			$returner->{'scope'} = $returner->{'duration'};
 		}
 		else {
-			$returner->{'scope'} = &subs::time_abbrev_translator($bud[-1]);
-			$returner->{'duration'} = $returner->{'scope'} unless $value;
+			$bud[-1] = 1 . $bud[-1] unless $bud[-1] =~ /[0-9]/;
+			$returner->{'scope_name'} = &subs::timespan_widener($bud[-1]);
+			$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1],&subs::rightNow());
+			unless ($scope) {
+				$returner->{'scope'} = $returner->{'duration'} ;
+			}
+			else {
+				$returner->{'scope'} = &subs::time_abbrev_translator($bud[-1]);
+				$returner->{'duration'} = $returner->{'scope'} unless $value;
+			}
 		}
 		unless ($value) {
 			my ($db) = &subs::database_grabber();
@@ -12092,7 +12113,9 @@ sub budget_calculator($data) {
 			# a measure is not a base mode: its value is the summed or averaged
 			# measure, per the measure's own calc
 			if ($is_measure) {
-				my $mcalc = &measure_calc_for($app, $circumstance, $settings->{'s_calc'});
+				# a fixed level (no scope) is a level, so it reads as an average whatever
+				# the measure's own calc is; a rate reads with the measure's calc
+				my $mcalc = $fixed ? 'average' : &measure_calc_for($app, $circumstance, $settings->{'s_calc'});
 				$value = ( $mcalc eq 'average' && $m_count ) ? ($m_sum / $m_count) : $m_sum;
 			}
 			$value = 0 if scalar @{$appts} == 0;
@@ -12161,7 +12184,7 @@ sub budget_calculator($data) {
 		$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner->{'timestamp'} = $timestamp;
-		if ($scope ne $returner->{'scope_name'} && $returner->{'circumstance'} eq $circumstance) {
+		if (!$returner->{'fixed'} && $scope ne $returner->{'scope_name'} && $returner->{'circumstance'} eq $circumstance) {
 			$returner->{'is_scope'} = 'no';
 			my $scoped = $returner->{'scope'} / &subs::time_abbrev_translator(1 . $scope ,&subs::rightNow());
 			$returner->{'expected'} = $returner->{'expected'} * $scoped;
@@ -12195,6 +12218,9 @@ sub budget_calculator($data) {
 		if ($ts eq 'this' && ($settings->{'s_lock'} || '') eq 'on' && $unit =~ /^(?:hour|day|week|month|year)$/) {
 			(undef, undef, $elapsed) = &subs::period_bounds($unit, $timestamp);
 		}
+		# a fixed level is not a period being run: it is not prorated, and its pace
+		# is not carried anywhere
+		$elapsed = 1 if $returner->{'fixed'};
 		my $floor = $pace_floor{$unit} // 0.1;
 		my $early = ($elapsed > 0 && $elapsed <= $floor) ? 1 : 0;
 		my $pace_elapsed = $early ? 0 : (($elapsed - $floor) / (1 - $floor));
@@ -12232,6 +12258,18 @@ sub budget_calculator($data) {
 		}
 		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner = &budget_status_maker($returner);
+		# A ceiling reads the mirror of the floor the status table is written for:
+		# at or under the target is settled, over it is the alarm. Re-read the status
+		# from the value against the target, not from the ratio.
+		if (($returner->{'direction'} || 'floor') eq 'ceiling') {
+			my $target = $returner->{'budgeted'} || 0;
+			my $value = $returner->{'value'} || 0;
+			$returner->{'on_track'} = ($value <= $target) ? 'yes' : 'no';
+			my $ceiling = 'budgeted';
+			if ($target > 0 && $value > $target * 1.2) { $ceiling = 'overkill'; }
+			elsif ($target > 0 && $value > $target) { $ceiling = 'burnt_out'; }
+			$returner = &{$gb::budget_statuses->{$ceiling}->{'notifier'}}($returner);
+		}
 	}
 	else {
 	#	$returner = {};
@@ -12487,24 +12525,41 @@ post '/manager/note_delete' => sub($c) {
 };
 
 post '/manager/note_to_appt' => sub($c) {
-	# A note dragged onto an appointment window: its text is appended to that app's
-	# notes and saved, encrypted exactly the way manager_reset encrypts a reset's
-	# notes. The appointment's notes field is refreshed over the websocket.
+	# A note dragged onto an appointment window. Dropped on one of the window's
+	# appointment rows (an .appointment_detail, which carries its own uuid) the
+	# note's text is appended to THAT appointment's notes; dropped anywhere else on
+	# the window it becomes a new appointment for the app. Either way the notes are
+	# encrypted exactly the way manager_reset encrypts a reset's notes.
 	my $uuid = $c->param('uuid');
 	my $app = &subs::unformat_name($c->param('app'));
+	my $appt_uuid = $c->param('appt_uuid');
 	my $note = &subs::db_select('notes', undef, { uuid => $uuid })->hash;
-	my $text = ($note && $note->{'text'}) ? $note->{'text'} : '';
-	return $c->render(json => { error => 'no such note' }) unless defined $note && defined $note->{'text'};
-	my $appts = &subs::db_query('select notes, ost, server_time, uuid from appointments where app = ? order by timestamp desc limit 1', $app)->hashes;
-	my $appt = $appts->[0];
-	return $c->render(json => { error => 'no appointment for ' . $app }) unless $appt && $appt->{'uuid'};
+	return $c->render(json => { error => 'no such note' }) unless $note && defined $note->{'text'};
+	my $text = $note->{'text'};
 	my $suds = $c->session('suds');
-	my $existing = $appt->{'notes'} ? &subs::note_decrypter($suds, $appt->{'notes'}, $appt->{'server_time'}) : '';
-	$existing .= "\n" if $existing =~ /\S/;
-	my $notes = &subs::note_encrypter($suds, $existing . $text);
-	&subs::db_update('appointments', { notes => $notes, server_time => &subs::rightNow() }, { uuid => $appt->{'uuid'} });
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app . '","' . $appt->{'uuid'} . '");' });
-	$c->render(json => { app => $app, uuid => $appt->{'uuid'} });
+	my $now = &subs::rightNow();
+	if ($appt_uuid) {
+		my $appt = &subs::db_select('appointments', undef, { uuid => $appt_uuid })->hash;
+		return $c->render(json => { error => 'no such appointment' }) unless $appt && $appt->{'uuid'};
+		my $existing = $appt->{'notes'} ? &subs::note_decrypter($suds, $appt->{'notes'}, $appt->{'server_time'}) : '';
+		$existing .= "\n" if $existing =~ /\S/;
+		&subs::db_update('appointments', { notes => &subs::note_encrypter($suds, $existing . $text), server_time => $now }, { uuid => $appt->{'uuid'} });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app . '","' . $appt->{'uuid'} . '");' });
+		return $c->render(json => { app => $app, uuid => $appt->{'uuid'}, created => 0 });
+	}
+	my $new_uuid = &subs::random_string_creator(21);
+	&subs::db_insert('appointments', {
+		app => $app,
+		timestamp => $now,
+		server_time => $now,
+		type => 'note',
+		pos => &subs::setting_grabber({ app => $app, setting => 'pos' }),
+		notes => &subs::note_encrypter($suds, $text),
+		uuid => $new_uuid,
+		seen => 'yes'
+	});
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app . '","' . $new_uuid . '");' });
+	$c->render(json => { app => $app, uuid => $new_uuid, created => 1 });
 };
 
 sub notification_grabber($data) {

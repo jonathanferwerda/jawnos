@@ -222,6 +222,54 @@ $(document).on('change', '.configure_input', function(e) {
 	});
 });
 
+// Budgets and goals are edited as a list: each row is an amount, a measure (the
+// app's own, money, or a plain count), a scope count + unit (none makes it a
+// fixed level), and which way it runs. The rows are composed back into the one
+// string everything downstream reads: "amount measure/scope", comma separated,
+// with a leading "<=" on a ceiling.
+function budgetGoalsValue(container) {
+	var parts = [];
+	container.find('.budget_goals_row').each(function() {
+		if ($(this).closest('.budget_goals_template').length) { return; }
+		var row = $(this);
+		var dir = row.find('.budget_goals_direction').val();
+		var value = $.trim(row.find('.budget_goals_value').val() || '');
+		var measure = row.find('.budget_goals_measure').val() || '';
+		var count = $.trim(row.find('.budget_goals_count').val() || '');
+		var unit = row.find('.budget_goals_unit').val() || '';
+		if (value === '') { return; }
+		var scope = unit ? (count || '1') + unit : '';
+		var entry = (measure === '$') ? ('$' + value) : (value + measure);
+		if (scope) { entry += '/' + scope; }
+		if (dir === 'ceiling') { entry = '<=' + entry; }
+		parts.push(entry);
+	});
+	return parts.join(',');
+}
+function budgetGoalsSave(container) {
+	var setting = container.attr('setting');
+	var app = container.attr('app');
+	var value = budgetGoalsValue(container);
+	settingSetter({ 'app': app, 'setting': setting, 'value': value });
+	var button = $('.app_configure_toggle[setting="' + setting + '"][app="' + app + '"]');
+	if (button.length) {
+		button.html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0, 20));
+	}
+}
+$(document).on('change', '.budget_goals_row .budget_goals_value, .budget_goals_row .budget_goals_direction, .budget_goals_row .budget_goals_measure, .budget_goals_row .budget_goals_count, .budget_goals_row .budget_goals_unit', function() {
+	budgetGoalsSave($(this).closest('.budget_goals'));
+});
+$(document).on('click', '.budget_goals_adder', function() {
+	var container = $(this).closest('.budget_goals');
+	var row = container.find('.budget_goals_template').first().find('.budget_goals_row').first().clone();
+	$(this).before(row);
+});
+$(document).on('click', '.budget_goals_remover', function() {
+	var container = $(this).closest('.budget_goals');
+	$(this).closest('.budget_goals_row').remove();
+	budgetGoalsSave(container);
+});
+
 $(document).on('click', '.app_measure_configuration_adder', function() {
 	var app = $(this).attr('app');
 	var amc = $(this);

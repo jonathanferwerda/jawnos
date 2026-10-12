@@ -92,6 +92,10 @@
 									<div class="app_packaging_configurator" app="<%= $a %>">
 										<%= include 'configure/packaging', settings => $appts->{$a}->{'setting'}, a => $a %>
 									</div>
+								<% } elsif ($b eq 'budget' || $b eq 'goals') { %>
+									<div class="budget_goals_configurator" app="<%= $a %>">
+										<%= include 'configure/budget_goals', settings => $appts->{$a}->{'setting'}, a => $a, setting => $b %>
+									</div>
 								<% } elsif ($b eq 'web') { %>
 									<b>URL</b>
 									<textarea app="<%= $a %>" setting="<%= $b %>" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$b} %>" placeholder="<%= $b %>"><%= $appts->{$a}->{'setting'}->{$b} %></textarea>

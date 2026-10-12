@@ -1,0 +1,62 @@
+<%
+	# A budget or a goal is a list of entries, not a blob of text: each is an
+	# amount, the measure it is about (one of the app's own measures, money, or a
+	# plain count), the scope it runs over - a rate - or none, which makes it a
+	# fixed level like a weight to hold at, and which way it runs: a floor to
+	# reach or a ceiling to stay under. The list is written back as the string the
+	# rest of the house already reads - "amount measure/scope", comma separated,
+	# with a leading "<=" on a ceiling - so nothing downstream changes form.
+	my $measures = eval { return decode_json $settings->{'app_measures'} } || {};
+	my @measure_names = sort keys %{$measures};
+	my @units = qw/minute hour day week month year/;
+	my $row = sub {
+		my ($dir, $value, $measure, $scount, $sunit) = @_;
+		$dir = 'floor' unless defined $dir && length $dir;
+		$value = '' unless defined $value;
+		$measure = '' unless defined $measure;
+		$scount = '' unless defined $scount;
+		$sunit = '' unless defined $sunit;
+		# keep any measure the app defines, plus money and duration, in the list;
+		# a measure the picker does not know (a time amount in a duration budget)
+		# still gets an option of its own so a round trip never drops it
+		my @known = ('', '$', @measure_names);
+		my @extra = (length($measure) && !grep { $_ eq $measure } @known) ? ($measure) : ();
+		my $o = '<div class="budget_goals_row">';
+		$o .= '<select class="budget_goals_direction" style="width:132px;">';
+		$o .= '<option value="floor"' . ($dir eq 'floor' ? ' selected' : '') . '>reach at least</option>';
+		$o .= '<option value="ceiling"' . ($dir eq 'ceiling' ? ' selected' : '') . '>stay under</option>';
+		$o .= '</select>';
+		$o .= '<input class="budget_goals_value" type="text" style="width:96px;" placeholder="amount" value="' . $value . '">';
+		$o .= '<select class="budget_goals_measure" style="width:124px;">';
+		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>(count)</option>';
+		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>money</option>';
+		foreach my $m ( @measure_names ) {
+			$o .= '<option value="' . $m . '"' . ($measure eq $m ? ' selected' : '') . '>' . &subs::format_name($m) . '</option>';
+		}
+		foreach my $m ( @extra ) {
+			$o .= '<option value="' . $m . '" selected>' . &subs::format_name($m) . '</option>';
+		}
+		$o .= '</select>';
+		$o .= '<input class="budget_goals_count" type="number" min="1" style="width:52px;" placeholder="1" value="' . $scount . '">';
+		$o .= '<select class="budget_goals_unit" style="width:104px;">';
+		$o .= '<option value=""' . ($sunit eq '' ? ' selected' : '') . '>fixed</option>';
+		foreach my $u ( @units ) {
+			$o .= '<option value="' . $u . '"' . ($sunit eq $u ? ' selected' : '') . '>' . &subs::format_name($u) . '</option>';
+		}
+		$o .= '</select>';
+		$o .= '<img class="little_thumb hover budget_goals_remover" src="' . &subs::icon_for('/icons/trash.png') . '" hint="Remove">';
+		$o .= '</div>';
+		return $o;
+	};
+%>
+<div class="budget_goals" app="<%= $a %>" setting="<%= $setting %>">
+	<% foreach my $e ( grep { length } split ',', ($settings->{$setting} || '') ) { %>
+		<% my $dir = 'floor'; my $body = $e; $dir = 'ceiling' if $body =~ s/^<=//; $body =~ s/^>=//; %>
+		<% my ($valpart, $scope) = split '/', $body, 2; %>
+		<% my ($value, $measure); if ($valpart =~ /^\$(.*)$/) { $measure = '$'; $value = $1; } else { ($value, $measure) = $valpart =~ /^([0-9.\-]+)([a-zA-Z_]*)$/; $value = $valpart unless defined $value; $measure = '' unless defined $measure; } %>
+		<% my ($scount, $sunit) = ('', ''); if (defined $scope && $scope =~ /^([0-9]*)([a-zA-Z]+)$/) { $scount = $1; $sunit = $2; } %>
+		<%== $row->($dir, $value, $measure, $scount, $sunit) %>
+	<% } %>
+	<div class="budget_goals_template" style="display:none;"><%== $row->('floor', '', '', '', '') %></div>
+	<img class="little_thumb hover budget_goals_adder" src="<%= &subs::icon_for('/images/studio/plus.png') %>" hint="Add" style="vertical-align:bottom;">
+</div>
