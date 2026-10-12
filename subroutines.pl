@@ -5264,12 +5264,14 @@ sub database_grabber() {
 			$db->query('PRAGMA journal_mode=WAL;') if (($row->{'journal_mode'} || '') ne 'wal');
 		};
 		# The rest of the tuning only makes sense on a handle that lives past one
-		# call: an 8MB page cache, sorts in memory, a 128MB read-only mapping of the
-		# file, and a cap on the WAL so it can never quietly grow to a quarter of a
-		# gigabyte again.
-		eval { $db->query('PRAGMA cache_size=-8000;'); };
+		# call: a page cache, sorts in memory, a read-only mapping of the file, and
+		# a cap on the WAL. A handheld runs a score of these handles at once, so it
+		# gets a smaller cache and mapping than a server: the 8MB/128MB pair cost a
+		# tablet ~150MB of page cache across its workers that it never warms.
+		my $mobile = &device_setter() eq 'mobile';
+		eval { $db->query('PRAGMA cache_size=' . ($mobile ? -2000 : -8000) . ';'); };
 		eval { $db->query('PRAGMA temp_store=MEMORY;'); };
-		eval { $db->query('PRAGMA mmap_size=134217728;'); };
+		eval { $db->query('PRAGMA mmap_size=' . ($mobile ? 33554432 : 134217728) . ';'); };
 		eval { $db->query('PRAGMA journal_size_limit=33554432;'); };
 		return ($db,$database,$sql);
 	}
