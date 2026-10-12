@@ -1,16 +1,53 @@
-<b>Status:</b> <%= &subs::format_name($budget->{'status'}) %><br>
-<span style="background-color:%= $budget->{'colour'} %>;"><b>This <%= &subs::format_name($budget->{'scope_name'}) %>:</b> <%= $budget->{'formatted_value'} %></span><br>
-<b>Budgeted:</b> <%= $budget->{'formatted_budgeted'} %><br>
-<%# a budget locked to the calendar is only part-run early in its period: the
-    status above reads the part against the whole, so the pace is what says
-    whether that part is on track, before the period is done %>
-<% if (defined $budget->{'elapsed'} && $budget->{'elapsed'} < 1) { %>
-<b>On track:</b> <%= ($budget->{'on_track'} || '') eq 'yes' ? 'yes' : 'no' %> - <%= $budget->{'progress'} %>% of the <%= &subs::format_name($budget->{'scope_name'}) %> has run, so <b><%= $budget->{'formatted_on_target'} %></b> is due by now and the pace projects <b><%= $budget->{'formatted_projected'} %></b> for the <%= &subs::format_name($budget->{'scope_name'}) %><br>
-<% } %>
-<b>Calc:</b> <%= $autocalc->{$budget->{'scope_name'}}->{'formatted_result'} %><br>
-<b><%= &subs::format_name($budget->{'scope_name'}) %> Diff:</b> <%= eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($improvement->{'difference'}) } || sprintf("%.3f", $improvement->{'difference'}) %><br>
-<b>Improvement: </b> <%= $improvement->{'overall'} %><br>
-<b>Overall Improvement %: </b> <%= $improvement->{'overall_percentage'} %><br>
-<b><%= &subs::format_name($budget->{'scope_name'}) %> Improvement %: </b> <%= $improvement->{'percentage'} %><br>
-<b>Last Autocalc: </b> <span class="time" timestamp="<%= $autocalc->{'data'}->{'timestamp'} %>"></span><br>
-<b>Last Budget: </b> <span class="time" timestamp="<%= $budget->{'timestamp'} %>"></span><br>
+<% my $scope = &subs::format_name($budget->{'scope_name'}); %>
+<% my $status_colour = $budget->{'colour'} || 'yellow'; %>
+<%# the report's percentages carry three decimals from percent_formatter; one is
+    plenty to read, so they are trimmed for the panel only %>
+<% my $trim = sub { my $s = shift; $s =~ s/(\d+\.\d)\d+/$1/g; return $s; }; %>
+<%# the difference is in the budget's own measure (ms for a duration budget, a
+    count, or money), so it wears the same formatting the budget does %>
+<% my $diff = eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($improvement->{'difference'}) } || sprintf('%.3f', $improvement->{'difference'}); %>
+<div style="min-width:280px;font-size:95%;line-height:1.45;">
+	<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+		<strong style="font-size:115%;"><%= $scope %> budget</strong>
+		<span style="background-color:<%= $status_colour %>;color:<%= &subs::contrast_ink($status_colour) %>;border-radius:9px;padding:1px 9px;font-weight:700;white-space:nowrap;"><%= &subs::format_name($budget->{'status'}) %></span>
+	</div>
+	<table style="border-collapse:collapse;width:100%;">
+		<tr>
+			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">This <%= $scope %></td>
+			<td style="text-align:right;font-weight:700;white-space:nowrap;"><%= $budget->{'formatted_value'} %></td>
+			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">of <%= $budget->{'formatted_budgeted'} %></td>
+		</tr>
+		<tr>
+			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">Typical</td>
+			<td style="text-align:right;font-weight:700;white-space:nowrap;"><%= $autocalc->{$budget->{'scope_name'}}->{'formatted_result'} %></td>
+			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">your history</td>
+		</tr>
+	</table>
+	<%# a budget locked to the calendar is only part-run early in its period; the
+	    pace is what says whether that part is on track before the period is done %>
+	<% if (defined $budget->{'elapsed'} && $budget->{'elapsed'} < 1) { %>
+		<div style="border-top:1px solid rgba(128,128,128,.35);margin:6px 0;"></div>
+		<div>
+			<b>On track:</b> <span style="color:<%= ($budget->{'on_track'} || '') eq 'yes' ? 'green' : '#b8860b' %>;font-weight:700;"><%= ($budget->{'on_track'} || '') eq 'yes' ? 'yes' : 'no' %></span><span style="opacity:.75;">
+			<% if ($budget->{'early'}) { %> - nothing due yet, <%= $budget->{'progress'} %>% into the <%= $scope %>; the pace projects <b><%= $budget->{'formatted_projected'} %></b>
+			<% } else { %> - <%= $budget->{'progress'} %>% into the <%= $scope %>, so <b><%= $budget->{'formatted_on_target'} %></b> is due; the pace projects <b><%= $budget->{'formatted_projected'} %></b>
+			<% } %></span>
+		</div>
+	<% } %>
+	<div style="border-top:1px solid rgba(128,128,128,.35);margin:6px 0;"></div>
+	<table style="border-collapse:collapse;width:100%;opacity:.9;">
+		<tr>
+			<td style="white-space:nowrap;padding-right:8px;">Budget vs typical</td>
+			<td style="text-align:right;font-weight:600;white-space:nowrap;"><%= $improvement->{'overall'} %></td>
+			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'overall_percentage'}) %></td>
+		</tr>
+		<tr>
+			<td style="white-space:nowrap;padding-right:8px;">This <%= $scope %> vs budget</td>
+			<td style="text-align:right;font-weight:600;white-space:nowrap;"><%= $diff %></td>
+			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'percentage'}) %></td>
+		</tr>
+	</table>
+	<div style="opacity:.5;font-size:88%;margin-top:6px;">
+		Autocalc <span class="time" timestamp="<%= $autocalc->{'data'}->{'timestamp'} %>"></span> - budget set <span class="time" timestamp="<%= $budget->{'timestamp'} %>"></span>
+	</div>
+</div>

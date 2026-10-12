@@ -221,6 +221,14 @@ sub duration_sayer() {
 	my $durational = shift;
 	my $timestamp = &subs::rightNow();
 
+	# A negative duration is a difference read the other way - a budget's
+	# shortfall, a moment that has passed - and Time::Duration itself formats the
+	# size and drops the sign. Without holding the sign out here the sub-second
+	# branch below would catch every negative (all of them are < 1) and print a
+	# whole shortfall as "-1800000.00 ms".
+	my $sign = (defined $durational && $durational < 0) ? '-' : '';
+	$durational = abs($durational || 0);
+
 	my $leap_year =  &subs::time_abbrev_translator('4y') / 1000;
 	if ($durational > $leap_year) {
 		my $leaps = (( $durational) / ($leap_year));
@@ -229,7 +237,7 @@ sub duration_sayer() {
 
 	my $duration = duration($durational);
 	if ($durational < 1) {
-		$duration = sprintf("%.2f", $durational * 1000) . ' milliseconds';
+		$duration = $durational == 0 ? '0s' : sprintf("%.2f", $durational * 1000) . ' milliseconds';
 	}
 
 
@@ -243,7 +251,7 @@ sub duration_sayer() {
 	$duration =~ s/ years?/y/gi;
 	$duration =~ s/ and / /gi;
 	$duration =~ s/just now/0s/gi;
-	return $duration;
+	return $sign . $duration;
 }
 
 sub time_abbrev_translator() {

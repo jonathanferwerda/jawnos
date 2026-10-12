@@ -11850,14 +11850,22 @@ sub budget_calculator($data) {
 		# its share of the period so far, and the projection carries the pace to the
 		# period's end. An unlocked window rolls a whole period back from now, so it
 		# is already run and its pace is 1, as is any block before or after now.
+		# Early in a period so little of the budget is due that a single blip reads
+		# as far ahead of pace, and a period only just opened has effectively nothing
+		# due at all. So for the status and the graph line the first few percent of
+		# the period count as nothing due yet; the projection keeps the exact elapsed.
+		my $pace_floor = 0.05;
 		my $elapsed = 1;
 		if ($ts eq 'this' && ($returner->{'is_scope'} || '') eq 'yes' && ($settings->{'s_lock'} || '') eq 'on'
 			&& $returner->{'scope_name'} =~ /^(?:hour|day|week|month|year)$/) {
 			(undef, undef, $elapsed) = &subs::period_bounds($returner->{'scope_name'}, $timestamp);
 		}
+		my $early = ($elapsed > 0 && $elapsed < $pace_floor) ? 1 : 0;
+		my $pace_elapsed = $early ? 0 : $elapsed;
 		$returner->{'elapsed'} = $elapsed;
+		$returner->{'early'} = $early;
 		$returner->{'progress'} = sprintf('%.0f', $elapsed * 100);
-		$returner->{'on_target'} = sprintf('%.19f', $returner->{'budgeted'} * $elapsed);
+		$returner->{'on_target'} = sprintf('%.19f', $returner->{'budgeted'} * $pace_elapsed);
 		$returner->{'on_track'} = ($returner->{'value'} >= $returner->{'on_target'}) ? 'yes' : 'no';
 		$returner->{'projected'} = $elapsed > 0 ? sprintf('%.19f', $returner->{'value'} / $elapsed) : $returner->{'value'};
 		my $pace_format = sub {
@@ -11868,17 +11876,23 @@ sub budget_calculator($data) {
 			return sprintf('%.1f', $n);
 		};
 		$returner->{'formatted_projected'} = $pace_format->($returner->{'projected'});
-		$returner->{'formatted_on_target'} = $pace_format->($returner->{'on_target'});
+		$returner->{'formatted_on_target'} = $early ? '0' : $pace_format->($returner->{'on_target'});
 		# For a part-run period the status and the graph line are read against the
 		# share of the budget due by now, not the whole period, so an on-pace start
 		# reads as on pace rather than a collapse; the budget itself
-		# (formatted_budgeted) still names the whole period. A period only just
-		# opened has nothing due yet, so the target is left off zero for the ratio.
-		if ($elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
+		# (formatted_budgeted) still names the whole period.
+		if (!$early && $elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
 			$returner->{'full_expected'} = $returner->{'expected'};
 			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $elapsed);
 			$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 			$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
+		}
+		elsif ($early) {
+			# nothing is due yet inside the floor: a zero target, which the status
+			# maker reads as on track rather than a collapse
+			$returner->{'expected'} = 0;
+			$returner->{'threshold'} = 0;
+			$returner->{'eval'} = 0;
 		}
 		$returner = &budget_status_maker($returner);
 	}
