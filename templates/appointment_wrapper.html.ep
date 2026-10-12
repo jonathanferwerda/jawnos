@@ -39,7 +39,7 @@
 
 			</div>
 			<span class="walkman_controls">
-				<video src="" class="video_monitor" style="display:none;"></video>					
+				<video class="video_monitor" style="display:none;"></video>					
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'place'} eq 'top') { %>

@@ -8,7 +8,7 @@ Favourite
 <% if ($configure->{'qr_image'}) { %>
 	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" src="<%= $configure->{'qr_image'} %>">
 <% } else { %>
-	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" style="display:none;" src="">
+	<img class="little_thumb ticket mail_qr" uuid="<%= $uuid %>" style="display:none;">
 <% } %>
 <img class="little_thumb delete_mail_conversation hover" uuid="<%= $uuid %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete">
 <br>
