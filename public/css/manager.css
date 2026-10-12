@@ -636,10 +636,12 @@ canvas { overflow: scroll; z-index: 99; }
    instead of standing 45 deep, and the extras the line-height would add above
    and below are dropped. That figure is the misc navbar height (--navbar_h),
    which scales the bar and everything inside it together.
-   The bar is width:100% with a border (set inline in window_maker), so it has
-   to be border-box: content-box would add the two 3px edges on top of the
-   full width and push the bar 6px past the window's right edge, out of line
-   with .window_contents. */
+   The bar is width:100% with a border (set inline in window_maker) as thick as
+   the window frame, so it has to be border-box: content-box would add the two
+   side edges on top of the full width and push the bar past the window's right
+   edge, out of line with .window_contents. The border is the same width on all
+   four sides, so the bar reads evenly - and its top corners land exactly on the
+   frame ring, which carries the same width. */
 .top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, 8px) var(--window_radius, 8px) 0 0; }
 /* the icon sits in a bare tile with a 2px collar of the bar's colour around
    it: the holder pads the top, left and bottom, and rides the foot of the bar.
