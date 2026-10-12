@@ -1419,6 +1419,8 @@ void loop() {
   if (ble_room_requested_at != 0 && !president_fetch_running
       && homebaseIP.length() > 0
       && !room_has_buttons(ble_room_requested_room)
+      && !voiceRecording
+      && (int32_t)(millis() - homebase_down_until) >= 0
       && millis() - ble_room_requested_at > 2500) {
     ble_room_requested_at = 0;
     president_fetch_room = ble_room_requested_room;
@@ -3050,6 +3052,13 @@ static bool voice_post_clip(const String &path) {
                   (unsigned)homebaseIP.length(), (unsigned)authorization.length());
     return false;
   }
+  // the same backoff the room fetch keeps: with the homebase away a TLS connect
+  // only times out, and a run of those is what asserts in the TLS/lwip stack and
+  // reboots the watch (see the notes). While it is marked down, do not POST.
+  if ((int32_t)(millis() - homebase_down_until) < 0) {
+    Serial.println("[voice] homebase marked down; not POSTing");
+    return false;
+  }
   File f = FFat.open(path.c_str(), FILE_READ);
   if (!f) {
     Serial.println("[voice] clip open failed");
@@ -3074,6 +3083,7 @@ static bool voice_post_clip(const String &path) {
   else {
     Serial.println("[voice] https.begin failed");
   }
+  homebase_down_until = ok ? 0 : millis() + 20000;
   f.close();
   return ok;
 }
@@ -3210,6 +3220,9 @@ static void voiceListenTask(void *pv) {
     while (voiceListening) {
       if (isRecording || isPlaying) {
         break;   // a manual record or playback started: hand the mic over
+      }
+      if (president_fetch_running) {
+        break;   // a TLS room fetch is running: do not add to the peak (see the notes)
       }
       int got = mic->read(buf, VOICE_FRAME_SAMPLES * 2);
       if (got <= 0) { continue; }
