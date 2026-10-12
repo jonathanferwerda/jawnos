@@ -17,10 +17,15 @@
 			<td style="text-align:right;font-weight:700;white-space:nowrap;"><%= $budget->{'formatted_value'} %></td>
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">of <%= $budget->{'formatted_budgeted'} %></td>
 		</tr>
+		<%# the autocalc's own reading for this scope is the budget it would suggest:
+		    surfaced here as a recommendation, and tinted when the set budget is the
+		    thing out of step with the actual (the "way too much for its budget" case) %>
+		<% my $recommended = eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($autocalc->{$budget->{'scope_name'}}->{'result'}) } || $autocalc->{$budget->{'scope_name'}}->{'formatted_result'}; %>
+		<% my $over_budget = defined $budget->{'budgeted'} && $budget->{'budgeted'} > 0 && defined $budget->{'value'} && $budget->{'value'} > $budget->{'budgeted'}; %>
 		<tr>
-			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">Typical</td>
-			<td style="text-align:right;font-weight:700;white-space:nowrap;"><%= $autocalc->{$budget->{'scope_name'}}->{'formatted_result'} %></td>
-			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">your history</td>
+			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">Recommended</td>
+			<td style="text-align:right;font-weight:700;white-space:nowrap;<%= $over_budget ? 'color:#b8860b;' : '' %>"><%= $recommended %></td>
+			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">your typical <%= lc $scope %></td>
 		</tr>
 	</table>
 	<%# a budget locked to the calendar is only part-run early in its period; the
