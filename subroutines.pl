@@ -11135,6 +11135,34 @@ sub backfills() {
 			&subs::say_it("backfill warehouse_money_ledger: mirrored $n money transactions");
 			return 1;
 		},
+		'mugshot_to_file' => sub {
+			# The mugshot was a multi-megabyte data URI in settings, which every
+			# load and every sync paid for. Hold it as a sealed picture under the
+			# photo location's `me` folder instead. Only the owning device converts
+			# its own row: the sealed file lives on this machine's disk and is not
+			# synced, so a machine that converted another device's row would leave
+			# that device pointing at a file only this one has.
+			my $dev = &subs::device_setter();
+			my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev });
+			return 0 unless $folder;
+			my $location = &subs::home($folder) . '/me';
+			my $rows = &subs::db_query("select device,value from settings where app='me' and setting='mugshot' and device=?", $dev)->hashes;
+			foreach my $row ( @{$rows} ) {
+				my $val = $row->{'value'} // '';
+				next unless $val =~ /^data:image\/\w+;base64,(.*)$/s;
+				my $img = MIME::Base64::decode_base64($1);
+				next unless $img && length $img;
+				`mkdir -p "$location"` unless -e $location;
+				my $raw = "$location/mugshot.$dev.png";
+				write_file($raw, $img);
+				my $secret = &subs::suds_grabber();
+				my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+				`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$location/mugshot.$dev.png.enc"`;
+				`shred -u "$raw"`;
+				&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => "mugshot.$dev.png.enc" });
+			}
+			return 1;
+		},
 	};
 }
 

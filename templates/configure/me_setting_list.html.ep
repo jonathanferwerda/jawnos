@@ -46,7 +46,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="me">
 				</script>
 			<% } elsif ( $m eq 'mugshot') { %>
 				<label><%= &subs::format_name($m) %></label><br>
-				<img src="<%= $me->{$d}->{$m} || '/images/make believe/face.png' %>" class="large_thumb me_setting mugshot_upload_button"
+				<img src="<%= &Manager::mugshot_source($d) || '/images/make believe/face.png' %>" class="large_thumb me_setting mugshot_upload_button"
 					device="<%= $d %>" setting="<%= $m %>">
 				<div class="mugshot_upload_container" device="<%= $d %>">
 					<form class="mugshot_upload" device="<%= $d %>" setting="<%= $m %>" style="display:none;">

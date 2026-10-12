@@ -3661,7 +3661,7 @@ post '/manager/configure/mugshot_upload' => sub($c) {
 			write_file($raw, $ass);
 			my $secret = &subs::suds_grabber();
 			my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-			my $sealed = 'mugshot.png.enc';
+			my $sealed = "mugshot.$dev.png.enc";
 			`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$location/$sealed"`;
 			`shred -u "$raw"`;
 			&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => $sealed });

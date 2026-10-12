@@ -19,6 +19,20 @@ hook before_dispatch => sub {
 	%subs::setting_memo = ();
 	$subs::setting_memo_on = 1;
 	$c->inactivity_timeout(300); 
+	# A handheld's workers grow their Perl heap over uptime until Android's
+	# low-memory killer reaps the tree. Log each worker's own RSS with its
+	# PURPOSE (readable only from inside the process) once every few minutes,
+	# so the worker that grows can be named rather than guessed.
+	if (&subs::device_setter() eq 'mobile') {
+		my $now = &subs::rightNow();
+		if (!defined $subs::worker_mem_at || $now - $subs::worker_mem_at > 240000) {
+			$subs::worker_mem_at = $now;
+			my $pid = $$;
+			my $status = eval { read_file("/proc/$pid/status") } || '';
+			my ($rss) = $status =~ /VmRSS:\s+(\d+)/;
+			$log->info('worker mem purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid rss=" . (defined $rss ? $rss : '?') . 'kB');
+		}
+	}
 	my $path = $c->req->url->path;
 	# A relayed request carries a relay_id. If this machine has already handled
 	# that id, the copy arrived via another path through the mesh: acknowledge it
@@ -203,6 +217,8 @@ hook before_dispatch => sub {
 		$path eq '/manager/tunnel/ws' ||
 		$path eq '/payment' ||
 		$path eq '/box_office/ticket_request' ||
+		# the homepage shows the mugshot to visitors, so it is served without a login
+		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
 		$path eq '/', ) {
 
