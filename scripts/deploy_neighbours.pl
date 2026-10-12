@@ -7,6 +7,8 @@
 #   perl scripts/deploy_neighbours.pl              # every machine
 #   perl scripts/deploy_neighbours.pl Table Fe     # only these hostnames
 #   perl scripts/deploy_neighbours.pl --dry-run    # list, change nothing
+#   perl scripts/deploy_neighbours.pl --force      # also reset a diverged
+#                                                  # tree hard to origin/main
 #
 # Run it from the jawn tree while jawn is up (it reads the same database).
 use strict;
@@ -20,8 +22,10 @@ require './Manager.pl';
 
 my @wanted;
 my $dry_run = 0;
+my $force = 0;
 foreach my $arg (@ARGV) {
 	if ($arg eq '--dry-run') { $dry_run = 1; next; }
+	if ($arg eq '--force') { $force = 1; next; }
 	push @wanted, $arg;
 }
 
@@ -43,7 +47,7 @@ foreach my $rm (@machines) {
 		print "$label: would deploy\n";
 		next;
 	}
-	my $res = &subs::remote_deploy($rm);
+	my $res = &subs::remote_deploy($rm, force => $force);
 	my $out = $res->{'output'} || '';
 	$out =~ s/\s+/ /g;
 	print "$label: " . $res->{'message'} . " [" . substr($out, 0, 200) . "]\n";

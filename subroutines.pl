@@ -10582,9 +10582,11 @@ sub run_backfills() {
 # Auto-update. A machine that receives code by git can keep itself current: the
 # watcher fetches origin and fast-forwards when the tree is clean and strictly
 # behind (never clobbers local commits or a dirty tree), then asks jawn to
-# restart. Only one-way - a dev machine ahead of origin is left alone. Open
-# browsers reload on their own: the websocket hands out the revision and the
-# client reloads when it changes.
+# restart. When the tree is clean but diverged because origin's history was
+# rewritten (every local commit still exists upstream under a new hash), it
+# resets hard to origin/main so the machine rejoins the update track; a tree
+# with genuinely local commits is left alone. Open browsers reload on their own:
+# the websocket hands out the revision and the client reloads when it changes.
 # ---------------------------------------------------------------------------
 # Push the current code to a neighbour over ssh, using the credentials the
 # remote_machines table already holds. Every device can also pull on its own
@@ -10602,7 +10604,7 @@ sub remote_deploy {
 	unless ($manager && $r && $r->{'ua'}) {
 		return { ok => 0, message => 'no route to peer' };
 	}
-	my $url = $manager . '/manager/self_deploy?signatorial=' . &subs::signatorial_designer();
+	my $url = $manager . '/manager/self_deploy?signatorial=' . &subs::signatorial_designer() . ($opts{'force'} ? '&force=1' : '');
 	my $res = eval { $r->{'ua'}->inactivity_timeout(60)->post($url)->result };
 	my $ok = ($res && $res->is_success) ? 1 : 0;
 	if ($subs::logfile) {
@@ -10621,25 +10623,61 @@ sub git_binary {
 	return 'git';
 }
 
+# Fast-forward a checkout to origin/main. Returns (status, output):
+#   current   already up to date
+#   updated   fast-forwarded to origin/main
+#   ahead     has commits origin/main does not; left alone
+#   reset     diverged, but every local commit already exists upstream under a
+#             rewritten hash, so reset hard to origin/main (nothing unique lost)
+#   diverged  has local commits that are not upstream; left alone (use force)
+#   dirty     tracked files are modified; never touched (use force)
+#   error/no-repo  the checkout could not be read
+# A clean tree only, unless force, which skips the dirty guard and hard-resets.
+sub git_repo_update {
+	my ($opts) = @_;
+	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
+	my $force = $opts->{'force'} ? 1 : 0;
+	my $git   = &subs::git_binary();
+	return ('no-repo', '') unless -d "$repo/.git";
+	my $run = sub { my $cmd = shift; return `cd "$repo" && $cmd 2>&1`; };
+	unless ($force) {
+		# never touch a tree with local modifications to tracked files
+		my $dirty = $run->("\"$git\" status --porcelain --untracked-files=no");
+		return ('dirty', $dirty) if $dirty =~ /\S/;
+	}
+	my $out = $run->("\"$git\" fetch origin --quiet");
+	my $head   = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
+	my $origin = `cd "$repo" && "$git" rev-parse origin/main 2>/dev/null`; chomp $origin;
+	return ('error', $out) unless $head && $origin;
+	return ('current', $out) if $head eq $origin;
+	# force makes the checkout exactly origin/main, whatever the local state
+	if ($force) {
+		$out .= $run->("\"$git\" reset --hard origin/main");
+		return ('reset', $out);
+	}
+	my $behind = (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD origin/main >/dev/null 2>&1") == 0);
+	return ('ahead', $out) if system("cd \"$repo\" && \"$git\" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1") == 0;
+	if ($behind) {
+		$out .= $run->("\"$git\" merge --ff-only origin/main");
+		return ('updated', $out);
+	}
+	# diverged and not ahead: accept it when every local commit is already
+	# upstream under a rewritten hash (git cherry marks those with '-')
+	my $cherry = $run->("\"$git\" cherry origin/main HEAD");
+	return ('diverged', $out . $cherry) if grep { /^\+/ } split /\n/, $cherry;
+	$out .= $run->("\"$git\" reset --hard origin/main");
+	return ('reset', $out);
+}
+
 sub git_watcher_check {
 	return unless -d '.git';
-	my $git = &subs::git_binary();
-	# never touch a tree with local modifications to tracked files
-	my $dirty = `$git status --porcelain --untracked-files=no 2>/dev/null`;
-	return if $dirty =~ /\S/;
-	`$git fetch origin --quiet 2>/dev/null`;
-	my $head = `$git rev-parse HEAD 2>/dev/null`; chomp $head;
-	my $origin = `$git rev-parse origin/main 2>/dev/null`; chomp $origin;
-	return unless $head && $origin && $head ne $origin;
-	# HEAD must be an ancestor of origin/main (we are only behind, not diverged)
-	my $rc = system("$git merge-base --is-ancestor HEAD origin/main >/dev/null 2>&1");
-	return if $rc != 0;
-	`$git merge --ff-only origin/main --quiet 2>/dev/null`;
-	my $new = `$git rev-parse HEAD 2>/dev/null`; chomp $new;
-	return if $new eq $head;
+	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
+	my ($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	return unless $status eq 'updated' || $status eq 'reset';
 	if ($subs::logfile) {
+		my $after = `git rev-parse HEAD 2>/dev/null`; chomp $after;
 		open(my $fh, '>>', $subs::logfile);
-		print $fh &subs::rightNow() . " git watcher: fast-forwarded " . substr($head,0,10) . " -> " . substr($new,0,10) . ", restarting\n";
+		print $fh &subs::rightNow() . " git watcher: $status " . substr($before,0,10) . " -> " . substr($after,0,10) . ", restarting\n";
 		close $fh;
 	}
 	# A desktop host keeps an installed copy of the app in

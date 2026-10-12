@@ -3992,14 +3992,16 @@ post '/manager/self_deploy' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm) { $c->rendered(403); return; }
-	my $git = &subs::git_binary();
 	my $repo = &subs::home('~/jawnos');
-	my $out = `cd "$repo" && "$git" pull --ff-only 2>&1`;
+	# force reconciles a tree git cannot fast-forward (origin's history was
+	# rewritten, or local commits exist) by resetting hard to origin/main; off by
+	# default so a plain pull never clobbers real work.
+	my ($status, $out) = &subs::git_repo_update({ repo => $repo, force => ($c->param('force') ? 1 : 0) });
 	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x "$repo/desktop/install.sh") {
 		`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
 	}
 	write_file(&subs::home('~/.president/status'), 'restart');
-	$c->render(text => "deployed\n" . ($out || ''));
+	$c->render(text => "deployed $status\n" . ($out || ''));
 };
 
 post '/manager/configure/deploy_neighbours' => sub($c) {
