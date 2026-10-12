@@ -27,6 +27,10 @@ Thumbs.db
 *.swp
 *~
 
+# --- Built app releases (APKs). Replicated across devices as blobs, never ---
+# --- committed: a ~35 MB binary per version would bloat git history forever. ---
+releases/
+
 # --- Python tooling (font + face preview generator) ---
 __pycache__/
 *.pyc

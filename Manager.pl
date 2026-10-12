@@ -4017,6 +4017,74 @@ post '/manager/configure/deploy_neighbours' => sub($c) {
 };
 
 
+# ---------------------------------------------------------------------------
+# App releases (the APK). scripts/app_release.pl stages a built APK into
+# <repo>/releases (gitignored); every machine replicates it as a blob, not
+# through git history. A peer asks what a machine holds, then fetches one - the
+# app half of "whoever has the newest is the authority".
+# ---------------------------------------------------------------------------
+our %app_release_sha;
+sub app_release_sha {
+	my $path = shift;
+	my @st = stat $path;
+	return '' unless @st;
+	my $key = "$path:$st[7]:$st[9]";
+	require Digest::SHA;
+	unless (exists $app_release_sha{$key}) {
+		my $data = eval { read_file($path) };
+		$app_release_sha{$key} = defined $data ? Digest::SHA::sha256_hex($data) : '';
+	}
+	return $app_release_sha{$key};
+}
+
+sub app_release_lister {
+	my $dir = &subs::home('~/jawnos/releases');
+	my @out;
+	opendir(my $dh, $dir) or return \@out;
+	foreach my $f ( sort readdir($dh) ) {
+		next unless my ($product, $vc, $vn) = $f =~ /^jawnos-(app|api)-(\d+)-(.+)\.apk$/;
+		my $path = "$dir/$f";
+		push @out, {
+			product     => $product,
+			versionCode => $vc + 0,
+			versionName => $vn,
+			filename    => $f,
+			size        => (-s $path) + 0,
+			sha256      => &app_release_sha($path),
+		};
+	}
+	closedir $dh;
+	return \@out;
+}
+
+get '/manager/app_release' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $hostname = `hostname`; chomp $hostname;
+	$c->render(json => { hostname => $hostname, signatorial => &subs::signatorial_designer(), releases => &app_release_lister() });
+};
+
+get '/manager/app_download' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $product = $c->param('product') || 'app';
+	my $want = $c->param('versionCode');
+	my $pick;
+	foreach my $r ( @{ &app_release_lister() } ) {
+		next unless $r->{'product'} eq $product;
+		next if defined $want && $want ne '' && $r->{'versionCode'} != $want;
+		$pick = $r if !$pick || $r->{'versionCode'} > $pick->{'versionCode'};
+	}
+	unless ($pick) { $c->rendered(404); return; }
+	$c->res->headers->content_type('application/vnd.android.package-archive');
+	$c->res->headers->content_disposition('attachment; filename="' . $pick->{'filename'} . '"');
+	$c->res->content->asset(Mojo::Asset::File->new(path => &subs::home('~/jawnos/releases') . '/' . $pick->{'filename'}));
+	$c->rendered(200);
+};
+
+
 sub remote_upgrade($c,$params) {
 	if ( &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' }) eq 'running' ) {
 		return;
