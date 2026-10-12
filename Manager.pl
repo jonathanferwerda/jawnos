@@ -1108,7 +1108,9 @@ sub appointment_writer($c,$app) {
 			my $model = eval { return decode_json $appt->{'model'} } || {};
 			push @{$options}, $model if $model->{'uuid'};
 
+			my %so_seen;
 			foreach my $so ( @{$sources} ) {
+				next if $so_seen{ $so->{'uuid'} }++;
 				push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 				if ( $so->{'type'} eq 'start' ) {
 					my $dur = $so->{'timestamp'} - $timestamp;
@@ -7940,7 +7942,9 @@ sub manager_reset($c) {
 			my $options = eval { return decode_json $o->{'options'} } || [];
 			my $model = eval { return decode_json $o->{'model'} } || {};
 			push @{$options}, $model if $model->{'uuid'};
+			my %so_seen;
 			foreach my $so ( @{$sources} ) {
+				next if $so_seen{ $so->{'uuid'} }++;
 				push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 				if ( $so->{'type'} eq 'start' ) {
 					my @current_option = grep { $_->{'name'} eq $so->{'app'} } @{$options};
@@ -7988,7 +7992,9 @@ sub manager_reset($c) {
 		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
+		my %so_seen;
 		foreach my $so ( @{$sources} ) {
+			next if $so_seen{ $so->{'uuid'} }++;
 			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 			if ( $so->{'type'} eq 'start' ) {
 				&subs::db_update('appointments', { type => $type, duration => $duration, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
@@ -8149,7 +8155,9 @@ sub manager_reset($c) {
 		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
+		my %so_seen;
 		foreach my $so ( @{$sources} ) {
+			next if $so_seen{ $so->{'uuid'} }++;
 			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 			if ( $so->{'type'} eq 'start' ) {
 				&subs::db_update('appointments', { type => 'start', timestamp => $timestamp, duration => $duration, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
@@ -8182,7 +8190,9 @@ sub manager_reset($c) {
 		});
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
+		my %so_seen;
 		foreach my $so ( @{$sources} ) {
+			next if $so_seen{ $so->{'uuid'} }++;
 			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 			&subs::db_update('appointments', { type => 'pause', status => 'paused', timestamp => $timestamp, duration => $duration, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 			&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
@@ -8218,7 +8228,9 @@ sub manager_reset($c) {
 		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
+		my %so_seen;
 		foreach my $so ( @{$sources} ) {
+			next if $so_seen{ $so->{'uuid'} }++;
 			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 			if ( $so->{'type'} eq 'stop' || $so->{'type'} eq 'cancel' ) {
 				&subs::db_update('appointments', { type => 'start', server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
@@ -17609,7 +17621,9 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 
 		&embedded_app_deleter({ appt_uuid => $uuid });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
+		my %so_seen;
 		foreach my $so ( @{$sources} ) {
+			next if $so_seen{ $so->{'uuid'} }++;
 			&embedded_app_deleter({ appt_uuid => $so->{'uuid'} });
 			&delete_app($so->{'app'},$so->{'uuid'},$so->{'server_time'},'source deletion');
 		}
@@ -21880,17 +21894,6 @@ sub text_editor_variables($context) {
 	return \@variables;
 }
 
-our $ws_mem_last = 0;
-sub ws_mem_probe {
-	return unless $device eq 'mobile';
-	my ($tag) = @_;
-	my $s = eval { read_file("/proc/$$/status") } || '';
-	my ($rss) = $s =~ /VmRSS:\s+(\d+)/;
-	return unless defined $rss;
-	$log->info("ws mem jump at $tag: $ws_mem_last -> $rss kB pid=$$") if $rss > $ws_mem_last + 5000;
-	$ws_mem_last = $rss;
-}
-
 websocket '/manager/ws' => sub ($c) {
 	my $ug    = Data::UUID->new;
 	my $uuid = $ug->create_str();
@@ -21899,7 +21902,6 @@ websocket '/manager/ws' => sub ($c) {
 	unless ($ws_server->{$app}) {
 		$ws_server->{$app} = &ws_server_socket({ app => $app });
 	}
-	&ws_mem_probe('connect app=' . ($app // '?'));
 	my $remote_address = $c->tx->remote_address;
 #	$c->render(template => 'guest_layouts/denial') unless $app eq 'music' || $app eq 'server' || $app eq 'tab';
 	my $timestamp = $c->param('timestamp');
@@ -21984,7 +21986,9 @@ websocket '/manager/ws' => sub ($c) {
 							&subs::appt_header_printer({ app => $appt->{'app'} });
 							&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
 							my $sources = &subs::db_select('appointments', undef, { source_uuid => $appt->{'uuid'} })->hashes;
+							my %so_seen;
 							foreach my $so ( @{$sources} ) {
+								next if $so_seen{ $so->{'uuid'} }++;
 								push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 								if ( $so->{'type'} eq 'stop' ) {
 									my $dur = $so->{'timestamp'} - $timestamp;
@@ -22034,7 +22038,6 @@ websocket '/manager/ws' => sub ($c) {
 		unless ($ws_server->{$app}) {
 			$ws_server->{$app} = &ws_server_socket({ app => $app });
 		}
-		&ws_mem_probe('msg-start ' . ($app // '?'));
 		my $remote_machines;
 		if ($data->{'type'} eq 'stayingAlive') {
 			my $server_time = &subs::rightNow();
@@ -22063,7 +22066,6 @@ websocket '/manager/ws' => sub ($c) {
 						$rm->{'data'} = eval { return decode_json $rm->{'data'} } || {};
 					}
 				}
-				&ws_mem_probe('sa-remote');
 
 			}
 			if ($app eq 'tab') {
@@ -22132,7 +22134,6 @@ websocket '/manager/ws' => sub ($c) {
 					warranty => $warranty
 				});
 			}
-			&ws_mem_probe('sa-row');
 			if ($data->{'debriefer'}) {
 				if ($c->session('ticket_uuid')) {
 					&subs::db_query('update tickets set debriefer = ? where uuid = ?', $data->{'debriefer'}, $c->session('ticket_uuid'));
@@ -22155,7 +22156,6 @@ websocket '/manager/ws' => sub ($c) {
 				}
 				$n->{'windows'} = encode_json $neighbourhood;
 			}
-			&ws_mem_probe('sa-db');
 
 			my $return_data = {
 				browser_tab_id => $browser_tab_id,
@@ -22180,10 +22180,8 @@ websocket '/manager/ws' => sub ($c) {
 				);
 				if ($app eq 'server') { delete $return_data->{'remote'}; }
 			}
-			&ws_mem_probe('sa-render');
 
 			&Websocket::send($app,$return_data);
-			&ws_mem_probe('sa-send');
 
 		}
 		elsif ($data->{'pty'} && $app eq 'server') {
@@ -22257,7 +22255,6 @@ websocket '/manager/ws' => sub ($c) {
 
 			&Websocket::send($app, $data);
 		}
-		&ws_mem_probe('msg ' . (ref $data ? ($data->{'type'} // $data->{'method'} // 'plain') : 'undef') . ' app=' . (ref $data ? ($data->{'app'} // '?') : '?'));
 	});
 	$c->on(finish => sub ($c,$code,$reason) {
 		# A resume that rebuilds sockets (a phone waking) can register a new

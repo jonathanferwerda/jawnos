@@ -131,7 +131,9 @@ sub alarm_clock() {
 
 						my $sources = &subs::db_select('appointments', undef, { source_uuid => $a->{'uuid'} })->hashes;
 
+						my %so_seen;
 						foreach my $so ( @{$sources} ) {
+							next if $so_seen{ $so->{'uuid'} }++;
 							push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 							if ( $so->{'type'} eq 'start' && (!$so->{'stop_timestamp'} || $so->{'stop_timestamp'} <= $timestamp) ) {
 								my $dur = $so->{'timestamp'} - $timestamp;
@@ -155,7 +157,9 @@ sub alarm_clock() {
 
 					my $sources = &subs::db_select('appointments', undef, { source_uuid => $a->{'uuid'} })->hashes;
 
+					my %so_seen;
 					foreach my $so ( @{$sources} ) {
+						next if $so_seen{ $so->{'uuid'} }++;
 						push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 						if ( $so->{'type'} eq 'start' && (!$so->{'stop_timestamp'} || $so->{'stop_timestamp'} <= $timestamp) ) {
 							&subs::db_update('appointments', { seen => 'yes' }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
