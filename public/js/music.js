@@ -382,10 +382,22 @@ function mediaMaker(data) {
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
 				tree.sound.queued = 0;
+				// the seek bar is only redrawn by the playing interval, which does not run
+				// while paused, so a paused restore would otherwise leave it sitting at 0
+				// even though the track is at its saved position
+				tree.sound.onloadedmetadata = function() {
+					var m = $('#video').attr('miss');
+					var bar = m ? $('#' + m + '_position') : $();
+					if (bar.length && tree.sound.duration) {
+						bar.val(tree.sound.currentTime / tree.sound.duration * 100);
+					}
+				};
 				if (data['state'] != 0) {
 					// the play() above runs before load()/the new src and is aborted by them,
-					// so start here too, once the source is in place - otherwise a restored
-					// track shows a pause button over silence
+					// so start here instead, once the source is in place. A refresh has no
+					// user gesture yet and browsers only autoplay a muted element, so a
+					// restore starts muted; onplaying lifts that again.
+					if (method == 'restore') { tree.sound.muted = true; }
 					tree.sound.play();
 				}
 				if (method != 'restore') {
@@ -403,6 +415,8 @@ function mediaMaker(data) {
 				theatreModeOff();
 			}
 			tree.sound.onplaying = function() {
+				if (method == 'restore') { tree.sound.muted = false; }
+				tree.sound.state = 1;
 				musicVolumeApply();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -489,6 +503,7 @@ function mediaMaker(data) {
 				};
 				tree.sound.onpause = function() {
 					clearInterval(interval);
+					tree.sound.state = 0;
 			
 					$('#play_logo').attr('src', jawnosPlayIcon());
 			
@@ -723,7 +738,8 @@ $(document).on('click', '#play', function() {
 	if (tree.sound.src == '') {
 		mediaMaker({ file: tree.songs[0].file });
 	}
-	else if (tree.sound.state == 0) {
+	else if (tree.sound.paused) {
+		tree.sound.muted = false;
 		tree.sound.play();
 		tree.sound.state = 1;
 		$('#play_logo').attr('src', jawnosPauseIcon());
