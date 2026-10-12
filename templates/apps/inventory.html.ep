@@ -1,9 +1,22 @@
-<br>
-Total Occurences: <%= $returner->{'total_occurences'} %><br>
-Average Duration: <%= &subs::duration_sayer($returner->{'average_duration'} / 1000) %><br>
-Total Duration: <%= &subs::duration_sayer($returner->{'total_duration'} / 1000) %><br>
-Average Between: <%= &subs::duration_sayer($returner->{'between_average'} / 1000) %><br>
-Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %><br>
+<%
+	# the headline numbers as cards, so the shape of the app reads at a glance
+	# before any scrolling
+	my @inventory_cards = (
+		[ 'Occurrences', $returner->{'total_occurences'} ],
+		[ 'Average Duration', &subs::duration_sayer($returner->{'average_duration'} / 1000) ],
+		[ 'Total Duration', &subs::duration_sayer($returner->{'total_duration'} / 1000) ],
+		[ 'Average Between', &subs::duration_sayer($returner->{'between_average'} / 1000) ],
+		[ 'Total Between', &subs::duration_sayer($returner->{'between_total'} / 1000) ],
+	);
+%>
+<div class="statistic_cards" style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;">
+	<% foreach my $card ( @inventory_cards ) { %>
+		<span class="statistic_card" style="flex:1 1 120px;min-width:110px;border:solid 1px;border-radius:6px;padding:6px 10px;">
+			<span style="opacity:.55;font-size:85%;display:block;white-space:nowrap;"><%= $card->[0] %></span>
+			<b style="font-size:150%;"><%= $card->[1] %></b>
+		</span>
+	<% } %>
+</div>
 <% my @cols = @{$time_lengths}; #qw/minute hour day week month year/; %>
 <% my @rows = @{$time_scopes}; %>
 <% my $s_display = $settings->{'s_display'}; %>
@@ -62,6 +75,18 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 		<% } %>
 	</div>
 	<div class="statistic_graph_information" style="display:none;position:fixed;background-color:white;border:solid;border-radius:5px;padding:2px;"></div>
+	<%# the same periods as bars (easier to compare) and as shares (a pie), so
+	    the shape is read three ways from one page of data %>
+	<div class="statistic_bars_pie" style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0;align-items:flex-start;">
+		<div style="flex:3 1 340px;min-width:240px;">
+			<b style="font-size:90%;opacity:.6;">By period</b>
+			<canvas id="<%= $app %>_bars_graph" class="statistic_bars" style="width:100%;height:160px;"></canvas>
+		</div>
+		<div style="flex:2 1 260px;min-width:220px;">
+			<b style="font-size:90%;opacity:.6;">Share</b>
+			<canvas id="<%= $app %>_pie_graph" class="statistic_pie" style="width:100%;height:200px;"></canvas>
+		</div>
+	</div>
 	<table id="<%= $app %>_inventory_table" style="overflow-x:scroll;width:100%;">
 		<thead>
 			<th></th>

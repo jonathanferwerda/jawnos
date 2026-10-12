@@ -12008,13 +12008,17 @@ sub budget_entry_parse {
 	return { raw => $entry, direction => $direction, value => $value, measure => $measure, scope => $scope, fixed => (defined $scope ? 0 : 1) };
 }
 
-# The measure's own trend: a least-squares line through its readings over the
-# last stretch, as value-per-day, with the latest reading and the reading count.
-# Times are measured from the first reading so the huge millisecond stamps do not
-# cancel the fit.
-sub measure_trend($app, $measure, $days) {
-	my $since = &subs::rightNow() - $days * 86400000;
-	my $appts = &subs::db_query('select timestamp,measures from appointments where app = ? and measures is not null and timestamp >= ? order by timestamp', $app, $since)->hashes;
+# The measure's own trend: a least-squares line through its readings, as
+# value-per-day, with the latest reading and the reading count. The stretch it
+# reads is the floor given unless the measure is recorded more sparsely than
+# that: the window is widened to about a dozen readings when the median gap
+# between them is longer than the floor of a dozen dozen, so a level recorded
+# once a month or once a year is not judged on the few points a fixed 90 days
+# would hold. Times are measured from the first reading so the huge millisecond
+# stamps do not cancel the fit.
+sub measure_trend($app, $measure, $floor_days) {
+	my $floor = ($floor_days || 90) * 86400000;
+	my $appts = &subs::db_query('select timestamp,measures from appointments where app = ? and measures is not null order by timestamp desc limit 600', $app)->hashes;
 	my @pts;
 	foreach my $a ( @{$appts} ) {
 		my $ms = eval { return decode_json $a->{'measures'} } || [];
@@ -12023,17 +12027,36 @@ sub measure_trend($app, $measure, $days) {
 			push @pts, [ ($a->{'timestamp'} + 0), ($m->{$measure} + 0) ];
 		}
 	}
+	@pts = sort { $a->[0] <=> $b->[0] } @pts;
 	return (undef, undef, scalar @pts) if scalar @pts < 2;
-	my $t0 = $pts[0][0];
+	# how often it is recorded: the median gap over the recent readings
+	my @gaps;
+	for (my $i = $#pts; $i > 0 && scalar @gaps < 50; $i--) {
+		my $g = $pts[$i][0] - $pts[$i-1][0];
+		push @gaps, $g if $g > 0;
+	}
+	my $window = $floor;
+	if (scalar @gaps) {
+		my @sorted = sort { $a <=> $b } @gaps;
+		my $gap = $sorted[int($#sorted / 2)];
+		my $span = $gap * 12;
+		$window = $span if $span > $window;
+	}
+	# fit the readings the window reaches back over, so a sparsely kept level is
+	# read over the long stretch it needs and a dense one stays on its recent pace
+	my $cut = $pts[-1][0] - $window;
+	my @fit = grep { $_->[0] >= $cut } @pts;
+	@fit = @pts if scalar @fit < 2;
+	my $t0 = $fit[0][0];
 	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
-	foreach my $p ( @pts ) {
+	foreach my $p ( @fit ) {
 		my $x = $p->[0] - $t0;
 		$n++; $sx += $x; $sy += $p->[1]; $sxx += $x * $x; $sxy += $x * $p->[1];
 	}
 	my $denom = $n * $sxx - $sx * $sx;
-	return (undef, $pts[-1][1], $n) if $denom == 0;
+	return (undef, $fit[-1][1], scalar @pts) if $denom == 0;
 	my $slope = ($n * $sxy - $sx * $sy) / $denom;
-	return ($slope * 86400000, $pts[-1][1], $n);
+	return ($slope * 86400000, $fit[-1][1], scalar @pts);
 }
 
 # A goal read for one circumstance: the target, where the measure stands now, and

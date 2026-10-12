@@ -337,7 +337,9 @@ function statisticGrapher(data,canvasId,mark) {
 					if (typeof data[ts][tl] == 'object') {
 						if (data[ts][tl][data.settings.s_display]) {
 							var point = numeral(data[ts][tl][data.settings.s_display]).value();
-							var x = wide * (n / time_widths);
+							// time reads left to right: the period list runs future -> past, so
+							// the oldest is placed at the left edge and the newest at the right
+							var x = wide * ((data.scopes.length - 1 - n) / time_widths);
 							var y = y_for(point);
 							ctx.lineTo(x, y);
 							if (mark && numeral(data[ts][tl]['start_timestamp']).value() == mark) {
@@ -423,6 +425,111 @@ function statisticGrapher(data,canvasId,mark) {
 		else {
 			//$('#' + id + '_span').remove();
 		}
+	});
+	if (!canvasId) {
+		// the bar and the pie wear the unit the page was last walked in, so they
+		// follow the graph being read; a fresh page starts on days
+		var unit = (data.page_scope && $.inArray(data.page_scope, data.time_lengths) >= 0) ? data.page_scope
+			: ($.inArray('day', data.time_lengths) >= 0 ? 'day' : data.time_lengths[0]);
+		statisticBars(data, unit);
+		statisticPie(data, unit);
+	}
+}
+
+// the per-period values for one column, oldest first, so a bar or a slice reads
+// the way the line now does
+function statisticSeries(data, unit) {
+	var display = data.settings.s_display;
+	var scopes = (data.scopes || []).filter(function(ts) { return ts != 'average' && ts != 'total'; });
+	scopes.reverse();
+	var out = [];
+	scopes.forEach(function(ts) {
+		var cell = data[ts] && data[ts][unit];
+		if (!cell || typeof cell != 'object') { return; }
+		var v = numeral(cell[display]).value();
+		if (v === null || isNaN(v)) { return; }
+		out.push({ ts: ts, value: v, budget: cell.budget });
+	});
+	return out;
+}
+
+function statisticBars(data, unit) {
+	var g = document.getElementById(data.app + '_bars_graph');
+	if (!g || !g.getContext) { return; }
+	var thick = window.devicePixelRatio || 1;
+	var wide = $(g).width() || 600;
+	var tall = numeral($(g).css('height')).value() || 160;
+	$(g).attr({ width: Math.round(wide * thick), height: Math.round(tall * thick) });
+	var ctx = g.getContext('2d');
+	ctx.setTransform(thick, 0, 0, thick, 0, 0);
+	ctx.clearRect(0, 0, wide, tall);
+	var series = statisticSeries(data, unit);
+	if (!series.length) { return; }
+	var max = 0;
+	series.forEach(function(p) { if (p.value > max) { max = p.value; } });
+	max = max || 1;
+	var base = tall - 14;
+	var bw = wide / series.length;
+	ctx.font = '400 10px Arial';
+	series.forEach(function(p, i) {
+		var h = base * (p.value / max);
+		var x = i * bw + 1;
+		ctx.fillStyle = (p.budget && p.budget.colour) ? p.budget.colour : (data.settings.colour || '#4a90d9');
+		ctx.fillRect(x, base - h, Math.max(1, bw - 2), h);
+	});
+	ctx.strokeStyle = 'rgba(0,0,0,.45)';
+	ctx.beginPath(); ctx.moveTo(0, base); ctx.lineTo(wide, base); ctx.stroke();
+}
+
+function statisticPie(data, unit) {
+	var g = document.getElementById(data.app + '_pie_graph');
+	if (!g || !g.getContext) { return; }
+	var thick = window.devicePixelRatio || 1;
+	var wide = $(g).width() || 300;
+	var tall = numeral($(g).css('height')).value() || 200;
+	$(g).attr({ width: Math.round(wide * thick), height: Math.round(tall * thick) });
+	var ctx = g.getContext('2d');
+	ctx.setTransform(thick, 0, 0, thick, 0, 0);
+	ctx.clearRect(0, 0, wide, tall);
+	var series = statisticSeries(data, unit).filter(function(p) { return p.value > 0; });
+	if (!series.length) { return; }
+	// the biggest periods get a slice of their own; the tail is gathered so the
+	// wheel stays readable whatever the page holds
+	series.sort(function(a, b) { return b.value - a.value; });
+	var top = series.slice(0, 9);
+	var rest = 0;
+	for (var i = 9; i < series.length; i++) { rest += series[i].value; }
+	if (rest > 0) { top.push({ ts: 'other', value: rest }); }
+	var total = 0;
+	top.forEach(function(p) { total += p.value; });
+	var palette = ['#4a90d9','#e06666','#93c47d','#f6b26b','#8e7cc3','#76a5af','#c27ba0','#ffd966','#a2c4c9','#b6d7a8','#dd7e6b'];
+	var rad = Math.min(tall, wide * .5) / 2 - 6;
+	var cx = rad + 8;
+	var cy = tall / 2;
+	var ang = -Math.PI / 2;
+	top.forEach(function(p, i) {
+		var slice = (p.value / total) * Math.PI * 2;
+		ctx.beginPath();
+		ctx.moveTo(cx, cy);
+		ctx.arc(cx, cy, rad, ang, ang + slice);
+		ctx.closePath();
+		ctx.fillStyle = palette[i % palette.length];
+		ctx.fill();
+		ctx.strokeStyle = '#fff';
+		ctx.lineWidth = 1;
+		ctx.stroke();
+		ang += slice;
+	});
+	ctx.font = '400 10px Arial';
+	var lx = rad * 2 + 18;
+	var ly = 12;
+	top.forEach(function(p, i) {
+		if (ly > tall - 2) { return; }
+		ctx.fillStyle = palette[i % palette.length];
+		ctx.fillRect(lx, ly - 8, 9, 9);
+		ctx.fillStyle = 'black';
+		ctx.fillText(p.ts + ' ' + Math.round(100 * p.value / total) + '%', lx + 13, ly);
+		ly += 13;
 	});
 }
 
