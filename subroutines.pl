@@ -1994,6 +1994,21 @@ sub voice_note_store() {
 	return $clean;
 }
 
+sub voice_clip_ack() {
+	# The clip was transcribed and filed, so the watch no longer needs its local
+	# copy: tell it over the bridge to drop the file (/voice.wav). Keyed by the
+	# clip's own timestamp so an ack that arrives after the watch has started a
+	# new capture cannot delete the newer clip.
+	my ($meta) = @_;
+	return unless $meta && $meta->{'chip_id'};
+	&subs::bluetooth_sender({
+		intent => 'com.jawn.president.bt.connect',
+		chip_id => $meta->{'chip_id'},
+		edt => $meta->{'edt'} || 'watch',
+		message => { type => 'voice_done', ts => (0 + ($meta->{'ts'} || 0)) }
+	});
+}
+
 sub voice_ingest() {
 	# Audio -> text -> action. The single entry both the WiFi route and the BLE
 	# bridge funnel into, so the two transports behave identically.
@@ -2007,7 +2022,12 @@ sub voice_ingest() {
 		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
 		# no wake word means it was not addressed to us as a command: file it as
 		# a note so it is not simply thrown away
-		&subs::voice_note_store($text) if ($cmd->{'status'} || '') eq 'no_wake';
+		if (($cmd->{'status'} || '') eq 'no_wake' && &subs::voice_note_store($text)) {
+			# a note landed: refresh any open Notes window at once, and let the
+			# watch drop its local copy of the clip
+			&Websocket::send('tab', { console => 'notesReload();' });
+			&subs::voice_clip_ack($meta);
+		}
 		return $cmd;
 	}
 	# Match the target against the apps the system actually knows (the settings
@@ -2097,7 +2117,7 @@ sub ble_message_processor() {
 		# wire. The same ingest the WiFi route runs, so both transports agree.
 		my $b64 = $msg->{'data'};
 		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
-		&subs::voice_ingest($raw, { edt => ($msg->{'edt'} || 'watch'), chip_id => $msg->{'chip_id'} }) if $raw;
+		&subs::voice_ingest($raw, { edt => ($msg->{'edt'} || 'watch'), chip_id => $msg->{'chip_id'}, ts => $msg->{'ts'} }) if $raw;
 		return;
 	}
 	my $url = $msg->{'url'};

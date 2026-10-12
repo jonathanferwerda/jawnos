@@ -109,6 +109,15 @@ static volatile bool voiceOneShot = false;   // a serial "voice" capture, not th
 // then, so a spoken command is not cut short by the watch dozing (the tilt-wake
 // delay the user asked for).
 static volatile bool voiceRecording = false;
+// The clip's own timestamp: it rides with the clip to the server and comes back on
+// the voice_done ack, so the watch deletes the file only for the clip that was
+// transcribed (not a newer one that has since been recorded over it).
+static volatile long voice_clip_ts = 0;
+// Set by loop2 when the server acks a transcribed clip; loop() (same core as the
+// mic task) does the delete so the filesystem is not touched from two cores.
+static volatile long voice_done_ts = -1;
+// The one clip file the capture writes and the server's ack deletes.
+static String VOICE_WAV_PATH = "/voice.wav";
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
@@ -1452,6 +1461,17 @@ void loop() {
       && (deviceConnected || WiFi.status() == WL_CONNECTED)) {
     voiceListenStart(false);
   }
+  // the server said the clip was transcribed and filed: drop the watch's local
+  // copy. Only when it is still that clip (a new capture would have changed the
+  // timestamp) and nothing is recording.
+  if (voice_done_ts >= 0 && !voiceRecording) {
+    long done_ts = voice_done_ts;
+    voice_done_ts = -1;
+    if (done_ts != 0 && done_ts == voice_clip_ts && FFat.exists(VOICE_WAV_PATH.c_str())) {
+      FFat.remove(VOICE_WAV_PATH.c_str());
+      Serial.println("[voice] local clip deleted (transcribed)");
+    }
+  }
   if (loraChatReceiver) {
     readRadio();
   }
@@ -1741,6 +1761,14 @@ void loop2(void * pvParameters) {
               Serial.println("[ble] toggles applied");
               xSemaphoreGive(taskMutex);
             }
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "voice_done") {
+            // the server transcribed the clip and filed it: loop() deletes the
+            // watch's local copy (it is on core 1, where the mic task runs, so the
+            // filesystem is not touched from two cores)
+            long t = btMsg["ts"];
+            voice_done_ts = t;
+            Serial.printf("[voice] done ack ts=%ld\n", t);
           }
         }
         }
@@ -3050,7 +3078,6 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
 #define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
 #define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
-static String VOICE_WAV_PATH = "/voice.wav";
 
 // POST the finished clip to the homebase. Streamed from flash: the WAV is tens
 // of KB, well past what the TLS stack wants held in RAM.
@@ -3079,7 +3106,7 @@ static bool voice_post_clip(const String &path) {
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + authorization
-    + "&timestamp=" + String(timestamp_maker());
+    + "&timestamp=" + String((long)voice_clip_ts);
   bool ok = false;
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");
@@ -3134,7 +3161,7 @@ static bool voice_ble_send(const String &path) {
   int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
   if (total < 1) { total = 1; }
   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"data\":\"";
+  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"data\":\"";
   String out = String(0) + "/" + String(total) + ":" + head;
   int in_chunk = 0;
   int index = 0;
@@ -3250,6 +3277,7 @@ static void voiceListenTask(void *pv) {
         rec_ms = 0;
         silence_ms = 0;
         voiceRecording = true;
+        voice_clip_ts = timestamp_maker();
         Serial.println("[voice] speech detected, recording");
       }
       // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
@@ -3276,7 +3304,7 @@ static void voiceListenTask(void *pv) {
       voiceRecording = false;
       if (pcm_bytes > 0) {
         finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
-        Serial.printf("[voice] clip %u bytes -> homebase\n", (unsigned)pcm_bytes);
+        Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
         voice_ship_clip(VOICE_WAV_PATH);
       }
     }

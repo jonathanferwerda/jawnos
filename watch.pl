@@ -162,7 +162,7 @@ post '/watch/voice' => sub($c) {
 			# SQLite handle does not survive fork() - the forked child died mid
 			# match holding the parent's handle. whisper is a couple of seconds and
 			# a voice clip is rare, so the brief wait is fine.
-			&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id });
+			&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $c->param('timestamp') });
 		}
 		$c->render('text' => 'ok');
 	}
