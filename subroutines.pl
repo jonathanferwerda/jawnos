@@ -2147,6 +2147,16 @@ sub ble_message_processor() {
 		my $b64 = $msg->{'data'};
 		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
 		if ($raw) {
+			# Tell the watch the clip arrived whole, at once: the watch holds the file
+			# and retries it until this lands, so the ack must come off the reassembly
+			# and not wait on whisper (seconds). voice_done follows after the file is
+			# transcribed, and it is what deletes the watch's copy.
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $msg->{'chip_id'},
+				edt => $msg->{'edt'} || 'watch',
+				message => { type => 'voice_recv', ts => (0 + ($msg->{'ts'} || 0)) }
+			});
 			# Off the listener: whisper takes seconds, and while it ran inline the
 			# listener stopped taking the next clip's parts, which the phone then
 			# dropped ("276 part(s) never arrived"). The forked worker re-dials the

@@ -116,6 +116,11 @@ static volatile long voice_clip_ts = 0;
 // Set by loop2 when the server acks a transcribed clip; loop() (same core as the
 // mic task) does the delete so the filesystem is not touched from two cores.
 static volatile long voice_done_ts = -1;
+// A second view of the same clip for the voice task, which holds the file until it
+// is written down: the server sends voice_recv the moment the clip arrives whole
+// (so the task stops retrying) and voice_done after it is transcribed and filed
+// (so loop() deletes the file). loop2 sets both.
+static volatile long voice_acked_ts = -1;
 // The one clip file the capture writes and the server's ack deletes.
 static String VOICE_WAV_PATH = "/voice.wav";
 // Set when the saved config says BLE should be on. Starting the BLE stack from
@@ -1782,7 +1787,15 @@ void loop2(void * pvParameters) {
             // filesystem is not touched from two cores)
             long t = btMsg["ts"];
             voice_done_ts = t;
+            voice_acked_ts = t;
             Serial.printf("[voice] done ack ts=%ld\n", t);
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "voice_recv") {
+            // the clip arrived whole: stop the voice task retrying it. The file
+            // stays until voice_done says it was transcribed and filed.
+            long t = btMsg["ts"];
+            voice_acked_ts = t;
+            Serial.printf("[voice] recv ack ts=%ld\n", t);
           }
         }
         }
@@ -3092,6 +3105,7 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_MAX_MS 6000            // a command, not a lecture
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
 #define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
+#define VOICE_BLE_PACE_MS 45         // between parts: ~one per connection interval, so the controller queue does not overflow and drop parts
 #define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
 
 // POST the finished clip to the homebase. Streamed from flash: the WAV is tens
@@ -3149,13 +3163,19 @@ static bool voice_ble_notify(String &part) {
   if (!deviceConnected || pTxCharacteristic == nullptr) {
     return false;
   }
-  pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
-  pTxCharacteristic->notify();
   // Each part must fit the notify limit (MTU - 3): an oversized part is rejected
   // outright and the characteristic keeps its old value, which silently loses
   // that part. VOICE_BLE_CHUNK is sized so the JSON head in part 0 still fits.
-  // The pause keeps the parts from overrunning the controller's queue.
-  delay(20);
+  //
+  // Bluedroid gives us no backpressure (notify() is void and the controller's
+  // per-connection packet count is not exported to the Arduino core), so pace
+  // the parts out generously instead: one part per connection interval or so,
+  // which is why a 20 ms pace used to outrun the link and leave parts missing
+  // ("never arrived"). A whole clip a touch slower beats a fast holed one. If a
+  // clip still arrives incomplete the caller retries it whole.
+  pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
+  pTxCharacteristic->notify();
+  delay(VOICE_BLE_PACE_MS);
   return true;
 }
 
@@ -3290,6 +3310,17 @@ static void voiceListenTask(void *pv) {
     voiceListening = false;
     vTaskDelete(NULL);
   }
+  // The microphone's first frames after open are a loud transient. The listener
+  // is torn down when the watch dozes and rebuilt on the way up, so that
+  // transient landed on every screen wake: the energy gate read it as speech,
+  // lit the ring, and shipped a clip of nothing. Discard the warm-up first.
+  {
+    uint32_t warm = millis();
+    while (voiceListening && millis() - warm < 400) {
+      mic->read(buf, VOICE_FRAME_SAMPLES * 2);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+  }
   // the microphone stays open across utterances: each pass captures one spoken
   // run, ships it, and - while the setting is on - goes straight back to
   // listening, so a command needs no button at all
@@ -3365,7 +3396,24 @@ static void voiceListenTask(void *pv) {
       if (pcm_bytes > 0) {
         finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
         Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
-        voice_ship_clip(VOICE_WAV_PATH);
+        // Ship, then hold the file until the server says the clip arrived whole.
+        // A clip that never lands is tried again as a whole - the queue is one
+        // clip, retried in place - so a busy bridge costs a moment, not the
+        // command. The server acks on reassembly (voice_recv), so the wait is a
+        // network round trip, not the transcription.
+        long ts = voice_clip_ts;
+        int tries = 0;
+        while (voiceListening && voice_acked_ts != ts && tries < 4) {
+          tries++;
+          if (!voice_ship_clip(VOICE_WAV_PATH)) { break; }
+          uint32_t started = millis();
+          while (voiceListening && voice_acked_ts != ts && millis() - started < 6000) {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+          }
+        }
+        if (voice_acked_ts != ts) {
+          Serial.println("[voice] clip unacked; left on disk for the next pass");
+        }
       }
     }
     else if (f) {
