@@ -23,6 +23,11 @@ package help;
 use strict;
 no warnings;
 
+# The date every topic is considered vetted as of, unless it carries its own
+# `verified`. The auditor compares this against the git history of the app's
+# files: anything that changed since is reported as possibly stale.
+our $verified_default = '2026-10-12';
+
 our %topic = (
 
 	# ---------------------------------------------------------------- apps
@@ -44,6 +49,9 @@ our %topic = (
 	},
 	'gallery' => {
 		title => 'Gallery', category => 'apps', app => 'gallery',
+		templates => [ 'templates/apps/gallery.html.ep', 'templates/apps/gallery_album.html.ep', 'templates/apps/gallery_home.html.ep' ],
+		controls => [ 'Previous', 'Next', 'Refresh', 'Repeat', 'Shuffle', 'File information', 'Fetch home', 'Set as main image', 'Albums', 'Home', 'Lock', 'Archives' ],
+		verified => '2026-10-12',
 		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
 		body => [
 			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
@@ -54,12 +62,12 @@ our %topic = (
 			'Open the apps whose photos you want to browse — Gallery shows the galleries of the windows you have open.',
 			'Open Gallery from the start menu (the photo icon). It lands on Home, one album cover per app.',
 			'Use the Home button for the album covers and the Albums button for the full grid of every photo; as you scroll the grid it keeps loading more.',
-			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle and Repeat (loop a slideshow), File information, Fetch home, and Set as main image.',
+			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
 			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
 			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
 			'The lock covers the gallery when you want it out of the way; unlock it with the combination.'
 		],
-		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. Never describe or guess the content of their photos.',
+		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
 	},
 	'marker' => {
@@ -157,6 +165,7 @@ our %topic = (
 	},
 	'web' => {
 		title => 'Web', category => 'apps', app => 'web',
+		templates => [ 'templates/web/web.html.ep' ],
 		summary => 'A browser in a window.',
 		body => [
 			'Web is a browser window, useful for pulling a page up beside your work without leaving the desktop.'
@@ -338,6 +347,7 @@ our %topic = (
 	},
 	'process_monitor' => {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
+		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],
 		summary => 'Live CPU and memory, per-core graphs and a process list.',
 		body => [
 			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.'
@@ -387,6 +397,7 @@ our %topic = (
 	},
 	'handbook' => {
 		title => 'Handbook', category => 'apps', app => 'handbook',
+		templates => [ 'templates/handbook/handbook.html.ep' ],
 		summary => 'Chaptered notes about the system itself.',
 		body => [
 			'Handbook is the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
@@ -758,6 +769,114 @@ sub briefing {
 	}
 	push @lines, 'Steering: ' . $t->{'prompt'} if $t->{'prompt'};
 	return join "\n", @lines;
+}
+
+# ---- code-aware helpers (the auditor and the guide both use these) ---------
+
+# The files that back a topic: any it names explicitly, plus the conventional
+# spots for its app. Only paths that exist are returned, so a moved file surfaces
+# as a missing one the auditor can complain about when it was listed explicitly.
+sub resolve_files {
+	my ($id) = @_;
+	my $t = help::get($id) or return ();
+	my %seen;
+	my @out;
+	my $add = sub {
+		my $p = shift;
+		return unless defined $p && length $p;
+		return unless -e $p;
+		return if $seen{$p}++;
+		push @out, $p;
+	};
+	foreach my $p ( @{ $t->{'templates'} || [] } ) { $add->($p); }
+	my $a = $t->{'app'};
+	if ($a) {
+		$add->($_) foreach (
+			"templates/apps/$a.html.ep",
+			"templates/$a.html.ep",
+			"public/js/manager/$a.js",
+			"public/js/$a.js",
+		);
+	}
+	return @out;
+}
+
+# The on-screen controls a topic's files declare, taken from their `hint="..."`
+# literals. Interpolated hints (the ones with <, >, { or }) are skipped: only a
+# fixed label is something the auditor can match a step against.
+sub hints {
+	my @files = @_;
+	my %h;
+	foreach my $f (@files) {
+		next unless -e $f;
+		open my $fh, '<', $f or next;
+		local $/;
+		my $body = <$fh>;
+		close $fh;
+		next unless defined $body;
+		while ($body =~ /hint="([^"<>{}]+)"/g) { $h{$1} = 1; }
+	}
+	return sort keys %h;
+}
+
+# A machine-generated inventory of an app, handed to the guide alongside the
+# hand-written entry. It is built from the code, so it stays current even when
+# the prose lags - and the guide is told to prefer it when the two disagree.
+sub inventory {
+	my ($id) = @_;
+	my $t = help::get($id) or return '';
+	my @files = help::resolve_files($id);
+	my @h = help::hints(@files);
+	my $v = $t->{'verified'} || $verified_default;
+	my @lines;
+	push @lines, 'CURRENT UI (generated from the code - trust this over the prose if the two disagree):';
+	push @lines, '  source files: ' . (@files ? join(', ', @files) : '(none resolved)');
+	push @lines, '  on-screen controls (from the code): ' . (@h ? join(', ', @h) : '(none found)');
+	push @lines, '  hand-written entry last vetted: ' . ($v || 'never') . '.';
+	return join "\n", @lines;
+}
+
+# Check every topic against the tree. Returns a list of [severity, topic, message]
+# where severity is one of 'error' (blocking), 'stale' (the code moved on), or
+# 'warn'/'info' (advisory).
+sub audit {
+	my %ids = map { $_ => 1 } keys %topic;
+	my @out;
+	foreach my $id (sort keys %topic) {
+		my $t = $topic{$id};
+		foreach my $r ( @{ $t->{'related'} || [] } ) {
+			push @out, [ 'error', $id, "related '$r' has no topic" ] unless $ids{ help::key($r) };
+		}
+		foreach my $p ( @{ $t->{'templates'} || [] } ) {
+			push @out, [ 'error', $id, "listed template '$p' is missing" ] unless -e $p;
+		}
+		my @files = help::resolve_files($id);
+		if ($t->{'app'} && !@files) {
+			push @out, [ 'warn', $id, "no source files resolved for app '$t->{'app'}' - add a templates list" ];
+		}
+		if ($t->{'controls'}) {
+			my %h = map { $_ => 1 } help::hints(@files);
+			foreach my $c ( @{ $t->{'controls'} } ) {
+				push @out, [ 'error', $id, "control '$c' is no longer an on-screen hint in the app" ] unless $h{$c};
+			}
+		}
+		my $v = $t->{'verified'} || $verified_default;
+		if ($v && @files) {
+			open my $fh, '-|', 'git', 'log', '--oneline', "--since=$v", '--', @files or next;
+			my @commits = <$fh>;
+			close $fh;
+			push @out, [ 'stale', $id, "source changed since it was vetted on $v (" . scalar(@commits) . ' commit(s))' ] if @commits;
+		}
+	}
+	# app templates with no topic at all
+	foreach my $f ( sort glob('templates/apps/*.html.ep') ) {
+		(my $base = $f) =~ s{.*/}{};
+		$base =~ s{\.html\.ep$}{};
+		my $found = 0;
+		foreach my $id (keys %topic) { if (($topic{$id}->{'app'} || '') eq $base) { $found = 1; last; } }
+		push @out, [ 'info', '(orphan)', "templates/apps/$base.html.ep has no topic" ] unless $found;
+	}
+	return @out;
 }
 
 1;

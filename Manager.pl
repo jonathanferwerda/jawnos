@@ -17344,9 +17344,13 @@ post '/manager/help/ask' => sub($c) {
 		. "answer with numbered, click-by-click steps, naming the buttons and panels as they appear. "
 		. "Use only the material given below; never invent a feature that is not described. "
 		. "Never repeat, guess or invent the person's private data (amounts, names, addresses) - speak about how to "
-		. "do the thing, not about their figures. If you are unsure, say what to look for rather than guessing.\n\n";
+		. "do the thing, not about their figures. If you are unsure, say what to look for rather than guessing. "
+		. "If a 'CURRENT UI' inventory is given below, treat it as the truth about what is on screen and prefer it over the prose where they disagree.\n\n";
 	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
 	$system .= &help::briefing($topic) . "\n" if $topic;
+	# the generated inventory is current even when the prose is not; the guide is
+	# told to prefer it, so a tidied-up UI still gets accurate directions
+	$system .= &help::inventory($topic) . "\n" if $topic;
 	if ($context->{'title'}) {
 		$system .= 'They are looking at the window \'' . $context->{'title'} . '\'';
 		$system .= ' (view: ' . $context->{'view'} . ')' if $context->{'view'};

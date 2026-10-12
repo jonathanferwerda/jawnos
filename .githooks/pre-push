@@ -1,0 +1,23 @@
+#!/bin/sh
+# pre-push - keep the Help registry honest.
+#
+# Runs the help auditor before a push. Hard errors (a broken related link, a
+# listed template that no longer exists, a control the topic names that is no
+# longer on screen) BLOCK the push. Stale topics are printed as a to-do but do
+# not block, so tidying the code never traps anyone mid-refactor.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass for a moment:     git push --no-verify
+cd "$(git rev-parse --show-toplevel)" || exit 0
+command -v perl >/dev/null 2>&1 || exit 0
+[ -f scripts/help_audit.pl ] || exit 0
+[ -f help.pl ] || exit 0
+
+out=$(perl scripts/help_audit.pl --quiet 2>&1)
+status=$?
+printf '%s\n' "$out"
+if [ "$status" -ne 0 ]; then
+	printf '\nhelp_audit: the Help registry has errors (above). Fix them, or push with --no-verify.\n'
+	exit 1
+fi
+exit 0
