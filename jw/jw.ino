@@ -109,6 +109,12 @@ static volatile bool voiceOneShot = false;   // a serial "voice" capture, not th
 // then, so a spoken command is not cut short by the watch dozing (the tilt-wake
 // delay the user asked for).
 static volatile bool voiceRecording = false;
+// True from the moment a clip starts shipping until the server acks it: the send
+// is hundreds of paced notifications, and the screen's short look would doze (and
+// light-sleep, which drops the radio) part-way through - exactly how a spoken
+// command went missing while a glance's worth of frames came through. loop() holds
+// the screen awake while either flag is set.
+static volatile bool voiceShipping = false;
 // The clip's own timestamp: it rides with the clip to the server and comes back on
 // the voice_done ack, so the watch deletes the file only for the clip that was
 // transcribed (not a newer one that has since been recorded over it).
@@ -1489,7 +1495,7 @@ void loop() {
   wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
   // a spoken command keeps the watch awake until it is captured: without this the
   // screen timeout could doze us mid-sentence and the clip would be lost
-  if (voiceRecording) {
+  if (voiceRecording || voiceShipping) {
     buttonMillis = millis();
   }
   // the orange ring: shown for exactly as long as a command is being heard
@@ -3403,6 +3409,7 @@ static void voiceListenTask(void *pv) {
         // network round trip, not the transcription.
         long ts = voice_clip_ts;
         int tries = 0;
+        voiceShipping = true;
         while (voiceListening && voice_acked_ts != ts && tries < 4) {
           tries++;
           if (!voice_ship_clip(VOICE_WAV_PATH)) { break; }
@@ -3411,6 +3418,7 @@ static void voiceListenTask(void *pv) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }
         }
+        voiceShipping = false;
         if (voice_acked_ts != ts) {
           Serial.println("[voice] clip unacked; left on disk for the next pass");
         }
