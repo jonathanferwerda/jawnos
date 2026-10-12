@@ -7161,14 +7161,22 @@ sub remote_machine_tunnel_processor() {
 		my $tun = &subs::tunnel_port_mapper({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}  });
 		$rm->{'tuns'} = $tun;
 
-		$rm->{'ip'} = '127.0.0.1';
-		$rm->{'port_dock'} = $tun->{'PORT_DOCK'};
-		my $man = $rm->{'manager'};
-		$rm->{'manager'} = 'https://' . $rm->{'ip'} . ':' . $tun->{'PORT_AHOY'};
-		if ($man ne $rm->{'manager'}) {
-			&subs::db_update('remote_machines', {
-				manager => $rm->{'manager'},
-			}, { uuid => $rm->{'uuid'} });
+		# A tunnel flag can outlive its rows (the peer redialled, the hub retired
+		# the batch, or the failure counter dropped them). Rewriting the manager
+		# from an empty map writes a portless 'https://127.0.0.1:' that then
+		# replaces the peer's real address until its next redial, so only rewrite
+		# when the tunnel actually reserved a port; otherwise leave the advertised
+		# manager (and the LAN fallback below) to reach the peer.
+		if ($tun->{'PORT_AHOY'}) {
+			$rm->{'ip'} = '127.0.0.1';
+			$rm->{'port_dock'} = $tun->{'PORT_DOCK'};
+			my $man = $rm->{'manager'};
+			$rm->{'manager'} = 'https://' . $rm->{'ip'} . ':' . $tun->{'PORT_AHOY'};
+			if ($man ne $rm->{'manager'}) {
+				&subs::db_update('remote_machines', {
+					manager => $rm->{'manager'},
+				}, { uuid => $rm->{'uuid'} });
+			}
 		}
 	}
 	# If reaching the peer by its stored manager would loop back home (its name
