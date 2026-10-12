@@ -252,6 +252,7 @@ static void screen_gesture(lv_event_t *e);
 static void ble_push_steps(bool force);
 static void voiceListenStart(bool one_shot);
 static void voice_control(lv_event_t *e);
+static void voice_border_show(bool on);
 void setting_room();
 String chat_room;
 bool loraChatBroadcaster = false;
@@ -1485,6 +1486,14 @@ void loop() {
   // screen timeout could doze us mid-sentence and the clip would be lost
   if (voiceRecording) {
     buttonMillis = millis();
+  }
+  // the orange ring: shown for exactly as long as a command is being heard
+  {
+    static bool voice_border_on = false;
+    if (voiceRecording != voice_border_on) {
+      voice_border_on = voiceRecording;
+      voice_border_show(voice_border_on);
+    }
   }
   if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     lowPowerEnergyHandler();
@@ -3232,6 +3241,39 @@ static bool voice_ship_clip(const String &path) {
   }
   Serial.println("[voice] no radio to ship the clip on");
   return false;
+}
+
+// The orange ring: a border around the whole panel while a spoken command is
+// being heard. It lives on the top layer so the per-room rebuilds - which
+// lv_obj_clean the screen - never sweep it away, and it is not clickable, so a
+// touch still lands on the buttons beneath it. loop() drives it from
+// `voiceRecording`, the same flag that keeps the screen awake mid-sentence, so
+// the ring means the one thing: the watch is listening right now.
+static lv_obj_t *voice_border = nullptr;
+
+static void voice_border_maker() {
+  if (voice_border) { return; }
+  voice_border = lv_obj_create(lv_layer_top());
+  lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(voice_border, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_pos(voice_border, 0, 0);
+  lv_obj_set_style_bg_opa(voice_border, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_radius(voice_border, 0, LV_PART_MAIN);
+  lv_obj_set_style_border_color(voice_border, lv_color_hex(0xff8000), LV_PART_MAIN);
+  lv_obj_set_style_border_width(voice_border, 6, LV_PART_MAIN);
+  lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void voice_border_show(bool on) {
+  voice_border_maker();
+  if (!voice_border) { return; }
+  if (on) {
+    lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+  }
+  else {
+    lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 static void voiceListenTask(void *pv) {
