@@ -365,12 +365,12 @@ our $budget_statuses = {
 		},
 		n => 2
 	},
-	abused => {
+	overkill => {
 		notifier => sub(){
 			my $rt = shift;
 			$rt->{'colour'} = 'red';
 			$rt->{'text-colour'} = 'white';
-			$rt->{'status'} = 'abused';
+			$rt->{'status'} = 'overkill';
 			return $rt;
 		},
 		n => 1

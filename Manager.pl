@@ -12123,7 +12123,7 @@ sub budget_calculator($data) {
 sub budget_status_maker($returner) {
 	# a target of nothing - a period only just opened, or a budget of zero - has
 	# nothing to fall behind: the value is read as on track, rather than the
-	# ratio's 0 >= 0 landing on "abused"
+	# ratio's 0 >= 0 landing on "overkill"
 	if (!defined $returner->{'expected'} || $returner->{'expected'} <= 0) {
 		return &{$gb::budget_statuses->{'budgeted'}->{'notifier'}}($returner);
 	}
@@ -12133,7 +12133,7 @@ sub budget_status_maker($returner) {
 		$returner->{'synth'} = 'play -v .3 "| sox -n -p synth .51 sine 391 && play | sox -n -p synth .51 triangle 500"';
 	}
 	elsif ($returner->{'actual'} >= $returner->{'expected'} * 2) {
-		$status = 'abused';
+		$status = 'overkill';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .51 pinknoise 1125 && play | sox -n -p synth .51 whitenoise 100"';
 	}
 	elsif ($returner->{'actual'} >= $returner->{'expected'} * 1.2) {

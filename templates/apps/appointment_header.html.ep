@@ -29,11 +29,11 @@
 				<% my $budget = $appts->{$appointments->[0]}->{'budget'}->{$br}; %>
 				<% my $colour = $budget->{'colour'} || 'yellow'; %>
 				<% my $glyph = &subs::budget_icon($br); %>
-				<span class="budget_light hover" circumstance="<%= $br %>" app="<%= $a %>" title="<%= &subs::format_name($br) %>" style="float:right;border:solid;border-radius:50%;width:28px;height:28px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background-color:<%= $colour %>;color:<%= &subs::contrast_ink($colour) %>;">
+				<span class="budget_light hover" circumstance="<%= $br %>" app="<%= $a %>" title="<%= &subs::format_name($br) %>" style="float:right;border:solid;border-radius:50%;width:40px;height:40px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background-color:<%= $colour %>;color:<%= &subs::contrast_ink($colour) %>;">
 					<% if ($glyph) { %>
-						<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true" style="display:block;pointer-events:none;"><%== $glyph %></svg>
+						<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true" style="display:block;pointer-events:none;"><%== $glyph %></svg>
 					<% } else { %>
-						<span style="font-size:15px;font-weight:700;line-height:1;pointer-events:none;"><%= &subs::format_name(substr($br, 0, 1)) %></span>
+						<span style="font-size:22px;font-weight:700;line-height:1;pointer-events:none;"><%= &subs::format_name(substr($br, 0, 1)) %></span>
 					<% } %>
 				</span>
 			<% } %>
