@@ -142,7 +142,6 @@ async function musicInit(method) {
 		mf.addClass('playing');
 		var playing = $('.playing');
 		tree.current_track = playing.attr('number');
-	//	tree.sound.volume = 1;
 		thisTrack(playing.closest('.track_item'));
 		$('#video_full_title').text(playing.find('.full_title').text());
 
@@ -153,9 +152,7 @@ async function musicInit(method) {
 			if (method != 'search') {
 				tree.sound.currentTime = pd.currentTime;
 			}
-	//		if (method != 'search') {
-				tree.sound.state = pd.state;
-	//		}
+			tree.sound.state = pd.state;
 		}
 		$('#music_player_data').text(jpd);
 
@@ -274,7 +271,6 @@ function treeMaker() {
 	};
 	for (n = 0; n <= tree.files.length - 1; n++) {
 		if (tree.files[n].textContent !== undefined) {
-//			JSON.parse($(tree.files[n]).val());
 			var info;
 			if (isJson($('.file_json[file_uuid="' + $(tree.files[n]).attr('file_uuid') + '"]').text())) {
 				info = JSON.parse($('.file_json[file_uuid="' + $(tree.files[n]).attr('file_uuid') + '"]').text());
@@ -350,8 +346,6 @@ function mediaMaker(data) {
 					$('#video').hide();
 					$('#video').attr('type', 'audio');
 					$('#album_cover').show();
-					var miss = $('#video').attr('miss');
-				//	$('#' + miss + '_controls').show();
 				}
 				else {
 					$('#video').attr('type', 'video').show();
@@ -383,7 +377,6 @@ function mediaMaker(data) {
 					this.removeAttribute('src');
 				});
 				tree.sound.video = true;
-		//		tree.sound.controls = true;
 				tree.sound.html5 = true;
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
@@ -563,7 +556,6 @@ function remoteTrackToggle(data) {
 	$.each(mao, function(i,v) {
 		if (i.match("\\.")) {
 			if (v == 'on' && $('.music_audio_output_select[value="' + i + '"]').length > 0) {
-			//	tree.sound.volume = 0;
 				var timestamp = Date.now();
 				var tr = { queuing: data['queuing'], timestamp: timestamp, volume: master_volume, method: 'transmitter', music_data: music_data, file: file, domain: i, toggle: toggle, seek: seek };
 				var jtr = JSON.stringify(tr);
@@ -1102,13 +1094,6 @@ function searchMusic(data) {
 }
 
 function playing_now(movement) {
-	var playing_scroll;
-	if ($('.playing').is(':visible') > 0) {
-		playing_scroll = ($('#music_files').scrollTop() - ( $('.playing').offset().top || 0 ) + $('#interface').height());
-	}
-	else {
-		playing_scroll = "5 billion or something!";
-	}
 	if (movement != 'update') {
 		musicAppointmentWriter('stop');
 		$('.playing').removeClass('playing');
@@ -1116,7 +1101,6 @@ function playing_now(movement) {
 	$('#track_' + tree.current_track).parent().addClass('playing');
 	$('.track_description').each(function() { $(this).hide() });
 	$('#track_' + tree.current_track).parent().find('.track_description').show();
-	//$('#music_files').scrollTop(playing_scroll);
 
 	return tree.current_track;
 
