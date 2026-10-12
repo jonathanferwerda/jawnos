@@ -10074,11 +10074,21 @@ sub inventory_details($c,$settings) {
 		}
 		$returner->{'between_average'} = eval { $returner->{'between_total'} / $returner->{'total_occurences'} } || undef;
 	}
+	# A row stays only if it holds something for what is on screen. A period that
+	# reaches past now can catch a stray future-dated appointment and come back as
+	# a bucket that carries no value for the chosen display - a note dated years
+	# ahead lands in the year rows that reach it - and that empty row should not
+	# take up space in the table or the graph.
 	foreach my $ts ( @time_scopes ) {
-
-		if (!$returner->{$ts}) {
-			@revised_time_scopes = grep { $_ ne $ts } @revised_time_scopes;
+		my $row = $returner->{$ts};
+		my $holds = 0;
+		if ($row) {
+			foreach my $scope ( @time_lengths ) {
+				next unless $row->{$scope} && ref $row->{$scope} eq 'HASH';
+				if (defined $row->{$scope}->{$s_display}) { $holds = 1; last; }
+			}
 		}
+		@revised_time_scopes = grep { $_ ne $ts } @revised_time_scopes unless $holds;
 	}
 	my @sb;
 	foreach my $s ( @display_options ) {
