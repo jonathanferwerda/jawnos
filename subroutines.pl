@@ -2146,7 +2146,16 @@ sub ble_message_processor() {
 		# wire. The same ingest the WiFi route runs, so both transports agree.
 		my $b64 = $msg->{'data'};
 		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
-		&subs::voice_ingest($raw, { edt => ($msg->{'edt'} || 'watch'), chip_id => $msg->{'chip_id'}, ts => $msg->{'ts'} }) if $raw;
+		if ($raw) {
+			# Off the listener: whisper takes seconds, and while it ran inline the
+			# listener stopped taking the next clip's parts, which the phone then
+			# dropped ("276 part(s) never arrived"). The forked worker re-dials the
+			# database itself (see database_grabber).
+			my ($edt, $chip_id, $ts) = ($msg->{'edt'} || 'watch', $msg->{'chip_id'}, $msg->{'ts'});
+			&subs::subprocessor(sub {
+				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts });
+			}, { name => 'voice ingest' });
+		}
 		return;
 	}
 	my $url = $msg->{'url'};
