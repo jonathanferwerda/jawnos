@@ -1327,6 +1327,12 @@ function topLevelNow(win) {
 			var now = Date.now();
 			win.find('.window_contents').css({ 'z-index': top_level_now + 1 });
 			win.find('.top_navbar').css({ 'z-index': top_level_now + 2 });
+			// The frame ring must out-paint both of those whatever they climb to: a
+			// restored window can carry a z-index past the ring's own huge default,
+			// which would lift the bar over its own frame. Tracking the same base
+			// keeps the ring on top; the floor keeps it above every template's
+			// in-window z-index in the ordinary case, where it stays the huge value.
+			win.css('--frame_z', Math.max(2147483000, top_level_now + 3));
 			win.css({ 'z-index': top_level_now + 1 });
 			top_level_now = (Number(top_level_now) + 1);
 			win.attr('last_top', now);

@@ -613,9 +613,11 @@ canvas { overflow: scroll; z-index: 99; }
    rather than a real border on .wind: a border would be counted in the box and
    shift every window's saved width/height and its resizable/drag math by its
    own width. The ring lands on the navbar's own border along the top and sides
-   and is what closes the window at the foot. The z-index is huge on purpose -
-   topLevelNow hands the contents and the navbar their own z-index inside the
-   window's own stacking context, and the ring has to sit over them.
+   and is what closes the window at the foot. topLevelNow hands the contents and
+   the navbar their own z-index inside the window's own stacking context, and the
+   ring has to sit over them; it reads --frame_z, which topLevelNow keeps just
+   above that pair. The fallback is huge on purpose - it beats every template's
+   own in-window z-index whenever --frame_z is unset (a window not yet raised).
    The colour follows the theme's chrome (--line) unless the misc setting
    window_border_colour overrides it, which rides the root as
    --window_border_colour so every window - and the title bar's own edge below -
@@ -629,7 +631,7 @@ canvas { overflow: scroll; z-index: 99; }
 	border-color: var(--window_border_colour, var(--line));
 	border-radius: inherit;
 	pointer-events: none;
-	z-index: 2147483000;
+	z-index: var(--frame_z, 2147483000);
 }
 /* the window title bar is a thin strip: the icon, the name and the window
    controls all answer to the one figure, so the bar closes up around them
