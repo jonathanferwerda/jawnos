@@ -1,12 +1,14 @@
 <%
-	# The Help window's contents. Rendered both as a whole window (via the
-	# /manager/help route) and on its own (via /manager/help/body), so the whole
-	# template is the .help_shell element and nothing above it.
+	# The Help window's contents. Rendered whole (via /manager/help, wrapped in a
+	# window) and on its own (via /manager/help/body) for in-place updates: the
+	# client swaps only the rail list and the topic pane, so the search box and
+	# the guide panel below survive a topic change.
 	my $raw = $topic // '';
 	my $shown = &help::get($raw);
 	my $search = $search // '';
 	my $results = length $search ? [ &help::search($search) ] : undef;
 	my $catalogue = [ &help::catalogue() ];
+	my $selected_model = $selected_model // '';
 	my %category_label = ( apps => 'Apps', features => 'Features', functions => 'Functions', devices => 'Devices' );
 	my %category_icon = (
 		apps => '/images/decipherable/folder.png',
@@ -15,76 +17,112 @@
 		devices => '/images/decipherable/microchip.png'
 	);
 	my @category_order = qw/apps features functions devices/;
+	my $default_question = $shown ? ('Guide me through ' . $shown->{'title'} . ', step by step.') : '';
 %>
-<div class="help_shell" style="display:flex;gap:0;width:100%;height:100%;color:var(--ink);">
-	<div class="help_rail" style="width:38%;min-width:150px;max-width:320px;height:100%;overflow-y:auto;border-right:2px solid var(--line);padding:8px 6px 24px 10px;box-sizing:border-box;">
-		<input id="help_search" placeholder="Search help…" value="<%= $search %>"
-			style="width:100%;box-sizing:border-box;margin:0 0 10px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;">
-		<% if ($results) { %>
-			<div class="help_group_label" style="font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:4px 2px;">Results</div>
-			<% if (!@{$results}) { %>
-				<div style="opacity:.7;padding:6px 2px;">Nothing found for “<%= $search %>”.</div>
-			<% } %>
-			<% foreach my $r ( @{$results} ) { %>
-				<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
-					style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
-					<%= $r->{'title'} %>
-					<span style="display:block;font-size:11px;opacity:.65;line-height:1.25;"><%= $r->{'summary'} %></span>
-				</span>
-			<% } %>
-		<% } else { %>
-			<% foreach my $cat ( @category_order ) { %>
-				<% my @items = grep { $_->{'category'} eq $cat } @{$catalogue}; %>
-				<% next unless @items; %>
-				<div class="help_group_label" style="display:flex;align-items:center;gap:6px;font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:8px 2px 3px;">
-					<img class="little_thumb" style="width:16px;height:16px;" src="<%= &subs::icon_for($category_icon{$cat}) %>">
-					<%= $category_label{$cat} %>
-				</div>
-				<% foreach my $r ( @items ) { %>
-					<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
-						style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
-						<%= $r->{'title'} %>
-					</span>
-				<% } %>
-			<% } %>
-		<% } %>
-	</div>
-	<div class="help_body" style="flex:1;height:100%;overflow-y:auto;padding:14px 20px 40px;box-sizing:border-box;">
-		<% if ($shown) { %>
-			<h2 style="margin:4px 0 2px;font-size:24px;"><%= $shown->{'title'} %></h2>
-			<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%= $shown->{'summary'} %></div>
-			<% foreach my $para ( @{ $shown->{'body'} } ) { %>
-				<p style="line-height:1.5;margin:0 0 12px;"><%= $para %></p>
-			<% } %>
-			<% if ($shown->{'app'}) { %>
-				<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="Open <%= $shown->{'title'} %>"
-					style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
-					Open <%= $shown->{'title'} %>
-				</span>
-			<% } %>
-			<% if (@{ $shown->{'related'} || [] }) { %>
-				<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
-					<span style="opacity:.6;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">See also</span><br>
-					<% foreach my $rid ( @{ $shown->{'related'} } ) { %>
-						<% my $rel = &help::get($rid); next unless $rel; %>
-						<span class="help_topic_link hover" topic="<%= &help::key($rid) %>" hint="<%= $rel->{'summary'} %>"
-							style="display:inline-block;margin:6px 8px 0 0;padding:4px 10px;border-radius:14px;border:1px solid var(--line);cursor:pointer;">
-							<%= $rel->{'title'} %>
+<div class="help_window" style="display:flex;flex-direction:column;width:100%;height:100%;color:var(--ink);">
+	<div class="help_shell" style="display:flex;flex:1;min-height:0;width:100%;">
+		<div class="help_rail" style="width:38%;min-width:150px;max-width:330px;display:flex;flex-direction:column;height:100%;border-right:2px solid var(--line);box-sizing:border-box;">
+			<input id="help_search" placeholder="Search help…" value="<%= $search %>"
+				style="box-sizing:border-box;margin:8px 6px 6px 10px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;">
+			<div class="help_rail_list" style="flex:1;overflow-y:auto;padding:0 6px 24px 10px;">
+				<% if ($results) { %>
+					<div class="help_group_label" style="font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:4px 2px;">Results</div>
+					<% if (!@{$results}) { %>
+						<div style="opacity:.7;padding:6px 2px;">Nothing found for “<%= $search %>”.</div>
+					<% } %>
+					<% foreach my $r ( @{$results} ) { %>
+						<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
+							style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+							<%= $r->{'title'} %>
+							<span style="display:block;font-size:11px;opacity:.65;line-height:1.25;"><%= $r->{'summary'} %></span>
 						</span>
 					<% } %>
-				</div>
+				<% } else { %>
+					<% foreach my $cat ( @category_order ) { %>
+						<% my @items = grep { $_->{'category'} eq $cat } @{$catalogue}; %>
+						<% next unless @items; %>
+						<div class="help_group_label" style="display:flex;align-items:center;gap:6px;font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:8px 2px 3px;">
+							<img class="little_thumb" style="width:16px;height:16px;" src="<%= &subs::icon_for($category_icon{$cat}) %>">
+							<%= $category_label{$cat} %>
+						</div>
+						<% foreach my $r ( @items ) { %>
+							<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
+								style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+								<%= $r->{'title'} %>
+							</span>
+						<% } %>
+					<% } %>
+				<% } %>
+			</div>
+		</div>
+		<div class="help_body" style="flex:1;min-height:0;overflow-y:auto;padding:14px 20px 40px;box-sizing:border-box;">
+			<% if ($shown) { %>
+				<h2 style="margin:4px 0 2px;font-size:24px;"><%= $shown->{'title'} %></h2>
+				<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%= $shown->{'summary'} %></div>
+				<% foreach my $para ( @{ $shown->{'body'} } ) { %>
+					<p style="line-height:1.5;margin:0 0 12px;"><%= $para %></p>
+				<% } %>
+				<% if (@{ $shown->{'steps'} || [] }) { %>
+					<div style="margin:4px 0 14px;padding:10px 12px 4px;border:1px solid var(--line);border-radius:8px;">
+						<div style="font-weight:bold;margin-bottom:6px;">Step by step</div>
+						<ol style="margin:0 0 6px 18px;padding:0;line-height:1.5;">
+							<% foreach my $step ( @{ $shown->{'steps'} } ) { %>
+								<li style="margin-bottom:5px;"><%= $step %></li>
+							<% } %>
+						</ol>
+					</div>
+				<% } %>
+				<% if ($shown->{'app'}) { %>
+					<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="Open <%= $shown->{'title'} %>"
+						style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+						Open <%= $shown->{'title'} %>
+					</span>
+				<% } %>
+				<% if (@{ $shown->{'related'} || [] }) { %>
+					<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+						<span style="opacity:.6;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">See also</span><br>
+						<% foreach my $rid ( @{ $shown->{'related'} } ) { %>
+							<% my $rel = &help::get($rid); next unless $rel; %>
+							<span class="help_topic_link hover" topic="<%= &help::key($rid) %>" hint="<%= $rel->{'summary'} %>"
+								style="display:inline-block;margin:6px 8px 0 0;padding:4px 10px;border-radius:14px;border:1px solid var(--line);cursor:pointer;">
+								<%= $rel->{'title'} %>
+							</span>
+						<% } %>
+					</div>
+				<% } %>
+			<% } else { %>
+				<h2 style="margin:4px 0 2px;font-size:24px;">Help</h2>
+				<p style="line-height:1.5;margin:0 0 12px;">
+					Pick a topic on the left, or search for one. Press <b>F1</b> to read about whatever window you are
+					focused on, and hover (or long-press) any control for a short hint — the question-mark button in a
+					window's title bar opens the topic for that window.
+				</p>
+				<p style="line-height:1.5;margin:0 0 12px;opacity:.8;">
+					Everything is grouped into <b>apps</b> (things you open), <b>features</b> (parts of the desktop
+					itself), <b>functions</b> (cross-cutting mechanics) and <b>devices</b> (the watch, deck and Pico).
+					Any topic can hand you to the guide below, which will walk you through it.
+				</p>
 			<% } %>
-		<% } else { %>
-			<h2 style="margin:4px 0 2px;font-size:24px;">Help</h2>
-			<p style="line-height:1.5;margin:0 0 12px;">
-				Pick a topic on the left, or search for one. Press <b>F1</b> to read about whatever window you are
-				focused on, and hover (or long-press) any control for a short hint — the question-mark button in a
-				window's title bar opens the topic for that window.
-			</p>
-			<p style="line-height:1.5;margin:0 0 12px;opacity:.8;">
-				Everything is grouped into <b>apps</b> (things you open), <b>features</b> (parts of the desktop
-				itself), <b>functions</b> (cross-cutting mechanics) and <b>devices</b> (the watch, deck and Pico).
-			</p>
-		<% } %>
+		</div>
+	</div>
+	<div class="help_agent" style="border-top:2px solid var(--line);padding:8px 12px 10px;box-sizing:border-box;flex:0 0 auto;background:var(--panel);">
+		<div class="help_agent_row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+			<span style="font-weight:bold;font-size:13px;opacity:.8;">Guide</span>
+			<select id="help_model" class="help_model_select" value="<%= $selected_model %>"
+				style="max-width:210px;padding:3px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px;">
+				<option value="">Choose a model…</option>
+				<% if ($models) { foreach my $cm ( @{$models} ) { my $mid = $cm->{'model'} || $cm->{'name'}; next unless $mid; %>
+					<option value="<%= $mid %>" <% if ($selected_model eq $mid) { %>selected<% } %>><%= $cm->{'name'} || $mid %></option>
+				<% } } %>
+			</select>
+			<span id="help_context" style="font-size:12px;opacity:.7;"></span>
+		</div>
+		<div class="help_agent_row" style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;">
+			<textarea id="help_question" placeholder="Ask the guide…" style="flex:1;height:38px;min-height:38px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-size:13px;resize:vertical;" data-default="<%= $default_question %>"><%= $default_question %></textarea>
+			<button id="help_ask" class="button" hint="Send this topic to the guide" style="padding:8px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Guide me</button>
+		</div>
+		<div id="help_answer" class="help_answer" style="margin-top:6px;max-height:34vh;overflow-y:auto;font-size:13px;line-height:1.5;opacity:.9;">
+			<% if ($shown) { %>Ask the guide and it will walk you through <b><%= $shown->{'title'} %></b>, using the window you came from as context.<% } else { %>Open a topic, then ask the guide to walk you through it.<% } %>
+		</div>
 	</div>
 </div>

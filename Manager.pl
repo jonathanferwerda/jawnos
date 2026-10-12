@@ -17299,10 +17299,17 @@ get '/manager/handbook/:chapter' => sub ($c) {
 # rebuilding (and re-raising) the whole window.
 get '/manager/help' => sub($c) {
 	my $timestamp = $c->param('timestamp');
+	# the model list the guide's dropdown is built from — the same agents the
+	# mailbox's Pen offers, so the choice is made in one place
+	my $models = &subs::pen_model_list();
+	push @{$models}, @{ &subs::cloudflare_model_list() };
+	my $selected_model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	my $contents = $c->render_to_string(
 		template => 'apps/help',
 		topic => $c->param('topic'),
-		search => $c->param('search')
+		search => $c->param('search'),
+		models => $models,
+		selected_model => $selected_model
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'help', contents => $contents }, $timestamp);
 	$c->render(text => $website);
@@ -17312,9 +17319,47 @@ get '/manager/help/body' => sub($c) {
 	my $html = $c->render_to_string(
 		template => 'apps/help',
 		topic => $c->param('topic'),
-		search => $c->param('search')
+		search => $c->param('search'),
+		models => undef,
+		selected_model => ''
 	);
-	$c->render(json => { html => $html });
+	$c->render(text => $html);
+};
+
+# The Help agent: the topic's own entry, plus what the reader was looking at,
+# becomes the system prompt; the question is the turn. The answer is read whole
+# through the same helper the evaluation uses, so there is one model wire.
+post '/manager/help/ask' => sub($c) {
+	my $topic = $c->param('topic');
+	my $question = $c->param('question') || 'Walk me through this step by step.';
+	my $model = $c->param('model');
+	my $context = eval { decode_json $c->param('context') } || {};
+	if (!$model) {
+		$c->render(json => { error => 'No model is selected for the guide.' });
+		return;
+	}
+	my $t = $topic ? &help::get($topic) : undef;
+	my $system = "You are the built-in guide inside JawnOS, a self-hosted personal desktop environment. "
+		. "You are helping the person who uses it. Be warm, concrete and brief. When they ask how to do something, "
+		. "answer with numbered, click-by-click steps, naming the buttons and panels as they appear. "
+		. "Use only the material given below; never invent a feature that is not described. "
+		. "Never repeat, guess or invent the person's private data (amounts, names, addresses) - speak about how to "
+		. "do the thing, not about their figures. If you are unsure, say what to look for rather than guessing.\n\n";
+	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
+	$system .= &help::briefing($topic) . "\n" if $topic;
+	if ($context->{'title'}) {
+		$system .= 'They are looking at the window \'' . $context->{'title'} . '\'';
+		$system .= ' (view: ' . $context->{'view'} . ')' if $context->{'view'};
+		$system .= ' (appointment: ' . $context->{'appointment'} . ')' if $context->{'appointment'};
+		$system .= ".\n";
+	}
+	$system .= "\nAnswer in plain text. Keep it under about 180 words unless they ask for more.";
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, $question);
+	if ($err || !$text) {
+		$c->render(json => { error => $err || 'the guide returned nothing readable' });
+		return;
+	}
+	$c->render(json => { answer => $text });
 };
 
 post '/manager/handbook/settings' => sub ($c) {

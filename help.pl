@@ -6,9 +6,12 @@
 #   category - 'apps' | 'features' | 'functions' | 'devices'
 #   summary  - one line, used in the index and in hover enrichments
 #   body     - an arrayref of paragraphs (plain text; the template escapes it)
+#   steps    - an optional arrayref of how-to steps, shown as an ordered list
 #   related  - an arrayref of other topic ids worth reading next
 #   app      - optional: the app name whose window this topic explains, so the
 #              template can offer an "Open" button
+#   prompt   - optional: extra steering handed to the Help agent for this topic,
+#              on top of the entry itself
 #
 # The registry is deliberately data, not code: adding a topic is adding a key.
 # Topics are matched case-insensitively and tolerate spaces or hyphens where the
@@ -31,6 +34,12 @@ our %topic = (
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
 			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.'
 		],
+		steps => [
+			'Open Folders from the start menu.',
+			'Click into a folder to descend; the breadcrumb along the top walks back up.',
+			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
+			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.'
+		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
 	'gallery' => {
@@ -39,6 +48,11 @@ our %topic = (
 		body => [
 			'Gallery lays your images out for viewing. It reads from the same media folders as Folders and adds album grouping and a viewing surface with pan and zoom.',
 			'Image functions live alongside it — cropping, resizing and the like — and a map view for images that carry a location.'
+		],
+		steps => [
+			'Open Gallery; it loads the images from your media folders.',
+			'Click an image to view it full-size; drag to pan and scroll to zoom.',
+			'Use the toolbar for the image functions — crop, rotate, resize — and the map for located shots.'
 		],
 		related => [ 'folders', 'marker' ]
 	},
@@ -49,6 +63,11 @@ our %topic = (
 			'Marker is a layered paint board with pencil, paintbrush, spray, fill and matching erase tools, plus undo and redo, zoom and pan.',
 			'It reads stylus pressure and ignores your palm on a tablet, and it autosaves so a refresh never loses a painting.'
 		],
+		steps => [
+			'Open Marker and pick a tool from the palette — pencil, brush, spray, fill or erase.',
+			'Add a layer for anything you want to keep separate, and name it by double-clicking.',
+			'Your work autosaves; reopen the drawing later from the marker\'s session list.'
+		],
 		related => [ 'gallery', 'studio' ]
 	},
 	'studio' => {
@@ -58,6 +77,11 @@ our %topic = (
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.'
 		],
+		steps => [
+			'Open Studio and add a track per instrument or take.',
+			'Record or drop a clip onto a track; drag its edges to trim and overlap to crossfade.',
+			'Route a pedalboard onto a channel to shape its sound, then mix the tracks together.'
+		],
 		related => [ 'music', 'synth' ]
 	},
 	'synth' => {
@@ -65,6 +89,11 @@ our %topic = (
 		summary => 'A playable synthesiser.',
 		body => [
 			'Synth is a software synthesiser you play from the screen or a keyboard. It shares the studio\'s audio plumbing, so it can be routed and recorded like any other source.'
+		],
+		steps => [
+			'Open Synth.',
+			'Play the on-screen keyboard, or use a connected MIDI keyboard.',
+			'Shape the sound with the controls, and record it into Studio when you have one you like.'
 		],
 		related => [ 'studio', 'music' ]
 	},
@@ -75,13 +104,22 @@ our %topic = (
 			'Music is the player and library: artists, albums, folders and playlists, with a mute, a lock and a configuration drawer.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.'
 		],
+		steps => [
+			'Open Music; the library lists artists and albums from your media folders.',
+			'Click a track to play it; the transport along the top controls playback.',
+			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.'
+		],
 		related => [ 'studio', 'synth' ]
 	},
 	'video' => {
 		title => 'Video', category => 'apps', app => 'video',
 		summary => 'Play video from your media folders.',
 		body => [
-			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — see the Desktop Application page for the hardware-decode setup that keeps HD smooth.'
+			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
+		],
+		steps => [
+			'Open Video and pick a file from your media folders.',
+			'Play, pause and scrub with the controls; go fullscreen from the player.'
 		],
 		related => [ 'gallery', 'folders' ]
 	},
@@ -91,6 +129,11 @@ our %topic = (
 		body => [
 			'Editor is a rich text editor for letters, notes and documents. Its variables can pull live values — including values from an appointment — so a document can fill itself in from your data.'
 		],
+		steps => [
+			'Open Editor and start a document.',
+			'Where you want a live value, drop in a variable; it can answer for an appointment\'s field.',
+			'Save the article; it appears in the library and can be reopened from where it belongs.'
+		],
 		related => [ 'ide', 'notes' ]
 	},
 	'ide' => {
@@ -98,6 +141,11 @@ our %topic = (
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.'
+		],
+		steps => [
+			'Open the IDE and choose a file from the project tree.',
+			'Edit with syntax colouring and the code helpers.',
+			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.'
 		],
 		related => [ 'editor', 'terminal' ]
 	},
@@ -115,14 +163,28 @@ our %topic = (
 		body => [
 			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.'
 		],
+		steps => [
+			'Open Terminal; it opens a session on the host machine.',
+			'Run commands as you would in any shell.',
+			'Use multiple windows or tabs for separate jobs.'
+		],
 		related => [ 'ide', 'process_monitor' ]
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
 		summary => 'Free-form notes you can scan, OCR and barcode.',
 		body => [
-			'Notes is note-taking with a document-scanning streak: it can OCR a page (Tesseract), read barcodes and QR codes (zbar), and render documents to PDF.'
+			'Notes is note-taking with a document-scanning streak. It can capture a page from a camera or scanner, read a barcode or QR code (zbar), run text recognition over a scan (Tesseract) and render documents to PDF.',
+			'Each note is an appointment like everything else, so a scanned page can carry attachments and be found from whatever it belongs to.'
 		],
+		steps => [
+			'Open Notes and start a new note.',
+			'To scan a document, use the scan action and pick the camera or a scanner; crop the page if you are offered it.',
+			'Turn on OCR to lift the text out of the scan, so the page becomes searchable.',
+			'For a barcode or QR code, use the scan action in its code mode instead — it reads the code and records it on the note.',
+			'Save the note; its scan and any recognised text travel with it.'
+		],
+		prompt => 'The reader wants a genuine step-by-step for scanning a document into JawnOS. Walk them through it in order, naming the buttons as they appear, and keep each step to one action.',
 		related => [ 'editor', 'folders' ]
 	},
 	'tasks' => {
@@ -132,6 +194,12 @@ our %topic = (
 			'Tasks is a nested checklist. Each item carries a colour, a priority, a renewal interval and a budget, so a task can repeat on its own and keep its own tally.',
 			'Ticking an item off can record the matching appointment, so doing the thing and logging the thing are one action.'
 		],
+		steps => [
+			'Open Tasks and add a list.',
+			'Add items; nest related ones under a parent to build a checklist.',
+			'Give an item a colour, a priority, a renewal interval or a budget as needed.',
+			'Tick an item off — if it is set to, the matching appointment is recorded for you.'
+		],
 		related => [ 'appointments', 'measures' ]
 	},
 	'measures' => {
@@ -139,6 +207,11 @@ our %topic = (
 		summary => 'Track a value over time.',
 		body => [
 			'Measures records a number against a time — weight, a reading, a score — and charts it. Ranges, multiple-selects and free values are all available, and the evaluation app can read what it finds.'
+		],
+		steps => [
+			'Open Measures and pick the kind of value: a range, a multiple-select, or a free number.',
+			'Record a reading; it is timestamped and added to the chart.',
+			'Change the scope to look back over a day, a week, a month or a year.'
 		],
 		related => [ 'budget', 'travel', 'evaluation' ]
 	},
@@ -155,6 +228,11 @@ our %topic = (
 		summary => 'People, and the relationships between them.',
 		body => [
 			'Contacts is the relational app: it stores people and the measured, named relationships between them — friend, family, colleague — with a measures panel for each connection.'
+		],
+		steps => [
+			'Open Contacts and add a person.',
+			'Record the people they connect to, and what the relationship is.',
+			'Use the measures panel to track how a connection is going over time.'
 		],
 		related => [ 'mailbox', 'travel' ]
 	},
@@ -179,8 +257,16 @@ our %topic = (
 		summary => 'Statement, budgets, a document ledger and a daily sheet.',
 		body => [
 			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, and a daily sheet.',
-			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account.'
+			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account. The window and its scope (hour, day, week, month, year) come from the app\'s own settings, so a view you set up is the view you come back to.'
 		],
+		steps => [
+			'Open Budget; it lands on the statement for the current scope.',
+			'Change the scope along the top to widen or narrow the window — hour, day, week, month, year.',
+			'Add or edit budgets so the statement has something to hold the movement against.',
+			'Switch the display to the document ledger to see invoices and quotes with their balances, or to the daily sheet for a day at a glance.',
+			'The display and scope are remembered, so the view you settle on is there next time.'
+		],
+		prompt => 'The reader wants help setting up a Budget view that makes sense for them. Help them decide on a scope and a display, and explain what each display is for, step by step. Never invent numbers — talk about how to read and arrange the view, not about their actual figures.',
 		related => [ 'store', 'warehouse', 'invoices_payments' ]
 	},
 	'store' => {
@@ -188,7 +274,14 @@ our %topic = (
 		summary => 'Items, models, options, quotes and invoices.',
 		body => [
 			'Store is the catalogue and the paperwork. Items carry models and options, each with its own prices; a quote or invoice is built from them and prints to a white, house-styled sheet that can be delivered by email.',
-			'Recording a payment against a document updates its balance and closes it when the balance reaches zero. See Invoices and payments.'
+			'Recording a payment against a document updates its balance and closes it when the balance reaches zero.'
+		],
+		steps => [
+			'Open Store and add the items you sell, each with its models and options and their prices.',
+			'Build a quote from those items and options; the totals are worked out as you go.',
+			'When the quote is accepted, move it to an invoice — it converts and the quote is consumed.',
+			'Email the invoice to the customer, or print it to the house-styled sheet.',
+			'Record a payment against it; the balance falls and it closes at zero.'
 		],
 		related => [ 'budget', 'invoices_payments', 'market' ]
 	},
@@ -197,7 +290,13 @@ our %topic = (
 		summary => 'Money and goods tracked per place.',
 		body => [
 			'Warehouse tracks stock per place: what is where and how much of it. Packaging carries real quantities (a carton of twelve, a box of nails by weight), and shelf life means expired stock is swept up on its own.',
-			'Every stock movement is journalled with its reason, and a moves ledger folds stock and money into one signed list. See The moves ledger.'
+			'Every stock movement is journalled with its reason, and a moves ledger folds stock and money into one signed list.'
+		],
+		steps => [
+			'Open Warehouse and set up the places you keep stock in.',
+			'Add your products; where a product ships in packaging, give the packaging its real quantity.',
+			'Move stock in and out — each move is journalled with its reason.',
+			'Read the moves ledger to see goods and money together.'
 		],
 		related => [ 'inventory', 'market', 'moves_ledger' ]
 	},
@@ -213,7 +312,7 @@ our %topic = (
 		title => 'Inventory', category => 'apps', app => 'inventory',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
-			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together. The Evaluation reports appear here too.'
+			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics and the Evaluation reports.'
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	},
@@ -222,15 +321,25 @@ our %topic = (
 		summary => 'Email over IMAP and SMTP, straight on the desktop.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
-			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to.'
+			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant.'
 		],
-		related => [ 'relational', 'store', 'sealing_files' ]
+		steps => [
+			'Open Mailbox and choose a section from the sidebar — sms, email, list, dial, pen or tickets.',
+			'For email, pick a folder (contacts, inbox, drafts, outbox, sent) and an address.',
+			'Compose with the new-file button; attachments are filed and sealed when you send.'
+		],
+		related => [ 'relational', 'store', 'sealing_files', 'assistant' ]
 	},
 	'process_monitor' => {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		summary => 'Live CPU and memory, per-core graphs and a process list.',
 		body => [
 			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.'
+		],
+		steps => [
+			'Open Process Monitor.',
+			'Read the headline CPU and memory figures along the top.',
+			'Sort the process list by CPU or memory to find what is busy.'
 		],
 		related => [ 'configure', 'terminal' ]
 	},
@@ -239,6 +348,11 @@ our %topic = (
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.'
+		],
+		steps => [
+			'Open Configure.',
+			'Use the tabs to move between appearance, devices, utilities and the mesh.',
+			'Changes save as you make them; a bar or theme change is felt at once.'
 		],
 		related => [ 'themes', 'icon_sets', 'devices_and_mesh' ]
 	},
@@ -255,7 +369,13 @@ our %topic = (
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
-			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. See Tickets for the mechanics.'
+			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it.'
+		],
+		steps => [
+			'Open the Box Office.',
+			'Issue a new ticket and choose its privilege — citizen, resident or guest.',
+			'Copy the link and give it to whoever needs it.',
+			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.'
 		],
 		related => [ 'tickets', 'security' ]
 	},
@@ -273,6 +393,11 @@ our %topic = (
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one or push a room to a watch, deck or board.'
 		],
+		steps => [
+			'Open Embedded to list the devices on your network.',
+			'Use Scan to re-discover devices, or Query on a row to ask one board what it is.',
+			'Push a room to send a screen of buttons to a watch or deck.'
+		],
 		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge' ]
 	},
 
@@ -282,9 +407,25 @@ our %topic = (
 		summary => 'Open, stack, move, resize, snap and minimise.',
 		body => [
 			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar.',
-			'The title bar\'s buttons are minimise, restore, maximise and close, and each window\'s drop-down menu adds snapping to half the screen and a move mode for precise placement. The layout of what is open is remembered and restored next time.'
+			'The title bar\'s buttons are help (?), minimise, restore, maximise and close, and each window\'s drop-down menu adds snapping to half the screen and a move mode for precise placement. The layout of what is open is remembered and restored next time.'
 		],
-		related => [ 'taskbar', 'start_menu', 'help_app' ]
+		related => [ 'taskbar', 'start_menu', 'appointment_windows', 'help_app' ]
+	},
+	'appointment_windows' => {
+		title => 'Appointment windows', category => 'features',
+		summary => 'The window that gathers everything about one record.',
+		body => [
+			'Opening an appointment — a task, an invoice, a scan, a note, a measurement — spawns a window built around that one record. It gathers what the record is (its details), what has happened to it, and the things that name it: files, mail, transactions, the apps it touches.',
+			'An appointment window is a centre view: it is not one app but a hub, and it can pull in panels from several apps at once. That is why opening one can feel like the whole desktop leaning in — it is.',
+			'Its header carries the record\'s controls; below it, the panels are drawn from the record\'s own data and the apps that reference it.'
+		],
+		steps => [
+			'Open an appointment by clicking it on the timeline, or a row in any app.',
+			'The header shows what the record is; edit the fields there.',
+			'The panels below gather the files, mail, money and other appointments that name it.',
+			'Close the window when you are done — nothing about the record changes until you edit a field.'
+		],
+		related => [ 'appointments', 'windows' ]
 	},
 	'taskbar' => {
 		title => 'The taskbar', category => 'features',
@@ -292,6 +433,12 @@ our %topic = (
 		body => [
 			'The taskbar is an ordered list of slots: the open windows, the clock, the start button, the search box and any apps or keyboards you have pinned. It can sit on any edge, be shown, hidden or set to auto-hide.',
 			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.'
+		],
+		steps => [
+			'Right-click the bar to open its context menu.',
+			'Turn on edit mode to rearrange the slots and pins.',
+			'Or use Position to move the bar, and Autohide to tuck it away.',
+			'Set the clock\'s format and time zone from the same menu.'
 		],
 		related => [ 'start_menu', 'dock', 'windows' ]
 	},
@@ -301,6 +448,12 @@ our %topic = (
 		body => [
 			'The start menu opens on the apps you used most recently, with a category rail (accessories, business, games, media, system) for the whole catalogue.',
 			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
+		],
+		steps => [
+			'Press the start button to open the menu.',
+			'Use the category rail to narrow the catalogue, or the search box to find an app by name.',
+			'The menu\'s other pages show running, upcoming, expiring and system.',
+			'Help sits at the foot of the menu if you want to read about an app before opening it.'
 		],
 		related => [ 'search', 'taskbar', 'hints' ]
 	},
@@ -334,7 +487,7 @@ our %topic = (
 		summary => 'Hover (or long-press) a control to learn what it does.',
 		body => [
 			'Most controls carry a hint. On a desk you hover over one and a small label appears; on a touchscreen you press and hold instead. That is the fastest way to learn an unfamiliar button.',
-			'For anything longer than a label, open this Help app — press F1, or use the question-mark button in a window\'s title bar, or search here.'
+			'For anything longer than a label, open this Help app — press F1, or use the question-mark button in a window\'s title bar, or search here. The Help agent can then walk you through it.'
 		],
 		related => [ 'help_app', 'start_menu' ]
 	},
@@ -367,13 +520,13 @@ our %topic = (
 
 	# ----------------------------------------------------------- functions
 	'appointments' => {
-		title => 'Appointments and the centre view', category => 'functions',
+		title => 'Appointments', category => 'functions',
 		summary => 'The one record everything else hangs from.',
 		body => [
 			'An appointment is the atom of JawnOS: a timestamped record with a type, a status, a duration and an app-specific body. Files, invoices, measurements, notes and mail are all appointments under the hood, which is why they can refer to one another.',
 			'Opening one spawns a centre view that ties together everything that names it. Appointments can have alarms, recur, and be exported to a calendar.'
 		],
-		related => [ 'clothesline', 'tasks', 'reminders' ]
+		related => [ 'appointment_windows', 'clothesline', 'tasks', 'reminders' ]
 	},
 	'reminders' => {
 		title => 'Reminders and alarms', category => 'functions',
@@ -383,12 +536,35 @@ our %topic = (
 		],
 		related => [ 'appointments', 'clothesline' ]
 	},
+	'scanning' => {
+		title => 'Scanning a document', category => 'functions',
+		summary => 'Turn a paper page into a searchable record.',
+		body => [
+			'A scan is born in Notes: it captures a page, can read the text off it, and can read a barcode or QR code. The result is an appointment carrying the scan as an attachment, so it can be found from whatever it belongs to.'
+		],
+		steps => [
+			'Open Notes and start a new note.',
+			'Use the scan action and choose your camera or a connected scanner.',
+			'Crop the page to the paper if you are offered it; this improves the text recognition.',
+			'Turn on OCR so the text is lifted off the image and becomes searchable.',
+			'For a barcode or QR code, use the scan action\'s code mode instead — it records the code on the note.',
+			'Save the note; the scan and any recognised text stay with it.'
+		],
+		prompt => 'The reader is new and wants to scan a document. Give a numbered, click-by-click walkthrough, in order, using plain language. If OCR or barcode modes are the wrong fit for what they described, say so and redirect them. Do not assume any personal data.',
+		related => [ 'notes', 'sealing_files', 'folders' ]
+	},
 	'sealing_files' => {
 		title => 'Sealing files', category => 'functions',
 		summary => 'Encrypt a file under a name of its own.',
 		body => [
 			'Sealing encrypts a file with your credentials and gives it a name of its own, so it can be stored anywhere without being readable. It opens again from the same right-click menu in Folders.',
 			'Attachments you email are sealed too, so the copy on disk is protected the same way.'
+		],
+		steps => [
+			'Open Folders and right-click the file.',
+			'Choose Seal; give it a name of its own.',
+			'The job runs in the background and reports its progress.',
+			'Open it again from the same menu — the sealed file carries what it needs to be unlocked.'
 		],
 		related => [ 'folders', 'security', 'mailbox' ]
 	},
@@ -398,6 +574,13 @@ our %topic = (
 		body => [
 			'A quote or invoice is built from store items and prints to a house-styled sheet. Recording a payment against it writes the matching income transaction and pushes a payment onto the document, updating the balance and closing it when the balance reaches zero.',
 			'Deleting that transaction unwinds the payment: the balance goes back up, and a document that had closed reopens.'
+		],
+		steps => [
+			'Build the document in Store from items and options.',
+			'Move a quote to an invoice when it is accepted.',
+			'Send or print the invoice.',
+			'Record a payment against it; the balance falls.',
+			'At zero it closes. Delete the payment\'s transaction and it reopens, balance restored.'
 		],
 		related => [ 'store', 'budget', 'moves_ledger' ]
 	},
@@ -416,15 +599,21 @@ our %topic = (
 			'Evaluation is an appraisal of any app\'s activity, run on demand or nightly. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report beside the app with a headline and links to everything it names.',
 			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere.'
 		],
+		steps => [
+			'Open the app you want appraised and find its evaluation panel.',
+			'Run it on demand, or let the nightly pass do it.',
+			'Read the report in the app\'s inventory; its links open everything it names.'
+		],
 		related => [ 'assistant', 'inventory', 'measures' ]
 	},
 	'assistant' => {
 		title => 'Assistant', category => 'functions',
 		summary => 'Chat and image generation, plus speech.',
 		body => [
-			'Assistant is the AI surface: chat and image generation through local Ollama models and Cloudflare Workers AI, with speech synthesis and transcription alongside. Like Evaluation, it prefers a local model so your data stays put.'
+			'Assistant is the AI surface: chat and image generation through local Ollama models and Cloudflare Workers AI, with speech synthesis and transcription alongside. Like Evaluation, it prefers a local model so your data stays put.',
+			'The Help agent is a cousin of the same machinery — see this Help app — tuned to guide you through JawnOS itself.'
 		],
-		related => [ 'evaluation', 'notes' ]
+		related => [ 'evaluation', 'help_app', 'notes' ]
 	},
 	'backup' => {
 		title => 'Backup and restore', category => 'functions',
@@ -490,12 +679,12 @@ our %topic = (
 	},
 	'help_app' => {
 		title => 'This Help app', category => 'features',
-		summary => 'The map you are reading now.',
+		summary => 'The map you are reading now, and its guide.',
 		body => [
-			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar.',
-			'It is arranged in four groups — apps, features, functions and devices — and each topic links to the ones worth reading next.'
+			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
+			'Each topic can also hand you to the Help agent — pick a model, and it will walk you through the topic step by step, using the window you came from as its context. See the guide panel below any topic.'
 		],
-		related => [ 'hints', 'handbook' ]
+		related => [ 'hints', 'handbook', 'assistant' ]
 	}
 );
 
@@ -531,7 +720,8 @@ sub catalogue {
 	return @out;
 }
 
-# Simple case-insensitive substring search over the title, summary and body.
+# Simple case-insensitive substring search over the title, summary, body and
+# steps.
 sub search {
 	my ($q) = @_;
 	return () unless defined $q && length $q;
@@ -539,12 +729,29 @@ sub search {
 	my @out;
 	foreach my $id (sort keys %topic) {
 		my $t = $topic{$id};
-		my $hay = join ' ', ($t->{'title'} // ''), ($t->{'summary'} // ''), @{ $t->{'body'} // [] };
+		my $hay = join ' ', ($t->{'title'} // ''), ($t->{'summary'} // ''), @{ $t->{'body'} // [] }, @{ $t->{'steps'} // [] };
 		if (lc($hay) =~ /\Q$needle\E/) {
 			push @out, { id => $id, title => $t->{'title'}, category => $t->{'category'}, summary => $t->{'summary'}, app => $t->{'app'} };
 		}
 	}
 	return @out;
+}
+
+# The material an AI guide should read about a topic: everything the reader can
+# see here, plus any steering the topic carries.
+sub briefing {
+	my ($id) = @_;
+	my $t = help::get($id);
+	return '' unless $t;
+	my @lines;
+	push @lines, 'Title: ' . ($t->{'title'} // '');
+	push @lines, 'Summary: ' . ($t->{'summary'} // '');
+	foreach my $p ( @{ $t->{'body'} // [] } ) { push @lines, $p; }
+	if (@{ $t->{'steps'} // [] }) {
+		push @lines, 'Steps: ' . join(' | ', @{ $t->{'steps'} });
+	}
+	push @lines, 'Steering: ' . $t->{'prompt'} if $t->{'prompt'};
+	return join "\n", @lines;
 }
 
 1;
