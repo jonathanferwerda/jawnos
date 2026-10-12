@@ -11851,19 +11851,27 @@ sub budget_calculator($data) {
 		# period's end. An unlocked window rolls a whole period back from now, so it
 		# is already run and its pace is 1, as is any block before or after now.
 		# Early in a period so little of the budget is due that a single blip reads
-		# as far ahead of pace, and a period only just opened has effectively nothing
-		# due at all. So for the status and the graph line the first few percent of
-		# the period count as nothing due yet; the projection keeps the exact elapsed.
-		my $pace_floor = 0.05;
+		# as far ahead of pace, and the start of a period is often spent asleep or
+		# otherwise away from it. So the first stretch of each period carries no
+		# target and the budget is spread over what is left of it: a day's first two
+		# fifths are the night (so its target only starts around nine in the morning),
+		# an hour's first quarter, and the longer clocks their first tenth. The
+		# projection below keeps the exact elapsed, so it still reads the whole
+		# period rather than only the part not slept through.
+		my %pace_floor = ( hour => 0.25, day => 0.4, week => 0.1, month => 0.1, year => 0.1 );
 		my $elapsed = 1;
 		if ($ts eq 'this' && ($returner->{'is_scope'} || '') eq 'yes' && ($settings->{'s_lock'} || '') eq 'on'
 			&& $returner->{'scope_name'} =~ /^(?:hour|day|week|month|year)$/) {
 			(undef, undef, $elapsed) = &subs::period_bounds($returner->{'scope_name'}, $timestamp);
 		}
-		my $early = ($elapsed > 0 && $elapsed < $pace_floor) ? 1 : 0;
-		my $pace_elapsed = $early ? 0 : $elapsed;
+		my $floor = $pace_floor{ $returner->{'scope_name'} } // 0.1;
+		my $early = ($elapsed > 0 && $elapsed <= $floor) ? 1 : 0;
+		my $pace_elapsed = $early ? 0 : (($elapsed - $floor) / (1 - $floor));
+		$pace_elapsed = 0 if $pace_elapsed < 0;
+		$pace_elapsed = 1 if $pace_elapsed > 1;
 		$returner->{'elapsed'} = $elapsed;
 		$returner->{'early'} = $early;
+		$returner->{'pace_floor'} = $floor;
 		$returner->{'progress'} = sprintf('%.0f', $elapsed * 100);
 		$returner->{'on_target'} = sprintf('%.19f', $returner->{'budgeted'} * $pace_elapsed);
 		$returner->{'on_track'} = ($returner->{'value'} >= $returner->{'on_target'}) ? 'yes' : 'no';
@@ -11883,7 +11891,7 @@ sub budget_calculator($data) {
 		# (formatted_budgeted) still names the whole period.
 		if (!$early && $elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
 			$returner->{'full_expected'} = $returner->{'expected'};
-			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $elapsed);
+			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $pace_elapsed);
 			$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 			$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		}
