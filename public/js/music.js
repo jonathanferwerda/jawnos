@@ -86,13 +86,21 @@ async function musicInit(method) {
 		// app is re-opened
 		musicVolumeApply();
 	}
-	var player = JSON.parse($('#music_player_data').text());
+	// The window contents can be served from the server-side cache, which freezes
+	// the player snapshot that was inlined when it was written. Trusting that copy
+	// restored the first track at 0:00 after a refresh, so fetch the live player
+	// cache before restoring. (The old $().load() here was async, so the read on
+	// the next line always saw the frozen copy.)
+	var jpd = $('#music_player_data').text();
+	if (method != 'search') {
+		try {
+			var fresh = await $.ajax({ url: '/manager/cache_get?app=music&context=player&json=yes', dataType: 'text' });
+			if (isJson(fresh)) { jpd = fresh; $('#music_player_data').text(jpd); }
+		}
+		catch (e) { /* keep the inlined copy if the fetch fails */ }
+	}
+	if (isJson(jpd) && method != 'search') {
 
-	//tree.sound.currentTime = player.currentTime;
-	$('#music_player_data').load("/manager/cache_get?app=music&context=player&json=yes");
-	if (isJson($('#music_player_data').text()) && method != 'search') {
-
-		var jpd = $('#music_player_data').text();
 		var pd = JSON.parse(jpd);
 		// the level and mute the player was last left at; a cached near-zero is the
 		// old autoplay-handshake value, so it is ignored
