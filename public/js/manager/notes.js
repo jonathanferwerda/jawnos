@@ -110,23 +110,49 @@ function notesDraggable() {
 		if (n.hasClass('ui-draggable')) { return; }
 		n.draggable({
 			appendTo: 'body',
-			helper: 'clone',
+			// Freeze the clone at the row's own width: out of the Notes window's
+			// layout it re-wraps and collapses, which is the shrink that was seen.
+			helper: function() {
+				var el = $(this);
+				var w = el.outerWidth();
+				return el.clone().css({ width: w + 'px', maxWidth: w + 'px' });
+			},
 			revert: 'invalid',
 			zIndex: 999999,
 			cancel: '.note_delete',
 			start: function(p, ui) {
-				$(ui.helper).css({ 'background-color': 'var(--panel)', 'border': 'solid', 'border-radius': '6px', 'padding': '6px', 'max-width': '320px' });
+				$(ui.helper).css({ 'opacity': '0.85' });
 			},
-			stop: function(p) {
-				var el = document.elementFromPoint(p.clientX, p.clientY);
-				var appt = $(el).closest('.appointment');
-				if (!appt.length) { return; }
+			stop: function(p, ui) {
+				// The helper rides under the cursor, and a full-screen background canvas
+				// sits over the windows, so a plain elementFromPoint finds one of those
+				// instead of the window. Walk the whole stack instead and take the first
+				// appointment (and appointment row) under the cursor.
+				var helper = (ui && ui.helper) ? $(ui.helper) : $('.ui-draggable-dragging');
+				helper.hide();
+				var stack = document.elementsFromPoint(p.clientX, p.clientY) || [];
+				helper.show();
+				var detail = null, appt = null;
+				for (var i = 0; i < stack.length; i++) {
+					var t = $(stack[i]);
+					if (!appt && t.closest('.appointment').length) { appt = t.closest('.appointment'); }
+					if (!detail && t.closest('.appointment_detail').length) { detail = t.closest('.appointment_detail'); }
+				}
+				if (!appt) { return; }
+				// Landed on one of the window's appointment rows: append the note to
+				// that appointment. Anywhere else on the window: the server makes a
+				// new appointment for the app.
 				$.ajax({
 					url: '/manager/note_to_appt',
 					type: 'POST',
-					data: { uuid: n.attr('uuid'), app: appt.attr('app'), timestamp: Date.now() },
+					data: {
+						uuid: n.attr('uuid'),
+						app: appt.attr('app'),
+						appt_uuid: detail.length ? detail.attr('uuid') : '',
+						timestamp: Date.now()
+					},
 					success: function(response) {
-						if (!response || !response.uuid) { console.log('note drop failed', response); }
+						if (!response || (!response.uuid && !response.created)) { console.log('note drop failed', response); }
 					}
 				});
 			}

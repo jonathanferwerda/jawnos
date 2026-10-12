@@ -115,6 +115,10 @@ static volatile bool voiceRecording = false;
 // command went missing while a glance's worth of frames came through. loop() holds
 // the screen awake while either flag is set.
 static volatile bool voiceShipping = false;
+// True while the panel has been darkened because a send is holding the chip
+// awake: the screen is off, but the loop keeps running so a touch brings it back
+// and the payload finishes in the background.
+static bool ship_dim = false;
 // The clip's own timestamp: it rides with the clip to the server and comes back on
 // the voice_done ack, so the watch deletes the file only for the clip that was
 // transcribed (not a newer one that has since been recorded over it).
@@ -1515,8 +1519,35 @@ void loop() {
       voice_border_show(voice_border_on);
     }
   }
-  if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
-    lowPowerEnergyHandler();
+  if (buttonMillis != 0 && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
+    if (voiceShipping) {
+      // A payload is still going out, so the radio (and the chip) must stay up.
+      // Dark the panel as the timeout wanted, but do NOT enter the sleep path -
+      // its blocking wait here is what left the screen frozen when the watch was
+      // woken mid-send. Hold the deadline so the sleep keeps being deferred, and
+      // a touch (touch_watch rebases buttonMillis) brings the screen straight
+      // back while the send carries on.
+      if (!ship_dim) {
+        ship_dim = true;
+        brightnessLevel = watch.getBrightness();
+        watch.setBrightness(0);
+        watch.sleepDisplay();
+        Serial.println("[voice] screen off, staying awake for the send");
+      }
+      buttonMillis = millis();
+    }
+    else {
+      lowPowerEnergyHandler();
+    }
+  }
+  else if (ship_dim) {
+    // the send finished, or the screen was woken: put the panel back
+    ship_dim = false;
+    if (brightnessLevel <= 1) { brightnessLevel = 20; }
+    watch.wakeupDisplay();
+    watch.setBrightness(brightnessLevel);
+    buttonMillis = millis();
+    Serial.println("[voice] screen back after the send");
   }
   awake_notifications();
 
@@ -5209,16 +5240,6 @@ void lowPowerEnergyHandler()
   // that ends a real light sleep is still latched in the PMU, and without this it
   // would read as a click while awake and put the watch straight back to sleep
   dozing = true;
-  // A clip still going out holds the device awake: the screen is already dark (as
-  // asked), but the radio has to stay up long enough to deliver the payload - it
-  // is hundreds of paced notifications - so sit at full speed until it is out,
-  // then sleep as usual.
-  if (voiceShipping) {
-    uint32_t ship_wait = millis();
-    while (voiceShipping && millis() - ship_wait < 45000) {
-      delay(20);
-    }
-  }
   wrist_look_watch = false;   // the glance ends with the screen
   wristPollReset();    // both sleep paths start their pose from scratch
 
@@ -5405,12 +5426,11 @@ void lowPowerEnergyHandler()
     // instant, like the sleep side: no fade to sit through on the way up
     watch.setBrightness(brightnessLevel);
     tilt_log_marker("ls wake br", watch.getBrightness());
-    if (temp_bt_enabled == true && !wrist_wake) {
-      // off the wake's critical path: the screen is already back, and a wrist
-      // glance (five seconds at the clock) does not need the radio at all, so
-      // it never pays the bring-up -- which is also what the watch was dying on
-      // (a stop/init cycle every glance). A real wake arms it a moment later,
-      // and the next sleep cancels it if the watch goes back down first.
+    if (temp_bt_enabled == true) {
+      // off the wake's critical path: the screen is already back. A wrist glance
+      // used to skip this, but a button pressed on a freshly woken watch then had
+      // no link to send over - so the radio now comes up on every wake and a tap
+      // works straight away.
       ble_restore_at = millis() + 1200;
     }
 
