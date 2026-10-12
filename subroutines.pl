@@ -8776,6 +8776,109 @@ sub evaluation_episode_lag {
 	};
 }
 
+# What conditions the app runs under: every numeric measure any app logged is
+# read against the app's own episodes. Two contrasts are weighed - the reading in
+# the windows around the episodes against its value everywhere else, and its mean
+# on the days the app ran against the days it did not - and the stronger by
+# effect size is kept, because a daily thing like weather is honest at the day
+# and a moment-to-moment thing is honest around the event. A walk in the cold, an
+# eczema day in the damp, steps that climb with a walk: the measure's app is what
+# carries the condition, so a weather app's temperature stands beside the apps.
+sub evaluation_conditions {
+	my ($app, $since, $cap) = @_;
+	return [] unless $app && $app ne '__president';
+	$since ||= &subs::rightNow() - 60 * 86400000;
+	$cap ||= 8;
+	my $list = &subs::evaluation_episode_list($app, $since);
+	my @ep = @{ $list->{'episodes'} };
+	return [] unless scalar @ep >= 3;
+	my $delta = 2 * 3600000;
+	my %active;
+	foreach my $ep ( @ep ) {
+		my @lt = localtime($ep->{'ts'} / 1000);
+		$active{ sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]) } = 1;
+	}
+	my $rows = &subs::db_query("select app, timestamp, measures from appointments where measures is not null and measures != '' and cast(timestamp as integer) >= ?", $since);
+	my $sth = $rows->sth;
+	my %series;
+	while (my $row = $sth->fetchrow_arrayref) {
+		my ($mapp, $ts, $j) = @{$row};
+		next unless $j;
+		my $ms = eval { decode_json $j } || next;
+		my @lt = localtime($ts / 1000);
+		my $day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
+		foreach my $m ( @{$ms} ) {
+			foreach my $k ( keys %{$m} ) {
+				next if $k eq 'uuid' || $k eq 'ts';
+				my $v = $m->{$k};
+				next unless defined $v && $v =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
+				my $s = ($series{$mapp . "\t" . $k} ||= { app => $mapp, name => $k, pts => [], days => {} });
+				push @{$s->{'pts'}}, [ $ts + 0, $v + 0 ];
+				push @{$s->{'days'}->{$day}}, $v + 0;
+			}
+		}
+	}
+	my @out;
+	# a two-group z: the two means over the standard error of their difference, so
+	# a real shift stands out from the day-to-day spread rather than being drowned
+	# by it
+	my $two_z = sub {
+		my ($on, $off) = @_;
+		my $n1 = scalar @{$on}; my $n2 = scalar @{$off};
+		return undef if $n1 < 4 || $n2 < 4;
+		my ($m1, $m2) = (0, 0);
+		$m1 += $_ for @{$on}; $m1 /= $n1;
+		$m2 += $_ for @{$off}; $m2 /= $n2;
+		my ($s1, $s2) = (0, 0);
+		$s1 += ($_ - $m1) ** 2 for @{$on};
+		$s2 += ($_ - $m2) ** 2 for @{$off};
+		$s1 = sqrt($s1 / $n1); $s2 = sqrt($s2 / $n2);
+		my $se = sqrt(($s1 ** 2) / $n1 + ($s2 ** 2) / $n2);
+		return undef unless $se > 0;
+		return { on => $m1, off => $m2, z => ($m1 - $m2) / $se, n => $n1, ratio => ($m2 ? $m1 / $m2 : undef) };
+	};
+	foreach my $key ( keys %series ) {
+		my $s = $series{$key};
+		my @pts = sort { $a->[0] <=> $b->[0] } @{ $s->{'pts'} };
+		my (@near, @far);
+		my $pi = 0;
+		foreach my $p ( @pts ) {
+			while ($pi < @ep && $ep[$pi]{'stop'} + $delta < $p->[0]) { $pi++ }
+			if ($pi < @ep && $p->[0] >= $ep[$pi]{'ts'} - $delta) { push @near, $p->[1] } else { push @far, $p->[1] }
+		}
+		my (@on_day, @off_day);
+		foreach my $d ( keys %{ $s->{'days'} } ) {
+			my @v = @{ $s->{'days'}->{$d} };
+			my $m = 0; $m += $_ for @v; $m /= @v;
+			push @{ $active{$d} ? \@on_day : \@off_day }, $m;
+		}
+		my @cand;
+		my $around = $two_z->(\@near, \@far);
+		push @cand, { kind => 'around', %{$around} } if $around;
+		my $day = $two_z->(\@on_day, \@off_day);
+		push @cand, { kind => 'day', %{$day} } if $day;
+		next unless @cand;
+		my ($best) = sort { abs($b->{'z'}) <=> abs($a->{'z'}) } @cand;
+		# a real condition stands out from the spread and is material: a large series
+		# makes a 1% shift look certain, so a ratio that actually moved is asked too
+		next unless abs($best->{'z'}) >= 2 && defined $best->{'ratio'} && abs($best->{'ratio'} - 1) >= 0.15;
+		push @out, {
+			app => $s->{'app'},
+			measure => $s->{'name'},
+			kind => $best->{'kind'},
+			on => sprintf('%.2f', $best->{'on'}),
+			off => sprintf('%.2f', $best->{'off'}),
+			(defined $best->{'ratio'} ? (ratio => sprintf('%.2f', $best->{'ratio'})) : ()),
+			z => sprintf('%.1f', $best->{'z'}),
+			n => $best->{'n'},
+			direction => ($best->{'on'} > $best->{'off'} ? 'higher' : 'lower'),
+		};
+	}
+	@out = sort { abs($b->{'z'}) <=> abs($a->{'z'}) || $b->{'n'} <=> $a->{'n'} } @out;
+	splice(@out, $cap) if scalar @out > $cap;
+	return \@out;
+}
+
 sub evaluation_measures {
 	my ($app, $since, $defs) = @_;
 	return {} unless $app && $app ne '__president';
@@ -9734,6 +9837,9 @@ sub evaluation_agent() {
 			$entry->{'lag_minutes'} = $lag->{'median_minutes'} if defined $lag->{'median_minutes'};
 		}
 	}
+	# the conditions the app runs under: any app's numeric measures read around
+	# this app's episodes (walk in the cold, a flare in the damp)
+	my $conditions = $global ? [] : &subs::evaluation_conditions($app, &subs::rightNow() - 60 * 86400000, 8);
 	my ($different, @open);
 	unless ($global) {
 		$different = &subs::measure_contrasts($app, $corr_days, $all_counts, $measures);
@@ -9790,13 +9896,14 @@ sub evaluation_agent() {
 		around => $around,
 		(!$global && scalar keys %{$trends} ? (trends => $trends) : ()),
 		(!$global && scalar keys %{$episodes} ? (episodes => $episodes) : ()),
+		(!$global && scalar @{$conditions} ? (conditions => $conditions) : ()),
 		(!$global && $different && scalar @{$different} ? (different => $different) : ()),
 		(!$global && scalar @open ? (tasks => \@open) : ()),
 		($last_report ? (previous => $last_report) : ()),
 		(scalar @recent ? (headlines => \@recent) : ()),
 		($since_last ? (since_last => $since_last) : ()),
 	};
-	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (the apps whose occurrences fell within a half hour either side of this app\'s own occurrences more than chance would place them - each with hits (how many of this app\'s occurrences had it nearby), of (how many occurrences were scanned), lift (the multiple over chance) and offset_minutes (negative when it tends to come before this app, positive after) and, when the episode lists allow, lag_minutes (the median gap from this app\'s episodes to that app\'s nearest episode - negative when it usually comes first) - so a thing that consistently happens at the same time stands out where a correlation of daily totals would drown it in the calendar), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. schedule, when it rides along, says how often this report is asked for on its own: cadence is one of hourly, daily, weekly, monthly, yearly or each_run (evaluated whenever the appointment itself runs), with days (the weekdays it runs on, for daily or weekly) and next_run (when a run is queued) when they apply. Each window also carries quantity where entries logged one - times (how many carried a quantity). serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. Where an app recorded a place track (the continent table the GPS fills), each window may also carry continent: points (how many fixes), distance_km, duration_minutes, the bounds (north, south, east, west) and from/to (the first and last fix), and speed (average and max, in km/h; the average is derived from the distance and the time when the fixes carried no speed of their own) - so a walk is read as the movement it was. A run for one app may also carry episodes: the app\'s own activity gathered into the natural unit rather than a count per day - a night, a cup, a session, a walk - with gap_minutes (the gap that split one episode from the next), episodes, days, per_day, median_duration and longest_duration, onset_hours (how many episodes began in each hour of the clock, 0-23) and, where the app logs a quantity, quantity_total, quantity_per_episode, quantity_per_day and unit. Read them where a day\'s count hides the shape: a sleep is a night with an onset hour and a length, a coffee a cup at a time of day - give the typical onset and duration, not only the tally. A run for one app may also carry trends: for each clock the inventory graphs - minute, hour, day, week, month and year - the counts of the last several periods as label=count pairs, oldest first, so the pace is read period by period (a week that fell away, a month that doubled). The newest pair is the period still running, so its count is written label=count/<percent>%, the percent saying how far through that period the run happened: a small count at a small percent is a period in progress, not a fall, so weigh it against its percent before calling the pace down. A period with nothing rides along as 0, but a scope whose whole window is empty is left out - never read its absence as a fall to nothing. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Where the app keeps a budget on its own period, budget_pace rides along: one entry per budgeted measure (occurences, duration, total) with the period, progress_percent (how far through it the run is), on_track (whether the value has kept its share of the period so far), value, budgeted (the whole period\'s budget), due_by_now (that share of it) and projected (what the current pace carries to the period\'s end) - so a part-run period is read as a pace, and on track or behind is called from on_track, not from the plain share. Use only the numbers given.';
+	my $system = 'You are the evaluation agent of JawnOS, a house that logs its life as timed appointments. A briefing follows for one app (or the whole house). Its windows map measures the same activity over five spans - day (24 hours), week, month, year and all time - each with occurrences, days_active, per_day (occurrences divided by the span in days, so spans can be compared), total_duration and average_duration, and, for a single app, kinds (the appointment types, subtypes and projects that ran and the model or option names they carried, each counted). The week and month windows also carry daily_counts (one count per day as date:count); the month window also carries an hourly profile (hours 0-23) and a weekday profile (0 is Sunday). These five are what a trend is read from: a per_day that climbs from year to month to week is a pace that is rising. For a single app the briefing also says what it is (its pos and mab constructs) and may carry related (the apps the relational window ties to it, each with a Pearson correlation of the daily series over the last 30 days at the best lag; a positive lag_days means the related app trails this one), around (the apps whose occurrences fell within a half hour either side of this app\'s own occurrences more than chance would place them - each with hits (how many of this app\'s occurrences had it nearby), of (how many occurrences were scanned), lift (the multiple over chance) and offset_minutes (negative when it tends to come before this app, positive after) and, when the episode lists allow, lag_minutes (the median gap from this app\'s episodes to that app\'s nearest episode - negative when it usually comes first) - so a thing that consistently happens at the same time stands out where a correlation of daily totals would drown it in the calendar), different (the measures that stood out on the days this app ran, its mean on those days (on_days) against its mean on the other days (off_days), scaled by z) and tasks (what is still open). A pair or entry marked habit runs on nearly every day and its correlation is the calendar, not a cause. A thing need not be linked to be a cause. A previous report may ride along as previous - the text the last run left, with its date and model - headlines is the last ten headlines the house has seen for this scope, and since_last hands you each window as it was (was) and as it is now (now); together they say what has changed. depth says how much to write - brief means one line, full means the whole report. schedule, when it rides along, says how often this report is asked for on its own: cadence is one of hourly, daily, weekly, monthly, yearly or each_run (evaluated whenever the appointment itself runs), with days (the weekdays it runs on, for daily or weekly) and next_run (when a run is queued) when they apply. Each window also carries quantity where entries logged one - times (how many carried a quantity). serving, where the app records one, is the default size of a single unit (coffee logs \'10oz\' a cup) and fills the appointments that logged no quantity of their own; each window\'s quantity carries unit where the appointments logged one and amount_total / amount_per_day in that unit (and volume_ml), with defaulted_from_serving set when that filling happened - so a logged quantity is read as the amount it already is. Where an app logs its own readings (a measure typed in against an appointment), each window may also carry measurements: one entry per measure with readings (how many were logged) and, for a numeric reading, average, min, max, the latest value and latest_at; a text or select reading keeps its latest and the values seen; a measure the app defines also carries its unit and range. These are the numbers themselves, so a measure that drifts - a weight climbing, a pressure falling - is read from its latest against its average and its min and max, not only from the correlations it makes. Where an app recorded a place track (the continent table the GPS fills), each window may also carry continent: points (how many fixes), distance_km, duration_minutes, the bounds (north, south, east, west) and from/to (the first and last fix), and speed (average and max, in km/h; the average is derived from the distance and the time when the fixes carried no speed of their own) - so a walk is read as the movement it was. A run for one app may also carry episodes: the app\'s own activity gathered into the natural unit rather than a count per day - a night, a cup, a session, a walk - with gap_minutes (the gap that split one episode from the next), episodes, days, per_day, median_duration and longest_duration, onset_hours (how many episodes began in each hour of the clock, 0-23) and, where the app logs a quantity, quantity_total, quantity_per_episode, quantity_per_day and unit. Read them where a day\'s count hides the shape: a sleep is a night with an onset hour and a length, a coffee a cup at a time of day - give the typical onset and duration, not only the tally. A run for one app may also carry conditions: for each numeric measure any app logged - a weather app\'s temperature or humidity, a pollen count, a reading of your own - how its value sits in the windows around this app\'s episodes and on the days it ran against its value elsewhere, with kind (around or day, whichever the two are further apart), the on and off means, the ratio between them, z (how far the shift stands out from the spread), n and direction (higher or lower), so a walk in the cold or a flare in the damp is named; the measure\'s app is the condition\'s home. A run for one app may also carry trends: for each clock the inventory graphs - minute, hour, day, week, month and year - the counts of the last several periods as label=count pairs, oldest first, so the pace is read period by period (a week that fell away, a month that doubled). The newest pair is the period still running, so its count is written label=count/<percent>%, the percent saying how far through that period the run happened: a small count at a small percent is a period in progress, not a fall, so weigh it against its percent before calling the pace down. A period with nothing rides along as 0, but a scope whose whole window is empty is left out - never read its absence as a fall to nothing. Each scope also carries settings, the app\'s own configuration as it stands - its aliases (aka), its category and subcategory, its budget (what it is meant to run to), its default duration, cost and worth, its warranty, schedule and movement - so what the thing is, and what it expects of itself, is read from how it is set up. Where the app keeps a budget on its own period, budget_pace rides along: one entry per budgeted measure (occurences, duration, total) with the period, progress_percent (how far through it the run is), on_track (whether the value has kept its share of the period so far), value, budgeted (the whole period\'s budget), due_by_now (that share of it) and projected (what the current pace carries to the period\'s end) - so a part-run period is read as a pace, and on track or behind is called from on_track, not from the plain share. Use only the numbers given.';
 	my $instructions = $depth eq 'brief'
 		? 'Write one line only - a headline, at most twenty words, no label and no headings - that states what changed in the pace, or that it held if nothing did. Nothing else.'
 		: 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Where a window carries continent, say how far the app went and how fast, and whether that is rising or falling across the windows. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Where episodes ride along, give the typical onset hour and the median and longest episode, and say whether the episodes are getting longer, shorter, earlier or later. The newest period is still running - its count carries the percent elapsed - so do not read a part-run period as a fall: call it in progress and judge its pace against the percent. Where budget_pace rides along, say plainly whether the app is on track for its budget - read on_track and progress_percent against value and due_by_now, and give the projected figure - and never call a young period behind. Under Correlations weigh related (a Pearson r of the daily series) and around (things that happened at the same time of day, by lift) together: say what r means here and whether the lag suggests one follows the other, say what around says - what consistently runs beside this app and which way, reading offset_minutes - and treat a measure in different as a suspect even when no pair clears the bar; name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.';
@@ -9844,9 +9951,18 @@ sub evaluation_agent() {
 	# File the relationships the house is sure of, so they are assembled for the
 	# user rather than drawn one at a time; the relational window still takes the
 	# rest by hand. The bar is high, so this only ever adds a pair.
-	my $autolinked;
+	my ($autolinked, $pruned);
 	unless ($global) {
 		$autolinked = &subs::evaluation_autolink($app, &subs::rightNow() - 60 * 86400000, 8, $around);
+		# a condition the app is strongly tied to is a relationship too
+		foreach my $c ( @{$conditions} ) {
+			next unless abs($c->{'z'}) >= 2 && defined $c->{'ratio'} && abs($c->{'ratio'} - 1) >= 0.25 && $c->{'n'} >= 8;
+			my $rel = &subs::evaluation_relate($app, $c->{'app'});
+			push @{$autolinked}, $rel if $rel && !$rel->{'skipped'};
+		}
+		# and take back the relationships that no longer hold up, the house's own
+		# and the ones drawn by hand alike
+		$pruned = &subs::evaluation_prune($app, &subs::rightNow() - 60 * 86400000, 4);
 	}
 	my $report = {
 		text => $text || ('The evaluation could not run: ' . $error),
@@ -9860,6 +9976,7 @@ sub evaluation_agent() {
 		($global ? () : (snapshot => \%snapshot)),
 		$linked ? (linked => $linked) : (),
 		($autolinked && scalar @{$autolinked} ? (autolinked => [ map { $_->{'app'} } @{$autolinked} ]) : ()),
+		($pruned && scalar @{$pruned} ? (pruned => $pruned) : ()),
 		timestamp => &subs::rightNow(),
 	};
 	# a run that could not reach the model must not erase the last report that
@@ -10029,12 +10146,7 @@ sub evaluation_relate {
 	@{$bc} = grep { $_ ne 'all' } @{$bc};
 	&subs::setting_setter({ app => $app, setting => 'sc_' . $their_construct, value => encode_json($sc) });
 	&subs::setting_setter({ app => $other, setting => 'sc_' . $my_construct, value => encode_json($bc) });
-	# the relational window draws from a cache; drop the two entries so it draws
-	# them fresh on the next open
-	my $buckets = &subs::cache_get({ app => 'relational', context => 'buckets' }) || {};
-	delete $buckets->{$app};
-	delete $buckets->{$other};
-	&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $buckets);
+	&evaluation_relationships_changed($app, $other);
 	return { app => $other, construct => $their_construct, their_construct => $my_construct };
 }
 
@@ -10060,6 +10172,78 @@ sub evaluation_autolink {
 		push @filed, $rel;
 	}
 	return \@filed;
+}
+
+# The relational window draws each bucket from a cache; a change to either end
+# of a relationship drops both, so the window redraws them fresh.
+sub evaluation_relationships_changed {
+	my ($app, $other) = @_;
+	my $buckets = &subs::cache_get({ app => 'relational', context => 'buckets' }) || {};
+	delete $buckets->{$app};
+	delete $buckets->{$other};
+	&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $buckets);
+	return 1;
+}
+
+# Undo a relationship, both ways, whoever made it. Symmetric with
+# evaluation_relate so a link the house filed and one drawn by hand are taken
+# apart the same way.
+sub evaluation_unrelate {
+	my ($app, $other) = @_;
+	return { app => $other, skipped => 'nothing to undo' } if !$other || $other eq $app;
+	my $mine = &subs::settings_grabber({ app => $app, benign => 1 });
+	my $theirs = &subs::settings_grabber({ app => $other, benign => 1 });
+	my $my_construct = $mine->{'pos'} || $mine->{'mab'};
+	my $their_construct = $theirs->{'pos'} || $theirs->{'mab'};
+	return { app => $other, skipped => 'one of them has no construct' }
+		unless $my_construct && $their_construct && $mine->{'uuid'} && $theirs->{'uuid'};
+	my $sc = eval { return decode_json($mine->{ 'sc_' . $their_construct }) } || [];
+	my $bc = eval { return decode_json($theirs->{ 'sc_' . $my_construct }) } || [];
+	return { app => $other, skipped => 'not related' }
+		unless grep { $_ eq $theirs->{'uuid'} } @{$sc} or grep { $_ eq $mine->{'uuid'} } @{$bc};
+	@{$sc} = grep { $_ ne $theirs->{'uuid'} } @{$sc};
+	@{$bc} = grep { $_ ne $mine->{'uuid'} } @{$bc};
+	&subs::setting_setter({ app => $app, setting => 'sc_' . $their_construct, value => encode_json($sc) });
+	&subs::setting_setter({ app => $other, setting => 'sc_' . $my_construct, value => encode_json($bc) });
+	&evaluation_relationships_changed($app, $other);
+	return { app => $other, removed => 1 };
+}
+
+# Take the relationships back that no longer hold up, whoever drew them: for
+# each app this one is related to, keep it only if the house can still see why -
+# the event scan still puts it nearby, or a condition it runs under is still
+# tied to the app - and drop the rest. Nothing is judged until the app has run
+# enough to be read, and only a few go in a run, so a link is removed when it
+# has truly gone quiet and not on a single thin night.
+sub evaluation_prune {
+	my ($app, $since, $cap) = @_;
+	return [] unless $app && $app ne '__president';
+	$cap ||= 4;
+	$since ||= &subs::rightNow() - 60 * 86400000;
+	my $count = &subs::db_query('select count(*) as n from appointments where app = ? and cast(timestamp as integer) >= ?', $app, $since)->hashes->[0]->{'n'} + 0;
+	return [] if $count < 10;
+	my $mine = &subs::settings_grabber({ app => $app, benign => 1 });
+	my @related;
+	foreach my $key ( grep { /^sc_/ } keys %{$mine} ) {
+		my $uuids = eval { return decode_json $mine->{$key} } || [];
+		foreach my $u ( @{$uuids} ) {
+			next if !$u || $u eq 'all';
+			my $s = &subs::settings_grabber({ uuid => $u });
+			push @related, $s->{'app'} if $s->{'app'};
+		}
+	}
+	return [] unless scalar @related;
+	my %lift = map { $_->{'app'} => ($_->{'lift'} + 0) } @{ &subs::evaluation_context_scan($app, $since, 30 * 60000, 24) };
+	my %cond = map { $_->{'app'} => 1 } grep { abs($_->{'z'}) >= 1.5 } @{ &subs::evaluation_conditions($app, $since, 24) };
+	my @removed;
+	foreach my $other ( @related ) {
+		last if scalar @removed >= $cap;
+		next if ($lift{$other} // 0) >= 1.5;
+		next if $cond{$other};
+		my $r = &evaluation_unrelate($app, $other);
+		push @removed, $other if $r && $r->{'removed'};
+	}
+	return \@removed;
 }
 
 # the machine whose worker runs the nightly evaluations; blank means every
