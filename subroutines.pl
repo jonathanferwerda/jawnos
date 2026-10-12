@@ -1909,8 +1909,8 @@ sub whisper_transcribe() {
 }
 
 sub voice_command_parse() {
-	# The words after the wake word, split into a verb and a target app. Only a
-	# command that actually follows the wake word counts, so a stray "start" in
+	# The words after the wake phrase, split into a verb and a target app. Only a
+	# command that actually follows "hey jawn" counts, so a stray "start" in
 	# conversation does nothing.
 	my ($transcript) = @_;
 	my $low = lc($transcript || '');
@@ -1919,11 +1919,17 @@ sub voice_command_parse() {
 	my @w = split ' ', $low;
 	my @rest;
 	my $woke = 0;
-	foreach my $x ( @w ) {
-		if ($woke) { push @rest, $x; next; }
-		# the wake word and the mis-hearings whisper reaches for (it renders
-		# "jawn" as dawn/john/jon/yawn far more often than it gets it right)
-		if ($x =~ /^(jawn|jaun|jauns|jawns|john|johns|jon|dawn|dawns|down|downs|don|dons|dun|yawn|yawns|yon)$/) { $woke = 1; }
+	# The wake phrase is "hey jawn", matched as a pair: whisper mangles both
+	# halves of it (hey -> hay/a/ay, jawn -> john/dawn/yawn), and requiring the two
+	# together is what stops a lone "john"/"dawn" in stray speech from running a
+	# command. The command is whatever follows the pair.
+	my %hey  = map { $_ => 1 } qw/hey hay a ay eh hei hej heya/;
+	my %jawn = map { $_ => 1 } qw/jawn jaun jauns jawns john johns jon dawn dawns down downs don dons dun yawn yawns yon/;
+	for (my $i = 1; $i < @w; $i++) {
+		next unless $jawn{$w[$i]} && $hey{$w[$i-1]};
+		$woke = 1;
+		@rest = @w[ $i + 1 .. $#w ];
+		last;
 	}
 	return { status => 'no_wake', said => $transcript } unless $woke && scalar @rest;
 	my $verb = shift @rest;
