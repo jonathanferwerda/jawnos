@@ -11816,6 +11816,23 @@ get '/manager/budget/current_information' => sub($c) {
 	$c->render(text => $ci->{'template'});
 };
 
+# A circumstance's own reading, written the way the budget panel shows it: a base
+# mode (occurences, duration, total, quantity) wears that mode's formatter, and a
+# measure wears its own name, the way the autocalc writes one ("8681.139steps").
+# The lookup is guarded on purpose: a bare chained deref of an absent measure
+# would autovivify the key in %{$gb::budget_modes}, and then every later
+# budget_calculator in this process would take the measure for a base mode and
+# skip reading it (its budget value came back undef).
+sub budget_value_formatter {
+	my ($circumstance, $value) = @_;
+	my $mode = $gb::budget_modes->{$circumstance};
+	if ($mode && $mode->{'formatted'}) {
+		my $formatted = eval { &{$mode->{'formatted'}}($value) };
+		return $formatted if defined $formatted;
+	}
+	return sprintf("%.3f", $value) . $circumstance;
+}
+
 sub budget_current_information($app,$circumstance,$timestamp) {
 
 	my $autocalc = &subs::cache_get({ app => $app, context => 'autocalc', subcontext => $circumstance });
@@ -11830,7 +11847,8 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	my $ov = sprintf("%.5f", $autocalc->{$budget->{'scope_name'}}->{'result'} - $budget->{'budgeted'});
 	my $improvement = {
 		difference => $budget->{'value'} - $budget->{'budgeted'},
-		overall => eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($ov) } || $ov,
+		overall => &budget_value_formatter($circumstance, $ov),
+		formatted_difference => &budget_value_formatter($circumstance, $budget->{'value'} - $budget->{'budgeted'}),
 		percentage => eval { return &subs::percent_formatter(($budget->{'value'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'}) } || 0,
 		overall_percentage => eval { return &subs::percent_formatter(($autocalc->{$budget->{'scope_name'}}->{'result'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'})} || 0
 	};
@@ -11919,6 +11937,10 @@ sub budget_calculator($data) {
 	my $app = $data->{'app'};
 
 	my $circumstance = $data->{'circumstance'};
+	# A measure is any circumstance that is not one of the base budget modes,
+	# worked out once with a key test that never autovivifies a measure into the
+	# modes (which would make this very test, and later ones, read it wrong).
+	my $is_measure = ( scalar grep { $_ eq $circumstance } keys %{$gb::budget_modes} ) == 0;
 	my $value = $data->{'value'};
 	my $scope = $data->{'scope'};
 	# the window the reading is for: the caller says when it is one of the blocks
@@ -12014,7 +12036,7 @@ sub budget_calculator($data) {
 			}
 			# a measure is not a base mode: its value is the summed or averaged
 			# measure, per the measure's own calc
-			if ( !grep { $_ eq $circumstance } keys %{$gb::budget_modes} ) {
+			if ($is_measure) {
 				my $mcalc = &measure_calc_for($app, $circumstance, $settings->{'s_calc'});
 				$value = ( $mcalc eq 'average' && $m_count ) ? ($m_sum / $m_count) : $m_sum;
 			}
@@ -12047,7 +12069,7 @@ sub budget_calculator($data) {
 				}
 				last;
 			}
-			elsif ( (scalar grep { $circumstance eq $_ } keys %{$gb::budget_modes}) == 0 ) {
+			elsif ($is_measure) {
 				$returner->{'budget_name'} = $bud[0];
 				$returner->{'budget_name'} =~ s/[0-9.]//gi;
 				next unless $returner->{'budget_name'} eq $circumstance;
@@ -12056,7 +12078,7 @@ sub budget_calculator($data) {
 				$returner->{'circumstance'} = $circumstance;
 
 				$returner->{'budgeted'} =~ s/[^0-9.]//gi;
-				$returner->{'formatted_value'} = $value;
+				$returner->{'formatted_value'} = sprintf("%.3f", $value) . $circumstance;
 				last;
 			}
 		}
@@ -12078,7 +12100,7 @@ sub budget_calculator($data) {
 		}
 
 		$returner->{'expected'} = sprintf("%.19f",$returner->{'budgeted'} / $returner->{'duration'});
-		$returner->{'formatted_budgeted'} = sprintf("%.3f", $returner->{'expected'} * $returner->{'scope'}) . '/' . $returner->{'scope_name'};
+		$returner->{'formatted_budgeted'} = sprintf("%.3f", $returner->{'expected'} * $returner->{'scope'}) . ($is_measure ? $circumstance : '') . '/' . $returner->{'scope_name'};
 		$returner->{'formatted_budgeted'} = &subs::duration_sayer($returner->{'expected'} * $returner->{'duration'} / 1000) . '/' . $returner->{'scope_name'} if $circumstance eq 'duration';
 		$returner->{'actual'} = sprintf("%.19f", $returner->{'value'} / $returner->{'scope'});
 		$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};

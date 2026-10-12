@@ -4,8 +4,10 @@
     plenty to read, so they are trimmed for the panel only %>
 <% my $trim = sub { my $s = shift; $s =~ s/(\d+\.\d)\d+/$1/g; return $s; }; %>
 <%# the difference is in the budget's own measure (ms for a duration budget, a
-    count, or money), so it wears the same formatting the budget does %>
-<% my $diff = eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($improvement->{'difference'}) } || sprintf('%.3f', $improvement->{'difference'}); %>
+    count, money, or a measure like 8681.139steps), so it wears the same
+    formatting the budget does - precomputed server-side so the lookup never
+    writes a measure's key into %{$gb::budget_modes} %>
+<% my $diff = $improvement->{'formatted_difference'} || sprintf('%.3f', $improvement->{'difference'}); %>
 <div style="min-width:280px;font-size:95%;line-height:1.45;">
 	<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
 		<strong style="font-size:115%;"><%= $scope %> budget</strong>
