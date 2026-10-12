@@ -1915,8 +1915,9 @@ sub voice_command_parse() {
 	my $woke = 0;
 	foreach my $x ( @w ) {
 		if ($woke) { push @rest, $x; next; }
-		# the wake word and the mis-hearings whisper reaches for
-		if ($x eq 'jawn' || $x eq 'john' || $x eq 'jon' || $x eq 'yawn' || $x eq 'johns') { $woke = 1; }
+		# the wake word and the mis-hearings whisper reaches for (it renders
+		# "jawn" as dawn/john/jon/yawn far more often than it gets it right)
+		if ($x =~ /^(jawn|jaun|jawns|john|johns|jon|dawn|dawns|yawn|yawns)$/) { $woke = 1; }
 	}
 	return { status => 'no_wake', said => $transcript } unless $woke && scalar @rest;
 	my $verb = shift @rest;
@@ -1963,23 +1964,33 @@ sub voice_ingest() {
 	$meta ||= {};
 	my $text = &subs::whisper_transcribe($raw);
 	return { status => 'silence' } unless $text;
+	$log->info('voice: heard "' . $text . '"');
 	my $cmd = &subs::voice_command_parse($text);
 	if (($cmd->{'status'} || '') ne 'ok') {
 		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
 		return $cmd;
 	}
+	# Match the target against the apps the system actually knows (the settings
+	# table), not the static known_appts list - the user's apps (breakfast,
+	# music, ...) live in the database. Match the plain key first, then the
+	# spelled-out name, so "Mr. Sun" and "mr sun" agree.
 	my $app = &subs::unformat_name($cmd->{'target'});
-	my $known = $gb::known_appts || {};
-	unless ($known->{$app}) {
-		foreach my $k ( keys %{$known} ) {
-			if (&subs::unformat_name($k) eq $app) { $app = $k; last; }
+	my $row = &subs::db_select('settings', undef, { app => $app })->hashes->[0];
+	unless ($row) {
+		foreach my $r ( @{ &subs::db_select('settings', undef, { setting => 'toggle' })->hashes } ) {
+			next unless $r->{'app'};
+			if (&subs::unformat_name($r->{'app'}) eq $app) { $app = $r->{'app'}; $row = $r; last; }
 		}
 	}
-	unless ($known->{$app}) {
+	unless ($row) {
 		$log->info('voice: no app for "' . $cmd->{'target'} . '" (' . $text . ')');
 		return { status => 'no_app', said => $text, target => $cmd->{'target'} };
 	}
-	&subs::voice_command_apply($app, $cmd->{'want'}, $meta);
+	my $did = eval { &subs::voice_command_apply($app, $cmd->{'want'}, $meta); 1 };
+	unless ($did) {
+		$log->error('voice: apply failed for ' . $app . ': ' . ($@ || 'unknown'));
+		return { status => 'apply_failed', app => $app, said => $text };
+	}
 	$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
 	return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
 }

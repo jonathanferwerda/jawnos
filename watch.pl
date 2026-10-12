@@ -158,9 +158,11 @@ post '/watch/voice' => sub($c) {
 			$raw = MIME::Base64::decode_base64($b64) // '';
 		}
 		if (length $raw > 100) {
-			&subs::subprocessor(sub {
-				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id });
-			}, { name => 'voice ingest' });
+			# inline, not forked: the ingest reads and writes the database, and a
+			# SQLite handle does not survive fork() - the forked child died mid
+			# match holding the parent's handle. whisper is a couple of seconds and
+			# a voice clip is rare, so the brief wait is fine.
+			&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id });
 		}
 		$c->render('text' => 'ok');
 	}
