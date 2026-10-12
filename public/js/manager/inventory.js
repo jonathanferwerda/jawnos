@@ -7,6 +7,12 @@ $(document).on('change', '.statistic_display', function() {
 	var s = $(this);
 	var app = s.closest('.appointment').attr('app');
 	var val = s.val();
+	// a measure carries its own calc (steps sum, weight average): apply it to the
+	// calc select before the load, so the reading and the select agree
+	var calc = s.closest('.appointment').find('.statistic_calc');
+	var measures = {};
+	try { measures = JSON.parse(calc.attr('data-measure_calc') || '{}'); } catch (e) {}
+	if (measures[val] !== undefined) { calc.val(measures[val]); }
 	settingSetter({ 'app': app, 'setting': 's_display', 'value': val });
 	inventoryDetails(app);
 });
@@ -15,7 +21,18 @@ $(document).on('change', '.statistic_calc', function() {
 	var s = $(this);
 	var app = s.closest('.appointment').attr('app');
 	var val = s.val();
-	settingSetter({ 'app': app, 'setting': 's_calc', 'value': val });
+	// A measure remembers its own reading - steps is summed, weight averaged -
+	// so changing the calc while a measure is shown records it for that measure
+	// rather than moving the app's one setting. A base reading still sets s_calc.
+	var measures = {};
+	try { measures = JSON.parse(s.attr('data-measure_calc') || '{}'); } catch (e) {}
+	var display = s.closest('.appointment').find('.statistic_display').val();
+	if (display && measures[display] !== undefined) {
+		settingSetter({ 'app': app, 'setting': 'measure_calc', 'subsetting': display, 'value': val });
+	}
+	else {
+		settingSetter({ 'app': app, 'setting': 's_calc', 'value': val });
+	}
 	inventoryDetails(app);
 });
 

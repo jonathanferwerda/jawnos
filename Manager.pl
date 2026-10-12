@@ -9638,6 +9638,21 @@ sub inventory_details($c,$settings) {
 		}
 		push @display_options, { name => $ameas, formatted_name => $formatted_name } unless grep { $_->{'name'} eq $ameas } @display_options;
 	}
+	# A measure remembers its own reading: steps is summed, weight averaged. The
+	# app's s_calc is only the fallback for one that was never set, and while a
+	# measure is displayed its own calc is the one in force - so the statistic, the
+	# budget and the panel all agree without re-picking. measure_calc_json rides
+	# out to the calc select, so the client knows which ones are measures.
+	my %measure_calc;
+	foreach my $ameas ( keys %{$am} ) {
+		my $mc = &subs::setting_grabber({ app => $app, setting => 'measure_calc', subsetting => $ameas });
+		$mc = $settings->{'s_calc'} unless (defined $mc && length $mc);
+		$mc = 'sum' unless (defined $mc && length $mc);
+		$measure_calc{$ameas} = $mc;
+	}
+	$settings->{'s_calc'} = $measure_calc{$s_display} if defined $measure_calc{$s_display};
+	my $is_measure = defined $measure_calc{$s_display};
+	my $measure_calc_json = encode_json(\%measure_calc);
 
 	my @time_scopes;
 	my @time_widths;
@@ -9895,7 +9910,9 @@ sub inventory_details($c,$settings) {
 							$returner->{'count'}->{$scope}->{$s_display} += 1;
 							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / $returner->{'count'}->{$scope}->{$s_display});
 						}
-						if ($settings->{'budget'} && $settings->{'s_calc'} eq 'sum' && $bucket->{$s_display} != 0) {
+						# a measure reads its budget value from its own calc (sum or average),
+						# not only when the display is summed; a base reading still wants sum
+						if ($settings->{'budget'} && $bucket->{$s_display} != 0 && ($settings->{'s_calc'} eq 'sum' || $is_measure)) {
 							unless ($returner->{'autocalc'}) {
 								$returner->{'autocalc'} = &subs::cache_get({ app => $returner->{'app'}, context => 'autocalc', subcontext => $s_display });
 							}
@@ -10123,6 +10140,7 @@ sub inventory_details($c,$settings) {
 		time_lengths => \@time_lengths,
 		movements => $movements,
 		display_options => \@display_options,
+		measure_calc_json => $measure_calc_json,
 		evaluation => $returner->{'evaluation'}
 	);
 	return $returner;
@@ -11834,11 +11852,15 @@ sub budget_runner($app) {
 		my $timestamp = &subs::rightNow();
 		my $budgets = &subs::db_query('select distinct(app) as app,* from settings where app=? and setting = ? and device = ? and value is not null',$app,'budget', $device)->hashes;
 		my $sb = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'special_budgets' }) } || [];
-		my @budget_modes = ( @{$sb}, %{$gb::budget_modes} );
+		my $am = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'app_measures' }) } || {};
+		# the base readings, any special budgets, and the app's measures: a measure
+		# budget (19869steps/week, 175weight/month) is a budget like any other and
+		# gets its light the same way
+		my @budget_modes = ( @{$sb}, keys %{$gb::budget_modes}, keys %{$am} );
 		foreach my $b ( @{$budgets} ) {
 			my $app = $b->{'app'};
 			my @buds = split /,/, $b->{'value'};
-			foreach my $circumstance ( keys %{$gb::budget_modes} ) {
+			foreach my $circumstance ( @budget_modes ) {
 				my $cache_budget = &subs::cache_get({ app => $app, context => 'budget', subcontext => $circumstance });
 				if ($cache_budget->{'scope'}) {
 					$scope = $cache_budget->{'scope'};
@@ -11878,6 +11900,18 @@ sub budget_runner($app) {
 		&centre_view_grabber({ app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
 
 	}, { name => 'budget runner' });
+}
+
+
+# The calc a measure reads with: its own remembered one (steps sum, weight
+# average), else the app's s_calc as the fallback. Used wherever a measure's
+# value is taken - the budget runner, the panel - so a steps budget and a weight
+# budget read right at the same time, whatever the display is showing.
+sub measure_calc_for {
+	my ($app, $measure, $fallback) = @_;
+	my $calc = &subs::setting_grabber({ app => $app, setting => 'measure_calc', subsetting => $measure });
+	$calc = $fallback unless (defined $calc && length $calc);
+	return (defined $calc && length $calc) ? $calc : 'sum';
 }
 
 
@@ -11948,6 +11982,7 @@ sub budget_calculator($data) {
 				$data->{'appts'} = $appts;
 			}
 
+			my ($m_sum, $m_count) = (0, 0);
 			foreach my $appt ( @{$appts} ) {
 				if ($circumstance eq 'duration') {
 					if ($appt->{'type'} eq 'start' || $appt->{'type'} eq 'record') {
@@ -11962,18 +11997,26 @@ sub budget_calculator($data) {
 					$value += (abs $appt->{'total'} || 0) if $value;
 				}
 				else {
-
-				#	$value = 0 unless $value;
-
-				#	$appt->{'measures'} = eval { return decode_json $appt->{'measures'} };
-				#	next if scalar @{$appt->{'measures'}} == 0;
-
-
-				#	$value += 0 if scalar @{$appt->{'measures'}} == 0;
-				#	foreach my $m ( @{$appt->{'measures'}} ) {
-				#		$value += $m->{$circumstance};
-				#	}
+					# a measure: sum, or average, it across the window's appointments -
+					# the measure decides (steps summed, weight averaged), so its
+					# budget reads right whatever the display is showing.
+					next unless $appt->{'measures'};
+					unless ($appt->{'measured'}) {
+						$appt->{'measures'} = eval { return decode_json $appt->{'measures'} } || [];
+						$appt->{'measured'} = 'yes';
+					}
+					foreach my $m ( @{$appt->{'measures'}} ) {
+						next unless defined $m->{$circumstance};
+						$m_sum += $m->{$circumstance};
+						$m_count++;
+					}
 				}
+			}
+			# a measure is not a base mode: its value is the summed or averaged
+			# measure, per the measure's own calc
+			if ( !grep { $_ eq $circumstance } keys %{$gb::budget_modes} ) {
+				my $mcalc = &measure_calc_for($app, $circumstance, $settings->{'s_calc'});
+				$value = ( $mcalc eq 'average' && $m_count ) ? ($m_sum / $m_count) : $m_sum;
 			}
 			$value = 0 if scalar @{$appts} == 0;
 			$returner->{'value'} = $value;

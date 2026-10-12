@@ -23,7 +23,7 @@ Total Between: <%= &subs::duration_sayer($returner->{'between_total'} / 1000) %>
 			<option value="<%= $v %>" <% if ($s_visual eq $v) { %>selected<% } %>><%= &subs::format_name($v) %></option>
 		<% } %>
 	</select>
-	<select class="statistic_calc" style="vertical-align:bottom;">
+	<select class="statistic_calc" data-measure_calc="<%= $measure_calc_json || '{}' %>" style="vertical-align:bottom;">
 		<% foreach my $cal ( qw/sum average high low/ ) { %>
 			<option value="<%= $cal %>" <% if ($s_calc eq $cal) { %>selected<% } %>><%= &subs::format_name($cal) %></option>
 		<% } %>

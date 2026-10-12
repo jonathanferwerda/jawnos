@@ -334,7 +334,7 @@ async function settingSetter(setter) {
 	return $.ajax({
 		url: '/manager/setting_setter',
 		type: 'POST',
-		data: { app: app, setting:setting, device: device, value:value, timestamp: timestamp},
+		data: { app: app, setting:setting, device: device, subsetting: setter['subsetting'], value:value, timestamp: timestamp},
 		success: function(response) {
 			return response;
 		}
