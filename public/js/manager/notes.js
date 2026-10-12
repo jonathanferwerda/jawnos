@@ -33,3 +33,29 @@ function notesReload() {
 		}
 	});
 }
+
+// Two-click delete, the same arm-then-delete the other app rows use: the first
+// press turns the X red and arms it for two seconds; a second press inside that
+// window removes the note. The row's own uuid keys the delete.
+$(document).on('click', '.note_delete', function() {
+	var a = $(this);
+	if (a.attr('armed') == 'yes') {
+		$.ajax({
+			url: '/manager/note_delete',
+			type: 'POST',
+			data: { uuid: a.attr('uuid'), timestamp: Date.now() },
+			success: function(response) {
+				a.closest('.note').remove();
+			}
+		});
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({ 'background-color': 'red' });
+		setTimeout(function() {
+			a.css({ 'background-color': bgcolor });
+			a.attr('armed', 'no');
+		}, 2000);
+	}
+});

@@ -12306,6 +12306,14 @@ get '/manager/notes' => sub($c) {
 	$c->render(text => $contents);
 };
 
+post '/manager/note_delete' => sub($c) {
+	# The Notes app's X (two-click: arm, then delete). Scoped to notes so a stray
+	# uuid cannot take a real appointment with it.
+	my $uuid = $c->param('uuid');
+	&subs::db_delete('appointments', { uuid => $uuid, app => 'notes', type => 'note' });
+	$c->render(json => { uuid => $uuid });
+};
+
 sub notification_grabber($data) {
 
 	my $timestamp = &subs::rightNow();
