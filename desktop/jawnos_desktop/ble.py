@@ -437,6 +437,7 @@ class Bridge(object):
     def _after_connect(self, path):
         self.device_path = path
         self.reconnect_delay = RECONNECT_START
+        self._drop_signal("_device_signal")
         self._device_signal = self.bus.add_signal_receiver(
             self._on_device_props, bus_name=BLUEZ,
             dbus_interface=DBUS_PROPS, signal_name="PropertiesChanged", path=path)
@@ -480,6 +481,7 @@ class Bridge(object):
             self.close_link(emit=False)
             self._schedule_reconnect()
             return
+        self._drop_signal("_char_signal")
         self._char_signal = self.bus.add_signal_receiver(
             self._on_char_props, bus_name=BLUEZ,
             dbus_interface=DBUS_PROPS, signal_name="PropertiesChanged", path=notify_char)
@@ -604,23 +606,24 @@ class Bridge(object):
         self.auto_reconnect = False
         self.close_link(emit=True)
 
+    def _drop_signal(self, attr):
+        # add_signal_receiver hands back a SignalMatch; keep it and .remove() it
+        # before adding another. The old code called remove_signal_receiver()
+        # with the match object where a handler belongs (and the wrong iface), so
+        # the removal always failed: every reconnect stacked a fresh receiver on
+        # the same path and each notification was delivered once per accumulated
+        # copy -- a single tap landed 7-12 times.
+        sig = getattr(self, attr, None)
+        if sig is not None:
+            try:
+                sig.remove()
+            except Exception:
+                pass
+            setattr(self, attr, None)
+
     def close_link(self, emit):
-        if self._char_signal is not None:
-            try:
-                self.bus.remove_signal_receiver(
-                    self._char_signal, dbus_interface=GATT_CHAR_IFACE,
-                    signal_name="PropertiesChanged", path=self.notify_char)
-            except Exception:
-                pass
-            self._char_signal = None
-        if self._device_signal is not None:
-            try:
-                self.bus.remove_signal_receiver(
-                    self._device_signal, dbus_interface=DEVICE_IFACE,
-                    signal_name="PropertiesChanged", path=self.device_path)
-            except Exception:
-                pass
-            self._device_signal = None
+        self._drop_signal("_char_signal")
+        self._drop_signal("_device_signal")
         had = self.device_path
         self.write_char = None
         self.notify_char = None
