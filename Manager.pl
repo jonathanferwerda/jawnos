@@ -3644,18 +3644,66 @@ sub store_setting_list() {
 }
 
 post '/manager/configure/mugshot_upload' => sub($c) {
-	my $timestamp = $c->param('timestamp');
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	my $dev = $c->param('device') || $device;
 	my @uploads = @{$c->req->uploads};
 	my $image;
-	my $ass;
 	if (scalar @uploads > 0) {
+		# The mugshot is a picture, so it is stored like one: sealed under the photo
+		# location's `me` folder. It used to be a multi-megabyte data URI in the
+		# settings table, which every load and every sync paid for.
+		my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev });
+		my $location = &subs::home($folder) . '/me';
+		`mkdir -p "$location"` unless -e $location;
 		foreach my $u ( @uploads ) {
-		  $ass = $u->asset->slurp;
-			$image = 'data:image/png;base64,' . encode_base64($ass);
-			&subs::setting_setter({ app => 'me', setting => 'mugshot', value => $image });
+			my $ass = $u->asset->slurp;
+			my $raw = $location . '/mugshot.png';
+			write_file($raw, $ass);
+			my $secret = &subs::suds_grabber();
+			my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+			my $sealed = 'mugshot.png.enc';
+			`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$location/$sealed"`;
+			`shred -u "$raw"`;
+			&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => $sealed });
+			$image = &Manager::mugshot_source($dev);
 		}
 	}
 	$c->render(text =>  $image );
+};
+
+# Where a mugshot is rendered from. Older installs still hold a data URI in
+# me.mugshot; those are returned as-is. A name is served by the public /mugshot
+# route, which is where the image file actually lives (sealed, under
+# photo_location/me). Returns undef when nothing is set.
+sub mugshot_source($dev) {
+	$dev = &subs::device_setter() unless defined $dev && length $dev;
+	my $name = &subs::setting_grabber({ app => 'me', setting => 'mugshot', device => $dev });
+	return undef unless defined $name && length $name;
+	return $name if $name =~ /^data:/;
+	return '/mugshot?device=' . Mojo::Util::url_escape($dev) . '&timestamp=' . &subs::rightNow();
+}
+
+get '/mugshot' => sub($c) {
+	# public: the homepage shows the face to visitors, so it must not need a login
+	my $dev = $c->param('device') || &subs::device_setter();
+	my $name = &subs::setting_grabber({ app => 'me', setting => 'mugshot', device => $dev });
+	unless (defined $name && $name =~ /^[\w.\-]+$/ && $name =~ /image|\.png|\.jpg|\.jpeg|\.webp|\.enc$/) { $c->rendered(404); return; }
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev });
+	my $file = &subs::home($folder) . '/me/' . $name;
+	unless (-e $file) { $c->rendered(404); return; }
+	my $data;
+	if ($file =~ /\.enc$/) {
+		my $secret = &subs::suds_grabber();
+		my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+		$data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$file" 2>/dev/null`;
+	} else {
+		$data = eval { read_file($file) };
+	}
+	if (defined $data && length $data) {
+		$c->res->headers->content_type('image/png');
+		$c->res->headers->cache_control('private, max-age=60');
+		$c->render(data => $data);
+	} else { $c->rendered(404); }
 };
 
 post '/manager/configure/logo_upload' => sub($c) {
@@ -12381,10 +12429,9 @@ get '/manager/notifications/list' => sub($c) {
 };
 
 get '/manager/notes' => sub($c) {
-	# Everything the watch recorded that did not name a command, transcribed and
-	# listed newest-first: the plainest possible reading of a note. The rows are
-	# written by subs::voice_note_store as the clips come in.
-	my $notes = &subs::db_query('select notes, timestamp, uuid from appointments where app = ? and type = ? order by timestamp desc limit 300', 'notes', 'note')->hashes;
+	# Every note, newest first: the plain rows subs::voice_note_store and the app's
+	# own input write. Notes are no longer appointments - a note is just its text.
+	my $notes = &subs::db_query('select text, timestamp, uuid from notes order by timestamp desc limit 300')->hashes;
 	my $content = $c->render_to_string(
 		template => 'notes/notes',
 		notes => $notes
@@ -12393,12 +12440,64 @@ get '/manager/notes' => sub($c) {
 	$c->render(text => $contents);
 };
 
-post '/manager/note_delete' => sub($c) {
-	# The Notes app's X (two-click: arm, then delete). Scoped to notes so a stray
-	# uuid cannot take a real appointment with it.
+post '/manager/note_save' => sub($c) {
+	# Write a note by hand, or save one being edited: a uuid that is already a note
+	# updates in place, anything else is a new note. Every open Notes window is
+	# refreshed, so the list stays live.
 	my $uuid = $c->param('uuid');
-	&subs::db_delete('appointments', { uuid => $uuid, app => 'notes', type => 'note' });
+	my $text = $c->param('text');
+	$text = '' unless defined $text;
+	$text =~ s/\r\n/\n/g;
+	$text =~ s/^\s+|\s+$//g;
+	my $now = &subs::rightNow();
+	my $exists = $uuid ? &subs::db_select('notes', ['uuid'], { uuid => $uuid })->hash : undef;
+	my $created = 0;
+	if ($exists && $exists->{'uuid'}) {
+		&subs::db_update('notes', { text => $text, server_time => $now }, { uuid => $uuid });
+	}
+	else {
+		$uuid = &subs::random_string_creator(21);
+		&subs::db_insert('notes', {
+			uuid => $uuid,
+			app => 'notes',
+			text => $text,
+			timestamp => $now,
+			server_time => $now
+		});
+		$created = 1;
+	}
+	&Websocket::send('tab', { console => 'notesReload();' });
+	$c->render(json => { uuid => $uuid, text => $text, created => $created });
+};
+
+post '/manager/note_delete' => sub($c) {
+	# The Notes app's X (two-click: arm, then delete). Notes live in their own
+	# table now, so this is scoped to it.
+	my $uuid = $c->param('uuid');
+	&subs::db_delete('notes', { uuid => $uuid });
+	&Websocket::send('tab', { console => 'notesReload();' });
 	$c->render(json => { uuid => $uuid });
+};
+
+post '/manager/note_to_appt' => sub($c) {
+	# A note dragged onto an appointment window: its text is appended to that app's
+	# notes and saved, encrypted exactly the way manager_reset encrypts a reset's
+	# notes. The appointment's notes field is refreshed over the websocket.
+	my $uuid = $c->param('uuid');
+	my $app = &subs::unformat_name($c->param('app'));
+	my $note = &subs::db_select('notes', undef, { uuid => $uuid })->hash;
+	my $text = ($note && $note->{'text'}) ? $note->{'text'} : '';
+	return $c->render(json => { error => 'no such note' }) unless defined $note && defined $note->{'text'};
+	my $appts = &subs::db_query('select notes, ost, server_time, uuid from appointments where app = ? order by timestamp desc limit 1', $app)->hashes;
+	my $appt = $appts->[0];
+	return $c->render(json => { error => 'no appointment for ' . $app }) unless $appt && $appt->{'uuid'};
+	my $suds = $c->session('suds');
+	my $existing = $appt->{'notes'} ? &subs::note_decrypter($suds, $appt->{'notes'}, $appt->{'server_time'}) : '';
+	$existing .= "\n" if $existing =~ /\S/;
+	my $notes = &subs::note_encrypter($suds, $existing . $text);
+	&subs::db_update('appointments', { notes => $notes, server_time => &subs::rightNow() }, { uuid => $appt->{'uuid'} });
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app . '","' . $appt->{'uuid'} . '");' });
+	$c->render(json => { app => $app, uuid => $appt->{'uuid'} });
 };
 
 sub notification_grabber($data) {
@@ -20190,6 +20289,12 @@ sub migration_already_applied($command) {
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [
+		# Notes are their own store now, not appointments: one plain row per note.
+		# The server_time column is what puts it on the generic peer sync and backup,
+		# so a note still reaches every machine.
+		'CREATE TABLE IF NOT EXISTS notes (uuid VARCHAR(255) unique, timestamp VARCHAR(255), server_time VARCHAR(255), app VARCHAR(255), device VARCHAR(255), text LONGTEXT, ost VARCHAR(25))',
+		'CREATE INDEX IF NOT EXISTS idx1_notes on notes (timestamp)',
+		'CREATE INDEX IF NOT EXISTS idx2_notes on notes (uuid)',
 		'alter table appointments add column subtype VARCHAR(255)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',

@@ -85,6 +85,14 @@ CREATE TABLE "neighbour_link" (
 			initiated VARCHAR(255),
 			status VARCHAR(25)
 		, ost VARCHAR(25), credential LONGTEXT, name VARCHAR(255));
+CREATE TABLE "notes" (
+			uuid VARCHAR(255) unique,
+			timestamp VARCHAR(255),
+			server_time VARCHAR(255),
+			app VARCHAR(255),
+			device VARCHAR(255),
+			text LONGTEXT,
+			ost VARCHAR(25));
 CREATE TABLE "notifications" (
 			timestamp VARCHAR(255),
 			message VARCHAR(500),
@@ -231,6 +239,8 @@ CREATE INDEX idx2_continent on continent (app,uuid);
 CREATE INDEX idx1_security on security (level);
 CREATE INDEX idx2_security on security (level,server_time);
 CREATE INDEX idx1_cache on cache (app,device,context,subcontext);
+CREATE INDEX idx1_notes on notes (timestamp);
+CREATE INDEX idx2_notes on notes (uuid);
 CREATE INDEX idx1_backups on backups (signatorial,recipient);
 CREATE INDEX idx1_mailbox on mailbox (contact);
 CREATE INDEX idx2_mailbox on mailbox (community,club,team,project,account,person);

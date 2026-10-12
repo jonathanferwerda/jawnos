@@ -1981,14 +1981,15 @@ sub voice_note_store() {
 	$spoken =~ s/^\s+|\s+$//g;
 	return unless length $spoken;
 	my $now = &subs::rightNow();
-	&subs::db_insert('appointments', {
+	# A plain note row, not an appointment: the Notes app reads this table, and the
+	# server_time column rides the generic peer sync so the note still reaches
+	# every machine.
+	&subs::db_insert('notes', {
 		app => 'notes',
 		timestamp => $now,
 		server_time => $now,
-		type => 'note',
-		notes => $clean,
-		uuid => &subs::random_string_creator(21),
-		seen => 'yes'
+		text => $clean,
+		uuid => &subs::random_string_creator(21)
 	});
 	$log->info('voice: note stored (' . $clean . ')');
 	return $clean;

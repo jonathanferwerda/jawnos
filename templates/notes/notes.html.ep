@@ -1,17 +1,23 @@
 <% 	no warnings 'uninitialized'; %>
-<%# The Notes app: what the watch heard when the words were not a command. Each
-    row is a transcript with the moment it was said; the list is newest first and
-    meant to be sorted into something more useful later. The X is a two-click
-    delete (arm, then remove) like the other app rows use. %>
-<div id="notes" style="width:100%;height:100%;overflow:scroll;background-color:var(--panel);padding:6px;">
-	<% if (!scalar @{$notes}) { %>
-		<span style="font-size:18px;">No notes yet. Anything the watch hears that is not a command lands here.</span>
-	<% } %>
-	<% foreach my $n ( @{$notes} ) { %>
-		<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;">
-			<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="Delete">X</button>
-			<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
-			<div><%= $n->{'notes'} %></div>
-		</div>
-	<% } %>
+<%# The Notes app: what the watch heard when the words were not a command, plus
+    anything typed here. A note is its own row now, not an appointment. Click a
+    note to edit it in the box at the foot, drag one onto an appointment window to
+    fold it into that app's notes, and the X is a two-click delete. %>
+<div id="notes" style="width:100%;height:100%;background-color:var(--panel);padding:6px;display:flex;flex-direction:column;">
+	<div id="notes_list" style="flex:1 1 auto;overflow:scroll;">
+		<% if (!scalar @{$notes}) { %>
+			<span style="font-size:18px;">No notes yet. Anything the watch hears that is not a command lands here.</span>
+		<% } %>
+		<% foreach my $n ( @{$notes} ) { %>
+			<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
+				<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="Delete">X</button>
+				<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
+				<div class="note_text"><%= $n->{'text'} %></div>
+			</div>
+		<% } %>
+	</div>
+	<div id="notes_input_row" style="flex:0 0 auto;padding-top:4px;">
+		<textarea id="notes_input" rows="2" placeholder="Write a note... (Enter saves, Shift+Enter makes a line)" style="width:80%;vertical-align:top;"></textarea>
+		<button id="notes_save" style="width:16%;vertical-align:top;">Save</button>
+	</div>
 </div>

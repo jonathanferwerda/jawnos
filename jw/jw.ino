@@ -1474,9 +1474,18 @@ void loop() {
   // awake: the task captures one utterance, ships it, and stays listening. It
   // steps aside (and is not restarted) while a manual record or playback holds
   // the microphone, and only listens while the screen is on (dozing = off).
-  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing
-      && (deviceConnected || WiFi.status() == WL_CONNECTED)) {
+  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing) {
+    // start the listener the moment the screen is up: a command spoken in the
+    // first seconds of a wake must be heard, so this no longer waits for the
+    // radio (a wrist glance skipped the bring-up entirely and voice detection
+    // waited on a link that was never coming). The clip waits on disk and ships
+    // as soon as there is a radio.
     voiceListenStart(false);
+  }
+  // a clip being heard or waiting to go needs the bridge: bring the radio up on
+  // demand (a glance did not), so the payload has somewhere to go
+  if ((voiceRecording || voiceShipping) && bt_enabled && !ble_radio_up && ble_restore_at == 0) {
+    ble_restore_at = millis();
   }
   // the server said the clip was transcribed and filed: drop the watch's local
   // copy. Only when it is still that clip (a new capture would have changed the
@@ -1495,7 +1504,7 @@ void loop() {
   wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
   // a spoken command keeps the watch awake until it is captured: without this the
   // screen timeout could doze us mid-sentence and the clip would be lost
-  if (voiceRecording || voiceShipping) {
+  if (voiceRecording) {
     buttonMillis = millis();
   }
   // the orange ring: shown for exactly as long as a command is being heard
@@ -3408,14 +3417,21 @@ static void voiceListenTask(void *pv) {
         // command. The server acks on reassembly (voice_recv), so the wait is a
         // network round trip, not the transcription.
         long ts = voice_clip_ts;
-        int tries = 0;
         voiceShipping = true;
-        while (voiceListening && voice_acked_ts != ts && tries < 4) {
-          tries++;
-          if (!voice_ship_clip(VOICE_WAV_PATH)) { break; }
-          uint32_t started = millis();
-          while (voiceListening && voice_acked_ts != ts && millis() - started < 6000) {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+        uint32_t ship_started = millis();
+        // Keep trying until the server says the clip arrived whole, or the cap is
+        // reached. A send that finds no radio (the bridge is still coming up) is
+        // not a failure - wait and try again. The queue is one clip, retried in
+        // place; the file stays until the server's ack deletes it.
+        while (voiceListening && voice_acked_ts != ts && millis() - ship_started < 45000) {
+          if (voice_ship_clip(VOICE_WAV_PATH)) {
+            uint32_t started = millis();
+            while (voiceListening && voice_acked_ts != ts && millis() - started < 6000) {
+              vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+          }
+          else {
+            vTaskDelay(500 / portTICK_PERIOD_MS);   // no radio yet: wait for one
           }
         }
         voiceShipping = false;
@@ -3446,8 +3462,9 @@ static void voiceListenStart(bool one_shot) {
   if (voiceListening) {
     return;
   }
-  if (!one_shot && !deviceConnected && WiFi.status() != WL_CONNECTED) {
+  if (!one_shot && !deviceConnected && WiFi.status() != WL_CONNECTED && !bt_enabled) {
     // the setting keeps a listener up, so it needs somewhere for the clip to go;
+    // with the bridge setting on the radio is brought up for it (see loop), and
     // the serial trigger still records without a radio, so the VAD can be tuned
     // over USB
     Serial.println("[voice] no radio to ship a clip on; not listening");
@@ -5192,6 +5209,16 @@ void lowPowerEnergyHandler()
   // that ends a real light sleep is still latched in the PMU, and without this it
   // would read as a click while awake and put the watch straight back to sleep
   dozing = true;
+  // A clip still going out holds the device awake: the screen is already dark (as
+  // asked), but the radio has to stay up long enough to deliver the payload - it
+  // is hundreds of paced notifications - so sit at full speed until it is out,
+  // then sleep as usual.
+  if (voiceShipping) {
+    uint32_t ship_wait = millis();
+    while (voiceShipping && millis() - ship_wait < 45000) {
+      delay(20);
+    }
+  }
   wrist_look_watch = false;   // the glance ends with the screen
   wristPollReset();    // both sleep paths start their pose from scratch
 
