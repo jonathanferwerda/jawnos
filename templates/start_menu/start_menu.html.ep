@@ -95,6 +95,7 @@
 				<img id="twirl_toggle" class="jonathan twirl" category="games" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" hint="Twirl"></img>
 				<img id="studio_toggle" category="media" src="<%= &subs::icon_for('/images/decipherable/mixer.png') %>" hint="Studio" class="jonathan mixer"></img>
 				<img class="handbook medium_thumb jonathan" id="handbook_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Handbook">
+				<img class="jonathan medium_thumb" id="help_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/question mark.png') %>" hint="Help">
 				<img class="home medium_thumb jonathan" id="home_toggle" category="system" hint="Home" src="<%= &subs::icon_for($gb::known_appts->{'guest'}->{'icon'}) %>">
 				<br>
 

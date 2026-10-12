@@ -1,0 +1,90 @@
+<%
+	# The Help window's contents. Rendered both as a whole window (via the
+	# /manager/help route) and on its own (via /manager/help/body), so the whole
+	# template is the .help_shell element and nothing above it.
+	my $raw = $topic // '';
+	my $shown = &help::get($raw);
+	my $search = $search // '';
+	my $results = length $search ? [ &help::search($search) ] : undef;
+	my $catalogue = [ &help::catalogue() ];
+	my %category_label = ( apps => 'Apps', features => 'Features', functions => 'Functions', devices => 'Devices' );
+	my %category_icon = (
+		apps => '/images/decipherable/folder.png',
+		features => '/images/decipherable/gear.png',
+		functions => '/images/decipherable/measures.png',
+		devices => '/images/decipherable/microchip.png'
+	);
+	my @category_order = qw/apps features functions devices/;
+%>
+<div class="help_shell" style="display:flex;gap:0;width:100%;height:100%;color:var(--ink);">
+	<div class="help_rail" style="width:38%;min-width:150px;max-width:320px;height:100%;overflow-y:auto;border-right:2px solid var(--line);padding:8px 6px 24px 10px;box-sizing:border-box;">
+		<input id="help_search" placeholder="Search help…" value="<%= $search %>"
+			style="width:100%;box-sizing:border-box;margin:0 0 10px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;">
+		<% if ($results) { %>
+			<div class="help_group_label" style="font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:4px 2px;">Results</div>
+			<% if (!@{$results}) { %>
+				<div style="opacity:.7;padding:6px 2px;">Nothing found for “<%= $search %>”.</div>
+			<% } %>
+			<% foreach my $r ( @{$results} ) { %>
+				<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
+					style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+					<%= $r->{'title'} %>
+					<span style="display:block;font-size:11px;opacity:.65;line-height:1.25;"><%= $r->{'summary'} %></span>
+				</span>
+			<% } %>
+		<% } else { %>
+			<% foreach my $cat ( @category_order ) { %>
+				<% my @items = grep { $_->{'category'} eq $cat } @{$catalogue}; %>
+				<% next unless @items; %>
+				<div class="help_group_label" style="display:flex;align-items:center;gap:6px;font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.6;padding:8px 2px 3px;">
+					<img class="little_thumb" style="width:16px;height:16px;" src="<%= &subs::icon_for($category_icon{$cat}) %>">
+					<%= $category_label{$cat} %>
+				</div>
+				<% foreach my $r ( @items ) { %>
+					<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
+						style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+						<%= $r->{'title'} %>
+					</span>
+				<% } %>
+			<% } %>
+		<% } %>
+	</div>
+	<div class="help_body" style="flex:1;height:100%;overflow-y:auto;padding:14px 20px 40px;box-sizing:border-box;">
+		<% if ($shown) { %>
+			<h2 style="margin:4px 0 2px;font-size:24px;"><%= $shown->{'title'} %></h2>
+			<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%= $shown->{'summary'} %></div>
+			<% foreach my $para ( @{ $shown->{'body'} } ) { %>
+				<p style="line-height:1.5;margin:0 0 12px;"><%= $para %></p>
+			<% } %>
+			<% if ($shown->{'app'}) { %>
+				<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="Open <%= $shown->{'title'} %>"
+					style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+					Open <%= $shown->{'title'} %>
+				</span>
+			<% } %>
+			<% if (@{ $shown->{'related'} || [] }) { %>
+				<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+					<span style="opacity:.6;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">See also</span><br>
+					<% foreach my $rid ( @{ $shown->{'related'} } ) { %>
+						<% my $rel = &help::get($rid); next unless $rel; %>
+						<span class="help_topic_link hover" topic="<%= &help::key($rid) %>" hint="<%= $rel->{'summary'} %>"
+							style="display:inline-block;margin:6px 8px 0 0;padding:4px 10px;border-radius:14px;border:1px solid var(--line);cursor:pointer;">
+							<%= $rel->{'title'} %>
+						</span>
+					<% } %>
+				</div>
+			<% } %>
+		<% } else { %>
+			<h2 style="margin:4px 0 2px;font-size:24px;">Help</h2>
+			<p style="line-height:1.5;margin:0 0 12px;">
+				Pick a topic on the left, or search for one. Press <b>F1</b> to read about whatever window you are
+				focused on, and hover (or long-press) any control for a short hint — the question-mark button in a
+				window's title bar opens the topic for that window.
+			</p>
+			<p style="line-height:1.5;margin:0 0 12px;opacity:.8;">
+				Everything is grouped into <b>apps</b> (things you open), <b>features</b> (parts of the desktop
+				itself), <b>functions</b> (cross-cutting mechanics) and <b>devices</b> (the watch, deck and Pico).
+			</p>
+		<% } %>
+	</div>
+</div>

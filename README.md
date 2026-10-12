@@ -51,8 +51,8 @@ furniture around them is largely user-defined:
   that belong at the current hour, in the order they usually happen.
 - **Global display zoom** (20%–200%), adjustable bar heights and a configurable window border
   (width and colour), so the interface can be scaled for a phone, a tablet or a large display.
-- **Five desktop themes**, each with a dark cut and a matching colour scheme, and **sixteen
-  selectable icon sets**, with the original hand-drawn artwork as the default.
+- **Nine colour schemes**, each in a light and a dark cut, and **seventeen selectable icon sets**,
+  with the original hand-drawn artwork as the default.
 
 ### The desktop app (a computer)
 
@@ -126,6 +126,9 @@ speaking the phone's protocol, so a watch links to whichever machine is in range
   revision, keeping each tab's code and data in step.
 - **Utilities & security** — password and pseudonym generation, QR codes, encryption helpers,
   screen locking and a keyring-style secret store.
+- **Built-in help** — a **Help** app that explains any app, feature, function or device in plain
+  language: hover (or long-press) a control for a hint, press **F1** for whatever window you are
+  focused on, or use the question-mark button in a window's title bar.
 - **Devices & firmware** — first-class support for the T-Watch, T-Deck and Pico 2W, with remote
   control, a Bluetooth Low Energy bridge, SSH tunnelling, and encrypted sync between machines.
 
@@ -425,7 +428,7 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 
 ## Status
 
-JawnOS is a work in progress. It ships with fourteen selectable icon sets and hover or long-press
+JawnOS is a work in progress. It ships with seventeen selectable icon sets and hover or long-press
 hints throughout the interface, with the original hand-drawn icons still the default. Recent
 attention has gone to the desktop itself — configurable bars, pins and context menus — and to the
 apps around it: the folders and sealed files, the warehouse's new move ledger, the store's

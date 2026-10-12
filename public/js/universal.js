@@ -912,7 +912,12 @@ function jawnosHintNode() {
 	return h;
 }
 function jawnosHintShow(el, x, y, gap) {
-	var text = $(el).attr('hint');
+	var hint = $(el).attr('hint');
+	var topic = $(el).attr('help');
+	// An element may carry a short label (hint), a help topic (help), or both.
+	// When a topic is present the label says so, and F1 opens the full entry.
+	var text = hint || '';
+	if (topic) { text = text ? (text + ' \u00b7 F1') : 'Help \u00b7 F1'; }
 	if (!text) { return; }
 	if (gap == null) { gap = 12; }
 	var h = jawnosHintNode();
@@ -969,7 +974,7 @@ var jawnos_hover_capable = true;
 try { jawnos_hover_capable = window.matchMedia('(hover: hover)').matches; } catch (e) {}
 
 if (jawnos_hover_capable) {
-	$(document).on('mouseenter', '[hint]', function () {
+	$(document).on('mouseenter', '[hint], [help]', function () {
 		if (jawnos_touch_hint_active) { return; }
 		var el = this;
 		clearTimeout(jawnos_hint_timer);
@@ -979,14 +984,14 @@ if (jawnos_hover_capable) {
 			jawnosHintShow(el, m.x, m.y);
 		}, 1000);
 	});
-	$(document).on('mouseleave', '[hint]', function () {
+	$(document).on('mouseleave', '[hint], [help]', function () {
 		clearTimeout(jawnos_hint_timer);
 		jawnosHintHide();
 	});
 	$(document).on('mousedown', function () { clearTimeout(jawnos_hint_timer); jawnosHintHide(); });
 }
 
-$(document).on('touchstart', '[hint]', function (e) {
+$(document).on('touchstart', '[hint], [help]', function (e) {
 	var el = this;
 	if ($(el).hasClass('draggable') || $(el).closest('.draggable').length > 0) { return; }
 	// where a context menu is registered the hold belongs to it, not the hint

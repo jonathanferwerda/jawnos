@@ -66,6 +66,7 @@ require "./subroutines.pl";
 require "./Music.pl";
 require "./hooks.pl";
 require "./tunnel.pl";
+require "./help.pl";
 { package gb; }
 
 # Run the schema migrations once per worker when the app comes up: a git pull
@@ -3238,6 +3239,7 @@ my @manager_bundle_files = qw(
 	/js/manager/monitor.js
 	/js/manager/folders.js
 	/js/manager/notes.js
+	/js/manager/help.js
 );
 my $manager_bundle_cache;
 get '/js/manager/bundle.js' => sub ($c) {
@@ -14185,6 +14187,7 @@ sub window_maker($type,$timestamp) {
 					<span style="float:right;">
 
 						<span class="navbar_buttons">
+							<button id="window_' . $timestamp . '_help" class="' . $unformatted_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '" hint="Help">' . $window_control->('help', '?') . '</button>
 							<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
 							<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
 							<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
@@ -17288,6 +17291,30 @@ get '/manager/handbook/:chapter' => sub ($c) {
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'handbook', contents => $contents }, $timestamp);
 	$c->render(text => $website);
+};
+
+# The Help app: a window into the topic registry (help.pl). /manager/help wraps
+# the contents in a window like every other app; /manager/help/body returns just
+# the contents, so a topic click or a search swaps the pane in place without
+# rebuilding (and re-raising) the whole window.
+get '/manager/help' => sub($c) {
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(
+		template => 'apps/help',
+		topic => $c->param('topic'),
+		search => $c->param('search')
+	);
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'help', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+};
+
+get '/manager/help/body' => sub($c) {
+	my $html = $c->render_to_string(
+		template => 'apps/help',
+		topic => $c->param('topic'),
+		search => $c->param('search')
+	);
+	$c->render(json => { html => $html });
 };
 
 post '/manager/handbook/settings' => sub ($c) {
