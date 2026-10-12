@@ -1259,53 +1259,51 @@ function windowAligner() {
 	});
 }
 
-// A phone layers its windows on one another: windowReorganizer parks them all
-// on the same top, so just the top of the pile shows. Two things follow from
-// that. Closing a window leaves the layers a step off, so they want re-parking
-// against the new count; and a tap on a title bar should walk the stack - the
-// window tapped rises to the top and the one that was on top drops to the foot,
-// so repeated taps cycle through the open windows. Desks place windows apart, so
-// neither applies there and this is a no-op.
+// Phones cascade their windows: windowReorganizer parks each one a title bar
+// below the last, so the bars step down the screen and the window at the foot of
+// the pile is the one in front. That gives two jobs. Closing a window should
+// close the gap - the bars below step up into its place - and a tap on a title
+// bar should walk the cascade: the top of the pile drops to the foot and the
+// rest rise, so taps cycle the open windows. Desks place windows by hand
+// wherever they like, so neither applies there and this is a no-op.
 function windowStacker(app) {
 	if (!windowPhoneChecker()) { return; }
 	var visible = $('.wind').filter(':visible');
 	if (visible.length == 0) { return; }
 
-	// the phone stack's own step and foot, matching windowReorganizer's mobile
-	// branch, so a restack lands the layers exactly where an open would
-	var vStep = visible.first().find('.top_navbar').outerHeight() || 40;
-	var offset = (vStep * Math.max(0, $('.wind').length - 1)) + windowTopLimit();
-
-	if (!app) {
-		// a plain restack (a window was closed): re-park the layers
-		visible.each(function () { $(this).css({ 'top': offset }); });
-		return;
-	}
-
-	var target = $('.wind[app="' + app + '"]');
-	if (!target.length || visible.length < 2) { return; }
-
-	// back to front by z-index, then rotate so the tapped window leads
-	var ordered = visible.sort(function (a, b) {
+	// the cascade as it stands, the bar at the top of the pile first
+	var order = visible.sort(function (a, b) {
+		var ta = parseFloat($(a).css('top')) || 0;
+		var tb = parseFloat($(b).css('top')) || 0;
+		if (ta !== tb) { return ta - tb; }
 		return (parseInt($(a).css('z-index'), 10) || 0) - (parseInt($(b).css('z-index'), 10) || 0);
 	}).toArray();
-	var front = ordered[ordered.length - 1];
-	var t = target.get(0);
-	var order;
-	if (t === front) {
-		// tapping the visible window drops it to the foot; the next one rises
-		order = [front].concat(ordered.slice(0, ordered.length - 1));
-	} else {
-		// a tap on a lower layer: it rises to the top, the old top falls to the foot
-		var rest = ordered.filter(function (el) { return el !== t && el !== front; });
-		order = [front].concat(rest, [t]);
+
+	if (app) {
+		var target = $('.wind[app="' + app + '"]').get(0);
+		if (!target || order.length < 2) { return; }
+		var head = order[0];
+		if (target === head) {
+			// a tap on the top of the pile walks it down to the foot
+			order = order.slice(1).concat([head]);
+		} else {
+			// a tap lower down lifts it to the top and drops the old top to the foot
+			order = [target].concat(order.filter(function (el) { return el !== target && el !== head; }), [head]);
+		}
+		// the window at the foot of the pile is the one in front
+		$(order).each(function (slot) { $(this).css({ 'z-index': top_level_now + slot + 1 }); });
+		top_level_now = top_level_now + order.length;
 	}
-	$(order).each(function (i) { $(this).css({ 'z-index': top_level_now + i + 1 }); });
-	top_level_now = top_level_now + order.length;
+
+	// repack the cascade: one title bar per step from the top limit down, so a
+	// closed window leaves no gap and the bars sit flush
+	var vStep = $(order[order.length - 1]).find('.top_navbar').outerHeight() || 40;
+	var start = windowTopLimit();
+	$(order).each(function (slot) { $(this).css({ 'top': start + (slot * vStep) }); });
+
 	// raise the new front through topLevelNow so its frame ring and the taskbar
-	// pins follow, then keep every layer parked at the restack's foot
-	topLevelNow($(order[order.length - 1]));
-	visible.each(function () { $(this).css({ 'top': offset }); });
+	// pins follow the order
+	if (app) { topLevelNow($(order[order.length - 1])); }
 }
 
 function windowRefresher(app) {
