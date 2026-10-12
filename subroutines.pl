@@ -11142,4 +11142,86 @@ sub git_watcher_check {
 	write_file(&subs::home('~/.president/status'), 'restart');
 }
 
+# A Mojo::UserAgent that speaks to a peer the way remote_useragent_maker builds
+# one - the tunnel-aware manager url plus the session cookie we already hold for
+# it. Kept in subroutines so the boot-time loops, which run before Manager.pl is
+# loaded, can reach a peer without pulling the whole app in.
+sub peer_useragent {
+	my $rm = shift;
+	return (undef, $rm) unless $rm && $rm->{'cookie'} && $rm->{'manager'};
+	$rm = &subs::remote_machine_tunnel_processor($rm);
+	my $jar = eval { decode_json $rm->{'cookie'} };
+	return (undef, $rm) unless $jar && ref $jar eq 'ARRAY';
+	require Mojo::Cookie::Response;
+	my $ua = Mojo::UserAgent->new;
+	$ua = $ua->max_response_size(0);
+	foreach my $c ( @{$jar} ) {
+		next unless $c->{'name'};
+		$ua->cookie_jar->add(Mojo::Cookie::Response->new(
+			name   => $c->{'name'},
+			value  => $c->{'value'},
+			domain => $c->{'domain'} || '',
+			path   => $c->{'path'} || '/',
+		));
+	}
+	$ua->insecure(1);
+	return ($ua, $rm);
+}
+
+# Reconcile the staged app releases (the APKs under releases/) with the newest a
+# reachable peer holds: a device that is behind pulls the APK in, so every
+# device becomes a holder and a source. The APK is a blob (gitignored) carried
+# over http, not through git - a ~35 MB binary per version in git history would
+# be untenable. Pull, on the watcher's slow tick; the code watcher keeps the
+# Perl tree current.
+sub app_release_sync {
+	my $dir = &subs::home('~/jawnos/releases');
+	mkdir $dir unless -d $dir;
+	my $me = &subs::signatorial_designer();
+	my (%local, %best);
+	foreach my $f ( glob("$dir/jawnos-*.apk") ) {
+		my ($product, $vc) = ( $f =~ m{/jawnos-(app|api)-(\d+)-} );
+		next unless $product;
+		$local{$product} = $vc if !$local{$product} || $vc > $local{$product};
+	}
+	my $rms = &subs::db_select('remote_machines')->hashes || [];
+	foreach my $rm ( @{$rms} ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		my ($ua, $p) = &subs::peer_useragent($rm);
+		next unless $ua;
+		my $res = eval { $ua->inactivity_timeout(20)->get($p->{'manager'} . '/manager/app_release?signatorial=' . $me)->result };
+		next unless $res && $res->is_success;
+		my $body = eval { decode_json $res->body } || {};
+		my $phost = $body->{'hostname'} || $rm->{'hostname'} || $rsig;
+		foreach my $rel ( @{ $body->{'releases'} || [] } ) {
+			my ($product, $vc) = ($rel->{'product'}, ($rel->{'versionCode'} || 0) + 0);
+			next unless $product && $vc;
+			next if $local{$product} && $vc <= $local{$product};
+			next if $best{$product} && $vc <= $best{$product}->{'versionCode'};
+			$best{$product} = { %$rel, versionCode => $vc, manager => $p->{'manager'}, ua => $ua, host => $phost };
+		}
+	}
+	foreach my $product ( sort keys %best ) {
+		my $b = $best{$product};
+		my $filename = $b->{'filename'};
+		next unless $filename && $filename =~ /^jawnos-\Q$product\E-\d+-[^\/]+\.apk$/;
+		my $url = $b->{'manager'} . '/manager/app_download?product=' . $product . '&versionCode=' . $b->{'versionCode'} . '&signatorial=' . $me;
+		my $res = eval { $b->{'ua'}->inactivity_timeout(300)->get($url)->result };
+		next unless $res && $res->is_success && defined $res->body && length $res->body;
+		my $blob = $res->body;
+		my $sha = eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) };
+		next if $b->{'sha256'} && $sha && $sha ne $b->{'sha256'};
+		my $dest = "$dir/$filename";
+		write_file("$dest.tmp", $blob);
+		unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$product-*.apk");
+		rename("$dest.tmp", $dest) or next;
+		if ($subs::logfile) {
+			open(my $fh, '>>', $subs::logfile);
+			print $fh &subs::rightNow() . " app release: pulled $product v" . $b->{'versionCode'} . " (" . length($blob) . " bytes) from " . $b->{'host'} . "\n";
+			close $fh;
+		}
+	}
+}
+
 1;

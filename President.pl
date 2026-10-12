@@ -204,6 +204,19 @@ sub manager_starter() {
 		}
 	}, { name => 'git watcher' });
 
+	# The staged app releases (the APKs) reconcile on a slower tick: ask each
+	# reachable peer what it holds and pull the newest in, so every device becomes
+	# a holder and a source. The code watcher above keeps the Perl tree current;
+	# this keeps the app blob current. A first pass soon after boot, then every
+	# five minutes.
+	&subs::subprocessor(sub {
+		sleep 45;
+		while (1) {
+			eval { &subs::app_release_sync(); };
+			sleep 300;
+		}
+	}, { name => 'app release sync' });
+
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
 		&subs::subprocessor(sub {
