@@ -9707,6 +9707,7 @@ sub inventory_details($c,$settings) {
 								circumstance => $s_display,
 								value => $bucket->{$s_display},
 								scope => $scope,
+								ts => $ts,
 								appts => $appts,
 								settings => $settings
 							});
@@ -11678,6 +11679,9 @@ sub budget_calculator($data) {
 	my $circumstance = $data->{'circumstance'};
 	my $value = $data->{'value'};
 	my $scope = $data->{'scope'};
+	# the window the reading is for: the caller says when it is one of the blocks
+	# before or after now, so a pace is only read off the one now running
+	my $ts = $data->{'ts'} || 'this';
 	my $settings = $data->{'settings'} || &subs::settings_grabber({ app => $app });
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $returner = { app => $app, scope_name => &subs::timespan_widener($scope), value => $value };
@@ -11837,6 +11841,34 @@ sub budget_calculator($data) {
 			$returner->{'expected'} = sprintf("%.19f",$returner->{'budgeted'} / ( $returner->{'duration'} * $scoped));
 			$returner->{'actual'} = sprintf("%.19f", ($returner->{'value'} * $scoped) / ($returner->{'scope'} * $scoped));
 		}
+		# A budget locked to the calendar is read against a period still running:
+		# on Monday a week holds a seventh of its value, so holding that part against
+		# the whole week's target would call an on-pace start a collapse and leave
+		# nothing meaningful to read until the week is done. The pace is read
+		# instead - the part of the period the moment stands at - and the target is
+		# prorated by that same part, so being on track means the value has reached
+		# its share of the period so far, and the projection carries the pace to the
+		# period's end. An unlocked window rolls a whole period back from now, so it
+		# is already run and its pace is 1, as is any block before or after now.
+		my $elapsed = 1;
+		if ($ts eq 'this' && ($returner->{'is_scope'} || '') eq 'yes' && ($settings->{'s_lock'} || '') eq 'on'
+			&& $returner->{'scope_name'} =~ /^(?:hour|day|week|month|year)$/) {
+			(undef, undef, $elapsed) = &subs::period_bounds($returner->{'scope_name'}, $timestamp);
+		}
+		$returner->{'elapsed'} = $elapsed;
+		$returner->{'progress'} = sprintf('%.0f', $elapsed * 100);
+		$returner->{'on_target'} = sprintf('%.19f', $returner->{'budgeted'} * $elapsed);
+		$returner->{'on_track'} = ($returner->{'value'} >= $returner->{'on_target'}) ? 'yes' : 'no';
+		$returner->{'projected'} = $elapsed > 0 ? sprintf('%.19f', $returner->{'value'} / $elapsed) : $returner->{'value'};
+		my $pace_format = sub {
+			my $n = shift;
+			return '-' unless defined $n;
+			return &subs::duration_sayer($n / 1000) if $circumstance eq 'duration';
+			return &subs::price_formatter($n) if $circumstance eq 'total';
+			return sprintf('%.1f', $n);
+		};
+		$returner->{'formatted_projected'} = $pace_format->($returner->{'projected'});
+		$returner->{'formatted_on_target'} = $pace_format->($returner->{'on_target'});
 		$returner = &budget_status_maker($returner);
 	}
 	else {

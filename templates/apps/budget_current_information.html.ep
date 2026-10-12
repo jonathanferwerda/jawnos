@@ -1,6 +1,12 @@
 <b>Status:</b> <%= &subs::format_name($budget->{'status'}) %><br>
 <span style="background-color:%= $budget->{'colour'} %>;"><b>This <%= &subs::format_name($budget->{'scope_name'}) %>:</b> <%= $budget->{'formatted_value'} %></span><br>
 <b>Budgeted:</b> <%= $budget->{'formatted_budgeted'} %><br>
+<%# a budget locked to the calendar is only part-run early in its period: the
+    status above reads the part against the whole, so the pace is what says
+    whether that part is on track, before the period is done %>
+<% if (defined $budget->{'elapsed'} && $budget->{'elapsed'} < 1) { %>
+<b>On track:</b> <%= ($budget->{'on_track'} || '') eq 'yes' ? 'yes' : 'no' %> - <%= $budget->{'progress'} %>% of the <%= &subs::format_name($budget->{'scope_name'}) %> has run, so <b><%= $budget->{'formatted_on_target'} %></b> is due by now and the pace projects <b><%= $budget->{'formatted_projected'} %></b> for the <%= &subs::format_name($budget->{'scope_name'}) %><br>
+<% } %>
 <b>Calc:</b> <%= $autocalc->{$budget->{'scope_name'}}->{'formatted_result'} %><br>
 <b><%= &subs::format_name($budget->{'scope_name'}) %> Diff:</b> <%= eval { &{$gb::budget_modes->{$circumstance}->{'formatted'}}($improvement->{'difference'}) } || sprintf("%.3f", $improvement->{'difference'}) %><br>
 <b>Improvement: </b> <%= $improvement->{'overall'} %><br>
