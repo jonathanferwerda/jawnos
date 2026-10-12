@@ -19522,7 +19522,10 @@ sub now_me($data) {
 		->query($params)
 		->to_string;
 
-	my $ua = Mojo::UserAgent->new();
+	# Bounded: a watch off its LAN has a dead IP, and an unbounded blocking fetch
+	# used to sit on the whole request until the connect gave up, which the panel
+	# showed as a stalled/red Now Me. A fast local device answers well inside these.
+	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 5);
 	foreach my $gah ( qw/project person community club team/ ) {
 		my $pros = &subs::db_query('select * from settings where (setting=? or setting =?) and value=?', 'pos','mab',$gah);
 		my $professionals = $pros->hashes;
@@ -19547,7 +19550,21 @@ sub now_me($data) {
 	my $json_op = encode_json $op_d;
 
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id });
-	if ($method eq 'bluetooth') {
+	# Which link actually carries this Now Me? An explicit 'bluetooth' asks for the
+	# bridge; otherwise the watch's own LAN is tried, and a watch that answers is
+	# fetched over HTTP. A watch bridged over BLE and off its access point cannot
+	# answer that ping, and the push used to be dropped in silence - the Embedded
+	# panel then red-dotted and the button never landed. When this machine can
+	# drive the bridge and the device carries a bluetooth address, fall through to
+	# the very push bt_now_me sends.
+	my $link = $method && $method eq 'bluetooth' ? 'bluetooth' : undef;
+	unless ($link) {
+		my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
+		my $ping_test = `$ping`;
+		$link = 'http' if $ping_test =~ /ttl/gi;
+		$link = 'bluetooth' if !$link && &subs::ble_bridge_capable() && $watch->{'mac_addresses'}->{'bluetooth'};
+	}
+	if ($link && $link eq 'bluetooth') {
 		my $returner = &subs::bluetooth_sender({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $chip_id,
@@ -19564,25 +19581,22 @@ sub now_me($data) {
 				message => { type => 'room', data => { room => 1, payload => $room_payload } }
 			});
 		}
-	} else {
-		my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-		my $ping_test = `$ping`;
-		if ($ping_test =~ /ttl/gi) {
-			my $res = $ua->insecure(1)->get($watch_home)->result;
-			if ($edt eq 'microcontroller') {
-				if (eval { $res->result->body }) {
-					if (eval { decode_json $res->result->body }) {
-						my $rb = decode_json $res->result->body;
-						foreach my $info ( keys %{$rb} ) {
-							$op_d->{'__specs'}->{$info} = $res->{$info};
-						}
+	}
+	elsif ($link && $link eq 'http') {
+		my $res = $ua->insecure(1)->get($watch_home)->result;
+		if ($edt eq 'microcontroller') {
+			if (eval { $res->result->body }) {
+				if (eval { decode_json $res->result->body }) {
+					my $rb = decode_json $res->result->body;
+					foreach my $info ( keys %{$rb} ) {
+						$op_d->{'__specs'}->{$info} = $res->{$info};
 					}
 				}
-				$json_op = encode_json $op_d;
-				&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id });
 			}
-			return $res;
+			$json_op = encode_json $op_d;
+			&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id });
 		}
+		return $res;
 	}
 	return {};
 }
