@@ -20,6 +20,13 @@ function musicLocalVolume() {
 function musicVolumeApply() {
 	if (tree && tree.sound) { tree.sound.volume = musicLocalVolume(); }
 }
+// The rendered window contents are cached server-side and reused on the next
+// open; key that cache to the code revision, so a template change (which ships
+// with a version bump) is never served stale - the tools toggle went missing
+// this way once already.
+function musicContentCache(html) {
+	cacheSet({ 'app': 'music', 'context': 'content', 'subcontext': (typeof jawnos_version != 'undefined' ? jawnos_version : '') }, { contents: html });
+}
 // The mute button carries both glyphs; which one shows follows the same rule as
 // the volume itself: muted when the user muted it or the machine's own output is
 // switched off in the configuration panel.
@@ -204,7 +211,7 @@ function playerCacheSaver(type) {
 			cacheSet({ 'app': 'music', 'context': 'player'}, playerData);
 			var html = $('#music').parent().html();
 			if (html != lastMusicCacheHtml) {
-				cacheSet({'app': 'music', 'context': 'content' },{ contents: html });
+				musicContentCache(html);
 			}
 		}
 		else {
@@ -489,7 +496,7 @@ function mediaMaker(data) {
 	}
 	playerCacheSaver();
 	var html = $('#music').parent().html();
-	cacheSet({'app': 'music', 'context': 'content' },{ contents: html });
+	musicContentCache(html);
 }
 
 function remoteTrackToggle(data) {
@@ -710,7 +717,7 @@ $(document).on('click', '#play', function() {
 	}
 	playerCacheSaver();
 	var html = $('#music').parent().html();
-	cacheSet({'app': 'music', 'context': 'content' },{ contents: html });
+	musicContentCache(html);
 });
 
 $(document).on('click', '#prev', function() {
@@ -1017,7 +1024,7 @@ function searchMusic(data) {
 				thisTrack(playing.closest('.track_item'));
 				mediaMaker({ src: v.src, currentTime: v.currentTime, method: 'benign', timestamp: timestamp });
 				var html = $('#music').parent().html();
-				cacheSet({'app': 'music', 'context': 'content' },{ contents: html });
+				musicContentCache(html);
 			}
 			else {
 				$('#video').hide();

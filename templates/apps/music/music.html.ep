@@ -14,11 +14,6 @@
 	<div id="interface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">
-			<span id="transport">
-				<span id="prev" class="hover control"><img id="prev_logo" hint="Previous" class="medium_thumb" src="<%= &subs::icon_path('prev', '/icons/prev.jpg') %>" /></span>
-				<span id="play" class="hover control"><img id="play_logo" hint="Play / Pause" play_icon="<%= &subs::icon_path('play', '/icons/play.jpg') %>" pause_icon="<%= &subs::icon_path('pause', '/icons/pause.jpg') %>" class="medium_thumb" src="<%= &subs::icon_path('play', '/icons/play.jpg') %>" /></span>
-				<span id="next" class="hover control"><img id="next_logo" hint="Next" class="medium_thumb" src="<%= &subs::icon_path('next', '/icons/next.jpg') %>" /></span>
-			</span>
 			<input id="music_search" value="<%= $search %>" placeholder="Search">
 			<span id="progress_readout"><span id="elapsed_progress"></span>/<span id="total_progress"></span></span>
 			<span id="music_volume_group">

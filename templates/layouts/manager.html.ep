@@ -28,6 +28,9 @@
 			}
 			var device = "<%= $device %>";
 			var signatorial = "<%= $signatorial %>";
+			// the code revision: client caches that hold rendered HTML (the music
+			// window contents) key on it, so a template change is never served stale
+			var jawnos_version = '<%= $string %>';
 			// Windows-style display zoom. 100% is the size everything was designed
 			// at; the misc settings' slider runs 25%–200% in 5% steps. Applied on the
 			// root element so fixed-position windows and bars scale with the rest.

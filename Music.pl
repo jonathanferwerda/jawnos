@@ -90,7 +90,7 @@ get '/manager/music' => sub ($c) {
 	}
 	my $misc_settings = &Manager::misc_setting_list();
 	unless ($files) {
-		if (my $cache = &subs::cache_get({ app => 'music', context => 'content' })) {
+		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => &subs::jawn_version() })) {
 			if ($cache->{'contents'}) {
 				if ($c->param('window_maker')) {
 					my $website = &Manager::window_maker({ app => 'music', title => 'music', contents => $cache->{'contents'} }, &subs::rightNow());
@@ -152,7 +152,7 @@ get '/manager/music' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content' }, { contents => $contents });
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => &subs::jawn_version() }, { contents => $contents });
 };
 
 
@@ -751,7 +751,7 @@ post '/music/search' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content' }, { contents => $contents });
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => &subs::jawn_version() }, { contents => $contents });
 };
 
 post '/music/folder_toggle' => sub($c) {
