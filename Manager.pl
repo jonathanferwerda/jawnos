@@ -21887,7 +21887,7 @@ sub ws_mem_probe {
 	my $s = eval { read_file("/proc/$$/status") } || '';
 	my ($rss) = $s =~ /VmRSS:\s+(\d+)/;
 	return unless defined $rss;
-	$log->info("ws mem jump at $tag: $ws_mem_last -> $rss kB pid=$$") if $rss > $ws_mem_last + 10000;
+	$log->info("ws mem jump at $tag: $ws_mem_last -> $rss kB pid=$$") if $rss > $ws_mem_last + 5000;
 	$ws_mem_last = $rss;
 }
 
@@ -22034,6 +22034,7 @@ websocket '/manager/ws' => sub ($c) {
 		unless ($ws_server->{$app}) {
 			$ws_server->{$app} = &ws_server_socket({ app => $app });
 		}
+		&ws_mem_probe('msg-start ' . ($app // '?'));
 		my $remote_machines;
 		if ($data->{'type'} eq 'stayingAlive') {
 			my $server_time = &subs::rightNow();
@@ -22062,6 +22063,7 @@ websocket '/manager/ws' => sub ($c) {
 						$rm->{'data'} = eval { return decode_json $rm->{'data'} } || {};
 					}
 				}
+				&ws_mem_probe('sa-remote');
 
 			}
 			if ($app eq 'tab') {
@@ -22130,6 +22132,7 @@ websocket '/manager/ws' => sub ($c) {
 					warranty => $warranty
 				});
 			}
+			&ws_mem_probe('sa-row');
 			if ($data->{'debriefer'}) {
 				if ($c->session('ticket_uuid')) {
 					&subs::db_query('update tickets set debriefer = ? where uuid = ?', $data->{'debriefer'}, $c->session('ticket_uuid'));
