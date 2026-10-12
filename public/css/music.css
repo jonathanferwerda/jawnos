@@ -153,6 +153,10 @@ html, body {
 	--music-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 	color: var(--ink);
 }
+/* the window is the query container for the player bar, so its icon sizes follow
+   the window's own width (a viewport media query cannot: the window is a small
+   panel on a large screen) */
+.wind[app="music"] { container-type: inline-size; }
 body.dark_theme #music {
 	--music-line: rgba(255, 255, 255, 0.22);
 	--music-line-soft: rgba(255, 255, 255, 0.10);

@@ -136,45 +136,67 @@
 		}
 		.media_tools_panel.shown { display: flex; }
 		.media_tools_panel > * { position: static !important; left: auto !important; right: auto !important; top: auto !important; bottom: auto !important; margin: 0; }
-		/* the music player's own bar: one flex row, laid out like a player a person
-		   already knows - transport, shuffle/repeat, the seek, then the extras. The
-		   controls that were absolutely placed in the foot are reset to static so
-		   this row can flow them. The sizes are tuned to fit the music window at its
-		   narrowest (it is a tall, narrow window); the title and the seek are the
-		   flex items that give and take the slack, so the row never overflows. */
+		/* the music player's own bar: one flex row - title, transport,
+		   shuffle/repeat, the seek, theatre, then the extras. The controls that were
+		   absolutely placed in the foot are reset to static so the row can flow
+		   them; the seek previews are kept out of that reset because their JS lays
+		   them fixed above the bar. The icon sizes follow the WINDOW, not the screen
+		   (the window is a small panel on a big screen): .wind[app=music] is the
+		   container, the base sizes are the ones that fit the window's narrowest
+		   (~320px) and @container min-width steps enlarge the transport and thumbs
+		   as it widens. Base = narrow also means a browser without container-query
+		   support degrades to a bar that fits. */
 		.media_controls.music_player_bar {
 			display: flex;
 			align-items: center;
-			gap: 2px;
-			padding: 0 6px;
+			gap: 1px;
+			padding: 0 4px;
 			box-sizing: border-box;
 		}
-		.music_player_bar > * {
+		.music_player_bar > *:not(.media_tools_panel):not(#<%= $miss %>_position_preview):not(#<%= $miss %>_position_preview_info) {
 			position: static !important;
 			left: auto !important;
 			right: auto !important;
 			top: auto !important;
 			bottom: auto !important;
 		}
-		.music_player_bar #transport { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
-		.music_player_bar .control { display: inline-block; padding: 2px; border-radius: 10px; transition: background-color .15s; }
+		.music_player_bar #transport { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
+		.music_player_bar .control { display: inline-block; padding: 1px; border-radius: 10px; transition: background-color .15s; }
 		.music_player_bar .control:hover { background-color: rgba(255,255,255,.12); }
-		.music_player_bar .medium_thumb { height: 34px; max-width: 40px; border: none; background: transparent; }
+		.music_player_bar .medium_thumb { height: 42px; max-width: 48px; border: none; background: transparent; }
 		.music_player_bar .music_shuffle,
-		.music_player_bar .music_repeat { height: 28px; border: none; background: transparent; flex: 0 0 auto; }
-		.music_player_bar .little_thumb { height: 30px; border: none; background: transparent; }
-		.music_player_bar .music_now_title { flex: 1 1 20px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: yellow; font-size: 14px; }
-		.music_player_bar .music_seek { flex: 2 1 40px; min-width: 30px; height: 24px; }
+		.music_player_bar .music_repeat,
+		.music_player_bar .little_thumb { height: 34px; border: none; background: transparent; }
+		.music_player_bar .music_shuffle,
+		.music_player_bar .music_repeat { flex: 0 0 auto; }
+		/* the title is the item that gives and takes the slack: it collapses to
+		   nothing on the narrowest window and grows once the icons stop filling
+		   the row, so it never forces the bar to overflow */
+		.music_player_bar .music_now_title { flex: 1 1 40px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: yellow; font-size: 14px; }
+		.music_player_bar .music_seek { flex: 2 1 60px; min-width: 22px; height: 24px; }
 		.music_player_bar .media_tools_toggle { flex: 0 0 auto; }
 		.music_player_bar #<%= $miss %>_jog_wheel_frame { height: 72px; width: 72px; }
-		/* the pop-out panel stays a pop-out: the reset above put every direct child
-		   back in the flow, so it is lifted out again to open above the bar */
-		.music_player_bar .media_tools_panel {
-			position: absolute !important;
-			left: 6px !important;
-			bottom: 112px !important;
-			top: auto !important;
-			right: auto !important;
+		@container (min-width: 380px) {
+			.media_controls.music_player_bar { gap: 2px; padding: 0 6px; }
+			.music_player_bar .medium_thumb { height: 48px; max-width: 54px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 40px; }
+			.music_player_bar .music_now_title { font-size: 15px; }
+			.music_player_bar .music_seek { min-width: 44px; }
+		}
+		@container (min-width: 560px) {
+			.music_player_bar .medium_thumb { height: 54px; max-width: 62px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 46px; }
+			.music_player_bar .music_seek { min-width: 60px; }
+		}
+		@container (min-width: 760px) {
+			.music_player_bar .medium_thumb { height: 60px; max-width: 68px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 52px; }
 		}
 		/* the theatre-mode picture fills the window: the container takes the
 		   media window's whole height, so the video's own 100% resolves and the
@@ -206,9 +228,9 @@
 			<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
 			<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
 			<input id="<%= $miss %>_position" hint="Seek" class="<%= $miss %> hover music_seek" value="0" type="range" step=".1" min="0" max="100">
+			<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
 			<img id="<%= $miss %>_tools_toggle" hint="More tools" class="little_thumb hover media_tools_toggle" src="<%= &subs::icon_path('wrench', '/images/decipherable/gear.png') %>">
 			<span id="<%= $miss %>_tools_panel" class="media_tools_panel">
-				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
 				<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1">
 				<img id="<%= $miss %>_snapshot" hint="Save a snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
 				<img id="<%= $miss %>_add" hint="Drop a mark" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
