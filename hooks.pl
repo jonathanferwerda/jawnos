@@ -25,7 +25,7 @@ hook before_dispatch => sub {
 	# so the worker that grows can be named rather than guessed.
 	if (&subs::device_setter() eq 'mobile') {
 		my $now = &subs::rightNow();
-		if (!defined $subs::worker_mem_at || $now - $subs::worker_mem_at > 240000) {
+		if (!defined $subs::worker_mem_at || $now - $subs::worker_mem_at > 60000) {
 			$subs::worker_mem_at = $now;
 			my $pid = $$;
 			my $status = eval { read_file("/proc/$pid/status") } || '';
