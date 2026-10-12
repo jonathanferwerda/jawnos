@@ -21868,6 +21868,17 @@ sub text_editor_variables($context) {
 	return \@variables;
 }
 
+our $ws_mem_last = 0;
+sub ws_mem_probe {
+	return unless $device eq 'mobile';
+	my ($tag) = @_;
+	my $s = eval { read_file("/proc/$$/status") } || '';
+	my ($rss) = $s =~ /VmRSS:\s+(\d+)/;
+	return unless defined $rss;
+	$log->info("ws mem jump at $tag: $ws_mem_last -> $rss kB pid=$$") if $rss > $ws_mem_last + 10000;
+	$ws_mem_last = $rss;
+}
+
 websocket '/manager/ws' => sub ($c) {
 	my $ug    = Data::UUID->new;
 	my $uuid = $ug->create_str();
@@ -21876,6 +21887,7 @@ websocket '/manager/ws' => sub ($c) {
 	unless ($ws_server->{$app}) {
 		$ws_server->{$app} = &ws_server_socket({ app => $app });
 	}
+	&ws_mem_probe('connect app=' . ($app // '?'));
 	my $remote_address = $c->tx->remote_address;
 #	$c->render(template => 'guest_layouts/denial') unless $app eq 'music' || $app eq 'server' || $app eq 'tab';
 	my $timestamp = $c->param('timestamp');
@@ -22227,6 +22239,7 @@ websocket '/manager/ws' => sub ($c) {
 
 			&Websocket::send($app, $data);
 		}
+		&ws_mem_probe('msg ' . (ref $data ? ($data->{'type'} // $data->{'method'} // 'plain') : 'undef') . ' app=' . (ref $data ? ($data->{'app'} // '?') : '?'));
 	});
 	$c->on(finish => sub ($c,$code,$reason) {
 		# A resume that rebuilds sockets (a phone waking) can register a new
