@@ -4559,13 +4559,13 @@ static bool accel_sample(float &x, float &y, float &z) {
 // light-sleep machine (and the doze one in that pose) never saw a turn and the
 // screen stayed off (2026-10-10). 35 catches it; the look band still keeps the
 // swing and the rest quiet.
-// The look band. The lower bound has to sit ABOVE the arm's swing/rest poses AND
-// above the "turned away" pose. A 2026-10-12 worn capture (right arm; 5 looks
-// then 5 away-tilts) settled the read at z 8.2-8.9 but the away tilt at z 3.2-4.6,
-// so the old floor of 4.0 admitted the away pose and most aways lit the screen.
-// The read pose reads z ~7-8.8, so 6.0 clears both the swing and the turned-away
-// pose and keeps the read.
-#define WRIST_LOOK_ZLOW  6.0f
+// The look band. The lower bound has to sit ABOVE the "turned away" pose. Across
+// two worn captures (2026-10-12) every turned-away/rest settle read z <= 4.6
+// (standing away ~3.2-4.6, sitting away ~-0.2) while every read settle read
+// z >= 5.7, so 5.0 splits them. Pose alone is only marginal here - the two
+// sitting reads came back with opposite y signs and z 7.6 vs 5.7 - so the floor
+// is set to clear the away pose without cutting off a genuine read.
+#define WRIST_LOOK_ZLOW  5.0f
 // The upper bound admits the way the watch is read -- brought up in front of the
 // face -- which leaves the screen nearly up (measured 6.9-8.8), so it sits just
 // under a flat desk (measured desk poses read 9.2-9.9).
