@@ -281,12 +281,16 @@ function statisticGrapher(data,canvasId,mark) {
 	var wind = $('.wind[app="' + data.app + '"]');
 	var wind_id = wind.attr('id');
 	var win = document.getElementById(wind_id);
-	$.each(data.time_lengths, function(itl, tl) {
+	// one trend at a time, its unit chosen, rather than a strip of canvases in
+	// their own sideways scroll the pointer kept snagging on
+	var units = canvasId ? data.time_lengths : [statisticUnit(data)];
+	$.each(units, function(u, tl) {
+		var itl = $.inArray(tl, data.time_lengths);
 		var time_widths = data.scopes.length;
-		if (data.time_widths.length > 0) {
+		if (data.time_widths.length > 0 && itl >= 0) {
 			time_widths = data.time_widths[itl] + 2;
 		}
-		var id = canvasId || data.app + '_' + tl + '_statistic_graph';
+		var id = canvasId || data.app + '_line_graph';
 		var g = document.getElementById(id);
 		// what the mouse reads back: the points the line runs through, kept in
 		// the drawing's own coordinates, and the display they are measured in
@@ -300,7 +304,7 @@ function statisticGrapher(data,canvasId,mark) {
 		// the popup's canvas is a small box inside its own parent, not a graph
 		// that spans the window and scrolls sideways, so it is drawn at the size
 		// it is shown at - the window's width put it far past its parent's edge
-		var wide = canvasId ? $(g).width() : wind.width();
+		var wide = $(g).width() || wind.width();
 		var tall = numeral($(g).css('height')).value() || 250;
 		$(g).attr({ width: Math.round(wide * thick), height: Math.round(tall * thick) });
 		ctx = g.getContext('2d');
@@ -310,7 +314,11 @@ function statisticGrapher(data,canvasId,mark) {
 		ctx.fillStyle = data.settings.colour || 'black';
 		ctx.strokeStyle = 'black';
 		ctx.globalAlpha = 1;	
-		ctx.font = "400 10px Arial";
+		// heavier and rounder, with a hint of shadow, so the line reads cleanly
+		ctx.font = "600 11px system-ui, Arial";
+		ctx.lineWidth = 2.5;
+		ctx.lineJoin = 'round';
+		ctx.lineCap = 'round';
 		var threshold;
 		// a page whose periods hold nothing carries no highest or lowest at all:
 		// there is no axis to draw against, which is an empty chart, not an error
@@ -363,12 +371,17 @@ function statisticGrapher(data,canvasId,mark) {
 							if (text_x < 0) {
 								text_x = x;
 							}
-							ctx.fillText(text,text_x, y - 4);
+							// a white halo behind the reading and the date, so the text stands
+							// off the line however the data crowds it
+							ctx.font = "600 11px system-ui, Arial";
+							ctx.lineWidth = 3;
+							ctx.strokeStyle = 'rgba(255,255,255,.85)';
+							ctx.strokeText(text, text_x, y - 5);
+							ctx.fillStyle = '#1b1b1b';
+							ctx.fillText(text, text_x, y - 5);
 							ctx.save('a');
-							ctx.fillStyle = 'black';
 							ctx.strokeStyle = 'black';
-
-							ctx.font = "400 10px Arial";
+							ctx.font = "600 10px system-ui, Arial";
 							var under = ts;
 							if (data.settings.s_visual == 'historical') {
 								under = ts.substr(0,3);
@@ -379,6 +392,10 @@ function statisticGrapher(data,canvasId,mark) {
 							// the points are closer together than the labels are wide, so
 							// only the labels with room under them are written
 							if (label_edge < x - ctx.measureText(under).width / 2) {
+								ctx.lineWidth = 3;
+								ctx.strokeStyle = 'rgba(255,255,255,.85)';
+								ctx.strokeText(under, x - 5, tall - 3);
+								ctx.fillStyle = '#333';
 								ctx.fillText(under, x - 5, tall - 3);
 								label_edge = x + ctx.measureText(under).width / 2 + 4;
 							}
@@ -429,35 +446,41 @@ function statisticGrapher(data,canvasId,mark) {
 	if (!canvasId) {
 		statisticData[data.app] = data;
 		statisticRedrawCharts(data.app);
-		// the fresh selects wear the choices already made
+		// the fresh controls wear the choices already made
 		var wind = $('.wind[app="' + data.app + '"]');
-		wind.find('.statistic_bar_unit').val(statisticUnit(data));
+		wind.find('.statistic_chart_unit').val(statisticUnit(data));
 		wind.find('.statistic_pie_by').val(statistic_pie_by);
 	}
 }
 
-// the last response per app, so the bar/pie controls can redraw without a reload
+// the last response per app, so the chart controls can redraw without a reload
 var statisticData = {};
-var statistic_bar_unit = localStorage.getItem('inventory_bar_unit') || '';
+var statistic_chart_unit = localStorage.getItem('inventory_chart_unit') || '';
 var statistic_pie_by = localStorage.getItem('inventory_pie_by') || 'period';
 
-// the unit the bars read in: the chosen one, else the unit the page was walked
-// in, else days
+// the unit the trend and the bars read in: the chosen one, else the unit the page
+// was walked in, else days
 function statisticUnit(data) {
-	if (statistic_bar_unit && $.inArray(statistic_bar_unit, data.time_lengths) >= 0) { return statistic_bar_unit; }
+	if (statistic_chart_unit && $.inArray(statistic_chart_unit, data.time_lengths) >= 0) { return statistic_chart_unit; }
 	if (data.page_scope && $.inArray(data.page_scope, data.time_lengths) >= 0) { return data.page_scope; }
 	return ($.inArray('day', data.time_lengths) >= 0) ? 'day' : data.time_lengths[0];
 }
 function statisticRedrawCharts(app) {
 	var data = statisticData[app];
 	if (!data) { return; }
+	// the trend is redrawn by the graph pass; the bar and pie read the same data
 	statisticBars(data, statisticUnit(data));
 	statisticPie(data, statisticUnit(data), statistic_pie_by);
 }
-$(document).on('change', '.statistic_bar_unit', function() {
-	statistic_bar_unit = $(this).val() || '';
-	localStorage.setItem('inventory_bar_unit', statistic_bar_unit);
-	statisticRedrawCharts($(this).closest('.appointment').attr('app'));
+$(document).on('change', '.statistic_chart_unit', function() {
+	statistic_chart_unit = $(this).val() || '';
+	localStorage.setItem('inventory_chart_unit', statistic_chart_unit);
+	var ir = $(this).closest('.appointment');
+	ir.find('.statistic_graph').attr('scope', statistic_chart_unit);
+	var app = ir.attr('app');
+	if (statisticData[app]) {
+		statisticGrapher(statisticData[app]);
+	}
 });
 $(document).on('change', '.statistic_pie_by', function() {
 	statistic_pie_by = $(this).val() || 'period';

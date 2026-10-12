@@ -79,28 +79,23 @@
 	    2P two pages back, 1F one page forward - and then the unit of the canvas
 	    that was walked, as in 1FD; it stays wide enough for 99FY, and tapping
 	    it returns to now while its tile follows the walk %>
-	<button class="statistic_page little_thumb hover" style="min-width:68px;<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll a graph sideways to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') . $page_letter %></button>
-	<div class="statistic_graphs" app="<%= $app %>" style="display:inline-block;max-height:300px;height:300px;overflow-x:scroll;">
-		<% foreach my $col ( @cols ) { %>
-			<span id="<%= $app %>_<%= $col %>_statistic_graph_span">
-				<%= &subs::format_name($col) %>
-				<canvas id="<%= $app %>_<%= $col %>_statistic_graph" scope="<%= $col %>" class="statistic_graph" style="width:100%;height:250px;"></canvas>
-			</span>
-		<% } %>
+	<% my $chart_unit = $returner->{'page_scope'} || 'day'; %>
+	<div class="statistic_chart_head" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 2px;">
+		<b style="font-size:90%;opacity:.6;">Trend</b>
+		<select class="statistic_chart_unit" style="font-size:90%;">
+			<% foreach my $col ( @cols ) { %>
+				<option value="<%= $col %>"<% if ($col eq $chart_unit) { %> selected<% } %>><%= &subs::format_name($col) %></option>
+			<% } %>
+		</select>
+		<button class="statistic_page little_thumb hover" style="min-width:68px;<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll or swipe the graph to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') . $page_letter %></button>
 	</div>
+	<canvas id="<%= $app %>_line_graph" class="statistic_graph" scope="<%= $chart_unit %>" style="width:100%;height:230px;"></canvas>
 	<div class="statistic_graph_information" style="display:none;position:fixed;background-color:white;border:solid;border-radius:5px;padding:2px;"></div>
 	<%# the same periods as bars (easier to compare) and as shares (a pie), so
 	    the shape is read three ways from one page of data %>
 	<div class="statistic_bars_pie" style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0;align-items:flex-start;">
 		<div style="flex:3 1 340px;min-width:240px;">
-			<div style="display:flex;justify-content:space-between;align-items:baseline;">
-				<b style="font-size:90%;opacity:.6;">By period</b>
-				<select class="statistic_bar_unit" style="font-size:85%;">
-					<% foreach my $col ( @cols ) { %>
-						<option value="<%= $col %>"><%= &subs::format_name($col) %></option>
-					<% } %>
-				</select>
-			</div>
+			<b style="font-size:90%;opacity:.6;">By period</b>
 			<canvas id="<%= $app %>_bars_graph" class="statistic_bars" style="width:100%;height:160px;"></canvas>
 		</div>
 		<div style="flex:2 1 260px;min-width:220px;">

@@ -1052,3 +1052,104 @@ $(document).on('touchstart', function (e) {
 $(document).on('touchend touchcancel touchmove', function () {
 	clearTimeout(jawnos_context_timer);
 });
+
+// ---- multi-selects, the phone way -------------------------------------------
+// A <select multiple> is a tall list that eats the page. It is painted as a
+// compact trigger instead, and opened in a popup whose options are toggles -
+// the way a phone shows a multi picker. The real select stays behind the
+// trigger (kept, only hidden), so every existing change handler still fires.
+(function () {
+	if (window.jawnos_multiselect_installed) { return; }
+	window.jawnos_multiselect_installed = true;
+	var css = document.createElement('style');
+	css.textContent = [
+		'.ms-native { position:absolute !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; left:-9999px !important; }',
+		'.ms-trigger { font:inherit; text-align:left; cursor:pointer; padding:3px 24px 3px 8px; border:1px solid rgba(0,0,0,.35); border-radius:4px; background:#fff; color:#111; position:relative; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:top; }',
+		'.ms-trigger:after { content:"\\25be"; position:absolute; right:8px; top:50%; transform:translateY(-50%); opacity:.55; }',
+		'.ms-popup { position:fixed; z-index:100000; background:#fff; color:#111; border:1px solid rgba(0,0,0,.4); border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.35); display:flex; flex-direction:column; min-width:200px; max-width:min(420px,92vw); }',
+		'.ms-head { padding:9px 14px; font-weight:700; border-bottom:1px solid rgba(0,0,0,.15); }',
+		'.ms-body { overflow:auto; padding:6px 0; }',
+		'.ms-option { display:flex; align-items:center; gap:10px; padding:8px 14px; cursor:pointer; white-space:nowrap; }',
+		'.ms-option:hover { background:rgba(0,0,0,.06); }',
+		'.ms-option input { width:18px; height:18px; }',
+		'.ms-foot { border-top:1px solid rgba(0,0,0,.15); padding:6px 12px; text-align:right; }',
+		'.ms-foot button { font:inherit; padding:4px 18px; border-radius:4px; border:1px solid rgba(0,0,0,.3); background:#f2f2f2; cursor:pointer; }'
+	].join('\n');
+	document.head.appendChild(css);
+})();
+function multiselectSummary(sel) {
+	var chosen = $(sel).find('option:selected').map(function () { return $.trim($(this).text()); }).get();
+	chosen = chosen.filter(function (t) { return t.length; });
+	if (!chosen.length) { return 'none'; }
+	if (chosen.length <= 2) { return chosen.join(', '); }
+	return chosen.length + ' selected';
+}
+function multiselectPaint(sel) {
+	$(sel).siblings('.ms-trigger').first().text(multiselectSummary(sel));
+}
+function multiselectUpgrade(root) {
+	$(root || document.body).find('select[multiple]').each(function () {
+		var s = $(this);
+		if (s.data('ms')) { return; }
+		s.data('ms', 1);
+		s.addClass('ms-native').before('<button type="button" class="ms-trigger"></button>');
+		s.on('change', function () { multiselectPaint(this); });
+		multiselectPaint(this);
+	});
+}
+var ms_current;
+function multiselectClose() {
+	if (ms_current) { ms_current.remove(); ms_current = null; }
+}
+function multiselectOpen(sel) {
+	multiselectClose();
+	var s = $(sel);
+	if (!s.length) { return; }
+	var pop = $('<div class="ms-popup"></div>');
+	pop.append($('<div class="ms-head"></div>').text(s.attr('hint') || s.attr('name') || 'Choose'));
+	var body = $('<div class="ms-body"></div>');
+	s.find('option').each(function () {
+		var o = $(this);
+		var cb = $('<input type="checkbox">').prop('checked', o.is(':selected'));
+		cb.on('change', function () { o.prop('selected', this.checked); s.trigger('change'); });
+		body.append($('<label class="ms-option"></label>').append(cb).append($('<span></span>').text(o.text() || '(none)')));
+	});
+	pop.append(body);
+	pop.append($('<div class="ms-foot"><button type="button" class="ms-done">Done</button></div>'));
+	$('body').append(pop);
+	var maxH = Math.min(window.innerHeight * 0.72, 500);
+	pop.css({ 'max-height': maxH + 'px' });
+	body.css({ 'max-height': (maxH - 92) + 'px' });
+	var t = s.siblings('.ms-trigger').first();
+	var r = (t.length ? t[0] : s[0]).getBoundingClientRect();
+	var left = Math.min(r.left, window.innerWidth - pop.outerWidth() - 8);
+	if (left < 8) { left = 8; }
+	var top = r.bottom + 4;
+	if (top + pop.outerHeight() > window.innerHeight && r.top - pop.outerHeight() - 4 > 0) { top = r.top - pop.outerHeight() - 4; }
+	if (top < 8) { top = 8; }
+	pop.css({ left: left + 'px', top: top + 'px' });
+	pop.find('.ms-done').on('click', function (e) { e.preventDefault(); multiselectClose(); });
+	ms_current = pop;
+}
+$(document).on('click', '.ms-trigger', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	multiselectOpen($(this).siblings('select[multiple]').first());
+});
+$(document).on('click', function (e) {
+	if (!ms_current) { return; }
+	if ($(e.target).closest('.ms-popup, .ms-trigger').length) { return; }
+	multiselectClose();
+});
+$(document).on('keydown', function (e) {
+	if (e.key === 'Escape') { multiselectClose(); }
+});
+// upgrade the selects already on the page and any a window brings in later; the
+// sweep is debounced because the house re-renders a lot
+var ms_sweep;
+function multiselectSweep() {
+	clearTimeout(ms_sweep);
+	ms_sweep = setTimeout(function () { multiselectUpgrade(document.body); }, 120);
+}
+$(document).ready(function () { multiselectUpgrade(document.body); });
+new MutationObserver(multiselectSweep).observe(document.documentElement, { childList: true, subtree: true });
