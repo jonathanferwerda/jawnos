@@ -2463,6 +2463,14 @@ String https_request_raw(String url, String method, String payloadData) {
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
     return "failure";
   }
+  // A TLS connect needs a live link: with the watch off WiFi (or the link
+  // flapping) the connect itself is what asserts inside lwip's thread/mbox setup
+  // and reboots the watch (see the notes, symbolised start_ssl_client). The watch
+  // reports WiFi 254 = not connected, and every request here is to a LAN homebase,
+  // so with no link there is nothing to reach - return before the TLS stack.
+  if (WiFi.status() != WL_CONNECTED) {
+    return "failure";
+  }
   // A homebase that has gone away (a sleeping laptop) turns every request into a
   // TLS connect that times out. Hammering it -- a button press each time --
   // asserts inside lwip's thread/mbox setup and reboots the watch (the longer it
