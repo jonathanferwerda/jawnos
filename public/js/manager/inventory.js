@@ -427,14 +427,43 @@ function statisticGrapher(data,canvasId,mark) {
 		}
 	});
 	if (!canvasId) {
-		// the bar and the pie wear the unit the page was last walked in, so they
-		// follow the graph being read; a fresh page starts on days
-		var unit = (data.page_scope && $.inArray(data.page_scope, data.time_lengths) >= 0) ? data.page_scope
-			: ($.inArray('day', data.time_lengths) >= 0 ? 'day' : data.time_lengths[0]);
-		statisticBars(data, unit);
-		statisticPie(data, unit);
+		statisticData[data.app] = data;
+		statisticRedrawCharts(data.app);
+		// the fresh selects wear the choices already made
+		var wind = $('.wind[app="' + data.app + '"]');
+		wind.find('.statistic_bar_unit').val(statisticUnit(data));
+		wind.find('.statistic_pie_by').val(statistic_pie_by);
 	}
 }
+
+// the last response per app, so the bar/pie controls can redraw without a reload
+var statisticData = {};
+var statistic_bar_unit = localStorage.getItem('inventory_bar_unit') || '';
+var statistic_pie_by = localStorage.getItem('inventory_pie_by') || 'period';
+
+// the unit the bars read in: the chosen one, else the unit the page was walked
+// in, else days
+function statisticUnit(data) {
+	if (statistic_bar_unit && $.inArray(statistic_bar_unit, data.time_lengths) >= 0) { return statistic_bar_unit; }
+	if (data.page_scope && $.inArray(data.page_scope, data.time_lengths) >= 0) { return data.page_scope; }
+	return ($.inArray('day', data.time_lengths) >= 0) ? 'day' : data.time_lengths[0];
+}
+function statisticRedrawCharts(app) {
+	var data = statisticData[app];
+	if (!data) { return; }
+	statisticBars(data, statisticUnit(data));
+	statisticPie(data, statisticUnit(data), statistic_pie_by);
+}
+$(document).on('change', '.statistic_bar_unit', function() {
+	statistic_bar_unit = $(this).val() || '';
+	localStorage.setItem('inventory_bar_unit', statistic_bar_unit);
+	statisticRedrawCharts($(this).closest('.appointment').attr('app'));
+});
+$(document).on('change', '.statistic_pie_by', function() {
+	statistic_pie_by = $(this).val() || 'period';
+	localStorage.setItem('inventory_pie_by', statistic_pie_by);
+	statisticRedrawCharts($(this).closest('.appointment').attr('app'));
+});
 
 // the per-period values for one column, oldest first, so a bar or a slice reads
 // the way the line now does
@@ -481,7 +510,8 @@ function statisticBars(data, unit) {
 	ctx.beginPath(); ctx.moveTo(0, base); ctx.lineTo(wide, base); ctx.stroke();
 }
 
-function statisticPie(data, unit) {
+var statistic_hour_labels = ['12a','1a','2a','3a','4a','5a','6a','7a','8a','9a','10a','11a','12p','1p','2p','3p','4p','5p','6p','7p','8p','9p','10p','11p'];
+function statisticPie(data, unit, mode) {
 	var g = document.getElementById(data.app + '_pie_graph');
 	if (!g || !g.getContext) { return; }
 	var thick = window.devicePixelRatio || 1;
@@ -491,23 +521,42 @@ function statisticPie(data, unit) {
 	var ctx = g.getContext('2d');
 	ctx.setTransform(thick, 0, 0, thick, 0, 0);
 	ctx.clearRect(0, 0, wide, tall);
-	var series = statisticSeries(data, unit).filter(function(p) { return p.value > 0; });
-	if (!series.length) { return; }
-	// the biggest periods get a slice of their own; the tail is gathered so the
-	// wheel stays readable whatever the page holds
-	series.sort(function(a, b) { return b.value - a.value; });
-	var top = series.slice(0, 9);
-	var rest = 0;
-	for (var i = 9; i < series.length; i++) { rest += series[i].value; }
-	if (rest > 0) { top.push({ ts: 'other', value: rest }); }
+	var slices = [];
+	var fixed = false;
+	if (mode == 'hour') {
+		var hp = data.hour_profile || [];
+		for (var h = 0; h < 24; h++) { slices.push({ ts: statistic_hour_labels[h], value: numeral(hp[h]).value() || 0 }); }
+		fixed = true;
+	}
+	else if (mode == 'weekday') {
+		var wp = data.weekday_profile || [];
+		var names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+		for (var d = 0; d < 7; d++) { slices.push({ ts: names[d], value: numeral(wp[d]).value() || 0 }); }
+		fixed = true;
+	}
+	else {
+		slices = statisticSeries(data, unit);
+	}
+	slices = slices.filter(function(p) { return p.value > 0; });
+	if (!slices.length) { return; }
+	// a period share is gathered to the biggest few so the wheel stays readable;
+	// an hour or weekday wheel keeps every slice it has
+	if (!fixed) {
+		slices.sort(function(a, b) { return b.value - a.value; });
+		var top = slices.slice(0, 9);
+		var rest = 0;
+		for (var i = 9; i < slices.length; i++) { rest += slices[i].value; }
+		if (rest > 0) { top.push({ ts: 'other', value: rest }); }
+		slices = top;
+	}
 	var total = 0;
-	top.forEach(function(p) { total += p.value; });
+	slices.forEach(function(p) { total += p.value; });
 	var palette = ['#4a90d9','#e06666','#93c47d','#f6b26b','#8e7cc3','#76a5af','#c27ba0','#ffd966','#a2c4c9','#b6d7a8','#dd7e6b'];
 	var rad = Math.min(tall, wide * .5) / 2 - 6;
 	var cx = rad + 8;
 	var cy = tall / 2;
 	var ang = -Math.PI / 2;
-	top.forEach(function(p, i) {
+	slices.forEach(function(p, i) {
 		var slice = (p.value / total) * Math.PI * 2;
 		ctx.beginPath();
 		ctx.moveTo(cx, cy);
@@ -523,7 +572,7 @@ function statisticPie(data, unit) {
 	ctx.font = '400 10px Arial';
 	var lx = rad * 2 + 18;
 	var ly = 12;
-	top.forEach(function(p, i) {
+	slices.forEach(function(p, i) {
 		if (ly > tall - 2) { return; }
 		ctx.fillStyle = palette[i % palette.length];
 		ctx.fillRect(lx, ly - 8, 9, 9);

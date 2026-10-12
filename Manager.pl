@@ -9751,6 +9751,16 @@ sub inventory_details($c,$settings) {
 		}
 		@time_lengths = grep { $_ eq $time_lengths[$return_n] } @time_lengths;
 	}
+	# when the app happens, as profiles for the "when" wheel: by the hour of the
+	# day and by the day of the week, read off the appointments themselves
+	my @hour_profile = (0) x 24;
+	my @weekday_profile = (0) x 7;
+	foreach my $a ( @{$appts} ) {
+		next unless ($a->{'timestamp'} || '') =~ /[0-9]/;
+		my @lt = localtime( ($a->{'timestamp'} + 0) / 1000 );
+		$hour_profile[$lt[2]]++;
+		$weekday_profile[$lt[6]]++;
+	}
 	my @revised_time_scopes = @time_scopes;
 	my $returner = {
 		longest => $appts->[0],
@@ -9776,6 +9786,8 @@ sub inventory_details($c,$settings) {
 		scope_page_max => $scope_page_max,
 		page_scope => $page_scope,
 		app => $app,
+		hour_profile => \@hour_profile,
+		weekday_profile => \@weekday_profile,
 		budget_status => {},
 	};
 	my $bmt = scalar grep { $_ eq $s_display } keys %{$gb::budget_modes};
