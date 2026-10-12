@@ -12234,97 +12234,114 @@ sub budget_autocalc($data) {
 		month => { symbol => 'M' },
 		year => { symbol => 'y' },
 	};
-	my ($db) = &subs::database_grabber();
 	my $settings = &subs::settings_grabber({ app => $app });
-	my $appts = $data->{'appts'} || &subs::db_query('select * from appointments where app = ? order by server_time DESC LIMIT 1000', $app)->hashes;
+	# The six windows this reads, named once so 'data' (added below) is never
+	# mistaken for one of them.
+	my @windows = keys %{$returner};
+	# A measure reads with its own calc (steps summed, weight averaged); every other
+	# circumstance is a budget mode and reads the plain way.
+	my $is_measure = !( $circumstance eq 'occurences' || $circumstance eq 'duration' || $circumstance eq 'total' );
+	my $mcalc = $is_measure ? &measure_calc_for($app, $circumstance, $settings->{'s_calc'}) : undef;
+	# The whole history, not the last thousand: a window can reach a year back, and
+	# the cap left the long scopes reading only the recent stretch. Read by
+	# timestamp (app,timestamp is indexed) and only the columns the walk needs.
+	my $cols = 'timestamp';
+	$cols .= ',duration' if $circumstance eq 'duration';
+	$cols .= ',total' if $circumstance eq 'total';
+	$cols .= ',measures' if $is_measure;
+	my $appts = $data->{'appts'} || &subs::db_query("select $cols from appointments where app = ? order by timestamp ASC", $app)->hashes;
 	if ($scope && $timestamp) {
 		my $duration = &subs::time_abbrev_translator(1 . $scope, $server_time);
 		my $beginning = $server_time - ( $duration * ($settings->{'s_scope_count'} || 1) );
 		@{$appts} = grep { $_->{'timestamp'} > $beginning } @{$appts};
-	#	@{$appts} = grep { $_->{'timestamp'} >= $timestamp - $duration && $_->{'timestamp'} <= $timestamp + $duration } @{$appts};
-		my $new_returner = {};
-		foreach my $re ( keys %{$returner} ) {
-			$new_returner->{$re} = $returner->{$re} if $re eq $scope;
-		}
-	#	$returner = $new_returner;
-
 	}
 
-	foreach my $r ( keys %{$returner} ) {
-		$returner->{$r}->{'duration'} = &subs::time_abbrev_translator(1 . $returner->{$r}->{'symbol'}, $server_time);
-		$returner->{$r}->{'close'} = [];
-	}
-
-	$returner->{'data'} = {};
+	# One pass to number each appointment and pull the value the walk slides over:
+	# a duration, an amount, or a measure's summed samples (with the sample count,
+	# so an averaged window can tell a level from an empty one). An appointment
+	# with no measures is left out of a measure's walk - it offers that measure
+	# nothing, and an averaged window may not be read from it.
+	my @rows;
 	foreach my $appt ( @{$appts} ) {
-		foreach my $r ( keys %{$returner} ) {
-			my @close = grep { $appt->{'timestamp'} + ($returner->{$r}->{'duration'} / 2) >= $_->{'timestamp'}
-				&& $appt->{'timestamp'} - ($returner->{$r}->{'duration'} / 2) <= $_->{'timestamp'} } @{$appts};
-			if ($circumstance eq 'occurences') {
-				push @{$returner->{$r}->{'close'}}, scalar @close;
-			}
-			elsif ($circumstance eq 'duration') {
-				my $total = 0;
-				foreach my $cl (@close) {
-					$total += abs $cl->{'duration'};
-				}
-
-				push @{$returner->{$r}->{'close'}}, $total;
-			}
-			elsif ($circumstance eq 'total') {
-				my $total = 0;
-				foreach my $cl (@close) {
-					$total += $cl->{'total'};
-				}
-				push @{$returner->{$r}->{'close'}}, $total;
-			}
-			else {
-				next unless $appt->{'measures'};
-				unless ($appt->{'measured'}) {
-					$appt->{'measures'} = eval { return decode_json $appt->{'measures'} } || [];
-					$appt->{'measured'} = 'yes';
-				}
-				my $total = 0;
-				foreach my $cl (@close) {
-					next unless $cl->{'measures'};
-					unless ($cl->{'measured'}) {
-						$cl->{'measures'} = eval { return decode_json $cl->{'measures'} } || [];
-						$cl->{'measured'} = 'yes';
-					}
-					foreach my $m ( @{$cl->{'measures'}} ) {
-						if ($m->{$circumstance}) {
-							$total += $m->{$circumstance};
-						}
-					}
-				}
-				push @{$returner->{$r}->{'close'}}, $total;
-			}
-		}
-	}
-
-	foreach my $r ( keys %{$returner} ) {
-		my $total = 0;
-		foreach my $close ( @{$returner->{$r}->{'close'}} ) {
-			$total += $close;
-		}
-		if ($circumstance eq 'occurences') {
-			$returner->{$r}->{'result'} = ($total / scalar @{$returner->{$r}->{'close'}});
-			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $returner->{$r}->{'result'}) . '/' . $r if $circumstance eq 'occurences';
+		my ($sum, $samples) = (0, 0);
+		if ($circumstance eq 'duration') {
+			$sum = abs( $appt->{'duration'} || 0 );
 		}
 		elsif ($circumstance eq 'total') {
-			$returner->{$r}->{'result'} =~ /^([-])/gi;
-			$returner->{$r}->{'formatted_result'} = &subs::price_formatter( $returner->{$r}->{'result'}) . '/' . $returner->{$r}->{'symbol'};
+			$sum = $appt->{'total'} + 0;
+		}
+		elsif ($is_measure) {
+			next unless $appt->{'measures'};
+			unless ($appt->{'measured'}) {
+				$appt->{'measures'} = eval { return decode_json $appt->{'measures'} } || [];
+				$appt->{'measured'} = 'yes';
+			}
+			foreach my $m ( @{$appt->{'measures'}} ) {
+				next unless defined $m->{$circumstance};
+				$sum += $m->{$circumstance};
+				$samples++;
+			}
+		}
+		push @rows, { ts => ($appt->{'timestamp'} + 0), sum => $sum, samples => $samples };
+	}
+	@rows = sort { $a->{'ts'} <=> $b->{'ts'} } @rows;
+	my $n = scalar @rows;
+
+	foreach my $r ( @windows ) {
+		my $width = &subs::time_abbrev_translator(1 . $returner->{$r}->{'symbol'}, $server_time);
+		$returner->{$r}->{'duration'} = $width;
+		my $half = $width / 2;
+		# A window per appointment, walked with two pointers over the sorted rows:
+		# as the appointment moves forward both edges move forward too, so every
+		# window is read in one pass - O(n) a window, not the O(n^2) scan of the
+		# whole list that made the full history too slow to read.
+		my ($lo, $hi, $wsum, $wsamples) = (0, 0, 0, 0);
+		my ($total, $count) = (0, 0);
+		for (my $k = 0; $k < $n; $k++) {
+			my $right = $rows[$k]->{'ts'} + $half;
+			my $left = $rows[$k]->{'ts'} - $half;
+			while ($hi < $n && $rows[$hi]->{'ts'} <= $right) {
+				$wsum += $rows[$hi]->{'sum'};
+				$wsamples += $rows[$hi]->{'samples'};
+				$hi++;
+			}
+			while ($lo < $hi && $rows[$lo]->{'ts'} < $left) {
+				$wsum -= $rows[$lo]->{'sum'};
+				$wsamples -= $rows[$lo]->{'samples'};
+				$lo++;
+			}
+			my $value;
+			if ($circumstance eq 'occurences') {
+				$value = $hi - $lo;
+			}
+			elsif ($is_measure && $mcalc eq 'average') {
+				# an averaged measure is read only from a window that holds a
+				# sample; an empty one is no level at all and is left out
+				next unless $wsamples;
+				$value = $wsum / $wsamples;
+			}
+			else {
+				$value = $wsum;
+			}
+			$total += $value;
+			$count++;
+		}
+		$returner->{$r}->{'result'} = $count ? ($total / $count) : 0;
+		if ($circumstance eq 'occurences') {
+			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $returner->{$r}->{'result'}) . '/' . $r;
+		}
+		elsif ($circumstance eq 'total') {
+			$returner->{$r}->{'formatted_result'} = &subs::price_formatter( $returner->{$r}->{'result'} ) . '/' . $returner->{$r}->{'symbol'};
 		}
 		elsif ($circumstance eq 'duration') {
-			$returner->{$r}->{'result'} = ($total / scalar @{$returner->{$r}->{'close'}});
 			$returner->{$r}->{'formatted_result'} = &subs::duration_sayer($returner->{$r}->{'result'} / 1000) . '/' . $r;
 		}
 		else {
-			$returner->{$r}->{'result'} = ($total / scalar @{$returner->{$r}->{'close'}});
 			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $returner->{$r}->{'result'}) . $circumstance . '/' . $r;
 		}
-		undef $returner->{$r}->{'close'};
 	}
+
+	$returner->{'data'} = {};
 
 	$returner->{'data'}->{'circumstance'} = $circumstance;
 	$returner->{'data'}->{'app'} = $app;
