@@ -3700,7 +3700,14 @@ get '/mugshot' => sub($c) {
 		$data = eval { read_file($file) };
 	}
 	if (defined $data && length $data) {
-		$c->res->headers->content_type('image/png');
+		# the sealed file keeps no extension of its own, so read the image type
+		# back off the bytes (a PNG name may hold a JPEG)
+		my $type = $data =~ /^\x89PNG/ ? 'image/png'
+			: $data =~ /^\xFF\xD8\xFF/ ? 'image/jpeg'
+			: $data =~ /^GIF8/ ? 'image/gif'
+			: $data =~ /^RIFF....WEBP/s ? 'image/webp'
+			: 'application/octet-stream';
+		$c->res->headers->content_type($type);
 		$c->res->headers->cache_control('private, max-age=60');
 		$c->render(data => $data);
 	} else { $c->rendered(404); }
