@@ -17,6 +17,7 @@ var config_appt_containers = {
 	'system_list': 'system_setting_lister',
 	'configure_appointment_list': 'appointment_list_grabber',
 	'misc_setting_list': 'misc_setting',
+	'plat_setting_list': 'plat_setting',
 	'pseudonym_list': 'pseudonym_setting_lister',
 	'store_list': 'store_setting_lister',
 	'tunnel_list': 'tunnel_lister'

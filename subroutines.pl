@@ -9609,36 +9609,123 @@ sub measure_contrasts {
 	return \@out;
 }
 
-# the same wire pen_message uses, but the answer is read whole: the evaluation
-# is a report, not a conversation
-sub evaluation_model_call() {
-	my ($model, $system, $user) = @_;
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', 'ollama_key' ] });
-	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
-	my $payload = {
-		model => $model,
-		messages => [
-			{ role => 'system', content => $system },
-			{ role => 'user', content => $user },
-		],
-		stream => \0,
-	};
-	my ($url, $key);
-	if ($model =~ /^\@cf/ && $settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) {
-		$url = 'https://api.cloudflare.com/client/v4/accounts/'. $settings->{'cloudflare_account'} . '/ai/run/' . $model;
-		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'});
+# Every AI provider the Platform panel can point a model at, and the models each
+# offers. A model is chosen by id: a bare name goes to the local Ollama,
+# @cf/... to Cloudflare, and everything else is "provider:model".
+sub ai_providers() {
+	return [
+		{ id => 'ollama',     label => 'Ollama (local)',        keys => [ [ 'ollama_key', 'API key (optional)' ] ] },
+		{ id => 'cloudflare', label => 'Cloudflare Workers AI', keys => [ [ 'cloudflare_account', 'Account ID' ], [ 'cloudflare_token', 'API token' ] ] },
+		{ id => 'openai',     label => 'OpenAI',                keys => [ [ 'openai_key', 'API key' ] ],
+			models => [ qw/gpt-4o gpt-4o-mini gpt-4.1 gpt-4.1-mini o3-mini o1/ ] },
+		{ id => 'anthropic',  label => 'Anthropic (Claude)',    keys => [ [ 'anthropic_key', 'API key' ] ],
+			models => [ qw/claude-sonnet-4-20250514 claude-opus-4-20250514 claude-3-7-sonnet-latest claude-3-5-sonnet-latest claude-3-5-haiku-latest/ ] },
+		{ id => 'google',     label => 'Google (Gemini)',       keys => [ [ 'google_key', 'API key' ] ],
+			models => [ qw/gemini-2.5-pro gemini-2.5-flash gemini-2.0-flash/ ] },
+		{ id => 'xai',        label => 'xAI (Grok)',            keys => [ [ 'xai_key', 'API key' ] ],
+			models => [ qw/grok-3 grok-3-mini grok-2-1212/ ] },
+		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
+			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
+		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
+			models => [ qw/llama-3.3-70b-versatile llama-3.1-8b-instant mixtral-8x7b-32768/ ] },
+		{ id => 'openrouter', label => 'OpenRouter',            keys => [ [ 'openrouter_key', 'API key' ] ],
+			models => [ qw{openai/gpt-4o anthropic/claude-3.5-sonnet meta-llama/llama-3.3-70b-instruct google/gemini-2.0-flash-001} ] },
+	];
+}
+
+# Every setting name that holds a secret, so a panel can tell a key from a value.
+sub ai_key_settings() {
+	return map { @{ $_->{'keys'} } } @{ &subs::ai_providers() };
+}
+
+# The model choices, grouped by provider, for the dropdowns. Ollama and
+# Cloudflare are read live; the rest are the fixed lists above.
+sub ai_model_catalogue() {
+	my @out;
+	foreach my $p ( @{ &subs::ai_providers() } ) {
+		my @models;
+		if ($p->{'id'} eq 'ollama') {
+			@models = map { { value => ($_->{'model'} || $_->{'name'}), name => ($_->{'name'} || $_->{'model'}) } } @{ &subs::pen_model_list() };
+		}
+		elsif ($p->{'id'} eq 'cloudflare') {
+			@models = map { { value => ($_->{'model'} || $_->{'name'}), name => ($_->{'name'} || $_->{'model'}) } } @{ &subs::cloudflare_model_list() };
+		}
+		else {
+			@models = map { { value => $p->{'id'} . ':' . $_, name => $_ } } @{ $p->{'models'} || [] };
+		}
+		push @out, { id => $p->{'id'}, label => $p->{'label'}, models => \@models };
 	}
-	else {
+	return \@out;
+}
+
+# Talk to whichever provider a model id points at, and return the whole answer.
+# The message list may carry a system message; Anthropic and Google want it
+# apart from the turns, so it is lifted out and put back per provider.
+sub ai_chat {
+	my ($model, $messages) = @_;
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
+	my $suds = &subs::suds_grabber();
+	my $secret = sub {
+		my $v = shift;
+		return '' unless defined $v && length $v;
+		my $d = eval { &subs::note_decrypter($suds, $v) };
+		return ($d && length $d) ? $d : $v;
+	};
+	my ($provider, $real) = ('ollama', $model);
+	if ($model =~ /^\@cf/) { ($provider, $real) = ('cloudflare', $model); }
+	elsif ($model =~ /^([a-z]+):(.+)$/) {
+		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter/) { ($provider, $real) = ($1, $2); }
+	}
+
+	my $system = '';
+	my @msgs;
+	foreach my $m ( @{ $messages } ) {
+		if (($m->{'role'} || '') eq 'system') { $system .= ($system ? "\n" : '') . $m->{'content'}; }
+		else { push @msgs, $m; }
+	}
+
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
+	my ($url, $headers, $payload);
+
+	if ($provider eq 'cloudflare') {
+		$url = 'https://api.cloudflare.com/client/v4/accounts/' . $settings->{'cloudflare_account'} . '/ai/run/' . $model;
+		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{'cloudflare_token'}), 'Content-Type' => 'application/json' };
+		$payload = { model => $model, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0 };
+	}
+	elsif ($provider eq 'anthropic') {
+		$url = 'https://api.anthropic.com/v1/messages';
+		$headers = { 'x-api-key' => $secret->($settings->{'anthropic_key'}), 'anthropic-version' => '2023-06-01', 'Content-Type' => 'application/json' };
+		$payload = { model => $real, max_tokens => 2048, system => $system, messages => [ @msgs ] };
+	}
+	elsif ($provider eq 'google') {
+		$url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $real . ':generateContent?key=' . url_escape($secret->($settings->{'google_key'}));
+		$headers = { 'Content-Type' => 'application/json' };
+		$payload = { contents => [ map { { role => ($_->{'role'} eq 'assistant' ? 'model' : 'user'), parts => [ { text => $_->{'content'} } ] } } @msgs ], systemInstruction => { parts => [ { text => $system } ] } };
+	}
+	elsif ($provider eq 'ollama') {
 		$url = 'http://localhost:11434/api/chat';
-		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'ollama_key'});
+		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{'ollama_key'}), 'Content-Type' => 'application/json' };
 		my $nproc = 4;
 		if (open(my $fh, "-|", "nproc")) { $nproc = <$fh>; chomp($nproc); close($fh); }
-		$payload->{'options'} = { num_thread => $nproc - 2, num_ctx => 32768 };
+		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0, options => { num_thread => $nproc - 2, num_ctx => 32768 } };
 	}
-	my $tx = $ua->build_tx(POST => $url => {
-		'Authorization' => "Bearer $key",
-		'Content-Type'  => 'application/json',
-	} => json => $payload);
+	else {
+		# the OpenAI-compatible crowd: openai, xai, mistral, groq, openrouter
+		my %ep = (
+			openai => 'https://api.openai.com/v1/chat/completions',
+			xai => 'https://api.x.ai/v1/chat/completions',
+			mistral => 'https://api.mistral.ai/v1/chat/completions',
+			groq => 'https://api.groq.com/openai/v1/chat/completions',
+			openrouter => 'https://openrouter.ai/api/v1/chat/completions',
+		);
+		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key' );
+		$url = $ep{$provider};
+		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
+		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0 };
+	}
+
+	my $tx = $ua->build_tx(POST => $url => $headers => json => $payload);
 	$ua->start($tx);
 	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
 	my $res = $tx->res;
@@ -9648,8 +9735,17 @@ sub evaluation_model_call() {
 		|| $body->{'response'}
 		|| $body->{'result'}->{'response'}
 		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
-		|| $body->{'choices'}->[0]->{'message'}->{'content'};
+		|| $body->{'choices'}->[0]->{'message'}->{'content'}
+		|| $body->{'content'}->[0]->{'text'}
+		|| $body->{'candidates'}->[0]->{'content'}->{'parts'}->[0]->{'text'};
 	return ($text, $text ? undef : 'the model returned nothing readable');
+}
+
+# the same wire pen_message uses, but the answer is read whole: the evaluation
+# is a report, not a conversation
+sub evaluation_model_call() {
+	my ($model, $system, $user) = @_;
+	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ]);
 }
 
 # Whether this machine can actually run the evaluation right now. The wish to
@@ -9659,9 +9755,13 @@ sub evaluation_model_call() {
 sub evaluation_model_available {
 	my ($model) = @_;
 	return 0 unless $model;
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token' ] });
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @{ &subs::ai_key_settings() } ] });
 	if ($model =~ /^\@cf/) {
 		return ($settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) ? 1 : 0;
+	}
+	if ($model =~ /^([a-z]+):/) {
+		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key' );
+		return $settings->{ $key{$1} } ? 1 : 0 if $key{$1};
 	}
 	# ollama: the daemon has to answer and the model has to be one it knows
 	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 5, request_timeout => 8);

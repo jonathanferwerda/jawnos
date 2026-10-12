@@ -110,40 +110,9 @@
 					</div>
 				<% } %>
 				<div id="pen_chatbot_data" style="display:none;"><%= $settings->{'chatbot_conversations'} || '{}' %></div>
-				<div id="pen_assistant_model_selection" style="width:100%;border:solid;border-radius:2%;">
-					<% my $assistants = [qw/visual_assistant text_to_image_assistant eval_assistant/]; %>
-					<% my $ass_settings = &subs::settings_grabber({ app => 'mail', settings => $assistants }); %>
-
-					<%= &subs::format_name('visual_assistant') %>
-					<select class="configure_input" app="mail" setting="visual_assistant" value="<%= $ass_settings->{'visual_assistant'} %>">
-			      <% foreach my $cm ( @{$chatbot_models}) { %>
-			        <option value="<%= $cm->{'model'} %>" <% if ($ass_settings->{'visual_assistant'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %></option>
-			      <% } %>
-			    </select>
-					<br>
-					<label>Text-to-Image</label>
-					<select class="configure_input" app="mail" setting="text_to_image_assistant" value="<%= $ass_settings->{'text_to_image_assistant'} %>">
-			      <% foreach my $cm ( @{$chatbot_models}) { %>
-							% next unless $cm->{'task'}->{'name'} eq 'Text-to-Image';
-			        <option value="<%= $cm->{'name'} %>" <% if ($ass_settings->{'text_to_image_assistant'} eq $cm->{'name'}) { %>selected<% } %>><%= $cm->{'name'} %></option>
-			      <% } %>
-			    </select>
-					<br>
-					<label>Evaluation</label>
-					<select class="configure_input" app="mail" setting="eval_assistant" value="<%= $ass_settings->{'eval_assistant'} %>">
-			      <% foreach my $cm ( @{$chatbot_models}) { %>
-			        <option value="<%= $cm->{'model'} %>" <% if ($ass_settings->{'eval_assistant'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %><% if ($cm->{'price'}) { %> <%= $cm->{'price'} %><% } %></option>
-			      <% } %>
-			    </select>
+				<div style="font-size:12px;opacity:.75;border:solid;border-radius:6px;padding:8px;margin-top:8px;line-height:1.4;">
+					Model choices and provider keys have moved to <b>Configure → Plat</b>, so every assistant is set in one place.
 				</div>
-				<label>Ollama Key</label>
-				<input type="password" value="<%= $settings->{'ollama_key'} %>" class="configure_input" app="mail" setting="ollama_key"><br>
-				<button>Refresh Ollama List</button><br>
-				<label>Cloudflare Account</label>
-				<input type="text" value="<%= $settings->{'cloudflare_account'} %>" class="configure_input" app="mail" setting="cloudflare_account"><br>
-				<label>Clouflare Key</label>
-				<input type="password" value="<%= $settings->{'cloudflare_token'} %>" class="configure_input" app="mail" setting="cloudflare_token"><br>
-				<button>Refresh Cloudflare List</button><br>
 
 			<% } elsif ($settings->{'subsection'} eq 'tickets') { %>
 				<div id="mail_contacts_list" style="height:100px;font-size:20px;max-height:100px;text-align:center;">

@@ -3600,6 +3600,11 @@ get '/manager/configure/me_settings' => sub($c) {
 	);
 };
 
+# The Platform panel: every AI model choice and provider credential in one place.
+get '/manager/configure/plat_setting_list' => sub($c) {
+	$c->render(template => 'configure/plat_setting_list');
+};
+
 post '/manager/configure/me_setting' => sub($c) {
 	my $value = $c->param('value');
 	if ($value =~ /\%$/gi) {
@@ -10549,7 +10554,7 @@ post '/manager/configure' => sub ($c) {
 
 		$value = encode_json $measures;
 	}
-	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token/ ) {
+	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token openai_key anthropic_key xai_key google_key mistral_key groq_key openrouter_key/ ) {
 		$log->info($value);
 		$value = &subs::note_encrypter(&subs::suds_grabber(), $value);
 		$log->info($value);

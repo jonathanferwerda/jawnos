@@ -944,15 +944,35 @@ $(document).on('click', '#misc_setting', function() {
 			data: { timestamp: timestamp },
 			success: function(response){
 				$('#misc_setting_list').html(response).show();
-				b.attr('status', 'active');
-			}
-		});
-	}
-	else {
-		$('#misc_setting_list').hide();
-		b.attr('status', 'inactive');
-	}
-});
+					b.attr('status', 'active');
+				}
+			});
+		}
+		else {
+			$('#misc_setting_list').hide();
+			b.attr('status', 'inactive');
+		}
+	});
+
+	$(document).on('click', '#plat_setting', function() {
+		var b = $(this);
+		if (!$('#plat_setting_list').is(':visible')) {
+			var timestamp = Date.now();
+			$.ajax({
+				url: '/manager/configure/plat_setting_list',
+				type:'GET',
+				data: { timestamp: timestamp },
+				success: function(response){
+					$('#plat_setting_list').html(response).show();
+					b.attr('status', 'active');
+				}
+			});
+		}
+		else {
+			$('#plat_setting_list').hide();
+			b.attr('status', 'inactive');
+		}
+	});
 
 $(document).on('change','.misc_setting', function() {
 	var timestamp = Date.now();
