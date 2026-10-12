@@ -47,12 +47,15 @@
 					    watch on change (push="now_me"), which now_me sends over the LAN if the
 					    watch answers, else the BLE bridge. hey_jawn joins once its model exists. %>
 					<% my %voice_modes = (
-						off       => 'Voice: Off',
-						vad       => 'Voice: Any speech (VAD)',
-						okay_nabu => 'Voice: Wake word - Okay Nabu',
+						off         => 'Voice: Off',
+						vad         => 'Voice: Any speech (VAD)',
+						okay_nabu   => 'Voice: Okay Nabu',
+						hey_jarvis  => 'Voice: Hey Jarvis',
+						hey_mycroft => 'Voice: Hey Mycroft',
+						alexa       => 'Voice: Alexa',
 					); %>
 					<select class="embedded_setting" setting="voice_trigger" push="now_me" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
-						<% foreach my $vm ( qw/off vad okay_nabu/ ) { %>
+						<% foreach my $vm ( qw/off vad okay_nabu hey_jarvis hey_mycroft alexa/ ) { %>
 							<option value="<%= $vm %>" <% if (($operator_door->{'__specs'}->{'voice_trigger'} || 'off') eq $vm) { %>selected<% } %>><%= $voice_modes{$vm} %></option>
 						<% } %>
 					</select>

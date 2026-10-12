@@ -103,6 +103,11 @@ static bool bt_enabled = false;
 // System). Declared up here because loop() reads it; the listener itself lives
 // with the rest of the voice code further down.
 static bool voiceCaptureEnabled = false;
+// The voice mode the panel set (operator_door.__specs.voice_trigger): 'off',
+// 'vad', or a wake word. It rides in a Now Me; voice_trigger_apply() maps it onto
+// the listener. Only 'vad' arms anything today - the wake-word runtime is not on
+// the watch yet, so those names are logged and ignored.
+static String voice_trigger = "off";
 static volatile bool voiceListening = false;
 static volatile bool voiceOneShot = false;   // a serial "voice" capture, not the setting
 // True while a command is being recorded: loop() holds the screen timeout off
@@ -268,6 +273,7 @@ static void ble_push_steps(bool force);
 static void voiceListenStart(bool one_shot);
 static void voice_control(lv_event_t *e);
 static void voice_border_show(bool on);
+static void voice_trigger_apply();
 void setting_room();
 String chat_room;
 bool loraChatBroadcaster = false;
@@ -766,6 +772,22 @@ void ota_upload() {
   }
 }
 
+// Apply the panel's voice mode onto the capture listener. 'vad' arms the
+// on-device listener (capture on any speech); 'off' disarms it. A wake word has
+// no model on the watch yet, so it disarms and is logged - the round-trip from
+// the Embedded panel still shows up on the serial console.
+static void voice_trigger_apply() {
+  if (voice_trigger == "vad") {
+    voiceCaptureEnabled = true;
+  } else {
+    voiceCaptureEnabled = false;
+    if (voice_trigger.length() && voice_trigger != "off") {
+      Serial.printf("[voice] wake word '%s' has no model on the watch yet\n", voice_trigger.c_str());
+    }
+  }
+  Serial.printf("[voice] mode=%s\n", voice_trigger.c_str());
+}
+
 void setup() {
   Serial.begin(921600);
   // Never let the console block the UI. The USB-Serial/JTAG CDC write waits up
@@ -1126,6 +1148,7 @@ void setup() {
     
     room_count = server.arg("room_count").toInt();
   //  room_max = server.arg("room_max").toInt();
+    { String vt = server.arg("voice_trigger"); if (vt.length()) { voice_trigger = vt; voice_trigger_apply(); } }
 
     pmuIrq = true;
     buttoned_before = false;
@@ -1777,6 +1800,10 @@ void loop2(void * pvParameters) {
               rtc.offset = offset;
               room_count = json_int(params["room_count"]);
               room_max = json_int(params["room_max"]) || room_max;
+              if (params.hasOwnProperty("voice_trigger")) {
+                const char *vt = (const char *)params["voice_trigger"];
+                if (vt) { voice_trigger = vt; voice_trigger_apply(); }
+              }
               if (DEFAULT_SCREEN_TIMEOUT < 30000) {
                 DEFAULT_SCREEN_TIMEOUT = 30000;
               }
