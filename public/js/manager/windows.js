@@ -584,6 +584,26 @@ function windowRetriever() {
 			keyboardDragEnabler(window,i,'off');
 		}
 	});
+
+	// A phone shows its windows as a cascade, and a restore renders them all at
+	// once - so their z-order and sizes drift as the renders settle. Once, after
+	// the burst, put each window back in its saved place and re-cascade the pile.
+	if (windowPhoneChecker()) {
+		var saved = {};
+		$.each(storage, function(i,v) {
+			if (v.type == 'window') { saved[i] = { z: v.zindex, h: v.height, w: v.width }; }
+		});
+		setTimeout(function() {
+			$.each(saved, function(app, s) {
+				var w = $('.wind[app="' + app + '"]');
+				if (!w.length) { return; }
+				if (s.z) { w.css('z-index', s.z); }
+				if (s.h) { w.css('height', s.h); }
+				if (s.w) { w.css('width', s.w); }
+			});
+			if (typeof windowStacker == 'function') { windowStacker(); }
+		}, 1500);
+	}
 }
 
 function appWindowLoader(i,v) {
@@ -733,7 +753,7 @@ function appWindowOpener(i,timestamp,v) {
 					if (v.visible != 'yes') {
 						window.hide();
 					}
-					if (v.top > 0 && v.left < window_w && v.top < window_h && v.left > 0) {
+					if (v.top > 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
 						window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 						if (numeral(v.zindex).value() > top_level_now) {
 							top_level_now = numeral(v.zindex).value();
@@ -757,7 +777,7 @@ function appWindowOpener(i,timestamp,v) {
 				var window = $('#' + id);
 				if (window.length == 0) { window = $('.wind[app="' + i + '"]'); }
 
-				if (v.top > 0 && v.left < window_w && v.top < window_h && v.left > 0) {
+				if (v.top > 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
 					window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 				}
 				windowFit(window);
@@ -1316,11 +1336,16 @@ function windowStacker(app, raise) {
 		top_level_now = top_level_now + order.length;
 	}
 
-	// re-cascade the pile by that order: one title bar per step from the top
-	// limit down, so a closed window leaves no gap and the bars sit flush
-	var vStep = $(order[order.length - 1]).find('.top_navbar').outerHeight() || 40;
-	var start = windowTopLimit();
-	$(order).each(function (slot) { $(this).css({ 'top': start + (slot * vStep) }); });
+	// re-cascade the pile by that order: a closed window leaves no gap. Step each
+	// window down by the height of the bar above it - not one measured step for
+	// the whole pile - so the bars sit flush even when their heights differ (a
+	// single step against a bar of another height leaves a gap, or an overlap).
+	var y = windowTopLimit();
+	$(order).each(function () {
+		var win = $(this);
+		win.css({ 'top': y });
+		y = y + (win.find('.top_navbar').outerHeight() || 40);
+	});
 
 	// raise the new front through topLevelNow so its frame ring and the taskbar
 	// pins follow the order
