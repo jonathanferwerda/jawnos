@@ -3087,6 +3087,7 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_FRAME_MS 30
 #define VOICE_FRAME_SAMPLES ((int)(MIC_I2S_SAMPLE_RATE / 1000 * VOICE_FRAME_MS))
 #define VOICE_RMS_FLOOR 900          // above room tone, below a spoken word
+#define VOICE_ONSET_FRAMES 4         // held-energy frames before a capture commits (a lone loud frame is the room, not a word)
 #define VOICE_SILENCE_MS 900         // trailing quiet that ends a command
 #define VOICE_MAX_MS 6000            // a command, not a lecture
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
@@ -3300,6 +3301,7 @@ static void voiceListenTask(void *pv) {
       break;   // the screen is off: the listener only runs while it is on
     }
     bool recording = false;
+    int speech_run = 0;      // held-energy frames seen before a capture commits
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
     File f;
     while (voiceListening) {
@@ -3322,7 +3324,12 @@ static void voiceListenTask(void *pv) {
       int rms = n > 0 ? (int)sqrtf((float)acc / n) : 0;
       bool speech = rms > VOICE_RMS_FLOOR;
       if (!recording) {
-        if (!speech) { continue; }
+        // a single loud frame is not a word: the room crosses the floor, and so
+        // does a running tap. Hold the energy for a short run before committing,
+        // so the listener - and the orange ring - answer speech, not the room.
+        if (!speech) { speech_run = 0; continue; }
+        if (++speech_run < VOICE_ONSET_FRAMES) { continue; }
+        Serial.printf("[voice] speech rms=%d\n", rms);
         if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), VOICE_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
         f = FFat.open(VOICE_WAV_PATH.c_str(), FILE_APPEND);
         if (!f) { break; }
@@ -4552,12 +4559,13 @@ static bool accel_sample(float &x, float &y, float &z) {
 // light-sleep machine (and the doze one in that pose) never saw a turn and the
 // screen stayed off (2026-10-10). 35 catches it; the look band still keeps the
 // swing and the rest quiet.
-// The look band. The lower bound has to sit ABOVE the arm's swing/rest poses,
-// which read low z (the walking swing is z ~1-3.5, the bench arm-down ~-1): the
-// waking machine no longer waits for a moment of stillness (see wristPollStep),
-// so a swing that settled inside the band would light the screen. The worn
-// reading pose reads z ~7-8.8, so 4.0 clears the swing and keeps the read.
-#define WRIST_LOOK_ZLOW  4.0f
+// The look band. The lower bound has to sit ABOVE the arm's swing/rest poses AND
+// above the "turned away" pose. A 2026-10-12 worn capture (right arm; 5 looks
+// then 5 away-tilts) settled the read at z 8.2-8.9 but the away tilt at z 3.2-4.6,
+// so the old floor of 4.0 admitted the away pose and most aways lit the screen.
+// The read pose reads z ~7-8.8, so 6.0 clears both the swing and the turned-away
+// pose and keeps the read.
+#define WRIST_LOOK_ZLOW  6.0f
 // The upper bound admits the way the watch is read -- brought up in front of the
 // face -- which leaves the screen nearly up (measured 6.9-8.8), so it sits just
 // under a flat desk (measured desk poses read 9.2-9.9).
@@ -4688,11 +4696,10 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
     if (now - wrist_still_since >= 200) {
       float angle = wrist_angle(wrist_sx, wrist_sy, wrist_sz, wrist_lx, wrist_ly, wrist_lz);
       wrist_rose = false;
-      // The z window is what separates a look from the watch set down or the
-      // arm dropping back to the side: the worn look settled at 7.4 and the
-      // in-hand look at 2-4.6 in the captures, while every desk pose measured
-      // z >= 9.2 and a hanging arm z ~-1 (which the old fabs(z) < 8 let
-      // through, so lowering the arm after a look lit the screen again).
+      // The z window is what separates a look from the watch set down, the arm
+      // dropping back to the side, or a turn away from the face: the worn read
+      // settled at z ~7-8.8 while every desk pose measured z >= 9.2, a hanging
+      // arm z ~-1, and a turned-away wrist z ~3.2-4.6 (see WRIST_LOOK_ZLOW).
       if (wrist_lz > WRIST_LOOK_ZLOW && wrist_lz < WRIST_LOOK_ZHIGH) {
         // held where it can be read. The arm coming back down is not another
         // look, so the next one waits until the arm has swung off this pose
