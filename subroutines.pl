@@ -1879,7 +1879,13 @@ sub whisper_transcribe() {
 	require IPC::Open3;
 	require Symbol;
 	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
-	my $model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+	# A command is a handful of words against a tiny vocabulary, so the fast tiny
+	# model is plenty and a clip gets through much sooner, especially on the
+	# phone; base is the fallback when tiny is not installed.
+	my $model = &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
+	unless (-e $model) {
+		$model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+	}
 	return '' unless -e $bin && -e $model;
 	my $cmd = sprintf(
 		'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file - 2>/dev/null',

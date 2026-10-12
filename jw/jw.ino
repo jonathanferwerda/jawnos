@@ -99,6 +99,16 @@ static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
 static bool bt_enabled = false;
+// Voice capture: loop() arms a VAD listener while this is on (Configure >
+// System). Declared up here because loop() reads it; the listener itself lives
+// with the rest of the voice code further down.
+static bool voiceCaptureEnabled = false;
+static volatile bool voiceListening = false;
+static volatile bool voiceOneShot = false;   // a serial "voice" capture, not the setting
+// True while a command is being recorded: loop() holds the screen timeout off
+// then, so a spoken command is not cut short by the watch dozing (the tilt-wake
+// delay the user asked for).
+static volatile bool voiceRecording = false;
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
@@ -231,6 +241,8 @@ static void tilt_wake_control(lv_event_t *e);
 static bool room_has_buttons(int r);
 static void screen_gesture(lv_event_t *e);
 static void ble_push_steps();
+static void voiceListenStart(bool one_shot);
+static void voice_control(lv_event_t *e);
 void setting_room();
 String chat_room;
 bool loraChatBroadcaster = false;
@@ -1430,10 +1442,23 @@ void loop() {
     ble_flush_wigi();
     ble_push_steps();   // recover the steps taken while the link was down
   }
+  // a watch armed for hands-free voice keeps a listener running while it is
+  // awake: the task captures one utterance, ships it, and stays listening. It
+  // steps aside (and is not restarted) while a manual record or playback holds
+  // the microphone.
+  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying
+      && (deviceConnected || WiFi.status() == WL_CONNECTED)) {
+    voiceListenStart(false);
+  }
   if (loraChatReceiver) {
     readRadio();
   }
   wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
+  // a spoken command keeps the watch awake until it is captured: without this the
+  // screen timeout could doze us mid-sentence and the clip would be lost
+  if (voiceRecording) {
+    buttonMillis = millis();
+  }
   if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     lowPowerEnergyHandler();
   }
@@ -2617,6 +2642,19 @@ void apply_president_payload() {
   }
 }
 
+// A room button's face: the app's own colour, white label, and - when its toggle
+// is on - a thick yellow ring. The ring replaced a full yellow fill, which hid
+// which app the button belonged to.
+static void button_finish(lv_obj_t *b, JSONVar &result, int sb) {
+  lv_obj_set_style_bg_color(b, lv_color_make(result["b" + String(sb)]["rgb"][0],
+                                             result["b" + String(sb)]["rgb"][1],
+                                             result["b" + String(sb)]["rgb"][2]), LV_PART_MAIN);
+  lv_obj_set_style_text_color(b, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  int tog = result["b" + String(sb)]["toggle"];
+  lv_obj_set_style_border_width(b, tog == 1 ? 5 : 0, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_make(255, 255, 0), LV_PART_MAIN);
+}
+
 void presidents_buttons() {
   crumb("d0 buttons");
   JSONVar result;
@@ -2647,20 +2685,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b1, mb1, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b1, 10, 26 );
   lv_obj_set_size(b1, 60, 60 );
-  lv_color_t c1;
-  lv_color_t t1;
-  int tog1 = result["b" + String(sb)]["toggle"]; 
-
-  if (tog1 == 1) {
-    t1 = lv_color_make(0,0,0);
-    c1 = lv_color_make(255,255,0);
-  }
-  else {
-    c1 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-    t1 = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b1, t1, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b1, c1, LV_PART_MAIN);
+  button_finish(b1, result, sb);
   lv_obj_t *l1;
   l1 = lv_label_create(b1);
   lv_label_set_text(l1, result["b" + String(sb)]["shorthand_name"]);
@@ -2672,20 +2697,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b2, mb2, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b2, 90, 26 );
   lv_obj_set_size(b2, 60, 60 );
-  lv_color_t c2;
-  lv_color_t t2;
-  int tog2 = result["b" + String(sb)]["toggle"]; 
-  
-  if (tog2 == 1) {
-    t2 = lv_color_make(0,0,0);
-    c2 = lv_color_make(255,255,0);
-  }
-  else {
-    c2 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-    t2 = lv_color_make(255,255,255);
-  }  
-  lv_obj_set_style_bg_color(b2, c2, LV_PART_MAIN);
-  lv_obj_set_style_text_color(b2, t2, LV_PART_MAIN);  
+  button_finish(b2, result, sb);
   lv_obj_t *l2;
   l2 = lv_label_create(b2);
   lv_label_set_text(l2, result["b" + String(sb)]["shorthand_name"]);
@@ -2697,20 +2709,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b3, mb3, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b3, 170, 26 );
   lv_obj_set_size(b3, 60, 60 );
-  lv_color_t c3;
-  lv_color_t t3;
-  int tog3 = result["b" + String(sb)]["toggle"]; 
-
-  if (tog3 == 1) {
-    t3 = lv_color_make(0,0,0);
-    c3 = lv_color_make(255,255,0);
-  }
-  else {
-    c3 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-    t3 = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b3, t3, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b3, c3, LV_PART_MAIN);
+  button_finish(b3, result, sb);
   lv_obj_t *l3;
   l3 = lv_label_create(b3);
   lv_label_set_text(l3, result["b" + String(sb)]["shorthand_name"]);
@@ -2722,20 +2721,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b4, mb4, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b4, 10, 106 );
   lv_obj_set_size(b4, 60, 60 );
-  lv_color_t c4;
-  lv_color_t t4;
-  int tog4 = result["b" + String(sb)]["toggle"]; 
-
-  if (tog4 == 1) {
-    t4 = lv_color_make(0,0,0);
-    c4 = lv_color_make(255,255,0);
-  }
-  else {
-    c4 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-    t4 = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b4, t4, LV_PART_MAIN);  
-  lv_obj_set_style_bg_color(b4, c4, LV_PART_MAIN);
+  button_finish(b4, result, sb);
   lv_obj_t *l4;
   l4 = lv_label_create(b4);
   lv_label_set_text(l4, result["b" + String(sb)]["shorthand_name"]);
@@ -2747,20 +2733,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b5, mb5, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b5, 90, 106 );
   lv_obj_set_size(b5, 60, 60 );
-  lv_color_t c5;
-  lv_color_t t5;
-  int tog5 = result["b" + String(sb)]["toggle"]; 
-
-  if (tog5 == 1) {
-    t5 = lv_color_make(0,0,0);
-    c5 = lv_color_make(255,255,0);
-  }
-  else {
-    t5 = lv_color_make(255,255,255);
-    c5 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-  }
-  lv_obj_set_style_text_color(b5, t5, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b5, c5, LV_PART_MAIN);
+  button_finish(b5, result, sb);
   lv_obj_t *l5;
   l5 = lv_label_create(b5);
   lv_label_set_text(l5, result["b" + String(sb)]["shorthand_name"]);
@@ -2773,20 +2746,8 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b6, mb6, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b6, 170, 106 );
   lv_obj_set_size(b6, 60, 60 );
-  lv_color_t c6;
-  lv_color_t t6;
   // Serial.println(result["b" + String(sb)]["toggle"]);
-  int tog6 = result["b" + String(sb)]["toggle"]; 
-  if (tog6 == 1) {
-    c6 = lv_color_make(255,255,0);
-    t6 = lv_color_make(0,0,0);
-  }
-  else {
-    c6 = lv_color_make(result["b" + String(sb)]["rgb"][0], result["b" + String(sb)]["rgb"][1], result["b" + String(sb)]["rgb"][2]);
-    t6 = lv_color_make(255,255,255);
-  }  
-  lv_obj_set_style_bg_color(b6, c6, LV_PART_MAIN);
-  lv_obj_set_style_text_color(b6, t6, LV_PART_MAIN);    
+  button_finish(b6, result, sb);
   
   lv_obj_t *l6;
   l6 = lv_label_create(b6);
@@ -2984,12 +2945,12 @@ bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_r
 }
 
 // Rewrites header placeholders with the exact byte sizes after recording stops
-void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes) {
+void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint32_t sample_rate) {
     File audio_file = FFat.open(song_name, "r+");
     if (!audio_file) return;
 
     uint32_t chunk_size = raw_pcm_bytes + 36;
-    uint32_t byte_rate = MIC_I2S_SAMPLE_RATE * 1 * (MIC_I2S_BITS_PER_SAMPLE / 8);
+    uint32_t byte_rate = sample_rate * 1 * (MIC_I2S_BITS_PER_SAMPLE / 8);
 
     // Update ChunkSize field (offset index 4)
     audio_file.seek(4);
@@ -3057,7 +3018,7 @@ void micCaptureTask(void *pvParameters) {
                   spent ? (unsigned)((uint64_t)bytes_written_total * 1000 / spent) : 0);
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
-    finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total);
+    finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total, MIC_I2S_SAMPLE_RATE);
     vTaskDelete(NULL);
 }
 
@@ -3065,28 +3026,33 @@ void micCaptureTask(void *pvParameters) {
 // The watch is hands-free if it listens by itself, but only while there is
 // speech: the microphone is read in short frames, a run of frames above the
 // energy floor starts a recording, and the recording ends once the voice has
-// been quiet for a moment (or it grows past a cap). The clip is POSTed to the
-// homebase's /watch/voice, which transcribes it with whisper and acts on
-// "jawn ..." - the watch hears the result only as the toggle that comes back.
-// Off unless the user turns it on, so it never competes with a normal record.
-static bool voiceCaptureEnabled = false;
-static volatile bool voiceListening = false;
+// been quiet for a moment (or it grows past a cap). The clip leaves for the
+// homebase - over the BLE bridge when one is attached, otherwise as a POST to
+// /watch/voice - where whisper transcribes it and acts on "jawn ..."; the watch
+// hears the result only as the toggle that comes back.
+// Off unless the user arms it in Configure > System, so it never competes with
+// a normal record.
 #define VOICE_FRAME_MS 30
 #define VOICE_FRAME_SAMPLES ((int)(MIC_I2S_SAMPLE_RATE / 1000 * VOICE_FRAME_MS))
 #define VOICE_RMS_FLOOR 900          // above room tone, below a spoken word
 #define VOICE_SILENCE_MS 900         // trailing quiet that ends a command
 #define VOICE_MAX_MS 6000            // a command, not a lecture
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
+#define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
+#define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
 static String VOICE_WAV_PATH = "/voice.wav";
 
 // POST the finished clip to the homebase. Streamed from flash: the WAV is tens
 // of KB, well past what the TLS stack wants held in RAM.
 static bool voice_post_clip(const String &path) {
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    Serial.printf("[voice] no homebase (%u) or authorization (%u)\n",
+                  (unsigned)homebaseIP.length(), (unsigned)authorization.length());
     return false;
   }
   File f = FFat.open(path.c_str(), FILE_READ);
   if (!f) {
+    Serial.println("[voice] clip open failed");
     return false;
   }
   WiFiClientSecure client;
@@ -3105,8 +3071,117 @@ static bool voice_post_clip(const String &path) {
     ok = (code > 0 && code < 400);
     https.end();
   }
+  else {
+    Serial.println("[voice] https.begin failed");
+  }
   f.close();
   return ok;
+}
+
+// Ship a finished clip over the BLE link. The bridge frames the daemon -> watch
+// direction on its own, but the watch must frame this one: "<i>/<n>:" + part,
+// the same shape ble_frame_ingest expects, so the bridge reassembles it and
+// hands the server one JSON envelope. The clip rides base64 so the whole
+// message stays text on the wire; the server base64-decodes it. Sent in
+// VOICE_BLE_CHUNK-sized pieces so neither side holds the whole clip at once -
+// the WAV can run ~190 KB and base64 a third larger again.
+static bool voice_ble_notify(String &part) {
+  if (!deviceConnected || pTxCharacteristic == nullptr) {
+    return false;
+  }
+  pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
+  pTxCharacteristic->notify();
+  // Each part must fit the notify limit (MTU - 3): an oversized part is rejected
+  // outright and the characteristic keeps its old value, which silently loses
+  // that part. VOICE_BLE_CHUNK is sized so the JSON head in part 0 still fits.
+  // The pause keeps the parts from overrunning the controller's queue.
+  delay(20);
+  return true;
+}
+
+static bool voice_ble_send(const String &path) {
+  if (!deviceConnected || pTxCharacteristic == nullptr) {
+    return false;
+  }
+  File f = FFat.open(path.c_str(), FILE_READ);
+  if (!f) {
+    return false;
+  }
+  size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    return false;
+  }
+  size_t b64_len = ((size + 2) / 3) * 4;
+  int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
+  if (total < 1) { total = 1; }
+  static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"data\":\"";
+  String out = String(0) + "/" + String(total) + ":" + head;
+  int in_chunk = 0;
+  int index = 0;
+  uint8_t b[3];
+  bool ok = true;
+  while (ok) {
+    int got = f.read(b, 3);
+    if (got <= 0) {
+      break;
+    }
+    if (got == 3) {
+      out += tbl[(b[0] >> 2) & 0x3f];
+      out += tbl[((b[0] & 0x03) << 4) | ((b[1] >> 4) & 0x0f)];
+      out += tbl[((b[1] & 0x0f) << 2) | ((b[2] >> 6) & 0x03)];
+      out += tbl[b[2] & 0x3f];
+    }
+    else if (got == 1) {
+      out += tbl[(b[0] >> 2) & 0x3f];
+      out += tbl[((b[0] & 0x03) << 4) & 0x3f];
+      out += '=';
+      out += '=';
+    }
+    else {
+      out += tbl[(b[0] >> 2) & 0x3f];
+      out += tbl[((b[0] & 0x03) << 4) | ((b[1] >> 4) & 0x0f)];
+      out += tbl[((b[1] & 0x0f) << 2) & 0x3f];
+      out += '=';
+    }
+    in_chunk += 4;
+    // a full part goes out only while more of the clip follows, so the JSON
+    // tail lands in the last part instead of an extra empty one
+    if (in_chunk >= VOICE_BLE_CHUNK && f.available() > 0) {
+      ok = voice_ble_notify(out);
+      index++;
+      out = String(index) + "/" + String(total) + ":";
+      in_chunk = 0;
+    }
+    if (got != 3) {
+      break;   // a padded final group ends the stream
+    }
+  }
+  out += "\"}";
+  if (ok) {
+    ok = voice_ble_notify(out);
+  }
+  f.close();
+  return ok;
+}
+
+// Ship a clip by whichever radio is up: the BLE bridge first (the preferred
+// radio, matching taps and steps), then a POST to the homebase over WiFi when
+// there is no bridge. A clip is tens of KB, so over BLE it is hundreds of
+// notifications and takes several seconds; keep the parts within the notify
+// limit and the bridge reassembles it whole.
+static bool voice_ship_clip(const String &path) {
+  if (deviceConnected && voice_ble_send(path)) {
+    Serial.println("[voice] clip shipped over BLE");
+    return true;
+  }
+  if (WiFi.status() == WL_CONNECTED && homebaseIP.length() > 0 && voice_post_clip(path)) {
+    Serial.println("[voice] clip shipped over WiFi");
+    return true;
+  }
+  Serial.println("[voice] no radio to ship the clip on");
+  return false;
 }
 
 static void voiceListenTask(void *pv) {
@@ -3122,58 +3197,115 @@ static void voiceListenTask(void *pv) {
     voiceListening = false;
     vTaskDelete(NULL);
   }
-  bool recording = false;
-  uint32_t rec_ms = 0, silence_ms = 0;
-  File f;
+  // the microphone stays open across utterances: each pass captures one spoken
+  // run, ships it, and - while the setting is on - goes straight back to
+  // listening, so a command needs no button at all
   while (voiceListening) {
-    int got = mic->read(buf, VOICE_FRAME_SAMPLES * 2);
-    if (got <= 0) { continue; }
-    int n = got / 2;
-    // energy of the frame: an integer RMS is enough for a speech/quiet gate
-    int64_t acc = 0;
-    int16_t *s = (int16_t *)buf;
-    for (int i = 0; i < n; i++) { acc += (int32_t)s[i] * (int32_t)s[i]; }
-    int rms = n > 0 ? (int)sqrtf((float)acc / n) : 0;
-    bool speech = rms > VOICE_RMS_FLOOR;
-    if (!recording) {
-      if (!speech) { continue; }
-      if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
-      f = FFat.open(VOICE_WAV_PATH.c_str(), FILE_APPEND);
-      if (!f) { break; }
-      recording = true;
-      rec_ms = 0;
-      silence_ms = 0;
-      Serial.println("[voice] speech detected, recording");
+    if (isRecording || isPlaying) {
+      break;   // a manual record or playback owns the mic; loop() re-arms us
     }
-    f.write((uint8_t *)buf, got);
-    rec_ms += VOICE_FRAME_MS;
-    silence_ms = speech ? 0 : silence_ms + VOICE_FRAME_MS;
-    if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) { break; }
-    if (rec_ms >= VOICE_MAX_MS) { break; }
+    bool recording = false;
+    uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
+    File f;
+    while (voiceListening) {
+      if (isRecording || isPlaying) {
+        break;   // a manual record or playback started: hand the mic over
+      }
+      int got = mic->read(buf, VOICE_FRAME_SAMPLES * 2);
+      if (got <= 0) { continue; }
+      int n = got / 2;
+      // energy of the frame: an integer RMS is enough for a speech/quiet gate
+      int64_t acc = 0;
+      int16_t *s = (int16_t *)buf;
+      for (int i = 0; i < n; i++) { acc += (int32_t)s[i] * (int32_t)s[i]; }
+      int rms = n > 0 ? (int)sqrtf((float)acc / n) : 0;
+      bool speech = rms > VOICE_RMS_FLOOR;
+      if (!recording) {
+        if (!speech) { continue; }
+        if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), VOICE_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
+        f = FFat.open(VOICE_WAV_PATH.c_str(), FILE_APPEND);
+        if (!f) { break; }
+        recording = true;
+        rec_ms = 0;
+        silence_ms = 0;
+        voiceRecording = true;
+        Serial.println("[voice] speech detected, recording");
+      }
+      // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
+      // transfer (the only radio when the watch is off WiFi) carries half the
+      // notifications and stands a far better chance of arriving whole. Whisper
+      // resamples to 16 kHz regardless, so speech decodes the same. Averaging
+      // each pair is the crude half-band filter - enough for a spoken command.
+      {
+        int16_t *in16 = (int16_t *)buf;
+        static int16_t folded[VOICE_FRAME_SAMPLES / 2 + 2];
+        int m = 0;
+        for (int i = 0; i + 1 < n; i += 2) {
+          folded[m++] = (int16_t)(((int32_t)in16[i] + (int32_t)in16[i + 1]) >> 1);
+        }
+        pcm_bytes += f.write((uint8_t *)folded, m * 2);
+      }
+      rec_ms += VOICE_FRAME_MS;
+      silence_ms = speech ? 0 : silence_ms + VOICE_FRAME_MS;
+      if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) { break; }
+      if (rec_ms >= VOICE_MAX_MS) { break; }
+    }
+    if (recording && !isRecording && !isPlaying) {
+      f.close();
+      voiceRecording = false;
+      if (pcm_bytes > 0) {
+        finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
+        Serial.printf("[voice] clip %u bytes -> homebase\n", (unsigned)pcm_bytes);
+        voice_ship_clip(VOICE_WAV_PATH);
+      }
+    }
+    else if (f) {
+      f.close();   // a capture cut short by a manual record is discarded
+      voiceRecording = false;
+    }
+    if (voiceOneShot) { break; }             // a serial "voice" capture is one utterance
+    if (!voiceCaptureEnabled) { break; }     // the setting was turned off
+    vTaskDelay(1);
   }
   mic->close();
-  if (recording) {
-    uint32_t bytes = f.size() >= 44 ? (uint32_t)f.size() - 44 : 0;
-    f.close();
-    finalize_wav_sizes(VOICE_WAV_PATH.c_str(), bytes);
-    Serial.printf("[voice] clip %u bytes -> homebase\n", (unsigned)bytes);
-    voice_post_clip(VOICE_WAV_PATH);
-  }
   free(buf);
+  voiceRecording = false;
   voiceListening = false;
   vTaskDelete(NULL);
 }
 
-// Listen for one command. A capture already in flight is left alone.
-static void voiceListenOnce() {
-  if (voiceListening) { return; }
-  if (WiFi.status() != WL_CONNECTED) {
-    // the clip has to leave over WiFi; over Bluetooth it would be a much larger
-    // job (framed and reassembled) and is not wired yet
-    Serial.println("[voice] no WiFi; cannot ship a clip yet");
+// Arm the listener. one_shot is the serial trigger (a single utterance); the
+// setting keeps it running until it is turned off. A capture already in flight
+// is left alone.
+static void voiceListenStart(bool one_shot) {
+  if (voiceListening) {
+    return;
   }
+  if (!one_shot && !deviceConnected && WiFi.status() != WL_CONNECTED) {
+    // the setting keeps a listener up, so it needs somewhere for the clip to go;
+    // the serial trigger still records without a radio, so the VAD can be tuned
+    // over USB
+    Serial.println("[voice] no radio to ship a clip on; not listening");
+    return;
+  }
+  voiceOneShot = one_shot;
   voiceListening = true;
   xTaskCreatePinnedToCore(voiceListenTask, "VoiceTask", 8192, NULL, 2, NULL, 1);
+}
+
+// The Configure > System toggle: arm the listener with the setting, disarm it
+// when it goes off.
+static void voice_control(lv_event_t *e) {
+  lv_obj_t *voice_button = lv_event_get_target_obj(e);
+  if (voiceCaptureEnabled) {
+    voiceCaptureEnabled = false;
+    lv_obj_set_style_bg_color(voice_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+  }
+  else {
+    voiceCaptureEnabled = true;
+    lv_obj_set_style_bg_color(voice_button, lv_color_hex(0x5afcdd), LV_PART_MAIN);
+    voiceListenStart(false);
+  }
 }
 
 // Background monitoring frame calculation handler for playback
@@ -3881,6 +4013,9 @@ void setting_room() {
       configure_button("Save", configSaveButton, 125, 46, 105, 56, lv_color_hex(0x61b3ff));
       configure_button("Restore", configRestoreButton, 10, 110, 105, 56, lv_color_hex(0xffca38));
       configure_button("Delete", configDeleteButton, 125, 110, 105, 56, lv_color_hex(0xde2716));
+      // hands-free voice: arm a VAD listener that ships a clip to the homebase
+      configure_button("Voice", voice_control, 10, 174, 220, 44,
+                       lv_color_hex(voiceCaptureEnabled ? 0x5afcdd : 0xb0b0b0));
       break;
   }
   full_refresh();
@@ -4781,7 +4916,7 @@ static void tilt_serial_command(String line) {
     // to the homebase for whisper. The console trigger exists so the VAD can be
     // tuned over USB without touching the UI.
     Serial.println("[voice] listening for a command");
-    voiceListenOnce();
+    voiceListenStart(true);
   }
   else if (line == "blecycle") {
     // exercise the async bring-up the way a wake does: tear the radio down, then
@@ -5443,6 +5578,12 @@ void configSave() {
   else {
     conf["tilt_wake"] = "off";
   }
+  if (voiceCaptureEnabled == true) {
+    conf["voice_capture"] = "on";
+  }
+  else {
+    conf["voice_capture"] = "off";
+  }
   conf["before_me"] = before_me;
   conf["jw_room"] = jw_room;
   String wigi_wah = JSON.stringify(wigi);
@@ -5540,6 +5681,7 @@ void configDefaults() {
   lightSleep = false;
   stepCounter = true;
   tiltWake = true;
+  voiceCaptureEnabled = false;
   wigi = JSON.parse("[]");
   notifications = JSON.parse("[]");
   DEFAULT_SCREEN_TIMEOUT = 30*1000;
@@ -5695,6 +5837,12 @@ void configRestore() {
       // absent means a config from before the watch learned about wrist
       // raises: the feature is the point, so it comes up on
       tiltWake = true;
+    }
+    String vc = (const char *)conf["voice_capture"];
+    if (vc == "on") {
+      // voice capture is opt-in: an absent field, or a config from before it
+      // existed, leaves it off so the mic is not always open
+      voiceCaptureEnabled = true;
     }
 //    call_the_president();
     jw_room = (const char *)conf["jw_room"];

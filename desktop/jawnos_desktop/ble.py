@@ -41,6 +41,7 @@ could not answer ``shutdown``.
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -81,6 +82,13 @@ DEFAULT_MTU = 23          # ATT default, as in the Android daemon
 CONNECT_TIMEOUT_MS = 20000
 RECONNECT_START = 3.0     # seconds; doubles to RECONNECT_MAX
 RECONNECT_MAX = 30.0
+
+# The watch frames a payload that will not fit one notification the same way the
+# daemon frames a write: "<i>/<n>:" + chunk, 0-based. A notification with no such
+# prefix is a whole message. Only the voice clip uses this direction today.
+FRAME_RE = re.compile(r"^(\d+)/(\d+):")
+RX_GAP_SECONDS = 5.0      # a pause this long means a new message, not a lost part
+RX_MAX_PARTS = 4096       # a runaway total cannot grow the buffer without bound
 
 
 def frame_payload(message, mtu):
@@ -169,6 +177,10 @@ class Bridge(object):
         self.discovery_owner = None
         self._char_signal = None
         self._device_signal = None
+        # watch -> daemon reassembly (a framed voice clip arrives in parts)
+        self._rx_parts = None
+        self._rx_total = 0
+        self._rx_at = 0.0
 
     # ---- logging / emit ----
 
@@ -556,6 +568,11 @@ class Bridge(object):
             self.info("device disconnected")
             self.close_link(emit=True)
 
+    def _reset_rx(self):
+        self._rx_parts = None
+        self._rx_total = 0
+        self._rx_at = 0.0
+
     def _on_char_props(self, interface, changed, invalidated, **kw):
         if "Value" not in changed:
             return
@@ -563,7 +580,41 @@ class Bridge(object):
             text = bytes(bytearray(changed["Value"])).decode("utf-8", "replace")
         except Exception:
             return
-        self.emit({"event": "message", "data": text})
+        match = FRAME_RE.match(text)
+        if not match:
+            # a whole message in one notification (a tap, a state request, the
+            # step push): pass it straight through
+            self._reset_rx()
+            self.emit({"event": "message", "data": text})
+            return
+        index = int(match.group(1))
+        total = int(match.group(2))
+        body = text[match.end():]
+        if total <= 0 or total > RX_MAX_PARTS or index < 0 or index >= total:
+            self.info("bad frame header from the watch; dropped")
+            self._reset_rx()
+            return
+        # Fill by index, not by order: parts can arrive out of order or twice,
+        # and a single lost part must not wipe the parts already in hand (it did
+        # when any disorder reset the buffer, which threw away the whole clip).
+        # Only a fresh message (index 0), a different total, or a long pause
+        # restarts the buffer; the message is emitted once every part is present.
+        now = time.time()
+        if (index == 0 or self._rx_parts is None or self._rx_total != total
+                or (now - self._rx_at) > RX_GAP_SECONDS):
+            if self._rx_parts is not None and any(p is None for p in self._rx_parts):
+                missing = [i for i, p in enumerate(self._rx_parts) if p is None]
+                self.info("%d part(s) of a framed message never arrived: %s"
+                          % (len(missing), missing[:12]))
+            self._rx_parts = [None] * total
+            self._rx_total = total
+        self._rx_parts[index] = body
+        self._rx_at = now
+        if any(part is None for part in self._rx_parts):
+            return
+        parts = self._rx_parts
+        self._reset_rx()
+        self.emit({"event": "message", "data": "".join(parts)})
 
     # ---- send ----
 
@@ -624,6 +675,7 @@ class Bridge(object):
     def close_link(self, emit):
         self._drop_signal("_char_signal")
         self._drop_signal("_device_signal")
+        self._reset_rx()   # a half-received clip cannot span a reconnect
         had = self.device_path
         self.write_char = None
         self.notify_char = None
