@@ -288,7 +288,10 @@ sub manager_starter() {
 			my $prefork = Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Manager.pl');
-			$prefork->workers(4);
+			# A handheld runs this whole tree in a few hundred MB that Android's
+			# low-memory killer reclaims the moment the device tightens; the extra
+			# prefork workers are a server's concurrency, not a phone's. Two is plenty.
+			$prefork->workers($device eq 'mobile' ? 2 : 4);
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
@@ -326,7 +329,7 @@ sub manager_starter() {
 				my $prefork = Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./watch.pl');
-				$prefork->workers(2);
+				$prefork->workers($device eq 'mobile' ? 1 : 2);
 				$prefork->run;
 			}
 		}, { name => 'Watch Server' });
@@ -346,7 +349,7 @@ sub manager_starter() {
 				my $prefork = Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./teletype.pl');
-				$prefork->workers(3);
+				$prefork->workers($device eq 'mobile' ? 1 : 3);
 				$prefork->run;
 			}
 		}, { name => 'TTY Server' });
