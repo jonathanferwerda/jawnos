@@ -21,6 +21,13 @@
 			</span>
 			<input id="music_search" value="<%= $search %>" placeholder="Search">
 			<span id="progress_readout"><span id="elapsed_progress"></span>/<span id="total_progress"></span></span>
+			<span id="music_volume_group">
+				<img id="music_mute" hint="Mute" class="hover little_thumb music_mute" muted="no"
+					speaker_icon="<%= &subs::icon_for('/images/decipherable/speaker.png') %>"
+					mute_icon="<%= &subs::icon_path('mute', '/images/studio/mute.png') %>"
+					src="<%= &subs::icon_for('/images/decipherable/speaker.png') %>" />
+				<input id="music_volume" class="music_volume" type="range" min="0" max="1" step="0.01" value="1" hint="Volume">
+			</span>
 			<span id="music_interface_options">
 				<% if (scalar @{$padlock_sighting} > 0) { %>
 					<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
@@ -31,7 +38,6 @@
 			<span style="display:none;">
 				<span style="float:left;width:70%;">
 					<progress value="0" id="progress_bar" data-label="Progress"></progress>
-					<progress id="volume_control" value="1" data-label="Volume"></progress>
 				</span>
 			</span>
 

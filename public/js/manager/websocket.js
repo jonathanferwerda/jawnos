@@ -570,9 +570,10 @@ function wsMessageHandler(event) {
 					tree.sound.currentTime = seek_to;
 				}
 				else if (data['control'] == 'volume_control') {
-					var new_volume = data['value'];
-					tree.sound.volume = new_volume;
-					$('#volume_control').attr('value', new_volume);
+					master_volume = parseFloat(data['value']) || 0;
+					$('#music_volume').val(master_volume);
+					musicVolumeApply();
+					updateMusicMuteIcon();
 				}
 				else {
 					$('#' + data['control']).val(data['value']);
@@ -780,7 +781,7 @@ function stayingAlive(data) {
 						}
 						var volume = 1;
 						if (md.interface) {
-							volume = $(md.interface).find('#volume_control').val();
+							volume = $(md.interface).find('#music_volume').val();
 						}
 						neighbours.append('<span style="" class="neighbour" browser_tab_id="' + n.browser_tab_id + '">' +
 						'<br><span class="media_controls">' + 

@@ -1,12 +1,37 @@
 var mao = {};
 var misses = {};
+var music_muted = false;
 // Play/pause glyphs follow the selected icon set; the music window stashes the
 // resolved paths on #play_logo (see apps/music/music.html.ep).
 function jawnosPlayIcon() { var s = $('#play_logo').attr('play_icon'); return s || '/icons/play.jpg'; }
 function jawnosPauseIcon() { var s = $('#play_logo').attr('pause_icon'); return s || '/icons/pause.jpg'; }
+
+// The local element is this machine's own output: audible whenever the 'me'
+// output is on (which is also the default when the setting has no 'me' key at
+// all), silent when it is explicitly off. The volume is deliberately dropped
+// for the audio-autoplay handshake and for each track change, so every path
+// that starts or resumes playback has to restore it through here - the one that
+// forgot played the track muted (tapping a paused picture, or re-opening the
+// app on a track that was already loaded).
+function musicLocalVolume() {
+	if (music_muted || mao['me'] == 'off') { return 0; }
+	return master_volume;
+}
+function musicVolumeApply() {
+	if (tree && tree.sound) { tree.sound.volume = musicLocalVolume(); }
+}
+// The mute button carries both glyphs; which one shows follows the same rule as
+// the volume itself: muted when the user muted it or the machine's own output is
+// switched off in the configuration panel.
+function updateMusicMuteIcon() {
+	var button = $('#music_mute');
+	if (!button.length) { return; }
+	var muted = (music_muted || mao['me'] == 'off');
+	button.attr('src', muted ? button.attr('mute_icon') : button.attr('speaker_icon'));
+	button.attr('muted', muted ? 'yes' : 'no');
+}
 $(document).on('ready', function() { 
 	treeMaker();
-	mao = settingGrabber({ 'app': 'music', 'setting': 'mao' });
 });
 $(document).on('click', '#music_toggle', function() {
 	musicToggle();
@@ -49,7 +74,10 @@ function musicToggle(files) {
 async function musicInit(method) {
 	treeMaker();
 	if (method != 'search') {
-		tree.sound.volume = 0;
+		// not a silent start: restore the machine's own output level, or a track
+		// that is already loaded plays back at the audio-handshake volume when the
+		// app is re-opened
+		musicVolumeApply();
 	}
 	var player = JSON.parse($('#music_player_data').text());
 
@@ -59,6 +87,13 @@ async function musicInit(method) {
 
 		var jpd = $('#music_player_data').text();
 		var pd = JSON.parse(jpd);
+		// the level and mute the player was last left at; a cached near-zero is the
+		// old autoplay-handshake value, so it is ignored
+		if (pd.volume && pd.volume >= 0.05) { master_volume = pd.volume; }
+		music_muted = !!pd.muted;
+		$('#music_volume').val(master_volume);
+		updateMusicMuteIcon();
+		musicVolumeApply();
 		$('#video').attr('theatre_mode', pd.theatre_mode);
 		$('#video').attr('type', pd.type);
 		mediaMaker({ src: pd.file, currentTime: pd.currentTime, method: 'benign', timestamp: Date.now(), state: pd.state, });
@@ -148,7 +183,8 @@ function playerCacheSaver(type) {
 			number: tree.sound.current_track, 
 			'currentTime': tree.sound.currentTime, 
 			file: tree.songs[0].file, 
-			volume: tree.sound.volume, 
+			volume: master_volume, 
+			muted: music_muted, 
 			state: tree.sound.state, 
 			theatre_mode: $('#video').attr('theatre_mode'), 
 			unlocked: unlocked,
@@ -332,6 +368,7 @@ function mediaMaker(data) {
 				theatreModeOff();
 			}
 			tree.sound.onplaying = function() {
+				musicVolumeApply();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
 					var endsong = tree.sound.duration;
@@ -479,10 +516,8 @@ function remoteTrackToggle(data) {
 			}
 		}
 	});
-	if (data['queuing'] != 1) {
-		if (mao['me'] == 'on' && remoted == 0) {
-			tree.sound.volume = master_volume;
-		}
+	if (data['queuing'] != 1 && remoted == 0) {
+		musicVolumeApply();
 	}
 }
 
@@ -777,13 +812,18 @@ $(document).on('click change', '#progress_bar', function(e) {
  });
 
 var master_volume = 1;
-$(document).on('click', '#volume_control', function(e) {
-	var total_width = $('#volume_control').width();
-  var current_location = e.offsetX;
-  var new_volume = (current_location / total_width);
-  tree.sound.volume = new_volume;
-	master_volume = new_volume;
-	$('#volume_control').attr('value', new_volume);
+// The volume slider sets the level to play back at; mute silences without losing
+// it. Both go through musicVolumeApply() so the element and the icon agree.
+$(document).on('input', '#music_volume', function() {
+	master_volume = parseFloat(this.value);
+	if (master_volume > 0) { music_muted = false; }
+	musicVolumeApply();
+	updateMusicMuteIcon();
+});
+$(document).on('click', '#music_mute', function() {
+	music_muted = !music_muted;
+	musicVolumeApply();
+	updateMusicMuteIcon();
 });
 
 $(document).on('click', '.music_artist', function(e) {
@@ -973,7 +1013,7 @@ function searchMusic(data) {
 					$('#video').show();
 				}
 				tree.current_track = playing.attr('number');
-				tree.sound.volume = master_volume;
+				musicVolumeApply();
 				thisTrack(playing.closest('.track_item'));
 				mediaMaker({ src: v.src, currentTime: v.currentTime, method: 'benign', timestamp: timestamp });
 				var html = $('#music').parent().html();
@@ -1202,12 +1242,8 @@ $(document).on('click', '.music_audio_output_select', function() {
 		data: { state: state, output: output },
 		success: function(response) {
 			mao = response;
-			if (mao['me'] == 'on') {
-				tree.sound.volume = master_volume;
-			}
-			if (mao['me'] == 'off') {
-				tree.sound.volume = 0.0000001;
-			}
+			musicVolumeApply();
+			updateMusicMuteIcon();
 		}
 	});
 

@@ -6,12 +6,9 @@
 	<div id="neighbour_media"></div>
 	<style>
 		#<%= $miss %>_speed {
-			position:absolute;
 			appearance: none;
 			height: 30px;
 			width: 130px;
-			bottom: 1px;
-			left: 65px;
 			border: solid;
 			border-radius: 5px;
 			border-width: 3px;
@@ -31,21 +28,6 @@
 			left: 0px;
 			width:98%;
 			height:20px;
-		}
-		#<%= $miss %>_loop_start {
-			position:absolute;
-			bottom:1px;
-			left: 220px;
-		}
-		#<%= $miss %>_loop_end {
-			position:absolute;
-			bottom:1px;
-			left: 270px;
-		}
-		#<%= $miss %>_snapshot {
-			position:absolute;
-			bottom: 1px;
-			left: 1px;
 		}
 		#<%= $miss %>_back {
 			position: absolute;
@@ -76,11 +58,6 @@
 			left: 320px;
 			bottom:55px;
 			position:absolute;
-		}
-		#<%= $miss %>_add {
-			position:absolute;
-			left: 1px;
-			bottom: 55px;
 		}
 		#<%= $miss %>_jog_wheel_frame {
 			position:absolute;
@@ -133,6 +110,30 @@
 			left: 160px;
 			position: absolute;
 		}
+		/* the tools toggle and its pop-out: the panel opens above the foot so the
+		   grouped controls (speed, snapshot, mark, loop markers) never crowd it */
+		#<%= $miss %>_tools_toggle {
+			position: absolute;
+			bottom: 1px;
+			left: 1px;
+		}
+		.media_tools_toggle.active { background-color: yellow; }
+		.media_tools_panel {
+			position: absolute;
+			bottom: 112px;
+			left: 6px;
+			display: none;
+			align-items: center;
+			gap: 8px;
+			padding: 8px 10px;
+			background-color: rgba(20,20,20,.94);
+			border: 1px solid #777;
+			border-radius: 10px;
+			box-shadow: 0 6px 20px rgba(0,0,0,.5);
+			z-index: 20;
+		}
+		.media_tools_panel.shown { display: flex; }
+		.media_tools_panel > * { position: static; left: auto; bottom: auto; margin: 0; }
 		/* the theatre-mode picture fills the window: the container takes the
 		   media window's whole height, so the video's own 100% resolves and the
 		   browser's subtitle overlay - drawn at the element's foot - lands at the
@@ -153,20 +154,27 @@
 		<% } %>
 		<img style="display:none;width:80%;height:80%;top:10%;left:10%;;left:10%;position:absolute;" id="music_album_cover">
 		<div class="media_controls" id="<%= $miss %>_controls" style="background-color:black;opacity:1;position:absolute;bottom:0px;height:110px;width:100%;">
-			<% if ($source eq 'music') { %>
-
-			<% } %>
-			<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1" width="100%" height="50">
 			<input id="<%= $miss %>_position" hint="Seek" class="<%= $miss %> hover" value="0" type="range" step=".1" min="0" max="100" width="100%">
-			<img id="<%= $miss %>_snapshot" hint="Save a snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
 			<img id="<%= $miss %>_full_screen" hint="Fullscreen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
 			<img id="<%= $miss %>_back" hint="Previous chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="<%= &subs::icon_for('/images/studio/back.png') %>">
 			<img id="<%= $miss %>_forward" hint="Next chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="<%= &subs::icon_for('/images/studio/forward.png') %>">
-			<img id="<%= $miss %>_add" hint="Drop a mark" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
-			<img id="<%= $miss %>_loop_start" hint="Set loop start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="<%= &subs::icon_for('/images/make believe/start.png') %>">
-			<img id="<%= $miss %>_loop_end" hint="Set loop end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
-			<img id="<%= $miss %>_position_preview" style="display:none;" class="huge_thumb">
 			<img id="<%= $id %>_subtitle_toggle" hint="Subtitles" style="" status="<%= ((eval { $crate->{'settings'}->{'subtitles'} } || '') eq 'showing') ? 'showing' : 'hidden' %>" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
+			<% if ($source eq 'music') { %>
+				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
+				<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
+			<% } %>
+			<%# the rarely-used tools sit behind one toggle: speed, snapshot, mark, and
+			    the two loop markers, which together were most of the crowded foot %
+			<img id="<%= $miss %>_tools_toggle" hint="More tools: speed, snapshot, mark, loop" class="little_thumb hover media_tools_toggle" src="<%= &subs::icon_path('wrench', '/images/decipherable/gear.png') %>">
+			<span id="<%= $miss %>_tools_panel" class="media_tools_panel">
+				<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1">
+				<img id="<%= $miss %>_snapshot" hint="Save a snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
+				<img id="<%= $miss %>_add" hint="Drop a mark" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
+				<img id="<%= $miss %>_loop_start" hint="Set loop start" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover"  loop_control="start" src="<%= &subs::icon_for('/images/make believe/start.png') %>">
+				<img id="<%= $miss %>_loop_end" hint="Set loop end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
+			</span>
+			<img id="<%= $miss %>_position_preview" style="display:none;" class="huge_thumb">
 			<span id="<%= $miss %>_position_preview_info" style="display:none;" class=""></span> 
 			<span id="<%= $miss %>_jog_wheel_frame" style="" class=" hover">
 				<img id="<%= $miss %>_jog_wheel" hint="Jog wheel" class="<%= $miss %> jog_wheel" src="/images/studio/jog wheel.png">
@@ -182,11 +190,6 @@
 
 			</span>
 			<span id="<%= $id %>_full_title"></span>
-			<% if ($source eq 'music') { %>
-				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Theatre mode" class="little_thumb hover" id="music_list_view">
-				<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
-				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
-			<% } %>
 		</div>
 	</div>
 	<script>
@@ -388,6 +391,13 @@
 					}
 				});
 			});
+			// one toggle for the grouped tools (speed, snapshot, mark, loop): the
+			// panel opens above the foot, so the rarely-used controls stay out of it
+			vidOn('click', '#<%= $miss %>_tools_toggle', function() {
+				var panel = $(this).closest('.media_controls').find('.media_tools_panel');
+				panel.toggleClass('shown');
+				$(this).toggleClass('active', panel.hasClass('shown'));
+			});
 			if (!windowPhoneChecker()) {
 				var <%= $miss %>_jw_deg =  0;
 				var <%= $miss %>_last = 'out';
@@ -446,6 +456,7 @@
 				vidOn('click', '#<%= $miss %>_jog_wheel, #<%= $id %>', function() {
 					var v = document.getElementById('<%= $id %>');
 					if (v.state == 0) {
+						<% if ($source eq 'music') { %>if (typeof musicVolumeApply == 'function') { musicVolumeApply(); }<% } %>
 						v.play();
 						v.state = 1;
 						$('#play_logo').attr('src', '<%= &subs::icon_path('pause', '/icons/pause.jpg') %>');

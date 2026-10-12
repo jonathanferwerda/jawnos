@@ -31,15 +31,6 @@ html, body {
 	border-width: 3px;
 	
 }
-#volume_control {
-	width: 300px;
-	height: 20px;
-	bottom:25px;
-	border-radius: 5px;
-	border: solid;
-	border-width: 3px;
-
-}
 .playing { border: solid; border-radius:2%; z-index:1100; background-color: yellow }
 .hidden { display: none }
 #timer { position:absolute; top: 20px; left: 450%; top: 55%; z-index: 1200;}
@@ -216,6 +207,29 @@ body.dark_theme #music {
 	font-size: 18px;
 	white-space: nowrap;
 }
+/* the machine's own output: a mute toggle and a level slider beside the clock */
+#music #music_volume_group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+}
+#music #music_mute {
+	height: 36px;
+	border: none;
+	background: transparent;
+	border-radius: 9px;
+	transition: transform .15s, background-color .15s;
+}
+#music #music_mute:hover {
+	transform: scale(1.08);
+	background-color: var(--music-line-soft);
+}
+#music #music_mute[muted="yes"] { opacity: .55; }
+#music #music_volume {
+	width: 110px;
+	accent-color: var(--music-accent);
+}
 #music #music_search {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -267,6 +281,8 @@ body.dark_theme #music {
 	#music #audio_controls img.medium_thumb { height: 32px; max-width: 38px; }
 	#music #music_search { height: 30px; padding: 0 10px; font-size: 14px; }
 	#music #progress_readout { font-size: 13px; letter-spacing: 0; }
+	#music #music_volume { width: 64px; }
+	#music #music_mute { height: 30px; }
 	#music #music_configuration_toggle,
 	#music #music_padlock_toggle { height: 28px; }
 	/* the shelves and the list lose their generous padding */
