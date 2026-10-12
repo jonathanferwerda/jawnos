@@ -62,6 +62,14 @@ ADAPTER_IFACE = "org.bluez.Adapter1"
 DEVICE_IFACE = "org.bluez.Device1"
 GATT_SERVICE_IFACE = "org.bluez.GattService1"
 GATT_CHAR_IFACE = "org.bluez.GattCharacteristic1"
+# A PropertiesChanged signal is emitted on org.freedesktop.DBus.Properties,
+# NOT on the interface whose property changed. A signal match rule keyed on the
+# concrete iface (org.bluez.Device1 / org.bluez.GattCharacteristic1) therefore
+# never fires -- which silently dropped every watch -> daemon notification
+# (buttons, state_request, steps) until this was pinned to the right iface. The
+# handler still receives the *changed object's* iface as its first argument, so
+# nothing else changes.
+DBUS_PROPS = "org.freedesktop.DBus.Properties"
 
 # The JawnOS watches and boards all speak the Nordic UART Service. These are
 # the fallback when a connect names no characteristics of its own.
@@ -431,7 +439,7 @@ class Bridge(object):
         self.reconnect_delay = RECONNECT_START
         self._device_signal = self.bus.add_signal_receiver(
             self._on_device_props, bus_name=BLUEZ,
-            dbus_interface=DEVICE_IFACE, signal_name="PropertiesChanged", path=path)
+            dbus_interface=DBUS_PROPS, signal_name="PropertiesChanged", path=path)
         GLib.timeout_add(200, self._wait_services, path, time.time() + 10.0)
 
     def _wait_services(self, path, deadline):
@@ -474,7 +482,7 @@ class Bridge(object):
             return
         self._char_signal = self.bus.add_signal_receiver(
             self._on_char_props, bus_name=BLUEZ,
-            dbus_interface=GATT_CHAR_IFACE, signal_name="PropertiesChanged", path=notify_char)
+            dbus_interface=DBUS_PROPS, signal_name="PropertiesChanged", path=notify_char)
         self.connecting = False
         self.pending_connect = False
         self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
