@@ -1456,8 +1456,8 @@ void loop() {
   // a watch armed for hands-free voice keeps a listener running while it is
   // awake: the task captures one utterance, ships it, and stays listening. It
   // steps aside (and is not restarted) while a manual record or playback holds
-  // the microphone.
-  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying
+  // the microphone, and only listens while the screen is on (dozing = off).
+  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing
       && (deviceConnected || WiFi.status() == WL_CONNECTED)) {
     voiceListenStart(false);
   }
@@ -3249,12 +3249,18 @@ static void voiceListenTask(void *pv) {
     if (isRecording || isPlaying) {
       break;   // a manual record or playback owns the mic; loop() re-arms us
     }
+    if (dozing) {
+      break;   // the screen is off: the listener only runs while it is on
+    }
     bool recording = false;
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
     File f;
     while (voiceListening) {
       if (isRecording || isPlaying) {
         break;   // a manual record or playback started: hand the mic over
+      }
+      if (dozing) {
+        break;   // the screen went off mid-capture: stop listening
       }
       if (president_fetch_running) {
         break;   // a TLS room fetch is running: do not add to the peak (see the notes)

@@ -1923,7 +1923,7 @@ sub voice_command_parse() {
 		if ($woke) { push @rest, $x; next; }
 		# the wake word and the mis-hearings whisper reaches for (it renders
 		# "jawn" as dawn/john/jon/yawn far more often than it gets it right)
-		if ($x =~ /^(jawn|jaun|jawns|john|johns|jon|dawn|dawns|yawn|yawns)$/) { $woke = 1; }
+		if ($x =~ /^(jawn|jaun|jauns|jawns|john|johns|jon|dawn|dawns|down|downs|don|dons|dun|yawn|yawns|yon)$/) { $woke = 1; }
 	}
 	return { status => 'no_wake', said => $transcript } unless $woke && scalar @rest;
 	my $verb = shift @rest;
@@ -2057,6 +2057,35 @@ sub voice_ingest() {
 
 sub ble_message_processor() {
 	my $data = shift;
+	# The watch frames a payload too big for one notification as "<i>/<n>:" +
+	# part. The desktop bridge reassembles that before handing it over; the Android
+	# bridge does not, so put the parts back together here too - then a voice clip
+	# works whichever bridge carries it. A message with no frame prefix (every
+	# small message, and anything the desktop daemon already reassembled) passes
+	# straight through.
+	if ($data =~ /^(\d+)\/(\d+):(.*)\z/s) {
+		my ($index, $total, $body) = (int($1), int($2), $3);
+		if ($total > 0 && $total <= 5000 && $index >= 0 && $index < $total) {
+			my $now = time();
+			# fill by index: parts can arrive out of order or twice, and one lost
+			# part must not wipe the parts already in hand
+			if ($index == 0 || !$gb::ble_rx_parts || ($gb::ble_rx_total || 0) != $total
+			    || $now - ($gb::ble_rx_at || 0) > 5) {
+				if ($gb::ble_rx_parts && grep { !defined } @{$gb::ble_rx_parts}) {
+					my $missing = scalar grep { !defined } @{$gb::ble_rx_parts};
+					$log->info("$missing part(s) of a framed BLE message never arrived; dropped");
+				}
+				$gb::ble_rx_parts = [ (undef) x $total ];
+				$gb::ble_rx_total = $total;
+			}
+			$gb::ble_rx_parts->[$index] = $body;
+			$gb::ble_rx_at = $now;
+			return if grep { !defined } @{$gb::ble_rx_parts};
+			$data = join('', @{$gb::ble_rx_parts});
+			$gb::ble_rx_parts = undef;
+			$gb::ble_rx_total = 0;
+		}
+	}
 	# A BLE notification as JSON text from the watch/board. The payload carries
 	# the url the old Tasker "rcv bt" task used to fetch, so all existing
 	# server-side handling stays untouched.
