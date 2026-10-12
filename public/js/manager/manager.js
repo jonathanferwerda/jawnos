@@ -2497,9 +2497,9 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 	if ($(e.target).parent().hasClass('navbar_buttons')) { return false; }
 	if (typeof windowStacker === 'function' && typeof windowPhoneChecker === 'function'
 		&& windowPhoneChecker() && clicker.hasClass('top_navbar')) {
-		// a phone stacks its windows on one another, so a tap on a title bar
-		// walks the stack instead of just raising the (already top) window
-		windowStacker(text);
+		// a phone walks its pile on touchend, not here: a title bar that was just
+		// dragged has its click swallowed by jQuery UI's drag, so the click cannot
+		// be trusted to fire at all. Nothing to do on this one.
 		return false;
 	}
 
@@ -2537,6 +2537,16 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 		appointmentGrabber(text,Date.now());
 	}
 
+});
+
+// A phone's title-bar tap walks the pile. It is taken on touchend, not click,
+// because a window that was just dragged has its click swallowed by jQuery UI's
+// drag state - the touch itself always fires, so the walk hangs off that.
+$(document).on('touchend', '.top_navbar', function(e) {
+	if (typeof windowPhoneChecker != 'function' || !windowPhoneChecker()) { return; }
+	if ($(e.target).closest('.navbar_buttons').length) { return; }
+	if (typeof windowStacker != 'function') { return; }
+	windowStacker($(this).attr('app'));
 });
 
 $(document).on('click', '.reset', function() {
