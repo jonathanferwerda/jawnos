@@ -11869,6 +11869,17 @@ sub budget_calculator($data) {
 		};
 		$returner->{'formatted_projected'} = $pace_format->($returner->{'projected'});
 		$returner->{'formatted_on_target'} = $pace_format->($returner->{'on_target'});
+		# For a part-run period the status and the graph line are read against the
+		# share of the budget due by now, not the whole period, so an on-pace start
+		# reads as on pace rather than a collapse; the budget itself
+		# (formatted_budgeted) still names the whole period. A period only just
+		# opened has nothing due yet, so the target is left off zero for the ratio.
+		if ($elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
+			$returner->{'full_expected'} = $returner->{'expected'};
+			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $elapsed);
+			$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
+			$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
+		}
 		$returner = &budget_status_maker($returner);
 	}
 	else {
@@ -11879,6 +11890,12 @@ sub budget_calculator($data) {
 
 
 sub budget_status_maker($returner) {
+	# a target of nothing - a period only just opened, or a budget of zero - has
+	# nothing to fall behind: the value is read as on track, rather than the
+	# ratio's 0 >= 0 landing on "abused"
+	if (!defined $returner->{'expected'} || $returner->{'expected'} <= 0) {
+		return &{$gb::budget_statuses->{'budgeted'}->{'notifier'}}($returner);
+	}
 	my $status;
 	if ($returner->{'actual'} < $returner->{'expected'} - ( $returner->{'expected'} * .0000000001) && $returner->{'actual'} >= $returner->{'expected'} - ($returner->{'expected'} * .2)) {
 		$status = 'budgeted';
