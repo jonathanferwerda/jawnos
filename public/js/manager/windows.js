@@ -1259,9 +1259,53 @@ function windowAligner() {
 	});
 }
 
-function windowStacker() {
-	var json_storage = sessionStorage.getItem('window_storage');
-	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
+// A phone layers its windows on one another: windowReorganizer parks them all
+// on the same top, so just the top of the pile shows. Two things follow from
+// that. Closing a window leaves the layers a step off, so they want re-parking
+// against the new count; and a tap on a title bar should walk the stack - the
+// window tapped rises to the top and the one that was on top drops to the foot,
+// so repeated taps cycle through the open windows. Desks place windows apart, so
+// neither applies there and this is a no-op.
+function windowStacker(app) {
+	if (!windowPhoneChecker()) { return; }
+	var visible = $('.wind').filter(':visible');
+	if (visible.length == 0) { return; }
+
+	// the phone stack's own step and foot, matching windowReorganizer's mobile
+	// branch, so a restack lands the layers exactly where an open would
+	var vStep = visible.first().find('.top_navbar').outerHeight() || 40;
+	var offset = (vStep * Math.max(0, $('.wind').length - 1)) + windowTopLimit();
+
+	if (!app) {
+		// a plain restack (a window was closed): re-park the layers
+		visible.each(function () { $(this).css({ 'top': offset }); });
+		return;
+	}
+
+	var target = $('.wind[app="' + app + '"]');
+	if (!target.length || visible.length < 2) { return; }
+
+	// back to front by z-index, then rotate so the tapped window leads
+	var ordered = visible.sort(function (a, b) {
+		return (parseInt($(a).css('z-index'), 10) || 0) - (parseInt($(b).css('z-index'), 10) || 0);
+	}).toArray();
+	var front = ordered[ordered.length - 1];
+	var t = target.get(0);
+	var order;
+	if (t === front) {
+		// tapping the visible window drops it to the foot; the next one rises
+		order = [front].concat(ordered.slice(0, ordered.length - 1));
+	} else {
+		// a tap on a lower layer: it rises to the top, the old top falls to the foot
+		var rest = ordered.filter(function (el) { return el !== t && el !== front; });
+		order = [front].concat(rest, [t]);
+	}
+	$(order).each(function (i) { $(this).css({ 'z-index': top_level_now + i + 1 }); });
+	top_level_now = top_level_now + order.length;
+	// raise the new front through topLevelNow so its frame ring and the taskbar
+	// pins follow, then keep every layer parked at the restack's foot
+	topLevelNow($(order[order.length - 1]));
+	visible.each(function () { $(this).css({ 'top': offset }); });
 }
 
 function windowRefresher(app) {
@@ -1306,9 +1350,17 @@ function closeWindow(timestamp) {
 	windowSaver();
 	startMenuDisplayer();
 	windowBackgroundAdjuster();
+	// a phone layers its windows on one another, so the layers left behind
+	// want re-parking against the smaller count
+	if (windowPhoneChecker()) { windowStacker(); }
 }
 
-$(document).on('click', '.wind', function() {
+$(document).on('click', '.wind', function(e) {
+	if (windowPhoneChecker() && $(e.target).closest('.top_navbar').length) {
+		// a phone's title-bar tap is a stack walk, handled by windowStacker
+		// from the .top_navbar handler; do not also raise the window here
+		return;
+	}
 	var app = $(this).attr('app');
 	topLevelNow($(this));
 });

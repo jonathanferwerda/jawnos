@@ -2495,6 +2495,13 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 	var win = clicker.closest('.wind');
 	var text = $(this).attr('app');
 	if ($(e.target).parent().hasClass('navbar_buttons')) { return false; }
+	if (typeof windowStacker === 'function' && typeof windowPhoneChecker === 'function'
+		&& windowPhoneChecker() && clicker.hasClass('top_navbar')) {
+		// a phone stacks its windows on one another, so a tap on a title bar
+		// walks the stack instead of just raising the (already top) window
+		windowStacker(text);
+		return false;
+	}
 
 	var app = JSON.stringify({ name: text });
 	var timestamp = Date.now();
