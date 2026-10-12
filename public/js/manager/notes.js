@@ -148,7 +148,7 @@ function notesDraggable() {
 					data: {
 						uuid: n.attr('uuid'),
 						app: appt.attr('app'),
-						appt_uuid: detail.length ? detail.attr('uuid') : '',
+						appt_uuid: detail ? detail.attr('uuid') : '',
 						timestamp: Date.now()
 					},
 					success: function(response) {
