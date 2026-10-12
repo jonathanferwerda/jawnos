@@ -1740,6 +1740,9 @@ void loop2(void * pvParameters) {
       req["type"] = "state_request";
       req["chip_id"] = chip_id_maker();
       req["edt"] = "watch";
+      // where the watch currently believes jawn is: the bridge that hears this
+      // can re-home it to itself when they differ
+      req["homebase"] = homebaseIP;
       ble_send(req);
       Serial.println("[ble] state requested");
     }

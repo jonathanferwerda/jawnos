@@ -1819,26 +1819,45 @@ sub ble_rehome_check() {
 	# the screen timeout (so an idle watch stops dropping the link). Only when
 	# the homebase really differs, and at most once a minute per watch, so a
 	# flapping link cannot thrash it.
-	my ($edt, $chip_id) = @_;
+	my ($edt, $chip_id, $reported) = @_;
 	return unless $edt && $chip_id && &subs::ble_bridge_capable();
-	my $od = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
-	my $stored = $od->{'__specs'}->{'homebase'};
-	my $here = &subs::device_lister(&subs::rightNow(), $edt, undef, $chip_id) || {};
-	my $mine = $here->{'homebase'} ? $here->{'homebase'} . ':' . $ENV{'PORT_ARM'} : undef;
-	return unless $mine;
-	return if defined $stored && $stored eq $mine;
+	# The watch's *own* homebase, as it reports it: the stored operator_door
+	# specs can already name this machine while the watch still points
+	# elsewhere (a push that never landed left them out of step), so the compare
+	# must trust the watch, not the record.
+	my $stored = $reported;
+	my $stored_host = $stored;
+	$stored_host =~ s/:\d+$// if defined $stored_host;
+	# "this machine" cannot be device_lister(): on a shared LAN several machines
+	# list the watch as a neighbour and it returns whichever it scans first. So
+	# use our own interfaces and take the one on the watch's subnet (the stored
+	# homebase names that subnet). The address is handed to now_me explicitly,
+	# because now_me's own choice trusts the watch's LAN, where every machine
+	# here shares a /24 and cannot be told apart.
+	my $addrs = &subs::network_interface_reporter();
+	my @ips = grep { $_ && $_ !~ /^127\./ } map { $addrs->{$_}->{'ip'} } keys %{$addrs};
+	return unless scalar @ips;
+	my ($mine_ip) = grep { $stored_host && &subs::same_net_test($_, $stored_host, '127.0.0.1') eq 'yes' } @ips;
+	$mine_ip ||= $ips[0];
+	return if defined $stored_host && $stored_host eq $mine_ip;
 	my $now = &subs::rightNow();
 	$gb::ble_rehome_at ||= {};
 	return if $gb::ble_rehome_at->{$chip_id} && $now - $gb::ble_rehome_at->{$chip_id} < 60000;
 	$gb::ble_rehome_at->{$chip_id} = $now;
-	$log->info('BLE re-home ' . $chip_id . ' from ' . ($stored || '?') . ' to ' . $mine);
-	&Manager::now_me({
-		edt => $edt,
-		chip_id => $chip_id,
-		method => 'bluetooth',
-		timestamp => $now,
-		ip => $here->{'homebase'}
-	});
+	$log->info('BLE re-home ' . $chip_id . ' from ' . ($stored || '?') . ' to ' . $mine_ip . ':' . ($ENV{'PORT_ARM'} || '?'));
+	# never let a re-home abort the listener's read loop: a throw here used to
+	# take the whole fork (and with it the watch -> jawn path) down
+	eval {
+		&Manager::now_me({
+			edt => $edt,
+			chip_id => $chip_id,
+			method => 'bluetooth',
+			timestamp => $now,
+			homebase => $mine_ip,
+			ip => $mine_ip
+		});
+		1;
+	} or $log->error('BLE re-home failed: ' . $@);
 }
 
 sub ble_message_processor() {
@@ -1857,7 +1876,7 @@ sub ble_message_processor() {
 		my $chip_id = $msg->{'chip_id'};
 		my $edt = $msg->{'edt'} || 'watch';
 		# bridged to a machine that is not the watch's homebase? re-home it
-		&subs::ble_rehome_check($edt, $chip_id);
+		&subs::ble_rehome_check($edt, $chip_id, $msg->{'homebase'});
 		my $toggles = {};
 		my $rows = &subs::db_select('settings', undef, { setting => 'toggle' })->hashes;
 		foreach my $row ( @{$rows} ) {

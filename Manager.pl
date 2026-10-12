@@ -19160,6 +19160,10 @@ sub now_me($data) {
 	my $chip_id = $data->{'chip_id'};
 	my $name = $data->{'name'};
 	my $method = $data->{'method'};
+	# an explicit homebase: the address a BLE bridge is re-homing the watch to.
+	# now_me's own choice trusts the watch's LAN, where two machines share a /24
+	# and cannot be told apart, so the bridge names the address instead.
+	my $forced_home = $data->{'homebase'};
 	my $server_time = time();
 
 
@@ -19182,8 +19186,8 @@ sub now_me($data) {
 	$ip = $watch->{'homebase'};# unless $ip;
 
 	$op_d->{'__specs'}->{'room_count'} = $op_d->{'__specs'}->{'room_count'} || &subs::setting_grabber({'app' => 'me', setting => 'room_count'}) || $op_d->{'__specs'}->{'room_count'} || 2;
-	$op_d->{'__specs'}->{'homebase'} = $watch->{'homebase'} . ':' . $watch_port;
-	$op_d->{'__specs'}->{'ip'} = $watch->{'homebase'};
+	$op_d->{'__specs'}->{'homebase'} = ($forced_home || $watch->{'homebase'}) . ':' . $watch_port;
+	$op_d->{'__specs'}->{'ip'} = $forced_home || $watch->{'homebase'};
 	$op_d->{'__specs'}->{'edt'} = $edt;
 	$op_d->{'__specs'}->{'name'} = $name;
 	my @t = localtime(time);
@@ -19227,7 +19231,7 @@ sub now_me($data) {
 	my $params = {
 		name           => $name,
 		ip             => $watch->{ip},
-		homebase       => "$watch->{homebase}:$watch_port",
+		homebase       => ($forced_home || $watch->{homebase}) . ":$watch_port",
 		screen_timeout => $screen_timeout,
 		timestamp      => $server_time,
 		offset         => $offset,
