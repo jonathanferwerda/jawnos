@@ -1868,6 +1868,122 @@ sub ble_rehome_check() {
 	} or $log->error('BLE re-home failed: ' . $@);
 }
 
+sub whisper_transcribe() {
+	# Speech -> text, the one place the whisper.cpp pipeline lives. Raw audio
+	# bytes in (any container ffmpeg reads - the watch sends 16 kHz mono WAV),
+	# the transcript out. ffmpeg normalises to the 16 kHz mono PCM whisper wants;
+	# whisper-cli reads stdin with --file - and prints the text on stdout. '' on
+	# any failure, so a caller only has to check for text.
+	my ($raw) = @_;
+	return '' unless $raw;
+	require IPC::Open3;
+	require Symbol;
+	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
+	my $model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+	return '' unless -e $bin && -e $model;
+	my $cmd = sprintf(
+		'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file - 2>/dev/null',
+		$bin, $model
+	);
+	my ($in, $out, $err);
+	$err = Symbol::gensym();
+	my $pid = IPC::Open3::open3($in, $out, $err, 'sh', '-c', $cmd);
+	return '' unless $pid;
+	binmode($in);
+	print {$in} $raw;
+	close($in);
+	my $text = do { local $/; <$out> // '' };
+	close($out);
+	close($err);
+	waitpid($pid, 0);
+	$text =~ s/\r//g;
+	$text =~ s/^\s+|\s+$//g;
+	$text =~ s/\n+/ /g;
+	return $text;
+}
+
+sub voice_command_parse() {
+	# The words after the wake word, split into a verb and a target app. Only a
+	# command that actually follows the wake word counts, so a stray "start" in
+	# conversation does nothing.
+	my ($transcript) = @_;
+	my $low = lc($transcript || '');
+	$low =~ s/[^a-z0-9 ]+/ /g;
+	$low =~ s/\s+/ /g;
+	my @w = split ' ', $low;
+	my @rest;
+	my $woke = 0;
+	foreach my $x ( @w ) {
+		if ($woke) { push @rest, $x; next; }
+		# the wake word and the mis-hearings whisper reaches for
+		if ($x eq 'jawn' || $x eq 'john' || $x eq 'jon' || $x eq 'yawn' || $x eq 'johns') { $woke = 1; }
+	}
+	return { status => 'no_wake', said => $transcript } unless $woke && scalar @rest;
+	my $verb = shift @rest;
+	my %on  = map { $_ => 1 } qw/start begin open launch play run resume/;
+	my %off = map { $_ => 1 } qw/stop end close finish pause halt quit/;
+	my $want = $on{$verb} ? 'on' : $off{$verb} ? 'off' : undef;
+	return { status => 'no_verb', verb => $verb, said => $transcript } unless $want;
+	my $target = join ' ', @rest;
+	$target =~ s/^\s+|\s+$//g;
+	return { status => 'no_target', said => $transcript } unless length $target;
+	return { status => 'ok', want => $want, target => $target, said => $transcript };
+}
+
+sub voice_command_apply() {
+	# Act on a command by the same writes a watch button makes - a toggle and a
+	# start/stop appointment - but without touching the watch's own operator_door,
+	# because voice is not a button press.
+	my ($app, $want, $meta) = @_;
+	my $now = &subs::rightNow();
+	my $settings = &subs::settings_grabber({ app => $app }) || {};
+	&subs::setting_setter({ app => $app, setting => 'toggle', value => $want });
+	my $db_data = {
+		app => $app,
+		server_time => $now,
+		timestamp => $meta->{'timestamp'} || $now,
+		type => ($want eq 'on' ? 'start' : 'stop'),
+		toggle => ($want eq 'on' ? 1 : 0),
+		uuid => &subs::random_string_creator(21),
+		duration => &subs::time_abbrev_translator($settings->{'duration'}),
+		warranty => &subs::ago_calc(&subs::setting_grabber({ app => $app, setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $now),
+		project => $settings->{'t_project'},
+		pos => $settings->{'pos'},
+		seen => 'yes'
+	};
+	&Manager::appointment_writer(&subs::controller_builder(), $db_data);
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $db_data->{'uuid'} . '\');' });
+	return $db_data;
+}
+
+sub voice_ingest() {
+	# Audio -> text -> action. The single entry both the WiFi route and the BLE
+	# bridge funnel into, so the two transports behave identically.
+	my ($raw, $meta) = @_;
+	$meta ||= {};
+	my $text = &subs::whisper_transcribe($raw);
+	return { status => 'silence' } unless $text;
+	my $cmd = &subs::voice_command_parse($text);
+	if (($cmd->{'status'} || '') ne 'ok') {
+		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
+		return $cmd;
+	}
+	my $app = &subs::unformat_name($cmd->{'target'});
+	my $known = $gb::known_appts || {};
+	unless ($known->{$app}) {
+		foreach my $k ( keys %{$known} ) {
+			if (&subs::unformat_name($k) eq $app) { $app = $k; last; }
+		}
+	}
+	unless ($known->{$app}) {
+		$log->info('voice: no app for "' . $cmd->{'target'} . '" (' . $text . ')');
+		return { status => 'no_app', said => $text, target => $cmd->{'target'} };
+	}
+	&subs::voice_command_apply($app, $cmd->{'want'}, $meta);
+	$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
+	return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
+}
+
 sub ble_message_processor() {
 	my $data = shift;
 	# A BLE notification as JSON text from the watch/board. The payload carries
@@ -1923,6 +2039,14 @@ sub ble_message_processor() {
 		&subs::step_ingest($samples, $msg->{'base'});
 		my $count = ref $samples eq 'ARRAY' ? scalar @{$samples} : 0;
 		$log->info('BLE steps for ' . ($msg->{'chip_id'} || '?') . ': ' . $count . ' samples');
+		return;
+	}
+	if ($type && $type eq 'voice') {
+		# a clip the watch shipped over the bridge; base64 so it rides the JSON
+		# wire. The same ingest the WiFi route runs, so both transports agree.
+		my $b64 = $msg->{'data'};
+		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
+		&subs::voice_ingest($raw, { edt => ($msg->{'edt'} || 'watch'), chip_id => $msg->{'chip_id'} }) if $raw;
 		return;
 	}
 	my $url = $msg->{'url'};

@@ -143,6 +143,30 @@ get '/watch/telephone_msg' => sub($c) {
 	$c->render('json' => { 'msg' => $message });
 };
 
+post '/watch/voice' => sub($c) {
+	# A voice clip from the watch over WiFi (the Bluetooth route funnels into the
+	# same voice_ingest). The body is the raw WAV; the params carry the usual
+	# authorization. Transcribing is slow, so it runs off the request and the
+	# watch is told 'ok' at once - it hears the result only as whatever the
+	# command changes (the toggle is pushed back like any other).
+	my $edt = $c->param('edt');
+	my $chip_id = $c->param('chip_id');
+	if (my $watch_settings = &embeddedAuthorizer($c)) {
+		my $raw = $c->req->body // '';
+		if (my $b64 = $c->param('audio')) {
+			require MIME::Base64;
+			$raw = MIME::Base64::decode_base64($b64) // '';
+		}
+		if (length $raw > 100) {
+			&subs::subprocessor(sub {
+				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id });
+			}, { name => 'voice ingest' });
+		}
+		$c->render('text' => 'ok');
+	}
+	else { $c->render('text' => 'failure'); }
+};
+
 get '/watch/button' => sub($c) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');

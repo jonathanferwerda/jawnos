@@ -3061,6 +3061,121 @@ void micCaptureTask(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+// ---- voice commands: a VAD-gated clip sent to the homebase ----------------
+// The watch is hands-free if it listens by itself, but only while there is
+// speech: the microphone is read in short frames, a run of frames above the
+// energy floor starts a recording, and the recording ends once the voice has
+// been quiet for a moment (or it grows past a cap). The clip is POSTed to the
+// homebase's /watch/voice, which transcribes it with whisper and acts on
+// "jawn ..." - the watch hears the result only as the toggle that comes back.
+// Off unless the user turns it on, so it never competes with a normal record.
+static bool voiceCaptureEnabled = false;
+static volatile bool voiceListening = false;
+#define VOICE_FRAME_MS 30
+#define VOICE_FRAME_SAMPLES ((int)(MIC_I2S_SAMPLE_RATE / 1000 * VOICE_FRAME_MS))
+#define VOICE_RMS_FLOOR 900          // above room tone, below a spoken word
+#define VOICE_SILENCE_MS 900         // trailing quiet that ends a command
+#define VOICE_MAX_MS 6000            // a command, not a lecture
+#define VOICE_MIN_MS 300             // shorter than a word is a cough
+static String VOICE_WAV_PATH = "/voice.wav";
+
+// POST the finished clip to the homebase. Streamed from flash: the WAV is tens
+// of KB, well past what the TLS stack wants held in RAM.
+static bool voice_post_clip(const String &path) {
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return false;
+  }
+  File f = FFat.open(path.c_str(), FILE_READ);
+  if (!f) {
+    return false;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient https;
+  https.setTimeout(8000);
+  String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
+    + "&chip_id=" + chip_id_maker()
+    + "&authorization=" + authorization
+    + "&timestamp=" + String(timestamp_maker());
+  bool ok = false;
+  if (https.begin(client, url)) {
+    https.addHeader("Content-Type", "application/octet-stream");
+    int code = https.sendRequest("POST", &f, (size_t)f.size());
+    Serial.printf("[voice] POST -> %d\n", code);
+    ok = (code > 0 && code < 400);
+    https.end();
+  }
+  f.close();
+  return ok;
+}
+
+static void voiceListenTask(void *pv) {
+  AudioInputIf *mic = watch.getAudioInput();
+  if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
+    Serial.println("[voice] microphone open failed");
+    voiceListening = false;
+    vTaskDelete(NULL);
+  }
+  uint8_t *buf = (uint8_t *)malloc(VOICE_FRAME_SAMPLES * 2);
+  if (!buf) {
+    mic->close();
+    voiceListening = false;
+    vTaskDelete(NULL);
+  }
+  bool recording = false;
+  uint32_t rec_ms = 0, silence_ms = 0;
+  File f;
+  while (voiceListening) {
+    int got = mic->read(buf, VOICE_FRAME_SAMPLES * 2);
+    if (got <= 0) { continue; }
+    int n = got / 2;
+    // energy of the frame: an integer RMS is enough for a speech/quiet gate
+    int64_t acc = 0;
+    int16_t *s = (int16_t *)buf;
+    for (int i = 0; i < n; i++) { acc += (int32_t)s[i] * (int32_t)s[i]; }
+    int rms = n > 0 ? (int)sqrtf((float)acc / n) : 0;
+    bool speech = rms > VOICE_RMS_FLOOR;
+    if (!recording) {
+      if (!speech) { continue; }
+      if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
+      f = FFat.open(VOICE_WAV_PATH.c_str(), FILE_APPEND);
+      if (!f) { break; }
+      recording = true;
+      rec_ms = 0;
+      silence_ms = 0;
+      Serial.println("[voice] speech detected, recording");
+    }
+    f.write((uint8_t *)buf, got);
+    rec_ms += VOICE_FRAME_MS;
+    silence_ms = speech ? 0 : silence_ms + VOICE_FRAME_MS;
+    if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) { break; }
+    if (rec_ms >= VOICE_MAX_MS) { break; }
+  }
+  mic->close();
+  if (recording) {
+    uint32_t bytes = f.size() >= 44 ? (uint32_t)f.size() - 44 : 0;
+    f.close();
+    finalize_wav_sizes(VOICE_WAV_PATH.c_str(), bytes);
+    Serial.printf("[voice] clip %u bytes -> homebase\n", (unsigned)bytes);
+    voice_post_clip(VOICE_WAV_PATH);
+  }
+  free(buf);
+  voiceListening = false;
+  vTaskDelete(NULL);
+}
+
+// Listen for one command. A capture already in flight is left alone.
+static void voiceListenOnce() {
+  if (voiceListening) { return; }
+  if (WiFi.status() != WL_CONNECTED) {
+    // the clip has to leave over WiFi; over Bluetooth it would be a much larger
+    // job (framed and reassembled) and is not wired yet
+    Serial.println("[voice] no WiFi; cannot ship a clip yet");
+  }
+  voiceListening = true;
+  xTaskCreatePinnedToCore(voiceListenTask, "VoiceTask", 8192, NULL, 2, NULL, 1);
+}
+
 // Background monitoring frame calculation handler for playback
 void audio_playback_loop_task(void *pvParameters) {
     Serial.println("[Player] Playback track active.");
@@ -4660,6 +4775,13 @@ static void tilt_serial_command(String line) {
   else if (line == "blestop off") {
     ble_state_off = false;
     Serial.println("[ble] state requests on");
+  }
+  else if (line == "voice") {
+    // one hands-free capture: record on speech, stop on silence, ship the clip
+    // to the homebase for whisper. The console trigger exists so the VAD can be
+    // tuned over USB without touching the UI.
+    Serial.println("[voice] listening for a command");
+    voiceListenOnce();
   }
   else if (line == "blecycle") {
     // exercise the async bring-up the way a wake does: tear the radio down, then
