@@ -249,7 +249,7 @@ static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
 static bool room_has_buttons(int r);
 static void screen_gesture(lv_event_t *e);
-static void ble_push_steps();
+static void ble_push_steps(bool force);
 static void voiceListenStart(bool one_shot);
 static void voice_control(lv_event_t *e);
 void setting_room();
@@ -261,6 +261,11 @@ uint32_t steps;
 uint32_t stepSampleMillis = 0;
 // the pedometer value at the last BLE hand-off: what the next push deltas from
 static uint32_t bleStepsBase = 0;
+// A link-up fires on every reconnect and a worn watch almost always has a new
+// step by then, so the recovery push spammed once per tap and wake. Automatic
+// pushes wait at least this long; the forced 60 s sample never is held back.
+#define BLE_STEPS_MIN_INTERVAL_MS 60000UL
+static uint32_t ble_steps_pushed_at = 0;
 JSONVar stepped;
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
@@ -1229,7 +1234,7 @@ void step_writer() {
   Serial.print(" across ");
   Serial.print((int)stepped.length());
   Serial.println(" samples");
-  ble_push_steps();   // hand the new count to a connected bridge, if any
+  ble_push_steps(true);   // hand the new count to a connected bridge, if any
 }
 
 #include "esp_mac.h" // Handles direct low-level chip hardware queries
@@ -1451,7 +1456,7 @@ void loop() {
   if (deviceConnected && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
     ble_link_up_at = 0;
     ble_flush_wigi();
-    ble_push_steps();   // recover the steps taken while the link was down
+    ble_push_steps(false);   // recover the steps taken while the link was down
   }
   // a watch armed for hands-free voice keeps a listener running while it is
   // awake: the task captures one utterance, ships it, and stays listening. It
@@ -3558,7 +3563,7 @@ void ble_flush_wigi() {
 // neither side has to remember anything across a message: a restart cannot
 // double-count. A count that went backwards means the AP path reset the
 // pedometer underneath us, and base drops to zero with it.
-static void ble_push_steps() {
+static void ble_push_steps(bool force) {
   if (!deviceConnected || pTxCharacteristic == nullptr) {
     return;
   }
@@ -3568,6 +3573,11 @@ static void ble_push_steps() {
   uint32_t counter = watch.getStepCounter();
   if (counter == bleStepsBase) {
     return;                    // nothing since the last hand-off
+  }
+  // the automatic (link-up) push keeps the minute cadence step_writer uses; a
+  // real sample passes force and is never held back
+  if (!force && ble_steps_pushed_at != 0 && millis() - ble_steps_pushed_at < BLE_STEPS_MIN_INTERVAL_MS) {
+    return;
   }
   if (counter < bleStepsBase) {
     bleStepsBase = 0;          // a reset happened elsewhere
@@ -3591,6 +3601,7 @@ static void ble_push_steps() {
   pTxCharacteristic->setValue(payload.c_str());
   pTxCharacteristic->notify();
   bleStepsBase = counter;
+  ble_steps_pushed_at = millis();
   Serial.printf("[ble] steps %u pushed\n", (unsigned)counter);
 }
 
