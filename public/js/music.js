@@ -111,28 +111,36 @@ async function musicInit(method) {
 		musicVolumeApply();
 		$('#video').attr('theatre_mode', pd.theatre_mode);
 		$('#video').attr('type', pd.type);
-		mediaMaker({ src: pd.file, currentTime: pd.currentTime, method: 'benign', timestamp: Date.now(), state: pd.state, });
-		if (method != 'search') {
-			tree.sound.currentTime = pd.currentTime;
-		}
-	//	if (method != 'search') {
-			tree.sound.state = pd.state;
-	//	}
-		$('#music_player_data').text(jpd);
 
+		// pick the saved track first, so thisTrack slices tree.songs and mediaMaker
+		// then loads THAT track - mediaMaker reads tree.songs[0] and ignores the file
+		// it is handed, so running it before this loaded the first track instead
 		$('.music_file').removeClass('playing');
-		var mf = $('.music_file[file="' + pd.file + '"]');
+		var mf = pd.file ? $('.music_file[file="' + pd.file + '"]') : $();
 		mf.addClass('playing');
 		var playing = $('.playing');
+		tree.current_track = playing.attr('number');
+	//	tree.sound.volume = 1;
+		thisTrack(playing.closest('.track_item'));
+
+		// only a saved track is restored: a first-ever open (no player cache) must
+		// not start playing on its own
+		if (pd.file) {
+			mediaMaker({ file: pd.file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
+			if (method != 'search') {
+				tree.sound.currentTime = pd.currentTime;
+			}
+	//		if (method != 'search') {
+				tree.sound.state = pd.state;
+	//		}
+		}
+		$('#music_player_data').text(jpd);
 
 		tree.sound.textTracks[0].mode = $('#video_subtitle_toggle').attr('status');
 
 		if ($('#video').attr('type') == 'audio') {
 			$('#video').hide();
 		}
-		tree.current_track = playing.attr('number');
-	//	tree.sound.volume = 1;
-		thisTrack(playing.closest('.track_item'));
 		if (pd.state == 0 && method != 'search') {
 			tree.sound.pause();
 		}
@@ -325,6 +333,10 @@ function mediaMaker(data) {
 			if (data['state'] != 0) {
 				$('#play_logo').attr('src', jawnosPauseIcon());
 			}
+			// 'benign' leaves the media untouched (a search re-render must not restart
+			// the track). 'restore' is the page-load path: it loads the saved track and
+			// resumes when the player was left playing, overriding any stale src the
+			// served window carried, but does not re-announce it remotely.
 			if (method != 'benign') {
 
 				if (tree.songs[0].type == 'audio') {
@@ -370,11 +382,19 @@ function mediaMaker(data) {
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
 				tree.sound.queued = 0;
-				remoteTrackToggle({
-					file: file,
-					toggle: 'on',
-					seek: tree.sound.currentTime
-				});
+				if (data['state'] != 0) {
+					// the play() above runs before load()/the new src and is aborted by them,
+					// so start here too, once the source is in place - otherwise a restored
+					// track shows a pause button over silence
+					tree.sound.play();
+				}
+				if (method != 'restore') {
+					remoteTrackToggle({
+						file: file,
+						toggle: 'on',
+						seek: tree.sound.currentTime
+					});
+				}
 			}
 			if ($('#video').attr('theatre_mode') == 'on') {
 				theatreModeOn();
@@ -393,7 +413,7 @@ function mediaMaker(data) {
 					
 					var app = tree.songs[0].app;
 					
-					if (method != 'benign') {
+					if (method != 'benign' && method != 'restore') {
 						playing_now();
 					}
 					else {
