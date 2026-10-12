@@ -13462,7 +13462,7 @@ sub window_maker($type,$timestamp) {
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--panel);
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
-			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:min(var(--window_border, 3px), 3px) solid var(--window_border_colour, var(--line));background-color:'. ($settings->{'colour'} || '#ffec1f') .
+			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:min(var(--window_border, 3px), 3px) solid var(--window_border_colour, var(--line));border-bottom-width:var(--window_border, 3px);background-color:'. ($settings->{'colour'} || '#ffec1f') .
 				';" app="' . $unformatted_name .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
 				<span class="appointment_name">
