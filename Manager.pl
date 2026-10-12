@@ -18839,14 +18839,6 @@ post '/manager/embedded/setting' => sub($c) {
 	my $jop = encode_json $op;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', subsetting => $chip_id, value => $jop });
 
-	# A setting that changes what the watch should be doing right now (the voice
-	# mode) carries push="now_me": the panel asks for a fresh Now Me so the device
-	# picks the change up at once rather than on its next poll. now_me picks the
-	# link itself - the watch's LAN when it answers, the BLE bridge when it cannot.
-	if ($c->param('push')) {
-		&now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') });
-	}
-
 	$c->render(json => { $setting => $value });
 
 };

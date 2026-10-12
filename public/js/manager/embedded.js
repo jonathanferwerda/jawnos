@@ -441,6 +441,7 @@ $(document).on('click change', '.watch_toggle', function() {
 });
 
 $(document).on('change', '.embedded_setting', function() {	
+	var el = this;
 	var timestamp = Date.now();
 	var setting = $(this).attr('setting');
 	var chip_id = $(this).attr('chip_id');
@@ -464,10 +465,13 @@ $(document).on('change', '.embedded_setting', function() {
 			setting: setting,
 			value: value,
 			edt: edt,
-			chip_id: chip_id,
-			push: $(this).attr('push') || ''
+			chip_id: chip_id
 		},
 		success: function(response) {
+			// a setting that says what the device should do now (the voice mode)
+			// carries push="now_me": the save is written first, then a fresh Now Me
+			// is sent so the watch picks it up at once rather than on its next poll
+			if ($(el).attr('push')) { embeddedNowMePush(); }
 			embeddedDevicesOpener()
 		}
 	});
@@ -572,25 +576,28 @@ $(document).on('click', '.embedded_bt_now_me', function() {
 });
 
 
-$(document).on('click', '.embedded_now_me', function() {
-	var timestamp = Date.now();
-	var ip = $(this).attr('ip');
-	var uuid = $(this).attr('uuid');
-	var name = $('#embedded_device_name').val();
-	var chip_id = $('#embedded_device_chip_id').val();
+function embeddedNowMePush() {
+	// One Now Me for whatever device the panel is showing - the same call the
+	// button makes, so a setting change can be carried to the watch at once.
+	// now_me itself picks the link (the watch's LAN, else the BLE bridge).
+	var nm = $('.embedded_now_me').first();
 	$.ajax({
 		url: '/manager/embedded/now_me',
 		type: 'POST',
-		data: { 
-			timestamp: timestamp, 
-			edt: edt, 
-			ip: ip, 
-			chip_id: chip_id, 
-			name: name,
-			uuid: uuid
+		data: {
+			timestamp: Date.now(),
+			edt: edt,
+			ip: nm.attr('ip'),
+			chip_id: $('#embedded_device_chip_id').val(),
+			name: $('#embedded_device_name').val(),
+			uuid: nm.attr('uuid')
 		},
 		success: function(response) {}
 	});
+}
+
+$(document).on('click', '.embedded_now_me', function() {
+	embeddedNowMePush();
 });
 
 $(document).on('click', '.embedded_wigi', function() {
