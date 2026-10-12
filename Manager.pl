@@ -11852,30 +11852,36 @@ sub budget_calculator($data) {
 		# its share of the period so far, and the projection carries the pace to the
 		# period's end. An unlocked window rolls a whole period back from now, so it
 		# is already run and its pace is 1, as is any block before or after now.
-		# Early in a period so little of the budget is due that a single blip reads
-		# as far ahead of pace, and the start of a period is often spent asleep or
-		# otherwise away from it. So the first stretch of each period carries no
-		# target and the budget is spread over what is left of it: a day's first two
-		# fifths are the night (so its target only starts around nine in the morning),
-		# an hour's first quarter, and the longer clocks their first tenth. The
-		# projection below keeps the exact elapsed, so it still reads the whole
+		# Every column is read this way, not only the one the budget is set to: a
+		# weekly budget graphed over the month is still a part-run month, and its
+		# column reads the same way (the target was scaled to the column above).
+		#
+		# The first stretch of a period carries no target, since so little is due that
+		# a single blip reads as far ahead of pace, and that stretch is often spent
+		# asleep or otherwise away from it. The budget is spread over what is left: a
+		# day's first two fifths are the night (so its target only starts around nine
+		# in the morning), an hour's first quarter, and the longer clocks their first
+		# tenth. The projection keeps the exact elapsed, so it still reads the whole
 		# period rather than only the part not slept through.
 		my %pace_floor = ( hour => 0.25, day => 0.4, week => 0.1, month => 0.1, year => 0.1 );
+		my $unit = $scope ? &subs::timespan_widener($scope) : $returner->{'scope_name'};
 		my $elapsed = 1;
-		if ($ts eq 'this' && ($returner->{'is_scope'} || '') eq 'yes' && ($settings->{'s_lock'} || '') eq 'on'
-			&& $returner->{'scope_name'} =~ /^(?:hour|day|week|month|year)$/) {
-			(undef, undef, $elapsed) = &subs::period_bounds($returner->{'scope_name'}, $timestamp);
+		if ($ts eq 'this' && ($settings->{'s_lock'} || '') eq 'on' && $unit =~ /^(?:hour|day|week|month|year)$/) {
+			(undef, undef, $elapsed) = &subs::period_bounds($unit, $timestamp);
 		}
-		my $floor = $pace_floor{ $returner->{'scope_name'} } // 0.1;
+		my $floor = $pace_floor{$unit} // 0.1;
 		my $early = ($elapsed > 0 && $elapsed <= $floor) ? 1 : 0;
 		my $pace_elapsed = $early ? 0 : (($elapsed - $floor) / (1 - $floor));
 		$pace_elapsed = 0 if $pace_elapsed < 0;
 		$pace_elapsed = 1 if $pace_elapsed > 1;
+		# the whole target the column's value is held against - already scaled to the
+		# column's own period when the budget is set to a different one
+		my $full_target = $returner->{'expected'} * $returner->{'scope'};
 		$returner->{'elapsed'} = $elapsed;
 		$returner->{'early'} = $early;
 		$returner->{'pace_floor'} = $floor;
 		$returner->{'progress'} = sprintf('%.0f', $elapsed * 100);
-		$returner->{'on_target'} = sprintf('%.19f', $returner->{'budgeted'} * $pace_elapsed);
+		$returner->{'on_target'} = sprintf('%.19f', $full_target * $pace_elapsed);
 		$returner->{'on_track'} = ($returner->{'value'} >= $returner->{'on_target'}) ? 'yes' : 'no';
 		$returner->{'projected'} = $elapsed > 0 ? sprintf('%.19f', $returner->{'value'} / $elapsed) : $returner->{'value'};
 		my $pace_format = sub {
@@ -11887,23 +11893,18 @@ sub budget_calculator($data) {
 		};
 		$returner->{'formatted_projected'} = $pace_format->($returner->{'projected'});
 		$returner->{'formatted_on_target'} = $early ? '0' : $pace_format->($returner->{'on_target'});
-		# For a part-run period the status and the graph line are read against the
-		# share of the budget due by now, not the whole period, so an on-pace start
-		# reads as on pace rather than a collapse; the budget itself
-		# (formatted_budgeted) still names the whole period.
-		if (!$early && $elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
-			$returner->{'full_expected'} = $returner->{'expected'};
-			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $pace_elapsed);
-			$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
-			$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
-		}
-		elsif ($early) {
-			# nothing is due yet inside the floor: a zero target, which the status
-			# maker reads as on track rather than a collapse
+		# The status and the graph line are held against the share of the target due
+		# by now, not the whole of it, so an on-pace start reads as on pace rather
+		# than a collapse; formatted_budgeted still names the whole period.
+		$returner->{'full_expected'} = $returner->{'expected'};
+		$returner->{'threshold'} = $full_target * $pace_elapsed;
+		if ($early) {
 			$returner->{'expected'} = 0;
-			$returner->{'threshold'} = 0;
-			$returner->{'eval'} = 0;
 		}
+		elsif ($elapsed > 0 && $elapsed < 1 && $returner->{'expected'} > 0) {
+			$returner->{'expected'} = sprintf('%.19f', $returner->{'expected'} * $pace_elapsed);
+		}
+		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner = &budget_status_maker($returner);
 	}
 	else {
