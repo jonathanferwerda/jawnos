@@ -1,25 +1,26 @@
-// The Help app. Opens a window that explains apps, features, functions and
-// devices in plain language, and wires four things together:
+// The Help app. A window that explains JawnOS in plain language, and a Guide
+// that can operate the screen for the person:
 //
 //   - the start menu's Help icon, and appWindowOpener('help'), open it;
 //   - F1 opens the topic for the window you are focused on (or for whatever
 //     control you are hovering, when it declares a `help="topic"` attribute);
 //   - the question-mark button in a window's title bar opens that window's app;
-//   - a Guide: pick a model and it walks you through the topic step by step,
-//     using the window you came from as context.
+//   - the Guide: ask it a question and it becomes a chat; ask it to DO
+//     something and it drives the screen - opening apps, searching, showing
+//     photos - one whitelisted action at a time, reporting each step.
 //
-// The topic registry lives server-side (help.pl); the model call is the same
-// whole-answer helper the evaluation uses.
+// The topic registry lives server-side (help.pl); the model turn is a plain
+// whole-answer call (subs::evaluation_model_call); the actions are executed
+// here, client-side, from a fixed vocabulary. Nothing the model says can reach
+// the server as a command - it can only pick a verb we already allow.
 
-// The topic currently shown, and the window the reader came from — both feed
-// the guide's context.
 var jawnos_help_topic_current = null;
 var jawnos_help_source = null;
 
-// Open the Help window, optionally on a topic. Uses the standard window path so
-// it behaves like every other app (stacking, remembering, restoring).
+// Open the Help window, optionally on a topic.
 function helpOpener(topic) {
 	var timestamp = Date.now();
+	jawnos_help_topic_current = topic || null;
 	$.ajax({
 		url: '/manager/help',
 		type: 'GET',
@@ -31,7 +32,6 @@ function helpOpener(topic) {
 	});
 }
 
-// Describe the window the reader came from, so the guide knows what "this" is.
 function helpSourceFrom(app) {
 	var ctx = { app: app || null };
 	if (app) {
@@ -47,26 +47,30 @@ function helpSourceFrom(app) {
 	return ctx;
 }
 
-// Paint the guide's context line. Prefers the explicit source (the window the
-// reader came from); falls back to the focused window.
-function helpRefreshContext() {
-	var el = $('#help_context');
-	if (!el.length) { return; }
+function helpContextNow() {
 	var src = jawnos_help_source;
 	if (!src || !src.title) {
 		var top = (typeof topWindow === 'function') ? topWindow() : null;
 		if (top && top !== 'help') { src = helpSourceFrom(top); }
 	}
+	return src || {};
+}
+
+function helpRefreshContext() {
+	var el = $('#help_context');
+	if (!el.length) { return; }
+	var src = helpContextNow();
 	if (src && src.title) {
-		var line = 'looking at ' + src.title + (src.view ? (' · ' + src.view) : '');
-		el.text('— ' + line);
+		el.text('— looking at ' + src.title + (src.view ? (' · ' + src.view) : ''));
 	} else {
 		el.text('');
 	}
 }
 
-// Swap the rail list and the topic pane in place. The search box and the guide
-// panel are left alone, so neither a search nor a scroll is thrown away.
+// ---- the browse view ------------------------------------------------------
+
+// Swap the rail list and the topic pane in place, keeping the search box, the
+// composer and the scroll position.
 function helpBody(topic, search) {
 	var win = $('.wind[app="help"]');
 	if (!win.length) { return; }
@@ -80,20 +84,175 @@ function helpBody(topic, search) {
 		var new_body = $r.find('.help_body');
 		if (new_rail.length) { rail.html(new_rail.html()); }
 		if (new_body.length) { body.html(new_body.html()); }
-		// keep the reader where they were, unless the list itself changed
 		rail.scrollTop(search ? 0 : rail_scroll);
 		body.scrollTop(search ? 0 : body_scroll);
 		jawnos_help_topic_current = topic || null;
-		// a new topic may carry its own opening question for the guide
 		var def = $r.find('#help_question').attr('data-default') || '';
-		if (def) { $('#help_question').val(def); }
+		if (def) { $('#help_question').attr('placeholder', 'Ask the guide — or tell it what you want to do…').val(def); }
 		helpRefreshContext();
 	});
 }
 
-// What F1 answers: a hovered control's topic if the pointer named one, else the
-// app of the window on top. Pressing F1 while Help itself is focused just opens
-// the index rather than a topic about Help.
+// ---- the chat view --------------------------------------------------------
+
+var jawnos_help_chat = [];
+
+function helpChatLog() { return $('.wind[app="help"] .help_chat_log'); }
+
+function helpShowChat(on) {
+	var win = $('.wind[app="help"]');
+	win.find('.help_shell').toggle(!on);
+	win.find('.help_chat_log').toggle(!!on);
+	win.find('#help_topics_back').toggle(!!on);
+	win.find('#help_ask').text(on ? 'Send' : 'Guide me');
+}
+
+// One chat bubble. role: 'user' (right, green), 'guide' (left, blue) or 'step'
+// (a small, centred line reporting an action the guide took).
+function helpChatAdd(role, text) {
+	var log = helpChatLog();
+	if (!log.length) { return; }
+	var safe = $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
+	if (role === 'step') {
+		log.append($('<div style="text-align:center;margin:6px 0;"><span style="font-size:12px;opacity:.6;font-style:italic;">' + safe + '</span></div>'));
+	}
+	else {
+		var mine = (role === 'user');
+		var bubble = '<span style="display:inline-block;max-width:82%;overflow-wrap:break-word;border-radius:10px;padding:7px 11px;'
+			+ (mine ? 'background:#cdeccd;' : 'background:#cfe3f5;') + '">' + safe + '</span>';
+		log.append($('<div style="display:flex;margin:5px 0;' + (mine ? 'justify-content:flex-end;' : 'justify-content:flex-start;') + '">' + bubble + '</div>'));
+	}
+	log.scrollTop(log[0].scrollHeight);
+}
+
+function helpChatEnter() { helpShowChat(true); }
+
+function helpTopicsBack() {
+	helpShowChat(false);
+	helpBody(jawnos_help_topic_current);
+}
+
+// ---- the guide that acts --------------------------------------------------
+
+function helpActionLabel(a) {
+	if (a.action === 'find') { return 'Searching for “' + (a.query || '') + '”…'; }
+	if (a.action === 'open_app') { return 'Opening ' + (a.app || 'the app') + '…'; }
+	var bits = [];
+	if (a.app) { bits.push(a.app); }
+	if (a.search) { bits.push('“' + a.search + '”'); }
+	return 'Opening Gallery' + (bits.length ? ' — ' + bits.join(' ') : '') + '…';
+}
+
+// Execute one whitelisted action. Only ever calls known client functions; a
+// model cannot reach past this switch. Reports back through cb(observation).
+function helpDoAction(a, cb) {
+	a = a || {};
+	if (a.action === 'open_app') {
+		if (a.app && typeof appWindowOpener === 'function') { appWindowOpener(a.app, Date.now(), {}); }
+		return cb('Opened the ' + (a.app || '') + ' window.', 'Done — I opened ' + (a.app || 'the app') + '.');
+	}
+	if (a.action === 'open_gallery') {
+		var openIt = function (app) {
+			var waits = [];
+			if (app) {
+				// scoping to an app shows its album; the app name is the reliable key,
+				// because a free-text search is literal and would miss e.g. "george
+				// michael" against an app actually called george_michael
+				waits.push(settingSetter({ app: 'gallery', setting: 'apps', value: JSON.stringify([app]) }));
+				waits.push(settingSetter({ app: 'gallery', setting: 'search', value: '' }));
+			}
+			else if (a.search) {
+				waits.push(settingSetter({ app: 'gallery', setting: 'search', value: a.search }));
+			}
+			$.when.apply($, waits).always(function () {
+				if (typeof appWindowOpener === 'function') { appWindowOpener('gallery', Date.now(), {}); }
+				cb(app ? ('Opened Gallery to the “' + app + '” album. The person can see those photos now.')
+					: (a.search ? ('Opened Gallery filtered to “' + a.search + '”. They can see the results now.') : 'Opened Gallery. The person can see it now.'), 
+					(app ? ('Done — here are the “' + app + '” photos.')
+						: (a.search ? ('Done — here is what I found for “' + a.search + '”.') : 'Done — the Gallery is open.')));
+			});
+		};
+		if (a.app) { openIt(a.app); }
+		else if (a.search) {
+			// resolve the name to an app first, so the person's words find the real app
+			$.get('/manager/help/find', { q: a.search }, function (r) {
+				var app = (r.apps && r.apps.length) ? r.apps[0].app : null;
+				openIt(app);
+			}).fail(function () { openIt(null); });
+		}
+		else { openIt(null); }
+		return;
+	}
+	if (a.action === 'find') {
+		$.get('/manager/help/find', { q: a.query || '' }, function (r) {
+			var apps = (r.apps || []).map(function (x) { return x.app + ' (' + x.count + ')'; }).join(', ');
+			var files = (r.files || []).slice(0, 8).join(', ');
+			cb('Found ' + (r.count || 0) + ' record(s)' + (apps ? (' in apps: ' + apps) : '') + (files ? ('; files: ' + files) : '') + '.');
+		}).fail(function () { cb('The search failed.'); });
+		return;
+	}
+	cb(a.text || '');
+}
+
+function helpAsk() {
+	var model = $('#help_model').val();
+	var q = $.trim($('#help_question').val() || '');
+	if (!model) {
+		helpShowChat(true);
+		helpChatAdd('step', 'Choose a model in the row above first — the guide needs one to think with.');
+		return;
+	}
+	if (!q) { return; }
+	$('#help_question').val('');
+	helpShowChat(true);
+	jawnos_help_chat.push({ role: 'user', content: q });
+	helpChatAdd('user', q);
+	helpAgentStep(0);
+}
+
+function helpAgentStep(n) {
+	if (n >= 6) {
+		helpChatAdd('step', 'Stopping after several steps.');
+		helpChatAdd('guide', 'I did not finish that in a few steps — here is where I got to. Try naming the app, or ask me a question about it.');
+		return;
+	}
+	$.ajax({
+		url: '/manager/help/act',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			transcript: JSON.stringify(jawnos_help_chat),
+			context: JSON.stringify(helpContextNow()),
+			topic: jawnos_help_topic_current || '',
+			model: $('#help_model').val()
+		},
+		success: function (r) {
+			if (r && r.error) { helpChatAdd('step', r.error); return; }
+			var a = (r && r.action) || {};
+			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
+				var text = a.text || '';
+				jawnos_help_chat.push({ role: 'assistant', content: text });
+				helpChatAdd('guide', text);
+				return;
+			}
+			helpChatAdd('step', helpActionLabel(a));
+			jawnos_help_chat.push({ role: 'assistant', content: JSON.stringify(a) });
+			helpDoAction(a, function (obs, friendly) {
+				jawnos_help_chat.push({ role: 'tool', content: obs });
+				if (friendly) {
+					jawnos_help_chat.push({ role: 'assistant', content: friendly });
+					helpChatAdd('guide', friendly);
+					return;
+				}
+				helpAgentStep(n + 1);
+			});
+		},
+		error: function () { helpChatAdd('step', 'The guide could not be reached.'); }
+	});
+}
+
+// ---- F1 and context --------------------------------------------------------
+
 function helpOpenContext() {
 	var topic = window.jawnos_help_topic;
 	var source_app = null;
@@ -103,46 +262,6 @@ function helpOpenContext() {
 	}
 	jawnos_help_source = source_app ? helpSourceFrom(source_app) : null;
 	helpOpener(topic);
-}
-
-// ---- the guide ------------------------------------------------------------
-
-function helpFormatAnswer(text) {
-	var safe = $('<div>').text(text || '').html();
-	safe = safe.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-	return '<p style="margin:0 0 10px;">' + safe + '</p>';
-}
-
-function helpAsk() {
-	var model = $('#help_model').val();
-	var question = $.trim($('#help_question').val() || '');
-	var answer = $('#help_answer');
-	if (!model) {
-		answer.html('<i>Choose a model in the row above first — the guide needs one to think with.</i>');
-		return;
-	}
-	if (!question) { question = 'Walk me through this step by step.'; }
-	var ctx = jawnos_help_source;
-	if (!ctx || !ctx.title) {
-		var top = (typeof topWindow === 'function') ? topWindow() : null;
-		if (top && top !== 'help') { ctx = helpSourceFrom(top); }
-	}
-	answer.html('<i>Thinking…</i>');
-	$.ajax({
-		url: '/manager/help/ask',
-		type: 'POST',
-		data: {
-			topic: jawnos_help_topic_current || '',
-			question: question,
-			context: JSON.stringify(ctx || {}),
-			model: model
-		},
-		success: function (r) {
-			if (r && r.error) { answer.html('<i>' + $('<div>').text(r.error).html() + '</i>'); return; }
-			answer.html(helpFormatAnswer(r && r.answer));
-		},
-		error: function () { answer.html('<i>The guide could not be reached. Is a model running?</i>'); }
-	});
 }
 
 // ---- wiring ---------------------------------------------------------------
@@ -160,6 +279,7 @@ $(document).on('click', '.help_button', function (e) {
 });
 
 $(document).on('click', '.help_topic_link', function () {
+	helpShowChat(false);
 	helpBody($(this).attr('topic'));
 });
 
@@ -169,8 +289,8 @@ $(document).on('click', '.help_open_app', function () {
 });
 
 $(document).on('click', '#help_ask', function () { helpAsk(); });
+$(document).on('click', '#help_topics_back', function () { helpTopicsBack(); });
 
-// Enter in the question box sends; Shift+Enter makes a newline.
 $(document).on('keydown', '#help_question', function (e) {
 	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); helpAsk(); }
 });
@@ -187,8 +307,6 @@ $(document).on('input', '#help_search', function () {
 	help_search_timer = setTimeout(function () { helpBody(null, q); }, 250);
 });
 
-// Remember what the pointer is over, so F1 can answer for it. universal.js does
-// the label; here we only keep the topic id.
 $(document).on('mouseenter', '[help]', function () {
 	window.jawnos_help_topic = $(this).attr('help');
 });

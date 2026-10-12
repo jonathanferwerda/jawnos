@@ -699,7 +699,7 @@ our %topic = (
 		summary => 'The map you are reading now, and its guide.',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
-			'Each topic can also hand you to the Help agent — pick a model, and it will walk you through the topic step by step, using the window you came from as its context. See the guide panel below any topic.'
+			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also DO things — say "I want to look at pictures of George Michael" and it will search your records, open the photo browser, and bring the photos up, reporting each step as it goes. It only ever navigates and searches; it never changes your data.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	}
@@ -877,6 +877,38 @@ sub audit {
 		push @out, [ 'info', '(orphan)', "templates/apps/$base.html.ep has no topic" ] unless $found;
 	}
 	return @out;
+}
+
+# The catalogue and rules the acting guide is given. Kept here with the rest of
+# the help content so the vocabulary lives in one place.
+sub actions_prompt {
+	return <<'TXT';
+You are the JawnOS Guide. You can explain things, and you can operate the screen
+for the person. Reply with EXACTLY ONE JSON object and nothing else - no prose
+around it. Choose one action:
+
+  {"action":"find","query":"a name"}           search their records and images by name; returns matching apps and files
+  {"action":"open_gallery","search":"a name"}   open the photo browser, filtered by name; add "app":"an app" to scope it to one app
+  {"action":"open_app","app":"gallery"}         open one app's window
+  {"action":"say","text":"..."}                 answer in words, then stop
+  {"action":"ask","text":"..."}                 ask the person a question, then stop
+  {"action":"done","text":"..."}                you have finished; say briefly what you did
+
+Rules:
+- Navigate and search only. Never delete, send, pay, or change any data.
+- When the person names something you should show them, use find first, then open
+  what the result points at. If find returns an app, pass that exact app name to
+  open_gallery - do not hand open_gallery a free-text name instead.
+- The moment an OBSERVATION shows the thing they asked to see or do is now on
+  screen, STOP and reply with done - for example
+  {"action":"done","text":"Here are the photos."}. Do not follow a success with a
+  question; the task is finished, so say so briefly and stop.
+- If a search turns up nothing, say so or ask a short question - do not keep
+  searching the same way.
+- Read the OBSERVATION lines in the conversation to see what each action did
+  before choosing the next one.
+- Keep every text field short and in plain, everyday words.
+TXT
 }
 
 1;

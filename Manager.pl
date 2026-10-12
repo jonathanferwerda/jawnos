@@ -17366,6 +17366,78 @@ post '/manager/help/ask' => sub($c) {
 	$c->render(json => { answer => $text });
 };
 
+# One turn of the acting guide: the model picks the next action, the browser runs
+# it. The vocabulary is closed - anything the model returns outside it becomes a
+# plain reply, so a model can never reach past the client's fixed verbs.
+post '/manager/help/act' => sub($c) {
+	my $model = $c->param('model');
+	my $topic = $c->param('topic');
+	my $context = eval { decode_json $c->param('context') } || {};
+	my $transcript = eval { decode_json $c->param('transcript') } || [];
+	if (!$model) {
+		$c->render(json => { error => 'No model is selected for the guide.' });
+		return;
+	}
+	my $t = $topic ? &help::get($topic) : undef;
+	my $system = &help::actions_prompt() . "\n\n";
+	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
+	$system .= &help::briefing($topic) . "\n" if $topic;
+	$system .= &help::inventory($topic) . "\n" if $topic;
+	if ($context->{'title'}) {
+		$system .= 'They are looking at the window \'' . $context->{'title'} . '\''
+			. ($context->{'view'} ? ' (view: ' . $context->{'view'} . ')' : '')
+			. ($context->{'appointment'} ? ' (appointment: ' . $context->{'appointment'} . ')' : '') . ".\n";
+	}
+	my @lines;
+	foreach my $m ( @{$transcript} ) {
+		my $role = $m->{'role'} || 'user';
+		my $label = $role eq 'tool' ? 'OBSERVATION' : ($role eq 'assistant' ? 'ASSISTANT' : 'USER');
+		push @lines, $label . ': ' . ($m->{'content'} || '');
+	}
+	push @lines, '', 'Reply with the single next JSON action.';
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines));
+	if ($err || !$text) {
+		$c->render(json => { error => $err || 'the guide returned nothing readable' });
+		return;
+	}
+	my $action = eval { decode_json $text };
+	unless ($action && $action->{'action'}) {
+		if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+	}
+	my %allowed = map { $_ => 1 } qw(find open_gallery open_app say ask done);
+	if ($action && $action->{'action'} && $allowed{ $action->{'action'} }) {
+		$c->render(json => { action => $action, raw => $text });
+	}
+	else {
+		$c->render(json => { action => { action => 'say', text => $text } });
+	}
+};
+
+# What the guide's find action sees: appointments whose app, file or notes match,
+# summarised as the apps involved and a few matching file names.
+get '/manager/help/find' => sub($c) {
+	my $q = $c->param('q') // '';
+	if (!length $q) {
+		$c->render(json => { query => $q, count => 0, apps => [], files => [] });
+		return;
+	}
+	my $like = '%' . join('%', split /\s+/, $q) . '%';
+	my $rows = &subs::db_query('select app, uuid, file, notes from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
+	my (%apps, %files);
+	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
+	foreach my $r ( @{$rows} ) {
+		$apps{ $r->{'app'} }++ if $r->{'app'};
+		my $fl = eval { decode_json $r->{'file'} } || [];
+		foreach my $f ( @{$fl} ) {
+			$files{ $f->{'name'} } = 1 if $f->{'name'} && lc($f->{'name'}) =~ /$fpat/i;
+		}
+	}
+	my @apps = map { { app => $_, count => $apps{$_} } } sort { $apps{$b} <=> $apps{$a} } keys %apps;
+	my @all = sort keys %files;
+	@all = @all[0 .. 7] if @all > 8;
+	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all });
+};
+
 post '/manager/handbook/settings' => sub ($c) {
 	my $setting = $c->param('setting');
 	my $value = $c->param('value');
