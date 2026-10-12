@@ -1273,13 +1273,15 @@ function windowStacker(app) {
 	var visible = $('.wind').filter(':visible');
 	if (visible.length == 0) { return; }
 
-	// the cascade as it stands, back of the pile first. Vertical and z order agree
-	// under the cascade, so the front (highest z, lowest bar) sorts last.
+	// the pile by z-index - the back (lowest z) first, so the top of the pile
+	// (the front window, highest z) is last. z is the pile's own order: a window
+	// dragged about on screen keeps its place in it, where sorting by height would
+	// mistake a window merely dragged low for the one in front.
 	var order = visible.sort(function (a, b) {
-		var ta = parseFloat($(a).css('top')) || 0;
-		var tb = parseFloat($(b).css('top')) || 0;
-		if (ta !== tb) { return ta - tb; }
-		return (parseInt($(a).css('z-index'), 10) || 0) - (parseInt($(b).css('z-index'), 10) || 0);
+		var za = parseInt($(a).css('z-index'), 10) || 0;
+		var zb = parseInt($(b).css('z-index'), 10) || 0;
+		if (za !== zb) { return za - zb; }
+		return (parseFloat($(a).css('top')) || 0) - (parseFloat($(b).css('top')) || 0);
 	}).toArray();
 
 	if (app) {
@@ -1302,8 +1304,8 @@ function windowStacker(app) {
 		top_level_now = top_level_now + order.length;
 	}
 
-	// repack the cascade: one title bar per step from the top limit down, so a
-	// closed window leaves no gap and the bars sit flush
+	// re-cascade the pile by that order: one title bar per step from the top
+	// limit down, so a closed window leaves no gap and the bars sit flush
 	var vStep = $(order[order.length - 1]).find('.top_navbar').outerHeight() || 40;
 	var start = windowTopLimit();
 	$(order).each(function (slot) { $(this).css({ 'top': start + (slot * vStep) }); });
