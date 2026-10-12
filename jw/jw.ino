@@ -230,6 +230,7 @@ static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
 static bool room_has_buttons(int r);
 static void screen_gesture(lv_event_t *e);
+static void ble_push_steps();
 void setting_room();
 String chat_room;
 bool loraChatBroadcaster = false;
@@ -237,6 +238,8 @@ bool loraChatReceiver = false;
 bool stepCounter = true;
 uint32_t steps;
 uint32_t stepSampleMillis = 0;
+// the pedometer value at the last BLE hand-off: what the next push deltas from
+static uint32_t bleStepsBase = 0;
 JSONVar stepped;
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
@@ -1205,6 +1208,7 @@ void step_writer() {
   Serial.print(" across ");
   Serial.print((int)stepped.length());
   Serial.println(" samples");
+  ble_push_steps();   // hand the new count to a connected bridge, if any
 }
 
 #include "esp_mac.h" // Handles direct low-level chip hardware queries
@@ -1424,6 +1428,7 @@ void loop() {
   if (deviceConnected && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
     ble_link_up_at = 0;
     ble_flush_wigi();
+    ble_push_steps();   // recover the steps taken while the link was down
   }
   if (loraChatReceiver) {
     readRadio();
@@ -3236,6 +3241,52 @@ void ble_flush_wigi() {
     delay(50);
   }
   wigi = remainder;
+}
+
+// The step count used to leave the watch only over its own access point: the
+// webapp's WIGI collection hit /wigi, handed the samples over and reset the
+// pedometer. A wrist that only ever talks BLE recorded no steps at all. This
+// hands the count over the same link the taps use, as one small message that
+// carries `base` - the cumulative value just before it. The server deltas the
+// sample against that base, exactly as the whole-array AP batch is deltas
+// against zero, so the pedometer is left running (the face keeps its count) and
+// neither side has to remember anything across a message: a restart cannot
+// double-count. A count that went backwards means the AP path reset the
+// pedometer underneath us, and base drops to zero with it.
+static void ble_push_steps() {
+  if (!deviceConnected || pTxCharacteristic == nullptr) {
+    return;
+  }
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return;
+  }
+  uint32_t counter = watch.getStepCounter();
+  if (counter == bleStepsBase) {
+    return;                    // nothing since the last hand-off
+  }
+  if (counter < bleStepsBase) {
+    bleStepsBase = 0;          // a reset happened elsewhere
+  }
+  JSONVar sample = JSON.parse("{}");
+  sample["timestamp"] = timestamp_maker();
+  sample["steps"] = (double)counter;
+  JSONVar data = JSON.parse("[]");
+  data[0] = sample;
+  JSONVar envelope = JSON.parse("{}");
+  envelope["type"] = "steps";
+  envelope["chip_id"] = chip_id_maker();
+  envelope["edt"] = "watch";
+  envelope["base"] = (double)bleStepsBase;
+  envelope["data"] = data;
+  String payload = JSON.stringify(envelope);
+  // one notify only: a truncated message is a silently lost batch
+  if (payload.length() > 480) {
+    return;
+  }
+  pTxCharacteristic->setValue(payload.c_str());
+  pTxCharacteristic->notify();
+  bleStepsBase = counter;
+  Serial.printf("[ble] steps %u pushed\n", (unsigned)counter);
 }
 
 void mb1(lv_event_t *e) {

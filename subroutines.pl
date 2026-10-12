@@ -1854,6 +1854,15 @@ sub ble_message_processor() {
 		}
 		return;
 	}
+	if ($type && $type eq 'steps') {
+		# the watch hands its pedometer over the BLE link instead of its own
+		# access point; the same ingest the /wigi collection uses
+		my $samples = $msg->{'data'};
+		&subs::step_ingest($samples, $msg->{'base'});
+		my $count = ref $samples eq 'ARRAY' ? scalar @{$samples} : 0;
+		$log->info('BLE steps for ' . ($msg->{'chip_id'} || '?') . ': ' . $count . ' samples');
+		return;
+	}
 	my $url = $msg->{'url'};
 	if (!$url) {
 		$log->info('BLE message without url: ' . $data);
@@ -2472,6 +2481,49 @@ sub manufacturer_grabber() {
 	$gb::abilities->{'manufacturer'}->{'options'} = $mans;
 }
 
+sub step_ingest() {
+	# Turn a batch of the pedometer's cumulative samples into measure
+	# appointments - the shape the AP's /wigi collection has always produced.
+	# Each sample's `steps` is the watch's running count; what gets recorded is
+	# the difference from the sample before it, and `$base` is the cumulative
+	# value just before the batch. The AP path sends the whole array with base
+	# zero; a BLE push sends one small message carrying its own base, so both
+	# delta the same way. A count that went backwards means the pedometer was
+	# reset under us (the AP path does that): that sample then stands on its
+	# own rather than losing the steps.
+	my ($steps, $base) = @_;
+	return unless ref $steps eq 'ARRAY' && scalar @{$steps};
+	my $last_step = $base || 0;
+	my (@measures,$first_step);
+	foreach my $step ( @{$steps} ) {
+		next unless ref $step eq 'HASH' && defined $step->{'steps'};
+		my $ls = $step->{'steps'};
+		$step->{'steps'} = $step->{'steps'} - $last_step;
+		if ($step->{'steps'} < 0) {
+			$step->{'steps'} = $ls;
+		}
+		$last_step = $ls;
+		$step->{'timestamp'} = $step->{'timestamp'} * 1000;
+		if ($step->{'steps'} > 0 && !$first_step) {
+			$first_step = $step->{'timestamp'};
+		}
+		if ($step->{'timestamp'} && $step->{'steps'} > 0) {
+			$step->{'uuid'} = &subs::random_string_creator(19);
+			push @measures, $step;
+		}
+	}
+	return unless scalar @measures > 0;
+	my $jstep = encode_json \@measures;
+	&Manager::appointment_writer(&subs::controller_builder(), {
+		app => &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' })),
+		type => 'measure',
+		measures => $jstep,
+		timestamp => &subs::rightNow(),
+		seen => 'yes',
+		duration => $first_step ? &subs::rightNow() - $first_step : 1
+	});
+}
+
 sub embedded_wigi() {
 	my $data = shift;
 	my $ip = $data->{'ip'};
@@ -2517,34 +2569,7 @@ sub embedded_wigi() {
 					});
 				}
 			}
-			my $last_step = 0;
-			my (@measures,$first_step);
-			foreach my $step ( @{$steps} ) {
-
-				my $ls = $step->{'steps'};
-				$step->{'steps'} = $step->{'steps'} - $last_step;
-
-				$last_step = $ls;
-				$step->{'timestamp'} = $step->{'timestamp'} * 1000;
-				if ($step->{'steps'} > 0 && !$first_step) {
-					$first_step = $step->{'timestamp'};
-				}
-				if ($step->{'timestamp'} && $step->{'steps'} > 0) {
-					$step->{'uuid'} = &subs::random_string_creator(19);
-					push @measures, $step;
-				}
-			}
-			if (scalar @measures > 0) {
-				my $jstep = encode_json \@measures;
-				&Manager::appointment_writer(&subs::controller_builder(), {
-					app => &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' })),
-					type => 'measure',
-					measures => $jstep,
-					timestamp => &subs::rightNow(),
-					seen => 'yes',
-					duration => $first_step ? &subs::rightNow() - $first_step : 1
-				});
-			}
+			&subs::step_ingest($steps);
 		}
 
 	}
