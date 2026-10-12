@@ -1963,6 +1963,37 @@ sub voice_command_apply() {
 	return $db_data;
 }
 
+sub voice_note_store() {
+	# A spoken clip with no wake word is not a failed command, it is a note: keep
+	# the transcript so it turns up in the Notes app, to be sorted out later. This
+	# is the whole 'audio that did not match the command word' path - the clip
+	# already reached us (over BLE or WiFi), so nothing extra has to be collected.
+	my ($text) = @_;
+	return unless defined $text;
+	my $clean = $text;
+	$clean =~ s/\s+/ /g;
+	$clean =~ s/^\s+|\s+$//g;
+	# whisper annotates non-speech as [BLANK_AUDIO] / (music) / [ Silence ]; with
+	# those removed, a clip that actually said nothing is not a note
+	my $spoken = $clean;
+	$spoken =~ s/[\[\(][^\]\)]*[\]\)]//g;
+	$spoken =~ s/\s+/ /g;
+	$spoken =~ s/^\s+|\s+$//g;
+	return unless length $spoken;
+	my $now = &subs::rightNow();
+	&subs::db_insert('appointments', {
+		app => 'notes',
+		timestamp => $now,
+		server_time => $now,
+		type => 'note',
+		notes => $clean,
+		uuid => &subs::random_string_creator(21),
+		seen => 'yes'
+	});
+	$log->info('voice: note stored (' . $clean . ')');
+	return $clean;
+}
+
 sub voice_ingest() {
 	# Audio -> text -> action. The single entry both the WiFi route and the BLE
 	# bridge funnel into, so the two transports behave identically.
@@ -1974,6 +2005,9 @@ sub voice_ingest() {
 	my $cmd = &subs::voice_command_parse($text);
 	if (($cmd->{'status'} || '') ne 'ok') {
 		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
+		# no wake word means it was not addressed to us as a command: file it as
+		# a note so it is not simply thrown away
+		&subs::voice_note_store($text) if ($cmd->{'status'} || '') eq 'no_wake';
 		return $cmd;
 	}
 	# Match the target against the apps the system actually knows (the settings

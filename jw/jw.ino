@@ -4007,15 +4007,17 @@ void setting_room() {
       configure_button("WiFi Send", wifi_lora_send, 125, 110, 105, 56, lv_color_hex(0xdafc5d));
       break;
     default:
-      // power and the config file
-      configure_button("Sleep", lightSleep_toggle, 10, 46, 105, 56,
+      // power, voice, and the config file. Two columns over three short rows so
+      // the whole page stays above the Rom/Clk/Set/Net row that button_writer()
+      // draws along the bottom of every room (y=190); a full-width Voice button
+      // at the old y=174 sat on top of it.
+      configure_button("Sleep", lightSleep_toggle, 10, 46, 105, 42,
                        lv_color_hex(lightSleep ? 0x5afcdd : 0xb0b0b0));
-      configure_button("Save", configSaveButton, 125, 46, 105, 56, lv_color_hex(0x61b3ff));
-      configure_button("Restore", configRestoreButton, 10, 110, 105, 56, lv_color_hex(0xffca38));
-      configure_button("Delete", configDeleteButton, 125, 110, 105, 56, lv_color_hex(0xde2716));
-      // hands-free voice: arm a VAD listener that ships a clip to the homebase
-      configure_button("Voice", voice_control, 10, 174, 220, 44,
+      configure_button("Voice", voice_control, 125, 46, 105, 42,
                        lv_color_hex(voiceCaptureEnabled ? 0x5afcdd : 0xb0b0b0));
+      configure_button("Save", configSaveButton, 10, 92, 105, 42, lv_color_hex(0x61b3ff));
+      configure_button("Restore", configRestoreButton, 125, 92, 105, 42, lv_color_hex(0xffca38));
+      configure_button("Delete", configDeleteButton, 10, 138, 220, 42, lv_color_hex(0xde2716));
       break;
   }
   full_refresh();

@@ -1,0 +1,15 @@
+<% 	no warnings 'uninitialized'; %>
+<%# The Notes app: what the watch heard when the words were not a command. Each
+    row is a transcript with the moment it was said; the list is newest first and
+    meant to be sorted into something more useful later. %>
+<div id="notes" style="width:100%;height:100%;overflow:scroll;background-color:var(--panel);padding:6px;">
+	<% if (!scalar @{$notes}) { %>
+		<span style="font-size:18px;">No notes yet. Anything the watch hears that is not a command lands here.</span>
+	<% } %>
+	<% foreach my $n ( @{$notes} ) { %>
+		<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;">
+			<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
+			<div><%= $n->{'notes'} %></div>
+		</div>
+	<% } %>
+</div>

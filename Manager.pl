@@ -3235,6 +3235,7 @@ my @manager_bundle_files = qw(
 	/js/manager/measures.js
 	/js/manager/monitor.js
 	/js/manager/folders.js
+	/js/manager/notes.js
 );
 my $manager_bundle_cache;
 get '/js/manager/bundle.js' => sub ($c) {
@@ -12289,6 +12290,19 @@ sub budget_autocalc($data) {
 get '/manager/notifications/list' => sub($c) {
 	my $content = &notification_grabber({});
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notifications', title => 'Notifications', contents => $content },$c->param('timestamp'));
+	$c->render(text => $contents);
+};
+
+get '/manager/notes' => sub($c) {
+	# Everything the watch recorded that did not name a command, transcribed and
+	# listed newest-first: the plainest possible reading of a note. The rows are
+	# written by subs::voice_note_store as the clips come in.
+	my $notes = &subs::db_query('select notes, timestamp, uuid from appointments where app = ? and type = ? order by timestamp desc limit 300', 'notes', 'note')->hashes;
+	my $content = $c->render_to_string(
+		template => 'notes/notes',
+		notes => $notes
+	);
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notes', title => 'Notes', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
 };
 
