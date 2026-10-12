@@ -11250,6 +11250,25 @@ sub git_binary {
 #   dirty     tracked files are modified; never touched (use force)
 #   error/no-repo  the checkout could not be read
 # A clean tree only, unless force, which skips the dirty guard and hard-resets.
+# Which of two dotted versions is newer - numerically, so 0.1.112 beats 0.1.79
+sub version_cmp {
+	my ($left, $right) = @_;
+	my @l = split /\./, ($left || '');
+	my @r = split /\./, ($right || '');
+	for my $i (0 .. 2) {
+		my $x = ($l[$i] // 0) + 0;
+		my $y = ($r[$i] // 0) + 0;
+		return $x <=> $y if $x != $y;
+	}
+	return 0;
+}
+sub version_newer {
+	my ($candidate, $mine) = @_;
+	return 0 unless ($candidate || '') =~ /\d/;
+	return 0 unless grep { /\d/ } split /\./, ($mine || '');
+	return &subs::version_cmp($candidate, $mine) > 0 ? 1 : 0;
+}
+
 sub git_repo_update {
 	my ($opts) = @_;
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -11286,10 +11305,70 @@ sub git_repo_update {
 	return ('reset', $out);
 }
 
+# Pull the code from a peer: it hands back a git bundle of its own HEAD (a
+# delta since ours when it can), we fetch it and fast-forward or reset by the
+# same rules as a pull from origin. This is the peer half of "whoever has the
+# newest is it", so a machine with no route to GitHub still follows the newest
+# machine - a laptop with commits not yet pushed, say.
+sub git_peer_update {
+	my ($opts) = @_;
+	my $repo = $opts->{'repo'} || &subs::home('~/jawnos');
+	my $rm = $opts->{'rm'};
+	my $git = &subs::git_binary();
+	return ('no-repo', '') unless -d "$repo/.git";
+	return ('no-peer', '') unless $rm;
+	# never touch a tree with local modifications to tracked files
+	my $dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>&1`;
+	return ('dirty', $dirty) if $dirty =~ /\S/;
+	my $head = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
+	my ($ua, $p) = &subs::peer_useragent($rm);
+	return ('no-peer', '') unless $ua;
+	my $url = $p->{'manager'} . '/manager/code_bundle?signatorial=' . &subs::signatorial_designer() . '&base=' . ($head || '');
+	my $res = eval { $ua->inactivity_timeout(60)->get($url)->result };
+	return ('peer-error', '') unless $res && $res->is_success && length($res->body || '');
+	require File::Temp;
+	my ($fh, $path) = File::Temp::tempfile(SUFFIX => '.bundle', UNLINK => 1);
+	binmode $fh;
+	print $fh $res->body;
+	close $fh;
+	my $fetch = `cd "$repo" && "$git" fetch "$path" HEAD 2>&1`;
+	my $target = `cd "$repo" && "$git" rev-parse FETCH_HEAD 2>/dev/null`; chomp $target;
+	unlink $path;
+	return ('fetch-error', $fetch) unless $target;
+	my $current = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $current;
+	return ('current', '') if $current eq $target;
+	if (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD $target >/dev/null 2>&1") == 0) {
+		my $out = `cd "$repo" && "$git" merge --ff-only $target 2>&1`;
+		return ('updated', $out);
+	}
+	# a rewritten history landing on the same work (git cherry marks every local
+	# commit '-') is a reset, not a conflict
+	my $cherry = `cd "$repo" && "$git" cherry $target HEAD 2>&1`;
+	return ('diverged', $cherry) if grep { /^\+/ } split /\n/, $cherry;
+	my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
+	return ('reset', $out);
+}
+
 sub git_watcher_check {
 	return unless -d '.git';
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
-	my ($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	# "whoever has the newest is it": a peer running a newer version is tried
+	# first - it may hold work not yet on origin - and origin is the fallback, so
+	# a machine with no reachable peer still follows GitHub.
+	my ($status, $out) = ('', '');
+	my $mine = &subs::jawn_version();
+	my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
+		grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
+	# only a few, so a run of dead peers cannot hold the watcher up
+	@peers = @peers[0 .. 2] if scalar @peers > 3;
+	foreach my $rm ( @peers ) {
+		my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm });
+		if ($st eq 'updated' || $st eq 'reset') { $status = "peer/$st"; $out = $o; last; }
+	}
+	unless ($status) {
+		($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	}
 	return unless $status eq 'updated' || $status eq 'reset';
 	if ($subs::logfile) {
 		my $after = `git rev-parse HEAD 2>/dev/null`; chomp $after;
