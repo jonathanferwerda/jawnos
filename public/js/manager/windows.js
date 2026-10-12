@@ -1143,6 +1143,10 @@ function windowDraggable(win) {
 				}
 				markerDragger(p.target.id,'stop');
 				windowDimensionSetter($('#' + p.target.id));
+				// a phone's pile is a cascade; a drag would leave the window over the
+				// others' bars and swallow their taps, so restack it - to the top of
+				// the pile - the moment the drag ends
+				if (windowPhoneChecker()) { windowStacker(win.attr('app'), true); }
 			}
 		});
 		// a phone keeps its windows the width of the screen: vertical only
@@ -1266,9 +1270,12 @@ function windowAligner() {
 // gives two jobs. Closing a window should close the gap - the bars below step up
 // into its place - and a tap on a title bar should walk the pile: the top of the
 // pile (the front window) drops to the bottom of the stack, and a window tapped
-// lower down rises to the top of the pile. Desks place windows by hand wherever
-// they like, so neither applies there and this is a no-op.
-function windowStacker(app) {
+// lower down rises to the top of the pile. A tap on a window's body, and the end
+// of a drag, restack too - they lift that window to the top of the pile - so no
+// window is left lying over the others' bars, swallowing their taps. Desks place
+// windows by hand wherever they like, so none of this applies there and it is a
+// no-op.
+function windowStacker(app, raise) {
 	if (!windowPhoneChecker()) { return; }
 	var visible = $('.wind').filter(':visible');
 	if (visible.length == 0) { return; }
@@ -1291,7 +1298,12 @@ function windowStacker(app) {
 		// z-index, which is the last in the order below
 		var front = order[order.length - 1];
 		var rest = order.filter(function (el) { return el !== front; });
-		if (target === front) {
+		if (raise) {
+			// a press that is not the pile's walk - a tap on a window's body, or the
+			// end of a drag - lifts that window to the top of the pile and leaves the
+			// rest in order, rather than the walk's front-to-foot rotation
+			order = order.filter(function (el) { return el !== target; }).concat([target]);
+		} else if (target === front) {
 			// a tap on the top of the pile walks it down to the bottom of the stack
 			order = [front].concat(rest);
 		} else {
@@ -1363,12 +1375,19 @@ function closeWindow(timestamp) {
 }
 
 $(document).on('click', '.wind', function(e) {
-	if (windowPhoneChecker() && $(e.target).closest('.top_navbar').length) {
-		// a phone's title-bar tap is a stack walk, handled by windowStacker
-		// from the .top_navbar handler; do not also raise the window here
+	var app = $(this).attr('app');
+	if (windowPhoneChecker()) {
+		if ($(e.target).closest('.top_navbar').length) {
+			// a phone's title-bar tap is a stack walk, handled by windowStacker
+			// from the .top_navbar handler; do not also touch the pile here
+			return;
+		}
+		// a press on a window's body lifts it to the top of the pile and restacks,
+		// so a window dragged over the others' bars cannot pin them and swallow
+		// their taps
+		windowStacker(app, true);
 		return;
 	}
-	var app = $(this).attr('app');
 	topLevelNow($(this));
 });
 
