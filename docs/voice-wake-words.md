@@ -69,10 +69,22 @@ use microWakeWord's own `vad.tflite` (no `esp-sr`), and add an external **I2S
 mic** (the Pico has none). The trained `.tflite` models are identical across
 watch, deck, laptop, and Pico.
 
+## Status
+
+- **Real (neural) VAD is in the watch firmware.** `jw/voice_vad.h` runs
+  `vad_model.h` (microWakeWord's `vad.tflite`) over the `micro_features`
+  front-end and returns a sliding-window speech decision; `jw.ino`'s listener
+  uses it in place of the old RMS gate. The tensor arena is in PSRAM (32 KB in
+  internal RAM starved the LCD's SPI DMA).
+- `micro_features` (the front-end) lives in `~/jawnos-fw/watch-libs/`, built by
+  `.shots/micro_features_vendor.sh`.
+- The interpreter is the ESP32 core's bundled `esp-tflite-micro`; nothing is
+  vendored for it.
+
 ## Next steps
 
-1. Build the microfrontend as a library (`watch-libs/`) + a wrapper that turns
-   10 ms of int16 into 40 features.
-2. Feed mic → features → interpreter → **`vad.tflite`** → real VAD (design A).
-   Flash + boot-check.
-3. Add a wake-word model; train `hey_jawn.tflite` on Colab; drop it in.
+1. Train `hey_jawn.tflite` (Colab) — see the plan above.
+2. Load it with the same runtime (a second model next to the VAD), and map the
+   `voice_trigger` wake-word values onto it in `voice_trigger_apply()`.
+3. Deck (`jt/`): same `voice_vad.h`/`micro_features` wiring (it already has
+   `esp_vad` and an ES7210 mic).
