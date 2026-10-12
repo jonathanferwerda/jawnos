@@ -9352,6 +9352,7 @@ get '/manager/inventory/information' => sub($c) {
 	my $y = $c->param('y');
 	my $start_timestamp = $c->param('start_timestamp');
 	my $end_timestamp = $c->param('end_timestamp');
+	my $zone = $c->param('zone');
 	my $returner = {
 		scope => $scope,
 		timestamp => $timestamp,
@@ -9366,6 +9367,7 @@ get '/manager/inventory/information' => sub($c) {
 		app => $app,
 		'x' => $x,
 		'y' => $y,
+		zone => $zone,
 		start_timestamp => $start_timestamp,
 		end_timestamp => $end_timestamp,
 		details => $returner->{'details'}
@@ -9373,6 +9375,126 @@ get '/manager/inventory/information' => sub($c) {
 
 	$c->render(json => $returner);
 };
+
+# A quick, plain-language reading of one cell of the inventory - its value, the
+# pace it is on if the app keeps a budget, how it sits against the recent
+# periods, and what the activity was made of - written by the same model the
+# evaluation uses. The panel asks for it after it has drawn, so a slow model
+# only leaves the summary a moment late rather than holding the window shut.
+get '/manager/inventory/summary' => sub($c) {
+	my $returner = &inventory_cell_summary({
+		app => &subs::unformat_name($c->param('app')),
+		scope => $c->param('scope'),
+		zone => $c->param('zone'),
+		timestamp => $c->param('timestamp'),
+		start => $c->param('start_timestamp'),
+		end => $c->param('end_timestamp'),
+	});
+	$c->render(json => $returner);
+};
+
+sub inventory_cell_summary($data) {
+	my $app = $data->{'app'};
+	my $scope = &subs::timespan_widener($data->{'scope'} || '') || 'week';
+	my $zone = $data->{'zone'} || 'this';
+	my $settings = &subs::settings_grabber({ app => $app });
+	my $display = $settings->{'s_display'} || 'occurences';
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my ($start, $end) = ($data->{'start'}, $data->{'end'});
+	unless ($start && $end) {
+		($start, $end) = &father_time({ scope => $scope, ts => $zone, lock => $settings->{'s_lock'}, timestamp => $timestamp });
+	}
+	my $appts = &subs::db_query('select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by timestamp', $app, $app, $start, $end)->hashes;
+	my $value = &inventory_window_value($appts, $display, $settings);
+	my $format = sub {
+		my $n = shift;
+		return '-' unless defined $n;
+		return &subs::duration_sayer($n / 1000) if $display eq 'duration';
+		return &subs::price_formatter($n) if $display eq 'total';
+		return sprintf('%.1f', $n);
+	};
+	# the budget this cell is held against, and the pace when it is the period now
+	# running - the same reading the inventory cell and its colour come from
+	my $budget;
+	if ($settings->{'budget'} && $settings->{'budget'} =~ /[0-9]/) {
+		my $b = &budget_calculator({
+			app => $app, budget => $settings->{'budget'}, circumstance => $display,
+			value => $value, scope => $scope, ts => $zone, settings => $settings
+		});
+		if ($b->{'budgeted'} && ($b->{'circumstance'} || '') eq $display) {
+			$budget = {
+				budgeted => $b->{'formatted_budgeted'},
+				status => $b->{'status'},
+				($zone eq 'this' && defined $b->{'elapsed'} && $b->{'elapsed'} < 1 ? (
+					on_track => $b->{'on_track'},
+					progress_percent => $b->{'progress'},
+					due_by_now => $b->{'formatted_on_target'},
+					projected => $b->{'formatted_projected'},
+				) : ()),
+			};
+		}
+	}
+	# the recent periods of the same clock, so the reading can say rising or falling
+	my $trends = &subs::evaluation_period_trends($app, 8);
+	# what the number was made of: the appointment types that ran in the window
+	my $made = &subs::db_query('select type, count(*) as c from appointments where (app = ? or model = ?) and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? group by type order by c desc', $app, $app, $start, $end)->hashes;
+	my @made_of = map { { type => ($_->{'type'} || 'record'), count => ($_->{'c'} + 0) } } @{$made}[0 .. ($#{$made} > 4 ? 4 : $#{$made})];
+	my $briefing = {
+		app => $app,
+		scope => $scope,
+		period => &subs::formatted_time($start) . ' to ' . &subs::formatted_time($end),
+		period_is_current => ($zone eq 'this' ? 1 : 0),
+		measure => $display,
+		value => $format->($value),
+		($budget ? (budget => $budget) : ()),
+		($trends->{$scope} ? (recent_periods_counts => $trends->{$scope}) : ()),
+		(scalar @made_of ? (made_of => \@made_of) : ()),
+	};
+	my $system = 'You summarise one period of one app\'s activity for someone glancing at a single statistic in JawnOS, a house that logs its life as timed appointments. A briefing follows: the app, the clock the period is on (scope: minute, hour, day, week, month or year), the period itself and whether it is the one now running (period_is_current), the measure the cell shows (measure) and its value, the budget if the app keeps one (budgeted, plus on_track, progress_percent, due_by_now and projected when the period is current), the recent counts of the same clock (recent_periods_counts, oldest first, the newest written count/percent so a part-run period is not read as a fall), and what the activity was made of (made_of: the appointment types that ran and how many). Write two to four short sentences, plain and specific, no headings, no bullets and no preamble: what the value is; whether it is on track for its budget, reading the pace when the period is current; how it sits against the recent periods (rising, falling, steady), naming the turn if there is one; and what most made up the number. Do not restate the labels or the raw figures as a list - say what they mean. Use only the numbers given.';
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
+	my ($text, $error);
+	if ($model) {
+		($text, $error) = &subs::evaluation_model_call($model, $system, encode_json($briefing));
+	}
+	else {
+		$error = 'no evaluation model is chosen';
+	}
+	unless ($text) {
+		# a plain fallback the panel can always show when the model is away
+		$text = 'This ' . $scope . ' shows ' . $format->($value) . '.';
+		if ($budget) {
+			$text .= ' The budget is ' . $budget->{'budgeted'} . '.';
+			$text .= ' On track: ' . $budget->{'on_track'} . ' (' . $budget->{'progress_percent'} . '% in; ' . $budget->{'due_by_now'} . ' due, projecting ' . $budget->{'projected'} . ').' if defined $budget->{'on_track'};
+		}
+		$text .= ' Recent periods, oldest first: ' . $trends->{$scope} . '.' if $trends->{$scope};
+		$text .= ' Mostly ' . join(', ', map { $_->{'type'} . ' x' . $_->{'count'} } @made_of) . '.' if scalar @made_of;
+	}
+	return { summary => $text, error => $error, briefing => $briefing };
+}
+
+# the value one window shows for the inventory's chosen measure, the way the
+# inventory buckets it (a running session read to now, a measure read off the
+# appointment's own readings)
+sub inventory_window_value($appts, $display, $settings) {
+	my $value = 0;
+	my $now = &subs::rightNow();
+	foreach my $a ( @{$appts} ) {
+		if ($display eq 'occurences') { $value += 1; }
+		elsif ($display eq 'duration') {
+			my $d = abs($a->{'duration'} || 0);
+			$d = $now - $a->{'timestamp'} if ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') && $a->{'timestamp'} && $a->{'timestamp'} < $now;
+			$value += $d;
+		}
+		elsif ($display eq 'total') { $value += abs($a->{'total'} || 0); }
+		else {
+			my $measures = eval { decode_json $a->{'measures'} } || [];
+			foreach my $m ( @{$measures} ) {
+				$value += $m->{$display} if defined $m->{$display} && $m->{$display} =~ /[0-9]/;
+			}
+		}
+	}
+	return $value;
+}
 
 get '/manager/inventory/details' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app'));
@@ -14127,11 +14249,20 @@ sub card_of_the_week() {
 	my $card;
 	my $cards = eval { decode_json &subs::setting_grabber({ app => 'cards', setting => 'week' }) } || [];
 	splice @{$cards}, 40;
-	my $last_card = $cards->[0];
+	my $last_card = $cards->[0] || {};
 	$card = $last_card->{'title'};
-	my @time = localtime($last_card->{'timestamp'} / 1000);
-	my @now = localtime(&subs::rightNow() / 1000);
-	if (sprintf("%.0f", $time[7] / 7) != sprintf("%.0f", $now[7] / 7)) {
+	# the week a moment is in, named by the Sunday it opens on, so the card turns
+	# over with the week the rest of the house counts - father_time's weeks start
+	# on Sunday. This used to divide yday by seven, which drifts across the year
+	# and here happened to turn the card on a Monday.
+	my $week_opens = sub {
+		my $ms = shift || 0;
+		my @t = localtime($ms / 1000);
+		my $sunday = timegm(0, 0, 0, $t[3], $t[4], $t[5]) - $t[6] * 86400;
+		my @d = gmtime($sunday);
+		return sprintf('%04d-%02d-%02d', $d[5] + 1900, $d[4] + 1, $d[3]);
+	};
+	if ($week_opens->($last_card->{'timestamp'}) ne $week_opens->(&subs::rightNow())) {
 		my $new_card = &random_card_picker();
 		$new_card =~ s/.png$//gi;
 		my $car = { title => $new_card, timestamp => &subs::rightNow() };

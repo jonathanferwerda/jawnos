@@ -586,6 +586,9 @@ function cardPicker(new_card) {
 				$('#deck_card').css({ 'height': '80%' });
 				$('#deck_history').html($(response.html).find('#deck_history').html());
 			}
+			// the deck stays hidden until a card is in it, so the window opens on
+			// the picked card rather than a title splash
+			$('#deck_card').show();
 			
 			$('#card_title').html(response.title).show();
 

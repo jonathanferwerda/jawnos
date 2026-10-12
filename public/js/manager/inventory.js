@@ -433,8 +433,9 @@ $(document).on('click', '.statistic_entry', function() {
 			end_timestamp: end_timestamp,
 		},
 		success: function(response) {
-			var id = $(response.html).attr('id');
-			$('.statistic_information_container[app="' + app + '"]').append(response.html);
+			var $html = $(response.html);
+			var id = $html.attr('id');
+			$('.statistic_information_container[app="' + app + '"]').append($html);
 			var info = $('#' + id);
 			if ((numeral(info.css('left')).value() + info.width()) > $(window).width()) {
 				var new_left = ($(window).width() - info.width() - 5);
@@ -449,6 +450,18 @@ $(document).on('click', '.statistic_entry', function() {
 			}
 			statisticGrapher(response.details,id + '_canvas', numeral(start_timestamp).value());
 			appointment_chron();
+			// the reading of the period arrives separately: the model can be slow, so
+			// the panel is drawn first and the summary fills in when it answers
+			var summary = $html.find('.statistic_summary');
+			$.ajax({
+				url: '/manager/inventory/summary',
+				type: 'GET',
+				data: { app: app, scope: scope, zone: zone, timestamp: (s.attr('inventory_timestamp') || timestamp), start_timestamp: start_timestamp, end_timestamp: end_timestamp },
+				success: function(r) {
+					summary.text((r && r.summary) ? r.summary : '');
+				},
+				error: function() { summary.text(''); }
+			});
 		}
 	});
 });
