@@ -398,13 +398,17 @@ function windowReorganizer(window_id) {
 				}
 			}
 			else {
-				var temp_placement = ( vStep * winCount ) + startingV;
+				// a phone cascades its bars flush; pull each up by the bar's border so
+				// the foot of this window and the frame of the one above meet as one
+				// line rather than two
+				var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
+				var temp_placement = ( vAdvance * winCount ) + startingV;
 				win.css({'top': temp_placement });
 
 				if (temp_placement > ($(window).height() - 100)) {
 					thisWinTop = Number(numeral(win.css('top')).format());
 					fullYCount = winCount;
-					win.css({ 'top': thisWinTop - (vStep * fullYCount) + startingV });
+					win.css({ 'top': thisWinTop - (vAdvance * fullYCount) + startingV });
 				}
 
 			}
@@ -1340,11 +1344,15 @@ function windowStacker(app, raise) {
 	// window down by the height of the bar above it - not one measured step for
 	// the whole pile - so the bars sit flush even when their heights differ (a
 	// single step against a bar of another height leaves a gap, or an overlap).
+	// Then pull it up by the bar's own border, so this bar's foot and the next
+	// window's frame land on one another and read as a single line, not two.
 	var y = windowTopLimit();
 	$(order).each(function () {
 		var win = $(this);
 		win.css({ 'top': y });
-		y = y + (win.find('.top_navbar').outerHeight() || 40);
+		var bar = win.find('.top_navbar');
+		var border = parseFloat(bar.css('border-top-width')) || 0;
+		y = y + (bar.outerHeight() || 40) - border;
 	});
 
 	// raise the new front through topLevelNow so its frame ring and the taskbar
