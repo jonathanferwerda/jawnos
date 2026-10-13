@@ -3316,6 +3316,7 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_SILENCE_MS 900         // trailing quiet that ends a command
 #define VOICE_MAX_MS 6000            // a command, not a lecture
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
+#define VOICE_WAKE_RMS_FLOOR 400     // frame RMS held to keep a wake capture going: the room sits well below, a spoken word above
 #define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
 #define VOICE_BLE_PACE_MS 45         // between parts: ~one per connection interval, so the controller queue does not overflow and drop parts
 #define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
@@ -3632,6 +3633,13 @@ static void voiceListenTask(void *pv) {
   }
   // bring in the voice model the setting asks for (VAD or a wake word)
   if (!voice_models_init(voice_trigger)) { Serial.println("[voice] no voice model loaded"); }
+  if (voiceDbg) {
+    // the display's SPI flush bounces through the DMA-capable pool, so watch it
+    // around the microphone: the I2S driver's buffers come from the same pool
+    Serial.printf("[voice] armed: int=%u dma=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
+  }
   // the microphone stays open across utterances: each pass captures one spoken
   // run, ships it, and - while the setting is on - goes straight back to
   // listening, so a command needs no button at all
@@ -3711,8 +3719,23 @@ static void voiceListenTask(void *pv) {
         }
         pcm_bytes += f.write((uint8_t *)folded, m * 2);
       }
+      // A wake-word model speaks only for its phrase: its output cannot be the
+      // silence detector once the capture has started, or every command ends
+      // about 900 ms after "hey jawn" and the clip carries the wake word and
+      // nothing else - which is exactly what the server heard (a blank or
+      // fragmentary transcript) on the walk. While recording a wake-word
+      // capture, end on the frame's energy instead: the room reads quiet, the
+      // command does not. A VAD capture keeps using the model, which is speech
+      // for as long as the person is speaking.
+      bool quiet = speech;
+      if (recording && voice_mode_name && strcmp(voice_mode_name, "vad") != 0) {
+        int32_t sq = 0;
+        for (int k = 0; k < n; k++) { sq += (int32_t)s[k] * (int32_t)s[k]; }
+        uint32_t rms = (uint32_t)sqrtf((float)sq / (float)(n > 0 ? n : 1));
+        quiet = (rms < VOICE_WAKE_RMS_FLOOR);
+      }
       rec_ms += VOICE_FRAME_MS;
-      silence_ms = speech ? 0 : silence_ms + VOICE_FRAME_MS;
+      silence_ms = quiet ? silence_ms + VOICE_FRAME_MS : 0;
       if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) { break; }
       if (rec_ms >= VOICE_MAX_MS) { break; }
     }
@@ -5223,6 +5246,18 @@ static void blesimframe_task(void *pv) {
   vTaskDelete(NULL);
 }
 
+static void heapfast_task(void *param) {
+  int secs = (int)(intptr_t)param;
+  uint32_t until = millis() + (uint32_t)(secs > 0 ? secs : 5) * 1000;
+  while ((int32_t)(until - millis()) > 0) {
+    Serial.printf("[dma] %u free=%u max=%u\n", millis(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+  vTaskDelete(NULL);
+}
+
 static void tilt_serial_command(String line) {
   line.trim();
   line.toLowerCase();
@@ -5397,11 +5432,33 @@ static void tilt_serial_command(String line) {
   }
   else if (line == "heap") {
     // what a room push has to work with: the largest single block matters as
-    // much as the total, because the payload needs one contiguous ~25 KB
+    // much as the total, because the payload needs one contiguous ~25 KB, and
+    // the display's SPI flush takes its bounce from the DMA-capable pool - the
+    // failures show up there first ("setup_dma_priv_buffer")
     Serial.printf("[heap] free=%u max=%u min=%u psram=%u/%u\n",
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
                   (unsigned)ESP.getMinFreeHeap(),
                   (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
+    Serial.printf("[heap] int=%u int_max=%u dma=%u dma_max=%u dma_min=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA));
+  }
+  else if (line.startsWith("heapfast")) {
+    // sample the DMA pool fast while a known-triggering sequence runs (a clip
+    // shipping while the screen repaints): the LCD's per-flush bounce fails in a
+    // dip that the one-shot 'heap' can miss. On core 0 so the ui keeps drawing.
+    int secs = line.substring(8).toInt();
+    xTaskCreatePinnedToCore(heapfast_task, "heapfast", 3072, (void *)(intptr_t)secs, 1, NULL, 0);
+  }
+  else if (line == "awake") {
+    // hold the screen on for console-driven testing (voice, LCD): rebase the
+    // timeout the way a touch does, so a probe needs no hand on the watch
+    buttonMillis = millis();
+    wrist_look_watch = false;
+    Serial.println("[console] screen timeout rebased");
   }
   else if (line == "time") {
     // the watch face reads the hardware clock; this says what both of them hold

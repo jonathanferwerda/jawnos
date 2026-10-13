@@ -44,8 +44,11 @@
 			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb" id="assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
 			<span style="flex:1;font-weight:bold;font-size:13px;opacity:.85;">Guide's associate</span>
 			<% my $guide_confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' }); %>
-			<label style="display:flex;align-items:center;gap:3px;font-size:11px;opacity:.85;cursor:pointer;white-space:nowrap;" hint="Confirmation Requirement: with this ticked, the Guide asks before it saves what it proposes; untick it and the Guide acts on its own"><input type="checkbox" id="assistant_confirm" <%= (defined $guide_confirm && $guide_confirm eq 'off') ? '' : 'checked' %>> Confirm</label>
+			<img id="assistant_config" hint="Configure the Guide's associate" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/set_button.png') %>" jawnos_icon="/images/make believe/set_button.png">
 			<img id="assistant_close" hint="Close" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" jawnos_icon="/images/make believe/cancel_button.png">
+		</div>
+		<div id="assistant_config_menu" style="position:absolute;top:38px;right:6px;display:none;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;">
+			<label style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;" hint="Confirmation Requirement: with this ticked, the Guide asks before it saves what it proposes; untick it and the Guide saves what it proposes without asking"><input type="checkbox" id="assistant_confirm" <%= (defined $guide_confirm && $guide_confirm eq 'off') ? '' : 'checked' %>> Confirm before saving</label>
 		</div>
 		<div class="assistant_chat_log" style="position:absolute;top:38px;bottom:46px;left:0;right:0;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
 		<div style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);">

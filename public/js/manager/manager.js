@@ -92,6 +92,17 @@ $(document).ready(function() {
 
 $(document).on('click', '#assistant_close', function() {
 	$('#assistant_view').hide();
+	$('#assistant_config_menu').hide();
+});
+
+// The configure button in the panel's navbar opens the small configuration menu
+// (today just the Confirmation Requirement); anywhere else closes it.
+$(document).on('click', '#assistant_config', function(e) {
+	e.stopPropagation();
+	$('#assistant_config_menu').toggle();
+});
+$(document).on('click', function(e) {
+	if (!$(e.target).closest('#assistant_config, #assistant_config_menu').length) { $('#assistant_config_menu').hide(); }
 });
 
 // The Confirmation Requirement, the tick in the panel's header: with it on the
@@ -309,7 +320,7 @@ async function assistantInitializer() {
 		revert: "false",
 		zIndex: 999999,
 		handle: '#assistant_header',
-		cancel: '#assistant_anchor, #assistant_close, #assistant_confirm, input, button, label, textarea',
+		cancel: '#assistant_anchor, #assistant_close, #assistant_config, #assistant_confirm, input, button, label, textarea',
 		drag: function(p, ui) {
 			// keep the panel on screen and clear of the taskbar, wherever it is dragged
 			var w = $(this).outerWidth(), h = $(this).outerHeight();

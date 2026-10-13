@@ -1,0 +1,96 @@
+Subject: [PATCH] LilyGoLib: stage PSRAM flush buffers through a preallocated internal-DMA bounce
+
+The ESP32-S3 SPI driver allocates a temporary DMA-capable buffer for every
+flush whose source buffer is not DMA-capable (the LVGL full-screen buffers
+live in PSRAM). When the DMA pool is tight the allocation fails and whole
+bands of the frame are dropped (setup_dma_priv_buffer / priv TX buffer).
+Stage whole rows through a preallocated internal-DMA buffer instead.
+
+Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
+(already applied in the local tree; the same edit carries the jawnos comments)
+
+--- a/LilyGoLib/src/display/LilyGoDispInterface.h
++++ b/LilyGoLib/src/display/LilyGoDispInterface.h
+@@ -386,6 +386,13 @@
+     esp_lcd_panel_handle_t panel_handle = NULL;
+     int _backlight;
+     uint8_t _rotation = 0;
++    // jawnos: preallocated internal-DMA staging for flushes whose source buffer
++    // lives in PSRAM. The ESP32-S3 SPI driver otherwise allocates a temporary
++    // DMA bounce for every flush, which fails outright when the DMA-capable
++    // pool is tight and drops whole bands of the frame ("setup_dma_priv_buffer:
++    // Failed to allocate priv TX buffer").
++    uint16_t *_bounce = nullptr;
++    size_t _bounce_pixels = 0;
+ public:
+     /** Current logical display size. */
+     uint16_t _width, _height;
+--- a/LilyGoLib/src/display/LilyGoDispInterface.cpp
++++ b/LilyGoLib/src/display/LilyGoDispInterface.cpp
+@@ -536,6 +536,11 @@
+ void LilyGoDispSPI::end()
+ {
+     assert(panel_handle);
++    if (_bounce) {
++        heap_caps_free(_bounce);
++        _bounce = nullptr;
++        _bounce_pixels = 0;
++    }
+     esp_lcd_panel_del(panel_handle);
+     esp_lcd_panel_io_del(io_handle);
+     spi_bus_free(SPI_DEV_HOST_ID);
+@@ -711,6 +716,18 @@
+     std::vector<uint16_t> draw_buf(_width * _height * 2, 0x000);
+     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, _width, _height, draw_buf.data());
+ 
++    // jawnos: the staging buffer for PSRAM flush sources (see pushColors). 8
++    // rows of the panel = 3,840 bytes, the same size the bus was sized for.
++    _bounce_pixels = (size_t)_width * 8;
++    _bounce = (uint16_t *)heap_caps_aligned_alloc(4, _bounce_pixels * sizeof(uint16_t),
++                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
++    if (!_bounce) {
++        _bounce_pixels = 0;
++        LILYGO_LOG_W("jawnos: SPI flush bounce not allocated; PSRAM flushes will bounce per transfer");
++    } else {
++        LILYGO_LOG_D("jawnos: SPI flush bounce %u bytes", (unsigned)(_bounce_pixels * sizeof(uint16_t)));
++    }
++
+     return true;
+ }
+ 
+@@ -749,6 +766,35 @@
+ 
+ void LilyGoDispSPI::pushColors(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t *color)
+ {
++    assert(panel_handle);
++    // jawnos: a PSRAM source (the LVGL full-screen buffers) makes the SPI driver
++    // allocate a temporary DMA bounce per flush; when the DMA-capable pool is
++    // tight that allocation fails and whole bands of the frame are dropped.
++    // Copy through our own preallocated internal-DMA buffer instead, whole rows
++    // at a time.
++    if (_bounce && color && x2 > 0 && y2 > 0 && !esp_ptr_dma_capable(color)) {
++        size_t rows = _bounce_pixels / x2;
++        if (rows < 1) { rows = 1; }
++        uint16_t *src = color;
++        uint16_t row = 0;
++        while (row < y2) {
++            size_t chunk = y2 - row;
++            if (chunk > rows) { chunk = rows; }
++            size_t n = (size_t)x2 * chunk;
++            memcpy(_bounce, src, n * sizeof(uint16_t));
++            esp_lcd_panel_draw_bitmap(panel_handle, x1, y1 + row, x1 + x2, y1 + row + chunk, _bounce);
++            src += n;
++            row += chunk;
++        }
++        return;
++    }
++    if (heap_caps_get_free_size(MALLOC_CAP_DMA) < 16384) {
++        // no bounce available: the driver's own temporary allocation is next, and
++        // this is the state that decides whether it fails
++        LILYGO_LOG_W("push %ux%u dma=%u max=%u", x2, y2,
++                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
++                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
++    }
+     esp_lcd_panel_draw_bitmap(panel_handle, x1, y1, x1 + x2, y1 + y2, color);
+ }
+ 

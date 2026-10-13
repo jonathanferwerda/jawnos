@@ -18530,27 +18530,47 @@ post '/manager/remote_command/send' => sub($c) {
 # ---- the Guide's write path: stage, then promote or drop ------------------
 # The Guide never writes an appointment straight in. It stages a proposal, the
 # person sees it, and only a promote turns it into a real appointment.
-post '/manager/help/stage' => sub($c) {
+# The Guide's write path as named subs, so the routes and the voice brain share
+# one implementation: a proposal staged by a spoken "remind me to ..." lands in
+# the same staged_appointments row a typed one would.
+sub guide_resolve_when($when) {
+	my $now = &subs::rightNow();
+	return $now unless defined $when && length $when;
+	return $when + 0 if $when =~ /^\d{10,}$/;
+	my $s = lc $when;
+	$s =~ s/^\s+|\s+$//g;
+	# the browser's helpResolveWhen takes "in 3 hours"; a spoken reminder uses
+	# the same shape, and str2time would not read it
+	if ($s =~ /^in\s+(\d+)\s*(minute|min|hour|hr|day|week)s?$/) {
+		my ($n, $u) = ($1, $2);
+		my $mult = ($u =~ /^min/) ? 60000 : ($u =~ /^h/) ? 3600000 : ($u =~ /^d/) ? 86400000 : 604800000;
+		return $now + $n * $mult;
+	}
+	return $now if $s eq 'now';
+	my $t = eval { str2time($when) };
+	return $t ? $t * 1000 : $now;
+}
+
+sub guide_stage_appointment($c, $params) {
 	my $uuid = &subs::random_string_creator(40);
 	my $now = &subs::rightNow();
-	my $app = &subs::unformat_name($c->param('app') || '');
-	my $type = $c->param('type') || 'usual';
-	my $timestamp = $c->param('timestamp') || $now;
-	my $title = $c->param('title') || '';
-	my $notes = $c->param('notes') || '';
-	my $data = $c->param('data') || '';
+	my $app = &subs::unformat_name($params->{'app'} || '');
+	my $type = $params->{'type'} || 'usual';
+	my $timestamp = $params->{'timestamp'} || $now;
+	my $title = $params->{'title'} || '';
+	my $notes = $params->{'notes'} || '';
+	my $data = $params->{'data'} || '';
 	&subs::db_insert('staged_appointments', {
-		uuid => $uuid, staged_time => $now, source => ($c->param('source') || 'guide'),
+		uuid => $uuid, staged_time => $now, source => ($params->{'source'} || 'guide'),
 		app => $app, type => $type, timestamp => $timestamp, title => $title,
-		notes => $notes, data => $data, device => &subs::device_setter(), status => 'pending'
+		notes => $notes, data => $data, device => ($params->{'device'} || &subs::device_setter()), status => 'pending'
 	});
-	$c->render(json => { staged => $uuid, app => $app, type => $type, timestamp => $timestamp, title => $title });
-};
+	return { staged => $uuid, app => $app, type => $type, timestamp => $timestamp, title => $title };
+}
 
-post '/manager/help/promote' => sub($c) {
-	my $uuid = $c->param('uuid');
+sub guide_promote_staged($c, $uuid) {
 	my $row = &subs::db_select('staged_appointments', undef, { uuid => $uuid })->hash;
-	unless ($row) { $c->render(json => { error => 'no such staged appointment' }); return; }
+	return { error => 'no such staged appointment' } unless $row;
 	my $real_uuid = &subs::random_string_creator(40);
 	my $notes = $row->{'title'} ? ($row->{'title'} . ($row->{'notes'} ? (" \x{2014} " . $row->{'notes'}) : '')) : $row->{'notes'};
 	# Write through appointment_writer, not straight to the table. A bare insert
@@ -18572,7 +18592,19 @@ post '/manager/help/promote' => sub($c) {
 	$appt->{'data'} = $row->{'data'} if defined $row->{'data'} && $row->{'data'} =~ /^\s*[\[\{]/;
 	&Manager::appointment_writer($c, $appt);
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
-	$c->render(json => { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} });
+	return { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} };
+}
+
+post '/manager/help/stage' => sub($c) {
+	$c->render(json => guide_stage_appointment($c, {
+		app => $c->param('app'), type => $c->param('type'), timestamp => $c->param('timestamp'),
+		title => $c->param('title'), notes => $c->param('notes'), data => $c->param('data'),
+		source => $c->param('source')
+	}));
+};
+
+post '/manager/help/promote' => sub($c) {
+	$c->render(json => guide_promote_staged($c, $c->param('uuid')));
 };
 
 post '/manager/help/discard' => sub($c) {

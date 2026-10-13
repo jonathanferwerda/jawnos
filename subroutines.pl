@@ -2132,12 +2132,11 @@ sub voice_clip_ack() {
 }
 
 sub voice_brain() {
-	# HAND-OFF: the voice assistant's brain. voice_ingest() calls this for an
-	# utterance that was addressed to us but is not a plain start/stop command,
-	# before it falls back to filing the transcript as a note. The intended brain
-	# is the guide (help::actions_prompt + the /manager/help/act action
-	# vocabulary), so a spoken request can act, answer aloud (via &subs::say_it)
-	# or ask back. This is a stub: implement it and the note fallback stops firing.
+	# The voice assistant's brain: an utterance addressed to us that is not a
+	# plain start/stop command goes to the guide's action vocabulary, so a spoken
+	# request can act (make an appointment, play something), answer aloud, or ask
+	# back. The guide's own model reads it; the verbs offered are only the ones a
+	# voice turn can carry out (there is no screen and no follow-up turn).
 	#
 	#   $text  the transcript. For a wake-word capture the phrase was already
 	#          consumed on the watch; for a VAD capture it opens with the phrase.
@@ -2145,9 +2144,76 @@ sub voice_brain() {
 	#          wake word), voice is the capture mode ('vad' or a wake phrase).
 	#
 	# Return a hashref { handled => 1, ... } to claim the utterance: the caller
-	# then acks the clip and stops. Return undef (or an empty hashref) and the
-	# caller files it as a note. Keep it quick, or run it in a subprocessor - the
-	# caller already holds a database handle and a fork would not survive it.
+	# then acks the clip and stops. Return undef and the caller files it as a
+	# note. Must keep the database handle it was given: no forking here beyond
+	# say_it's own child, which touches no database.
+	my ($text, $meta) = @_;
+	$meta ||= {};
+	return undef unless defined $text && length $text;
+	# the guide's own model (Configure -> Plat); without one the caller keeps the
+	# note fallback
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return undef unless $model;
+	my %voice_verbs = map { $_ => 1 } qw/say ask done measure where_when create play_music open_app/;
+	my $system = &help::actions_prompt(\%voice_verbs) . "\n\n";
+	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
+		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
+		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
+	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+	my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.");
+	my $action = $out ? eval { decode_json $out } : undef;
+	if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+	return undef unless $action && ref $action eq 'HASH' && $action->{'action'};
+	my $a = $action->{'action'};
+	# A make/create is the Guide's write path: stage a proposal, and the
+	# Confirmation Requirement decides whether the same breath saves it (the
+	# Confirm tick in the Guide's associate; off = save without asking).
+	if ($a eq 'create') {
+		my $when = $action->{'when'};
+		# no time named: the clip's own onset, so the appointment sits where the
+		# person said it, not where whisper finished
+		my $timestamp = (defined $when && length $when)
+			? &Manager::guide_resolve_when($when)
+			: ($meta->{'ts'} || &subs::rightNow());
+		my $staged = eval { &Manager::guide_stage_appointment(&subs::controller_builder(), {
+			app => $action->{'app'}, type => $action->{'type'}, timestamp => $timestamp,
+			title => $action->{'title'}, notes => $action->{'notes'},
+		}) };
+		return undef unless $staged && $staged->{'staged'};
+		my $what = $staged->{'title'} || &subs::format_name($staged->{'app'}) || 'it';
+		my $confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' });
+		if (defined $confirm && $confirm eq 'off') {
+			my $promoted = eval { &Manager::guide_promote_staged(&subs::controller_builder(), $staged->{'staged'}) };
+			if ($promoted && !$promoted->{'error'}) {
+				my $speech = 'Saved ' . $what . '.';
+				&subs::say_it($speech);
+				$log->info('voice: brain saved "' . $what . '"');
+				return { handled => 1, action => 'create', saved => 1, said => $speech };
+			}
+		}
+		my $speech = 'I staged ' . $what . '. Promote it in the Guide and it is saved.';
+		&subs::say_it($speech);
+		$log->info('voice: brain staged "' . $what . '"');
+		return { handled => 1, action => 'create', staged => $staged->{'staged'}, said => $speech };
+	}
+	# speaking verbs: answer out loud, nothing else to run
+	if ($a eq 'say' || $a eq 'ask' || $a eq 'done') {
+		my $speech = $action->{'text'} || '';
+		return undef unless length $speech;
+		&subs::say_it($speech);
+		$log->info('voice: brain said "' . $speech . '"');
+		return { handled => 1, action => $a, said => $speech };
+	}
+	# the acting verbs the server can run itself: measure/where read our own
+	# records, play_music/open_app reach the open JawnOS tabs over the socket
+	if ($a eq 'measure' || $a eq 'where_when' || $a eq 'play_music' || $a eq 'open_app') {
+		my $obs = eval { &Manager::remote_command_execute(&subs::controller_builder(), $action) };
+		return undef unless defined $obs && length $obs;
+		&subs::say_it($obs);
+		$log->info('voice: brain ' . $a . ' (' . $obs . ')');
+		return { handled => 1, action => $a, observation => $obs };
+	}
+	# anything else: undef lets the note fallback keep the transcript
 	return undef;
 }
 

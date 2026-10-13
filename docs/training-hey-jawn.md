@@ -82,6 +82,31 @@ notebook prints; raise the cutoff if it false-triggers, lower it if it misses.
   `voice_words[]` entry with its mode name and cutoff), and flash.
 - The same file works on the deck and (later) the Pico — train once.
 
+## Training the other phrases (Jawn Do)
+
+One model per phrase. "Jawn Do" is this notebook with two edits:
+
+```python
+target_word = 'jawn do'          # cell 2, "... + our target word"
+dst = "jawn_do.tflite"           # cell 11, the output copy
+```
+
+The ready-to-run version lives at `~/Downloads/jawn_do_colab.ipynb` (File →
+Upload notebook in Colab). Run all cells on a GPU runtime and download the model.
+
+**The trap that bit us:** the first "Jawn Do" model turned out to be a byte copy
+of `hey_jawn.tflite` (both `md5 a3da6184…`), so the watch could only ever fire on
+"hey jawn" and the setting looked broken. After downloading, check it is its own
+model before wiring anything in:
+
+    md5sum ~/Downloads/jawn_do.tflite ~/Downloads/hey_jawn.tflite   # must differ
+
+Then: `.shots/tflite_to_header.py jawn_do.tflite jw/jawn_do_model.h jawn_do_model`,
+build and flash, and set the watch to it (`vtrig jawn_do` over USB, or the Voice
+select in the Embedded panel, which pushes a Now Me). The `jawn_do` cutoff in
+`jw/voice_models.h` starts at 0.55; the ROC file the notebook prints (`tflite_streaming_roc.txt`)
+tells you the false-accept/hour at each cutoff to move it.
+
 ## Tips that matter for this phrase
 
 - "hey jawn" is two syllables and fairly distinctive — a much easier target than

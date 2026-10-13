@@ -124,8 +124,21 @@ watch, deck, laptop, and Pico.
   VAD read speech (peak 255) yet nothing recorded, so no clip and no orange ring.
   It now returns "is there speech now?". Debug the path over serial with
   `voicedbg on` (prints `frames/maxamp/peak/fires/stride` once a second).
-- **`hey_jawn`** and **`jawn_do`** (62 KB each, trained on Colab) are
-  embedded as `jw/hey_jawn_model.h` / `jw/jawn_do_model.h`.
+- **`hey_jawn`** is embedded as `jw/hey_jawn_model.h` (62 KB, trained on Colab).
+  **`jawn_do` is currently the same file under another name** — `jw/jawn_do_model.h`
+  is byte-identical to `hey_jawn_model.h` (md5 `a3da6184…`), so the watch can only
+  ever fire on "hey jawn" and the Jawn Do setting does nothing. Training the real
+  phrase is a Colab run away: `~/Downloads/jawn_do_colab.ipynb` is the notebook
+  with `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'` already set; run it,
+  then `.shots/tflite_to_header.py jawn_do.tflite jw/jawn_do_model.h jawn_do_model`
+  and rebuild. Check the new file is not byte-identical to `hey_jawn_model.h`
+  before flashing (that is exactly how this happened).
+- **A wake-word capture ends on frame energy, not on the model.** The model only
+  speaks for its phrase, so using its output as the silence detector ended every
+  command ~900 ms after "hey jawn" (the clip carried the wake word and nothing
+  else, and the server heard a blank/fragmentary transcript). While recording a
+  wake-word capture, `voiceListenTask` now ends on `VOICE_WAKE_RMS_FLOOR` instead;
+  a VAD capture still uses the model.
 - **The Embedded panel's voice select now arms the wake words too.**
   `voice_trigger_apply()` in `jw/jw.ino` asks `voice_models_has()` (true for `vad`
   and any phrase with a model), so picking a phrase in the panel starts the
@@ -136,7 +149,10 @@ watch, deck, laptop, and Pico.
   vendored for it.
 - The panel can't always push the setting over BLE (the phone usually owns the
   link), so the console has `vtrig hey_jawn` / `vtrig jawn_do` / `vtrig vad` /
-  `vtrig off` for tuning.
+  `vtrig off` for tuning. Two more console commands help testing with no hand on
+  the watch: `awake` rebases the screen timeout (a tilt-sim raise only holds the
+  screen ~5 s), and `heapfast <secs>` samples the DMA heap from a core-0 task
+  while a sequence runs.
 - **The payload path carries binary safely now, and the wake word persists.** The
   compressed daemon->watch payload is binary, but the BLE write callback built its
   chunk with `String(getValue().c_str())`, which stops at the first NUL -- every
