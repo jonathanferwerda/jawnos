@@ -3200,6 +3200,7 @@ my @manager_bundle_files = qw(
 	/js/manager/text_editor_variables.js
 	/js/manager/clothesline.js
 	/js/manager/manager.js
+	/js/manager/mapengine.js
 	/js/music.js
 	/js/images.js
 	/js/manager/configure.js
@@ -17190,6 +17191,75 @@ sub travel_grabber($c) {
 	return $contents;
 }
 
+# The measured maps, normalised for the client engine: a file URL the browser can
+# open plus the two things that place the picture on the globe - the home_plate (a
+# pixel at a latitude/longitude) and the scale bar (metres between two pixels).
+# Shared by the travel viewer and the continent background.
+sub travel_atlas_maps {
+	my $maps = shift || [];
+	my $out = [];
+	foreach my $map ( @{$maps} ) {
+		next unless $map->{'home_plate'} && $map->{'scale'};
+		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
+		my $f = $destination . $asset;
+		push @{$out}, {
+			name => $map->{'name'} || $map->{'app'} || $map->{'uuid'},
+			uuid => $map->{'uuid'},
+			app => $map->{'app'},
+			file => '/file_open?timestamp=' . ($map->{'server_time'} || 0) . '&file=' . $f . '&app=' . ($map->{'app'} || ''),
+			home_plate => $map->{'home_plate'},
+			scale => $map->{'scale'}
+		};
+	}
+	return $out;
+}
+
+# The machine's current position - the single row several writers (the headless
+# navigator, the browser, the tunnels, the reconnector) keep rewriting with type
+# 'temporary'. Returns undef when none has been recorded.
+sub travel_here_position {
+	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null order by server_time desc limit 1', 'temporary')->hashes->[0];
+	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
+}
+
+# Every place the continent has a fix for - one row per app, its latest - so the
+# background can show the places in relation to the current position. Types other
+# than a plain place (temporary above all) are set aside.
+sub travel_atlas_points {
+	my $rows = &subs::db_query('select app, latitude, longitude, type, max(timestamp) as timestamp from continent where latitude is not null group by app, type')->hashes;
+	my $points = [];
+	my $seen = {};
+	foreach my $con ( @{$rows} ) {
+		next if !$con->{'latitude'} || $con->{'latitude'} eq '';
+		next if defined $con->{'type'} && $con->{'type'} eq 'temporary';
+		my $app = $con->{'app'};
+		next if !$app || $seen->{$app}++;
+		my $set = &subs::settings_grabber({ app => $app });
+		next if $set->{'visible'} ne 'checked'; # the same places the travel viewer shows
+		push @{$points}, {
+			latitude => $con->{'latitude'} + 0,
+			longitude => $con->{'longitude'} + 0,
+			name => $set->{'name'} || $app,
+			colour => $set->{'colour'}
+		};
+	}
+	return $points;
+}
+
+get '/manager/travel/continent' => sub($c) {
+	my $settings = &subs::settings_grabber({ app => 'travel' });
+	my $maps = &travel_atlas_maps(eval { return decode_json $settings->{'maps'} } || []);
+	my $points = &travel_atlas_points();
+	my $here = &travel_here_position();
+	$c->render(json => {
+		maps => $maps,
+		points => $points,
+		here => $here,
+		provider => $settings->{'map_provider'} || 'none',
+		custom_url => $settings->{'map_custom_url'} || ''
+	});
+};
+
 get '/manager/travel/viewer' => sub($c) {
 	if ($c->param('settings')) {
 		my $set = eval { return decode_json $c->param('settings') } || {};
@@ -17242,6 +17312,10 @@ get '/manager/travel/viewer' => sub($c) {
 		start_time => $t,
 		end_time => $t2
 	};
+	# every measured map for the pan-able engine, and the machine's current
+	# position (the 'temporary' row) so the view opens on it when there is one
+	$proxies->{'all_maps'} = &travel_atlas_maps($maps);
+	$proxies->{'position'} = &travel_here_position();
 	my $locations = [];
 	if ($settings->{'home_plate_enabled'} eq 'enabled') {
 		my $home_plates = &subs::db_select('settings', undef, { setting => 'home_plate' })->hashes;

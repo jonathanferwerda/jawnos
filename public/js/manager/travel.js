@@ -26,109 +26,82 @@ function travelToggle() {
 }
 
 
-// Draw the appointments onto the map image at their true geographic positions.
-//
-// The map is georeferenced by two things recorded when it was measured:
-//   * home_plate: a pixel {x, y} plus the latitude/longitude it represents
-//   * scale: two pixel points (first/last) and `legend`, the ground distance in
-//     metres between them
-// So pixels-per-metre comes from the scale bar, and every point is projected
-// from (latitude, longitude) relative to the home plate. North is up.
-function mapCampus(timestamp, response, campus) {
-	var canvas = document.getElementById(campus);
-	if (!canvas) { return; }
-	var ctx = canvas.getContext('2d');
-	var zoom = numeral($('#travel_distance_range').val()).value() || 1;
-	var map_file = $('.travel_map_selector').find('option[selected]').attr('file');
-	var current_map = response ? response['current_map'] : null;
+// The travel map is drawn by jawnosMap (public/js/manager/mapengine.js): a pan-able
+// viewport that shows every measured map we have, each placed by the georeference it
+// carries (its home_plate pixel and scale bar), over an optional tile layer from a
+// chosen provider, with the continent points and the machine's current position on
+// top. Drag to pan, the slider to zoom.
+var travelMap;
+var travelBaseZoom = 16;
+var travelFramed = false;
 
-	function numberOrNull(value) {
-		var n = numeral(value).value();
-		return (n === null || n === undefined || isNaN(n)) ? null : n;
+function travelMapEngine() {
+	var canvas = document.getElementById('travel_campus');
+	if (!canvas || !window.jawnosMap) { return null; }
+	if (travelMap && travelMap.canvas === canvas) { return travelMap; }
+	// a fresh canvas (the window was reopened) needs a fresh engine
+	travelMap = window.jawnosMap.create('travel_campus', {
+		z: 16,
+		width: function() { return $('#travel_campus').parent().width() || 640; },
+		height: function() { return Math.max(240, Math.round($(window).height() * 0.6)); }
+	});
+	travelFramed = false;
+	return travelMap;
+}
+
+// Fill the provider picker from the engine's own table, so the two cannot drift.
+function travelProviderFill() {
+	var sel = $('.travel_provider');
+	if (!sel.length || sel.attr('filled') == 'yes' || !window.jawnosMap) { return; }
+	sel.attr('filled', 'yes');
+	var engines = window.jawnosMap.providers;
+	for (var key in engines) {
+		$('<option></option>').attr('value', key).text(engines[key].name).appendTo(sel);
 	}
+	sel.val(sel.attr('provider') || 'none');
+}
 
-	function drawMap(map) {
-		var plate = map['home_plate'];
-		var scale = map['scale'] || {};
+function applyTravelZoom() {
+	if (!travelMap) { return; }
+	var v = numeral($('#travel_distance_range').val()).value() || 1;
+	travelMap.setZoom(travelBaseZoom + Math.log(v) / Math.LN2);
+}
 
-		// Pixel coordinates were recorded against the image size shown when the
-		// map was measured; rescale them to the canvas (the image's natural size).
-		var sx = (plate['width'] > 0 && canvas.width > 0) ? canvas.width / plate['width'] : 1;
-		var sy = (plate['height'] > 0 && canvas.height > 0) ? canvas.height / plate['height'] : 1;
+function travelMapRender(response) {
+	if (!window.jawnosMap) { return; }
+	travelProviderFill();
+	var engine = travelMapEngine();
+	if (!engine) { return; }
+	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val());
+	engine.setMaps(response['all_maps'] || []);
 
-		var reference_x = numberOrNull(plate['x']) * sx;
-		var reference_y = numberOrNull(plate['y']) * sy;
-		var reference_latitude = numberOrNull(plate['latitude']);
-		var reference_longitude = numberOrNull(plate['longitude']);
-
-		// pixels-per-metre, measured from the drawn scale bar
-		var px_per_metre = 0;
-		if (scale['first'] && scale['last'] && numberOrNull(scale['legend']) > 0) {
-			var dx = (numberOrNull(scale['last']['x']) - numberOrNull(scale['first']['x'])) * sx;
-			var dy = (numberOrNull(scale['last']['y']) - numberOrNull(scale['first']['y'])) * sy;
-			var bar_px = Math.sqrt((dx * dx) + (dy * dy));
-			if (bar_px > 0) { px_per_metre = bar_px / numberOrNull(scale['legend']); }
-		}
-
-		var metres_per_degree = 6372800 * (Math.PI / 180);
-		var metres_per_degree_longitude = metres_per_degree * Math.cos(reference_latitude * (Math.PI / 180));
-
-		ctx.font = "400 " + (28 / zoom) + "px Arial";
-		ctx.strokeStyle = 'black';
-		ctx.textBaseline = 'middle';
-
-		// the home plate, straight from its recorded pixel position
-		ctx.beginPath();
-		ctx.fillStyle = 'black';
-		ctx.arc(reference_x, reference_y, 10, 0, (Math.PI * 2), true);
-		ctx.stroke();
-		ctx.fill();
-		ctx.fillText(plate['formatted_legend'] || plate['legend'] || '', reference_x + 14, reference_y);
-
-		if (!px_per_metre || reference_latitude === null || reference_longitude === null) { return; }
-
-		$.each(response['near'] || [], function(i, point) {
-			// the home plate is in this list too, but carries no settings
-			if (!point || !point['settings']) { return; }
-			var latitude = numberOrNull(point['latitude']);
-			var longitude = numberOrNull(point['longitude']);
-			if (latitude === null || longitude === null) { return; }
-
-			var east = (longitude - reference_longitude) * metres_per_degree_longitude;
-			var north = (latitude - reference_latitude) * metres_per_degree;
-			var x = reference_x + (east * px_per_metre);
-			var y = reference_y - (north * px_per_metre);
-
-			ctx.beginPath();
-			ctx.fillStyle = point['settings']['colour'] || 'black';
-			ctx.arc(x, y, 7, 0, (Math.PI * 2), true);
-			ctx.stroke();
-			ctx.fill();
-			ctx.fillStyle = 'black';
-			ctx.fillText(point['app'] || '', x + 14, y);
+	var points = [];
+	$.each(response['near'] || [], function(i, point) {
+		if (!point || !point['latitude'] || !point['longitude']) { return; }
+		if (point['settings'] && point['settings']['visible'] && point['settings']['visible'] != 'checked') { return; }
+		points.push({
+			lat: parseFloat(point['latitude']),
+			lon: parseFloat(point['longitude']),
+			label: point['app'] || '',
+			colour: (point['settings'] && point['settings']['colour']) || undefined
 		});
-	}
+	});
+	engine.setPoints(points);
 
-	function render(image) {
-		if (image) {
-			canvas.width = image.width;
-			canvas.height = image.height;
-			ctx.drawImage(image, 0, 0, image.width, image.height);
-		}
-		if (current_map && current_map['home_plate']) {
-			drawMap(current_map);
-		}
-		appointment_chron();
-	}
+	var pos = response['position'];
+	var hasPos = pos && pos['latitude'];
+	engine.setPosition(hasPos ? { lat: parseFloat(pos['latitude']), lon: parseFloat(pos['longitude']), label: pos['label'] || 'You are here' } : null);
 
-	if (map_file) {
-		var image = new Image();
-		image.onload = function() { render(image); };
-		image.src = map_file;
+	// frame the current position (with the maps around it) the first time; after
+	// that leave the view where the user panned it
+	if (!travelFramed) {
+		if (hasPos) { engine.focusOn(parseFloat(pos['latitude']), parseFloat(pos['longitude'])); }
+		else if ((response['all_maps'] || []).length) { engine.fitToMaps(); }
+		travelBaseZoom = engine.view().z;
+		travelFramed = true;
+		applyTravelZoom();
 	}
-	else {
-		render(null);
-	}
+	engine.draw();
 }
 
 function travelViewer(data) {
@@ -158,7 +131,7 @@ function travelViewer(data) {
 			mapData = response;
 			$('#travel_campus').show();
 			$('#travel_proxy_view').html(response['html']);
-			mapCampus(ts, response, 'travel_campus');
+			travelMapRender(response);
 			$('#travel_start_time').attr('timestamp', response['start_time']);
 			$('#travel_end_time').attr('timestamp', response['end_time']);
 			$('#travel_appt').val(response['settings']['search']);
@@ -385,24 +358,6 @@ $(document).on('change', '.travel_map_selector', function() {
 });
 
 
-$(document).on('mousemove touchmove click', '#travel_campus', function(m) {
-
-	if (m.which === 1 || m.originalEvent.type == 'touchmove') {
-
-		var x = m.originalEvent.clientX;
-		var y = m.originalEvent.clientY;
-		if (m.originalEvent.targetTouches) {
-			x = m.originalEvent.targetTouches[0].clientX;
-			y = m.originalEvent.targetTouches[0].clientY;
-		}
-		x = numeral(x - w.offset().left).value();
-		y = numeral(y - w.offset().top).value();
-
-
-
-	}
-});
-
 $(document).on('click', '.delete_travel_map', function() {
 	var a = $(this);
 	var sel = $('.travel_map_selector').find('option[selected]');
@@ -434,12 +389,22 @@ $(document).on('click', '.delete_travel_map', function() {
 	}
 });
 
-$(document).on('change mousewheel', '#travel_distance_range', function() {
+$(document).on('input change', '#travel_distance_range', function() {
 	var value = $(this).val();
-
-	$('#travel_campus').css({ 'zoom': value });
 	settingSetter({ 'app': 'travel', 'setting': 'campus_zoom', 'value': value });
-	mapCampus(timestamp, mapData, 'travel_campus');
+	applyTravelZoom();
+});
+
+$(document).on('change', '.travel_provider', function() {
+	var value = $(this).val();
+	settingSetter({ 'app': 'travel', 'setting': 'map_provider', 'value': value });
+	if (travelMap) { travelMap.setProvider(value, $('#travel_custom_url').val()); }
+});
+
+$(document).on('change', '#travel_custom_url', function() {
+	var value = $(this).val();
+	settingSetter({ 'app': 'travel', 'setting': 'map_custom_url', 'value': value });
+	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', value); }
 });
 
 $(document).on('click', '#travel_config_toggle', function() {

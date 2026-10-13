@@ -1,8 +1,88 @@
-// The continent: every place in the payload plotted by latitude/longitude,
-// auto-fitted to the points (with a floor on the span so one dot is not
-// magnified into nonsense) over a faint graticule, with labels where they fit.
+// The continent background: a pan-able map of every measured map we have, with the
+// places the continent knows and - front and centre - the machine's current position
+// (the row the writers keep rewriting with type 'temporary'). The map is drawn by
+// jawnosMap (public/js/manager/mapengine.js); its data comes from
+// /manager/travel/continent (maps + places + current position + the chosen provider).
+// When the engine is unavailable it falls back to the old fitted graticule of places.
 
-function continentPrinter(appts,sort) {
+var jawnosContinentMap;
+var jawnosContinentAt = 0;
+var jawnosContinentRefetch = 30000;
+
+function continentPrinter(appts, sort) {
+	var places = appts['__continent'] || [];
+
+	// no engine in the bundle? the fitted plot still tells the story
+	if (!window.jawnosMap) {
+		continentPlot(appts, sort);
+		return;
+	}
+
+	if (!jawnosContinentMap) {
+		jawnosContinentMap = window.jawnosMap.create('continent', {
+			z: 13,
+			width: function() { return $(window).width(); },
+			height: function() { return $(window).height(); }
+		});
+	}
+	var engine = jawnosContinentMap;
+	var canvas = document.getElementById('continent');
+	$(canvas).show();
+
+	// whatever the payload already carries, drawn at once while the fetch is out
+	if (places.length) {
+		engine.setPoints(continentPoints(places));
+	}
+	engine.draw();
+
+	// (re)fetch the atlas at most every jawnosContinentRefetch ms - graphicalize runs
+	// on every poll, the maps and the current position do not
+	var now = Date.now();
+	if (now - jawnosContinentAt < jawnosContinentRefetch) { return; }
+	jawnosContinentAt = now;
+	$.ajax({
+		url: '/manager/travel/continent',
+		type: 'GET',
+		success: function(response) {
+			engine.setProvider(response['provider'] || 'none', response['custom_url'] || '');
+			engine.setMaps(response['maps'] || []);
+			engine.setPoints((response['points'] || []).length ? response['points'] : continentPoints(places));
+
+			var here = response['here'];
+			if (here && here['latitude']) {
+				engine.setPosition({ lat: parseFloat(here['latitude']), lon: parseFloat(here['longitude']), label: here['label'] || 'You are here' });
+			}
+			else {
+				engine.setPosition(null);
+			}
+			// frame the current position (with the maps around it) - the whole point of
+			// the background is to show where you are in relation to the maps we have
+			if (!engine.__framed) {
+				if (here && here['latitude']) { engine.focusOn(parseFloat(here['latitude']), parseFloat(here['longitude'])); }
+				else { engine.fitToMaps(); }
+				engine.__framed = true;
+			}
+			engine.draw();
+		}
+	});
+}
+
+// jawnosMap points want lat/lon/label/colour; the payload's places spell them out.
+function continentPoints(places) {
+	var out = [];
+	$.each(places, function(i, v) {
+		var lat = parseFloat(v['latitude']);
+		var lon = parseFloat(v['longitude']);
+		if (!isFinite(lat) || !isFinite(lon)) { return; }
+		out.push({ lat: lat, lon: lon, label: v['name'] || v['app'] || '', colour: v['colour'] });
+	});
+	return out;
+}
+
+// The fallback: every place plotted by latitude/longitude, auto-fitted to the points
+// (with a floor on the span so one dot is not magnified into nonsense) over a faint
+// graticule, with labels where they fit.
+function continentPlot(appts, sort) {
 	var canvas = document.getElementById('continent');
 	canvas.width = $('#background').width();
 	canvas.height = $(window).height();

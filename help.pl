@@ -232,11 +232,25 @@ our %topic = (
 	},
 	'travel' => {
 		title => 'Travel', category => 'apps', app => 'travel',
-		summary => 'Location logging, history, distance and speed.',
+		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/continentprinter.js' ],
+		controls => [ 'Configure', 'Now', 'Delete' ],
+		verified => '2026-10-12',
+		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
-			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the device data the phone feeds in as well as anything logged by hand.'
+			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
+			'The map is a canvas you drag to pan and zoom with the slider (or the wheel). On it sit the measured maps you have stored — each one an image georeferenced when you measured it (a home plate plus a scale bar), so it lands at its true place on the globe. Pan toward another area and whichever of your maps covers it scrolls into view: that is how you move among the maps you have rather than looking at one at a time.',
+			'Above the measured maps you can lay a tile basemap from the Map picker: OpenStreetMap, OpenTopoMap, Carto, Esri imagery, a county GIS such as Lambton, or a Custom URL for any other service (paste its tile template; ArcGIS services are usually {z}/{y}/{x}). Leave it on None and nothing is fetched — the measured maps are all it needs, so it works offline.',
+			'The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows.',
+			'The continent desktop background draws the same map: your current position in relation to every map you have measured.'
 		],
-		related => [ 'measures', 'relational' ]
+		steps => [
+			'Open Travel. The view frames your maps and your current position.',
+			'Drag the map to pan, and use the slider to zoom; your maps scroll into view as you go.',
+			'Pick a Map source for a tile basemap, or leave it on None for the offline measured maps; paste a tile URL for Custom or Lambton.',
+			'Use the map selector to choose the current map and the trash to delete one; Search and the Start/End times scope the history shown.',
+			'Set Home Plate to mark the place your maps share as their reference.'
+		],
+		related => [ 'measures', 'relational', 'navigation' ]
 	},
 	'relational' => {
 		title => 'Contacts', category => 'apps', app => 'relational',
