@@ -3570,6 +3570,8 @@ static void voiceListenTask(void *pv) {
     }
     bool recording = false;
     int speech_run = 0;      // held-energy frames seen before a capture commits
+    bool have_onset = false; // the first speech of this utterance stamps the clip
+    uint32_t onset_ts = 0;
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
     File f;
     while (voiceListening) {
@@ -3605,6 +3607,10 @@ static void voiceListenTask(void *pv) {
         // does a running tap. Hold the energy for a short run before committing,
         // so the listener - and the orange ring - answer speech, not the room.
         if (!speech) { speech_run = 0; continue; }
+        // the clip's timestamp is when the utterance STARTED - the wake word, not
+        // the command word after a pause. Stamp the first speech frame and keep
+        // it, so a pause between "jawn do" and the command does not move it.
+        if (!have_onset) { have_onset = true; onset_ts = timestamp_maker(); }
         if (++speech_run < VOICE_ONSET_FRAMES) { continue; }
         Serial.println("[voice] speech (vad)");
         if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), VOICE_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
@@ -3614,7 +3620,7 @@ static void voiceListenTask(void *pv) {
         rec_ms = 0;
         silence_ms = 0;
         voiceRecording = true;
-        voice_clip_ts = timestamp_maker();
+        voice_clip_ts = have_onset ? (long)onset_ts : timestamp_maker();
         Serial.println("[voice] speech detected, recording");
       }
       // The clip ships at 8 kHz: half of what the microphone produced, so a BLE

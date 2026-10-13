@@ -29,11 +29,10 @@ use Time::HiRes qw(gettimeofday time);
 use Mojo::IOLoop;
 use Clone qw(clone);
 use MIME::Base64;
-use Authen::SASL;
-use Net::IMAP::Client;
-use MIME::Parser;
-use Email::Stuffer;
-use Email::Sender::Transport::SMTP;
+# The mail stack is heavy and used by exactly two routines (email_receiver and
+# email_send). Loading it per worker at boot is pure waste on a box that never
+# touches IMAP/SMTP, so each routine requires what it needs the first time it
+# runs. All five are used only as class methods, so there is no import to keep.
 use IO::Socket::UNIX;
 use IO::Select;
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
@@ -2016,7 +2015,9 @@ sub voice_command_apply() {
 	my $db_data = {
 		app => $app,
 		server_time => $now,
-		timestamp => $meta->{'timestamp'} || $now,
+		# the clip's own time (when the utterance began), not our processing time:
+		# voice_ingest carries it as 'ts'
+		timestamp => $meta->{'ts'} || $now,
 		type => ($want eq 'on' ? 'start' : 'stop'),
 		toggle => ($want eq 'on' ? 1 : 0),
 		uuid => &subs::random_string_creator(21),
@@ -7877,6 +7878,10 @@ sub email_receiver() {
 		}
 	}
 
+	require Net::IMAP::Client;
+	require MIME::Parser;
+	require Authen::SASL;
+
 	my $c = &subs::controller_builder();
 	my $email_servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
 	@{$email_servers} = grep { $_->{'active'} eq 'on' } @{$email_servers};
@@ -8210,6 +8215,9 @@ sub email_send() {
 	@{$email_server} = grep { $_->{'uuid'} eq $data->{'from'} } @{$email_server};
 	return { result => 'server no longer exists' } if scalar @{$email_server} == 0;
 	my $es = $email_server->[0];
+	require Email::Stuffer;
+	require Email::Sender::Transport::SMTP;
+	require Authen::SASL;
 	my $smtp_data = {
 		host          => $es->{'smtp_server'},
 		port          => $es->{'smtp_port'},
@@ -9856,6 +9864,65 @@ sub ai_model_caps {
 	return &ai_model_caps_by_name($family ? ($name . ' ' . $family) : $name);
 }
 
+# Which provider a model id points at. A bare name (and a :cloud one) goes to
+# Ollama; @cf/... to Cloudflare; the rest are "provider:model".
+sub ai_model_provider {
+	my ($model) = @_;
+	return 'cloudflare' if $model =~ /^\@cf/;
+	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/;
+	return 'ollama';
+}
+
+# The billing bucket a model draws on. Local Ollama and Cloudflare (its plan is
+# included) are free; an Ollama :cloud model and every third-party provider cost.
+sub ai_model_bucket {
+	my ($model) = @_;
+	my $provider = &ai_model_provider($model);
+	return 'ollama_cloud' if $provider eq 'ollama' && $model =~ /:cloud\b/i;
+	return $provider;
+}
+
+sub ai_model_paid {
+	my ($model) = @_;
+	my $bucket = &ai_model_bucket($model);
+	return 0 if $bucket eq 'cloudflare' || $bucket eq 'ollama';
+	return 1;
+}
+
+# A provider that has answered "no credit" is stood down for a while, so the panel
+# can hide its paid models and chat can step down to a free one.
+my $AI_UNAVAILABLE_FOR = 30 * 60 * 1000;
+sub ai_bucket_available {
+	my ($bucket) = @_;
+	return 1 unless $bucket;
+	my $until = &subs::setting_grabber({ app => '__president', setting => 'ai_' . $bucket . '_unavailable' });
+	return 1 unless $until && $until > &subs::rightNow();
+	return 0;
+}
+sub ai_bucket_mark_unavailable {
+	my ($bucket, $reason) = @_;
+	return unless $bucket;
+	&subs::setting_setter({ app => '__president', setting => 'ai_' . $bucket . '_unavailable', value => &subs::rightNow() + $AI_UNAVAILABLE_FOR });
+	&subs::say_it('AI: ' . $bucket . ' looks out of credit; standing it down for a while (' . substr($reason || '', 0, 80) . ')');
+}
+
+# The cheapest thing that still answers: a local Ollama chat model, else a
+# Cloudflare text model (its plan is included).
+sub ai_free_model {
+	foreach my $m ( @{ &subs::pen_model_list() } ) {
+		my $name = $m->{'model'} || $m->{'name'};
+		next if $name =~ /:cloud\b/i;
+		next unless grep { $_ eq 'chat' } &ai_model_caps('ollama', $name, $m);
+		return $name;
+	}
+	foreach my $m ( @{ &subs::cloudflare_model_list() } ) {
+		my $name = $m->{'model'} || $m->{'name'};
+		next unless grep { $_ eq 'chat' } &ai_model_caps('cloudflare', $name, $m);
+		return $name;
+	}
+	return '';
+}
+
 # Pass a capability (chat, vision, image, audio) to keep only models that serve it.
 sub ai_model_catalogue {
 	my ($cap) = @_;
@@ -9865,18 +9932,19 @@ sub ai_model_catalogue {
 		if ($p->{'id'} eq 'ollama') {
 			foreach my $mi ( @{ &subs::pen_model_list() } ) {
 				my $name = $mi->{'model'} || $mi->{'name'};
-				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('ollama', $name, $mi) ] };
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($name), bucket => &ai_model_bucket($name) };
 			}
 		}
 		elsif ($p->{'id'} eq 'cloudflare') {
 			foreach my $mi ( @{ &subs::cloudflare_model_list() } ) {
 				my $name = $mi->{'model'} || $mi->{'name'};
-				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('cloudflare', $name, $mi) ] };
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('cloudflare', $name, $mi) ], paid => &ai_model_paid($name), bucket => &ai_model_bucket($name) };
 			}
 		}
 		else {
 			foreach my $m ( @{ $p->{'models'} || [] } ) {
-				push @models, { value => $p->{'id'} . ':' . $m, name => $m, caps => [ &ai_model_caps($p->{'id'}, $m, undef) ] };
+				my $value = $p->{'id'} . ':' . $m;
+				push @models, { value => $value, name => $m, caps => [ &ai_model_caps($p->{'id'}, $m, undef) ], paid => &ai_model_paid($value), bucket => &ai_model_bucket($value) };
 			}
 		}
 		@models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @models if $cap;
@@ -10065,7 +10133,15 @@ sub ai_chat_raw {
 	$ua->start($tx);
 	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
 	my $res = $tx->res;
-	return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200)) unless $res->is_success;
+	unless ($res->is_success) {
+		my $body = substr($res->body || '', 0, 500);
+		# out of credit reads the same at every provider: stand the bucket down, so
+		# the panel hides its paid models and chat steps down to a free one
+		if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|out of funds|no funds|balance|exceeded your current quota|exceeded your quota)/i) {
+			&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . $body);
+		}
+		return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200));
+	}
 	return (eval { return $res->json } || {}, undef);
 }
 
@@ -10096,7 +10172,20 @@ sub ai_chat_parts {
 
 sub ai_chat {
 	my ($model, $messages) = @_;
+	# a paid model whose bucket is already stood down steps straight to a free one
+	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
+		my $free = &ai_free_model();
+		$model = $free if $free;
+	}
 	my ($parts, $err) = &ai_chat_parts($model, $messages);
+	# a fresh credit failure (marked down inside the call) also falls back, once
+	if ($err && &ai_model_paid($model)) {
+		my $free = &ai_free_model();
+		if ($free && $free ne $model) {
+			my ($fp, $ferr) = &ai_chat_parts($free, $messages);
+			if (!$ferr) { ($parts, $err) = ($fp, undef); &subs::say_it('AI: answered with the free model ' . $free); }
+		}
+	}
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
