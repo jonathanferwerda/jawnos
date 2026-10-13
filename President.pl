@@ -235,6 +235,17 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# The voice models ride the same mesh, one tick later so the two pulls do not
+	# pile onto the same link: a device that lacks a voice pulls it in and can
+	# then serve it, so every device holds (and speaks with) the same voices.
+	&subs::subprocessor(sub {
+		sleep 50;
+		while (1) {
+			eval { &subs::voice_sync(); };
+			sleep 300;
+		}
+	}, { name => 'voice sync' });
+
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
 		&subs::subprocessor(sub {

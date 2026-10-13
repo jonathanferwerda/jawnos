@@ -4007,6 +4007,13 @@ get '/manager/backup_serve' => sub($c) {
 	unless ($rm) { $c->rendered(403); return; }
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
+	# A remote backup's archive is a one-shot temp under ~/.president, made for
+	# this pull; delete it once the body is on the wire rather than leave it for
+	# the next boot's ~/.president wipe. Durable backups live beside the database
+	# and are never touched here.
+	if ($path =~ m{/\.president/}) {
+		$c->on(finish => sub { unlink $path; });
+	}
 	$c->res->headers->content_type('application/octet-stream');
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 	$c->rendered(200);
@@ -4225,6 +4232,50 @@ get '/manager/app_download' => sub($c) {
 	$c->res->headers->content_type('application/vnd.android.package-archive');
 	$c->res->headers->content_disposition('attachment; filename="' . $pick->{'filename'} . '"');
 	$c->res->content->asset(Mojo::Asset::File->new(path => &subs::home('~/jawnos/releases') . '/' . $pick->{'filename'}));
+	$c->rendered(200);
+};
+
+# The voice models this machine can serve - the *.onnx files and their json under
+# voices/. Only the models are shared: the piper binary is per-arch and stays
+# local (say_piper_binary), so it is not listed here.
+sub voice_lister {
+	my $dir = &subs::home('~/jawnos/voices');
+	my @out;
+	opendir(my $dh, $dir) or return \@out;
+	foreach my $f ( sort readdir($dh) ) {
+		next unless $f =~ /^[A-Za-z0-9_.-]+\.onnx(\.json)?$/;
+		my $path = "$dir/$f";
+		next unless -f $path;
+		push @out, {
+			filename => $f,
+			size     => (-s $path) + 0,
+			sha256   => &app_release_sha($path),
+		};
+	}
+	closedir $dh;
+	return \@out;
+}
+
+get '/manager/voice_release' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $hostname = `hostname`; chomp $hostname;
+	$c->render(json => { hostname => $hostname, signatorial => &subs::signatorial_designer(), voices => &voice_lister() });
+};
+
+get '/manager/voice_download' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $file = $c->param('file') || '';
+	# a plain model filename inside voices/, never a path
+	unless ($file =~ /^[A-Za-z0-9_.-]+\.onnx(\.json)?$/) { $c->rendered(404); return; }
+	my $path = &subs::home('~/jawnos/voices') . '/' . $file;
+	unless (-f $path) { $c->rendered(404); return; }
+	$c->res->headers->content_type('application/octet-stream');
+	$c->res->headers->content_disposition('attachment; filename="' . $file . '"');
+	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 	$c->rendered(200);
 };
 

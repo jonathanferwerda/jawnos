@@ -965,46 +965,71 @@ sub say_voice_spec() {
 	return undef;
 }
 
+# Where the piper binary is on this device. It is arch-specific, so the voice
+# sync never carries it - only the models (which are arch-independent). Prefer a
+# piper on PATH (a Termux/pip install), else the native build bundled under
+# voices/ - but not on mobile, where that build is the wrong architecture and
+# there the fallback is Android's own engine.
+sub say_piper_binary() {
+	my $onpath = `command -v piper 2>/dev/null`;
+	chomp $onpath;
+	return $onpath if $onpath && -x $onpath;
+	my $bundled = &subs::home('~/jawnos/voices/piper/piper');
+	return $bundled if $device ne 'mobile' && -x $bundled;
+	return '';
+}
+
+# How to play a finished wav here. Android has no sox audio backend, so its
+# clips go through termux-media-player; everywhere else, the sox player.
+sub say_player_command() {
+	return 'termux-media-player play' if $device eq 'mobile';
+	return 'play -q';
+}
+
 sub say_it() {
 	my $text = shift;
 	my $voice_override = shift;
 	return unless defined $text && length $text;
   &subs::subprocessor(sub {
     Mojo::IOLoop->reset;
-		# Android speaks through its own engine, which is already natural; the
-		# piper models below are the answer for every other device.
-		if ($device eq 'mobile') {
-			`termux-tts-speak "$text"`;
-			return;
-		}
 		my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
 		my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
-		my $voices_dir = &subs::home('~/jawnos/voices');
+		# Piper first, on every device, so the voice is uniform wherever it can
+		# run: the models are shared (voice_sync), only the binary is per-device.
 		if (($spec->{'engine'} || '') eq 'piper') {
-			my $piper = $voices_dir . '/piper/piper';
-			my $model = $voices_dir . '/' . $spec->{'model'} . '.onnx';
-			if (-x $piper && -e $model) {
+			my $piper = &subs::say_piper_binary();
+			my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
+			if ($piper && -e $model) {
 				my $tmp_dir = $gb::tmp_dir || '/tmp';
 				my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
 				# the words go to piper on stdin, so nothing has to be quoted for a shell
+				my $made = 0;
 				if (my $pid = open(my $piper_in, '|-', $piper, '-q', '-m', $model, '-f', $wav)) {
 					print {$piper_in} $text;
 					close $piper_in;
-					if (-s $wav) {
-						`play -q "$wav"`;
-						unlink $wav;
-						return;
-					}
+					$made = 1 if -s $wav;
+				}
+				if ($made) {
+					my $player = &subs::say_player_command();
+					# a headless server has no sink; a failed play is not our problem
+					`$player "$wav" 2>/dev/null`;
+					unlink $wav;
+					return;
 				}
 				unlink $wav if -e $wav;
 			}
+		}
+		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
+		if ($device eq 'mobile') {
+			`termux-tts-speak "$text"`;
+			return;
 		}
 		# espeak: the chosen espeak voice, or the fallback when piper is missing.
 		# Its own quotes are escaped so the words cannot break out of the shell.
 		my $safe = $text;
 		$safe =~ s/"/\\"/g;
 		my $voice = $spec->{'voice'} || 'en-us';
-		`espeak -a70 -v $voice "$safe"`;
+		`espeak -a70 -v $voice "$safe" 2>/dev/null`;
 	}, { name => 'say it' });
 }
 
@@ -2475,6 +2500,14 @@ sub backup_now() {
 	my $raw_data;
 	if ($size < 2000000) {
 		$raw_data = read_file($archive_path . ".enc");
+	}
+	# A small remote snapshot rides back inside the JSON body itself, so the file
+	# under ~/.president is already redundant: sweep it here rather than leave it
+	# for the next boot's ~/.president wipe. A large one is pulled over http, and
+	# backup_serve deletes it once it has been served.
+	if ($reason eq 'remote_update' && defined $raw_data && $archive_path =~ m{/\.president/}) {
+		my $sweep = $archive_path . '.enc';
+		`shred -u "$sweep"`;
 	}
 
 
@@ -11650,6 +11683,54 @@ sub app_release_sync {
 			close $fh;
 		}
 	}
+}
+
+# Reconcile the voice models (voices/*.onnx and their json) with a reachable peer.
+# Models are arch-independent, so they travel the same way the APKs do - a device
+# that lacks one pulls it in and can then serve it, so every device ends up with
+# the same voices. The piper binary is per-arch and stays local, so it is never
+# part of this list. The models are immutable, so presence is enough: no version
+# to compare, unlike an APK.
+sub voice_sync {
+my $dir = &subs::home('~/jawnos/voices');
+mkdir $dir unless -d $dir;
+my $me = &subs::signatorial_designer();
+my %local;
+foreach my $f ( glob("$dir/*.onnx") ) {
+	my ($base) = $f =~ m{/([^/]+)$};
+	$local{$base} = 1 if $base;
+}
+my $rms = &subs::db_select('remote_machines')->hashes || [];
+foreach my $rm ( @{$rms} ) {
+	my $rsig = $rm->{'signatorial'};
+	next unless $rsig && $rsig ne $me;
+	my ($ua, $p) = &subs::peer_useragent($rm);
+	next unless $ua;
+	my $res = eval { $ua->inactivity_timeout(20)->get($p->{'manager'} . '/manager/voice_release?signatorial=' . $me)->result };
+	next unless $res && $res->is_success;
+	my $body = eval { decode_json $res->body } || {};
+	my $phost = $body->{'hostname'} || $rm->{'hostname'} || $rsig;
+	foreach my $v ( @{ $body->{'voices'} || [] } ) {
+		my $filename = $v->{'filename'};
+		next unless $filename && $filename =~ /^[A-Za-z0-9_.-]+\.onnx(\.json)?$/;
+		next if $local{$filename};
+		my $url = $p->{'manager'} . '/manager/voice_download?file=' . $filename . '&signatorial=' . $me;
+		my $vres = eval { $ua->inactivity_timeout(300)->get($url)->result };
+		next unless $vres && $vres->is_success && defined $vres->body && length $vres->body;
+		my $blob = $vres->body;
+		my $sha = eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) };
+		next if $v->{'sha256'} && $sha && $sha ne $v->{'sha256'};
+		my $dest = "$dir/$filename";
+		write_file("$dest.tmp", $blob);
+		rename("$dest.tmp", $dest) or next;
+		$local{$filename} = 1;
+		if ($subs::logfile) {
+			open(my $fh, '>>', $subs::logfile);
+			print $fh &subs::rightNow() . " voice: pulled $filename (" . length($blob) . " bytes) from " . $phost . "\n";
+			close $fh;
+		}
+	}
+}
 }
 
 1;
