@@ -301,13 +301,18 @@ our @guide_tools = (
 	  desc => 'say where the person was at a time, read from the recorded place fixes; give when as an absolute date (YYYY-MM-DD) or a timestamp, never a relative phrase' },
 	{ name => 'measure', args => { measure => 'walk or weight', period => 'month', target => '180' }, example => '{"action":"measure","measure":"walk","period":"month"}',
 	  desc => 'answer a measured question: "walk" sums the distance walked over the period (day, week, month, year); "weight" reads the person\'s latest weight and projects when the target (their set budget) is reached' },
-	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours', type => 'start' }, example => '{"action":"create","app":"lunch","title":"lunch with Mom","when":"in 3 hours","type":"usual"}',
-	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in. Leave "type" as "usual" for a one-off log entry, or set "type":"start" to begin an activity that stays running until they stop it' },
+	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours', type => 'start' }, example => '{"action":"create","app":"meditate","title":"evening sit","when":"in 3 hours","type":"start"}',
+	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in. Set "type" to "start", "record" or "command" for something the alarm will fire at that time (a future start begins the activity; record starts a recording; command runs the app\'s configured command), or leave it "usual" for a plain one-off log entry' },
 	{ name => 'promote', args => { }, example => '{"action":"promote"}',
 	  desc => 'save the appointment you just staged, after the person says yes' },
 	{ name => 'discard', args => { }, example => '{"action":"discard"}',
 	  desc => 'throw away the appointment you just staged, if the person declines' },
 );
+
+# Every appointment type the Guide's create may stage, so the model is told the
+# closed set rather than inventing one. The alarm clock treats start/record/
+# command as things to fire when their time comes.
+our @guide_create_types = qw/usual start record command/;
 
 # The Coding agent's tools: a closed vocabulary the model may pick from, one
 # action per turn, exactly like the Guide's. Unlike the Guide, these run on the

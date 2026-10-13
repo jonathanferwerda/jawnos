@@ -3241,6 +3241,7 @@ my @manager_bundle_files = qw(
 	/js/manager/folders.js
 	/js/manager/notes.js
 	/js/manager/help.js
+	/js/manager/coding.js
 );
 my $manager_bundle_cache;
 
@@ -18487,6 +18488,39 @@ sub coding_execute($c, $action, $touched) {
 	return 'unknown action: ' . $a;
 }
 
+# The Coding agent's rules, AGENTS.md included when it is on this machine (it is
+# gitignored, so a fresh clone may not carry one). Cached by mtime so a run does
+# not re-read it every turn.
+our $coding_agents_md;
+our $coding_agents_md_mtime;
+sub coding_system_prompt {
+	my $system = &help::coding_prompt();
+	my $path = &subs::home('~/jawnos/AGENTS.md');
+	if (-f $path) {
+		my $mtime = (stat($path))[9] // 0;
+		if (!defined $coding_agents_md || ($coding_agents_md_mtime // 0) != $mtime) {
+			my $text = eval { read_file($path) } // '';
+			if (length $text > 20000) { $text = substr($text, 0, 20000) . "\n... [trimmed]"; }
+			$coding_agents_md = $text;
+			$coding_agents_md_mtime = $mtime;
+		}
+		$system .= "\n\nAGENTS.md (the map of this codebase; follow it):\n" . $coding_agents_md . "\n";
+	}
+	$system .= "\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
+	return $system;
+}
+
+# A named conversation's recent turns, kept in one setting so the agent remembers
+# what it did last time without a table of its own.
+sub coding_conversation_load($name) {
+	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'coding_conversation_' . $name }) } || [];
+	return ref $rows eq 'ARRAY' ? $rows : [];
+}
+sub coding_conversation_save($name, $rows) {
+	splice @{$rows}, 0, scalar(@{$rows}) - 20 if scalar @{$rows} > 20;
+	&subs::setting_setter({ app => '__president', setting => 'coding_conversation_' . $name, value => encode_json $rows });
+}
+
 # One bounded run of the Coding agent: the model picks the next action, the server
 # runs it, repeat until done or the step cap. The whole thread comes back so the
 # person sees every change, check and ship.
@@ -18497,13 +18531,23 @@ post '/manager/coding/heal' => sub($c) {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	unless ($model) { $c->render(json => { error => "No Coding model is set (Configure \x{2192} Platform)." }); return; }
-	my @lines = ( 'TASK: ' . $task );
-	my @steps;
+	# which thread this belongs to, so the same chatbox remembers across turns
+	my $conversation = $c->param('conversation') || 'coding';
+	$conversation =~ s/[^A-Za-z0-9_-]//g;
+	$conversation = 'coding' unless length $conversation;
+	my $remembered = coding_conversation_load($conversation);
+	my @lines;
+	foreach my $m ( @{$remembered} ) {
+		next unless $m->{'content'};
+		push @lines, (($m->{'role'} || 'user') eq 'user' ? 'USER: ' : 'AGENT: ') . $m->{'content'};
+	}
+	push @lines, 'TASK: ' . $task;
 	my %touched;
+	my @steps;
 	my $final = '';
 	my $tries = 0;
 	while ($tries++ < 12) {
-		my $system = &help::coding_prompt() . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
+		my $system = coding_system_prompt();
 		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines) . "\n\nReply with the single next JSON action.");
 		if ($err || !$text) { push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') }; last; }
 		my $action = eval { decode_json $text };
@@ -18517,7 +18561,19 @@ post '/manager/coding/heal' => sub($c) {
 		push @lines, 'OBSERVATION: ' . $obs;
 		if ($action->{'action'} eq 'done' || $action->{'action'} eq 'say') { $final = $action->{'text'} // ''; last; }
 	}
-	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version() });
+	push @{$remembered}, { role => 'user', content => $task };
+	push @{$remembered}, { role => 'assistant', content => (length $final ? $final : 'done') };
+	coding_conversation_save($conversation, $remembered);
+	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version(), conversation => $conversation });
+};
+
+# Start a fresh conversation: forget the stored thread so the next run begins clean.
+post '/manager/coding/forget' => sub($c) {
+	my $conversation = $c->param('conversation') || 'coding';
+	$conversation =~ s/[^A-Za-z0-9_-]//g;
+	$conversation = 'coding' unless length $conversation;
+	coding_conversation_save($conversation, []);
+	$c->render(json => { ok => 1, conversation => $conversation });
 };
 
 # ---- the guide looks an appointment over when it opens --------------------

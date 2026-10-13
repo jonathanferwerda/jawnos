@@ -470,7 +470,7 @@ function helpCodingRun(task) {
 		url: '/manager/coding/heal',
 		type: 'POST',
 		dataType: 'json',
-		data: { task: task },
+		data: { task: task, conversation: 'help' },
 		success: function (r) {
 			if (!r || r.error) { helpChatAdd('guide', (r && r.error) || 'The coding agent failed.'); return; }
 			(r.steps || []).forEach(function (s) {

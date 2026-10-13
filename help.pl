@@ -156,13 +156,16 @@ our %topic = (
 	'ide' => {
 		title => 'IDE', category => 'apps', app => 'ide',
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
+		verified => '2026-10-13',
 		body => [
-			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.'
+			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation.'
 		],
 		steps => [
 			'Open the IDE and choose a file from the project tree.',
 			'Edit with syntax colouring and the code helpers.',
-			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.'
+			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.',
+			'Press the code button to open the Coding agent and describe a change in words.'
 		],
 		related => [ 'editor', 'terminal' ]
 	},
@@ -178,13 +181,16 @@ our %topic = (
 	'terminal' => {
 		title => 'Terminal', category => 'apps', app => 'terminal',
 		summary => 'A shell, in a window.',
+		verified => '2026-10-13',
 		body => [
-			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.'
+			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
+			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation.'
 		],
 		steps => [
 			'Open Terminal; it opens a session on the host machine.',
 			'Run commands as you would in any shell.',
-			'Use multiple windows or tabs for separate jobs.'
+			'Use multiple windows or tabs for separate jobs.',
+			'Press the code button to hand a task to the Coding agent.'
 		],
 		related => [ 'ide', 'process_monitor' ]
 	},
@@ -1065,9 +1071,16 @@ Rules:
   whole, then run "perl -c <file>" (or a test) to check it before you commit.
 - Never commit code that failed its check. Fix it and check again.
 - The finishing routine is: bump, then commit with a short message, then push,
-  then restart. Do each as its own action, in that order.
+  then restart. Do each as its own action, in that order. Commit as the subject
+  "v<version> - <summary>" once bumped.
+- If you cannot find a file, or the right place for one, after three attempts,
+  stop and say what you tried; never invent a path or keep guessing.
+- Only ever change the files the task needs. A commit stages only the files you
+  wrote, so never sweep in unrelated work that was already in the tree.
+- Treat the person's data as private; never print secrets (keys, tokens).
 - Write plain, everyday, factual text. Do not narrate; act.
 - When the work is done and shipped, reply with done and one short sentence.
+- When AGENTS.md is quoted below, follow it: it is the map of this codebase.
 TXT
 	return $header . $lines . "\n" . $rules;
 }

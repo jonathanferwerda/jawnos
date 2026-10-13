@@ -9924,7 +9924,8 @@ sub ai_providers() {
 		{ id => 'xai',        label => 'xAI (Grok)',            keys => [ [ 'xai_key', 'API key' ] ],
 			models => [ qw/grok-3 grok-3-mini grok-2-1212/ ] },
 		{ id => 'deepseek',   label => 'DeepSeek',              keys => [ [ 'deepseek_key', 'API key' ] ],
-			models => [ qw/deepseek-chat deepseek-reasoner/ ] },
+			# The model ids must match DeepSeek's API exactly; add or rename here.
+			models => [ qw/deepseek-chat deepseek-reasoner deepseek-v4-flash deepseek-v4-pro deepseek-v4.1-flash deepseek-v4.1-pro/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
