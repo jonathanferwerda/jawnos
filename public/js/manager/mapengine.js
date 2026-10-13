@@ -45,6 +45,19 @@ window.jawnosMap = (function () {
 	function worldPx(lat, lon, z) { return [lonToX(lon, z) * TILE, latToY(lat, z) * TILE]; }
 	function geoAt(wx, wy, z) { return { lat: yToLat(wy / TILE, z), lon: xToLon(wx / TILE, z) }; }
 
+	// The browser will not say whether a wheel came from a trackpad or a mouse; the
+	// stream does. A mouse sends one coarse, whole-numbered vertical notch at a
+	// time (and never leans sideways); a trackpad sends fine, often fractional
+	// pixels in floods, and is the only one that scrolls sideways. Same heuristic
+	// the clothesline uses, so a two-finger scroll pans and a wheel zooms.
+	function wheelKind(deltaX, deltaY, deltaMode) {
+		if (!deltaX && !deltaY) { return undefined; }
+		if (deltaX !== 0) { return 'trackpad'; }
+		if (deltaMode !== 0) { return 'mouse'; }
+		if (!Number.isInteger(deltaY)) { return 'trackpad'; }
+		return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
+	}
+
 	// The ground bounds of a measured map: the latitude/longitude of its top-left
 	// and bottom-right image pixels, from its home_plate and scale bar. North-up,
 	// which is how the maps are drawn / measured.
@@ -75,6 +88,8 @@ window.jawnosMap = (function () {
 		opts = opts || {};
 		var canvas = document.getElementById(canvasId);
 		var ctx = canvas.getContext('2d');
+		// own the touch gestures: without this the page would scroll/zoom instead
+		try { canvas.style.touchAction = 'none'; } catch (e) {}
 		var view = { lat: opts.lat || 43.0, lon: opts.lon || -81.94, z: opts.z || 14 };
 		var maps = [];        // measured maps, each with a georeference
 		var points = [];      // { lat, lon, label, colour }
@@ -116,7 +131,7 @@ window.jawnosMap = (function () {
 			var zLon = Math.log2((dim.w * 360) / (256 * spanLon));
 			var zLat = Math.log2((dim.h * 360 * Math.cos(lat * Math.PI / 180)) / (256 * spanLat));
 			var z = Math.min(zLon, zLat) - Math.log2(margin || 1.3);
-			view = { lat: lat, lon: lon, z: Math.max(8, Math.min(19, z)) };
+			view = { lat: lat, lon: lon, z: Math.max(2, Math.min(21, z)) };
 			draw();
 		}
 
@@ -251,38 +266,107 @@ window.jawnosMap = (function () {
 		}
 
 		// ---- interaction ----
-		var drag = null;
-		canvas.addEventListener('mousedown', function (e) { drag = { x: e.clientX, y: e.clientY, v: view.lat + ',' + view.lon }; e.preventDefault(); });
-		window.addEventListener('mousemove', function (e) {
-			if (!drag) { return; }
-			panBy(e.clientX - drag.x, e.clientY - drag.y, drag.v);
-			drag.x = e.clientX; drag.y = e.clientY;
-		});
-		window.addEventListener('mouseup', function () { if (drag) { drag = null; fire(); } });
-		canvas.addEventListener('touchstart', function (e) { var t = e.touches[0]; drag = { x: t.clientX, y: t.clientY, v: view.lat + ',' + view.lon }; }, { passive: true });
-		canvas.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (!drag) { return; } panBy(t.clientX - drag.x, t.clientY - drag.y, drag.v); drag.x = t.clientX; drag.y = t.clientY; e.preventDefault(); }, { passive: false });
-		canvas.addEventListener('touchend', function () { if (drag) { drag = null; fire(); } });
-		canvas.addEventListener('wheel', function (e) { e.preventDefault(); zoomBy(e.deltaY < 0 ? 0.4 : -0.4); }, { passive: false });
+		var ZMIN = 2, ZMAX = 21;
+		function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
 
-		function panBy(dx, dy, from) {
+		function panBy(dx, dy) {
 			var c = worldPx(view.lat, view.lon, view.z);
 			var g = geoAt(c[0] - dx, c[1] - dy, view.z);
 			view.lat = Math.max(-85, Math.min(85, g.lat));
 			view.lon = g.lon;
 			draw();
 		}
-		function zoomBy(dz) {
-			view.z = Math.max(1, Math.min(21, view.z + dz));
+		// zoom by dz, keeping the ground under screen point (sx,sy) pinned there
+		function zoomAt(dz, sx, sy) {
+			var dim = size();
+			var o = originFor(view, dim.w, dim.h);
+			var anchor = geoAt(o.x + sx, o.y + sy, view.z);
+			var nz = clampZ(view.z + dz);
+			if (nz === view.z) { return; }
+			var aw = worldPx(anchor.lat, anchor.lon, nz);
+			var c = geoAt(aw[0] - sx + dim.w / 2, aw[1] - sy + dim.h / 2, nz);
+			view.lat = Math.max(-85, Math.min(85, c.lat));
+			view.lon = c.lon;
+			view.z = nz;
 			draw();
 		}
+		function zoomBy(dz) { view.z = clampZ(view.z + dz); draw(); }
 		function fire() { for (var i = 0; i < changing.length; i++) { changing[i](view); } }
+
+		// mouse: press-and-drag pans, a wheel zooms. A trackpad's two-finger scroll
+		// pans too, and its pinch (ctrl+wheel) zooms.
+		var drag = null;
+		canvas.addEventListener('mousedown', function (e) { drag = { x: e.clientX, y: e.clientY }; e.preventDefault(); });
+		window.addEventListener('mousemove', function (e) {
+			if (!drag) { return; }
+			panBy(e.clientX - drag.x, e.clientY - drag.y);
+			drag.x = e.clientX; drag.y = e.clientY;
+		});
+		window.addEventListener('mouseup', function () { if (drag) { drag = null; fire(); } });
+
+		canvas.addEventListener('wheel', function (e) {
+			e.preventDefault();
+			var dx = e.deltaX || 0, dy = e.deltaY || 0;
+			if (e.ctrlKey) { zoomAt(dy < 0 ? 0.4 : -0.4, e.offsetX, e.offsetY); return; } // trackpad pinch / ctrl+wheel
+			if (wheelKind(dx, dy, e.deltaMode || 0) === 'trackpad') { panBy(dx, dy); return; }
+			zoomAt(dy < 0 ? 0.5 : -0.5, e.offsetX, e.offsetY); // a mouse wheel
+		}, { passive: false });
+
+		// touch: one finger pans, two fingers pinch, a double-tap zooms in
+		var touch = null;   // one-finger drag
+		var pinch = null;   // two-finger pinch
+		var lastTap = 0, tapAt = null;
+		function touchMid(t) {
+			return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2,
+				d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) };
+		}
+		canvas.addEventListener('touchstart', function (e) {
+			if (e.touches.length >= 2) {
+				pinch = touchMid(e.touches); touch = null;
+			}
+			else {
+				touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0 };
+			}
+		}, { passive: true });
+		canvas.addEventListener('touchmove', function (e) {
+			if (e.touches.length >= 2) {
+				if (!pinch) { return; }
+				var m = touchMid(e.touches);
+				if (m.d > 0 && pinch.d > 0) {
+					var r = canvas.getBoundingClientRect();
+					panBy(m.x - pinch.x, m.y - pinch.y);
+					zoomAt(Math.log(m.d / pinch.d) / Math.LN2, m.x - r.left, m.y - r.top);
+				}
+				pinch = m;
+				e.preventDefault();
+			}
+			else if (touch) {
+				var t0 = e.touches[0];
+				panBy(t0.clientX - touch.x, t0.clientY - touch.y);
+				touch.x = t0.clientX; touch.y = t0.clientY; touch.moved = 1;
+				e.preventDefault();
+			}
+		}, { passive: false });
+		canvas.addEventListener('touchend', function (e) {
+			if (e.touches.length > 0) { return; }
+			// a double-tap (two quick taps with no drag between) zooms in one step
+			if (touch && !touch.moved) {
+				var r = canvas.getBoundingClientRect();
+				var now = Date.now();
+				if (tapAt && now - lastTap < 300) { zoomAt(1, touch.x - r.left, touch.y - r.top); tapAt = null; }
+				else { tapAt = { x: touch.x, y: touch.y }; }
+				lastTap = now;
+			}
+			touch = null; pinch = null;
+			fire();
+		});
 
 		var api = {
 			providers: providers,
 			canvas: canvas,
 			draw: draw,
 			zoom: zoomBy,
-			setZoom: function (z) { view.z = Math.max(1, Math.min(21, z)); draw(); },
+			setZoom: function (z) { view.z = Math.max(2, Math.min(21, z)); draw(); },
 			center: function (lat, lon) { view.lat = lat; view.lon = lon; draw(); },
 			setProvider: function (key, url) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;

@@ -32,7 +32,6 @@ function travelToggle() {
 // chosen provider, with the continent points and the machine's current position on
 // top. Drag to pan, the slider to zoom.
 var travelMap;
-var travelBaseZoom = 16;
 var travelFramed = false;
 
 function travelMapEngine() {
@@ -59,12 +58,6 @@ function travelProviderFill() {
 		$('<option></option>').attr('value', key).text(engines[key].name).appendTo(sel);
 	}
 	sel.val(sel.attr('provider') || 'none');
-}
-
-function applyTravelZoom() {
-	if (!travelMap) { return; }
-	var v = numeral($('#travel_distance_range').val()).value() || 1;
-	travelMap.setZoom(travelBaseZoom + Math.log(v) / Math.LN2);
 }
 
 function travelMapRender(response) {
@@ -97,9 +90,7 @@ function travelMapRender(response) {
 	if (!travelFramed) {
 		if (hasPos) { engine.focusOn(parseFloat(pos['latitude']), parseFloat(pos['longitude'])); }
 		else if ((response['all_maps'] || []).length) { engine.fitToMaps(); }
-		travelBaseZoom = engine.view().z;
 		travelFramed = true;
-		applyTravelZoom();
 	}
 	engine.draw();
 }
@@ -387,12 +378,6 @@ $(document).on('click', '.delete_travel_map', function() {
 			a.attr('armed', 'no');
 		},2000);
 	}
-});
-
-$(document).on('input change', '#travel_distance_range', function() {
-	var value = $(this).val();
-	settingSetter({ 'app': 'travel', 'setting': 'campus_zoom', 'value': value });
-	applyTravelZoom();
 });
 
 $(document).on('change', '.travel_provider', function() {

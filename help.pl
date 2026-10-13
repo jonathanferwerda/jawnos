@@ -239,14 +239,15 @@ our %topic = (
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
 			'The map is a canvas you drag to pan and zoom with the slider (or the wheel). On it sit the measured maps you have stored — each one an image georeferenced when you measured it (a home plate plus a scale bar), so it lands at its true place on the globe. Pan toward another area and whichever of your maps covers it scrolls into view: that is how you move among the maps you have rather than looking at one at a time.',
-			'Above the measured maps you can lay a tile basemap from the Map picker: OpenStreetMap, OpenTopoMap, Carto, Esri imagery, a county GIS such as Lambton, or a Custom URL for any other service (paste its tile template; ArcGIS services are usually {z}/{y}/{x}). Leave it on None and nothing is fetched — the measured maps are all it needs, so it works offline.',
-			'The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows.',
-			'The continent desktop background draws the same map: your current position in relation to every map you have measured.'
+			'Above the measured maps you can lay a tile basemap from the Map picker: OpenStreetMap, OpenTopoMap, Carto, Esri imagery, a county GIS such as Lambton, or a Custom URL. Leave it on None and nothing is fetched — the measured maps are all it needs, so it works offline.',
+			'The first four services are built in and need no key — just pick one. For a county or city service (Lambton GIS, and the like) or anything else, paste the service\'s tile URL into the box next to the picker. A service that speaks {z}/{x}/{y} works; an ArcGIS service is usually …/MapServer/tile/{z}/{y}/{x} (note y before x). Where to find it: the publisher lists its map services under a REST directory (for a county, look for an "ArcGIS REST Services" or "GIS Data" page); open the layer, and the Tile link or the URL under the map is the template to copy. Google Maps and Apple Maps have no keyless tile URL — they need their own SDK — so use another service, or paste a keyed URL you already hold.',
+			'Drag to move the map; a mouse wheel or a pinch zooms, and a double-tap zooms in; a trackpad\'s two-finger scroll pans it. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows.',
+			'The continent desktop background draws the same map: your current position in relation to every map you have measured. Its now button (or a double-click on the background) centres it back on you.'
 		],
 		steps => [
 			'Open Travel. The view frames your maps and your current position.',
-			'Drag the map to pan, and use the slider to zoom; your maps scroll into view as you go.',
-			'Pick a Map source for a tile basemap, or leave it on None for the offline measured maps; paste a tile URL for Custom or Lambton.',
+			'Drag to pan; scroll or pinch to zoom, and double-tap to zoom in. Your maps scroll into view as you go.',
+			'Pick a built-in Map source (OpenStreetMap, OpenTopoMap, Carto, Esri), or paste a tile URL for Lambton or Custom — see where to find one in the words above.',
 			'Use the map selector to choose the current map and the trash to delete one; Search and the Start/End times scope the history shown.',
 			'Set Home Plate to mark the place your maps share as their reference.'
 		],

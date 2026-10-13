@@ -17273,19 +17273,30 @@ sub travel_here_position {
 	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
 }
 
-# Every place the continent has a fix for - one row per app, its latest - so the
-# background can show the places in relation to the current position. Types other
-# than a plain place (temporary above all) are set aside.
+# Every place the continent has a fix for in a time range (or all of them), the
+# same places the travel viewer shows. Repeated identical fixes collapse to one
+# dot, so a walk reads as its points rather than a stack of samples.
 sub travel_atlas_points {
-	my $rows = &subs::db_query('select app, latitude, longitude, type, max(timestamp) as timestamp from continent where latitude is not null group by app, type')->hashes;
+	my ($start,$end) = @_;
+	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or type != ?)';
+	my @bind = ('temporary');
+	if (defined $start && length $start && defined $end && length $end) {
+		$sql .= ' and timestamp >= ? and timestamp <= ?';
+		push @bind, $start, $end;
+	}
+	$sql .= ' order by timestamp desc';
+	my $rows = &subs::db_query($sql, @bind)->hashes;
 	my $points = [];
 	my $seen = {};
+	my %set_cache;
 	foreach my $con ( @{$rows} ) {
+		last if scalar @{$points} >= 1500;
 		next if !$con->{'latitude'} || $con->{'latitude'} eq '';
-		next if defined $con->{'type'} && $con->{'type'} eq 'temporary';
 		my $app = $con->{'app'};
-		next if !$app || $seen->{$app}++;
-		my $set = &subs::settings_grabber({ app => $app });
+		next if !$app;
+		my $key = $app . '|' . $con->{'latitude'} . '|' . $con->{'longitude'};
+		next if $seen->{$key}++;
+		my $set = $set_cache{$app} ||= &subs::settings_grabber({ app => $app });
 		next if $set->{'visible'} ne 'checked'; # the same places the travel viewer shows
 		push @{$points}, {
 			latitude => $con->{'latitude'} + 0,
@@ -17300,7 +17311,7 @@ sub travel_atlas_points {
 get '/manager/travel/continent' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 	my $maps = &travel_atlas_maps(eval { return decode_json $settings->{'maps'} } || []);
-	my $points = &travel_atlas_points();
+	my $points = &travel_atlas_points($c->param('start'), $c->param('end'));
 	my $here = &travel_here_position();
 	$c->render(json => {
 		maps => $maps,
@@ -17628,7 +17639,15 @@ get '/manager/help/find' => sub($c) {
 	my @apps = map { { app => $_, count => $apps{$_} } } sort { $apps{$b} <=> $apps{$a} } keys %apps;
 	my @all = sort keys %files;
 	@all = @all[0 .. 7] if @all > 8;
-	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all });
+	# when the person asks "when did I last see X", the answer is the newest match:
+	# hand the guide that one row's date along with the matches
+	my $last_row = &subs::db_query('select app, timestamp from appointments where (app like ? or file like ? or notes like ?) order by timestamp desc limit 1', $like, $like, $like)->hash;
+	my $last;
+	if ($last_row && $last_row->{'timestamp'} && $last_row->{'timestamp'} =~ /^\d+$/) {
+		my $when = eval { localtime($last_row->{'timestamp'} / 1000)->strftime('%A %B %d, %Y') };
+		$last = { app => $last_row->{'app'}, when => $when } if $when;
+	}
+	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all, last => $last });
 };
 
 post '/manager/handbook/settings' => sub ($c) {

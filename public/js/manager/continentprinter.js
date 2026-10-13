@@ -8,6 +8,8 @@
 var jawnosContinentMap;
 var jawnosContinentAt = 0;
 var jawnosContinentRefetch = 30000;
+var jawnosContinentHere = null;   // the last known current position
+var jawnosContinentRange = '';    // the time range the points were fetched for
 
 function continentPrinter(appts, sort) {
 	var places = appts['__continent'] || [];
@@ -35,14 +37,19 @@ function continentPrinter(appts, sort) {
 	}
 	engine.draw();
 
-	// (re)fetch the atlas at most every jawnosContinentRefetch ms - graphicalize runs
-	// on every poll, the maps and the current position do not
+	// (re)fetch the atlas when the time range changes, or at most every
+	// jawnosContinentRefetch ms - graphicalize runs on every poll, the maps and the
+	// places do not
+	var specs = appts['__specs'] || {};
+	var range = (specs['start'] || '') + '-' + (specs['end'] || '');
 	var now = Date.now();
-	if (now - jawnosContinentAt < jawnosContinentRefetch) { return; }
+	if (range === jawnosContinentRange && (now - jawnosContinentAt) < jawnosContinentRefetch) { return; }
 	jawnosContinentAt = now;
+	jawnosContinentRange = range;
 	$.ajax({
 		url: '/manager/travel/continent',
 		type: 'GET',
+		data: { start: specs['start'], end: specs['end'] },
 		success: function(response) {
 			engine.setProvider(response['provider'] || 'none', response['custom_url'] || '');
 			engine.setMaps(response['maps'] || []);
@@ -50,7 +57,8 @@ function continentPrinter(appts, sort) {
 
 			var here = response['here'];
 			if (here && here['latitude']) {
-				engine.setPosition({ lat: parseFloat(here['latitude']), lon: parseFloat(here['longitude']), label: here['label'] || 'You are here' });
+				jawnosContinentHere = { lat: parseFloat(here['latitude']), lon: parseFloat(here['longitude']) };
+				engine.setPosition({ lat: jawnosContinentHere.lat, lon: jawnosContinentHere.lon, label: here['label'] || 'You are here' });
 			}
 			else {
 				engine.setPosition(null);
@@ -67,7 +75,17 @@ function continentPrinter(appts, sort) {
 	});
 }
 
-// jawnosMap points want lat/lon/label/colour; the payload's places spell them out.
+// The now button (and a double-click on the background) returns the timeline to the
+// present; on the continent it also centres back on where you are.
+function jawnosContinentRecentre() {
+	if (!jawnosContinentMap) { return; }
+	if (jawnosContinentHere) { jawnosContinentMap.focusOn(jawnosContinentHere.lat, jawnosContinentHere.lon); }
+	else if (jawnosContinentMap.fitToMaps) { jawnosContinentMap.fitToMaps(); }
+	jawnosContinentMap.draw();
+}
+$(document).on('click', '.now', function() { jawnosContinentRecentre(); });
+$(document).on('dblclick', '#continent', function() { jawnosContinentRecentre(); });
+
 function continentPoints(places) {
 	var out = [];
 	$.each(places, function(i, v) {
