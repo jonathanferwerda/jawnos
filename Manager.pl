@@ -6451,7 +6451,6 @@ sub log_reader {
 	# polls once a second, so ~1600 rows were being materialized and formatted to
 	# be ignored. The other views keep them bit for bit.
 	my $settings = [];
-	my $db_settings;
 	unless (($data->{'view'} || '') eq 'appointment_viewer') {
 		$settings = &subs::db_raw('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
 		foreach my $s (@{$settings}) {
