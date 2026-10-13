@@ -558,6 +558,47 @@ our %topic = (
 		],
 		related => [ 'themes', 'configure' ]
 	},
+	'utility_controller' => {
+		title => 'Utility controller', category => 'features',
+		templates => [ 'templates/configure/utility_controller.html.ep' ],
+		controls => [ 'Run this job', 'How often', 'Good', 'Bad' ],
+		verified => '2026-10-12',
+		summary => 'The background jobs every machine runs, and how often.',
+		body => [
+			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot.',
+			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
+			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation — and some carry a Beacon switch that drops a record into the log as well.',
+			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.'
+		],
+		steps => [
+			'Open Configure and press Sys; the Utility controller is in that panel.',
+			'Find the machine whose jobs you want to change.',
+			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
+			'Watch the last-run time and the good/bad dot to see whether it is keeping up.'
+		],
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. Do not invent job names beyond the ones listed.',
+		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
+	},
+	'navigation' => {
+		title => 'Navigation (location logging)', category => 'features',
+		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'public/js/manager/travel.js' ],
+		verified => '2026-10-12',
+		summary => 'JawnOS records where a device is on a schedule, screen on or off.',
+		body => [
+			'Navigation is the autonomous location log. On a handheld the backend asks for a fresh GPS fix once per navigation interval — whether or not the app is open and whether or not the screen is on, since the phone holds a wake lock for it — and writes that one point down as the machine\'s current position.',
+			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval — never faster than the navigation interval itself (the utility\'s own pace in the Utility controller), which is the real ceiling.',
+			'Those filed fixes are the Distance list on the appointment: open its details and the Distance section lists each point with its distance from home, the metres since the last one, and the speed between them.',
+			'Navigation also drives the home plate: when the device crosses a home plate\'s radius, that plate\'s duty can start or stop the matching appointment on its own.'
+		],
+		steps => [
+			'Give an app a navigation value in its settings: none never logs, once only logs when you act, and an interval (like 1m) logs while one of its appointments is running.',
+			'Start an appointment of that app and carry the device; the backend files a fix each navigation interval.',
+			'Open the appointment and read its Distance list for the points, the distance and the speed.',
+			'Set a home plate and a duty on it to let crossing that radius start or stop the appointment by itself.'
+		],
+		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; and filed fixes appear in the appointment\'s Distance list (distance from home, metres since the last, speed). The utility interval is the ceiling — a 1m per-app setting still only gets a point about as often as the utility runs. Do not describe it as a live map, and never guess a person\'s actual location.',
+		related => [ 'travel', 'appointments', 'devices_and_mesh' ]
+	},
 
 	# ----------------------------------------------------------- functions
 	'appointments' => {
