@@ -28,11 +28,16 @@
 	#device_listings .device_nic thead { display:none; }
 	#device_listings .device_nic tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; background:var(--panel); }
 	#device_listings .device_nic td { border:0; padding:3px 2px; }
+	#device_listings .device_head { justify-content:center; text-align:center; }
+	#device_listings .nic_head { justify-content:center; text-align:center; }
+	#device_listings .device_nic td, #device_listings .remote_machine td:first-child { text-align:center; }
+	#device_listings .device_actions { justify-content:center; }
+	#device_listings .device_actions .device_purpose { flex:1 1 100%; }
 }
 </style>
 <div class="cfg" style="width:100%;height:100%;">
 	<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-		<input type="text" value="<%= $ping %>" class="ping_host" placeholder="host" style="flex:1 1 220px;margin:0;">
+		<input type="text" value="<%= $ping %>" class="ping_host" placeholder="host" style="flex:1 1 110px;min-width:90px;margin:0;">
 		<button class="ping">Ping</button>
 		<button class="device_scan" load_type="scan">Scan</button>
 		<span id="ping_results" style="opacity:.85;"></span>

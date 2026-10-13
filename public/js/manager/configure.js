@@ -17,14 +17,44 @@ var jawnos_configure_panels = {
 	pseudonym_setting_lister: 'pseudonym_list',
 	store_setting_lister: 'store_list'
 };
+// A tab's true label, captured once the first time we see it, so a panel that
+// closes can put its button back exactly as it was when the screen loaded --
+// even if a load was still in flight and left a '* loading' prefix behind.
+function jawnosConfigureLabel(b) {
+	var label = b.attr('data-label');
+	if (!label) {
+		label = (b.text() || '').replace(/^(\*\s*)+/, '').trim();
+		b.attr('data-label', label);
+	}
+	return label;
+}
+function jawnosConfigureLabelAll() {
+	$('.configure_toggle').each(function() {
+		if (!$(this).attr('data-label')) {
+			$(this).attr('data-label', ($(this).text() || '').replace(/^(\*\s*)+/, '').trim());
+		}
+	});
+}
+// Which tab the user last asked for. A panel's own load may finish after the
+// user has moved on; it only gets to show itself if it is still the intent, so
+// a slow panel can never stack a second one on screen.
+var jawnos_configure_intent = null;
+function jawnosConfigureShow(buttonId, c) {
+	if (jawnos_configure_intent !== buttonId) { return false; }
+	c.show();
+	return true;
+}
 $(document).on('click', '.configure_toggle', function() {
+	var b = $(this);
 	var keep = jawnos_configure_panels[this.id];
 	if (!keep) { return; }
-	if ($('#' + keep).is(':visible')) { return; }
+	jawnosConfigureLabel(b);
+	if ($('#' + keep).is(':visible')) { jawnos_configure_intent = null; return; }
+	jawnos_configure_intent = this.id;
 	$.each(jawnos_configure_panels, function(button, panel) {
 		if (panel === keep) { return; }
 		$('#' + panel).hide();
-		$('#' + button).attr('status', 'inactive');
+		$('#' + button).attr('status', 'inactive').text(jawnosConfigureLabel($('#' + button)));
 	});
 });
 
@@ -52,6 +82,7 @@ async function configureToggle() {
 				//cb.html(response);
 				windowMaker(response);
 				initializer();
+				jawnosConfigureLabelAll();
 			
 				$('.media_picker').each(function(i,vd) {
 					var v = $(vd);
@@ -445,7 +476,7 @@ $(document).on('click', '.delete_packaging', function() {
 $(document).on('click', '#device_lister, .device_scan', function() {
 	var b = $(this);
 	var load_type = b.attr('load_type');
-	var text = b.text();
+	var text = jawnosConfigureLabel(b);
 	var host = $('.ping_host').val();
 	if (b.hasClass('ping_scan')) {
 		host = b.attr('ip_address');
@@ -453,7 +484,7 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 	b.text('* ' + text);
 	var c = $('#device_list');
 	if (c.is(':visible') && load_type == 'list') {
-		b.text('Dev');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	}
@@ -465,10 +496,11 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			type: 'GET',
 			data: { timestamp: timestamp, load_type: load_type, host: host },
 			success: function(response) {
-				$('#device_list').html(response).show();
-
+				$('#device_list').html(response);
 				$('#ping_results').html(ping);
-				b.attr('status', 'active');
+				if (jawnosConfigureShow('device_lister', $('#device_list'))) {
+					b.attr('status', 'active');
+				}
 				b.text(text);
 				$('.remote_restore_list').each(function(i,v) {
 					var r = $(v);
@@ -501,13 +533,12 @@ $(document).on('click', '#tunnel_lister', function() {
 	var c = $('#tunnel_list');
 
 	if (c.is(':visible')) {
-		b.text('Tun');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	}
 	else {
-		b.text('* Tun');
-		b.text('Tun');
+		b.text('* ' + jawnosConfigureLabel(b));
 		c.show();
 		tunnelLister('open');
 		b.attr('status', 'active');	
@@ -533,21 +564,22 @@ $(document).on('click', '#pseudonym_setting_lister', function() {
 	var b = $(this);
 	var c = $('#pseudonym_list');
 	if (c.is(':visible')) {
-		b.text('Pseud');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	}
 	else {
-		b.text('* Pseud');
+		b.text('* ' + jawnosConfigureLabel(b));
 		$.ajax({
 			url: '/manager/configure/pseudonym_list',
 			type: 'GET',
 			data: { timestamp: timestamp },
 			success: function(response) {
 				c.html(response);
-				b.text('Pseud');
-				c.show();
-				b.attr('status', 'active');
+				b.text(jawnosConfigureLabel(b));
+				if (jawnosConfigureShow('pseudonym_setting_lister', c)) {
+					b.attr('status', 'active');
+				}
 			}
 		});
 	}
@@ -642,21 +674,22 @@ $(document).on('click', '#store_setting_lister', function() {
 	var b = $(this);
 	var c = $('#store_list');
 	if (c.is(':visible')) {
-		b.text('Store');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	}
 	else {
-		b.text('* Store');
+		b.text('* ' + jawnosConfigureLabel(b));
 		$.ajax({
 			url: '/manager/configure/store_list',
 			type: 'GET',
 			data: { timestamp: timestamp },
 			success: function(response) {
 				c.html(response);
-				b.text('Store');
-				c.show();
-				b.attr('status', 'active');
+				b.text(jawnosConfigureLabel(b));
+				if (jawnosConfigureShow('store_setting_lister', c)) {
+					b.attr('status', 'active');
+				}
 			}
 		});
 	}
@@ -970,18 +1003,20 @@ $(document).on('click', '#misc_setting', function() {
 			type:'GET',
 			data: { timestamp: timestamp },
 			success: function(response){
-				$('#misc_setting_list').html(response).show();
+				$('#misc_setting_list').html(response);
+				if (jawnosConfigureShow('misc_setting', $('#misc_setting_list'))) {
 					b.attr('status', 'active');
 				}
-			});
-		}
-		else {
-			$('#misc_setting_list').hide();
-			b.attr('status', 'inactive');
-		}
-	});
+			}
+		});
+	}
+	else {
+		$('#misc_setting_list').hide();
+		b.attr('status', 'inactive');
+	}
+});
 
-	$(document).on('click', '#plat_setting', function() {
+$(document).on('click', '#plat_setting', function() {
 		var b = $(this);
 		if (!$('#plat_setting_list').is(':visible')) {
 			var timestamp = Date.now();
@@ -990,8 +1025,10 @@ $(document).on('click', '#misc_setting', function() {
 				type:'GET',
 				data: { timestamp: timestamp },
 				success: function(response){
-					$('#plat_setting_list').html(response).show();
-					b.attr('status', 'active');
+					$('#plat_setting_list').html(response);
+					if (jawnosConfigureShow('plat_setting', $('#plat_setting_list'))) {
+						b.attr('status', 'active');
+					}
 				}
 			});
 		}
@@ -1258,8 +1295,10 @@ $(document).on('click', '#me_settings', function() {
 			type: 'GET',
 			data: { timestamp: timestamp },
 			success: function(response) {
-				ml.html(response).show();
-				b.attr('status', 'active');
+				ml.html(response);
+				if (jawnosConfigureShow('me_settings', ml)) {
+					b.attr('status', 'active');
+				}
 			}
 		});
 	}
@@ -1327,10 +1366,10 @@ $(document).on('click', '.home_plate_record', function() {
 $(document).on('click', '#restore_list', function() {
 	var c = $('#backup_list');
 	var b = $(this);
-	var text = b.text();
+	var text = jawnosConfigureLabel(b);
 	b.text('* ' + text);
 	if (c.is(':visible')) {
-		b.text('Enc');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	} 
@@ -1341,9 +1380,10 @@ $(document).on('click', '#restore_list', function() {
 			type: 'GET',
 			data: { 'president': president },
 			success:function(response) {
-				c.html(response).show();
-				b.text(text);
-				b.attr('status', 'active');
+				if (jawnosConfigureShow('restore_list', c)) {
+					b.text(text);
+					b.attr('status', 'active');
+				}
 			}
 		});
 	}
@@ -1352,11 +1392,11 @@ $(document).on('click', '#restore_list', function() {
 $(document).on('click', '#system_setting_lister', function() {
 	var c = $('#system_list');
 	var b = $(this);
-	var text = b.text();
+	var text = jawnosConfigureLabel(b);
 	var local_storage = JSON.stringify(localStorage);
 	b.text('* ' + text);
 	if (c.is(':visible')) {
-		b.text('Sys');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	}
@@ -1366,9 +1406,11 @@ $(document).on('click', '#system_setting_lister', function() {
 			type: 'GET',
 			data: { local_storage: local_storage },
 			success: function(response) {
-				c.html(response).show();
-				b.text(text);
-				b.attr('status', 'active');
+				c.html(response);
+				if (jawnosConfigureShow('system_setting_lister', c)) {
+					b.text(text);
+					b.attr('status', 'active');
+				}
 			}
 		});
 	}
@@ -1383,11 +1425,11 @@ $(document).on('click', '.localstorage_delete', function() {
 $(document).on('click', '#appointment_list_grabber', function() {
 
 	var b = $(this);
-	var text = b.text();
+	var text = jawnosConfigureLabel(b);
 	b.text('* ' + text);
 	var c = $('#configure_appointment_list');
 	if (c.is(':visible')) {
-		b.text('Appts');
+		b.text(jawnosConfigureLabel(b));
 		c.hide();
 		b.attr('status', 'inactive');
 	} else {
@@ -1395,9 +1437,11 @@ $(document).on('click', '#appointment_list_grabber', function() {
 			url: '/manager/configure/appointment_list',
 			type:'GET',
 			success:function(response) {
-				$('#configure_appointment_list').html(response).show();
-				b.text(text);
-				b.attr('status', 'active');
+				$('#configure_appointment_list').html(response);
+				if (jawnosConfigureShow('appointment_list_grabber', $('#configure_appointment_list'))) {
+					b.text(text);
+					b.attr('status', 'active');
+				}
 			},
 		});
 	}
