@@ -268,7 +268,6 @@ our $known_appts = {
 	market => { icon => '/icons/pos/vendor.png' },
 	library => { icon => '/images/decipherable/handbook.png' },
 	notes => { icon => '/images/decipherable/list.png' },
-	tetris => { icon => '/images/decipherable/tetris.png' },
 	help => { icon => '/images/decipherable/question mark.png' }
 };
 
