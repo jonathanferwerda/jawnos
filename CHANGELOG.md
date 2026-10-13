@@ -1,0 +1,692 @@
+# Changelog
+
+Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
+(`v<version> - ...`) mark the points where `VERSION` was bumped.
+
+## 2026-10-13
+
+- v0.1.202 - docs: record T-Deck voice parity requirement
+- v0.1.198 - Guide create goes live: stage -> confirm -> promote/discard, with a create/promote/discard tool set generated from the registry
+- v0.1.200 - docs: capture the beyond-the-watch voice-input plan (desktop/phone always-on, browser vs native, Pico far-field) so it survives the session
+- windows.js: read the built-in app list from the server (jawnos_builtin_apps stamped from gb::known_appts), ending the second hand-kept copy
+- v0.1.197 - docs/install: Piper on Termux needs glibc-repo + glibc-runner (README + the installer's --sh/wizard script); name Piper as the speech engine
+- v0.1.195 - Guide registry (step 2): generate actions_prompt and the allow-list from gb::guide_tools; verified the prompt is byte-identical to the hand-written one
+- voices: track .onnx.json in the local set too, so a sync stops re-pulling every config
+- v0.1.194 - Guide tool registry (step 1): declare the guide's tools once in gb::guide_tools (6 active, 5 scoped)
+- twirl: drop the stale tetris duplicate from the app lists (the app is twirl everywhere else)
+- v0.1.192 - voices: only prune a dropped voice once the sanctioned set is complete, so an offline device keeps its old models
+- v0.1.191 - voices: swap to cleanly-permissive models (LJSpeech, LibriTTS-R, Alba) and prune dropped ones mesh-wide; Piper on the phone via glibc-runner + the prebuilt bundle; run piper version-agnostically
+- v0.1.190 - Plat: a Clear button beside a stood-down AI provider, so its paid models are offered again at once
+- Reconcile gb::known_appts with the client's built-in app list (add library, market, notes, tetris)
+- v0.1.188 - docs: the voice -> guide handoff (the voice_brain seam, its contract, and the watch facts the brain needs)
+- v0.1.187 - voice: stamp a note at when the utterance began too (the clip's ts), matching the command path
+- v0.1.186 - version bump (guide review guard + persisted marker already landed in-tree)
+- v0.1.185 - Plat: tag each model with its role caps and free/paid, hide a provider's paid models when it is out of credit, and fall back to a free model in chat
+- v0.1.184 - recycle grown prefork workers, trim desktop worker counts, drop the app's bfcache
+- v0.1.183 - voice: stamp a command at when the utterance began (the watch records the onset time, and voice_command_apply reads the clip's ts, not our processing time)
+- v0.1.182 - Guide reviews an app's pos/mab when its window opens (server route + opener trigger)
+- v0.1.178 - Guide review: /manager/help/review corrects an app's pos/mab when the name does not match, cache-marked so no-AI machines skip it
+- v0.1.180 - Plat: each agent-model list offers only models that fit the role (a chatbot is not offered a vision-only model, Vision is not offered plain text); add a /manager/ai_chat test route for the multimodal layer
+- v0.1.179 - pause the chrons and the appointment poll behind a fullscreen video
+- v0.1.178 - voices: the deps installer installs Piper itself (extras, run on every update); voice sync is a boot pass plus on-demand on the Configure panel, not a 5-minute loop; add THIRD-PARTY.md licence notices
+- v0.1.174 - Guide write path: staged_appointments table + stage/promote/discard/staged routes (a proposal a person promotes, never a direct write)
+- v0.1.176 - desktop: deflate large daemon->watch payloads (a room push goes over BLE several times smaller); watch: inflate them in loop2 and lower the voice cutoffs for whispered speech
+- v0.1.175 - AI: multimodal chat (images now, audio/video shapes ready) for every provider; map setting reads the legend to metres, Ask vision places the scale bar, and the tilt previews live
+- v0.1.174 - watch: compact the voice clip to IMA ADPCM before shipping (~4:1, ffmpeg reads it so the server is unchanged), and tag the clip with the active voice model, not the setting
+- v0.1.173 - Map setting: read the legend (OCR) or ask the vision model, and a tilt to straighten an off-north-up map; wheel/pinch zoom (trackpad scroll zooms too), drag pans
+- v0.1.172 - Guide: find reports the newest match's date ("when did I last see X"); open_gallery takes one or several names
+- v0.1.171 - Travel/continent: free zoom (wheel, pinch, double-tap; trackpad pans), a now-button recentre, places over the seen time range, and help that says where to find a map's tile URL
+- v0.1.170 - Assistant panel stays on screen (clear of the taskbar); drop targets the element under the pointer, not the drag clone
+- v0.1.168 - Assistant: drag from a pinned taskbar tile, drop on a control for help, thread carries on; new helpful-lady icon across the sets (strawberry for handdrawn)
+- v0.1.167 - embedded: push wifi credentials to a device over BLE (Update Wifi works before the device is on the network); voice: only keep a note for speech addressed to us, and at least a short phrase
+
+## 2026-10-12
+
+- v0.1.166 - Guide thread: decode UTF-8 params so a non-ASCII char no longer empties the transcript (one-and-done bug)
+- v0.1.165 - voices: piper-first on every device (uniform voice, termux-tts-speak/espeak fallback), sync the voice models across the mesh, and sweep backup_now's temp archives out of ~/.president once delivered
+- v0.1.164 - Assistant becomes a compact chat: click to open, drag a picture in, same bubbles as the guide
+- v0.1.163 - say_it: natural Piper voices (Amy/Ryan/Alba) pickable in Configure → Misc → Speech, eSpeak fallback, models staged in a gitignored voices/ blob store
+- v0.1.162 - voice: ship clips over WiFi first (BLE drops parts on tens-of-KB payloads) and tag each clip with its capture mode; a wake-word clip is parsed as the command itself, and anything that is not a command becomes a note
+- v0.1.161 - Travel: a pan-able map engine (measured maps + tile providers + current position)
+- v0.1.160 - docs: the VAD window is a state now (the self-clearing one-shot was why nothing ever recorded); note the voicedbg serial report
+- v0.1.159 - watch: fix voice capture (the model window cleared itself on every hit, so the listener's onset count never reached 4 - VAD read speech but nothing ever recorded); add a 'voicedbg' serial report; desktop: unstick a bridge connect whose radio call never returned
+- v0.1.158 - Configure sweep: Me field grid, Plat provider headings, Enc backup cards, Tun tunnel cards
+- v0.1.157 - Pseudonyms: drop the retired beacon name from lists cached before it was pulled
+- v0.1.156 - Pull out the Beacon idea (switch, writer, flags, doc) and give Pseud the Sys card design
+- v0.1.155 - help: add topics for navigation (autonomous location logging) and the utility controller
+- v0.1.154 - watch: lower the wake-word cutoff to 0.75 (0.90 never fired); desktop: keep BLE discovery alive during a pending connect so the bridge cannot wedge
+- v0.1.153 - Configure: POS/MAB labels, keep uploaded image shape, tidy Sys (collapsible totals, per-machine utility rows), restore Enc panel
+- v0.1.152 - tidy: remove the ripped-out IDE sidebar leftovers (dead handler + orphan container)
+- v0.1.151 - tidy: drop the dead $db_settings left by the db_raw refactor
+- v0.1.150 - navigation: capture on the utility interval alone, so an open app (which writes its own location rows) no longer resets the clock and starves the autonomous capture
+- v0.1.149 - perf P4: settings_grabber reads via db_raw; db_raw pads/trims binds like Mojo
+- v0.1.148 - perf P5: drop dead assets (unused layout, jquery.mobile, interface, locales, harper)
+- v0.1.147 - perf P4: log_reader reads rows via db_raw (skip Mojo::SQLite::Results); hash the app-name check
+- v0.1.146 - help: a 'Voice and wake words' topic, and an Embedded topic that names the Voice select (bind the real templates so the guide's inventory tracks them)
+- v0.1.145 - perf P4: cache_get uses the raw-SQL fast path too (no SQL::Abstract left in the poll)
+- v0.1.144 - perf P4: raw-SQL fast path for setting_grabber (skip SQL::Abstract on settings reads)
+- v0.1.143 - Configure: restore tab labels on accordion close, stop panels stacking on a fast tab switch
+- v0.1.142 - watch: table-driven voice models (adds jawn_do); the Embedded panel now arms any built wake word, and lists only the voices we have
+- v0.1.141 - perf P3: run the manager scripts before #preload (the restored window's inline script needs jQuery UI)
+- v0.1.140 - navigation: key the capture cadence off our own temporary fix, not the browser's newest app row (a walk with the app open logged almost nothing)
+- v0.1.139 - perf P3 tail: load the manager's scripts at the foot of the body; serve the bundle terser-minified (sources stay readable)
+- v0.1.138 - configure: tabs behave as an accordion (opening one closes the others); keep secret fields, their "set" marker and button labels on one line
+- v0.1.137 - watch: voice_models.h runs the VAD or a wake-word model by the voice_trigger setting; embed the trained hey_jawn model (verified loading on-device); add a serial 'vtrig' to pick the model for tuning
+- v0.1.136 - configure: redesign every panel for desktop and mobile (one responsive .cfg system, stacking tables) and add the Platform AI panel (DeepSeek, and multi-provider keys); fix provider-key reads
+- v0.1.135 - training: run piper from the cloned repo dir (cwd on sys.path) instead of relying on PYTHONPATH, which Colab ignored
+- v0.1.134 - training: piper PYTHONPATH must be the clone's real path (was hardcoded to the Kaggle dir; broken on Colab)
+- v0.1.133 - training: the piper generator .pt needs a config json beside it; borrow it from the matching Piper voice
+- v0.1.132 - training: piper's pip package omits piper_train, so clone the repo and add it to PYTHONPATH
+- v0.1.131 - training: use the piper-sample-generator pip package (the git repo was rewritten; generate_samples.py is gone)
+- v0.1.130 - training: guard the piper clone on the file, not the directory (a failed clone leaves an empty dir)
+- v0.1.129 - training: install piper deps every run (an earlier run could clone without installing), and only guard the clone
+- v0.1.128 - training: fix the sample-playback cell (Audio filename=) so it does not raise on newer IPython/Kaggle
+- v0.1.127 - configure: a Platform panel gathering every AI model choice and provider key (adds OpenAI, Anthropic, Google, xAI, Mistral, Groq, OpenRouter); model ids route by provider
+- v0.1.126 - training: a Kaggle-ready notebook for the hey jawn wake word (install, samples, negatives, features, 10k-step train, export)
+- v0.1.125 - docs: how to train a hey jawn wake word (Colab/Kaggle, one model per phrase, the manifest, and how it gets wired in)
+- v0.1.124 - watch: real neural VAD. voice_vad.h runs microWakeWord's vad.tflite (via the esp-tflite-micro bundled with the ESP32 core + the micro_features front-end) and the listener uses its sliding-window speech decision instead of the RMS energy gate; tensor arena in PSRAM so the LCD keeps its DMA buffers
+- v0.1.123 - help: a chat Guide that drives the screen (whitelisted find/open actions), a fixed-height composer, and a terminal-action end
+- v0.1.122 - help: audit the registry against the tree, feed the guide a generated UI inventory, and gate pushes on a pre-push hook
+- v0.1.121 - help: train the Gallery guide with verified flows (views, sources, controls) and its steering prompt
+- v0.1.120 - help: add the Guide (context-aware AI over the mailbox agents, with a model dropdown), step-by-step topics and appointment windows, and remember the rail scroll
+- v0.1.119 - embedded: the voice-mode select lists the target wake phrases (hey jawn, sup jawn, jawnski, sup ya hoser); add docs/voice-wake-words.md recording the runtime, the microWakeWord path, and the Pico notes
+- v0.1.118 - add a built-in Help app (topic registry, contextual help via F1 and a window "?" button, richer hints); correct README icon-set and colour-scheme counts
+- v0.1.117 - configure: show the running version at the top of the panel
+- v0.1.116 - embedded: the voice-mode select lists every wake word we ship (okay nabu, hey jarvis, hey mycroft, alexa); watch firmware reads voice_trigger from a Now Me and maps it onto the capture listener (wake words logged until their model lands)
+- v0.1.115 - embedded: send the voice-mode Now Me from the panel after the save (client-side) instead of inside the setting route, which blocked on the BLE connect
+- v0.1.114 - code sync: a machine also pulls the tree from the newest peer (a git bundle over http), falling back to github when no peer is newer or reachable
+- v0.1.113 - embedded: a voice-mode option for the watch (off / any-speech VAD / wake word Okay Nabu) that pushes a fresh Now Me on change, and now_me carries the choice to the device
+- v0.1.112 - appointments: walk a source_uuid chain once, not onto the array being walked - a cycle in it ballooned a websocket worker by hundreds of MB (seen at the music/server connect heartbeat)
+- v0.1.107 - voice: the wake phrase is now "hey jawn" (a matched pair) rather than a lone "jawn", so stray "john"/"dawn"/"yawn" in conversation no longer runs a command
+- v0.1.110 - multi-selects: pressing the trigger again puts the picker away, and the popup wears the house theme tokens; device lister: cards, a toolbar, and a themed neighbour table
+- v0.1.109 - websocket: probe each step of the stayingAlive path to localize the balloon
+- v0.1.108 - inventory: one trend with a unit picker instead of a sideways-scrolling strip, and a lighter, haloed chart; multi-selects everywhere become a compact trigger that opens a picker popup
+- v0.1.107 - websocket: split the stayingAlive memory probe across its steps to pin the balloon
+- v0.1.106 - appointment windows no longer carry a <video src="">, whose empty source made the browser fetch the page URL as media and raise the empty 'ERROR @ :' on every open (the QR placeholder image drops its empty src too)
+- v0.1.105 - notes: fix the drop walker so a drop that is not on an appointment row no longer throws (it made the new-appointment path never fire)
+- v0.1.104 - inventory: a tidy control bar, a self-scrolling table with a sticky header, a bar unit picker, and a share wheel that reads by period, by hour or by weekday
+- v0.1.103 - websocket: log a mobile worker's memory jump at the ws event that causes it, so the balloon can be attributed
+- v0.1.102 - trend: a self-correcting baseline (a dozen readings, or the floor); inventory: charts read forward in time, headline cards, and a bar and a pie
+- v0.1.101 - mobile: recycle a prefork worker after 500 connections so a grown heap leaves with it, name each worker at spawn, and log RSS every minute
+- v0.1.100 - notes: freeze the drag clone and hit-test through the background canvas (drop on a row appends, drop on the window makes a new appointment); watch: keep a send out of the sleep path so a mid-send wake stays usable, and bring the radio up on every wake
+- v0.1.99 - goals: read for the app, and give a scopeless level a pace - the measure's own trend carried to the goal's date
+- v0.1.98 - budgets and goals: a list editor (amount, measure, scope, floor/ceiling), fixed levels read as levels (no more pace on a weight), and an explicit ceiling
+- v0.1.97 - mugshot: serve the sealed file with the image type its bytes actually are (a .png name may hold a JPEG)
+- v0.1.96 - mugshot: a sealed file under me/ instead of a multi-megabyte setting, migrated per-device and served from a public /mugshot; log a handheld worker's own RSS by PURPOSE
+- v0.1.95 - notes: their own table (not appointments) with a bottom input, click-to-edit, Enter-to-save, and drag-onto-appointment; watch: listen the moment the screen wakes and stay awake through a send
+- v0.1.94 - budget panel: a measure's lookup no longer poisons the budget modes (its value went undef once the panel ran), and a measure's figures carry its own name
+- v0.1.93 - autocalc: read the whole history with a sliding window (was capped at 1000 rows), and let measures read their own calc
+- v0.1.92 - watch: hold the screen awake while a clip ships, so the glance no longer dozes (and light-sleeps the radio) mid-send
+- v0.1.91 - voice: pace the clip parts so the link stops losing them, discard the mic warm-up that lit the ring on every wake, ack on reassembly (voice_recv) and retry an unacked clip whole
+- v0.1.90 - budgets: remember the calc per measure (sum/average), and read and light measure budgets
+- v0.1.89 - mobile: smaller SQLite page cache and mmap per handle
+- v0.1.88 - watch: set the look floor to 5.0, the value that clears every away/rest settle and admits every read across the worn captures
+- v0.1.87 - mobile: fewer prefork workers so a handheld fits under the low-memory killer
+- v0.1.86 - budget panel: the recommendation is a button that sets the budget, shown only when off budget
+- v0.1.85 - watch: a look must read above the turned-away pose (raise the z floor), and hold the VAD onset so the room stops waking a capture
+- v0.1.84 - budget panel: surface the autocalc's own reading as a Recommended budget
+- v0.1.83 - watch: an orange ring around the panel while a spoken command is being heard
+- v0.1.82 - watch: hold the automatic BLE step push to the minute cadence so every reconnect stops re-sending the count
+- v0.1.81 - tunnels: do not clobber a peer manager when its tunnel rows are gone
+- v0.1.80 - appointment header: bigger budget icons, and rename the 'abused' budget status to 'overkill'
+- v0.1.79 - watch: a Now Me for a BLE-only watch falls through to the bridge push (the HTTP ping could not reach it), and bound the fetch so the panel stops red-dotting
+- v0.1.78 - voice: run a bridged clip's ingest in a forked worker so the listener keeps draining the bridge
+- v0.1.77 - remote: never file or sync a machine with itself
+- v0.1.76 - voice: reassemble the watch's framed clip server-side too (the phone bridge doesn't), take whisper's 'down' for 'jawn', and listen only while the screen is on
+- v0.1.75 - notes: reopen as an app on reload (not a centre view), and give each note a two-click delete
+- v0.1.74 - voice: live-refresh an open Notes window over the websocket, and delete the watch's clip once the server has transcribed and filed it
+- v0.1.73 - watch: do not enter the TLS stack with no WiFi link (the lwip assert that reboots the watch)
+- v0.1.72 - watch: keep the voice clip off a homebase marked down, and stand the VAD listener aside for a TLS fetch (the lwip-assert reboot)
+- v0.1.71 - notes: file speech that named no command as notes, add the Notes app to the start menu, and fit the Set room's System page above the bottom row
+- v0.1.70 - inventory: drop period rows that carry nothing for the chosen display
+- v0.1.69 - app releases: pull the newest APK from a peer onto every device (5-min tick)
+- v0.1.68 - evaluation: keep both contrasts of a condition, and trust the day reading over the clock
+- v0.1.67 - evaluation: conditions the app runs under, and pruning relationships that go quiet
+- v0.1.66 - app releases: stage built APKs into the project dir (gitignored) and advertise/fetch them between peers
+- v0.1.65 - voice: a hands-free VAD setting, an 8 kHz clip shipped over BLE with bridge-side reassembly, and ring-only button toggles
+- v0.1.64 - evaluation: assemble related apps automatically, and give each relationship its lag
+- v0.1.63 - evaluation: read an app's episodes, and offer noticed relationships in the relational autocalc
+- v0.1.62 - evaluation: read what runs around each occurrence, not just daily totals
+- v0.1.61 - cards: a Sunday week and no title splash; inventory cell: an AI reading of the period
+- v0.1.60 - read every time-period column as a pace, not only the budget's own scope
+- v0.1.59 - update: reconcile a rewritten-history tree, and let a deploy force it
+
+## 2026-10-11
+
+- v0.1.58 - voice: run the ingest inline (not forked), match apps in the DB, and take whisper's 'dawn'/'john' renderings of 'jawn'
+- v0.1.57 - desktop: overlap the cascaded bars by their border so the seam between two navbars reads as one line
+- v0.1.56 - voice: whisper ingest + a VAD-gated capture so 'jawn <verb> <app>' runs over WiFi or BLE
+- v0.1.55 - per-scope pace floor, spread over the part of the period awake
+- v0.1.54 - phone: overlap the cascaded bars by their border so the seam between two navbars reads as one line
+- v0.1.53 - floor the early-period pace and format negative durations
+- v0.1.52 - watch: re-home a BLE-bridged watch to the machine it is talking to (its taps then fetch the right box)
+- v0.1.51 - phone: flush the window cascade to each bar's own height, and restore the pile's z and sizes on reload
+- v0.1.50 - music: sweep the commented-out debris from music.js
+- v0.1.49 - read a locked budget's colour, graph line and report as a pace
+- v0.1.48 - read part-run periods as a pace, not a fall
+- v0.1.47 - ble bridge: keep one PropertiesChanged match per link, so a tap or step is delivered once not 7-12x
+- v0.1.46 - phone: take the title-bar tap on touchend so a just-dragged window still answers
+- v0.1.45 - music: cache only the window shell (strip frozen player state, so no stale row/source on reopen) and drop dead code
+- v0.1.44 - ble bridge: register PropertiesChanged on the right D-Bus interface, so watch notifications (buttons, state_request, steps) reach jawn
+- v0.1.43 - phone: restack on a body tap and on drag end so a moved window cannot pin the pile
+- v0.1.42 - phone: order the window pile by z-index so a dragged window still answers a title-bar tap
+- v0.1.41 - music: keep the seek position while paused, and make the play state track reality so one tap resumes
+- v0.1.40 - phone: walk the window pile by z-index (top of the pile is the front window)
+- v0.1.39 - phone: repack the window cascade on close and walk it on a title-bar tap
+- v0.1.38 - music: resume the saved track and actually start playing after a refresh
+- v0.1.37 - watch: push the step count over Bluetooth, not just the access point
+- v0.1.36 - phone: restack the layered windows on close and walk the stack on a title-bar tap
+- v0.1.35 - music: full-width seek row with 2-line title, theatre button by the transport, restore the live player state on refresh
+- v0.1.34 - keep the window frame ring above the bar when the z-index runs high
+- v0.1.33 - make the title bar's border even on all four sides
+- v0.1.32 - give the title bar's bottom edge the window's border width
+- v0.1.31 - music: theatre button out of the tools, window-scaled icons, seek preview above the bar
+- v0.1.30 - music: single-row player bar, a visible tools toggle, and a version-keyed window cache
+- v0.1.29 - music: fix silent playback, add volume/mute, tuck the media tools away
+- v0.1.28 - perf P3: serve the manager's 43 app scripts as one memoised, ETag-revalidated bundle
+- v0.1.27 - perf P3: stable version cache-busters everywhere; bust gate.js
+- v0.1.26 - perf P2: skip visit_child_handles unless a statement is live
+- v0.1.25 - sit the window controls and title icon on the bar's foot
+- v0.1.24 - perf P2: request-scoped settings memo; drop dead settings_grabber fallback
+- v0.1.23 - round the windows' corners a touch
+- v0.1.22 - desktop view: stop cookieless static fetches clobbering the session
+- v0.1.21 - perf P2: log_reader per-row memoization, drop the O(n^2) reorder
+- hooks: gzip static assets on the way out
+- jp: add PlatformIO project for the Pico 2W alarm-clock firmware
+- perf P1 tail: version-based cache-buster, pruned newest_folder_checker, lazy gb globals
+- peer_lan_address: skip the hub and memoize our interfaces
+- peers: reach the LAN directly; throttle the Dingaling; drop dead subs
+- credentials: remove the ssh data plane, ui and columns
+- deploy/reconnect: no ssh; ask the peer over http
+- remote_upgrade: pull the db archive over http, not sshpass/rsync
+- remote_rsync: carry the tree over http, not sshpass/rsync
+- relay: gossip each request to every reachable peer, deduped
+- tunnels: wss peer must dial the hub's ws route
+- v0.1.20 - perf P1: drop dead harper.js and the 404'ing aframe, stable cache-buster
+- tunnels: wss carries the whole batch over one websocket
+- v0.1.19 - fix stale connection flag; keep the dock up under the pointer
+- v0.1.18 - fix the backup export dying on sync_cursors, wedging fleet sync
+- v0.1.17 - keep the wss tunnel holder alive
+- v0.1.16 - make the wss tunnel actually reach the hub
+- v0.1.15 - scripts/deploy_neighbours.pl: force a push to the neighbours
+- v0.1.14 - report version on the periodic handshake too
+- v0.1.13 - fix remote_deploy quoting ($HOME expanded locally)
+- v0.1.12 - peer version in handshake; auto-reinstall desktop app; ssh deploy
+- v0.1.11 - cache thumbnails, document VA-API drivers for all systems
+- v0.1.10 - desktop perf: cache model, lazy music thumbs, honest VA-API check
+- v0.1.9 - printers: soft-shadow text instead of hard outline; keep screen on
+- v0.1.8 - desktop dashboard: centred, clickable logo, view button under Restart
+- v0.1.7 - budget lights wear icons; drop clothesline text halo
+- Desktop app: media keep-awake, tray by default, smoother WebKit
+- Apply schema migrations on boot, so a git pull lands its schema
+- Durable deletion tombstones (permanent until every device acks)
+- Fix wss hub tunnel route; add version to the desktop app
+- Wire password-less wss tunnel behind tunnel_transport (default ssh)
+- Add password-less websocket tunnel data plane + version 0.1.1
+- readme: a support section and GitHub Sponsors funding
+- sync: log when a remote export is deferred, so the 4am herd is visible
+- appointment_viewer: stop the nothing-new poll hiding a running appointment
+- sync: one remote export at a time, and a real watermark for the peer check
+- desktop/wayland: bootstrap script and the bootable-USB recipe
+- desktop/wayland: a starting Sway session for JawnOS (kiosk / DE)
+- teletype: an input-injection backend (xdotool / dotool / wtype)
+- readme: the Linux desktop app, themes and auto-update in the features
+- scripts: --desktop deps check for the app's WebKit/GStreamer media
+- docs: install the WebKit/GStreamer media packages
+- desktop: no notebook frame, and F11 is the only way out of fullscreen
+- desktop: hide the tab strip, tidy the admin icon, and help video
+- window: close the titlebar/content gap and the frame at the foot; add a window border colour setting
+- desktop: Super shortcuts under WebKit, an admin icon, and the ticket's host
+
+## 2026-10-10
+
+- desktop: one app -- dashboard and embedded view in one window
+- desktop: load the embedded view on the ticket's host, not loopback
+- desktop: launch jawn from a GUI, and start the BLE bridge with it
+- configure: window border width slider
+- remove the dead newsstand / statement_grabber
+- appointment_viewer: make the nothing-new short-circuit actually fire
+- desktop: encrypted login-ticket import + fullscreen in the embedded view
+- appointment_viewer: slash the per-second poll
+- desktop: grant camera/mic in the embedded view
+- desktop: embed the JawnOS UI in a WebKitGTK view
+- watch+laptop BLE: let the desktop's writes actually reach the watch
+- desktop: name the bridge 'Laptop', timestamp the daemon log
+- desktop: make the BLE bridge actually carry to the watch
+- desktop: settle scan before an LE connect
+- version: dirty means modified tracked files, matching the update watcher
+- Auto-update: store the new revision before reloading a stale tab
+- desktop: single connect flow in the BLE bridge
+- evaluation: speed in km/h, and a volume guard on the speed measures
+- evaluation: read the continent track, and save GPS speed as a measure
+- version: freeze the code revision at boot so /manager/version is exact
+- desktop: JawnOS for Linux -- supervisor, BLE bridge, GTK dashboard
+- evaluation: a cadence (hourly..yearly, every run), and the schedule in the briefing
+- Auto-update: a git watcher that fast-forwards and reloads tabs
+- evaluation: quiet trends, no clock, and numbers that read normally
+- warehouse: a deleted transaction leaves nothing in the ledger; fix move-amount nbsp
+- evaluation: walk the recent periods of every scope (trends)
+- configure: drop the dock icon size slider
+- configure: navbar and dock size sliders
+- Code revision endpoint + automatic data backfills
+- evaluation: read an app's measurements and their values
+- diagnose: log remote_rsync entry (the last restart writer not yet traced)
+- icons: add Windows, macOS and GNOME icon sets
+- configure: four more colour schemes; labels read on their own colour
+- configure: soften dark theme ink and give chrome a grey border line
+- president: fewer prefork workers, and log what triggers a restart
+- configure: add dark cuts of the five desktop themes
+- watch: hide the status strip in the Set room, and enlarge its tabs
+- configure: replace generated colour schemes with five desktop themes
+- permissions: the phone's Permissions icon also raises the JawnOS API grant screen
+- utilities: one restart-proof schedule; utility rows keyed by machine
+- watch: the Set room's sliders go full width under their names
+- watch: the Set room is grouped into Screen / Radio / System pages
+- watch: the console stops blocking the UI, and room_count parses a JSON string
+- Pinned apps: box office merges with its pin; a pin press opens the window visible (not minimized)
+- sync: bound the remote_upgrade lock by its own age, and clear it on boot
+- watch: a room_request fallback, and taps that do not block on TLS
+- navigation: close an auto-started app when the plate is left
+- Timeline magnify: grow the compact dot-and-words item, not the whole wide row
+- watch: Now Me sets the face clock directly (and stop corrupting the ESP clock)
+- Click magnify: soften the pulse from 10% to 6%
+- Click magnify: scale only the clicked item, not its captured neighbours; app switcher order oldest-left
+- Taskbar: order window tiles oldest-left, newest-right
+- navigation: gate headless_navigation on this machine's own fix, not the newest row
+- readme: fresh, sanitised screenshots
+- readme: add a screenshots section
+- windows: sit a tiled lock flush under the top bar and clear the dock's tucked strip
+- readme: a professional pass, and the features since the last update
+- watch: configSave only writes the config when it actually changed
+- watch: a bigger clock with the seconds beside it, and a faster screen
+- windows: one frame for every window, drawn as an inset ring
+- windows: border-box the navbar and the configure panel so their borders fit
+- windows: a half lock reaches the bottom, or the dock's top edge
+- music: dim only the track list while a search is in flight
+- music: dim the library while a search is in flight
+- watch: square the clock-room buttons, steps left and seconds right
+- music: update search results in place instead of re-rendering the window
+- Toggle push rides the icon set, not the hand-drawn fallback
+- music: keep playback alive across a search re-render
+- Bar heights as sliders: taskbar height and a new clothesline height
+- watch: the radio comes back off the wake path, and a nap always samples
+- Clothesline: let a task/default the user also runs directly hang itself
+- watch: the pose-log markers carry millis()
+- Clothesline: don't auto-hang an app's task apps either
+- warehouse: the money ledger becomes the budget's money store
+- Clothesline: don't auto-hang a parent's default options/models
+- watch: the turn threshold was above the real arm-to-look turn
+- Clothesline: gap below the top edge, daily order, auto-hang daily routines
+- warehouse: a ledger of moves with money folded in; evaluation reads all settings
+- Dock: hug the row horizontally when the search is not in the dock
+- Dock: centre the icon row when the search is not in the dock
+- evaluation: default-fill a window's quantity from the serving setting
+- watch: the glance is five seconds, and a gone homebase is not hammered
+- evaluation: read a logged quantity's own unit, and only size a bare count
+- studio: make the audio buffer hint a setting
+- evaluation: read quantities, name what the appointment is, and frame it in now
+- watch: a look is seen while walking, and the swing is not
+- studio: add a round-trip latency meter and defer the localStorage song write
+- studio: fix pedal knobs (drag/roll, no buried sliders) and jump to a pedal
+- evaluation: drop the raw timeslot dump and open the report from its whole header
+- watch: a bigger clock (54 -> 60 px)
+- studio: default the input to audio only
+- studio: drop the now-unused count-in helper
+- studio: run the transport on the audio clock and schedule takes as buffers
+- evaluation: remember the headlines, hand over the change, and link every appointment it names
+- watch: the glance ends on the wrist turning back, not on the window
+- evaluation: read the last report against the new one, and stop printing the raw table
+- evaluation: weigh every window, drop scheduled sources, keep a durable run note
+- watch: the look holds the screen, and the arm coming down drops it
+- tasks: one clock for a relayed checkbox; evaluation: only a machine that can run it does
+- watch: a light-sleep stall reboots instead of needing a power cycle
+- inventory: run the evaluation on demand, and hold the headline to twenty words
+- watch: a look survives the hand dropping back to the side
+- mail: a reply frame without its own uuid still replaces on screen
+- mail: the pen's reply reaches the tab once
+- Reorder window-menu helper comment
+- Window menu: detect maximized via restore control or view attr
+- watch: light sleep samples the wrist fast enough to find a raise
+- Taskbar: 5-char window shorthand; window menu offers Restore when maximized
+
+## 2026-10-09
+
+- taskbar: the start menu's foot icons can be pinned too, and 'Now' stays an action
+- taskbar: a pinned app opens its app, not an appointment
+- menus: a window's own context menu (close/max/min/move), a long press opens every menu on touch, and a slimmer clothesline edge
+- zoom slider: floor the scale at 20% so the 10% step grid still includes the 100% neutral
+- the load reading is real now: the subprocess CPU fiction goes and Process Monitor takes its place; display zoom is 25-200%
+- chrome: the black click-line goes, a pressed canvas item grows, the clothesline becomes rounded tiles, and presses beat while they load
+- taskbar: the window slot wears a frame in edit mode, and the start button always wears one
+- taskbar: pins launch by app and the open window parks in the pin's slot; menu search clears every tab and matches the icon size
+- taskbar: pin an app from its window, merge the pin with the open window, and give the tiles a sunken/raised state
+- taskbar: the add-items list is a fixed-height scroller, so the whole catalogue is reachable
+- taskbar: an edit mode and a context menu, so the clock - and anything else - can be dragged where it belongs
+- watch: the crown cannot be starved out of light sleep
+- killer: stop everything jawn runs, the master included
+- taskbar: the clock's plate sits off its text, top and bottom too
+- menu: the app list stops above the foot, instead of scrolling behind the fixed buttons
+- invoice: deleting the transaction a payment made reopens the document
+- workers: two killers that dropped a request, and the icons the documents never wore
+- menu: the list scrolls, the foot buttons and rail stay put, the body fills up when the search is away
+- watch: the glance says five seconds, because that is what it gives
+- lister: one row per address across every machine's tables
+- watch: a raise is movement between samples, held in the look window
+- chrome: the taskbar's height is a setting, the start button has a face of its own, and the menu's search gets room
+- AGENTS.md: kept on disk, off the repo
+- agents: the deck's TLS needs PSRAM, the client leak both boards had, and the scan's sharp edges
+- scan: one row per address
+- deck: mbedTLS borrows the idle PSRAM, the fetch stops leaking clients, and one homebase keeps one entry
+- watch: a look is a turn the arm holds, not the screen coming up
+- menu: the search can ride the start menu, the tabs stay put, and a press outside puts it away
+- video: the theatre picture fills its window, so the subtitles stay in the frame
+- chrome: the dock keeps a sliver without the search, and its icons can be switched off
+- agents: the watch and deck's push path, the crumbs, the console wedge, and how the scan really lists a device
+- dock: the side pill's chrome is 26 after the thinner border
+- chrome: the dock wears the taskbar's tiles, and a shared edge paints over it
+- dock: side docks slide away and answer the pointer
+- settings: a misc setting reads through Me, and the panel shows what is stored
+- AGENTS.md: field notes for agents, so nobody rediscovers the hard way
+- budget: invoices and quotes total separately, quotes read as drafts
+- budget: the invoices display is a ledger of documents, counted once
+- store: every line prices by its quantity, and the paper draws itself
+- chrome: the phone's bar speaks in shorthand, the clock has two faces, and a press answers once
+- store: the paper gets a face worth reading
+- chrome: the corner shelf lets clicks through, and the search's results stay in reach
+- store: the browser's keys group into families, and the debrief is folded on the way in
+- store: the paper a letter carries is drawn by the house, not the poster
+- mail: a sent letter files itself, and its envelope opens the message
+- bars: the menu hangs from the button that opened it
+- storage: the view's timestamp is kept, not the whole payload
+- icons: the paperwork joins every set
+- store: a moved document leaves no twin, and the paper prints white
+- bars: the legends wear a type, and the left start button leads the bar
+- store: the invoice flow gets a driver that walks it as a browser does
+- mail: arrivals reach the browser, and the compose sends at once
+- keyboards: the claim bar goes, and the bar's own X closes the panel
+- bars: the clock shortens on a phone, the start button picks an end, and the dock takes the sides
+- windows: the clothesline holds the top back on every device
+- deck: the push path hands buffers over instead of copying them, and the console stops printing whole files
+- scan: a typed host is honoured even when the neighbour table has entries, and the ping waits for a sleeping esp32
+- watch: the push stops holding five copies, the raise is polled, and the console prints stop drowning it
+- bars: the dock's top offset falls back to the page's top
+- search: the dropdown hangs from whichever half the box rides in
+- bars: the top dock hides its row above the edge, and the band above the clothesline goes
+- bars: the top icons join the taskbar, and the trio moves into the menu
+- bars: the window list moves into a taskbar, and both bars take an edge
+- timeline: a press keeps its own click, and rest begins when the finger lifts
+- windows: the stack steps by the title bar's own height
+- evaluation: the budget is read too, and the controls move in with the app
+- watch: the raise's ten seconds are armed where the wake ends
+- watch: the net room says who the bridge is, and a raise is a glance
+- evaluation: the report's names match however they were written
+- evaluation: a headline on the report, names that walk, and a link only when sure
+- watch: the screen wakes to the arm, and only to the arm
+- evaluation: kinds and tasks in the briefing, and the output on the card
+- nightly: the days retune after the write, boot retunes stale schedules, and the picker skips mirrors
+- evaluation: look around the appointment, not only at its links
+- nightly: the nights, the machine, and a report the house can read
+- a command can name the machine it belongs to, and the appointment says where it ran
+- evaluation windows: the strip picks a day, a week or a month of history
+- nightly evaluation: a checkbox that leaves a fresh report by morning
+- watch: the bridge carries the buttons, the rooms and the toggles, and stops base64ing them
+- give the evaluate buttons a model-backed evaluation agent
+- watch: the radio knows whether it is up, so a fresh config cannot leave it silent
+- three doors for the appointment's own buttons: media, extra, connect
+- watch: a blank config can no longer write itself back, and taps stop panicking the radio core
+- notifications: the uuid is minted before the render, so the X knows what to remove
+- one size for the bottom row, and the little ones above it
+- alarm: the record setting is not a command, notifications key on themselves, and benign stays out of the where clause
+- back to the top row as it was, and group the appointment's own buttons
+- give the window buttons their rows: run, jump, write, tools
+- wake the alarm for the recording that starts right now
+- keep an audio take audio the whole way through
+- watch: the frame stops losing bands, and the access point stays off
+- timeline: a dot pinned to an edge sits flush with it, whole circle and all
+- watch: the radio cannot eat the config, and a room redraws over its ghosts
+- give the transport icons fixed hues in every set
+- shed the header's status line and tuck the transport row up
+- bare the title icon, and unframe the appointment header's icons and time
+- give the title-bar icon a 2px collar of the bar colour
+- pick the name ink by WCAG luminance, not a flat channel average
+- watch: a press keeps the patience, and the BLE listener keeps its lines
+- let the window name ride on the bar colour, not in a chip
+- thin the window title bar to 36px
+- desktop: the window chrome icons are the buttons, with no grey face behind them
+
+## 2026-10-08
+
+- desktop: the now background carries the speed, and the windows wear the set's chrome
+- desktop: the top row lines up by the picture, and the assistant sheds its plate
+- websocket: a resume after a real absence rebuilds the sockets at once, not seconds later
+- BLE: jawn-bt bridge integration (Tasker replacement)
+- desktop: the top row lines up, and the now tile follows the time machine
+- timeline: a poll's slide lands where it is put, not 32x past it
+- music: the top bar tidies, a search keeps the shelf sizes, and the video toolbar's ruler, title and subtitle buttons are mended
+- start menu: the recents ask for a warranty, so the alarm cannot purge them
+- jawn: the launch guard waits for a reply, and the watch fd stops riding along
+- jawn: the dead subprocess list is gone, and its warning with it
+- jawn: one master per machine, and a restart request is consumed once
+- housekeeping: the agent harnesses keep their home in .shots, ignored
+- start menu: the shelf showing is not remembered, so an open lands on the recents
+- start menu: the recents live in the cache, and every row wears an X
+- inventory: the page button names the unit it walked, and holds 99FY
+- inventory: the page button walks its colour with the page
+- start menu: the app list is a recently used list, and the shelves are a rail
+- inventory: the page button wears the icon set, and no empty page can wedge it
+- lsp: a gb global touched once in a file is not a typo
+- text editor: $self answers an appointment, and the legend says $self
+- inventory: the page label walks back to now, and the popup canvas fits its box
+- db: replay a schema without the internal statistics tables
+- editor: the variable legend is a toolbox button that opens upward
+- timeline: a trackpad turns the grab off, read from the wheel stream
+- timeline: a row answers to a click where its line is drawn
+- keyboard: the dock keeps a strip under the search, and panels drag by a top bar
+- timeline: a finished appointment behind the view stops sticking there
+- timeline: a stop before the view is not a presence in it
+- keyboard: the delorean's config reads from the middle
+- timeline: the whole appt line answers to a click again
+- keyboard: the delorean's config carries the sensitivities and the old view
+- security: the neighbour table holds its window width
+- appointments: a deletion fetches its rows before the websocket send
+- timeline: the past sticks to the left edge, and presence stops falling off it
+- timeline: the swipe is a twentieth, and the other way round
+- timeline: a trackpad swipe is damped to a tenth
+- timeline: the wheel was never the event the browser fires
+- timeline: the double-click's refresh is not blocked by its own press
+- timeline: the flick's momentum is time, not pixels
+- timeline: a double-click gets back to now again
+- timeline: the flick glides from its speed, not its last tiny event
+- keyboard: a moving window may hang half off the screen
+- jawn: the restart trigger keeps working past the first restart
+- timeline: a trackpad swipe glides, a scroll stays plain, and a mouse grab slides
+- timeline: the slide glides like the clothesline, and no longer multiplies the time machine
+- leaderboard: full names while the screen has room for them
+- timeline: the pseudonym icons are kept, so a reload does not flash
+- timeline: the pseudonym icon is a fifth larger
+- db: migrations leave fresh statistics behind
+- db: one connection per process, and it cannot pin the wal
+- keyboard: a moving window may hang half off the screen
+- windows: reopen raises a window, background refreshes do not
+- db: retire nine redundant indexes and give the planner real statistics
+- store: the item panel opens below the store header
+- security: the neighbour table fits its window
+- tickets: the sales key rests below the window buttons
+- windows: a window may not grow past the viewport
+- president: retire the memory mirror, the cache is the database
+- marker: one save at a time, so the autosave never doubles up
+- db_insert: a refused write answers falsy, not a stale id
+- timeline: the pseudonym icon sits in the middle of its dot
+- marker: a session is saved by replacing it, not delete-then-insert
+- mail: the template screen's old Variables label is gone
+- text editor: the subject takes the words too, and a letter knows who it is to
+- icons: drop the last unreferenced mirror art
+- icons: retire the mirror glyph
+- icons: the tunnel button gets a tunnel; search's hint says Search
+- text editor: ${self} answers the invoice, and a legend names what it can say
+- icons: the search button is a magnifying glass
+- websockets: a closing socket no longer deletes every tab's rows
+- ide: pl, js, html and html.ep read in colour
+- text editor: one click puts the caret in, and ${vape}->duration is eaten
+- start menu: a row is one button; the dock shares its width
+- start menu: app rows lead with the icon, panel fits the screen
+- folders: the file grid takes what is left under the toolbar
+- folders: a sealed picture shows itself and opens in the images app
+- folders: the toolbar grows to fit its items, so nothing overflows
+- sync: the remote rsync leaves git behind
+- readme: the folders menu and sealed files, in the features
+- folders: a deletion trims the rows beside the appointments of it
+- folders: a deletion lets the appointments that attached a file go of it
+- deck: the watch's Nordic UART bluetooth, with the boot crash designed out
+- folders: a cut and paste takes what pointed at the file along
+- folders: the right-click menu works, and files can be sealed and opened
+- deck: the microphone finally works - the codec was in the wrong serial format
+- dock: leave out what the music player wrote, keep the albums in
+- dock: leave the gallery's albums out of the keyup search
+- inventory: the graph readout sits on white
+- inventory: the graphs read out the window under the mouse
+- dock: keep gallery albums out of the keyup search
+- music, folders, gallery: fetch home from wherever you are
+
+## 2026-10-07
+
+- inventory: write down what a row that names periods ahead counts
+- folders: drive the loop while a fetched file is streamed down
+- folders: fetch an archived item back home
+- gallery: a way to turn the archive on, and the tiles that follow
+- gallery: show archived photos instead of losing them
+- printers: the timeline maps a percent a scope either side of now
+- folders: a bookmark drawer in the toolbar
+- music: an archives button, and the listing it brings with it
+- deck: a FAT wedged by power cuts rebuilds itself, and the screen sleeps once per idle
+- folders: keep a manifest in the archive, and read it back
+- inventory: the graphs page with ctrl and a finger, not just a trackpad
+- folders: browse another machine, and its archive, from the toolbar
+- folders: stop or retry a queued archive item
+- inventory: the pages run newest to oldest, the way the axis does
+- folders: archive from the context menu, and a queue in the toolbar
+- inventory: sideways scrolling walks the graphs through the periods
+- folders: queue archive transfers and carry them over the tunnel
+- inventory: the popup graph is about the item that was clicked
+- configure: pick the archive root from the panel
+- music: scan the folders the panel has lit, sent with the search
+- deck: record from TDM slot 0, and turn the ES7210's high pass filter on
+- president: run the archive queue's worker
+- inventory: trim the keyboard's span picker to the spans that get used
+- folders: refuse archive writes when the archive root is not there
+- folders: put the archive probe and receive endpoints back
+- deck: line the ES7210 up with the factory firmware's TDM settings, and 30 dB of mic gain
+- inventory: one span function, the budget's multiplier in periods, and a graph that fits its data
+- folders: probe and receive archive transfers over the tunnel
+- deck: voice notes through the ES7210 mic array, and a GPS drain loop that cannot hang
+- folders: give the archive root its per-location folders
+- inventory: Nnext is the next N periods, and locked edges are period starts
+- deck: real text inputs for the chat and pen rooms, and make touch actually point
+- inventory: put window edges on one side of the boundary
+- deck: stop pinMode() from de-routing the shared SPI bus, and make the deck usable
+- studio: Start on grid setting and capture quality controls
+- music: dress the player window
+- inventory: snap the locked month window to real calendar months
+- studio: count in before recording, following the signature by default
+- inventory: stop recomputing the details windows for every appointment
+- studio: bar-locked loop takes, headphone monitoring, fader layout fix
+- deck: give GPSPI2 a single owner so the boot survives the first SPI write
+- music: switch libraries inside the search request
+- music: make remote libraries search, configure and list correctly
+- deck: keep the GPS bring-up out of the boot path and time each UBX call
+- printers: redraw the manager canvases for legibility
+- icons: retire squircle/flat/professional, add five artsy sets and clown barf
+- deck: trace the boot on the IDF console, fix two more hang points
+- watch: start BLE from loop(), not from setup()
+- deck: fix the boot crash loop, make the GPS non-fatal, unblock the serial port
+- watch: fix the clock font cmap so the digits resolve
+- jw: keep python bytecode out of the tree
+- watch: 54px clock font, crown sleeps on click, IPs only in the net room
+- watch: record in 2 KB chunks and only yield on an empty read
+- watch: fix playback pitch, AP IP on the face, 30s sleep floor, crown sleep gesture
+- jw: a refused light sleep falls back to a doze instead of bouncing the screen
+- jw: keep the CPU at 240 MHz, refresh the screen timer off LVGL, log the slow paths
+- jw: tidy the watch face and stop stray events waking the screen
+- jw: the crown lights the screen instead of sleeping it, and the screen is upright
+- firmware: PlatformIO builds green for both boards
+- embedded: a USB button that has the manager flash the esp32 boards
+- firmware: bring jw and jt up to arduino-esp32 3.3.12, LilyGoLib 0.3.0 and LVGL 9.6
+- embedded: wifi OTA for the esp32 boards - the manager relays the picked .bin to the board's own /update
+- db: stop the migration list re-running statements the schema already has
+- firmware: LVGL 9 configs for both boards
+- jw: keep step samples tied to the clock room
+- jw: sample the pedometer on a timer, not just the BMA interrupt
+- start menu: put every row into the sort, wrapped icons included
+- start menu: right-aligned alphabetical rows
+- start menu, icons and the top bar
+- clothesline: glide the distance it used to, and no halo without a picture
+- configure: leave appointment colours alone, add a re-theme button
+- db: dial per call again, and let every writer wait its turn
+- chron: dynamic times tick every second again
+- configure: fix the packaging panel dying on a sort collision
+- db: stop the connection setup and the migration from poisoning the shared handle
+- pwa: version universal.js, and stop the service worker re-issuing what it should not
+- clothesline: keep the backdrop visible over a background picture
+- readme: cover the warehouse, marker, studio and store
+- marker: autosave the board in progress
+- marker: make the zoom obvious, and add a scroll = zoom mode
+- marker: hide the toolbox, and make trackpad pinch zoom reliable
+- marker: pinch zoom, pan, and straight lines from the last point
+- marker: palm protection for the stylus
+- marker: saved sessions, undo/redo, and stylus pressure
+- marker: layers, fill, and real brushes
+- perf: cool down the remaining animation and polling loops
+- perf: only touch clock elements when their text can actually change
+- perf: stop the websocket heartbeat from burning phone batteries
+- db: index warehouse, item catalogs, settings-by-app, appointment type/app, remote machines and mailbox
+- warehouse: inline journals, and a stock journal on appointment details
+- warehouse: stock journal, opening on current place, 6-hourly expiry sweep
+- warehouse: default stock place = where you are; place inventory flag; packaging default place
+- warehouse: stock movements, expiry and packaging shelf life
+- warehouse: list stock and money by place, with item search
+- store: fix numeric_formatter stripping the leading digit, so model/option prices populate
+- start_menu: stop leave/site-type covering the app icons
+- perf: cut per-call forks, reuse the DB handle, quiet idle polling
+- configure: stop the process-watch socket from derailing the system page; label contrast; bigger start-menu icons
+- theme: re-theme panels and ink on live scheme changes
+- theme: window/panel backgrounds follow the colour scheme
+- studio: show the pedalboard, and make knobs/jog wheels truly circular
+- studio: crossfades, clip waveforms, circular knobs, hand-drawn pedals
+
+## 2026-10-06
+
+- studio: clip editing (cut/splice/trim) on the track canvas
+- studio: fix template regex, latency offset, pedal drag-drop, take editing
+- studio: real audio engine, effects, synced transport, fix save-after-reload
+- Add a copy/download install script to the setup wizard
+- Fix first-run check reading config.json in list context
+- Fix travel map placement: project lat/long onto the map image
+- Restore the duplicate ssh in the Debian package list
+- Dedupe the Debian apt package list
+- Drop dnsmasq and GatewayPorts from the Debian notes
+- Distinguish ./jawn --setup re-runs from first runs
+- Add first-run setup: dependency check + config/database wizard
+- main_icon_maker placeholder icons in the icon sets
+- Hint delay 1s; theme every template icon with hints
+- Hints everywhere: 2s delay, above the pointer, start menu + appointments + gallery
+- Theme studio instrument artwork + mouse pointer
+- icon hints (hover/long-press), circular jog wheels, theme manager icons
+- video/studio controls follow the icon set; fix background-tab freeze
+- Music theatre icons follow the icon set
+- Music app icons follow the icon set; keep windows' open panels on icon refresh
+- icons: start menu + app icons follow the selected set
+- icons/theme: fix prefork cache staleness + hand-drawn icon frame
+- icons: selectable icon sets (10 SVG styles + hand-drawn original)
+- theme: make white panels theme-aware (--panel) so dark schemes are readable
+- config: remember last device; richer light+dark schemes with depth/variety; themeable ink so dark themes use light text (printers + css)
+- config: device tabs + ~20 colour schemes applied to the visible device; bigger colour labels
+- config: tidy misc settings (no horizontal scroll) + configurable title font; replace hand-drawn lettering with text (start menu, music, keyboard)
+- icons: menu-bar icons + known_appts stragglers (apps/run/up/exp/view, wrench, camera, register, appts, shop, blocked)
+- icons: new Home icon (replaces hand-drawn jbuttons/decipherable home)
+- icons: greyer palette + larger glyphs; force static revalidation; cache-bust start-menu icons
+- icons: add a rounded border around each icon tile
+- icons: replace hand-drawn start-menu icons with new SVG-based macOS-style set
+- docs: launch JawnOS with ./jawn, not ./President.pl
+- docs: refer to the project as jawnos in the README
+- Initial commit: JawnOS, a personal self-hosted operating environment
+

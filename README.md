@@ -19,8 +19,8 @@ If JawnOS is useful to you, sponsoring is the most direct way to keep it moving.
 JawnOS is a long-running personal software project by Jon ("Jawn") Ferwerda. It turns a single
 Perl web server into a browser-based command centre — a desktop-like environment that gathers
 the things one person actually does with a computer: files and media, appointments and tasks,
-budgets and invoices, inventory and mail, notes and location history, AI assistance, and a small
-fleet of handheld and wearable devices.
+budgets and invoices, inventory and mail, notes and location history, maps, AI assistance and a
+spoken interface, and a small fleet of handheld and wearable devices.
 
 It is not an operating system in the kernel sense, but a self-hosted personal environment that
 runs as an ordinary application and presents itself through the browser. It integrates natively
@@ -51,8 +51,9 @@ furniture around them is largely user-defined:
   that belong at the current hour, in the order they usually happen.
 - **Global display zoom** (20%–200%), adjustable bar heights and a configurable window border
   (width and colour), so the interface can be scaled for a phone, a tablet or a large display.
-- **Nine colour schemes**, each in a light and a dark cut, and **seventeen selectable icon sets**,
-  with the original hand-drawn artwork as the default.
+- **Nine colour schemes** — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum and Rose —
+  each in a light and a dark cut, and **seventeen selectable icon sets**, with the original
+  hand-drawn artwork as the default.
 
 ### The desktop app (a computer)
 
@@ -61,7 +62,10 @@ jawn, opens its UI, tails the log and drives the Bluetooth bridge — the same t
 computer. It embeds the whole JawnOS UI in the same window through **WebKitGTK**, logging in with
 a ticket you import once (kept encrypted in your keyring), with camera and microphone access,
 F11 fullscreen and hardware-accelerated video. Its Bluetooth LE bridge is a real BlueZ central
-speaking the phone's protocol, so a watch links to whichever machine is in range.
+speaking the phone's protocol, so a watch links to whichever machine is in range. The dashboard
+and the embedded view are one window; the app can come up as a kiosk session (a starting Sway
+configuration ships in `desktop/wayland/`) or sit in the tray, and it holds the machine awake
+while media plays.
 
 ### Files, media & creation
 
@@ -71,13 +75,18 @@ speaking the phone's protocol, so a watch links to whichever machine is in range
   encrypted with your credentials under a name of their own — and opened again from the same
   menu, with the long jobs running in the background and reporting their progress. Moving,
   sealing, opening or deleting a file carries the appointments, mail attachments and store
-  entries that named it along with it.
+  entries that named it along with it. An **archive queue** moves files off to a per-place
+  archive over the tunnel, keeping a manifest so they can be fetched home again; the toolbar can
+  browse another machine and its archive, and a bookmark drawer keeps the places you use.
+- **Gallery** — the photo and video browser, including anything kept in the archive, with albums
+  and a per-item view.
 - **Drawing (the marker)** — a layered paint board with pencil, paintbrush, spray, fill and
   matching erase tools, undo/redo, and zoom and pan. It reads stylus pressure, ignores your palm
-  on a tablet, and autosaves so a refresh does not lose a painting.
+  on a tablet, draws straight from the last point, and autosaves so a refresh does not lose a
+  painting; sessions can be saved and reopened.
 - **Music and studio** — a multitrack studio with takes, crossfades, waveform clips and a
   pedalboard routed onto channels, alongside a synthesiser and a music player.
-- **Text, code and shell** — a rich text editor with variables that can answer for an
+- **Text, code and shell** — a rich text editor whose variables can answer for a `self`
   appointment; a colour-coded IDE for Perl, JavaScript, HTML and templates; a web browser; and a
   terminal.
 
@@ -89,49 +98,94 @@ speaking the phone's protocol, so a watch links to whichever machine is in range
   budget, and that can record the matching appointment when you tick one off.
 - **The wardrobe (clothesline)** — apps and routines are "hung" on the rail for the hours they
   belong to, with automatic hanging of the routines the history shows you actually perform.
+- **Measures** — record a number against a time and chart it: ranges, multiple-selects and free
+  values, read back over a day, a week, a month or a year, and legible to the evaluation.
 
 ### Money, stock & documents
 
 - **Budgeting** — a statement, budgets, a document ledger of invoices and quotes, and a daily
-  sheet, all drawn from the same transaction history.
+  sheet, all drawn from the same transaction history. A budget can be a ceiling or a floor and is
+  read as a **pace** for the part of its period that has run, with the autocalc offering a
+  recommended figure.
 - **Store & invoicing** — a store of items, models and options that each carry their own prices,
   with quotes and invoices that print to a white, house-styled paper and can be delivered by
-  email. Recording a payment against a document updates its balance and closes it when the
-  balance reaches zero; deleting that transaction reopens it.
+  email. Quotes and invoices total separately, and a quote reads as a draft. Recording a payment
+  against a document updates its balance and closes it when the balance reaches zero; deleting
+  that transaction reopens it.
 - **Warehouse & stock** — money and goods tracked per place: what is where and how much of it,
   packaging that carries real quantities (a carton of twelve, a box of nails by weight) and
   shelf life so expired stock is swept up on its own, a journal of every stock movement and its
   reason, and a **moves ledger** that folds stock and money into one signed list.
-- **Notes & documents** — note-taking, document scanning, OCR (Tesseract), barcode/QR scanning
-  (zbar) and PDF rendering (WeasyPrint).
+- **Market** — the trading side of the warehouse and store: vendors, buyers and the deals
+  between them, drawn from the same items, prices and stock.
+- **Inventory** — each app's own record of what it holds and has been up to: its measures,
+  documents and reports together, with charts, a share wheel and the **Evaluation** reports.
+- **Notes & documents** — note-taking with document scanning, OCR (Tesseract), barcode/QR
+  reading (zbar) and PDF rendering (WeasyPrint). A note is an appointment like everything else,
+  can be dragged onto an appointment to attach it, and is where speech that named no command
+  lands.
 
 ### Communication, location & assistance
 
 - **Mail & messages** — email over IMAP/SMTP, SMS, and an internal message and paper-route
-  system, with mail that arrives straight on the desktop.
-- **Location & activity** — location logging, travel history, distance and speed calculations,
-  and a "father time" activity clock.
+  system, with mail that arrives straight on the desktop. Sent mail is filed back onto the
+  recipient's app and its attachments are sealed; alongside email sit the Pen assistant and the
+  ticket store.
+- **Location & activity** — autonomous location logging (one fix per interval, screen on or off),
+  location history, distance and speed calculations, and a "father time" activity clock.
+- **Maps** — a pannable map of every map you have measured: store a map image, measure its scale
+  and home plate by hand, by OCR or by asking the vision model, and it lands at its true place on
+  the globe, with an optional tile basemap (OpenStreetMap, OpenTopoMap, Carto, Esri, a county
+  GIS, or a custom URL) laid over it. The same map is the continent desktop background.
 - **AI assistance** — chat and image generation through local [Ollama](https://ollama.com)
-  models and Cloudflare Workers AI, plus speech ([Piper](https://github.com/rhasspy/piper),
-  with espeak as a fallback) and transcription (whisper.cpp).
+  models, Cloudflare Workers AI and, now, OpenAI, Anthropic (Claude), Google (Gemini), xAI
+  (Grok), DeepSeek, Mistral, Groq and OpenRouter, with multimodal chat (images, and the shapes
+  for audio and video); plus speech ([Piper](https://github.com/rhasspy/piper), with espeak as a
+  fallback) and transcription (whisper.cpp). Which model each role uses, and each provider's key,
+  live under Configure → Plat.
+- **The Guide** — the help agent you can ask in words. It answers, and it can also do things:
+  search your records, open an app, bring up photos, play a track, centre a map, reporting each
+  step as it goes. It only navigates and searches; an appointment it proposes is staged for you
+  to confirm, never written straight in.
 - **Evaluation** — a model-backed appraisal of any app's activity, run on demand or nightly,
   that reads what the app is and what it has been doing, weighs day, week, month and year
-  together, and leaves a report beside the app with a headline and links to everything it names.
+  together, notices the conditions and relationships around each occurrence, and leaves a report
+  beside the app with a headline and links to everything it names.
+
+### Voice and the wake word
+
+The T-Watch can listen for you. It detects speech — or a wake phrase — records a short clip and
+ships it to JawnOS over Bluetooth or Wi-Fi, where the clip is transcribed and either run as a
+command or kept as a note. The wake phrases are custom-trained for JawnOS rather than stock —
+**Hey Jawn** and **Jawn Do** so far — and each device's mode (off, any speech, or a phrase) is
+chosen from its row in the Embedded panel. JawnOS answers aloud through a neural **Piper** voice,
+and the T-Deck carries the same microphone and code, on its way to the same behaviour.
 
 ### System, security & devices
 
 - **System & monitoring** — a **Process Monitor** with live CPU and memory readings, per-core
   graphs and a sortable process list; network **device discovery** with a ping/`/device_query`
-  scan; backup and restore; and a utility controller for the background chores.
+  scan; backup and restore; and a utility controller for the background chores, set per machine.
 - **Self-updating** — a git watcher fast-forwards the checkout and reloads open tabs onto the new
-  revision, keeping each tab's code and data in step.
+  revision, keeping each tab's code and data in step; a machine with no route to the source pulls
+  the tree as a git bundle from the newest reachable peer instead.
+- **The mesh** — several machines keep one another in step without a central authority: code,
+  app builds and data all move the same way ("whoever has the newest is the authority"), machines
+  reach one another across whatever network they are on, and every machine can be logged into
+  from another with a ticket. A deletion is carried as a tombstone until every device
+  acknowledges it.
 - **Utilities & security** — password and pseudonym generation, QR codes, encryption helpers,
   screen locking and a keyring-style secret store.
 - **Built-in help** — a **Help** app that explains any app, feature, function or device in plain
   language: hover (or long-press) a control for a hint, press **F1** for whatever window you are
-  focused on, or use the question-mark button in a window's title bar.
+  focused on, or use the question-mark button in a window's title bar. Its **Guide** is the chat
+  that can also drive the screen (above).
 - **Devices & firmware** — first-class support for the T-Watch, T-Deck and Pico 2W, with remote
-  control, a Bluetooth Low Energy bridge, SSH tunnelling, and encrypted sync between machines.
+  control, a Bluetooth Low Energy bridge, SSH and websocket tunnels, and encrypted sync between
+  machines. The ESP32 boards update **over the air** — the manager relays a chosen firmware image
+  to the board's own update endpoint — or over USB from a button in the Embedded panel.
+- **App releases** — the Android build has a store of its own: stage a built APK and every device
+  pulls the newest from the mesh and can serve it in turn.
 
 ## Screenshots
 
@@ -168,15 +222,23 @@ the screen.
   processes is [Sereal](https://metacpan.org/pod/Sereal)-encoded over Unix sockets, and
   [Minion](https://metacpan.org/pod/Minion) carries the background jobs.
 - **Processes:** the app runs as a set of purpose-specific servers. `President.pl` starts a dock
-  server, a WebSocket server, the main prefork server, an alarm worker, the watch and teletype
-  servers, each identified by `PURPOSE` and each loading the module that suits it. In development
-  they run under Morbo for hot reloading; in production they run as prefork workers.
+  server, a WebSocket server, the main prefork server, an alarm worker, and the watch, teletype
+  and music servers, each identified by `PURPOSE` and each loading the module that suits it. In
+  development they run under Morbo for hot reloading; in production they run as prefork workers,
+  recycled as their heaps grow.
 - **Real-time:** WebSockets push updates to the browser so windows, notifications and status stay
   live without polling.
 - **Front end:** Embedded-Perl (`.ep`) templates in `templates/`, rendered into a jQuery-driven
-  "desktop in a browser" UI in `public/`.
-- **Firmware:** Arduino sketches under `jp/`, `jt/` and `jw/` for the handheld and wearable
-  devices.
+  "desktop in a browser" UI in `public/`; the manager's app scripts are served as one memoised,
+  ETag-revalidated bundle.
+- **Mesh:** machines reach each other over HTTP — through a tunnel when one is behind a router —
+  and code and data travel as git bundles and backups on the same "newest wins" rule;
+  `tunnel.pl` carries the transport.
+- **Voice:** the boards run an on-device voice-activity detector and a wake-word listener
+  (microWakeWord, with models trained for JawnOS); a shipped clip is transcribed with whisper.cpp
+  and JawnOS speaks through Piper.
+- **Firmware:** Arduino sketches under `jp/`, `jt/` and `jw/` for the Pico 2W, T-Deck and
+  T-Watch, built with PlatformIO and updated over the air or over USB from the Embedded panel.
 
 ### Repository layout
 
@@ -188,12 +250,18 @@ the screen.
 | `gb.pl` | Global state shared across the app |
 | `subroutines.pl` | Shared helper library |
 | `Websocket.pl` | WebSocket server and live updates |
-| `Alarm.pl`, `Music.pl`, `pen.pl`, `teletype.pl`, `watch.pl`, `hooks.pl` | Feature modules (alarms, music, notes, terminals, smartwatch, device hooks) |
+| `Alarm.pl`, `Music.pl`, `pen.pl`, `teletype.pl`, `watch.pl`, `tunnel.pl`, `hooks.pl` | Feature modules (alarms, music, notes, terminals, smartwatch, the peer tunnel, device hooks) |
+| `help.pl` | The built-in guide's topic registry, served by the Help app |
 | `templates/` | Embedded-Perl page templates |
 | `public/` | Front-end JavaScript, CSS and images (including the icon sets in `public/icons/sets/`) |
+| `desktop/` | The Linux app: the GTK dashboard, the CLI, the BlueZ BLE bridge and the embedded WebKitGTK view |
 | `jp/`, `jt/`, `jw/` | Device firmware (Pico 2W, T-Deck, T-Watch) |
-| `scripts/` | Supporting scripts — the dependency checker, the first-run wizard, the process killer, the BLE bridge and the store invoice driver |
+| `scripts/` | Supporting scripts — the dependency checker, the first-run wizard, the process killer, the app-release stager, the help auditor, the BLE bridge and the store invoice driver |
 | `database/` | `schema.sql` (used to build a fresh database) and a starting encrypted database |
+| `docs/` | Documentation and screenshots |
+| `training/` | The wake-word training notebook |
+| `voices/`, `releases/` | Blob stores (gitignored): Piper voice models, and staged Android APKs |
+| `server/` | TLS material and the inventory seed |
 
 ## Requirements
 
@@ -439,10 +507,12 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 
 JawnOS is a work in progress. It ships with seventeen selectable icon sets and hover or long-press
 hints throughout the interface, with the original hand-drawn icons still the default. Recent
-attention has gone to the desktop itself — configurable bars, pins and context menus — and to the
-apps around it: the folders and sealed files, the warehouse's new move ledger, the store's
-invoice and email flow, the evaluation reports, and the battery behaviour and tilt-to-wake
-handling of the wristwatch.
+attention has gone to **voice and the wake word** — the watch listens, ships a clip for
+transcription and files the rest as a note — and to the **Guide**, an AI help agent that answers
+questions and drives the screen; to the **mesh**, so machines carry code, app builds and data
+among themselves without a server; and to the apps around them: the travel map engine, the
+warehouse's moves ledger, the store's invoice and email flow, the budget's pace and goals, and
+the evaluation reports.
 
 ## License
 
