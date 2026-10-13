@@ -9892,6 +9892,8 @@ sub ai_model_paid {
 # A provider that has answered "no credit" is stood down for a while, so the panel
 # can hide its paid models and chat can step down to a free one.
 my $AI_UNAVAILABLE_FOR = 30 * 60 * 1000;
+# the model that actually answered the last ai_chat (a paid one may stand down)
+our $ai_last_model;
 sub ai_bucket_available {
 	my ($bucket) = @_;
 	return 1 unless $bucket;
@@ -10146,10 +10148,25 @@ sub ai_chat_raw {
 }
 
 # The reply as parts, so a caller can take more than the words (an image a
-# multimodal model returns, and the shape to grow into audio/video later).
+# multimodal model returns, and the shape to grow into audio/video later). A paid
+# model whose bucket is stood down steps down to a free one here, so every caller
+# gets the fallback.
 sub ai_chat_parts {
 	my ($model, $messages) = @_;
+	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
+		my $free = &ai_free_model();
+		if ($free) { &subs::say_it('AI: ' . $model . ' is stood down (no credit); using the free model ' . $free); $model = $free; }
+	}
 	my ($body, $err) = &ai_chat_raw($model, $messages);
+	$ai_last_model = $model;
+	# a fresh credit failure (marked down inside the call) also falls back, once
+	if ($err && &ai_model_paid($model)) {
+		my $free = &ai_free_model();
+		if ($free && $free ne $model) {
+			my ($body2, $err2) = &ai_chat_raw($free, $messages);
+			if (!$err2) { ($body, $err) = ($body2, undef); $model = $free; $ai_last_model = $model; &subs::say_it('AI: answered with the free model ' . $free); }
+		}
+	}
 	return (undef, $err) if $err;
 	my @parts;
 	my $text = &ai_response_text($body);
@@ -10172,20 +10189,7 @@ sub ai_chat_parts {
 
 sub ai_chat {
 	my ($model, $messages) = @_;
-	# a paid model whose bucket is already stood down steps straight to a free one
-	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
-		my $free = &ai_free_model();
-		$model = $free if $free;
-	}
 	my ($parts, $err) = &ai_chat_parts($model, $messages);
-	# a fresh credit failure (marked down inside the call) also falls back, once
-	if ($err && &ai_model_paid($model)) {
-		my $free = &ai_free_model();
-		if ($free && $free ne $model) {
-			my ($fp, $ferr) = &ai_chat_parts($free, $messages);
-			if (!$ferr) { ($parts, $err) = ($fp, undef); &subs::say_it('AI: answered with the free model ' . $free); }
-		}
-	}
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');

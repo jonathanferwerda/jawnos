@@ -7381,7 +7381,7 @@ any '/manager/ai_chat' => sub($c) {
 	my @msgs = ( ($system ? { role => 'system', content => $system } : ()), $msg );
 	my ($parts, $err) = &subs::ai_chat_parts($model, \@msgs);
 	if ($err) { $c->render(json => { model => $model, error => $err }); return; }
-	$c->render(json => { model => $model, parts => $parts });
+	$c->render(json => { model => $model, model_used => $subs::ai_last_model, parts => $parts });
 };
 
 
@@ -17841,17 +17841,24 @@ post '/manager/help/review' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app') || '');
 	my $description = $c->param('description') || '';
 	unless ($app) { $c->render(json => { ok => 0, error => 'no app' }); return; }
-	my $key = { app => '__president', context => 'guide_review', subcontext => $app };
-	if (&subs::cache_get($key)) {
-		$c->render(json => { app => $app, reviewed => 1, cached => 1, changed => 0 });
+	# a built-in app is code, not an appointment the guide should re-read
+	if ($gb::known_appts->{$app}) {
+		$c->render(json => { app => $app, reviewed => 0, reason => 'built-in app' });
 		return;
 	}
+	# the marker is a setting, so it survives a restart and a machine with no model
+	# keeps the same "already looked at" as everyone else
+	my $reviewed = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'guide_reviewed' }) } || [];
+	$reviewed = [] unless ref $reviewed eq 'ARRAY';
+	if (grep { $_ eq $app } @{$reviewed}) {
+		$c->render(json => { app => $app, reviewed => 1, changed => 0 });
+		return;
+	}
+	my $mark = sub {
+		push @{$reviewed}, $app;
+		&subs::setting_setter({ app => '__president', setting => 'guide_reviewed', value => encode_json $reviewed });
+	};
 	my $settings = &subs::settings_grabber({ app => $app });
-	unless ($settings->{'uuid'}) {
-		# not an appointment (no settings rows): nothing for the guide to read
-		$c->render(json => { app => $app, reviewed => 0, reason => 'not an appointment' });
-		return;
-	}
 	my $pos = $settings->{'pos'} || '';
 	my $mab = $settings->{'mab'} || '';
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
@@ -17870,7 +17877,7 @@ post '/manager/help/review' => sub($c) {
 	if ($text) { $action = eval { decode_json $text }; }
 	if (!$action || ($action->{'keep'} && !$action->{'mab'})) {
 		# the answer was unreadable or said it already fits: mark it and move on
-		&subs::cache_set($key, { reviewed => 1, changed => 0 });
+		$mark->();
 		$c->render(json => { app => $app, reviewed => 1, changed => 0 });
 		return;
 	}
@@ -17883,7 +17890,7 @@ post '/manager/help/review' => sub($c) {
 		&subs::setting_setter({ app => $app, setting => 'mab', value => $action->{'mab'} });
 		$changed = 1;
 	}
-	&subs::cache_set($key, { reviewed => 1, changed => $changed });
+	$mark->();
 	$c->render(json => { app => $app, reviewed => 1, changed => $changed, pos => $action->{'pos'}, mab => $action->{'mab'} });
 };
 

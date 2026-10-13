@@ -2,7 +2,6 @@
 <% no warnings 'uninitialized'; %>
 <%
 	# Every AI model choice and provider credential in one place.
-	my $catalogue = &subs::ai_model_catalogue();
 	my @roles = (
 		[ 'help_assistant',          'Help guide',           'chat' ],
 		[ 'eval_assistant',          'Evaluation',           'chat' ],
@@ -14,13 +13,24 @@
 	my $catalogue = &subs::ai_model_catalogue();
 	my $providers = &subs::ai_providers();
 	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
+	# which billing buckets are stood down (out of credit) - one check per bucket
+	my %bucket_ok;
+	foreach my $p ( @{$catalogue} ) {
+		foreach my $m ( @{ $p->{'models'} } ) {
+			$bucket_ok{ $m->{'bucket'} } = &subs::ai_bucket_available($m->{'bucket'}) unless exists $bucket_ok{ $m->{'bucket'} };
+		}
+	}
+	my @down = sort grep { !$bucket_ok{$_} && $_ ne 'ollama' && $_ ne 'cloudflare' } keys %bucket_ok;
 %>
 <div class="cfg">
 	<h2>Platform</h2>
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
 	<h3>Agent models</h3>
-	<p class="cfg-note">Which model each assistant uses. Models are grouped by provider — a provider needs its key below before its models will answer.</p>
+	<p class="cfg-note">Which model each assistant uses. Each list offers only models that fit the role, and marks whether a model is free or paid.</p>
+	<% if (@down) { %>
+		<p class="cfg-note">Out of credit just now, so their paid models are hidden: <%= join(', ', @down) %>. They come back on their own after a while, or once the account is topped up.</p>
+	<% } %>
 	<div class="cfg-card">
 		<% foreach my $r ( @roles ) {
 			my ($setting, $label, $cap) = @{$r};
@@ -32,18 +42,23 @@
 				<select class="configure_input" app="mail" setting="<%= $setting %>">
 					<option value="">— none —</option>
 					<% foreach my $provider ( @{$catalogue} ) {
-						my @models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @{ $provider->{'models'} };
+						my @models = grep {
+							my $m = $_;
+							scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) && (!$m->{'paid'} || $bucket_ok{ $m->{'bucket'} })
+						} @{ $provider->{'models'} };
 						next unless scalar @models;
 					%>
 						<optgroup label="<%= $provider->{'label'} %>">
-							<% foreach my $m ( @models ) { %>
-								<option value="<%= $m->{'value'} %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %></option>
+							<% foreach my $m ( @models ) {
+								my @mcaps = grep { $_ ne 'other' } @{ $m->{'caps'} };
+							%>
+								<option value="<%= $m->{'value'} %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
 							<% } %>
 						</optgroup>
 					<% } %>
-					<%# a model already chosen that does not fit this role is kept so it is not silently dropped %>
+					<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>
 					<% if ($current && !$shown) { %>
-						<option value="<%= $current %>" selected="selected"><%= $current %> (kept — not listed for this role)</option>
+						<option value="<%= $current %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
 					<% } %>
 				</select>
 			</div>

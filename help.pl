@@ -727,7 +727,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Configure and press Plat.',
-			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation and the Pen. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit.',
+			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation and the Pen. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
 			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.'
 		],
 		related => [ 'configure', 'assistant', 'help_app' ]
