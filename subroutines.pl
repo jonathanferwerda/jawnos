@@ -7459,7 +7459,16 @@ sub remote_machine_lister() {
 				$mirror->{'source_domain'} = $rm->{'domain'};
 				$mirror->{'source_fqdn'} = $rm->{'fqdn'};
 				$mirror->{'mirror'} = 'yes';
-			#	$mirror = &rm_tunnel_processor($mirror);
+			# When the mirror is on our own network, reach it directly rather than
+			# through the source's tunnel: same-wifi peers talk on the LAN.
+				my $lan = &subs::peer_lan_address($mirror, 1);
+				if ($lan) {
+					$mirror->{'ip'} = $lan->{'ip'};
+					$mirror->{'manager'} = $lan->{'manager'};
+					$mirror->{'port'} = $lan->{'port'} || $mirror->{'port'};
+					$mirror->{'vip'} = $lan->{'ip'};
+					$mirror->{'lan'} = 'yes';
+				}
 				push @{$remote_machines}, $mirror;
 			}
 		}
@@ -7535,7 +7544,7 @@ sub remote_machine_tunnel_processor() {
 # When the manager host resolves to loopback, fall back to the LAN address the
 # peer reported in its network map, so same-net peers talk directly.
 sub peer_lan_address() {
-	my ($rm) = @_;
+	my ($rm, $force) = @_;
 	return undef unless $rm && $rm->{'manager'};
 	# The hub's 127.0.0.1 tunnel managers are correct there, and it is not on the
 	# peers' LAN - this fallback is only for a peer reaching another peer.
@@ -7543,15 +7552,22 @@ sub peer_lan_address() {
 	return undef unless $rm->{'network'};
 	my ($host) = $rm->{'manager'} =~ m{^https?://([^:/]+)};
 	return undef unless $host;
-	my $loopback = 0;
-	if ($host =~ /^127\./) { $loopback = 1; }
-	elsif ($host =~ /[a-zA-Z]/) {
-		require Socket;
-		my $packed = gethostbyname($host);
-		$loopback = 1 if $packed && Socket::inet_ntoa($packed) =~ /^127\./;
+	# Normally only a manager that loops home (resolves to 127.0.0.1) is swapped
+	# for the LAN address. $force skips that: a mirror is reached through the
+	# source's public tunnel name, yet when the peer shares our own network the
+	# direct LAN address is still the better route.
+	unless ($force) {
+		my $loopback = 0;
+		if ($host =~ /^127\./) { $loopback = 1; }
+		elsif ($host =~ /[a-zA-Z]/) {
+			require Socket;
+			my $packed = gethostbyname($host);
+			$loopback = 1 if $packed && Socket::inet_ntoa($packed) =~ /^127\./;
+		}
+		return undef unless $loopback;
 	}
-	return undef unless $loopback;
-	my $you = eval { return decode_json $rm->{'network'} } || {};
+	# a mirror arrives already decoded; a normal row is a JSON string
+	my $you = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
 	# our own interfaces rarely change; don't run ifconfig per peer per call
 	our ($_ME_NETWORK, $_ME_NETWORK_AT);
 	unless ($_ME_NETWORK && $_ME_NETWORK_AT > &subs::rightNow() - 60000) {

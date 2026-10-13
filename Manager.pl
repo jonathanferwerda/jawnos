@@ -18334,7 +18334,8 @@ post '/manager/remote_command/send' => sub($c) {
 		my $fuzzy;
 		foreach my $rm ( @{ &subs::remote_machine_lister() } ) {
 			my @names = grep { defined && length } ( lc($rm->{'hostname'} // ''), lc($rm->{'fqdn'} // ''), lc($rm->{'ip'} // '') );
-			my @labels = map { my $x = $_; $x =~ s/\..*$//; $x } @names;
+			# a machine the hub knows arrives as "X (mirror)"; match on its real name
+			my @labels = map { my $x = $_; $x =~ s/\s*\(mirror\)$//; $x =~ s/\..*$//; $x } @names;
 			if (grep { $_ eq $want } (@names, @labels)) { $uuid = $rm->{'uuid'}; last; }
 			$fuzzy ||= $rm if grep { index($_, $want) >= 0 || index($want, $_) >= 0 } @labels;
 		}

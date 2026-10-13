@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-13
 
+- v0.1.226 - mesh: a machine the hub knows only as a mirror is now reached over the LAN when it shares our network (same-wifi peers talk directly, not through the hub tunnel), and a machine named in words matches its real name rather than the " (mirror)" suffix
 - v0.1.223 - Guide promote now writes through appointment_writer (a bare insert left model/options empty, so the details view met a string where it wanted a hash) and stamps source 'guide' on the appointments it makes
 - v0.1.221 - the Coding agent can teach the Guide a runtime verb (a learn action saved to the shared setting, so the Guide and every machine pick it up at once)
 - v0.1.220 - Guide runtime verbs: add commands in Configure → Plat → Guide commands (a JSON entry naming a primitive - say/open_app/set_setting/run_command/toggle/stage/find/play_music - and its params); stored as one shared setting, so every machine learns them, and the remote channel runs them too. The Coding agent's protocols are baked from AGENTS.md into a tracked file, refreshed by a pre-commit hook
