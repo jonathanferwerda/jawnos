@@ -29,7 +29,9 @@
 	<h3>Agent models</h3>
 	<p class="cfg-note">Which model each assistant uses. Each list offers only models that fit the role, and marks whether a model is free or paid.</p>
 	<% if (@down) { %>
-		<p class="cfg-note">Out of credit just now, so their paid models are hidden: <%= join(', ', @down) %>. They come back on their own after a while, or once the account is topped up.</p>
+		<p class="cfg-note">Out of credit just now, so their paid models are hidden:
+			<% foreach my $b ( @down ) { %><span style="white-space:nowrap;"><b><%= $b %></b> <button class="ai_avail_clear" bucket="<%= $b %>" style="font-size:11px;">Clear</button></span> <% } %>
+			They come back on their own after a while, or once the account is topped up.</p>
 	<% } %>
 	<div class="cfg-card">
 		<% foreach my $r ( @roles ) {

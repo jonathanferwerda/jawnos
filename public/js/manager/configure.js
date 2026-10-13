@@ -2148,3 +2148,22 @@ $(document).on('click', '.nfc_deleter', function() {
 
 
 
+
+// A stood-down AI provider (out of credit): its paid models are hidden until it
+// clears. This clears the flag now, then reloads the panel so the models return.
+$(document).on('click', '.ai_avail_clear', function() {
+	var bucket = $(this).attr('bucket');
+	$.ajax({
+		url: '/manager/configure/ai_availability_clear',
+		type: 'POST',
+		data: { bucket: bucket },
+		success: function() {
+			$.ajax({
+				url: '/manager/configure/plat_setting_list',
+				type: 'GET',
+				data: { timestamp: Date.now() },
+				success: function(response) { $('#plat_setting_list').html(response); }
+			});
+		}
+	});
+});

@@ -7384,6 +7384,14 @@ any '/manager/ai_chat' => sub($c) {
 	$c->render(json => { model => $model, model_used => $subs::ai_last_model, parts => $parts });
 };
 
+# Clear a provider's stand-down, so its paid models are offered again at once.
+post '/manager/configure/ai_availability_clear' => sub($c) {
+	my $bucket = $c->param('bucket') || '';
+	unless ($bucket =~ /^[a-z_]+$/) { $c->render(json => { error => 'bad bucket' }); return; }
+	&subs::setting_setter({ app => '__president', setting => 'ai_' . $bucket . '_unavailable', value => 0 });
+	$c->render(json => { bucket => $bucket, cleared => 1 });
+};
+
 
 
 sub image_function_sanity_check() {
