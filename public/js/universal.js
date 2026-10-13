@@ -6,6 +6,31 @@ var errorInfo = [];
 if (!signatorial in window) {
 	globalThis.signatorial = 'unknown';
 }
+
+// The repaint work (the appointment chrons, the calculators, the little
+// animations) only matters while the page is really being looked at. A hidden
+// tab is the usual case; a fullscreen video is the other, and document.hidden
+// stays false there - without this the chrons and the appointment poll keep
+// churning behind the picture. Anything that must keep the app connected or
+// aware (the websocket, the alarms, a recording in progress) must NOT be gated
+// on this.
+function jawn_resting() {
+	return document.hidden || !!document.fullscreenElement || !!document.webkitFullscreenElement;
+}
+var jawn_was_resting = jawn_resting();
+function jawn_rest_change() {
+	var resting = jawn_resting();
+	if (jawn_was_resting && !resting) {
+		// back on screen: paint the chrons at once, and let the calculator resync
+		// the view it stopped polling while it was covered
+		appointment_chron();
+		if (typeof calculator == 'function') { calculator(); }
+	}
+	jawn_was_resting = resting;
+}
+document.addEventListener('fullscreenchange', jawn_rest_change);
+document.addEventListener('webkitfullscreenchange', jawn_rest_change);
+
 $(document).ready(function() {
 	appointment_chron();
 });
@@ -30,8 +55,9 @@ function appointment_chron() {
 	clearInterval(appointment_chronicler);
 	time_updater();
 	appointment_chronicler = setInterval(function(){
-		// no point repainting clocks while the page isn't on screen
-		if (document.hidden) { return; }
+		// no point repainting clocks while the page isn't on screen, or while a
+		// fullscreen video is covering it
+		if (jawn_resting()) { return; }
 		time_updater();
 	},1000);
 	function time_updater() {

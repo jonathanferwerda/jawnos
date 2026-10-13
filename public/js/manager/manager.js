@@ -2145,7 +2145,7 @@ function deloreanBringer() {
 function calculator() {
 	var now = Date.now();
 
-	if (document.visibilityState == 'visible' && !document.hidden && clothesLineAtRest()) {
+	if (!jawn_resting() && clothesLineAtRest()) {
 		var data = deloreanBringer();
 		windowBackgroundAdjuster({ caller: 'calculator' });
 		// While the view is fresh, echo the markers of what we are showing so an
