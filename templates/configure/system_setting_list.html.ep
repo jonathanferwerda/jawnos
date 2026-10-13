@@ -3,13 +3,16 @@
 	<p class="cfg-note">Database totals, the utility controller, and where the settings list is read from.</p>
 
 	<div class="cfg-card">
-		<div id="stats" class="cfg-actions">
-			<% foreach my $s ( @{$stats} ) { %>
-				<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
-			<% } %>
-		</div>
-		<% if ($c->stash('pl_time')) { %><p class="cfg-note" style="margin:6px 0 0;">PL TIME: <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span></p><% } %>
-		<p class="cfg-note" style="margin:6px 0 0;">Uptime: <span class="time" timestamp="<%= $last_restart %>"></span></p>
+		<% if ($c->stash('pl_time')) { %><p class="cfg-note" style="margin:0 0 6px;">PL TIME: <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span></p><% } %>
+		<p class="cfg-note" style="margin:0;">Uptime: <span class="time" timestamp="<%= $last_restart %>"></span></p>
+		<details class="cfg-details">
+			<summary>Database totals (<%= scalar @{$stats} %> tables)</summary>
+			<div id="stats" class="cfg-actions">
+				<% foreach my $s ( @{$stats} ) { %>
+					<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
+				<% } %>
+			</div>
+		</details>
 	</div>
 
 	<h3>Utility controller</h3>

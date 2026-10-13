@@ -4,9 +4,10 @@
 	<style>
 	/* The App panel is the largest Configure tab: one card per app. The card's
 	   head holds the window/actions, the name, the colour and the three flags;
-	   Position and MAB sit side by side (stacking under 560px through .cfg-grid).
-	   Each ability is a full-width toggle so its panel - measures, packaging,
-	   budgets, a web table - gets the whole card on any screen. */
+	   Part of Speech and Might Also Be sit side by side (stacking under 560px
+	   through .cfg-grid). Each ability is a full-width toggle so its panel -
+	   measures, packaging, budgets, a web table - gets the whole card on any
+	   screen. */
 	#configuration_container .app_block_head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; }
 	#configuration_container .app_block_head .navbar_buttons { position:static; right:auto; display:inline-flex; flex-wrap:wrap; gap:6px; align-items:center; }
 	#configuration_container .app_block_head .navbar_buttons img,
@@ -51,6 +52,11 @@
 		#configuration_container .app_web_measures td { border:0; padding:3px 2px; }
 		#configuration_container .app_web_measures td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
 	}
+	@media (max-width:560px) {
+		/* the row is a column here, so a flex-basis meant for width would become a
+		   height (the tall box that used to swallow the Part-of-Speech dropdown) */
+		#configuration_container .cfg-row > span { flex:0 0 auto; width:100%; }
+	}
 	</style>
 	<% &subs::manufacturer_grabber(); %>
 	<% my $signatorial = &subs::signatorial_designer(); %>
@@ -93,7 +99,7 @@
 
 					<div class="cfg-grid">
 						<div class="cfg-row">
-							<label>Position</label>
+							<label>Part of Speech</label>
 							<span>
 								<select class='pos' app='<%= $a %>' id="<%= $a %>_pos" setting="pos">
 									<% foreach my $o (sort keys %{$gb::pos}) { %>
@@ -104,9 +110,9 @@
 							</span>
 						</div>
 						<div class="cfg-row">
-							<label>MAB</label>
+							<label>Might Also Be</label>
 							<span>
-								<select class='mab' app='<%= $a %>' id="<%= $a %>_pos" setting="mab">
+								<select class='mab' app='<%= $a %>' id="<%= $a %>_mab" setting="mab">
 									<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq '' ){ %>selected="selected"<% } %>
 									<% foreach my $o (sort keys %{$gb::pos}) { %>
 										<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq $o ){ %>selected="selected"<% } %>

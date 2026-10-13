@@ -1380,6 +1380,7 @@ $(document).on('click', '#restore_list', function() {
 			type: 'GET',
 			data: { 'president': president },
 			success:function(response) {
+				c.html(response);
 				if (jawnosConfigureShow('restore_list', c)) {
 					b.text(text);
 					b.attr('status', 'active');

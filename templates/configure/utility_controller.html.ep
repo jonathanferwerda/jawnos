@@ -12,62 +12,60 @@
 <% } %>
 
 <style>
-/* The utility grid carries a column per job; on a phone each cell becomes a
-   labelled card, so nothing is off the right edge. */
-@media (max-width:640px) {
-	#utility_controls, #utility_controls thead, #utility_controls tbody, #utility_controls tr, #utility_controls td { display:block; width:100%; box-sizing:border-box; }
-	#utility_controls thead { display:none; }
-	#utility_controls tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
-	#utility_controls td { border:0; padding:3px 2px; }
-	#utility_controls td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
-	#utility_controls .utility_cell { border-radius:8px; }
+/* One card per machine, one row per background job: a job's name on the left,
+   its controls on the right, wrapping under the name on a phone. No wide table,
+   so nothing is hidden off the right edge. */
+#utility_machines { display:flex; flex-direction:column; gap:10px; }
+#utility_machines .utility_machine_name { margin:0 0 6px; }
+#utility_machines .utility_jobs { display:flex; flex-direction:column; }
+#utility_machines .utility_job { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 0; border-top:1px solid var(--line); }
+#utility_machines .utility_job:first-child { border-top:0; }
+#utility_machines .utility_job_name { flex:1 1 150px; min-width:0; font-size:13px; }
+#utility_machines .utility_job_controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#utility_machines .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+#utility_machines .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
+#utility_machines .utility_beacon { display:inline-flex; align-items:center; gap:4px; font-size:85%; opacity:.85; }
+@media (max-width:560px) {
+	#utility_machines .utility_job_name { flex:1 1 100%; }
 }
 </style>
 
-<div class="cfg-scroll">
-	<table id="utility_controls">
-		<thead>
-			<tr>
-				<th></th>
+<div id="utility_controls">
+	% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
+	% my %machine_name;
+	% foreach my $mk ( @machine_keys ) {
+	% 	next if $mk eq $signatorial;
+	% 	my $rm = &subs::db_select('remote_machines', ['hostname'], { signatorial => $mk })->hashes->[0];
+	% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
+	% }
+	<div id="utility_machines">
+	<% foreach my $dt ( sort @machine_keys ) { %>
+		<div class="cfg-card utility_machine">
+			<h4 class="utility_machine_name"><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></h4>
+			<div class="utility_jobs">
 				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
-					<th><%= &subs::format_name($t) %></th>
-				<% } %>
-			</tr>
-		</thead>
-		<tbody>
-
-			% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
-			% my %machine_name;
-			% foreach my $mk ( @machine_keys ) {
-			% 	next if $mk eq $signatorial;
-			% 	my $rm = &subs::db_select('remote_machines', ['hostname'], { signatorial => $mk })->hashes->[0];
-			% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
-			% }
-			<% foreach my $dt ( sort @machine_keys ) { %>
-				<tr>
-					<td data-label="Machine"><b><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></b></td>
-					<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
-						% next unless $controls->{$dt}->{$t}; 
-						<td class="utility_cell" data-label="<%= &subs::format_name($t) %>">
-							<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>><br>
-							<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" style="width:70px;" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>"><br>
+					% next unless $controls->{$dt}->{$t};
+					<div class="utility_job">
+						<span class="utility_job_name"><%= &subs::format_name($t) %></span>
+						<div class="utility_job_controls">
+							<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" hint="Run this job" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
+							<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" hint="How often" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>">
 							<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
-								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good"><br>
+								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
 							<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
-								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad"><br>
-							<% } else { %>
-
+								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
 							<% } %>
 							<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
-								<span class="time" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
-							<% } else { %><span>&nbsp;</span><% } %><br>
-							<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
-								Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>><br>
+								<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
 							<% } %>
-						</td>
-					<% } %>
-				</tr>
-			<% } %>
-		</tbody>
-	</table>
+							<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
+								<label class="utility_beacon">Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>></label>
+							<% } %>
+						</div>
+					</div>
+				<% } %>
+			</div>
+		</div>
+	<% } %>
+	</div>
 </div>
