@@ -18372,20 +18372,25 @@ post '/manager/help/promote' => sub($c) {
 	unless ($row) { $c->render(json => { error => 'no such staged appointment' }); return; }
 	my $real_uuid = &subs::random_string_creator(40);
 	my $notes = $row->{'title'} ? ($row->{'title'} . ($row->{'notes'} ? (" \x{2014} " . $row->{'notes'}) : '')) : $row->{'notes'};
-	&subs::db_insert('appointments', {
-		uuid => $real_uuid, app => $row->{'app'}, type => $row->{'type'},
-		timestamp => $row->{'timestamp'}, server_time => &subs::rightNow(),
-		notes => $notes, data => $row->{'data'}, device => $row->{'device'} || &subs::device_setter()
-	});
+	# Write through appointment_writer, not straight to the table. A bare insert
+	# left the app's model/options empty, and the details view then met a string
+	# where it wanted a hash; the writer works those out, fires the header, alarms
+	# and budget, and stamps the row. source 'guide' marks it as the Guide's own,
+	# so its auto-made appointments can be told apart from the person's.
+	my $appt = {
+		uuid => $real_uuid,
+		app => $row->{'app'},
+		type => ($row->{'type'} || 'usual'),
+		timestamp => $row->{'timestamp'},
+		server_time => &subs::rightNow(),
+		notes => $notes,
+		source => 'guide',
+		device => $row->{'device'} || &subs::device_setter(),
+	};
+	# only hand data on when it is real JSON; an empty string is not
+	$appt->{'data'} = $row->{'data'} if defined $row->{'data'} && $row->{'data'} =~ /^\s*[\[\{]/;
+	&Manager::appointment_writer($c, $appt);
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
-	# A promoted appointment was written straight to the table, so the app's header
-	# still shows the set from before it existed - the person never sees the thing
-	# the guide just saved. Repaint and broadcast the header here, the way a normal
-	# appointment write does, so the new row appears without a reload.
-	if ($row->{'app'}) {
-		&subs::appt_header_printer({ app => $row->{'app'}, timestamp => $row->{'timestamp'} });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $row->{'app'} . '\',\'' . $real_uuid . '\');' });
-	}
 	$c->render(json => { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} });
 };
 
@@ -18462,7 +18467,7 @@ sub guide_verb_execute($c, $action) {
 		return 'no app named' unless length $app;
 		my $uuid = &subs::random_string_creator(40);
 		&subs::db_insert('staged_appointments', {
-			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide_verb',
+			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
 			app => $app, type => ($p{'type'} || 'usual'), timestamp => ($p{'when'} || &subs::rightNow()),
 			title => ($p{'title'} || ''), notes => ($p{'notes'} || ''), data => '',
 			device => &subs::device_setter(), status => 'pending'

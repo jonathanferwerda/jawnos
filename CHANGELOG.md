@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-13
 
+- v0.1.223 - Guide promote now writes through appointment_writer (a bare insert left model/options empty, so the details view met a string where it wanted a hash) and stamps source 'guide' on the appointments it makes
 - v0.1.221 - the Coding agent can teach the Guide a runtime verb (a learn action saved to the shared setting, so the Guide and every machine pick it up at once)
 - v0.1.220 - Guide runtime verbs: add commands in Configure → Plat → Guide commands (a JSON entry naming a primitive - say/open_app/set_setting/run_command/toggle/stage/find/play_music - and its params); stored as one shared setting, so every machine learns them, and the remote channel runs them too. The Coding agent's protocols are baked from AGENTS.md into a tracked file, refreshed by a pre-commit hook
 - v0.1.218 - Coding agent: its own chatbox in the Terminal and the IDE (each with its own remembered conversation), AGENTS.md folded into its rules, and a forget/clear; DeepSeek v4/4.1 flash and pro added to the model catalogue; the Guide's create can stage a start/record/command the alarm will fire
