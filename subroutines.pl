@@ -12105,11 +12105,11 @@ sub voice_sync {
 my $dir = &subs::home('~/jawnos/voices');
 mkdir $dir unless -d $dir;
 my $me = &subs::signatorial_designer();
-my %local;
-foreach my $f ( glob("$dir/*.onnx") ) {
-	my ($base) = $f =~ m{/([^/]+)$};
-	$local{$base} = 1 if $base;
-}
+	my %local;
+	foreach my $f ( glob("$dir/*.onnx"), glob("$dir/*.onnx.json") ) {
+		my ($base) = $f =~ m{/([^/]+)$};
+		$local{$base} = 1 if $base;
+	}
 my $rms = &subs::db_select('remote_machines')->hashes || [];
 foreach my $rm ( @{$rms} ) {
 	my $rsig = $rm->{'signatorial'};
