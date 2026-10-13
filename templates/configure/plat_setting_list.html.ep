@@ -1,74 +1,64 @@
 <% use Mojo::JSON qw/decode_json/; %>
 <% no warnings 'uninitialized'; %>
 <%
-	# Every AI model choice and provider credential lives here now, so the whole
-	# AI surface is configured in one place. The role dropdowns and the provider
-	# keys are saved with the same .configure_input handler the rest of the
-	# configure panels use (POST /manager/configure).
+	# Every AI model choice and provider credential in one place.
 	my $catalogue = &subs::ai_model_catalogue();
 	my @roles = (
-		[ 'help_assistant',       'Help guide' ],
-		[ 'eval_assistant',       'Evaluation' ],
-		[ 'visual_assistant',     'Vision (reads images)' ],
+		[ 'help_assistant',          'Help guide' ],
+		[ 'eval_assistant',          'Evaluation' ],
+		[ 'visual_assistant',        'Vision (reads images)' ],
 		[ 'text_to_image_assistant', 'Image generation' ],
-		[ 'chatbot_model',        'Pen chat (default)' ],
+		[ 'chatbot_model',           'Pen chat (default)' ],
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $providers = &subs::ai_providers();
-	my $key_settings = [ &subs::ai_key_settings() ];
-	my $key_values = &subs::settings_grabber({ app => 'mail', settings => $key_settings });
+	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
 %>
-<div style="text-align:left;padding:10px 16px 48px;box-sizing:border-box;max-width:820px;">
-	<h3 style="margin:4px 0 6px;">Agent models</h3>
-	<p style="opacity:.75;font-size:12px;margin:0 0 12px;line-height:1.4;">
-		Which model each assistant uses. Models are grouped by provider — a provider needs its key below
-		before its models will answer.
-	</p>
-	<table style="width:100%;border-collapse:collapse;font-size:14px;">
-		<% foreach my $r ( @roles ) { %>
-			<tr>
-				<td style="padding:5px 12px 5px 0;white-space:nowrap;vertical-align:top;"><%= $r->[1] %></td>
-				<td style="padding:5px 0;">
-					<select class="configure_input" app="mail" setting="<%= $r->[0] %>" style="width:100%;max-width:360px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);">
-						<option value="">— none —</option>
-						<% foreach my $provider ( @{$catalogue} ) { %>
-							<% next unless scalar @{ $provider->{'models'} }; %>
-							<optgroup label="<%= $provider->{'label'} %>">
-								<% foreach my $m ( @{ $provider->{'models'} } ) { %>
-									<option value="<%= $m->{'value'} %>" <% if (($role_settings->{$r->[0]} // '') eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %></option>
-								<% } %>
-							</optgroup>
-						<% } %>
-					</select>
-				</td>
-			</tr>
-		<% } %>
-	</table>
+<div class="cfg">
+	<h2>Platform</h2>
+	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
-	<h3 style="margin:20px 0 6px;">Provider access</h3>
-	<p style="opacity:.75;font-size:12px;margin:0 0 12px;line-height:1.4;">
-		Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows
-		only “set” — leave it alone to keep it, or type a new value to replace it.
-	</p>
+	<h3>Agent models</h3>
+	<p class="cfg-note">Which model each assistant uses. Models are grouped by provider — a provider needs its key below before its models will answer.</p>
+	<div class="cfg-card">
+		<% foreach my $r ( @roles ) { %>
+			<div class="cfg-row">
+				<label><%= $r->[1] %></label>
+				<select class="configure_input" app="mail" setting="<%= $r->[0] %>">
+					<option value="">— none —</option>
+					<% foreach my $provider ( @{$catalogue} ) { %>
+						<% next unless scalar @{ $provider->{'models'} }; %>
+						<optgroup label="<%= $provider->{'label'} %>">
+							<% foreach my $m ( @{ $provider->{'models'} } ) { %>
+								<option value="<%= $m->{'value'} %>" <% if (($role_settings->{$r->[0]} // '') eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %></option>
+							<% } %>
+						</optgroup>
+					<% } %>
+				</select>
+			</div>
+		<% } %>
+	</div>
+
+	<h3>Provider access</h3>
+	<p class="cfg-note">Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows “••• set” — leave it alone to keep it, or type a new value to replace it.</p>
 	<% foreach my $p ( @{$providers} ) { %>
-		<div style="border-top:1px solid var(--line);padding:10px 0 4px;">
-			<b style="font-size:14px;"><%= $p->{'label'} %></b>
+		<div class="cfg-card">
+			<b><%= $p->{'label'} %></b>
 			<% foreach my $k ( @{ $p->{'keys'} } ) { %>
 				<% my ($name, $label) = @{$k}; my $val = $key_values->{$name}; my $is_secret = ($name =~ /_(key|token)$/) ? 1 : 0; my $set = (defined $val && length $val) ? 1 : 0; %>
-				<div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;">
-					<span style="width:140px;opacity:.85;font-size:13px;"><%= $label %></span>
-					<input type="<%= $is_secret ? 'password' : 'text' %>" class="configure_input" app="mail" setting="<%= $name %>"
-						value="" data-set="<%= $set %>"
-						placeholder="<%= $set ? '••• set — type to replace' : 'not set' %>"
-						style="flex:1;min-width:200px;max-width:380px;padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px;">
-					<% if ($set) { %><span style="font-size:12px;opacity:.6;">✔ set</span><% } %>
+				<div class="cfg-row">
+					<label><%= $label %></label>
+					<% if ($is_secret) { %>
+						<input type="password" class="configure_input" app="mail" setting="<%= $name %>" value=""
+							placeholder="<%= $set ? '••• set — type to replace' : 'not set' %>"
+							data-set="<%= $set %>">
+						<% if ($set) { %><span class="cfg-note" style="margin:0;min-width:0;">✔ set</span><% } %>
+					<% } else { %>
+						<input type="text" class="configure_input" app="mail" setting="<%= $name %>" value="<%= $val %>">
+					<% } %>
 				</div>
 			<% } %>
 		</div>
 	<% } %>
-	<p style="opacity:.6;font-size:12px;margin-top:16px;line-height:1.4;">
-		Ollama and Cloudflare model lists are read from each service when this panel opens; the other
-		providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name
-		goes to Ollama, and <code>@cf/…</code> to Cloudflare.
-	</p>
+	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare.</p>
 </div>

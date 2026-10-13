@@ -1,16 +1,48 @@
-<div style="width:100%; height: 100%; box-sizing: border-box; text-align: center; background-color:<%= $config->{$device}->{'configure'}->{'background_colour'} || "#619cfa" %>; border: solid; border-radius:2px;overflow-x:scroll;overflow:scroll;" id="configure">
-	<div class="jawn_version" style="text-align:left;padding:2px 8px 0;font-size:13px;opacity:0.75;">v<%= &subs::jawn_version() %></div>
-	<button type="button" class="configure_toggle" id="me_settings">Me</button>
-	<button type="button" class="configure_toggle"  name="backup" id="restore_list">Enc</button>
-	<button type="button" class="configure_toggle"  name="system" id="system_setting_lister">Sys</button>
-	<button type="button" class="configure_toggle"  id="misc_setting">Misc</button>
-	<button type="button" class="configure_toggle"  id="plat_setting">Plat</button>
-	<button type="button" class="configure_toggle"  id="appointment_list_grabber">App</button>
-	<button type="button" class="configure_toggle"  id="device_lister" load_type="list">Dev</button>
-	<button type="button" class="configure_toggle"  id="tunnel_lister">Tun</button>
-	<button type="button" class="configure_toggle"  id="pseudonym_setting_lister">Pseud</button>
-	<button type="button" class="configure_toggle"  id="store_setting_lister">Store</button>
-	<br>
+<div style="width:100%; height: 100%; box-sizing: border-box; text-align: center; background-color:<%= $config->{$device}->{'configure'}->{'background_colour'} || "#619cfa" %>; border: solid; border-radius:2px;overflow:auto;" id="configure">
+	<style>
+	/* One responsive system for every Configure tab: a row stacks on a narrow
+	   screen, a wide table scrolls instead of clipping, a control fills the
+	   width it is given. Panels are .cfg; rows are .cfg-row; tables live in
+	   .cfg-scroll. */
+	#configure .jawn_version { text-align:left; padding:3px 10px 0; font-size:12px; opacity:.7; }
+	#configure .cfg-tabs { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; padding:2px 8px 10px; }
+	#configure .configure_toggle { font:inherit; padding:5px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; }
+	#configure .configure_toggle[status="active"] { background:var(--line); font-weight:bold; }
+	.cfg { max-width:920px; margin:0 auto; padding:12px 14px 56px; box-sizing:border-box; text-align:left; width:100%; }
+	.cfg h2 { font-size:22px; margin:2px 0 10px; }
+	.cfg h3 { font-size:17px; margin:16px 0 8px; }
+	.cfg h4 { font-size:15px; margin:14px 0 6px; }
+	.cfg .cfg-note { opacity:.75; font-size:12.5px; line-height:1.4; margin:0 0 12px; }
+	.cfg-card { border:1px solid var(--line); border-radius:10px; background:var(--panel-2, var(--panel)); padding:10px 12px; margin:0 0 12px; }
+	.cfg-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:7px 0; }
+	.cfg-row > label, .cfg-label { flex:0 0 auto; min-width:150px; font-size:13px; opacity:.85; }
+	.cfg-row > input, .cfg-row > select, .cfg-row > textarea, .cfg-control { flex:1 1 220px; min-width:0; max-width:100%; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+	.cfg-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+	.cfg-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; border-radius:8px; }
+	.cfg-scroll table { width:100%; border-collapse:collapse; }
+	.cfg-scroll th, .cfg-scroll td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+	.cfg-scroll th { background:var(--panel); font-size:88%; }
+	.cfg button, .cfg .button { font:inherit; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; }
+	.cfg-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
+	@media (max-width:560px) {
+		.cfg-row { flex-direction:column; align-items:stretch; }
+		.cfg-row > label, .cfg-label { min-width:0; }
+		.cfg { padding:10px 10px 48px; }
+	}
+	</style>
+	<div class="jawn_version">v<%= &subs::jawn_version() %></div>
+	<div class="cfg-tabs">
+		<button type="button" class="configure_toggle" id="me_settings">Me</button>
+		<button type="button" class="configure_toggle"  name="backup" id="restore_list">Enc</button>
+		<button type="button" class="configure_toggle"  name="system" id="system_setting_lister">Sys</button>
+		<button type="button" class="configure_toggle"  id="misc_setting">Misc</button>
+		<button type="button" class="configure_toggle"  id="plat_setting">Plat</button>
+		<button type="button" class="configure_toggle"  id="appointment_list_grabber">App</button>
+		<button type="button" class="configure_toggle"  id="device_lister" load_type="list">Dev</button>
+		<button type="button" class="configure_toggle"  id="tunnel_lister">Tun</button>
+		<button type="button" class="configure_toggle"  id="pseudonym_setting_lister">Pseud</button>
+		<button type="button" class="configure_toggle"  id="store_setting_lister">Store</button>
+	</div>
 
 	<div style="display:none;" id="me_setting_list"></div>
 	<div style="display:none;" id="device_list"></div>
@@ -22,7 +54,5 @@
 	<div style="display:none;" id="plat_setting_list"></div>
 	<div style="display:none;" id="pseudonym_list"></div>
 	<div style="display:none;" id="store_list"></div>
-	
+
 </div>
-
-

@@ -1,64 +1,85 @@
-<div id="stats">
-	<% foreach my $s ( @{$stats} ) { %>
-		<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
-	<% } %>
-</div>
-<% if ($c->stash('pl_time')) { %><b>PL TIME:</b> <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span><% } %><br>
-<b>Uptime:</b> <span class="time" timestamp="<%= $last_restart %>"></span><br><br>
-<div id="utility_controls_container">
-	<%= include 'configure/utility_controller' %>
-</div>
-<br><br>
+<div class="cfg">
+	<h2>System</h2>
+	<p class="cfg-note">Database totals, the utility controller, and where the settings list is read from.</p>
 
-<% foreach my $b ( qw/none localstorage cache eval/ ) { %>
-	<button class="sys_setting_option" onclick="settingSetter({'app': '__president', 'setting': 'system_settings_list_view', 'value': '<%= $b %>' });" 
-		option="<%= $b %>" style="<% if ($b eq $settings->{$device}->{'system_settings_list_view'}) { %>background-color:yellow;<% } %>"><%= &subs::format_name($b) %></button>
-<% } %>
-<br>
-<% if ($settings->{$device}->{'system_settings_list_view'} eq 'localstorage') { %>
-	<table style="width:100%;max-width:100%;">
-		<thead>
-			<th>Cxl</th>
-			<th>Key</th>
-			<th>Value</th>
-		</thead>
-		<tbody>
-			<% foreach my $ls ( sort keys %{$local_storage} ) { %>
-				<tr class="system_localstorage" key="<%= $ls %>">
-					<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close"></td>
-					<td><b><%= $ls %></b></td>
-					<td style="text-align:left;"><%= $local_storage->{$ls} %></td>
-				</tr>
+	<div class="cfg-card">
+		<div id="stats" class="cfg-actions">
+			<% foreach my $s ( @{$stats} ) { %>
+				<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
 			<% } %>
-		</tbody>
-	</table>
-<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
+		</div>
+		<% if ($c->stash('pl_time')) { %><p class="cfg-note" style="margin:6px 0 0;">PL TIME: <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span></p><% } %>
+		<p class="cfg-note" style="margin:6px 0 0;">Uptime: <span class="time" timestamp="<%= $last_restart %>"></span></p>
+	</div>
 
-	<br>
-	<%# the whole house's own evaluation controls sit here, where the global
-	    report already lives %>
-	<%= include 'apps/evaluation_controls', app => '' %>
-	<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
-	<br>
-	<%# every machine keeps its own queue, so the house has to say where the
-	    nightly evaluations happen; remote_machine_lister names the machines %>
-	<% my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }); %>
-	<label>Nightly machine</label>
-	<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="Only this machine's worker runs the nightly evaluations; any machine means every queue that carries the wish keeps its own" style="vertical-align:bottom;">
-		<option value="">Any machine</option>
-		<% foreach my $m ( @{$machines} ) { %>
-			<% next unless $m->{'signatorial'}; %>
-			<option value="<%= $m->{'signatorial'} %>" <% if (($settings->{$device}->{'evaluation_machine'} || '') eq $m->{'signatorial'}) { %>selected<% } %>><%= ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})) %></option>
+	<h3>Utility controller</h3>
+	<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>
+	<div id="utility_controls_container" class="cfg-card">
+		<%= include 'configure/utility_controller' %>
+	</div>
+
+	<h3>Settings list source</h3>
+	<p class="cfg-note">Which copy of the settings list this browser reads.</p>
+	<div class="cfg-actions">
+		<% foreach my $b ( qw/none localstorage cache eval/ ) { %>
+			<button class="sys_setting_option" onclick="settingSetter({'app': '__president', 'setting': 'system_settings_list_view', 'value': '<%= $b %>' });" 
+				option="<%= $b %>" style="<% if ($b eq $settings->{$device}->{'system_settings_list_view'}) { %>background-color:yellow;<% } %>"><%= &subs::format_name($b) %></button>
 		<% } %>
-	</select>
-<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'cache') { %>
+	</div>
 
-	Anchor <input type="checkbox" class="anchor_all_settings" setting_type="sys">
-	<% foreach my $dt ( @gb::device_types ) { %>
-		<h3><%= $dt %></h3>
+	<% if ($settings->{$device}->{'system_settings_list_view'} eq 'localstorage') { %>
+		<div class="cfg-scroll">
+			<table>
+				<thead>
+					<tr><th>Cxl</th><th>Key</th><th>Value</th></tr>
+				</thead>
+				<tbody>
+					<% foreach my $ls ( sort keys %{$local_storage} ) { %>
+						<tr class="system_localstorage" key="<%= $ls %>">
+							<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close"></td>
+							<td><b><%= $ls %></b></td>
+							<td style="text-align:left;"><%= $local_storage->{$ls} %></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+	<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
 
-		<h4>Cache Folders</h4>
-		<textarea style="width:100%;" class="sys_setting" setting="cache_folders" device="<%= $dt %>"><%= $settings->{$dt}->{'cache_folders'} %></textarea>
+		<%# the whole house's own evaluation controls sit here, where the global
+		    report already lives %>
+		<div class="cfg-card">
+			<%= include 'apps/evaluation_controls', app => '' %>
+			<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
+		</div>
+		<%# every machine keeps its own queue, so the house has to say where the
+		    nightly evaluations happen; remote_machine_lister names the machines %>
+		<% my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }); %>
+		<div class="cfg-row">
+			<label>Nightly machine</label>
+			<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="Only this machine's worker runs the nightly evaluations; any machine means every queue that carries the wish keeps its own">
+				<option value="">Any machine</option>
+				<% foreach my $m ( @{$machines} ) { %>
+					<% next unless $m->{'signatorial'}; %>
+					<option value="<%= $m->{'signatorial'} %>" <% if (($settings->{$device}->{'evaluation_machine'} || '') eq $m->{'signatorial'}) { %>selected<% } %>><%= ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})) %></option>
+				<% } %>
+			</select>
+		</div>
+	<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'cache') { %>
 
+		<div class="cfg-card">
+			<div class="cfg-row">
+				<label><input type="checkbox" class="anchor_all_settings" setting_type="sys"> Anchor to all devices</label>
+			</div>
+		</div>
+		<% foreach my $dt ( @gb::device_types ) { %>
+			<div class="cfg-card">
+				<h3><%= $dt %></h3>
+				<div class="cfg-row">
+					<label>Cache Folders</label>
+					<textarea class="sys_setting" setting="cache_folders" device="<%= $dt %>"><%= $settings->{$dt}->{'cache_folders'} %></textarea>
+				</div>
+			</div>
+		<% } %>
 	<% } %>
-<% } %>
+</div>

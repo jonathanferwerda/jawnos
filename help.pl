@@ -368,9 +368,10 @@ our %topic = (
 		steps => [
 			'Open Configure.',
 			'Use the tabs to move between appearance, devices, utilities and the mesh.',
+			'The Plat tab holds every AI model choice and provider key.',
 			'Changes save as you make them; a bar or theme change is felt at once.'
 		],
-		related => [ 'themes', 'icon_sets', 'devices_and_mesh' ]
+		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform' ]
 	},
 	'security' => {
 		title => 'Security', category => 'apps', app => 'security',
@@ -627,10 +628,25 @@ our %topic = (
 		title => 'Assistant', category => 'functions',
 		summary => 'Chat and image generation, plus speech.',
 		body => [
-			'Assistant is the AI surface: chat and image generation through local Ollama models and Cloudflare Workers AI, with speech synthesis and transcription alongside. Like Evaluation, it prefers a local model so your data stays put.',
-			'The Help agent is a cousin of the same machinery — see this Help app — tuned to guide you through JawnOS itself.'
+			'Assistant is the AI surface: chat and image generation, with speech synthesis and transcription alongside. Like Evaluation, it prefers a local model so your data stays put unless you point it elsewhere.',
+			'Which model each assistant uses, and the keys that reach them, are set under Configure → Plat. Besides the local Ollama and Cloudflare Workers AI, that list now reaches OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter.'
 		],
-		related => [ 'evaluation', 'help_app', 'notes' ]
+		related => [ 'evaluation', 'help_app', 'platform' ]
+	},
+	'platform' => {
+		title => 'Platform (AI providers)', category => 'functions',
+		summary => 'Choose the model each assistant uses, and add provider keys.',
+		body => [
+			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs.',
+			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
+			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.'
+		],
+		steps => [
+			'Open Configure and press Plat.',
+			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation and the Pen.',
+			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.'
+		],
+		related => [ 'configure', 'assistant', 'help_app' ]
 	},
 	'backup' => {
 		title => 'Backup and restore', category => 'functions',

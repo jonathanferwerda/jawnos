@@ -10,15 +10,23 @@
 		<option value="<%= $pl->{'app'} %>"><%= &subs::format_name($pl->{'app'}) %></option>
 	<% } %>
 </datalist>
+<style>
+/* One row per package: the fields share the width and wrap, so a phone sees
+   two or three per line instead of a clipped strip. */
+.packaging_config_container .packaging_config { flex:1 1 100px; min-width:80px; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.packaging_config_container input[name="name"] { flex:2 1 160px; }
+.packaging_config_container input[name="default_place"] { flex:1 1 150px; }
+.packaging_config_container .delete_packaging { align-self:center; }
+</style>
 
 <% foreach my $p ( keys %{$packages} ) { %>
 	<% my $packaging = $packages->{$p}; %>
 	<div class="packaging_config_container" uuid="<%= $packaging->{'uuid'} || $p %>">
-		<input class="packaging_config" uuid="<%= $p %>" name="name" value="<%= $packaging->{'name'} %>" style="width:40%;" placeholder="Name">
+		<input class="packaging_config" uuid="<%= $p %>" name="name" value="<%= $packaging->{'name'} %>" placeholder="Name">
 		<% foreach my $pc ( qw/quantity each length width height weight expires/ ) { %>
-			<input class="packaging_config" uuid="<%= $p %>" name="<%= $pc %>" value="<%= $packaging->{$pc} %>" style="width:20%;" placeholder="<%= &subs::format_name($pc) %>">
+			<input class="packaging_config" uuid="<%= $p %>" name="<%= $pc %>" value="<%= $packaging->{$pc} %>" placeholder="<%= &subs::format_name($pc) %>">
 		<% } %>
-		<input class="packaging_config" uuid="<%= $p %>" name="default_place" list="warehouse_place_options" value="<%= $packaging->{'default_place'} %>" style="width:20%;" placeholder="Default Place">
+		<input class="packaging_config" uuid="<%= $p %>" name="default_place" list="warehouse_place_options" value="<%= $packaging->{'default_place'} %>" placeholder="Default Place">
 		<% if ($p ne 'new') { %>
 			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="delete_packaging little_thumb" uuid="<%= $p %>" style="vertical-align:bottom;">
 		<% } %>

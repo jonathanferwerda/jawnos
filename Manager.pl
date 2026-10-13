@@ -10554,7 +10554,7 @@ post '/manager/configure' => sub ($c) {
 
 		$value = encode_json $measures;
 	}
-	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token openai_key anthropic_key xai_key google_key mistral_key groq_key openrouter_key/ ) {
+	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token openai_key anthropic_key xai_key google_key mistral_key groq_key openrouter_key deepseek_key/ ) {
 		$log->info($value);
 		$value = &subs::note_encrypter(&subs::suds_grabber(), $value);
 		$log->info($value);

@@ -22,12 +22,12 @@
 		my @known = ('', '$', @measure_names);
 		my @extra = (length($measure) && !grep { $_ eq $measure } @known) ? ($measure) : ();
 		my $o = '<div class="budget_goals_row">';
-		$o .= '<select class="budget_goals_direction" style="width:132px;">';
+		$o .= '<select class="budget_goals_direction">';
 		$o .= '<option value="floor"' . ($dir eq 'floor' ? ' selected' : '') . '>reach at least</option>';
 		$o .= '<option value="ceiling"' . ($dir eq 'ceiling' ? ' selected' : '') . '>stay under</option>';
 		$o .= '</select>';
-		$o .= '<input class="budget_goals_value" type="text" style="width:96px;" placeholder="amount" value="' . $value . '">';
-		$o .= '<select class="budget_goals_measure" style="width:124px;">';
+		$o .= '<input class="budget_goals_value" type="text" placeholder="amount" value="' . $value . '">';
+		$o .= '<select class="budget_goals_measure">';
 		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>(count)</option>';
 		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>money</option>';
 		foreach my $m ( @measure_names ) {
@@ -37,8 +37,8 @@
 			$o .= '<option value="' . $m . '" selected>' . &subs::format_name($m) . '</option>';
 		}
 		$o .= '</select>';
-		$o .= '<input class="budget_goals_count" type="number" min="1" style="width:52px;" placeholder="1" value="' . $scount . '">';
-		$o .= '<select class="budget_goals_unit" style="width:104px;">';
+		$o .= '<input class="budget_goals_count" type="number" min="1" placeholder="1" value="' . $scount . '">';
+		$o .= '<select class="budget_goals_unit">';
 		$o .= '<option value=""' . ($sunit eq '' ? ' selected' : '') . '>fixed</option>';
 		foreach my $u ( @units ) {
 			$o .= '<option value="' . $u . '"' . ($sunit eq $u ? ' selected' : '') . '>' . &subs::format_name($u) . '</option>';
@@ -49,6 +49,16 @@
 		return $o;
 	};
 %>
+<style>
+/* A budget/goal entry reads as one sentence: reach at least / stay under this
+   amount of this measure, per count unit - the row wraps on a narrow screen. */
+.budget_goals .budget_goals_row select,
+.budget_goals .budget_goals_row input { flex:1 1 auto; min-width:0; max-width:100%; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.budget_goals .budget_goals_direction { flex:0 1 auto; }
+.budget_goals .budget_goals_value { flex:0 1 110px; }
+.budget_goals .budget_goals_count { flex:0 1 72px; }
+</style>
+<p class="cfg-note">Each line is one rule: an amount of a measure, held at a floor to reach or a ceiling to stay under - optionally per hour, day, week, month or year.</p>
 <div class="budget_goals" app="<%= $a %>" setting="<%= $setting %>">
 	<% foreach my $e ( grep { length } split ',', ($settings->{$setting} || '') ) { %>
 		<% my $dir = 'floor'; my $body = $e; $dir = 'ceiling' if $body =~ s/^<=//; $body =~ s/^>=//; %>

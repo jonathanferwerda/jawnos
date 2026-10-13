@@ -1,36 +1,54 @@
-<table>
-	<thead>
-		<th>Status</th><th>Name</th><th>Colour</th><th>Icon</th><th>Place</th><th>Speech</th><th>Class</th><th>onClick</th><th>Default</th>
-	</thead>
-	<tbody>
-		<% foreach my $p ( @{$pseudonyms} ) { %>
-			<tr pseudonym_name="<%= $p->{'name'} %>">
-				<td>
-					<select setting="status" class="pseudonym_setting pseudonym_state_set">
-						<% foreach my $state (qw/on off button none/) { %>
-							<option value="<%= $state %>" <% if ($state eq $p->{'status'}) { %>selected<% } %>><%= $state %></option>
-						<% } %>
-					</select>
-				</td>
-				<td><%= $p->{'name'} %></td>
-				<td><input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set"></td>
-				<td>
-					<img class="ps little_thumb pseudonym_icon_set" hint="<%= &subs::format_name($p->{'name'}) %>" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
-				</td>
-				<td>
-					<select setting="place" class="pseudonym_setting pseudonym_place_set">
-						<% foreach my $place (qw/top mid bottom/) { %>
-							<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= $place %></option>
-						<% } %>
-					</select>
-				</td>
-				<td><input value="<%= $p->{'speech'} %>" setting="speech" class="pseudonym_setting pseudonym_speech_set"></td>
-				<td><input value="<%= $p->{'classmates'} %>" setting="classmates" class="pseudonym_setting psedonym_classmate_set"></td>
+<style>
+/* Nine columns is more than a phone can show side by side, so each row becomes
+   a labelled card under 640px. Scoped to the panel's container so it cannot
+   touch any other table. */
+@media (max-width:640px) {
+	#pseudonym_list table, #pseudonym_list thead, #pseudonym_list tbody, #pseudonym_list tr, #pseudonym_list td { display:block; width:100%; box-sizing:border-box; }
+	#pseudonym_list thead { display:none; }
+	#pseudonym_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
+	#pseudonym_list td { border:0; padding:3px 2px; }
+	#pseudonym_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
+}
+</style>
+<div class="cfg">
+	<h2>Pseudonyms</h2>
+	<p class="cfg-note">The named keyboard faces. Each setting saves as you change it; Default restores the built-in look.</p>
+	<div class="cfg-scroll">
+		<table>
+			<thead>
+				<tr><th>Status</th><th>Name</th><th>Colour</th><th>Icon</th><th>Place</th><th>Speech</th><th>Class</th><th>onClick</th><th>Default</th></tr>
+			</thead>
+			<tbody>
+				<% foreach my $p ( @{$pseudonyms} ) { %>
+					<tr pseudonym_name="<%= $p->{'name'} %>">
+						<td data-label="Status">
+							<select setting="status" class="pseudonym_setting pseudonym_state_set">
+								<% foreach my $state (qw/on off button none/) { %>
+									<option value="<%= $state %>" <% if ($state eq $p->{'status'}) { %>selected<% } %>><%= $state %></option>
+								<% } %>
+							</select>
+						</td>
+						<td data-label="Name"><%= $p->{'name'} %></td>
+						<td data-label="Colour"><input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set"></td>
+						<td data-label="Icon">
+							<img class="ps little_thumb pseudonym_icon_set" hint="<%= &subs::format_name($p->{'name'}) %>" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
+						</td>
+						<td data-label="Place">
+							<select setting="place" class="pseudonym_setting pseudonym_place_set">
+								<% foreach my $place (qw/top mid bottom/) { %>
+									<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= $place %></option>
+								<% } %>
+							</select>
+						</td>
+						<td data-label="Speech"><input value="<%= $p->{'speech'} %>" setting="speech" class="pseudonym_setting pseudonym_speech_set"></td>
+						<td data-label="Class"><input value="<%= $p->{'classmates'} %>" setting="classmates" class="pseudonym_setting psedonym_classmate_set"></td>
 
-				<td><input value="<%= $p->{'click'} %>" setting="click" class="pseudonym_setting pseudonym_onclick_set"></td>
+						<td data-label="onClick"><input value="<%= $p->{'click'} %>" setting="click" class="pseudonym_setting pseudonym_onclick_set"></td>
 
-				<td><button class="pseudonym_defaulter" name="<%= $p->{'name'} %>">Default</button></td>
-			</tr>
-		<% } %>
-	</tbody>
-</table>
+						<td data-label="Default"><button class="pseudonym_defaulter" name="<%= $p->{'name'} %>">Default</button></td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	</div>
+</div>

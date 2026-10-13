@@ -1,7 +1,23 @@
 <% no warnings 'uninitialized'; %>
-
-Lat:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="latitude" value="<%= $settings->{'app_home_plate'}->{'latitude'} %>"><br>
-Long:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="longitude" value="<%= $settings->{'app_home_plate'}->{'longitude'} %>"><br>
+<style>
+/* The home plate: a manual latitude/longitude, then one card per duty - where
+   a device is placed relative to home, how far, which app, and what it does.
+   Each field stacks its label over its control so the card wraps on a phone. */
+.home_plate_setting_container .hp_field { display:flex; flex-direction:column; gap:2px; flex:0 1 auto; min-width:0; }
+.home_plate_setting_container .hp_field > label { font-size:11.5px; opacity:.7; }
+.home_plate_setting_container .hp_field .home_plate_setting { box-sizing:border-box; max-width:100%; padding:6px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.home_plate_setting_container .hp_field.hp_inline { flex-direction:row; align-items:center; gap:5px; }
+.home_plate_setting_container .hp_field.hp_inline > label { font-size:13px; opacity:.85; }
+.home_plate_setting_container .hp_actions { display:flex; align-items:flex-end; gap:6px; }
+</style>
+<div class="cfg-row">
+	<label>Latitude</label>
+	<input type="text" class="manual_home_plate" app="<%= $app %>" setting="latitude" value="<%= $settings->{'app_home_plate'}->{'latitude'} %>">
+</div>
+<div class="cfg-row">
+	<label>Longitude</label>
+	<input type="text" class="manual_home_plate" app="<%= $app %>" setting="longitude" value="<%= $settings->{'app_home_plate'}->{'longitude'} %>">
+</div>
 
 
 % my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
@@ -10,32 +26,50 @@ Long:<input type="text" class="manual_home_plate" app="<%= $app %>" setting="lon
 % push @{$home_plate_duties}, { uuid => $uuid, timestamp => &subs::rightNow() };
 <% foreach my $hpd ( sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @{$home_plate_duties} ) { %>
 	<div class="home_plate_setting_container" uuid="<%= $hpd->{'uuid'} %>">
-		<select class="home_plate_setting" setting="placement" value="<%= $hpd->{'placement'} %>" uuid="<%= $hpd->{'uuid'} %>">
-			<% foreach my $dir ( qw/within without/ ) { %>
-				<option value="<%= $dir %>" <% if ($hpd->{'placement'} eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
-			<% } %>
-		</select>
-		<input class="home_plate_setting" setting="distance" value="<%= $hpd->{'distance'} %>" placeholder="(km)" uuid="<%= $hpd->{'uuid'} %>" style="width:50px;">
-		<input class="home_plate_setting" setting="self" <% if ($hpd->{'self'} eq 'on') { %>checked<% } %> type="checkbox" uuid="<%= $hpd->{'uuid'} %>">Self 
+		<span class="hp_field">
+			<label>Placement</label>
+			<select class="home_plate_setting" setting="placement" value="<%= $hpd->{'placement'} %>" uuid="<%= $hpd->{'uuid'} %>">
+				<% foreach my $dir ( qw/within without/ ) { %>
+					<option value="<%= $dir %>" <% if ($hpd->{'placement'} eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
+				<% } %>
+			</select>
+		</span>
+		<span class="hp_field">
+			<label>Distance (km)</label>
+			<input class="home_plate_setting" setting="distance" value="<%= $hpd->{'distance'} %>" placeholder="(km)" uuid="<%= $hpd->{'uuid'} %>" size="6">
+		</span>
+		<span class="hp_field hp_inline">
+			<label><input class="home_plate_setting" setting="self" <% if ($hpd->{'self'} eq 'on') { %>checked<% } %> type="checkbox" uuid="<%= $hpd->{'uuid'} %>"> Self</label>
+		</span>
 
-		<input class="home_plate_setting" setting="app" value="<%= &subs::format_name($hpd->{'app'}) %>" placeholder="app" uuid="<%= $hpd->{'uuid'} %>" style="width:200px; <% if ($hpd->{'self'} eq 'on') { %>display:none; <% } %>">
-		<select class="home_plate_setting" setting="action" value="<%= $hpd->{'action'} %>" uuid="<%= $hpd->{'uuid'} %>">
-			<% foreach my $o ( qw/none start record stop command kill/ ) { %>
-				<option value="<%= $o %>" <% if ($o eq $hpd->{'action'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
-			<% } %>
-		</select>
+		<span class="hp_field">
+			<label>App</label>
+			<input class="home_plate_setting" setting="app" value="<%= &subs::format_name($hpd->{'app'}) %>" placeholder="app" uuid="<%= $hpd->{'uuid'} %>" style="<% if ($hpd->{'self'} eq 'on') { %>display:none; <% } %>">
+		</span>
+		<span class="hp_field">
+			<label>Action</label>
+			<select class="home_plate_setting" setting="action" value="<%= $hpd->{'action'} %>" uuid="<%= $hpd->{'uuid'} %>">
+				<% foreach my $o ( qw/none start record stop command kill/ ) { %>
+					<option value="<%= $o %>" <% if ($o eq $hpd->{'action'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+				<% } %>
+			</select>
+		</span>
 
-		<select class="home_plate_setting" setting="device" value="<%= $hpd->{'device'} %>" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>">
-			% my $devices = &subs::remote_machine_lister();
-			<option value="">None</option>
-			<% foreach my $d ( @{$devices} ) { %>
-				<option value="<%= $d->{'signatorial'} %>" <% if ($hpd->{'device'} eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+		<span class="hp_field">
+			<label>Device</label>
+			<select class="home_plate_setting" setting="device" value="<%= $hpd->{'device'} %>" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>">
+				% my $devices = &subs::remote_machine_lister();
+				<option value="">None</option>
+				<% foreach my $d ( @{$devices} ) { %>
+					<option value="<%= $d->{'signatorial'} %>" <% if ($hpd->{'device'} eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+				<% } %>
+			</select>
+		</span>
+		<span class="hp_actions">
+			<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+			<% if ($hpd->{'uuid'} ne $uuid) { %>
+				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
 			<% } %>
-		</select>
-		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
-		<% if ($hpd->{'uuid'} ne $uuid) { %>
-			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
-		<% } %>
-		<br><br>
+		</span>
 	</div>
 <% } %>

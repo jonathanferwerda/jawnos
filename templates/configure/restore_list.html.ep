@@ -1,55 +1,94 @@
+<style>
+/* The eight ticket digits sit compactly and wrap rather than run off the edge. */
+#ticket { display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
+#ticket .ticket_input { width:4.2em; text-align:center; }
+/* Rm / Status / Utils / Filename is too much for a phone in one line, so the
+   rows become labelled cards under 640px. Scoped to this panel's container. */
+@media (max-width:640px) {
+	#backup_list table, #backup_list thead, #backup_list tbody, #backup_list tr, #backup_list td { display:block; width:100%; box-sizing:border-box; }
+	#backup_list thead { display:none; }
+	#backup_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
+	#backup_list td { border:0; padding:3px 2px; }
+	#backup_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
+}
+</style>
+<div class="cfg">
+	<h2>Enc</h2>
+	<p class="cfg-note">Restore or merge a database backup, or start a new one. Each backup is an encrypted <code>.enc</code> file.</p>
 
-<input id="president" placeholder="President" />
-<input type="password" id="credential" placeholder="Credential" />
-<button type="button" id="new_database">New</button>
-<br><br>
+	<div class="cfg-grid">
+		<div class="cfg-row">
+			<label>President</label>
+			<input id="president" placeholder="President" />
+		</div>
+		<div class="cfg-row">
+			<label>Credential</label>
+			<input type="password" id="credential" placeholder="Credential" />
+		</div>
+	</div>
+	<div class="cfg-actions">
+		<button type="button" id="new_database">New</button>
+	</div>
 
-<div id="signatorial_upload_container">
-	<form id="signatorial_upload" style="display:none;">
-		<input id="signatorial_upload_input" type="file" name="fileupload" />
-		<input type="submit" />
-	</form>
-</div>
+	<h3>Signatorial</h3>
+	<p class="cfg-note">Upload a signatorial file, key the eight-number ticket, then submit or Clear.</p>
+	<div id="signatorial_upload_container">
+		<form id="signatorial_upload" style="display:none;">
+			<input id="signatorial_upload_input" type="file" name="fileupload" />
+			<input type="submit" />
+		</form>
+	</div>
 
-<div id="ticket" class="ticket_form">
-	<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
-	<% foreach my $n (0..7) { %>
-		<% if ($n == 4) { %>
-			&nbsp;-&nbsp;
+	<div id="ticket" class="ticket_form">
+		<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
+		<% foreach my $n (0..7) { %>
+			<% if ($n == 4) { %>
+				&nbsp;-&nbsp;
+			<% } %>
+			<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>" style="vertical-align:bottom;">
 		<% } %>
-		<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>" style="vertical-align:bottom;">
+		<button type="button" id="password_clear">Clear</button>
+	</div>
+
+	<h3>Backups</h3>
+	<% if (scalar @{$backups} > 0) { %>
+		<div class="cfg-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th>Rm</th>
+						<th>Status</th>
+						<th colspan="2">Utils</th>
+						<th>Filename</th>
+					</tr>
+				</thead>
+				<tbody>
+					<% foreach my $b ( @{$backups } ) { %>
+						<tr class="backup">
+							<td data-label="Rm">
+								<button class="delete_backup" filename="<%= $b->{'filename'} %>">X</button>
+							</td>
+							<td data-label="Status"><%= $b->{'status'} %></td>
+							<td colspan="2" data-label="Utils">
+								<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
+								<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button><br>
+							</td>
+							<td data-label="Filename">
+								<%= $b->{'filename'} %><br>
+								<%= $b->{'size'} %> ( <%= $b->{'blocks'} %> )<br>
+								<%= $b->{'created'} %><br>
+							</td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+	<% } else { %>
+		<p class="cfg-note">No backups found here yet.</p>
 	<% } %>
-	<button type="button" id="password_clear">Clear</button>
+
+	<div class="cfg-actions">
+		<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="large_thumb" id="database_vacuum">
+		<img src="<%= &subs::icon_for('/images/jbuttons/doctor.png') %>" hint="Doctor" class="large_thumb" id="database_doctor">
+	</div>
 </div>
-
-
-<br><br>
-<table style="width: 100%; border: 1px solid black;">
-	<thead>
-		<th>Rm</th>
-		<th>Status</th>
-		<th colspan="2">Utils</th>
-		<th>Filename</th>
-	</thead>
-	<tbody>
-		<% foreach my $b ( @{$backups } ) { %>
-			<tr class="backup">
-				<td>
-					<button class="delete_backup" filename="<%= $b->{'filename'} %>">X</button>
-				</td>
-				<td><%= $b->{'status'} %></td>
-				<td colspan="2">
-					<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
-					<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button><br>
-				</td>
-				<td style=" border: 1px solid black;">
-					<%= $b->{'filename'} %><br>
-					<%= $b->{'size'} %> ( <%= $b->{'blocks'} %> )<br>
-					<%= $b->{'created'} %><br>
-				</td>
-			</tr>
-		<% } %>
-	</tbody
-</table>
-<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="large_thumb" id="database_vacuum">
-<img src="<%= &subs::icon_for('/images/jbuttons/doctor.png') %>" hint="Doctor" class="large_thumb" id="database_doctor">

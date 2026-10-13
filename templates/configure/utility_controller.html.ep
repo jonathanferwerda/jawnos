@@ -4,54 +4,70 @@
 
 <% my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {}; %>
 <% if (scalar keys %{$controls} == 0) { %>
-	Never seen this<br>
+	<p class="cfg-note">Never seen this</p>
 	<% foreach my $dt ( ( $signatorial, @gb::device_types ) ) { %>
-		writing for <%= $dt %><br>
+		<p class="cfg-note">writing for <%= $dt %></p>
 		<% $controls->{$dt} = $gb::timeouts; %>
 	<% } %>
 <% } %>
 
+<style>
+/* The utility grid carries a column per job; on a phone each cell becomes a
+   labelled card, so nothing is off the right edge. */
+@media (max-width:640px) {
+	#utility_controls, #utility_controls thead, #utility_controls tbody, #utility_controls tr, #utility_controls td { display:block; width:100%; box-sizing:border-box; }
+	#utility_controls thead { display:none; }
+	#utility_controls tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
+	#utility_controls td { border:0; padding:3px 2px; }
+	#utility_controls td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
+	#utility_controls .utility_cell { border-radius:8px; }
+}
+</style>
 
-<table style="width:100%;" id="utility_controls">
-	<thead>
-		<th></th>
-		<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
-			<th><%= &subs::format_name($t) %></th>
-		<% } %>
-	</thead>
-	<tbody>
-
-		% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
-		% my %machine_name;
-		% foreach my $mk ( @machine_keys ) {
-		% 	next if $mk eq $signatorial;
-		% 	my $rm = &subs::db_select('remote_machines', ['hostname'], { signatorial => $mk })->hashes->[0];
-		% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
-		% }
-		<% foreach my $dt ( sort @machine_keys ) { %>
+<div class="cfg-scroll">
+	<table id="utility_controls">
+		<thead>
 			<tr>
-				<td><b><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></b></td>
+				<th></th>
 				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
-					% next unless $controls->{$dt}->{$t}; 
-					<td style="border:solid;border-radius:3px;">
-						<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>><br>
-						<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" style="width:70px;" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>"><br>
-						<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
-							<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good"><br>
-						<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
-							<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad"><br>
-						<% } else { %>
-
-						<% } %>
-						<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
-							<span class="time" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
-						<% } else { %><span>&nbsp;</span><% } %><br>
-						<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
-							Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>><br>
-						<% } %>
-					</td>
+					<th><%= &subs::format_name($t) %></th>
 				<% } %>
 			</tr>
-		<% } %>
-	</tbody>
-</table>
+		</thead>
+		<tbody>
+
+			% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
+			% my %machine_name;
+			% foreach my $mk ( @machine_keys ) {
+			% 	next if $mk eq $signatorial;
+			% 	my $rm = &subs::db_select('remote_machines', ['hostname'], { signatorial => $mk })->hashes->[0];
+			% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
+			% }
+			<% foreach my $dt ( sort @machine_keys ) { %>
+				<tr>
+					<td data-label="Machine"><b><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></b></td>
+					<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
+						% next unless $controls->{$dt}->{$t}; 
+						<td class="utility_cell" data-label="<%= &subs::format_name($t) %>">
+							<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>><br>
+							<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= $dt %>" style="width:70px;" value="<%= &subs::duration_sayer($controls->{$dt}->{$t}->{'interval'}) %>"><br>
+							<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
+								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good"><br>
+							<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
+								<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad"><br>
+							<% } else { %>
+
+							<% } %>
+							<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
+								<span class="time" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
+							<% } else { %><span>&nbsp;</span><% } %><br>
+							<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
+								Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>><br>
+							<% } %>
+						</td>
+					<% } %>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+</div>

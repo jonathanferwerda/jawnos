@@ -1,39 +1,57 @@
 <% my $tunnels = &subs::db_query('select * from tunnels where status=?', 'active')->hashes; %>
 <% no warnings 'uninitialized'; %>
-<% if (@{$tunnels} > 0) { %>
-	<h4>Tunnels:</h4>
-	<table style="background-color:var(--panel-2);width:100%;">
-		<thead>
-			<th>F</th><th>Host</th><th>Dir</th><th>Name</th><th>IP</th><th>In</th><th>Out</th><th>Time</th><th>ST</th>
-		</thead>
-		<tbody>
-			<% foreach my $tun ( @{$tunnels} ) { %>
-				<% if ($tun->{'server_time'} < &subs::rightNow() - ( 60 * 5 * 1000)) { %>
-					<% &subs::db_delete('tunnels', { uuid => $tun->{'uuid'} });
-					<% next; %>
-				<% } %>
-				<tr>
-					<td><img class="tiny_thumb" src="
-						<% if ($tun->{'failures'} == 0) { %>
-							/images/make believe/good.png
-						<% } elsif ($tun->{'failures'} >- 1) { %>
-							/images/make believe/bad.png
-						<% } else { %>
-							/images/decipherable/question.png
+<style>
+/* A tunnel row carries nine columns; on a phone each becomes a labelled card,
+   so nothing is off the right edge. */
+#tunnel_list table, #tunnel_list thead, #tunnel_list tbody, #tunnel_list tr, #tunnel_list td { }
+@media (max-width:640px) {
+	#tunnel_list table, #tunnel_list thead, #tunnel_list tbody, #tunnel_list tr, #tunnel_list td { display:block; width:100%; box-sizing:border-box; }
+	#tunnel_list thead { display:none; }
+	#tunnel_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
+	#tunnel_list td { border:0; padding:3px 2px; }
+	#tunnel_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
+}
+</style>
+<div class="cfg">
+	<h2>Tunnels</h2>
+	<% if (scalar @{$tunnels} > 0) { %>
+		<p class="cfg-note">Live tunnels between this machine and its peers.</p>
+		<div class="cfg-scroll">
+			<table>
+				<thead>
+					<tr><th>F</th><th>Host</th><th>Dir</th><th>Name</th><th>IP</th><th>In</th><th>Out</th><th>Time</th><th>ST</th></tr>
+				</thead>
+				<tbody>
+					<% foreach my $tun ( @{$tunnels} ) { %>
+						<% if ($tun->{'server_time'} < &subs::rightNow() - ( 60 * 5 * 1000)) { %>
+							<% &subs::db_delete('tunnels', { uuid => $tun->{'uuid'} }); %>
+							<% next; %>
 						<% } %>
-						">
-					</td>
-					<td><%= $tun->{'host'} %></td>
-					<td><%= &subs::format_name($tun->{'direction'}) %></td>
-					<td><%= $tun->{'name'} %></td> 
-					<td><%= $tun->{'ip'} %></td> 
-					<td><%= $tun->{'in_port'} %></td>
-					<td><%= $tun->{'out_port'} %></td>
-					<td><span class="time" timestamp="<%= $tun->{'timestamp'} %>"></span></td>
-					<td><span class="time" timestamp="<%= $tun->{'server_time'} %>"></span></td>
-				</tr>
-			<% } %>
-		</tbody>
-	</table>
-	<script>appointment_chron();</script>
-<% } %>
+						<tr>
+							<td data-label="F"><img class="tiny_thumb" src="
+								<% if ($tun->{'failures'} == 0) { %>
+									/images/make believe/good.png
+								<% } elsif ($tun->{'failures'} >- 1) { %>
+									/images/make believe/bad.png
+								<% } else { %>
+									/images/decipherable/question.png
+								<% } %>
+								"></td>
+							<td data-label="Host"><%= $tun->{'host'} %></td>
+							<td data-label="Dir"><%= &subs::format_name($tun->{'direction'}) %></td>
+							<td data-label="Name"><%= $tun->{'name'} %></td>
+							<td data-label="IP"><%= $tun->{'ip'} %></td>
+							<td data-label="In"><%= $tun->{'in_port'} %></td>
+							<td data-label="Out"><%= $tun->{'out_port'} %></td>
+							<td data-label="Time"><span class="time" timestamp="<%= $tun->{'timestamp'} %>"></span></td>
+							<td data-label="ST"><span class="time" timestamp="<%= $tun->{'server_time'} %>"></span></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+		<script>appointment_chron();</script>
+	<% } else { %>
+		<p class="cfg-note">No active tunnels right now.</p>
+	<% } %>
+</div>

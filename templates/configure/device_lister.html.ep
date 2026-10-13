@@ -5,7 +5,7 @@
     from the house's own theme tokens so it wears the light or the dark set. %>
 <style>
 #device_listings { display:flex; flex-direction:column; gap:10px; }
-#device_listings .device_card { border:1px solid var(--line); border-radius:8px; background:var(--panel-2); overflow:hidden; }
+#device_listings .device_card { border:1px solid var(--line); border-radius:8px; background:var(--panel-2); }
 #device_listings .device_head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--line); }
 #device_listings .device_head .device_domain { flex:1 1 220px; min-width:150px; margin:0; }
 #device_listings .device_when { opacity:.6; font-size:85%; white-space:nowrap; }
@@ -21,8 +21,16 @@
 #device_listings .device_actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 #device_listings button { font:inherit; font-size:90%; padding:2px 10px; margin:2px 0; }
 #device_listings .pill { display:inline-block; padding:1px 8px; border-radius:10px; border:1px solid var(--line); background:var(--panel); font-size:85%; }
+/* On a phone the neighbour table becomes a stack of cards, so the purpose
+   controls (lock, mirror, scan, delete) are never off the right edge. */
+@media (max-width:640px) {
+	#device_listings .device_nic table, #device_listings .device_nic thead, #device_listings .device_nic tbody, #device_listings .device_nic tr, #device_listings .device_nic td { display:block; width:100%; box-sizing:border-box; }
+	#device_listings .device_nic thead { display:none; }
+	#device_listings .device_nic tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; background:var(--panel); }
+	#device_listings .device_nic td { border:0; padding:3px 2px; }
+}
 </style>
-<div style="width:100%;height:100%;">
+<div class="cfg" style="width:100%;height:100%;">
 	<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
 		<input type="text" value="<%= $ping %>" class="ping_host" placeholder="host" style="flex:1 1 220px;margin:0;">
 		<button class="ping">Ping</button>
@@ -44,6 +52,7 @@
 							<span class="device_control" ip="<%= $a->{'ip'} %>" mac="<%= $a->{'mac'} %>"><%= $a->{'nic'} %>: <span class="clip remote_ip"><%= $a->{'ip'} %></span> <%= $a->{'mac'} %></span>
 						</div>
 						<% if (scalar keys @{$d->{'address'}->{$ad}->{'neigh'}} > 0) { %>
+							<div class="cfg-scroll">
 							<table>
 								<thead>
 									<tr><th>net</th><th>manager</th><th>purpose</th></tr>
@@ -104,6 +113,7 @@
 								<% } %>
 								</tbody>
 							</table>
+							</div>
 						<% } %>
 					</div>
 				<% } %>

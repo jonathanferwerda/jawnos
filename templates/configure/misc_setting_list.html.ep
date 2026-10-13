@@ -1,7 +1,12 @@
 <% use Mojo::JSON qw/encode_json/; %>
-<br>
-Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
-<br>
+<div class="cfg">
+	<h2>Misc</h2>
+	<p class="cfg-note">Appearance, storage and per-device bars, locations and colours. Changes save as you make them; the Anchor toggle copies a change to every device.</p>
+	<div class="cfg-card">
+		<div class="cfg-row">
+			<label><input type="checkbox" class="anchor_all_settings" setting_type="misc"> Anchor to all devices</label>
+		</div>
+	</div>
 
 <% my $signatorial = &subs::signatorial_designer(); %>
 <% my $dev = &subs::device_setter(); %>
@@ -64,85 +69,88 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 ); %>
 
 <style>
-	.misc_device_tab { padding:10px 24px; cursor:pointer; border-radius:8px; border:solid 2px; background:transparent; font-size:22px; }
-	.misc_device_tab.selected { background:yellow; font-weight:bold; }
+	/* Device tabs and the two blocks the JS toggles. The grid extends the house
+	   .cfg system to the panel's stacked label+control cells. */
+	.misc_device_tabs { justify-content:center; }
+	.misc_device_tab.selected { background:var(--line); font-weight:bold; }
 	.misc_device_block { display:none; }
-	#misc_setting_list h4 { font-size:20px; margin:12px 0 4px; }
-	#misc_setting_list label b, #misc_setting_list b { font-size:15px; }
-	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:118px; font-size:15px; text-align:center; }
+	.misc_grid { grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+	.misc_grid label { display:flex; flex-direction:column; gap:3px; }
+	.misc_grid label > b { font-size:13px; opacity:.85; }
+	.misc_grid label > select, .misc_grid label > input:not([type=color]) { width:100%; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:118px; font-size:13px; text-align:center; }
 	.misc_colour_chip input[type=color] { width:110px; height:34px; }
 </style>
 
-<div class="misc_device_tabs" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:10px 0;">
+<div class="cfg-actions misc_device_tabs">
 	<% foreach my $dt (@devices) { %>
 		<% my $name = $dt eq $signatorial ? 'Me' : &subs::format_name($dt); %>
 		<button class="misc_device_tab" device="<%= $dt %>"><%= $name %></button>
 	<% } %>
 </div>
 
-<div class="misc_section" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
-	<h1 style="margin:0;">Appearance</h1>
-	<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin-top:6px;">
-		<label style="display:flex;flex-direction:column;min-width:240px;">
-			<b>Zoom <span id="ui_zoom_value"><%= &subs::misc_setting('ui_zoom') || 100 %></span>%</b>
-			<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="20" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
-		</label>
-		<label style="display:flex;flex-direction:column;max-width:260px;">
-			<b>Font</b>
-			<select class="misc_setting" setting="title_font" device="<%= $dev %>">
-				<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
-				<% foreach my $f ( @fonts ) { %>
-					<option value="<%= $f %>" style="font-family:<%= $f %>;" <% if ($current_font eq $f) { %>selected="selected"<% } %>><%= $f %></option>
-				<% } %>
-			</select>
-		</label>
-		<label style="display:flex;flex-direction:column;">
-			<b>Colour Scheme</b>
-			<select id="colour_scheme">
-				<option value="">&mdash; choose &mdash;</option>
-				<% foreach my $name (@scheme_order) { %>
-					<option value="<%= $name %>"><%= $name %></option>
-				<% } %>
-			</select>
-		</label>
-		<label style="display:flex;flex-direction:column;max-width:260px;">
-			<b>Icon Set</b>
-			<% my $current_icon_set = &subs::setting_grabber({ app => 'misc', setting => 'icon_set', device => $dev }) || ''; %>
-			<select class="misc_setting" setting="icon_set" device="<%= $dev %>">
-				<option value="" <% if (!$current_icon_set) { %>selected="selected"<% } %>>Default</option>
-				<% foreach my $s ( @gb::icon_sets ) { %>
-					<option value="<%= $s %>" <% if ($current_icon_set eq $s) { %>selected="selected"<% } %>><%= $gb::icon_set_labels{$s} %></option>
-				<% } %>
-			</select>
-		</label>
+<div class="misc_section cfg-card">
+	<h3>Appearance</h3>
+	<div class="cfg-row">
+		<label><b>Zoom <span id="ui_zoom_value"><%= &subs::misc_setting('ui_zoom') || 100 %></span>%</b></label>
+		<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="20" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
+	</div>
+	<div class="cfg-row">
+		<label><b>Font</b></label>
+		<select class="misc_setting" setting="title_font" device="<%= $dev %>">
+			<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
+			<% foreach my $f ( @fonts ) { %>
+				<option value="<%= $f %>" style="font-family:<%= $f %>;" <% if ($current_font eq $f) { %>selected="selected"<% } %>><%= $f %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
+		<label><b>Colour Scheme</b></label>
+		<select id="colour_scheme">
+			<option value="">&mdash; choose &mdash;</option>
+			<% foreach my $name (@scheme_order) { %>
+				<option value="<%= $name %>"><%= $name %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
+		<label><b>Icon Set</b></label>
+		<% my $current_icon_set = &subs::setting_grabber({ app => 'misc', setting => 'icon_set', device => $dev }) || ''; %>
+		<select class="misc_setting" setting="icon_set" device="<%= $dev %>">
+			<option value="" <% if (!$current_icon_set) { %>selected="selected"<% } %>>Default</option>
+			<% foreach my $s ( @gb::icon_sets ) { %>
+				<option value="<%= $s %>" <% if ($current_icon_set eq $s) { %>selected="selected"<% } %>><%= $gb::icon_set_labels{$s} %></option>
+			<% } %>
+		</select>
 		<div class="icon_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
-		<label style="display:flex;flex-direction:column;max-width:260px;">
-			<b>Start Button</b>
-			<%# the start button's picture: any file in the jbuttons folder; the icon
-			    set may carry a variant and icon_for() prefers it, so this is a theme
-			    choice as much as a face %>
-			<% my $current_start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
-			<% my @jbuttons = map { my $f = $_; $f =~ s|.*/||; $f } grep { /\.(png|svg|jpe?g)$/i } glob './public/images/jbuttons/*'; %>
-			<select class="misc_setting" setting="start_menu_icon" device="<%= $dev %>">
-				<% foreach my $f ( sort @jbuttons ) { %>
-					<option value="/images/jbuttons/<%= $f %>" <% if ($current_start_icon eq "/images/jbuttons/$f") { %>selected="selected"<% } %>><%= $f %></option>
-				<% } %>
-			</select>
-		</label>
-		<label style="display:flex;flex-direction:column;">
-			<b>Appointment Colours</b>
-			<button id="appt_colour_update" class="hover">Re-theme appointments</button>
-			<span id="appt_colour_update_status" style="font-size:15px;"></span>
-		</label>
+	</div>
+	<div class="cfg-row">
+		<label><b>Start Button</b></label>
+		<%# the start button's picture: any file in the jbuttons folder; the icon
+		    set may carry a variant and icon_for() prefers it, so this is a theme
+		    choice as much as a face %>
+		<% my $current_start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
+		<% my @jbuttons = map { my $f = $_; $f =~ s|.*/||; $f } grep { /\.(png|svg|jpe?g)$/i } glob './public/images/jbuttons/*'; %>
+		<select class="misc_setting" setting="start_menu_icon" device="<%= $dev %>">
+			<% foreach my $f ( sort @jbuttons ) { %>
+				<option value="/images/jbuttons/<%= $f %>" <% if ($current_start_icon eq "/images/jbuttons/$f") { %>selected="selected"<% } %>><%= $f %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
+		<label><b>Appointment Colours</b></label>
+		<button id="appt_colour_update" class="hover">Re-theme appointments</button>
+		<span id="appt_colour_update_status" style="font-size:13px;"></span>
 	</div>
 </div>
 
 <% foreach my $dt (@devices) { %>
 	<% my $device_name = $dt eq $signatorial ? 'Me' : &subs::format_name($dt); %>
-	<div class="misc_section misc_device_block" device="<%= $dt %>" style="border:solid;border-radius:5px;padding:6px;margin:6px 0;">
-		<h1 style="margin:0;"><%= $device_name %></h1>
+	<div class="misc_section misc_device_block cfg-card" device="<%= $dt %>">
+		<h3><%= $device_name %></h3>
 
-		<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+		<h4>General</h4>
+		<div class="cfg-grid misc_grid">
 			<% my @general = (
 				[ 'max_files', 'Max Files', [ 0..5000 ] ],
 				[ 'photo_size', 'Photo Size', [ '', @{$photo_sizes} ] ],
@@ -154,7 +162,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 			<% foreach my $g ( @general ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
 				<% my $chosen = (defined $settings->{$dt}->{$key} && length $settings->{$dt}->{$key}) ? $settings->{$dt}->{$key} : $me_row->{$key}; %>
-				<label style="display:flex;flex-direction:column;">
+				<label>
 					<b><%= $label %></b>
 					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
 						<% foreach my $o ( @{$opts} ) { %>
@@ -166,7 +174,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		</div>
 
 		<h4>Bars</h4>
-		<div style="display:flex;flex-wrap:wrap;gap:10px;">
+		<div class="cfg-grid misc_grid">
 			<% my @bars = (
 				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
 				[ 'taskbar_position', 'Taskbar', [ 'bottom', 'top', 'hidden' ] ],
@@ -193,7 +201,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 				    option rather than what was stored. Falls back to Me, then nothing. %>
 				<% my $chosen = &subs::misc_setting($key, $dt); %>
 				<% if (ref $opts eq 'ARRAY') { %>
-					<label style="display:flex;flex-direction:column;">
+					<label>
 						<b><%= $label %></b>
 						<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
 							<% foreach my $o ( @{$opts} ) { %>
@@ -203,7 +211,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 					</label>
 				<% } elsif ($opts eq 'colour') { %>
 					<% my $value = (defined $chosen && $chosen =~ /^#/) ? $chosen : $theme_line; %>
-					<label style="display:flex;flex-direction:column;align-items:center;font-size:15px;">
+					<label style="align-items:center;">
 						<b><%= $label %></b>
 						<input type="color" id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>"
 							value="<%= $value %>" style="width:110px;height:34px;"
@@ -214,7 +222,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 					<% my $value = (defined $chosen && length $chosen) ? $chosen : $def; %>
 					<%# a range's value rides a readout beside the label; the input event previews
 					    the change on the live screen and the usual change handler writes it away --%>
-					<label style="display:flex;flex-direction:column;min-width:220px;">
+					<label>
 						<b><%= $label %> <span id="<%= $key %>_value_<%= $dt %>"><%= $value %></span>px</b>
 						<input type="range" id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>"
 							min="<%= $min %>" max="<%= $max %>" step="<%= $step %>" value="<%= $value %>"
@@ -227,42 +235,43 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<h4>Locations</h4>
-		<div style="display:flex;flex-wrap:wrap;gap:10px;">
+		<div class="cfg-grid misc_grid">
 			<% foreach my $l (@locations) { %>
-				<div style="display:flex;flex-direction:column;border:solid;border-radius:5px;padding:4px;min-width:180px;">
+				<div class="cfg-card">
 					<b><%= &subs::format_name($l) %></b>
-					<select id="<%= $l %>_location" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_location">
-						<% foreach my $s ( '', @{$folders}) { %>
-							<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
-						<% } %>
-					</select>
-					<b style="font-size:15px;">Archive</b>
-					<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
-						<option value="">None</option>
-						<% foreach my $rm ( @{$remote_machines} ) { %>
-							<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $settings->{$dt}->{$l . '_archive'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
-						<% } %>
-					</select>
+					<label>Location
+						<select id="<%= $l %>_location" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_location">
+							<% foreach my $s ( '', @{$folders}) { %>
+								<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
+							<% } %>
+						</select>
+					</label>
+					<label>Archive
+						<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
+							<option value="">None</option>
+							<% foreach my $rm ( @{$remote_machines} ) { %>
+								<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $settings->{$dt}->{$l . '_archive'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
+							<% } %>
+						</select>
+					</label>
 				</div>
 			<% } %>
 		</div>
 
 		<h4>Archive Root</h4>
-		<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
-			<label style="display:flex;flex-direction:column;min-width:180px;">
-				<b>archive_dir</b>
-				<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
-				<select id="archive_dir" class="misc_setting" device="<%= $dt %>" setting="archive_dir">
-					<% foreach my $s ( '', @{$folders} ) { %>
-						<option <% if ($current_archive_dir eq $s) { %>selected="selected"<% } %>><%= $s %></option>
-					<% } %>
-				</select>
-			</label>
-			<span style="font-size:15px;max-width:340px;">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</span>
+		<div class="cfg-row">
+			<label><b>archive_dir</b></label>
+			<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
+			<select id="archive_dir" class="misc_setting" device="<%= $dt %>" setting="archive_dir">
+				<% foreach my $s ( '', @{$folders} ) { %>
+					<option <% if ($current_archive_dir eq $s) { %>selected="selected"<% } %>><%= $s %></option>
+				<% } %>
+			</select>
 		</div>
+		<p class="cfg-note">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</p>
 
 		<h4>Colours</h4>
-		<div style="display:flex;flex-wrap:wrap;gap:8px;">
+		<div class="cfg-actions" style="flex-wrap:wrap;gap:8px;">
 			<% my @colours = @gb::misc_settings; %>
 			<% foreach my $k ( @colours ) { %>
 				<label class="misc_colour_chip">
@@ -273,6 +282,7 @@ Anchor <input type="checkbox" class="anchor_all_settings" setting_type="misc">
 		</div>
 	</div>
 <% } %>
+</div>
 
 <script>
 	var jawnos_colour_schemes = <%== encode_json \%schemes %>;

@@ -9624,6 +9624,8 @@ sub ai_providers() {
 			models => [ qw/gemini-2.5-pro gemini-2.5-flash gemini-2.0-flash/ ] },
 		{ id => 'xai',        label => 'xAI (Grok)',            keys => [ [ 'xai_key', 'API key' ] ],
 			models => [ qw/grok-3 grok-3-mini grok-2-1212/ ] },
+		{ id => 'deepseek',   label => 'DeepSeek',              keys => [ [ 'deepseek_key', 'API key' ] ],
+			models => [ qw/deepseek-chat deepseek-reasoner/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
@@ -9635,7 +9637,7 @@ sub ai_providers() {
 
 # Every setting name that holds a secret, so a panel can tell a key from a value.
 sub ai_key_settings() {
-	return map { @{ $_->{'keys'} } } @{ &subs::ai_providers() };
+	return map { $_->[0] } map { @{ $_->{'keys'} } } @{ &subs::ai_providers() };
 }
 
 # The model choices, grouped by provider, for the dropdowns. Ollama and
@@ -9675,7 +9677,7 @@ sub ai_chat {
 	my ($provider, $real) = ('ollama', $model);
 	if ($model =~ /^\@cf/) { ($provider, $real) = ('cloudflare', $model); }
 	elsif ($model =~ /^([a-z]+):(.+)$/) {
-		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter/) { ($provider, $real) = ($1, $2); }
+		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/) { ($provider, $real) = ($1, $2); }
 	}
 
 	my $system = '';
@@ -9718,8 +9720,9 @@ sub ai_chat {
 			mistral => 'https://api.mistral.ai/v1/chat/completions',
 			groq => 'https://api.groq.com/openai/v1/chat/completions',
 			openrouter => 'https://openrouter.ai/api/v1/chat/completions',
+			deepseek => 'https://api.deepseek.com/chat/completions',
 		);
-		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key' );
+		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
 		$url = $ep{$provider};
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
 		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0 };
@@ -9760,7 +9763,7 @@ sub evaluation_model_available {
 		return ($settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) ? 1 : 0;
 	}
 	if ($model =~ /^([a-z]+):/) {
-		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key' );
+		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
 		return $settings->{ $key{$1} } ? 1 : 0 if $key{$1};
 	}
 	# ollama: the daemon has to answer and the model has to be one it knows
