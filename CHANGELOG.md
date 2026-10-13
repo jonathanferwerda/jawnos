@@ -5,6 +5,16 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-13
 
+- v0.1.212 - remote channel: scope the stored peer session cookie to the host we call, so a peer on its fqdn accepts it
+- v0.1.211 - cards title splash back; gate (box_office redirect) icon hand-drawn; the remote channel answers measure/where on the peer
+- v0.1.210 - walk big trees with find(1): music, the ide, folders and the archive list paths in C (~5x on the media search, 2x on the ide's file list) with File::Find as the fallback; the music thumb walk is memoised per album
+- v0.1.209 - music: special-character tracks play again (decode walked names, byte-safe url_escape and tag JSON); the folder walk drops its per-entry extension regex for a suffix look-up
+- v0.1.208 - padlock always hand-drawn; remote verb channel: a peer runs a verb or its own guide's reading of plain words, with a remote_control send box and a remote guide tool
+- v0.1.207 - hidden things stay hidden everywhere: the guide and Folders apply the visible rule device-wide, gated to home, with a Folders padlock context
+- v0.1.206 - Guide search mirrors the gallery: a thing not marked visible is surfaced only when its padlock is open; fix the file-name key ({f}) so names actually list
+- v0.1.205 - Guide find lists real file names (the {f} key), and never names an .enc file unless its padlock is open
+- v0.1.204 - docs: refresh the README and add a changelog
+- v0.1.203 - Guide read tools go live: where_when, show_place, measure (walk/weight), play_music
 - v0.1.202 - docs: record T-Deck voice parity requirement
 - v0.1.198 - Guide create goes live: stage -> confirm -> promote/discard, with a create/promote/discard tool set generated from the registry
 - v0.1.200 - docs: capture the beyond-the-watch voice-input plan (desktop/phone always-on, browser vs native, Pico far-field) so it survives the session

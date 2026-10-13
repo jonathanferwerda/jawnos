@@ -34,16 +34,19 @@ our %topic = (
 	'folders' => {
 		title => 'Folders', category => 'apps', app => 'folders',
 		summary => 'Browse, manage, seal and play with your files.',
+		verified => '2026-10-13',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
-			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.'
+			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
+			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public.'
 		],
 		steps => [
 			'Open Folders from the start menu.',
 			'Click into a folder to descend; the breadcrumb along the top walks back up.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
-			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.'
+			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
+			'For a not-visible folder, press the lock on the toolbar, enter the combination, and it appears — at home.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
@@ -754,8 +757,10 @@ our %topic = (
 		summary => 'Several machines that keep each other in step.',
 		body => [
 			'JawnOS is built to run on more than one machine — a laptop, a phone, a tablet, a server — and to keep them in step without a central authority. Code, app builds and data all move the same way: whoever has the newest is the authority.',
-			'Machines reach each other across whatever network they are on, including from behind a router, and every machine can be logged into from another via a ticket.'
+			'Machines reach each other across whatever network they are on, including from behind a router, and every machine can be logged into from another via a ticket.',
+			'One machine can also tell another what to do: name it and say the task — "on the table, play Friends" — and the command is read by that machine\'s own guide there, so it runs on that machine without the words leaving the mesh. The Assistant\'s remote_control panel has a box for the same thing.'
 		],
+		verified => '2026-10-13',
 		related => [ 'backup', 'ble_bridge', 'tickets' ]
 	},
 
@@ -798,9 +803,13 @@ our %topic = (
 	'help_app' => {
 		title => 'This Help app', category => 'features',
 		summary => 'The map you are reading now, and its guide.',
+		verified => '2026-10-13',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
-			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also DO things — say "I want to look at pictures of George Michael" and it will search your records, open the photo browser, and bring the photos up, reporting each step as it goes. It only ever navigates and searches; it never changes your data.'
+			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Ben Folds Five" starts the track. It reports each step as it goes.',
+			'It writes only with your say-so. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. It never sends, pays or deletes.',
+			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
+			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	}
