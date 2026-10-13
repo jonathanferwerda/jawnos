@@ -168,8 +168,19 @@ if ($config->{'environment'} eq 'development') {
 # The spawn hook names each worker (with its PURPOSE, readable only in the worker)
 # and the pid, so a ballooning worker can be attributed rather than guessed.
 sub prefork_tune {
-	my ($prefork) = @_;
-	$prefork->accepts(500) if $device eq 'mobile';
+	my ($prefork, %opt) = @_;
+	# Recycle workers so a grown heap dies with its worker instead of living
+	# forever. `accepts` ends a worker once it has taken that many connections and
+	# prefork starts a lean replacement before the old one stops. A phone already
+	# needs this (Android's low-memory killer); a desktop benefits just as much -
+	# it grew a main worker to 116MB, three times a fresh one.
+	#
+	# A server whose connections are long-lived and load-bearing asks to be left
+	# alone with keep_alive: the websocket worker's sockets ARE the product, the
+	# alarm server holds wake connections, and a teletype session is a terminal
+	# someone is sitting in - ending those would drop live work to save a heap
+	# nobody is watching. A server (device) also keeps the module default.
+	$prefork->accepts(500) if $device eq 'mobile' || (!$opt{'keep_alive'} && $device ne 'server');
 	$prefork->on(spawn => sub {
 		my ($self, $pid) = @_;
 		$log->info('worker spawn purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid");
@@ -299,7 +310,7 @@ sub manager_starter() {
 			print "Starting Pro WS Server on port " . $ws_port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $ws_port . $certs;
 			$ENV{PURPOSE} = 'websocket';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Manager.pl');
 			$prefork->workers(1);
@@ -318,7 +329,9 @@ sub manager_starter() {
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens; the extra
 			# prefork workers are a server's concurrency, not a phone's. Two is plenty.
-			$prefork->workers($device eq 'mobile' ? 2 : 4);
+			# A desktop pays the same per-worker cost for the same reason and serves
+			# one person, so three covers its parallel AJAX. A server keeps four.
+			$prefork->workers($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
@@ -327,7 +340,7 @@ sub manager_starter() {
 			print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $alarm_port . $certs;
 			$ENV{PURPOSE} = 'alarm';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Alarm.pl');
 			$prefork->workers(1);
@@ -356,7 +369,7 @@ sub manager_starter() {
 				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./watch.pl');
-				$prefork->workers($device eq 'mobile' ? 1 : 2);
+				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
 				$prefork->run;
 			}
 		}, { name => 'Watch Server' });
@@ -373,10 +386,10 @@ sub manager_starter() {
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTY Server on port " . $tty_port . "\n";
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./teletype.pl');
-				$prefork->workers($device eq 'mobile' ? 1 : 3);
+				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2));
 				$prefork->run;
 			}
 		}, { name => 'TTY Server' });
@@ -391,7 +404,7 @@ sub manager_starter() {
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTYws Server on port " . $ws_tty_port . "\n";
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./teletype.pl');
 				$prefork->workers(1);

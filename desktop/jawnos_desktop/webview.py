@@ -262,11 +262,16 @@ class WebViewPanel(Gtk.Box):
             ("enable-html5-local-storage", True),
             ("javascript-can-open-windows-automatically", True),
             # Closer to a desktop browser's feel: momentum scroll, a GPU 2d
-            # canvas, speculative DNS and the back/forward page cache.
+            # canvas and speculative DNS. The back/forward page cache is left
+            # OFF on purpose: it keeps a whole rendered document alive per
+            # history entry, and the manager opens its apps as in-page windows
+            # rather than navigating, so there is little to gain and a live DOM
+            # to lose. A back press that has to reload is cheap against a
+            # permanent copy of the heaviest page.
             ("enable-smooth-scrolling", True),
             ("enable-accelerated-2d-canvas", True),
             ("enable-dns-prefetching", True),
-            ("enable-page-cache", True),
+            ("enable-page-cache", False),
             ("enable-mediasource", True),
             ("enable-webaudio", True),
         ):
