@@ -134,6 +134,36 @@ function helpTopicsBack() {
 	helpBody(jawnos_help_topic_current);
 }
 
+// A guide answer, with a small good/or-not pair under it: the person's verdict
+// on the reply is the one bit of feedback we keep. It names the question it is
+// answering so the record reads on its own.
+function helpGuideAnswer(text) {
+	helpChatAdd('guide', text);
+	var log = helpChatLog();
+	if (!log.length) { return; }
+	var q = '';
+	for (var i = jawnos_help_chat.length - 1; i >= 0; i--) {
+		if (jawnos_help_chat[i].role === 'user') { q = jawnos_help_chat[i].content; break; }
+	}
+	var bar = $('<div style="display:flex;gap:8px;justify-content:flex-start;margin:-2px 0 8px 4px;">'
+		+ '<span class="hover" style="cursor:pointer;opacity:.55;font-size:13px;" hint="This answer was good">👍</span>'
+		+ '<span class="hover" style="cursor:pointer;opacity:.55;font-size:13px;" hint="This answer was not good">👎</span></div>');
+	bar.find('span').first().attr('verdict', 'good');
+	bar.find('span').last().attr('verdict', 'bad');
+	bar.attr('data-q', q).attr('data-a', text);
+	log.append(bar);
+	log.scrollTop(log[0].scrollHeight);
+}
+
+$(document).on('click', '.help_chat_log span[verdict]', function () {
+	var v = ($(this).attr('verdict') === 'good') ? 1 : 0;
+	var bar = $(this).parent();
+	$.post('/manager/help/feedback', {
+		good: v, question: bar.attr('data-q') || '', answer: bar.attr('data-a') || '', topic: jawnos_help_topic_current || ''
+	});
+	bar.html('<span style="font-size:12px;opacity:.6;">Thanks — noted.</span>');
+});
+
 // ---- the guide that acts --------------------------------------------------
 
 function helpActionLabel(a) {
@@ -318,11 +348,13 @@ function helpDoAction(a, cb) {
 		return;
 	}
 	if (a.action === 'remote') {
-		var machine = a.machine || '';
-		var what = a.text || '';
+		// the model sometimes labels the instruction "command" rather than "text"
+		var machine = a.machine || a.target || '';
+		var what = a.text || a.command || '';
 		if (!machine || !what) { cb('I need both a machine and what to do there.'); return; }
 		$.post('/manager/remote_command/send', { machine: machine, text: what }, function (r) {
-			if (!r || r.ok === 0 || r.error) { cb((r && r.error) || ('I could not reach ' + machine + '.')); return; }
+			// a login page (or any non-JSON body) means the machine answered nothing
+			if (!r || typeof r !== 'object' || r.ok === 0 || r.error) { cb((r && r.error) || ('I could not reach ' + machine + '.')); return; }
 			cb('On ' + machine + ': ' + (r.observation || 'done') + '.', 'On ' + machine + ' — ' + (r.observation || 'done') + '.');
 		}).fail(function () { cb('I could not reach ' + machine + '.'); });
 		return;
@@ -352,12 +384,118 @@ function helpAsk() {
 		helpChatAdd('step', 'Choose a model in the row above first — the guide needs one to think with.');
 		return;
 	}
-	if (!q) { return; }
+	if (!q) {
+		// an empty Send means "listen": record a clip, transcribe it, then ask
+		helpListenToggle(function (text) { $('#help_question').val(text); helpAsk(); });
+		return;
+	}
 	$('#help_question').val('');
 	helpShowChat(true);
 	jawnos_help_chat.push({ role: 'user', content: q });
 	helpChatAdd('user', q);
+	if (jawnos_help_coding) { helpCodingRun(q); return; }
 	helpAgentStep(0);
+}
+
+// ---- speech in -----------------------------------------------------------
+// The mic button: record a short clip from the browser, post the raw bytes and
+// let the server's whisper pipeline turn it into words for the question box.
+var jawnos_help_recorder = null;
+var jawnos_help_chunks = [];
+var jawnos_help_listening = false;
+var jawnos_help_listen_cb = null;
+
+function helpListenToggle(onText) {
+	if (jawnos_help_listening) {
+		if (jawnos_help_recorder && jawnos_help_recorder.state !== 'inactive') { jawnos_help_recorder.stop(); }
+		return;
+	}
+	if (onText) { jawnos_help_listen_cb = onText; }
+	if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+		helpShowChat(true);
+		helpChatAdd('step', 'This device has no microphone I can reach.');
+		return;
+	}
+	helpShowChat(true);
+	navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+		jawnos_help_chunks = [];
+		var rec = new MediaRecorder(stream);
+		jawnos_help_recorder = rec;
+		jawnos_help_listening = true;
+		$('#help_ask').text('Stop');
+		helpChatAdd('step', 'Listening — press Stop when you are done.');
+		rec.ondataavailable = function (e) { if (e.data && e.data.size) { jawnos_help_chunks.push(e.data); } };
+		rec.onstop = function () {
+			jawnos_help_listening = false;
+			$('#help_ask').text('Send');
+			stream.getTracks().forEach(function (t) { t.stop(); });
+			helpListenSend(new Blob(jawnos_help_chunks, { type: rec.mimeType || 'audio/webm' }));
+		};
+		rec.start();
+	}).catch(function () {
+		jawnos_help_listening = false;
+		$('#help_ask').text('Send');
+		helpChatAdd('step', 'I could not reach the microphone.');
+	});
+}
+
+function helpListenSend(blob) {
+	if (!blob || !blob.size) { helpChatAdd('step', 'I did not catch any audio.'); return; }
+	helpChatAdd('step', 'Transcribing…');
+	$.ajax({
+		url: '/manager/help/listen',
+		type: 'POST',
+		data: blob,
+		processData: false,
+		contentType: 'application/octet-stream',
+		success: function (r) {
+			if (!r || r.error || !r.text) { helpChatAdd('step', (r && r.error) || 'I could not make out any words.'); return; }
+			var cb = jawnos_help_listen_cb;
+			jawnos_help_listen_cb = null;
+			if (cb) { cb(r.text); } else { $('#help_question').val(r.text); }
+		},
+		error: function () { helpChatAdd('step', 'I could not transcribe that.'); }
+	});
+}
+
+// ---- the coding agent ----------------------------------------------------
+// When the Coding box is ticked the composer drives the self-healing agent
+// behind /manager/coding/heal instead of the screen guide: one bounded run that
+// edits the repo, checks it, and ships it, reported step by step.
+var jawnos_help_coding = false;
+
+function helpCodingRun(task) {
+	helpChatAdd('step', 'Coding — reading and changing the repo…');
+	$.ajax({
+		url: '/manager/coding/heal',
+		type: 'POST',
+		dataType: 'json',
+		data: { task: task },
+		success: function (r) {
+			if (!r || r.error) { helpChatAdd('guide', (r && r.error) || 'The coding agent failed.'); return; }
+			(r.steps || []).forEach(function (s) {
+				var a = s.action || {};
+				var obs = String(s.observation == null ? '' : s.observation).replace(/\s+\n/g, '\n').replace(/\n+/g, ' · ');
+				if (obs.length > 240) { obs = obs.slice(0, 240) + '…'; }
+				helpChatAdd('step', helpCodingLine(a) + (obs ? (' → ' + obs) : ''));
+			});
+			if (r.final) { helpChatAdd('guide', r.final); }
+			else { helpChatAdd('guide', 'Done — now at version ' + (r.version || '?') + '.'); }
+		},
+		error: function () { helpChatAdd('guide', 'The coding agent could not be reached.'); }
+	});
+}
+
+function helpCodingLine(a) {
+	if (a.action === 'write') { return 'Wrote ' + (a.path || '?'); }
+	if (a.action === 'read') { return 'Read ' + (a.path || '?'); }
+	if (a.action === 'list') { return 'Listed ' + (a.path || '.'); }
+	if (a.action === 'run') { return 'Ran ' + (a.command || ''); }
+	if (a.action === 'bump') { return 'Bumped the version'; }
+	if (a.action === 'commit') { return 'Committed'; }
+	if (a.action === 'push') { return 'Pushed to GitHub'; }
+	if (a.action === 'restart') { return 'Restarting'; }
+	return (a.action || 'Step');
 }
 
 function helpAgentStep(n) {
@@ -382,7 +520,7 @@ function helpAgentStep(n) {
 			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
 				var text = a.text || '';
 				jawnos_help_chat.push({ role: 'assistant', content: text });
-				helpChatAdd('guide', text);
+				helpGuideAnswer(text);
 				return;
 			}
 			helpChatAdd('step', helpActionLabel(a));
@@ -391,7 +529,7 @@ function helpAgentStep(n) {
 				jawnos_help_chat.push({ role: 'tool', content: obs });
 				if (friendly) {
 					jawnos_help_chat.push({ role: 'assistant', content: friendly });
-					helpChatAdd('guide', friendly);
+					helpGuideAnswer(friendly);
 					return;
 				}
 				helpAgentStep(n + 1);
@@ -448,6 +586,13 @@ $(document).on('keydown', '#help_question', function (e) {
 $(document).on('change', '#help_model', function () {
 	var v = $(this).val();
 	if (v) { settingSetter({ app: 'mail', setting: 'help_assistant', value: v }); $('#assistant_model').text(v); }
+});
+
+$(document).on('change', '#help_coding', function () {
+	jawnos_help_coding = $(this).is(':checked');
+	$('#help_question').attr('placeholder', jawnos_help_coding
+		? 'Tell the Coding agent what to change or fix…'
+		: 'Ask the guide — or tell it what you want to do…');
 });
 
 var help_search_timer = null;

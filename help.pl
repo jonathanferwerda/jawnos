@@ -730,7 +730,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Configure and press Plat.',
-			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation and the Pen. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
+			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
 			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.'
 		],
 		related => [ 'configure', 'assistant', 'help_app' ]
@@ -809,7 +809,10 @@ our %topic = (
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Ben Folds Five" starts the track. It reports each step as it goes.',
 			'It writes only with your say-so. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. It never sends, pays or deletes.',
 			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
-			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.'
+			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
+			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses.',
+			'Tick the Coding box in the composer (set its model under Configure → Plat → Coding) and the same box becomes the Coding agent. It can change JawnOS\'s own code, check it, and ship it - bumping the version, committing and pushing to GitHub, then restarting - so the program can mend itself from a plain request.',
+			'Under each answer is a small good / not-good pair. Press the one that fits and the verdict is kept with the question and the reply, so the guide\'s answers can be judged over time.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	}
@@ -994,10 +997,16 @@ sub audit {
 sub actions_prompt {
 	# The action lines are generated from @gb::guide_tools (see gb.pl), so a tool is
 	# declared once and offered here automatically once it is live (not `planned`).
+	# $only, when given, is a hashref of tool names to offer: the remote channel has
+	# its own executor that runs only a few of these verbs, so it must not offer the
+	# rest - a model told it could "find" when nothing can run a find simply did
+	# nothing at all.
+	my ($only) = @_;
 	my $header = "You are the JawnOS Guide. You can explain things, and you can operate the screen\nfor the person. Reply with EXACTLY ONE JSON object and nothing else - no prose\naround it. Choose one action:\n\n";
 	my $lines = '';
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
+		next if $only && ref $only eq 'HASH' && !$only->{ $t->{'name'} };
 		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
 		# pad to the shared column, but never let a long example swallow the gap
 		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
@@ -1006,6 +1015,7 @@ sub actions_prompt {
 	my $rules = <<'TXT';
 Rules:
 - Navigate and search only. Never delete, send, pay, or change any data.
+- Choose only from the actions listed above; there is no other verb here.
 - When the person names something you should show them, use find first, then open
   what the result points at. If find returns an app, pass that exact app name to
   open_gallery - do not hand open_gallery a free-text name instead.
@@ -1030,6 +1040,34 @@ Rules:
   measure with measure "weight". Do not guess a number - always take it from measure.
 - For music, use play_music with the artist and track; it plays the first match.
 - Keep every text field short and in plain, everyday words.
+TXT
+	return $header . $lines . "\n" . $rules;
+}
+
+# The Coding agent's prompt: the JawnOS Guide's self-healing half. It reads and
+# writes the repo, runs the release routine and ships - one JSON action per turn,
+# from @gb::coding_tools. Kept deliberately narrow: every verb is a fixed, safe
+# operation, so the model can never reach a shell it was not handed.
+sub coding_prompt {
+	my $header = "You are the JawnOS Coding agent. You fix and ship the JawnOS code itself.\n"
+		. "The repository is at ~/jawnos; every path you give is relative to it.\n"
+		. "Reply with EXACTLY ONE JSON object and nothing else - no prose around it.\n"
+		. "Choose one action:\n\n";
+	my $lines = '';
+	foreach my $t ( @gb::coding_tools ) {
+		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
+		my $gap = ' ' x (length($ex) < 62 ? (62 - length($ex)) : 2);
+		$lines .= '  ' . $ex . $gap . $t->{'desc'} . "\n";
+	}
+	my $rules = <<'TXT';
+Rules:
+- Work in small steps: read the file you are about to change first, then write it
+  whole, then run "perl -c <file>" (or a test) to check it before you commit.
+- Never commit code that failed its check. Fix it and check again.
+- The finishing routine is: bump, then commit with a short message, then push,
+  then restart. Do each as its own action, in that order.
+- Write plain, everyday, factual text. Do not narrate; act.
+- When the work is done and shipped, reply with done and one short sentence.
 TXT
 	return $header . $lines . "\n" . $rules;
 }

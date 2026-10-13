@@ -301,12 +301,39 @@ our @guide_tools = (
 	  desc => 'say where the person was at a time, read from the recorded place fixes; give when as an absolute date (YYYY-MM-DD) or a timestamp, never a relative phrase' },
 	{ name => 'measure', args => { measure => 'walk or weight', period => 'month', target => '180' }, example => '{"action":"measure","measure":"walk","period":"month"}',
 	  desc => 'answer a measured question: "walk" sums the distance walked over the period (day, week, month, year); "weight" reads the person\'s latest weight and projects when the target (their set budget) is reached' },
-	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours' }, example => '{"action":"create","app":"lunch","title":"lunch with Mom","when":"in 3 hours"}',
-	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in' },
+	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours', type => 'start' }, example => '{"action":"create","app":"lunch","title":"lunch with Mom","when":"in 3 hours","type":"usual"}',
+	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in. Leave "type" as "usual" for a one-off log entry, or set "type":"start" to begin an activity that stays running until they stop it' },
 	{ name => 'promote', args => { }, example => '{"action":"promote"}',
 	  desc => 'save the appointment you just staged, after the person says yes' },
 	{ name => 'discard', args => { }, example => '{"action":"discard"}',
 	  desc => 'throw away the appointment you just staged, if the person declines' },
+);
+
+# The Coding agent's tools: a closed vocabulary the model may pick from, one
+# action per turn, exactly like the Guide's. Unlike the Guide, these run on the
+# server (files, git, the release routine) so a spoken or typed request can
+# change the code and ship it - the self-healing half of the pair.
+our @coding_tools = (
+	{ name => 'list', example => '{"action":"list","path":"lib"}',
+		desc => 'list the files in a folder inside the jawnos repo (a path relative to the repo root; "." is the root)' },
+	{ name => 'read', example => '{"action":"read","path":"help.pl"}',
+		desc => 'read a file inside the repo; returns its text, trimmed if very long' },
+	{ name => 'write', example => '{"action":"write","path":"help.pl","content":"...the whole file..."}',
+		desc => 'write a whole file inside the repo, replacing it; give the complete new contents, not a diff' },
+	{ name => 'run', example => '{"action":"run","command":"perl -c Manager.pl"}',
+		desc => 'run one checked command in the repo: perl -c <file>, perl scripts/<file>, prove, or a read-only git command (status, diff, log). Anything else is refused' },
+	{ name => 'bump', example => '{"action":"bump"}',
+		desc => 'bump the patch version in ./VERSION (the normal step before a commit)' },
+	{ name => 'commit', example => '{"action":"commit","message":"fix the help header"}',
+		desc => 'stage every change and commit it as "v<version> - <message>"' },
+	{ name => 'push', example => '{"action":"push"}',
+		desc => 'push the commits to GitHub (origin)' },
+	{ name => 'restart', example => '{"action":"restart"}',
+		desc => 'restart the jawn tree so the changed Perl and JS go live' },
+	{ name => 'say', example => '{"action":"say","text":"..."}',
+		desc => 'answer or report in words, then stop' },
+	{ name => 'done', example => '{"action":"done","text":"..."}',
+		desc => 'you have finished; say briefly what changed (and the new version)' },
 );
 
 our $known_icons = {

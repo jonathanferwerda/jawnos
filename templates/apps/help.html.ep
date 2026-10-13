@@ -117,6 +117,7 @@
 					<option value="<%= $mid %>" <% if ($selected_model eq $mid) { %>selected<% } %>><%= $cm->{'name'} || $mid %></option>
 				<% } } %>
 			</select>
+			<label style="display:flex;align-items:center;gap:4px;font-size:12px;opacity:.8;cursor:pointer;" hint="Switch the composer to the Coding agent, which edits and ships the JawnOS code"><input type="checkbox" id="help_coding"> Coding</label>
 			<span id="help_context" style="font-size:12px;opacity:.7;"></span>
 			<button id="help_topics_back" class="button" hint="Back to the topics" style="display:none;margin-left:auto;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;">Topics</button>
 		</div>

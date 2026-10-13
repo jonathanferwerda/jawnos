@@ -17742,6 +17742,43 @@ post '/manager/help/ask' => sub($c) {
 	$c->render(json => { answer => $text });
 };
 
+# Speech in from the browser: the Guide's mic button records a clip and posts the
+# raw bytes here, and the same whisper pipeline the watch uses turns it into text
+# for the question box. The clip is short, so the call is bounded; '' on failure.
+post '/manager/help/listen' => sub($c) {
+	my $raw = $c->req->body;
+	$raw = $raw->slurp if ref $raw;
+	unless (defined $raw && length $raw) {
+		$c->render(json => { error => 'I did not catch any audio.' });
+		return;
+	}
+	my $text = &subs::whisper_transcribe($raw);
+	if (!length $text) {
+		$c->render(json => { error => 'I could not make out any words.' });
+		return;
+	}
+	$c->render(json => { text => $text });
+};
+
+# The verdict on a guide answer - the person's "was that good?" signal. Kept in
+# one setting as a bounded ring so a machine can read the recent run back without
+# a table of its own.
+post '/manager/help/feedback' => sub($c) {
+	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'guide_feedback' }) } || [];
+	$rows = [] unless ref $rows eq 'ARRAY';
+	push @{$rows}, {
+		ts => &subs::rightNow(),
+		topic => substr($c->param('topic') || '', 0, 200),
+		question => substr($c->param('question') || '', 0, 500),
+		answer => substr($c->param('answer') || '', 0, 1000),
+		good => ($c->param('good') ? 1 : 0),
+		device => &subs::device_setter()
+	};
+	splice @{$rows}, 0, scalar(@{$rows}) - 200 if scalar @{$rows} > 200;
+	&subs::setting_setter({ app => '__president', setting => 'guide_feedback', value => encode_json $rows });
+	$c->render(json => { ok => 1 });
+};
+
 # One turn of the acting guide: the model picks the next action, the browser runs
 # it. The vocabulary is closed - anything the model returns outside it becomes a
 # plain reply, so a model can never reach past the client's fixed verbs.
@@ -18173,7 +18210,10 @@ sub remote_command_run($c, $data) {
 		# the peer's own guide reads it, so the command stays on that machine
 		my $model = $data->{'model'} || &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 		return { ok => 0, error => 'no agent on this machine to read that' } unless $model;
-		my $system = &help::actions_prompt() . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+		# Only the verbs this executor actually runs are offered, so the peer's guide
+		# cannot pick an action whose effect has nowhere to go.
+		my %remote_verbs = map { $_ => 1 } qw/open_app play_music measure where_when say ask done/;
+		my $system = &help::actions_prompt(\%remote_verbs) . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
 		my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.");
 		$action = $out ? eval { decode_json $out } : undef;
 		if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
@@ -18305,6 +18345,14 @@ post '/manager/help/promote' => sub($c) {
 		notes => $notes, data => $row->{'data'}, device => $row->{'device'} || &subs::device_setter()
 	});
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
+	# A promoted appointment was written straight to the table, so the app's header
+	# still shows the set from before it existed - the person never sees the thing
+	# the guide just saved. Repaint and broadcast the header here, the way a normal
+	# appointment write does, so the new row appears without a reload.
+	if ($row->{'app'}) {
+		&subs::appt_header_printer({ app => $row->{'app'}, timestamp => $row->{'timestamp'} });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $row->{'app'} . '\',\'' . $real_uuid . '\');' });
+	}
 	$c->render(json => { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} });
 };
 
@@ -18317,6 +18365,159 @@ post '/manager/help/discard' => sub($c) {
 get '/manager/help/staged' => sub($c) {
 	my $rows = &subs::db_select('staged_appointments', undef, { status => 'pending' })->hashes;
 	$c->render(json => { staged => $rows });
+};
+
+# ---- the Coding agent: the Guide's self-healing half ---------------------
+# A closed-vocabulary agent that edits the repo and ships the change: read and
+# write files, run one checked command, bump the version, commit, push, restart.
+# Every verb is a fixed operation with its own guardrail (paths stay inside the
+# repo, commands are allow-listed), so the model can never reach a raw shell. It
+# runs server-side because git and the release routine have to.
+
+sub coding_repo { return &subs::home('~/jawnos'); }
+
+# Resolve a repo-relative path, refusing anything that climbs out of the tree or
+# reaches state the agent must not touch (git internals, local config, the blob
+# stores whose files are large binaries kept out of git).
+sub coding_path($rel) {
+	$rel = '' unless defined $rel;
+	$rel =~ s{^\./+}{};
+	$rel =~ s{^/+}{};
+	return undef if $rel =~ /(^|\/)\.\.(\/|$)/;
+	return undef if $rel =~ /[\x00-\x1f"`\\]/;
+	return undef if $rel =~ m{^(?:\.git|\.president|releases|voices)(?:/|$)};
+	return undef if $rel eq 'config.json';
+	return &coding_repo() . ($rel eq '' ? '' : '/' . $rel);
+}
+
+# The repo-relative form of a path, for recording what the agent touched.
+sub coding_rel($rel) {
+	$rel = '' unless defined $rel;
+	$rel =~ s{^\./+}{};
+	$rel =~ s{^/+}{};
+	return $rel;
+}
+
+# Run one coding action and hand back its observation as plain text. The verbs
+# are the same ones help::coding_prompt offers (gb::coding_tools).
+sub coding_execute($c, $action, $touched) {
+	my $a = $action->{'action'} // '';
+	if ($a eq 'list') {
+		my $abs = coding_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		return 'no such folder' unless -d $abs;
+		opendir(my $dh, $abs) or return 'could not read that folder';
+		my @names = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+		closedir($dh);
+		@names = map { -d "$abs/$_" ? "$_/" : $_ } @names;
+		@names = @names[0 .. 199] if @names > 200;
+		return join("\n", @names);
+	}
+	if ($a eq 'read') {
+		my $abs = coding_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		return 'no such file' unless -f $abs;
+		my $text = eval { read_file($abs) } // '';
+		$text =~ s/\x00//g;
+		if (length $text > 40000) { $text = substr($text, 0, 40000) . "\n... [trimmed]"; }
+		return length($text) ? $text : '(empty file)';
+	}
+	if ($a eq 'write') {
+		my $abs = coding_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		my $content = $action->{'content'};
+		$content = '' unless defined $content;
+		require File::Basename;
+		my $dir = File::Basename::dirname($abs);
+		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
+		eval { write_file($abs, $content) };
+		return 'could not write that file' if $@;
+		$touched->{ coding_rel($action->{'path'}) } = 1 if $touched;
+		return 'wrote ' . length($content) . ' bytes to ' . ($action->{'path'} // '');
+	}
+	if ($a eq 'run') {
+		my $cmd = $action->{'command'} // '';
+		$cmd =~ s/^\s+|\s+$//g;
+		return 'refused: only perl -c, perl scripts/*, prove and read-only git are allowed here'
+			unless $cmd =~ m{^(?:perl\s+-c\s+[\w./-]+|perl\s+scripts/[\w./-]+(?:\s+[^\n;|&]*)?|prove(?:\s+[^\n;|&]*)?|git\s+(?:status|diff|log|show|rev-parse|branch|remote)(?:\s+[^\n;|&]*)?)$};
+		my $repo = coding_repo();
+		my $out = `cd "$repo" && $cmd 2>&1`;
+		$out = '' unless defined $out;
+		if (length $out > 8000) { $out = substr($out, 0, 8000) . "\n... [trimmed]"; }
+		return $out =~ /\S/ ? $out : '(no output)';
+	}
+	if ($a eq 'bump') {
+		my $repo = coding_repo();
+		my $v = `cd "$repo" && perl scripts/version_bump.pl 2>&1`;
+		chomp $v;
+		return $v =~ /^\d+\.\d+\.\d+$/ ? "bumped to $v" : ('bump failed: ' . ($v || 'no output'));
+	}
+	if ($a eq 'commit') {
+		my $msg = $action->{'message'} // 'coding agent change';
+		$msg =~ s/["`\$\\]/ /g;
+		$msg =~ s/\s+/ /g;
+		$msg =~ s/^\s+|\s+$//g;
+		my $v = &subs::jawn_version();
+		my $repo = coding_repo();
+		# stage only what the agent actually wrote (plus the version file), so a
+		# commit it makes never sweeps in someone else's work-in-progress
+		my @files = map { '"' . $_ . '"' } sort keys %{ $touched || {} };
+		push @files, '"VERSION"' if -f "$repo/VERSION";
+		return 'nothing to commit' unless @files;
+		my $cmd = 'cd "' . $repo . '" && git add -- ' . join(' ', @files) . ' 2>&1 && git commit -m "v' . $v . ' - ' . $msg . '" 2>&1';
+		my $out = `$cmd`;
+		$out = '' unless defined $out;
+		if (length $out > 4000) { $out = substr($out, 0, 4000); }
+		return $out =~ /\S/ ? $out : '(committed)';
+	}
+	if ($a eq 'push') {
+		my $repo = coding_repo();
+		my $out = `cd "$repo" && git push 2>&1`;
+		$out = '' unless defined $out;
+		if (length $out > 4000) { $out = substr($out, 0, 4000); }
+		return $out =~ /\S/ ? $out : '(pushed)';
+	}
+	if ($a eq 'restart') {
+		write_file(&subs::home('~/.president/status'), 'restart');
+		return 'asked the tree to restart';
+	}
+	if ($a eq 'say' || $a eq 'done') {
+		return $action->{'text'} // '';
+	}
+	return 'unknown action: ' . $a;
+}
+
+# One bounded run of the Coding agent: the model picks the next action, the server
+# runs it, repeat until done or the step cap. The whole thread comes back so the
+# person sees every change, check and ship.
+post '/manager/coding/heal' => sub($c) {
+	my $task = $c->param('task') // '';
+	$task =~ s/^\s+|\s+$//g;
+	unless (length $task) { $c->render(json => { error => 'Tell me what to change.' }); return; }
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	unless ($model) { $c->render(json => { error => "No Coding model is set (Configure \x{2192} Platform)." }); return; }
+	my @lines = ( 'TASK: ' . $task );
+	my @steps;
+	my %touched;
+	my $final = '';
+	my $tries = 0;
+	while ($tries++ < 12) {
+		my $system = &help::coding_prompt() . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines) . "\n\nReply with the single next JSON action.");
+		if ($err || !$text) { push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') }; last; }
+		my $action = eval { decode_json $text };
+		unless ($action && $action->{'action'}) {
+			if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+		}
+		unless ($action && $action->{'action'}) { $final = $text; last; }
+		my $obs = coding_execute($c, $action, \%touched);
+		push @steps, { action => $action, observation => $obs };
+		push @lines, 'ACTION: ' . encode_json($action);
+		push @lines, 'OBSERVATION: ' . $obs;
+		if ($action->{'action'} eq 'done' || $action->{'action'} eq 'say') { $final = $action->{'text'} // ''; last; }
+	}
+	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version() });
 };
 
 # ---- the guide looks an appointment over when it opens --------------------
