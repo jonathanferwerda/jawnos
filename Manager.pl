@@ -17777,23 +17777,28 @@ get '/manager/help/find' => sub($c) {
 	my $like = '%' . join('%', split /\s+/, $q) . '%';
 	my $rows = &subs::db_query('select app, uuid, file, notes from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
 	my (%apps, %files);
+	my $visible_count = 0;
 	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
-	# An encrypted file is only named when its padlock is open - the same unlock the
-	# gallery and music apps read - so the guide never reads out a locked file.
-	my $enc_open = 0;
-	foreach my $ctx ( qw/gallery music/ ) {
-		next unless &subs::setting_grabber({ app => $ctx, setting => 'combo_unlock' });
-		my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
-		$enc_open = 1 if grep { $_ eq $ctx } @{$sightings};
-	}
+	# A thing the person has not marked visible is only surfaced when its padlock
+	# is open - the same rule the gallery itself reads (visible eq 'checked').
+	my $permissive = help_media_unlocked();
+	my %visible;
+	my $is_visible = sub {
+		my $app = shift;
+		return 1 if $permissive;
+		return 0 unless defined $app && length $app;
+		$visible{$app} = &subs::setting_grabber({ app => $app, setting => 'visible' }) unless exists $visible{$app};
+		return (($visible{$app} // '') eq 'checked') ? 1 : 0;
+	};
 	foreach my $r ( @{$rows} ) {
+		next unless $is_visible->($r->{'app'});
+		$visible_count++;
 		$apps{ $r->{'app'} }++ if $r->{'app'};
 		my $fl = eval { decode_json $r->{'file'} } || [];
 		foreach my $f ( @{$fl} ) {
 			# the file list stores each entry as {f => <path>, ...}; older rows used name
 			my $n = $f->{'name'} || $f->{'f'};
 			next unless $n && lc($n) =~ /$fpat/i;
-			next if !$enc_open && $n =~ /\.enc$/i;
 			$n =~ s{.*/}{};
 			$files{ $n } = 1;
 		}
@@ -17803,13 +17808,17 @@ get '/manager/help/find' => sub($c) {
 	@all = @all[0 .. 7] if @all > 8;
 	# when the person asks "when did I last see X", the answer is the newest match:
 	# hand the guide that one row's date along with the matches
-	my $last_row = &subs::db_query('select app, timestamp from appointments where (app like ? or file like ? or notes like ?) order by timestamp desc limit 1', $like, $like, $like)->hash;
+	my $last_rows = &subs::db_query('select app, timestamp from appointments where (app like ? or file like ? or notes like ?) order by timestamp desc limit 60', $like, $like, $like)->hashes;
 	my $last;
-	if ($last_row && $last_row->{'timestamp'} && $last_row->{'timestamp'} =~ /^\d+$/) {
-		my $when = eval { localtime($last_row->{'timestamp'} / 1000)->strftime('%A %B %d, %Y') };
-		$last = { app => $last_row->{'app'}, when => $when } if $when;
+	foreach my $lr ( @{$last_rows} ) {
+		next unless $is_visible->($lr->{'app'});
+		if ($lr->{'timestamp'} && $lr->{'timestamp'} =~ /^\d+$/) {
+			my $when = eval { localtime($lr->{'timestamp'} / 1000)->strftime('%A %B %d, %Y') };
+			$last = { app => $lr->{'app'}, when => $when } if $when;
+		}
+		last;
 	}
-	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all, last => $last });
+	$c->render(json => { query => $q, count => $visible_count, apps => \@apps, files => \@all, last => $last });
 };
 
 # ---- what the acting guide reads to answer, instead of guessing --------
@@ -17821,6 +17830,18 @@ get '/manager/help/find' => sub($c) {
 sub help_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return 0 unless defined $lat1 && defined $lon1 && defined $lat2 && defined $lon2;
 	return great_circle_distance(deg2rad($lon1), deg2rad(90 - $lat1), deg2rad($lon2), deg2rad(90 - $lat2), $gb::planet_radius);
+}
+
+# Whether the gallery or music padlock is open: the same unlock those apps read,
+# so the guide can mirror their visibility rule (a thing not marked visible is
+# shown only when its padlock is open).
+sub help_media_unlocked {
+	my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	foreach my $ctx ( qw/gallery music/ ) {
+		next unless &subs::setting_grabber({ app => $ctx, setting => 'combo_unlock' });
+		return 1 if grep { $_ eq $ctx } @{$sightings};
+	}
+	return 0;
 }
 
 # the nearest thing we have measured, for naming a fix
