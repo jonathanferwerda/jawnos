@@ -974,8 +974,15 @@ sub say_piper_binary() {
 	my $onpath = `command -v piper 2>/dev/null`;
 	chomp $onpath;
 	return $onpath if $onpath && -x $onpath;
+	# On mobile the prebuilt build is the wrong architecture; there the only
+	# working piper is one on PATH (a Termux install).
+	return '' if $device eq 'mobile';
+	# installed by the dependency step (scripts/jawnos_deps.pl --extras)
+	my $installed = &subs::home('~/.local/share/jawnos/piper/piper');
+	return $installed if -x $installed;
+	# or the copy staged in the repo's blob store
 	my $bundled = &subs::home('~/jawnos/voices/piper/piper');
-	return $bundled if $device ne 'mobile' && -x $bundled;
+	return $bundled if -x $bundled;
 	return '';
 }
 
@@ -2299,6 +2306,45 @@ sub ble_listener_start() {
 
 
 
+# The backups registry is merged across the mesh, so rows pile up for every
+# machine's old archives - and the file-based prune in backup_now can only ever
+# match this machine's own files, which is why a peer's rows (a phone's
+# /data/data/... paths, say) were never cleaned and the table ran to thousands.
+# Bound it: keep only the newest few rows per (reason, machine, recipient,
+# destination) and delete the rest, with a tombstone so the deletion reaches the
+# other machines too. Keeping the newest is what makes it safe: the newest
+# remote_upgraded row of a group is the sync watermark (remote_machine's
+# reconnector and remote_upgrade read it), and merge_database reads the newest
+# one or two rows overall. Capped so one pass never floods the tombstone log;
+# successive backups finish the job.
+sub backup_registry_prune() {
+	my $keep = shift || 5;
+	my ($db,$database,$sql) = &subs::database_grabber();
+	return 0 unless $db;
+	my $cap = 500;
+	my $groups = &subs::db_query(
+		"select ifnull(reason,'') reason, ifnull(signatorial,'') signatorial, ifnull(recipient,'') recipient, ifnull(destination,'') destination, count(*) c from backups group by reason, signatorial, recipient, destination having count(*) > ?",
+		$keep
+	)->hashes || [];
+	my $deleted = 0;
+	foreach my $g ( @{$groups} ) {
+		last if $deleted >= $cap;
+		my $rows = &subs::db_query(
+			"select uuid, server_time from backups where ifnull(reason,'') = ? and ifnull(signatorial,'') = ? and ifnull(recipient,'') = ? and ifnull(destination,'') = ? order by cast(server_time as integer) desc",
+			$g->{'reason'}, $g->{'signatorial'}, $g->{'recipient'}, $g->{'destination'}
+		)->hashes || [];
+		for (my $i = $keep; $i < scalar @{$rows}; $i++) {
+			last if $deleted >= $cap;
+			my $r = $rows->[$i];
+			next unless $r->{'uuid'};
+			&Manager::deletion_registration({ table => 'backups', uuid => $r->{'uuid'}, scope => 'single', server_time => $r->{'server_time'} });
+			&subs::db_delete('backups', { uuid => $r->{'uuid'} });
+			$deleted++;
+		}
+	}
+	return $deleted;
+}
+
 sub backup_now() {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
@@ -2470,6 +2516,10 @@ sub backup_now() {
 		}
 
 	}
+
+	# drop this machine's dead references and anyone's stale ones (see
+	# backup_registry_prune); the file prune above only knew local paths
+	&subs::backup_registry_prune();
 
 	my $archive_path = $path . '_' . $timestamp;
 	my $encrypt =	`openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $temporary_path -out $archive_path.enc`;
@@ -9786,7 +9836,114 @@ sub ai_model_catalogue() {
 # Talk to whichever provider a model id points at, and return the whole answer.
 # The message list may carry a system message; Anthropic and Google want it
 # apart from the turns, so it is lifted out and put back per provider.
-sub ai_chat {
+# The media one message carries, flattened to one shape. A caller may hand images
+# (and, for providers that take them, audio/video/files) as base64 strings, data:
+# URLs, or { data => .., mime => .. } / { url => .. }. The per-provider builders
+# below read this, so the parse lives in exactly one place.
+sub ai_message_media {
+	my ($m) = @_;
+	my @out;
+	foreach my $key ( qw/images image audio video files documents/ ) {
+		my $v = $m->{$key};
+		next unless defined $v;
+		my @items = ref $v eq 'ARRAY' ? @{$v} : ($v);
+		foreach my $it ( @items ) {
+			next unless defined $it;
+			my ($data, $mime, $url);
+			if (ref $it eq 'HASH') {
+				$url  = $it->{'url'};
+				$data = $it->{'data'};
+				$mime = $it->{'mime'} || $it->{'media_type'};
+			}
+			else { $data = $it; }
+			if (!$url && defined $data && $data =~ m{^data:([^;,\s]+)[^,]*;base64,(.*)$}s) { ($mime, $data) = ($1, $2); }
+			$data =~ s/\s+//g if defined $data;
+			next unless $url || (defined $data && length $data);
+			push @out, { kind => $key, data => $data, mime => ($mime || ''), url => $url };
+		}
+	}
+	return @out;
+}
+
+# OpenAI-compatible content: a plain string with no media, else the multimodal
+# array (text + image_url parts, and input_audio where the model takes it).
+sub ai_content_openai {
+	my ($m) = @_;
+	my @media = &ai_message_media($m);
+	return $m->{'content'} unless @media;
+	my @parts = ( { type => 'text', text => ($m->{'content'} || '') } );
+	foreach my $md ( @media ) {
+		if ($md->{'kind'} =~ /audio/ && $md->{'mime'} =~ m{audio/}) {
+			push @parts, { type => 'input_audio', input_audio => { data => $md->{'data'}, format => ($md->{'mime'} =~ /wav/ ? 'wav' : 'mp3') } };
+		}
+		else {
+			my $u = $md->{'url'} || ('data:' . ($md->{'mime'} || 'image/png') . ';base64,' . $md->{'data'});
+			push @parts, { type => 'image_url', image_url => { url => $u } };
+		}
+	}
+	return \@parts;
+}
+
+# Anthropic content: text block + image (or document) blocks.
+sub ai_content_anthropic {
+	my ($m) = @_;
+	my @media = &ai_message_media($m);
+	return $m->{'content'} unless @media;
+	my @parts = ( { type => 'text', text => ($m->{'content'} || '') } );
+	foreach my $md ( @media ) {
+		next unless defined $md->{'data'};
+		my $t = ($md->{'mime'} =~ m{application/pdf}) ? 'document' : 'image';
+		push @parts, { type => $t, source => { type => 'base64', media_type => ($md->{'mime'} || 'image/png'), data => $md->{'data'} } };
+	}
+	return \@parts;
+}
+
+# Gemini parts: an ordered list of text and inline_data parts.
+sub ai_parts_google {
+	my ($m) = @_;
+	my @parts;
+	push @parts, { text => $m->{'content'} } if defined $m->{'content'} && length $m->{'content'};
+	foreach my $md ( &ai_message_media($m) ) {
+		next unless defined $md->{'data'};
+		push @parts, { inline_data => { mime_type => ($md->{'mime'} || 'image/png'), data => $md->{'data'} } };
+	}
+	return \@parts;
+}
+
+# The provider-specific wire message for one of our messages.
+sub ai_wire_message {
+	my ($provider, $m) = @_;
+	if ($provider eq 'ollama') {
+		my %c = ( role => $m->{'role'}, content => ($m->{'content'} || '') );
+		my @im = map { $_->{'data'} } grep { defined $_->{'data'} } &ai_message_media($m);
+		$c{'images'} = \@im if @im;
+		return \%c;
+	}
+	elsif ($provider eq 'anthropic') {
+		return { role => $m->{'role'}, content => &ai_content_anthropic($m) };
+	}
+	elsif ($provider eq 'google') {
+		return { role => ($m->{'role'} eq 'assistant' ? 'model' : 'user'), parts => &ai_parts_google($m) };
+	}
+	else {
+		# openai-compatible: openai, xai, mistral, groq, openrouter, deepseek, cloudflare
+		return { role => $m->{'role'}, content => &ai_content_openai($m) };
+	}
+}
+
+# The text out of any of the providers' reply shapes.
+sub ai_response_text {
+	my ($body) = @_;
+	return $body->{'message'}->{'content'}
+		|| $body->{'response'}
+		|| $body->{'result'}->{'response'}
+		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
+		|| $body->{'choices'}->[0]->{'message'}->{'content'}
+		|| $body->{'content'}->[0]->{'text'}
+		|| $body->{'candidates'}->[0]->{'content'}->{'parts'}->[0]->{'text'};
+}
+
+sub ai_chat_raw {
 	my ($model, $messages) = @_;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
@@ -9809,6 +9966,7 @@ sub ai_chat {
 		if (($m->{'role'} || '') eq 'system') { $system .= ($system ? "\n" : '') . $m->{'content'}; }
 		else { push @msgs, $m; }
 	}
+	my @wire = map { &ai_wire_message($provider, $_) } @msgs;
 
 	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
 	my ($url, $headers, $payload);
@@ -9816,27 +9974,27 @@ sub ai_chat {
 	if ($provider eq 'cloudflare') {
 		$url = 'https://api.cloudflare.com/client/v4/accounts/' . $settings->{'cloudflare_account'} . '/ai/run/' . $model;
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{'cloudflare_token'}), 'Content-Type' => 'application/json' };
-		$payload = { model => $model, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0 };
+		$payload = { model => $model, messages => [ { role => 'system', content => $system }, @wire ], stream => \0 };
 	}
 	elsif ($provider eq 'anthropic') {
 		$url = 'https://api.anthropic.com/v1/messages';
 		$headers = { 'x-api-key' => $secret->($settings->{'anthropic_key'}), 'anthropic-version' => '2023-06-01', 'Content-Type' => 'application/json' };
-		$payload = { model => $real, max_tokens => 2048, system => $system, messages => [ @msgs ] };
+		$payload = { model => $real, max_tokens => 2048, system => $system, messages => [ @wire ] };
 	}
 	elsif ($provider eq 'google') {
 		$url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $real . ':generateContent?key=' . url_escape($secret->($settings->{'google_key'}));
 		$headers = { 'Content-Type' => 'application/json' };
-		$payload = { contents => [ map { { role => ($_->{'role'} eq 'assistant' ? 'model' : 'user'), parts => [ { text => $_->{'content'} } ] } } @msgs ], systemInstruction => { parts => [ { text => $system } ] } };
+		$payload = { contents => [ @wire ], systemInstruction => { parts => [ { text => $system } ] } };
 	}
 	elsif ($provider eq 'ollama') {
 		$url = 'http://localhost:11434/api/chat';
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{'ollama_key'}), 'Content-Type' => 'application/json' };
 		my $nproc = 4;
 		if (open(my $fh, "-|", "nproc")) { $nproc = <$fh>; chomp($nproc); close($fh); }
-		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0, options => { num_thread => $nproc - 2, num_ctx => 32768 } };
+		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0, options => { num_thread => $nproc - 2, num_ctx => 32768 } };
 	}
 	else {
-		# the OpenAI-compatible crowd: openai, xai, mistral, groq, openrouter
+		# the OpenAI-compatible crowd: openai, xai, mistral, groq, openrouter, deepseek
 		my %ep = (
 			openai => 'https://api.openai.com/v1/chat/completions',
 			xai => 'https://api.x.ai/v1/chat/completions',
@@ -9848,7 +10006,7 @@ sub ai_chat {
 		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
 		$url = $ep{$provider};
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
-		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @msgs ], stream => \0 };
+		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0 };
 	}
 
 	my $tx = $ua->build_tx(POST => $url => $headers => json => $payload);
@@ -9856,15 +10014,40 @@ sub ai_chat {
 	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
 	my $res = $tx->res;
 	return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200)) unless $res->is_success;
-	my $body = eval { return $res->json } || {};
-	my $text = $body->{'message'}->{'content'}
-		|| $body->{'response'}
-		|| $body->{'result'}->{'response'}
-		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
-		|| $body->{'choices'}->[0]->{'message'}->{'content'}
-		|| $body->{'content'}->[0]->{'text'}
-		|| $body->{'candidates'}->[0]->{'content'}->{'parts'}->[0]->{'text'};
-	return ($text, $text ? undef : 'the model returned nothing readable');
+	return (eval { return $res->json } || {}, undef);
+}
+
+# The reply as parts, so a caller can take more than the words (an image a
+# multimodal model returns, and the shape to grow into audio/video later).
+sub ai_chat_parts {
+	my ($model, $messages) = @_;
+	my ($body, $err) = &ai_chat_raw($model, $messages);
+	return (undef, $err) if $err;
+	my @parts;
+	my $text = &ai_response_text($body);
+	push @parts, { type => 'text', text => $text } if defined $text && length $text;
+	# an image the model drew or returned (OpenAI-style, Gemini inline_data, Anthropic blocks)
+	foreach my $u ( @{ $body->{'choices'}->[0]->{'message'}->{'images'} || [] } ) {
+		my $url = (ref $u eq 'HASH') ? ($u->{'image_url'}->{'url'} || $u->{'url'}) : $u;
+		push @parts, { type => 'image', url => $url } if $url;
+	}
+	foreach my $p ( @{ $body->{'candidates'}->[0]->{'content'}->{'parts'} || [] } ) {
+		push @parts, { type => 'image', mime => $p->{'inline_data'}->{'mime_type'}, data => $p->{'inline_data'}->{'data'} } if $p->{'inline_data'};
+	}
+	if (ref $body->{'content'} eq 'ARRAY') {
+		foreach my $b ( @{ $body->{'content'} } ) {
+			push @parts, { type => 'image', mime => $b->{'source'}->{'media_type'}, data => $b->{'source'}->{'data'} } if (($b->{'type'} || '') eq 'image' && $b->{'source'});
+		}
+	}
+	return (\@parts, undef);
+}
+
+sub ai_chat {
+	my ($model, $messages) = @_;
+	my ($parts, $err) = &ai_chat_parts($model, $messages);
+	return (undef, $err) if $err;
+	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
+	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
 # the same wire pen_message uses, but the answer is read whole: the evaluation
@@ -11575,6 +11758,22 @@ sub git_peer_update {
 	return ('reset', $out);
 }
 
+# Best-effort, idempotent install of the optional applications the tree names
+# (scripts/jawnos_deps.pl's extras: Piper today). Called after a code update so a
+# new version's new apps land without a hand; a device that cannot install one
+# simply keeps the fallback.
+sub install_extras {
+	my $script = &subs::home('~/jawnos/scripts/jawnos_deps.pl');
+	return unless -e $script;
+	my $repo = &subs::home('~/jawnos');
+	my $out = `cd "$repo" && perl scripts/jawnos_deps.pl --extras-only --install 2>&1`;
+	if ($subs::logfile && defined $out && $out =~ /\S/) {
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " extras: " . join(' ', grep { /\S/ } split "\n", $out) . "\n";
+		close $fh;
+	}
+}
+
 sub git_watcher_check {
 	return unless -d '.git';
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
@@ -11608,6 +11807,8 @@ sub git_watcher_check {
 	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x './desktop/install.sh') {
 		`./desktop/install.sh >/dev/null 2>&1`;
 	}
+	# a new version may name a new application to install (Piper, say)
+	&subs::install_extras();
 	write_file(&subs::home('~/.president/status'), 'restart');
 }
 

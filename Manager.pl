@@ -3840,8 +3840,16 @@ sub misc_setting_list() {
 
 
 get '/manager/configure/misc_setting_list' => sub($c) {
+	our $voice_synced_at;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $timestamp = $c->param('timestamp');
+	# Gather the voice models alongside this panel, the way the Plat panel reads
+	# the AI model lists when it opens - on demand, not on a timer. Background, and
+	# at most once a minute, so opening Configure never waits on a peer.
+	unless ($voice_synced_at && (&subs::rightNow() - $voice_synced_at) < 60000) {
+		$voice_synced_at = &subs::rightNow();
+		&subs::subprocessor(sub { Mojo::IOLoop->reset; eval { &subs::voice_sync(); }; }, { name => 'voice sync' });
+	}
 	my $settings = &misc_setting_list();
 	my $encryption_standards = `openssl enc -ciphers`;
 	my @encryption_standards = split ' ', $encryption_standards;
@@ -4124,6 +4132,7 @@ post '/manager/self_deploy' => sub($c) {
 	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x "$repo/desktop/install.sh") {
 		`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
 	}
+	&subs::install_extras();
 	write_file(&subs::home('~/.president/status'), 'restart');
 	$c->render(text => "deployed $status\n" . ($out || ''));
 };
@@ -7273,6 +7282,26 @@ sub travel_map_record {
 	return ($map, $maps);
 }
 
+# A scale legend read off a map ("500 ft") is ground truth only once it is metres:
+# the engine measures pixels-per-metre off it, so a plain number is what gets stored.
+sub map_legend_metres {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	return undef unless $text =~ /(\d[\d.,]*)\s*([a-zA-Z]+)/;
+	(my $n = $1) =~ s/,//g;
+	my $u = lc $2;
+	my %f = (
+		m => 1, metre => 1, meter => 1, metres => 1, meters => 1,
+		km => 1000, kilometre => 1000, kilometer => 1000, kilometres => 1000, kilometers => 1000,
+		cm => 0.01, mm => 0.001,
+		ft => 0.3048, foot => 0.3048, feet => 0.3048,
+		mi => 1609.344, mile => 1609.344, miles => 1609.344,
+		in => 0.0254, inch => 0.0254, inches => 0.0254,
+	);
+	return undef unless exists $f{$u};
+	return sprintf('%.3f', $n * $f{$u});
+}
+
 # The pair of helpers a person setting a map wants: read the scale legend off the
 # image (local tesseract), or ask the vision model for the legend and how far the
 # picture is off north-up. Both open the sealed image first.
@@ -7294,13 +7323,18 @@ post '/manager/configure/map_helper' => sub($c) {
 		my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
 		unless ($model) { unlink $tmp; $c->render(json => { error => 'no vision model is set (Configure, Plat, Vision)' }); return; }
 		my $system = 'You label a single map screenshot for JawnOS. The map is meant to be north-up.';
-		my $ask = 'Return ONLY JSON, no prose: {"legend":"the scale-bar text exactly as printed (e.g. 200 m or 1 km), or empty","rotate":degrees to turn the image CLOCKWISE so its north points up (a number; 0 if already north-up)}. Judge the rotation from the map content (roads, labels, the graticule), not from the scale bar, which is drawn horizontally however the map is turned.';
+		my $ask = 'Return ONLY JSON, no prose: {"legend":"the scale-bar text exactly as printed (e.g. 200 m or 1 km), or empty","rotate":degrees to turn the image CLOCKWISE so its north points up (a number; 0 if already north-up),"bar":{"x1":0.0,"y1":0.0,"x2":0.0,"y2":0.0}}. For bar, give the two ends of the scale bar as fractions of the image width and height, each between 0 and 1 (x1,y1 the left end, x2,y2 the right end). Judge the rotation from the map content (roads, labels, the graticule), not from the scale bar, which is drawn horizontally however the map is turned.';
 		my ($text, $err) = &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ]);
 		unlink $tmp;
 		unless ($text) { $c->render(json => { error => $err || 'the vision model returned nothing' }); return; }
 		my ($json) = $text =~ /(\{.*\})/s;
 		my $out = eval { return decode_json $json } || {};
-		$c->render(json => { legend => $out->{'legend'}, rotate => $out->{'rotate'}, raw => $text });
+		# a map may print more than one bar (500 ft and 200 m); keep the first
+		my $legend = $out->{'legend'} // '';
+		$legend =~ s/\s+/ /g; $legend =~ s/^\s+|\s+$//g;
+		$legend = $1 if $legend =~ /(\d[\d.,]*\s*(?:km|m|cm|ft|mi|metres?|meters?|kilometres?|kilometers?|miles?|feet|foot)\b)/i;
+		my $metres = &map_legend_metres($legend);
+		$c->render(json => { legend => ($metres // $legend), legend_text => $legend, rotate => $out->{'rotate'}, bar => $out->{'bar'}, raw => $text });
 		return;
 	}
 
@@ -7312,7 +7346,8 @@ post '/manager/configure/map_helper' => sub($c) {
 	while ($ocr =~ /(\d[\d.,]*\s*(?:km|m|cm|ft|mi|metres?|meters?|kilometres?|kilometers?|miles?|feet|foot)\b)/gi) {
 		push @cands, $1;
 	}
-	$c->render(json => { legend => ($cands[0] || undef), candidates => \@cands, text => $ocr });
+	my $metres = &map_legend_metres($cands[0]);
+	$c->render(json => { legend => ($metres // $cands[0]), legend_text => $cands[0], candidates => \@cands, text => $ocr });
 };
 
 post '/manager/configure/map_rotate' => sub($c) {
@@ -17728,6 +17763,51 @@ get '/manager/help/find' => sub($c) {
 	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all, last => $last });
 };
 
+# ---- the Guide's write path: stage, then promote or drop ------------------
+# The Guide never writes an appointment straight in. It stages a proposal, the
+# person sees it, and only a promote turns it into a real appointment.
+post '/manager/help/stage' => sub($c) {
+	my $uuid = &subs::random_string_creator(40);
+	my $now = &subs::rightNow();
+	my $app = &subs::unformat_name($c->param('app') || '');
+	my $type = $c->param('type') || 'usual';
+	my $timestamp = $c->param('timestamp') || $now;
+	my $title = $c->param('title') || '';
+	my $notes = $c->param('notes') || '';
+	my $data = $c->param('data') || '';
+	&subs::db_insert('staged_appointments', {
+		uuid => $uuid, staged_time => $now, source => ($c->param('source') || 'guide'),
+		app => $app, type => $type, timestamp => $timestamp, title => $title,
+		notes => $notes, data => $data, device => &subs::device_setter(), status => 'pending'
+	});
+	$c->render(json => { staged => $uuid, app => $app, type => $type, timestamp => $timestamp, title => $title });
+};
+
+post '/manager/help/promote' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $row = &subs::db_select('staged_appointments', undef, { uuid => $uuid })->hash;
+	unless ($row) { $c->render(json => { error => 'no such staged appointment' }); return; }
+	my $real_uuid = &subs::random_string_creator(40);
+	&subs::db_insert('appointments', {
+		uuid => $real_uuid, app => $row->{'app'}, type => $row->{'type'},
+		timestamp => $row->{'timestamp'}, server_time => &subs::rightNow(),
+		notes => $row->{'notes'}, data => $row->{'data'}, device => $row->{'device'} || &subs::device_setter()
+	});
+	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
+	$c->render(json => { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} });
+};
+
+post '/manager/help/discard' => sub($c) {
+	my $uuid = $c->param('uuid');
+	&subs::db_update('staged_appointments', { status => 'discarded' }, { uuid => $uuid });
+	$c->render(json => { discarded => $uuid });
+};
+
+get '/manager/help/staged' => sub($c) {
+	my $rows = &subs::db_select('staged_appointments', undef, { status => 'pending' })->hashes;
+	$c->render(json => { staged => $rows });
+};
+
 post '/manager/handbook/settings' => sub ($c) {
 	my $setting = $c->param('setting');
 	my $value = $c->param('value');
@@ -21025,6 +21105,22 @@ sub update_database($data) {
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
 		'alter table remote_machines add column sync_cursor VARCHAR(50)',
 		'alter table remote_machines add column version VARCHAR(25)',
+		# the Guide writes here, not into appointments: a staged row is a proposal a
+		# person can look over and promote (or drop) before it becomes real
+		'create table if not exists staged_appointments (
+			uuid VARCHAR(255) unique,
+			staged_time VARCHAR(255),
+			source VARCHAR(255),
+			app VARCHAR(500),
+			type VARCHAR(500),
+			timestamp VARCHAR(25),
+			title VARCHAR(500),
+			notes LONGTEXT,
+			data LONGTEXT,
+			device VARCHAR(255),
+			status VARCHAR(25)
+		)',
+		'create index if not exists idx1_staged on staged_appointments (status, staged_time)',
 		'create table if not exists sync_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			server_time VARCHAR(255),

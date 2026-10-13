@@ -1114,21 +1114,46 @@ $(document).on('keydown', function(e) {
 });
 
 // ---- map setting helpers: read the legend (OCR) or ask the vision model, and
-// save a tilt when the map's picture is off north-up ----
+// straighten a tilt; both preview live and save as they go ----
 function mapTiltInfo(app_uuid, file_uuid) {
 	return $('#' + app_uuid + '_' + file_uuid + '_tilt_info');
 }
 
-function mapTiltSave(file_uuid, app_uuid, app, deg) {
+function mapTiltPreview(file_uuid, deg) {
+	$('.detail_image[file_uuid="' + file_uuid + '"]').css({ 'transform': 'rotate(' + deg + 'deg)', 'transform-origin': 'center center' });
+}
+
+function mapTiltSave(file_uuid, app_uuid, app, deg, quiet) {
+	deg = numeral(deg).value() || 0;
+	mapTiltPreview(file_uuid, deg);
 	$.ajax({
 		url: '/manager/configure/map_rotate',
 		type: 'POST',
 		data: { file_uuid: file_uuid, app_uuid: app_uuid, app: app, rotate: deg },
 		success: function(response) {
 			if (response.error) { mapTiltInfo(app_uuid, file_uuid).text(response.error); return; }
-			mapTiltInfo(app_uuid, file_uuid).text('tilt saved: ' + response.rotate + '\u00b0');
+			if (!quiet) { mapTiltInfo(app_uuid, file_uuid).text('tilt saved: ' + response.rotate + '\u00b0'); }
 		}
 	});
+}
+
+// Place the scale bar the vision model found. Its ends come as fractions of the
+// picture, so they hold however it is shown; the tool converts the legend to metres.
+function mapBarApply(file_uuid, app_uuid, app, bar, legend) {
+	var img = $('.detail_image[file_uuid="' + file_uuid + '"]')[0];
+	var nw = img ? (img.naturalWidth || img.width) : 0;
+	var nh = img ? (img.naturalHeight || img.height) : 0;
+	var x1 = numeral(bar.x1).value(), y1 = numeral(bar.y1).value(), x2 = numeral(bar.x2).value(), y2 = numeral(bar.y2).value();
+	if (!(nw > 0 && nh > 0)) { return false; }
+	if (![x1, y1, x2, y2].every(function(n) { return isFinite(n) && n >= 0 && n <= 1; })) { return false; }
+	if (x1 === x2 && y1 === y2) { return false; }
+	var value = { legend: legend, width: nw, height: nh, first: { x: x1 * nw, y: y1 * nh }, last: { x: x2 * nw, y: y2 * nh } };
+	$.ajax({
+		url: '/manager/configure/image_function_tool',
+		type: 'POST',
+		data: { file_uuid: file_uuid, app_uuid: app_uuid, app: app, tool: 'scale', value: JSON.stringify(value) }
+	});
+	return true;
 }
 
 $(document).on('click', '.map_legend_read, .map_tilt_ask', function() {
@@ -1146,16 +1171,25 @@ $(document).on('click', '.map_legend_read, .map_tilt_ask', function() {
 		success: function(response) {
 			if (response.error) { info.text(response.error); return; }
 			if (response.legend) { $('#' + app_uuid + '_' + file_uuid + '_legend').val(response.legend); }
-			var tilt = '';
+			var notes = [];
+			if (response.legend_text) { notes.push('legend: ' + response.legend_text + ' = ' + response.legend + ' m'); }
+			else { notes.push(response.legend ? 'legend: ' + response.legend + ' m' : 'no legend found'); }
 			if (response.rotate !== undefined && response.rotate !== null && response.rotate !== '') {
 				$('.map_tilt[file_uuid="' + file_uuid + '"]').val(response.rotate);
-				mapTiltSave(file_uuid, app_uuid, app, response.rotate);
-				tilt = '  tilt: ' + response.rotate + '\u00b0';
+				mapTiltSave(file_uuid, app_uuid, app, response.rotate, 1);
+				notes.push('tilt: ' + response.rotate + '\u00b0');
 			}
-			info.text((response.legend ? 'legend: ' + response.legend : 'no legend found') + tilt);
+			if (mode == 'vision' && response.bar && response.legend) {
+				if (mapBarApply(file_uuid, app_uuid, app, response.bar, response.legend)) { notes.push('bar placed'); }
+			}
+			info.text(notes.join('  '));
 		},
 		error: function() { info.text('the helper could not run'); }
 	});
+});
+
+$(document).on('input change', '.map_tilt', function() {
+	mapTiltPreview($(this).attr('file_uuid'), numeral($(this).val()).value() || 0);
 });
 
 $(document).on('click', '.map_tilt_save', function() {
