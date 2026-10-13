@@ -5784,8 +5784,160 @@ post '/manager/configure/pseudonym_icon_changer' => sub ($c) {
 	$c->render(json => $returner);
 };
 
+# Ticket management is the citizen's desk: minting, deleting, suspending,
+# renewing and reinstating are the owner's acts, and the hooks' path
+# allowances do not enforce that on their own.
+sub ticket_desk_allowed($c) {
+	return $c->session('privilege') eq 'citizen' ? 1 : 0;
+}
+
+# The request desk's policy and its blacklist are rows read by the newest
+# write, not device-scoped settings: the public page is served by the server
+# while the owner may sit at a phone, so a choice made anywhere has to be seen
+# everywhere the mesh carries the settings table.
+sub ticket_policy() {
+	my $row = &subs::db_query('select value from settings where app=? and setting=? order by server_time desc limit 1', 'box_office', 'request_policy')->hashes->[0];
+	my $policy = eval { return decode_json $row->{'value'} } || {};
+	$policy->{'guest_warranty'} = '-1d' unless defined $policy->{'guest_warranty'} && length $policy->{'guest_warranty'};
+	$policy->{'issue_guest_on_request'} = 0 unless defined $policy->{'issue_guest_on_request'};
+	return $policy;
+}
+
+sub ticket_policy_set($policy) {
+	&subs::setting_setter({ app => 'box_office', setting => 'request_policy', value => encode_json $policy });
+}
+
+sub ticket_blacklist() {
+	my $row = &subs::db_query('select value from settings where app=? and setting=? order by server_time desc limit 1', 'box_office', 'blacklist')->hashes->[0];
+	return eval { return decode_json $row->{'value'} } || [];
+}
+
+sub ticket_blacklist_save($list) {
+	&subs::setting_setter({ app => 'box_office', setting => 'blacklist', value => encode_json $list });
+}
+
+sub ticket_contact_clean($kind,$value) {
+	return '' unless defined $value && length $value;
+	if ($kind eq 'email') {
+		$value = lc $value;
+	}
+	elsif ($kind eq 'phone') {
+		$value =~ s/\D+//g;
+		$value =~ s/^1//;
+	}
+	else {
+		$value = &subs::unformat_name($value);
+	}
+	return $value;
+}
+
+# A request matches the blacklist when any one of its identifiers does.
+sub ticket_blacklist_match($info) {
+	my $name = &ticket_contact_clean('name', $info->{'name'});
+	my $email = &ticket_contact_clean('email', $info->{'email'});
+	my $phone = &ticket_contact_clean('phone', $info->{'phone'});
+	foreach my $b ( @{&ticket_blacklist()} ) {
+		next unless ref $b eq 'HASH';
+		return 1 if $name && $name eq &ticket_contact_clean('name', $b->{'name'});
+		return 1 if $email && $email eq &ticket_contact_clean('email', $b->{'email'});
+		return 1 if $phone && $phone eq &ticket_contact_clean('phone', $b->{'phone'});
+	}
+	return 0;
+}
+
+# Is this requester already known to the house? The same rows the mailbox uses
+# to name a thread: an email or a phone number kept on an app.
+sub ticket_request_known($info) {
+	my @known;
+	my $email = &ticket_contact_clean('email', $info->{'email'});
+	if ($email) {
+		my $rows = &subs::db_query('select app from settings where setting=? and lower(value)=?', 'email', $email)->hashes;
+		push @known, map { $_->{'app'} } @{$rows};
+	}
+	my $phone = &ticket_contact_clean('phone', $info->{'phone'});
+	if ($phone) {
+		my $rows = &subs::db_query('select app from settings where setting=? and value=?', 'phone', $phone)->hashes;
+		push @known, map { $_->{'app'} } @{$rows};
+	}
+	@known = grep { defined $_ && length $_ } @known;
+	my %seen;
+	@known = grep { !$seen{$_}++ } @known;
+	return \@known;
+}
+
+# The door's throttle: one request per browser tab at a time, and one per
+# address per ten minutes. Over the line the form answers exactly as it does
+# to a queued request, so the door never says who is on the list.
+sub ticket_request_allowed($c) {
+	my $browser_tab_id = $c->param('browser_tab_id') || '';
+	if ($browser_tab_id) {
+		my $open = &subs::db_query('select uuid from tickets where browser_tab_id=? and status=? and server_time > ? order by server_time desc limit 1', $browser_tab_id, 'request', &subs::rightNow() - 3600000)->hashes->[0];
+		return 0 if $open && $open->{'uuid'};
+	}
+	my ($db) = &subs::database_grabber();
+	return 1 unless $db;
+	my $ip = $c->tx->remote_address;
+	my $now = &subs::rightNow();
+	my $seen = &subs::db_query('select server_time from cache where context=? and uuid=? order by server_time desc limit 1', 'ticket_request', $ip)->hashes->[0];
+	return 0 if $seen->{'server_time'} && $seen->{'server_time'} > $now - 600000;
+	&subs::db_query('delete from cache where context=? and uuid=?', 'ticket_request', $ip);
+	&subs::db_query('insert into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $ip, 'ticket_request', 'box_office', $now, $now);
+	return 1;
+}
+
+sub ticket_request_pending_html() {
+	return '<h3>Request received</h3><p>Your request is with the house. If it is approved, this page will let itself in.</p>';
+}
+
+# What an approval mints: the box office's own mint, with the house's suds
+# when a citizen is not the one pressing the button, and the requesting tab
+# carried over so the waiting page can be let in.
+sub ticket_request_mint($c, $request, $privilege, $warranty) {
+	my $info = eval { return decode_json $request->{'information'} } || {};
+	my $host = $c->req->url->base->host;
+	my $addresses = eval { &subs::device_lister(&subs::rightNow(), '')->[0]->{'address'} } || {};
+	my $nic;
+	foreach my $key ( sort keys %{$addresses} ) {
+		next unless $addresses->{$key}->{'ip'};
+		if ($addresses->{$key}->{'ip'} eq $host || $key eq $host) { $nic = $key; last; }
+	}
+	my $domain = &subs::config_reader()->{'domain'};
+	$nic = $domain if !$nic && $domain && $addresses->{$domain};
+	$nic = ( grep { $addresses->{$_}->{'ip'} } sort keys %{$addresses} )[0] unless $nic;
+	my $suds = $c->session('suds') || &subs::suds_grabber();
+	return undef unless $nic && $suds;
+	my $data = &qrcode_generator({
+		timestamp => &subs::rightNow(),
+		app => 'box_office',
+		name => $request->{'name'},
+		privilege => $privilege,
+		project => $info->{'project'},
+		nic => $nic,
+		suds => $suds,
+		warranty => $warranty,
+		keep_warranty => 1
+	});
+	$data->{'browser_tab_id'} = $request->{'browser_tab_id'};
+	$data->{'information'} = $request->{'information'};
+	return $data;
+}
+
+sub ticket_request_notify($c, $request, $info) {
+	my $who = $info->{'name'} || $info->{'email'} || 'Someone';
+	my $awaiting = scalar @{ &subs::db_query('select uuid from tickets where status=?', 'request')->hashes };
+	my (undef,$database) = &subs::database_grabber();
+	&Websocket::send('tab', { type => 'ticket_request_arrival', count => $awaiting, message => $who . ' asks for a ticket' });
+	# an open box office refreshes itself; the visible test keeps a hidden window
+	# from rebuilding under the user
+	&Websocket::send('server', { console => '$("#box_office").is(":visible") && typeof boxOffice == "function" ? boxOffice() : 0;' });
+	&notification_sender({ app => 'box_office', role => 'citizen', title => 'Ticket Request', message => $who . ' asks for a ticket', image => $gb::known_appts->{'box_office'}->{'icon'} }, $database);
+}
 
 get '/manager/qrcode_generator' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
 	my $name = &subs::unformat_name($c->param('name') || 'visitor');
@@ -5862,7 +6014,9 @@ sub qrcode_generator($params) {
 	}
 	my $url = 'https://' . $domain . ':' . $ENV{'PORT_DOCK'} . '/box_office/' . $sj->{'uuid'} . '?s=' . $secret;
 	$warranty = $warranty || &subs::setting_grabber({ app => 'box_office', setting => 'warranty' });
-	unless ($params->{'db'}) {
+	# the issue form's warranty box is a choice about this ticket, not a new
+	# house default; a request minted in the background must not move it
+	unless ($params->{'db'} || $params->{'keep_warranty'}) {
 		&subs::setting_setter({ app => 'box_office', setting => 'warranty', value => $warranty });
 	}
 	$warranty = &subs::ago_calc($warranty,$timestamp);
@@ -5904,6 +6058,10 @@ sub qrcode_updater($c) {
 	my $level_one = $level_one_q->hashes;
 
 	foreach my $t ( @{$tickets} ) {
+		# a request (or anything else that was never minted) has no secret to
+		# re-encrypt; decoding its empty one used to die and take the whole
+		# box office down with it
+		next unless $t->{'secret'} && $t->{'password'};
 		my $secretive = $t->{'secret'};
 		my $ver = url_unescape `echo "$secretive" | base64 --decode`;
 		my $ts = &subs::note_decrypter($t->{'password'},$ver);
@@ -5934,6 +6092,11 @@ sub qrcode_updater($c) {
 }
 
 get '/manager/box_office' => sub($c) {
+	# the desk lists every ticket's link and secret: only the citizen reads it
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(text => '');
+		return;
+	}
 	my $app = &subs::unformat_name('box_office');
 	my $view = $c->param('view') || &subs::setting_grabber({ app => 'misc', setting => 'box_office_view' });
 	my $timestamp = $c->param('timestamp');
@@ -5947,6 +6110,12 @@ get '/manager/box_office' => sub($c) {
 	my $projs = &subs::db_query('select * from settings where (setting=? or setting=?) and value=?', 'pos','mab', 'project');
 	my $projects = $projs->hashes;
 	my $persons = &subs::db_query('select * from settings where (setting=? or setting=?) and value=? or value = ?', 'pos','mab','person', 'customer');
+	my $requests = [ grep { ($_->{'status'} || '') eq 'request' } @{$tickets} ];
+	foreach my $r ( @{$requests} ) {
+		$r->{'access_log'} = [];
+		$r->{'info'} = eval { return decode_json $r->{'information'} } || {};
+		$r->{'known'} = &ticket_request_known($r->{'info'});
+	}
 	foreach my $t ( @{$tickets} ) {
 		my $al = eval { return decode_json $t->{'access_log'} } || [];
 		$t->{'access_log'} = $al;
@@ -5958,6 +6127,9 @@ get '/manager/box_office' => sub($c) {
 		config => &subs::config_reader(),
 		addresses => $addresses,
 		tickets => $tickets,
+		requests => $requests,
+		blacklist => &ticket_blacklist(),
+		policy => &ticket_policy(),
 		nic => &subs::setting_grabber({ app => $app, setting => 'last_nic' }),
 		name => &subs::setting_grabber({ app => $app, setting => 'last_name' }) || &subs::setting_grabber({ app => 'me', setting => 'my_name' }),
 		privilege => &subs::setting_grabber({ app => $app, setting => 'last_privilege' }) || 'visitor',
@@ -5999,21 +6171,176 @@ any '/box_office/ticket_request' => sub($c) {
 		$c->render(json => { content => $content });
 	}
 	elsif ($call eq 'submit') {
-		my ($db) = &subs::database_grabber();
-		my $data = eval { return decode_json $c->param('data') };
-		if ($data->{'approval_rating'}) {
-
-			&subs::db_insert('tickets', {
-				name => &subs::unformat_name($data->{'name'}),
-				timestamp => $timestamp,
-				server_time => &subs::rightNow(),
-				information => $c->param('data')
-			});
+		my $data = eval { return decode_json $c->param('data') } || {};
+		my $info = {
+			name => &subs::unformat_name($data->{'name'} || ''),
+			email => &ticket_contact_clean('email', $data->{'email'}),
+			phone => &ticket_contact_clean('phone', $data->{'phone'}),
+			description => substr($data->{'description'} || '', 0, 1000),
+			privilege => 'guest',
+			team => $data->{'team'},
+			club => $data->{'club'},
+			community => $data->{'community'}
+		};
+		my $browser_tab_id = $c->param('browser_tab_id') || '';
+		my $policy = &ticket_policy();
+		# the door's rules: a blacklisted identifier and a flood both get the
+		# queued answer, so the form never says who is on the list
+		if (&ticket_blacklist_match($info) || !&ticket_request_allowed($c)) {
+			$log->info('ticket request dropped: ' . $info->{'name'} . ' (' . $c->tx->remote_address . ')');
+			$c->render(json => { status => 'pending', html => &ticket_request_pending_html() });
+			return;
+		}
+		my $request = {
+			uuid => &subs::random_string_creator(35),
+			name => $info->{'name'},
+			timestamp => $timestamp || &subs::rightNow(),
+			server_time => &subs::rightNow(),
+			status => 'request',
+			privilege => 'guest',
+			browser_tab_id => $browser_tab_id,
+			ip => $c->tx->remote_address,
+			information => encode_json $info
+		};
+		if ($policy->{'issue_guest_on_request'}) {
+			# the house keeps the door open: a guest ticket is minted on the spot
+			my $minted = &ticket_request_mint($c, $request, 'guest', $policy->{'guest_warranty'});
+			if ($minted) {
+				&subs::db_insert('tickets', $minted);
+				$c->render(json => { status => 'approved', url => $minted->{'url'} });
+				return;
+			}
+		}
+		&subs::db_insert('tickets', $request);
+		&ticket_request_notify($c, $request, $info);
+		$c->render(json => { status => 'pending', html => &ticket_request_pending_html() });
+	}
+	elsif ($call eq 'check') {
+		# the waiting page asks whether its ticket has been granted: the tab's
+		# own id is the claim, and only a fresh ticket answers it
+		my $browser_tab_id = $c->param('browser_tab_id') || '';
+		my $ticket = $browser_tab_id ? &subs::db_query('select url from tickets where browser_tab_id=? and status=? and server_time > ? order by server_time desc limit 1', $browser_tab_id, 'active', &subs::rightNow() - 1800000)->hashes->[0] : undef;
+		if ($ticket->{'url'}) {
+			$c->render(json => { status => 'approved', url => $ticket->{'url'} });
+		}
+		else {
+			$c->render(json => { status => 'pending' });
 		}
 	}
 	else {
 		$c->render(template => 'guest_layouts/denial');
 	}
+};
+
+# The desk's decisions, all citizen acts: approve mints the ticket the request
+# asked for (and keeps its information and requesting tab), decline forgets
+# the request, blacklist remembers the identifiers so the door refuses them
+# before a request is ever queued.
+post '/manager/box_office/approve' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $uuid = $c->param('ticket');
+	my $privilege = $c->param('privilege') || 'guest';
+	$privilege = 'guest' unless $gb::chairs->{$privilege};
+	my $warranty = $c->param('warranty') || &ticket_policy()->{'guest_warranty'};
+	my $request = &subs::db_query('select * from tickets where uuid=? and status=?', $uuid, 'request')->hashes->[0];
+	unless ($request->{'uuid'}) {
+		$c->render(json => { error => 'no request' });
+		return;
+	}
+	my $minted = &ticket_request_mint($c, $request, $privilege, $warranty);
+	unless ($minted) {
+		$c->render(json => { error => 'no key' });
+		return;
+	}
+	&subs::db_delete('tickets', { uuid => $uuid });
+	&subs::db_insert('tickets', $minted);
+	&Websocket::send('server', { console => 'typeof ticket_list == "function" && ticket_list();' });
+	$c->render(json => { ticket => $minted->{'uuid'}, url => $minted->{'url'} });
+};
+
+post '/manager/box_office/decline' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $uuid = $c->param('ticket');
+	my $request = &subs::db_query('select * from tickets where uuid=? and status=?', $uuid, 'request')->hashes->[0];
+	unless ($request->{'uuid'}) {
+		$c->render(json => { error => 'no request' });
+		return;
+	}
+	$log->info('ticket request declined: ' . $request->{'name'});
+	&subs::db_delete('tickets', { uuid => $uuid });
+	$c->render(json => { declined => $uuid });
+};
+
+post '/manager/box_office/blacklist' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $uuid = $c->param('ticket');
+	my $request = &subs::db_query('select * from tickets where uuid=? and status=?', $uuid, 'request')->hashes->[0];
+	unless ($request->{'uuid'}) {
+		$c->render(json => { error => 'no request' });
+		return;
+	}
+	my $info = eval { return decode_json $request->{'information'} } || {};
+	my $list = &ticket_blacklist();
+	push @{$list}, {
+		name => $info->{'name'},
+		email => $info->{'email'},
+		phone => $info->{'phone'},
+		note => $info->{'description'},
+		timestamp => &subs::rightNow()
+	};
+	&ticket_blacklist_save($list);
+	&subs::db_delete('tickets', { uuid => $uuid });
+	$c->render(json => { blacklisted => $info->{'name'} });
+};
+
+post '/manager/box_office/blacklist/remove' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $stamp = $c->param('stamp');
+	my $list = &ticket_blacklist();
+	@{$list} = grep { ($_->{'timestamp'} || '') ne $stamp } @{$list};
+	&ticket_blacklist_save($list);
+	$c->render(json => { count => scalar @{$list} });
+};
+
+post '/manager/box_office/policy' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $policy = &ticket_policy();
+	$policy->{'issue_guest_on_request'} = $c->param('issue_guest_on_request') && $c->param('issue_guest_on_request') eq 'on' ? 1 : 0;
+	$policy->{'guest_warranty'} = $c->param('guest_warranty') || '-1d';
+	&ticket_policy_set($policy);
+	$c->render(json => $policy);
+};
+
+# Upgrading a holder is the box office's act too: the chair is the ticket's,
+# and the next time the link is opened the session wears the new privilege.
+post '/manager/ticket_privilege' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $uuid = $c->param('uuid');
+	my $privilege = $c->param('privilege');
+	unless ($uuid && $gb::chairs->{$privilege}) {
+		$c->render(json => { error => 'bad request' });
+		return;
+	}
+	&subs::db_update('tickets', { privilege => $privilege, server_time => &subs::rightNow() }, { uuid => $uuid });
+	$c->render(json => { uuid => $uuid, privilege => $privilege });
 };
 
 get '/box_office/:uuid' => sub($c) {
@@ -6155,6 +6482,10 @@ get '/box_office/:uuid' => sub($c) {
 };
 
 get '/manager/delete_ticket' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 
@@ -6164,6 +6495,10 @@ get '/manager/delete_ticket' => sub($c) {
 };
 
 get '/manager/suspend_ticket' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 	my ($db,$database,$sql) = &subs::database_grabber();
@@ -6172,6 +6507,10 @@ get '/manager/suspend_ticket' => sub($c) {
 };
 
 get '/manager/renew_ticket' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 	my $warranty = $c->param('warranty');
@@ -6188,6 +6527,10 @@ get '/manager/renew_ticket' => sub($c) {
 };
 
 get '/manager/reinstate_ticket' => sub($c) {
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 	my ($db,$database,$sql) = &subs::database_grabber();
@@ -22808,6 +23151,9 @@ websocket '/mail/ws' => sub ($c) {
 				$m->{'email'} = undef;
 			}
 			my $trusted = &mailws_trusted($c);
+			# the one thread a guest was invited into - their ticket - is filed
+			# like correspondence, while the rooms stay heard-not-kept (below)
+			my $filed = $trusted || ($c->session('privilege') eq 'guest' && $m->{'mail_contact'} && $m->{'mail_contact'} eq $c->session('ticket_uuid'));
 			if (!$trusted) {
 				# a guest's words are not filed, so they are bounded: a length
 				# cap and a per-ticket pace that a flood cannot pass
@@ -22847,10 +23193,10 @@ websocket '/mail/ws' => sub ($c) {
 				person => $constructs->{'people'},
 				conversation_uuid => $m->{'conversation_uuid'}
 			};
-			&subs::db_insert('mailbox', $msg) if $trusted;
-			# trusted words are filed; a visitor's words are only ever heard
+			# filed words are stored; a visitor's room words are only ever heard
 			# live by whoever is tuned in, so they are never written down
-			$m->{'ephemeral'} = 'yes' unless $trusted;
+			&subs::db_insert('mailbox', $msg) if $filed;
+			$m->{'ephemeral'} = 'yes' unless $filed;
 			$m->{'envelope'} = $c->render_to_string(
 				template => 'mail/message',
 				'm' => $m,

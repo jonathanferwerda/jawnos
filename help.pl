@@ -367,14 +367,14 @@ our %topic = (
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
 			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant.',
 			'The dial is the house\'s radio: a set of appointments picked across the six groups names one thread, and a tab only hears messages addressed to the set it is tuned to. Advertise opens the tuned set to guests, who may then tune the same channel from the mailbox on the public page.',
-			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down. Their bubbles are dashed to say so.'
+			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down — except on the guest\'s own ticket thread, the one conversation the house opened for them. Room bubbles that are not kept are dashed to say so.'
 		],
 		steps => [
 			'Open Mailbox and choose a section from the sidebar — sms, email, list, dial, pen or tickets.',
 			'For email, pick a folder (contacts, inbox, drafts, outbox, sent) and an address.',
 			'Compose with the new-file button; attachments are filed and sealed when you send.',
 			'On the dial, pick a set and press Advertise to open it to guests; press Advertised to close it again.',
-			'As a guest on the public page, open Mailbox, tune an advertised set from the Dial section, and write; the house\'s replies stay, yours are only heard.'
+			'As a guest on the public page, open Mailbox, tune an advertised set from the Dial section, and write; the house\'s replies stay, and so does the ticket thread — your words in the rooms are only heard.'
 		],
 		related => [ 'relational', 'store', 'sealing_files', 'assistant' ]
 	},
@@ -420,17 +420,22 @@ our %topic = (
 	},
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
+		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
 		verified => '2026-10-13',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
-			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it.',
+			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
+			'The Requests view holds what the public page asked for: each request shows its name, contact, description and whether the house already knows the contact. Approve mints the ticket (the waiting page lets itself in), Decline forgets it, Blacklist remembers the identifiers so the door refuses them before a request is ever queued.',
+			'Issue guest tickets on request keeps the door open: a request is minted a guest ticket on the spot at the guest warranty. Leave it unticked and requests queue for approval instead.',
 			'A blacklisted ticket is the deny: its holder is shown the denial page and that browser is then locked out of the house — public pages included — with no redirect.'
 		],
 		steps => [
 			'Open the Box Office.',
 			'Issue a new ticket and choose its privilege — citizen, resident, guest or blacklisted.',
 			'Copy the link and give it to whoever needs it.',
-			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.'
+			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.',
+			'Change a ticket\'s privilege from the select in its row; the next login wears it.',
+			'Open the Requests view to approve, decline or blacklist what the public page asked for.'
 		],
 		related => [ 'tickets', 'security' ]
 	},

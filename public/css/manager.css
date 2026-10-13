@@ -809,7 +809,7 @@ canvas { overflow: scroll; z-index: 99; }
 /* Mail the server accepted rings the envelope until the mailbox is opened: the
    icon wears a red border that pulses, so the ring needs no extra markup and
    survives the menu being fetched anew. */
-#mailbox_toggle[waiting="yes"] {
+#mailbox_toggle[waiting="yes"], #ticketmaker[waiting="yes"] {
 	border-color: red;
 	animation: mail_dot_pulse 1.2s ease-in-out infinite;
 }

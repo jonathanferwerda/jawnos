@@ -844,19 +844,102 @@ function boxOffice() {
 	});
 }
 
-$(document).on('click', '.ticket_approve', function() {
-	var timestamp = Date.now();
-	var ticket = $(this).attr('ticket');
-	$.ajax({
-		url: '/manager/box_office/approve/',
-		type: 'POST',
-		data: { timestamp: timestamp, ticket: ticket },
-		success: function(response) {
+// Ticket requests raise a dot on the start menu's Tickets icon until the box
+// office is opened, exactly as a letter rings the envelope.
+function ticketDotSet(message) {
+	localStorage.setItem('ticket_waiting', message || 'Ticket request');
+	ticketDotPaint();
+}
 
+function ticketDotPaint() {
+	var icon = $('#ticketmaker');
+	if (!icon.length) { return; }
+	if (localStorage.getItem('ticket_waiting')) { icon.attr('waiting', 'yes'); }
+	else { icon.removeAttr('waiting'); }
+}
+
+function ticketDotClear() {
+	localStorage.removeItem('ticket_waiting');
+	$('#ticketmaker').removeAttr('waiting');
+}
+
+function ticketArrival(data) {
+	ticketDotSet(data ? data['message'] : '');
+}
+
+$(document).on('click', '.ticket_approve', function() {
+	var b = $(this);
+	var row = b.closest('.ticket_request');
+	var ticket = b.attr('ticket');
+	$.ajax({
+		url: '/manager/box_office/approve',
+		type: 'POST',
+		data: {
+			timestamp: Date.now(),
+			ticket: ticket,
+			privilege: row.find('.ticket_request_privilege').val(),
+			warranty: row.find('.ticket_request_warranty').val()
+		},
+		success: function(response) {
+			b.css({ 'background-color': 'green' });
+			setTimeout(function() { boxOffice(); }, 400);
 		},
 		error: function(response) {
-
+			b.css({ 'background-color': 'red' });
 		}
+	});
+});
+
+$(document).on('click', '.ticket_decline', function() {
+	var ticket = $(this).attr('ticket');
+	$.ajax({
+		url: '/manager/box_office/decline',
+		type: 'POST',
+		data: { timestamp: Date.now(), ticket: ticket },
+		success: function(response) { boxOffice(); }
+	});
+});
+
+$(document).on('click', '.ticket_blacklist', function() {
+	var ticket = $(this).attr('ticket');
+	$.ajax({
+		url: '/manager/box_office/blacklist',
+		type: 'POST',
+		data: { timestamp: Date.now(), ticket: ticket },
+		success: function(response) { boxOffice(); }
+	});
+});
+
+$(document).on('click', '.ticket_blacklist_remove', function() {
+	var stamp = $(this).attr('stamp');
+	$.ajax({
+		url: '/manager/box_office/blacklist/remove',
+		type: 'POST',
+		data: { timestamp: Date.now(), stamp: stamp },
+		success: function(response) { boxOffice(); }
+	});
+});
+
+$(document).on('click', '#ticket_policy_save', function() {
+	$.ajax({
+		url: '/manager/box_office/policy',
+		type: 'POST',
+		data: {
+			timestamp: Date.now(),
+			issue_guest_on_request: $('#ticket_policy_auto').is(':checked') ? 'on' : 'off',
+			guest_warranty: $('#ticket_policy_warranty').val()
+		},
+		success: function(response) { boxOffice(); }
+	});
+});
+
+$(document).on('change', '.ticket_privilege_change', function() {
+	var s = $(this);
+	$.ajax({
+		url: '/manager/ticket_privilege',
+		type: 'POST',
+		data: { timestamp: Date.now(), uuid: s.attr('uuid'), privilege: s.val() },
+		success: function(response) { s.css({ 'background-color': 'lightgreen' }); }
 	});
 });
 
@@ -864,6 +947,7 @@ function boxOfficeMaker(response) {
 	if (response) {
 		windowMaker(response);
 		$('#box_office').show();
+		ticketDotClear();
 		if (original_key_position == undefined) {
 			original_key_position = {
 				top: $('#ticket_sales').css('top'),
@@ -1335,6 +1419,7 @@ function startMenuRender(html, st) {
 	assistantIconInitializer();
 	taskbarDisplayer();
 	if (typeof mailDotPaint == 'function') { mailDotPaint(); }
+	if (typeof ticketDotPaint == 'function') { ticketDotPaint(); }
 	st.attr('toggled', 'open');
 }
 

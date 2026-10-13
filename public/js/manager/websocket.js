@@ -421,6 +421,11 @@ function wsMessageHandler(event) {
 			// the mailbox is opened
 			if (typeof mailArrival == 'function') { mailArrival(data); }
 		}
+		else if ( data['type'] == 'ticket_request_arrival' ) {
+			// a ticket request the server queued: the start menu's Tickets icon
+			// rings until the box office is opened
+			if (typeof ticketArrival == 'function') { ticketArrival(data); }
+		}
 		else if ( data['type'] == 'html' ) {
 			var s = $(data['selector']);
 			s.html(data['content']);

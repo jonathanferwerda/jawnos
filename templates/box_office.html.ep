@@ -62,7 +62,12 @@
 						<td><span class="ticket_app" app="<%= $t->{'app'} %>"><%= &subs::format_name($t->{'app'}) %></span></td>
 						<td><span class="ticket_name"><%= &subs::format_name($t->{'name'}) %></span></td>
 						<td><span class="ticket_status"><%= $t->{'status'} %></span></td>
-						<td><span class="ticket_privilege"><%= $t->{'privilege'} %></span</td>
+						<td><span class="ticket_privilege"><%= $t->{'privilege'} %></span>
+							<select class="ticket_privilege_change" uuid="<%= $t->{'uuid'} %>" title="Upgrade">
+								<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
+									<option value="<%= $chair %>" <% if (($t->{'privilege'} || '') eq $chair) { %>selected<% } %>><%= &subs::format_name($chair) %></option>
+								<% } %>
+							</select></td>
 						<td><span class="ticket_project"><%= &subs::format_name($t->{'project'}) %></span</td>
 						<td><span class="ticket_timestamp time" timestamp="<%= $t->{'timestamp'} %>"><%= $t->{'timestamp'} %></span></td>
 						<td><span class="ticket_duration duration" timestamp="<%= $t->{'duration'} %>"><%= &subs::duration_sayer($t->{'duration'} / 1000) %></span></td>
@@ -84,6 +89,60 @@
 							<% } %>
 							<span><button class="delete_ticket" uuid="<%= $t->{'uuid'} %>">Delete</button></span>
 						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } else { %>
+		<div id="ticket_request_policy">
+			<label><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> Issue guest tickets on request</label>
+			guest warranty: <input type="text" id="ticket_policy_warranty" value="<%= $policy->{'guest_warranty'} %>" style="width:100px;">
+			<button id="ticket_policy_save">Save</button>
+		</div>
+		<table id="ticket_request_list" style="width:100%;">
+			<thead>
+				<th>Name</th><th>Contact</th><th>Description</th><th>Known</th><th>Asked</th><th>Age</th><th>Approve</th><th>Decide</th>
+			</thead>
+			<tbody>
+				<% foreach my $r ( @{$requests} ) { %>
+					<tr class="ticket_request" uuid="<%= $r->{'uuid'} %>">
+						<td><%= $r->{'name'} %></td>
+						<td><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></td>
+						<td style="max-width:300px;overflow-wrap:break-word;"><%= $r->{'info'}->{'description'} %></td>
+						<td><%== join '<br>', map { &subs::format_name($_) } @{$r->{'known'}} %></td>
+						<td><%= &subs::format_name($r->{'info'}->{'privilege'} || 'guest') %></td>
+						<td class="time" timestamp="<%= $r->{'timestamp'} %>"></td>
+						<td>
+							<select class="ticket_request_privilege">
+								<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
+									<option value="<%= $chair %>" <% if ($chair eq 'guest') { %>selected<% } %>><%= &subs::format_name($chair) %></option>
+								<% } %>
+							</select>
+							<input class="ticket_request_warranty" value="<%= $policy->{'guest_warranty'} %>" style="width:70px;">
+							<button class="ticket_approve" ticket="<%= $r->{'uuid'} %>">Approve</button>
+						</td>
+						<td>
+							<button class="ticket_decline" ticket="<%= $r->{'uuid'} %>">Decline</button>
+							<button class="ticket_blacklist" ticket="<%= $r->{'uuid'} %>">Blacklist</button>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+		<% if (scalar @{$requests} == 0) { %><div>No requests waiting.</div><% } %>
+		<h3>Blacklist</h3>
+		<table id="ticket_blacklist_list" style="width:100%;">
+			<thead>
+				<th>Name</th><th>Email</th><th>Phone</th><th>Note</th><th></th>
+			</thead>
+			<tbody>
+				<% foreach my $b ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @{$blacklist} ) { %>
+					<tr class="ticket_blacklist_entry" stamp="<%= $b->{'timestamp'} %>">
+						<td><%= $b->{'name'} %></td>
+						<td><%= $b->{'email'} %></td>
+						<td><%= $b->{'phone'} %></td>
+						<td><%= $b->{'note'} %></td>
+						<td><button class="ticket_blacklist_remove" stamp="<%= $b->{'timestamp'} %>">Remove</button></td>
 					</tr>
 				<% } %>
 			</tbody>
