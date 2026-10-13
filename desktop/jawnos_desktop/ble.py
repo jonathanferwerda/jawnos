@@ -83,6 +83,11 @@ DEFAULT_MTU = 23          # ATT default, as in the Android daemon
 CONNECT_TIMEOUT_MS = 20000
 RECONNECT_START = 3.0     # seconds; doubles to RECONNECT_MAX
 RECONNECT_MAX = 30.0
+# Only a link that stood this long is a real link. A drop sooner than this is a
+# flap (the watch reboots, or its radio sleeps): the backoff keeps doubling
+# instead of resetting, so a connect-then-drop loop cannot retry every 3 s
+# forever and cook the machine that hosts the bridge.
+STABLE_SECONDS = 30.0
 
 # Large daemon -> watch payloads (the ~25 KB room push) are zlib-compressed before
 # they go over the air; BLE is the slow part and the JSON deflates ~4x. A leading
@@ -181,6 +186,7 @@ class Bridge(object):
         self.next_attempt = 0.0
         self.connecting = False
         self.connecting_at = 0.0
+        self.connected_at = 0.0
         self.pending_connect = False
         self.discovery_owner = None
         self._char_signal = None
@@ -482,7 +488,9 @@ class Bridge(object):
 
     def _after_connect(self, path):
         self.device_path = path
-        self.reconnect_delay = RECONNECT_START
+        # the backoff resets only once the link has proved itself (see
+        # close_link / STABLE_SECONDS): resetting it here is what made a link
+        # that connects and immediately drops retry every 3 s, endlessly
         self._drop_signal("_device_signal")
         self._device_signal = self.bus.add_signal_receiver(
             self._on_device_props, bus_name=BLUEZ,
@@ -533,6 +541,7 @@ class Bridge(object):
             dbus_interface=DBUS_PROPS, signal_name="PropertiesChanged", path=notify_char)
         self.connecting = False
         self.pending_connect = False
+        self.connected_at = time.time()
         self.info("connected to", self.target.get("mac"), "mtu", self.mtu)
         self.emit({"event": "connected", "mac": self.target.get("mac"), "mtu": self.mtu})
         # Say who is on the other end; the watch prints this in the net room.
@@ -580,6 +589,18 @@ class Bridge(object):
         self.next_attempt = time.time() + delay
 
     def _maintain(self):
+        # A Connect() whose reply never came back must not latch the bridge: with
+        # connecting set, _begin_connect and the retry check both no-op and the
+        # link never comes back. Clear the stale attempt, drop the half-open
+        # D-Bus object and let the backoff cadence try again.
+        if self.connecting and (time.time() - self.connecting_at) > (CONNECT_TIMEOUT_MS / 1000.0 + 5):
+            self.info("connect timed out; retrying")
+            had = bool(self.device_path)
+            self.connecting = False
+            self.pending_connect = False
+            self.close_link(emit=False)
+            if not had:
+                self._schedule_reconnect()
         # BlueZ is the truth about the link. Without this, a drop that we did
         # not catch as a signal left write_char set and every send failed with
         # "Not connected" against a link that was already gone.
@@ -719,6 +740,11 @@ class Bridge(object):
         self._drop_signal("_device_signal")
         self._reset_rx()   # a half-received clip cannot span a reconnect
         had = self.device_path
+        # a link that stood a while gets a prompt first retry; a flap keeps the
+        # doubled delay so the retry storm stays bounded (see STABLE_SECONDS)
+        if had and self.connected_at and (time.time() - self.connected_at) >= STABLE_SECONDS:
+            self.reconnect_delay = RECONNECT_START
+        self.connected_at = 0.0
         self.write_char = None
         self.notify_char = None
         self.device_path = None

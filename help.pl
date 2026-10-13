@@ -816,7 +816,7 @@ our %topic = (
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Ben Folds Five" starts the track. It reports each step as it goes.',
-			'It writes only with your say-so. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. It never sends, pays or deletes.',
+			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. The Guide\'s associate - the small chat in the corner - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. It never sends, pays or deletes.',
 			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
 			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses.',
@@ -1052,20 +1052,34 @@ sub actions_prompt {
 	# rest - a model told it could "find" when nothing can run a find simply did
 	# nothing at all.
 	my ($only) = @_;
+	# The Confirmation Requirement (the Confirm tick in the Guide's associate
+	# panel, stored as a setting so it is the same on every machine): off means
+	# a proposed appointment is saved as it is made, so promote and discard are
+	# not offered and create says it writes straight in.
+	my $confirm_setting = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' });
+	my $auto_save = (defined $confirm_setting && $confirm_setting eq 'off');
 	my $header = "You are the JawnOS Guide. You can explain things, and you can operate the screen\nfor the person. Reply with EXACTLY ONE JSON object and nothing else - no prose\naround it. Choose one action:\n\n";
 	my $lines = '';
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
 		next if $only && ref $only eq 'HASH' && !$only->{ $t->{'name'} };
+		next if $auto_save && ($t->{'name'} eq 'promote' || $t->{'name'} eq 'discard');
+		my $desc = $t->{'desc'};
+		if ($auto_save && $t->{'name'} eq 'create') {
+			$desc = 'make the appointment and save it right away: the Confirmation Requirement is off, so create writes it straight in - do not ask for a yes and there is nothing to promote';
+		}
 		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
 		# pad to the shared column, but never let a long example swallow the gap
 		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
-		$lines .= '  ' . $ex . $gap . $t->{'desc'} . "\n";
+		$lines .= '  ' . $ex . $gap . $desc . "\n";
 	}
 	# runtime verbs are added on every invocation: they are the person's own
 	# commands (and the Coding agent's), understood on every machine
 	$lines .= &learned_tool_lines();
-	my $rules = <<'TXT';
+	my $create_rule = $auto_save
+		? "- To make an appointment, use create - the Confirmation Requirement is off, so it is saved the moment it is made. Do not ask the person to confirm and do not call promote; say briefly that it is saved."
+		: "- To make an appointment, use create - it only stages a proposal. Tell the person what you staged and ask them to confirm; call promote only once they agree, and never say it is saved before promote returns. Use discard if they decline.";
+	my $rules = <<"TXT";
 Rules:
 - Navigate and search only. Never delete, send, pay, or change any data.
 - Choose only from the actions listed above; there is no other verb here.
@@ -1082,9 +1096,7 @@ Rules:
   before choosing the next one.
 - For "when did I last see/do X", use find and answer from its last date - do not
   guess a date.
-- To make an appointment, use create - it only stages a proposal. Tell the person
-  what you staged and ask them to confirm; call promote only once they agree, and
-  never say it is saved before promote returns. Use discard if they decline.
+$create_rule
 - "Where was I" and "when did I last see X" are different questions. For a place
   at a time, use where_when with an absolute date. For a record or photo, use find.
 - For "show me <place> on a map", use show_place - it works offline from the

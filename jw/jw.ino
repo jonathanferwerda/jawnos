@@ -439,6 +439,23 @@ bool deviceConnected = false;
 static char ble_peer_addr[18] = "";
 static char ble_peer_name[32] = "";
 
+// The phone can only hear a notify once it has written the notification
+// descriptor (its CCCD). The bridge subscribes a beat after the link comes up,
+// and a tap pressed in that gap used to look sent and vanish; this flag makes
+// the watch queue it instead (see ble_link_ready).
+static volatile bool ble_notify_ready = false;
+
+// Every write to the phone must pass this. ble_radio_up is the radio's own
+// state; deinit() deletes the server and its characteristics, so after a sleep
+// teardown deviceConnected and pTxCharacteristic alone can lie (stale true /
+// dangling) until the next bring-up - a steps push in that window wrote into
+// freed memory, the StoreProhibited panic on the first wrist raise after a
+// walk's minute's worth of steps. The subscription flag covers the other
+// half: a notify before the phone subscribes is dropped without an error.
+static inline bool ble_link_ready() {
+  return ble_radio_up && deviceConnected && ble_notify_ready && pTxCharacteristic != nullptr;
+}
+
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define CHARACTERISTIC_UUID_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
@@ -501,7 +518,7 @@ static void queue_ble_message(String &message) {
 // small outbound message over the Nordic UART TX characteristic; used for the
 // bridge requests (state_request / room_request) from either core
 static void ble_send(JSONVar message) {
-    if (!deviceConnected || pTxCharacteristic == nullptr) {
+    if (!ble_link_ready()) {
         return;
     }
     String payload = JSON.stringify(message);
@@ -523,6 +540,7 @@ static void ble_peer_grab(uint8_t *b) {
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
+        ble_notify_ready = false;   // until the central subscribes to the TX characteristic
         ble_connected_at = millis();
         // the address comes straight from the host: this callback always runs,
         // where the address-carrying overload of the pair sits behind a config
@@ -542,6 +560,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
     };
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
+        ble_notify_ready = false;
         ble_connected_at = 0;
         ble_peer_addr[0] = '\0';
         ble_peer_name[0] = '\0';
@@ -551,6 +570,16 @@ class MyServerCallbacks: public BLEServerCallbacks {
         pServer->startAdvertising();
     }
 };
+// The phone subscribes by writing the notification descriptor; until it does,
+// notify() has nowhere to land. Bluedroid reports that write here.
+class MyTxCallbacks: public BLECharacteristicCallbacks {
+    void onSubscribe(BLECharacteristic *pCharacteristic, ble_gap_conn_desc *desc, uint16_t subValue) {
+        ble_notify_ready = (subValue != 0);
+        Serial.printf("[bt] notify %s\n", subValue ? "on" : "off");
+    }
+};
+static MyTxCallbacks ble_tx_callbacks;
+
 // One BLE write as it arrives: a whole message, or one chunk of a framed one.
 // Runs on the BLE stack's own task, whose stack is small -- nothing here may
 // print (1.9 KB of headroom measured on 2026-10-09, less than vfprintf wants,
@@ -680,6 +709,9 @@ void start_ble_transfer() {
   Serial.println("Powering up Nordic UART BLE Radio...");
   ble_radio_up = true;
   bt_enabled = true;
+  // a fresh stack starts linked to nobody
+  deviceConnected = false;
+  ble_notify_ready = false;
 
   // 1. Re-wake the underlying Espressif BLE stack hardware
   BLEDevice::init("T-Watch-S3");
@@ -701,6 +733,7 @@ void start_ble_transfer() {
                         BLECharacteristic::PROPERTY_NOTIFY
                       );
   pTxCharacteristic->addDescriptor(new BLE2902());
+  pTxCharacteristic->setCallbacks(&ble_tx_callbacks);
 
   // Create RX Characteristic (Phone sending data to Watch)
   // WRITE_NR is added so a *desktop* bridge can reach it: BlueZ refuses to
@@ -768,7 +801,17 @@ void stop_ble_transfer() {
   
   // Passing 'false' shuts off the RF power without destroying 
   // the NUS UUID/Characteristic mapping objects in RAM
+  // (this library's deinit deletes the server, its service and the
+  // characteristics anyway - see BLEDevice::deinit: m_pServer is deleted)
   BLEDevice::deinit(false); 
+  // deinit() deleted the server and its characteristics: the pointers and the
+  // connected flag are now lies, and anything checking only them would write
+  // into freed memory on the next wake (the first steps push after a wrist
+  // raise). Clear them so every send path goes through ble_link_ready().
+  deviceConnected = false;
+  ble_notify_ready = false;
+  pTxCharacteristic = nullptr;
+  pServer = nullptr;
   // the teardown blocks the loop for a moment; repaint so the pause cannot
   // leave half-drawn frames behind
   lv_obj_invalidate(lv_scr_act());
@@ -1538,17 +1581,18 @@ void loop() {
     xTaskCreatePinnedToCore(president_fetch_task, "PresTask", 12288, NULL, 1, NULL, 0);
   }
   // taps queued while the link was down go out shortly after a fresh central
-  // arrives: notify() before its CCCD subscription lands is dropped
+  // arrives: notify() before its CCCD subscription lands is dropped, so wait
+  // for the subscription flag too, not just the connection
   static bool ble_link_was_up = false;
   static uint32_t ble_link_up_at = 0;
-  if (deviceConnected && !ble_link_was_up) {
+  if (ble_link_ready() && !ble_link_was_up) {
     ble_link_was_up = true;
     ble_link_up_at = millis();
   }
-  else if (!deviceConnected) {
+  else if (!ble_link_ready()) {
     ble_link_was_up = false;
   }
-  if (deviceConnected && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
+  if (ble_link_ready() && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
     ble_link_up_at = 0;
     ble_flush_wigi();
     ble_push_steps(false);   // recover the steps taken while the link was down
@@ -2043,6 +2087,9 @@ void loop2(void * pvParameters) {
 }
 
 void stream_large_payload(String massive_string) {
+  if (!ble_link_ready()) {
+    return;
+  }
   // 1. Define packet size based on standard safe MTU lengths
   const int CHUNK_SIZE = 240; 
   int total_length = massive_string.length();
@@ -3044,7 +3091,7 @@ void remote_room() {
     static uint32_t last_attempt = 0;
     if (millis() - last_attempt > 20000) {
       last_attempt = millis();
-      if (deviceConnected) {
+      if (ble_link_ready()) {
         // the bridge is up: the phone fetches the room and pushes it back, so
         // this works away from the home wifi
         JSONVar req = JSON.parse("{}");
@@ -3321,7 +3368,7 @@ static bool voice_post_clip(const String &path) {
 // VOICE_BLE_CHUNK-sized pieces so neither side holds the whole clip at once -
 // the WAV can run ~190 KB and base64 a third larger again.
 static bool voice_ble_notify(String &part) {
-  if (!deviceConnected || pTxCharacteristic == nullptr) {
+  if (!ble_link_ready()) {
     return false;
   }
   // Each part must fit the notify limit (MTU - 3): an oversized part is rejected
@@ -3341,7 +3388,7 @@ static bool voice_ble_notify(String &part) {
 }
 
 static bool voice_ble_send(const String &path) {
-  if (!deviceConnected || pTxCharacteristic == nullptr) {
+  if (!ble_link_ready()) {
     return false;
   }
   File f = FFat.open(path.c_str(), FILE_READ);
@@ -3827,7 +3874,7 @@ void when_i_get_in(JSONVar wigi_item, String url) {
   }
   Serial.print("Defice connected: ");
   Serial.println(deviceConnected);
-  if (deviceConnected) {
+  if (ble_link_ready()) {
     // a local envelope: btMessages was shared with loop2 on core 0, and staging
     // a tap into it from here raced with that reader until resetting it from
     // this side panicked the chip (StoreProhibited)
@@ -3858,7 +3905,7 @@ void when_i_get_in(JSONVar wigi_item, String url) {
 // (vol +/-, play, ...) lands at once. Returns true when it went over BLE, so
 // the caller skips https_request().
 static bool tap_over_ble(int which, int toggle, const String &url) {
-  if (!deviceConnected) {
+  if (!ble_link_ready()) {
     return false;
   }
   JSONVar updater;
@@ -3897,6 +3944,10 @@ String generateRandomString(int length) {
 void ble_flush_wigi() {
   int l = wigi.length();
   if (l <= 0) {
+    return;
+  }
+  // the link must be up AND subscribed, or these notifies are dropped too
+  if (!ble_link_ready()) {
     return;
   }
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
@@ -3949,7 +4000,7 @@ void ble_flush_wigi() {
 // double-count. A count that went backwards means the AP path reset the
 // pedometer underneath us, and base drops to zero with it.
 static void ble_push_steps(bool force) {
-  if (!deviceConnected || pTxCharacteristic == nullptr) {
+  if (!ble_link_ready()) {
     return;
   }
   if (homebaseIP.length() == 0 || authorization.length() == 0) {

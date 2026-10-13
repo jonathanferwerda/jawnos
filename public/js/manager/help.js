@@ -271,9 +271,19 @@ function helpDoAction(a, cb) {
 		var when = helpResolveWhen(a.when);
 		$.post('/manager/help/stage', { app: a.app || '', title: a.title || '', notes: a.notes || '', timestamp: when }, function (r) {
 			if (!r || !r.staged) { cb('I could not stage that.'); return; }
-			jawnos_help_last_staged = r.staged;
 			var when_text = r.timestamp ? (' for ' + new Date(parseInt(r.timestamp, 10)).toLocaleString()) : '';
-			cb('Staged a "' + (a.title || a.app || '') + '" appointment' + when_text + '. It is NOT saved yet.',
+			var who = a.title || a.app || '';
+			// The Confirmation Requirement tick: off means the proposal is saved
+			// the moment it is made, so promote it here instead of asking
+			if (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired()) {
+				$.post('/manager/help/promote', { uuid: r.staged }, function (p) {
+					if (p && p.error) { cb('I could not save that: ' + p.error); return; }
+					cb('Saved a "' + who + '" appointment' + when_text + '.', 'Done - it is saved.');
+				}).fail(function () { cb('I staged it but could not save it.'); });
+				return;
+			}
+			jawnos_help_last_staged = r.staged;
+			cb('Staged a "' + who + '" appointment' + when_text + '. It is NOT saved yet.',
 				'I have staged it - say yes and I will save it.');
 		}).fail(function () { cb('I could not stage that.'); });
 		return;

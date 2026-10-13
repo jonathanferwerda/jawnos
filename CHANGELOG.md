@@ -5,6 +5,8 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-13
 
+- v0.1.228 - watch: every send needs the radio up AND the phone subscribed, because deinit deletes the server and its characteristics (a steps push in the second after a wrist raise wrote into freed memory - the panics that lost most of a walk's steps, and why a tap right after a wake landed or vanished); desktop bridge: a connect whose reply never comes back is dropped and retried, and the reconnect backoff resets only after a link has stood 30 s, so a connect-then-drop flap cannot retry every 3 s; Guide's associate: the whole navbar drags the panel, the corner icon still inspects whatever it is dropped on, and a Confirm tick beside the close button is the Confirmation Requirement - unticked, the Guide saves what it proposes without asking
+
 - v0.1.226 - mesh: a machine the hub knows only as a mirror is now reached over the LAN when it shares our network (same-wifi peers talk directly, not through the hub tunnel), and a machine named in words matches its real name rather than the " (mirror)" suffix
 - v0.1.223 - Guide promote now writes through appointment_writer (a bare insert left model/options empty, so the details view met a string where it wanted a hash) and stamps source 'guide' on the appointments it makes
 - v0.1.221 - the Coding agent can teach the Guide a runtime verb (a learn action saved to the shared setting, so the Guide and every machine pick it up at once)

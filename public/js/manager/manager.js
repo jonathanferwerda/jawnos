@@ -94,6 +94,19 @@ $(document).on('click', '#assistant_close', function() {
 	$('#assistant_view').hide();
 });
 
+// The Confirmation Requirement, the tick in the panel's header: with it on the
+// Guide stages a proposed appointment and waits for a yes; with it off the
+// guide saves what it proposes as it makes it (helpDoAction reads this).
+$(document).on('change', '#assistant_confirm', function() {
+	settingSetter({ app: '__president', setting: 'guide_confirm', device: 'all', value: $(this).is(':checked') ? 'on' : 'off' });
+});
+
+function assistantConfirmRequired() {
+	var box = $('#assistant_confirm');
+	if (box.length) { return box.is(':checked'); }
+	return true;
+}
+
 // ---- the Guide's associate: a compact chat that lives with the taskbar --------
 // Clicking the assistant button opens this; dragging it onto a picture drops
 // that picture into the chat. It shares the Guide's bubble format and its
@@ -289,11 +302,14 @@ $(document).on('click', '#assistant', function () {
 });
 
 async function assistantInitializer() {
+	// the whole navbar drags the panel (it spans the width); the corner icon is
+	// left out so it keeps its own drag - drop it on a control or a picture and
+	// the guide looks at whatever is under it (assistantIconInitializer)
 	$('#assistant_view').draggable({
 		revert: "false",
 		zIndex: 999999,
-		handle: '#assistant_anchor',
-		cancel: '',
+		handle: '#assistant_header',
+		cancel: '#assistant_anchor, #assistant_close, #assistant_confirm, input, button, label, textarea',
 		drag: function(p, ui) {
 			// keep the panel on screen and clear of the taskbar, wherever it is dragged
 			var w = $(this).outerWidth(), h = $(this).outerHeight();
@@ -310,7 +326,10 @@ async function assistantInitializer() {
 // anew on every open, so the drag is armed once at load for the copy the page
 // ships with and again over there after each fetch.
 function assistantIconInitializer() {
-	$('#assistant, .taskbar_pin[sel$="#assistant"]').draggable({
+	// the start-menu button, its taskbar pin, and the panel's own corner icon:
+	// drag any of them onto something and the guide looks at whatever is under
+	// the pointer (the panel's copy is excluded from the panel-move handle above)
+	$('#assistant, #assistant_anchor, .taskbar_pin[sel$="#assistant"]').draggable({
 		appendTo: "body",
 		helper: "clone",
 		revert: "invalid",
