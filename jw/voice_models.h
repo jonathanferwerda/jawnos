@@ -34,10 +34,11 @@ struct voice_word_t {
 };
 
 static const voice_word_t voice_words[] = {
-  { "vad",      vad_model,      0.50f },
-  // 0.90 was too strict to fire on a walk; lowered to make the phrase read
-  { "hey_jawn", hey_jawn_model, 0.75f },
-  { "jawn_do",  jawn_do_model,  0.75f },
+  // Cutoffs suit a quiet user: whispering into the watch sits well below a
+  // spoken word, so the noise floor is low. Raise these if it false-triggers.
+  { "vad",      vad_model,      0.30f },
+  { "hey_jawn", hey_jawn_model, 0.55f },
+  { "jawn_do",  jawn_do_model,  0.55f },
 };
 #define VOICE_WORD_COUNT (sizeof(voice_words) / sizeof(voice_words[0]))
 

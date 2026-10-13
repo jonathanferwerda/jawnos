@@ -46,6 +46,7 @@ import socket
 import sys
 import threading
 import time
+import zlib
 
 from .core import BRIDGE_PORT, ble_pid_path, config_dir
 
@@ -83,6 +84,13 @@ CONNECT_TIMEOUT_MS = 20000
 RECONNECT_START = 3.0     # seconds; doubles to RECONNECT_MAX
 RECONNECT_MAX = 30.0
 
+# Large daemon -> watch payloads (the ~25 KB room push) are zlib-compressed before
+# they go over the air; BLE is the slow part and the JSON deflates ~4x. A leading
+# 0x1e byte marks a compressed body (no JSON message starts with it); the watch
+# inflates it with the ESP32 ROM's miniz. Small messages ride uncompressed.
+TX_ZLIB_MIN = 512
+TX_ZLIB_MARK = 0x1e
+
 # The watch frames a payload that will not fit one notification the same way the
 # daemon frames a write: "<i>/<n>:" + chunk, 0-based. A notification with no such
 # prefix is a whole message. Only the voice clip uses this direction today.
@@ -91,15 +99,14 @@ RX_GAP_SECONDS = 5.0      # a pause this long means a new message, not a lost pa
 RX_MAX_PARTS = 4096       # a runaway total cannot grow the buffer without bound
 
 
-def frame_payload(message, mtu):
-    """Split *message* into the daemon's framed chunks.
+def frame_payload(data, mtu):
+    """Split *data* (bytes) into the daemon's framed chunks.
 
     Framing matches the Android daemon and the watch firmware
     (``<i>/<n>:`` + chunk). The sizes are pinned to the ATT limit, not the
     Android long-write maths: the watch only accepts **Write Without
     Response**, which cannot be fragmented, so one framed part must fit in
     ``mtu - 3`` bytes. 12 covers the longest ``"<i>/<n>:"`` prefix."""
-    data = message.encode("utf-8")
     max_part = max(20, mtu - 3)
     body = max(1, max_part - 12)
     total = 1 if len(data) == 0 else (len(data) + body - 1) // body
@@ -647,12 +654,20 @@ class Bridge(object):
 
     def _write_raw(self, message):
         char = self._iface(self.bus, self.write_char, GATT_CHAR_IFACE)
+        data = message.encode("utf-8")
+        # Deflate a large payload before it goes over the air (see TX_ZLIB_*):
+        # the ~25 KB room push is the slow one, and it compresses ~4x. Only when
+        # it actually helps - the mark byte would otherwise grow a small message.
+        if len(data) >= TX_ZLIB_MIN:
+            comp = zlib.compress(data, 6)
+            if len(comp) + 1 < len(data):
+                data = bytes([TX_ZLIB_MARK]) + comp
         # Write Without Response: this watch refuses every Write Request
         # (org.bluez.Error.NotPermitted on the D-Bus WriteValue). It has no ATT
         # ack to throttle us, so pace the chunks to avoid overrunning the
         # peripheral's receive buffer on a big room push.
         options = dbus.Dictionary({"type": "command"}, signature="sv")
-        parts = frame_payload(message, self.mtu)
+        parts = frame_payload(data, self.mtu)
         for index, part in enumerate(parts):
             value = dbus.Array([dbus.Byte(b) for b in part], signature="y")
             char.WriteValue(value, options)
