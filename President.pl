@@ -727,6 +727,32 @@ sub utility_functions() {
 					$dirty = 1;
 				}
 			}
+			# Prune the vestigial device-type rows: they exist only as the carry-over
+			# source just above, so once no machine's row is still pristine they are
+			# dead weight carried through every merge. Keep them while any row is
+			# unset, so a machine that has not yet run this code can still inherit.
+			if (grep { $controls->{$_} } @gb::device_types) {
+				my $is_pristine = sub {
+					my $row = shift;
+					foreach my $t ( keys %{$gb::utility_defaults} ) {
+						my $def = ($gb::utility_defaults->{$t}->{'toggle'} || 'off');
+						my $cur = ($row->{$t}->{'toggle'} || 'off');
+						return 0 if $cur ne $def;
+					}
+					return 1;
+				};
+				my $any_pristine = 0;
+				foreach my $k ( keys %{$controls} ) {
+					next if grep { $_ eq $k } @gb::device_types;
+					next unless $k =~ /^[0-9a-f]{32}$/;
+					if ($is_pristine->($controls->{$k})) { $any_pristine = 1; last; }
+				}
+				unless ($any_pristine) {
+					foreach my $dt ( @gb::device_types ) {
+						if ($controls->{$dt}) { delete $controls->{$dt}; $dirty = 1; }
+					}
+				}
+			}
 			# Adopt this machine's row into the runtime on first use (the process
 			# starts from gb.pl's built-in defaults, which are not its config) and
 			# again whenever the stored row was edited. The old check compared
@@ -782,6 +808,12 @@ sub utility_functions() {
 				# to rewrite the setting and message every tab several times a minute
 				# even when nothing had moved.
 				if (!defined $last_controls_json || $jcontrols ne $last_controls_json) {
+					# Stamp our own row's age before persisting so a peer merging this blob
+					# keeps OUR copy of our row over its staler one (merge_database merges
+					# the utility blob per key by __settings.last_change), and so the
+					# last-run time a peer's card shows tracks us.
+					$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+					$jcontrols = encode_json $controls;
 					$last_controls_json = $jcontrols;
 					&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
 					&Websocket::send('tab', { utility_controller => 'yes' });
