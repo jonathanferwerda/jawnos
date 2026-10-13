@@ -22361,7 +22361,12 @@ post '/manager/setting_setter' => sub($c) {
 	my $value = $c->param('value');
 	my $subsetting = $c->param('subsetting');
 	my $timestamp = $c->param('timestamp');
-	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting });
+	# the settingSetter() client already carries a device when one is asked for
+	# (the Guide's associate saves its Confirm tick with device 'all' so every
+	# machine reads the one shared row); the route used to drop it and store the
+	# value against this device class instead
+	my $device = $c->param('device');
+	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
 	$c->render(json => $s);
 };
 

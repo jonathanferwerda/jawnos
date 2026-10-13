@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-13
 
+- v0.1.231 - settings: the /manager/setting_setter route forwards a device (the client's settingSetter has always carried one; the Guide's associate saves its Confirm tick with device 'all' so every machine reads the one shared row, and the dropped field stored it against a single device class instead)
 - v0.1.229 - watch: the sleep teardown waits for the disconnect callback's own flag (not just the connection count) before deinit deletes the server, and deviceConnected is volatile across the two cores
 - v0.1.228 - watch: every send needs the radio up AND the phone subscribed, because deinit deletes the server and its characteristics (a steps push in the second after a wrist raise wrote into freed memory - the panics that lost most of a walk's steps, and why a tap right after a wake landed or vanished); desktop bridge: a connect whose reply never comes back is dropped and retried, and the reconnect backoff resets only after a link has stood 30 s, so a connect-then-drop flap cannot retry every 3 s; Guide's associate: the whole navbar drags the panel, the corner icon still inspects whatever it is dropped on, and a Confirm tick beside the close button is the Confirmation Requirement - unticked, the Guide saves what it proposes without asking
 
