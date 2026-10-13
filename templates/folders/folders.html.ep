@@ -1,4 +1,5 @@
-<div id="folders" style="background-color:var(--panel);width:100%;height:100%;display:flex;flex-direction:column;" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
+<% use Mojo::JSON qw/decode_json/; %>
+<div id="folders" unlock="<%= $settings->{'combo_unlock'} %>" style="background-color:var(--panel);width:100%;height:100%;display:flex;flex-direction:column;" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
 	<div id="folders_toolbar" style="min-height:35px;width:100%;border:solid;background-color:var(--panel-2);">
 		<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="little_thumb hover folders_command" command="home">
 		<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" class="little_thumb hover folders_command" command="up">
@@ -12,6 +13,10 @@
 		</select>
 		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Bookmarks" class="little_thumb hover" id="folders_bookmarks_toggle">
 		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archive queue" class="little_thumb hover" id="folders_archive_toggle">
+		<% my $fpl = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
+		<% if (grep { $_ eq 'folders' } @{$fpl}) { %>
+			<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="little_thumb hover folders_lock" style="<% if (($settings->{'combo_unlock'} || '') =~ /[a-zA-Z0-9]/) { %>background-color:red;<% } %>">
+		<% } %>
 	</div>
 	<%# the folders worth getting back to on the machine being browsed - which,
 	    for a remote one, is that machine's own list, since it renders this %>
@@ -44,6 +49,10 @@
 				</table>
 			<% } %>
 		</div>
+	</div>
+	<div id="folders_padlock" style="display:none;position:absolute;top:45px;left:0;width:100%;height:80%;z-index:7;">
+		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb folders_cancel_padlock hover" style="position:absolute;top:0;right:5px;z-index:8;">
+		<%= include 'padlock', mode => 'folders' %>
 	</div>
 	% my $disk = $fo->{'disk'};
 	<div id="folders_bottom_bar" style="background-color:var(--panel-2);width:100%;height:25px;border:solid;font-size:24px;position:absolute;bottom:-5px;">

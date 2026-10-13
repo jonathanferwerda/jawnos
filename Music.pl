@@ -104,7 +104,7 @@ get '/manager/music' => sub ($c) {
 		}
 	}
 	if ($unlock) {
-		if (secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' })) ) ) {
+		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' })) ) ) {
 			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
 				$permissive = 1;
@@ -380,7 +380,7 @@ sub music_search($data) {
 	}
 	my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 	if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-		$permissive = 1 if $settings->{'combo_unlock'};
+		$permissive = 1 if $settings->{'combo_unlock'} && &Manager::help_at_home();
 	}
 
 	my @folders;
@@ -662,7 +662,7 @@ post '/music/search' => sub ($c) {
 	my $misc_settings = &Manager::misc_setting_list();
 
 	if ($unlock) {
-		if (secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
 				$permissive = 1;
@@ -715,7 +715,7 @@ post '/music/search' => sub ($c) {
 		my $permissive = 0;
 		my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 		if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-			$permissive = 1 if $settings->{'combo_unlock'};
+			$permissive = 1 if $settings->{'combo_unlock'} && &Manager::help_at_home();
 		}
 		$crate = &song_maker({ c => $c, config => $config, port => $port, files => $list, settings => $settings, now_playing => $now_playing, same_order => $same_order, misc_settings => $misc_settings });
 	}

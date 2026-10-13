@@ -5247,6 +5247,10 @@ sub lock_session($c) {
 		&subs::window_closer('gallery');
 		&subs::setting_deleter({ app => 'music', setting => 'combo_unlock' });
 	}
+	if (&subs::setting_grabber({ app => 'folders', setting => 'combo_unlock' })) {
+		&subs::setting_deleter({ app => 'folders', setting => 'combo_unlock' });
+		&subs::window_closer('folders');
+	}
 
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
 	if ($player->{'unlocked'} == 1) {
@@ -14611,7 +14615,7 @@ get '/manager/gallery' => sub ($c) {
 	}
 	my $permissive = 0;
 	if ($unlock) {
-		if (secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			$permissive = 1;
 		}
 	}
@@ -14773,7 +14777,7 @@ get '/manager/gallery/scroll' => sub($c) {
 	my $returner = { apps => $apps, count => $count, count_timestamp => $count_timestamp };
 	my $permissive = 0;
 	if ($unlock) {
-		if (secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			$permissive = 1;
 		}
 	}
@@ -15600,6 +15604,27 @@ post '/manager/folders' => sub($c) {
 	$c->render(json => { html => $html, fo => $fo });
 };
 
+# The app a path belongs to: the first segment under a known location root
+# (~/Pictures/<app>/...). Used to apply the visibility rule to a listing.
+sub folders_owning_app($path) {
+	return undef unless defined $path && length $path;
+	my $misc = &misc_setting_list();
+	my $device = &subs::device_setter();
+	foreach my $k ( keys %{ $misc->{$device} || {} } ) {
+		next unless $k =~ /_location$/;
+		my $root = $misc->{$device}->{$k};
+		next unless defined $root && length $root;
+		$root = &subs::home($root);
+		$root =~ s{/+$}{};
+		next unless length $root;
+		next unless index($path, $root . '/') == 0;
+		my $rest = substr($path, length($root) + 1);
+		my ($seg) = split '/', $rest;
+		return $seg if defined $seg && length $seg;
+	}
+	return undef;
+}
+
 sub folders_opener($data) {
 	my $folder = $data->{'folder'};
 	my $command = $data->{'command'};
@@ -15623,6 +15648,13 @@ sub folders_opener($data) {
 		$total_size += $file->{'size'} unless $file->{'type'} eq 'folder';
 		push @{$files}, $file;
 	}
+	# a thing the person hid (visible ne checked) is not listed unless its padlock
+	# is open and we are at home - the same rule the gallery reads
+	my $revealed = help_media_revealed();
+	@{$files} = grep {
+		my $app = folders_owning_app($_->{'path'});
+		!($app && help_app_hidden($app) && !$revealed);
+	} @{$files};
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};
 	my $disk = {
@@ -17779,19 +17811,8 @@ get '/manager/help/find' => sub($c) {
 	my (%apps, %files);
 	my $visible_count = 0;
 	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
-	# A thing the person has not marked visible is only surfaced when its padlock
-	# is open - the same rule the gallery itself reads (visible eq 'checked').
-	my $permissive = help_media_unlocked();
-	my %visible;
-	my $is_visible = sub {
-		my $app = shift;
-		return 1 if $permissive;
-		return 0 unless defined $app && length $app;
-		$visible{$app} = &subs::setting_grabber({ app => $app, setting => 'visible' }) unless exists $visible{$app};
-		return (($visible{$app} // '') eq 'checked') ? 1 : 0;
-	};
 	foreach my $r ( @{$rows} ) {
-		next unless $is_visible->($r->{'app'});
+		next unless help_app_visible($r->{'app'});
 		$visible_count++;
 		$apps{ $r->{'app'} }++ if $r->{'app'};
 		my $fl = eval { decode_json $r->{'file'} } || [];
@@ -17811,7 +17832,7 @@ get '/manager/help/find' => sub($c) {
 	my $last_rows = &subs::db_query('select app, timestamp from appointments where (app like ? or file like ? or notes like ?) order by timestamp desc limit 60', $like, $like, $like)->hashes;
 	my $last;
 	foreach my $lr ( @{$last_rows} ) {
-		next unless $is_visible->($lr->{'app'});
+		next unless help_app_visible($lr->{'app'});
 		if ($lr->{'timestamp'} && $lr->{'timestamp'} =~ /^\d+$/) {
 			my $when = eval { localtime($lr->{'timestamp'} / 1000)->strftime('%A %B %d, %Y') };
 			$last = { app => $lr->{'app'}, when => $when } if $when;
@@ -17832,16 +17853,44 @@ sub help_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return great_circle_distance(deg2rad($lon1), deg2rad(90 - $lat1), deg2rad($lon2), deg2rad(90 - $lat2), $gb::planet_radius);
 }
 
-# Whether the gallery or music padlock is open: the same unlock those apps read,
-# so the guide can mirror their visibility rule (a thing not marked visible is
-# shown only when its padlock is open).
+# The current place's rating - 1 at home (private), 2 out (public), 3 dangerous.
+# A lost fix reads as public, so an unknown place denies rather than reveals.
+sub help_site_rating {
+	my $sig = &subs::signatorial_designer();
+	my $nav = eval { &subs::navigation_information({ signatorial => $sig, cache => 'yes' }) } || {};
+	return $nav->{$sig}->{'site_rating'} // 2;
+}
+sub help_at_home { return help_site_rating() <= 1 ? 1 : 0; }
+
+# Whether a media padlock (gallery, music or folders) is open: the same unlock
+# those apps read.
 sub help_media_unlocked {
 	my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
-	foreach my $ctx ( qw/gallery music/ ) {
+	foreach my $ctx ( qw/gallery music folders/ ) {
 		next unless &subs::setting_grabber({ app => $ctx, setting => 'combo_unlock' });
 		return 1 if grep { $_ eq $ctx } @{$sightings};
 	}
 	return 0;
+}
+
+# A thing the person marked not-visible is shown only when its padlock is open
+# AND we are at home - so a hidden album can never be opened out in public.
+sub help_media_revealed { return (help_media_unlocked() && help_at_home()) ? 1 : 0; }
+
+# An app is hidden when any device marks it not visible: a thing hidden anywhere
+# is hidden everywhere (the toggle syncs, so the phone gets it too).
+sub help_app_hidden($app) {
+	return 0 unless defined $app && length $app;
+	my $rows = &subs::db_select('settings', ['value'], { app => $app, setting => 'visible' })->hashes;
+	return 0 unless scalar @{$rows};
+	foreach my $r ( @{$rows} ) { return 1 unless (($r->{'value'} // '') eq 'checked'); }
+	return 0;
+}
+
+# What the guide may reach: an app it is not hidden, or the reveal rule holds.
+sub help_app_visible($app) {
+	return 1 unless help_app_hidden($app);
+	return help_media_revealed();
 }
 
 # the nearest thing we have measured, for naming a fix
@@ -18083,6 +18132,11 @@ get '/manager/help/music' => sub($c) {
 	$title =~ s{.*/}{};
 	$title =~ s/\.[a-z0-9]+$//i;
 	$c->render(json => { q => $q, found => scalar @hits, file => $file, title => $title });
+};
+
+get '/manager/help/permitted' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app') || '');
+	$c->render(json => { app => $app, permitted => (help_app_visible($app) ? 1 : 0) });
 };
 
 # ---- the Guide's write path: stage, then promote or drop ------------------
@@ -18370,6 +18424,11 @@ post '/manager/security/padlock_pull' => sub($c) {
 			}
 		}
 		if ($success == 1) {
+			# a hidden thing's padlock may only be turned at home
+			if ($mode =~ /^(?:gallery|music|folders)$/ && !help_at_home()) {
+				$c->render(json => { status => 'fail' });
+				return;
+			}
 			$attempts = 0;
 
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
@@ -18387,6 +18446,12 @@ post '/manager/security/padlock_pull' => sub($c) {
 				&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
 				&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
 				&Websocket::send('server', { console => 'searchMusic()', browser_tab_id => $c->param('browser_tab_id') });
+			}
+			if ($mode eq 'folders') {
+				my $combo_unlock = &subs::note_encrypter($c->session('suds'), &subs::random_string_creator(255));
+				&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
+				&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
+				&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
 			}
 			else {
 				&Websocket::send('server', { console => '$(\'#padlock_frame\').html(\'\'); $(\'#padlock_frame\').hide();$(\'#everything\').show();'});

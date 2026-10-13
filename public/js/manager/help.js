@@ -171,8 +171,17 @@ function helpResolveWhen(when) {
 function helpDoAction(a, cb) {
 	a = a || {};
 	if (a.action === 'open_app') {
-		if (a.app && typeof appWindowOpener === 'function') { appWindowOpener(a.app, Date.now(), {}); }
-		return cb('Opened the ' + (a.app || '') + ' window.', 'Done — I opened ' + (a.app || 'the app') + '.');
+		var open = function () {
+			if (a.app && typeof appWindowOpener === 'function') { appWindowOpener(a.app, Date.now(), {}); }
+			cb('Opened the ' + (a.app || '') + ' window.', 'Done — I opened ' + (a.app || 'the app') + '.');
+		};
+		if (!a.app) { open(); return; }
+		// a thing the person hid is not opened here unless its padlock is open at home
+		$.get('/manager/help/permitted', { app: a.app }, function (r) {
+			if (r && r.permitted === 0) { cb('That app is hidden here, so I left it shut.', 'That one is hidden here — I left it shut.'); return; }
+			open();
+		}).fail(open);
+		return;
 	}
 	if (a.action === 'open_gallery') {
 		var show = function (apps, search_term) {
@@ -207,7 +216,13 @@ function helpDoAction(a, cb) {
 			});
 		};
 		if (a.apps && a.apps.length) { show(a.apps, null); }
-		else if (a.app) { show([a.app], null); }
+		else if (a.app) {
+			// an explicit app still has to be permitted here (not hidden, or at home unlocked)
+			$.get('/manager/help/permitted', { app: a.app }, function (r) {
+				if (r && r.permitted === 0) { cb('That is hidden here, so I left it shut.', 'That one is hidden here — I left it shut.'); return; }
+				show([a.app], null);
+			}).fail(function () { show([a.app], null); });
+		}
 		else if (a.names && a.names.length) { resolve(a.names, function (found) { found.length ? show(found, null) : show(null, a.names.join(' ')); }); }
 		else if (a.search) { resolve([a.search], function (found) { found.length ? show(found, null) : show(null, a.search); }); }
 		else { show(null, null); }

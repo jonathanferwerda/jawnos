@@ -12,7 +12,7 @@
 		<%= include 'padlock', mode => 'security' %>
 		<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
 		<select id="padlock_contexts" multiple value="<%= join ',', @{$selected_contexts} %>" style="position:absolute;right:0px;bottom:40px;height:100px;">
-			<% foreach my $context ( qw/general gallery music/ ) { %>
+			<% foreach my $context ( qw/general gallery music folders/ ) { %>
 				<option value="<%= $context %>" <% if (grep { $_ eq $context } @{$selected_contexts}) { %>selected<% } %>><%= &subs::format_name($context) %></option>
 			<% } %>
 		</select>

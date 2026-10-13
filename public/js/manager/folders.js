@@ -15,6 +15,17 @@ $(document).on('click', '#folders_toggle', function() {
 	foldersOpener();
 });
 
+// the media padlock: a hidden app's files are not listed until it is turned, and
+// only at home. The lock icon shows the dial; the dial's own handler posts it.
+$(document).on('click', '.folders_lock', function () {
+	$('#folders_mainview').hide();
+	$('#folders_padlock').show();
+});
+$(document).on('click', '.folders_cancel_padlock', function () {
+	$('#folders_padlock').hide();
+	$('#folders_mainview').show();
+});
+
 function foldersOpener(data) {
 	if (!data) {
 		data = {};
