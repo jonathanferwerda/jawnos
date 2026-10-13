@@ -5514,6 +5514,11 @@ sub pseudonym_maker($context,$app) {
 	if (my $ps = &subs::cache_get({ app => 'me', context => 'pseudonyms', subcontext => $set_key })) {
 		# the console panel is now called sessions - migrate older cached lists
 		my $renamed = 0;
+		# names this build no longer ships (the beacon went away), dropped from
+		# any list cached before the change
+		my %retired = map { $_ => 1 } qw/beacon/;
+		my @kept = grep { !$_->{'name'} || !$retired{$_->{'name'}} } @{$ps};
+		if (scalar @kept != scalar @{$ps}) { $ps = \@kept; $renamed = 1; }
 		foreach my $p ( @{$ps} ) {
 			if ($p->{'name'} && $p->{'name'} eq 'console') {
 				$p->{'name'} = 'sessions';
