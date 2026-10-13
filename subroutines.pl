@@ -1038,34 +1038,6 @@ sub restore_list() {
 	return $returner;
 }
 
-sub beacon_appt_writer() {
-	my $beacon_appts = &subs::db_select('appointments', ['timestamp','uuid'], { app => '__president', type => 'beacon' })->hashes;
-	my $beacon;
-	if (scalar @{$beacon_appts} > 0) {
-		$beacon = $beacon_appts->[0];
-		$beacon->{'server_time'} = &subs::rightNow();
-		$beacon->{'warranty'} = &subs::ago_calc('-100m', &subs::rightNow());
-		&subs::db_update('appointments', $beacon, { uuid => $beacon->{'uuid'}, app => $beacon->{'app'} });
-		if (@{$beacon_appts} > 12) {
-			foreach my $beacon ( @{$beacon_appts} ) {
-				&subs::db_delete('appointments', { app => $beacon->{'app'}, type => 'beacon', uuid => $beacon->{'uuid'} });
-			}
-		}
-	}
-	else {
-		$beacon = {
-			uuid => &subs::random_string_creator(12),
-			type => 'beacon',
-			app => '__president',
-			warranty => &subs::ago_calc('-100m', &subs::rightNow()),
-			timestamp => &subs::rightNow()
-		};
-		&subs::db_insert('appointments', $beacon);
-	}
-	return $beacon;
-
-}
-
 
 sub edt_button_presser() {
 	my $data = shift;

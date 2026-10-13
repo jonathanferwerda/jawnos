@@ -1,54 +1,57 @@
 <style>
-/* Nine columns is more than a phone can show side by side, so each row becomes
-   a labelled card under 640px. Scoped to the panel's container so it cannot
-   touch any other table. */
-@media (max-width:640px) {
-	#pseudonym_list table, #pseudonym_list thead, #pseudonym_list tbody, #pseudonym_list tr, #pseudonym_list td { display:block; width:100%; box-sizing:border-box; }
-	#pseudonym_list thead { display:none; }
-	#pseudonym_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
-	#pseudonym_list td { border:0; padding:3px 2px; }
-	#pseudonym_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
-}
+/* One card per pseudonym, the same shape as the Sys panel: a head with the icon,
+   its name, its state and Default, then the fields as labelled controls that
+   wrap to as many columns as the screen can hold. */
+#pseudonym_list .ps_list { display:flex; flex-direction:column; gap:10px; }
+#pseudonym_list .ps_card { margin:0; }
+#pseudonym_list .ps_head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:0 0 8px; }
+#pseudonym_list .ps_head .pseudonym_icon_set { flex:0 0 auto; }
+#pseudonym_list .ps_name { flex:1 1 130px; min-width:0; font-weight:600; }
+#pseudonym_list .ps_head .pseudonym_state_set { flex:0 0 auto; }
+#pseudonym_list .ps_grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px 10px; }
+#pseudonym_list .ps_field { display:flex; flex-direction:column; gap:3px; min-width:0; font-size:12.5px; opacity:.85; }
+#pseudonym_list .ps_field > input, #pseudonym_list .ps_field > select { width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; line-height:1.3; }
+#pseudonym_list .ps_field > input[type=color] { padding:2px; height:34px; }
+#pseudonym_list .ps_wide { grid-column:1 / -1; }
 </style>
 <div class="cfg">
 	<h2>Pseudonyms</h2>
-	<p class="cfg-note">The named keyboard faces. Each setting saves as you change it; Default restores the built-in look.</p>
-	<div class="cfg-scroll">
-		<table>
-			<thead>
-				<tr><th>Status</th><th>Name</th><th>Colour</th><th>Icon</th><th>Place</th><th>Speech</th><th>Class</th><th>onClick</th><th>Default</th></tr>
-			</thead>
-			<tbody>
-				<% foreach my $p ( @{$pseudonyms} ) { %>
-					<tr pseudonym_name="<%= $p->{'name'} %>">
-						<td data-label="Status">
-							<select setting="status" class="pseudonym_setting pseudonym_state_set">
-								<% foreach my $state (qw/on off button none/) { %>
-									<option value="<%= $state %>" <% if ($state eq $p->{'status'}) { %>selected<% } %>><%= $state %></option>
-								<% } %>
-							</select>
-						</td>
-						<td data-label="Name"><%= $p->{'name'} %></td>
-						<td data-label="Colour"><input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set"></td>
-						<td data-label="Icon">
-							<img class="ps little_thumb pseudonym_icon_set" hint="<%= &subs::format_name($p->{'name'}) %>" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
-						</td>
-						<td data-label="Place">
-							<select setting="place" class="pseudonym_setting pseudonym_place_set">
-								<% foreach my $place (qw/top mid bottom/) { %>
-									<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= $place %></option>
-								<% } %>
-							</select>
-						</td>
-						<td data-label="Speech"><input value="<%= $p->{'speech'} %>" setting="speech" class="pseudonym_setting pseudonym_speech_set"></td>
-						<td data-label="Class"><input value="<%= $p->{'classmates'} %>" setting="classmates" class="pseudonym_setting psedonym_classmate_set"></td>
-
-						<td data-label="onClick"><input value="<%= $p->{'click'} %>" setting="click" class="pseudonym_setting pseudonym_onclick_set"></td>
-
-						<td data-label="Default"><button class="pseudonym_defaulter" name="<%= $p->{'name'} %>">Default</button></td>
-					</tr>
-				<% } %>
-			</tbody>
-		</table>
+	<p class="cfg-note">The named faces of the dock and the ledger: each one's icon, colour, place and speech. Changes save as you make them; Default restores the built-in look.</p>
+	<div class="ps_list">
+		<% foreach my $p ( @{$pseudonyms} ) { %>
+			<div class="cfg-card ps_card" pseudonym_name="<%= $p->{'name'} %>">
+				<div class="ps_head">
+					<img class="ps little_thumb pseudonym_icon_set" hint="<%= &subs::format_name($p->{'name'}) %>" name="<%= $p->{'name'} %>" src="<%= $p->{'icon'} %>" setting="icon" style="background-color:<%= $p->{'colour'} %>;">
+					<span class="ps_name"><%= &subs::format_name($p->{'name'}) %></span>
+					<select setting="status" class="pseudonym_setting pseudonym_state_set">
+						<% foreach my $state (qw/on off button none/) { %>
+							<option value="<%= $state %>" <% if ($state eq $p->{'status'}) { %>selected<% } %>><%= &subs::format_name($state) %></option>
+						<% } %>
+					</select>
+					<button class="pseudonym_defaulter" name="<%= $p->{'name'} %>">Default</button>
+				</div>
+				<div class="ps_grid">
+					<label class="ps_field"><span>Colour</span>
+						<input value="<%= $p->{'colour'} %>" type="color" setting="colour" class="pseudonym_setting pseudonym_colour_set">
+					</label>
+					<label class="ps_field"><span>Place</span>
+						<select setting="place" class="pseudonym_setting pseudonym_place_set">
+							<% foreach my $place (qw/top mid bottom/) { %>
+								<option <% if ($p->{'place'} eq $place) { %>selected<% } %> value="<%= $place %>"><%= &subs::format_name($place) %></option>
+							<% } %>
+						</select>
+					</label>
+					<label class="ps_field"><span>Speech</span>
+						<input value="<%= $p->{'speech'} %>" setting="speech" class="pseudonym_setting pseudonym_speech_set">
+					</label>
+					<label class="ps_field"><span>Class</span>
+						<input value="<%= $p->{'classmates'} %>" setting="classmates" class="pseudonym_setting psedonym_classmate_set">
+					</label>
+					<label class="ps_field ps_wide"><span>onClick</span>
+						<input value="<%= $p->{'click'} %>" setting="click" class="pseudonym_setting pseudonym_onclick_set">
+					</label>
+				</div>
+			</div>
+		<% } %>
 	</div>
 </div>

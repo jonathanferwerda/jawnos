@@ -590,7 +590,7 @@ $(document).on('change', '.pseudonym_setting', function() {
 	var timestamp = Date.now();
 	var setting = b.attr('setting');
 	var value = b.val();
-	var name = b.closest('tr').attr('pseudonym_name');
+	var name = b.closest('[pseudonym_name]').attr('pseudonym_name');
 	var p = 
 	$.ajax({
 		url: '/manager/configure/pseudonym_setter',

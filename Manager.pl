@@ -5540,7 +5540,6 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'on', name => "quote", icon => "quote" },
 		{ status => 'on', name => "encrypt", icon => "encrypt" },
 		{ status => 'on', name => "assign", icon => "assign" },
-		{ status => 'on', name => "beacon", icon => "beacon" },
 		{ status => 'on', name => "reset", icon => "reset" },
 		{ status => 'on', name => "software", icon => "software" },
 		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },

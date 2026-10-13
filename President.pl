@@ -623,9 +623,6 @@ sub utility_runner() {
 				$log->error("Task '$t' threw an error but we caught it: $@");
 			}
 		}
-		if ($u->{'beacon'} eq 'on') {
-			&subs::beacon_appt_writer();
-		}
 		if ($success == 1) {
 			$u->{'last_run'} = &subs::rightNow();
 		}
@@ -655,7 +652,6 @@ sub utility_functions() {
 
 	sub utility_controller() {
 		my $data = shift;
-		$data->{'send_beacon'} = 0;
 		my ($db,$database,$sql) = &subs::database_grabber();
 		if ($db) {
 			my $signatorial = &subs::signatorial_designer();

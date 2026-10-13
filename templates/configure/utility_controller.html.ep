@@ -24,7 +24,6 @@
 #utility_machines .utility_job_controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #utility_machines .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
-#utility_machines .utility_beacon { display:inline-flex; align-items:center; gap:4px; font-size:85%; opacity:.85; }
 @media (max-width:560px) {
 	#utility_machines .utility_job_name { flex:1 1 100%; }
 }
@@ -57,9 +56,6 @@
 							<% } %>
 							<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
 								<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
-							<% } %>
-							<% if ($controls->{$dt}->{$t}->{'beaconable'} eq 'yes') { %>
-								<label class="utility_beacon">Beacon <input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="beacon" <% if ($controls->{$dt}->{$t}->{'beacon'} eq 'on') { %>checked="checked"<% } %>></label>
 							<% } %>
 						</div>
 					</div>
