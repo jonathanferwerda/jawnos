@@ -152,35 +152,42 @@ function helpDoAction(a, cb) {
 		return cb('Opened the ' + (a.app || '') + ' window.', 'Done — I opened ' + (a.app || 'the app') + '.');
 	}
 	if (a.action === 'open_gallery') {
-		var openIt = function (app) {
+		var show = function (apps, search_term) {
 			var waits = [];
-			if (app) {
-				// scoping to an app shows its album; the app name is the reliable key,
+			if (apps && apps.length) {
+				// scoping to apps shows their albums; the app name is the reliable key,
 				// because a free-text search is literal and would miss e.g. "george
 				// michael" against an app actually called george_michael
-				waits.push(settingSetter({ app: 'gallery', setting: 'apps', value: JSON.stringify([app]) }));
+				waits.push(settingSetter({ app: 'gallery', setting: 'apps', value: JSON.stringify(apps) }));
 				waits.push(settingSetter({ app: 'gallery', setting: 'search', value: '' }));
 			}
-			else if (a.search) {
-				waits.push(settingSetter({ app: 'gallery', setting: 'search', value: a.search }));
+			else if (search_term) {
+				waits.push(settingSetter({ app: 'gallery', setting: 'search', value: search_term }));
 			}
 			$.when.apply($, waits).always(function () {
 				if (typeof appWindowOpener === 'function') { appWindowOpener('gallery', Date.now(), {}); }
-				cb(app ? ('Opened Gallery to the “' + app + '” album. The person can see those photos now.')
-					: (a.search ? ('Opened Gallery filtered to “' + a.search + '”. They can see the results now.') : 'Opened Gallery. The person can see it now.'), 
-					(app ? ('Done — here are the “' + app + '” photos.')
-						: (a.search ? ('Done — here is what I found for “' + a.search + '”.') : 'Done — the Gallery is open.')));
+				var what = (apps && apps.length) ? ('the “' + apps.join('” and “') + '” photos') : (search_term ? ('what I found for “' + search_term + '”') : 'the Gallery');
+				cb('Opened Gallery to ' + what + '. The person can see them now.', 'Done — here are ' + what + '.');
 			});
 		};
-		if (a.app) { openIt(a.app); }
-		else if (a.search) {
-			// resolve the name to an app first, so the person's words find the real app
-			$.get('/manager/help/find', { q: a.search }, function (r) {
-				var app = (r.apps && r.apps.length) ? r.apps[0].app : null;
-				openIt(app);
-			}).fail(function () { openIt(null); });
-		}
-		else { openIt(null); }
+		// resolve plain names (one or several) to real app names first, so the
+		// person's own words find the apps that exist
+		var resolve = function (names, done) {
+			names = (names || []).filter(function (n) { return n && n.length; });
+			if (!names.length) { done([]); return; }
+			var found = [], pending = names.length;
+			names.forEach(function (n) {
+				$.get('/manager/help/find', { q: n }, function (r) {
+					if (r.apps && r.apps.length) { found.push(r.apps[0].app); }
+					if (--pending === 0) { done(found); }
+				}).fail(function () { if (--pending === 0) { done(found); } });
+			});
+		};
+		if (a.apps && a.apps.length) { show(a.apps, null); }
+		else if (a.app) { show([a.app], null); }
+		else if (a.names && a.names.length) { resolve(a.names, function (found) { found.length ? show(found, null) : show(null, a.names.join(' ')); }); }
+		else if (a.search) { resolve([a.search], function (found) { found.length ? show(found, null) : show(null, a.search); }); }
+		else { show(null, null); }
 		return;
 	}
 	if (a.action === 'find') {
