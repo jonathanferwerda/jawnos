@@ -4936,12 +4936,17 @@ sub remote_useragent_maker($data) {
 	my $manager = $rm->{'manager'};
 	if ($rm->{'cookie'}) {
 		my $cookie_jar = decode_json $rm->{'cookie'};
+		# The cookie was stored with the address the peer was reached on (often a
+		# LAN ip), but the manager url is usually its fqdn: a cookie scoped to the
+		# ip is never sent to the fqdn host. Scope it to whatever host we are about
+		# to call, so the stored session actually rides along.
+		my $host = eval { Mojo::URL->new($manager)->host };
 		foreach my $cookie ( @{$cookie_jar} ) {
 			$ua->cookie_jar->add(
 				Mojo::Cookie::Response->new(
 					name => $cookie->{'name'},
 					value => $cookie->{'value'},
-					domain => $cookie->{'domain'},
+					domain => ($host || $cookie->{'domain'}),
 					path => $cookie->{'path'}
 				)
 			);
