@@ -17836,6 +17836,55 @@ get '/manager/help/staged' => sub($c) {
 	$c->render(json => { staged => $rows });
 };
 
+# ---- the guide looks an appointment over when it opens --------------------
+# If the app's name and description do not match its pos (part of speech) or
+# mab, the guide sets the right ones. It marks each app it has looked at in a
+# cache, so a machine with no model (or a second open) never asks twice.
+post '/manager/help/review' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app') || '');
+	my $description = $c->param('description') || '';
+	unless ($app) { $c->render(json => { ok => 0, error => 'no app' }); return; }
+	my $key = { app => '__president', context => 'guide_review', subcontext => $app };
+	if (&subs::cache_get($key)) {
+		$c->render(json => { app => $app, reviewed => 1, cached => 1, changed => 0 });
+		return;
+	}
+	my $settings = &subs::settings_grabber({ app => $app });
+	my $pos = $settings->{'pos'} || '';
+	my $mab = $settings->{'mab'} || '';
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	if (!$model) {
+		# no model on this machine: touch nothing and do not mark it, so a machine
+		# that does carry one still gets the look
+		$c->render(json => { app => $app, reviewed => 0, changed => 0, reason => 'no model' });
+		return;
+	}
+	my @poses = sort keys %{$gb::pos};
+	my $system = 'You check one JawnOS appointment\'s part of speech. An appointment logs one kind of activity; its "pos" (part of speech) is what sort of thing it is, and "mab" (might also be) names a second reading when the name is ambiguous. The valid pos values are: '
+		. join(', ', @poses) . '. Given the app\'s name and any description, reply with EXACTLY ONE JSON object and nothing else: {"pos":"<a valid pos>"} to correct it, or {"pos":"' . $pos . '","keep":true} when the current one already fits. Add "mab":"<a valid pos>" only if a second reading clearly applies.';
+	my $user = 'App: ' . $app . '\nCurrent pos: ' . $pos . '\nCurrent mab: ' . $mab . ($description ? ('\nDescription: ' . $description) : '');
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, $user);
+	my $action;
+	if ($text) { $action = eval { decode_json $text }; }
+	if (!$action || ($action->{'keep'} && !$action->{'mab'})) {
+		# the answer was unreadable or said it already fits: mark it and move on
+		&subs::cache_set($key, { reviewed => 1, changed => 0 });
+		$c->render(json => { app => $app, reviewed => 1, changed => 0 });
+		return;
+	}
+	my $changed = 0;
+	if ($action->{'pos'} && grep { $_ eq $action->{'pos'} } @poses && $action->{'pos'} ne $pos) {
+		&subs::setting_setter({ app => $app, setting => 'pos', value => $action->{'pos'} });
+		$changed = 1;
+	}
+	if ($action->{'mab'} && grep { $_ eq $action->{'mab'} } @poses && $action->{'mab'} ne $mab) {
+		&subs::setting_setter({ app => $app, setting => 'mab', value => $action->{'mab'} });
+		$changed = 1;
+	}
+	&subs::cache_set($key, { reviewed => 1, changed => $changed });
+	$c->render(json => { app => $app, reviewed => 1, changed => $changed, pos => $action->{'pos'}, mab => $action->{'mab'} });
+};
+
 post '/manager/handbook/settings' => sub ($c) {
 	my $setting = $c->param('setting');
 	my $value = $c->param('value');
