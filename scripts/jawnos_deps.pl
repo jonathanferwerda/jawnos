@@ -444,6 +444,15 @@ sub install_script {
 		push @lines, '';
 	}
 
+	unless ($no_extras) {
+		my @want_extras = grep { !$_->{'check'}->() } @extras;
+		if (@want_extras) {
+			push @lines, '# optional applications (Piper, the natural speech voice)';
+			push @lines, 'perl scripts/jawnos_deps.pl --extras-only --install';
+			push @lines, '';
+		}
+	}
+
 	if (!@pkgs && !@missing_modules) {
 		push @lines, 'echo "Every JawnOS dependency is already installed."';
 	}

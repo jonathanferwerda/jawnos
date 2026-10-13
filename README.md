@@ -112,7 +112,8 @@ speaking the phone's protocol, so a watch links to whichever machine is in range
 - **Location & activity** — location logging, travel history, distance and speed calculations,
   and a "father time" activity clock.
 - **AI assistance** — chat and image generation through local [Ollama](https://ollama.com)
-  models and Cloudflare Workers AI, plus speech (espeak) and transcription (whisper.cpp).
+  models and Cloudflare Workers AI, plus speech ([Piper](https://github.com/rhasspy/piper),
+  with espeak as a fallback) and transcription (whisper.cpp).
 - **Evaluation** — a model-backed appraisal of any app's activity, run on demand or nightly,
   that reads what the app is and what it has been doing, weighs day, week, month and year
   together, and leaves a report beside the app with a headline and links to everything it names.
@@ -264,7 +265,15 @@ cpanm --notest --force Mojolicious::Lite \
  Sereal::Encoder WebService::Ollama
 
 pip install weasyprint
+
+# Piper, for the natural speech voice: glibc-repo adds the repo glibc-runner needs
+# (Termux is bionic, so the glibc Piper build runs under glibc-runner)
+pkg install -y glibc-repo && pkg install -y glibc-runner
 ```
+
+`perl scripts/jawnos_deps.pl` installs Piper (engine and voices) for you as an
+"extra", and re-runs on every code update; the `pkg install` line above is the manual
+equivalent.
 
 Activate developer settings: go to **Settings → About Device → Software Information** and tap
 **Build Number** seven times. In **Developer options**, turn on **Wireless debugging**, tap it,
