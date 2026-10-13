@@ -1,8 +1,11 @@
 # Voice inputs beyond the watch (desktop, phone, Pico)
 
-The watch is live (see `docs/voice-wake-words.md`). This is the plan for the other
-places you'd speak from, captured so it is not lost between sessions. Nothing here is
-built yet; it is a design and the decision points still open.
+The watch is live (see `docs/voice-wake-words.md`). The **T-Deck is next**: it has
+fallen behind and must be brought to the watch's feature set before this file's other
+input sources matter — the checklist lives in `docs/voice-wake-words.md` under
+"T-Deck parity". This is the plan for the other places you'd speak from, captured so
+it is not lost between sessions. Nothing here is built yet; it is a design and the
+decision points still open.
 
 ## Always-on listening on the desktop app and the Termux fork
 

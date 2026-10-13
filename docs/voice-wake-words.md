@@ -62,6 +62,45 @@ capture listener (`voice_trigger_apply()` in `jw/jw.ino`).
 - Runtime wiring is chip-level, so a shared library under
   `~/jawnos-fw/watch-libs/` serves both.
 
+## T-Deck parity (required)
+
+The deck has **fallen behind the watch** and must be brought to the same feature set.
+The panel already offers a `voice_trigger` for a deck, but on the deck it currently
+arms nothing. This is the second half of the voice work and it is the *easier* of the
+two: an ESP32-S3 with the **ES7210 mic already streaming 16 kHz**, `esp_vad` already
+initialised, more flash/PSRAM, and an SD card.
+
+**Reuse, do not reinvent.** All of this is chip-level and compiles for the deck as-is:
+
+- `jw/voice_models.h` and the model headers (`vad`, `hey_jawn`, `jawn_do`) — the whole
+  table-driven listener.
+- The `jawn_micro_features` front-end in `~/jawnos-fw/watch-libs/`.
+
+Only the *mic feed* differs: the deck's ES7210 arrives as one TDM frame of four slots,
+so MIC1 (the first) is the mono track the front-end wants.
+
+**Checklist — each line is a watch behaviour the deck lacks today:**
+
+1. **microWakeWord listener.** Replace the deck's `esp_vad`-only capture with the
+   model table (`voice_words[]`), one model at a time, tensor arena in PSRAM.
+2. **`voice_trigger` plumbing.** `voice_trigger_apply()` arming on
+   `voice_models_has()`, driven by the panel's `now_me` push (and the BLE path the
+   watch already uses).
+3. **Automatic capture.** A task that captures on wake / any speech, ships, and keeps
+   listening. The deck records only via a **manual button** today.
+4. **Clip compaction + ship.** IMA ADPCM WAV (~4:1, ffmpeg reads it as-is) over
+   **WiFi-first, BLE fallback**, tagged with the *active* model (`voice_mode_name`),
+   stamped at **utterance onset** (`onset_ts`). Inflate the deflate'd payload in a task
+   with the ROM miniz — never in the BLE callback.
+5. **Acks + feedback.** `voice_recv` / `voice_done`, the on-screen listening border,
+   and the keep-the-screen-awake-while-capturing rule.
+6. **Serial tools.** `voicedbg on`, `vtrig <mode>`, `voice` — same names as the watch.
+7. **WiFi creds over BLE.** The `type:"wifi"` push the Embedded panel already sends.
+
+**Check early:** the ES7210's **channel routing / gain** (MIC1 of four, 37.5 dB — that
+is already its maximum) has to match what the watch's mono mic gives the model, and the
+deck's larger buffers may want the same `loop2` split for inflate and capture.
+
 ## Pico 2 W (later, different ecosystem)
 
 RP2350 — **not** ESP32, so none of the bundled Espressif libs apply. The
@@ -107,5 +146,6 @@ watch, deck, laptop, and Pico.
    (was 0.90 and hey jawn did not fire on a walk; lowered to 0.75 for both wake
    words. The hey jawn ROC file was lost, so 0.75 is still a guess - retrain for
    the curve, or lower further if it still misses).
-3. Deck (`jt/`): same `voice_models.h`/`micro_features` wiring (it already has
-   `esp_vad` and an ES7210 mic).
+3. **Deck parity (`jt/`).** Bring the deck up to the watch — see **T-Deck parity**
+   above for the full checklist (it already has `esp_vad` and an ES7210 mic, so this
+   is the wiring, not new research).
