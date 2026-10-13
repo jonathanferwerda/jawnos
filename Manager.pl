@@ -17967,30 +17967,27 @@ sub help_weight_projection($app, $target) {
 }
 
 # "where was I at a moment" - the newest fix at or before it, named if we can
-get '/manager/help/where' => sub($c) {
-	my $when = $c->param('when') // '';
+sub help_where($when) {
 	my $target;
-	if ($when =~ /^\d{10,}$/) { $target = $when + 0; }
-	else { my $t = eval { str2time($when) }; $target = $t ? $t * 1000 : undef; }
-	unless ($target) {
-		$c->render(json => { error => "I could not read the time '" . $when . "'." });
-		return;
-	}
+	if (defined $when && $when =~ /^\d{10,}$/) { $target = $when + 0; }
+	else { my $t = eval { str2time($when // '') }; $target = $t ? $t * 1000 : undef; }
+	return { error => "I could not read the time '" . ($when // '') . "'." } unless $target;
 	my $now = &subs::rightNow();
 	$target = $now if $target > $now;
 	my $row = &subs::db_query('select latitude, longitude, timestamp from continent where cast(timestamp as integer) <= ? and cast(timestamp as integer) <= ? and latitude is not null and latitude != ? order by cast(timestamp as integer) desc limit 1', $target, $now, '')->hash;
-	unless ($row && $row->{'latitude'}) {
-		$c->render(json => { when => $target, found => 0 });
-		return;
-	}
+	return { when => $target, found => 0 } unless $row && $row->{'latitude'};
 	my $at = localtime($row->{'timestamp'} / 1000)->strftime('%A, %B %d %Y at %I:%M%P');
 	my $near = help_nearest_place($row->{'latitude'}, $row->{'longitude'});
-	$c->render(json => {
+	return {
 		found => 1, latitude => $row->{'latitude'}, longitude => $row->{'longitude'},
 		timestamp => $row->{'timestamp'}, at => $at,
 		place => ($near ? &subs::format_name($near->{'app'}) : undef),
 		place_km => ($near ? sprintf('%.3f', $near->{'km'}) : undef)
-	});
+	};
+}
+
+get '/manager/help/where' => sub($c) {
+	$c->render(json => help_where($c->param('when')));
 };
 
 # "show me a place" - resolve a name to coordinates we already hold: a home
@@ -18042,9 +18039,9 @@ get '/manager/help/place' => sub($c) {
 
 # "how far did I walk" and "when will I be <target>" - read from the fixes and
 # the logged measurements, answered in the guide's own voice
-get '/manager/help/measure' => sub($c) {
-	my $measure = lc($c->param('measure') // '');
-	my $period = lc($c->param('period') // 'month');
+sub help_measure($measure, $period, $target) {
+	$measure = lc($measure // '');
+	$period = lc($period // 'month');
 	my $now = &subs::rightNow();
 	if ($measure =~ /walk|distance|km|steps?|far/) {
 		my $unit = ($period =~ /^(day|week|month|year)$/) ? $period : 'month';
@@ -18052,12 +18049,11 @@ get '/manager/help/measure' => sub($c) {
 		my ($km, $fixes) = help_walk_distance_km($start, $now);
 		my $label = { day => 'today', week => 'this week', month => 'this month', year => 'this year' }->{$unit};
 		my $text = sprintf('You have walked about %.1f km %s', $km, $label) . ($fixes ? ' (from ' . $fixes . ' place fixes).' : '.');
-		$c->render(json => { measure => 'walk', period => $unit, km => sprintf('%.2f', $km), fixes => $fixes, text => $text });
-		return;
+		return { measure => 'walk', period => $unit, km => sprintf('%.2f', $km), fixes => $fixes, text => $text };
 	}
 	if ($measure =~ /weight|pounds?|lbs?|kilos?|kg|mass/) {
 		my $person = &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '');
-		if (!$person) { $c->render(json => { error => 'I do not know whose weight to read.' }); return; }
+		return { error => 'I do not know whose weight to read.' } unless $person;
 		my $settings = &subs::settings_grabber({ app => $person });
 		my $unit = 'lb';
 		my $units = &subs::db_select('settings', ['value'], { app => $person, setting => 'unit' })->hashes;
@@ -18065,7 +18061,6 @@ get '/manager/help/measure' => sub($c) {
 			my $v = $u->{'value'};
 			if ($v && $gb::measures->{$v} && grep { $_ eq 'weight' || $_ eq 'mass' } @{ $gb::measures->{$v}->{'types'} || [] }) { $unit = $v; last; }
 		}
-		my $target = $c->param('target');
 		if (!$target) {
 			my $budgets = &subs::db_select('settings', ['value'], { app => $person, setting => 'budget' })->hashes;
 			foreach my $b ( @{$budgets} ) {
@@ -18089,10 +18084,13 @@ get '/manager/help/measure' => sub($c) {
 				$text = sprintf("You are at %.1f %s, %s about %.1f %s a week.", $latest, $unit, $dir, $rate, $unit);
 			}
 		}
-		$c->render(json => { measure => 'weight', unit => $unit, target => $target, %{$proj}, text => $text });
-		return;
+		return { measure => 'weight', unit => $unit, target => $target, %{$proj}, text => $text };
 	}
-	$c->render(json => { error => 'I can only measure walking distance and weight so far.' });
+	return { error => 'I can only measure walking distance and weight so far.' };
+}
+
+get '/manager/help/measure' => sub($c) {
+	$c->render(json => help_measure($c->param('measure'), $c->param('period'), $c->param('target')));
 };
 
 # "play <x>" - run the music app's own folder walk (Music::music_search) over
@@ -18199,6 +18197,16 @@ sub remote_command_execute($c, $action) {
 		&Websocket::send('server', { console => $js });
 		return 'now playing ' . $r->{'title'};
 	}
+	if ($a eq 'measure') {
+		my $r = help_measure($action->{'measure'}, $action->{'period'}, $action->{'target'});
+		return $r->{'text'} || $r->{'error'} || 'I measured nothing.';
+	}
+	if ($a eq 'where_when') {
+		my $r = help_where($action->{'when'});
+		return $r->{'error'} if $r->{'error'};
+		return 'I have no place fix for ' . ($action->{'when'} // 'then') . '.' unless $r->{'found'};
+		return 'The nearest fix before then was at ' . $r->{'at'} . ($r->{'place'} ? (', by ' . $r->{'place'}) : '') . '.';
+	}
 	return $action->{'text'} || ('did ' . ($a // 'nothing'));
 }
 
@@ -18232,7 +18240,10 @@ sub remote_command_send($data) {
 		})->result;
 	};
 	return { ok => 0, error => 'no reply from ' . ($rm->{'hostname'} || $rm->{'fqdn'} || $uuid) } unless $res && $res->is_success;
-	return eval { decode_json $res->body } || { ok => 1, observation => $res->body };
+	my $parsed = eval { decode_json $res->body };
+	# a login gate coming back means the peer no longer trusts our session
+	return { ok => 0, error => ($rm->{'hostname'} || $rm->{'fqdn'} || $uuid) . ' did not accept the sign-in (a fresh ticket there would renew it)' } unless $parsed && ref $parsed eq 'HASH';
+	return $parsed;
 }
 
 post '/manager/remote_command/send' => sub($c) {

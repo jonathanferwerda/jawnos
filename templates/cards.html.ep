@@ -4,7 +4,7 @@
 			<button class="cards_mode" mode="<%= $mod %>" <% if ($mode eq $mod) { %>status="enabled"<% } %>><%= &subs::shorthand_name(&subs::format_name($mod), 3) %></button>
 		<% } %>
 	</span>
-	<img id="deck_card" class="card hover" style="align:center;width:70%;height:80%;float:left;display:none;" hint="Title">
+	<img id="deck_card" class="card hover" style="align:center;width:70%;height:80%;float:left;" src="<%= &subs::icon_for('/images/cards/title.png') %>" hint="Title">
 	<span id="deck_history" style="float:right;width:30%;height:90%;overflow:scroll;">
 		<% foreach my $his ( @{$history} ) { %>
 			<% my $rn = &subs::random_string_creator(10); %>
@@ -17,7 +17,7 @@
 			<br>
 		<% } %>
 	</span>
-	<p style="font-size:36px;display:none;" id="card_title"></p>
+	<p style="font-size:36px;" id="card_title">Deck of Jawn!</p>
 	<p style="display:none;" id="card_description"></p>
 
 </div>
