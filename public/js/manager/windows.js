@@ -655,7 +655,9 @@ function appWindowOpener(i,timestamp,v) {
 			} catch (e) {}
 		}
 	}
-	if (i == 'budget' || i == 'folders' || i == 'relational' || i == 'warehouse' || i == 'measures' || i == 'market' || i == 'music' || i == 'web' || i == 'handbook' || i == 'video' || i == 'security' || i == 'library' || i == 'gallery' || i == 'twirl' || i == 'store' || i == 'studio' || i == 'marker' || i == 'ide' || i == 'terminal' || i == 'travel' || i == 'mailbox' || i == 'editor' || i == 'synth' || i == 'cards' || i == 'embedded' || i == 'terminal' || i == 'configure' || i == 'box_office' || i == 'process_monitor' || i == 'notes' || i == 'help' ) {
+	// the built-in apps come from the server (jawnos_builtin_apps, stamped by the
+	// layout from gb::known_appts), so there is one list, not two that drift
+	if (jawnos_builtin_apps[i]) {
 //				var preload = sessionStorage.getItem('preload_' + i);
 		var scope = localStorage.getItem('scope');
 		var article_uuid = localStorage.getItem('editor_article');

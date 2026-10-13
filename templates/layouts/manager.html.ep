@@ -100,6 +100,9 @@
 			var jawnos_clock_format = '<%= &subs::misc_setting('clock_format') || '24' %>';
 			var jawnos_clock_timezone = '<%= &subs::misc_setting('clock_timezone') || '' %>';
 			var jawnos_clock_notifications = '<%= &subs::misc_setting('clock_notifications') || 'on' %>';
+			// the built-in apps, from the server's own list (gb::known_appts), so the
+			// client keeps no copy of its own that can drift
+			var jawnos_builtin_apps = <%== encode_json({ map { $_ => 1 } sort keys %{$gb::known_appts} }) %>;
 		</script>
 		<!-- the manager's scripts load at the foot of the body, so the desktop can
 		     paint before the parser waits on them; see the bundle there -->
