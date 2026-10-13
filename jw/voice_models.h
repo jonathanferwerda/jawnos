@@ -60,6 +60,10 @@ struct voice_model_t {
 // changes, and a resident model reloads in no time). Only the picked one is active.
 static voice_model_t voice_slots[VOICE_WORD_COUNT];
 static voice_model_t *voice_active = nullptr;
+// The mode string of the model actually running ("vad" or a wake phrase), which
+// is what a shipped clip is tagged with - not the setting, which can be 'off'
+// while the listener falls back to the VAD. The server routes on this.
+static const char *voice_mode_name = "off";
 
 // Diagnostics for the serial 'voicedbg' line: the highest model probability
 // seen since the last report (0 = never invoked or always silent), and how many
@@ -131,6 +135,7 @@ static bool voice_models_init(const String &mode) {
     return false;
   }
   voice_active = slot;
+  voice_mode_name = w->mode;
   Serial.printf("[voice] model: %s\n", w->mode);
   return true;
 }

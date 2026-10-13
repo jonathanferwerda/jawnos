@@ -144,6 +144,10 @@ static volatile long voice_done_ts = -1;
 static volatile long voice_acked_ts = -1;
 // The one clip file the capture writes and the server's ack deletes.
 static String VOICE_WAV_PATH = "/voice.wav";
+// The same clip compacted to an IMA ADPCM WAV (~4:1) before it ships: the BLE
+// link is the slow part off WiFi, and ffmpeg (the server's transcriber) reads
+// this container natively, so nothing server-side changes.
+static String VOICE_ADPCM_PATH = "/voice.adpcm";
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
@@ -1535,6 +1539,7 @@ void loop() {
     voice_done_ts = -1;
     if (done_ts != 0 && done_ts == voice_clip_ts && FFat.exists(VOICE_WAV_PATH.c_str())) {
       FFat.remove(VOICE_WAV_PATH.c_str());
+      FFat.remove(VOICE_ADPCM_PATH.c_str());
       Serial.println("[voice] local clip deleted (transcribed)");
     }
   }
@@ -3238,7 +3243,7 @@ static bool voice_post_clip(const String &path) {
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + authorization
-    + "&voice=" + voice_trigger
+    + "&voice=" + voice_mode_name
     + "&timestamp=" + String((long)voice_clip_ts);
   bool ok = false;
   if (https.begin(client, url)) {
@@ -3300,7 +3305,7 @@ static bool voice_ble_send(const String &path) {
   int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
   if (total < 1) { total = 1; }
   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"voice\":\"" + voice_trigger + "\",\"data\":\"";
+  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"voice\":\"" + voice_mode_name + "\",\"data\":\"";
   String out = String(0) + "/" + String(total) + ":" + head;
   int in_chunk = 0;
   int index = 0;
@@ -3348,6 +3353,95 @@ static bool voice_ble_send(const String &path) {
   }
   f.close();
   return ok;
+}
+
+// Compress the recorded clip to an IMA ADPCM WAV (~4:1) before shipping. The
+// server's whisper_transcribe() pipes the clip through ffmpeg, which reads IMA
+// ADPCM WAV natively, so the server needs no change. Fixed 1024-byte blocks,
+// each a 4-byte header (int16 LE predictor, step index, reserved) then 4-bit
+// nibbles - the layout ffmpeg writes itself (verified against its output).
+#define VOICE_ADPCM_BLOCK 1024
+#define VOICE_ADPCM_SPB ((VOICE_ADPCM_BLOCK - 4) * 2 + 1)   // 2041 samples/block
+
+static const int32_t voice_adpcm_step[89] = {
+  7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,
+  50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,
+  337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,
+  2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,
+  12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767 };
+static const int8_t voice_adpcm_index[16] = { -1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8 };
+
+static void voice_wr16(uint8_t *p, uint16_t v) { p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; }
+static void voice_wr32(uint8_t *p, uint32_t v) { p[0]=v&0xff; p[1]=(v>>8)&0xff; p[2]=(v>>16)&0xff; p[3]=(v>>24)&0xff; }
+
+static bool voice_compress_clip() {
+  File in = FFat.open(VOICE_WAV_PATH.c_str(), FILE_READ);
+  if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
+  uint32_t pcm_bytes = in.size() - 44;
+  uint32_t samples = pcm_bytes / 2;
+  uint32_t blocks = (samples + VOICE_ADPCM_SPB - 1) / VOICE_ADPCM_SPB;
+  uint32_t data_bytes = blocks * VOICE_ADPCM_BLOCK;
+  uint32_t total = 60 + data_bytes;
+  uint8_t *buf = (uint8_t *)ps_malloc(total);
+  if (!buf) { buf = (uint8_t *)malloc(total); }
+  if (!buf) { in.close(); return false; }
+  uint32_t abps = (uint32_t)((uint64_t)VOICE_SAMPLE_RATE * VOICE_ADPCM_BLOCK / VOICE_ADPCM_SPB);
+  memcpy(buf, "RIFF", 4); voice_wr32(buf + 4, total - 8); memcpy(buf + 8, "WAVE", 4);
+  memcpy(buf + 12, "fmt ", 4); voice_wr32(buf + 16, 20);
+  voice_wr16(buf + 20, 0x11); voice_wr16(buf + 22, 1);
+  voice_wr32(buf + 24, VOICE_SAMPLE_RATE); voice_wr32(buf + 28, abps);
+  voice_wr16(buf + 32, VOICE_ADPCM_BLOCK); voice_wr16(buf + 34, 4);
+  voice_wr16(buf + 36, 2); voice_wr16(buf + 38, VOICE_ADPCM_SPB);
+  memcpy(buf + 40, "fact", 4); voice_wr32(buf + 44, 4); voice_wr32(buf + 48, samples);
+  memcpy(buf + 52, "data", 4); voice_wr32(buf + 56, data_bytes);
+  in.seek(44);
+  static int16_t blk[VOICE_ADPCM_SPB];
+  uint32_t o = 60;
+  while (true) {
+    int count = 0;
+    while (count < VOICE_ADPCM_SPB) {
+      int got = in.read((uint8_t *)(blk + count), (VOICE_ADPCM_SPB - count) * 2);
+      if (got <= 0) { break; }
+      if (got % 2) { break; }        // a torn sample ends the clip
+      count += got / 2;
+    }
+    if (count < 2) { break; }
+    uint32_t block_start = o;
+    int32_t pred = blk[0];
+    int index = 0;
+    voice_wr16(buf + o, (uint16_t)pred); o += 2; buf[o++] = (uint8_t)index; buf[o++] = 0;
+    int nib_have = 0; uint8_t pending = 0;
+    for (int i = 1; i < count; i++) {
+      int32_t step = voice_adpcm_step[index];
+      int32_t diff = (int32_t)blk[i] - pred;
+      uint8_t nib = 0;
+      if (diff < 0) { nib = 8; diff = -diff; }
+      if (diff >= step) { nib |= 4; diff -= step; }
+      if (diff >= (step >> 1)) { nib |= 2; diff -= (step >> 1); }
+      if (diff >= (step >> 2)) { nib |= 1; }
+      int32_t diffq = step >> 3;
+      if (nib & 4) { diffq += step; }
+      if (nib & 2) { diffq += step >> 1; }
+      if (nib & 1) { diffq += step >> 2; }
+      pred = (nib & 8) ? pred - diffq : pred + diffq;
+      if (pred > 32767) { pred = 32767; } else if (pred < -32768) { pred = -32768; }
+      index += voice_adpcm_index[nib];
+      if (index < 0) { index = 0; } else if (index > 88) { index = 88; }
+      if (!nib_have) { pending = nib; nib_have = 1; }
+      else { buf[o++] = pending | (nib << 4); nib_have = 0; }
+    }
+    if (nib_have) { buf[o++] = pending; }
+    while (o - block_start < VOICE_ADPCM_BLOCK) { buf[o++] = 0; }   // pad the last block
+    if (count < VOICE_ADPCM_SPB) { break; }
+  }
+  in.close();
+  File out = FFat.open(VOICE_ADPCM_PATH.c_str(), FILE_WRITE);
+  if (!out) { free(buf); return false; }
+  size_t wrote = out.write(buf, o);
+  out.close();
+  free(buf);
+  Serial.printf("[voice] compressed clip %u -> %u bytes\n", (unsigned)pcm_bytes, (unsigned)wrote);
+  return wrote == o;
 }
 
 // Ship a clip by whichever radio is up: the BLE bridge first (the preferred
@@ -3518,6 +3612,10 @@ static void voiceListenTask(void *pv) {
       if (pcm_bytes > 0) {
         finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
         Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
+        // Compact it first: ffmpeg on the server reads IMA ADPCM WAV natively, so
+        // the BLE link carries a quarter of the bytes with no server change.
+        String ship_path = VOICE_WAV_PATH;
+        if (voice_compress_clip()) { ship_path = VOICE_ADPCM_PATH; }
         // Ship, then hold the file until the server says the clip arrived whole.
         // A clip that never lands is tried again as a whole - the queue is one
         // clip, retried in place - so a busy bridge costs a moment, not the
@@ -3531,7 +3629,7 @@ static void voiceListenTask(void *pv) {
         // not a failure - wait and try again. The queue is one clip, retried in
         // place; the file stays until the server's ack deletes it.
         while (voiceListening && voice_acked_ts != ts && millis() - ship_started < 45000) {
-          if (voice_ship_clip(VOICE_WAV_PATH)) {
+          if (voice_ship_clip(ship_path)) {
             uint32_t started = millis();
             while (voiceListening && voice_acked_ts != ts && millis() - started < 6000) {
               vTaskDelay(100 / portTICK_PERIOD_MS);
