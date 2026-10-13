@@ -430,6 +430,9 @@ JSONVar dualCoreTasks;
 
 BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic = NULL;
+BLECharacteristic *pRxCharacteristic = NULL;
+BLEService *pService = NULL;
+BLE2902 *pCccd = NULL;
 // written by the BLE stack task, read by the ui core: volatile so neither core
 // caches it across the sleep teardown (see ble_link_ready)
 volatile bool deviceConnected = false;
@@ -572,6 +575,11 @@ class MyServerCallbacks: public BLEServerCallbacks {
         pServer->startAdvertising();
     }
 };
+// One instance, not a new one per bring-up: nothing in this core's Bluedroid
+// path deletes a server callback, so `new MyServerCallbacks()` in
+// start_ble_transfer leaked an object on every sleep/wake (see the teardown
+// note in stop_ble_transfer for the bigger versions of the same leak).
+static MyServerCallbacks ble_server_callbacks;
 // The phone subscribes by writing the notification descriptor; until it does,
 // notify() has nowhere to land. Bluedroid reports that write here.
 class MyTxCallbacks: public BLECharacteristicCallbacks {
@@ -675,6 +683,9 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         ble_frame_ingest(rawInput);
     }
 };
+// Stateless, so one shared instance is enough (the old code `new`ed one per
+// bring-up and never deleted it).
+static MyCallbacks ble_rx_callbacks;
 /*
 // Handles incoming data from Tasker
 class MyCallbacks: public BLECharacteristicCallbacks {
@@ -724,17 +735,17 @@ void start_ble_transfer() {
 
 // Create the BLE Server
   pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  pServer->setCallbacks(&ble_server_callbacks);
 
   // Create the UART Service
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pService = pServer->createService(SERVICE_UUID);
 
   // Create TX Characteristic (Watch sending data to Phone)
   pTxCharacteristic = pService->createCharacteristic(
                         CHARACTERISTIC_UUID_TX,
                         BLECharacteristic::PROPERTY_NOTIFY
                       );
-  pTxCharacteristic->addDescriptor(new BLE2902());
+  pTxCharacteristic->addDescriptor(pCccd = new BLE2902());
   pTxCharacteristic->setCallbacks(&ble_tx_callbacks);
 
   // Create RX Characteristic (Phone sending data to Watch)
@@ -744,12 +755,12 @@ void start_ble_transfer() {
   // Commands -- which this characteristic must advertise to receive them, or
   // the command is dropped with no error. Android writes with Write Requests
   // and is unaffected by the extra property.
-  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+  pRxCharacteristic = pService->createCharacteristic(
                                            CHARACTERISTIC_UUID_RX,
                                            BLECharacteristic::PROPERTY_WRITE |
                                            BLECharacteristic::PROPERTY_WRITE_NR
                                          );
-  pRxCharacteristic->setCallbacks(new MyCallbacks());
+  pRxCharacteristic->setCallbacks(&ble_rx_callbacks);
 
   // Start the service & begin broadcasting
   pService->start();
@@ -803,11 +814,24 @@ void stop_ble_transfer() {
     }
     pServer->getAdvertising()->stop();
   }
-  
-  // Passing 'false' shuts off the RF power without destroying 
-  // the NUS UUID/Characteristic mapping objects in RAM
-  // (this library's deinit deletes the server, its service and the
-  // characteristics anyway - see BLEDevice::deinit: m_pServer is deleted)
+
+  // This core's Bluedroid path never frees what createService/createCharacteristic
+  // made: the server has no destructor that walks its service map, and both
+  // ~BLEService and ~BLECharacteristic are empty there. Every sleep/wake cycle
+  // leaked two characteristics (the RX value string alone holds the last
+  // ~450-byte chunk), the CCCD descriptor and two callbacks - most of the ~2 KB a
+  // `blecycle` moved, enough to matter across a walk's raises. Delete what the
+  // core lets us own; BLEDevice::deinit deletes the server itself. (
+  // ~BLEService is private, so that one small object - three semaphores and a
+  // uuid - cannot be deleted from here and remains per cycle.)
+  delete pCccd;            pCccd = nullptr;
+  delete pTxCharacteristic; pTxCharacteristic = nullptr;
+  delete pRxCharacteristic; pRxCharacteristic = nullptr;
+  pService = nullptr;
+
+  // 'false' keeps the controller's memory pool: BLEDevice::init refuses to come
+  // back once btMemRelease has run (btMemReleased() guards it), and this radio is
+  // rebuilt on every wake. deinit still deletes the server object itself.
   BLEDevice::deinit(false); 
   // deinit() deleted the server and its characteristics: the pointers and the
   // connected flag are now lies, and anything checking only them would write
