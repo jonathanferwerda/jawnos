@@ -203,12 +203,26 @@ $(document).on('click', '.assistant_staged_approve', function () {
 });
 
 $(document).on('click', '.assistant_staged_delete', function () {
-	var row = $(this).closest('.assistant_staged_row');
-	var title = row.attr('staged_title') || 'the appointment';
-	$.post('/manager/help/discard', { uuid: row.attr('uuid') }, function () {
-		assistantChatAdd('step', 'Deleted the staged “' + title + '”.');
-		assistantStagedLoad();
-	});
+	// the program's delete idiom: the first press arms the button (red for 2 s),
+	// the second press within that window does the delete
+	var a = $(this);
+	var row = a.closest('.assistant_staged_row');
+	if (a.attr('armed') == 'yes') {
+		var title = row.attr('staged_title') || 'the appointment';
+		$.post('/manager/help/discard', { uuid: row.attr('uuid') }, function () {
+			assistantChatAdd('step', 'Deleted the staged “' + title + '”.');
+			assistantStagedLoad();
+		});
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({'background-color': 'red' });
+		setTimeout(function() {
+			a.css({'background-color': bgcolor });
+			a.attr('armed', 'no');
+		},2000);
+	}
 });
 
 // ---- the Guide's associate: a compact chat that lives with the taskbar --------

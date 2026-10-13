@@ -49,6 +49,13 @@ foreach my $apk (@apks) {
 	$vn = $override{'versionName'} || $vn || '0';
 	$vn =~ s/[^0-9A-Za-z._-]/_/g;
 	my $dest = "$dir/jawnos-$product-$vc-$vn.apk";
+	# A build must out-number the staged one or the in-app updater reads "up to
+	# date": say so rather than silently replacing it. (Re-staging the same
+	# number on purpose - a rebuild before anyone updated - is allowed.)
+	my ($staged_vc) = map { /-([0-9]+)-/ } glob("$dir/jawnos-$product-*.apk");
+	if (defined $staged_vc && $vc <= $staged_vc) {
+		print "note: $product versionCode $vc does not out-number the staged $staged_vc; devices will not see an update\n";
+	}
 	# one build per product: drop whatever else is staged for it
 	unlink $_ for grep { $_ ne $dest } glob("$dir/jawnos-$product-*.apk");
 	copy($apk, $dest) or die "copy to $dest failed: $!\n";
