@@ -147,6 +147,15 @@ watch, deck, laptop, and Pico.
   (its headroom during an inflate went from ~0.4 KB to ~8 KB). The chosen phrase is
   also saved in `config.json` (`voice_trigger`), so it no longer reverts to the VAD
   on every reboot.
+- **The voice model's arenas live in PSRAM, so they stop starving the LCD.** The
+  resource-variable arena is 8 KB per `voice_slots[]` row (three rows, one model
+  active) -- ~24 KB of internal `.bss`. Once the room payloads started applying,
+  that was enough to push the LCD's SPI DMA bounce (`max_transfer_sz`, 24 rows =
+  11520 bytes) past the largest free internal block: `spi_master` could not
+  allocate the bounce, draws failed, and the screen kept stale room pixels while
+  taps appeared dead. The arena is `ps_malloc`'d with the tensor arena now, and the
+  48 KB inflate scratch is PSRAM too; internal heap went ~39 KB -> ~64 KB and the
+  DMA errors stopped.
 
 ## Next steps
 

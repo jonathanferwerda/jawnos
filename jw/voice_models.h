@@ -49,7 +49,7 @@ struct voice_model_t {
   tflite::MicroResourceVariables *mrv = nullptr;
   TfLiteTensor *in = nullptr, *out = nullptr;
   uint8_t *tensor_arena = nullptr;
-  uint8_t var_arena[VOICE_MODEL_VAR_ARENA];
+  uint8_t *var_arena = nullptr;
   uint8_t stride = 1, step = 0;
   uint8_t probs[VOICE_MODEL_WINDOW];
   int idx = 0;
@@ -81,6 +81,15 @@ static bool voice_model_load(voice_model_t *m, const voice_word_t *w) {
   r.AddQuantize(); r.AddDepthwiseConv2D(); r.AddAveragePool2D(); r.AddMaxPool2D();
   r.AddPad(); r.AddPack(); r.AddSplitV();
 
+  // The resource-variable arena is 8 KB per slot and there are three slots, but
+  // only one model runs at a time: keeping all three in .bss cost ~24 KB of
+  // internal RAM, the same memory the LCD's SPI DMA bounce needs (see the tensor
+  // arena below). Nothing here is DMA, so it lives in PSRAM too.
+  if (!m->var_arena) {
+    m->var_arena = (uint8_t *)ps_malloc(VOICE_MODEL_VAR_ARENA);
+    if (!m->var_arena) { m->var_arena = (uint8_t *)malloc(VOICE_MODEL_VAR_ARENA); }
+    if (!m->var_arena) { return false; }
+  }
   m->ma = tflite::MicroAllocator::Create(m->var_arena, VOICE_MODEL_VAR_ARENA);
   if (!m->ma) { return false; }
   m->mrv = tflite::MicroResourceVariables::Create(m->ma, 20);

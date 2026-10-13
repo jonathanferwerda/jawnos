@@ -563,16 +563,30 @@ class MyServerCallbacks: public BLEServerCallbacks {
 static String ble_inflate_if_zlib(const String &in) {
   if (in.length() < 2 || (uint8_t)in[0] != BLE_ZLIB_MARK) { return in; }
   static const size_t cap = 48 * 1024;   // a room push inflates to ~25 KB
-  uint8_t *out = (uint8_t *)malloc(cap);
+  uint8_t *out = (uint8_t *)ps_malloc(cap);   // PSRAM: keep the 48 KB scratch out of internal RAM
+  if (!out) { out = (uint8_t *)malloc(cap); }
   if (!out) { Serial.println("[ble] inflate: no room"); return in; }
-  size_t got = tinfl_decompress_mem_to_mem(out, cap, (const uint8_t *)in.c_str() + 1,
-                                           in.length() - 1, TINFL_FLAG_PARSE_ZLIB_HEADER);
-  if (got == 0 || got == (size_t)-1) {
-    Serial.println("[ble] inflate failed");
+  // tinfl's state is ~11 KB. The ROM's tinfl_decompress_mem_to_mem keeps it on
+  // the stack, which is why loop2 needed 20 KB -- and that permanent 8 KB
+  // starved the LCD's SPI DMA pool (the screen froze with stale room pixels and
+  // taps stopped repainting). Keep the state in PSRAM via the low-level entry
+  // point instead, so loop2 stays small and the inflate costs no stack.
+  tinfl_decompressor *dec = (tinfl_decompressor *)ps_malloc(sizeof(tinfl_decompressor));
+  if (!dec) { free(out); Serial.println("[ble] inflate: no state"); return in; }
+  tinfl_init(dec);
+  size_t in_bytes = in.length() - 1;
+  size_t out_bytes = cap;
+  tinfl_status st = tinfl_decompress(dec, (const mz_uint8 *)in.c_str() + 1, &in_bytes,
+                                     out, out, &out_bytes,
+                                     TINFL_FLAG_PARSE_ZLIB_HEADER |
+                                     TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  free(dec);
+  if (st != TINFL_STATUS_DONE) {
+    Serial.printf("[ble] inflate failed (%d)\n", (int)st);
     free(out);
     return in;   // hand the raw bytes on; the parse will fail loudly, not crash
   }
-  String s((const char *)out, (unsigned int)got);
+  String s((const char *)out, (unsigned int)out_bytes);
   free(out);
   return s;
 }
@@ -842,12 +856,13 @@ void setup() {
   taskMutex = xSemaphoreCreateMutex(); 
 
   xTaskCreatePinnedToCore(
-    // 20 KB: this task parses the whole pushed payload (a room push is 25 KB of
-    // JSON) and inflates a compressed one -- miniz's tinfl_decompress_mem_to_mem
-    // keeps a ~10.5 KB tinfl_decompressor on the stack. At 12 KB that left ~384
-    // bytes free (192 while dozing), one payload from an overflow; 4 KB aborted
-    // the watch on 2026-10-09.
-    loop2, "Core0Task", 20480, NULL, 1, &Core0TaskHandle, 0
+    // 12 KB: this task parses the whole pushed payload (a room push is 25 KB of
+    // JSON); 4 KB overflowed the stack and aborted the watch on 2026-10-09. The
+    // compressed-payload inflate used to add ~10 KB more (miniz's state on the
+    // stack), which is why this was briefly 20 KB -- but that permanent 8 KB
+    // starved the LCD's SPI DMA pool and froze the display. The inflate keeps
+    // its state in PSRAM now (see ble_inflate_if_zlib), so 12 KB holds.
+    loop2, "Core0Task", 12288, NULL, 1, &Core0TaskHandle, 0
   );
   bleIncomingQueue = xQueueCreate(5, sizeof(String*));
 
