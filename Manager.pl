@@ -17778,11 +17778,24 @@ get '/manager/help/find' => sub($c) {
 	my $rows = &subs::db_query('select app, uuid, file, notes from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
 	my (%apps, %files);
 	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
+	# An encrypted file is only named when its padlock is open - the same unlock the
+	# gallery and music apps read - so the guide never reads out a locked file.
+	my $enc_open = 0;
+	foreach my $ctx ( qw/gallery music/ ) {
+		next unless &subs::setting_grabber({ app => $ctx, setting => 'combo_unlock' });
+		my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+		$enc_open = 1 if grep { $_ eq $ctx } @{$sightings};
+	}
 	foreach my $r ( @{$rows} ) {
 		$apps{ $r->{'app'} }++ if $r->{'app'};
 		my $fl = eval { decode_json $r->{'file'} } || [];
 		foreach my $f ( @{$fl} ) {
-			$files{ $f->{'name'} } = 1 if $f->{'name'} && lc($f->{'name'}) =~ /$fpat/i;
+			# the file list stores each entry as {f => <path>, ...}; older rows used name
+			my $n = $f->{'name'} || $f->{'f'};
+			next unless $n && lc($n) =~ /$fpat/i;
+			next if !$enc_open && $n =~ /\.enc$/i;
+			$n =~ s{.*/}{};
+			$files{ $n } = 1;
 		}
 	}
 	my @apps = map { { app => $_, count => $apps{$_} } } sort { $apps{$b} <=> $apps{$a} } keys %apps;
