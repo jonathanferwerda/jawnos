@@ -187,7 +187,7 @@ server_time VARCHAR(255),
 message LONGTEXT,
 app LONGTEXT,
 uuid VARCHAR(255) unique
-, connection_id VARCHAR(255), browser_tab_id VARCHAR(255), browser_tab VARCHAR(255), hostname VARCHAR(500), connected VARCHAR(25), user_agent LONGTEXT, local_address VARCHAR(25), remote_address VARCHAR(25), type VARCHAR(25), windows LONGTEXT, room VARCHAR(255), db VARCHAR(255), music_data LONGTEXT, jp_data LONGTEXT, random_string VARCHAR(500), warranty VARCHAR(25), href VARCHAR(500), pathname VARCHAR(500), cookie LONGTEXT, ost VARCHAR(25), ticket_uuid VARCHAR(255));
+, connection_id VARCHAR(255), browser_tab_id VARCHAR(255), browser_tab VARCHAR(255), hostname VARCHAR(500), connected VARCHAR(25), user_agent LONGTEXT, local_address VARCHAR(25), remote_address VARCHAR(25), type VARCHAR(25), windows LONGTEXT, room VARCHAR(255), db VARCHAR(255), music_data LONGTEXT, jp_data LONGTEXT, random_string VARCHAR(500), warranty VARCHAR(25), href VARCHAR(500), pathname VARCHAR(500), cookie LONGTEXT, ost VARCHAR(25), ticket_uuid VARCHAR(255), revision VARCHAR(255));
 CREATE TABLE tunnels (
 			server_time VARCHAR(255),
 			ost VARCHAR(255),

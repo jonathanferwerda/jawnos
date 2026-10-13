@@ -21766,6 +21766,12 @@ sub update_database($data) {
 		'alter table warehouse add column notes LONGTEXT',
 		'alter table warehouse add column state VARCHAR(25)',
 		'alter table warehouse add column source_uuid VARCHAR(255)',
+		# The websocket connect writes the running code revision so a tab can reload
+		# when it changes, but the column was never added to the table: every connect
+		# failed with "table websockets has no column named revision", retried to the
+		# driver's limit and left the tab unrecorded. Add it here for existing installs
+		# (schema.sql carries it for a database built fresh).
+		'alter table websockets add column revision VARCHAR(255)',
 		'CREATE INDEX IF NOT EXISTS idx6_warehouse on warehouse (kind)',
 		'CREATE INDEX idx1_tunnels on tunnels (signatorial)',
 		'CREATE INDEX idx2_settings on settings (setting,device)',
