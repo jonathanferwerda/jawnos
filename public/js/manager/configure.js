@@ -1038,6 +1038,17 @@ $(document).on('click', '#plat_setting', function() {
 		}
 	});
 
+// the Speech setting's Preview button: speak a test phrase in the voice chosen
+// for that device, rather than waiting for a real say_it to happen
+$(document).on('click', '.say_voice_test', function() {
+	var voice = $(this).closest('.misc_device_block').find('.misc_setting[setting="say_voice"]').val();
+	$.ajax({
+		url: '/manager/say_it',
+		type: 'GET',
+		data: { words: 'This is the voice you have chosen.', voice: voice, timestamp: Date.now() }
+	});
+});
+
 $(document).on('change','.misc_setting', function() {
 	var timestamp = Date.now();
 	var set = $(this);

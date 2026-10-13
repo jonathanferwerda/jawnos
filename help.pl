@@ -375,17 +375,20 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
+		verified => '2026-10-12',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
-			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.'
+			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
+			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (Amy, Ryan, Alba) or an eSpeak fallback, each chosen per device.'
 		],
 		steps => [
 			'Open Configure.',
 			'Use the tabs to move between appearance, devices, utilities and the mesh.',
 			'The Plat tab holds every AI model choice and provider key.',
+			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'Changes save as you make them; a bar or theme change is felt at once.'
 		],
-		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform' ]
+		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform', 'assistant' ]
 	},
 	'security' => {
 		title => 'Security', category => 'apps', app => 'security',
@@ -707,7 +710,8 @@ our %topic = (
 		summary => 'Chat and image generation, plus speech.',
 		body => [
 			'Assistant is the AI surface: chat and image generation, with speech synthesis and transcription alongside. Like Evaluation, it prefers a local model so your data stays put unless you point it elsewhere.',
-			'Which model each assistant uses, and the keys that reach them, are set under Configure → Plat. Besides the local Ollama and Cloudflare Workers AI, that list now reaches OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter.'
+			'Which model each assistant uses, and the keys that reach them, are set under Configure → Plat. Besides the local Ollama and Cloudflare Workers AI, that list now reaches OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter.',
+			'When JawnOS speaks aloud it uses the voice set under Configure → Misc → Speech: a neural Piper voice, or an eSpeak fallback. Speech plays on the machine running that device\'s jawn.'
 		],
 		related => [ 'evaluation', 'help_app', 'platform' ]
 	},

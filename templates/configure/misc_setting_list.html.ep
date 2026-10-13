@@ -232,6 +232,25 @@
 			<% } %>
 		</div>
 
+		<h4>Speech</h4>
+		<div class="cfg-grid misc_grid">
+			<%# say_it's voice for this device. The piper choices read neural models
+			    staged under voices/; the eSpeak choices need nothing installed. %>
+			<% my $say_chosen = &subs::misc_setting('say_voice', $dt) || &subs::say_default_voice(); %>
+			<label>
+				<b>Say voice</b>
+				<select id="say_voice" class="misc_setting" device="<%= $dt %>" setting="say_voice">
+					<% foreach my $v ( &subs::say_voices() ) { %>
+						<option value="<%= $v->{'value'} %>" <% if ($say_chosen eq $v->{'value'}) { %>selected="selected"<% } %>><%= $v->{'label'} %></option>
+					<% } %>
+				</select>
+			</label>
+			<label style="align-items:center;">
+				<b>Preview</b>
+				<button type="button" class="hover say_voice_test" device="<%= $dt %>">Say test phrase</button>
+			</label>
+		</div>
+
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<h4>Locations</h4>

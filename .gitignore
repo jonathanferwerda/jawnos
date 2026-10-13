@@ -31,6 +31,10 @@ Thumbs.db
 # --- committed: a ~35 MB binary per version would bloat git history forever. ---
 releases/
 
+# --- Speech voices (Piper models + the piper binary). Same deal as releases/: ---
+# --- multi-MB blobs carried across devices, never committed. ---
+voices/
+
 # --- Python tooling (font + face preview generator) ---
 __pycache__/
 *.pyc

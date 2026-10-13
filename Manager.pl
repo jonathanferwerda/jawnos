@@ -3792,7 +3792,7 @@ post '/manager/configure/logo_upload' => sub($c) {
 sub misc_setting_list() {
     my ($db, $database, $sql) = &subs::database_grabber();
 		my @locations = &subs::location_types();
-    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir/;
+    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir say_voice/;
 		foreach my $l ( @locations ) {
 			push @settings, $l . '_location';
 			push @settings, $l . '_archive';
@@ -18748,7 +18748,8 @@ post '/manager/keyboard_presser' => sub($c) {
 get '/manager/say_it' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $words = $c->param('words');
-	&subs::say_it($words);
+	my $voice = $c->param('voice');
+	&subs::say_it($words, $voice);
 	$c->render(text => 'said ' . $words);
 	&Websocket::send('server', { json => { type => 'command', command => 'say_it', params => $words, timestamp => $timestamp } });
 };
