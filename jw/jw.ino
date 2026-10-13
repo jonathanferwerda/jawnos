@@ -430,7 +430,9 @@ JSONVar dualCoreTasks;
 
 BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic = NULL;
-bool deviceConnected = false;
+// written by the BLE stack task, read by the ui core: volatile so neither core
+// caches it across the sleep teardown (see ble_link_ready)
+volatile bool deviceConnected = false;
 // Who is on the other end of the bridge. The address comes from the connect
 // event; the name arrives with the daemon's hello (Android rotates the
 // address underneath the connection, a name does not). Fixed buffers, not
@@ -791,9 +793,12 @@ void stop_ble_transfer() {
     // Close the link before tearing the stack down. Deinit used to run while a
     // disconnect event was still in flight, and BLEServer's callback then
     // walked characteristics that no longer existed (LoadProhibited panic),
-    // rebooting the watch mid-save and eating /config.json with it.
-    for (int tries = 0; pServer->getConnectedCount() > 0 && tries < 20; tries++) {
-      pServer->disconnect(pServer->getConnId());
+    // rebooting the watch mid-save and eating /config.json with it. Wait for
+    // both the count and the callback's own flag to clear: the count can read 0
+    // a beat before onDisconnect runs, and deinit deletes the server either way.
+    for (int tries = 0; pServer->getConnectedCount() > 0 || deviceConnected; tries++) {
+      if (tries >= 40) { break; }
+      if (pServer->getConnectedCount() > 0) { pServer->disconnect(pServer->getConnId()); }
       delay(50);
     }
     pServer->getAdvertising()->stop();
