@@ -22802,19 +22802,25 @@ sub remote_machine_reconnector($c) {
 
 				sub remote_pseudonyms($rm) {
 					my $pseu = eval { return decode_json $rm->{'pseudonyms'} } || {};
-					my ($ip,$ping,$ping_test);
+					# No `my` on $ping/$ping_test here: shadowing them inside the block threw
+					# the probe's answer away, so a reachable pseudonym still read as
+					# no-answer and the full handshake below never ran on the new network.
+					my ($ping,$ping_test);
 					if ($pseu->{'ip'}) {
-						my $ip = $pseu->{'ip'};
-						my $ping = &remote_machine_online({ rm => $rm, ip => $pseu->{'ip'}, port => $pseu->{'port'}, signatorial => $rm->{'signatorial'} });
+						$ping = &remote_machine_online({ rm => $rm, ip => $pseu->{'ip'}, port => $pseu->{'port'}, signatorial => $rm->{'signatorial'} });
 
 						if ($ping == 0) {
 							$ping_test = 'no';
 						} else {
+							# rebuild the manager in the base form the handshake expects
+							# (host:port, no /manager path): the stored pseudonym carries the
+							# peer's advertised `.../manager`, which would double up when the
+							# handshake appends its own '/manager/remote_auth_test'.
+							my $port = $pseu->{'port'} || $rm->{'port'};
 							$rm->{'ip'} = $pseu->{'ip'};
-							$rm->{'manager'} = $pseu->{'manager'};
-							$rm->{'port'} = $pseu->{'port'};
+							$rm->{'manager'} = 'https://' . $pseu->{'ip'} . ':' . $port;
+							$rm->{'port'} = $port;
 							$rm->{'ws_port'} = $pseu->{'ws_port'};
-#							&subs::db_update('remote_machines', $rm, { signatorial => $rm->{'signatorial'} });
 						}
 					}
 					return ($ping, $ping_test, $rm);
@@ -23065,7 +23071,14 @@ sub remote_machine_online($data) {
 			my $ua = Mojo::UserAgent->new();
 			$ua->inactivity_timeout(15);
 			my $rs = &subs::encrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($remote_signatorial, 5), $remote_signatorial);
-			my $manager = $rm->{'manager'} . '/?signatorial=' . url_escape $rs;
+			# When we were handed a bare LAN address (a same-net probe, or a peer's
+			# stored pseudonym), call THAT address. Its manager url is usually its
+			# fqdn, which resolves back to us on a machine whose hosts/dnsmasq maps
+			# the peer's name to loopback - the ping answers but the call lands on
+			# ourselves, so the peer never answers with its own signatorial and the
+			# two machines never meet on the new network.
+			my $manager = ($ip =~ /^\d+\.\d+\.\d+\.\d+$/) ? 'https://' . $ip . ':' . $port : $rm->{'manager'};
+			$manager .= '/?signatorial=' . url_escape $rs;
 			my $user_agent = $remote_signatorial;
 			my $res = $ua->insecure(1)->get($manager => {user_agent => $user_agent});
 			if ( $res->result->is_success ) {

@@ -677,39 +677,70 @@ sub utility_functions() {
 		my ($db,$database,$sql) = &subs::database_grabber();
 		if ($db) {
 			my $signatorial = &subs::signatorial_designer();
+			my $real_device = &subs::device_setter();
 			my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+			my $dirty = 0;
 			if (scalar keys %{$controls} == 0) {
 				foreach my $dt ( ( $signatorial, @gb::device_types ) ) {
 					$controls->{$dt} = clone $gb::timeouts;
 				}
-				my $jcontrols = encode_json $controls;
-				&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
-				$gb::timeouts = $controls->{$signatorial};
-			} 
-			else {
-				# pick up any utilities added since this install was configured
-				if ($gb::utility_defaults && $controls->{$signatorial}) {
-					my $added = 0;
+				$dirty = 1;
+			}
+			# This machine's own row, keyed by its signatorial. The runtime reads no
+			# other key, so a missing row is created here.
+			unless ($controls->{$signatorial}) {
+				$controls->{$signatorial} = clone $gb::timeouts;
+				$dirty = 1;
+			}
+			# pick up any utilities added since this install was configured
+			if ($gb::utility_defaults) {
+				foreach my $t ( keys %{$gb::utility_defaults} ) {
+					unless (exists $controls->{$signatorial}->{$t}) {
+						$controls->{$signatorial}->{$t} = clone $gb::utility_defaults->{$t};
+						$dirty = 1;
+					}
+				}
+			}
+			# A row that was never edited through Configure is only the built-in
+			# defaults cloned in when it was first created. Re-keying the rows from
+			# device types to signatorials left the person's switches on the old
+			# device-type rows, so a machine silently reverted to the defaults
+			# (every job off). When our row is still pristine, take the matching
+			# device-type row's switches and intervals and record the change so it
+			# sticks and stops being re-derived.
+			if (!$controls->{$signatorial}->{'__settings'}->{'last_change'} && $controls->{$real_device}) {
+				my $pristine = 1;
+				foreach my $t ( keys %{$gb::utility_defaults} ) {
+					my $def = ($gb::utility_defaults->{$t}->{'toggle'} || 'off');
+					my $cur = ($controls->{$signatorial}->{$t}->{'toggle'} || 'off');
+					if ($cur ne $def) { $pristine = 0; last; }
+				}
+				if ($pristine) {
 					foreach my $t ( keys %{$gb::utility_defaults} ) {
-						unless (exists $controls->{$signatorial}->{$t}) {
-							$controls->{$signatorial}->{$t} = clone $gb::utility_defaults->{$t};
-							$added = 1;
+						my $legacy = $controls->{$real_device}->{$t} or next;
+						foreach my $k ( qw/toggle interval/ ) {
+							next unless defined $legacy->{$k};
+							$controls->{$signatorial}->{$t}->{$k} = $legacy->{$k};
 						}
 					}
-					if ($added) {
-						$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
-						my $jcontrols = encode_json $controls;
-						&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
-					}
+					$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+					$dirty = 1;
 				}
-				if ($controls->{$signatorial}->{'__settings'}->{'last_change'} > $gb::timeouts->{'__settings'}->{'last_change'}) {
-
-					foreach my $t ( keys %{$gb::timeouts} ) {
-						Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
-					}
-					$gb::timeouts = $controls->{$signatorial};
-					$gb::utility_running = 0;
+			}
+			# Adopt this machine's row into the runtime on first use (the process
+			# starts from gb.pl's built-in defaults, which are not its config) and
+			# again whenever the stored row was edited. The old check compared
+			# last_change against gb.pl's (absent) value, so a row that was never
+			# edited - undef > undef - was never adopted at all.
+			my $row_lc = $controls->{$signatorial}->{'__settings'}->{'last_change'} || 0;
+			my $cur_lc = $gb::timeouts->{'__settings'}->{'last_change'} || 0;
+			if (!$gb::utility_adopted || $row_lc > $cur_lc) {
+				foreach my $t ( keys %{$gb::timeouts} ) {
+					Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
 				}
+				$gb::timeouts = $controls->{$signatorial};
+				$gb::utility_adopted = 1;
+				$gb::utility_running = 0;
 			}
 			if ($gb::utility_running == 0) {
 				$gb::utility_running = 1;
@@ -726,7 +757,7 @@ sub utility_functions() {
 
 			}
 			my $now = &subs::rightNow();
-			my $writable = 0;
+			my $writable = $dirty ? 1 : 0;
 			foreach my $t ( keys %{$controls->{$signatorial}} ) {
 				if ($gb::timeouts->{$t}->{'toggle'} eq 'on') {
 					if ($now - $gb::timeouts->{$t}->{'last_run'} > $gb::timeouts->{$t}->{'interval'} * 5 * 1000) {
