@@ -41,7 +41,7 @@
 <div id="top_right_buttons">
 	<div id="assistant_view" style="position:fixed;height:360px;width:320px;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
 		<div id="assistant_header" style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;gap:6px;padding:0 6px;box-sizing:border-box;border-bottom:1px solid var(--line);">
-			<img src="<%= &subs::icon_for('/icons/lymeboard/automate everything.png') %>" jawnos_icon="/icons/lymeboard/automate everything.png" class="little_thumb" id="assistant_anchor" hint="Drag me onto a picture and the guide will look at it">
+			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb" id="assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
 			<span style="flex:1;font-weight:bold;font-size:13px;opacity:.85;">Guide's associate</span>
 			<img id="assistant_close" hint="Close" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" jawnos_icon="/images/make believe/cancel_button.png">
 		</div>

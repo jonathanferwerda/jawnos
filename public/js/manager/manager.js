@@ -101,6 +101,7 @@ $(document).on('click', '#assistant_close', function() {
 
 var jawnos_assistant_chat = [];
 var jawnos_assistant_dragging = false;
+var jawnos_assistant_topic = '';
 
 function assistantLog() { return $('#assistant_view .assistant_chat_log'); }
 
@@ -162,6 +163,7 @@ function assistantAsk() {
 	var q = $.trim($('#assistant_question').val() || '');
 	if (!q) { return; }
 	$('#assistant_question').val('');
+	jawnos_assistant_topic = '';
 	assistantOpen();
 	assistantChatAdd('user', q);
 	jawnos_assistant_chat.push({ role: 'user', content: q });
@@ -182,7 +184,7 @@ function assistantGuideStep(n) {
 		data: {
 			transcript: JSON.stringify(jawnos_assistant_chat),
 			context: JSON.stringify(ctx),
-			topic: '',
+			topic: jawnos_assistant_topic || '',
 			model: assistantModel()
 		},
 		success: function (r) {
@@ -221,9 +223,11 @@ function assistantDrop(media) {
 			+ '<span style="display:inline-block;max-width:84%;border-radius:10px;padding:5px;background:#cdeccd;">'
 			+ '<img style="display:block;max-width:180px;max-height:180px;border-radius:6px;" src="' + media.image + '"></span></div>'));
 		log.scrollTop(log[0].scrollHeight);
+		jawnos_assistant_chat.push({ role: 'user', content: '(I showed you a picture)' });
 	}
 	else if (media.audio) {
 		assistantChatAdd('user', '(voice clip)');
+		jawnos_assistant_chat.push({ role: 'user', content: '(I played you a voice clip)' });
 	}
 	var content = assistantAnswerBubble();
 	$.ajax({
@@ -236,6 +240,44 @@ function assistantDrop(media) {
 		},
 		error: function () { content.text('I could not reach the assistant.'); }
 	});
+}
+
+// What the assistant was dragged onto, spelled out for the guide: the element,
+// any hint or id it carries, and the app or window it lives in.
+function assistantDescribeElement(el) {
+	var $e = $(el);
+	if (!$e.length || el === document.body || el === document.documentElement) { return ''; }
+	var bits = [];
+	bits.push((el.tagName || '').toLowerCase());
+	if ($e.attr('id')) { bits.push('#' + $e.attr('id')); }
+	if (typeof el.className == 'string' && el.className.trim()) { bits.push('.' + el.className.trim().split(/\s+/).slice(0, 3).join('.')); }
+	var hint = $e.attr('hint') || $e.attr('title') || $e.attr('aria-label') || $e.attr('placeholder');
+	if (hint) { bits.push('(hint: ' + hint + ')'); }
+	var label = $.trim($e.closest('label').text());
+	if (label) { bits.push('label: "' + label.slice(0, 60) + '"'); }
+	var app = $e.closest('[app]').attr('app');
+	if (app) { bits.push('app: "' + app + '"'); }
+	var win = $.trim($e.closest('.wind').find('.name_text').first().text());
+	if (win) { bits.push('window: "' + win + '"'); }
+	var text = $.trim($e.text()).slice(0, 80);
+	if (text) { bits.push('text: "' + text + '"'); }
+	return bits.join(' ');
+}
+
+// Dropped onto a control or a window (not a picture): ask the guide about it,
+// carrying the thread on so it remembers what came before.
+function assistantHelpFor(el) {
+	var desc = assistantDescribeElement(el);
+	assistantOpen();
+	if (!desc) {
+		assistantChatAdd('step', 'Drop me onto a control or a window and I will explain it.');
+		return;
+	}
+	// the element may name a help topic; hand it over so the guide has the briefing
+	jawnos_assistant_topic = $(el).closest('[help]').attr('help') || '';
+	assistantChatAdd('user', 'Help me with: ' + desc);
+	jawnos_assistant_chat.push({ role: 'user', content: 'The person dragged me onto this element and wants help using it: ' + desc });
+	assistantGuideStep(0);
 }
 
 $(document).on('click', '#assistant_send', function () { assistantAsk(); });
@@ -262,7 +304,7 @@ async function assistantInitializer() {
 // anew on every open, so the drag is armed once at load for the copy the page
 // ships with and again over there after each fetch.
 function assistantIconInitializer() {
-	$('#assistant').draggable({
+	$('#assistant, .taskbar_pin[sel$="#assistant"]').draggable({
 		appendTo: "body",
 		helper: "clone",
 		revert: "invalid",
@@ -362,7 +404,13 @@ function assistantIconInitializer() {
 				audio = $target.attr('src');
 			}
 			
-			assistantDrop({ image: image, base64: base64Data, audio: audio });
+			if (image || audio) {
+				assistantDrop({ image: image, base64: base64Data, audio: audio });
+			}
+			else {
+				// not a picture: ask the guide about whatever it landed on
+				assistantHelpFor(elementLandedOn);
+			}
 
 		}
 	});
@@ -375,6 +423,20 @@ function assistantIconInitializer() {
 
 
 }
+
+// The taskbar rebuilds its pins whenever the order changes, so re-arm the
+// assistant's drag each time it lays them out (a pinned assistant is a
+// .taskbar_pin with sel="#start_menu #assistant").
+$(function () {
+	if (typeof jawnosTaskbarOrderApply == 'function') {
+		var base = jawnosTaskbarOrderApply;
+		jawnosTaskbarOrderApply = function () {
+			var r = base.apply(this, arguments);
+			assistantIconInitializer();
+			return r;
+		};
+	}
+});
 
 $(document).on('click dblclick mouseenter mouseleave keydown keyup change submit focus blur input', function(e) {
 	nfcListener();

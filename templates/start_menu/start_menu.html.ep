@@ -142,7 +142,7 @@
 				    top-left where a reach for the search kept landing on the bird %>
 				<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
 				<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;position:absolute;bottom:4px;left:104px;" class="little_thumb now jonathan start_menu_corner">
-				<img src="<%= &subs::icon_for('/icons/lymeboard/automate everything.png') %>" jawnos_icon="/icons/lymeboard/automate everything.png" class="little_thumb assistant hover start_menu_corner" id="assistant" style="position:absolute;bottom:4px;left:152px;">
+				<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant hover start_menu_corner" id="assistant" style="position:absolute;bottom:4px;left:152px;">
 				<img class="jonathan little_thumb fuck_you start_menu_corner" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" style="position:absolute;bottom:4px;left:200px;"></img>
 
 				<%# The desktop app's embedded view shows this and nothing else does: it
