@@ -2424,6 +2424,24 @@ sub backup_registry_prune() {
 	return $deleted;
 }
 
+# Held for the life of a remote export. Releasing in DESTROY means the lock is
+# cleared even when backup_now dies part-way, not only on its normal return.
+{
+	package Jawn::BackupLock;
+	sub new { my ($class,$val) = @_; return bless { val => $val }, $class; }
+	sub release {
+		my $self = shift;
+		return unless $self->{'val'};
+		my $val = $self->{'val'};
+		$self->{'val'} = undef;
+		eval {
+			my $row = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+			&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if (($row->{'value'} || '') eq $val);
+		};
+	}
+	sub DESTROY { my $self = shift; $self->release; }
+}
+
 sub backup_now() {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
@@ -2441,24 +2459,32 @@ sub backup_now() {
 	# OOM killer takes the tree. One remote export at a time, here on the target:
 	# a second caller is told to come back on its next tick instead.
 	my $backup_lock;
+	my $backup_lock_guard;
 	if ($reason eq 'remote_update') {
 		my $held = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
-		# a worker that dies mid-export leaves the lock behind; bound it by age so
-		# the next caller recovers instead of wedging the sync for the day
-		my $stale = !$held->{'server_time'} || $held->{'server_time'} + (10 * 60 * 1000) < &subs::rightNow();
+		# The lock value carries the holding worker's pid. This tree restarts every
+		# few minutes under memory pressure, so an export's worker is often gone
+		# before the export finishes; a lock whose owner is dead is recovered at
+		# once instead of wedging every peer's sync for the full age bound. The age
+		# bound stays as the fallback for an owner that is alive but hung.
+		my ($held_uuid, $held_pid) = split /:/, ($held->{'value'} || ''), 2;
+		my $owner_dead = 0;
+		$owner_dead = 1 if ($held_pid && $held_pid =~ /^\d+$/ && $held_pid > 1 && !kill(0, $held_pid));
+		my $stale = !$held->{'server_time'} || $held->{'server_time'} + (10 * 60 * 1000) < &subs::rightNow() || $owner_dead;
 		if (($held->{'value'} || '') ne '' && ($held->{'value'} || '') ne '0' && !$stale) {
 			$log->info('remote backup busy; told ' . $c->tx->remote_address . ' to retry') if $log;
 			return { status => 'busy', reason => $reason };
 		}
-		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => $auuid });
+		$backup_lock = $auuid . ':' . $$;
+		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => $backup_lock });
 		# two workers can pass the check above in the same instant; the last writer
 		# keeps the lock and the loser steps aside rather than run a second export
 		my $confirm = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
-		if (($confirm->{'value'} || '') ne $auuid) {
+		if (($confirm->{'value'} || '') ne $backup_lock) {
 			$log->info('remote backup claim lost to another worker; told ' . $c->tx->remote_address . ' to retry') if $log;
 			return { status => 'busy', reason => $reason };
 		}
-		$backup_lock = $auuid;
+		$backup_lock_guard = Jawn::BackupLock->new($backup_lock);
 	}
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $server_time = &subs::rightNow();

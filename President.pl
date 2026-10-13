@@ -669,8 +669,12 @@ sub utility_functions() {
 	$gb::clothesline_running = 0;
 
 	# The last utility state we persisted, so idle ticks don't keep rewriting the
-	# setting and pinging every tab.
-	my $last_controls_json;
+	# setting and pinging every tab. A package variable, not a `my`: the nested
+	# utility_controller below is a named sub, and a `my` here is not shared with it
+	# (perl warns "will not stay shared"), so it was a fresh undef on every call -
+	# the guard never matched and the blob was rewritten, and every tab pinged,
+	# every five seconds.
+	our $utility_controls_json;
 
 	sub utility_controller() {
 		my $data = shift;
@@ -807,14 +811,14 @@ sub utility_functions() {
 				# Only persist + broadcast when something actually changed. This used
 				# to rewrite the setting and message every tab several times a minute
 				# even when nothing had moved.
-				if (!defined $last_controls_json || $jcontrols ne $last_controls_json) {
+				if (!defined $utility_controls_json || $jcontrols ne $utility_controls_json) {
 					# Stamp our own row's age before persisting so a peer merging this blob
 					# keeps OUR copy of our row over its staler one (merge_database merges
 					# the utility blob per key by __settings.last_change), and so the
 					# last-run time a peer's card shows tracks us.
 					$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
 					$jcontrols = encode_json $controls;
-					$last_controls_json = $jcontrols;
+					$utility_controls_json = $jcontrols;
 					&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
 					&Websocket::send('tab', { utility_controller => 'yes' });
 				}
