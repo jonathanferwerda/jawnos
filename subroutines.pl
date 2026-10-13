@@ -5989,12 +5989,13 @@ sub rightNow() {
 
 sub headless_navigation() {
 	my $signatorial = &subs::signatorial_designer();
-	# This machine's own newest fix, not the newest row in the whole table. The
-	# continent table is shared by every app, every device and every machine (the
-	# browser writes a row on each appointment action and the rows are synced),
-	# so the global newest row is almost always fresh and used to starve this
-	# machine's own capture the moment anything else was writing.
-	my $last_location = &subs::db_query('select * from continent where signatorial = ? and latitude is not null and latitude != ? and timestamp is not null order by server_time desc', $signatorial, '')->hashes->[0];
+	# This machine's own newest *navigation* fix. The continent table is shared by
+	# every app, every device and every machine, and the browser writes an app row
+	# WITH coordinates on each appointment action - so the newest row for this
+	# machine is usually the browser's, not ours. Keying the cadence off that row
+	# starved our own capture whenever the app was in use (a walk with the app open
+	# logged almost nothing). Our own row is the `temporary` one we write here.
+	my $last_location = &subs::db_query('select * from continent where signatorial = ? and type = ? and latitude is not null and latitude != ? and timestamp is not null order by server_time desc', $signatorial, 'temporary', '')->hashes->[0];
 	my $now = &subs::rightNow();
 	my $navigation_due = [];
 	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', $now)->hashes;
