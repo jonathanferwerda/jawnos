@@ -128,17 +128,13 @@
 				<span class="dot_info"><span>
 			</div>
 		</div>
-		<div style="display:none;width:100%;height:100%;" id="padlock_frame">
 
-		</div>
-		<div style="display:none;" id="preload"><%= $website %></div>
-
-		<!-- every script the desktop needs, at the foot of the body so the markup
-		     above can paint first. The order matters and the inline script below
-		     must stay last: the taskbar, keyboard and printer handlers register
-		     here, then it opens the first window. /js/manager/bundle.js concatenates
-		     the manager's own files in this order (the list lives in Manager.pl:
-		     manager_bundle_files). -->
+		<!-- every script the desktop needs runs here, just past the desktop markup
+		     but *before* #preload below: the preloaded window HTML carries an inline
+		     script that uses jQuery UI, so the libraries must already be loaded when
+		     it is parsed. Order matters and the inline windowMaker call stays last.
+		     /js/manager/bundle.js concatenates the manager's own files in this order
+		     (the list lives in Manager.pl: manager_bundle_files). -->
 		<script src="/js/universal.js?string=<%= $string %>"></script>
 		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
 		<script src="/js/jquery-ui.js"></script>
@@ -147,6 +143,10 @@
 		<script src="/js/moment.js"></script>
 		<script src="/js/manager/bundle.js?string=<%= $string %>"></script>
 	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
+		<div style="display:none;width:100%;height:100%;" id="padlock_frame">
+
+		</div>
+		<div style="display:none;" id="preload"><%= $website %></div>
 		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() { windowMaker(preload,timestamp); });</script>
 	</body>
 	<script src="/js/manager/websocket.js?string=<%= $string %>"></script>
