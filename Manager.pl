@@ -18631,6 +18631,26 @@ sub coding_execute($c, $action, $touched) {
 		write_file(&subs::home('~/.president/status'), 'restart');
 		return 'asked the tree to restart';
 	}
+	if ($a eq 'learn') {
+		# teach the Guide a runtime verb: saved to the shared setting, so every
+		# machine (and the remote channel) learns it too
+		my $name = $action->{'name'} // '';
+		my $prim = $action->{'primitive'} // '';
+		return 'refused: a command needs a lowercase name' unless $name =~ /^[a-z][a-z0-9_]{1,40}$/;
+		return 'refused: unknown primitive (say, open_app, set_setting, run_command, toggle, stage, find, play_music)'
+			unless $prim =~ /^(?:say|open_app|set_setting|run_command|toggle|stage|find|play_music)$/;
+		my @rows = @{ &help::learned_verbs() };
+		@rows = grep { $_->{'name'} ne $name } @rows;
+		push @rows, {
+			name => $name,
+			desc => ($action->{'desc'} // 'a learned command'),
+			primitive => $prim,
+			args => (ref $action->{'args'} eq 'HASH' ? $action->{'args'} : {}),
+			params => (ref $action->{'params'} eq 'HASH' ? $action->{'params'} : {})
+		};
+		&subs::setting_setter({ app => '__president', setting => 'guide_verbs', device => 'all', value => encode_json \@rows });
+		return 'taught the Guide the "' . $name . '" command';
+	}
 	if ($a eq 'say' || $a eq 'done') {
 		return $action->{'text'} // '';
 	}

@@ -1120,6 +1120,9 @@ Rules:
 - The finishing routine is: bump, then commit with a short message, then push,
   then restart. Do each as its own action, in that order. Commit as the subject
   "v<version> - <summary>" once bumped.
+- To give the Guide a new command without a code change, use learn: it saves a
+  runtime verb to the shared setting, so the Guide and every machine pick it up
+  at once.
 - If you cannot find a file, or the right place for one, after three attempts,
   stop and say what you tried; never invent a path or keep guessing.
 - Only ever change the files the task needs. A commit stages only the files you

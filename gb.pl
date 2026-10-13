@@ -335,6 +335,8 @@ our @coding_tools = (
 		desc => 'push the commits to GitHub (origin)' },
 	{ name => 'restart', example => '{"action":"restart"}',
 		desc => 'restart the jawn tree so the changed Perl and JS go live' },
+	{ name => 'learn', example => '{"action":"learn","name":"house_lights_off","desc":"turn the house lights off","primitive":"set_setting","params":{"app":"house","setting":"toggle","value":"off"}}',
+		desc => 'teach the Guide a new runtime command: a name, a description, and a primitive (say, open_app, set_setting, run_command, toggle, stage, find, play_music) with its params; saved to the shared setting so every machine learns it' },
 	{ name => 'say', example => '{"action":"say","text":"..."}',
 		desc => 'answer or report in words, then stop' },
 	{ name => 'done', example => '{"action":"done","text":"..."}',
