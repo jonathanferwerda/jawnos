@@ -101,16 +101,8 @@
 			var jawnos_clock_timezone = '<%= &subs::misc_setting('clock_timezone') || '' %>';
 			var jawnos_clock_notifications = '<%= &subs::misc_setting('clock_notifications') || 'on' %>';
 		</script>
-		<script src="/js/universal.js?string=<%= $string %>"></script>
-		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
-		<script src="/js/jquery-ui.js"></script>
-		<script src="/js/jquery.ui.touch-punch.min.js"></script>
-		<script src="/js/numeral.min.js"></script>
-		<script src="/js/moment.js"></script>
-		<script src="/js/manager/bundle.js?string=<%= $string %>"></script>
-		<!-- the manager's own scripts are concatenated by /js/manager/bundle.js;
-		     the file list lives in Manager.pl (search: manager_bundle_files) -->
-	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
+		<!-- the manager's scripts load at the foot of the body, so the desktop can
+		     paint before the parser waits on them; see the bundle there -->
 		<link rel="stylesheet" href="/css/keyboard.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/music.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
@@ -140,6 +132,21 @@
 
 		</div>
 		<div style="display:none;" id="preload"><%= $website %></div>
+
+		<!-- every script the desktop needs, at the foot of the body so the markup
+		     above can paint first. The order matters and the inline script below
+		     must stay last: the taskbar, keyboard and printer handlers register
+		     here, then it opens the first window. /js/manager/bundle.js concatenates
+		     the manager's own files in this order (the list lives in Manager.pl:
+		     manager_bundle_files). -->
+		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
+		<script src="/js/jquery-ui.js"></script>
+		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script src="/js/numeral.min.js"></script>
+		<script src="/js/moment.js"></script>
+		<script src="/js/manager/bundle.js?string=<%= $string %>"></script>
+	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
 		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() { windowMaker(preload,timestamp); });</script>
 	</body>
 	<script src="/js/manager/websocket.js?string=<%= $string %>"></script>

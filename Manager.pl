@@ -3242,6 +3242,57 @@ my @manager_bundle_files = qw(
 	/js/manager/help.js
 );
 my $manager_bundle_cache;
+
+# Minify the concatenation on the way out, so the readable files under public/js
+# stay the source of truth for a person (or an agent) while the browser gets one
+# small script. terser -c only: it strips whitespace and comments and folds
+# constants, but never renames - the manager leans on names (HTML attributes call
+# globals directly, and a few places hand eval() a string). If no minifier is
+# found the plain concatenation is served, so this degrades to correct-but-bigger
+# rather than broken. Point JAWN_JS_MINIFIER at another terser to override.
+my $js_minifier;
+sub js_minifier_command {
+	return $js_minifier if defined $js_minifier;
+	my @cands;
+	unshift @cands, $ENV{'JAWN_JS_MINIFIER'} if $ENV{'JAWN_JS_MINIFIER'};
+	push @cands, 'terser';
+	push @cands, glob(&subs::home('~/.local/share/zed/languages/eslint/*/vscode-eslint/node_modules/.bin/terser'));
+	foreach my $c (@cands) {
+		next unless defined $c && length $c;
+		if ($c =~ m{/}) {
+			next unless -x $c;
+		}
+		else {
+			my $found = `command -v $c 2>/dev/null`;
+			chomp $found;
+			next unless length $found;
+			$c = $found;
+		}
+		return $js_minifier = $c if `$c --version 2>/dev/null` =~ /terser/i;
+	}
+	return $js_minifier = '';
+}
+
+sub js_minify {
+	my ($text) = @_;
+	my $cmd = js_minifier_command();
+	return $text unless $cmd;
+	my $tmp = '/tmp/jawn_bundle_' . $$ . '.js';
+	my $out;
+	eval {
+		write_file($tmp, $text);
+		if (open(my $fh, '-|', $cmd, $tmp, '-c')) {
+			local $/;
+			$out = <$fh>;
+			close $fh;
+			$out = undef unless $? == 0;
+		}
+		unlink $tmp;
+	};
+	unlink $tmp;
+	return (defined $out && length $out > 1024) ? $out : $text;
+}
+
 get '/js/manager/bundle.js' => sub ($c) {
 	my $dir = 'public';
 	my $sig = '';
@@ -3259,12 +3310,12 @@ get '/js/manager/bundle.js' => sub ($c) {
 		return $c->rendered(304);
 	}
 	unless ($manager_bundle_cache && $manager_bundle_cache->[0] eq $sig) {
-		my $body = '';
+		my $raw = '';
 		foreach my $rel (@manager_bundle_files) {
 			my $src = eval { read_file($dir . $rel) } // '';
-			$body .= "\n;/* $rel */\n" . $src . "\n;\n";
+			$raw .= "\n;/* $rel */\n" . $src . "\n;\n";
 		}
-		$manager_bundle_cache = [$sig, $body];
+		$manager_bundle_cache = [$sig, js_minify($raw)];
 	}
 	$c->res->body($manager_bundle_cache->[1]);
 	return $c->rendered(200);
