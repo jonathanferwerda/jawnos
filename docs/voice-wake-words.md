@@ -97,7 +97,8 @@ watch, deck, laptop, and Pico.
 1. Train the other phrases (`sup jawn`, `jawnski`, `sup ya hoser`) the same way;
    embed each as another `*_model.h` and add a `voice_words[]` row.
 2. Tune each model's `probability_cutoff` from its `tflite_streaming_roc.txt`
-   (currently 0.90 for both wake words; hey jawn did not fire on a walk test, so
-   lower it first).
+   (was 0.90 and hey jawn did not fire on a walk; lowered to 0.75 for both wake
+   words. The hey jawn ROC file was lost, so 0.75 is still a guess - retrain for
+   the curve, or lower further if it still misses).
 3. Deck (`jt/`): same `voice_models.h`/`micro_features` wiring (it already has
    `esp_vad` and an ES7210 mic).

@@ -425,7 +425,26 @@ class Bridge(object):
             # still winding down aborts with le-connection-abort-by-local.
             GLib.timeout_add(400, self._connect_device, path)
             return False
+        # Keep discovery alive. BlueZ's StartDiscovery lapses on its own (~30 s)
+        # and nothing else re-arms it, so a single arm silently stops and the
+        # peripheral is then never seen -- which left a connect pending forever
+        # (every later connect no-oped on it, and every send failed "not
+        # connected", until the daemon was restarted).
+        self._keep_discovering()
         return True
+
+    def _keep_discovering(self):
+        if self.discovery_owner not in (None, "connect"):
+            return   # a scan owns discovery; do not fight it
+        adapter = self._adapter_path()
+        if adapter is None:
+            return
+        props = self._managed().get(dbus.ObjectPath(adapter), {}).get(ADAPTER_IFACE, {})
+        if props.get("Discovering"):
+            self.discovery_owner = "connect"
+            return
+        self.discovery_owner = None
+        self._start_discovery("connect")
 
     def _connect_device(self, path):
         if self.connecting:

@@ -35,8 +35,9 @@ struct voice_word_t {
 
 static const voice_word_t voice_words[] = {
   { "vad",      vad_model,      0.50f },
-  { "hey_jawn", hey_jawn_model, 0.90f },
-  { "jawn_do",  jawn_do_model,  0.90f },
+  // 0.90 was too strict to fire on a walk; lowered to make the phrase read
+  { "hey_jawn", hey_jawn_model, 0.75f },
+  { "jawn_do",  jawn_do_model,  0.75f },
 };
 #define VOICE_WORD_COUNT (sizeof(voice_words) / sizeof(voice_words[0]))
 
