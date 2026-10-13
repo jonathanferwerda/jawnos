@@ -2718,7 +2718,11 @@ sub appointment_watermark() {
 sub appointments_since() {
 	my $since = shift;
 	return undef unless defined $since && $since =~ /^[0-9]+$/;
-	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments where server_time > ? and status != ?', $since, 'deleting')->hashes->[0];
+	# A NULL or empty status is the common case for a freshly written appointment,
+	# and `status != 'deleting'` is NULL (not true) for those rows - so the count
+	# came back 0 while the peer plainly held newer appointments, and the caller
+	# then skipped the pull and never synced. Include them explicitly.
+	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments where server_time > ? and (status is null or status != ?)', $since, 'deleting')->hashes->[0];
 	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0, since => $since + 0 };
 }
 

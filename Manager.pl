@@ -22906,7 +22906,7 @@ get '/manager/remote_auth_test' => sub($c) {
 	elsif ($c->param('auth_test') eq 'yes') {
 		my $rm = &subs::db_query('select ip,deletions,signatorial from remote_machines where signatorial = ?', $signatorial)->hashes;
 		my $now = &subs::rightNow();
-		my $appt = &subs::db_query('select server_time,app from appointments where ? != ? and server_time < ? order by server_time DESC LIMIT 1', 'status','deleting', $now - 2500)->hashes->[0];
+		my $appt = &subs::db_query('select server_time,app from appointments where (status is null or status != ?) and server_time < ? order by server_time DESC LIMIT 1', 'deleting', $now - 2500)->hashes->[0];
 		if (scalar @{$rm} > 0) {
 			if ($rm->[-1]->{'signatorial'}) {
 				my @domain = split '\.', $config->{'domain'};
@@ -23186,14 +23186,17 @@ sub remote_machine_reconnector($c) {
 							#	my $update = `$uc`;
 							}
 						}
-						# The peer reports how many of its appointments sit above the
-						# watermark we handed it; zero means there is nothing to pull, so
-						# skip the export (and fall back to the timestamp compare for a peer
-						# running older code that sends no pending block). A deep (nightly)
+						# Pull when the peer's newest appointment sits above the watermark we
+						# handed it, or when its `pending` count says it holds anything newer
+						# (the peer computes that count from the watermark). A deep (nightly)
 						# sync still runs - it reconciles a gap the watermark cannot see.
 						my $deep = $c->session('gimme') || $c->param('gimme');
 						my $has_new = $rj->{'server_time'} > $backup->{'server_time'};
-						$has_new = (($rj->{'pending'}->{'count'} || 0) > 0) if defined $rj->{'pending'};
+						# pending can only ADD a pull: a peer on older code computes it with a
+						# NULL-unsafe status filter (appointments_since) and can answer zero
+						# while plainly holding newer appointments, so its zero must not
+						# suppress the pull the timestamp comparison already wants.
+						$has_new = 1 if (defined $rj->{'pending'} && ($rj->{'pending'}->{'count'} || 0) > 0);
 						if (($has_new || $deep) && $rj->{'merging'} ne 'running') {
 							my $whoami = `whoami`;
 							chomp $whoami;
