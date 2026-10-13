@@ -17788,10 +17788,11 @@ post '/manager/help/promote' => sub($c) {
 	my $row = &subs::db_select('staged_appointments', undef, { uuid => $uuid })->hash;
 	unless ($row) { $c->render(json => { error => 'no such staged appointment' }); return; }
 	my $real_uuid = &subs::random_string_creator(40);
+	my $notes = $row->{'title'} ? ($row->{'title'} . ($row->{'notes'} ? (" \x{2014} " . $row->{'notes'}) : '')) : $row->{'notes'};
 	&subs::db_insert('appointments', {
 		uuid => $real_uuid, app => $row->{'app'}, type => $row->{'type'},
 		timestamp => $row->{'timestamp'}, server_time => &subs::rightNow(),
-		notes => $row->{'notes'}, data => $row->{'data'}, device => $row->{'device'} || &subs::device_setter()
+		notes => $notes, data => $row->{'data'}, device => $row->{'device'} || &subs::device_setter()
 	});
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
 	$c->render(json => { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} });
@@ -21110,6 +21111,8 @@ sub update_database($data) {
 		'create table if not exists staged_appointments (
 			uuid VARCHAR(255) unique,
 			staged_time VARCHAR(255),
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
 			source VARCHAR(255),
 			app VARCHAR(500),
 			type VARCHAR(500),
@@ -21120,6 +21123,8 @@ sub update_database($data) {
 			device VARCHAR(255),
 			status VARCHAR(25)
 		)',
+		'alter table staged_appointments add column server_time VARCHAR(255)',
+		'alter table staged_appointments add column ost VARCHAR(25)',
 		'create index if not exists idx1_staged on staged_appointments (status, staged_time)',
 		'create table if not exists sync_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

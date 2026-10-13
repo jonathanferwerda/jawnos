@@ -247,3 +247,8 @@ CREATE INDEX idx2_mailbox on mailbox (community,club,team,project,account,person
 CREATE INDEX idx2_backups on backups (recipient,signatorial);
 CREATE INDEX idx3_backups on backups (recipient,signatorial,ost,reason);
 CREATE INDEX idx4_backups on backups (recipient,signatorial,reason);
+
+CREATE TABLE IF NOT EXISTS staged_appointments (uuid VARCHAR(255) unique, staged_time VARCHAR(255), source VARCHAR(255), app VARCHAR(500), type VARCHAR(500), timestamp VARCHAR(25), title VARCHAR(500), notes LONGTEXT, data LONGTEXT, device VARCHAR(255), status VARCHAR(25));
+CREATE INDEX IF NOT EXISTS idx1_staged on staged_appointments (status, staged_time);
+ALTER TABLE staged_appointments ADD COLUMN server_time VARCHAR(255);
+ALTER TABLE staged_appointments ADD COLUMN ost VARCHAR(25);
