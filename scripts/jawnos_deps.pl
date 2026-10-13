@@ -174,9 +174,13 @@ sub install_piper {
 		print "  piper: no prebuilt binary for this architecture; skipping.\n";
 		return;
 	}
-	# The models (voices/*) are not here: they ride the mesh separately. This is
-	# only the engine. The glibc prebuilt runs on Linux x86_64/aarch64; on Termux
-	# (bionic) it needs glibc-runner, so the phone may keep termux-tts-speak.
+	if ($platform eq 'termux') {
+		# Termux is bionic, so it cannot run the glibc build directly: glibc-runner
+		# (from the glibc-repo / tur-repo) is the launcher say_piper_argv uses. The
+		# Python piper-tts builds but ships without its espeakbridge extension there.
+		run('pkg', 'install', '-y', 'glibc-repo');
+		run('pkg', 'install', '-y', 'glibc-runner');
+	}
 	system('mkdir', '-p', $piper_dir);
 	my $url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$arch.tar.gz";
 	my $tmp = "/tmp/jawnos_piper_$$.tgz";

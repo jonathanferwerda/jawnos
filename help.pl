@@ -381,7 +381,7 @@ our %topic = (
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
-			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (Amy, Ryan, Alba) or an eSpeak fallback, each chosen per device.'
+			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (LJSpeech, LibriTTS-R, Alba) or an eSpeak fallback, each chosen per device.'
 		],
 		steps => [
 			'Open Configure.',

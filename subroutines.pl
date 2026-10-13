@@ -943,18 +943,21 @@ sub ago_calc() {
 # list here is the single source of truth for both the taker and the picker.
 # The piper models live under voices/ (carried as blobs like the APKs, see
 # app_release_sync); espeak voices are the fallback when piper is not staged.
+# Only cleanly-permissive voices belong here: LJSpeech is public domain,
+# LibriTTS-R and Alba are CC BY 4.0. A model dropped from this list is pruned
+# from every device by voice_sync, so a licence problem is fixed everywhere.
 sub say_voices() {
 	return (
-		{ value => 'piper-amy',  label => 'Amy - US female',  engine => 'piper', model => 'en_US-amy-medium'  },
-		{ value => 'piper-ryan', label => 'Ryan - US male',   engine => 'piper', model => 'en_US-ryan-medium' },
-		{ value => 'piper-alba', label => 'Alba - UK female', engine => 'piper', model => 'en_GB-alba-medium' },
-		{ value => 'espeak-us',  label => 'eSpeak - US',      engine => 'espeak', voice => 'en-us'            },
-		{ value => 'espeak-gb',  label => 'eSpeak - UK',      engine => 'espeak', voice => 'en-gb'            },
-		{ value => 'espeak-nyc', label => 'eSpeak - NYC',     engine => 'espeak', voice => 'gmw/en-US-nyc'    },
+		{ value => 'piper-ljspeech', label => 'LJSpeech - US female', engine => 'piper', model => 'en_US-ljspeech-medium'   },
+		{ value => 'piper-libritts', label => 'LibriTTS-R - US',     engine => 'piper', model => 'en_US-libritts_r-medium'  },
+		{ value => 'piper-alba',     label => 'Alba - UK female',    engine => 'piper', model => 'en_GB-alba-medium'        },
+		{ value => 'espeak-us',      label => 'eSpeak - US',         engine => 'espeak', voice => 'en-us'                    },
+		{ value => 'espeak-gb',      label => 'eSpeak - UK',         engine => 'espeak', voice => 'en-gb'                    },
+		{ value => 'espeak-nyc',     label => 'eSpeak - NYC',        engine => 'espeak', voice => 'gmw/en-US-nyc'            },
 	);
 }
 
-sub say_default_voice() { return 'piper-amy'; }
+sub say_default_voice() { return 'piper-ljspeech'; }
 
 sub say_voice_spec() {
 	my $pick = shift;
@@ -965,24 +968,37 @@ sub say_voice_spec() {
 }
 
 # Where the piper binary is on this device. It is arch-specific, so the voice
-# sync never carries it - only the models (which are arch-independent). Prefer a
-# piper on PATH (a Termux/pip install), else the native build bundled under
-# voices/ - but not on mobile, where that build is the wrong architecture and
-# there the fallback is Android's own engine.
+# sync never carries it - only the models (which are arch-independent). The
+# dependency step's copy wins, then a piper on PATH; the repo's own bundle is the
+# desktop last resort (on the phone it is the wrong architecture).
 sub say_piper_binary() {
+	# installed by the dependency step (scripts/jawnos_deps.pl --extras); a glibc
+	# build, which on Android is run through glibc-runner (see say_piper_argv)
+	my $installed = &subs::home('~/.local/share/jawnos/piper/piper');
+	return $installed if -x $installed;
+	# a piper on PATH (a distribution package, or a Termux install)
 	my $onpath = `command -v piper 2>/dev/null`;
 	chomp $onpath;
 	return $onpath if $onpath && -x $onpath;
-	# On mobile the prebuilt build is the wrong architecture; there the only
-	# working piper is one on PATH (a Termux install).
+	# the copy staged in the repo's blob store (fine on a desktop)
 	return '' if $device eq 'mobile';
-	# installed by the dependency step (scripts/jawnos_deps.pl --extras)
-	my $installed = &subs::home('~/.local/share/jawnos/piper/piper');
-	return $installed if -x $installed;
-	# or the copy staged in the repo's blob store
 	my $bundled = &subs::home('~/jawnos/voices/piper/piper');
 	return $bundled if -x $bundled;
 	return '';
+}
+
+# The command that runs piper here, engine only (say_it appends the model and
+# output args). A glibc-built bundle needs the glibc launcher on Android; a
+# Termux build runs directly.
+sub say_piper_argv() {
+	my $piper = &subs::say_piper_binary();
+	return () unless $piper;
+	if ($device eq 'mobile' && $piper eq &subs::home('~/.local/share/jawnos/piper/piper')) {
+		my $runner = `command -v glibc-runner 2>/dev/null`;
+		chomp $runner;
+		return ($runner, $piper) if $runner && -x $runner;
+	}
+	return ($piper);
 }
 
 # How to play a finished wav here. Android has no sox audio backend, so its
@@ -1003,14 +1019,21 @@ sub say_it() {
 		# Piper first, on every device, so the voice is uniform wherever it can
 		# run: the models are shared (voice_sync), only the binary is per-device.
 		if (($spec->{'engine'} || '') eq 'piper') {
-			my $piper = &subs::say_piper_binary();
+			my @piper_argv = &subs::say_piper_argv();
 			my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
-			if ($piper && -e $model) {
+			# a bundle carries its own espeak-ng data; point piper at it (the glibc
+			# launcher, unlike a native run, does not find it on its own)
+			my $piper_bin = $piper_argv[-1] || '';
+			(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
+			my @espeak_data = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
+			if (scalar @piper_argv && -e $model) {
 				my $tmp_dir = $gb::tmp_dir || '/tmp';
 				my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
-				# the words go to piper on stdin, so nothing has to be quoted for a shell
+				# the words go to piper on stdin, so nothing has to be quoted for a shell.
+				# no -q: the flag exists in the 1.2.0 build but not in the newer CLI, and
+				# an unknown flag is a hard argparse error there.
 				my $made = 0;
-				if (my $pid = open(my $piper_in, '|-', $piper, '-q', '-m', $model, '-f', $wav)) {
+				if (my $pid = open(my $piper_in, '|-', @piper_argv, @espeak_data, '-m', $model, '-f', $wav)) {
 					print {$piper_in} $text;
 					close $piper_in;
 					$made = 1 if -s $wav;
@@ -2086,6 +2109,26 @@ sub voice_clip_ack() {
 	});
 }
 
+sub voice_brain() {
+	# HAND-OFF: the voice assistant's brain. voice_ingest() calls this for an
+	# utterance that was addressed to us but is not a plain start/stop command,
+	# before it falls back to filing the transcript as a note. The intended brain
+	# is the guide (help::actions_prompt + the /manager/help/act action
+	# vocabulary), so a spoken request can act, answer aloud (via &subs::say_it)
+	# or ask back. This is a stub: implement it and the note fallback stops firing.
+	#
+	#   $text  the transcript. For a wake-word capture the phrase was already
+	#          consumed on the watch; for a VAD capture it opens with the phrase.
+	#   $meta  { edt, chip_id, ts, voice } - ts is when the utterance began (the
+	#          wake word), voice is the capture mode ('vad' or a wake phrase).
+	#
+	# Return a hashref { handled => 1, ... } to claim the utterance: the caller
+	# then acks the clip and stops. Return undef (or an empty hashref) and the
+	# caller files it as a note. Keep it quick, or run it in a subprocessor - the
+	# caller already holds a database handle and a fork would not survive it.
+	return undef;
+}
+
 sub voice_ingest() {
 	# Audio -> text -> action. The single entry both the WiFi route and the BLE
 	# bridge funnel into, so the two transports behave identically.
@@ -2107,6 +2150,16 @@ sub voice_ingest() {
 		# (the phrase was consumed on the watch) or a clip that opened with the
 		# phrase. A VAD clip of the room, or a clipped fragment, is not a note.
 		my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
+		# addressed, but not a plain command: hand it to the voice brain before
+		# settling for a note (see voice_brain). If no brain claims it, fall through
+		if ($addressed) {
+			my $brain = eval { &subs::voice_brain($text, $meta) };
+			if ($brain && ref $brain eq 'HASH' && $brain->{'handled'}) {
+				$log->info('voice: brain handled "' . $text . '"');
+				&subs::voice_clip_ack($meta);
+				return { status => 'brain', said => $text, %{$brain} };
+			}
+		}
 		if ($addressed && &subs::voice_note_store($text, $meta->{'ts'})) {
 			# a note landed: refresh any open Notes window at once, and let the
 			# watch drop its local copy of the clip
@@ -12087,6 +12140,20 @@ foreach my $rm ( @{$rms} ) {
 			close $fh;
 		}
 	}
+}
+
+# Keep only the voices the running code names. A model dropped from
+# say_voices() (a licence problem, say) is removed here, so no device goes on
+# serving or speaking with it. Never touches the per-arch piper/ bundle.
+my %wanted;
+foreach my $v ( &subs::say_voices() ) {
+	next unless ($v->{'engine'} || '') eq 'piper' && $v->{'model'};
+	$wanted{ $v->{'model'} . '.onnx' } = 1;
+	$wanted{ $v->{'model'} . '.onnx.json' } = 1;
+}
+foreach my $f ( glob("$dir/*.onnx"), glob("$dir/*.onnx.json") ) {
+	my ($base) = $f =~ m{/([^/]+)$};
+	unlink $f if $base && !$wanted{$base};
 }
 }
 

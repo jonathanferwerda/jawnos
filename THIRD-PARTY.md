@@ -72,16 +72,18 @@ dataset repository `rhasspy/piper-checkpoints` also declares `license:mit`.
 Each voice also has a per-voice `MODEL_CARD` naming the **training dataset**, whose licence
 can differ from the model repository's MIT declaration. For the three voices JawnOS ships:
 
-| Voice | Upstream folder | Training dataset / stated licence |
+| Voice | Upstream folder | Training dataset / licence |
 | --- | --- | --- |
-| `en_US-amy-medium` | `en/en_US/amy/medium` | MycroftAI/mimic3-voices — "See URL" (not a specific identifier) |
-| `en_US-ryan-medium` | `en/en_US/ryan/medium` | Kaggle "RyansSpeech" — **CC BY-NC-SA 4.0** (non-commercial) |
-| `en_GB-alba-medium` | `en/en_GB/alba/medium` | Edinburgh DataShare (10283/3270) — **CC BY 4.0** |
+| `en_US-ljspeech-medium` | `en/en_US/ljspeech/medium` | LJSpeech (keithito.com/LJ-Speech-Dataset) — **public domain** |
+| `en_US-libritts_r-medium` | `en/en_US/libritts_r/medium` | LibriTTS-R (OpenSLR 141) — **CC BY 4.0** |
+| `en_GB-alba-medium` | `en/en_GB/alba/medium` | Edinburgh DataShare 10283/3270 — **CC BY 4.0** |
 
-All three voices have a `MODEL_CARD`; the repo states most do not. If you redistribute
-these models, check the per-voice card: `en_US-ryan-medium` in particular is derived from a
-**non-commercial (CC BY-NC-SA 4.0)** dataset, which is stricter than the repository-level
-MIT tag.
+Each voice's training dataset carries its own licence, which the repository-level MIT tag
+does not override, so JawnOS ships only cleanly-permissive voices (public domain or CC BY —
+never NC or ND). Two earlier voices were dropped for exactly this reason:
+`en_US-amy-medium` (dataset "see URL") and `en_US-ryan-medium` (**CC BY-NC-SA 4.0**,
+non-commercial). A voice removed from `say_voices()` is deleted from `voices/` and pruned
+from every device by `voice_sync`.
 
 ### 2.3–2.5 Fonts
 
@@ -160,8 +162,8 @@ voices/piper/piper --version
 # Voice models: canonical repo is the MODEL repo, not the /datasets/ path
 # (the /datasets/ URL currently returns HTTP 401 for anonymous access)
 curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/README.md | sed -n '1,3p'
-curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/amy/medium/MODEL_CARD
-curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/ryan/medium/MODEL_CARD
+curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/ljspeech/medium/MODEL_CARD
+curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/libritts_r/medium/MODEL_CARD
 curl -sL https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_GB/alba/medium/MODEL_CARD
 
 # Fonts
