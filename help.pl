@@ -242,7 +242,7 @@ our %topic = (
 	'travel' => {
 		title => 'Travel', category => 'apps', app => 'travel',
 		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
-		controls => [ 'Configure', 'Now', 'Delete' ],
+		controls => [ 'Configure', 'Now', 'Delete', 'Guess the gap' ],
 		verified => '2026-10-13',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
@@ -253,6 +253,7 @@ our %topic = (
 			'The first four services are built in and need no key — just pick one. For a county or city service (Lambton GIS, and the like) or anything else, paste the service\'s tile URL into the box next to the picker. A service that speaks {z}/{x}/{y} works; an ArcGIS service is usually …/MapServer/tile/{z}/{y}/{x} (note y before x). Where to find it: the publisher lists its map services under a REST directory (for a county, look for an "ArcGIS REST Services" or "GIS Data" page); open the layer, and the Tile link or the URL under the map is the template to copy. Google Maps and Apple Maps have no keyless tile URL — they need their own SDK — so use another service, or paste a keyed URL you already hold.',
 			'Drag to move the map; a flick glides on and eases out, a mouse wheel or a pinch zooms, and a double-tap zooms in; a trackpad\'s two-finger scroll pans it. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows — tap one to open that app\'s appointment window, and where several share a spot the dot wears their count and a tap unfolds the list.',
 			'To set a map up: upload the picture, set its function to map on the appointment, and the measuring tools appear under it — Scale (click the two ends of the scale bar, with its legend typed in) and Location (the home plate). Read legend lifts the scale number off the picture with OCR; Ask vision sends the picture to your Vision model (Configure → Plat) and comes back with the scale bar placed, the legend read (turned into metres), and a tilt. The Tilt box turns the picture straight — with a live preview — if its screenshot was taken rotated, so it lands level on the map.',
+			'The gaps between measured maps can be guessed: with a map chosen, press the hat (Guess the gap) and the Plat Image-generation model (Configure → Plat → Image generation) draws the ground between that map and its nearest neighbour. The Vision model reads the two facing edges first, when one is set, so the fill is prompted to match their imagery. The guess is filed as a map of its own — dashed and named “guess: …” so it never passes for measured ground — and it can be picked, framed and deleted like any other map; pressing the hat again re-rolls it.',
 			'The continent desktop background draws the same map, with the current timeframe\'s appointments and every home plate on it; the header and the clothesline rail ride over it. Home plates sharing a spot collapse into one marker wearing their count — tap it and the list unfolds, and a tap on a name opens that app\'s appointment window; a tap on an appointment\'s dot opens its window too. Its now button (or a double-click on the background) centres it back on you.'
 		],
 		steps => [
@@ -261,6 +262,7 @@ our %topic = (
 			'Pick a built-in Map source (OpenStreetMap, OpenTopoMap, Carto, Esri), or paste a tile URL for Lambton or Custom — see where to find one in the words above.',
 			'Use the map selector to bring a measured map into view and the trash to delete one; Search and the Start/End times scope the history shown. The toolbar stays pinned as you scroll.',
 			'Set Home Plate to mark the place your maps share as their reference.',
+			'To fill a gap between maps, pick one of them and press Guess the gap: the guess lands between it and its nearest neighbour, drawn by the Plat models and marked as a guess. Press the hat again to re-roll it, or the trash to delete it.',
 			'On the continent background, tap an appointment dot or a home plate to open its appointment window; a numbered marker unfolds the places sharing that spot.'
 		],
 		related => [ 'measures', 'relational', 'navigation' ]

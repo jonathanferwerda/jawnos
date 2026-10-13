@@ -11433,6 +11433,69 @@ sub evaluation_run_record {
 	return $log;
 }
 
+# Text to an image: the Plat Image-generation model, and the bytes it answered
+# with. Cloudflare's @cf text-to-image models run at the run/{model} endpoint and
+# answer with the picture itself; any other model goes through the chat layer,
+# whose image parts are collected here. Returns ($bytes, $mime, $error).
+sub ai_text_to_image {
+	my ($data) = @_;
+	my $prompt = $data->{'prompt'} || '';
+	return (undef, undef, 'no prompt') unless length $prompt;
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'text_to_image_assistant', 'cloudflare_account', 'cloudflare_token', @key_settings ] });
+	my $model = $data->{'model'} || $settings->{'text_to_image_assistant'};
+	return (undef, undef, 'no image model is set (Configure, Plat, Image generation)') unless $model;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
+	if ($model =~ /^\@cf/) {
+		my $account = $settings->{'cloudflare_account'};
+		my $token = eval { &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'}) } || $settings->{'cloudflare_token'};
+		return (undef, undef, 'no Cloudflare account is set (Configure, Plat, Provider access)') unless $account;
+		return (undef, undef, 'no Cloudflare token is set (Configure, Plat, Provider access)') unless $token;
+		my $url = 'https://api.cloudflare.com/client/v4/accounts/' . $account . '/ai/run/' . $model;
+		my $payload = { prompt => $prompt };
+		$payload->{'negative_prompt'} = $data->{'negative_prompt'} if $data->{'negative_prompt'};
+		$payload->{'width'} = int($data->{'width'}) if $data->{'width'};
+		$payload->{'height'} = int($data->{'height'}) if $data->{'height'};
+		my $tx = $ua->post($url => {
+			'Authorization' => 'Bearer ' . $token,
+			'Content-Type'  => 'application/json'
+		} => json => $payload);
+		if ($tx->error) {
+			my $detail = '';
+			if (my $res = $tx->res) { $detail = ' ' . substr(($res->body || ''), 0, 300); }
+			return (undef, undef, 'could not reach Cloudflare: ' . $tx->error->{'message'} . $detail);
+		}
+		my $res = $tx->res;
+		unless ($res->is_success) {
+			my $body = $res->body || '';
+			if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|balance|quota)/i) {
+				&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . $body);
+			}
+			return (undef, undef, 'the image model answered ' . $res->code . ': ' . substr($body, 0, 200));
+		}
+		my $binary = $res->body;
+		return (undef, undef, 'the image model returned nothing') unless defined $binary && length $binary;
+		return ($binary, 'image/png', undef);
+	}
+	# any other model: whatever the chat layer hands back as an image part (a
+	# multimodal model that draws, or a URL to fetch)
+	my ($parts, $err) = &ai_chat_parts($model, [ { role => 'user', content => $prompt } ]);
+	return (undef, undef, $err || 'the model returned nothing readable') if $err;
+	foreach my $part ( @{$parts || []} ) {
+		next unless ($part->{'type'} || '') eq 'image';
+		if ($part->{'data'}) {
+			my $bytes = MIME::Base64::decode_base64($part->{'data'});
+			return ($bytes, $part->{'mime'} || 'image/png', undef) if $bytes && length $bytes;
+		}
+		elsif ($part->{'url'}) {
+			my $fetch = $ua->get($part->{'url'});
+			my $bytes = $fetch->res->body;
+			return ($bytes, $fetch->res->headers->content_type || 'image/png', undef) if $bytes && length $bytes;
+		}
+	}
+	return (undef, undef, 'the model answered without an image');
+}
+
 sub generate_ai_image {
   my ($data) = @_;
 	my $c = &subs::controller_builder();
@@ -11450,76 +11513,56 @@ sub generate_ai_image {
 	$app = &subs::unformat_name($app);
 
   $log->info(Dumper $data);
-  # Fetch your Cloudflare Account ID and Token out of your app settings
-  my $cf_account_id = $settings->{'cloudflare_account'};
-  my $cf_token      = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'}); # or cf_token
-	$log->info($cf_account_id . ' ' . $cf_token);
-  if ($cf_account_id && $cf_token) {
-		$log->info('got the account id and token');
-		# Endpoint using Stable Diffusion XL Base
-		my $model = $settings->{'text_to_image_assistant'} || '@cf/stabilityai/stable-diffusion-xl-base-1.0';
-		my $url = 'https://api.cloudflare.com/client/v4/accounts/' . $cf_account_id . '/ai/run/' . $model;
-		$log->info($url);
-		my $payload = { prompt => $prompt };
-
-		my $tx = $ua->post($url => {
-		    'Authorization' => "Bearer $cf_token",
-		    'Content-Type'  => 'application/json'
-		} => json => $payload);
-		$log->info('after call');
-		if (!$tx->error) {
-		  # Cloudflare responds directly with image/png or image/jpeg binary stream
-		  my $binary = $tx->result->body;
-			my $folder;
-			my $location;
-			my $filename = 'img_' . &subs::rightNow() . '.png';
-			my $upload_type = 'image';
-			my $ft = File::Type->new();
-			my $fd = $ft->checktype_contents($binary);
-			if ($fd =~ /image/) {
-				$upload_type = 'image';
-				$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-				$location = &subs::home($folder) . '/' . $app;
-				my $location = $folder . '/' . $app;
-			}
-
-
-		  my $public_dir = $location || &subs::home('~/Public/generated_images');
-		  `mkdir $public_dir` unless -d $public_dir;
-
-		  my $file_path = $public_dir . '/' . $filename;
-		  write_file($file_path, $binary);
-			my $ocr;
-			if ($fd =~ /image/) {
-				my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
-				`magick $file_path -resize $resolution $file_path` unless lc $resolution eq 'raw';
-				$ocr = &Manager::ocr_reader($c,$file_path);
-			}
-			my $appt_uuid = &subs::random_string_creator(33);
-			my $file_uuid = &subs::random_string_creator(21);
-			my $u_data = [{ server_time => &subs::rightNow(), appt_uuid => $appt_uuid, mail_uuid => $msg_uuid, ocr => $ocr, f => $file_path, uuid => $file_uuid, type => $upload_type }];
-			$log->info(Dumper $u_data);
-			my $jfile = encode_json $u_data;
-
-			my $write = {
-				timestamp => &subs::rightNow(),
-				app => &subs::unformat_name($app),
-				notes => &subs::note_encrypter(&subs::suds_grabber(),$prompt),
-				type => $upload_type,
-				file => $jfile,
-				uuid => $appt_uuid,
-				duration => &subs::rightNow() - $start_timestamp,
-			};
-			&Manager::appointment_writer($c,$write);
-			&subs::file_encrypter({ app => &subs::unformat_name($app) });
-			&Manager::centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
-
-		  return ('/file_open?appt_uuid=' . $appt_uuid . '&file_uuid=' . $file_uuid . '&app=' . $app,$u_data);
-		} else {
-		  $log->error("Cloudflare Generation Failed: " . $tx->error->{message});
-		  return undef;
-		}
+	# the picture comes through the Plat Image-generation model; the storing, the
+	# appointment and the reply are this routine's own work
+	my ($binary, $mime, $img_err) = &subs::ai_text_to_image({ prompt => $prompt });
+	if ($img_err || !defined $binary || !length $binary) {
+		$log->error('Image generation failed: ' . ($img_err || 'nothing returned'));
+		return undef;
 	}
+	my $folder;
+	my $location;
+	my $filename = 'img_' . &subs::rightNow() . '.png';
+	my $upload_type = 'image';
+	my $ft = File::Type->new();
+	my $fd = $ft->checktype_contents($binary);
+	if ($fd =~ /image/) {
+		$upload_type = 'image';
+		$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
+		$location = &subs::home($folder) . '/' . $app;
+	}
+
+	my $public_dir = $location || &subs::home('~/Public/generated_images');
+	`mkdir $public_dir` unless -d $public_dir;
+
+	my $file_path = $public_dir . '/' . $filename;
+	write_file($file_path, $binary);
+	my $ocr;
+	if ($fd =~ /image/) {
+		my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
+		`magick $file_path -resize $resolution $file_path` unless lc $resolution eq 'raw';
+		$ocr = &Manager::ocr_reader($c,$file_path);
+	}
+	my $appt_uuid = &subs::random_string_creator(33);
+	my $file_uuid = &subs::random_string_creator(21);
+	my $u_data = [{ server_time => &subs::rightNow(), appt_uuid => $appt_uuid, mail_uuid => $msg_uuid, ocr => $ocr, f => $file_path, uuid => $file_uuid, type => $upload_type }];
+	$log->info(Dumper $u_data);
+	my $jfile = encode_json $u_data;
+
+	my $write = {
+		timestamp => &subs::rightNow(),
+		app => &subs::unformat_name($app),
+		notes => &subs::note_encrypter(&subs::suds_grabber(),$prompt),
+		type => $upload_type,
+		file => $jfile,
+		uuid => $appt_uuid,
+		duration => &subs::rightNow() - $start_timestamp,
+	};
+	&Manager::appointment_writer($c,$write);
+	&subs::file_encrypter({ app => &subs::unformat_name($app) });
+	&Manager::centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
+
+	return ('/file_open?appt_uuid=' . $appt_uuid . '&file_uuid=' . $file_uuid . '&app=' . $app,$u_data);
 }
 
 

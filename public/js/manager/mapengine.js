@@ -201,8 +201,20 @@ window.jawnosMap = (function () {
 					try { ctx.drawImage(m.image, left, top, right - left, bottom - top); } catch (e) {}
 				}
 				ctx.restore();
-				ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-				ctx.strokeRect(left, top, right - left, bottom - top);
+				if (m.guess) {
+					// a guessed map is imagination bridging measured ones: a dashed border
+					// so it never passes for ground we actually measured
+					ctx.save();
+					ctx.setLineDash([10, 7]);
+					ctx.strokeStyle = 'rgba(160,80,63,0.95)';
+					ctx.lineWidth = 3;
+					ctx.strokeRect(left + 1.5, top + 1.5, (right - left) - 3, (bottom - top) - 3);
+					ctx.restore();
+				}
+				else {
+					ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+					ctx.strokeRect(left, top, right - left, bottom - top);
+				}
 				ctx.font = '12px Arial';
 				ctx.fillStyle = 'rgba(255,255,255,0.85)';
 				ctx.fillRect(left, top, Math.max(60, ctx.measureText(m.name || '').width + 10), 16);
@@ -517,7 +529,7 @@ window.jawnosMap = (function () {
 				(list || []).forEach(function (m) {
 					var b = mapBounds(m);
 					if (!b) { return; }
-					var entry = { name: m.name, file: m.file, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0 };
+					var entry = { name: m.name, file: m.file, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0, guess: m.guessed ? 1 : 0 };
 					// how much ground the map covers, so the draw can put the finest
 					// (smallest footprint) on top: panning into a neighbourhood must not
 					// leave the town-wide map covering the detailed one

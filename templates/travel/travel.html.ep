@@ -5,6 +5,8 @@
 			<button id="travel_home_plate" status="<%= $home_plate_enabled %>">Home Plate</button>
 			<button id="travel_update">Update</button>
 			<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now">
+			<img class="little_thumb hover" id="travel_guess_gap" hint="Guess the gap" src="<%= &subs::icon_for('/images/make believe/hat.png') %>">
+			<span id="travel_guess_status" style="font-size:12px;opacity:.75;"></span>
 
 			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">
 				<option value="">None</option>
@@ -13,7 +15,7 @@
 						$map->{'f'} = $destination . $asset;
 					%>
 					<% if ($map->{'home_plate'} && $map->{'scale'}) { %>
-						<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
+						<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= $map->{'guessed'} ? $map->{'name'} : &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
 					<% } %>
 				<% } %>
 			</select>

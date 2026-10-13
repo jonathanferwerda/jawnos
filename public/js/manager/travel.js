@@ -427,6 +427,34 @@ $(document).on('click', '.travel_now', function() {
 	travelViewer({ timestamp: timestamp, settings: settings });
 });
 
+// The guess button: the server picks the widest gap between the placed maps (or
+// between the selected map and its nearest neighbour), has the Plat models draw
+// the missing ground, and files it as a dashed 'guess' map - this just asks,
+// shows what is happening, and frames the answer when it lands.
+$(document).on('click', '#travel_guess_gap', function() {
+	var b = $(this);
+	if (b.attr('busy') == 'yes') { return; }
+	b.attr('busy', 'yes').css({ 'opacity': '0.4' });
+	var status = $('#travel_guess_status').text('guessing the gap…');
+	var sel = $('.travel_map_selector').find('option[selected]');
+	$.ajax({
+		url: '/manager/travel/guess_gap',
+		type: 'POST',
+		data: { map: sel.val(), timestamp: Date.now() },
+		success: function(response) {
+			b.attr('busy', 'no').css({ 'opacity': '' });
+			if (response && response['error']) { status.text(response['error']); return; }
+			status.text('guessed ' + response['name']);
+			travelPendingMap = response['uuid'];
+			travelViewer({ timestamp: Date.now() });
+		},
+		error: function() {
+			b.attr('busy', 'no').css({ 'opacity': '' });
+			status.text('the guess could not be made - see Configure, Plat');
+		}
+	});
+});
+
 $(document).on('change', '#travel_search', function() {
 	var search = $(this).val();
 	settingSetter({'app':'travel','setting':'search', 'value': search });
