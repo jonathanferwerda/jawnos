@@ -631,6 +631,11 @@ function appWindowOpener(i,timestamp,v) {
 	}
 	v = v || {};
 	timestamp = timestamp || Date.now();
+	// Every window the guide opens is one it may want to look over: if the app's
+	// name does not match its part of speech, the guide sets the right one. The
+	// server marks what it has seen, so this is a no-op after the first time and
+	// on a machine with no model.
+	if (typeof i === 'string' && i) { $.post('/manager/help/review', { app: i }); }
 	var window_w = $(window).width();
 	var window_h = $(window).height();
 	var app = JSON.stringify({ name: i });

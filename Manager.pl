@@ -48,11 +48,8 @@ use Data::UUID;
 use Storable;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
 use MIME::Base64;
-use Authen::SASL;
-use Net::IMAP::Client;
-use MIME::Parser;
-use Email::Stuffer;
-use Email::Sender::Transport::SMTP;
+# The mail stack is loaded on demand (see subroutines.pl): heavy, and used by two
+# routines only, so a worker that never handles mail should not pay for it.
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
 use Sereal::Decoder qw(decode_sereal);
 my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 });
@@ -17850,6 +17847,11 @@ post '/manager/help/review' => sub($c) {
 		return;
 	}
 	my $settings = &subs::settings_grabber({ app => $app });
+	unless ($settings->{'uuid'}) {
+		# not an appointment (no settings rows): nothing for the guide to read
+		$c->render(json => { app => $app, reviewed => 0, reason => 'not an appointment' });
+		return;
+	}
 	my $pos = $settings->{'pos'} || '';
 	my $mab = $settings->{'mab'} || '';
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
