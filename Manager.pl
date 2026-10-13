@@ -3201,6 +3201,7 @@ my @manager_bundle_files = qw(
 	/js/manager/clothesline.js
 	/js/manager/manager.js
 	/js/manager/mapengine.js
+	/js/manager/mapmarkers.js
 	/js/music.js
 	/js/images.js
 	/js/manager/configure.js
@@ -17531,8 +17532,6 @@ sub travel_grabber($c) {
 	my $home_plate = &subs::setting_grabber({ app => 'me', setting => 'home_plate' });
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 
-	my $travel_scope = 	$settings->{'travel_scope'} || 100;
-	my $time_scope = $settings->{'time_scope'} || '5minute';
 	my $home_plate_enabled = $settings->{'home_plate_enabled'};
 	$settings->{'maps'} = eval { return decode_json $settings->{'maps'} } || [];
 
@@ -17540,8 +17539,6 @@ sub travel_grabber($c) {
 		template => '/travel/travel',
 		home_plate => $home_plate,
 		home_plate_enabled => $home_plate_enabled,
-		travel_scope => $travel_scope,
-		time_scope => $time_scope,
 		window_maker => $c->param('window_maker'),
 		timestamp => $timestamp,
 		settings => $settings
@@ -17732,7 +17729,6 @@ get '/manager/travel/viewer' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
-	my $travel_scope = $c->param('travel_scope') ? $c->param('travel_scope') : 20;
 	my $time_scope = $c->param('time_scope') ? $c->param('time_scope') : '5minute';
 	my $t = &subs::time_span($time_scope, $timestamp); #timestamp at beginning
 	my $t1 = ($timestamp - $t);
@@ -17765,7 +17761,6 @@ get '/manager/travel/viewer' => sub($c) {
 		far => [],
 		here => {},
 		scope => $time_scope,
-		travel_scope => $travel_scope,
 		start_time => $t,
 		end_time => $t2
 	};
@@ -17794,7 +17789,6 @@ get '/manager/travel/viewer' => sub($c) {
 	}
 
   sub NESW { deg2rad($_[0]), deg2rad(90 - $_[1]) }
-	&subs::setting_setter({ app => 'travel', setting => 'travel_scope', value => $travel_scope });
 	&subs::setting_setter({ app => 'travel', setting => 'time_scope', value => $time_scope });
 
 	my $universal_settings = {};
@@ -17831,12 +17825,6 @@ get '/manager/travel/viewer' => sub($c) {
 		};
 
 		push @{$proxies->{'near'}}, $sl;
-		if ($metres <= $travel_scope) {
-
-		}
-		elsif ($metres == 0) {
-
-		}
 	}
 
 	push @{$proxies->{'near'}}, $main_map->{'home_plate'};

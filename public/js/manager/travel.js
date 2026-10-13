@@ -11,7 +11,6 @@ function travelToggle() {
 		ts = timestamp; 
 	}
 	var url = '/manager/travel';
-	var travel_scope = localStorage.getItem('travel_scope');
 	$.ajax({
 		url: url,
 		type: 'GET',
@@ -20,7 +19,6 @@ function travelToggle() {
 			windowMaker(response);
 
 			travelViewer({ timestamp: ts });
-			//continent_record({'app':'travel','timestamp':ts,'purpose':'travel_viewer','scope':travel_scope});
 		}, error: function (response) {  }
 	});
 }
@@ -33,6 +31,7 @@ function travelToggle() {
 // top. Drag to pan; wheel or pinch to zoom.
 var travelMap;
 var travelFramed = false;
+var travelPendingMap;   // the map the picker just chose, to be framed once its atlas arrives
 
 function travelMapEngine() {
 	var canvas = document.getElementById('travel_campus');
@@ -44,6 +43,9 @@ function travelMapEngine() {
 		width: function() { return $('#travel_campus').parent().width() || 640; },
 		height: function() { return Math.max(240, Math.round($(window).height() * 0.6)); }
 	});
+	// a tap on a place opens its appointment window; a numbered one unfolds its list
+	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
+	travelMap.onChange(jawnosMarkerListHide);
 	travelFramed = false;
 	return travelMap;
 }
@@ -68,18 +70,35 @@ function travelMapRender(response) {
 	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val());
 	engine.setMaps(response['all_maps'] || []);
 
+	// the picker's choice brings that measured map into the centre of the view
+	if (travelPendingMap) {
+		var chosen;
+		$.each(response['all_maps'] || [], function(i, m) {
+			if (m['uuid'] == travelPendingMap) { chosen = m; }
+		});
+		travelPendingMap = undefined;
+		var bounds = chosen ? window.jawnosMap.mapBounds(chosen) : null;
+		if (bounds) { engine.fitBounds(bounds); travelFramed = true; }
+	}
+
 	var points = [];
+	var places = [];
 	$.each(response['near'] || [], function(i, point) {
 		if (!point || !point['latitude'] || !point['longitude']) { return; }
 		if (point['settings'] && point['settings']['visible'] && point['settings']['visible'] != 'checked') { return; }
-		points.push({
-			lat: parseFloat(point['latitude']),
-			lon: parseFloat(point['longitude']),
-			label: point['app'] || '',
-			colour: (point['settings'] && point['settings']['colour']) || undefined
-		});
+		var lat = parseFloat(point['latitude']);
+		var lon = parseFloat(point['longitude']);
+		var colour = (point['settings'] && point['settings']['colour']) || undefined;
+		if (point['settings']) {
+			// a place the continent knows: tappable, and grouped when several share
+			// one spot, so the tap opens the app it means (or unfolds them)
+			places.push({ app: point['app'], name: point['settings']['name'] || point['app'], colour: colour, lat: lat, lon: lon });
+		}
+		else {
+			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });
+		}
 	});
-	engine.setPoints(points);
+	engine.setPoints(points.concat(jawnosMarkerGroups(places, 50, '#2f6f9f')));
 
 	var pos = response['position'];
 	var hasPos = pos && pos['latitude'];
@@ -107,11 +126,10 @@ function travelViewer(data) {
 		console.log(data['settings']);
 		console.log(jsettings);
 	}
-	var travel_scope = $('#travel_scope').val();
 	var time_scope = localStorage.getItem('scope');
 	var sel = $('.travel_map_selector').find('option[selected]');
 	var map = sel.val();
-	var tdata = { map: map, travel_scope: travel_scope, uuid: data['uuid'], time_scope: time_scope, timestamp: ts, settings: jsettings };
+	var tdata = { map: map, uuid: data['uuid'], time_scope: time_scope, timestamp: ts, settings: jsettings };
 	console.log(tdata);
 	$.ajax({
 		url: '/manager/travel/viewer',
@@ -136,21 +154,7 @@ $(document).on('click', '#travel_update', function() {
 	if ($('.now').attr('presence') == 'not') {
 		ts = timestamp; 
 	}
-
-	var travel_scope = localStorage.getItem('travel_scope');
-	if ($('#travel_home_plate').attr('status') == 'disabled') {
-	//	continent_record({'app':'travel','timestamp':ts,'purpose':'travel_viewer','scope':travel_scope,'navigation':'once'});
-		travelViewer({ timestamp: ts });
-	}
-	else {
-		travelViewer({ timestamp: ts });
-	}
-});
-
-$(document).on('change', '#travel_scope', function() {
-	var scope = $(this).val();
-	localStorage.setItem('travel_scope', scope);
-	settingSetter({ 'app': 'travel', 'setting': 'travel_scope' });
+	travelViewer({ timestamp: ts });
 });
 
 $(document).on('click', '#travel_home_plate', function() {
@@ -341,7 +345,9 @@ $(document).on('change', '.travel_map_selector', function() {
 	var s = $('.travel_map_selector').find('option[selected]').removeAttr('selected');
 
 	$('.travel_map_selector').find('option[value="' + uuid + '"]').attr('selected', 'yes');
-	
+
+	// choosing a map brings it into view once the viewer answers with its bounds
+	travelPendingMap = uuid;
 	setTimeout(function() {
 		var timestamp = Date.now();
 		travelViewer({ timestamp: timestamp });

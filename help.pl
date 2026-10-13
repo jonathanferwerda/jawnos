@@ -241,25 +241,25 @@ our %topic = (
 	},
 	'travel' => {
 		title => 'Travel', category => 'apps', app => 'travel',
-		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/continentprinter.js' ],
+		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
 		controls => [ 'Configure', 'Now', 'Delete' ],
 		verified => '2026-10-13',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
 			'The map is a canvas you drag to pan and zoom with the slider (or the wheel). On it sit the measured maps you have stored — each one an image georeferenced when you measured it (a home plate plus a scale bar), so it lands at its true place on the globe. Pan toward another area and whichever of your maps covers it scrolls into view: that is how you move among the maps you have rather than looking at one at a time, and where two maps overlap the finer one lies on top.',
-			'The configuration row is pinned to the top of the window: scroll the view down and the Home Plate and Update buttons, the scope, the map picker and the Start/End times stay in reach. The gear tucks the row away.',
+			'The configuration row is pinned to the top of the window: scroll the view down and the Home Plate and Update buttons, the map picker and the Start/End times stay in reach. The gear tucks the row away.',
 			'Above the measured maps you can lay a tile basemap from the Map picker: OpenStreetMap, OpenTopoMap, Carto, Esri imagery, a county GIS such as Lambton, or a Custom URL. Leave it on None and nothing is fetched — the measured maps are all it needs, so it works offline.',
 			'The first four services are built in and need no key — just pick one. For a county or city service (Lambton GIS, and the like) or anything else, paste the service\'s tile URL into the box next to the picker. A service that speaks {z}/{x}/{y} works; an ArcGIS service is usually …/MapServer/tile/{z}/{y}/{x} (note y before x). Where to find it: the publisher lists its map services under a REST directory (for a county, look for an "ArcGIS REST Services" or "GIS Data" page); open the layer, and the Tile link or the URL under the map is the template to copy. Google Maps and Apple Maps have no keyless tile URL — they need their own SDK — so use another service, or paste a keyed URL you already hold.',
-			'Drag to move the map; a mouse wheel or a pinch zooms, and a double-tap zooms in; a trackpad\'s two-finger scroll pans it. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows.',
+			'Drag to move the map; a flick glides on and eases out, a mouse wheel or a pinch zooms, and a double-tap zooms in; a trackpad\'s two-finger scroll pans it. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows — tap one to open that app\'s appointment window, and where several share a spot the dot wears their count and a tap unfolds the list.',
 			'To set a map up: upload the picture, set its function to map on the appointment, and the measuring tools appear under it — Scale (click the two ends of the scale bar, with its legend typed in) and Location (the home plate). Read legend lifts the scale number off the picture with OCR; Ask vision sends the picture to your Vision model (Configure → Plat) and comes back with the scale bar placed, the legend read (turned into metres), and a tilt. The Tilt box turns the picture straight — with a live preview — if its screenshot was taken rotated, so it lands level on the map.',
-			'The continent desktop background draws the same map, with the current timeframe\'s appointments and every home plate on it. Home plates sharing a spot collapse into one marker wearing their count — tap it and the list unfolds, and a tap on a name opens that app\'s appointment window; a tap on an appointment\'s dot opens its window too. Its now button (or a double-click on the background) centres it back on you.'
+			'The continent desktop background draws the same map, with the current timeframe\'s appointments and every home plate on it; the header and the clothesline rail ride over it. Home plates sharing a spot collapse into one marker wearing their count — tap it and the list unfolds, and a tap on a name opens that app\'s appointment window; a tap on an appointment\'s dot opens its window too. Its now button (or a double-click on the background) centres it back on you.'
 		],
 		steps => [
 			'Open Travel. The view frames your maps and your current position.',
 			'Drag to pan; scroll or pinch to zoom, and double-tap to zoom in. Your maps scroll into view as you go.',
 			'Pick a built-in Map source (OpenStreetMap, OpenTopoMap, Carto, Esri), or paste a tile URL for Lambton or Custom — see where to find one in the words above.',
-			'Use the map selector to choose the current map and the trash to delete one; Search and the Start/End times scope the history shown. The toolbar stays pinned as you scroll.',
+			'Use the map selector to bring a measured map into view and the trash to delete one; Search and the Start/End times scope the history shown. The toolbar stays pinned as you scroll.',
 			'Set Home Plate to mark the place your maps share as their reference.',
 			'On the continent background, tap an appointment dot or a home plate to open its appointment window; a numbered marker unfolds the places sharing that spot.'
 		],

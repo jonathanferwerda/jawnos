@@ -6,8 +6,6 @@
 			<button id="travel_update">Update</button>
 			<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now">
 
-			<span><b>Scope</b> <input type="text" id="travel_scope" name="scope" value="<%= $travel_scope %>" style="width:5em;"></span>
-
 			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">
 				<option value="">None</option>
 				<% foreach my $map ( @{$settings->{'maps'}} ) { %>

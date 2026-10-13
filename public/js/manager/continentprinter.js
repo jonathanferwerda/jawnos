@@ -13,9 +13,29 @@ var jawnosContinentAt = 0;
 var jawnosContinentRefetch = 30000;
 var jawnosContinentHere = null;   // the last known current position
 var jawnosContinentRange = '';    // the time range the points were fetched for
+var jawnosContinentAppts = null;  // the payload, for the header the overlay repaints
+
+// The engine owns the continent canvas, so its clear-and-draw wipes the furniture
+// the page paints on the same canvas - the header and the clothesline rail. The
+// engine calls this after every draw (a late tile, a pan), so the rail always
+// rides over the maps.
+function jawnosContinentOverlay() {
+	// only the continent layout wears this canvas; a late tile must not paint its
+	// furniture over whatever layout took over
+	if (typeof localStorage != 'undefined' && localStorage.getItem('layout') != 'continent') { return; }
+	var canvas = document.getElementById('continent');
+	if (!canvas) { return; }
+	if (typeof headerPrinter == 'function' && jawnosContinentAppts) {
+		headerPrinter(canvas.getContext('2d'), jawnosContinentAppts, 'Continent');
+	}
+	if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe.length) {
+		clotheslineHanger(wardrobe);
+	}
+}
 
 function continentPrinter(appts, sort) {
 	var places = appts['__continent'] || [];
+	jawnosContinentAppts = appts;
 
 	// no engine in the bundle? the fitted plot still tells the story
 	if (!window.jawnosMap) {
@@ -27,10 +47,14 @@ function continentPrinter(appts, sort) {
 		jawnosContinentMap = window.jawnosMap.create('continent', {
 			z: 13,
 			width: function() { return $(window).width(); },
-			height: function() { return $(window).height(); }
+			height: function() { return $(window).height(); },
+			// the clothesline band belongs to the rail: a drag or scroll there must
+			// not also move or zoom the map under it
+			ignoreTop: function() { return (typeof clothesLinePos != 'undefined') ? clothesLinePos['maxHeight'] : 0; }
 		});
-		jawnosContinentMap.onMarkerClick(jawnosContinentMarkerTapped);
-		jawnosContinentMap.onChange(jawnosContinentListHide);
+		jawnosContinentMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, jawnosContinentMap.canvas); });
+		jawnosContinentMap.onChange(jawnosMarkerListHide);
+		jawnosContinentMap.onDraw(jawnosContinentOverlay);
 	}
 	var engine = jawnosContinentMap;
 	var canvas = document.getElementById('continent');
@@ -105,114 +129,21 @@ function continentPoints(places) {
 	return out;
 }
 
-// The tappable markers: every home plate (several in the same spot collapse to one
-// marker wearing their count, carrying the plates themselves so the tap can unfold
-// them), and every appointment the view's time range holds, at its latest recorded
-// fix. A tap opens the appointment window for the app.
+// The tappable markers: every home plate (several in the same spot collapse to
+// one marker wearing their count) and every appointment the view's time range
+// holds, at its latest recorded fix. A tap opens the appointment window for the
+// app; a grouped one unfolds its list.
 function continentTappables(response) {
-	var markers = [];
-	var clusters = [];
+	var plates = [];
 	$.each(response['home_plates'] || [], function(i, v) {
-		var lat = parseFloat(v['latitude']);
-		var lon = parseFloat(v['longitude']);
-		if (!isFinite(lat) || !isFinite(lon)) { return; }
-		var plate = { app: v['app'], name: v['name'] || v['app'], colour: v['colour'], lat: lat, lon: lon };
-		for (var c = 0; c < clusters.length; c++) {
-			if (continentMetres(clusters[c], plate) <= 50) {
-				var n = clusters[c].plates.length;
-				clusters[c].lat = ((clusters[c].lat * n) + lat) / (n + 1);
-				clusters[c].lon = ((clusters[c].lon * n) + lon) / (n + 1);
-				clusters[c].plates.push(plate);
-				return;
-			}
-		}
-		clusters.push({ lat: lat, lon: lon, plates: [plate] });
+		plates.push({ app: v['app'], name: v['name'] || v['app'], colour: v['colour'], lat: parseFloat(v['latitude']), lon: parseFloat(v['longitude']) });
 	});
-	$.each(clusters, function(i, cluster) {
-		markers.push({
-			lat: cluster.lat,
-			lon: cluster.lon,
-			kind: 'home_plate',
-			count: cluster.plates.length,
-			plates: cluster.plates,
-			app: cluster.plates.length == 1 ? cluster.plates[0].app : '',
-			label: cluster.plates.length == 1 ? cluster.plates[0].name : '',
-			colour: cluster.plates[0].colour || '#6f4f9f'
-		});
-	});
+	var appointments = [];
 	$.each(response['appointments'] || [], function(i, v) {
-		var lat = parseFloat(v['latitude']);
-		var lon = parseFloat(v['longitude']);
-		if (!isFinite(lat) || !isFinite(lon)) { return; }
-		markers.push({ lat: lat, lon: lon, kind: 'appointment', app: v['app'], label: v['name'] || v['app'], colour: v['colour'] || '#a0503f' });
+		appointments.push({ app: v['app'], name: v['name'] || v['app'], colour: v['colour'], lat: parseFloat(v['latitude']), lon: parseFloat(v['longitude']) });
 	});
-	return markers;
+	return jawnosMarkerGroups(plates, 50, '#6f4f9f').concat(jawnosMarkerGroups(appointments, 50, '#a0503f'));
 }
-
-// How far apart two markers are, in metres (the equirectangular approximation is
-// plenty at the scale one spot is judged at).
-function continentMetres(a, b) {
-	var mid = (a.lat + b.lat) / 2 * Math.PI / 180;
-	var dLat = (a.lat - b.lat) * 111194.9;
-	var dLon = (a.lon - b.lon) * 111194.9 * Math.cos(mid);
-	return Math.sqrt((dLat * dLat) + (dLon * dLon));
-}
-
-// A tap on the map: a single home plate or an appointment opens its appointment
-// window; a group unfolds into the list of what shares the spot.
-function jawnosContinentMarkerTapped(pt, sx, sy) {
-	if (pt.plates && pt.plates.length > 1) {
-		jawnosContinentList(pt, sx, sy);
-		return;
-	}
-	var app = pt.app || (pt.plates && pt.plates.length ? pt.plates[0].app : '');
-	if (app) { appointmentGrabber(app, Date.now()); }
-}
-
-// The little list a grouped marker unfolds: each plate by name, a tap on a name
-// opens that app's appointment window.
-function jawnosContinentList(pt, sx, sy) {
-	jawnosContinentListHide();
-	var canvas = document.getElementById('continent');
-	if (!canvas) { return; }
-	var rect = canvas.getBoundingClientRect();
-	var list = $('<div id="continent_marker_list"></div>').css({
-		position: 'fixed',
-		left: Math.max(4, Math.min(rect.left + sx + 12, $(window).width() - 190)) + 'px',
-		top: Math.max(4, Math.min(rect.top + sy + 12, $(window).height() - 190)) + 'px',
-		'z-index': 9000,
-		'background-color': 'var(--panel)',
-		border: '2px solid var(--line)',
-		'border-radius': '8px',
-		padding: '4px 8px',
-		'max-height': '34vh',
-		'overflow-y': 'auto',
-		'box-shadow': '0 6px 18px rgba(0,0,0,.35)',
-		'font-size': '13px',
-		'min-width': '130px'
-	});
-	$('<b></b>').text(pt.plates.length + ' places').appendTo(list);
-	$.each(pt.plates, function(i, plate) {
-		$('<span class="continent_marker_item"></span>')
-			.attr('app', plate.app)
-			.css({ display: 'block', padding: '3px 4px', cursor: 'pointer' })
-			.text(plate.name)
-			.appendTo(list);
-	});
-	list.appendTo('body');
-}
-
-function jawnosContinentListHide() {
-	$('#continent_marker_list').remove();
-}
-$(document).on('click', '.continent_marker_item', function() {
-	var app = $(this).attr('app');
-	jawnosContinentListHide();
-	if (app) { appointmentGrabber(app, Date.now()); }
-});
-$(document).on('mousedown touchstart', function(e) {
-	if ($(e.target).closest('#continent_marker_list').length == 0) { jawnosContinentListHide(); }
-});
 
 // The fallback: every place plotted by latitude/longitude, auto-fitted to the points
 // (with a floor on the span so one dot is not magnified into nonsense) over a faint

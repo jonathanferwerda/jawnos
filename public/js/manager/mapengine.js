@@ -88,6 +88,7 @@ window.jawnosMap = (function () {
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
 		var changing = [];    // callbacks fired after a pan/zoom
+		var drawHooks = [];   // callbacks fired after every draw (overlays on the same canvas)
 		var markerHandler = null; // called with a tapped marker (a point carrying an app)
 
 		function size() {
@@ -288,6 +289,11 @@ window.jawnosMap = (function () {
 				ctx.fillText(credit, dim.w - 6, dim.h - 6);
 				ctx.textAlign = 'left';
 			}
+			// the page may paint its own furniture on this canvas (a header, the
+			// clothesline rail): the clear above wiped it, so let it come back on top
+			for (var i = 0; i < drawHooks.length; i++) {
+				try { drawHooks[i](); } catch (e) {}
+			}
 		}
 
 		// ---- interaction ----
@@ -303,7 +309,7 @@ window.jawnosMap = (function () {
 			var best = null, bestD = Infinity;
 			for (var i = 0; i < points.length; i++) {
 				var pt = points[i];
-				if (!pt.app && !(pt.plates && pt.plates.length)) { continue; }
+				if (!pt.app && !(pt.list && pt.list.length)) { continue; }
 				var s = screenFor(pt.lat, pt.lon, o, view.z);
 				var reach = (pt.count > 1) ? 20 : 14;
 				var d = Math.sqrt(((s[0] - sx) * (s[0] - sx)) + ((s[1] - sy) * (s[1] - sy)));
@@ -332,24 +338,73 @@ window.jawnosMap = (function () {
 			view.lon = c.lon;
 			view.z = nz;
 			draw();
+			fire();
 		}
-		function zoomBy(dz) { view.z = clampZ(view.z + dz); draw(); }
+		function zoomBy(dz) { view.z = clampZ(view.z + dz); draw(); fire(); }
 		function fire() { for (var i = 0; i < changing.length; i++) { changing[i](view); } }
 
-		// mouse: press-and-drag pans, a wheel zooms. A trackpad's two-finger scroll
-		// pans too, and its pinch (ctrl+wheel) zooms. A click that did not drag is a
-		// tap, and may open a marker's window.
+		// A page may keep a band at the top of the canvas for its own furniture (the
+		// manager's clothesline rail): a gesture that starts inside it belongs to that
+		// furniture, not to the map.
+		function inBand(clientY) {
+			if (typeof opts.ignoreTop !== 'function') { return false; }
+			var band = opts.ignoreTop() || 0;
+			if (!(band > 0)) { return false; }
+			var r = canvas.getBoundingClientRect();
+			return (clientY - r.top) < band;
+		}
+
+		// A flick glides: the release velocity carries the pan on, easing out, so a
+		// throw of the map has weight instead of stopping dead.
+		var glideFrame = null;
+		function stopGlide() { if (glideFrame) { cancelAnimationFrame(glideFrame); glideFrame = null; } }
+		function glide(vx, vy) {
+			stopGlide();
+			vx = Math.max(-45, Math.min(45, vx));
+			vy = Math.max(-45, Math.min(45, vy));
+			var step = function () {
+				vx *= 0.93; vy *= 0.93;
+				if (Math.abs(vx) < 0.25 && Math.abs(vy) < 0.25) { glideFrame = null; fire(); return; }
+				panBy(vx, vy);
+				glideFrame = requestAnimationFrame(step);
+			};
+			glideFrame = requestAnimationFrame(step);
+		}
+		function release(vx, vy, moved) {
+			if (moved && (Math.abs(vx) > 1 || Math.abs(vy) > 1)) { glide(vx, vy); }
+			else { fire(); }
+		}
+
+		// mouse: press-and-drag pans (a flick glides on release), a wheel zooms. A
+		// trackpad's two-finger scroll pans too, and its pinch (ctrl+wheel) zooms. A
+		// click that did not drag is a tap, and may open a marker's window.
 		var drag = null;
 		var suppressClick = false;
 		var lastTouch = 0;
-		canvas.addEventListener('mousedown', function (e) { drag = { x: e.clientX, y: e.clientY, moved: 0 }; suppressClick = false; e.preventDefault(); });
+		canvas.addEventListener('mousedown', function (e) {
+			if (inBand(e.clientY)) { return; }
+			stopGlide();
+			drag = { x: e.clientX, y: e.clientY, moved: 0, vx: 0, vy: 0 };
+			suppressClick = false;
+			e.preventDefault();
+		});
 		window.addEventListener('mousemove', function (e) {
 			if (!drag) { return; }
-			if (e.clientX !== drag.x || e.clientY !== drag.y) { drag.moved = 1; }
-			panBy(e.clientX - drag.x, e.clientY - drag.y);
+			var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+			if (dx || dy) { drag.moved = 1; }
+			// the flick, damped, so the release can carry it on
+			drag.vx = (drag.vx * 0.7) + (dx * 0.3);
+			drag.vy = (drag.vy * 0.7) + (dy * 0.3);
+			panBy(dx, dy);
 			drag.x = e.clientX; drag.y = e.clientY;
 		});
-		window.addEventListener('mouseup', function () { if (drag) { suppressClick = drag.moved ? true : false; drag = null; fire(); } });
+		window.addEventListener('mouseup', function () {
+			if (!drag) { return; }
+			var moved = drag.moved, vx = drag.vx, vy = drag.vy;
+			suppressClick = moved ? true : false;
+			drag = null;
+			release(vx, vy, moved);
+		});
 		canvas.addEventListener('click', function (e) {
 			if (suppressClick) { suppressClick = false; return; }
 			if (Date.now() - lastTouch < 500) { return; } // the touch tap already answered
@@ -359,10 +414,19 @@ window.jawnosMap = (function () {
 		});
 
 		canvas.addEventListener('wheel', function (e) {
+			if (inBand(e.clientY)) { return; }
 			e.preventDefault();
 			var dy = e.deltaY || 0;
 			if (!dy) { return; } // a sideways-only scroll does nothing
-			zoomAt(dy < 0 ? 0.4 : -0.4, e.offsetX, e.offsetY);
+			// the zoom follows the wheel's own size: a mouse notch (~100px) is a gentle
+			// step, while a trackpad's many small deltas crawl - the old fixed step let
+			// a trackpad flick race through the zooms
+			if (e.deltaMode === 1) { dy *= 16; }
+			else if (e.deltaMode === 2) { dy *= 100; }
+			var dz = Math.max(-0.3, Math.min(0.3, -dy * 0.0015));
+			if (!dz) { return; }
+			stopGlide();
+			zoomAt(dz, e.offsetX, e.offsetY);
 		}, { passive: false });
 
 		// touch: one finger pans, two fingers pinch, a double-tap zooms in
@@ -374,11 +438,13 @@ window.jawnosMap = (function () {
 				d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) };
 		}
 		canvas.addEventListener('touchstart', function (e) {
+			if (inBand(e.touches[0].clientY)) { return; }
+			stopGlide();
 			if (e.touches.length >= 2) {
 				pinch = touchMid(e.touches); touch = null;
 			}
 			else {
-				touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0 };
+				touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0, vx: 0, vy: 0 };
 			}
 		}, { passive: true });
 		canvas.addEventListener('touchmove', function (e) {
@@ -395,7 +461,10 @@ window.jawnosMap = (function () {
 			}
 			else if (touch) {
 				var t0 = e.touches[0];
-				panBy(t0.clientX - touch.x, t0.clientY - touch.y);
+				var dx = t0.clientX - touch.x, dy = t0.clientY - touch.y;
+				touch.vx = (touch.vx * 0.7) + (dx * 0.3);
+				touch.vy = (touch.vy * 0.7) + (dy * 0.3);
+				panBy(dx, dy);
 				touch.x = t0.clientX; touch.y = t0.clientY; touch.moved = 1;
 				e.preventDefault();
 			}
@@ -403,6 +472,7 @@ window.jawnosMap = (function () {
 		canvas.addEventListener('touchend', function (e) {
 			if (e.touches.length > 0) { return; }
 			lastTouch = Date.now();
+			var tapped = false;
 			// a tap that lands on a marker opens it at once; anywhere else, two
 			// quick taps with no drag between zoom in one step
 			if (touch && !touch.moved) {
@@ -410,7 +480,7 @@ window.jawnosMap = (function () {
 				var pt = markerHandler ? markerAt(touch.x - r.left, touch.y - r.top) : null;
 				if (pt) {
 					markerHandler(pt, touch.x - r.left, touch.y - r.top);
-					tapAt = null; lastTap = 0;
+					tapAt = null; lastTap = 0; tapped = true;
 				}
 				else {
 					var now = Date.now();
@@ -419,8 +489,11 @@ window.jawnosMap = (function () {
 					lastTap = now;
 				}
 			}
+			var moved = touch ? touch.moved : 0, vx = touch ? touch.vx : 0, vy = touch ? touch.vy : 0;
 			touch = null; pinch = null;
-			fire();
+			// a marker tap already answered: firing here would hide the list it
+			// just unfolded
+			if (!tapped) { release(vx, vy, moved); }
 		});
 
 		var api = {
@@ -475,6 +548,12 @@ window.jawnosMap = (function () {
 				if (!lats.length) { return; }
 				fitBox(Math.min.apply(null, lats), Math.max.apply(null, lats), Math.min.apply(null, lons), Math.max.apply(null, lons), 1.3);
 			},
+			// Frame a ground box ({ nw, se }) - a measured map's own bounds, from
+			// jawnosMap.mapBounds(m) - so choosing it brings it into view.
+			fitBounds: function (bounds, margin) {
+				if (!bounds || !bounds.nw || !bounds.se) { return; }
+				fitBox(bounds.se.lat, bounds.nw.lat, bounds.nw.lon, bounds.se.lon, margin || 1.15);
+			},
 			// Frame a point: the tightest measured map that covers it (so the local map
 			// is legible), but never closer than minSpan degrees, else just minSpan.
 			focusOn: function (lat, lon, minSpan) {
@@ -492,6 +571,7 @@ window.jawnosMap = (function () {
 				fitBox(lat - h, lat + h, lon - h, lon + h, 1.15);
 			},
 			onMarkerClick: function (fn) { markerHandler = fn; },
+			onDraw: function (fn) { drawHooks.push(fn); },
 			onChange: function (fn) { changing.push(fn); },
 			view: function () { return view; }
 		};
