@@ -6276,8 +6276,8 @@ sub log_reader {
 				my ($from, $where, $vars) = @{$clause};
 				my $q = "select * from $from where " . ($for_app ? "app = ? and " : '')
 					. $where . $stick_suffix . " order by timestamp";
-				$results = &subs::db_query($q, ($for_app ? ($app) : ()), @{$vars}, @stick_suffix_variables);
-				push @{$appointments}, @{$results->hashes};
+				$results = &subs::db_raw($q, ($for_app ? ($app) : ()), @{$vars}, @stick_suffix_variables);
+				push @{$appointments}, @{$results};
 			}
 		};
 
@@ -6307,8 +6307,8 @@ sub log_reader {
 					push @query_variables, $account;
 				}
 				$query .=  " order by $timestamp_selector";
-				$results = &subs::db_query($query, @query_variables);
-				$temp_appointments = $results->hashes;
+				$results = &subs::db_raw($query, @query_variables);
+				$temp_appointments = $results;
 				push @{$appointments}, @{$temp_appointments};
 				unless ($in_view_only) {
 					$stick_run->(1, $a);
@@ -6336,8 +6336,7 @@ sub log_reader {
 			}
 			$query .= " order by $timestamp_selector LIMIT 500";
 
-			$results = &subs::db_query($query, @query_variables);
-			$appointments = $results->hashes;
+			$appointments = &subs::db_raw($query, @query_variables);
 			unless ($in_view_only) {
 				$stick_run->();
 			}
@@ -6384,8 +6383,7 @@ sub log_reader {
 		my $searchable = join '%', @search_split;
 
 		my $s = "%" . $searchable . "%";
-		$results = &subs::db_query('select * from appointments where app like ?', $s);
-		my $temp_appointments = $results->hashes;
+		my $temp_appointments = &subs::db_raw('select * from appointments where app like ?', $s);
 		my (@n,@perfect_n);
 		foreach my $a (reverse @{$temp_appointments}) {
 			if ($a->{'app'} eq $searchable) {
@@ -6400,10 +6398,8 @@ sub log_reader {
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'centre_view') {
 		#centre_view
-		$results = &subs::db_query("select max(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC", $chosen_app,$time_definition);
-		$appointments = $results->hashes;
-		$results = &subs::db_query("select min(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector", $chosen_app,$time_definition);
-		push @{$appointments}, @{$results->hashes};
+		$appointments = &subs::db_raw("select max(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC", $chosen_app,$time_definition);
+		push @{$appointments}, @{&subs::db_raw("select min(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector", $chosen_app,$time_definition)};
 
 
 		@{$appointments} = grep { $_->{'app'} eq $chosen_app } @{$appointments};
@@ -6423,20 +6419,19 @@ sub log_reader {
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp);
 		if ($data->{'uuid'}) {
-			$results = &subs::db_query("select * from appointments where app=? and uuid=? order by server_time DESC", $chosen_app, $data->{'uuid'});
+			$results = &subs::db_raw("select * from appointments where app=? and uuid=? order by server_time DESC", $chosen_app, $data->{'uuid'});
 		}
 		elsif ($data->{'filter'} ne 'all') {
-			$results = &subs::db_query("select * from appointments where app=? and type=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app, $data->{'filter'}, $t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and type=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app, $data->{'filter'}, $t,$t2,$t2,'start','record');
 		}
 		else {
-			$results = &subs::db_query("select * from appointments where app=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app,$t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app,$t,$t2,$t2,'start','record');
 		}
-		$appointments = $results->hashes;
+		$appointments = $results;
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'appointment_display') {
 		# appointment_display (configure)
-		$results = &subs::db_query("select * from appointments where app=? order by $timestamp_selector limit 1", $chosen_app,$timestamp_selector);
-		$appointments = $results->hashes;
+		$appointments = &subs::db_raw("select * from appointments where app=? order by $timestamp_selector limit 1", $chosen_app,$timestamp_selector);
 		if (scalar @{$appointments} == 0) {
 			push @{$appointments}, { app => $chosen_app };
 		}
@@ -6458,8 +6453,7 @@ sub log_reader {
 	my $settings = [];
 	my $db_settings;
 	unless (($data->{'view'} || '') eq 'appointment_viewer') {
-		$db_settings = &subs::db_query('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
-		$settings = $db_settings->hashes;
+		$settings = &subs::db_raw('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
 		foreach my $s (@{$settings}) {
 			if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'account') {
 				push @{$appts->{'__accounts'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__accounts'}};
@@ -6470,10 +6464,13 @@ sub log_reader {
 		}
 	}
 	my @app_names = ( &subs::device_setter() );
+	my %seen_app = ( $app_names[0] => 1 );
 	my $s_query = 'select * from settings where device = ? and (';
 	foreach my $a ( @{$appointments} ) {
-		unless ( grep { $_ eq $a->{'app'} } @app_names ) {
-			push @app_names, $a->{'app'};
+		my $an = $a->{'app'};
+		unless ( $seen_app{$an} ) {
+			$seen_app{$an} = 1;
+			push @app_names, $an;
 			$s_query .= ' or' if scalar @app_names > 2;
 			$s_query .= ' app = ?';
 		}
@@ -6486,8 +6483,7 @@ sub log_reader {
 	# viewer never looks at them, so here they are neither read nor sent.
 	$s_query .= " and substr(setting,1,3) <> 'sc_'" if ($data->{'view'} || '') eq 'appointment_viewer';
 	if (scalar @app_names > 1) {
-		$db_settings = &subs::db_query($s_query, @app_names);
-		my @app_settings = @{$db_settings->hashes};
+		my @app_settings = @{&subs::db_raw($s_query, @app_names)};
 
 		if ($data->{'view'} eq 'appointment_viewer') {
 			if (my @invisible = grep { $_->{'setting'} eq 'visible' && $_->{'value'} ne 'checked' } @app_settings) {

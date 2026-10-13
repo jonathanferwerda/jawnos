@@ -5343,6 +5343,32 @@ sub db_query() {
 	return eval { return $db->query($query, @params)  } if $db;
 }
 
+# The rows from a query as a plain arrayref of hashes - what db_query's
+# ->hashes gives back, but over the shared handle with a statement cache and
+# without the Mojo::SQLite::Results object and its per-call finalize. The hot
+# readers (log_reader's per-poll selects) only ever ask for ->hashes, and that
+# wrapper was a measurable slice of the poll. Anything needing more of the
+# Results API still goes through db_query.
+sub db_raw() {
+	my $query = shift;
+	my @params = @_;
+	my ($db) = &database_grabber();
+	return [] unless $db;
+	my $sth = eval { $db->dbh->prepare_cached($query) };
+	return [] unless $sth;
+	# Mojo::SQLite tolerated an extra bind argument (a few call sites interpolate a
+	# value into the SQL and then pass it as a bind too); a direct execute would
+	# fail on the mismatch, so match that tolerance by trimming to the placeholders.
+	my $n = $sth->{NUM_OF_PARAMS};
+	splice(@params, $n) if defined $n && @params > $n;
+	return [] unless eval { $sth->execute(@params); 1 };
+	my $rows = eval { $sth->fetchall_arrayref({}) };
+	# finish it: a statement left active pins the connection's read snapshot in
+	# SQLite, so later reads would see the world as it was here, not as it is
+	eval { $sth->finish };
+	return $rows || [];
+}
+
 
 sub db_update() {
 	my $table = shift;
