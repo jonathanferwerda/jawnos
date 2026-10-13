@@ -10,6 +10,9 @@
 #   perl scripts/jawnos_deps.pl --desktop  # also check/install the desktop app's
 #                                          # WebKitGTK + GStreamer media packages
 #                                          # (optional: their absence is not fatal)
+#   perl scripts/jawnos_deps.pl --extras-only --install  # only the optional apps
+#                                          # (Piper); run after a code update
+#   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
 #
 # Deliberately uses only core Perl so it runs before any CPAN module is present.
 
@@ -18,19 +21,48 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
 
-my ($report_only, $json, $sh, $install, $yes, $desktop);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras);
 GetOptions(
-	'report'  => \$report_only,
-	'json'    => \$json,
-	'sh'      => \$sh,
-	'install' => \$install,
-	'yes|y'   => \$yes,
-	'desktop' => \$desktop,
+	'report'      => \$report_only,
+	'json'        => \$json,
+	'sh'          => \$sh,
+	'install'     => \$install,
+	'yes|y'       => \$yes,
+	'desktop'     => \$desktop,
+	'extras-only' => \$extras_only,
+	'no-extras'   => \$no_extras,
 ) or die "bad options\n";
 
 $install = 1 if $yes;
 
 my $platform = detect_platform();
+
+# --- optional applications (extras) -----------------------------------------
+# Tools JawnOS wants that are not a distribution package, so the installer
+# fetches them itself. Idempotent (present => skipped) and non-fatal (a device
+# that cannot install one keeps working with its fallback). Piper is the first;
+# add another by pushing one more row. `--extras-only` is what the update hook
+# runs, so a new version's new app lands without a hand.
+my $home = $ENV{'HOME'} || (getpwuid $<)[7] || '';
+my $piper_dir = "$home/.local/share/jawnos/piper";
+my @extras = (
+	{ id => 'piper', label => 'Piper TTS (natural voice)', check => \&have_piper, install => \&install_piper },
+);
+
+if ($extras_only) {
+	my @want = grep { !$_->{'check'}->() } @extras;
+	if (!@want) { print "Optional applications: all present.\n"; exit 0; }
+	print "Optional applications missing:\n";
+	print "  - " . $_->{'label'} . "\n" for @want;
+	exit 1 if $report_only;
+	unless ($install) {
+		print "\nInstall them now? [Y/n] ";
+		my $a = <STDIN>; $a = 'y' if !defined $a;
+		exit 1 if $a =~ /^n/i;
+	}
+	foreach my $e (@want) { $e->{'install'}->(); }
+	exit( (grep { !$_->{'check'}->() } @want) ? 1 : 0 );
+}
 
 # --- required command line tools --------------------------------------------
 # command => { apt => pkg, pacman => pkg, termux => pkg, label => "..." }
@@ -122,6 +154,46 @@ sub have_command {
 	return 0;
 }
 
+# --- extras: checks and installers ------------------------------------------
+sub have_piper {
+	return 1 if which('piper');
+	return 1 if -x "$piper_dir/piper";
+	return 0;
+}
+
+sub piper_arch {
+	my $m = `uname -m`; chomp $m;
+	return 'x86_64'  if $m =~ /^(x86_64|amd64)$/;
+	return 'aarch64' if $m =~ /^(aarch64|arm64)$/;
+	return '';
+}
+
+sub install_piper {
+	my $arch = piper_arch();
+	if (!$arch) {
+		print "  piper: no prebuilt binary for this architecture; skipping.\n";
+		return;
+	}
+	# The models (voices/*) are not here: they ride the mesh separately. This is
+	# only the engine. The glibc prebuilt runs on Linux x86_64/aarch64; on Termux
+	# (bionic) it needs glibc-runner, so the phone may keep termux-tts-speak.
+	system('mkdir', '-p', $piper_dir);
+	my $url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$arch.tar.gz";
+	my $tmp = "/tmp/jawnos_piper_$$.tgz";
+	if (run('curl', '-L', '--fail', '-o', $tmp, $url) != 0) {
+		print "  piper: download failed; leaving the fallback in place.\n";
+		return;
+	}
+	if (run('tar', 'xzf', $tmp, '-C', $piper_dir, '--strip-components=1') != 0) {
+		print "  piper: extract failed.\n";
+		unlink $tmp;
+		return;
+	}
+	unlink $tmp;
+	print "  piper: installed to $piper_dir\n" if -x "$piper_dir/piper";
+	print "  piper: installed (no binary produced?)\n" unless -x "$piper_dir/piper";
+}
+
 # --- desktop extra probes ----------------------------------------------------
 sub have_webkit {
 	my $py = which('python3') || which('python');
@@ -155,7 +227,7 @@ sub detect_platform {
 	return 'unknown';
 }
 
-my (@missing_tools, @missing_modules, @missing_desktop);
+my (@missing_tools, @missing_modules, @missing_desktop, @missing_extras);
 foreach my $t (@tools) {
 	push @missing_tools, $t unless have_command($t);
 }
@@ -167,6 +239,11 @@ if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 		push @missing_desktop, $d unless $d->{'check'}->();
 	}
 }
+unless ($no_extras) {
+	foreach my $e (@extras) {
+		push @missing_extras, $e unless $e->{'check'}->();
+	}
+}
 
 if ($json) {
 	my $data = {
@@ -175,6 +252,7 @@ if ($json) {
 		missing_tools   => [ map { { cmd => $_->{'cmd'}, label => $_->{'label'}, package => pkg_for($_) } } @missing_tools ],
 		missing_modules => [ @missing_modules ],
 		missing_desktop => [ map { { label => $_->{'label'}, package => pkg_for($_) } } @missing_desktop ],
+		missing_extras  => [ map { { id => $_->{'id'}, label => $_->{'label'} } } @missing_extras ],
 	};
 	print JSON::PP->new->canonical->pretty->encode($data);
 	exit((@missing_tools + @missing_modules == 0) ? 0 : 1);
@@ -215,6 +293,17 @@ if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 		print "and video merely decodes in software):\n";
 		foreach my $d (@missing_desktop) {
 			printf "  - %-44s (%s)\n", $d->{'label'}, pkg_for($d);
+		}
+	}
+}
+if (!$no_extras) {
+	if (!@missing_extras) {
+		print "optional applications: all present\n";
+	}
+	else {
+		print "optional applications missing (the eSpeak fallback is used until installed):\n";
+		foreach my $e (@missing_extras) {
+			print "  - " . $e->{'label'} . "\n";
 		}
 	}
 }
@@ -282,6 +371,13 @@ if (@missing_modules) {
 	my @cmd = ($cpanm, '--notest', '--force', @missing_modules);
 	unshift @cmd, sudo() unless $platform eq 'termux';
 	run(@cmd);
+}
+
+unless ($no_extras) {
+	if (@missing_extras) {
+		print "\nOptional applications:\n";
+		foreach my $e (@missing_extras) { $e->{'install'}->(); }
+	}
 }
 
 # --- final verdict -----------------------------------------------------------

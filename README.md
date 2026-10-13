@@ -437,4 +437,6 @@ handling of the wristwatch.
 
 ## License
 
-BSD 2-Clause. See [LICENSE](LICENSE).
+BSD 2-Clause. See [LICENSE](LICENSE). The third-party components JawnOS bundles or
+redistributes — the Piper TTS engine and its voice models, and any bundled fonts — are listed
+with their licences in [THIRD-PARTY.md](THIRD-PARTY.md).

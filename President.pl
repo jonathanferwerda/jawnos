@@ -235,15 +235,13 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
-	# The voice models ride the same mesh, one tick later so the two pulls do not
-	# pile onto the same link: a device that lacks a voice pulls it in and can
-	# then serve it, so every device holds (and speaks with) the same voices.
+	# The voice models ride the same mesh as the APKs, but they change rarely, so
+	# this is a single pass after boot rather than a loop: a device that lacks a
+	# voice pulls it in and can then serve it. Opening Configure -> Misc refreshes
+	# them on demand (see the misc_setting_list route).
 	&subs::subprocessor(sub {
 		sleep 50;
-		while (1) {
-			eval { &subs::voice_sync(); };
-			sleep 300;
-		}
+		eval { &subs::voice_sync(); };
 	}, { name => 'voice sync' });
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
