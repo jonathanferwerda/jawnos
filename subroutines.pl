@@ -5973,6 +5973,17 @@ sub icon_original() {
 	return -e "public" . $candidate ? $candidate : $path;
 }
 
+# The hand-drawn picture behind a public icon path, whatever icon set is
+# selected - the gate's splash and the denial page wear it always. build.js
+# renders generated tiles in at the old public paths, so the plain path no
+# longer shows the hand.
+sub icon_drawn() {
+	my $path = shift;
+	return $path unless defined $path && $path =~ m{^/};
+	my $candidate = "/icons/original" . $path;
+	return -e "public" . $candidate ? $candidate : $path;
+}
+
 # Resolve a button icon through the selected set, falling back to the given path.
 sub icon_path() {
 	my ($name, $fallback) = @_;

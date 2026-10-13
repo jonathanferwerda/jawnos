@@ -6084,7 +6084,8 @@ get '/box_office/:uuid' => sub($c) {
 
 
 		my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
-		my $image = $gb::known_appts->{$ticket->{'privilege'}}->{'icon'};
+		# the splash always wears the drawing (the hand the denial page shows too)
+		my $image = &subs::icon_drawn($gb::known_appts->{$ticket->{'privilege'}}->{'icon'});
 		my %js = (
 			title => 'Box Office',
 			layout => 'gate',
