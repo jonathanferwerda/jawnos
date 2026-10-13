@@ -125,14 +125,18 @@ watch, deck, laptop, and Pico.
   It now returns "is there speech now?". Debug the path over serial with
   `voicedbg on` (prints `frames/maxamp/peak/fires/stride` once a second).
 - **`hey_jawn`** is embedded as `jw/hey_jawn_model.h` (62 KB, trained on Colab).
-  **`jawn_do` is currently the same file under another name** — `jw/jawn_do_model.h`
-  is byte-identical to `hey_jawn_model.h` (md5 `a3da6184…`), so the watch can only
-  ever fire on "hey jawn" and the Jawn Do setting does nothing. Training the real
-  phrase is a Colab run away: `~/Downloads/jawn_do_colab.ipynb` is the notebook
-  with `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'` already set; run it,
-  then `.shots/tflite_to_header.py jawn_do.tflite jw/jawn_do_model.h jawn_do_model`
-  and rebuild. Check the new file is not byte-identical to `hey_jawn_model.h`
-  before flashing (that is exactly how this happened).
+  **`jawn_do` is currently the same model bytes under another name** — the two
+  headers differ only in the generator comment and the array name, and every
+  `*.tflite` copy (`~/Downloads/`, `~/jawnos-fw/models/`) is md5 `a3da6184…` — so
+  the watch can only ever fire on "hey jawn" and the Jawn Do setting does nothing.
+  Training the real phrase is a Colab run away: `~/Downloads/jawn_do_colab.ipynb`
+  is the notebook with `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'`
+  already set; run it, then
+  `.shots/tflite_to_header.py jawn_do.tflite jw/jawn_do_model.h jawn_do_model`
+  and rebuild. Verify the *model bytes*, not the whole file: `cmp` the arrays
+  past the first line (or md5 the new tflite/dump) — a fresh header always
+  differs in the comment and array name, which is exactly how the copy slipped
+  through.
 - **A wake-word capture ends on frame energy, not on the model.** The model only
   speaks for its phrase, so using its output as the silence detector ended every
   command ~900 ms after "hey jawn" (the clip carried the wake word and nothing
