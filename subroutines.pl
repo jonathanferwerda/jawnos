@@ -12142,19 +12142,25 @@ foreach my $rm ( @{$rms} ) {
 	}
 }
 
-# Keep only the voices the running code names. A model dropped from
-# say_voices() (a licence problem, say) is removed here, so no device goes on
-# serving or speaking with it. Never touches the per-arch piper/ bundle.
-my %wanted;
-foreach my $v ( &subs::say_voices() ) {
-	next unless ($v->{'engine'} || '') eq 'piper' && $v->{'model'};
-	$wanted{ $v->{'model'} . '.onnx' } = 1;
-	$wanted{ $v->{'model'} . '.onnx.json' } = 1;
-}
-foreach my $f ( glob("$dir/*.onnx"), glob("$dir/*.onnx.json") ) {
-	my ($base) = $f =~ m{/([^/]+)$};
-	unlink $f if $base && !$wanted{$base};
-}
+	# Keep only the voices the running code names. A model dropped from
+	# say_voices() (a licence problem, say) is removed here, so no device goes on
+	# serving or speaking with it. Never touches the per-arch piper/ bundle.
+	# Only prune once every sanctioned voice is present: a device that could not
+	# reach a peer keeps its old models rather than being left with none.
+	my (%wanted, $complete);
+	$complete = 1;
+	foreach my $v ( &subs::say_voices() ) {
+		next unless ($v->{'engine'} || '') eq 'piper' && $v->{'model'};
+		$wanted{ $v->{'model'} . '.onnx' } = 1;
+		$wanted{ $v->{'model'} . '.onnx.json' } = 1;
+		$complete = 0 unless -e "$dir/" . $v->{'model'} . '.onnx';
+	}
+	if ($complete) {
+		foreach my $f ( glob("$dir/*.onnx"), glob("$dir/*.onnx.json") ) {
+			my ($base) = $f =~ m{/([^/]+)$};
+			unlink $f if $base && !$wanted{$base};
+		}
+	}
 }
 
 1;
