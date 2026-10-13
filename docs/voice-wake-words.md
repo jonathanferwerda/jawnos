@@ -39,11 +39,12 @@ step, 40 channels, PCAN on, 125–7500 Hz, `out_type` uint16. Feed **160 samples
 
 ## Wake phrases (target list)
 
-`hey jawn`, `sup jawn`, `jawnski`, `sup ya hoser` — multi-syllable and
-distinctive, which train reliably and false-fire less than a lone "Jawn". **Each
-phrase is its own `.tflite`** (one training run each, ~a day on Colab); the
-firmware should hold a **list of models** and report which one fired, so adding a
-phrase later is a file drop.
+`hey jawn`, `sup jawn`, `jawnski`, `sup ya hoser` (and `jawn do`) —
+multi-syllable and distinctive, which train reliably and false-fire less than a
+lone "Jawn". **Each phrase is its own `.tflite`** (one training run each, ~a day
+on Colab); the firmware holds a **list of models** (`voice_words[]` in
+`jw/voice_models.h`) so adding a phrase later is a file drop. `hey jawn` and
+`jawn do` are trained; `sup jawn`, `jawnski`, `sup ya hoser` are still to do.
 
 ## Setting plumbing (already built)
 
@@ -55,7 +56,7 @@ capture listener (`voice_trigger_apply()` in `jw/jw.ino`).
 
 ## Boards
 
-- `jw/` — T-Watch S3 (I2S mic already at 16 kHz mono). Currently RMS VAD only.
+- `jw/` — T-Watch S3 (I2S mic already at 16 kHz mono). Neural VAD + two wake words.
 - `jt/` — T-Deck (ESP32-S3, ES7210 mic, **already uses `esp_vad`**, more
   flash/PSRAM + SD). VAD design is largely there; needs the wake word.
 - Runtime wiring is chip-level, so a shared library under
@@ -71,24 +72,32 @@ watch, deck, laptop, and Pico.
 
 ## Status
 
-- **VAD and a custom wake word are in the watch firmware.** `jw/voice_models.h`
-  loads whichever model `voice_trigger` asks for (one at a time): `vad.tflite`
-  (capture on any speech) or a wake phrase's model (capture after the phrase),
-  both over the `micro_features` front-end. Tensor arenas are in PSRAM.
-- **`hey_jawn.tflite`** (62 KB, trained on Colab) is embedded as
-  `jw/hey_jawn_model.h`; verified to load on-device (`[voice] model: hey jawn`).
+- **VAD and two custom wake words are in the watch firmware.** `jw/voice_models.h`
+  is table-driven (`voice_words[]`): one row per voice, holding its `.tflite` bytes
+  and its `probability_cutoff`. `voice_models_init()` loads whichever row the
+  setting asks for (one at a time) over the shared `micro_features` front-end;
+  tensor arenas are in PSRAM. Adding a phrase is a file drop (train, run
+  `.shots/tflite_to_header.py`, add an include and a row).
+- **`hey_jawn.tflite`** and **`jawn_do.tflite`** (62 KB each, trained on Colab) are
+  embedded as `jw/hey_jawn_model.h` / `jw/jawn_do_model.h`.
+- **The Embedded panel's voice select now arms the wake words too.**
+  `voice_trigger_apply()` in `jw/jw.ino` asks `voice_models_has()` (true for `vad`
+  and any phrase with a model), so picking a phrase in the panel starts the
+  listener instead of disarming it as it did before the runtime landed.
 - `micro_features` (the front-end) lives in `~/jawnos-fw/watch-libs/`, built by
   `.shots/micro_features_vendor.sh`.
 - The interpreter is the ESP32 core's bundled `esp-tflite-micro`; nothing is
   vendored for it.
 - The panel can't always push the setting over BLE (the phone usually owns the
-  link), so the console has `vtrig hey_jawn` / `vtrig vad` / `vtrig off` for tuning.
+  link), so the console has `vtrig hey_jawn` / `vtrig jawn_do` / `vtrig vad` /
+  `vtrig off` for tuning.
 
 ## Next steps
 
 1. Train the other phrases (`sup jawn`, `jawnski`, `sup ya hoser`) the same way;
-   embed each as another `*_model.h` and map its `voice_trigger` value.
-2. Tune each model's `probability_cutoff` from its
-   `tflite_streaming_roc.txt` (currently 0.90 hardcoded for hey jawn).
+   embed each as another `*_model.h` and add a `voice_words[]` row.
+2. Tune each model's `probability_cutoff` from its `tflite_streaming_roc.txt`
+   (currently 0.90 for both wake words; hey jawn did not fire on a walk test, so
+   lower it first).
 3. Deck (`jt/`): same `voice_models.h`/`micro_features` wiring (it already has
    `esp_vad` and an ES7210 mic).

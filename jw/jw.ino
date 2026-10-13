@@ -105,9 +105,8 @@ static bool bt_enabled = false;
 // with the rest of the voice code further down.
 static bool voiceCaptureEnabled = false;
 // The voice mode the panel set (operator_door.__specs.voice_trigger): 'off',
-// 'vad', or a wake word. It rides in a Now Me; voice_trigger_apply() maps it onto
-// the listener. Only 'vad' arms anything today - the wake-word runtime is not on
-// the watch yet, so those names are logged and ignored.
+// 'vad', or a wake word we have a model for. It rides in a Now Me;
+// voice_trigger_apply() arms the listener for anything voice_models_has() knows.
 static String voice_trigger = "off";
 static volatile bool voiceListening = false;
 static volatile bool voiceOneShot = false;   // a serial "voice" capture, not the setting
@@ -773,17 +772,17 @@ void ota_upload() {
   }
 }
 
-// Apply the panel's voice mode onto the capture listener. 'vad' arms the
-// on-device listener (capture on any speech); 'off' disarms it. A wake word has
-// no model on the watch yet, so it disarms and is logged - the round-trip from
-// the Embedded panel still shows up on the serial console.
+// Apply the panel's voice mode onto the capture listener. A mode we have a model
+// for ('vad' or a wake phrase) arms the listener (capture on speech / after the
+// phrase); 'off' and unknown names disarm it and are logged - the round-trip from
+// the Embedded panel shows up on the serial console.
 static void voice_trigger_apply() {
-  if (voice_trigger == "vad") {
+  if (voice_models_has(voice_trigger)) {
     voiceCaptureEnabled = true;
   } else {
     voiceCaptureEnabled = false;
     if (voice_trigger.length() && voice_trigger != "off") {
-      Serial.printf("[voice] wake word '%s' has no model on the watch yet\n", voice_trigger.c_str());
+      Serial.printf("[voice] no model for '%s'\n", voice_trigger.c_str());
     }
   }
   Serial.printf("[voice] mode=%s\n", voice_trigger.c_str());

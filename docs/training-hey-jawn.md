@@ -77,9 +77,9 @@ notebook prints; raise the cutoff if it false-triggers, lower it if it misses.
 
 ## What lands where
 
-- Your trained `hey_jawn.tflite` → I add it as a **second model** beside the VAD
-  in `jw/voice_vad.h`, map the `voice_trigger` value `hey_jawn` onto it in
-  `voice_trigger_apply()`, and flash.
+- Your trained `<phrase>.tflite` → I add it as a **row** beside the VAD in
+  `jw/voice_models.h` (a `*_model.h` via `.shots/tflite_to_header.py`, plus a
+  `voice_words[]` entry with its mode name and cutoff), and flash.
 - The same file works on the deck and (later) the Pico — train once.
 
 ## Tips that matter for this phrase

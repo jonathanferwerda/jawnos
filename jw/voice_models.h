@@ -1,9 +1,12 @@
 #pragma once
 // On-device voice models (microWakeWord). One model runs at a time, chosen by the
 // panel's voice_trigger setting: 'vad' runs vad.tflite (capture on any speech); a
-// wake phrase runs that phrase's model (capture after the phrase). Both share the
+// wake phrase runs that phrase's model (capture after the phrase). All share the
 // same front-end (micro_features) and the same runtime (the interpreter bundled
 // with the ESP32 core); only the model bytes and the cutoff differ.
+//
+// Adding a phrase is a file drop: train it, run .shots/tflite_to_header.py to make
+// a *_model.h, include that header here, and add one row to voice_words[].
 
 #include <Arduino.h>
 #include <string.h>
@@ -15,10 +18,27 @@
 #include "tensorflow/lite/micro/micro_allocator.h"
 #include "vad_model.h"
 #include "hey_jawn_model.h"
+#include "jawn_do_model.h"
 
 #define VOICE_MODEL_WINDOW 5           // sliding_window_size (the models ship 5)
 #define VOICE_MODEL_TENSOR_ARENA 32768 // in PSRAM
 #define VOICE_MODEL_VAR_ARENA 8192
+
+// The voices the panel can pick. cutoff is the microWakeWord probability_cutoff,
+// kept here rather than read from the model: lower means more sensitive. Tune
+// each phrase from the tflite_streaming_roc.txt its training run writes.
+struct voice_word_t {
+  const char *mode;
+  const unsigned char *bytes;
+  float cutoff;
+};
+
+static const voice_word_t voice_words[] = {
+  { "vad",      vad_model,      0.50f },
+  { "hey_jawn", hey_jawn_model, 0.90f },
+  { "jawn_do",  jawn_do_model,  0.90f },
+};
+#define VOICE_WORD_COUNT (sizeof(voice_words) / sizeof(voice_words[0]))
 
 struct voice_model_t {
   tflite::MicroMutableOpResolver<20> resolver;
@@ -35,11 +55,12 @@ struct voice_model_t {
   bool ready = false;
 };
 
-static voice_model_t voice_vad;
-static voice_model_t voice_wake;
+// One slot per row in voice_words[], loaded lazily and kept (the setting rarely
+// changes, and a resident model reloads in no time). Only the picked one is active.
+static voice_model_t voice_slots[VOICE_WORD_COUNT];
 static voice_model_t *voice_active = nullptr;
 
-static bool voice_model_load(voice_model_t *m, const unsigned char *bytes, uint8_t cutoff_q) {
+static bool voice_model_load(voice_model_t *m, const voice_word_t *w) {
   if (m->ready) { return true; }
   auto &r = m->resolver;
   r.AddCallOnce(); r.AddVarHandle(); r.AddReshape(); r.AddReadVariable();
@@ -58,40 +79,53 @@ static bool voice_model_load(voice_model_t *m, const unsigned char *bytes, uint8
   if (!m->tensor_arena) { m->tensor_arena = (uint8_t *)malloc(VOICE_MODEL_TENSOR_ARENA); }
   if (!m->tensor_arena) { return false; }
 
-  const tflite::Model *model = tflite::GetModel(bytes);
+  const tflite::Model *model = tflite::GetModel(w->bytes);
   m->interp = new tflite::MicroInterpreter(model, r, m->tensor_arena, VOICE_MODEL_TENSOR_ARENA, m->mrv);
   if (m->interp->AllocateTensors() != kTfLiteOk) { return false; }
   m->in = m->interp->input(0);
   m->out = m->interp->output(0);
   m->stride = m->in->dims->data[1];
-  m->cutoff_q = cutoff_q;
+  m->cutoff_q = (uint8_t)(w->cutoff * 255);
   for (int i = 0; i < VOICE_MODEL_WINDOW; i++) { m->probs[i] = 0; }
   m->idx = 0;
   m->ready = true;
   return true;
 }
 
-// Pick and load the model the setting asks for. Anything that is not a wake word
-// we have a model for (including 'vad', and the on-device voice toggle which
-// leaves the trigger unset) falls back to the VAD.
+static const voice_word_t *voice_word_for(const String &mode) {
+  for (size_t i = 0; i < VOICE_WORD_COUNT; i++) {
+    if (mode == voice_words[i].mode) { return &voice_words[i]; }
+  }
+  return nullptr;
+}
+
+// True when the setting names a voice we have a model for. jw.ino uses this to arm
+// the capture listener (the panel path); 'off' and unknown names return false.
+static bool voice_models_has(const String &mode) {
+  return voice_word_for(mode) != nullptr;
+}
+
+// Pick and load the model the setting asks for. Anything without a model (the
+// on-device toggle leaving the trigger unset, and 'off') falls back to the VAD.
 static bool voice_models_init(const String &mode) {
   jawn_features_init();
-  if (mode == "hey_jawn") {
-    if (voice_model_load(&voice_wake, hey_jawn_model, (uint8_t)(0.90f * 255))) {
-      voice_active = &voice_wake;
-      Serial.println("[voice] model: hey jawn");
-      return true;
+  const voice_word_t *w = voice_word_for(mode);
+  if (!w) {
+    if (mode.length() && mode != "off") {
+      Serial.printf("[voice] no model for '%s' yet; using VAD\n", mode.c_str());
     }
-    Serial.println("[voice] hey jawn model failed to load; using VAD");
-  } else if (mode.length() && mode != "off" && mode != "vad") {
-    Serial.printf("[voice] no model for '%s' yet; using VAD\n", mode.c_str());
+    w = voice_word_for("vad");
   }
-  if (voice_model_load(&voice_vad, vad_model, (uint8_t)(0.5f * 255))) {
-    voice_active = &voice_vad;
-    return true;
+  if (!w) { voice_active = nullptr; return false; }
+  voice_model_t *slot = &voice_slots[w - voice_words];
+  if (!voice_model_load(slot, w)) {
+    Serial.printf("[voice] %s model failed to load; using VAD\n", w->mode);
+    voice_active = nullptr;
+    return false;
   }
-  voice_active = nullptr;
-  return false;
+  voice_active = slot;
+  Serial.printf("[voice] model: %s\n", w->mode);
+  return true;
 }
 
 // Feed 16 kHz int16 samples to the active model; true when it reads speech (VAD)
