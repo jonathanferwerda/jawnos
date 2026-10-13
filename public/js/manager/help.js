@@ -297,7 +297,7 @@ $(document).on('keydown', '#help_question', function (e) {
 
 $(document).on('change', '#help_model', function () {
 	var v = $(this).val();
-	if (v) { settingSetter({ app: 'mail', setting: 'help_assistant', value: v }); }
+	if (v) { settingSetter({ app: 'mail', setting: 'help_assistant', value: v }); $('#assistant_model').text(v); }
 });
 
 var help_search_timer = null;

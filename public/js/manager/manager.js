@@ -94,22 +94,165 @@ $(document).on('click', '#assistant_close', function() {
 	$('#assistant_view').hide();
 });
 
+// ---- the Guide's associate: a compact chat that lives with the taskbar --------
+// Clicking the assistant button opens this; dragging it onto a picture drops
+// that picture into the chat. It shares the Guide's bubble format and its
+// whitelisted actions, but it is its own little window, not the Help app.
+
+var jawnos_assistant_chat = [];
+var jawnos_assistant_dragging = false;
+
+function assistantLog() { return $('#assistant_view .assistant_chat_log'); }
+
+function assistantChatAdd(role, text) {
+	var log = assistantLog();
+	if (!log.length) { return $(); }
+	var safe = $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
+	if (role === 'step') {
+		log.append($('<div style="text-align:center;margin:5px 0;"><span style="font-size:11px;opacity:.6;font-style:italic;">' + safe + '</span></div>'));
+	}
+	else {
+		var mine = (role === 'user');
+		var bubble = '<span style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;font-size:13px;line-height:1.35;'
+			+ (mine ? 'background:#cdeccd;' : 'background:#cfe3f5;') + '">' + safe + '</span>';
+		log.append($('<div style="display:flex;margin:4px 0;' + (mine ? 'justify-content:flex-end;' : 'justify-content:flex-start;') + '">' + bubble + '</div>'));
+	}
+	log.scrollTop(log[0].scrollHeight);
+	return log.children().last();
+}
+
+// An assistant bubble whose inner .assistant_content the server streams into.
+function assistantAnswerBubble() {
+	var log = assistantLog();
+	if (!log.length) { return $(); }
+	var el = $('<div style="display:flex;margin:4px 0;justify-content:flex-start;">'
+		+ '<span style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;font-size:13px;line-height:1.35;background:#cfe3f5;">'
+		+ '<span class="assistant_content" style="opacity:.7;">…</span></span></div>');
+	log.append(el);
+	log.scrollTop(log[0].scrollHeight);
+	return el.find('.assistant_content');
+}
+
+function assistantOpen() {
+	var av = $('#assistant_view');
+	if (!av.length) { return av; }
+	if (!av.data('greeted')) {
+		av.data('greeted', 1);
+		assistantChatAdd('guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button onto a picture and I'll take a look.");
+	}
+	if (!av.is(':visible')) {
+		var w = av.outerWidth(), h = av.outerHeight();
+		av.css({
+			left: Math.max(6, $(window).width() - w - 16) + 'px',
+			top: Math.max(6, $(window).height() - h - 70) + 'px',
+			right: '', bottom: ''
+		}).show();
+	}
+	return av;
+}
+
+function assistantModel() {
+	var m = $.trim($('#assistant_model').text() || '');
+	if (!m && $('#help_model').length) { m = $('#help_model').val() || ''; }
+	return m;
+}
+
+// Text turns go to the same guide agent the Help app uses.
+function assistantAsk() {
+	var q = $.trim($('#assistant_question').val() || '');
+	if (!q) { return; }
+	$('#assistant_question').val('');
+	assistantOpen();
+	assistantChatAdd('user', q);
+	jawnos_assistant_chat.push({ role: 'user', content: q });
+	assistantGuideStep(0);
+}
+
+function assistantGuideStep(n) {
+	if (n >= 6) {
+		assistantChatAdd('step', 'Stopping after several steps.');
+		assistantChatAdd('guide', 'I did not finish that in a few steps — try naming the app, or ask me about it.');
+		return;
+	}
+	var ctx = (typeof helpContextNow === 'function') ? helpContextNow() : {};
+	$.ajax({
+		url: '/manager/help/act',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			transcript: JSON.stringify(jawnos_assistant_chat),
+			context: JSON.stringify(ctx),
+			topic: '',
+			model: assistantModel()
+		},
+		success: function (r) {
+			if (r && r.error) { assistantChatAdd('step', r.error); return; }
+			var a = (r && r.action) || {};
+			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
+				jawnos_assistant_chat.push({ role: 'assistant', content: a.text || '' });
+				assistantChatAdd('guide', a.text || '');
+				return;
+			}
+			assistantChatAdd('step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
+			jawnos_assistant_chat.push({ role: 'assistant', content: JSON.stringify(a) });
+			if (typeof helpDoAction !== 'function') { assistantChatAdd('step', 'The guide is not available.'); return; }
+			helpDoAction(a, function (obs, friendly) {
+				jawnos_assistant_chat.push({ role: 'tool', content: obs });
+				if (friendly) {
+					jawnos_assistant_chat.push({ role: 'assistant', content: friendly });
+					assistantChatAdd('guide', friendly);
+					return;
+				}
+				assistantGuideStep(n + 1);
+			});
+		},
+		error: function () { assistantChatAdd('step', 'The guide could not be reached.'); }
+	});
+}
+
+// A dropped picture (or voice clip) goes to the assistant; its answer streams
+// into the chat bubble the same way the mailbox one does.
+function assistantDrop(media) {
+	media = media || {};
+	assistantOpen();
+	if (media.image) {
+		var log = assistantLog();
+		log.append($('<div style="display:flex;margin:4px 0;justify-content:flex-end;">'
+			+ '<span style="display:inline-block;max-width:84%;border-radius:10px;padding:5px;background:#cdeccd;">'
+			+ '<img style="display:block;max-width:180px;max-height:180px;border-radius:6px;" src="' + media.image + '"></span></div>'));
+		log.scrollTop(log[0].scrollHeight);
+	}
+	else if (media.audio) {
+		assistantChatAdd('user', '(voice clip)');
+	}
+	var content = assistantAnswerBubble();
+	$.ajax({
+		url: '/manager/assistant',
+		type: 'POST',
+		data: { image: media.base64, audio: media.audio },
+		success: function (response) {
+			if (response && response.uuid) { content.attr('uuid', response.uuid); }
+			content.text('…');
+		},
+		error: function () { content.text('I could not reach the assistant.'); }
+	});
+}
+
+$(document).on('click', '#assistant_send', function () { assistantAsk(); });
+$(document).on('keydown', '#assistant_question', function (e) {
+	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); assistantAsk(); }
+});
+$(document).on('click', '#assistant', function () {
+	if (jawnos_assistant_dragging) { return; }
+	assistantOpen();
+});
+
 async function assistantInitializer() {
 	$('#assistant_view').draggable({
 		revert: "false",
 		zIndex: 999999,
 		handle: '#assistant_anchor',
-		cancel: '',
-		start: function(p,ui) {
-			console.log('started dragging a assistant');
-		},
-		drag: function(p,ui) {
-			console.log('dragging a file/folder');
-		  ui.position.left = p.pageX - 30;
-		  ui.position.top = p.pageY - 30;
-		},
-		stop: function(p,ui) {
-		}
+		cancel: ''
 	});
 
 	assistantIconInitializer();
@@ -127,20 +270,15 @@ function assistantIconInitializer() {
 		cursorAt: { top: 30, left: 30 },
 		cancel: '',
 		start: function(p,ui) {
-			console.log('started dragging a assistant');
-		//	$(this).css('opacity', '0');
+			jawnos_assistant_dragging = true;
 		},
 		drag: function(p,ui) {
-			console.log('dragging a file/folder');
 		  ui.position.left = p.pageX - 30;
 		  ui.position.top = p.pageY - 30;
 		},
 		stop: function(p,ui) {
+			setTimeout(function () { jawnos_assistant_dragging = false; }, 0);
 			$(this).css('opacity', '1');
-			var m = mouse_position();
-			var av = $('#assistant_view');
-			var show_assistant = 0;
-
 			
       var dropX = p.clientX;
       var dropY = p.clientY;
@@ -224,44 +362,7 @@ function assistantIconInitializer() {
 				audio = $target.attr('src');
 			}
 			
-			$('.assistant_content').html('<br><h1>Awaiting Response</h1>').show();
-			if (image) {
-				$('#assistant_image').attr('src', image).show();
-			}
-			else {
-				$('#assistant_image').attr('src', undefined).hide();
-			}
-			if (audio) {
-				$('#assistant_audio').attr('src',audio).show();
-			}
-			else {
-				$('#assistant_audio').hide();
-			}
-			$.ajax({
-				url: '/manager/assistant',
-				type: 'POST',
-				data: { image: base64Data, audio: audio },
-				success:function(response) {
-					$('.assistant_content').attr('uuid', response.uuid);
-
-
-
-
-					av.show();
-					
-					av.css({ 'left': m.x - ( av.width() / 2), 'top': m.y, 'position':'fixed' });
-					if ((numeral(av.css('left')).value() + numeral(av.width()).value()) > numeral($(window).width()).value()) {
-						av.css({ 'right': (($(window).width() - m.x) +  ( av.width() / 2)), 'left': '' });
-					}
-					if (numeral(av.css('left')).value() < 3) {
-						av.css({ 'left': '3px' });
-					}
-					if ((numeral(av.css('top')).value() + numeral(av.height()).value()) > numeral($(window).height()).value()) {
-						av.css({ 'bottom': (($(window).height() - m.y)), 'top': '' });
-					}
-
-				}
-			});
+			assistantDrop({ image: image, base64: base64Data, audio: audio });
 
 		}
 	});
