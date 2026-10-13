@@ -7248,6 +7248,83 @@ post '/manager/configure/image_function_tool' => sub($c) {
 	$c->render(json => $value);
 };
 
+# Decrypt a sealed file's bytes, trying each security credential the way
+# rock_and_roll does. Returns undef when none open it.
+sub sealed_file_bytes {
+	my ($suds, $file) = @_;
+	return read_file($file) unless $file =~ /\.enc$/i;
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my $pwords = &subs::db_query('select * from security where level != ? order by server_time DESC', 'padlock')->hashes;
+	foreach my $p ( @{$pwords} ) {
+		my $secret = &subs::decrypter($suds, $p->{'credential'});
+		next unless $secret;
+		my $data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$file" 2>/dev/null`;
+		next unless $data && length $data;
+		my $ft = File::Type->new();
+		return $data if $ft->checktype_contents($data) ne 'application/octet-stream';
+	}
+	return undef;
+}
+
+sub travel_map_record {
+	my ($uuid) = @_;
+	my $maps = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps' }) } || [];
+	my ($map) = grep { $_->{'uuid'} eq $uuid } @{$maps};
+	return ($map, $maps);
+}
+
+# The pair of helpers a person setting a map wants: read the scale legend off the
+# image (local tesseract), or ask the vision model for the legend and how far the
+# picture is off north-up. Both open the sealed image first.
+post '/manager/configure/map_helper' => sub($c) {
+	my $uuid = $c->param('file_uuid');
+	my $mode = $c->param('mode') || 'ocr';
+	my ($map) = &travel_map_record($uuid);
+	unless ($map && $map->{'f'}) { $c->render(json => { error => 'no such map' }); return; }
+	my ($destination,$asset) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
+	my $path = &subs::home($destination . $asset);
+	unless (-e $path) { $c->render(json => { error => 'the map image is not on this machine' }); return; }
+	my $bytes = &sealed_file_bytes($c->session('suds'), $path);
+	unless (defined $bytes && length $bytes) { $c->render(json => { error => 'could not open the map image' }); return; }
+
+	my $tmp = '/tmp/jawn_map_' . &subs::random_string_creator(8) . '.png';
+	write_file($tmp, $bytes);
+
+	if ($mode eq 'vision') {
+		my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
+		unless ($model) { unlink $tmp; $c->render(json => { error => 'no vision model is set (Configure, Plat, Vision)' }); return; }
+		my $system = 'You label a single map screenshot for JawnOS. The map is meant to be north-up.';
+		my $ask = 'Return ONLY JSON, no prose: {"legend":"the scale-bar text exactly as printed (e.g. 200 m or 1 km), or empty","rotate":degrees to turn the image CLOCKWISE so its north points up (a number; 0 if already north-up)}. Judge the rotation from the map content (roads, labels, the graticule), not from the scale bar, which is drawn horizontally however the map is turned.';
+		my ($text, $err) = &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ]);
+		unlink $tmp;
+		unless ($text) { $c->render(json => { error => $err || 'the vision model returned nothing' }); return; }
+		my ($json) = $text =~ /(\{.*\})/s;
+		my $out = eval { return decode_json $json } || {};
+		$c->render(json => { legend => $out->{'legend'}, rotate => $out->{'rotate'}, raw => $text });
+		return;
+	}
+
+	my $base = '/tmp/jawn_map_ocr_' . &subs::random_string_creator(8);
+	`tesseract "$tmp" "$base" 2>/dev/null`;
+	my $ocr = (-e $base . '.txt') ? read_file($base . '.txt') : '';
+	unlink $tmp; unlink $base . '.txt';
+	my @cands;
+	while ($ocr =~ /(\d[\d.,]*\s*(?:km|m|cm|ft|mi|metres?|meters?|kilometres?|kilometers?|miles?|feet|foot)\b)/gi) {
+		push @cands, $1;
+	}
+	$c->render(json => { legend => ($cands[0] || undef), candidates => \@cands, text => $ocr });
+};
+
+post '/manager/configure/map_rotate' => sub($c) {
+	my $uuid = $c->param('file_uuid');
+	my $rotate = 0 + ($c->param('rotate') || 0);
+	my ($map, $maps) = &travel_map_record($uuid);
+	unless ($map) { $c->render(json => { error => 'no such map' }); return; }
+	foreach my $m ( @{$maps} ) { $m->{'rotate'} = $rotate if $m->{'uuid'} eq $uuid; }
+	&subs::setting_setter({ app => 'travel', setting => 'maps', value => encode_json $maps });
+	$c->render(json => { rotate => $rotate });
+};
+
 
 
 sub image_function_sanity_check() {
@@ -17259,7 +17336,8 @@ sub travel_atlas_maps {
 			app => $map->{'app'},
 			file => '/file_open?timestamp=' . ($map->{'server_time'} || 0) . '&file=' . $f . '&app=' . ($map->{'app'} || ''),
 			home_plate => $map->{'home_plate'},
-			scale => $map->{'scale'}
+			scale => $map->{'scale'},
+			rotate => ($map->{'rotate'} || 0)
 		};
 	}
 	return $out;

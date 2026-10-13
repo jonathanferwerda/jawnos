@@ -9,9 +9,10 @@
 //     them covers it scrolls into view — that is "load the other maps we have".
 //   * markers: the continent points, and the machine's current position.
 //
-// Drag to pan, wheel (or the zoom slider) to zoom. With no provider chosen it
-// fetches nothing and the measured maps are all it needs, so it stays usable
-// offline; the tile layer is the online bonus.
+// Drag to pan; a wheel or a pinch zooms (a trackpad's two-finger scroll zooms too),
+// and a double-tap zooms in. With no provider chosen it fetches nothing and the
+// measured maps are all it needs, so it stays usable offline; the tile layer is the
+// online bonus.
 //
 // Everything is plain JS and jQuery-free; the page's own jQuery is not required.
 
@@ -44,19 +45,6 @@ window.jawnosMap = (function () {
 	function yToLat(y, z) { var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z); return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))); }
 	function worldPx(lat, lon, z) { return [lonToX(lon, z) * TILE, latToY(lat, z) * TILE]; }
 	function geoAt(wx, wy, z) { return { lat: yToLat(wy / TILE, z), lon: xToLon(wx / TILE, z) }; }
-
-	// The browser will not say whether a wheel came from a trackpad or a mouse; the
-	// stream does. A mouse sends one coarse, whole-numbered vertical notch at a
-	// time (and never leans sideways); a trackpad sends fine, often fractional
-	// pixels in floods, and is the only one that scrolls sideways. Same heuristic
-	// the clothesline uses, so a two-finger scroll pans and a wheel zooms.
-	function wheelKind(deltaX, deltaY, deltaMode) {
-		if (!deltaX && !deltaY) { return undefined; }
-		if (deltaX !== 0) { return 'trackpad'; }
-		if (deltaMode !== 0) { return 'mouse'; }
-		if (!Number.isInteger(deltaY)) { return 'trackpad'; }
-		return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
-	}
 
 	// The ground bounds of a measured map: the latitude/longitude of its top-left
 	// and bottom-right image pixels, from its home_plate and scale bar. North-up,
@@ -192,9 +180,24 @@ window.jawnosMap = (function () {
 				var left = Math.min(nw[0], se[0]), top = Math.min(nw[1], se[1]);
 				var right = Math.max(nw[0], se[0]), bottom = Math.max(nw[1], se[1]);
 				if (right < 0 || bottom < 0 || left > w || top > h) { continue; } // off-screen
+				var iw = m.image.width, ih = m.image.height;
+				var kx = iw > 0 ? (right - left) / iw : 1;
+				var ky = ih > 0 ? (bottom - top) / ih : 1;
 				ctx.save();
 				ctx.globalAlpha = 0.92;
-				try { ctx.drawImage(m.image, left, top, right - left, bottom - top); } catch (e) {}
+				if (m.rotate) {
+					// a screenshot taken off north-up lands tilted; straighten it about its
+					// home plate (a length - the scale bar - is rotation-invariant, so the
+					// georeference still holds after the turn)
+					var hp = m.home_plate || {};
+					var hx = parseFloat(hp.x) || 0, hy = parseFloat(hp.y) || 0;
+					ctx.translate(left + hx * kx, top + hy * ky);
+					ctx.rotate(m.rotate * Math.PI / 180);
+					try { ctx.drawImage(m.image, -hx * kx, -hy * ky, iw * kx, ih * ky); } catch (e) {}
+				}
+				else {
+					try { ctx.drawImage(m.image, left, top, right - left, bottom - top); } catch (e) {}
+				}
 				ctx.restore();
 				ctx.strokeStyle = 'rgba(0,0,0,0.5)';
 				ctx.strokeRect(left, top, right - left, bottom - top);
@@ -306,10 +309,9 @@ window.jawnosMap = (function () {
 
 		canvas.addEventListener('wheel', function (e) {
 			e.preventDefault();
-			var dx = e.deltaX || 0, dy = e.deltaY || 0;
-			if (e.ctrlKey) { zoomAt(dy < 0 ? 0.4 : -0.4, e.offsetX, e.offsetY); return; } // trackpad pinch / ctrl+wheel
-			if (wheelKind(dx, dy, e.deltaMode || 0) === 'trackpad') { panBy(dx, dy); return; }
-			zoomAt(dy < 0 ? 0.5 : -0.5, e.offsetX, e.offsetY); // a mouse wheel
+			var dy = e.deltaY || 0;
+			if (!dy) { return; } // a sideways-only scroll does nothing
+			zoomAt(dy < 0 ? 0.4 : -0.4, e.offsetX, e.offsetY);
 		}, { passive: false });
 
 		// touch: one finger pans, two fingers pinch, a double-tap zooms in
@@ -382,7 +384,7 @@ window.jawnosMap = (function () {
 				(list || []).forEach(function (m) {
 					var b = mapBounds(m);
 					if (!b) { return; }
-					var entry = { name: m.name, file: m.file, bounds: b };
+					var entry = { name: m.name, file: m.file, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0 };
 					maps.push(entry);
 					if (imageCache[m.file]) {
 						entry.image = imageCache[m.file];
@@ -399,6 +401,7 @@ window.jawnosMap = (function () {
 			},
 			setPoints: function (list) { points = list || []; draw(); },
 			setPosition: function (pos) { here = pos || null; draw(); },
+			maps: function () { return maps; },
 			// Frame the measured maps (their home plates), else keep the centre.
 			fitToMaps: function () {
 				var lats = [], lons = [];

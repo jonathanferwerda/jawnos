@@ -2,5 +2,11 @@
 <button class="image_function_tool" tool="scale" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" style="vertical-align:top;">Scale</button>
 <input class="image_function_input" id="<%= $appt->{'uuid'} %>_<%= $file->{'uuid'} %>_legend" placeholder="Legend" style="width:150px;vertical-align:top;">
 <span class="image_function_info" id="<%= $appt->{'uuid'} %>_<%= $file->{'uuid'} %>_info"></span>
-<img src="<%= &subs::icon_for('/images/make believe/gps.png') %>" hint="Location" class="little_thumb image_function_tool" tool="home_plate" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>">
-<br>
+	<img src="<%= &subs::icon_for('/images/make believe/gps.png') %>" hint="Location" class="little_thumb image_function_tool" tool="home_plate" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>">
+	<br>
+	<button class="map_legend_read" hint="Read the scale number off the map" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" app="<%= $appt->{'app'} %>" style="vertical-align:top;">Read legend</button>
+	<button class="map_tilt_ask" hint="Ask the vision model for the legend and how far the map is off north-up" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" app="<%= $appt->{'app'} %>" style="vertical-align:top;">Ask vision</button>
+	<input class="map_tilt" file_uuid="<%= $file->{'uuid'} %>" placeholder="Tilt°" size="4" style="vertical-align:top;">
+	<button class="map_tilt_save" hint="Save the tilt (degrees clockwise)" file_uuid="<%= $file->{'uuid'} %>" app_uuid="<%= $appt->{'uuid'} %>" app="<%= $appt->{'app'} %>" style="vertical-align:top;">Tilt</button>
+	<span class="map_tilt_info" id="<%= $appt->{'uuid'} %>_<%= $file->{'uuid'} %>_tilt_info" style="font-size:12px;"></span>
+	<br>

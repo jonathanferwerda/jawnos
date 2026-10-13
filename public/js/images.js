@@ -1112,3 +1112,54 @@ $(document).on('keydown', function(e) {
 		}
 	}
 });
+
+// ---- map setting helpers: read the legend (OCR) or ask the vision model, and
+// save a tilt when the map's picture is off north-up ----
+function mapTiltInfo(app_uuid, file_uuid) {
+	return $('#' + app_uuid + '_' + file_uuid + '_tilt_info');
+}
+
+function mapTiltSave(file_uuid, app_uuid, app, deg) {
+	$.ajax({
+		url: '/manager/configure/map_rotate',
+		type: 'POST',
+		data: { file_uuid: file_uuid, app_uuid: app_uuid, app: app, rotate: deg },
+		success: function(response) {
+			if (response.error) { mapTiltInfo(app_uuid, file_uuid).text(response.error); return; }
+			mapTiltInfo(app_uuid, file_uuid).text('tilt saved: ' + response.rotate + '\u00b0');
+		}
+	});
+}
+
+$(document).on('click', '.map_legend_read, .map_tilt_ask', function() {
+	var b = $(this);
+	var mode = b.hasClass('map_tilt_ask') ? 'vision' : 'ocr';
+	var file_uuid = b.attr('file_uuid');
+	var app_uuid = b.attr('app_uuid');
+	var app = b.attr('app');
+	var info = mapTiltInfo(app_uuid, file_uuid);
+	info.text(mode == 'vision' ? 'asking the vision model\u2026' : 'reading the legend\u2026');
+	$.ajax({
+		url: '/manager/configure/map_helper',
+		type: 'POST',
+		data: { mode: mode, file_uuid: file_uuid, app_uuid: app_uuid, app: app },
+		success: function(response) {
+			if (response.error) { info.text(response.error); return; }
+			if (response.legend) { $('#' + app_uuid + '_' + file_uuid + '_legend').val(response.legend); }
+			var tilt = '';
+			if (response.rotate !== undefined && response.rotate !== null && response.rotate !== '') {
+				$('.map_tilt[file_uuid="' + file_uuid + '"]').val(response.rotate);
+				mapTiltSave(file_uuid, app_uuid, app, response.rotate);
+				tilt = '  tilt: ' + response.rotate + '\u00b0';
+			}
+			info.text((response.legend ? 'legend: ' + response.legend : 'no legend found') + tilt);
+		},
+		error: function() { info.text('the helper could not run'); }
+	});
+});
+
+$(document).on('click', '.map_tilt_save', function() {
+	var b = $(this);
+	var file_uuid = b.attr('file_uuid');
+	mapTiltSave(file_uuid, b.attr('app_uuid'), b.attr('app'), $('.map_tilt[file_uuid="' + file_uuid + '"]').val() || 0);
+});

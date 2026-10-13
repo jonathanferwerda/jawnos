@@ -30,7 +30,7 @@ function travelToggle() {
 // viewport that shows every measured map we have, each placed by the georeference it
 // carries (its home_plate pixel and scale bar), over an optional tile layer from a
 // chosen provider, with the continent points and the machine's current position on
-// top. Drag to pan, the slider to zoom.
+// top. Drag to pan; wheel or pinch to zoom.
 var travelMap;
 var travelFramed = false;
 
