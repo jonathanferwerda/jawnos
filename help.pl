@@ -990,7 +990,9 @@ sub actions_prompt {
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
 		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
-		$lines .= sprintf("  %-46s%s\n", $ex, $t->{'desc'});
+		# pad to the shared column, but never let a long example swallow the gap
+		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
+		$lines .= '  ' . $ex . $gap . $t->{'desc'} . "\n";
 	}
 	my $rules = <<'TXT';
 Rules:
@@ -1008,6 +1010,9 @@ Rules:
   before choosing the next one.
 - For "when did I last see/do X", use find and answer from its last date - do not
   guess a date.
+- To make an appointment, use create - it only stages a proposal. Tell the person
+  what you staged and ask them to confirm; call promote only once they agree, and
+  never say it is saved before promote returns. Use discard if they decline.
 - Keep every text field short and in plain, everyday words.
 TXT
 	return $header . $lines . "\n" . $rules;

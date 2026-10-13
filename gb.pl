@@ -300,8 +300,12 @@ our @guide_tools = (
 	  desc => 'say where the person was at a time, read from the continent fixes', planned => 1 },
 	{ name => 'measure', args => { measure => 'what is measured', period => 'month' },
 	  desc => 'answer a measured question (how far walked this month; when a weight will be reached), read from the app and its budget pace', planned => 1 },
-	{ name => 'create', args => { app => '...', title => '...', when => '...' },
-	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in', planned => 1 },
+	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours' }, example => '{"action":"create","app":"lunch","title":"lunch with Mom","when":"in 3 hours"}',
+	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in' },
+	{ name => 'promote', args => { }, example => '{"action":"promote"}',
+	  desc => 'save the appointment you just staged, after the person says yes' },
+	{ name => 'discard', args => { }, example => '{"action":"discard"}',
+	  desc => 'throw away the appointment you just staged, if the person declines' },
 );
 
 our $known_icons = {

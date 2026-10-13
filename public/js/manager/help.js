@@ -96,6 +96,8 @@ function helpBody(topic, search) {
 // ---- the chat view --------------------------------------------------------
 
 var jawnos_help_chat = [];
+// the appointment the guide last staged (create), so a later promote can save it
+var jawnos_help_last_staged = null;
 
 function helpChatLog() { return $('.wind[app="help"] .help_chat_log'); }
 
@@ -145,6 +147,23 @@ function helpActionLabel(a) {
 
 // Execute one whitelisted action. Only ever calls known client functions; a
 // model cannot reach past this switch. Reports back through cb(observation).
+// Turn the person's words for a time ("in 3 hours", a date string, a raw ms)
+// into a timestamp the stage route can store.
+function helpResolveWhen(when) {
+	if (when == null || when === '') { return Date.now(); }
+	var s = String(when).trim().toLowerCase();
+	if (/^\d{10,}$/.test(s)) { return parseInt(s, 10); }
+	var m = /^in\s+(\d+)\s*(minute|min|hour|hr|day|week)s?$/.exec(s);
+	if (m) {
+		var n = parseInt(m[1], 10), u = m[2];
+		var mult = (u.indexOf('min') === 0) ? 60000 : ((u.indexOf('hour') === 0 || u === 'hr') ? 3600000 : (u.indexOf('day') === 0 ? 86400000 : 604800000));
+		return Date.now() + n * mult;
+	}
+	if (s === 'now') { return Date.now(); }
+	var d = Date.parse(when);
+	return isNaN(d) ? Date.now() : d;
+}
+
 function helpDoAction(a, cb) {
 	a = a || {};
 	if (a.action === 'open_app') {
@@ -196,6 +215,36 @@ function helpDoAction(a, cb) {
 			var files = (r.files || []).slice(0, 8).join(', ');
 			cb('Found ' + (r.count || 0) + ' record(s)' + (apps ? (' in apps: ' + apps) : '') + (files ? ('; files: ' + files) : '') + '.');
 		}).fail(function () { cb('The search failed.'); });
+		return;
+	}
+	if (a.action === 'create') {
+		var when = helpResolveWhen(a.when);
+		$.post('/manager/help/stage', { app: a.app || '', title: a.title || '', notes: a.notes || '', timestamp: when }, function (r) {
+			if (!r || !r.staged) { cb('I could not stage that.'); return; }
+			jawnos_help_last_staged = r.staged;
+			var when_text = r.timestamp ? (' for ' + new Date(parseInt(r.timestamp, 10)).toLocaleString()) : '';
+			cb('Staged a "' + (a.title || a.app || '') + '" appointment' + when_text + '. It is NOT saved yet.',
+				'I have staged it - say yes and I will save it.');
+		}).fail(function () { cb('I could not stage that.'); });
+		return;
+	}
+	if (a.action === 'promote') {
+		if (!jawnos_help_last_staged) { cb('There is nothing staged to save.'); return; }
+		var id = jawnos_help_last_staged;
+		$.post('/manager/help/promote', { uuid: id }, function (r) {
+			jawnos_help_last_staged = null;
+			if (r && r.error) { cb('I could not save that: ' + r.error); return; }
+			cb('Saved it as a real appointment.', 'Done - it is saved.');
+		}).fail(function () { cb('I could not save that.'); });
+		return;
+	}
+	if (a.action === 'discard') {
+		if (!jawnos_help_last_staged) { cb('There is nothing staged to drop.'); return; }
+		var drop = jawnos_help_last_staged;
+		$.post('/manager/help/discard', { uuid: drop }, function () {
+			jawnos_help_last_staged = null;
+			cb('Dropped the staged appointment.', 'Done - I threw it away.');
+		}).fail(function () { cb('I could not drop that.'); });
 		return;
 	}
 	cb(a.text || '');
