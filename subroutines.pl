@@ -3315,13 +3315,13 @@ sub settings_grabber() {
 
 			}
 			$query .= ')';
-			$q = &db_query($query, $app,$settings->{'device'}, @{$settings->{'settings'}});
+			$q = &db_raw($query, $app,$settings->{'device'}, @{$settings->{'settings'}});
 		}
 	}
 	else {
-		$q = &db_query($query, $app,$settings->{'device'});
+		$q = &db_raw($query, $app,$settings->{'device'});
 	}
-	my $list = $q->hashes;
+	my $list = $q;
 	if ($settings->{'subsetting'}) {
 		@{$list} = grep { $_->{'subsetting'} eq $settings->{'subsetting'} } @{$list};
 	}
@@ -5356,11 +5356,16 @@ sub db_raw() {
 	return [] unless $db;
 	my $sth = eval { $db->dbh->prepare_cached($query) };
 	return [] unless $sth;
-	# Mojo::SQLite tolerated an extra bind argument (a few call sites interpolate a
-	# value into the SQL and then pass it as a bind too); a direct execute would
-	# fail on the mismatch, so match that tolerance by trimming to the placeholders.
+	# Mojo::SQLite tolerated a bind count that did not match the placeholders
+	# (some call sites interpolate a value into the SQL and then pass it as a bind
+	# too, and one builds one clause too many); a direct execute fails on either
+	# mismatch. Trim extras and NULL-fill any shortfall so the result matches what
+	# the same SQL returned through db_query.
 	my $n = $sth->{NUM_OF_PARAMS};
-	splice(@params, $n) if defined $n && @params > $n;
+	if (defined $n) {
+		splice(@params, $n) if @params > $n;
+		push @params, undef while @params < $n;
+	}
 	return [] unless eval { $sth->execute(@params); 1 };
 	my $rows = eval { $sth->fetchall_arrayref({}) };
 	# finish it: a statement left active pins the connection's read snapshot in
