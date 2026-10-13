@@ -88,6 +88,7 @@ window.jawnosMap = (function () {
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
 		var changing = [];    // callbacks fired after a pan/zoom
+		var markerHandler = null; // called with a tapped marker (a point carrying an app)
 
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
@@ -229,8 +230,29 @@ window.jawnosMap = (function () {
 				var pt = points[i];
 				var s = screenFor(pt.lat, pt.lon, o, z);
 				if (s[0] < -20 || s[1] < -20 || s[0] > w + 20 || s[1] > h + 20) { continue; }
-				dot(s[0], s[1], r, pt.colour || '#2f6f9f');
-				if (pt.label && !many) { ctx.fillStyle = '#000'; ctx.fillText(pt.label, s[0] + 8, s[1] - 6); }
+				if (pt.count > 1) {
+					// a group in one spot: a bigger disc wearing the count, so the map
+					// stays readable and the tap can unfold what is under it
+					ctx.beginPath();
+					ctx.arc(s[0], s[1], 11, 0, Math.PI * 2);
+					ctx.fillStyle = pt.colour || '#2f6f9f';
+					ctx.fill();
+					ctx.lineWidth = 2;
+					ctx.strokeStyle = '#fff';
+					ctx.stroke();
+					ctx.save();
+					ctx.fillStyle = '#fff';
+					ctx.font = 'bold 12px Arial';
+					ctx.textAlign = 'center';
+					ctx.textBaseline = 'middle';
+					ctx.fillText(String(pt.count), s[0], s[1]);
+					ctx.restore();
+				}
+				else {
+					dot(s[0], s[1], r, pt.colour || '#2f6f9f');
+				}
+				// what can be opened keeps its name even in a crowd
+				if (pt.label && (!many || pt.app || pt.plates)) { ctx.fillStyle = '#000'; ctx.fillText(pt.label, s[0] + 8, s[1] - 6); }
 			}
 			if (here) {
 				var h2 = screenFor(here.lat, here.lon, o, z);
@@ -272,6 +294,24 @@ window.jawnosMap = (function () {
 		var ZMIN = 2, ZMAX = 21;
 		function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
 
+		// Which tappable marker sits under a screen point: only points that carry an
+		// app (or a list of them, a grouped marker) answer - the plain places are
+		// drawn for context and do nothing. The nearest within arm's reach wins.
+		function markerAt(sx, sy) {
+			var dim = size();
+			var o = originFor(view, dim.w, dim.h);
+			var best = null, bestD = Infinity;
+			for (var i = 0; i < points.length; i++) {
+				var pt = points[i];
+				if (!pt.app && !(pt.plates && pt.plates.length)) { continue; }
+				var s = screenFor(pt.lat, pt.lon, o, view.z);
+				var reach = (pt.count > 1) ? 20 : 14;
+				var d = Math.sqrt(((s[0] - sx) * (s[0] - sx)) + ((s[1] - sy) * (s[1] - sy)));
+				if (d <= reach && d < bestD) { bestD = d; best = pt; }
+			}
+			return best;
+		}
+
 		function panBy(dx, dy) {
 			var c = worldPx(view.lat, view.lon, view.z);
 			var g = geoAt(c[0] - dx, c[1] - dy, view.z);
@@ -297,15 +337,26 @@ window.jawnosMap = (function () {
 		function fire() { for (var i = 0; i < changing.length; i++) { changing[i](view); } }
 
 		// mouse: press-and-drag pans, a wheel zooms. A trackpad's two-finger scroll
-		// pans too, and its pinch (ctrl+wheel) zooms.
+		// pans too, and its pinch (ctrl+wheel) zooms. A click that did not drag is a
+		// tap, and may open a marker's window.
 		var drag = null;
-		canvas.addEventListener('mousedown', function (e) { drag = { x: e.clientX, y: e.clientY }; e.preventDefault(); });
+		var suppressClick = false;
+		var lastTouch = 0;
+		canvas.addEventListener('mousedown', function (e) { drag = { x: e.clientX, y: e.clientY, moved: 0 }; suppressClick = false; e.preventDefault(); });
 		window.addEventListener('mousemove', function (e) {
 			if (!drag) { return; }
+			if (e.clientX !== drag.x || e.clientY !== drag.y) { drag.moved = 1; }
 			panBy(e.clientX - drag.x, e.clientY - drag.y);
 			drag.x = e.clientX; drag.y = e.clientY;
 		});
-		window.addEventListener('mouseup', function () { if (drag) { drag = null; fire(); } });
+		window.addEventListener('mouseup', function () { if (drag) { suppressClick = drag.moved ? true : false; drag = null; fire(); } });
+		canvas.addEventListener('click', function (e) {
+			if (suppressClick) { suppressClick = false; return; }
+			if (Date.now() - lastTouch < 500) { return; } // the touch tap already answered
+			if (!markerHandler) { return; }
+			var pt = markerAt(e.offsetX, e.offsetY);
+			if (pt) { markerHandler(pt, e.offsetX, e.offsetY); }
+		});
 
 		canvas.addEventListener('wheel', function (e) {
 			e.preventDefault();
@@ -351,13 +402,22 @@ window.jawnosMap = (function () {
 		}, { passive: false });
 		canvas.addEventListener('touchend', function (e) {
 			if (e.touches.length > 0) { return; }
-			// a double-tap (two quick taps with no drag between) zooms in one step
+			lastTouch = Date.now();
+			// a tap that lands on a marker opens it at once; anywhere else, two
+			// quick taps with no drag between zoom in one step
 			if (touch && !touch.moved) {
 				var r = canvas.getBoundingClientRect();
-				var now = Date.now();
-				if (tapAt && now - lastTap < 300) { zoomAt(1, touch.x - r.left, touch.y - r.top); tapAt = null; }
-				else { tapAt = { x: touch.x, y: touch.y }; }
-				lastTap = now;
+				var pt = markerHandler ? markerAt(touch.x - r.left, touch.y - r.top) : null;
+				if (pt) {
+					markerHandler(pt, touch.x - r.left, touch.y - r.top);
+					tapAt = null; lastTap = 0;
+				}
+				else {
+					var now = Date.now();
+					if (tapAt && now - lastTap < 300) { zoomAt(1, touch.x - r.left, touch.y - r.top); tapAt = null; }
+					else { tapAt = { x: touch.x, y: touch.y }; }
+					lastTap = now;
+				}
 			}
 			touch = null; pinch = null;
 			fire();
@@ -385,6 +445,10 @@ window.jawnosMap = (function () {
 					var b = mapBounds(m);
 					if (!b) { return; }
 					var entry = { name: m.name, file: m.file, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0 };
+					// how much ground the map covers, so the draw can put the finest
+					// (smallest footprint) on top: panning into a neighbourhood must not
+					// leave the town-wide map covering the detailed one
+					entry.span = Math.max(Math.abs(b.nw.lat - b.se.lat), Math.abs(b.se.lon - b.nw.lon));
 					maps.push(entry);
 					if (imageCache[m.file]) {
 						entry.image = imageCache[m.file];
@@ -397,6 +461,7 @@ window.jawnosMap = (function () {
 						})(entry);
 					}
 				});
+				maps.sort(function (a, b) { return b.span - a.span; });
 				draw();
 			},
 			setPoints: function (list) { points = list || []; draw(); },
@@ -426,6 +491,7 @@ window.jawnosMap = (function () {
 				var h = span / 2;
 				fitBox(lat - h, lat + h, lon - h, lon + h, 1.15);
 			},
+			onMarkerClick: function (fn) { markerHandler = fn; },
 			onChange: function (fn) { changing.push(fn); },
 			view: function () { return view; }
 		};
