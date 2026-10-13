@@ -100,6 +100,7 @@ $(document).on('click', '#assistant_close', function() {
 $(document).on('click', '#assistant_config', function(e) {
 	e.stopPropagation();
 	$('#assistant_config_menu').toggle();
+	if ($('#assistant_config_menu').is(':visible')) { assistantStagedRefreshCount(); }
 });
 $(document).on('click', function(e) {
 	if (!$(e.target).closest('#assistant_config, #assistant_config_menu').length) { $('#assistant_config_menu').hide(); }
@@ -117,6 +118,98 @@ function assistantConfirmRequired() {
 	if (box.length) { return box.is(':checked'); }
 	return true;
 }
+
+// ---- the associate's staged list ----------------------------------------------
+// The configure menu's Staged entry swaps the chat for what the Guide is holding
+// (staged_appointments, status pending). Each row approves (promote) or deletes
+// (discard) its proposal. The chat itself is only hidden, never rebuilt: going
+// back finds the conversation exactly as it was left.
+
+function assistantStagedRefreshCount() {
+	var at = $('#assistant_staged_count');
+	if (!at.length) { return; }
+	$.get('/manager/help/staged', function (r) {
+		var n = (r && r.staged) ? r.staged.length : 0;
+		at.text(n ? ' (' + n + ')' : '');
+	});
+}
+
+function assistantStagedShow() {
+	$('#assistant_view .assistant_chat_log, #assistant_input_row').hide();
+	$('#assistant_staged_panel').css('display', 'flex');
+	assistantStagedLoad();
+}
+
+function assistantStagedHide() {
+	$('#assistant_staged_panel').hide();
+	$('#assistant_view .assistant_chat_log, #assistant_input_row').show();
+}
+
+function assistantStagedWhen(row) {
+	var ts = parseInt(row.timestamp, 10);
+	if (!ts || isNaN(ts)) { return row.staged_time || ''; }
+	var d = new Date(ts);
+	return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function assistantStagedLoad() {
+	var list = $('#assistant_staged_list');
+	if (!list.length) { return; }
+	list.text('…');
+	$.get('/manager/help/staged', function (r) {
+		assistantStagedRender((r && r.staged) || []);
+	}).fail(function () { list.text('I could not read the staged list.'); });
+}
+
+function assistantStagedRender(rows) {
+	var list = $('#assistant_staged_list');
+	list.empty();
+	$('#assistant_staged_count').text(rows.length ? ' (' + rows.length + ')' : '');
+	if (!rows.length) {
+		list.append($('<div style="font-size:12px;opacity:.7;padding:6px 2px;"></div>').text('Nothing is staged.'));
+		return;
+	}
+	rows.forEach(function (row) {
+		var item = $('<div class="assistant_staged_row" style="display:flex;align-items:center;gap:6px;padding:7px 2px;border-bottom:1px solid var(--line);"></div>')
+			.attr('uuid', row.uuid)
+			.attr('staged_title', row.title || row.app || '');
+		var text = $('<div style="flex:1;min-width:0;overflow-wrap:break-word;"></div>');
+		text.append($('<div style="font-size:13px;line-height:1.3;"></div>').text(row.title || '(an appointment)'));
+		text.append($('<div style="font-size:11px;opacity:.65;"></div>').text(assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '')));
+		var trash = $.trim($('#assistant_trash_icon').text()) || '/icons/trash.png';
+		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:pointer;font-size:15px;opacity:.75;">👍</span>';
+		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:pointer;padding:2px;" src="' + trash + '">';
+		item.append(text).append(approve).append(del);
+		list.append(item);
+	});
+}
+
+$(document).on('click', '#assistant_staged_open', function (e) {
+	e.stopPropagation();
+	$('#assistant_config_menu').hide();
+	assistantStagedShow();
+});
+
+$(document).on('click', '#assistant_staged_back', function () { assistantStagedHide(); });
+
+$(document).on('click', '.assistant_staged_approve', function () {
+	var row = $(this).closest('.assistant_staged_row');
+	var title = row.attr('staged_title') || 'the appointment';
+	$.post('/manager/help/promote', { uuid: row.attr('uuid') }, function (r) {
+		if (!r || r.error) { assistantChatAdd('step', 'I could not save that one.'); return; }
+		assistantChatAdd('step', 'Saved the staged “' + title + '”.');
+		assistantStagedLoad();
+	}).fail(function () { assistantChatAdd('step', 'I could not save that one.'); });
+});
+
+$(document).on('click', '.assistant_staged_delete', function () {
+	var row = $(this).closest('.assistant_staged_row');
+	var title = row.attr('staged_title') || 'the appointment';
+	$.post('/manager/help/discard', { uuid: row.attr('uuid') }, function () {
+		assistantChatAdd('step', 'Deleted the staged “' + title + '”.');
+		assistantStagedLoad();
+	});
+});
 
 // ---- the Guide's associate: a compact chat that lives with the taskbar --------
 // Clicking the assistant button opens this; dragging it onto a picture drops

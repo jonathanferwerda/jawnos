@@ -49,13 +49,22 @@
 		</div>
 		<div id="assistant_config_menu" style="position:absolute;top:38px;right:6px;display:none;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;">
 			<label style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;" hint="Confirmation Requirement: with this ticked, the Guide asks before it saves what it proposes; untick it and the Guide saves what it proposes without asking"><input type="checkbox" id="assistant_confirm" <%= (defined $guide_confirm && $guide_confirm eq 'off') ? '' : 'checked' %>> Confirm before saving</label>
+			<div id="assistant_staged_open" class="hover" hint="Show what the Guide has staged and is waiting to save" style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;padding-top:6px;margin-top:6px;border-top:1px solid var(--line);">Staged<span id="assistant_staged_count" style="opacity:.6;"></span></div>
 		</div>
 		<div class="assistant_chat_log" style="position:absolute;top:38px;bottom:46px;left:0;right:0;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
-		<div style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);">
+		<div style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);" id="assistant_input_row">
 			<textarea id="assistant_question" rows="1" placeholder="Ask the guide…" style="flex:1;box-sizing:border-box;height:32px;min-height:32px;max-height:32px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-size:13px;font-family:inherit;"></textarea>
 			<button id="assistant_send" class="button" hint="Ask, or ask it to do it" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Ask</button>
 		</div>
+		<div id="assistant_staged_panel" style="position:absolute;top:38px;bottom:0;left:0;right:0;display:none;flex-direction:column;box-sizing:border-box;background:var(--panel);">
+			<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);box-sizing:border-box;">
+				<img id="assistant_staged_back" hint="Back to the chat, as you left it" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" jawnos_icon="/images/make believe/left arrow.png">
+				<span style="font-weight:bold;font-size:13px;opacity:.85;">Staged appointments</span>
+			</div>
+			<div id="assistant_staged_list" style="flex:1;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
+		</div>
 		<span id="assistant_model" style="display:none;"><%= &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) %></span>
+		<span id="assistant_trash_icon" style="display:none;"><%= &subs::icon_path('trash', '/icons/trash.png') %></span>
 	</div>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 			<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
