@@ -49,10 +49,12 @@
 				<div class="cfg-row">
 					<label><%= $label %></label>
 					<% if ($is_secret) { %>
-						<input type="password" class="configure_input" app="mail" setting="<%= $name %>" value=""
-							placeholder="<%= $set ? '••• set — type to replace' : 'not set' %>"
-							data-set="<%= $set %>">
-						<% if ($set) { %><span class="cfg-note" style="margin:0;min-width:0;">✔ set</span><% } %>
+						<span class="cfg-inline">
+							<input type="password" class="configure_input" app="mail" setting="<%= $name %>" value=""
+								placeholder="<%= $set ? '••• set — type to replace' : 'not set' %>"
+								data-set="<%= $set %>">
+							<% if ($set) { %><span class="cfg-note" style="margin:0;white-space:nowrap;">✔ set</span><% } %>
+						</span>
 					<% } else { %>
 						<input type="text" class="configure_input" app="mail" setting="<%= $name %>" value="<%= $val %>">
 					<% } %>

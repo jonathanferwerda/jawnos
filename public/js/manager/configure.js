@@ -1,6 +1,33 @@
 var global_constraints = { 'video': false, 'audio': false };
 var configIntervals = { 'sysEvaluateInterval': '', 'sysEvaluateTimeout' : '' };
 
+// The Configure tabs behave like tabs: opening one panel closes the others, so
+// there is never a tall pile of half-scrolled panels. This runs before each
+// panel's own handler and only acts when that panel is about to OPEN, so
+// clicking the tab that is already open still closes it.
+var jawnos_configure_panels = {
+	me_settings: 'me_setting_list',
+	restore_list: 'backup_list',
+	system_setting_lister: 'system_list',
+	misc_setting: 'misc_setting_list',
+	plat_setting: 'plat_setting_list',
+	appointment_list_grabber: 'configure_appointment_list',
+	device_lister: 'device_list',
+	tunnel_lister: 'tunnel_list',
+	pseudonym_setting_lister: 'pseudonym_list',
+	store_setting_lister: 'store_list'
+};
+$(document).on('click', '.configure_toggle', function() {
+	var keep = jawnos_configure_panels[this.id];
+	if (!keep) { return; }
+	if ($('#' + keep).is(':visible')) { return; }
+	$.each(jawnos_configure_panels, function(button, panel) {
+		if (panel === keep) { return; }
+		$('#' + panel).hide();
+		$('#' + button).attr('status', 'inactive');
+	});
+});
+
 async function configureToggle() {
 	var cb = $('#configure_balloon');
 	if (cb.is(':visible')) {

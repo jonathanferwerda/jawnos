@@ -22,11 +22,14 @@
 	.cfg-scroll table { width:100%; border-collapse:collapse; }
 	.cfg-scroll th, .cfg-scroll td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
 	.cfg-scroll th { background:var(--panel); font-size:88%; }
-	.cfg button, .cfg .button { font:inherit; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; }
+	.cfg button, .cfg .button { font:inherit; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; white-space:nowrap; }
+	.cfg .cfg-inline { flex:1 1 220px; min-width:0; display:flex; gap:8px; align-items:center; }
+	.cfg .cfg-inline > input { flex:1 1 auto; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 	.cfg-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
 	@media (max-width:560px) {
 		.cfg-row { flex-direction:column; align-items:stretch; }
 		.cfg-row > label, .cfg-label { min-width:0; }
+		.cfg .cfg-inline { flex:1 1 auto; width:100%; }
 		.cfg { padding:10px 10px 48px; }
 	}
 	</style>
