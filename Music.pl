@@ -62,18 +62,16 @@ sub playable_enc_name($name) {
 	return playable_name(substr($name, 0, -4));
 }
 
-sub process_file() {
-	my $name = $File::Find::name;
-	if (playable_name($name) || ($permissive == 1 && playable_enc_name($name))) {
-		# A directory walk hands names back as UTF-8 bytes, but the music window is
-		# a character string: an undecoded name gets upgraded as Latin-1 and served
-		# double-encoded (Æ -> Ã), which the player then cannot open. Decode only the
-		# names that are kept, so the rest of the app sees them as the browser does.
-		# Invalid UTF-8 is left as bytes, which is what it was before.
-		utf8::decode($name) unless utf8::is_utf8($name);
-		$name =~ s/^\.\///g;
-		push @{$files}, $name;
-	}
+sub process_file($name) {
+	return unless playable_name($name) || ($permissive == 1 && playable_enc_name($name));
+	# A directory walk hands names back as UTF-8 bytes, but the music window is a
+	# character string: an undecoded name gets upgraded as Latin-1 and served
+	# double-encoded (Æ -> Ã), which the player then cannot open. Decode only the
+	# names that are kept, so the rest of the app sees them as the browser does.
+	# Invalid UTF-8 is left as bytes, which is what it was before.
+	utf8::decode($name) unless utf8::is_utf8($name);
+	$name =~ s/^\.\///g;
+	push @{$files}, $name;
 }
 
 sub process_thumbfile() {
@@ -427,12 +425,8 @@ sub music_search($data) {
 			@folders = map { $_->{'path'} } @{$selection};
 			$picked = $selection;
 		}
-		foreach my $folder (@folders) {
-			$folder = &subs::home($folder);
-			if (-d $folder) {
-				find(\&process_file,$folder);
-			}
-		}
+		my @walk = grep { -d } map { &subs::home($_) } @folders;
+		&process_file($_) for &subs::dir_listing(\@walk);
 		# the archive is part of the collection too, when the app is asked to
 		# look there: its manifest is the listing, and each row knows the
 		# machine its bytes come from
@@ -499,6 +493,8 @@ sub song_maker($data) {
 	my $songs = [];
 	my $pushed_now_playing = 0;
 	my $current_track;
+	# covers live in the album folder, so tracks that share one are listed once
+	my %thumb_cache;
 
 	splice @local_files, $max_files;
 	if ($now_playing->{'file'}) {
@@ -539,9 +535,12 @@ sub song_maker($data) {
 		pop @temp_path;
 		my $album_folder = join '/', @temp_path;
 		if ($type eq 'audio' && !$archive_row) {
-			$thumb_files = [];
-			find(\&process_thumbfile,$album_folder);
-			@thumbs = @{$thumb_files};
+			unless (exists $thumb_cache{$album_folder}) {
+				$thumb_files = [];
+				find(\&process_thumbfile,$album_folder);
+				$thumb_cache{$album_folder} = [ @{$thumb_files} ];
+			}
+			@thumbs = @{ $thumb_cache{$album_folder} };
 		}
 		my $app;
 		if ($filename =~ /\.enc$/gi) {
