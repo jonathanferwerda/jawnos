@@ -407,19 +407,42 @@ our %topic = (
 	},
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
+		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
+		verified => '2026-10-12',
 		summary => 'The device fleet, from the desktop.',
 		body => [
-			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one or push a room to a watch, deck or board.'
+			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
+			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), plus its room count and screen timeout.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
 			'Use Scan to re-discover devices, or Query on a row to ask one board what it is.',
-			'Push a room to send a screen of buttons to a watch or deck.'
+			'Push a room to send a screen of buttons to a watch or deck.',
+			'On a watch row, set the Voice select to choose what it listens for, then press Now Me to push the change.'
 		],
-		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge' ]
+		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge', 'voice' ]
 	},
 
 	# ------------------------------------------------------------ features
+	'voice' => {
+		title => 'Voice and wake words', category => 'features',
+		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
+		verified => '2026-10-12',
+		summary => 'Speak to the watch; it listens for a phrase and files the rest.',
+		body => [
+			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
+			'How the watch listens is the Voice setting on the watch row in the Embedded panel. There are four choices: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn or Voice: Jawn Do - which waits for that phrase and records what follows.',
+			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" and "Jawn Do" are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all.'
+		],
+		steps => [
+			'Open Embedded and find the watch in the device list.',
+			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn or Voice: Jawn Do.',
+			'The choice is pushed to the watch as a fresh Now Me, and the watch starts listening in that mode.',
+			'Speak: a command runs, and anything else is saved as a note.'
+		],
+		related => [ 'watch', 'embedded', 'notes', 'ble_bridge' ],
+		prompt => 'Describe the Voice select on the watch row in the Embedded panel and its four choices exactly: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, Voice: Jawn Do. Only those two phrases are trained - do not name any other wake word.'
+	},
 	'windows' => {
 		title => 'Windows', category => 'features',
 		summary => 'Open, stack, move, resize, snap and minimise.',
@@ -680,10 +703,11 @@ our %topic = (
 		title => 'The T-Watch', category => 'devices',
 		summary => 'A wrist clock, notifications and app buttons.',
 		body => [
-			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, can capture voice, and wakes when you raise your wrist to look at it.',
+			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command.',
+			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words.',
 			'It talks to JawnOS over Bluetooth through a bridge running on a nearby phone or desktop.'
 		],
-		related => [ 'ble_bridge', 'tdeck', 'embedded' ]
+		related => [ 'voice', 'ble_bridge', 'tdeck', 'embedded' ]
 	},
 	'tdeck' => {
 		title => 'The T-Deck', category => 'devices',
