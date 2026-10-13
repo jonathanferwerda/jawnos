@@ -139,6 +139,10 @@ function helpTopicsBack() {
 function helpActionLabel(a) {
 	if (a.action === 'find') { return 'Searching for “' + (a.query || '') + '”…'; }
 	if (a.action === 'open_app') { return 'Opening ' + (a.app || 'the app') + '…'; }
+	if (a.action === 'play_music') { return 'Looking for “' + (a.query || '') + '” to play…'; }
+	if (a.action === 'show_place') { return 'Finding ' + (a.place || 'the place') + ' on the map…'; }
+	if (a.action === 'where_when') { return 'Looking up where you were…'; }
+	if (a.action === 'measure') { return 'Measuring…'; }
 	var bits = [];
 	if (a.app) { bits.push(a.app); }
 	if (a.search) { bits.push('“' + a.search + '”'); }
@@ -247,7 +251,71 @@ function helpDoAction(a, cb) {
 		}).fail(function () { cb('I could not drop that.'); });
 		return;
 	}
+	if (a.action === 'show_place') {
+		$.get('/manager/help/place', { q: a.place || '' }, function (r) {
+			if (!r || r.error || !r.latitude) { cb((r && r.error) || ('I have no place called “' + (a.place || '') + '” measured yet.')); return; }
+			var lat = parseFloat(r.latitude), lon = parseFloat(r.longitude);
+			if (!$('#travel_campus').length && typeof appWindowOpener === 'function') { appWindowOpener('travel', Date.now(), {}); }
+			var tries = 0;
+			var centre = function () {
+				var engine = (typeof travelMapEngine === 'function') ? travelMapEngine() : null;
+				// the viewer frames itself once, on its first render; wait for that so our
+				// focus is the one that sticks rather than being overwritten a beat later
+				var framed = (typeof travelFramed === 'undefined') ? true : travelFramed;
+				if (engine && framed) {
+					var place_point = function () {
+						engine.setPoints([{ lat: lat, lon: lon, label: r.place || a.place || '', colour: '#e23b3b' }]);
+						engine.focusOn(lat, lon);
+						engine.draw();
+					};
+					place_point();
+					setTimeout(place_point, 900);
+					var extra = (r.count > 1) ? (' — the middle of ' + r.count + ' places named for it') : '';
+					cb('Centred the map on ' + (r.place || a.place) + extra + '.', 'Here is ' + (r.place || a.place) + ' on the map.');
+					return;
+				}
+				if (++tries < 40) { setTimeout(centre, 250); }
+				else { cb('I opened Travel but the map was not ready to centre.'); }
+			};
+			setTimeout(centre, 300);
+		}).fail(function () { cb('I could not look that place up.'); });
+		return;
+	}
+	if (a.action === 'where_when') {
+		$.get('/manager/help/where', { when: a.when || '' }, function (r) {
+			if (!r || r.error) { cb((r && r.error) || 'I could not read that time.'); return; }
+			if (!r.found) { cb('I have no place fix recorded for ' + (a.when || 'that time') + '.'); return; }
+			var text = 'The nearest fix before then was at ' + r.at + (r.place ? (', by ' + r.place) : '') + ' (' + r.latitude + ', ' + r.longitude + ').';
+			cb(text, text);
+		}).fail(function () { cb('I could not look that up.'); });
+		return;
+	}
+	if (a.action === 'measure') {
+		$.get('/manager/help/measure', { measure: a.measure || '', period: a.period || 'month', target: a.target || '' }, function (r) {
+			if (!r || r.error) { cb((r && r.error) || 'I could not measure that.'); return; }
+			cb(r.text || 'I measured nothing.', r.text || '');
+		}).fail(function () { cb('I could not measure that.'); });
+		return;
+	}
+	if (a.action === 'play_music') {
+		helpPlayMusic(a.query || '', cb);
+		return;
+	}
 	cb(a.text || '');
+}
+
+// Play music by artist or track: ask the server (which runs the music app's own
+// search) for the file, then open the music app on it. The music app does the
+// playing; the guide only has to name the track.
+function helpPlayMusic(query, cb) {
+	var q = $.trim(query || '');
+	if (!q) { cb('I did not catch what to play.'); return; }
+	$.get('/manager/help/music', { q: q }, function (r) {
+		if (!r || !r.found) { cb('I searched the library for “' + q + '” but found nothing to play.'); return; }
+		if (typeof musicToggle === 'function') { musicToggle([r.file]); }
+		else { cb('The music app is not available here.'); return; }
+		cb('Playing ' + r.title + '.', 'Now playing ' + r.title + '.');
+	}).fail(function () { cb('I could not reach the music library.'); });
 }
 
 function helpAsk() {

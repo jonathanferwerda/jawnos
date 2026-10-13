@@ -1013,6 +1013,13 @@ Rules:
 - To make an appointment, use create - it only stages a proposal. Tell the person
   what you staged and ask them to confirm; call promote only once they agree, and
   never say it is saved before promote returns. Use discard if they decline.
+- "Where was I" and "when did I last see X" are different questions. For a place
+  at a time, use where_when with an absolute date. For a record or photo, use find.
+- For "show me <place> on a map", use show_place - it works offline from the
+  places we have measured, so an odd name is matched against the things named for it.
+- For "how far did I walk" use measure with measure "walk"; for a weight goal use
+  measure with measure "weight". Do not guess a number - always take it from measure.
+- For music, use play_music with the artist and track; it plays the first match.
 - Keep every text field short and in plain, everyday words.
 TXT
 	return $header . $lines . "\n" . $rules;

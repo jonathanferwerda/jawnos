@@ -424,6 +424,11 @@ sub music_search($data) {
 	if ($search && !$data->{'files'}) {	
 		@local_files = grep { lc $_ =~ /($search)/gi } @{$files};
 	}
+	# a caller that only wants the matches (the guide's play_music) gets the file
+	# list back instead of a rendered crate, so it can hand one file to the player
+	if ($data->{'return_files'}) {
+		return { files => \@local_files, count => scalar @local_files };
+	}
 	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing });
 	$permissive = 0;
 	return $crate;

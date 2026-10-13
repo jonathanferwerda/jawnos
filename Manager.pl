@@ -17724,6 +17724,9 @@ post '/manager/help/act' => sub($c) {
 	}
 	my $t = $topic ? &help::get($topic) : undef;
 	my $system = &help::actions_prompt() . "\n\n";
+	# the guide is given the wall clock so it can turn "last year", "yesterday" and
+	# "next Friday" into the absolute dates where_when and create need
+	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
 	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
 	$system .= &help::briefing($topic) . "\n" if $topic;
 	$system .= &help::inventory($topic) . "\n" if $topic;
@@ -17794,6 +17797,258 @@ get '/manager/help/find' => sub($c) {
 		$last = { app => $last_row->{'app'}, when => $when } if $when;
 	}
 	$c->render(json => { query => $q, count => scalar @{$rows}, apps => \@apps, files => \@all, last => $last });
+};
+
+# ---- what the acting guide reads to answer, instead of guessing --------
+# These turn the model's words into an answer from data already on the machine
+# (the place fixes, the home plates, the logged measurements), so the guide can
+# say where, how far, and when without reaching the network or inventing a number.
+
+# kilometres between two latitude/longitude pairs, in the app's own units
+sub help_distance_km($lat1, $lon1, $lat2, $lon2) {
+	return 0 unless defined $lat1 && defined $lon1 && defined $lat2 && defined $lon2;
+	return great_circle_distance(deg2rad($lon1), deg2rad(90 - $lat1), deg2rad($lon2), deg2rad(90 - $lat2), $gb::planet_radius);
+}
+
+# the nearest thing we have measured, for naming a fix
+sub help_nearest_place($lat, $lon, $within_km = 0.15) {
+	my $rows = &subs::db_query("select app, value from settings where setting = 'home_plate' and value like '%latitude%' limit 400")->hashes;
+	my ($best, $best_km);
+	foreach my $r ( @{$rows} ) {
+		my $hp = eval { decode_json $r->{'value'} } || {};
+		next unless $hp->{'latitude'} && $hp->{'longitude'};
+		my $d = help_distance_km($lat, $lon, $hp->{'latitude'}, $hp->{'longitude'});
+		($best, $best_km) = ($r->{'app'}, $d) if !defined $best_km || $d < $best_km;
+	}
+	return undef unless defined $best_km && $best_km <= $within_km;
+	return { app => $best, km => $best_km };
+}
+
+# the distance walked between two moments, read from the walk app's own fixes.
+# A step is only counted between fixes close in time and at a walking pace, so
+# the quiet hours between two walks do not read as one long stride.
+sub help_walk_distance_km($start, $end) {
+	my $rows = &subs::db_query("select latitude, longitude, timestamp from continent where app = 'walk' and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ? and latitude is not null and latitude != '' order by cast(timestamp as integer) asc", $start, $end)->hashes;
+	my ($total, $prev) = (0, undef);
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'latitude'} =~ /^-?[0-9.]+$/ && $r->{'longitude'} =~ /^-?[0-9.]+$/;
+		my ($lat, $lon) = ($r->{'latitude'} + 0, $r->{'longitude'} + 0);
+		if ($prev) {
+			my $dt = ($r->{'timestamp'} - $prev->{'timestamp'}) / 1000;
+			my $km = help_distance_km($prev->{'lat'}, $prev->{'lon'}, $lat, $lon);
+			$total += $km if $dt > 0 && $dt <= 1200 && (($km / $dt) * 3600) <= 15;
+		}
+		$prev = { lat => $lat, lon => $lon, timestamp => $r->{'timestamp'} };
+	}
+	return ($total, scalar @{$rows});
+}
+
+# the person's weight trend, read from their logged measurements, projected to a
+# target: a line through the recent readings, taken to where it meets the budget
+sub help_weight_projection($app, $target) {
+	my $rows = &subs::db_query('select timestamp, measures from appointments where app = ? and measures like ? order by cast(timestamp as integer) asc', $app, '%"weight"%')->hashes;
+	my @pts;
+	foreach my $r ( @{$rows} ) {
+		next unless ($r->{'measures'} || '') =~ /"weight":"?([0-9.]+)"?/;
+		push @pts, [ $r->{'timestamp'} + 0, $1 + 0 ];
+	}
+	return { readings => 0 } unless @pts;
+	# the pace is the recent weeks, not all time: a turn only shows there
+	my $cutoff = $pts[-1][0] - (90 * 86400 * 1000);
+	my @recent = grep { $_->[0] >= $cutoff } @pts;
+	@recent = @pts if scalar @recent < 3;
+	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+	my $t0 = $recent[0][0];
+	foreach my $p ( @recent ) {
+		my $x = ($p->[0] - $t0) / 86400000;  # days
+		my $y = $p->[1];
+		$n++; $sx += $x; $sy += $y; $sxx += $x * $x; $sxy += $x * $y;
+	}
+	my $latest = $pts[-1][1];
+	my $den = $n * $sxx - $sx * $sx;
+	return { readings => scalar @pts, latest => $latest } unless $den;
+	my $slope = ($n * $sxy - $sx * $sy) / $den;  # per day
+	my ($days, $when);
+	if (defined $target && $target ne '' && abs($slope) > 0.00001) {
+		my $d = ($target - $latest) / $slope;
+		if ($d > 0) {
+			$days = int($d + 0.5);
+			$when = localtime(($pts[-1][0] + $d * 86400000) / 1000)->strftime('%B %d, %Y');
+		}
+	}
+	return { readings => scalar @pts, latest => $latest, target => $target,
+		slope_per_week => sprintf('%.3f', $slope * 7), days => $days, when => $when };
+}
+
+# "where was I at a moment" - the newest fix at or before it, named if we can
+get '/manager/help/where' => sub($c) {
+	my $when = $c->param('when') // '';
+	my $target;
+	if ($when =~ /^\d{10,}$/) { $target = $when + 0; }
+	else { my $t = eval { str2time($when) }; $target = $t ? $t * 1000 : undef; }
+	unless ($target) {
+		$c->render(json => { error => "I could not read the time '" . $when . "'." });
+		return;
+	}
+	my $now = &subs::rightNow();
+	$target = $now if $target > $now;
+	my $row = &subs::db_query('select latitude, longitude, timestamp from continent where cast(timestamp as integer) <= ? and cast(timestamp as integer) <= ? and latitude is not null and latitude != ? order by cast(timestamp as integer) desc limit 1', $target, $now, '')->hash;
+	unless ($row && $row->{'latitude'}) {
+		$c->render(json => { when => $target, found => 0 });
+		return;
+	}
+	my $at = localtime($row->{'timestamp'} / 1000)->strftime('%A, %B %d %Y at %I:%M%P');
+	my $near = help_nearest_place($row->{'latitude'}, $row->{'longitude'});
+	$c->render(json => {
+		found => 1, latitude => $row->{'latitude'}, longitude => $row->{'longitude'},
+		timestamp => $row->{'timestamp'}, at => $at,
+		place => ($near ? &subs::format_name($near->{'app'}) : undef),
+		place_km => ($near ? sprintf('%.3f', $near->{'km'}) : undef)
+	});
+};
+
+# "show me a place" - resolve a name to coordinates we already hold: a home
+# plate of something named for it (an exact app wins), else the middle of all of
+# them (every "sarnia" pin, together, stands in for Sarnia). No geocoder.
+get '/manager/help/place' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+//; $q =~ s/\s+$//;
+	if (!length $q) { $c->render(json => { error => 'no place named' }); return; }
+	my $like = '%' . join('%', split /\s+/, $q) . '%';
+	my $rows = &subs::db_query("select app, value from settings where setting = 'home_plate' and app like ? limit 300", $like)->hashes;
+	my @pts;
+	foreach my $r ( @{$rows} ) {
+		my $hp = eval { decode_json $r->{'value'} } || {};
+		next unless $hp->{'latitude'} && $hp->{'longitude'};
+		push @pts, { app => $r->{'app'}, lat => $hp->{'latitude'} + 0, lon => $hp->{'longitude'} + 0 };
+	}
+	if (!@pts) {
+		# a place that only exists as a tracked fix
+		my $crows = &subs::db_query("select app, latitude, longitude from continent where app like ? and latitude is not null and latitude != '' limit 300", $like)->hashes;
+		foreach my $r ( @{$crows} ) {
+			next unless $r->{'latitude'} =~ /^-?[0-9.]+$/ && $r->{'longitude'} =~ /^-?[0-9.]+$/;
+			push @pts, { app => $r->{'app'}, lat => $r->{'latitude'} + 0, lon => $r->{'longitude'} + 0 };
+		}
+	}
+	if (!@pts) { $c->render(json => { place => $q, found => 0, error => 'I have no measured place by that name.' }); return; }
+	my $exact = &subs::unformat_name($q);
+	my ($sel) = grep { $_->{'app'} eq $exact } @pts;
+	my ($lat, $lon, $label);
+	if ($sel) { ($lat, $lon, $label) = ($sel->{'lat'}, $sel->{'lon'}, &subs::format_name($exact)); }
+	else {
+		my ($sx, $sy) = (0, 0);
+		foreach my $p ( @pts ) { $sx += $p->{'lat'}; $sy += $p->{'lon'}; }
+		$lat = $sx / scalar @pts; $lon = $sy / scalar @pts;
+		$label = &subs::format_name($exact);
+	}
+	my ($near, $nd);
+	foreach my $p ( @pts ) {
+		next if $sel && $p->{'app'} eq $exact;
+		my $d = help_distance_km($lat, $lon, $p->{'lat'}, $p->{'lon'});
+		($near, $nd) = ($p, $d) if !defined $nd || $d < $nd;
+	}
+	$c->render(json => {
+		place => $label, found => 1, latitude => $lat, longitude => $lon,
+		count => scalar @pts, near => ($near ? &subs::format_name($near->{'app'}) : undef),
+		near_km => (defined $nd ? sprintf('%.3f', $nd) : undef)
+	});
+};
+
+# "how far did I walk" and "when will I be <target>" - read from the fixes and
+# the logged measurements, answered in the guide's own voice
+get '/manager/help/measure' => sub($c) {
+	my $measure = lc($c->param('measure') // '');
+	my $period = lc($c->param('period') // 'month');
+	my $now = &subs::rightNow();
+	if ($measure =~ /walk|distance|km|steps?|far/) {
+		my $unit = ($period =~ /^(day|week|month|year)$/) ? $period : 'month';
+		my ($start) = &subs::period_bounds($unit, $now);
+		my ($km, $fixes) = help_walk_distance_km($start, $now);
+		my $label = { day => 'today', week => 'this week', month => 'this month', year => 'this year' }->{$unit};
+		my $text = sprintf('You have walked about %.1f km %s', $km, $label) . ($fixes ? ' (from ' . $fixes . ' place fixes).' : '.');
+		$c->render(json => { measure => 'walk', period => $unit, km => sprintf('%.2f', $km), fixes => $fixes, text => $text });
+		return;
+	}
+	if ($measure =~ /weight|pounds?|lbs?|kilos?|kg|mass/) {
+		my $person = &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '');
+		if (!$person) { $c->render(json => { error => 'I do not know whose weight to read.' }); return; }
+		my $settings = &subs::settings_grabber({ app => $person });
+		my $unit = 'lb';
+		my $units = &subs::db_select('settings', ['value'], { app => $person, setting => 'unit' })->hashes;
+		foreach my $u ( @{$units} ) {
+			my $v = $u->{'value'};
+			if ($v && $gb::measures->{$v} && grep { $_ eq 'weight' || $_ eq 'mass' } @{ $gb::measures->{$v}->{'types'} || [] }) { $unit = $v; last; }
+		}
+		my $target = $c->param('target');
+		if (!$target) {
+			my $budgets = &subs::db_select('settings', ['value'], { app => $person, setting => 'budget' })->hashes;
+			foreach my $b ( @{$budgets} ) {
+				if (($b->{'value'} || '') =~ /([0-9.]+)\s*weight/i) { $target = $1; last; }
+			}
+		}
+		my $proj = help_weight_projection($person, $target);
+		my $text;
+		if (!$proj->{'readings'}) { $text = 'I have no weight readings logged yet.'; }
+		else {
+			my $latest = $proj->{'latest'};
+			my $rate = abs($proj->{'slope_per_week'} + 0);
+			my $dir = $proj->{'slope_per_week'} >= 0 ? 'gaining' : 'losing';
+			if (defined $target && $target ne '' && $proj->{'days'}) {
+				$text = sprintf("You are at %.1f %s and %s about %.1f %s a week. At that pace you would reach %s %s around %s (about %d days).", $latest, $unit, $dir, $rate, $unit, $target, $unit, $proj->{'when'}, $proj->{'days'});
+			}
+			elsif (defined $target && $target ne '') {
+				$text = sprintf("You are at %.1f %s. The trend has been flat or moving away from %s %s recently, so I cannot say when you would reach it.", $latest, $unit, $target, $unit);
+			}
+			else {
+				$text = sprintf("You are at %.1f %s, %s about %.1f %s a week.", $latest, $unit, $dir, $rate, $unit);
+			}
+		}
+		$c->render(json => { measure => 'weight', unit => $unit, target => $target, %{$proj}, text => $text });
+		return;
+	}
+	$c->render(json => { error => 'I can only measure walking distance and weight so far.' });
+};
+
+# "play <x>" - run the music app's own folder walk (Music::music_search) over
+# every known location, then keep the files that contain all the words asked for,
+# best match first (a "Ben Folds Five" album folder and a "Mess" track are the
+# same request). Hands back the one file to play.
+get '/manager/help/music' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+//; $q =~ s/\s+$//;
+	if (!length $q) { $c->render(json => { error => 'no music named' }); return; }
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	$settings->{'artist'} = eval { decode_json $settings->{'artist'} } || [];
+	$settings->{'album'} = eval { decode_json $settings->{'album'} } || [];
+	my $misc = &misc_setting_list();
+	my $device = &subs::device_setter();
+	my @every = sort grep { /_location$/ } keys %{ $misc->{$device} || {} };
+	my $port = $c->req->url->base->port;
+	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every });
+	my @files = @{ $res->{'files'} || [] };
+	my @words = grep { length } split /\s+/, lc $q;
+	my @hits;
+	foreach my $f ( @files ) {
+		my $lf = lc $f;
+		my $ok = 1;
+		my $last = -1;
+		foreach my $w ( @words ) {
+			my $at = index($lf, $w);
+			if ($at < 0) { $ok = 0; last; }
+			$last = $at if $at > $last;
+		}
+		next unless $ok;
+		push @hits, { file => $f, last => $last };
+	}
+	if (!@hits) { $c->render(json => { q => $q, found => 0 }); return; }
+	# the words landing earliest in the path is the tighter match (the album folder
+	# holds the artist, the track name holds the song); a shorter path breaks a tie
+	my ($best) = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
+	my $file = $best->{'file'};
+	my $title = $file;
+	$title =~ s{.*/}{};
+	$title =~ s/\.[a-z0-9]+$//i;
+	$c->render(json => { q => $q, found => scalar @hits, file => $file, title => $title });
 };
 
 # ---- the Guide's write path: stage, then promote or drop ------------------
