@@ -2041,6 +2041,10 @@ sub voice_note_store() {
 	$spoken =~ s/\s+/ /g;
 	$spoken =~ s/^\s+|\s+$//g;
 	return unless length $spoken;
+	# a single word, a clipped fragment, or a two-word noise is not a note: the
+	# wake word already filters ", the room"; this keeps the rest of the mumbles out.
+	my @words = split ' ', $spoken;
+	return unless scalar @words >= 3;
 	my $now = &subs::rightNow();
 	# A plain note row, not an appointment: the Notes app reads this table, and the
 	# server_time column rides the generic peer sync so the note still reaches
@@ -2088,7 +2092,11 @@ sub voice_ingest() {
 	my $cmd = &subs::voice_command_parse($text, $wake_optional);
 	if (($cmd->{'status'} || '') ne 'ok') {
 		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
-		if (&subs::voice_note_store($text)) {
+		# Keep it as a note only when it was addressed to us: a wake-word capture
+		# (the phrase was consumed on the watch) or a clip that opened with the
+		# phrase. A VAD clip of the room, or a clipped fragment, is not a note.
+		my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
+		if ($addressed && &subs::voice_note_store($text)) {
 			# a note landed: refresh any open Notes window at once, and let the
 			# watch drop its local copy of the clip
 			&Websocket::send('tab', { console => 'notesReload();' });

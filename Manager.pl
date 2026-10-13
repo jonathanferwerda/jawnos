@@ -19225,9 +19225,27 @@ post '/manager/teletype/wifi_config' => sub($c) {
 };
 
 post '/manager/teletype/wifi_update' => sub($c) {
-	my $edt = $c->param('edt');
+	my $edt = $c->param('edt') || 'watch';
 	my $timestamp = $c->param('timestamp');
 	my $chip_id = $c->param('chip_id');
+	# Prefer the Bluetooth bridge: this button exists to hand a device credentials
+	# it does not have yet, so it usually cannot be reached over the network it is
+	# trying to join. Read the stored wifi setting back and push it over BLE.
+	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
+	my $wifi = eval { decode_json $json_wifi } || {};
+	if ($wifi->{'ssid'} && &subs::bluetooth_sender({
+		intent => 'com.jawn.president.bt.connect',
+		chip_id => $chip_id,
+		edt => $edt,
+		message => { type => 'wifi', data => {
+			ssid => $wifi->{'ssid'}, password => $wifi->{'password'},
+			ap_ssid => $wifi->{'ap_ssid'}, ap_password => $wifi->{'ap_password'},
+		} }
+	})) {
+		$c->render(text => 'pushed over bluetooth');
+		return;
+	}
+	# else the device is on the network already: tell it to pull its own copy
 	my $teletype = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 	my $wifi_url = 'http://' . $teletype->{'ip'} . ':' . $config->{'port'} . '/wifi_update';
 	my $ua = Mojo::UserAgent->new();

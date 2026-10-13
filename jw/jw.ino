@@ -99,6 +99,9 @@ static volatile bool dozing = false;
 static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
+// Set when the panel hands us network credentials over BLE: the watch cannot
+// fetch them from a LAN it is not yet on, so loop() does the (blocking) join.
+static volatile bool wifi_join_requested = false;
 static bool bt_enabled = false;
 // Voice capture: loop() arms a VAD listener while this is on (Configure >
 // System). Declared up here because loop() reads it; the listener itself lives
@@ -1500,6 +1503,13 @@ void loop() {
     ble_flush_wigi();
     ble_push_steps(false);   // recover the steps taken while the link was down
   }
+  // the panel handed us network credentials over BLE: join now (this is the
+  // same blocking join the watch's Net-room WiFi button runs)
+  if (wifi_join_requested) {
+    wifi_join_requested = false;
+    Serial.println("[wifi] joining from BLE credentials");
+    wifi_server();
+  }
   // a watch armed for hands-free voice keeps a listener running while it is
   // awake: the task captures one utterance, ships it, and stays listening. It
   // steps aside (and is not restarted) while a manual record or playback holds
@@ -1814,6 +1824,23 @@ void loop2(void * pvParameters) {
               xSemaphoreGive(taskMutex);
               ble_now_me_ready = true;
               Serial.println("[ble] now_me applied");
+              Serial.flush();
+            }
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "wifi") {
+            // the panel sent our network credentials over BLE (the watch cannot
+            // reach a LAN it is not on yet). Store them and let loop() join;
+            // wifi_server() blocks, so it must not run here on loop2.
+            JSONVar w = btMsg["data"];
+            if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              if (w.hasOwnProperty("ssid")) { ssid = (const char *)w["ssid"]; }
+              if (w.hasOwnProperty("password")) { password = (const char *)w["password"]; }
+              if (w.hasOwnProperty("ap_ssid")) { ap_ssid = (const char *)w["ap_ssid"]; }
+              if (w.hasOwnProperty("ap_password")) { ap_password = (const char *)w["ap_password"]; }
+              wifi_enabled = true;
+              wifi_join_requested = true;
+              xSemaphoreGive(taskMutex);
+              Serial.println("[ble] wifi credentials received");
               Serial.flush();
             }
           }
