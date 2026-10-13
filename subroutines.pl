@@ -2037,7 +2037,10 @@ sub voice_note_store() {
 	# the transcript so it turns up in the Notes app, to be sorted out later. This
 	# is the whole 'audio that did not match the command word' path - the clip
 	# already reached us (over BLE or WiFi), so nothing extra has to be collected.
-	my ($text) = @_;
+	#
+	# $at is the clip's own time (when the utterance began); the note is stamped
+	# there, not at our processing time, so a note sorts where it was said.
+	my ($text, $at) = @_;
 	return unless defined $text;
 	my $clean = $text;
 	$clean =~ s/\s+/ /g;
@@ -2059,7 +2062,7 @@ sub voice_note_store() {
 	# every machine.
 	&subs::db_insert('notes', {
 		app => 'notes',
-		timestamp => $now,
+		timestamp => $at || $now,
 		server_time => $now,
 		text => $clean,
 		uuid => &subs::random_string_creator(21)
@@ -2104,7 +2107,7 @@ sub voice_ingest() {
 		# (the phrase was consumed on the watch) or a clip that opened with the
 		# phrase. A VAD clip of the room, or a clipped fragment, is not a note.
 		my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
-		if ($addressed && &subs::voice_note_store($text)) {
+		if ($addressed && &subs::voice_note_store($text, $meta->{'ts'})) {
 			# a note landed: refresh any open Notes window at once, and let the
 			# watch drop its local copy of the clip
 			&Websocket::send('tab', { console => 'notesReload();' });
