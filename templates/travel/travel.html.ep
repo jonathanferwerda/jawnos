@@ -1,33 +1,37 @@
 <div id="travel" style="background-color:var(--panel);width:100%;overflow:scroll;">
-	<div id="travel_toolbar" style="position:sticky;top:0;z-index:6;background-color:var(--panel);border-bottom:2px solid var(--line);">
-		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
-		<div id="travel_config" status="<%= $settings->{'config_visible'} %>" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } else { %>display:flex;<% } %>flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 30px 3px 3px;">
-			<button id="travel_home_plate" status="<%= $home_plate_enabled %>">Home Plate</button>
-			<button id="travel_update">Update</button>
-			<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now">
+	<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
+	<div id="travel_config" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } %>" status="<%= $settings->{'config_toggle'} %>">
+		<button id="travel_home_plate" status="<%= $home_plate_enabled %>"  style="vertical-align:top;">Home Plate</button>
+		<button id="travel_update" style="vertical-align:top;">Update</button>
+		<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now" style="vertical-align:top;"><br>
 
-			<span><b>Scope</b> <input type="text" id="travel_scope" name="scope" value="<%= $travel_scope %>" style="width:5em;"></span>
+		<input type="text" id="travel_scope" name="scope" value="<%= $travel_scope %>"><br>
 
-			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">
-				<option value="">None</option>
-				<% foreach my $map ( @{$settings->{'maps'}} ) { %>
-					<% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} }); 
-						$map->{'f'} = $destination . $asset;
-					%>
-					<% if ($map->{'home_plate'} && $map->{'scale'}) { %>
-						<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
-					<% } %>
+		<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>" style="vertical-align:top;">
+			<option value="">None</option>
+			<% foreach my $map ( @{$settings->{'maps'}} ) { %>
+				<% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} }); 
+					$map->{'f'} = $destination . $asset;
+				%>
+				<% if ($map->{'home_plate'} && $map->{'scale'}) { %>
+					<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
 				<% } %>
-			</select>
-			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_travel_map">
+			<% } %>
+		</select>
+		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_travel_map">
+		<br>
+		<b>Map</b>
+		<select class="travel_provider" provider="<%= $settings->{'map_provider'} || 'none' %>" style="vertical-align:top;"></select>
+		<input type="text" id="travel_custom_url" value="<%= $settings->{'map_custom_url'} %>" placeholder="custom tile URL: .../{z}/{x}/{y} or ArcGIS .../{z}/{y}/{x}" style="width:90%;">
+		<br>
+		<b>Search</b>
+		<input id="travel_search" value="<%= $settings->{'search'} %>">
+		<br>
+		<b>Start Time</b>
+		<input class="time travel_time" setting="start_time" app="travel" timestamp="<%= $settings->{'start_time'} %>" id="travel_start_time"><br>
+		<b>End Time</b>
+		<input class="time travel_time" setting="end_time" app="travel" timestamp="<%= $settings->{'end_time'} %>" id="travel_end_time">
 
-			<span><b>Map</b> <select class="travel_provider" provider="<%= $settings->{'map_provider'} || 'none' %>"></select> <input type="text" id="travel_custom_url" value="<%= $settings->{'map_custom_url'} %>" placeholder="custom tile URL: .../{z}/{x}/{y} or ArcGIS .../{z}/{y}/{x}" style="width:20em;max-width:60vw;"></span>
-
-			<span><b>Search</b> <input id="travel_search" value="<%= $settings->{'search'} %>" style="width:8em;"></span>
-
-			<span><b>Start</b> <input class="time travel_time" setting="start_time" app="travel" timestamp="<%= $settings->{'start_time'} %>" id="travel_start_time" style="width:9em;"></span>
-			<span><b>End</b> <input class="time travel_time" setting="end_time" app="travel" timestamp="<%= $settings->{'end_time'} %>" id="travel_end_time" style="width:9em;"></span>
-		</div>
 	</div>
 
 	<% if ($settings->{'view'}) { %>
@@ -41,3 +45,4 @@
 	<div id="travel_proxy_view">travel proxy view</div>
 
 </div>
+

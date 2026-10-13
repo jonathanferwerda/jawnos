@@ -6060,66 +6060,88 @@ get '/box_office/:uuid' => sub($c) {
 
 	if ((secure_compare $secret, $suds) && $ticket->{'privilege'} && $ticket->{'status'} eq 'active') {
 		&update_database($c);
-		$c->session('role' => $ticket->{'privilege'});
-		my $warranty = &subs::ago_calc(&subs::setting_grabber({ 'app' => $ticket->{'name'}, setting => 'warranty' }), $timestamp);
-		#&subs::db_insert('appointments',{ uuid => &subs::random_string_creator(40), app => $ticket->{'name'}, warranty => $warranty, type => "entry", timestamp => $timestamp, server_time => $server_time });
 		my $d = { app => 'customs', role => 'citizen', title => 'Your Majesty', message => &subs::format_name($ticket->{'privilege'}) . ': ' . &subs::format_name($ticket->{'name'}), image => "/images/make believe/crown.png" };
-		$c->session('database' => $database);
-		$c->session('authentication' => 'approved');
-		$c->session('suds' => $suds);
-		$c->session('server_time' => $server_time);
-		$c->session('warranty' => $ticket->{'warranty'});
-		$c->session('source' => 'ticket');
-		$c->session('ticket_uuid' => $ticket->{'uuid'});
-		$c->session('name' => $ticket->{'name'});
-		$c->session('privilege' => $ticket->{'privilege'});
-		$c->session('project' => $ticket->{'project'});
-		$c->session('app' => $ticket->{'app'} );
-		$c->session('padlock' => $server_time) if (scalar @{&subs::db_select('security', [ 'level' ], { level => 'padlock' })->hashes} > 0);
 		unless ($c->req->url->base->port eq 3000) {
 			&subs::say_it($ticket->{'name'});
 			&notification_sender($d,$database);
 		}
-		$access->{'status'} = 'approved';
+		if ($ticket->{'privilege'} eq 'blacklisted') {
+			# blacklisted is the deny: the denial page is the whole answer (no
+			# redirect after it), and the session itself is marked denial, so these
+			# cookies meet that page on every later request - public pages and
+			# static assets included - and carry no usable credential
+			$c->session('authentication' => 'denial');
+			$c->session('privilege' => 'blacklisted');
+			$c->session('suds' => undef);
+			$c->session('database' => undef);
+			$c->render(template => 'guest_layouts/denial');
+		}
+		else {
+			$c->session('role' => $ticket->{'privilege'});
+			my $warranty = &subs::ago_calc(&subs::setting_grabber({ 'app' => $ticket->{'name'}, setting => 'warranty' }), $timestamp);
+			#&subs::db_insert('appointments',{ uuid => &subs::random_string_creator(40), app => $ticket->{'name'}, warranty => $warranty, type => "entry", timestamp => $timestamp, server_time => $server_time });
+			$c->session('database' => $database);
+			$c->session('authentication' => 'approved');
+			$c->session('suds' => $suds);
+			$c->session('server_time' => $server_time);
+			$c->session('warranty' => $ticket->{'warranty'});
+			$c->session('source' => 'ticket');
+			$c->session('ticket_uuid' => $ticket->{'uuid'});
+			$c->session('name' => $ticket->{'name'});
+			$c->session('privilege' => $ticket->{'privilege'});
+			$c->session('project' => $ticket->{'project'});
+			$c->session('app' => $ticket->{'app'} );
+			$c->session('padlock' => $server_time) if (scalar @{&subs::db_select('security', [ 'level' ], { level => 'padlock' })->hashes} > 0);
+			$access->{'status'} = 'approved';
 
 
-		my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
-		# the splash always wears the drawing (the hand the denial page shows too)
-		my $image = &subs::icon_drawn($gb::known_appts->{$ticket->{'privilege'}}->{'icon'});
-		my %js = (
-			title => 'Box Office',
-			layout => 'gate',
-			template => 'guest_layouts/box_office',
-			'authentication' => 'approved',
-			port => $ENV{PORT_AHOY},
-			ws_port => $ENV{PORT_MSG},
-			alarm_port => $ENV{PORT_BELL},
-			device => $device,
-			manager_file => &manager_file_maker($c->session('name')),
-			ticket => $ticket,
-			image => $image
-		);
-		my $msg = encode_json { app => 'server', ticket => $ticket, timestamp => $timestamp };
-		if ($ticket->{'privilege'} eq 'citizen') {
-			$js{'redirector'} = $base_url . '/manager';
-			$js{'debriefer'} = $ticket->{'debriefer'};
-			$js{'js'} = encode_json \%js;
-			$c->render(%js);
-		}
-		elsif ($ticket->{'privilege'} eq 'resident') {
-			$js{'debriefer'} = $ticket->{'debriefer'};
-			$js{'redirector'} = $base_url . '/store?app=' . $ticket->{'app'};
-			$js{'js'} = encode_json \%js;
-			$c->render(%js);
-		}
-		elsif ($ticket->{'privilege'} eq 'guest') {
-			$js{'redirector'} = $base_url . '/';
-		#	$js{'debriefer'} = $deb;
-			$js{'js'} = encode_json \%js;
-			$c->render(%js);
+			my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
+			# the splash always wears the drawing (the hand the denial page shows too)
+			my $image = &subs::icon_drawn($gb::known_appts->{$ticket->{'privilege'}}->{'icon'});
+			my %js = (
+				title => 'Box Office',
+				layout => 'gate',
+				template => 'guest_layouts/box_office',
+				'authentication' => 'approved',
+				port => $ENV{PORT_AHOY},
+				ws_port => $ENV{PORT_MSG},
+				alarm_port => $ENV{PORT_BELL},
+				device => $device,
+				manager_file => &manager_file_maker($c->session('name')),
+				ticket => $ticket,
+				image => $image
+			);
+			my $msg = encode_json { app => 'server', ticket => $ticket, timestamp => $timestamp };
+			if ($ticket->{'privilege'} eq 'citizen') {
+				$js{'redirector'} = $base_url . '/manager';
+				$js{'debriefer'} = $ticket->{'debriefer'};
+				$js{'js'} = encode_json \%js;
+				$c->render(%js);
+			}
+			elsif ($ticket->{'privilege'} eq 'resident') {
+				$js{'debriefer'} = $ticket->{'debriefer'};
+				$js{'redirector'} = $base_url . '/store?app=' . $ticket->{'app'};
+				$js{'js'} = encode_json \%js;
+				$c->render(%js);
+			}
+			elsif ($ticket->{'privilege'} eq 'guest') {
+				$js{'redirector'} = $base_url . '/';
+			#	$js{'debriefer'} = $deb;
+				$js{'js'} = encode_json \%js;
+				$c->render(%js);
+			}
 		}
 	}
 	else {
+		# a blacklisted ticket marks the session even when it is expired or
+		# suspended: the secret proves whose browser it is, and a blacklisted one
+		# is allowed no public pages afterwards (an expired ticket still is)
+		if ($ticket->{'privilege'} && $ticket->{'privilege'} eq 'blacklisted' && secure_compare $secret, $suds) {
+			$c->session('authentication' => 'denial');
+			$c->session('privilege' => 'blacklisted');
+			$c->session('suds' => undef);
+			$c->session('database' => undef);
+		}
 		$c->render(template => 'guest_layouts/denial');
 	}
 	unless ( grep { $_->{'server_time'} >= $server_time - 5000 } @{$access_log} ) {
@@ -17527,38 +17549,15 @@ sub travel_grabber($c) {
 	return $contents;
 }
 
-# A map's home plate is its anchor on the globe: a pixel at a latitude/longitude.
-# Measuring can also leave it as a named legend instead ("lambton mall") - the
-# home_plate setting of the app it names - so fold whichever exists into the
-# map's home_plate, and the client has one shape to read. The map is modified in
-# place; the resolved plate is returned.
-sub travel_map_home_plate {
-	my ($map) = @_;
-	my $home_plate = $map->{'home_plate'} || {};
-	if (!($home_plate->{'latitude'} && $home_plate->{'longitude'}) && $home_plate->{'legend'}) {
-		my $plate = eval { return decode_json &subs::setting_grabber({ app => &subs::unformat_name($home_plate->{'legend'}), setting => 'home_plate' }) } || {};
-		if ($plate->{'latitude'} && $plate->{'longitude'}) {
-			$home_plate->{'latitude'} = $plate->{'latitude'};
-			$home_plate->{'longitude'} = $plate->{'longitude'};
-		}
-	}
-	$map->{'home_plate'} = $home_plate;
-	return $home_plate;
-}
-
 # The measured maps, normalised for the client engine: a file URL the browser can
 # open plus the two things that place the picture on the globe - the home_plate (a
 # pixel at a latitude/longitude) and the scale bar (metres between two pixels).
-# Shared by the travel viewer and the continent background. A map that cannot be
-# placed (no plate, still ungeoreferenced) is left out rather than sent to be
-# silently skipped.
+# Shared by the travel viewer and the continent background.
 sub travel_atlas_maps {
 	my $maps = shift || [];
 	my $out = [];
 	foreach my $map ( @{$maps} ) {
 		next unless $map->{'home_plate'} && $map->{'scale'};
-		my $home_plate = &travel_map_home_plate($map);
-		next unless $home_plate->{'latitude'} && $home_plate->{'longitude'};
 		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
 		my $f = $destination . $asset;
 		push @{$out}, {
@@ -17566,7 +17565,7 @@ sub travel_atlas_maps {
 			uuid => $map->{'uuid'},
 			app => $map->{'app'},
 			file => '/file_open?timestamp=' . ($map->{'server_time'} || 0) . '&file=' . $f . '&app=' . ($map->{'app'} || ''),
-			home_plate => $home_plate,
+			home_plate => $map->{'home_plate'},
 			scale => $map->{'scale'},
 			rotate => ($map->{'rotate'} || 0)
 		};
@@ -17617,77 +17616,14 @@ sub travel_atlas_points {
 	return $points;
 }
 
-# The appointments the view's time range holds: every app with a row whose span
-# touches [start,end] (a running appointment reaches back past the window), each
-# at its latest recorded fix, so a tap on the map can open its appointment
-# window. The same visibility rule as travel_atlas_points applies - a thing
-# marked not-visible is not drawn.
-sub travel_atlas_appointments {
-	my ($start,$end) = @_;
-	return [] unless defined $start && length $start && defined $end && length $end;
-	my $rows = &subs::db_raw(
-		'select distinct app from appointments where app is not null and ((timestamp >= ? and timestamp <= ?) or (stop_timestamp >= ? and stop_timestamp <= ?) or (stop_timestamp is null and type in (?,?) and timestamp > 0 and timestamp <= ?))',
-		$start, $end, $start, $end, 'start', 'record', $end);
-	my @apps = map { $_->{'app'} } @{$rows};
-	return [] unless @apps;
-	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or type != ?) and app in (' . join(',', map { '?' } @apps) . ') and timestamp <= ? order by timestamp desc';
-	my $fixes = &subs::db_raw($sql, 'temporary', @apps, $end);
-	my $out = [];
-	my $seen = {};
-	my %set_cache;
-	foreach my $fix ( @{$fixes} ) {
-		next if $seen->{$fix->{'app'}}++;
-		next if !$fix->{'latitude'} || $fix->{'latitude'} eq '';
-		my $set = $set_cache{$fix->{'app'}} ||= &subs::settings_grabber({ app => $fix->{'app'} });
-		next if $set->{'visible'} ne 'checked';
-		push @{$out}, {
-			app => $fix->{'app'},
-			name => $set->{'name'} || $fix->{'app'},
-			colour => $set->{'colour'},
-			latitude => $fix->{'latitude'} + 0,
-			longitude => $fix->{'longitude'} + 0
-		};
-	}
-	return $out;
-}
-
-# Every home plate the machine knows, for the map's place markers: the plates are
-# the fixed points a walk comes home to, and the same spot can hold several of
-# them (one per device, or a place and the thing beside it), so the client groups
-# them by where they sit.
-sub travel_atlas_home_plates {
-	my $rows = &subs::db_select('settings', undef, { setting => 'home_plate' })->hashes;
-	my $out = [];
-	my %seen;
-	foreach my $row ( @{$rows} ) {
-		my $hp = eval { return decode_json $row->{'value'} } || {};
-		next unless $hp->{'latitude'} && $hp->{'longitude'};
-		my $key = $row->{'app'} . '|' . $hp->{'latitude'} . '|' . $hp->{'longitude'};
-		next if $seen{$key}++;
-		my $set = &subs::settings_grabber({ app => $row->{'app'} });
-		push @{$out}, {
-			app => $row->{'app'},
-			name => $set->{'name'} || &subs::format_name($row->{'app'}),
-			colour => $set->{'colour'},
-			latitude => $hp->{'latitude'} + 0,
-			longitude => $hp->{'longitude'} + 0
-		};
-	}
-	return $out;
-}
-
 get '/manager/travel/continent' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 	my $maps = &travel_atlas_maps(eval { return decode_json $settings->{'maps'} } || []);
 	my $points = &travel_atlas_points($c->param('start'), $c->param('end'));
-	my $appointments = &travel_atlas_appointments($c->param('start'), $c->param('end'));
-	my $home_plates = &travel_atlas_home_plates();
 	my $here = &travel_here_position();
 	$c->render(json => {
 		maps => $maps,
 		points => $points,
-		appointments => $appointments,
-		home_plates => $home_plates,
 		here => $here,
 		provider => $settings->{'map_provider'} || 'none',
 		custom_url => $settings->{'map_custom_url'} || ''
@@ -17731,7 +17667,6 @@ get '/manager/travel/viewer' => sub($c) {
 	my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $main_map->[0]->{'f'}, app => $main_map->[0]->{'app'}, type => $main_map->[0]->{'type'} });
 	$main_map = $main_map->[0];
 	$main_map->{'f'} = $destination . $asset;
-	&travel_map_home_plate($main_map);
 
 	$main_map->{'original_scale'} = $main_map->{'scale'}->{'last'}->{'x'} - $main_map->{'scale'}->{'first'}->{'x'};
 

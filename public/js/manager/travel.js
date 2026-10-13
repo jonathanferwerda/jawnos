@@ -401,8 +401,7 @@ $(document).on('click', '#travel_config_toggle', function() {
 		tc.hide();
 	} else {
 		status = 'visible';
-		// the toolbar is a flex row; .show() would restore the default block display
-		tc.css('display', 'flex');
+		tc.show();
 	}
 	tc.attr('status', status);
 	settingSetter({ 'app': 'travel', 'setting': 'config_visible', 'value': status });

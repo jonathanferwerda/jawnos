@@ -3314,10 +3314,7 @@ $(document).on('click', '.det', function() {
 	var parent = a.closest('.appointment');
 	var app = a.attr('app');
 	var container = parent.find('.re_details');
-	// an area showing no appointments is not an open list: treat it as closed, so
-	// the tap refetches the current timeframe's appointments instead of just hiding
-	// an empty panel
-	if (container.is(':visible') && container.find('.appointment_detail').length > 0) {
+	if (container.is(':visible')) {
 		container.html('<span class="detail_json" app="' + app + '">{}</span>').hide();
 	}
 	else {

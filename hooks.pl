@@ -72,7 +72,9 @@ hook before_dispatch => sub {
 		}
 
 	}
-	if ($c->session('authentication') eq 'denial') {
+	# A denial session - or one carrying a blacklisted privilege, however it was
+	# minted - is refused every path, public pages and static assets included.
+	if ($c->session('authentication') eq 'denial' || $c->session('privilege') eq 'blacklisted') {
 		my $denial = $c->render(template => 'guest_layouts/denial', message => '... and fuck you too!');
 		$c->session('authentication' => 'denial');
 		$c->rendered;
