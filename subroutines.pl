@@ -6040,13 +6040,6 @@ sub rightNow() {
 
 sub headless_navigation() {
 	my $signatorial = &subs::signatorial_designer();
-	# This machine's own newest *navigation* fix. The continent table is shared by
-	# every app, every device and every machine, and the browser writes an app row
-	# WITH coordinates on each appointment action - so the newest row for this
-	# machine is usually the browser's, not ours. Keying the cadence off that row
-	# starved our own capture whenever the app was in use (a walk with the app open
-	# logged almost nothing). Our own row is the `temporary` one we write here.
-	my $last_location = &subs::db_query('select * from continent where signatorial = ? and type = ? and latitude is not null and latitude != ? and timestamp is not null order by server_time desc', $signatorial, 'temporary', '')->hashes->[0];
 	my $now = &subs::rightNow();
 	my $navigation_due = [];
 	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', $now)->hashes;
@@ -6076,51 +6069,54 @@ sub headless_navigation() {
 			warranty => &subs::ago_calc('-' . &subs::duration_sayer($gb::timeouts->{'navigation'}->{'interval'} * 1000 * 3),$now),
 		};
 		my $written = 0;
-		if ($now - $last_location->{'timestamp'} >= $gb::timeouts->{'navigation'}->{'interval'} * 1000) {
-			if (&subs::device_setter() eq 'mobile') {
-				my $jloc = `termux-location`;
-				my $loc = eval { return decode_json $jloc } || {};
-				# A walk gives plenty of perfectly usable fixes that are a couple of
-				# seconds old or a little loose. The old 1s / 100m gates threw them
-				# away silently, so the location stopped moving with the person; keep
-				# the good ones and say when a fix was dropped.
-				if ($loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500) {
-					$returner->{'latitude'} = $loc->{'latitude'};
-					$returner->{'longitude'} = $loc->{'longitude'};
-					$returner->{'accuracy'} = sprintf("%.2F", $loc->{'accuracy'});
-					&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
-					my $treturner = clone $returner;
-					$treturner->{'uuid'} = &subs::random_string_creator(31);
-					&subs::db_insert('continent', $treturner);
-					$written = 1;
-				}
-				else {
-					$log->info('navigation: termux-location gave no usable fix (' . ($loc->{'latitude'} ? 'elapsed ' . ($loc->{'elapsedMs'} || '?') . 'ms accuracy ' . ($loc->{'accuracy'} || '?') . 'm' : ($jloc || 'empty output')) . ')');
-				}
+		# The capture runs on the navigation interval alone (the gate above). It
+		# used to also wait until the machine's newest location row was older than
+		# the interval - but the browser writes those rows too (continent_record),
+		# so an open app reset the clock and this autonomous capture starved. It now
+		# records on its own cadence whether or not the browser just did.
+		if (&subs::device_setter() eq 'mobile') {
+			my $jloc = `termux-location`;
+			my $loc = eval { return decode_json $jloc } || {};
+			# A walk gives plenty of perfectly usable fixes that are a couple of
+			# seconds old or a little loose. The old 1s / 100m gates threw them
+			# away silently, so the location stopped moving with the person; keep
+			# the good ones and say when a fix was dropped.
+			if ($loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500) {
+				$returner->{'latitude'} = $loc->{'latitude'};
+				$returner->{'longitude'} = $loc->{'longitude'};
+				$returner->{'accuracy'} = sprintf("%.2F", $loc->{'accuracy'});
+				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+				my $treturner = clone $returner;
+				$treturner->{'uuid'} = &subs::random_string_creator(31);
+				&subs::db_insert('continent', $treturner);
+				$written = 1;
 			}
 			else {
-				$returner = &subs::embedded_location_grabber($returner);
-				if ($returner->{'latitude'}) {
-					&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
-					my $treturner = clone $returner;
-					$treturner->{'uuid'} = &subs::random_string_creator(31);
-					&subs::db_insert('continent', $treturner);
-					$written = 1;
-				}
+				$log->info('navigation: termux-location gave no usable fix (' . ($loc->{'latitude'} ? 'elapsed ' . ($loc->{'elapsedMs'} || '?') . 'ms accuracy ' . ($loc->{'accuracy'} || '?') . 'm' : ($jloc || 'empty output')) . ')');
 			}
-			if ($returner->{'latitude'} && $written == 1) {
-
-			#	&subs::db_insert('continent', $returner);
-				foreach my $nd ( @{$navigation_due} ) {
-					$returner->{'uuid'} = $nd->{'uuid'} . '-' . &subs::random_string_creator(9);
-					$returner->{'app'} = $nd->{'app'};
-					$returner->{'warranty'} = $nd->{'warranty'};
-					$returner->{'type'} = 'app';
-					&subs::db_insert('continent', $returner);
-				}
-				&subs::navigation_automation($returner);
-
+		}
+		else {
+			$returner = &subs::embedded_location_grabber($returner);
+			if ($returner->{'latitude'}) {
+				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+				my $treturner = clone $returner;
+				$treturner->{'uuid'} = &subs::random_string_creator(31);
+				&subs::db_insert('continent', $treturner);
+				$written = 1;
 			}
+		}
+		if ($returner->{'latitude'} && $written == 1) {
+
+		#	&subs::db_insert('continent', $returner);
+			foreach my $nd ( @{$navigation_due} ) {
+				$returner->{'uuid'} = $nd->{'uuid'} . '-' . &subs::random_string_creator(9);
+				$returner->{'app'} = $nd->{'app'};
+				$returner->{'warranty'} = $nd->{'warranty'};
+				$returner->{'type'} = 'app';
+				&subs::db_insert('continent', $returner);
+			}
+			&subs::navigation_automation($returner);
+
 		}
 	}
 }
