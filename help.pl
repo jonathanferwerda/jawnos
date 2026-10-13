@@ -728,16 +728,19 @@ our %topic = (
 	},
 	'platform' => {
 		title => 'Platform (AI providers)', category => 'functions',
-		summary => 'Choose the model each assistant uses, and add provider keys.',
+		summary => 'Choose the model each assistant uses, add provider keys, and teach the Guide runtime commands.',
+		verified => '2026-10-13',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
-			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.'
+			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.',
+			'Guide commands (runtime) is where you teach the Guide new verbs without a code change. Each is a JSON entry naming a primitive — say, open_app, set_setting, run_command, toggle, stage, find or play_music — and its parameters. The list is a setting, so it syncs to every machine and they all learn the verb.'
 		],
 		steps => [
 			'Open Configure and press Plat.',
 			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
-			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.'
+			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.',
+			'Under Guide commands, add a verb as a JSON entry and press Save — every machine picks it up.'
 		],
 		related => [ 'configure', 'assistant', 'help_app' ]
 	},
@@ -818,7 +821,8 @@ our %topic = (
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
 			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses.',
 			'Tick the Coding box in the composer (set its model under Configure → Plat → Coding) and the same box becomes the Coding agent. It can change JawnOS\'s own code, check it, and ship it - bumping the version, committing and pushing to GitHub, then restarting - so the program can mend itself from a plain request.',
-			'Under each answer is a small good / not-good pair. Press the one that fits and the verdict is kept with the question and the reply, so the guide\'s answers can be judged over time.'
+			'Under each answer is a small good / not-good pair. Press the one that fits and the verdict is kept with the question and the reply, so the guide\'s answers can be judged over time.',
+			'You can also teach it new verbs at runtime (Configure → Plat → Guide commands): each is a small JSON entry naming a primitive and its parameters, and because it is a setting it syncs, so every machine understands the same commands.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	}
@@ -1000,6 +1004,46 @@ sub audit {
 
 # The catalogue and rules the acting guide is given. Kept here with the rest of
 # the help content so the vocabulary lives in one place.
+# ---- runtime (learned) verbs ----------------------------------------------
+# Beyond the built-in tools, a verb can be added at runtime: one row in the
+# __president/guide_verbs setting names a closed primitive and the parameters to
+# run it with. A row is data, and settings already sync across the mesh, so a
+# verb added on one machine is understood by all of them. The primitives are the
+# only things a learned verb can do, so a runtime verb can never reach past them.
+sub learned_verbs {
+	my $raw = eval { &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) } || '';
+	my $rows = eval { Mojo::JSON::decode_json($raw) } || [];
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my @out;
+	foreach my $v ( @{$rows} ) {
+		next unless ref $v eq 'HASH';
+		next unless ($v->{'name'} // '') =~ /^[a-z][a-z0-9_]{1,40}$/;
+		next unless ($v->{'primitive'} // '') =~ /^(?:say|open_app|set_setting|run_command|toggle|stage|find|play_music)$/;
+		push @out, $v;
+	}
+	return \@out;
+}
+
+# The learned verbs as prompt lines, shaped like the built-in ones.
+sub learned_tool_lines {
+	my $lines = '';
+	foreach my $v ( @{ &learned_verbs() } ) {
+		my @args = sort keys %{ $v->{'args'} || {} };
+		my $ex = '{"action":"' . $v->{'name'} . '"' . join('', map { ',"' . $_ . '":"..."' } @args) . '}';
+		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
+		$lines .= '  ' . $ex . $gap . ($v->{'desc'} // 'a learned command you may run') . "\n";
+	}
+	return $lines;
+}
+
+# Every verb the guide may pick: the built-in ones plus the learned ones. Used
+# for the allow-list here and by the remote channel, so both understand alike.
+sub live_verb_names {
+	my %names = map { $_->{'name'} => 1 } grep { !$_->{'planned'} } @gb::guide_tools;
+	$names{ $_->{'name'} } = 1 for @{ &learned_verbs() };
+	return \%names;
+}
+
 sub actions_prompt {
 	# The action lines are generated from @gb::guide_tools (see gb.pl), so a tool is
 	# declared once and offered here automatically once it is live (not `planned`).
@@ -1018,6 +1062,9 @@ sub actions_prompt {
 		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
 		$lines .= '  ' . $ex . $gap . $t->{'desc'} . "\n";
 	}
+	# runtime verbs are added on every invocation: they are the person's own
+	# commands (and the Coding agent's), understood on every machine
+	$lines .= &learned_tool_lines();
 	my $rules = <<'TXT';
 Rules:
 - Navigate and search only. Never delete, send, pay, or change any data.

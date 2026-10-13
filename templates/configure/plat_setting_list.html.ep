@@ -92,4 +92,12 @@
 		</div>
 	<% } %>
 	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare.</p>
+
+	<h3>Guide commands (runtime)</h3>
+	<p class="cfg-note">Extra verbs the Guide can run, added without a code change. Each entry is JSON: a <code>name</code>, a <code>desc</code>, an optional <code>args</code> map, and a <code>primitive</code> with its <code>params</code>. The primitives are <code>say</code>, <code>open_app</code>, <code>set_setting</code>, <code>run_command</code>, <code>toggle</code>, <code>stage</code>, <code>find</code> and <code>play_music</code>; a param value may contain <code>{name}</code> to take one of the model's arguments. The list is a setting, so it syncs to every machine and they all learn the verb.</p>
+	<textarea id="guide_verbs_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:140px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) || '[]' %></textarea>
+	<div class="cfg-row">
+		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Save commands</button>
+		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
+	</div>
 </div>

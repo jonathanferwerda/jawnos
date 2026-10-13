@@ -359,7 +359,12 @@ function helpDoAction(a, cb) {
 		}).fail(function () { cb('I could not reach ' + machine + '.'); });
 		return;
 	}
-	cb(a.text || '');
+	// a runtime (learned) verb, or anything the browser has no local effect for:
+	// the server runs it through its primitive executor and reports back
+	$.post('/manager/help/verb', { action: JSON.stringify(a) }, function (r) {
+		if (!r || r.ok === 0 || r.error) { cb((r && r.error) || 'That command did not run.'); return; }
+		cb(r.observation || 'done');
+	}).fail(function () { cb('That command did not run.'); });
 }
 
 // Play music by artist or track: ask the server (which runs the music app's own

@@ -1,0 +1,51 @@
+# Coding agent protocols
+
+GENERATED — do not edit by hand. Built from AGENTS.md (gitignored, so it cannot
+ride the repo) by scripts/bake_agents_rules.pl; the pre-commit hook refreshes it
+whenever AGENTS.md changes. This is what the Coding agent is told to follow on
+every machine.
+
+## RULE 1 — Stop and ask after 3 attempts
+
+If you cannot find a file (or the right place for one) after **3 attempts** (searches, globs, path
+guesses), **STOP**. Do not keep grepping, globbing, or invent paths. Report what you tried and ask the
+user for the exact file/folder/name. A wrong guess costs far more tokens than a question.
+
+---
+
+
+## Run & restart
+
+- **Entry:** `./jawn` (master) → `President.pl` in a PTY → workers keyed by `$ENV{PURPOSE}`
+  (`manager`, `websocket`, …) running `Manager.pl`, `Websocket.pl`.
+- **Log:** `~/manager.log`. **DB:** `/home/jawn/initial.db` (SQLite, WAL).
+- **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every 2 s, writes `good` back,
+  and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
+- Status values: `good` / `restart` / `frozen`.
+- Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c Manager.pl` first)
+  · `public/js/*.js` **no restart, plain refresh** — static assets revalidate (`no-cache` + ETag/Last-Modified),
+  and the manager's scripts come from `/js/manager/bundle.js`, which the app rebuilds from the files' mtimes
+  and the browser revalidates by ETag. The `?string=` buster still only moves on restart, but nothing depends
+  on it for freshness.
+
+
+## Rules
+
+- **Test fixtures only:** `email_test`, `email_tester`, `testing`, `testings`, `testingser`, plus the one
+  sanctioned phone/email in `docs/AGENTS-notes.md`. Every other number/address is prohibited; only the
+  sanctioned email may receive mail.
+- **Never open an appointment or centre view just to look** — it fans out to every tab and pops windows
+  on the user's screen. Verify UI behaviour by asking, not by curling a route.
+- **Writes go through the app's routes**; standalone writes to `appointments` can be overwritten — re-read.
+- **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
+- **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
+  e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
+  `cat VERSION` before `git push`. Existing pushes that skipped this were the oversight this rule fixes.
+- **Commit as you go**, staging only your own hunks (`git add -p`).
+- **Finishing routine (the norm): bump → commit → push → restart.** Run `perl scripts/version_bump.pl`,
+  stage only your own hunks (never someone else's WIP), commit as `v<version> - <summary>`, `git push`,
+  then restart (`printf 'restart' > ~/.president/status`; wait for `good`). The bump ships the version
+  prefix and busts the client caches; the restart is what makes `.pl` and `public/js` changes live. This
+  is how a change is normally wrapped up — do it at the end of the work unless the user says otherwise.
+
+---

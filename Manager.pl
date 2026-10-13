@@ -11479,6 +11479,35 @@ sub merge_database($c,$configuration) {
 									}
 								}
 								if ($q eq 'settings') {
+									# The utility controller keeps every machine's jobs in one blob keyed
+									# by that machine's signatorial. The generic whole-row replace below
+									# would let whichever peer synced last win outright, wiping the other
+									# machines' keys (their runtimes then reseed to the built-in
+									# defaults - the "jobs all turned off" that started this). Merge the
+									# blob per key instead: union the keys, and for a key both sides
+									# hold keep the one whose __settings.last_change is newer (ours is
+									# always authoritative for our own signatorial).
+									if (($r->{'setting'} || '') eq 'utility_controller' && ($r->{'app'} || '') eq '__president') {
+										my $sig = &subs::signatorial_designer();
+										my %device_key = map { $_ => 1 } @gb::device_types;
+										my $local = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller', benign => 1 }) } || {};
+										my $theirs = eval { decode_json $r->{'value'} } || {};
+										my $merged = {};
+										foreach my $k ( keys %{$local} ) { $merged->{$k} = $local->{$k}; }
+										foreach my $k ( keys %{$theirs} ) {
+											if (!$merged->{$k}) { $merged->{$k} = $theirs->{$k}; next; }
+											next if $k eq $sig || $device_key{$k};
+											my $la = $merged->{$k}->{'__settings'}->{'last_change'} || 0;
+											my $lb = $theirs->{$k}->{'__settings'}->{'last_change'} || 0;
+											$merged->{$k} = $theirs->{$k} if $lb > $la;
+										}
+										my $jmerged = encode_json $merged;
+										my $jcur = encode_json $local;
+										if ($jmerged ne $jcur) {
+											&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jmerged, server_time => &subs::rightNow() });
+										}
+										next;
+									}
 									$universal_settings->{$r->{'app'}} = &subs::settings_grabber({ app => $r->{'app'}, device => $device, benign => 1 }) unless $universal_settings->{$r->{'app'}};
 									my $protected = 0;
 									foreach my $pr ( @gb::protected ) {
@@ -17834,9 +17863,10 @@ post '/manager/help/act' => sub($c) {
 	unless ($action && $action->{'action'}) {
 		if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
 	}
-	# the allow-list is the same registry the prompt is built from (gb::guide_tools)
-	my %allowed = map { $_ => 1 } map { $_->{'name'} } grep { !$_->{'planned'} } @gb::guide_tools;
-	if ($action && $action->{'action'} && $allowed{ $action->{'action'} }) {
+	# the allow-list is the same registry the prompt is built from, plus the
+	# runtime (learned) verbs, so the guide may pick either
+	my $allowed = &help::live_verb_names();
+	if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
 		$c->render(json => { action => $action, raw => $text });
 	}
 	else {
@@ -18203,8 +18233,8 @@ sub remote_command_run($c, $data) {
 	$args = {} unless ref $args eq 'HASH';
 	my $action;
 	if ($verb) {
-		my %live = map { $_->{'name'} => 1 } grep { !$_->{'planned'} } @gb::guide_tools;
-		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live{$verb};
+		my $live = &help::live_verb_names();
+		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live->{$verb};
 		$action = { action => $verb, %{$args} };
 	}
 	elsif (length $text) {
@@ -18231,6 +18261,8 @@ sub remote_command_run($c, $data) {
 # anything that is only words is answered directly.
 sub remote_command_execute($c, $action) {
 	my $a = $action->{'action'};
+	# a runtime (learned) verb runs through the same primitive executor
+	return guide_verb_execute($c, $action) if grep { $_->{'name'} eq ($a // '') } @{ &help::learned_verbs() };
 	if ($a eq 'open_app' && $action->{'app'}) {
 		my $js = 'if (typeof appWindowOpener === "function") { appWindowOpener(' . encode_json($action->{'app'}) . ', Date.now(), {}); }';
 		&Websocket::send('server', { console => $js });
@@ -18368,6 +18400,123 @@ get '/manager/help/staged' => sub($c) {
 	$c->render(json => { staged => $rows });
 };
 
+# ---- runtime (learned) verbs: the executor --------------------------------
+# Run one learned verb. Its row (help::learned_verbs) names a closed primitive
+# and the parameters; the model's own args may fill {placeholders} or override a
+# declared argument. It can never reach anything the primitive list does not name.
+
+sub _guide_fill {
+	my ($v, $args) = @_;
+	return $v if ref $v || !defined $v;
+	$v =~ s/\{([a-z0-9_]+)\}/defined $args->{$1} ? $args->{$1} : ''/ge;
+	return $v;
+}
+
+sub guide_verb_execute($c, $action) {
+	my $name = $action->{'action'} // '';
+	my ($verb) = grep { $_->{'name'} eq $name } @{ &help::learned_verbs() };
+	return 'no such command: ' . $name unless $verb;
+	my %p;
+	foreach my $k ( keys %{ $verb->{'params'} || {} } ) {
+		my $v = $verb->{'params'}->{$k};
+		$p{$k} = ref $v eq 'ARRAY' ? [ map { _guide_fill($_, $action) } @{$v} ] : _guide_fill($v, $action);
+	}
+	# an argument the model supplied for a declared arg wins over the literal
+	foreach my $k ( keys %{ $verb->{'args'} || {} } ) {
+		$p{$k} = $action->{$k} if defined $action->{$k} && $action->{$k} ne '';
+	}
+	my $prim = $verb->{'primitive'};
+	if ($prim eq 'say') {
+		return $p{'text'} // $action->{'text'} // 'done';
+	}
+	if ($prim eq 'open_app') {
+		my $app = $p{'app'} // '';
+		return 'no app named' unless length $app;
+		my $js = 'if (typeof appWindowOpener === "function") { appWindowOpener(' . encode_json($app) . ', Date.now(), {}); }';
+		&Websocket::send('server', { console => $js });
+		return 'opened the ' . $app . ' window';
+	}
+	if ($prim eq 'set_setting') {
+		my ($app, $setting, $value) = ($p{'app'}, $p{'setting'}, $p{'value'});
+		return 'no setting named' unless $app && $setting;
+		&subs::setting_setter({ app => $app, setting => $setting, value => $value });
+		return 'set ' . $app . ' ' . $setting . ' to ' . (defined $value && length $value ? $value : '(blank)');
+	}
+	if ($prim eq 'run_command') {
+		my $app = $p{'app'} // '';
+		my $command = $p{'command'};
+		$command = &subs::setting_grabber({ app => $app, setting => 'command' }) if !defined $command || !length $command;
+		return 'no command configured' unless $app && defined $command && length $command;
+		&subs::run_command($app, $command, &subs::rightNow());
+		return 'ran the ' . $app . ' command';
+	}
+	if ($prim eq 'toggle') {
+		my $app = $p{'app'} // '';
+		return 'no app named' unless length $app;
+		my $on = (($p{'state'} // 'on') !~ /^(?:off|stop|no|0)$/i);
+		&Manager::appointment_writer($c, { app => &subs::unformat_name($app), type => ($on ? 'start' : 'stop'), timestamp => &subs::rightNow(), server_time => &subs::rightNow() });
+		return ($on ? 'started ' : 'stopped ') . $app;
+	}
+	if ($prim eq 'stage') {
+		my $app = &subs::unformat_name($p{'app'} || '');
+		return 'no app named' unless length $app;
+		my $uuid = &subs::random_string_creator(40);
+		&subs::db_insert('staged_appointments', {
+			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide_verb',
+			app => $app, type => ($p{'type'} || 'usual'), timestamp => ($p{'when'} || &subs::rightNow()),
+			title => ($p{'title'} || ''), notes => ($p{'notes'} || ''), data => '',
+			device => &subs::device_setter(), status => 'pending'
+		});
+		return 'staged a "' . ($p{'title'} || $app) . '" appointment (not saved yet)';
+	}
+	if ($prim eq 'find') {
+		my $q = $p{'query'} // '';
+		return 'no search given' unless length $q;
+		my $like = '%' . join('%', split /\s+/, $q) . '%';
+		my $rows = &subs::db_query('select app from appointments where (app like ? or file like ? or notes like ?) group by app limit 12', $like, $like, $like)->hashes;
+		my @apps = map { $_->{'app'} } @{$rows};
+		return @apps ? ('found in: ' . join(', ', @apps)) : ('nothing found for "' . $q . '"');
+	}
+	if ($prim eq 'play_music') {
+		my $r = help_music_file($c, $p{'query'});
+		return 'found nothing to play' unless $r->{'found'};
+		my $js = 'if (typeof musicToggle === "function") { musicToggle([' . encode_json($r->{'file'}) . ']); }';
+		&Websocket::send('server', { console => $js });
+		return 'now playing ' . $r->{'title'};
+	}
+	return 'unknown primitive: ' . $prim;
+}
+
+# The runtime verb list, and one verb run on its own (the client's fallback when
+# the guide picks a verb it does not itself implement). The list is a setting, so
+# it syncs to every machine - all of them learn the verb.
+get '/manager/help/verbs' => sub($c) {
+	$c->render(json => { verbs => (&subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) || '[]'), list => &help::learned_verbs() });
+};
+
+post '/manager/help/verbs' => sub($c) {
+	my $raw = $c->param('verbs') // '';
+	utf8::encode($raw) if utf8::is_utf8($raw);
+	my $rows = eval { decode_json $raw };
+	unless (ref $rows eq 'ARRAY') { $c->render(json => { ok => 0, error => 'that is not a JSON list of commands' }); return; }
+	my @clean;
+	foreach my $v ( @{$rows} ) {
+		next unless ref $v eq 'HASH';
+		next unless ($v->{'name'} // '') =~ /^[a-z][a-z0-9_]{1,40}$/;
+		next unless ($v->{'primitive'} // '') =~ /^(?:say|open_app|set_setting|run_command|toggle|stage|find|play_music)$/;
+		push @clean, $v;
+	}
+	# device 'all': one shared row every machine reads, whatever its device class
+	&subs::setting_setter({ app => '__president', setting => 'guide_verbs', device => 'all', value => encode_json \@clean });
+	$c->render(json => { ok => 1, count => scalar @clean });
+};
+
+post '/manager/help/verb' => sub($c) {
+	my $action = eval { decode_json($c->param('action') // '') } || {};
+	unless (ref $action eq 'HASH' && ($action->{'action'} // '')) { $c->render(json => { ok => 0, error => 'no command given' }); return; }
+	$c->render(json => { ok => 1, observation => guide_verb_execute($c, $action) });
+};
+
 # ---- the Coding agent: the Guide's self-healing half ---------------------
 # A closed-vocabulary agent that edits the repo and ships the change: read and
 # write files, run one checked command, bump the version, commit, push, restart.
@@ -18488,23 +18637,25 @@ sub coding_execute($c, $action, $touched) {
 	return 'unknown action: ' . $a;
 }
 
-# The Coding agent's rules, AGENTS.md included when it is on this machine (it is
-# gitignored, so a fresh clone may not carry one). Cached by mtime so a run does
-# not re-read it every turn.
-our $coding_agents_md;
-our $coding_agents_md_mtime;
+# The Coding agent's protocols: the baked, tracked copy first (so every machine
+# carries them, even though AGENTS.md itself is gitignored), else a local AGENTS.md
+# if there is one. Cached by mtime so a run does not re-read it every turn.
+our $coding_protocols;
+our $coding_protocols_mtime;
 sub coding_system_prompt {
 	my $system = &help::coding_prompt();
-	my $path = &subs::home('~/jawnos/AGENTS.md');
-	if (-f $path) {
+	my $repo = &subs::home('~/jawnos');
+	my $path = -f "$repo/docs/coding_agent_protocols.md" ? "$repo/docs/coding_agent_protocols.md"
+		: (-f "$repo/AGENTS.md" ? "$repo/AGENTS.md" : '');
+	if (length $path) {
 		my $mtime = (stat($path))[9] // 0;
-		if (!defined $coding_agents_md || ($coding_agents_md_mtime // 0) != $mtime) {
+		if (!defined $coding_protocols || ($coding_protocols_mtime // 0) != $mtime) {
 			my $text = eval { read_file($path) } // '';
 			if (length $text > 20000) { $text = substr($text, 0, 20000) . "\n... [trimmed]"; }
-			$coding_agents_md = $text;
-			$coding_agents_md_mtime = $mtime;
+			$coding_protocols = $text;
+			$coding_protocols_mtime = $mtime;
 		}
-		$system .= "\n\nAGENTS.md (the map of this codebase; follow it):\n" . $coding_agents_md . "\n";
+		$system .= "\n\nCodebase protocols (follow these):\n" . $coding_protocols . "\n";
 	}
 	$system .= "\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
 	return $system;

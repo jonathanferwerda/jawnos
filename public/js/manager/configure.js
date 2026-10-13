@@ -280,6 +280,23 @@ $(document).on('change', '.configure_input', function(e) {
 	});
 });
 
+// The runtime Guide commands are one JSON list in a textarea, saved whole rather
+// than on every keystroke, so a half-typed entry never reaches the server.
+$(document).on('click', '#guide_verbs_save', function () {
+	var status = $('#guide_verbs_status');
+	status.text('saving…');
+	$.ajax({
+		url: '/manager/help/verbs',
+		type: 'POST',
+		dataType: 'json',
+		data: { verbs: $('#guide_verbs_json').val() },
+		success: function (r) {
+			status.text((r && r.ok) ? ('saved — ' + (r.count || 0) + ' command(s)') : ((r && r.error) || 'could not save'));
+		},
+		error: function () { status.text('could not save'); }
+	});
+});
+
 // Budgets and goals are edited as a list: each row is an amount, a measure (the
 // app's own, money, or a plain count), a scope count + unit (none makes it a
 // fixed level), and which way it runs. The rows are composed back into the one

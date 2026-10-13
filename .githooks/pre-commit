@@ -1,0 +1,21 @@
+#!/bin/sh
+# pre-commit - keep the baked Coding-agent protocols in step with AGENTS.md.
+#
+# AGENTS.md is gitignored (it carries fixtures and a login-token path), so it
+# cannot ride the repo. Its protocol sections are baked into a tracked file the
+# Coding agent reads on every machine; this regenerates that file whenever
+# AGENTS.md changes and stages it, so the commit carries the update.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass for a moment:     git commit --no-verify
+cd "$(git rev-parse --show-toplevel)" || exit 0
+command -v perl >/dev/null 2>&1 || exit 0
+[ -f AGENTS.md ] || exit 0
+[ -f scripts/bake_agents_rules.pl ] || exit 0
+
+perl scripts/bake_agents_rules.pl >/dev/null 2>&1
+if ! git diff --quiet -- docs/coding_agent_protocols.md 2>/dev/null; then
+	git add docs/coding_agent_protocols.md
+	printf 'pre-commit: refreshed docs/coding_agent_protocols.md from AGENTS.md\n'
+fi
+exit 0
