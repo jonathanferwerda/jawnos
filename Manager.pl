@@ -17552,8 +17552,16 @@ post '/manager/help/ask' => sub($c) {
 post '/manager/help/act' => sub($c) {
 	my $model = $c->param('model');
 	my $topic = $c->param('topic');
-	my $context = eval { decode_json $c->param('context') } || {};
-	my $transcript = eval { decode_json $c->param('transcript') } || [];
+	# Mojo hands params back as character strings, but decode_json wants UTF-8
+	# bytes: a single non-ASCII character (an em dash in the guide's own wording,
+	# say) would make the decode fail, leaving an empty thread for every turn
+	# after the first. Encode back to bytes before decoding.
+	my $context_json = $c->param('context') // '';
+	utf8::encode($context_json) if utf8::is_utf8($context_json);
+	my $context = eval { decode_json $context_json } || {};
+	my $transcript_json = $c->param('transcript') // '';
+	utf8::encode($transcript_json) if utf8::is_utf8($transcript_json);
+	my $transcript = eval { decode_json $transcript_json } || [];
 	if (!$model) {
 		$c->render(json => { error => 'No model is selected for the guide.' });
 		return;
@@ -17571,7 +17579,12 @@ post '/manager/help/act' => sub($c) {
 	my @lines;
 	foreach my $m ( @{$transcript} ) {
 		my $role = $m->{'role'} || 'user';
-		my $label = $role eq 'tool' ? 'OBSERVATION' : ($role eq 'assistant' ? 'ASSISTANT' : 'USER');
+		# the guide's own earlier words are shown to the person but left out here:
+		# served back as "ASSISTANT:" turns they flip the model into chat mode and
+		# it greets instead of acting. Only what the person said and what the
+		# actions reported carry the thread.
+		next if $role eq 'assistant';
+		my $label = $role eq 'tool' ? 'OBSERVATION' : 'USER';
 		push @lines, $label . ': ' . ($m->{'content'} || '');
 	}
 	push @lines, '', 'Reply with the single next JSON action.';
