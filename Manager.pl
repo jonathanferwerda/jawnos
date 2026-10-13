@@ -17753,7 +17753,8 @@ post '/manager/help/act' => sub($c) {
 	unless ($action && $action->{'action'}) {
 		if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
 	}
-	my %allowed = map { $_ => 1 } qw(find open_gallery open_app say ask done);
+	# the allow-list is the same registry the prompt is built from (gb::guide_tools)
+	my %allowed = map { $_ => 1 } map { $_->{'name'} } grep { !$_->{'planned'} } @gb::guide_tools;
 	if ($action && $action->{'action'} && $allowed{ $action->{'action'} }) {
 		$c->render(json => { action => $action, raw => $text });
 	}

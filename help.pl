@@ -983,18 +983,16 @@ sub audit {
 # The catalogue and rules the acting guide is given. Kept here with the rest of
 # the help content so the vocabulary lives in one place.
 sub actions_prompt {
-	return <<'TXT';
-You are the JawnOS Guide. You can explain things, and you can operate the screen
-for the person. Reply with EXACTLY ONE JSON object and nothing else - no prose
-around it. Choose one action:
-
-  {"action":"find","query":"a name"}            search their records and images by name; returns matching apps, file names, and last (the date of the newest match)
-  {"action":"open_gallery","names":["a","b"]}   open the photo browser to one or more named things, each resolved to the app that holds it ("app":"x" scopes to one; "search":"x" filters by text)
-  {"action":"open_app","app":"gallery"}         open one app's window
-  {"action":"say","text":"..."}                 answer in words, then stop
-  {"action":"ask","text":"..."}                 ask the person a question, then stop
-  {"action":"done","text":"..."}                you have finished; say briefly what you did
-
+	# The action lines are generated from @gb::guide_tools (see gb.pl), so a tool is
+	# declared once and offered here automatically once it is live (not `planned`).
+	my $header = "You are the JawnOS Guide. You can explain things, and you can operate the screen\nfor the person. Reply with EXACTLY ONE JSON object and nothing else - no prose\naround it. Choose one action:\n\n";
+	my $lines = '';
+	foreach my $t ( @gb::guide_tools ) {
+		next if $t->{'planned'};
+		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
+		$lines .= sprintf("  %-46s%s\n", $ex, $t->{'desc'});
+	}
+	my $rules = <<'TXT';
 Rules:
 - Navigate and search only. Never delete, send, pay, or change any data.
 - When the person names something you should show them, use find first, then open
@@ -1009,9 +1007,10 @@ Rules:
 - Read the OBSERVATION lines in the conversation to see what each action did
   before choosing the next one.
 - For "when did I last see/do X", use find and answer from its last date - do not
-guess a date.
+  guess a date.
 - Keep every text field short and in plain, everyday words.
 TXT
+	return $header . $lines . "\n" . $rules;
 }
 
 1;

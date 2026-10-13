@@ -279,17 +279,17 @@ our $known_appts = {
 # `planned` marks a tool whose resolver is not built yet: it is declared so the
 # shape is settled, and is only offered to the model once its resolver lands.
 our @guide_tools = (
-	{ name => 'find', args => { query => 'a name' },
+	{ name => 'find', args => { query => 'a name' }, example => '{"action":"find","query":"a name"}',
 	  desc => 'search their records and images by name; returns matching apps, file names, and last (the date of the newest match)' },
-	{ name => 'open_gallery', args => { names => [ 'a', 'b' ], app => 'x', search => 'x' },
-	  desc => 'open the photo browser to one or more named things, each resolved to the app that holds it (app scopes to one; search filters by text)' },
-	{ name => 'open_app', args => { app => 'gallery' },
+	{ name => 'open_gallery', args => { names => [ 'a', 'b' ], app => 'x', search => 'x' }, example => '{"action":"open_gallery","names":["a","b"]}',
+	  desc => 'open the photo browser to one or more named things, each resolved to the app that holds it ("app":"x" scopes to one; "search":"x" filters by text)' },
+	{ name => 'open_app', args => { app => 'gallery' }, example => '{"action":"open_app","app":"gallery"}',
 	  desc => "open one app's window" },
-	{ name => 'say', args => { text => '...' },
+	{ name => 'say', args => { text => '...' }, example => '{"action":"say","text":"..."}',
 	  desc => 'answer in words, then stop' },
-	{ name => 'ask', args => { text => '...' },
+	{ name => 'ask', args => { text => '...' }, example => '{"action":"ask","text":"..."}',
 	  desc => 'ask the person a question, then stop' },
-	{ name => 'done', args => { text => '...' },
+	{ name => 'done', args => { text => '...' }, example => '{"action":"done","text":"..."}',
 	  desc => 'you have finished; say briefly what you did' },
 	# --- scoped, resolvers to come ---
 	{ name => 'play_music', args => { query => 'artist or track' },
