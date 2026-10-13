@@ -61,6 +61,12 @@ struct voice_model_t {
 static voice_model_t voice_slots[VOICE_WORD_COUNT];
 static voice_model_t *voice_active = nullptr;
 
+// Diagnostics for the serial 'voicedbg' line: the highest model probability
+// seen since the last report (0 = never invoked or always silent), and how many
+// frames in the last second read as speech.
+static uint8_t voice_dbg_peak = 0;
+static uint32_t voice_dbg_fires = 0;
+
 static bool voice_model_load(voice_model_t *m, const voice_word_t *w) {
   if (m->ready) { return true; }
   auto &r = m->resolver;
@@ -134,7 +140,7 @@ static bool voice_models_init(const String &mode) {
 static bool voice_active_frame(const int16_t *samples, size_t n) {
   voice_model_t *m = voice_active;
   if (!m || !m->ready) { return false; }
-  bool fired = false;
+  bool present = false;
   size_t done = 0;
   uint16_t feats[JAWN_FEATURE_SIZE];
   while (done < n) {
@@ -157,17 +163,20 @@ static bool voice_active_frame(const int16_t *samples, size_t n) {
     m->step++;
     if (m->step >= m->stride) {
       if (m->interp->Invoke() != kTfLiteOk) { continue; }
-      m->probs[m->idx] = m->out->data.uint8[0];
+      uint8_t p = m->out->data.uint8[0];
+      m->probs[m->idx] = p;
+      if (p > voice_dbg_peak) { voice_dbg_peak = p; }
       m->idx = (m->idx + 1) % VOICE_MODEL_WINDOW;
       uint32_t sum = 0;
       for (int i = 0; i < VOICE_MODEL_WINDOW; i++) { sum += m->probs[i]; }
-      if (sum > (uint32_t)(m->cutoff_q * VOICE_MODEL_WINDOW)) { fired = true; }
+      if (sum > (uint32_t)(m->cutoff_q * VOICE_MODEL_WINDOW)) { present = true; }
     }
   }
-  if (fired) {
-    // cool off: clear the window so the same utterance is not detected twice
-    for (int i = 0; i < VOICE_MODEL_WINDOW; i++) { m->probs[i] = 0; }
-    m->idx = 0;
-  }
-  return fired;
+  // Report the window as a *state* (is there speech right now?), not a one-shot
+  // event that clears its own window. The listener counts consecutive speech
+  // frames before it commits a capture, so a latched 'fired' that zeroed the
+  // window on every hit made that count reset each time and no capture ever
+  // committed: the VAD read speech, but nothing ever recorded.
+  if (present) { voice_dbg_fires++; }
+  return present;
 }

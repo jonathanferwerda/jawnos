@@ -173,6 +173,7 @@ class Bridge(object):
         self.reconnect_delay = RECONNECT_START
         self.next_attempt = 0.0
         self.connecting = False
+        self.connecting_at = 0.0
         self.pending_connect = False
         self.discovery_owner = None
         self._char_signal = None
@@ -364,6 +365,12 @@ class Bridge(object):
         tx = tx or stored.get("tx") or NUS_TX
         if not mtu:
             mtu = stored.get("mtu") or 512
+        # A radio Connect() whose reply never came back (the device vanished
+        # mid-connect, e.g. a reset) leaves 'connecting' set forever, and every
+        # later connect no-ops on it. Treat a connect older than the D-Bus
+        # timeout as dead so this one can retry -- this was a wedge in practice.
+        if self.connecting and (time.time() - self.connecting_at) > (CONNECT_TIMEOUT_MS / 1000.0 + 5):
+            self.connecting = False
         # Idempotent: a second connect for the same target (an explicit one on
         # top of the startup auto-connect) must not tear down a connect that is
         # already in flight -- that produced BlueZ "InProgress" churn.
@@ -450,6 +457,7 @@ class Bridge(object):
         if self.connecting:
             return
         self.connecting = True
+        self.connecting_at = time.time()
         try:
             device = self._iface(self.bus, path, DEVICE_IFACE)
             device.Connect(

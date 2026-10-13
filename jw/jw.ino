@@ -104,6 +104,9 @@ static bool bt_enabled = false;
 // System). Declared up here because loop() reads it; the listener itself lives
 // with the rest of the voice code further down.
 static bool voiceCaptureEnabled = false;
+// Serial 'voicedbg on': print the listener's mic level and model peak once a
+// second, so a quiet or wedged voice path is visible over USB without speaking.
+static bool voiceDbg = false;
 // The voice mode the panel set (operator_door.__specs.voice_trigger): 'off',
 // 'vad', or a wake word we have a model for. It rides in a Now Me;
 // voice_trigger_apply() arms the listener for anything voice_models_has() knows.
@@ -3426,6 +3429,18 @@ static void voiceListenTask(void *pv) {
       int16_t *s = (int16_t *)buf;
       // the neural model reads the frame as speech (VAD) or the wake phrase
       bool speech = voice_active_frame(s, n);
+      if (voiceDbg) {
+        static uint32_t vdbg_at = 0, vdbg_frames = 0;
+        static int32_t vdbg_amp = 0;
+        for (int k = 0; k < n; k++) { int32_t a = s[k]; if (a < 0) { a = -a; } if (a > vdbg_amp) { vdbg_amp = a; } }
+        vdbg_frames++;
+        if (millis() - vdbg_at >= 1000) {
+          Serial.printf("[vdbg] frames=%u maxamp=%d peak=%u fires=%u stride=%u\n",
+                        (unsigned)vdbg_frames, (int)vdbg_amp, (unsigned)voice_dbg_peak,
+                        (unsigned)voice_dbg_fires, (unsigned)(voice_active ? voice_active->stride : 0));
+          vdbg_at = millis(); vdbg_frames = 0; vdbg_amp = 0; voice_dbg_peak = 0; voice_dbg_fires = 0;
+        }
+      }
       if (!recording) {
         // a single loud frame is not a word: the room crosses the floor, and so
         // does a running tap. Hold the energy for a short run before committing,
@@ -5157,6 +5172,14 @@ static void tilt_serial_command(String line) {
   else if (line == "blestop off") {
     ble_state_off = false;
     Serial.println("[ble] state requests on");
+  }
+  else if (line == "voicedbg on") {
+    voiceDbg = true;
+    Serial.println("[voice] debug on");
+  }
+  else if (line == "voicedbg off") {
+    voiceDbg = false;
+    Serial.println("[voice] debug off");
   }
   else if (line == "voice") {
     // one hands-free capture: record on speech, stop on silence, ship the clip
