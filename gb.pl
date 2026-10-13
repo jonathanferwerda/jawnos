@@ -271,6 +271,39 @@ our $known_appts = {
 	help => { icon => '/images/decipherable/question mark.png' }
 };
 
+# The Guide's tools, declared once. Each entry names the action the model may
+# choose, the arguments it takes, and what it does; the prompt, the allow-list
+# and (in time) the remote verb channel are all generated from this, so adding a
+# tool is one entry here, not a change in three files.
+#
+# `planned` marks a tool whose resolver is not built yet: it is declared so the
+# shape is settled, and is only offered to the model once its resolver lands.
+our @guide_tools = (
+	{ name => 'find', args => { query => 'a name' },
+	  desc => 'search their records and images by name; returns matching apps, file names, and last (the date of the newest match)' },
+	{ name => 'open_gallery', args => { names => [ 'a', 'b' ], app => 'x', search => 'x' },
+	  desc => 'open the photo browser to one or more named things, each resolved to the app that holds it (app scopes to one; search filters by text)' },
+	{ name => 'open_app', args => { app => 'gallery' },
+	  desc => "open one app's window" },
+	{ name => 'say', args => { text => '...' },
+	  desc => 'answer in words, then stop' },
+	{ name => 'ask', args => { text => '...' },
+	  desc => 'ask the person a question, then stop' },
+	{ name => 'done', args => { text => '...' },
+	  desc => 'you have finished; say briefly what you did' },
+	# --- scoped, resolvers to come ---
+	{ name => 'play_music', args => { query => 'artist or track' },
+	  desc => 'play music by artist or track', planned => 1 },
+	{ name => 'show_place', args => { place => 'a place name' },
+	  desc => 'show a place on the map, deduced from a home_plate or a place named for it (offline; no geocoder)', planned => 1 },
+	{ name => 'where_when', args => { when => 'a date or time' },
+	  desc => 'say where the person was at a time, read from the continent fixes', planned => 1 },
+	{ name => 'measure', args => { measure => 'what is measured', period => 'month' },
+	  desc => 'answer a measured question (how far walked this month; when a weight will be reached), read from the app and its budget pace', planned => 1 },
+	{ name => 'create', args => { app => '...', title => '...', when => '...' },
+	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in', planned => 1 },
+);
+
 our $known_icons = {
 	file => '/images/decipherable/file.png',
 	folder => '/images/decipherable/folder.png',
