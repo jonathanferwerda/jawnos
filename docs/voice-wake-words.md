@@ -172,6 +172,14 @@ watch, deck, laptop, and Pico.
   taps appeared dead. The arena is `ps_malloc`'d with the tensor arena now, and the
   48 KB inflate scratch is PSRAM too; internal heap went ~39 KB -> ~64 KB and the
   DMA errors stopped.
+- **`jawn_features_init` populates once.** Every listener arm called it, and each
+  call ran `FrontendPopulateState` again -- which mallocs the window, filterbank,
+  FFT and noise-reduction buffers -- without freeing the old ones. That leaked
+  ~11.7 KB of internal RAM per screen wake (the same wake sequence with the
+  listener off was perfectly flat), enough that a walk's wrist raises drained the
+  heap into aborts. Populate now returns early once ready (`if (g_ready) { return
+  true; }`); a three-wake probe holds one int figure the whole way. The vendor tree
+  is not a repo: `jw/patches/microfeatures-populate-once.patch`.
 
 ## Next steps
 

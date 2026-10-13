@@ -1,0 +1,14 @@
+--- a/src/jawn_micro_features.cpp
++++ b/src/jawn_micro_features.cpp
+@@ -6,7 +6,11 @@
+ static struct FrontendState g_state;
+ static bool g_ready = false;
+ 
++// Populate is a one-time cost: it mallocs the window, filterbank, FFT and
++// noise-reduction buffers, and repeating it on every listener arm leaked
++// ~11.7 KB of internal RAM per screen wake until the watch aborted.
+ bool jawn_features_init() {
++  if (g_ready) { return true; }
+   struct FrontendConfig config;
+   FrontendFillConfigWithDefaults(&config);
+   // the microWakeWord preprocessor settings (ESPHome preprocessor_settings.h)

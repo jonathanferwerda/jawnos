@@ -3608,6 +3608,7 @@ static void voice_border_show(bool on) {
 }
 
 static void voiceListenTask(void *pv) {
+  if (voiceDbg) { Serial.printf("[voice] task int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   AudioInputIf *mic = watch.getAudioInput();
   if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
     Serial.println("[voice] microphone open failed");
@@ -3790,6 +3791,7 @@ static void voiceListenTask(void *pv) {
   free(buf);
   voiceRecording = false;
   voiceListening = false;
+  if (voiceDbg) { Serial.printf("[voice] task end int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   vTaskDelete(NULL);
 }
 
@@ -3808,6 +3810,7 @@ static void voiceListenStart(bool one_shot) {
     Serial.println("[voice] no radio to ship a clip on; not listening");
     return;
   }
+  if (voiceDbg) { Serial.printf("[voice] start int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   voiceOneShot = one_shot;
   voiceListening = true;
   xTaskCreatePinnedToCore(voiceListenTask, "VoiceTask", 8192, NULL, 2, NULL, 1);
