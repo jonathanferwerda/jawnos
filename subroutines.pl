@@ -3613,7 +3613,7 @@ sub cache_get() {
 	my ($params) = @_;
 	$params->{'device'} = $device;
 	my $returner;
-	my $results = &subs::db_select('cache', ['data'], $params)->hashes;
+	my $results = &subs::db_select_simple('cache', ['data'], $params)->hashes;
 	my $result = $results->[0];
 	my $json_data = $result->{'data'};
 	if ($result->{'data'}) {
