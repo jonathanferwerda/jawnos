@@ -7360,6 +7360,33 @@ post '/manager/configure/map_rotate' => sub($c) {
 	$c->render(json => { rotate => $rotate });
 };
 
+# A thin test bed for the multimodal chat layer: hand it a model, a prompt and some
+# media - uploads named 'media', or base64 / data: values in image / audio / video /
+# files - and it hands back the reply as parts. Nothing routes through it; it is
+# here to poke ai_chat while the media features grow.
+any '/manager/ai_chat' => sub($c) {
+	my $model = $c->param('model') || &subs::setting_grabber({ app => 'mail', setting => 'chatbot_model' });
+	unless ($model) { $c->render(json => { error => 'no model given, and no default chatbot model is set' }); return; }
+	my $prompt = $c->param('prompt') || 'Describe what you are given.';
+	my $system = $c->param('system');
+	my $msg = { role => 'user', content => $prompt };
+	foreach my $key ( qw/images image audio video files/ ) {
+		my $v = $c->param($key);
+		next unless defined $v && length $v;
+		$msg->{$key} = $v;
+	}
+	foreach my $u ( @{ $c->req->uploads('media') } ) {
+		my $ct = ($u->headers->content_type || 'application/octet-stream');
+		my $data = encode_base64($u->slurp, '');
+		my $key = $ct =~ m{^image/} ? 'images' : $ct =~ m{^audio/} ? 'audio' : $ct =~ m{^video/} ? 'video' : 'files';
+		push @{ $msg->{$key} }, { data => $data, mime => $ct };
+	}
+	my @msgs = ( ($system ? { role => 'system', content => $system } : ()), $msg );
+	my ($parts, $err) = &subs::ai_chat_parts($model, \@msgs);
+	if ($err) { $c->render(json => { model => $model, error => $err }); return; }
+	$c->render(json => { model => $model, parts => $parts });
+};
+
 
 
 sub image_function_sanity_check() {

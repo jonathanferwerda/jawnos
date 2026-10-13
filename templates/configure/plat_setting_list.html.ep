@@ -4,13 +4,14 @@
 	# Every AI model choice and provider credential in one place.
 	my $catalogue = &subs::ai_model_catalogue();
 	my @roles = (
-		[ 'help_assistant',          'Help guide' ],
-		[ 'eval_assistant',          'Evaluation' ],
-		[ 'visual_assistant',        'Vision (reads images)' ],
-		[ 'text_to_image_assistant', 'Image generation' ],
-		[ 'chatbot_model',           'Pen chat (default)' ],
+		[ 'help_assistant',          'Help guide',           'chat' ],
+		[ 'eval_assistant',          'Evaluation',           'chat' ],
+		[ 'visual_assistant',        'Vision (reads images)', 'vision' ],
+		[ 'text_to_image_assistant', 'Image generation',     'image' ],
+		[ 'chatbot_model',           'Pen chat (default)',   'chat' ],
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
+	my $catalogue = &subs::ai_model_catalogue();
 	my $providers = &subs::ai_providers();
 	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
 %>
@@ -21,18 +22,28 @@
 	<h3>Agent models</h3>
 	<p class="cfg-note">Which model each assistant uses. Models are grouped by provider — a provider needs its key below before its models will answer.</p>
 	<div class="cfg-card">
-		<% foreach my $r ( @roles ) { %>
+		<% foreach my $r ( @roles ) {
+			my ($setting, $label, $cap) = @{$r};
+			my $current = $role_settings->{$setting} // '';
+			my $shown = 0;
+		%>
 			<div class="cfg-row">
-				<label><%= $r->[1] %></label>
-				<select class="configure_input" app="mail" setting="<%= $r->[0] %>">
+				<label><%= $label %></label>
+				<select class="configure_input" app="mail" setting="<%= $setting %>">
 					<option value="">— none —</option>
-					<% foreach my $provider ( @{$catalogue} ) { %>
-						<% next unless scalar @{ $provider->{'models'} }; %>
+					<% foreach my $provider ( @{$catalogue} ) {
+						my @models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @{ $provider->{'models'} };
+						next unless scalar @models;
+					%>
 						<optgroup label="<%= $provider->{'label'} %>">
-							<% foreach my $m ( @{ $provider->{'models'} } ) { %>
-								<option value="<%= $m->{'value'} %>" <% if (($role_settings->{$r->[0]} // '') eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %></option>
+							<% foreach my $m ( @models ) { %>
+								<option value="<%= $m->{'value'} %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %></option>
 							<% } %>
 						</optgroup>
+					<% } %>
+					<%# a model already chosen that does not fit this role is kept so it is not silently dropped %>
+					<% if ($current && !$shown) { %>
+						<option value="<%= $current %>" selected="selected"><%= $current %> (kept — not listed for this role)</option>
 					<% } %>
 				</select>
 			</div>

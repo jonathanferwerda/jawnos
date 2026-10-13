@@ -9815,20 +9815,72 @@ sub ai_key_settings() {
 
 # The model choices, grouped by provider, for the dropdowns. Ollama and
 # Cloudflare are read live; the rest are the fixed lists above.
-sub ai_model_catalogue() {
+#
+# Which of chat / vision / image / audio a model can serve, so a role only offers
+# models that fit it: a text chatbot is not offered a vision-only model, and the
+# Vision role is not offered a plain text one. A name is the only signal for most
+# providers, so this is a heuristic and errs toward 'chat'.
+sub ai_model_caps_by_name {
+	my ($name) = @_;
+	my $n = lc($name || '');
+	return ('image') if $n =~ /(dall-e|gpt-image|stable-?diffusion|sdxl|sd3|flux|imagen|playground-v2|kandinsky|dreamshaper|lucid|phoenix|text-to-image|text2image)/;
+	return ('audio') if $n =~ /(whisper|asr|speech|melotts|aura-|\btts\b)/;
+	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
+	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision)/;
+	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision)/;
+	return ('chat');
+}
+
+sub ai_model_caps_by_task {
+	my ($task) = @_;
+	my $t = lc($task || '');
+	return ('image') if $t =~ /text-to-image|image generation|image-to-image|inpaint|image editing/;
+	return ('vision') if $t =~ /image-to-text|visual question|image classification|object detection|vision/;
+	return ('audio') if $t =~ /speech|audio|asr|text-to-speech|tts/;
+	return ('chat') if $t =~ /text generation|conversational|summariz|chat/;
+	return ('other');
+}
+
+sub ai_model_caps {
+	my ($provider, $name, $meta) = @_;
+	my $task = '';
+	if (ref $meta eq 'HASH' && defined $meta->{'task'}) {
+		# Cloudflare's search returns task as an object { id, name } in some versions
+		$task = ref $meta->{'task'} eq 'HASH' ? ($meta->{'task'}->{'name'} || $meta->{'task'}->{'id'} || '') : $meta->{'task'};
+		$task = '' if ref $task;
+	}
+	if ($provider eq 'cloudflare' && $task) {
+		return &ai_model_caps_by_task($task);
+	}
+	my $family = (ref $meta eq 'HASH' && ref $meta->{'details'} eq 'HASH') ? ($meta->{'details'}->{'family'} || '') : '';
+	return &ai_model_caps_by_name($family ? ($name . ' ' . $family) : $name);
+}
+
+# Pass a capability (chat, vision, image, audio) to keep only models that serve it.
+sub ai_model_catalogue {
+	my ($cap) = @_;
 	my @out;
 	foreach my $p ( @{ &subs::ai_providers() } ) {
 		my @models;
 		if ($p->{'id'} eq 'ollama') {
-			@models = map { { value => ($_->{'model'} || $_->{'name'}), name => ($_->{'name'} || $_->{'model'}) } } @{ &subs::pen_model_list() };
+			foreach my $mi ( @{ &subs::pen_model_list() } ) {
+				my $name = $mi->{'model'} || $mi->{'name'};
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('ollama', $name, $mi) ] };
+			}
 		}
 		elsif ($p->{'id'} eq 'cloudflare') {
-			@models = map { { value => ($_->{'model'} || $_->{'name'}), name => ($_->{'name'} || $_->{'model'}) } } @{ &subs::cloudflare_model_list() };
+			foreach my $mi ( @{ &subs::cloudflare_model_list() } ) {
+				my $name = $mi->{'model'} || $mi->{'name'};
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('cloudflare', $name, $mi) ] };
+			}
 		}
 		else {
-			@models = map { { value => $p->{'id'} . ':' . $_, name => $_ } } @{ $p->{'models'} || [] };
+			foreach my $m ( @{ $p->{'models'} || [] } ) {
+				push @models, { value => $p->{'id'} . ':' . $m, name => $m, caps => [ &ai_model_caps($p->{'id'}, $m, undef) ] };
+			}
 		}
-		push @out, { id => $p->{'id'}, label => $p->{'label'}, models => \@models };
+		@models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @models if $cap;
+		push @out, { id => $p->{'id'}, label => $p->{'label'}, models => \@models } if @models;
 	}
 	return \@out;
 }
