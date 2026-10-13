@@ -43,7 +43,7 @@
 	<p class="cfg-note">Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows “••• set” — leave it alone to keep it, or type a new value to replace it.</p>
 	<% foreach my $p ( @{$providers} ) { %>
 		<div class="cfg-card">
-			<b><%= $p->{'label'} %></b>
+			<h4 style="margin-top:0;"><%= $p->{'label'} %></h4>
 			<% foreach my $k ( @{ $p->{'keys'} } ) { %>
 				<% my ($name, $label) = @{$k}; my $val = $key_values->{$name}; my $is_secret = ($name =~ /_(key|token)$/) ? 1 : 0; my $set = (defined $val && length $val) ? 1 : 0; %>
 				<div class="cfg-row">

@@ -1,54 +1,45 @@
 <% my $tunnels = &subs::db_query('select * from tunnels where status=?', 'active')->hashes; %>
 <% no warnings 'uninitialized'; %>
 <style>
-/* A tunnel row carries nine columns; on a phone each becomes a labelled card,
-   so nothing is off the right edge. */
-#tunnel_list table, #tunnel_list thead, #tunnel_list tbody, #tunnel_list tr, #tunnel_list td { }
-@media (max-width:640px) {
-	#tunnel_list table, #tunnel_list thead, #tunnel_list tbody, #tunnel_list tr, #tunnel_list td { display:block; width:100%; box-sizing:border-box; }
-	#tunnel_list thead { display:none; }
-	#tunnel_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
-	#tunnel_list td { border:0; padding:3px 2px; }
-	#tunnel_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
-}
+/* One card per live tunnel: a head with the health dot, the peer and the
+   direction, then the addresses as a wrapping field grid. */
+#tunnel_list .tun_list { display:flex; flex-direction:column; gap:10px; }
+#tunnel_list .tun_card { margin:0; }
+#tunnel_list .tun_head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:0 0 8px; }
+#tunnel_list .tun_head .tiny_thumb { flex:0 0 auto; }
+#tunnel_list .tun_name { flex:1 1 130px; min-width:0; font-weight:600; word-break:break-all; }
+#tunnel_list .tun_dir { font-size:12px; opacity:.75; }
+#tunnel_list .tun_grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:6px 10px; }
+#tunnel_list .tun_field { display:flex; flex-direction:column; gap:2px; min-width:0; font-size:12.5px; }
+#tunnel_list .tun_field > span:first-child { opacity:.55; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+#tunnel_list .tun_field > span:last-child { word-break:break-all; }
 </style>
 <div class="cfg">
 	<h2>Tunnels</h2>
 	<% if (scalar @{$tunnels} > 0) { %>
 		<p class="cfg-note">Live tunnels between this machine and its peers.</p>
-		<div class="cfg-scroll">
-			<table>
-				<thead>
-					<tr><th>F</th><th>Host</th><th>Dir</th><th>Name</th><th>IP</th><th>In</th><th>Out</th><th>Time</th><th>ST</th></tr>
-				</thead>
-				<tbody>
-					<% foreach my $tun ( @{$tunnels} ) { %>
-						<% if ($tun->{'server_time'} < &subs::rightNow() - ( 60 * 5 * 1000)) { %>
-							<% &subs::db_delete('tunnels', { uuid => $tun->{'uuid'} }); %>
-							<% next; %>
-						<% } %>
-						<tr>
-							<td data-label="F"><img class="tiny_thumb" src="
-								<% if ($tun->{'failures'} == 0) { %>
-									/images/make believe/good.png
-								<% } elsif ($tun->{'failures'} >- 1) { %>
-									/images/make believe/bad.png
-								<% } else { %>
-									/images/decipherable/question.png
-								<% } %>
-								"></td>
-							<td data-label="Host"><%= $tun->{'host'} %></td>
-							<td data-label="Dir"><%= &subs::format_name($tun->{'direction'}) %></td>
-							<td data-label="Name"><%= $tun->{'name'} %></td>
-							<td data-label="IP"><%= $tun->{'ip'} %></td>
-							<td data-label="In"><%= $tun->{'in_port'} %></td>
-							<td data-label="Out"><%= $tun->{'out_port'} %></td>
-							<td data-label="Time"><span class="time" timestamp="<%= $tun->{'timestamp'} %>"></span></td>
-							<td data-label="ST"><span class="time" timestamp="<%= $tun->{'server_time'} %>"></span></td>
-						</tr>
-					<% } %>
-				</tbody>
-			</table>
+		<div class="tun_list">
+			<% foreach my $tun ( @{$tunnels} ) { %>
+				<% if ($tun->{'server_time'} < &subs::rightNow() - ( 60 * 5 * 1000)) { %>
+					<% &subs::db_delete('tunnels', { uuid => $tun->{'uuid'} }); %>
+					<% next; %>
+				<% } %>
+				<% my $health = ($tun->{'failures'} == 0) ? 'good' : 'bad'; %>
+				<div class="cfg-card tun_card">
+					<div class="tun_head">
+						<img class="tiny_thumb" hint="Health" src="/images/make believe/<%= $health %>.png">
+						<span class="tun_name"><%= $tun->{'host'} %> · <%= $tun->{'name'} %></span>
+						<span class="tun_dir"><%= &subs::format_name($tun->{'direction'}) %></span>
+					</div>
+					<div class="tun_grid">
+						<div class="tun_field"><span>IP</span><span><%= $tun->{'ip'} %></span></div>
+						<div class="tun_field"><span>In</span><span><%= $tun->{'in_port'} %></span></div>
+						<div class="tun_field"><span>Out</span><span><%= $tun->{'out_port'} %></span></div>
+						<div class="tun_field"><span>Seen</span><span class="time" timestamp="<%= $tun->{'timestamp'} %>"></span></div>
+						<div class="tun_field"><span>Server</span><span class="time" timestamp="<%= $tun->{'server_time'} %>"></span></div>
+					</div>
+				</div>
+			<% } %>
 		</div>
 		<script>appointment_chron();</script>
 	<% } else { %>

@@ -2,86 +2,75 @@
 /* The eight ticket digits sit compactly and wrap rather than run off the edge. */
 #ticket { display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
 #ticket .ticket_input { width:4.2em; text-align:center; }
-/* Rm / Status / Utils / Filename is too much for a phone in one line, so the
-   rows become labelled cards under 640px. Scoped to this panel's container. */
-@media (max-width:640px) {
-	#backup_list table, #backup_list thead, #backup_list tbody, #backup_list tr, #backup_list td { display:block; width:100%; box-sizing:border-box; }
-	#backup_list thead { display:none; }
-	#backup_list tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; }
-	#backup_list td { border:0; padding:3px 2px; }
-	#backup_list td[data-label]::before { content: attr(data-label) ": "; opacity:.65; }
-}
+/* One card per backup: the filename and status up top, its size and age, then
+   Restore / Merge / Remove. No table, nothing off the right edge on a phone. */
+#backup_list .bk_list { display:flex; flex-direction:column; gap:10px; }
+#backup_list .bk_card { margin:0; }
+#backup_list .bk_head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; }
+#backup_list .bk_name { flex:1 1 160px; min-width:0; font-family:var(--mono-font, monospace); font-size:12.5px; word-break:break-all; }
+#backup_list .bk_status { font-size:12px; opacity:.85; }
+#backup_list .bk_meta { font-size:12px; opacity:.7; margin:4px 0 8px; }
+#backup_list .bk_actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 </style>
 <div class="cfg">
 	<h2>Enc</h2>
 	<p class="cfg-note">Restore or merge a database backup, or start a new one. Each backup is an encrypted <code>.enc</code> file.</p>
 
-	<div class="cfg-grid">
-		<div class="cfg-row">
-			<label>President</label>
-			<input id="president" placeholder="President" />
+	<div class="cfg-card">
+		<div class="cfg-grid">
+			<div class="cfg-row">
+				<label>President</label>
+				<input id="president" placeholder="President" />
+			</div>
+			<div class="cfg-row">
+				<label>Credential</label>
+				<input type="password" id="credential" placeholder="Credential" />
+			</div>
 		</div>
-		<div class="cfg-row">
-			<label>Credential</label>
-			<input type="password" id="credential" placeholder="Credential" />
+		<div class="cfg-actions">
+			<button type="button" id="new_database">New</button>
 		</div>
-	</div>
-	<div class="cfg-actions">
-		<button type="button" id="new_database">New</button>
 	</div>
 
-	<h3>Signatorial</h3>
-	<p class="cfg-note">Upload a signatorial file, key the eight-number ticket, then submit or Clear.</p>
-	<div id="signatorial_upload_container">
-		<form id="signatorial_upload" style="display:none;">
-			<input id="signatorial_upload_input" type="file" name="fileupload" />
-			<input type="submit" />
-		</form>
-	</div>
+	<div class="cfg-card">
+		<h3 style="margin-top:0;">Signatorial</h3>
+		<p class="cfg-note">Upload a signatorial file, key the eight-number ticket, then submit or Clear.</p>
+		<div id="signatorial_upload_container">
+			<form id="signatorial_upload" style="display:none;">
+				<input id="signatorial_upload_input" type="file" name="fileupload" />
+				<input type="submit" />
+			</form>
+		</div>
 
-	<div id="ticket" class="ticket_form">
-		<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
-		<% foreach my $n (0..7) { %>
-			<% if ($n == 4) { %>
-				&nbsp;-&nbsp;
+		<div id="ticket" class="ticket_form">
+			<img style="vertical-align:bottom;" class="jonathan little_thumb" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
+			<% foreach my $n (0..7) { %>
+				<% if ($n == 4) { %>
+					&nbsp;-&nbsp;
+				<% } %>
+				<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>" style="vertical-align:bottom;">
 			<% } %>
-			<input type="password" class="ticket_input" data-input_number="<%= $n %>" id="ticket_number_<%= $n %>" style="vertical-align:bottom;">
-		<% } %>
-		<button type="button" id="password_clear">Clear</button>
+			<button type="button" id="password_clear">Clear</button>
+		</div>
 	</div>
 
 	<h3>Backups</h3>
 	<% if (scalar @{$backups} > 0) { %>
-		<div class="cfg-scroll">
-			<table>
-				<thead>
-					<tr>
-						<th>Rm</th>
-						<th>Status</th>
-						<th colspan="2">Utils</th>
-						<th>Filename</th>
-					</tr>
-				</thead>
-				<tbody>
-					<% foreach my $b ( @{$backups } ) { %>
-						<tr class="backup">
-							<td data-label="Rm">
-								<button class="delete_backup" filename="<%= $b->{'filename'} %>">X</button>
-							</td>
-							<td data-label="Status"><%= $b->{'status'} %></td>
-							<td colspan="2" data-label="Utils">
-								<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
-								<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button><br>
-							</td>
-							<td data-label="Filename">
-								<%= $b->{'filename'} %><br>
-								<%= $b->{'size'} %> ( <%= $b->{'blocks'} %> )<br>
-								<%= $b->{'created'} %><br>
-							</td>
-						</tr>
-					<% } %>
-				</tbody>
-			</table>
+		<div class="bk_list">
+			<% foreach my $b ( @{$backups } ) { %>
+				<div class="cfg-card bk_card backup">
+					<div class="bk_head">
+						<span class="bk_name"><%= $b->{'filename'} %></span>
+						<span class="bk_status"><%= $b->{'status'} %></span>
+					</div>
+					<div class="bk_meta"><%= $b->{'size'} %> · <%= $b->{'blocks'} %> · <%= $b->{'created'} %></div>
+					<div class="bk_actions">
+						<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
+						<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button>
+						<button class="delete_backup" filename="<%= $b->{'filename'} %>" type="button">✕ Remove</button>
+					</div>
+				</div>
+			<% } %>
 		</div>
 	<% } else { %>
 		<p class="cfg-note">No backups found here yet.</p>

@@ -1,4 +1,14 @@
 <% use Mojo::JSON qw/decode_json/; %>
+<style>
+/* One card per device. The plainly-valued settings share a wrapping field grid
+   (the Pseud panel's shape); a checkbox, the mugshot, the home plate and the
+   free-text note each get their own row. */
+#me_setting_list .me_grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:8px 10px; margin:0 0 10px; }
+#me_setting_list .me_field { display:flex; flex-direction:column; gap:3px; min-width:0; font-size:12.5px; opacity:.85; }
+#me_setting_list .me_field > input, #me_setting_list .me_field > select { width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; line-height:1.3; }
+#me_setting_list .me_checks { display:flex; flex-wrap:wrap; gap:6px 18px; margin:0 0 4px; }
+#me_setting_list .me_checks label { display:inline-flex; align-items:center; gap:6px; font-size:13px; }
+</style>
 <div class="cfg">
 	<h2>Me</h2>
 	<p class="cfg-note">Your personal details, kept per device. Change one device's setting, or tick Anchor to copy a change to every device at once.</p>
@@ -11,96 +21,100 @@
 	<% foreach my $d ( @gb::device_types ) { %>
 		<div class="cfg-card">
 			<h3><%= $d %></h3>
-			<% foreach my $m ( sort keys %{$me->{$d}} ) { %>
-				<% unless ( $m eq 'pos' || $m eq 'gallery_appts' || $m eq 'currency' || $m eq 'unit' || $m eq 'budget_alarm' || $m eq 'log_me' || $m eq 'advertise_watching' || $m eq 'mugshot' || $m eq 'home_plate' || $m eq 'information' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
-					</div>
-				<% } elsif ( $m eq 'unit' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<select name="unit" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
+
+			<div class="me_grid">
+				<% foreach my $m ( sort keys %{$me->{$d}} ) { %>
+					<% next if grep { $_ eq $m } qw(pos gallery_appts currency unit budget_alarm log_me advertise_watching mugshot home_plate information); %>
+					<label class="me_field"><span><%= &subs::format_name($m) %></span>
+						<input type="text" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
+					</label>
+				<% } %>
+				<% if (exists $me->{$d}->{'unit'}) { %>
+					<label class="me_field"><span><%= &subs::format_name('unit') %></span>
+						<select class="me_setting" device="<%= $d %>" setting="unit" value="<%= $me->{$d}->{'unit'} %>">
 							<% foreach my $u ( sort keys %{$gb::measures} ) { %>
-								<option value="<%= $u %>" <% if ($me->{$d}->{$m} eq $u) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+								<option value="<%= $u %>" <% if ($me->{$d}->{'unit'} eq $u) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
 							<% } %>
 						</select>
-					</div>
-				<% } elsif ( $m eq 'currency' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<select name="currency" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $me->{$d}->{$m} %>">
+					</label>
+				<% } %>
+				<% if (exists $me->{$d}->{'currency'}) { %>
+					<label class="me_field"><span><%= &subs::format_name('currency') %></span>
+						<select class="me_setting" device="<%= $d %>" setting="currency" value="<%= $me->{$d}->{'currency'} %>">
 							<% foreach my $dolla ( keys %{$gb::measures} ) { %>
-								<% if (grep { $_ eq $m } @{$gb::measures->{$dolla}->{'types'}}) { %>
-									<option value="<%= $dolla %>" <% if ($me->{$d}->{$m} eq $dolla) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$dolla}->{'name'}) %></option>
+								<% if (grep { $_ eq 'currency' } @{$gb::measures->{$dolla}->{'types'}}) { %>
+									<option value="<%= $dolla %>" <% if ($me->{$d}->{'currency'} eq $dolla) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$dolla}->{'name'}) %></option>
 								<% } %>
 							<% } %>
 						</select>
-					</div>
-				<% } elsif ( $m eq 'log_me' || $m eq 'gallery_appts' || $m eq 'budget_alarm' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<span><input type="checkbox" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" <% if ( $me->{$d}->{$m} eq 'on' ) { %>checked <% } %> value="<%= $me->{$d}->{$m} %>"></span>
-					</div>
-				<% } elsif ( $m eq 'advertise_watching') { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<span><input type="checkbox" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" <% if ( $me->{$d}->{$m} eq 'on' ) { %>checked <% } %> value="<%= $me->{$d}->{$m} %>"></span>
-					</div>
-					<script>
-						$(document).on('change', '.me_setting[device="<%= $device %>"][setting="advertise_watching"]', function() {
-							if ($(this).is(':checked')) {
-								advertise_watching = 'on';
-							}
-							else {
-								advertise_watching = 'off';
-							}
-						});
-					</script>
-				<% } elsif ( $m eq 'mugshot') { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<img src="<%= &Manager::mugshot_source($d) || '/images/make believe/face.png' %>" class="large_thumb me_setting mugshot_upload_button"
-							device="<%= $d %>" setting="<%= $m %>">
-					</div>
-					<div class="mugshot_upload_container" device="<%= $d %>">
-						<form class="mugshot_upload" device="<%= $d %>" setting="<%= $m %>" style="display:none;">
-							<input class="mugshot_upload_input" device="<%= $d %>" setting="<%= $m %>" type="file" name="fileupload" />
-							<input type="submit" />
-						</form>
-					</div>
-				<% } elsif ( $m eq 'home_plate' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<img <% if ($me->{$d}->{$m}) { %> style="background-color:lightgreen;" <% } %> src="<%= &subs::icon_for('/images/make believe/gps.png') %>" hint="Location" device="<%= $d %>" setting="<%= $m %>" class="medium_thumb home_plate_record">
-					</div>
-					<% if ($me->{$d}->{$m}) { %>
-						<% my $location = eval { return decode_json $me->{$d}->{$m} } || {}; %>
-						<div class="cfg-row">
-							<label>lat</label>
-							<input type="text" class="manual_home_plate" app="me" setting="latitude" value="<%= $location->{'latitude'} %>" device="<%= $d %>">
-						</div>
-						<div class="cfg-row">
-							<label>long</label>
-							<input type="text" class="manual_home_plate" app="me" setting="longitude" value="<%= $location->{'longitude'} %>" device="<%= $d %>">
-						</div>
-					<% } %>
-
-				<% } elsif ( $m eq 'information' ) { %>
-					<div class="cfg-row">
-						<label><%= &subs::format_name($m) %></label>
-						<textarea class="me_setting" setting="information" device="<%= $d %>"><%= $me->{$d}->{$m} %></textarea>
-					</div>
-				<% } else { %>
-					<div class="cfg-row">
-						<label>Part of Speech</label>
-						<select name="pos" class="me_setting" setting="pos" device="<%= $d %>" value="<%= $me->{$d}->{$m} %>">
+					</label>
+				<% } %>
+				<% if (exists $me->{$d}->{'pos'}) { %>
+					<label class="me_field"><span>Part of Speech</span>
+						<select class="me_setting" setting="pos" device="<%= $d %>" value="<%= $me->{$d}->{'pos'} %>">
 							<% foreach my $p ( keys %{$pos_list} ) { %>
-								<option <% if ($p eq $me->{$d}->{$m}) { %>selected<% } %> value="<%= $p %>"><%= &subs::format_name($p) %></option>
+								<option <% if ($p eq $me->{$d}->{'pos'}) { %>selected<% } %> value="<%= $p %>"><%= &subs::format_name($p) %></option>
 							<% } %>
 						</select>
+					</label>
+				<% } %>
+			</div>
+
+			<div class="me_checks">
+				<% foreach my $m ( qw/log_me gallery_appts budget_alarm advertise_watching/ ) { %>
+					<% next unless exists $me->{$d}->{$m}; %>
+					<label><input type="checkbox" class="me_setting" device="<%= $d %>" setting="<%= $m %>" <% if ( $me->{$d}->{$m} eq 'on' ) { %>checked <% } %> value="<%= $me->{$d}->{$m} %>"> <%= &subs::format_name($m) %></label>
+				<% } %>
+			</div>
+
+			<script>
+				$(document).on('change', '.me_setting[device="<%= $device %>"][setting="advertise_watching"]', function() {
+					if ($(this).is(':checked')) {
+						advertise_watching = 'on';
+					}
+					else {
+						advertise_watching = 'off';
+					}
+				});
+			</script>
+
+			<% if (exists $me->{$d}->{'mugshot'}) { %>
+				<div class="cfg-row">
+					<label><%= &subs::format_name('mugshot') %></label>
+					<img src="<%= &Manager::mugshot_source($d) || '/images/make believe/face.png' %>" class="large_thumb me_setting mugshot_upload_button"
+						device="<%= $d %>" setting="mugshot">
+				</div>
+				<div class="mugshot_upload_container" device="<%= $d %>">
+					<form class="mugshot_upload" device="<%= $d %>" setting="mugshot" style="display:none;">
+						<input class="mugshot_upload_input" device="<%= $d %>" setting="mugshot" type="file" name="fileupload" />
+						<input type="submit" />
+					</form>
+				</div>
+			<% } %>
+
+			<% if (exists $me->{$d}->{'home_plate'}) { %>
+				<div class="cfg-row">
+					<label><%= &subs::format_name('home_plate') %></label>
+					<img <% if ($me->{$d}->{'home_plate'}) { %> style="background-color:lightgreen;" <% } %> src="<%= &subs::icon_for('/images/make believe/gps.png') %>" hint="Location" device="<%= $d %>" setting="home_plate" class="medium_thumb home_plate_record">
+				</div>
+				<% if ($me->{$d}->{'home_plate'}) { %>
+					<% my $location = eval { return decode_json $me->{$d}->{'home_plate'} } || {}; %>
+					<div class="cfg-row">
+						<label>lat</label>
+						<input type="text" class="manual_home_plate" app="me" setting="latitude" value="<%= $location->{'latitude'} %>" device="<%= $d %>">
+					</div>
+					<div class="cfg-row">
+						<label>long</label>
+						<input type="text" class="manual_home_plate" app="me" setting="longitude" value="<%= $location->{'longitude'} %>" device="<%= $d %>">
 					</div>
 				<% } %>
+			<% } %>
+
+			<% if (exists $me->{$d}->{'information'}) { %>
+				<div class="cfg-row">
+					<label><%= &subs::format_name('information') %></label>
+					<textarea class="me_setting" setting="information" device="<%= $d %>"><%= $me->{$d}->{'information'} %></textarea>
+				</div>
 			<% } %>
 		</div>
 	<% } %>
