@@ -156,6 +156,28 @@ sub terminal_name() {
 	return $name;
 }
 
+# Percent-encode a filesystem name for a URL. Names that come from a directory
+# walk are decoded to characters (see Music::process_file), and a Mojolicious
+# template is a character string, so encode back to UTF-8 bytes first: url_escape
+# would otherwise escape a multi-byte character's codepoint (Æ -> %C6) instead of
+# its UTF-8 bytes (%C3%86). Plain ASCII and already-byte strings pass through.
+sub url_escape_utf8() {
+	my $name = shift // '';
+	utf8::encode($name) if utf8::is_utf8($name);
+	return url_escape($name);
+}
+
+# encode_json returns UTF-8 bytes, but a Mojolicious template is a character
+# string: interpolating those bytes upgrades them as Latin-1 and mangles every
+# non-ASCII value in the data (an "Ænima" tag renders as "Ãnima"). Decode back to
+# characters for the template, the same reason process_file decodes the names it
+# hands the window.
+sub json_chars() {
+	my $json = encode_json shift;
+	utf8::decode($json) unless utf8::is_utf8($json);
+	return $json;
+}
+
 sub html_name() {
 	my $name = shift || "";
 	$name =~ s/[^a-zA-Z0-9\?]+//g;

@@ -588,7 +588,10 @@ sub rock_and_roll($c) {
 	if ($man eq 'approved') {
 		my $tdir = $gb::tmp_dir;
 
-		$file = uri_decode $c->param('track') unless $file;
+		# Mojo has already decoded the query string, so use the parameter as-is. A
+		# second uri_decode corrupts any name containing a literal %xx sequence
+		# (100%20.mp3 -> 100 .mp3), which is exactly how a track failed to open.
+		$file = $c->param('track') unless $file;
 		if (!$file) {
 			if ($c->param('appt_uuid') && $c->param('file_uuid') && $c->param('app')) {
 				my $appt = &subs::db_select('appointments', undef, { uuid => $c->param('appt_uuid'), app => $c->param('app') })->hashes->[0];
@@ -6879,7 +6882,7 @@ get '/manager/cache_get' => sub($c) {
 
 get '/manager/download_file' => sub ($c) {
 	my $file = $c->param('file');
-	my $app = uri_decode( $c->param('app') );
+	my $app = $c->param('app');
 	my $uuid = $c->param('uuid');
 	my $timestamp = $c->param('timestamp');
 	my $server_time = $c->param('server_time');

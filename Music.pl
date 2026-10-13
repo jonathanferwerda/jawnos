@@ -40,23 +40,45 @@ my (@results);
 my $files = [];
 my $thumb_files = [];
 my $permissive = 0;
+
+# The playable and cover extensions the walk looks for. The old wanted() tested
+# them with /mp3$|m4a$|.../i - a ten-way case-insensitive suffix match run on
+# every entry of every folder, and the one part of the walk that cost real time
+# (about 0.15s of a 0.2s walk over a large library). A look-up of the final three
+# or four lowercased characters answers the same question in constant time. The
+# extensionless tail is still allowed ("WAV" ends in wav), exactly as before.
+my %playable_suffix = map { $_ => 1 } qw/mp3 m4a wav flac mp4 mkv mov webm weba wmv/;
+my %cover_suffix = map { $_ => 1 } qw/jpg png/;
+
+sub playable_name($name) {
+	my $tail = lc substr($name, -4);
+	return 1 if $playable_suffix{$tail};
+	return 1 if $playable_suffix{substr($tail, -3)};
+	return 0;
+}
+
+sub playable_enc_name($name) {
+	return 0 unless lc(substr($name, -4)) eq '.enc';
+	return playable_name(substr($name, 0, -4));
+}
+
 sub process_file() {
 	my $name = $File::Find::name;
-	if ($name =~ m/mp3$|m4a$|wav$|flac$|mp4$|mkv$|mov$|webm$|weba$|wmv$/i) {
+	if (playable_name($name) || ($permissive == 1 && playable_enc_name($name))) {
+		# A directory walk hands names back as UTF-8 bytes, but the music window is
+		# a character string: an undecoded name gets upgraded as Latin-1 and served
+		# double-encoded (Æ -> Ã), which the player then cannot open. Decode only the
+		# names that are kept, so the rest of the app sees them as the browser does.
+		# Invalid UTF-8 is left as bytes, which is what it was before.
+		utf8::decode($name) unless utf8::is_utf8($name);
 		$name =~ s/^\.\///g;
 		push @{$files}, $name;
-	}
-	if ($permissive == 1) {
-		if ($name =~ m/mp3\.enc$|m4a\.enc$|wav\.enc$|mkv\.enc$|flac\.enc$|mp4\.enc$|mov\.enc$|webm\.enc$|weba\.enc$|wmv\.enc$/i) {
-			$name =~ s/^\.\///g;
-			push @{$files}, $name;
-		}
 	}
 }
 
 sub process_thumbfile() {
 	my $name = $File::Find::name;
-	if ($name =~ m/jpg$|png$/i) {
+	if ($cover_suffix{lc substr($name, -3)}) {
 		$name =~ s/^\.\///g;
 		push @{$thumb_files}, $name;
 	}
@@ -158,7 +180,9 @@ get '/manager/music' => sub ($c) {
 
 get '/play' => sub($c) {
 	my $mao = eval { return decode_json &subs::setting_grabber({ app => 'music', setting => 'mao' }) } || {};
-	my $track = &subs::terminal_name(uri_decode $c->param('track'));
+	# the query is already decoded by Mojo; decoding again would corrupt a name
+	# with a literal %xx in it (see Manager::rock_and_roll)
+	my $track = &subs::terminal_name($c->param('track'));
 	my $data;
 
 	&Manager::rock_and_roll($c);
