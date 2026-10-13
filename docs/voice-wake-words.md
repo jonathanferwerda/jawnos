@@ -78,7 +78,14 @@ watch, deck, laptop, and Pico.
   setting asks for (one at a time) over the shared `micro_features` front-end;
   tensor arenas are in PSRAM. Adding a phrase is a file drop (train, run
   `.shots/tflite_to_header.py`, add an include and a row).
-- **`hey_jawn.tflite`** and **`jawn_do.tflite`** (62 KB each, trained on Colab) are
+- **`voice_active_frame()` reports a state, not a self-clearing one-shot.** It
+  used to clear its sliding window on every hit (a "cool off" to avoid a double
+  detect), but the listener counts consecutive speech frames before it commits a
+  capture, so that count reset every time and *no capture ever committed* - the
+  VAD read speech (peak 255) yet nothing recorded, so no clip and no orange ring.
+  It now returns "is there speech now?". Debug the path over serial with
+  `voicedbg on` (prints `frames/maxamp/peak/fires/stride` once a second).
+- **`hey_jawn`** and **`jawn_do`** (62 KB each, trained on Colab) are
   embedded as `jw/hey_jawn_model.h` / `jw/jawn_do_model.h`.
 - **The Embedded panel's voice select now arms the wake words too.**
   `voice_trigger_apply()` in `jw/jw.ino` asks `voice_models_has()` (true for `vad`
