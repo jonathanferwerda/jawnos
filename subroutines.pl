@@ -3221,7 +3221,7 @@ sub setting_setter() {
 sub setting_grabber() {
 	my $settings = shift;
 	if ($settings->{'uuid'}) {
-		my $s = &subs::db_select('settings', undef, { value => $settings->{'uuid'}, setting => 'uuid', subsetting => $settings->{'subsetting'} })->hashes->[0];
+		my $s = &subs::db_select_simple('settings', undef, { value => $settings->{'uuid'}, setting => 'uuid', subsetting => $settings->{'subsetting'} })->hashes->[0];
 		$settings->{'app'} = $s->{'app'};
 	}
 
@@ -3246,7 +3246,7 @@ sub setting_grabber() {
 		return $setting_memo{$memo_key} if exists $setting_memo{$memo_key};
 	}
 
-	if (my $q = eval { return &db_select('settings', ['value'], $params) }) {
+	if (my $q = eval { return &db_select_simple('settings', ['value'], $params) }) {
 		my $list = $q->hashes;
 
 		if (scalar @{$list} > 1) {
@@ -3288,7 +3288,7 @@ sub settings_grabber() {
 #	return {};
 
 	if ($settings->{'uuid'}) {
-		my $s = &subs::db_select('settings', undef, { value => $settings->{'uuid'}, setting => 'uuid', subsetting => $settings->{'subsetting'} })->hashes->[0];
+		my $s = &subs::db_select_simple('settings', undef, { value => $settings->{'uuid'}, setting => 'uuid', subsetting => $settings->{'subsetting'} })->hashes->[0];
 		$settings->{'app'} = $s->{'app'};
 	}
 
@@ -5392,6 +5392,26 @@ sub db_select() {
 	my ($db,$database,$sql) = &database_grabber();
 
 	return $db->select($table,$columns,$params,$filters) if $db;
+}
+
+# A raw-SQL fast path for the common db_select shape: one table, equality
+# filters, and IS NULL for an undef value. SQL::Abstract was a measurable slice
+# of a settings read (it re-derives the same WHERE every call). Anything richer
+# - a ref filter value, or a $filters argument - falls back to db_select, so
+# behaviour is unchanged.
+sub db_select_simple() {
+	my ($table, $columns, $params, $filters) = @_;
+	return &db_select($table, $columns, $params, $filters)
+		if $filters || !$params || ref($params) ne 'HASH' || grep { ref $params->{$_} } keys %{$params};
+	my (@w, @v);
+	foreach my $k (sort keys %{$params}) {
+		if (defined $params->{$k}) { push @w, "$k = ?"; push @v, $params->{$k}; }
+		else { push @w, "$k is null"; }
+	}
+	my $cols = ref($columns) eq 'ARRAY' ? join(', ', @{$columns}) : (defined $columns ? $columns : '*');
+	my $sql = 'select ' . $cols . ' from ' . $table;
+	$sql .= ' where ' . join(' and ', @w) if @w;
+	return &db_query($sql, @v);
 }
 
 sub db_close() {
