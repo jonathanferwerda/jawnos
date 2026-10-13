@@ -1,5 +1,8 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<% 	no warnings 'uninitialized'; %>
+<%	no warnings 'uninitialized'; %>
+<style>
+	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
+</style>
 <div id="mail" style="width:100%;background-color:pink;">
 	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
 	<% if ($settings->{'subsection'} eq 'email') { %>
@@ -30,12 +33,17 @@
 			<button id="send_it" style="width:12%;vertical-align:top;">></button>
 		</div>
 	</div>
-	<% if ($c->session('privilege') eq 'citizen') { %>
+	<% my $privilege = $c->session('privilege'); %>
+	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
-			<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
-				<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+			<% if ($privilege eq 'citizen') { %>
+				<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
+					<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+				<% } %>
+				<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+			<% } else { %>
+				<button class="mail_subsection active" section="dial" disabled>Dial</button>
 			<% } %>
-			<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
 			<br><br><br>
 
 			<% if ($settings->{'subsection'} eq 'sms') { %>
@@ -124,19 +132,32 @@
 
 				</div>
 			<% } elsif ($settings->{'subsection'} eq 'dial') { %>
-				<button id="mail_picker_default" style="float:right;">Default</button><br>
-				<% foreach my $group ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
-					<b><%= &subs::format_name($group->{'name'}) %></b><br>
-					<% if (scalar @{$group->{'list'}} >= 0) { %>
-						<select class="mail_picker" group="<%= $group->{'name'} %>" id="mail_<%= $group->{'sing'} %>_picker">
-							<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::format_name($group->{'def'}) %></option>
-							<% foreach my $list ( @{$group->{'list'}} ) { %>
-								<% if ($list->{'app'} ne $group->{'def'}) { %>
-									<option value="<%= $list->{'app'} %>" <% if ($group->{'value'} eq $list->{'app'}) { %>selected<% } %>><%= &subs::format_name($list->{'app'}) %></option>
+				<% if ($privilege eq 'citizen') { %>
+					<button id="mail_picker_default" style="float:right;">Default</button>
+					<button id="mail_public_toggle" public="<%= $channel_public ? 'yes' : 'no' %>" style="float:right;margin-right:5px;" hint="Advertise this dial to guests"><%= $channel_public ? 'Advertised' : 'Advertise' %></button><br>
+					<% foreach my $group ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
+						<b><%= &subs::format_name($group->{'name'}) %></b><br>
+						<% if (scalar @{$group->{'list'}} >= 0) { %>
+							<select class="mail_picker" group="<%= $group->{'name'} %>" id="mail_<%= $group->{'sing'} %>_picker">
+								<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::format_name($group->{'def'}) %></option>
+								<% foreach my $list ( @{$group->{'list'}} ) { %>
+									<% if ($list->{'app'} ne $group->{'def'}) { %>
+										<option value="<%= $list->{'app'} %>" <% if ($group->{'value'} eq $list->{'app'}) { %>selected<% } %>><%= &subs::format_name($list->{'app'}) %></option>
+									<% } %>
 								<% } %>
-							<% } %>
-						</select><br>
+							</select><br>
+						<% } %>
 					<% } %>
+				<% } else { %>
+					<div style="font-size:14px;opacity:.8;">Tune a set the house advertises. You hear a channel while tuned to it; a visitor's words are heard, not kept.</div>
+					<table id="mail_public_channel_list" style="width:100%;font-size:18px;text-align:center;">
+						<% foreach my $ch ( @{$public_channels} ) { %>
+							<tr class="mail_public_channel hover <% if ($channel_key && $channel_key eq $ch->{'key'}) { %>active <% } %>" picker="<%= $ch->{'picker'} %>" key="<%= $ch->{'key'} %>">
+								<td><%= $ch->{'label'} %></td>
+							</tr>
+						<% } %>
+					</table>
+					<% if (scalar @{$public_channels} == 0) { %><div style="font-size:14px;opacity:.8;">Nothing is advertised right now.</div><% } %>
 				<% } %>
 			<% } elsif ($settings->{'subsection'} eq 'list') { %>
 				<div class="mail_list_picker" style="width:100%;">

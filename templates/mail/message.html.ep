@@ -14,7 +14,7 @@
 			</span>
 		<% } %>
 <% } else { %>
-	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" uuid="<%= $m->{'uuid'} %>" class="mailbox_message" style="font-size:20px;width:60%;" timestamp="<%= $m->{'timestamp'} %>">
+	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" <% if ($m->{'ephemeral'}) { %>ephemeral="yes" title="A visitor's words are heard live; they are not kept"<% } %> uuid="<%= $m->{'uuid'} %>" class="mailbox_message" style="font-size:20px;width:60%;" timestamp="<%= $m->{'timestamp'} %>">
 		<% if ($me ne $m->{'manager_file'}) { %>
 			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b><br>
 				<span style="float:left;padding-left:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>

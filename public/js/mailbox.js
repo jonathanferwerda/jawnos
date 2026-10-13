@@ -1073,6 +1073,49 @@ $(document).on('click', '#mail_picker_default', function() {
 	lastV.trigger('change');
 });
 
+// Advertising a dial: the house's permission for guests to tune this exact
+// set. The button wears the answer the server gives, not the click, so two
+// tabs (or a failed write) can never disagree about what is advertised.
+$(document).on('click', '#mail_public_toggle', function() {
+	var b = $(this);
+	$.ajax({
+		url: '/manager/mail/public_channel',
+		type: 'POST',
+		data: { picker: JSON.stringify(mail_picker()), timestamp: Date.now() },
+		success: function(response) {
+			if (response && response.public) { b.attr('public', 'yes').text('Advertised'); }
+			else { b.attr('public', 'no').text('Advertise'); }
+		}
+	});
+});
+
+// Tuning a channel: the picker is remembered first, then the thread is rebuilt
+// for the new address. In the manager the window is remade; on the homepage and
+// the store the mailbox form is fetched into #mail instead.
+function mailDialReload() {
+	if (typeof windowMaker == 'function' && $('#mailbox').is(':visible')) {
+		mailMaker();
+		return;
+	}
+	$.ajax({
+		url: '/mail/homepage_form',
+		type: 'GET',
+		data: { timestamp: Date.now(), picker: JSON.stringify(mail_picker()), mail_contact: '' },
+		success: function(response) {
+			$('#mail').html(response).show();
+			mailWebSocketStart();
+		}
+	});
+}
+
+$(document).on('click', '.mail_public_channel', function() {
+	var channel = $(this);
+	localStorage.setItem('mail_picker', channel.attr('picker'));
+	$('.mail_public_channel.active').removeClass('active');
+	channel.addClass('active');
+	mailDialReload();
+});
+
 $(document).on('dblclick', '#mailbox', function() {
 	mailScrollBottom('load');
 })

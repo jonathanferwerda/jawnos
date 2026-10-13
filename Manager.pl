@@ -17174,6 +17174,41 @@ get '/manager/mail/scroll' => sub($c) {
 	$c->render(json => $mc);
 };
 
+# Advertising is the house's half of the dial: a citizen opens the set of
+# appointments they are currently tuned to, and guests may then tune the same
+# set. Pressing it again closes the channel to guests. Only a citizen holds
+# the dial's public face - a resident or guest may tune, not advertise.
+post '/manager/mail/public_channel' => sub($c) {
+	unless ($c->session('privilege') eq 'citizen') {
+		$c->render(json => { public => 0, error => 'denied' });
+		return;
+	}
+	my $picker = eval { return decode_json $c->param('picker') } || {};
+	unless (&mailws_picker_dialled($picker)) {
+		$c->render(json => { public => 0, error => 'no dial' });
+		return;
+	}
+	my $channels = eval { return decode_json &subs::setting_grabber({ app => 'mail', setting => 'public_channels' }) } || [];
+	my $key = &mail_channel_key(&mailws_constructs($picker));
+	my $found = 0;
+	my @kept;
+	foreach my $ch ( @{$channels} ) {
+		next unless ref $ch eq 'HASH';
+		if (&mail_channel_key(&mailws_constructs($ch)) eq $key) {
+			$found = 1;
+			next;
+		}
+		push @kept, $ch;
+	}
+	my $public = 0;
+	if (!$found) {
+		push @kept, &mailws_constructs($picker);
+		$public = 1;
+	}
+	&subs::setting_setter({ app => 'mail', setting => 'public_channels', value => encode_json \@kept });
+	$c->render(json => { public => $public, count => scalar @kept });
+};
+
 sub mail_checker($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $incoming_data = eval { return decode_json $c->param('incoming_data') } || {};
@@ -17191,6 +17226,10 @@ sub mail_checker($c) {
 	my $contacts = $contacters->hashes;
 	my $picker = eval { return decode_json $c->param('picker') } || {};
 	my $settings = &subs::settings_grabber({ app => 'mail' });
+	my $privilege = $c->session('privilege');
+	my $dialled = &mailws_picker_dialled($picker);
+	my $channel_key = $dialled ? &mail_channel_key(&mailws_constructs($picker)) : '';
+	my $channel_public = $dialled ? &mail_public_channel_allows($picker) : 0;
 	my $me = &manager_file_maker($c->session('name'));
 	$settings->{'mail_config'} = eval {return decode_json $settings->{'mail_config'} } || {};
 	foreach my $contact ( @{$contacts} ) {
@@ -17201,8 +17240,30 @@ sub mail_checker($c) {
 	my $phone = $c->param('phone');
 	my $email = $c->param('email');
 	my $main_title;
-	if ($c->session('privilege') eq 'guest') {
-		$contact = $c->session('ticket_uuid');
+	if ($privilege eq 'guest') {
+		# a guest's dial is honoured only when the house advertises it; any
+		# other dial puts them back on the ticket thread the house opened
+		if ($dialled && $channel_public) {
+			$contact = undef;
+		}
+		else {
+			$dialled = 0;
+			$channel_key = '';
+			$contact = $c->session('ticket_uuid');
+		}
+		# a guest speaks through the box, not a phone or a mailbox server
+		$phone = undef;
+		$email = undef;
+	}
+	elsif ($privilege eq 'resident' && $dialled) {
+		# a resident's dial is the thread they mean to read
+		$contact = undef;
+		$phone = undef;
+		$email = undef;
+	}
+	if ($privilege ne 'citizen') {
+		# a visitor has one dial, not the house's sections
+		$settings->{'subsection'} = 'dial';
 	}
 	my $last_sc;
 	my $chatbot_models;
@@ -17317,13 +17378,22 @@ sub mail_checker($c) {
 			&Websocket::send('tab', {  type => 'mailbox_message', selector => '.mailbox_message[uuid="' . $m->{'uuid'} . '"]', content => $content, browser_tab_id => $c->param('browser_tab_id') });
 		}
 	}, { name => 'mail message processor' });
+	# the advertised dials, each carrying its label and comparison key so the
+	# template can list a house's public face without walking the tuples itself
+	my $channel_list = [];
+	foreach my $ch ( @{&mail_public_channels()} ) {
+		push @{$channel_list}, { %{$ch}, label => &mail_channel_label($ch), key => &mail_channel_key($ch), picker => encode_json $ch };
+	}
 	my $combined_data = {
 		template => 'mail/mailbox',
 		mail => $mails,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,
 		contacts => $contacts,
-		sc => $gb::social_constructs,
+		sc => ($privilege eq 'citizen' ? $gb::social_constructs : {}),
+		public_channels => $channel_list,
+		channel_key => $channel_key,
+		channel_public => $channel_public,
 		mail_contact => $c->param('mail_contact'),
 		mail_phone => $phone,
 		mail_email => $email,
@@ -22546,6 +22616,15 @@ websocket '/mail/ws' => sub ($c) {
 				my ($db,$database,$sql) = &subs::database_grabber();
 				&mail_depublicizer($c);
 			}
+			if ($c->session('privilege') eq 'guest') {
+				# a tune is re-checked for as long as it is held: the house may
+				# have taken the advertised dial back, and a guest then slides
+				# home to their ticket rather than keeping the channel
+				my $entry = $gb::mailws->{$browser_tab_id};
+				if ($entry && $entry->{'address'}->{'picker'} && !&mail_public_channel_allows($entry->{'address'}->{'picker'})) {
+					$entry->{'address'} = { ticket => $c->session('ticket_uuid') };
+				}
+			}
 			if (scalar @{$m->{'decrypteds'}} > 0) {
 
 				foreach my $d ( @{$m->{'decrypteds'}} ) {
@@ -22564,7 +22643,9 @@ websocket '/mail/ws' => sub ($c) {
 			$mws->send($msg);
 		}
 		elsif ($m->{'type'} eq 'delete') {
-			if ($m->{'msg'}->{'uuid'}) {
+			# only a trusted session may unsend: a visitor's browser can drop
+			# what it is showing, but not the house's record of it
+			if (&mailws_trusted($c) && $m->{'msg'}->{'uuid'}) {
 				&subs::db_delete('mailbox', { uuid => $m->{'msg'}->{'uuid'} });
 				my $message = &subs::db_select('mailbox', undef, { uuid => $m->{'msg'}->{'uuid'} })->hashes->[0];
 				&deletion_registration({ table => 'mailbox', uuid => $message->{'uuid'}, scope => 'single', server_time => $message->{'server_time'} });
@@ -22581,7 +22662,31 @@ websocket '/mail/ws' => sub ($c) {
 			my $manager_file = &manager_file_maker($name);
 			$m->{'manager_file'} = $manager_file;
 			if ($c->session('privilege') eq 'guest') {
-				$m->{'mail_contact'} = $c->session('ticket_uuid');
+				# a guest may write to a dial the house advertises; any other
+				# address falls back to the ticket - the one thread the house
+				# opened for them. A guest speaks through the box, never through
+				# a phone number, a mailbox server or the Pen.
+				my $dialled = eval { return decode_json $m->{'picker'} } || {};
+				if (&mail_public_channel_allows($dialled)) {
+					$m->{'picker'} = encode_json $dialled;
+					$m->{'mail_contact'} = undef;
+				}
+				else {
+					$m->{'mail_contact'} = $c->session('ticket_uuid');
+					delete $m->{'picker'};
+				}
+				$m->{'phone'} = undef;
+				$m->{'email'} = undef;
+			}
+			my $trusted = &mailws_trusted($c);
+			if (!$trusted) {
+				# a guest's words are not filed, so they are bounded: a length
+				# cap and a per-ticket pace that a flood cannot pass
+				$m->{'msg'} = substr($m->{'msg'} || '', 0, 4000);
+				unless (&mailws_untrusted_throttle($c->session('ticket_uuid') || $browser_tab_id)) {
+					$log->info('mail throttle: dropped a guest message on ' . ($browser_tab_id || '?'));
+					return;
+				}
 			}
 			$m->{'body'} = $m->{'msg'};
 			$m->{'msg'} =~ s/\n/<br>/gi;
@@ -22613,7 +22718,10 @@ websocket '/mail/ws' => sub ($c) {
 				person => $constructs->{'people'},
 				conversation_uuid => $m->{'conversation_uuid'}
 			};
-			&subs::db_insert('mailbox', $msg);
+			&subs::db_insert('mailbox', $msg) if $trusted;
+			# trusted words are filed; a visitor's words are only ever heard
+			# live by whoever is tuned in, so they are never written down
+			$m->{'ephemeral'} = 'yes' unless $trusted;
 			$m->{'envelope'} = $c->render_to_string(
 				template => 'mail/message',
 				'm' => $m,
@@ -22624,7 +22732,7 @@ websocket '/mail/ws' => sub ($c) {
 			# the pen), a guest's ticket, or the nested social construct chain a
 			# dial or list tab is watching
 			&mailws_sender($m);
-			if ($m->{'phone'}) {
+			if ($trusted && $m->{'phone'}) {
 				&sms_message_send($m->{'phone'},$m->{'msg'});
 			}
 			if ($m->{'mail_contact'} && $m->{'mail_contact'} eq 'pen') {
@@ -22678,7 +22786,7 @@ websocket '/mail/ws' => sub ($c) {
 				# comes back from the forked worker over the mail socket
 				&mailws_sender($mesg);
 			}
-			elsif (!$m->{'phone'} && !$m->{'email'} && !$m->{'mail_contact'} && $c->session('privilege') ne 'guest') {
+			elsif (!$m->{'phone'} && !$m->{'email'} && !$m->{'mail_contact'}) {
 				my $mail_msg = {
 					uuid => $m->{'uuid'},
 					timestamp => $m->{'timestamp'},
@@ -22694,7 +22802,10 @@ websocket '/mail/ws' => sub ($c) {
 					contact => $m->{'mail_contact'},
 					phone => $m->{'phone'},
 					email => $m->{'email'},
-					person => $constructs->{'people'}
+					person => $constructs->{'people'},
+					# an unfiled letter travels the mesh marked ephemeral: the
+					# machines that catch it deliver it live and keep nothing
+					ephemeral => ($trusted ? undef : 'yes')
 				};
 				my $remote_machines = &subs::db_select('remote_machines', undef, { connection => 'active' })->hashes;
 				my $form_data = {
@@ -22712,7 +22823,7 @@ websocket '/mail/ws' => sub ($c) {
 
 						}
 					}, { name => 'embedded mail msg' });
-					if (&subs::setting_grabber({ app => 'mail', setting => 'lora_toggle' }) eq 'on') {
+					if ($trusted && &subs::setting_grabber({ app => 'mail', setting => 'lora_toggle' }) eq 'on') {
 						foreach my $device_type ( qw/watch teletype microcontroller/ ) {
 							my $chips = &subs::device_lister(&subs::rightNow(), $device_type, undef, 'all');
 							foreach my $watch ( @{$chips} ) {
@@ -22742,7 +22853,7 @@ websocket '/mail/ws' => sub ($c) {
 				}
 
 			}
-			&mail_depublicizer($c);
+			&mail_depublicizer($c) if $trusted;
 		}
 		elsif ($m->{'type'} eq 'refresher') {
 			my ($db,$database,$sql) = &subs::database_grabber();
@@ -22803,7 +22914,32 @@ post '/mail/msg' => sub($c) {
 	my $msg = {};
 
 	$msg = eval { return decode_json $c->param('msg') } || {};
+	# a hand-over from the mesh must come from the mesh: a signatorial this
+	# house knows, a live session, or the machine itself. Without one this is an
+	# open insert into the mailbox - the one door that must stay shut, since a
+	# message nobody sent is exactly what "not written down" promises against
+	my $signatorial = $c->param('signatorial');
+	my $local_door = $c->tx->remote_address eq $c->tx->local_address;
+	my $known_neighbour = $signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0];
+	unless ($local_door || $known_neighbour || $c->session('authentication') eq 'approved') {
+		$log->info('mail hand-over refused from ' . $c->tx->remote_address . ' signatorial=' . ($signatorial || 'none'));
+		$c->render(json => { ok => 0, error => 'unknown neighbour' });
+		return;
+	}
 	if ($msg->{'uuid'}) {
+		# an ephemeral letter is only ever heard live: the machine that catches
+		# it delivers it to whoever is tuned in and writes nothing down
+		if ($msg->{'ephemeral'}) {
+			$msg->{'decrypted'} = 'yes';
+			$msg->{'envelope'} = $c->render_to_string(
+				template => 'mail/message',
+				'm' => $msg,
+				'me' => ''
+			);
+			&mailws_sender($msg);
+			$c->render(json => $msg);
+			return;
+		}
 		my $pre_msg = &subs::db_query('select uuid from mailbox where uuid=? and manager_file=?', $msg->{'uuid'}, $msg->{'manager_file'})->hashes->[0];
 		unless ($pre_msg->{'uuid'}) {
 			&subs::db_insert('mailbox', $msg);
@@ -24259,13 +24395,86 @@ sub mailws_constructs($picker) {
 	return $constructs;
 }
 
-# What one mail tab is watching when it connects: a guest watches its ticket,
-# everyone else watches whichever of a phone number, an email address, a
-# contact or a social construct chain their section put in the url.
+# The house's trust rule for words: a citizen or a resident holds a ticket
+# this house issued and named, so what they write is filed - stored, synced
+# and readable later like any mail. A guest is a visitor whose words are only
+# ever heard live by whoever is tuned in: they are never written down.
+# Moving a privilege between the two lists is the whole policy.
+sub mailws_trusted($c) {
+	my $privilege = $c->session('privilege');
+	return ($privilege eq 'citizen' || $privilege eq 'resident') ? 1 : 0;
+}
+
+# A dialled picker: at least one social construct chosen by hand. A tab with
+# an empty picker has no dial of its own - a guest on their ticket, say - not
+# a tab dialled to the defaults.
+sub mailws_picker_dialled($picker) {
+	return 0 unless ref $picker eq 'HASH';
+	foreach my $k ( keys %{$gb::social_constructs} ) {
+		return 1 if defined $picker->{$k} && length $picker->{$k};
+	}
+	return 0;
+}
+
+# One tuple of six values names one thread; this is how two dials are
+# compared, whatever order their keys arrived in.
+sub mail_channel_key($constructs) {
+	return join "\x1f", map { defined $constructs->{$_} ? $constructs->{$_} : '' } sort keys %{$gb::social_constructs};
+}
+
+# The dials this house advertises to guests, each filled to the same six
+# values a message carries, so comparing one to a dial is comparing threads.
+sub mail_public_channels() {
+	my $channels = eval { return decode_json &subs::setting_grabber({ app => 'mail', setting => 'public_channels' }) } || [];
+	my @out;
+	foreach my $ch ( @{$channels} ) {
+		push @out, &mailws_constructs($ch) if ref $ch eq 'HASH';
+	}
+	return \@out;
+}
+
+# A channel is public only when the house advertised exactly this tuple; a
+# guest may watch or write to advertised dials and nothing else.
+sub mail_public_channel_allows($picker) {
+	return 0 unless &mailws_picker_dialled($picker);
+	my $key = &mail_channel_key(&mailws_constructs($picker));
+	foreach my $ch ( @{&mail_public_channels()} ) {
+		return 1 if &mail_channel_key($ch) eq $key;
+	}
+	return 0;
+}
+
+# The human name of a dial: its six values in the order the dial lists them.
+sub mail_channel_label($constructs) {
+	return join ' ', map { &subs::format_name($constructs->{$_->{'name'}}) }
+		sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs};
+}
+
+# An unfiled letter's pace: a guest speaks at most this many times a minute.
+our %mailws_untrusted_rate = ();
+sub mailws_untrusted_throttle($id) {
+	my $now = time();
+	my $entry = $mailws_untrusted_rate{$id};
+	if (!$entry || $now - $entry->{'at'} > 60) {
+		$entry = $mailws_untrusted_rate{$id} = { at => $now, count => 0 };
+	}
+	$entry->{'count'}++;
+	return $entry->{'count'} <= 20 ? 1 : 0;
+}
+
+# What one mail tab is watching when it connects: a guest watches a dial the
+# house advertises when they tuned one, and their ticket otherwise; everyone
+# else watches whichever of a phone number, an email address, a contact or a
+# social construct chain their section put in the url.
 sub mailws_address($c, $picker) {
 	my $address = {};
 	if ($c->session('privilege') eq 'guest' && $c->session('ticket_uuid')) {
-		$address->{'ticket'} = $c->session('ticket_uuid');
+		if ($picker && &mail_public_channel_allows($picker)) {
+			$address->{'picker'} = &mailws_constructs($picker);
+		}
+		else {
+			$address->{'ticket'} = $c->session('ticket_uuid');
+		}
 	}
 	else {
 		my $phone = $c->param('phone');

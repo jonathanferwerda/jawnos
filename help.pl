@@ -358,15 +358,21 @@ our %topic = (
 	},
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
+		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
+		verified => '2026-10-13',
 		summary => 'Email over IMAP and SMTP, straight on the desktop.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
-			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant.'
+			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant.',
+			'The dial is the house\'s radio: a set of appointments picked across the six groups names one thread, and a tab only hears messages addressed to the set it is tuned to. Advertise opens the tuned set to guests, who may then tune the same channel from the mailbox on the public page.',
+			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down. Their bubbles are dashed to say so.'
 		],
 		steps => [
 			'Open Mailbox and choose a section from the sidebar — sms, email, list, dial, pen or tickets.',
 			'For email, pick a folder (contacts, inbox, drafts, outbox, sent) and an address.',
-			'Compose with the new-file button; attachments are filed and sealed when you send.'
+			'Compose with the new-file button; attachments are filed and sealed when you send.',
+			'On the dial, pick a set and press Advertise to open it to guests; press Advertised to close it again.',
+			'As a guest on the public page, open Mailbox, tune an advertised set from the Dial section, and write; the house\'s replies stay, yours are only heard.'
 		],
 		related => [ 'relational', 'store', 'sealing_files', 'assistant' ]
 	},
