@@ -1023,7 +1023,7 @@ function fuck_you() {
 	$.each(['#left_view','.wind', '.cord', '.manager_search_result'],function(i,v) {
 		$(v).remove();
 	});
-	$.each(['#configure_balloon','#ide_sidebar_container','#mail_sidebar_container', '#soundroom_sidebar_container', '#grapple', '#search_results'],function(i,v) {
+	$.each(['#configure_balloon','#mail_sidebar_container', '#soundroom_sidebar_container', '#grapple', '#search_results'],function(i,v) {
 		$(v).hide();
 	});
 	$('.typewriter').remove();
