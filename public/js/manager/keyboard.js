@@ -1915,3 +1915,19 @@ function appSwitcher(duty) {
 		as.css({'display': 'flex' }).show();
 	}
 }
+
+// The remote_control panel's command box: tell the selected machine what to do.
+// The command is sent as plain words and read by that machine's own guide, so it
+// stays on that machine; the reply is what it reports back.
+function jawnosRemoteCommand() {
+	var uuid = $('#remote_control_machine_select').val();
+	var text = $.trim($('#remote_command_text').val() || '');
+	var reply = $('#remote_command_reply');
+	if (!uuid) { reply.text('Pick a machine other than Me first.'); return; }
+	if (!text) { return; }
+	reply.text('Sending...');
+	$.post('/manager/remote_command/send', { remote_uuid: uuid, text: text }, function (r) {
+		reply.text((r && (r.observation || r.error)) || 'no reply');
+	}).fail(function () { reply.text('no reply'); });
+}
+$(document).on('click', '#remote_command_send', function () { jawnosRemoteCommand(); });

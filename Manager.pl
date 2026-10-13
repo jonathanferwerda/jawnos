@@ -18095,11 +18095,12 @@ get '/manager/help/measure' => sub($c) {
 # "play <x>" - run the music app's own folder walk (Music::music_search) over
 # every known location, then keep the files that contain all the words asked for,
 # best match first (a "Ben Folds Five" album folder and a "Mess" track are the
-# same request). Hands back the one file to play.
-get '/manager/help/music' => sub($c) {
-	my $q = $c->param('q') // '';
+# same request). Hands back the one file to play. Shared by the guide's route and
+# the remote command channel.
+sub help_music_file($c, $q) {
+	$q = '' unless defined $q;
 	$q =~ s/^\s+//; $q =~ s/\s+$//;
-	if (!length $q) { $c->render(json => { error => 'no music named' }); return; }
+	return { q => $q, found => 0 } unless length $q;
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	$settings->{'artist'} = eval { decode_json $settings->{'artist'} } || [];
 	$settings->{'album'} = eval { decode_json $settings->{'album'} } || [];
@@ -18123,7 +18124,7 @@ get '/manager/help/music' => sub($c) {
 		next unless $ok;
 		push @hits, { file => $f, last => $last };
 	}
-	if (!@hits) { $c->render(json => { q => $q, found => 0 }); return; }
+	return { q => $q, found => 0 } unless @hits;
 	# the words landing earliest in the path is the tighter match (the album folder
 	# holds the artist, the track name holds the song); a shorter path breaks a tie
 	my ($best) = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
@@ -18131,12 +18132,126 @@ get '/manager/help/music' => sub($c) {
 	my $title = $file;
 	$title =~ s{.*/}{};
 	$title =~ s/\.[a-z0-9]+$//i;
-	$c->render(json => { q => $q, found => scalar @hits, file => $file, title => $title });
+	return { q => $q, found => scalar @hits, file => $file, title => $title };
+}
+
+get '/manager/help/music' => sub($c) {
+	my $q = $c->param('q') // '';
+	if (!length $q) { $c->render(json => { error => 'no music named' }); return; }
+	$c->render(json => help_music_file($c, $q));
 };
 
 get '/manager/help/permitted' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app') || '');
 	$c->render(json => { app => $app, permitted => (help_app_visible($app) ? 1 : 0) });
+};
+
+# ---- the remote verb channel ------------------------------------------------
+# A peer can be told what to do in the words the person used (text, parsed by
+# that machine's own guide, so it stays offline) or as a structured verb from the
+# same registry the local guide offers. Client effects are broadcast to the
+# peer's own tabs over its websocket; questions are answered here and handed back.
+sub remote_command_run($c, $data) {
+	my $text = $data->{'text'} // '';
+	my $verb = $data->{'verb'} // '';
+	my $args = $data->{'args'};
+	$args = eval { decode_json $args } if !ref $args && defined $args && length $args;
+	$args = {} unless ref $args eq 'HASH';
+	my $action;
+	if ($verb) {
+		my %live = map { $_->{'name'} => 1 } grep { !$_->{'planned'} } @gb::guide_tools;
+		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live{$verb};
+		$action = { action => $verb, %{$args} };
+	}
+	elsif (length $text) {
+		# the peer's own guide reads it, so the command stays on that machine
+		my $model = $data->{'model'} || &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+		return { ok => 0, error => 'no agent on this machine to read that' } unless $model;
+		my $system = &help::actions_prompt() . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+		my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.");
+		$action = $out ? eval { decode_json $out } : undef;
+		if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+		return { ok => 0, error => 'the guide returned nothing readable' } unless $action && $action->{'action'};
+	}
+	else {
+		return { ok => 0, error => 'send text, or a verb' };
+	}
+	my $obs = remote_command_execute($c, $action);
+	return { ok => 1, action => $action, observation => $obs };
+}
+
+# Run one action here. Client effects go to our own tabs over the websocket;
+# anything that is only words is answered directly.
+sub remote_command_execute($c, $action) {
+	my $a = $action->{'action'};
+	if ($a eq 'open_app' && $action->{'app'}) {
+		my $js = 'if (typeof appWindowOpener === "function") { appWindowOpener(' . encode_json($action->{'app'}) . ', Date.now(), {}); }';
+		&Websocket::send('server', { console => $js });
+		return 'opened the ' . $action->{'app'} . ' window';
+	}
+	if ($a eq 'play_music' && $action->{'query'}) {
+		my $r = help_music_file($c, $action->{'query'});
+		return 'found nothing to play for "' . $action->{'query'} . '"' unless $r->{'found'};
+		my $js = 'if (typeof musicToggle === "function") { musicToggle([' . encode_json($r->{'file'}) . ']); }';
+		&Websocket::send('server', { console => $js });
+		return 'now playing ' . $r->{'title'};
+	}
+	return $action->{'text'} || ('did ' . ($a // 'nothing'));
+}
+
+# The peer half: a known remote_machine may tell us what to do.
+post '/manager/remote_command' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $result = remote_command_run($c, {
+		text => $c->param('text'), verb => $c->param('verb'), args => $c->param('args'),
+		target => $c->param('target'), model => $c->param('model')
+	});
+	$c->render(json => $result);
+};
+
+# The local half: this machine sends a command to a peer.
+sub remote_command_send($data) {
+	my $uuid = $data->{'uuid'};
+	my $rm = &subs::remote_machine_lister({ uuid => $uuid, limit => 1 });
+	return { ok => 0, error => 'no such machine' } unless $rm && $rm->{'uuid'};
+	$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm });
+	return { ok => 0, error => 'that machine is not reachable' } unless $rm->{'ua'};
+	my $url = $rm->{'manager'} . '/manager/remote_command';
+	my $res = eval {
+		$rm->{'ua'}->inactivity_timeout(30)->post($url => form => {
+			signatorial => &subs::signatorial_designer(),
+			text => $data->{'text'} || '',
+			verb => $data->{'verb'} || '',
+			args => (ref $data->{'args'} ? encode_json($data->{'args'}) : ($data->{'args'} || '')),
+			target => $data->{'target'} || ''
+		})->result;
+	};
+	return { ok => 0, error => 'no reply from ' . ($rm->{'hostname'} || $rm->{'fqdn'} || $uuid) } unless $res && $res->is_success;
+	return eval { decode_json $res->body } || { ok => 1, observation => $res->body };
+}
+
+post '/manager/remote_command/send' => sub($c) {
+	my $uuid = $c->param('remote_uuid');
+	# a command can name the machine in words ("the table", "the phone") instead of by uuid
+	if (!$uuid && $c->param('machine')) {
+		my $want = lc $c->param('machine');
+		$want =~ s/^\s*(?:the|my|a)\s+//;
+		$want =~ s/\s+$//;
+		my $fuzzy;
+		foreach my $rm ( @{ &subs::remote_machine_lister() } ) {
+			my @names = grep { defined && length } ( lc($rm->{'hostname'} // ''), lc($rm->{'fqdn'} // ''), lc($rm->{'ip'} // '') );
+			my @labels = map { my $x = $_; $x =~ s/\..*$//; $x } @names;
+			if (grep { $_ eq $want } (@names, @labels)) { $uuid = $rm->{'uuid'}; last; }
+			$fuzzy ||= $rm if grep { index($_, $want) >= 0 || index($want, $_) >= 0 } @labels;
+		}
+		$uuid = $fuzzy->{'uuid'} if !$uuid && $fuzzy;
+	}
+	unless ($uuid) { $c->render(json => { ok => 0, error => 'no machine selected' }); return; }
+	$c->render(json => remote_command_send({
+		uuid => $uuid, text => $c->param('text'), verb => $c->param('verb'), args => $c->param('args')
+	}));
 };
 
 # ---- the Guide's write path: stage, then promote or drop ------------------

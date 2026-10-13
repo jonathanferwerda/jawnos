@@ -293,6 +293,8 @@ our @guide_tools = (
 	  desc => 'you have finished; say briefly what you did' },
 	{ name => 'play_music', args => { query => 'artist or track' }, example => '{"action":"play_music","query":"Ben Folds Five Mess"}',
 	  desc => 'search the music library and play the first matching track' },
+	{ name => 'remote', args => { machine => 'the table', text => 'play Ben Folds Five Mess' }, example => '{"action":"remote","machine":"the table","text":"play ..."}',
+	  desc => "send a command to one of the person's other machines, named in their words (\"the table\", \"the phone\"); that machine's own guide reads it, so it runs there" },
 	{ name => 'show_place', args => { place => 'a place name' }, example => '{"action":"show_place","place":"Sarnia"}',
 	  desc => 'open the travel map and centre it on a place, deduced from the home plates of the things named for it (offline; no geocoder)' },
 	{ name => 'where_when', args => { when => 'a date or time' }, example => '{"action":"where_when","when":"2025-09-18"}',

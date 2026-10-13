@@ -143,6 +143,7 @@ function helpActionLabel(a) {
 	if (a.action === 'show_place') { return 'Finding ' + (a.place || 'the place') + ' on the map…'; }
 	if (a.action === 'where_when') { return 'Looking up where you were…'; }
 	if (a.action === 'measure') { return 'Measuring…'; }
+	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
 	var bits = [];
 	if (a.app) { bits.push(a.app); }
 	if (a.search) { bits.push('“' + a.search + '”'); }
@@ -314,6 +315,16 @@ function helpDoAction(a, cb) {
 	}
 	if (a.action === 'play_music') {
 		helpPlayMusic(a.query || '', cb);
+		return;
+	}
+	if (a.action === 'remote') {
+		var machine = a.machine || '';
+		var what = a.text || '';
+		if (!machine || !what) { cb('I need both a machine and what to do there.'); return; }
+		$.post('/manager/remote_command/send', { machine: machine, text: what }, function (r) {
+			if (!r || r.ok === 0 || r.error) { cb((r && r.error) || ('I could not reach ' + machine + '.')); return; }
+			cb('On ' + machine + ': ' + (r.observation || 'done') + '.', 'On ' + machine + ' — ' + (r.observation || 'done') + '.');
+		}).fail(function () { cb('I could not reach ' + machine + '.'); });
 		return;
 	}
 	cb(a.text || '');

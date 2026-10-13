@@ -102,9 +102,9 @@
 														<% } %>
 													</select>
 													<% if ($n->{'locked'} eq 'yes') { %>
-														<img src="<%= &subs::icon_for('/images/jbuttons/padlock lock.png') %>" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
+														<img src="/images/jbuttons/padlock lock.png" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
 													<% } else { %>
-														<img src="<%= &subs::icon_for('/images/jbuttons/padlock unlock.png') %>" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
+														<img src="/images/jbuttons/padlock unlock.png" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
 													<% } %>
 													<% if ($n->{'purpose'} eq 'server') { %>
 														<img src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $a->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $d->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">

@@ -138,6 +138,11 @@
 				<% } %>
 
 				<br><span id="manager_file" style=""><%= $manager_file %></span>
+				<div id="remote_command_box" style="margin-top:6px;">
+					<input id="remote_command_text" placeholder="Tell that machine to..." style="width:65%;vertical-align:top;" onkeydown="if(event.key==='Enter'){jawnosRemoteCommand();}">
+					<button type="button" id="remote_command_send">Send</button>
+					<div id="remote_command_reply" style="font-size:13px;opacity:0.85;"></div>
+				</div>
 			</div>
 			<div toggle="<%= $toggle %>" class="keyboard_config remote_control_configuration" style="display:none;width:100%;" remote_uuid="<%= $remote_control %>">
 				Keyboard Config

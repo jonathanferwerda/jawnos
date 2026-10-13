@@ -25,7 +25,7 @@
 			</span>
 			<span id="music_interface_options">
 				<% if (scalar @{$padlock_sighting} > 0) { %>
-					<img src="<%= &subs::icon_path('padlock unlock', '/images/jbuttons/padlock unlock.png') %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+					<img src="/images/jbuttons/padlock unlock.png" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
 				<% } %>
 				<img src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="music_configuration_toggle">
 			</span>
