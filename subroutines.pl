@@ -939,24 +939,72 @@ sub ago_calc() {
 	return $timestamp;
 }
 
+# The voices say_it can speak with. A friendly name carries the engine and what
+# that engine needs; the Speech setting in Configure picks one by name, so the
+# list here is the single source of truth for both the taker and the picker.
+# The piper models live under voices/ (carried as blobs like the APKs, see
+# app_release_sync); espeak voices are the fallback when piper is not staged.
+sub say_voices() {
+	return (
+		{ value => 'piper-amy',  label => 'Amy - US female',  engine => 'piper', model => 'en_US-amy-medium'  },
+		{ value => 'piper-ryan', label => 'Ryan - US male',   engine => 'piper', model => 'en_US-ryan-medium' },
+		{ value => 'piper-alba', label => 'Alba - UK female', engine => 'piper', model => 'en_GB-alba-medium' },
+		{ value => 'espeak-us',  label => 'eSpeak - US',      engine => 'espeak', voice => 'en-us'            },
+		{ value => 'espeak-gb',  label => 'eSpeak - UK',      engine => 'espeak', voice => 'en-gb'            },
+		{ value => 'espeak-nyc', label => 'eSpeak - NYC',     engine => 'espeak', voice => 'gmw/en-US-nyc'    },
+	);
+}
+
+sub say_default_voice() { return 'piper-amy'; }
+
+sub say_voice_spec() {
+	my $pick = shift;
+	foreach my $v ( &subs::say_voices() ) {
+		return $v if $v->{'value'} eq $pick;
+	}
+	return undef;
+}
+
 sub say_it() {
 	my $text = shift;
+	my $voice_override = shift;
+	return unless defined $text && length $text;
   &subs::subprocessor(sub {
     Mojo::IOLoop->reset;
+		# Android speaks through its own engine, which is already natural; the
+		# piper models below are the answer for every other device.
 		if ($device eq 'mobile') {
-
-
 			`termux-tts-speak "$text"`;
-#			my $filename = &home("~/.president/espeaker.wav");
-
-#			`espeak -w $filename "$text"`;
-#			`termux-media-player play $filename`;
-#			sleep 1;
-#			`shred -u $filename`;
+			return;
 		}
-		elsif ($device eq 'computer') {
-			`espeak -a70 -v gmw/en-US-nyc "$text"`;
+		my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
+		my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
+		my $voices_dir = &subs::home('~/jawnos/voices');
+		if (($spec->{'engine'} || '') eq 'piper') {
+			my $piper = $voices_dir . '/piper/piper';
+			my $model = $voices_dir . '/' . $spec->{'model'} . '.onnx';
+			if (-x $piper && -e $model) {
+				my $tmp_dir = $gb::tmp_dir || '/tmp';
+				my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
+				# the words go to piper on stdin, so nothing has to be quoted for a shell
+				if (my $pid = open(my $piper_in, '|-', $piper, '-q', '-m', $model, '-f', $wav)) {
+					print {$piper_in} $text;
+					close $piper_in;
+					if (-s $wav) {
+						`play -q "$wav"`;
+						unlink $wav;
+						return;
+					}
+				}
+				unlink $wav if -e $wav;
+			}
 		}
+		# espeak: the chosen espeak voice, or the fallback when piper is missing.
+		# Its own quotes are escaped so the words cannot break out of the shell.
+		my $safe = $text;
+		$safe =~ s/"/\\"/g;
+		my $voice = $spec->{'voice'} || 'en-us';
+		`espeak -a70 -v $voice "$safe"`;
 	}, { name => 'say it' });
 }
 
@@ -1884,7 +1932,11 @@ sub voice_command_parse() {
 	# The words after the wake phrase, split into a verb and a target app. Only a
 	# command that actually follows "hey jawn" counts, so a stray "start" in
 	# conversation does nothing.
-	my ($transcript) = @_;
+	#
+	# $wake_optional is set for a clip that came from a wake-word capture: the
+	# phrase was already consumed by the on-device trigger, so the transcript IS
+	# the command and no "hey jawn" appears in it to match.
+	my ($transcript, $wake_optional) = @_;
 	my $low = lc($transcript || '');
 	$low =~ s/[^a-z0-9 ]+/ /g;
 	$low =~ s/\s+/ /g;
@@ -1902,6 +1954,12 @@ sub voice_command_parse() {
 		$woke = 1;
 		@rest = @w[ $i + 1 .. $#w ];
 		last;
+	}
+	if (!$woke && $wake_optional) {
+		# a wake-word capture: the phrase was consumed on the watch, so treat the
+		# whole transcript as the command
+		$woke = 1;
+		@rest = @w;
 	}
 	return { status => 'no_wake', said => $transcript } unless $woke && scalar @rest;
 	my $verb = shift @rest;
@@ -1996,12 +2054,16 @@ sub voice_ingest() {
 	my $text = &subs::whisper_transcribe($raw);
 	return { status => 'silence' } unless $text;
 	$log->info('voice: heard "' . $text . '"');
-	my $cmd = &subs::voice_command_parse($text);
+	# A wake-word capture already consumed the phrase on the watch, so its
+	# transcript is the command itself; a VAD capture must still open with the
+	# phrase, so a stray "start" in the room does nothing. If what we heard is not
+	# a command we can run, keep it as a note rather than throw the clip away.
+	my $mode = $meta->{'voice'} || '';
+	my $wake_optional = ($mode ne '' && $mode ne 'vad');
+	my $cmd = &subs::voice_command_parse($text, $wake_optional);
 	if (($cmd->{'status'} || '') ne 'ok') {
 		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
-		# no wake word means it was not addressed to us as a command: file it as
-		# a note so it is not simply thrown away
-		if (($cmd->{'status'} || '') eq 'no_wake' && &subs::voice_note_store($text)) {
+		if (&subs::voice_note_store($text)) {
 			# a note landed: refresh any open Notes window at once, and let the
 			# watch drop its local copy of the clip
 			&Websocket::send('tab', { console => 'notesReload();' });
@@ -2142,7 +2204,7 @@ sub ble_message_processor() {
 			# database itself (see database_grabber).
 			my ($edt, $chip_id, $ts) = ($msg->{'edt'} || 'watch', $msg->{'chip_id'}, $msg->{'ts'});
 			&subs::subprocessor(sub {
-				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts });
+				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'} });
 			}, { name => 'voice ingest' });
 		}
 		return;

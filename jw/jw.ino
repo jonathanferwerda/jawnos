@@ -3211,6 +3211,7 @@ static bool voice_post_clip(const String &path) {
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + authorization
+    + "&voice=" + voice_trigger
     + "&timestamp=" + String((long)voice_clip_ts);
   bool ok = false;
   if (https.begin(client, url)) {
@@ -3272,7 +3273,7 @@ static bool voice_ble_send(const String &path) {
   int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
   if (total < 1) { total = 1; }
   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"data\":\"";
+  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"voice\":\"" + voice_trigger + "\",\"data\":\"";
   String out = String(0) + "/" + String(total) + ":" + head;
   int in_chunk = 0;
   int index = 0;
@@ -3328,12 +3329,19 @@ static bool voice_ble_send(const String &path) {
 // notifications and takes several seconds; keep the parts within the notify
 // limit and the bridge reassembles it whole.
 static bool voice_ship_clip(const String &path) {
-  if (deviceConnected && voice_ble_send(path)) {
-    Serial.println("[voice] clip shipped over BLE");
+  // Prefer WiFi: a clip is tens of KB, and over BLE that is hundreds of
+  // notifications the bridge drops parts of (its reassembler logs "never
+  // arrived"), so a clip often reaches the server holed and whisper gets half a
+  // word. WiFi POSTs the whole file in one request. The BLE bridge is the
+  // fallback for when there is no WiFi (or the homebase is unreachable); taps and
+  // steps, which are tiny, still ride BLE as before.
+  if (WiFi.status() == WL_CONNECTED && homebaseIP.length() > 0
+      && (int32_t)(millis() - homebase_down_until) >= 0 && voice_post_clip(path)) {
+    Serial.println("[voice] clip shipped over WiFi");
     return true;
   }
-  if (WiFi.status() == WL_CONNECTED && homebaseIP.length() > 0 && voice_post_clip(path)) {
-    Serial.println("[voice] clip shipped over WiFi");
+  if (deviceConnected && voice_ble_send(path)) {
+    Serial.println("[voice] clip shipped over BLE");
     return true;
   }
   Serial.println("[voice] no radio to ship the clip on");
