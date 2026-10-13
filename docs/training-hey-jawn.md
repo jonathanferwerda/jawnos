@@ -91,8 +91,12 @@ target_word = 'jawn do'          # cell 2, "... + our target word"
 dst = "jawn_do.tflite"           # cell 11, the output copy
 ```
 
-The ready-to-run version lives at `~/Downloads/jawn_do_colab.ipynb` (File →
-Upload notebook in Colab). Run all cells on a GPU runtime and download the model.
+The ready-to-run version lives at `docs/jawn_do_colab.ipynb` (in the repo; in
+Colab use File → Upload notebook, or open it straight from GitHub). It is the
+same pipeline with `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'` already
+set, its shell lines use the notebook's `!`/`{}` forms (the first generated copy
+had nested quotes in `get_ipython()` calls and five cells would not even parse),
+and its last cell downloads the model. Run all cells on a GPU runtime.
 
 **The trap that bit us:** the first "Jawn Do" model turned out to be a byte copy
 of `hey_jawn.tflite` (both `md5 a3da6184…`), so the watch could only ever fire on

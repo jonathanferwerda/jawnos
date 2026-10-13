@@ -129,9 +129,9 @@ watch, deck, laptop, and Pico.
   headers differ only in the generator comment and the array name, and every
   `*.tflite` copy (`~/Downloads/`, `~/jawnos-fw/models/`) is md5 `a3da6184…` — so
   the watch can only ever fire on "hey jawn" and the Jawn Do setting does nothing.
-  Training the real phrase is a Colab run away: `~/Downloads/jawn_do_colab.ipynb`
-  is the notebook with `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'`
-  already set; run it, then
+  Training the real phrase is a Colab run away: `docs/jawn_do_colab.ipynb`
+  (committed; upload it in Colab or open it from GitHub) is the notebook with
+  `target_word = 'jawn do'` and `dst = 'jawn_do.tflite'` already set; run it, then
   `.shots/tflite_to_header.py jawn_do.tflite jw/jawn_do_model.h jawn_do_model`
   and rebuild. Verify the *model bytes*, not the whole file: `cmp` the arrays
   past the first line (or md5 the new tflite/dump) — a fresh header always
