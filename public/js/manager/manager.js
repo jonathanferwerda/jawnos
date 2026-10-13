@@ -143,11 +143,10 @@ function assistantOpen() {
 	}
 	if (!av.is(':visible')) {
 		var w = av.outerWidth(), h = av.outerHeight();
-		av.css({
-			left: Math.max(6, $(window).width() - w - 16) + 'px',
-			top: Math.max(6, $(window).height() - h - 70) + 'px',
-			right: '', bottom: ''
-		}).show();
+		var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+		var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
+		var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
+		av.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' }).show();
 	}
 	return av;
 }
@@ -294,7 +293,14 @@ async function assistantInitializer() {
 		revert: "false",
 		zIndex: 999999,
 		handle: '#assistant_anchor',
-		cancel: ''
+		cancel: '',
+		drag: function(p, ui) {
+			// keep the panel on screen and clear of the taskbar, wherever it is dragged
+			var w = $(this).outerWidth(), h = $(this).outerHeight();
+			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
+			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+		}
 	});
 
 	assistantIconInitializer();
@@ -322,14 +328,21 @@ function assistantIconInitializer() {
 			setTimeout(function () { jawnos_assistant_dragging = false; }, 0);
 			$(this).css('opacity', '1');
 			
-      var dropX = p.clientX;
-      var dropY = p.clientY;
-
-      // 2. Detect the element beneath the mouse cursor
-      var elementLandedOn = document.elementFromPoint(dropX, dropY);
-      
-      // 3. Convert to jQuery object to interact with it easily
-      var $target = $(elementLandedOn);
+			// 2. Find what the cursor is over - skipping the drag clone and the panel
+			// itself, which sit under the pointer and would otherwise answer
+			var dropX = p.clientX;
+			var dropY = p.clientY;
+			var stack = document.elementsFromPoint(dropX, dropY) || [];
+			var elementLandedOn = null;
+			for (var si = 0; si < stack.length; si++) {
+				var cand = stack[si];
+				if (cand === document.body || cand === document.documentElement) { continue; }
+				if ($(cand).closest('#assistant_view, .ui-draggable-dragging').length) { continue; }
+				elementLandedOn = cand;
+				break;
+			}
+			if (!elementLandedOn) { elementLandedOn = stack[stack.length - 1] || document.body; }
+			var $target = $(elementLandedOn);
       console.log('Landed on:', elementLandedOn, 'ID:', $target.attr('id'), 'Class:', $target.attr('class'));
 			var base64Data;
 			// Set a maximum bound for width or height (Qwen handles 400px - 600px beautifully)
