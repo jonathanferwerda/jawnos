@@ -622,7 +622,11 @@ static void ble_frame_ingest(const String &rawInput) {
 
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-        String rawInput = String(pCharacteristic->getValue().c_str());
+        // A chunk can be binary: a compressed payload arrives as zlib bytes, and
+        // c_str() stops at the first NUL -- which truncated every compressed part
+        // and made the inflate fail on a mangled stream. Copy the full length.
+        auto value = pCharacteristic->getValue();
+        String rawInput(value.c_str(), (unsigned int)value.length());
         ble_frame_ingest(rawInput);
     }
 };
@@ -838,9 +842,12 @@ void setup() {
   taskMutex = xSemaphoreCreateMutex(); 
 
   xTaskCreatePinnedToCore(
-    // 12 KB: this task parses the whole pushed payload (a room push is 25 KB of
-    // JSON); 4 KB overflowed the stack and aborted the watch on 2026-10-09
-    loop2, "Core0Task", 12288, NULL, 1, &Core0TaskHandle, 0
+    // 20 KB: this task parses the whole pushed payload (a room push is 25 KB of
+    // JSON) and inflates a compressed one -- miniz's tinfl_decompress_mem_to_mem
+    // keeps a ~10.5 KB tinfl_decompressor on the stack. At 12 KB that left ~384
+    // bytes free (192 while dozing), one payload from an overflow; 4 KB aborted
+    // the watch on 2026-10-09.
+    loop2, "Core0Task", 20480, NULL, 1, &Core0TaskHandle, 0
   );
   bleIncomingQueue = xQueueCreate(5, sizeof(String*));
 
@@ -6034,6 +6041,11 @@ void configSave() {
   else {
     conf["voice_capture"] = "off";
   }
+  // the wake-word choice rides in a Now Me and, before this, was lost on every
+  // reboot: with capture on the listener fell back to the VAD even though the
+  // panel had picked a phrase. Keep it with the rest of the settings so the
+  // chosen phrase survives a restart.
+  conf["voice_trigger"] = voice_trigger;
   conf["before_me"] = before_me;
   conf["jw_room"] = jw_room;
   String wigi_wah = JSON.stringify(wigi);
@@ -6293,6 +6305,12 @@ void configRestore() {
       // voice capture is opt-in: an absent field, or a config from before it
       // existed, leaves it off so the mic is not always open
       voiceCaptureEnabled = true;
+    }
+    String vtg = (const char *)conf["voice_trigger"];
+    if (vtg.length()) {
+      // the wake word picked in the panel, kept across restarts (absent on a
+      // config written before it was saved, which leaves the built-in default)
+      voice_trigger = vtg;
     }
 //    call_the_president();
     jw_room = (const char *)conf["jw_room"];

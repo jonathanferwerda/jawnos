@@ -137,6 +137,16 @@ watch, deck, laptop, and Pico.
 - The panel can't always push the setting over BLE (the phone usually owns the
   link), so the console has `vtrig hey_jawn` / `vtrig jawn_do` / `vtrig vad` /
   `vtrig off` for tuning.
+- **The payload path carries binary safely now, and the wake word persists.** The
+  compressed daemon->watch payload is binary, but the BLE write callback built its
+  chunk with `String(getValue().c_str())`, which stops at the first NUL -- every
+  compressed part was truncated, so the inflate failed (`[ble] inflate failed`) and
+  the big pushes (the room, the Now Me that carries `voice_trigger`) never applied.
+  The callback copies the full length now. And `tinfl_decompress_mem_to_mem` keeps
+  a ~10.5 KB `tinfl_decompressor` on the stack, so `loop2` went from 12 KB to 20 KB
+  (its headroom during an inflate went from ~0.4 KB to ~8 KB). The chosen phrase is
+  also saved in `config.json` (`voice_trigger`), so it no longer reverts to the VAD
+  on every reboot.
 
 ## Next steps
 
