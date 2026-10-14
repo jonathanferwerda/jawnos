@@ -435,9 +435,10 @@ class Dashboard(Gtk.Window):
             ticket = secrets.describe()
         except Exception:
             ticket = "?"
-        version = core.jawn_version(self.settings.get("jawn_dir", "")) or "unknown"
+        code, name = core.desktop_version(self.settings.get("jawn_dir", ""))
+        version = ("%s (%s)" % (name, code)) if name else "unknown"
         self.env.set_text(
-            "folder: %s\nversion: %s\nautostart: %s\nlogin ticket: %s" % (
+            "folder: %s\ndesktop: v%s\nautostart: %s\nlogin ticket: %s" % (
                 self.settings.get("jawn_dir", ""),
                 version,
                 "enabled" if core.autostart_enabled() else "disabled",

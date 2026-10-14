@@ -92,6 +92,23 @@ def jawn_version(jawn_dir):
         return None
 
 
+def desktop_version(jawn_dir):
+    """This app's version, in the app-store shape: (versionCode, versionName).
+
+    Both ride the tree's VERSION file, so the desktop carries the same version
+    the rest of the house does and can compare itself the way the APK's
+    versionCode does. code is 0 when the version is unknown."""
+    name = jawn_version(jawn_dir) or ""
+    code = 0
+    parts = name.split(".")
+    try:
+        if len(parts) >= 3:
+            code = int(parts[0]) * 1000000 + int(parts[1]) * 1000 + int(parts[2])
+    except ValueError:
+        code = 0
+    return code, name
+
+
 def load_settings():
     data = {
         "jawn_dir": default_jawn_dir(),
@@ -120,6 +137,87 @@ def save_settings(settings):
         json.dump(settings, fh, indent=2, sort_keys=True)
         fh.write("\n")
     os.replace(tmp, settings_path())
+
+
+# --------------------------------------------------------------------------
+# self-update: the installed copy follows the repo's desktop/ tree
+# --------------------------------------------------------------------------
+
+def _tree_stamp(root):
+    """A stamp that changes when any file in the tree does: newest mtime and
+    the file count."""
+    newest = 0
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in filenames:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(dirpath, name)))
+                count += 1
+            except OSError:
+                pass
+    return "%d-%d" % (int(newest), count)
+
+
+def installed_stamp_path():
+    return os.path.join(DESKTOP_DIR, ".installed")
+
+
+def repo_desktop_dir(settings):
+    return os.path.join(settings.get("jawn_dir") or default_jawn_dir(), "desktop")
+
+
+def sync_self(settings):
+    """Copy the repo's desktop/ over this installed copy when it has changed,
+    returning True so the caller re-execs and the new code loads.
+
+    A no-op when this *is* the checkout (nothing to copy) or the repo carries
+    no desktop tree. The stored login ticket lives in the config dir, not here,
+    so a plain copy never disturbs it."""
+    if os.environ.get("JAWNOS_SELFUPDATED"):
+        return False
+    repo = repo_desktop_dir(settings)
+    if not os.path.isfile(os.path.join(repo, "jawnos_desktop", "ui.py")):
+        return False
+    try:
+        if os.path.realpath(repo) == os.path.realpath(DESKTOP_DIR):
+            return False
+    except OSError:
+        return False
+    stamp = _tree_stamp(repo)
+    try:
+        with open(installed_stamp_path(), "r", encoding="utf-8") as fh:
+            if fh.read().strip() == stamp:
+                return False
+    except OSError:
+        pass
+    import shutil
+    for dirpath, dirnames, filenames in os.walk(repo):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        rel = os.path.relpath(dirpath, repo)
+        dest = DESKTOP_DIR if rel == "." else os.path.join(DESKTOP_DIR, rel)
+        try:
+            os.makedirs(dest, exist_ok=True)
+        except OSError:
+            continue
+        for name in filenames:
+            try:
+                shutil.copy2(os.path.join(dirpath, name), os.path.join(dest, name))
+            except OSError:
+                pass
+    for tool in ("jawnosctl", "jawnos-desktop", "jawnos-bt-daemon"):
+        path = os.path.join(DESKTOP_DIR, tool)
+        if os.path.exists(path):
+            try:
+                os.chmod(path, 0o755)
+            except OSError:
+                pass
+    try:
+        with open(installed_stamp_path(), "w", encoding="utf-8") as fh:
+            fh.write(stamp + "\n")
+    except OSError:
+        pass
+    return True
 
 
 # --------------------------------------------------------------------------
