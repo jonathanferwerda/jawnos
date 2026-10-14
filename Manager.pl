@@ -13960,7 +13960,10 @@ get '/manager/appointment_details' => sub($c) {
 
 
 
-	my $models = &subs::db_query('select * from model where app=? order by timestamp desc', $app)->hashes;
+	# the model picker is a chooser, so the app's models come back the way the eye
+	# expects (alphabetical by the name that is shown) rather than newest-first
+	my $models = &subs::db_query('select * from model where app=?', $app)->hashes;
+	@{$models} = sort { &subs::format_name($a->{'name'}) cmp &subs::format_name($b->{'name'}) } @{$models};
 	my $options = &subs::db_query('select * from option where app=? order by timestamp desc', $app)->hashes;
 	my $option_categories = &subs::db_query('select * from option_category where app=? order by timestamp desc', $app)->hashes;
 	foreach my $mo ( @{$models}, @{$options} ) {

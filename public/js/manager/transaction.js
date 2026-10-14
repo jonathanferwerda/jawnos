@@ -470,8 +470,12 @@ function transactionStorageDeleter(app) {
 	});
 	appt.find('.transaction_information').html('').val('').hide();
 	appt.find('.transaction_information_viewer').html('').hide();
-	appt.find('.appointment_model_selector_container').each(function(i,v) { $(v).html('').hide(); });
-	appt.find('.appointment_option_selector_container').each(function(i,v) { $(v).html('').hide(); });
+	// Only the transaction form's own pickers are reset here. The appointment
+	// details list carries model/option selectors of its own; clearing those made
+	// the model dropdown vanish until the next refresh (the GPS fix), which is the
+	// "wait for the GPS to get the dropdown back" the user saw.
+	appt.find('.purchase_details').find('.appointment_model_selector_container').each(function(i,v) { $(v).html('').hide(); });
+	appt.find('.purchase_details').find('.appointment_option_selector_container').each(function(i,v) { $(v).html('').hide(); });
 	var pd = appt.find('.purchase_details');
 	var length = pd.length;
 	for (var n = 1; n <= length; n++) {
