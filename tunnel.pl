@@ -143,6 +143,10 @@ sub peer_session {
   my $sig      = $opts->{'signatorial'} || '';
   my %channels;   # channel id => TCP stream to the local service
 
+  # sign the ws handshake the way the HTTP peer rail signs its requests, so the
+  # hub verifies identity instead of trusting a name alone
+  $ua->on(start => $opts->{'sign'}) if $opts->{'sign'};
+
   my $connect;
   $connect = sub {
     _log('peer dialing %s', $url);

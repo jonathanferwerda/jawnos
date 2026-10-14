@@ -4910,6 +4910,14 @@ websocket '/manager/tunnel/ws' => sub ($c) {
 		$c->rendered(403);
 		return;
 	}
+	# A signatorial is a name, not a secret - it rides in query strings and in the
+	# mirror lists peers share - so a rostered name alone is not enough: the peer
+	# must also sign the handshake, exactly like every request on the HTTP peer
+	# rail. peer_verify pins the key on first contact and refuses a changed key.
+	unless (&subs::peer_verify($c, $rm)) {
+		$c->rendered(403);
+		return;
+	}
 	$c->rendered(101);
 	# The peer's reserved ports live in its tunnels rows: in_port is the port
 	# reserved on this hub, out_port the service on the peer. The hub listens on
