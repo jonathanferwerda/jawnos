@@ -151,7 +151,6 @@ my $watch_port = $port + 2;
 my $ws_port = $port + 1;
 my $dock_port = $config->{'port'};
 my $tty_port = $port + 3;
-my $mail_port = $port + 4;
 my $alarm_port = $port + 5;
 if ($config->{'environment'} eq 'development') {
 	$ws_port = $port;
@@ -197,10 +196,8 @@ sub manager_starter() {
 	$ENV{PORT_BESTOW} = $tty_port;
 	$ENV{PORT_DOCK} = $dock_port;
 	$ENV{PORT_COMS} = $ws_tty_port;
-	$ENV{PORT_MAIL} = $mail_port;
 	$ENV{PORT_ARM} = $watch_port;
 	$ENV{PORT_ENV} = $config->{'environment'};
-	$ENV{PORT_SSH} = $config->{'ssh_port'};
 	$ENV{cookie_name} = 'president';
 
 	my $certs = "";

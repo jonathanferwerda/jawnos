@@ -4421,7 +4421,6 @@ sub remote_upgrade($c,$params) {
 					if ($remote_machine->{'tunnel'} eq 'yes') {
 						my $tun = &subs::tunnel_port_mapper({ signatorial => $remote_signatorial });
 						$vip = '127.0.0.1';
-						$port = $tun->{'PORT_SSH'};
 						$remote_machine->{'manager'} = 'https://127.0.0.1:' . $tun->{'PORT_AHOY'};
 					}
 					if ($body->{'raw_data'} && $body->{'size'} < 2000000) {

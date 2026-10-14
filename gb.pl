@@ -28,7 +28,7 @@ our $vault_pull_last;
 our $secret_maker;
 our $father_time = {};
 our $utility_functions_watcher = 0;
-our @ports = qw/PORT_AHOY PORT_MSG PORT_BELL PORT_ARM PORT_BESTOW PORT_DOCK PORT_COMS PORT_SSH PORT_MAIL/;
+our @ports = qw/PORT_AHOY PORT_MSG PORT_BELL PORT_ARM PORT_BESTOW PORT_DOCK PORT_COMS/;
 our $pen = { '__statements' => [], '__lexicon' => [] };
 our $universal_splitter = "--simple--split--and--whatnot--";
 our $jcache = Mojo::Cache->new(max_keys => 100);
