@@ -203,6 +203,10 @@ $(document).on('click', '.coding_fixes_toggle', function () {
 $(document).on('click', '.coding_fixes_back', function () {
 	codingFixesShow($(this).closest('.coding_chat').attr('mount'), false);
 });
+$(document).on('click', '.coding_fixes_clear', function () {
+	var mount = $(this).closest('.coding_chat').attr('mount');
+	$.post('/manager/coding/fixes_clear', {}, function () { codingFixesFetch(mount); });
+});
 $(document).on('click', '.coding_fixes_restart', function () {
 	var el = $(this);
 	el.text('restarting…');

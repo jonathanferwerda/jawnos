@@ -1,4 +1,4 @@
-<% my $scope = &subs::format_name($budget->{'scope_name'}); %>
+<% my $scope = &subs::format_name($budget->{'scope_name'} // ''); %>
 <% my $status_colour = $budget->{'colour'} || 'yellow'; %>
 <%# the report's percentages carry three decimals from percent_formatter; one is
     plenty to read, so they are trimmed for the panel only %>
@@ -26,7 +26,7 @@
 		    what the budget edit wants, for every mode: a count, a duration, money, or
 		    a measure like 12.345weight. %>
 		<% my $over_budget = defined $budget->{'budgeted'} && $budget->{'budgeted'} > 0 && defined $budget->{'value'} && $budget->{'value'} > $budget->{'budgeted'}; %>
-		<% my $suggested = $autocalc->{$budget->{'scope_name'}}->{'formatted_result'}; %>
+		<% my $suggested = $autocalc->{($budget->{'scope_name'} // '')}->{'formatted_result'}; %>
 		<% if ($over_budget && defined $suggested) { %>
 		<% $suggested =~ s{/[^/]*$}{}; %>
 		<tr>

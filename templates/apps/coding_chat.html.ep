@@ -22,6 +22,7 @@
 		<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line);">
 			<span class="coding_fixes_back hover" hint="Back to the chat" style="cursor:pointer;font-size:12px;opacity:.7;">&larr; chat</span>
 			<span style="flex:1;font-size:12px;opacity:.6;">errors caught &amp; fixes staged</span>
+			<span class="coding_fixes_clear hover" hint="Empty the whole list (an applied fix lives in git, and a fault that comes back is caught again)" style="cursor:pointer;font-size:12px;opacity:.7;">clear</span>
 			<span class="coding_fixes_restart hover" hint="Restart the tree so applied fixes go live" style="cursor:pointer;font-size:12px;opacity:.7;">restart</span>
 		</div>
 		<div class="coding_fixes_rows" style="flex:1;overflow-y:auto;padding:8px;font-size:12px;line-height:1.35;"></div>

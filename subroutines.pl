@@ -720,7 +720,20 @@ sub subprocessor() {
 
 
 
+our $random_seeded_for;
+
 sub random_string_creator() {
+
+	# A forked worker inherits its parent's PRNG, so two children handed the same
+	# sequence mint identical "random" strings - which is how the cache's unique
+	# uuid collided between workers (a UNIQUE constraint failure on every racing
+	# write). Seed once per process: the flag is keyed by pid because a child also
+	# inherits the flag itself, and the pid and clock differ between children.
+	unless (defined $random_seeded_for && $random_seeded_for == $$) {
+		my ($sec, $usec) = gettimeofday();
+		srand( ($$ << 16) ^ $usec ^ $sec );
+		$random_seeded_for = $$;
+	}
 
   my ($string,$count);
 	$count = shift || 8;
@@ -12311,7 +12324,7 @@ sub error_watch_state_save {
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
-my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe/;
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe|UDTA parsing failed|source=model_show_cache/;
 
 sub error_watch_is_error {
 	my $line = shift;

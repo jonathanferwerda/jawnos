@@ -19929,6 +19929,13 @@ post '/manager/coding/fixes_retry' => sub($c) {
 	$c->render(json => { retried => $uuid });
 };
 
+post '/manager/coding/fixes_clear' => sub($c) {
+	# empty the list - the queue and its history: a caught error that comes back
+	# is caught again from scratch, and an applied fix lives in git, not here
+	&subs::db_query('delete from staged_fixes');
+	$c->render(json => { ok => 1 });
+};
+
 post '/manager/coding/fixes_apply' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
