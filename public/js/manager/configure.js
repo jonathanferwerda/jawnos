@@ -149,14 +149,14 @@ async function permissionAsker(kind) {
 
 		});
 	}
-	if ((kind == 'nfc' || !kind) && 'NDEFReader' in window) {
+	if ((kind == 'nfc' || !kind) && typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
 		nfc = {
 			scanning: false,
 			writing: false,
 			abort: new AbortController(),
 			initialized: false
 		};
-		nfc['ndef'] = new NDEFReader();
+		nfc['ndef'] = jawnNfcMake();
 		nfcInitializer();
 		nfcListener();
 	}

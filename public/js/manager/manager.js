@@ -5,8 +5,8 @@ var nfc = {
 	initialized: false
 };
 var assistant = {};
-if ('NDEFReader' in window) {
-	nfc['ndef'] = new NDEFReader();
+if (typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
+	nfc['ndef'] = jawnNfcMake();
 	nfcInitializer();
 }
 else { nfc['ndef'] = undefined; }
@@ -879,6 +879,82 @@ $(function () {
 $(document).on('click dblclick mouseenter mouseleave keydown keyup change submit focus blur input', function(e) {
 	nfcListener();
 });
+
+// ---- Web NFC over the app's native bridge -----------------------------
+// Chrome for Android ships NDEFReader; a plain WebView does not, so the app
+// injects window.JawnNFC (JawnNfcBridge, its NfcAdapter reader-mode bridge) and
+// jawnNfcAdapter() presents the same NDEFReader surface over it. The scan and
+// write call sites below are then identical either way.
+function jawnNfcAvailable() {
+	if ('NDEFReader' in window) return true;
+	return !!(window.JawnNFC && window.JawnNFC.available() === 'yes');
+}
+function jawnNfcMake() {
+	if ('NDEFReader' in window) return new NDEFReader();
+	return jawnNfcAdapter();
+}
+function jawnNfcBase64ToBytes(b64) {
+	var bin = atob(b64 || '');
+	var out = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+	return out;
+}
+function jawnNfcBytesToBase64(bytes) {
+	var b = new Uint8Array(bytes || []);
+	var bin = '';
+	for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+	return btoa(bin);
+}
+function jawnNfcAdapter() {
+	var handlers = { reading: [], readingerror: [] };
+	var pendingWrite = null;
+	function dispatch(type, ev) {
+		$.each(handlers[type] || [], function(i, cb) { try { cb(ev); } catch (e) {} });
+	}
+	// the app calls this from the native side with the tag it saw
+	window.__jawnNfcEvent = function(type, payload) {
+		payload = payload || {};
+		if (type === 'reading') {
+			var records = $.map(payload.records || [], function(r) {
+				return { recordType: r.recordType, mediaType: r.mediaType, encoding: r.encoding, data: jawnNfcBase64ToBytes(r.data) };
+			});
+			dispatch('reading', { message: { records: records }, serialNumber: payload.serial });
+		}
+		else if (type === 'readingerror') { dispatch('readingerror', {}); }
+		else if (type === 'write') {
+			var w = pendingWrite;
+			pendingWrite = null;
+			if (w) { payload.ok ? w.resolve() : w.reject(new Error(payload.error || 'write failed')); }
+		}
+	};
+	return {
+		addEventListener: function(type, cb) { if (handlers[type]) handlers[type].push(cb); },
+		scan: function(options) {
+			options = options || {};
+			var signal = options.signal;
+			var result = window.JawnNFC.startScan();
+			return new Promise(function(resolve, reject) {
+				if (result !== 'ok') { reject(new Error('nfc scan: ' + result)); return; }
+				if (signal) {
+					var stop = function() { window.JawnNFC.stopScan(); };
+					if (signal.aborted) { stop(); reject(new DOMException('AbortError', 'AbortError')); return; }
+					signal.addEventListener('abort', stop);
+				}
+				resolve();
+			});
+		},
+		write: function(message) {
+			var records = $.map(message.records || [], function(r) {
+				return { recordType: r.recordType, mediaType: r.mediaType, encoding: r.encoding, data: jawnNfcBytesToBase64(r.data) };
+			});
+			return new Promise(function(resolve, reject) {
+				pendingWrite = { resolve: resolve, reject: reject };
+				var result = window.JawnNFC.write(JSON.stringify({ records: records }));
+				if (result !== 'ok') { pendingWrite = null; reject(new Error('nfc write: ' + result)); }
+			});
+		}
+	};
+}
 
 function nfcInitializer() {
 	if (nfc['initialized'] == false) {
