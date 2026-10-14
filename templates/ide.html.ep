@@ -1,30 +1,136 @@
 <% no warnings 'uninitialized'; %>
 
-	<div id="ide" style="width:100%;background-color:<%= $background_colour || 'var(--panel)' %>;max-height:100%;height:100%;position:relative;">
-	<div id="ide_navbar" style="float:top;height:65px;overflow:scroll;vertical-align:top;width:100%;">
-		<img id="ide_hamburger" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu">
-		<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" id="ide_new">
-		<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" id="ide_save">
-		<img class="little_thumb hover coding_chat_toggle" mount="ide" src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Coding agent">
-		<span id="ide_open_tabs" style="vertical-align:top;">
+<%# The IDE's chrome (toolbar, tree and code pane). The code view's own colours
+    live in manager.css beside the token palette; the chrome below wears the
+    theme's panel/line/ink variables so it follows light and dark alike. %>
+<style>
+	#ide {
+		display: flex;
+		flex-direction: column;
+		box-sizing: border-box;
+		position: relative;
+		width: 100%;
+		height: 100%;
+		max-height: 100%;
+		overflow: hidden;
+		--ide-accent: #2f6feb;
+	}
+	body.dark_theme #ide { --ide-accent: #6ea8fe; }
+
+	#ide_navbar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex: 0 0 auto;
+		box-sizing: border-box;
+		height: 50px;
+		padding: 0 10px;
+		background: var(--panel-2);
+		border-bottom: 1px solid var(--line);
+	}
+	#ide_navbar .ide_tools { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+	#ide_navbar .ide_icon {
+		height: 34px; width: 34px; padding: 3px; box-sizing: border-box;
+		object-fit: contain; border: 1px solid transparent; border-radius: 8px;
+		background: transparent;
+	}
+	#ide_navbar .ide_icon:hover { background: var(--panel); border-color: var(--line); }
+
+	#ide_open_tabs {
+		display: flex; align-items: center; gap: 6px;
+		flex: 1 1 auto; min-width: 0; height: 100%;
+		overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+		scrollbar-width: thin;
+	}
+	.ide_tab {
+		display: inline-flex; align-items: center; gap: 6px;
+		flex: 0 0 auto; max-width: 220px;
+		height: 30px; padding: 0 4px 0 12px; box-sizing: border-box;
+		border: 1px solid var(--line); border-radius: 15px;
+		background: transparent; color: var(--ink-muted);
+		font-size: 13px; line-height: 1; cursor: pointer;
+		white-space: nowrap; overflow: hidden;
+	}
+	.ide_tab:hover { border-color: var(--ide-accent); color: var(--ink); }
+	.ide_tab.active { background: var(--panel); color: var(--ink); border-color: var(--ide-accent); font-weight: 600; }
+	.ide_close_tab {
+		border: 0; background: transparent; color: inherit; cursor: pointer;
+		font-size: 12px; line-height: 1; padding: 2px 6px; border-radius: 10px; opacity: .55;
+	}
+	.ide_close_tab:hover { opacity: 1; background: var(--panel-2); }
+
+	#ide_list {
+		display: none; flex: 1 1 auto; min-height: 0; box-sizing: border-box;
+		width: 100%; overflow: auto; padding: 10px;
+		background: var(--panel);
+	}
+	.ide_list_head { position: sticky; top: -10px; z-index: 2; padding: 2px 0 8px; background: var(--panel); }
+	#ide_folder_selector, #ide_search {
+		display: block; box-sizing: border-box; width: 100%; height: 34px;
+		margin: 0 0 7px; padding: 0 10px;
+		border: 1px solid var(--line); border-radius: 9px;
+		background: var(--panel-2); color: var(--ink);
+		font-size: 14px; font-family: inherit;
+	}
+	#ide_search { margin-bottom: 0; }
+	#ide_folder_selector:focus, #ide_search:focus { outline: none; border-color: var(--ide-accent); }
+
+	#ide_files { display: flex; flex-direction: column; gap: 1px; }
+	.ide_file {
+		display: flex; align-items: center; gap: 6px;
+		box-sizing: border-box; min-height: 26px; padding: 3px 8px;
+		border-radius: 7px; font-size: 15px; line-height: 1.3;
+		white-space: nowrap; overflow: hidden; cursor: pointer;
+	}
+	.ide_file:hover { background: var(--panel-2); }
+	.ide_name { display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+	.ide_label { overflow: hidden; text-overflow: ellipsis; }
+	.ide_folder .ide_label { font-weight: 600; }
+	.ide_file img.tiny_thumb {
+		height: 18px; width: 18px; max-width: 18px; flex: 0 0 auto;
+		border: 0; border-radius: 0; background: transparent; object-fit: contain;
+	}
+	.ide_file_delete { opacity: 0; flex: 0 0 auto; transition: opacity .12s ease; }
+	.ide_file:hover .ide_file_delete { opacity: .5; }
+	.ide_file_delete:hover { opacity: 1; }
+
+	#ide_main_window { flex: 1 1 auto; min-height: 0; box-sizing: border-box; width: 100%; padding: 10px; }
+	#ide_editor {
+		position: relative; box-sizing: border-box; width: 100%; height: 100%;
+		overflow: hidden; border: 1px solid var(--line); border-radius: 10px;
+		background: var(--panel);
+	}
+</style>
+
+<div id="ide" style="background-color:<%= $background_colour || 'var(--panel)' %>;">
+	<div id="ide_navbar">
+		<span class="ide_tools">
+			<img id="ide_hamburger" class="ide_icon hover" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu">
+			<img class="ide_icon hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" id="ide_new">
+			<img class="ide_icon hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" id="ide_save">
+			<img class="ide_icon hover coding_chat_toggle" mount="ide" src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Coding agent">
+		</span>
+		<span id="ide_open_tabs">
 			<% foreach my $t ( keys %{$tabs}) { %>
 				<%== $tabs->{$t}->{'tab'} %>
 			<% } %>
 		</span>
 	</div>
-	<div id="ide_list" style="font-size:20px;height:80%;overflow:scroll;display:none;">
-		<select id="ide_folder_selector" value="<%= $settings->{'folder_selector'} %>">
-			<option value="./">President</option>
-			<% foreach my $f ( sort grep { $_ =~ /location/gi } keys %{$misc_settings->{$device}} ) { %>
-				<option value="<%= &subs::home($misc_settings->{$device}->{$f}) %>" <% if ($settings->{'folder_selector'} eq &subs::home($misc_settings->{$device}->{$f})) { %>selected<% } %>><%= &subs::format_name($f) %></option>
-			<% } %>
-		</select>
-		<input id="ide_search" value="<%= $search %>" placeholder="Search">
+	<div id="ide_list">
+		<div class="ide_list_head">
+			<select id="ide_folder_selector" value="<%= $settings->{'folder_selector'} %>">
+				<option value="./">President</option>
+				<% foreach my $f ( sort grep { $_ =~ /location/gi } keys %{$misc_settings->{$device}} ) { %>
+					<option value="<%= &subs::home($misc_settings->{$device}->{$f}) %>" <% if ($settings->{'folder_selector'} eq &subs::home($misc_settings->{$device}->{$f})) { %>selected<% } %>><%= &subs::format_name($f) %></option>
+				<% } %>
+			</select>
+			<input id="ide_search" value="<%= $search %>" placeholder="Search">
+		</div>
 		<div id="ide_files">
 			<%== include 'apps/ide_files', files => $files %>
 		</div>
 	</div>
-	<div id="ide_main_window" style="width:100%;height:100%;border:solid;border-width:3px;">
+	<div id="ide_main_window">
 		<%# the words are the textarea's, the colour is the pre behind it; the two
 		    boxes share every metric and scroll as one, so the caret and the
 		    colours always sit on the same character - see manager.css and
@@ -41,10 +147,12 @@
 	var ideocwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
 
 	ideSearchActive = ($('#ide_search').val() || '') !== '';
+	ideView = <%== $view_json %>;
 	ideScrollInit(<%== $list_scroll_json %>, <%== $editor_scroll_json %>);
 	ideOpenInit(<%== $open_folders_json %>);
 	ideScrollBind();
 	ideRestoreFolders();
+	ideViewShow(ideView);
 
 	var windHeight = $('#ide').closest('.wind').height();
 	$('#ide').height(windHeight);

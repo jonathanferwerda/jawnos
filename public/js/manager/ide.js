@@ -8,6 +8,9 @@ var ideSearchTimeout;
 // folder's children are fetched only when it first unfolds.
 var ideOpen = {};
 var ideSearchActive = false;
+// which pane is showing - the file list or the editor - remembered so a reopen
+// returns to the last one instead of always resetting to the list
+var ideView = 'list';
 
 function ideOpenInit(list) {
 	ideOpen = {};
@@ -159,6 +162,27 @@ function ideScrollBind() {
 	}
 }
 
+function ideViewShow(which) {
+	if (which == 'editor') {
+		$('#ide_list').hide();
+		$('#ide_main_window').show();
+		ideEditorScrollApply($('#ide_content').attr('file'));
+	}
+	else {
+		$('#ide_main_window').hide();
+		$('#ide_list').show();
+		ideListScrollApply();
+	}
+}
+
+function ideViewChoose(which) {
+	ideViewShow(which);
+	if (ideView != which) {
+		ideView = which;
+		settingSetter({ app: 'ide', setting: 'view', value: which });
+	}
+}
+
 // one move in: the words and the file they belong to, so the colours and the
 // caret can never disagree about what is open
 function ideContentSet(text, file) {
@@ -176,18 +200,7 @@ $(document).on('click', '#ide_toggle', function() {
 });
 
 $(document).on('click', '#ide_hamburger', function() {
-	var il = $('#ide_list');
-	var imw = $('#ide_main_window');
-	if (il.is(':visible')) {
-		il.hide();
-		imw.show();
-		ideEditorScrollApply($('#ide_content').attr('file'));
-	}
-	else {
-		il.show();
-		ideListScrollApply();
-		imw.hide();
-	}
+	ideViewChoose($('#ide_list').is(':visible') ? 'editor' : 'list');
 });
 
 $(document).on('click', '.ide_file', function(e) {
@@ -262,9 +275,7 @@ function ideFileOpen(data) {
 				}
 				ide[response['file']] = response;
 				settingSetter({ 'app': 'ide', 'setting': 'active_tab', 'value': file });
-				$('#ide_list').hide();
-				$('#ide_main_window').show();
-				ideEditorScrollApply(response['file']);
+				ideViewChoose('editor');
 			}
 		}
 	});
@@ -289,9 +300,10 @@ function ideFolderSelector(folder,search) {
 			ideTabPopulator(response);
 			ideScrollBind();
 			ideRestoreFolders();
-			$('#ide_list').show();
-			ideListScrollApply();
-			$('#ide_main_window').hide();
+			// a search or a chosen root shows the list; a plain open returns to
+			// whichever pane was last up
+			if ((typeof folder != 'undefined' && folder !== '') || ideSearchActive) { ideViewChoose('list'); }
+			else { ideViewShow(ideView); }
 		}
 	});
 }

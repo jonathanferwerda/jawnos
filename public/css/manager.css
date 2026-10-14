@@ -163,17 +163,7 @@ html, body {
 	z-index:1000;
 }
 
-.ide_tab {
-	border: solid;
-	border-color: black;
-	border-radius: 3px;
-	height: 70px;
-	background-color:var(--panel);
-}
-
-.ide_tab.active {
-	background-color:yellow;
-}
+/* the ide's tab chips live with the rest of its chrome, in templates/ide.html.ep */
 
 .mail_contact.active {
 	background-color:yellow;
@@ -1342,12 +1332,12 @@ body.dark_theme #ide {
 
 #ide_editor {
 	position: relative;
-	width: 99%;
-	height: 88%;
-	max-height: 700px;
+	width: 100%;
+	height: 100%;
 	overflow: hidden;
-	border: solid;
 	box-sizing: border-box;
+	border: 1px solid var(--line);
+	border-radius: 10px;
 	background-color: var(--panel);
 }
 
@@ -1358,11 +1348,11 @@ body.dark_theme #ide {
 	width: 100%;
 	height: 100%;
 	margin: 0;
-	padding: 6px 8px;
+	padding: 12px 14px;
 	border: 0;
 	box-sizing: border-box;
-	font-family: monospace;
-	font-size: 20px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+	font-size: 16px;
 	line-height: 24px;
 	tab-size: 2;
 	-moz-tab-size: 2;
@@ -1394,8 +1384,8 @@ body.dark_theme #ide {
 
 #ide_highlight code {
 	display: block;
-	font-family: monospace;
-	font-size: 20px;
+	font-family: inherit;
+	font-size: 16px;
 	line-height: 24px;
 	tab-size: 2;
 	-moz-tab-size: 2;

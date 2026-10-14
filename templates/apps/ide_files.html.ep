@@ -2,16 +2,19 @@
 
 <%# One level of the IDE's file tree: the root's children on first open, and a
     folder's children when it unfolds (rendered by /manager/ide/folder_open).
-    Every row carries the same file/location/root_count the client keys on, so
-    indentation and lazy insertion read the same whether the row came from the
-    page or from an unfold. %>
+    Depth is a padding on the row, so the flex layout keeps every icon and name
+    in a column however deep the row sits. %>
 <% foreach my $f ( sort { lc $a->{'file'} cmp lc $b->{'file'} } @{$files}) { %>
-	<div class="hover ide_file" type="<%= $f->{'type'} %>" status="closed" location="<%= $f->{'location'} %>" file="<%= $f->{'file'} %>">
-		<% if ($f->{'type'} eq 'folder') { %>
-			<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><b style="width:70%;"><img src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folders" class="tiny_thumb"><%= $f->{'short_name'} %></b>
-		<% } else { %>
-			<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><span style="width:70%;" ><img src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" class="tiny_thumb"> <%= $f->{'short_name'} %></span>
-		<% } %>
-		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="tiny_thumb ide_file_delete hover" style="float:right;" type="<%= $f->{'type'} %>" file="<%= $f->{'file'} %>">
+	<% my $indent = 8 + (($f->{'root_count'} || 0) * 14); %>
+	<div class="hover ide_file" type="<%= $f->{'type'} %>" status="closed" location="<%= $f->{'location'} %>" file="<%= $f->{'file'} %>" style="padding-left:<%= $indent %>px">
+		<span class="ide_name <%= $f->{'type'} eq 'folder' ? 'ide_folder' : 'ide_file_name' %>">
+			<% if ($f->{'type'} eq 'folder') { %>
+				<img class="tiny_thumb" src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folder">
+			<% } else { %>
+				<img class="tiny_thumb" src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="File">
+			<% } %>
+			<span class="ide_label"><%= $f->{'short_name'} %></span>
+		</span>
+		<img class="tiny_thumb ide_file_delete hover" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" type="<%= $f->{'type'} %>" file="<%= $f->{'file'} %>">
 	</div>
 <% } %>

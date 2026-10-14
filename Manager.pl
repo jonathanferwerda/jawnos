@@ -17085,6 +17085,8 @@ sub ide_opener($data) {
 	$list_scroll = {} unless ref $list_scroll eq 'HASH';
 	my $editor_scroll = eval { decode_json( $settings->{'editor_scroll'} || '{}' ) } || {};
 	$editor_scroll = {} unless ref $editor_scroll eq 'HASH';
+	# which pane was showing: the file list or the editor
+	my $view = ($settings->{'view'} && $settings->{'view'} eq 'editor') ? 'editor' : 'list';
 	my $bgc = &subs::setting_grabber({ app => 'misc', setting => 'ide_sidebar_container_background_colour', device => $device });
 	my $contents = $c->render_to_string(
 		files => $files,
@@ -17098,7 +17100,8 @@ sub ide_opener($data) {
 		search => $search,
 		open_folders_json => $open_folders_json,
 		list_scroll_json => encode_json($list_scroll),
-		editor_scroll_json => encode_json($editor_scroll)
+		editor_scroll_json => encode_json($editor_scroll),
+		view_json => encode_json($view)
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'ide', contents => $contents }, $timestamp);
 	return { html => $website, tabs => $tabs, settings => $settings, open_folders => \@open_folders };
@@ -17239,7 +17242,7 @@ sub ide_file_open($file,$source) {
 	if ($source eq 'open') {
 		$status = 'active';
 	}
-	my $tab = '<span class="ide_tab ' . $status . ' hover" style="vertical-align:top;font-size:20px;" file="' . $file . '">' . $file_name[-1] . '<button class="ide_close_tab hover" file="' . $file . '">X</button></span>';
+	my $tab = '<span class="ide_tab ' . $status . ' hover" file="' . $file . '">' . $file_name[-1] . '<button class="ide_close_tab hover" file="' . $file . '">X</button></span>';
 	return ($tab,$content,$file);
 }
 
