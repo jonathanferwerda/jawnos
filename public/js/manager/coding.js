@@ -140,6 +140,14 @@ function codingFixesRender(mount, data) {
 		}
 		var result = $('<div style="margin:2px 0 0;"></div>');
 		row.append(result);
+		if (f.status === 'failed' || f.status === 'new') {
+			var retry = $('<button class="button" style="padding:4px 10px;border-radius:7px;border:2px solid var(--line);cursor:pointer;margin-right:6px;">Retry</button>');
+			retry.on('click', function () {
+				result.text('back in the queue — the agent picks it up on a later pass');
+				$.post('/manager/coding/fixes_retry', { uuid: f.uuid }, function () { setTimeout(function () { codingFixesFetch(mount); }, 1200); });
+			});
+			row.append(retry);
+		}
 		if (f.status === 'proposed') {
 			var apply = $('<button class="button" style="padding:4px 10px;border-radius:7px;border:2px solid var(--line);cursor:pointer;font-weight:bold;margin-right:6px;">Apply</button>');
 			apply.on('click', function () { codingFixesApply(mount, f, row, result); });

@@ -12240,6 +12240,10 @@ sub error_signature {
 	$text = '' unless defined $text;
 	$text =~ s/\e\[[0-9;?]*[A-Za-z]//g;
 	$text =~ s/\r//g;
+	# a per-occurrence correlator ([GXJwplb_HcnT]) is not part of the fault: a
+	# bracketed 8+ char token carrying an upper-case letter is blanked, so the
+	# same fault logged twice does not stage twice
+	$text =~ s/\[(?=[A-Za-z0-9_-]{8,}\])(?:[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]*\]/[ID]/g;
 	$text =~ s/0x[0-9a-fA-F]+/0xADDR/g;
 	$text =~ s/\b\d+\b/N/g;
 	$text =~ s/\s+/ /g;

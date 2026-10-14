@@ -19761,6 +19761,17 @@ post '/manager/coding/fixes_discard' => sub($c) {
 	$c->render(json => { discarded => $uuid });
 };
 
+post '/manager/coding/fixes_retry' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
+	unless ($row) { $c->render(json => { error => 'no such caught error' }); return; }
+	# back to the queue: the watcher proposes it again on a later pass (for a row
+	# whose proposal failed - an unreachable model, a bad key - or one that sat
+	# waiting for a model that has since been set)
+	&subs::db_update('staged_fixes', { status => 'new', summary => '', note => '', files => '', steps => '' }, { uuid => $uuid });
+	$c->render(json => { retried => $uuid });
+};
+
 post '/manager/coding/fixes_apply' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
