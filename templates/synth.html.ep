@@ -5,16 +5,12 @@
 		<label>MIDI</label>
 		<select id="synth_midi" class="synth_select" hint="A connected USB MIDI keyboard"></select>
 		<button id="synth_midi_connect" class="hover" hint="Connect a USB MIDI keyboard">Connect</button>
+		<button id="synth_keyboard_toggle" class="hover" hint="Play the piano with your computer keyboard (A W S E D F T G Y H U J K …)">Keys: off</button>
+		<span id="synth_octave" class="synth_voices" style="margin-left:0;" hint="Octave for the computer keyboard (Z down, X up)"></span>
 		<span id="synth_voices" class="synth_voices"></span>
 	</div>
 
-	<div class="synth_keys">
-		<% foreach my $k ( @{$piano} ) { %>
-			<% if ($k->{'note'}) { %>
-				<div class="piano_key <%= $k->{'colour'} %>" freq="<%= $k->{'freq'} %>" note="<%= $k->{'note'} %>" hint="<%= $k->{'note'} %>"></div>
-			<% } %>
-		<% } %>
-	</div>
+	<div class="synth_keys" id="synth_keys"></div>
 
 	<div class="synth_controls">
 		<div class="synth_knob"><label>Cutoff</label><input type="range" class="synth_param" param="filter.cutoff" min="0" max="100" value="55"></div>
@@ -63,39 +59,46 @@
 
 	.synth_keys {
 		position: relative;
-		height: 120px;
-		white-space: nowrap;
+		height: 124px;
 		overflow-x: auto;
 		overflow-y: hidden;
+		white-space: nowrap;
 		padding-bottom: 4px;
+		border-radius: 4px;
 	}
 	.piano_key {
+		cursor: pointer;
+		user-select: none;
+		border: solid;
+		border-width: 1px;
+		box-sizing: border-box;
+	}
+	.piano_key.white {
 		display: inline-block;
 		vertical-align: top;
 		width: 26px;
-		border: solid;
-		border-width: 1px;
+		height: 118px;
+		background: #fdfdfa;
+		color: #666;
+		font-size: 9px;
+		text-align: center;
+		padding-top: 100px;
 		border-radius: 0 0 4px 4px;
-		cursor: pointer;
-		user-select: none;
-	}
-	.piano_key:active { background: var(--accent, #888); }
-	.piano_key.white {
-		background-color: var(--panel);
-		height: 116px;
-		color: #333;
 		position: relative;
 		z-index: 1;
 	}
 	.piano_key.black {
-		background-color: #111;
-		color: #eee;
+		position: absolute;
+		top: 0;
+		width: 16px;
 		height: 74px;
-		margin-left: -13px;
-		margin-right: -13px;
-		position: relative;
+		background: #141414;
+		border-color: #000;
+		border-radius: 0 0 3px 3px;
 		z-index: 2;
 	}
+	.piano_key.white.piano_key_on { background: #ffd21e; }
+	.piano_key.black.piano_key_on { background: #b8860b; }
 
 	.synth_controls {
 		display: flex;

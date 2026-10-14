@@ -565,6 +565,56 @@
 
 	var pianoMidiBase = 60;
 
+	// A full 88-key range (A0..C8), built here so the layout is exact: the white
+	// keys flow inline and the black keys sit absolutely over the boundaries.
+	var SYNTH_FIRST = 21, SYNTH_LAST = 108, WHITE_W = 26, BLACK_W = 16;
+
+	function synthIsBlack(n) {
+		var p = ((n % 12) + 12) % 12;
+		return p === 1 || p === 3 || p === 6 || p === 8 || p === 10;
+	}
+
+	function synthBuildKeys() {
+		var host = $('#synth_keys');
+		if (!host.length || host.data('built')) { return; }
+		host.empty();
+		var whiteCount = 0, i;
+		for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
+			if (synthIsBlack(i)) { continue; }
+			var key = $('<div class="piano_key white"></div>').attr('midi', i).attr('note', i).css('width', WHITE_W + 'px');
+			if (i % 12 === 0) { key.text('C' + (i / 12 - 1)); }
+			host.append(key);
+			whiteCount++;
+		}
+		var seen = 0;
+		for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
+			if (!synthIsBlack(i)) { seen++; continue; }
+			var black = $('<div class="piano_key black"></div>').attr('midi', i).attr('note', i);
+			black.css('left', (seen * WHITE_W - BLACK_W / 2) + 'px');
+			host.append(black);
+		}
+		host.css('min-width', (whiteCount * WHITE_W) + 'px');
+		host.data('built', 1);
+	}
+
+	function synthScrollToMiddle() {
+		var host = $('#synth_keys');
+		if (!host.length) { return; }
+		var key = host.find('.piano_key[midi="60"]');
+		if (!key.length) { return; }
+		host.scrollLeft(Math.max(0, key.position().left - host.width() / 2));
+	}
+
+	// The computer keyboard plays the piano: the usual A W S E D F T G Y H U J K row,
+	// Z/X shift the octave. Off until the Keys button turns it on, and it never
+	// steals a keypress aimed at a form field.
+	var keyboardOn = false, keyboardOctave = 4, keyboardHeld = {};
+	var KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16, "'": 17 };
+
+	function synthKeyboardNote(k) { return keyboardOctave * 12 + 12 + KEYMAP[k]; }
+
+	function synthRenderOctave() { $('#synth_octave').text('octave ' + keyboardOctave); }
+
 	// The standalone window's controls. The studio's Synth pedal drives the same
 	// engine through KNOBS, so a patch set in one place reads the same in the other.
 	function synthSyncSliders() {
@@ -600,9 +650,12 @@
 		var ctx = (typeof studioAudio !== 'undefined' && studioAudio.ctx) ? studioAudio.ctx : null;
 		if (!ctx) { if (!Ctor) { return null; } ctx = new Ctor(); }
 		jawnosSynth.attach(ctx, ctx.destination);
+		synthBuildKeys();
 		synthPopulatePresets();
 		synthSyncSliders();
 		synthPopulateMidi();
+		synthRenderOctave();
+		synthScrollToMiddle();
 		return ctx;
 	};
 
@@ -618,12 +671,21 @@
 		});
 	});
 
-	$(document).on('click', '.piano_key', function () {
+	$(document).on('mousedown touchstart', '.piano_key', function (e) {
 		if (!jawnosSynth.context()) { pianoInit(); }
-		var note = parseInt($(this).attr('note'), 10);
-		if (isNaN(note)) { note = noteNameToMidi($(this).text()); }
+		var note = parseInt($(this).attr('midi'), 10);
+		if (isNaN(note)) { note = noteNameToMidi($(this).attr('note')); }
+		if (isNaN(note)) { return; }
+		$(this).addClass('piano_key_on');
 		jawnosSynth.noteOn(note, 0.85);
-		setTimeout(function () { jawnosSynth.noteOff(note); }, 700);
+		e.preventDefault();
+	});
+
+	$(document).on('mouseup touchend mouseleave', '.piano_key', function () {
+		var note = parseInt($(this).attr('midi'), 10);
+		if (isNaN(note)) { return; }
+		$(this).removeClass('piano_key_on');
+		jawnosSynth.noteOff(note);
 	});
 
 	$(document).on('change', '#synth_preset', function () {
@@ -647,6 +709,44 @@
 
 	$(document).on('change', '#synth_midi', function () {
 		window.jawnosSynth.midi.select($(this).val());
+	});
+
+	$(document).on('click', '#synth_keyboard_toggle', function () {
+		keyboardOn = !keyboardOn;
+		$(this).text('Keys: ' + (keyboardOn ? 'on' : 'off'));
+		if (!keyboardOn) {
+			Object.keys(keyboardHeld).forEach(function (k) {
+				jawnosSynth.noteOff(keyboardHeld[k]);
+				$('.piano_key[midi="' + keyboardHeld[k] + '"]').removeClass('piano_key_on');
+			});
+			keyboardHeld = {};
+		}
+		else if (!jawnosSynth.context()) { pianoInit(); }
+	});
+
+	$(document).on('keydown', function (e) {
+		if (!keyboardOn || e.metaKey || e.ctrlKey || e.altKey) { return; }
+		if ($(e.target).is('input, select, textarea, [contenteditable]')) { return; }
+		var k = String(e.key || '').toLowerCase();
+		if (k === 'z') { keyboardOctave = Math.max(0, keyboardOctave - 1); synthRenderOctave(); e.preventDefault(); return; }
+		if (k === 'x') { keyboardOctave = Math.min(8, keyboardOctave + 1); synthRenderOctave(); e.preventDefault(); return; }
+		if (!(k in KEYMAP) || keyboardHeld[k] != null) { return; }
+		if (!jawnosSynth.context()) { pianoInit(); }
+		var note = synthKeyboardNote(k);
+		keyboardHeld[k] = note;
+		e.preventDefault();
+		jawnosSynth.noteOn(note, 0.85);
+		$('.piano_key[midi="' + note + '"]').addClass('piano_key_on');
+	});
+
+	$(document).on('keyup', function (e) {
+		if (!keyboardOn) { return; }
+		var k = String(e.key || '').toLowerCase();
+		if (!(k in KEYMAP) || keyboardHeld[k] == null) { return; }
+		var note = keyboardHeld[k];
+		delete keyboardHeld[k];
+		jawnosSynth.noteOff(note);
+		$('.piano_key[midi="' + note + '"]').removeClass('piano_key_on');
 	});
 
 	$(function () {
