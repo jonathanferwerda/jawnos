@@ -857,40 +857,38 @@ async function keyboardMaker(data) {
 			return;
 		}
 	}
-	var pos = jawnosWindowPlaceGet(toggle + '_toggle');
-	var css;
-	if (pos) {
-		var ps = JSON.parse(pos);
-		var top = ps.top + 60;
-		var left = ps.left;
-		css = { 'position': 'fixed', 'top': top, 'left': left };
-		if (bottom < h / 4) {
-			var kept_style = jawnosWindowStyleGet(toggle);
-			if (kept_style) {
-				css = JSON.parse(kept_style);
-			}
-			else {
+	// Where the panel was left. Its own drag bar keeps the whole spot (the style
+	// dump the bar's stop writes); a panel never moved falls back to the place its
+	// dock icon was dropped in, or to its default against the dock. The panel's own
+	// spot wins, because that is the one a person moves.
+	var css = null;
+	var kept_style = jawnosWindowStyleGet(toggle);
+	if (kept_style) {
+		try { css = JSON.parse(kept_style); } catch (e) { css = null; }
+	}
+	if (css == null) {
+		var pos = jawnosWindowPlaceGet(toggle + '_toggle');
+		if (pos) {
+			var ps = JSON.parse(pos);
+			var top = ps.top + 60;
+			var left = ps.left;
+			css = { 'position': 'fixed', 'top': top, 'left': left };
+			if (bottom < h / 4) {
 				delete css['top'];
 				css['bottom'] = 20;
 				css['height'] = $('#' + toggle).height();
 				css['width'] = $('#pseudonym_home').width();
 				css['left'] = $('#pseudonym_home').offset().left;
 			}
-
+			else {
+				css['height'] = $('#' + toggle).height();
+				var jcss = JSON.stringify(css);
+				jawnosWindowStyleSet(toggle, jcss);
+				jawnosWindowPlaceSet(toggle, jcss);
+			}
 		}
-		else {
-
-			css['top'] = top;
-			delete css['bottom'];
-			css['height'] = $('#' + toggle).height();
-			var jcss = JSON.stringify(css);
-			jawnosWindowStyleSet(toggle, jcss);
-			jawnosWindowPlaceSet(toggle, jcss);
-
-		}
-		$('#' + toggle).css(css);
-
 	}
+	if (css) { $('#' + toggle).css(css); }
 	if (!t.is(':visible') && !t.hasClass('keyboard') || state == 'on') {
 		var data = { 
 			timestamp: timestamp, 
@@ -920,10 +918,8 @@ async function keyboardMaker(data) {
 				$('.typewriter').show();
 				$('#time_machine').val(localStorage.getItem('time_machine')	);
 				initializer();
-				if ((top <= $(window).height() && left <= $(window).width()) || bottom < h / 4) {
+				if (css) {
 					css['width'] = t.width();
-					//css['bottom'] = $('#pseudonym_home').height();
-					//css['top'] = undefined;
 					t.css(css);
 				}
 				t.attr('claimed', 'yes');
@@ -948,6 +944,8 @@ async function keyboardMaker(data) {
 		if (l != undefined) {
 			setTimeout(function() {
 				clearInterval(togglerInterval);
+				// nothing was kept to clamp: the panel is wearing its own CSS default
+				if (!css) { return; }
 				var wow = l.left;
 				var toggle_width = $('#' + toggle).width();
 				var wow_right = wow + toggle_width;
