@@ -182,7 +182,11 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    remade whole rather than re-wrapped half-way. The `oldkey` row keeps the file and note candidate
    walks reaching content sealed before the rotation; the recovery code is set aside
    (`recovery_stale`). Sessions do not survive a rotation by design - every suds_id changes, and
-   paired devices re-admit themselves.
+   paired devices re-admit themselves. A standalone pass (`subs::legacy_reseal`, Security → Recovery's
+   Upgrade Old Seals) does the same legacy upgrade on demand and asks every linked machine to run its
+   own over the signed peer rail (`/manager/legacy_reseal`, peer_verify-gated); and `login_gate`
+   accepts the house key itself in every vault state - with a door present it authorizes without
+   touching it - so one long string on paper is a complete backup.
 
 ## What this buys
 

@@ -156,5 +156,13 @@
 		</p>
 		<button id="rotate_key">Rotate the house key</button>
 		<div id="rotate_key_note" style="min-height:22px;color:darkred;"></div>
+		<h3 style="margin-top:18px;">Old Seals</h3>
+		<p style="max-width:640px;margin:0 auto;">
+			Values locked long ago - before this house used its own key - were sealed with a passphrase
+			anybody could know. Upgrade Old Seals re-seals any that are left, here and on every linked
+			machine; values already under the house key are left alone.
+		</p>
+		<button id="legacy_reseal">Upgrade Old Seals</button>
+		<div id="legacy_reseal_note" style="min-height:22px;color:darkred;"></div>
 	</div>
 </div>

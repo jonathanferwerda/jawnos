@@ -4055,6 +4055,19 @@ get '/manager/vault_share' => sub($c) {
 	$c->render(json => { ok => 1, sealed => $sealed });
 };
 
+get '/manager/legacy_reseal' => sub($c) {
+	# A linked machine asks this one to upgrade its values left from the era when
+	# the outer layer was sealed with the empty passphrase (public knowledge, so
+	# such values are effectively plaintext at rest). Nothing secret crosses: the
+	# work is local and idempotent, and peer_verify against a pinned key is the
+	# gate, like vault_share.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $result = eval { &subs::legacy_reseal() } || { ok => 0 };
+	$c->render(json => { %{$result}, by => &subs::signatorial_designer() });
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $direction = $c->param('direction');
@@ -20542,6 +20555,16 @@ post '/manager/security/rotate_key' => sub($c) {
 		summary => { settings => $result->{'settings'}, security => $result->{'security'}, links => $result->{'links'} },
 		html => $sec->{'html'}
 	});
+};
+
+post '/manager/security/legacy_reseal' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $local = &subs::legacy_reseal();
+	my $mesh = &subs::legacy_reseal_mesh();
+	$c->render(json => { ok => $local->{'ok'} ? 1 : 0, local => $local, mesh => $mesh });
 };
 
 # The gate's recovery door: the paper code unwraps the sealed suds and the

@@ -264,6 +264,32 @@ $(document).on('click', '#rotate_key', function() {
 	});
 });
 
+$(document).on('click', '#legacy_reseal', function() {
+	var button = $(this);
+	button.prop('disabled', true);
+	$('#legacy_reseal_note').text('Upgrading...');
+	$.ajax({
+		url: '/manager/security/legacy_reseal',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				$('#legacy_reseal_note').text('The upgrade did not run.');
+				return;
+			}
+			var local = response.local || {};
+			var mesh = response.mesh || {};
+			var here = (local.settings || 0) + (local.security || 0) + (local.links || 0);
+			$('#legacy_reseal_note').text('Upgraded here: ' + here + '. On linked machines: ' + (mesh.upgraded || 0) + ' (' + (mesh.ok || 0) + ' of ' + (mesh.asked || 0) + ' answered' + ((mesh.failed || 0) ? ', ' + mesh.failed + ' not answering yet' : '') + ').');
+		},
+		error: function() {
+			button.prop('disabled', false);
+			$('#legacy_reseal_note').text('The upgrade did not run.');
+		}
+	});
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');

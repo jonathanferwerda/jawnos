@@ -8220,10 +8220,11 @@ sub door_set {
 }
 
 # The login gate: (authorized, key). The key comes from this machine's vault;
-# the password only has to open the door row. A machine with no door yet still
-# accepts the password-that-is-the-key and is migrated on the spot; a machine
-# whose vault was lost but whose typed password still validates the canary heals
-# its vault here. Neither password nor key ever travel in a session.
+# the password only has to open the door row. The house key itself is the root
+# credential and opens the house in every state: with a door present it
+# authorizes without touching the door, with no door it becomes the password,
+# and a machine whose vault was lost heals its vault here. Neither password nor
+# key ever travel in a session.
 sub login_gate {
 	my ($typed) = @_;
 	return (0, undef) unless defined $typed && length $typed;
@@ -8232,7 +8233,10 @@ sub login_gate {
 	if ($vault && &suds_current($vault)) {
 		my $door = &door_row();
 		if ($door) {
-			return (&door_check($typed) ? 1 : 0, $vault);
+			return (1, $vault) if &door_check($typed);
+			# the typed house key is stronger than any password: let it in and
+			# leave the door exactly as it was
+			return (&secure_compare($typed, $vault) ? (1, $vault) : (0, $vault));
 		}
 		if (&secure_compare($typed, $vault)) {
 			&door_set($typed);
@@ -8357,9 +8361,18 @@ sub rotation_reseal_value {
 	my $inner = &crypt_simple_unwrap($K, $v);
 	$inner = &crypt_simple_unwrap('', $v) unless defined $inner;
 	return unless defined $inner;
+	return &reseal_unwrapped_value($inner, $v, $K, $Knew);
+}
+
+# The half both re-seal sweeps share: the outer layer is already unwrapped, so
+# this decides note or plain blob and hands back the value sealed under $Knew.
+# A note carries ':::---:::' inside that outer layer, and its own openssl layer
+# is keyed to the real secret ($K reaches a legacy note's inner layer through
+# note_decrypter's own fallback), so it is remade whole - re-wrapping only the
+# outer layer would not open later.
+sub reseal_unwrapped_value {
+	my ($inner, $v, $K, $Knew) = @_;
 	if (index($inner, ':::---:::') >= 0) {
-		# note_decrypter's own outer call falls back, so this reaches a legacy
-		# note's inner layer under $K; the remake below is fully under $Knew
 		my $plain = &note_decrypter($K, $v);
 		return unless defined $plain && length $plain;
 		my $re = &note_encrypter($Knew, $plain);
@@ -8369,6 +8382,19 @@ sub rotation_reseal_value {
 	my $re = &encrypter($Knew, $inner);
 	return unless $re && &decrypter($Knew, $re) eq $inner;
 	return $re;
+}
+
+# The standalone form of the rotation's legacy side effect: re-seal one value
+# still locked by the empty-passphrase era and leave everything else exactly
+# alone (a value already under $K reports back as undefined, so nothing is ever
+# rewritten for nothing).
+sub legacy_reseal_value {
+	my ($v, $K) = @_;
+	return unless defined $v && length $v && $K;
+	return if defined &crypt_simple_unwrap($K, $v);
+	my $inner = &crypt_simple_unwrap('', $v);
+	return unless defined $inner;
+	return &reseal_unwrapped_value($inner, $v, $K, $K);
 }
 
 sub rotate_house_key {
@@ -8438,6 +8464,86 @@ sub rotate_house_key {
 		&db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'key_rotation', timestamp => $now, server_time => $now });
 	}
 	return { ok => 1, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
+}
+
+# --- legacy seals -------------------------------------------------------------
+# A sweep for values left from the era when encrypter sealed the outer layer
+# under the empty passphrase (md5(''), public knowledge): out in the open to
+# anyone holding a copy of the database. Unlike rotation this changes no key -
+# each value is upgraded to the key this machine already holds - so it is safe
+# on any machine at any time, idempotent, and cheap where none are left. The
+# mesh form asks every linked machine to run its own, over the signed peer
+# rail: nothing secret crosses, only signatures.
+sub legacy_reseal {
+	my $K = &suds_grabber();
+	return { ok => 0, error => 'no key on this machine' } unless $K;
+	my $counts = { settings => 0, security => 0, links => 0 };
+	my $settings = &db_select('settings', ['rowid','setting','value'], {})->hashes;
+	foreach my $row ( @{$settings} ) {
+		my $re = &legacy_reseal_value($row->{'value'}, $K);
+		next unless defined $re;
+		&db_update('settings', { value => $re }, { rowid => $row->{'rowid'} });
+		$counts->{settings}++;
+	}
+	# padlock and door hold no key material (upgrading the door would break it:
+	# it must keep opening with the typed password alone); level 1 is the canary,
+	# which has its own reseal - the same filter rotation uses
+	my $secs = &db_select('security', ['rowid','level','credential'], {})->hashes;
+	foreach my $row ( @{$secs} ) {
+		next if $row->{'level'} eq 'padlock' || $row->{'level'} eq 'door' || $row->{'level'} eq '1';
+		my $re = &legacy_reseal_value($row->{'credential'}, $K);
+		next unless defined $re;
+		&db_update('security', { credential => $re }, { rowid => $row->{'rowid'} });
+		$counts->{security}++;
+	}
+	my $links = &db_select('neighbour_link', ['rowid','credential'], {})->hashes;
+	foreach my $row ( @{$links} ) {
+		my $re = &legacy_reseal_value($row->{'credential'}, $K);
+		next unless defined $re;
+		&db_update('neighbour_link', { credential => $re }, { rowid => $row->{'rowid'} });
+		$counts->{links}++;
+	}
+	return { ok => 1, settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
+}
+
+# Ask one linked machine to upgrade its own legacy values (its route runs the
+# same local sweep) and hand back the counts. A machine that has not caught up
+# with this code yet simply fails to answer.
+sub legacy_reseal_peer_one {
+	my ($rm) = @_;
+	return unless $rm && $rm->{'signatorial'};
+	my $manager = $rm->{'manager'};
+	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
+	return unless $manager;
+	my $ua = Mojo::UserAgent->new();
+	$ua->max_response_size(0);
+	$ua->insecure(1);
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	my $url = $manager . '/manager/legacy_reseal?signatorial=' . &signatorial_designer();
+	my $res = eval { $ua->inactivity_timeout(15)->get($url)->result };
+	return unless $res && $res->is_success;
+	my $json = eval { decode_json $res->body };
+	return unless $json && $json->{'ok'};
+	return $json;
+}
+
+sub legacy_reseal_mesh {
+	my $me = &signatorial_designer();
+	my $rms = &db_select('remote_machines')->hashes || [];
+	my $summary = { asked => 0, ok => 0, failed => 0, upgraded => 0 };
+	foreach my $rm ( @{$rms} ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		next unless $rm->{'manager'} || $rm->{'ip'};
+		$summary->{asked}++;
+		my $got = eval { &legacy_reseal_peer_one($rm) };
+		if ($got) {
+			$summary->{ok}++;
+			$summary->{upgraded} += ($got->{'settings'} || 0) + ($got->{'security'} || 0) + ($got->{'links'} || 0);
+		}
+		else { $summary->{failed}++; }
+	}
+	return $summary;
 }
 
 sub suds_grabber {
