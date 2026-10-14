@@ -53,6 +53,12 @@ function continentPrinter(appts, sort) {
 			ignoreTop: function() { return (typeof clothesLinePos != 'undefined') ? clothesLinePos['maxHeight'] : 0; }
 		});
 		jawnosContinentMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, jawnosContinentMap.canvas); });
+		// a right-click on a guessed gap offers to drop it, as the travel map does
+		jawnosContinentMap.onMapContext(function(m, sx, sy) {
+			if (!m || !m.guess) { return 0; }
+			jawnosGuessMenu(m, sx, sy, jawnosContinentMap.canvas);
+			return 1;
+		});
 		jawnosContinentMap.onChange(jawnosMarkerListHide);
 		jawnosContinentMap.onDraw(jawnosContinentOverlay);
 	}

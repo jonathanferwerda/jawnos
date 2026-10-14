@@ -105,3 +105,61 @@ $(document).on('click', '.jawnos_marker_item', function() {
 $(document).on('mousedown touchstart', function(e) {
 	if ($(e.target).closest('#jawnos_marker_list').length == 0) { jawnosMarkerListHide(); }
 });
+
+// A guessed map's right-click menu: the one thing to do with a guess is drop it,
+// which leaves its ground blank again for the hat to fill afresh. The marker
+// list's little sibling (same look); any click away folds it.
+function jawnosGuessMenu(marker, sx, sy, canvas) {
+	jawnosGuessMenuHide();
+	if (!canvas || !marker || !marker['uuid']) { return; }
+	var rect = canvas.getBoundingClientRect();
+	var menu = $('<div id="jawnos_guess_menu"></div>').css({
+		position: 'fixed',
+		left: Math.max(4, Math.min(rect.left + sx, $(window).width() - 200)) + 'px',
+		top: Math.max(4, Math.min(rect.top + sy, $(window).height() - 80)) + 'px',
+		'z-index': 9000,
+		'background-color': 'var(--panel)',
+		border: '2px solid var(--line)',
+		'border-radius': '8px',
+		padding: '4px 8px',
+		'box-shadow': '0 6px 18px rgba(0,0,0,.35)',
+		'font-size': '13px',
+		'min-width': '150px',
+		'max-width': '240px'
+	});
+	$('<b></b>').text(marker.name || 'guess').css({ display: 'block', 'font-size': '12px', opacity: '.7', 'padding-bottom': '2px' }).appendTo(menu);
+	$('<span class="jawnos_guess_delete hover"></span>').attr('guess_uuid', marker['uuid'])
+		.css({ display: 'block', padding: '4px', cursor: 'pointer', 'border-radius': '5px' })
+		.text('Delete this guess').appendTo(menu);
+	menu.appendTo('body');
+}
+
+function jawnosGuessMenuHide() { $('#jawnos_guess_menu').remove(); }
+
+$(document).on('click', '.jawnos_guess_delete', function() {
+	var uuid = $(this).attr('guess_uuid');
+	jawnosGuessMenuHide();
+	if (!uuid) { return; }
+	$.ajax({
+		url: '/manager/travel/delete_map',
+		type: 'POST',
+		data: { file_uuid: uuid, app_uuid: '', app: 'travel' },
+		success: function() { jawnosGuessDropped(uuid); }
+	});
+});
+$(document).on('mousedown touchstart', function(e) {
+	if ($(e.target).closest('#jawnos_guess_menu').length == 0) { jawnosGuessMenuHide(); }
+});
+
+// What a dropped guess calls: each page that shows maps pulls itself back in
+// without it - the travel viewer redraws, the continent refetches on its next
+// poll, and the status line stops naming a guess that is gone.
+function jawnosGuessDropped(uuid) {
+	if (typeof travelGuessStatus == 'function' && $('#travel_guess_status').attr('guess_uuid') == uuid) {
+		travelGuessStatus('');
+	}
+	if (typeof travelViewer == 'function' && typeof travelMap != 'undefined' && travelMap) {
+		travelViewer({ timestamp: Date.now() });
+	}
+	if (typeof jawnosContinentAt != 'undefined') { jawnosContinentAt = 0; }
+}

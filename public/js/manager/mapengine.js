@@ -90,6 +90,7 @@ window.jawnosMap = (function () {
 		var changing = [];    // callbacks fired after a pan/zoom
 		var drawHooks = [];   // callbacks fired after every draw (overlays on the same canvas)
 		var markerHandler = null; // called with a tapped marker (a point carrying an app)
+		var contextHandler = null; // called with the map under a right-click; 1 = it was handled
 
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
@@ -330,6 +331,23 @@ window.jawnosMap = (function () {
 			return best;
 		}
 
+		// Which map sits under a screen point, front to back - the draw order, so the
+		// finest (or last-drawn) map wins. Null when none does.
+		function mapAt(sx, sy) {
+			var dim = size();
+			var o = originFor(view, dim.w, dim.h);
+			for (var i = maps.length - 1; i >= 0; i--) {
+				var m = maps[i];
+				if (!m.image || !m.bounds) { continue; }
+				var nw = screenFor(m.bounds.nw.lat, m.bounds.nw.lon, o, view.z);
+				var se = screenFor(m.bounds.se.lat, m.bounds.se.lon, o, view.z);
+				var left = Math.min(nw[0], se[0]), top = Math.min(nw[1], se[1]);
+				var right = Math.max(nw[0], se[0]), bottom = Math.max(nw[1], se[1]);
+				if (sx >= left && sx <= right && sy >= top && sy <= bottom) { return m; }
+			}
+			return null;
+		}
+
 		function panBy(dx, dy) {
 			var c = worldPx(view.lat, view.lon, view.z);
 			var g = geoAt(c[0] - dx, c[1] - dy, view.z);
@@ -424,6 +442,22 @@ window.jawnosMap = (function () {
 			if (!markerHandler) { return; }
 			var pt = markerAt(e.offsetX, e.offsetY);
 			if (pt) { markerHandler(pt, e.offsetX, e.offsetY); }
+		});
+
+		// A right-click on a map: the topmost one under the point goes to the page,
+		// which decides (a guessed gap offers to be dropped). Only when the page says
+		// it handled it is the event consumed - everywhere else the desktop's own
+		// menus still open over the map.
+		canvas.addEventListener('contextmenu', function (e) {
+			if (inBand(e.clientY)) { return; }
+			if (!contextHandler) { return; }
+			var r = canvas.getBoundingClientRect();
+			var pt = mapAt(e.clientX - r.left, e.clientY - r.top);
+			if (!pt) { return; }
+			if (contextHandler(pt, e.clientX - r.left, e.clientY - r.top)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
 		});
 
 		canvas.addEventListener('wheel', function (e) {
@@ -530,7 +564,7 @@ window.jawnosMap = (function () {
 				(list || []).forEach(function (m) {
 					var b = mapBounds(m);
 					if (!b) { return; }
-					var entry = { name: m.name, file: m.file, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0, guess: m.guessed ? 1 : 0 };
+					var entry = { name: m.name, file: m.file, uuid: m.uuid, bounds: b, home_plate: m.home_plate, rotate: parseFloat(m.rotate) || 0, guess: m.guessed ? 1 : 0 };
 					// how much ground the map covers, so the draw can put the finest
 					// (smallest footprint) on top: panning into a neighbourhood must not
 					// leave the town-wide map covering the detailed one
@@ -596,6 +630,7 @@ window.jawnosMap = (function () {
 				fitBox(lat - h, lat + h, lon - h, lon + h, 1.15);
 			},
 			onMarkerClick: function (fn) { markerHandler = fn; },
+			onMapContext: function (fn) { contextHandler = fn; },
 			onDraw: function (fn) { drawHooks.push(fn); },
 			onChange: function (fn) { changing.push(fn); },
 			view: function () { return view; }

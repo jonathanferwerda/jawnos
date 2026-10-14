@@ -271,7 +271,7 @@ our %topic = (
 			'Pick a built-in Map source (OpenStreetMap, OpenTopoMap, Carto, Esri), or paste a tile URL for Lambton or Custom — see where to find one in the words above.',
 			'Use the map selector to bring a measured map into view and the trash to delete one; Search and the Start/End times scope the history shown. The toolbar stays pinned as you scroll.',
 			'Set Home Plate to mark the place your maps share as their reference.',
-			'To fill the blanks, switch the hat on: the empty ground you are looking at is guessed and drawn under the measured maps, so it never covers known ground. Switch it off to leave the blanks blank; the status line beside the hat names the last guess and deletes it on a second tap.',
+			'To fill the blanks, switch the hat on: the empty ground you are looking at is guessed and drawn under the measured maps, so it never covers known ground. Switch it off to leave the blanks blank; the status line beside the hat names the last guess and deletes it on a second tap, and a right-click on any guess on the map offers to delete it too.',
 			'On the continent background, tap an appointment dot or a home plate to open its appointment window; a numbered marker unfolds the places sharing that spot.'
 		],
 		related => [ 'measures', 'relational', 'navigation' ]

@@ -45,6 +45,13 @@ function travelMapEngine() {
 	});
 	// a tap on a place opens its appointment window; a numbered one unfolds its list
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
+	// a right-click on a guessed gap offers to drop it (so the hat may fill that
+	// ground afresh); anywhere else the engine leaves the event alone
+	travelMap.onMapContext(function(m, sx, sy) {
+		if (!m || !m.guess) { return 0; }
+		jawnosGuessMenu(m, sx, sy, travelMap.canvas);
+		return 1;
+	});
 	travelMap.onChange(jawnosMarkerListHide);
 	// with the hat on, a pause in the pan asks for the empty ground on screen to
 	// be guessed (the server decides what is empty; a guess only ever shows where
@@ -108,7 +115,7 @@ function travelMapRender(response) {
 		if (point['settings']) {
 			// a place the continent knows: tappable, and grouped when several share
 			// one spot, so the tap opens the app it means (or unfolds them)
-			places.push({ app: point['app'], name: point['settings']['name'] || point['app'], colour: colour, lat: lat, lon: lon });
+			places.push({ app: point['app'], name: point['name'] || point['settings']['name'] || point['app'], colour: colour, lat: lat, lon: lon });
 		}
 		else {
 			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });

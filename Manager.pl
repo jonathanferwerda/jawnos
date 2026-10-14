@@ -18340,7 +18340,7 @@ sub travel_atlas_points {
 		push @{$points}, {
 			latitude => $con->{'latitude'} + 0,
 			longitude => $con->{'longitude'} + 0,
-			name => $set->{'name'} || $app,
+			name => &subs::format_name($set->{'name'} || $app),
 			colour => $set->{'colour'}
 		};
 	}
@@ -18372,7 +18372,7 @@ sub travel_atlas_appointments {
 		next if $set->{'visible'} ne 'checked';
 		push @{$out}, {
 			app => $fix->{'app'},
-			name => $set->{'name'} || $fix->{'app'},
+			name => &subs::format_name($set->{'name'} || $fix->{'app'}),
 			colour => $set->{'colour'},
 			latitude => $fix->{'latitude'} + 0,
 			longitude => $fix->{'longitude'} + 0
@@ -18397,7 +18397,7 @@ sub travel_atlas_home_plates {
 		my $set = &subs::settings_grabber({ app => $row->{'app'} });
 		push @{$out}, {
 			app => $row->{'app'},
-			name => $set->{'name'} || &subs::format_name($row->{'app'}),
+			name => &subs::format_name($set->{'name'} || $row->{'app'}),
 			colour => $set->{'colour'},
 			latitude => $hp->{'latitude'} + 0,
 			longitude => $hp->{'longitude'} + 0
@@ -18721,6 +18721,9 @@ get '/manager/travel/viewer' => sub($c) {
 	foreach my $sl (@{$locations}) {
 		$universal_settings->{$sl->{'app'}} = &subs::settings_grabber({ app => $sl->{'app'} }) unless $universal_settings->{$sl->{'app'}};
 		$sl->{'settings'} = $universal_settings->{$sl->{'app'}};
+		# the map says a name the way the rest of the app does (the grouped marker's
+		# list reads straight off this)
+		$sl->{'name'} = &subs::format_name($sl->{'settings'}->{'name'} || $sl->{'app'});
 		next if $sl->{'settings'}->{'visible'} ne 'checked';
 		my $radius = 6372.8;
 		my @visitor = NESW($sl->{'longitude'}, $sl->{'latitude'});
