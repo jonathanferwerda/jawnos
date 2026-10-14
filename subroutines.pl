@@ -5540,6 +5540,20 @@ sub reads_as_backup {
 # the new key. Batched by a time budget; when the budget runs out the job
 # queues its own follow-up carrying a cursor - the walk is sorted, so the next
 # run starts where this one stopped instead of re-walking the whole home.
+# Where the sealed files live: the home plus every media location the misc
+# settings name (music, download, photo, document, video, scan, rec). On a phone
+# those point at /sdcard/... rather than the Termux home, so walking only ~ would
+# leave a rotation's tail of /sdcard seals untouched.
+sub folders_reseal_roots {
+	my @roots = ( &home('~/') );
+	foreach my $l ( &location_types() ) {
+		my $loc = &setting_grabber({ app => 'misc', setting => $l . '_location' });
+		push @roots, &home($loc) if (defined $loc && length $loc);
+	}
+	my %seen;
+	return [ grep { !$seen{$_}++ } @roots ];
+}
+
 sub folders_reseal_job {
 	my ($job, $data) = @_;
 	my $suds = eval { &suds_grabber() };
@@ -5556,7 +5570,7 @@ sub folders_reseal_job {
 	my $before = $data->{'before'} || 0;
 	my $budget = $data->{'budget'} || 600;
 	my $after = defined $data->{'after'} ? $data->{'after'} : '';
-	my $roots = (ref $data->{'roots'} && scalar @{$data->{'roots'}}) ? $data->{'roots'} : [ &home('~/') ];
+	my $roots = (ref $data->{'roots'} && scalar @{$data->{'roots'}}) ? $data->{'roots'} : &folders_reseal_roots();
 	my $references = &file_reference_read();
 	my $started = time();
 	my @files = &sealed_files_under($roots);

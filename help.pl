@@ -54,7 +54,7 @@ our %topic = (
 		title => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'templates/apps/gallery_album.html.ep', 'templates/apps/gallery_home.html.ep' ],
 		controls => [ 'Previous', 'Next', 'Refresh', 'Repeat', 'Shuffle', 'File information', 'Fetch home', 'Set as main image', 'Albums', 'Home', 'Lock', 'Archives' ],
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
 		body => [
 			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
@@ -137,6 +137,7 @@ our %topic = (
 	},
 	'video' => {
 		title => 'Video', category => 'apps', app => 'video',
+		verified => '2026-10-14',
 		summary => 'Play video from your media folders.',
 		body => [
 			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
@@ -207,6 +208,7 @@ our %topic = (
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
+		verified => '2026-10-14',
 		summary => 'Free-form notes you can scan, OCR and barcode.',
 		body => [
 			'Notes is note-taking with a document-scanning streak. It can capture a page from a camera or scanner, read a barcode or QR code (zbar), run text recognition over a scan (Tesseract) and render documents to PDF.',
@@ -254,7 +256,7 @@ our %topic = (
 		title => 'Travel', category => 'apps', app => 'travel',
 		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
 		controls => [ 'Configure', 'Now', 'Delete', 'Guess the gaps' ],
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
@@ -293,6 +295,7 @@ our %topic = (
 	},
 	'cards' => {
 		title => 'Cards', category => 'apps', app => 'cards',
+		verified => '2026-10-14',
 		summary => 'A deck of cards, drawn from your own data.',
 		body => [
 			'Cards is a card deck — part game, part lens. It deals from your own appointments and measures, so a draw is a small reflection rather than a random flip.'
@@ -365,6 +368,7 @@ our %topic = (
 	},
 	'inventory' => {
 		title => 'Inventory', category => 'apps', app => 'inventory',
+		verified => '2026-10-14',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
 			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics and the Evaluation reports.'
@@ -374,7 +378,7 @@ our %topic = (
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		summary => 'Email over IMAP and SMTP, straight on the desktop.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
@@ -407,7 +411,7 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
@@ -441,7 +445,7 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
 			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
@@ -471,7 +475,7 @@ our %topic = (
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
@@ -490,7 +494,7 @@ our %topic = (
 	'voice' => {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'Speak to the watch; it listens for a phrase and files the rest.',
 		body => [
 			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
@@ -625,7 +629,7 @@ our %topic = (
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep' ],
 		controls => [ 'Run this job', 'How often', 'Good', 'Bad' ],
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'The background jobs every machine runs, and how often.',
 		body => [
 			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot.',
@@ -645,7 +649,7 @@ our %topic = (
 	'navigation' => {
 		title => 'Navigation (location logging)', category => 'features',
 		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'public/js/manager/travel.js' ],
-		verified => '2026-10-12',
+		verified => '2026-10-14',
 		summary => 'JawnOS records where a device is on a schedule, screen on or off.',
 		body => [
 			'Navigation is the autonomous location log. On a handheld the backend asks for a fresh GPS fix once per navigation interval — whether or not the app is open and whether or not the screen is on, since the phone holds a wake lock for it — and writes that one point down as the machine\'s current position.',
