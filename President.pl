@@ -278,6 +278,18 @@ sub manager_starter() {
 		eval { &subs::voice_sync(); };
 	}, { name => 'voice sync' });
 
+	# The provider balances shown in Configure -> Sys. Only OpenRouter and DeepSeek
+	# publish an account balance, so this reads what it can and caches it for the
+	# page to show; a page load never waits on a provider. First pass soon after
+	# boot, then every ten minutes.
+	&subs::subprocessor(sub {
+		sleep 30;
+		while (1) {
+			eval { &subs::ai_balance_refresh(); };
+			sleep 600;
+		}
+	}, { name => 'ai balance' });
+
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
 		&subs::subprocessor(sub {

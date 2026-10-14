@@ -12706,13 +12706,20 @@ sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
 	# the queue is per-machine and the settings are shared, so this is what keeps
-	# one wish from running on every machine's queue at once. With no machine named,
-	# the house ledger picks the evaluation's home, so "Any machine" now means once
-	# for the house rather than once per queue.
-	my $chosen = &subs::evaluation_machine() || &ai_job_owner('eval:' . $app);
+	# one wish from running on every machine's queue at once. A machine named by
+	# hand always runs it; with none named, the house ledger picks the runner, and
+	# because the house holds only machines seen recently a home that goes quiet
+	# hands the evaluation to the next machine.
+	my $named = &subs::evaluation_machine();
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
-	if ($chosen && $chosen ne &subs::signatorial_designer()) {
-		$job->finish({ app => $app, skipped => 'not the evaluation machine' });
+	if ($named) {
+		if ($named ne &subs::signatorial_designer()) {
+			$job->finish({ app => $app, skipped => 'not the evaluation machine' });
+			return;
+		}
+	}
+	elsif (!&ai_job_may_run('eval:' . $app, 3600 * 1000)) {
+		$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
 		return;
 	}
 	# the wish is shared and the queue is per-machine: a machine that cannot
@@ -13768,23 +13775,37 @@ sub ai_job_rank {
 	return $h;
 }
 
-# the job's home machine - the first of the house by the job's own order
-sub ai_job_owner {
-	my ($job) = @_;
+# The machine that runs $job now. The present house - the machines whose model
+# heartbeat is fresh - is ranked by the job's own order, and if nobody has run
+# the job within $ttl the highest-ranked member takes it. Because the house holds
+# only machines seen recently, a home that goes quiet drops out and the job falls
+# to the next machine (the failover); a job already run within the ttl is left
+# alone by everyone, so a machine that runs it and then goes quiet does not cause
+# a second run.
+sub ai_job_runner {
+	my ($job, $ttl) = @_;
 	my @house = &ai_house_members();
-	return undef unless @house;
+	return &ai_house_me() unless @house;
+	$ttl = 6 * 3600 * 1000 unless $ttl && $ttl > 0;
+	my $now = &subs::rightNow();
+	my $rows = eval { &subs::db_select('ai_jobs', undef, { job => $job })->hashes } || [];
+	foreach my $r ( @{$rows} ) {
+		my $at = ($r->{'at'} || 0) + 0;
+		return undef if $at && ($now - $at) <= $ttl;   # someone ran it: covered
+	}
 	my @ranked = sort { &ai_job_rank($job, $a) <=> &ai_job_rank($job, $b) } @house;
 	return $ranked[0];
 }
 
-# May this machine run $job? Only when it is the job's home. The ledger row is a
-# note of who ran what and when, for the review list rather than a lock.
+# May this machine run $job? Only when it is the job's runner. The ledger row in
+# ai_jobs is the note of who ran what and when (the review list, and the cover
+# that keeps the rest of the house off).
 sub ai_job_may_run {
-	my ($job) = @_;
+	my ($job, $ttl) = @_;
 	return 1 unless length($job // '');
-	my $owner = &ai_job_owner($job);
-	return 1 unless defined $owner;
-	return ($owner eq &ai_house_me()) ? 1 : 0;
+	my $runner = &ai_job_runner($job, $ttl);
+	return 0 unless defined $runner;
+	return ($runner eq &ai_house_me()) ? 1 : 0;
 }
 
 sub ai_job_note {
@@ -13813,6 +13834,131 @@ sub ai_house_budget_add {
 	&subs::db_delete('ai_budget', { machine => $me, day => $day });
 	&subs::db_insert('ai_budget', { machine => $me, day => $day, tokens => $total, server_time => &subs::rightNow() });
 	return $total;
+}
+
+# The house at a glance for Configure → Sys: every machine that has published
+# itself (does it hold a model, when it was last seen) with its spend today, and
+# the day's house total against the shared ceiling. Read-only, straight from the
+# synced ledger tables, so every machine shows the same picture.
+sub ai_house_report {
+	my $now = &subs::rightNow();
+	my $day = &ai_house_today();
+	my %spend;
+	my $brows = eval { &subs::db_query('select machine, sum(tokens) as tokens from ai_budget where day = ? group by machine', $day)->hashes } || [];
+	foreach my $b ( @{$brows} ) { $spend{ $b->{'machine'} // '' } = ($b->{'tokens'} || 0) + 0; }
+	my $me = &ai_house_me();
+	my %seen;
+	my @rows;
+	my $hrows = eval { &subs::db_select('ai_house')->hashes } || [];
+	foreach my $r ( @{$hrows} ) {
+		my $m = $r->{'machine'} // '';
+		next unless length $m;
+		$seen{$m} = 1;
+		push @rows, {
+			machine   => $m,
+			self      => ($m eq $me) ? 1 : 0,
+			has_model => ($r->{'has_model'} ? 1 : 0),
+			seen      => ($r->{'seen'} || 0) + 0,
+			online    => ((($r->{'seen'} || 0) + 0) > ($now - 600000)) ? 1 : 0,
+			tokens    => $spend{$m} || 0,
+		};
+	}
+	# this machine itself, even before anything has synced back to it
+	if (length $me && !$seen{$me}) {
+		push @rows, { machine => $me, self => 1, has_model => &ai_house_have_model(), seen => $now, online => 1, tokens => $spend{$me} || 0 };
+		$seen{$me} = 1;
+	}
+	# spend from a machine whose ai_house row is gone (stale, but it did spend)
+	foreach my $m ( keys %spend ) {
+		next if $seen{$m} || !length $m;
+		push @rows, { machine => $m, self => 0, has_model => 0, seen => 0, online => 0, tokens => $spend{$m} };
+	}
+	@rows = sort {
+		($b->{'online'} <=> $a->{'online'})
+			|| (($b->{'tokens'} || 0) <=> ($a->{'tokens'} || 0))
+			|| ($a->{'machine'} cmp $b->{'machine'})
+	} @rows;
+	my $budget = &subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' });
+	$budget = (defined $budget && $budget =~ /^\d+$/) ? ($budget + 0) : 1000000;
+	return {
+		day     => $day,
+		rows    => \@rows,
+		spent   => &ai_house_budget_spent(),
+		budget  => $budget,
+		members => scalar( grep { $_->{'has_model'} && $_->{'online'} } @rows ),
+		machine => $me,
+	};
+}
+
+# The money left on each provider account, where the provider will say. There is
+# no common balance API: OpenRouter publishes its credits and DeepSeek its account
+# balance, and the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq,
+# Cloudflare) have none, so they read "—". The read itself is done off the page
+# by President.pl's ai balance loop; this only ever reads the cached result, so a
+# page load never waits on a provider.
+sub ai_balance_report {
+	my $cache = &subs::cache_get({ app => '__president', context => 'ai_balance' });
+	return (ref $cache eq 'HASH' && $cache->{'rows'}) ? $cache : { at => 0, rows => [] };
+}
+
+sub ai_balance_refresh {
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
+	my $suds = &subs::suds_grabber();
+	my $secret = sub {
+		my $v = shift;
+		return '' unless defined $v && length $v;
+		my $d = eval { &subs::note_decrypter($suds, $v) };
+		return ($d && length $d) ? $d : $v;
+	};
+	# short timeouts: a balance read must never become a stall, and it is only a
+	# convenience on a settings page
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 8, request_timeout => 12);
+	my %money;
+	# OpenRouter: granted credits less what has been used
+	{
+		my $key = $secret->($settings->{'openrouter_key'});
+		my $row = { available => undef, currency => 'USD', note => 'no key' };
+		if (length $key) {
+			my $tx = eval { $ua->get('https://openrouter.ai/api/v1/credits' => { 'Authorization' => "Bearer $key" }) };
+			my $d = ($tx && !$tx->error && $tx->res->is_success) ? eval { decode_json($tx->res->body) } : undef;
+			if ($d && ref $d->{'data'} eq 'HASH' && defined $d->{'data'}->{'total_credits'}) {
+				$row = { available => (($d->{'data'}->{'total_credits'} || 0) - ($d->{'data'}->{'total_usage'} || 0)), currency => 'USD' };
+			}
+			else { $row = { available => undef, currency => 'USD', note => 'could not read credits' }; }
+		}
+		$money{'openrouter'} = $row;
+	}
+	# DeepSeek: the account balance
+	{
+		my $key = $secret->($settings->{'deepseek_key'});
+		my $row = { available => undef, currency => 'USD', note => 'no key' };
+		if (length $key) {
+			my $tx = eval { $ua->get('https://api.deepseek.com/user/balance' => { 'Authorization' => "Bearer $key" }) };
+			my $d = ($tx && !$tx->error && $tx->res->is_success) ? eval { decode_json($tx->res->body) } : undef;
+			my $info = ($d && ref $d->{'balance_infos'} eq 'ARRAY') ? $d->{'balance_infos'}->[0] : undef;
+			if ($info && defined $info->{'total_balance'}) {
+				$row = { available => ($info->{'total_balance'} + 0), currency => ($info->{'currency'} || 'USD') };
+			}
+			else { $row = { available => undef, currency => 'USD', note => 'could not read balance' }; }
+		}
+		$money{'deepseek'} = $row;
+	}
+	# every provider, in the panel's own order, with a balance where there is one
+	my @rows;
+	foreach my $p ( @{ &subs::ai_providers() } ) {
+		my $m = $money{ $p->{'id'} };
+		push @rows, {
+			provider  => $p->{'id'},
+			label     => $p->{'label'},
+			available => $m ? $m->{'available'} : undef,
+			currency  => $m ? $m->{'currency'} : undef,
+			note      => $m ? $m->{'note'} : 'no balance API',
+		};
+	}
+	my $report = { at => &subs::rightNow(), rows => \@rows };
+	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-1d' }, $report);
+	return $report;
 }
 
 # Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a
@@ -14370,7 +14516,7 @@ sub coding_propose_fix {
 	# home and only that machine spends on it, so two machines never pay to propose
 	# the same repair. The cost is bounded below by the house-wide purse.
 	my $job = 'fix:' . ($row->{'source'} || 'log') . ':' . ($row->{'signature'} || $row->{'uuid'});
-	unless (&ai_job_may_run($job)) {
+	unless (&ai_job_may_run($job, 7 * 24 * 3600 * 1000)) {
 		&subs::db_update('staged_fixes', { note => 'the house ledger has another machine on this one' }, { uuid => $row->{'uuid'} });
 		return 'another machine';
 	}

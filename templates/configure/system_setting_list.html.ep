@@ -68,6 +68,61 @@
 				<% } %>
 			</select>
 		</div>
+
+		<%# The house ledger: which machines can take AI work, when each was last seen,
+		    and what today has cost. Reads the synced ai_house and ai_budget rows, so
+		    every machine shows the same picture. %>
+		<% my %machine_name; foreach my $m ( @{$machines} ) { $machine_name{$m->{'signatorial'}} = ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})); } %>
+		<div class="cfg-card">
+			<h3>The house</h3>
+			<p class="cfg-note">
+				<b><%= $ai_house->{'members'} %></b> <%= ($ai_house->{'members'} == 1 ? 'machine' : 'machines') %> can take AI work ·
+				today <%= $ai_house->{'spent'} %> tokens<%= ($ai_house->{'budget'} ? ' of ' . $ai_house->{'budget'} : ' (no cap)') %>.
+				Each job runs once for the house; a machine that goes quiet hands its job on.
+			</p>
+			<div class="cfg-scroll">
+				<table>
+					<thead>
+						<tr><th>Machine</th><th>Has model</th><th>Last seen</th><th>Tokens today</th></tr>
+					</thead>
+					<tbody>
+						<% foreach my $r ( @{ $ai_house->{'rows'} } ) { %>
+							<tr>
+								<td style="text-align:left;"><%= ($r->{'self'} ? 'me (this machine)' : ($machine_name{$r->{'machine'}} || $r->{'machine'})) %></td>
+								<td><%= ($r->{'has_model'} ? 'yes' : 'no') %></td>
+								<td><% if ($r->{'seen'}) { %><span class="time" timestamp="<%= $r->{'seen'} %>"></span><% } else { %>—<% } %></td>
+								<td><%= $r->{'tokens'} %></td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		</div>
+
+		<%# The provider balances: only a couple publish one, so the rest read — %>
+		<div class="cfg-card">
+			<h3>API balances</h3>
+			<p class="cfg-note">
+				What is left on each provider account, where the provider reports it.
+				<% if (!$ai_balance->{'at'}) { %>Not read yet — this fills in a moment after boot.<% } %>
+			</p>
+			<div class="cfg-scroll">
+				<table>
+					<thead>
+						<tr><th>Provider</th><th>Available</th><th>Read</th></tr>
+					</thead>
+					<tbody>
+						<% foreach my $b ( @{ $ai_balance->{'rows'} } ) { %>
+							<tr>
+								<td style="text-align:left;"><%= $b->{'label'} %></td>
+								<td><%= (defined $b->{'available'} ? (sprintf('%.2f', $b->{'available'}) . ' ' . ($b->{'currency'} || '')) : ($b->{'note'} || '—')) %></td>
+								<td><% if ($ai_balance->{'at'}) { %><span class="time" timestamp="<%= $ai_balance->{'at'} %>"></span><% } else { %>—<% } %></td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		</div>
 	<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'cache') { %>
 
 		<div class="cfg-card">
