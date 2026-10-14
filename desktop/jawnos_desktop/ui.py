@@ -29,19 +29,27 @@ LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 _CSS = """
 window { background-color: #101010; }
 label { color: #ededed; }
-label.title { font-size: 22px; font-weight: bold; }
+label.title { font-size: 24px; font-weight: bold; }
 label.dim { color: #8e8e8e; font-size: 12px; }
 label.h { color: #8e8e8e; font-size: 11px; font-weight: bold; }
-box.card { background-color: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 16px; padding: 12px; }
+label.state { font-size: 16px; }
+box.card { background-color: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 18px; padding: 14px; }
 button { background-image: none; background-color: #262626; color: #ededed;
-         border: 1px solid #2c2c2c; border-radius: 12px; padding: 9px 14px; box-shadow: none; }
+         border: 1px solid #2c2c2c; border-radius: 13px; padding: 12px 14px; box-shadow: none; }
 button:hover { background-color: #303030; }
 button.primary { background-color: #ffcc00; color: #0a0a0a; border: 1px solid #ffcc00; font-weight: bold; }
 button.primary:hover { background-color: #e6b800; }
 entry { background-color: #262626; color: #ededed; border: 1px solid #2c2c2c;
-        border-radius: 10px; padding: 8px; }
+        border-radius: 10px; padding: 9px; }
 checkbutton { color: #ededed; }
 """
+
+# The live status dots, the same greens/ambers/reds the manager and the Android
+# dashboard use.
+GREEN_RGB = (0x34 / 255.0, 0xC7 / 255.0, 0x59 / 255.0)
+AMBER_RGB = (0xFF / 255.0, 0xB0 / 255.0, 0x20 / 255.0)
+RED_RGB = (0xFF / 255.0, 0x45 / 255.0, 0x3A / 255.0)
+DIM_RGB = (0x8E / 255.0, 0x8E / 255.0, 0x8E / 255.0)
 
 _CSS_APPLIED = False
 
@@ -64,13 +72,13 @@ class Dashboard(Gtk.Window):
         self.start_requested_at = 0.0
         self._web_panel = None
         self._web_failed = False
-        self.set_default_size(1080, 820)
+        self.set_default_size(640, 860)
         _apply_css()
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_border_width(20)
-        # Each control is given hexpand + CENTER alignment (see _centre), so the
-        # panel reads as a centred column instead of hugging the left edge.
+        # Cards fill the column; their buttons are centred inside, so the panel
+        # reads as a single tidy column on any window width.
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.add(box)
@@ -114,13 +122,18 @@ class Dashboard(Gtk.Window):
         box.pack_start(self._centre(title), False, False, 0)
 
         status = self._card(box, "Status")
-        self.live = Gtk.Label(xalign=0)
-        status.pack_start(self.live, False, False, 0)
+        _jrow, self.jawn_dot, self.jawn_state = self._status_line(status)
+        _brow, self.ble_dot, self.ble_state = self._status_line(status)
 
         self.env = Gtk.Label(xalign=0)
         self.env.set_line_wrap(True)
         self.env.get_style_context().add_class("dim")
         status.pack_start(self.env, False, False, 0)
+
+        self.live = Gtk.Label(xalign=0)
+        self.live.set_line_wrap(True)
+        self.live.get_style_context().add_class("dim")
+        status.pack_start(self.live, False, False, 0)
 
         self.dir_entry = Gtk.Entry()
         self.dir_entry.set_text(settings.get("jawn_dir", ""))
@@ -139,13 +152,13 @@ class Dashboard(Gtk.Window):
             ("Restart", self.action_restart, False),
             ("Stop", self.action_stop, False),
         ])
-        # The view is the everyday destination, so it sits right here.
-        self._card_button(jawn, "Open JawnOS view", self.action_open_embedded, primary=True)
 
         opn = self._card(box, "Open")
-        self._card_button(opn, "Open in browser", self.action_open_ui)
+        # The view is the everyday destination, so it is the primary action.
+        self._card_button(opn, "JawnOS UI", self.action_open_embedded, primary=True)
         self._card_row(opn, [
-            ("Show log", self.action_show_log, False),
+            ("In browser", self.action_open_ui, False),
+            ("Log", self.action_show_log, False),
             ("Console", self.action_open_console, False),
         ])
 
@@ -162,9 +175,9 @@ class Dashboard(Gtk.Window):
         ])
 
         settings_card = self._card(box, "Settings")
-        settings_card.pack_start(self.dir_entry, False, False, 0)
-        settings_card.pack_start(self.autostart, False, False, 0)
-        settings_card.pack_start(self.ble_with_jawn, False, False, 0)
+        settings_card.pack_start(self.dir_entry, False, True, 0)
+        settings_card.pack_start(self.autostart, False, True, 0)
+        settings_card.pack_start(self.ble_with_jawn, False, True, 0)
         self._card_button(settings_card, "Save settings", self.action_save, primary=True)
 
         self.connect("destroy", Gtk.main_quit)
@@ -187,17 +200,6 @@ class Dashboard(Gtk.Window):
         widget.set_hexpand(True)
         return widget
 
-    def _header(self, box, text):
-        label = Gtk.Label(xalign=0.5)
-        label.set_markup("<b>%s</b>" % GLib.markup_escape_text(text))
-        label.set_margin_top(10)
-        box.pack_start(self._centre(label), False, False, 0)
-
-    def _button(self, box, text, handler):
-        button = Gtk.Button(label=text)
-        button.connect("clicked", lambda _b: handler())
-        box.pack_start(self._centre(button), False, False, 0)
-
     # ---- cards (the panel's look) ----
 
     def _card(self, box, title=None):
@@ -207,8 +209,40 @@ class Dashboard(Gtk.Window):
             label = Gtk.Label(label=title.upper(), xalign=0)
             label.get_style_context().add_class("h")
             card.pack_start(label, False, False, 0)
-        box.pack_start(card, False, False, 0)
+        box.pack_start(card, False, True, 0)
         return card
+
+    def _status_line(self, card):
+        """A coloured dot + a live label, returning both so the dot can recolour."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        dot = self._dot(DIM_RGB)
+        label = Gtk.Label(xalign=0)
+        label.get_style_context().add_class("state")
+        row.pack_start(dot, False, False, 0)
+        row.pack_start(label, False, False, 0)
+        card.pack_start(row, False, False, 0)
+        return row, dot, label
+
+    def _dot(self, rgb):
+        """A small filled circle, drawn so it can be recoloured in place."""
+        area = Gtk.DrawingArea()
+        area.set_size_request(13, 13)
+        area._rgb = rgb
+
+        def draw(widget, cr):
+            w = widget.get_allocated_width()
+            h = widget.get_allocated_height()
+            cr.set_source_rgb(*widget._rgb)
+            cr.arc(w / 2.0, h / 2.0, min(w, h) / 2.0 - 1.0, 0.0, 6.283185307)
+            cr.fill()
+
+        area.connect("draw", draw)
+        return area
+
+    @staticmethod
+    def _set_dot(dot, rgb):
+        dot._rgb = rgb
+        dot.queue_draw()
 
     def _card_button(self, card, text, handler, primary=False):
         button = Gtk.Button(label=text)
@@ -412,13 +446,19 @@ class Dashboard(Gtk.Window):
     def _render(self, jawn_up, ble_up):
         if jawn_up:
             self.start_requested_at = 0.0
-            js = "running"
+            js, colour = "running", GREEN_RGB
         elif self.start_requested_at:
             age = int(GLib.get_monotonic_time() / 1e6 - self.start_requested_at)
-            js = "starting... (%ds)" % age if age < 150 else "not running"
+            if age < 150:
+                js, colour = "starting... (%ds)" % age, AMBER_RGB
+            else:
+                js, colour = "not running", RED_RGB
         else:
-            js = "not running"
-        self.live.set_text("jawn: %s\nBLE bridge: %s" % (js, "running" if ble_up else "stopped"))
+            js, colour = "not running", RED_RGB
+        self.jawn_state.set_text("jawn  —  " + js)
+        self._set_dot(self.jawn_dot, colour)
+        self.ble_state.set_text("BLE bridge  —  " + ("running" if ble_up else "stopped"))
+        self._set_dot(self.ble_dot, GREEN_RGB if ble_up else DIM_RGB)
         return False
 
 
