@@ -210,7 +210,7 @@ function jawnosClockText(timestamp) {
 // present itself, and graphicalize clears it.)
 function jawnosClockAstray() {
 	var time_machine = localStorage.getItem('time_machine');
-	if (time_machine && time_machine != '0s' && time_machine != 'in 0s') { return true; }
+	if (time_machine && time_machine != '0s' && time_machine != 'in 0s' && time_machine.toLowerCase() != 'now') { return true; }
 	var timeshift = parseFloat(localStorage.getItem('timeshift'));
 	return isFinite(timeshift) && timeshift != 0;
 }
@@ -226,9 +226,66 @@ var jawnosClockStamp = null;
 function jawnosClockShow(timestamp) {
 	if (timestamp !== undefined && timestamp !== null) { jawnosClockStamp = timestamp; }
 	if (jawnosClockStamp === null) { return; }
+	// a poll must not clobber the time machine while it is being typed into
+	if (jawnosClockEditing()) { jawnosClockAstrayApply(); return; }
 	$('#taskbar_clock').html(jawnosClockText(jawnosClockStamp));
 	jawnosClockAstrayApply();
 }
+
+// The clock doubles as a time machine: click it and type a time - "-3h", "jul
+// 16", "last dec 25", "dec 25 2025 at 7:04pm" - and Enter carries the view
+// there, exactly as the keyboard's #time_machine does. Escape or a click away
+// leaves the view where it was, and an empty entry is "now".
+function jawnosClockEditing() {
+	return $('#taskbar_clock').hasClass('editing');
+}
+function jawnosClockEditStart() {
+	var clock = $('#taskbar_clock');
+	if (!clock.length || jawnosClockEditing()) { return; }
+	if (typeof jawnosTaskbarEditing == 'function' && jawnosTaskbarEditing()) { return; }
+	var current = '';
+	try { current = localStorage.getItem('time_machine') || ''; } catch (e) { current = ''; }
+	clock.data('clock_html', clock.html());
+	clock.addClass('editing');
+	clock.html('<input type="text" class="taskbar_clock_input" placeholder="Time machine">');
+	var input = clock.find('.taskbar_clock_input');
+	input.val(current).focus();
+	try { input[0].select(); } catch (e) {}
+}
+function jawnosClockEditEnd(commit) {
+	var clock = $('#taskbar_clock');
+	if (!jawnosClockEditing()) { return; }
+	var input = clock.find('.taskbar_clock_input');
+	var value = input.length ? (input.val() || '') : '';
+	var saved = clock.data('clock_html');
+	clock.removeClass('editing').removeData('clock_html');
+	clock.html(saved === undefined ? '' : saved);
+	value = value.replace(/^\s+|\s+$/g, '');
+	if (commit) {
+		try { localStorage.setItem('time_machine', value); } catch (e) {}
+		$('#time_machine').val(value);
+		jawnosClockAstrayApply();
+		// one fetch, the same the poll makes: the view slides to the new centre
+		if (typeof calculator == 'function') { calculator(); }
+	}
+	else {
+		jawnosClockAstrayApply();
+	}
+}
+$(document).on('click', '#taskbar_clock', function (e) {
+	if ($(e.target).is('.taskbar_clock_input')) { return; }
+	jawnosClockEditStart();
+});
+$(document).on('keydown keypress keyup', '.taskbar_clock_input', function (e) {
+	// keep the typed keys away from the app's own shortcut handlers
+	e.stopPropagation();
+	if (e.type != 'keydown') { return; }
+	if (e.keyCode == 13) { e.preventDefault(); jawnosClockEditEnd(true); }
+	else if (e.keyCode == 27) { e.preventDefault(); jawnosClockEditEnd(false); }
+});
+$(document).on('focusout', '.taskbar_clock_input', function () {
+	jawnosClockEditEnd(true);
+});
 
 // The search's own home: the taskbar's right end, the start menu's corner
 // beside the leave, now and bird buttons, or the dock's row. One writer, so the

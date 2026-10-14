@@ -217,6 +217,23 @@ our %topic = (
 		],
 		related => [ 'ide', 'process_monitor' ]
 	},
+	'camera' => {
+		title => 'Camera', category => 'apps', app => 'camera',
+		templates => [ 'templates/apps/camera.html.ep' ],
+		controls => [ 'Take a photo', 'Record a video' ],
+		verified => '2026-10-14',
+		summary => 'The device camera and video recorder, from the app.',
+		body => [
+			'Camera opens the device camera and its video recorder, so a photo or a video is taken with a viewfinder you can see and the camera\'s own processing. It is the app\'s own camera (window.JawnCamera); in a plain browser there is no bridge, and the panel says so.',
+			'A capture is filed under the Camera app. The same pair of buttons rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.'
+		],
+		steps => [
+			'Open Camera from the start menu, or pin it to the taskbar.',
+			'Tap Take a photo or Record a video; the OS camera opens.',
+			'The capture is saved when you accept it in the camera.'
+		],
+		related => [ 'gallery' ]
+	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
 		verified => '2026-10-14',
@@ -552,13 +569,15 @@ our %topic = (
 		body => [
 			'The taskbar is an ordered list of slots: the open windows, the clock, the start button, the search box and any apps or keyboards you have pinned. It can sit on any edge, be shown, hidden or set to auto-hide.',
 			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.',
-			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now.'
+			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now.',
+			'Click the clock to use it as a time machine: type a time - "-3h", "jul 16", "last dec 25", "dec 25 2025 at 7:04pm" - and press Enter to carry the view there, or Escape to leave it. An empty entry is now.'
 		],
 		steps => [
 			'Right-click the bar to open its context menu.',
 			'Turn on edit mode to rearrange the slots and pins.',
 			'Or use Position to move the bar, and Autohide to tuck it away.',
-			'Set the clock\'s format and time zone from the same menu.'
+			'Set the clock\'s format and time zone from the same menu.',
+			'Click the clock and type a time to travel to it.'
 		],
 		related => [ 'start_menu', 'dock', 'windows' ]
 	},
