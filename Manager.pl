@@ -3982,7 +3982,7 @@ get '/manager/configure/ping' => sub($c) {
 get '/manager/rsync_pack' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $folder = $c->param('folder') || 'jawnos';
 	$folder =~ s{.*/}{};
 	my $home = &subs::home('~/');
@@ -3994,7 +3994,7 @@ get '/manager/rsync_pack' => sub($c) {
 post '/manager/rsync_unpack' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $folder = $c->param('folder') || 'jawnos';
 	$folder =~ s{.*/}{};
 	my $body = $c->req->body;
@@ -4013,7 +4013,7 @@ post '/manager/rsync_unpack' => sub($c) {
 get '/manager/backup_serve' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
 	# A remote backup's archive is a one-shot temp under ~/.president, made for
@@ -4124,7 +4124,7 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 post '/manager/self_deploy' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	# force reconciles a tree git cannot fast-forward (origin's history was
 	# rewritten, or local commits exist) by resetting hard to origin/main; off by
@@ -4198,7 +4198,7 @@ sub app_release_lister {
 get '/manager/code_bundle' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	my $git = &subs::git_binary();
 	my $base = $c->param('base') || '';
@@ -4918,6 +4918,8 @@ sub remote_useragent_maker($data) {
 	my $auth_test = $data->{'auth_test'};
 	my $ua = Mojo::UserAgent->new();
 	$ua = $ua->max_response_size(0);
+	# every request on the peer rail names this machine and carries a signature
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 	unless ($rm) {
 		if ($uuid) {
 			$rm = &subs::remote_machine_lister({ uuid => $uuid, limit => 1 });
@@ -19387,7 +19389,7 @@ sub remote_command_execute($c, $action) {
 post '/manager/remote_command' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $result = remote_command_run($c, {
 		text => $c->param('text'), verb => $c->param('verb'), args => $c->param('args'),
 		target => $c->param('target'), model => $c->param('model')
@@ -23490,6 +23492,9 @@ sub update_database($data) {
 		# driver's limit and left the tab unrecorded. Add it here for existing installs
 		# (schema.sql carries it for a database built fresh).
 		'alter table websockets add column revision VARCHAR(255)',
+		# peers prove themselves with an Ed25519 signature now; the roster row
+		# carries the public key (schema.sql has it for a fresh database).
+		'alter table remote_machines add column pubkey LONGTEXT',
 		'CREATE INDEX IF NOT EXISTS idx6_warehouse on warehouse (kind)',
 		'CREATE INDEX idx1_tunnels on tunnels (signatorial)',
 		'CREATE INDEX idx2_settings on settings (setting,device)',
@@ -24231,7 +24236,7 @@ post '/manager/president' => sub($c) {
 
 	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $remote_signatorial })->hashes->[0];
 	$log->info('president route: command=' . ($command || '') . ' from=' . ($remote_signatorial || '') . ' ip=' . $c->tx->remote_address) if $log;
-	if ($rm->{'signatorial'} && $command eq 'restart') {
+	if ($rm && &subs::peer_verify($c, $rm) && $command eq 'restart') {
 		&president_restarter();
 	}
 	$c->render(json => { command => $command, remote_signatorial => $remote_signatorial });
@@ -24262,7 +24267,11 @@ get '/manager/remote_auth_test' => sub($c) {
 		$c->render(json => { chip_chyea => $chip_chyea });
 	}
 	elsif ($c->param('auth_test') eq 'yes') {
-		my $rm = &subs::db_query('select ip,deletions,signatorial from remote_machines where signatorial = ?', $signatorial)->hashes;
+		my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
+		unless (scalar @{$rm} > 0 && &subs::peer_verify($c, $rm->[-1])) {
+			$c->rendered(403);
+			return;
+		}
 		my $now = &subs::rightNow();
 		my $appt = &subs::db_query('select server_time,app from appointments where (status is null or status != ?) and server_time < ? order by server_time DESC LIMIT 1', 'deleting', $now - 2500)->hashes->[0];
 		if (scalar @{$rm} > 0) {

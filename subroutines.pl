@@ -8237,6 +8237,105 @@ sub suds_grabber {
 	return $gb::suds;
 }
 
+# --- peer keys ---------------------------------------------------------------
+# Every machine gets an Ed25519 keypair at first use (~/.peer.key, 0600, never
+# in the database or a code sync). Requests between machines carry a timestamp,
+# a nonce and a signature over method and path; once a peer's key is on file an
+# unsigned request is refused, so a leaked address, cookie or signatorial is no
+# longer enough to pull a backup or push code. The first verified contact pins
+# the offered key to the peer's row (trust on first use).
+sub peer_key_paths {
+	my $key = &home('~/.peer.key');
+	my $pub = &home('~/.peer.pub');
+	unless (-e $key && -s $key > 0) {
+		`openssl genpkey -algorithm ED25519 -out "$key" 2>/dev/null`;
+		chmod 0600, $key;
+	}
+	unless (-e $pub && -s $pub > 0) {
+		`openssl pkey -in "$key" -pubout -out "$pub" 2>/dev/null`;
+	}
+	return ($key, $pub);
+}
+
+sub peer_pubkey {
+	my ($key, $pub) = &peer_key_paths();
+	return unless -e $pub;
+	return read_file($pub);
+}
+
+sub peer_sign_message {
+	my ($method, $path_query, $ts, $nonce) = @_;
+	return join "\n", ($method // ''), ($path_query // ''), ($ts // ''), ($nonce // '');
+}
+
+# Name this machine and sign the request it is about to make. Attached to a
+# peer user agent's start event, so every request on that rail is signed.
+sub peer_sign_request {
+	my ($req) = @_;
+	my ($key) = &peer_key_paths();
+	return unless -e $key && -s $key > 0;
+	my $ts = time();
+	my $nonce = &random_string_creator(24);
+	my $id = &random_string_creator(16);
+	my $msg_file = "/tmp/peer_$id.msg";
+	my $sig_file = "/tmp/peer_$id.sig";
+	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
+	`openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg_file" -out "$sig_file" 2>/dev/null`;
+	my $sig = (-e $sig_file) ? read_file($sig_file) : '';
+	my $pub = &peer_pubkey();
+	if ($sig && $pub) {
+		$req->headers->header('X-Peer-Timestamp', $ts);
+		$req->headers->header('X-Peer-Nonce', $nonce);
+		$req->headers->header('X-Peer-Signature', encode_base64($sig, ''));
+		$req->headers->header('X-Peer-Key', encode_base64($pub, ''));
+	}
+	`shred -u "$msg_file" "$sig_file" 2>/dev/null`;
+	return 1;
+}
+
+# The server half: is this request really from the peer it claims, and has it
+# not been seen before? Unsigned requests pass only while the peer has no key on
+# file yet, so machines upgrade without a flag day; once pinned, only a fresh
+# valid signature from the holder of the private key gets through.
+sub peer_verify {
+	my ($c, $rm) = @_;
+	return 0 unless $rm && $rm->{'signatorial'};
+	my $stored = $rm->{'pubkey'} // '';
+	my $ts = $c->req->headers->header('X-Peer-Timestamp');
+	my $nonce = $c->req->headers->header('X-Peer-Nonce');
+	my $b64sig = $c->req->headers->header('X-Peer-Signature');
+	my $b64key = $c->req->headers->header('X-Peer-Key');
+	return 1 unless $ts || $nonce || $b64sig;
+	return 0 unless $ts && $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
+	return 0 unless $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
+	my $pubkey = $stored;
+	$pubkey = eval { decode_base64 $b64key } if (!$pubkey && $b64key);
+	return 0 unless $pubkey && index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $sig = eval { decode_base64 $b64sig } || '';
+	return 0 unless length $sig;
+	my $stamp = $rm->{'signatorial'} . ':' . $nonce;
+	my $q = &db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'peer_nonce', $stamp);
+	my $seen = $q ? $q->hashes->[0] : undef;
+	return 0 if $seen && $seen->{'server_time'};
+	my $id = &random_string_creator(16);
+	my $msg_file = "/tmp/peer_$id.msg";
+	my $sig_file = "/tmp/peer_$id.sig";
+	my $key_file = "/tmp/peer_$id.pub";
+	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce));
+	write_file($sig_file, $sig);
+	write_file($key_file, $pubkey);
+	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
+	`shred -u "$msg_file" "$sig_file" "$key_file" 2>/dev/null`;
+	return 0 unless $ok;
+	# the nonce is spent; the first verified contact pins the offered key
+	&db_query('delete from cache where context = ? and uuid = ?', 'peer_nonce', $stamp);
+	&db_query('insert into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $stamp, 'peer_nonce', '__president', &rightNow(), &rightNow());
+	unless ($stored) {
+		&db_update('remote_machines', { pubkey => $pubkey }, { uuid => $rm->{'uuid'} });
+	}
+	return 1;
+}
+
 sub c_maker() {
 	my $c = &subs::controller_builder();
 	&subs::suds_grabber();

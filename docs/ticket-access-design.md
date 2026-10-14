@@ -132,8 +132,14 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    stores the pubkey), challenge/verify endpoints, server-side sessions, roster + revoke UI in
    `templates/security.html.ep` (and its help topic).
 3. **Recovery** — recovery code at initialization; second-device approval flow.
-4. **Peer keys** — machine keypairs, roster column, signed requests across the `remote_*`
-   routes.
+4. **Peer keys** — *(done in this build)* each machine has an Ed25519 pair (`~/.peer.key`);
+   `remote_useragent_maker` signs every peer request (timestamp + nonce over method/path),
+   and `subs::peer_verify` checks it against `remote_machines.pubkey`, pinning the key on
+   the first verified contact; unsigned requests pass only until a key is pinned.
+   Converted: rsync_pack/unpack, backup_serve, self_deploy, code_bundle, remote_command,
+   remote_auth_test, `/manager/president`. Still legacy: app_release/app_download and
+   voice_release/voice_download (the phone app fetches those), the tunnel websocket, and
+   the `/mail/msg` neighbour path.
 
 ## What this buys
 
@@ -150,8 +156,8 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
   doors, not the house from itself.
 - The T-Deck and T-Watch keep narrow ticket/relay access; they cannot hold browser keys.
 
-## Open questions
+## Decisions (was: open questions)
 
-- Recovery code: a printed word string (BIP39-style) acceptable as the offline path?
-- Phase 4 (peer keys): now, or after phases 0–3?
-- Should residents be allowed to pair devices, or stay ticket-only (recommended ticket-only)?
+- Recovery code: a printed word string, paper only — accepted; Phase 3.
+- Peer keys: now — done in this build.
+- Residents: ticket-only, never device keys.
