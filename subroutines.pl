@@ -975,7 +975,7 @@ sub resolve_when {
 	elsif ($scan =~ /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/) {
 		($mon, $day) = ($1 + 0, $2 + 0);
 		$date_like = 1;
-		if (defined $3) { $year = $3 < 100 ? ($3 < 70 ? 2000 + $3 : 1900 + $3) : $3 + 0; $year_given = 1; }
+		if (defined $3) { $year = $3 < 100 ? ($3 < 69 ? 2000 + $3 : 1900 + $3) : $3 + 0; $year_given = 1; }
 	}
 	if (!$date_like && $scan =~ /\b(1\d{3}|2\d{3})\b/) { $year = $1 + 0; $date_like = $year_given = 1; }
 	if (!$mon && $scan =~ /\b(january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/) {
@@ -1001,8 +1001,17 @@ sub resolve_when {
 		$day = $1 + 0;
 		$residual =~ s/\b0*\Q$day\E\b/ /g;
 	}
-	if (!$has_time && $residual =~ /\b(\d{1,2})\b/) {
-		$hour = $1 + 0; $min = 0; $sec = 0; $has_time = 1;
+	# a lone small number left over is the hour ("16th 2"); a two-figure number
+	# too big for an hour is a short year ("oct 12 96" is October 12 1996)
+	if ($residual =~ /\b(\d{1,2})\b/) {
+		my $n = $1 + 0;
+		if (!$has_time && $n <= 24) {
+			$hour = $n; $min = 0; $sec = 0; $has_time = 1;
+		}
+		elsif (!defined $year && $n >= 25) {
+			$year = $n < 69 ? 2000 + $n : 1900 + $n;
+			$year_given = 1;
+		}
 	}
 
 	$year = $now[5] + 1900 unless defined $year;
