@@ -121,7 +121,7 @@ function jawnosAgentsRender(panel, agents) {
 		var actions = $('<div style="margin:4px 0 0;"></div>');
 		row.append(actions);
 		if (is_open) {
-			var raise = $('<span class="hover" hint="Bring this agent forward" style="font-size:12px;opacity:.8;text-decoration:underline;">bring forward</span>');
+			var raise = $('<span class="hover" hint="Bring this agent forward" style="font-size:12px;opacity:.8;text-decoration:underline;margin-right:10px;">bring forward</span>');
 			raise.on('click', function (e) { e.stopPropagation(); jawnosAgentsShow(key); });
 			actions.append(raise);
 		}
@@ -129,19 +129,17 @@ function jawnosAgentsRender(panel, agents) {
 			var reopen = $('<span class="hover" hint="Re-open this conversation, with what was said" style="font-size:12px;opacity:.8;text-decoration:underline;margin-right:10px;">re-open</span>');
 			reopen.on('click', function (e) { e.stopPropagation(); jawnosAgentsShow(key); });
 			actions.append(reopen);
-			var del = $('<span class="jawnos_agents_delete hover" hint="Throw this history away (press twice)" style="font-size:12px;opacity:.8;color:#c33;cursor:pointer;">delete</span>');
-			del.on('click', function (e) {
-				e.stopPropagation();
-				if (del.attr('armed') === 'yes') {
-					$.post('/manager/agents/delete', { kind: a.kind, name: a.name }, function () { jawnosAgentsLoad(panel); });
-					return;
-				}
-				del.attr('armed', 'yes');
-				del.css({ 'background-color': 'red', 'color': '#fff', 'padding': '0 4px', 'border-radius': '4px' });
-				setTimeout(function () { del.css({ 'background-color': '', 'color': '#c33', 'padding': '', 'border-radius': '' }); del.attr('armed', 'no'); }, 2000);
-			});
-			actions.append(del);
 		}
+		// every row deletes - an open one too: its panels go with it
+		var del = $('<span class="jawnos_agents_delete hover" hint="Throw this conversation away (press twice)" style="font-size:12px;opacity:.8;color:#c33;cursor:pointer;">delete</span>');
+		del.on('click', function (e) {
+			e.stopPropagation();
+			if (del.attr('armed') === 'yes') { jawnosAgentsDelete(panel, a); return; }
+			del.attr('armed', 'yes');
+			del.css({ 'background-color': 'red', 'color': '#fff', 'padding': '0 4px', 'border-radius': '4px' });
+			setTimeout(function () { del.css({ 'background-color': '', 'color': '#c33', 'padding': '', 'border-radius': '' }); del.attr('armed', 'no'); }, 2000);
+		});
+		actions.append(del);
 		row.on('click', function () { jawnosAgentsShow(key); });
 		rows.append(row);
 	});
@@ -156,6 +154,40 @@ function jawnosAgentsShow(key) {
 	var name = bits.join(':');
 	if (kind === 'guide') { assistantOpenConversation(name); return; }
 	if (kind === 'coding' && typeof codingChatOpenConversation === 'function') { codingChatOpenConversation(name); }
+}
+
+function jawnosAgentsDelete(panel, a) {
+	$.post('/manager/agents/delete', { kind: a.kind, name: a.name }, function () {
+		jawnosAgentsTakeAway(a.kind, a.name);
+		jawnosAgentsLoad(panel);
+	});
+}
+
+// The conversation is gone on the server: take its panels with it. A spawned
+// panel goes away whole; the one the layout owns - the taskbar's own associate,
+// or a chatbox mounted in an app's window - clears instead, because it is the
+// layout's, not the conversation's.
+function jawnosAgentsTakeAway(kind, name) {
+	if (kind === 'guide') {
+		$('.assistant_view').filter(function () { return ($(this).attr('conversation') || 'assistant') === name; }).each(function () {
+			var panel = $(this);
+			if (panel.attr('spawned')) { panel.remove(); return; }
+			panel.find('.assistant_chat_log').empty();
+			panel.data('thread', []);
+			panel.removeData('greeted');
+			panel.removeData('title');
+			panel.find('.assistant_title').text("Guide's associate");
+			panel.hide();
+		});
+		return;
+	}
+	$('.coding_chat').filter(function () { return ($(this).attr('conversation') || $(this).attr('mount')) === name; }).each(function () {
+		var panel = $(this);
+		if (panel.attr('spawned')) { panel.remove(); return; }
+		panel.find('.coding_chat_log').empty();
+		panel.data('title', '');
+		if (typeof codingChatAdd === 'function') { codingChatAdd(panel.attr('mount'), 'step', 'This conversation was deleted.'); }
+	});
 }
 
 $(document).on('click', '.jawnos_agents_close', function () { jawnosAgentsPanel().hide(); });
