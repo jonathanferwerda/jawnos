@@ -76,6 +76,11 @@
 			<% my $watching = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // ''); %>
 			<input type="checkbox" class="configure_input" app="mail" setting="error_watch" <% if ($watching eq 'on') { %>checked<% } %>>
 		</div>
+		<div class="cfg-row">
+			<label>Tokens/day</label>
+			<% my $watch_budget = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' }) // ''); %>
+			<input type="text" class="configure_input" app="mail" setting="error_watch_budget" value="<%= $watch_budget %>" placeholder="1000000 — 0 for no cap">
+		</div>
 	</div>
 
 	<h3>Provider access</h3>

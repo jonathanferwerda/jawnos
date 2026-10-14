@@ -10071,8 +10071,9 @@ sub ai_providers() {
 		{ id => 'xai',        label => 'xAI (Grok)',            keys => [ [ 'xai_key', 'API key' ] ],
 			models => [ qw/grok-3 grok-3-mini grok-2-1212/ ] },
 		{ id => 'deepseek',   label => 'DeepSeek',              keys => [ [ 'deepseek_key', 'API key' ] ],
-			# The model ids must match DeepSeek's API exactly; add or rename here.
-			models => [ qw/deepseek-chat deepseek-reasoner deepseek-v4-flash deepseek-v4-pro deepseek-v4.1-flash deepseek-v4.1-pro/ ] },
+			# The ids must match DeepSeek's API exactly; its /models lists these two
+			# (deepseek-flash is V4.1 Flash, deepseek-v4-pro the pro).
+			models => [ qw/deepseek-flash deepseek-v4-pro/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
@@ -10160,6 +10161,9 @@ sub ai_model_paid {
 my $AI_UNAVAILABLE_FOR = 30 * 60 * 1000;
 # the model that actually answered the last ai_chat (a paid one may stand down)
 our $ai_last_model;
+# what model calls have cost, running (calls, in, out tokens): the error watch
+# reads it around a proposal to log the spend and to stop at its day's budget
+our $ai_tokens = { calls => 0, in => 0, out => 0, unmetered => 0 };
 sub ai_bucket_available {
 	my ($bucket) = @_;
 	return 1 unless $bucket;
@@ -10410,7 +10414,20 @@ sub ai_chat_raw {
 		}
 		return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200));
 	}
-	return (eval { return $res->json } || {}, undef);
+	my $body = eval { return $res->json } || {};
+	# Account what the call cost, so the error watch can log its spend and stop
+	# when the day's purse is empty. Providers differ in shape (an OpenAI-style
+	# usage, Cloudflare's own), so take whatever is there.
+	my $usage = $body->{'usage'} || $body->{'result'}->{'usage'} || {};
+	my $in = $usage->{'prompt_tokens'};
+	$in = $usage->{'input_tokens'} unless defined $in;
+	my $out = $usage->{'completion_tokens'};
+	$out = $usage->{'output_tokens'} unless defined $out;
+	$ai_tokens->{'calls'}++;
+	$ai_tokens->{'in'} += ($in // 0);
+	$ai_tokens->{'out'} += ($out // 0);
+	$ai_tokens->{'unmetered'}++ unless defined $in || defined $out;
+	return ($body, undef);
 }
 
 # The reply as parts, so a caller can take more than the words (an image a
@@ -12321,6 +12338,27 @@ sub error_watch_state_save {
 	write_file(&error_watch_offsets_file(), encode_json(\%error_watch_state));
 }
 
+# The watch's purse: what today's proposals have cost, kept in the local cache
+# (cache is never synced or backed up), so the day's budget can stop it before
+# a runaway spend. The ceiling is the error_watch_budget setting (tokens/day;
+# unset means a 1,000,000-a-day default, and 0 means no ceiling).
+sub watch_tokens_day { return localtime()->strftime('%Y-%m-%d'); }
+
+sub watch_tokens_spent {
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_tokens', subcontext => &watch_tokens_day() });
+	return (ref $row eq 'HASH') ? ($row->{'total'} || 0) : 0;
+}
+
+sub watch_tokens_add {
+	my ($tokens) = @_;
+	return unless $tokens;
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_tokens', subcontext => &watch_tokens_day() }) || {};
+	&subs::cache_set(
+		{ app => '__president', context => 'watch_tokens', subcontext => &watch_tokens_day(), warranty => '-2d' },
+		{ total => ($row->{'total'} || 0) + $tokens, proposals => ($row->{'proposals'} || 0) + 1 }
+	);
+}
+
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
@@ -12580,6 +12618,18 @@ sub coding_propose_fix {
 		&subs::db_update('staged_fixes', { note => 'no Coding model is set (Configure -> Plat)' }, { uuid => $row->{'uuid'} });
 		return;
 	}
+	# The purse: a proposal costs a handful of calls. The day's ceiling (a
+	# setting, in tokens) stops the watch before a runaway spend, and one run
+	# stops at its own cap below.
+	my $budget = &subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' });
+	$budget = (defined $budget && $budget =~ /^\d+$/) ? ($budget + 0) : 1000000;   # unset: a million a day; 0: no cap
+	my $spent_today = &watch_tokens_spent();
+	if ($budget && $spent_today >= $budget) {
+		&subs::db_update('staged_fixes', { note => "the day's token budget is spent ($spent_today/$budget)" }, { uuid => $row->{'uuid'} });
+		$log->info('error watch: proposal skipped for "' . substr($row->{'signature'} || '?', 0, 80) . "\" - day's token budget is spent ($spent_today/$budget)") if defined $log;
+		return 'over-budget';
+	}
+	my $ai_start = { calls => $ai_tokens->{'calls'}, in => $ai_tokens->{'in'}, out => $ai_tokens->{'out'} };
 	require &error_watch_repo() . '/help.pl';
 	my $system = &help::coding_propose_prompt();
 	my $protocols = &coding_protocols_text();
@@ -12613,6 +12663,10 @@ sub coding_propose_fix {
 		push @lines, 'ACTION: ' . encode_json($action);
 		push @lines, 'OBSERVATION: ' . $obs;
 		if ($action->{'action'} eq 'done' || $action->{'action'} eq 'say') { $final = $action->{'text'} // ''; last; }
+		if (($ai_tokens->{'in'} + $ai_tokens->{'out'}) - ($ai_start->{'in'} + $ai_start->{'out'}) > 80000) {
+			$final = "stopped: this run's token cap";
+			last;
+		}
 	}
 	my $files = scalar(keys %staged) ? encode_json(\%staged) : '';
 	&subs::db_update('staged_fixes', {
@@ -12623,6 +12677,14 @@ sub coding_propose_fix {
 		steps => encode_json(\@steps),
 		note => ($files ? '' : 'no file change was proposed'),
 	}, { uuid => $row->{'uuid'} });
+	my $run_calls = $ai_tokens->{'calls'} - $ai_start->{'calls'};
+	my $run_in = $ai_tokens->{'in'} - $ai_start->{'in'};
+	my $run_out = $ai_tokens->{'out'} - $ai_start->{'out'};
+	&watch_tokens_add($run_in + $run_out);
+	if (defined $log) {
+		$log->info('error watch: ' . ($files ? 'proposed' : 'no proposal') . ' for "' . substr($row->{'signature'} || '?', 0, 80) . '" - '
+			. $run_calls . ' call(s), in ' . $run_in . ' out ' . $run_out . ' tokens, day ' . &watch_tokens_spent() . ($budget ? '/' . $budget : ' (no cap)'));
+	}
 	return $files ? 'proposed' : 'failed';
 }
 
