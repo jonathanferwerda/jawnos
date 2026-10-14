@@ -255,7 +255,7 @@ $(document).on('click', '#rotate_key', function() {
 			}
 			$('#security').replaceWith(response.html);
 			appointment_chron();
-			$('#rotate_key_note').text('Rotated. Write down a new recovery code.');
+			$('#rotate_key_note').text('Rotated. Write down a new recovery code. Sealed files re-seal in the background.');
 		},
 		error: function() {
 			button.prop('disabled', false);

@@ -20565,6 +20565,11 @@ post '/manager/security/rotate_key' => sub($c) {
 		return;
 	}
 	my $result = &subs::rotate_house_key();
+	if ($result->{'ok'}) {
+		# the sweep re-sealed the database; the sealed files on disk go to the
+		# queue, which walks them resumably and re-seals each one in place
+		eval { &subs::minion_grabber()->enqueue('folders_reseal' => [ { before => $result->{'at'}, budget => 600 } ] => { attempts => 2 }) };
+	}
 	my $sec = &security_initializer($c);
 	$c->render(json => {
 		ok => $result->{'ok'} ? 1 : 0,

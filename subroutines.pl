@@ -5444,6 +5444,190 @@ sub folders_decrypt_job {
 	$job->finish($result);
 }
 
+# The sealed files under the given roots: dir_listing's find(1), with the name
+# filter left to the child, so a home with a hundred thousand files costs one
+# process to ask.
+sub sealed_files_under {
+	my ($roots) = @_;
+	my @roots = grep { defined $_ && length $_ && -d $_ } @{ $roots || [] };
+	return () unless @roots;
+	my @out;
+	my $listed = 0;
+	my $find = &find_program();
+	if ($find) {
+		if (open(my $fh, '-|', $find, @roots, '-type', 'f', '-iname', '*.enc', '-print0')) {
+			$listed = 1;
+			local $/ = "\0";
+			while (defined(my $path = <$fh>)) {
+				chop $path;
+				push @out, $path if length $path;
+			}
+			close $fh;
+		}
+	}
+	unless ($listed) {
+		find({ no_chdir => 1, wanted => sub { push @out, $File::Find::name if -f $_ && /\.enc$/i } }, @roots);
+	}
+	return sort @out;
+}
+
+# system() with the child's stderr sent to /dev/null: openssl enc -d chatters
+# "bad decrypt" on every wrong password, and a reseal pass tries many.
+sub system_quiet {
+	my @command = @_;
+	open my $saved, '>&', \*STDERR or return system(@command);
+	open STDERR, '>', '/dev/null' or do { close $saved; return system(@command) };
+	my $status = system(@command);
+	open STDERR, '>&', $saved;
+	close $saved;
+	return $status;
+}
+
+# A database backup is not a folder seal: backup_now appends its standard
+# after the ciphertext, marked with the universal splitter (the restore path
+# splits on it), so the tail tells the two apart without opening anything. The
+# marker is 31 characters, which random ciphertext does not spell by accident.
+sub reads_as_backup {
+	my ($file) = @_;
+	my $size = -s $file or return 0;
+	my $take = $size > 512 ? 512 : $size;
+	open my $fh, '<', $file or return 0;
+	binmode $fh;
+	seek $fh, $size - $take, 0;
+	my $tail = '';
+	read $fh, $tail, $take;
+	close $fh;
+	my $splitter = $gb::universal_splitter;
+	return (defined $tail && defined $splitter && length $splitter && index($tail, $splitter) >= 0) ? 1 : 0;
+}
+
+# The rotation's tail on disk: walk the sealed files and put every one that
+# opens under an old key back under the current one. The passwords are the ones
+# a rotation leaves reachable - the current suds first, so an already re-sealed
+# file is recognised and left alone, then every secret the security rows derive
+# (the wrapped old keys among them, which is what finds the old seals). Nothing
+# is ever lost to a guess: the original seal is replaced only once the new one
+# is written and opens back to the identical bytes, a file no password opens is
+# counted and left exactly as it was, database backups (recognised by the
+# standard they append after the ciphertext) are left whole, and a file written
+# since the rotation
+# (mtime past `before`) is skipped without opening, since it is already under
+# the new key. Batched by a time budget; when the budget runs out the job
+# queues its own follow-up, so a big home resumes by re-walking (already
+# re-sealed files skip in one cheap opening).
+sub folders_reseal_job {
+	my ($job, $data) = @_;
+	my $suds = eval { &suds_grabber() };
+	unless ($suds) { $job->fail('there is no key on this machine'); return }
+	my $standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my @passwords = ( $suds );
+	my $secrets = &db_query('select * from security where level != ? and level != ? order by server_time DESC', 'padlock', 'door');
+	foreach my $p ( @{$secrets->hashes} ) {
+		my $secret = &decrypter($suds, $p->{'credential'});
+		push @passwords, $secret if (defined $secret && length $secret);
+	}
+	my %seen;
+	@passwords = grep { !$seen{$_}++ } @passwords;
+	my $before = $data->{'before'} || 0;
+	my $budget = $data->{'budget'} || 600;
+	my $roots = (ref $data->{'roots'} && scalar @{$data->{'roots'}}) ? $data->{'roots'} : [ &home('~/') ];
+	my $references = &file_reference_read();
+	my $started = time();
+	my @files = &sealed_files_under($roots);
+	my ($resealed, $current, $unopened, $skipped, $backups, $count) = (0, 0, 0, 0, 0, 0);
+	my (@errors, $out_of_time, $cancelled);
+	foreach my $file ( @files ) {
+		$count++;
+		$job->note(progress => "re-sealed $resealed, current $current of " . scalar(@files) . " sealed files") if $count % 10 == 0;
+		if (($job->info->{'notes'} || {})->{'cancel'}) { $cancelled = 1; last; }
+		if (time() - $started > $budget) { $out_of_time = 1; last; }
+		# written since the rotation: already under the new key (stat is in
+		# seconds, the stamps in milliseconds)
+		if ($before && ((stat($file))[9] || 0) * 1000 > $before) { $skipped++; next; }
+		# a database backup carries its standard appended after the ciphertext
+		# (backup_now), so it is not a folder seal at all: leave it whole
+		if (&reads_as_backup($file)) { $backups++; next; }
+		my $remembered = &file_reference_remembered($references, $file) || {};
+		my @standards = ( $remembered->{'standard'}, $standard );
+		my %seen_standard;
+		@standards = grep { defined $_ && length $_ && !$seen_standard{$_}++ } @standards;
+		my $clear = $file . '.opening';
+		my ($opened_with, $opened_standard);
+		foreach my $which ( @standards ) {
+			foreach my $password ( @passwords ) {
+				next unless (defined $password && length $password);
+				unlink $clear if -e $clear;
+				my $status = &system_quiet('openssl', 'enc', '-d', '-k', $password, "-$which", '-pbkdf2', '-in', $file, '-out', $clear);
+				next unless ($status == 0 && -e $clear);
+				# nothing in the stream says which password is the one, so the
+				# opening is read as a file the way the decrypt job reads one
+				my $head = '';
+				if (open my $fh, '<', $clear) { binmode $fh; read $fh, $head, 1024; close $fh; }
+				my $type = File::Type->new()->mime_type($head);
+				if ($type ne 'application/octet-stream' || $head =~ /webm/ || &folders_reads_as_text($head) || ((-s $clear) == 0 && (-s $file) <= 48)) {
+					$opened_with = $password;
+					$opened_standard = $which;
+					last;
+				}
+			}
+			last if defined $opened_with;
+		}
+		unless (defined $opened_with) {
+			system('shred', '-u', $clear) if -e $clear;
+			$unopened++;
+			next;
+		}
+		if ($opened_with eq $suds) {
+			system('shred', '-u', $clear) if -e $clear;
+			$current++;
+			next;
+		}
+		# an old seal: put it back under the current key. The original file is
+		# only replaced once the new seal exists and opens to the same bytes.
+		my $seal = $file . '.resealing';
+		my $verify = $file . '.verifying';
+		unlink $seal if -e $seal;
+		my $status = system('openssl', 'enc', '-e', '-k', $suds, "-$opened_standard", '-pbkdf2', '-in', $clear, '-out', $seal);
+		if ($status != 0 || !-e $seal || (-s $seal) == 0) {
+			push @errors, $file . ': it could not be sealed again';
+			system('shred', '-u', $clear) if -e $clear;
+			unlink $seal if -e $seal;
+			next;
+		}
+		unlink $verify if -e $verify;
+		$status = system('openssl', 'enc', '-d', '-k', $suds, "-$opened_standard", '-pbkdf2', '-in', $seal, '-out', $verify);
+		my $same = ($status == 0 && -e $verify) ? (system('cmp', '-s', $clear, $verify) == 0 ? 1 : 0) : 0;
+		if (!$same) {
+			push @errors, $file . ': the new seal did not open back to the same bytes';
+			system('shred', '-u', $clear) if -e $clear;
+			system('shred', '-u', $verify) if -e $verify;
+			unlink $seal if -e $seal;
+			next;
+		}
+		unless (rename $seal, $file) {
+			push @errors, $file . ': the new seal could not take its place';
+			system('shred', '-u', $clear) if -e $clear;
+			system('shred', '-u', $verify) if -e $verify;
+			unlink $seal if -e $seal;
+			next;
+		}
+		system('shred', '-u', $clear) if -e $clear;
+		system('shred', '-u', $verify) if -e $verify;
+		$resealed++;
+	}
+	my $result = { resealed => $resealed, current => $current, unopened => $unopened, skipped => $skipped, backups => $backups, files => scalar @files };
+	if (scalar @errors) { $result->{'errors'} = \@errors; $job->fail($result); return; }
+	$result->{'cancelled'} = 1 if $cancelled;
+	$job->note(progress => "re-sealed $resealed, current $current, unopened $unopened of " . scalar(@files));
+	$job->finish($result);
+	# out of time, not out of files: hand the next stretch to a fresh job
+	if ($out_of_time) {
+		my $run = ($data->{'run'} || 1) + 1;
+		eval { &minion_grabber()->enqueue('folders_reseal' => [ { before => $before, budget => $budget, run => $run, roots => $data->{'roots'} } ] => { attempts => 2 }) } if $run <= 20;
+	}
+	return;
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
@@ -5454,6 +5638,7 @@ sub minion_task_list {
 		folders_copy => \&folders_copy_job,
 		folders_encrypt => \&folders_encrypt_job,
 		folders_decrypt => \&folders_decrypt_job,
+		folders_reseal => \&folders_reseal_job,
 		appointment_evaluation => \&appointment_evaluation_job
 	};
 }
@@ -8463,7 +8648,7 @@ sub rotate_house_key {
 		&db_delete('settings', { app => '__president', setting => 'recovery_stale' });
 		&db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'key_rotation', timestamp => $now, server_time => $now });
 	}
-	return { ok => 1, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
+	return { ok => 1, at => $now, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
 }
 
 # --- legacy seals -------------------------------------------------------------
