@@ -5882,6 +5882,29 @@ sub backups_dir {
 	return $dir;
 }
 
+# Adopt a pre-fixed-path install: move the database the old scan would have
+# chosen, and the .enc backups beside it, into database/. Runs once, and only
+# when the fixed database is missing, so pulling this build onto an existing
+# machine needs no hand - the first database_grabber migrates it in place.
+sub database_adopt_legacy {
+	my $dir = &subs::home($config->{'start_dir'} || '~/');
+	$dir =~ s{/+$}{};
+	my @dbs = grep { -s $_ > 5000 && $_ !~ /-(?:shm|wal)$/ } glob("$dir/*.db");
+	return unless scalar @dbs;
+	my ($legacy) = sort { (-M $b) <=> (-M $a) } @dbs;
+	my $target = &subs::database_path();
+	my $base = $legacy;
+	$base =~ s{.*/}{};
+	$base =~ s/\.db$//i;
+	`mv -f "$legacy" "$target" 2>/dev/null`;
+	`mv -f "$legacy-shm" "$target-shm" 2>/dev/null`;
+	`mv -f "$legacy-wal" "$target-wal" 2>/dev/null`;
+	my $backups = &subs::backups_dir();
+	`mv -f "$dir/$base"*.enc "$backups/" 2>/dev/null`;
+	&subs::log_writer('database adopted into the install: ' . $target);
+	return $target;
+}
+
 sub database_grabber() {
 	my $connection = shift || '';
 	# A forked child inherits the parent's handle. Detach it so our exit cannot
@@ -5916,8 +5939,10 @@ sub database_grabber() {
 		}
 	}
 	# One machine, one database, at its fixed install path - no scan for the
-	# newest .db, so a stray file can never become the database.
+	# newest .db, so a stray file can never become the database. An older build
+	# kept it under start_dir, so the first run after this one adopts that.
 	my $database = &subs::database_path();
+	unless (-e $database) { &subs::database_adopt_legacy(); }
 
 	if ($database && -e $database && -s $database > 5000) {
 
