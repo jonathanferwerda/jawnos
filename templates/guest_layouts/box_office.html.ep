@@ -19,7 +19,7 @@
 			console.log(jso);
 			var jss = JSON.stringify(jso);
 
-			gateKeeper(jso);
+			try { gateKeeper(jso); } catch (e) { console.log(e); }
 			window.location = jso['redirector'];
 	</script>
 </html>

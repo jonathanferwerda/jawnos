@@ -120,11 +120,15 @@ function gateKeeper(response) {
 	if (response.authentication == 'approved') {
 		if (isJson(response.debriefer)) {
 			var d = eval(JSON.parse(response.debriefer));
-			$.each(d,function(i,v) {
-				localStorage.setItem(i,v);
-			});
-			if(!d.redirector) {
-				window.location.reload();
+			// a ticket minted without a debriefer parses to null; guard it or this
+			// throws and the caller (the box office splash) never redirects
+			if (d && typeof d === 'object') {
+				$.each(d,function(i,v) {
+					localStorage.setItem(i,v);
+				});
+				if(!d.redirector) {
+					window.location.reload();
+				}
 			}
 		}
 
