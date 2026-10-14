@@ -4941,6 +4941,17 @@ websocket '/manager/tunnel/ws' => sub ($c) {
 post '/manager/tunnel/alive' => sub($c) {
 	my $chip_chyea = $c->param('chip_chyea');
 	my $signatorial = $c->param('signatorial');
+	# This route sits on the gate-exempt peer rail (hooks.pl) so a tunnelled peer
+	# whose session has lapsed can still prove its data plane. Exempt is not open:
+	# the caller signs the request like every other peer-rail call (the checker
+	# posts it on remote_useragent_maker's UA), so authenticate it against the
+	# roster row it names - without this, anyone quoting a signatorial could make
+	# this hub dial every peer it knows with an attacker's chip_chyea.
+	my $self_row = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes->[-1];
+	unless ($self_row && &subs::peer_verify($c, $self_row)) {
+		$c->rendered(403);
+		return;
+	}
 	my $network = $c->param('network');
 	my $interval = $c->param('interval');
 	my $remote_address = $c->tx->remote_address;

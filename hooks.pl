@@ -236,6 +236,11 @@ hook before_dispatch => sub {
 		# against the roster (peer_verify), so a peer whose session cookie has
 		# lapsed can still handshake and reconnect
 		$path eq '/manager/remote_auth_test' ||
+		# the tunnel liveness ping rides the same bare signed rail, and the hub's
+		# reply to it (the peer's remote_auth_test callback) is the same handshake -
+		# so a tunnelled peer whose session lapsed must still reach it. The route
+		# peer_verifies the sig against the roster itself (see Manager.pl).
+		$path eq '/manager/tunnel/alive' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
