@@ -2,8 +2,10 @@
 	# A Coding-agent chatbox any app can mount: pass a unique mount (also used as
 	# the conversation name, so each app keeps its own thread) and an optional
 	# label. The panel stays hidden until its .coding_chat_toggle is pressed; the
-	# words go to /manager/coding/heal, which edits and ships the repo. Its fixes
-	# button swaps the chat for the error watch's staging area (staged_fixes):
+	# words go to /manager/coding/heal, which edits and ships the repo. Its bar
+	# drags the panel (codingChatDraggable) and the + in the bar opens another
+	# agent, with its own conversation, so several can sit on screen at once. Its
+	# fixes button swaps the chat for the error watch's staging area (staged_fixes):
 	# errors caught in the tree's own log, each with the fix the agent proposed,
 	# waiting for Apply.
 	my $m = $mount // 'app';
@@ -11,8 +13,9 @@
 %>
 <div class="coding_chat" id="coding_chat_<%= $m %>" mount="<%= $m %>" conversation="<%= $m %>"
 	style="position:absolute;right:10px;bottom:48px;width:360px;max-width:92%;height:340px;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;z-index:4000;">
-	<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);">
-		<span style="flex:1;font-weight:bold;font-size:13px;opacity:.85;"><%= $l %></span>
+	<div class="coding_chat_header" hint="Drag here to move this panel" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);cursor:move;">
+		<span class="coding_chat_title" style="flex:1;font-weight:bold;font-size:13px;opacity:.85;"><%= $l %></span>
+		<span class="coding_chat_new hover" hint="Open another coding agent, with its own thread" style="cursor:pointer;font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
 		<span class="coding_fixes_toggle hover" hint="Errors caught in the tree's log, and fixes staged for your word" style="cursor:pointer;font-size:12px;opacity:.6;">fixes <b class="coding_fixes_count">0</b></span>
 		<span class="coding_chat_forget hover" hint="Forget this conversation" style="cursor:pointer;font-size:12px;opacity:.6;">forget</span>
 		<span class="coding_chat_close hover" hint="Close" style="cursor:pointer;font-size:14px;opacity:.7;padding:0 4px;">✕</span>

@@ -19918,6 +19918,33 @@ get '/manager/coding/fixes' => sub($c) {
 	});
 };
 
+# The fixed list: every error the watch caught and the Coding agent fixed - a
+# row turns 'applied' only once the finishing routine (bump, commit, push) has
+# run, and its note carries when it shipped and the version it shipped as. Read
+# from Configure -> Plat's Self-healing card, under the auto-heal tick.
+get '/manager/coding/fixes_fixed' => sub($c) {
+	my $rows = eval { &subs::db_query('select * from staged_fixes where status = ? order by ost desc limit 100', 'applied')->hashes } || [];
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		my $files = eval { decode_json $r->{'files'} } || {};
+		my ($applied, $version) = (($r->{'note'} || '') =~ /^applied\s+(\d+)(?:\s+as\s+v(\S+))?/) ? ($1, $2) : (undef, undef);
+		push @out, {
+			uuid => $r->{'uuid'},
+			source => $r->{'source'},
+			signature => $r->{'signature'},
+			sample => $r->{'sample'},
+			summary => $r->{'summary'},
+			model => $r->{'model'},
+			seen => ($r->{'tally'} || 0) + 0,
+			created => $r->{'ost'},
+			applied => $applied,
+			version => $version,
+			files => [ sort keys %{$files} ],
+		};
+	}
+	$c->render(json => { fixed => \@out });
+};
+
 post '/manager/coding/fixes_discard' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;

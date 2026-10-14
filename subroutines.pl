@@ -12726,7 +12726,9 @@ sub staged_fix_apply {
 	my $push = `cd "$repo" && git push 2>&1`;
 	$push = '' unless defined $push;
 	$push = substr($push, 0, 800);
-	&subs::db_update('staged_fixes', { status => 'applied', note => 'applied ' . &subs::rightNow() }, { uuid => $uuid });
+	# the note is also the fixed list's record: when it shipped, and as what - the
+	# review list under Configure's auto-heal tick reads it back
+	&subs::db_update('staged_fixes', { status => 'applied', note => 'applied ' . &subs::rightNow() . ' as v' . $version }, { uuid => $uuid });
 	return { applied => $uuid, version => $version, bump => $bump, commit => $commit, push => $push };
 }
 

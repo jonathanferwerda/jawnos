@@ -166,14 +166,15 @@ our %topic = (
 		verified => '2026-10-13',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
-			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation.',
-			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply.'
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar itself drags the panel where you like it.',
+			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply. Every fix that ships is recorded: Fixed so far in Configure → Plat → Self-healing keeps the list, and review shows it.'
 		],
 		steps => [
 			'Open the IDE and choose a file from the project tree.',
 			'Edit with syntax colouring and the code helpers.',
 			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.',
 			'Press the code button to open the Coding agent and describe a change in words.',
+			'Drag the panel by its bar to move it; the + in the bar opens another agent, with its own conversation.',
 			'Press fixes in its corner to review errors caught in the log and apply a proposed fix.'
 		],
 		related => [ 'editor', 'terminal' ]
@@ -193,13 +194,13 @@ our %topic = (
 		verified => '2026-10-13',
 		body => [
 			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
-			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation.'
+			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation. The bar drags the panel about, and + in the bar opens another agent, each with its own thread.',
 		],
 		steps => [
 			'Open Terminal; it opens a session on the host machine.',
 			'Run commands as you would in any shell.',
 			'Use multiple windows or tabs for separate jobs.',
-			'Press the code button to hand a task to the Coding agent.'
+			'Press the code button to hand a task to the Coding agent — or + in its bar for another one, so several can work at once.'
 		],
 		related => [ 'ide', 'process_monitor' ]
 	},
@@ -766,14 +767,14 @@ our %topic = (
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
 			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.',
 			'Guide commands (runtime) is where you teach the Guide new verbs without a code change. Each is a JSON entry naming a primitive — say, open_app, set_setting, run_command, toggle, stage, find or play_music — and its parameters. The list is a setting, so it syncs to every machine and they all learn the verb.',
-			'Self-healing is the error watch: tick Watch errors and, with a Coding model set, every new error is caught and listed in the IDE\'s coding panel with a fix the Coding agent has proposed — the tree\'s own log (the pty stream the master tees to ~/pty.log, plus manager.log) and the browser: every page reports its fatal JavaScript errors (an uncaught exception, an unhandled promise rejection, a script or stylesheet that would not load), which is what JS means on a row\'s line. The fix waits there: Apply writes it, checks it compiles, bumps the version, commits and pushes, and the panel\'s restart link puts it live. Nothing is written until Apply — unless Apply automatically is ticked, when each proposal is written, checked (perl -c, rolled back if it fails) and shipped at once, like the Guide associate\'s Confirm tick; a file that has uncommitted work stands down and waits for you, and Tokens/day caps what the day may spend.',
+			'Self-healing is the error watch: tick Watch errors and, with a Coding model set, every new error is caught and listed in the IDE\'s coding panel with a fix the Coding agent has proposed — the tree\'s own log (the pty stream the master tees to ~/pty.log, plus manager.log) and the browser: every page reports its fatal JavaScript errors (an uncaught exception, an unhandled promise rejection, a script or stylesheet that would not load), which is what JS means on a row\'s line. The fix waits there: Apply writes it, checks it compiles, bumps the version, commits and pushes, and the panel\'s restart link puts it live. Nothing is written until Apply — unless Apply automatically is ticked, when each proposal is written, checked (perl -c, rolled back if it fails) and shipped at once, like the Guide associate\'s Confirm tick; a file that has uncommitted work stands down and waits for you, and Tokens/day caps what the day may spend. Fixed so far, under the tick, is the record of what has shipped: press review to read each fixed error, with the model that fixed it and the version it went out as.',
 		],
 		steps => [
 			'Open Configure and press Plat.',
 			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
 			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.',
 			'Under Guide commands, add a verb as a JSON entry and press Save — every machine picks it up.',
-			'Under Self-healing, tick Watch errors to have the Coding agent watch the tree\'s log and stage a fix for each new error; review and apply them from the fixes list in the IDE\'s coding panel, or tick Apply automatically to have each one written, checked and shipped on its own.',
+			'Under Self-healing, tick Watch errors to have the Coding agent watch the tree\'s log and stage a fix for each new error; review and apply them from the fixes list in the IDE\'s coding panel, or tick Apply automatically to have each one written, checked and shipped on its own. Fixed so far, under the tick, shows the errors already fixed and shipped.',
 		],
 		related => [ 'configure', 'assistant', 'help_app' ]
 	},

@@ -75,7 +75,13 @@ function codingChatSend(mount) {
 }
 
 $(document).on('click', '.coding_chat_toggle', function () { codingChatToggle($(this).attr('mount')); });
-$(document).on('click', '.coding_chat_close', function () { $(this).closest('.coding_chat').hide(); });
+$(document).on('click', '.coding_chat_close', function () {
+	var panel = $(this).closest('.coding_chat');
+	// a spawned agent was made on a whim: closing it takes it away, while a
+	// mounted one stays put for its toolbar button to bring back
+	if (panel.attr('spawned')) { panel.remove(); }
+	else { panel.hide(); }
+});
 $(document).on('click', '.coding_chat_send', function () { codingChatSend($(this).closest('.coding_chat').attr('mount')); });
 $(document).on('click', '.coding_chat_forget', function () {
 	var panel = $(this).closest('.coding_chat');
@@ -211,4 +217,132 @@ $(document).on('click', '.coding_fixes_restart', function () {
 	var el = $(this);
 	el.text('restarting…');
 	$.post('/manager/coding/restart', {}, function () { el.text('restart asked'); });
+});
+
+// ---- moving the panel, and having more than one -------------------------------
+// The header is the handle, exactly as the Guide associate's bar is its handle,
+// and the panel is kept on screen and clear of the taskbar. The + in the header
+// spawns another agent: a clone with its own mount and conversation, so several
+// can be open at once, each remembering its own thread.
+
+var jawnos_coding_agents = 0;
+var jawnos_coding_top = 4000;
+
+function codingChatDraggable(panel) {
+	if (!panel.length || !$.fn.draggable) { return; }
+	panel.draggable({
+		revert: 'false',
+		handle: '.coding_chat_header',
+		cancel: '.coding_chat_new, .coding_chat_close, .coding_chat_forget, .coding_fixes_toggle, input, button, textarea',
+		start: function () {
+			// the panel starts anchored right/bottom; give the drag left/top to
+			// move, from where it currently sits, so nothing jumps
+			var p = $(this);
+			var pos = p.position();
+			p.css({ right: 'auto', bottom: 'auto', left: pos.left + 'px', top: pos.top + 'px' });
+		},
+		drag: function (e, ui) {
+			// the panel lives in its app's window, and ui.position is relative to
+			// that container, so clamp against it - the panel never leaves the
+			// window it belongs to
+			var p = $(this);
+			var w = p.outerWidth(), h = p.outerHeight();
+			var box = p.offsetParent();
+			var bw = box.length ? box.width() : $(window).width();
+			var bh = box.length ? box.height() : $(window).height();
+			ui.position.left = Math.max(0, Math.min(ui.position.left, bw - w));
+			ui.position.top = Math.max(0, Math.min(ui.position.top, bh - h));
+		}
+	});
+}
+
+// Panels arrive with their app (the window content is fetched), so arm whatever
+// is present now and whatever the observer sees appear - the same pattern the
+// multiselect upgrade uses. drag_armed keeps it to once per panel.
+function codingChatArmAll(root) {
+	$(root || document).find('.coding_chat:not([drag_armed])').each(function () {
+		var panel = $(this);
+		panel.attr('drag_armed', '1');
+		codingChatDraggable(panel);
+	});
+}
+
+function codingChatSpawn(mount) {
+	var src = codingChatPanel(mount);
+	if (!src.length) { return; }
+	var name;
+	do {
+		jawnos_coding_agents += 1;
+		name = mount + '_agent_' + jawnos_coding_agents;
+	} while ($('#coding_chat_' + name).length);
+	var clone = src.clone();
+	clone.attr('id', 'coding_chat_' + name).attr('mount', name).attr('conversation', name).attr('spawned', '1');
+	clone.removeAttr('drag_armed');
+	clone.removeClass('ui-draggable ui-draggable-disabled ui-draggable-handle ui-draggable-dragging');
+	clone.find('.coding_chat_title').text($.trim(src.find('.coding_chat_title').text() || 'Coding agent') + ' ' + jawnos_coding_agents);
+	clone.find('.coding_chat_log, .coding_fixes_rows').empty();
+	clone.find('.coding_fixes_count').text('0');
+	clone.find('.coding_fixes_panel').css('display', 'none');
+	clone.find('.coding_chat_log').css('display', '');
+	clone.find('.coding_chat_composer').css('display', 'flex');
+	clone.css({ display: 'flex', right: 'auto', bottom: 'auto', left: (24 + jawnos_coding_agents * 26) + 'px', top: (40 + jawnos_coding_agents * 26) + 'px' });
+	src.parent().append(clone);
+	codingChatArmAll(src.parent());
+	clone.find('.coding_chat_input').focus();
+	codingChatAdd(name, 'step', 'A fresh agent — this one keeps its own thread.');
+}
+
+$(document).on('click', '.coding_chat_new', function () {
+	codingChatSpawn($(this).closest('.coding_chat').attr('mount'));
+});
+$(document).on('mousedown', '.coding_chat', function () {
+	// clicked or grabbed, the panel comes forward - several agents, one stack
+	jawnos_coding_top += 1;
+	$(this).css('z-index', jawnos_coding_top);
+});
+
+$(document).ready(function () { codingChatArmAll(document); });
+new MutationObserver(function () { codingChatArmAll(document); }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- the fixed list, read from Configure -> Plat -------------------------------
+// Every error the Coding agent has fixed and shipped, newest first: what it was,
+// where it came from, what the fix says, and the version it went out as.
+
+function codingFixedWhen(f) {
+	var ms = parseInt(f && f.applied, 10);
+	if (!ms || isNaN(ms)) { ms = parseInt(f && f.created, 10); }
+	if (!ms || isNaN(ms)) { return ''; }
+	var d = new Date(ms);
+	return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function codingFixedRender(rows) {
+	var box = $('#coding_fixed_list');
+	box.empty();
+	if (!rows.length) {
+		box.append($('<div style="opacity:.6;padding:2px 0;"></div>').text('Nothing yet — a fix lands here once the agent has applied it and the finishing routine (bump, commit, push) has run.'));
+		return;
+	}
+	rows.forEach(function (f) {
+		var row = $('<div style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:0 0 8px;"></div>');
+		row.append($('<div style="font-weight:bold;overflow-wrap:break-word;"></div>').text(f.signature || '(error)'));
+		var bits = [ (f.source === 'js' ? 'browser' : (f.source || '?') + ' log'), 'seen ' + (f.seen || 1) + '×' ];
+		if (f.model) { bits.push(f.model); }
+		if (f.version) { bits.push('v' + f.version); }
+		if (codingFixedWhen(f)) { bits.push(codingFixedWhen(f)); }
+		row.append($('<div style="opacity:.55;margin:2px 0 4px;"></div>').text(bits.join(' · ')));
+		var story = f.summary || f.sample;
+		if (story) { row.append($('<div style="margin:0 0 4px;overflow-wrap:break-word;"></div>').text(String(story).slice(0, 500))); }
+		if (f.files && f.files.length) {
+			row.append($('<div style="opacity:.7;overflow-wrap:break-word;"></div>').text('files: ' + f.files.join(', ')));
+		}
+		box.append(row);
+	});
+}
+
+$(document).on('click', '#coding_fixed_open', function () {
+	var box = $('#coding_fixed_list');
+	if (box.is(':visible')) { box.hide(); return; }
+	box.text('…').show();
+	$.get('/manager/coding/fixes_fixed', function (r) { codingFixedRender((r && r.fixed) || []); }).fail(function () { box.text('could not read the fixed list.'); });
 });

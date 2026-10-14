@@ -69,7 +69,7 @@
 	</div>
 
 	<h3>Self-healing</h3>
-	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies.</p>
+	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped.</p>
 	<div class="cfg-card">
 		<div class="cfg-row">
 			<label>Watch errors</label>
@@ -81,6 +81,21 @@
 			<% my $autoing = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch_auto' }) // ''); %>
 			<input type="checkbox" class="configure_input" app="mail" setting="error_watch_auto" <% if ($autoing eq 'on') { %>checked<% } %>>
 		</div>
+		<div class="cfg-row">
+			<label>Fixed so far</label>
+			<%
+				my $fixed_n = 0;
+				eval {
+					my $fixed_row = &subs::db_query('select count(*) as n from staged_fixes where status = ?', 'applied')->hashes->[0];
+					$fixed_n = ($fixed_row->{'n'} || 0) if $fixed_row;
+				};
+			%>
+			<span class="cfg-inline">
+				<span id="coding_fixed_open" class="hover" hint="Review the errors the Coding agent has fixed, committed and pushed" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span class="cfg-note" style="margin:0;"><%= $fixed_n ? "$fixed_n fixed" : 'nothing yet' %></span>
+			</span>
+		</div>
+		<div id="coding_fixed_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:320px;overflow:auto;font-size:12px;line-height:1.35;"></div>
 		<div class="cfg-row">
 			<label>Tokens/day</label>
 			<% my $watch_budget = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' }) // ''); %>
