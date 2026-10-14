@@ -315,6 +315,33 @@ function studioAttachInput(ch, stream) {
 	return c.recDest.stream;
 }
 
+// Feed the JawnOS synth engine into a channel the way a live input is fed, so it
+// records through the channel's tone stack and pedals and can be monitored. The
+// engine rides the studio's own context and stays audible on its own, so it can
+// be played before anything is armed; the tap is a per-channel gain, so stopping
+// it never silences the synth's own output.
+function studioAttachSynth(ch) {
+	var ctx = studioContext();
+	var c = studioChannelEngine(ch);
+	if (!ctx || !c || !window.jawnosSynth || typeof jawnosSynth.outputNode !== 'function') { return null; }
+	if (jawnosSynth.context() !== ctx) { jawnosSynth.attach(ctx, ctx.destination); }
+	var node = jawnosSynth.outputNode();
+	if (!node) { return null; }
+	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+	if (c.synthTap) {
+		try { c.synthTap.node.disconnect(c.synthTap.gain); } catch (e) {}
+		try { c.synthTap.gain.disconnect(); } catch (e) {}
+	}
+	var tap = ctx.createGain();
+	tap.gain.value = 1;
+	node.connect(tap);
+	tap.connect(c.trim);
+	c.synthTap = { node: node, gain: tap };
+	studioApplyChannel(ch);
+	studioRebuildInserts(ch);
+	return c.recDest.stream;
+}
+
 // Push a capture-quality change (channel count) onto the live channels.
 function studioApplyCapture() {
 	var chans = studioSettingNumber('audio_channels', 2) || 2;
@@ -492,6 +519,11 @@ function studioDetachInput(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
 	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+	if (c.synthTap) {
+		try { c.synthTap.node.disconnect(c.synthTap.gain); } catch (e) {}
+		try { c.synthTap.gain.disconnect(); } catch (e) {}
+		c.synthTap = null;
+	}
 }
 
 // Route a take's media element through the channel's playback bus. A media
@@ -2374,6 +2406,24 @@ async function studioInputStreamGrabber(channel,state) {
 	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]');
 	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
 	var video = (plug['av'] == 'av' || plug['av'] == 'v');
+
+	// The synth is an app input with no device behind it: route the engine into
+	// the channel instead of opening a microphone. It records through the tone
+	// stack and pedals like any other source.
+	if (plug['app'] == 'synth') {
+		var synthStream = studioAttachSynth(ch);
+		if (!synthStream) { mixer[ch].media.active = false; return; }
+		mixer[ch].media.active = true;
+		mixer[ch].media.in = synthStream;
+		mixer[ch].media.video = false;
+		clearInterval(mixer[ch].media.in_analyzer_timeout);
+		mixer[ch].media.in_analyzer_timeout = setInterval(function() {
+			if (document.hidden) { return; }
+			studioDrawChannel(ch);
+			studioDrawMetre(ch);
+		}, 40);
+		return synthStream;
+	}
 
 	var audio = {
 		echoCancellation: false,  // Disables echo suppression

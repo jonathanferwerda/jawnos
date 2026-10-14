@@ -103,14 +103,16 @@ our %topic = (
 	},
 	'synth' => {
 		title => 'Synth', category => 'apps', app => 'synth',
-		summary => 'A playable synthesiser.',
+		summary => 'A polyphonic synthesiser you play from the screen or a MIDI keyboard.',
+		verified => '2026-10-14',
 		body => [
-			'Synth is a software synthesiser you play from the screen or a keyboard. It shares the studio\'s audio plumbing, so it can be routed and recorded like any other source.'
+			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys or a connected USB MIDI keyboard, and it shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
+			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano or guitar without any samples. Pick a sound from the preset list — Grand Piano, Electric Piano, Bell, Warm Pad, Saw Lead, Sub Bass, Strings, Organ, Pluck, Nylon Pluck — and shape it with the controls.'
 		],
 		steps => [
 			'Open Synth.',
-			'Play the on-screen keyboard, or use a connected MIDI keyboard.',
-			'Shape the sound with the controls, and record it into Studio when you have one you like.'
+			'Choose a preset, or play the on-screen keys, or connect a USB MIDI keyboard.',
+			'In Studio, set a channel\'s input to Synth, arm it, and record what you play.'
 		],
 		related => [ 'studio', 'music' ]
 	},
