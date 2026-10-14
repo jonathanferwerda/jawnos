@@ -224,8 +224,8 @@ our %topic = (
 		verified => '2026-10-14',
 		summary => 'The device camera and video recorder, from the app.',
 		body => [
-			'Camera opens the device camera and its video recorder, so a photo or a video is taken with a viewfinder you can see and the camera\'s own processing. It is the app\'s own camera (window.JawnCamera); in a plain browser there is no bridge, and the panel says so.',
-			'A capture is filed under the Camera app. The same pair of buttons rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.'
+			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
+			'A capture is filed under the Camera app. In the app the same pair of buttons also rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.'
 		],
 		steps => [
 			'Open Camera from the start menu, or pin it to the taskbar.',

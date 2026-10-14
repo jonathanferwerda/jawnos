@@ -16,8 +16,10 @@ Why WebKitGTK and not the things you may have read about:
 Camera, microphone and location all work in WebKitGTK, with two caveats: the
 features must be enabled and each origin must be granted permission (both done
 here), and capture depends on the distro's GStreamer capture plugins while
-location depends on GeoClue. If a site asks for something we do not recognise,
-we deny it by default.
+location depends on GeoClue. Geolocation is granted only on a machine that
+really carries a GPS receiver (see :func:`_has_gps`): with none, GeoClue answers
+with the ISP's coarse position, which the house disregards, so it is denied.
+If a site asks for something we do not recognise, we deny it by default.
 """
 
 import os
@@ -98,6 +100,35 @@ def manager_url(jawn_dir, ticket=None):
     return "https://%s:%d/manager" % (host, port)
 
 
+def _has_gps(jawn_dir):
+    """Whether this machine really carries a GPS receiver.
+
+    A machine with none still gets a position from GeoClue - the ISP's coarse
+    one - which the house deliberately disregards, so geolocation is denied
+    rather than let that through. Opt in explicitly with ``"gps": true`` in
+    config.json (or name the device with ``"gps_device"``); otherwise a running
+    gpsd or a receiver named on the USB bus is taken as the tell."""
+    try:
+        config = core.read_app_config(jawn_dir) if jawn_dir else {}
+    except Exception:
+        config = {}
+    if isinstance(config, dict):
+        if config.get("gps"):
+            return True
+        device = config.get("gps_device")
+        if device and os.path.exists(str(device)):
+            return True
+    for sock in ("/run/gpsd.sock", "/var/run/gpsd.sock"):
+        if os.path.exists(sock):
+            return True
+    try:
+        import subprocess
+        out = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=3).stdout.lower()
+    except Exception:
+        out = ""
+    return any(mark in out for mark in ("gps", "u-blox", "ublox", "sirf", "globaltop", "quectel"))
+
+
 def _js_string(result):
     """The JS value a script-message handler received, as text.
 
@@ -171,6 +202,8 @@ class WebViewPanel(Gtk.Box):
         self._login_url = login
         self._manager_url = manager_url(settings["jawn_dir"], start_url or login)
         self._manager_host = urlparse(self._manager_url).hostname or "127.0.0.1"
+        # Geolocation is offered only where there is a real receiver (see _has_gps).
+        self._gps = _has_gps(settings.get("jawn_dir"))
         self._login_pending = bool(login)
         self._gate_retries = 0
         self.load(start_url or login or self._manager_url)
@@ -384,7 +417,8 @@ class WebViewPanel(Gtk.Box):
         except ValueError:
             host = ""
         allowed = {"127.0.0.1", "localhost", "::1", self._manager_host}
-        if host in allowed:
+        geo = "geolocation" in type(request).__name__.lower()
+        if host in allowed and (not geo or self._gps):
             request.allow()
         else:
             request.deny()
