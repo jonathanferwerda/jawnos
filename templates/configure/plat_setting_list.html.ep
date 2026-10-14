@@ -68,6 +68,16 @@
 		<% } %>
 	</div>
 
+	<h3>Self-healing</h3>
+	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there.</p>
+	<div class="cfg-card">
+		<div class="cfg-row">
+			<label>Watch errors</label>
+			<% my $watching = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // ''); %>
+			<input type="checkbox" class="configure_input" app="mail" setting="error_watch" <% if ($watching eq 'on') { %>checked<% } %>>
+		</div>
+	</div>
+
 	<h3>Provider access</h3>
 	<p class="cfg-note">Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows “••• set” — leave it alone to keep it, or type a new value to replace it.</p>
 	<% foreach my $p ( @{$providers} ) { %>

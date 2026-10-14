@@ -19572,6 +19572,8 @@ sub coding_execute($c, $action, $touched) {
 		my $repo = coding_repo();
 		my $v = `cd "$repo" && perl scripts/version_bump.pl 2>&1`;
 		chomp $v;
+		# the commit that follows reads the version; the old number may be cached
+		&subs::jawn_version_forget() if $v =~ /^\d+\.\d+\.\d+$/;
 		return $v =~ /^\d+\.\d+\.\d+$/ ? "bumped to $v" : ('bump failed: ' . ($v || 'no output'));
 	}
 	if ($a eq 'commit') {
@@ -19717,6 +19719,115 @@ post '/manager/coding/forget' => sub($c) {
 	$conversation = 'coding' unless length $conversation;
 	coding_conversation_save($conversation, []);
 	$c->render(json => { ok => 1, conversation => $conversation });
+};
+
+# ---- the error watch's staging area ---------------------------------------
+# The watcher (President) records every new error in staged_fixes; with a Coding
+# model set, the agent stages a proposed fix on the row. These routes list what
+# is waiting, throw a row away, and apply one - writing its files, checking
+# they compile, then the finishing routine (bump, commit, push). Restarting so
+# an applied fix goes live is the person's own word, from the panel's button.
+get '/manager/coding/fixes' => sub($c) {
+	my $rows = eval { &subs::db_query('select * from staged_fixes where status in (?, ?, ?) order by ost desc limit 50', 'new', 'proposed', 'failed')->hashes } || [];
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		my $files = eval { decode_json $r->{'files'} } || {};
+		push @out, {
+			uuid => $r->{'uuid'},
+			source => $r->{'source'},
+			signature => $r->{'signature'},
+			sample => $r->{'sample'},
+			tally => ($r->{'tally'} || 0) + 0,
+			status => $r->{'status'},
+			model => $r->{'model'},
+			summary => $r->{'summary'},
+			note => $r->{'note'},
+			created => $r->{'ost'},
+			last_seen => $r->{'last_seen'},
+			files => [ map { { path => $_, bytes => length($files->{$_}) } } sort keys %{$files} ],
+		};
+	}
+	$c->render(json => {
+		fixes => \@out,
+		watching => ((&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on' ? 1 : 0),
+	});
+};
+
+post '/manager/coding/fixes_discard' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
+	unless ($row) { $c->render(json => { error => 'no such caught error' }); return; }
+	&subs::db_update('staged_fixes', { status => 'discarded' }, { uuid => $uuid });
+	$c->render(json => { discarded => $uuid });
+};
+
+post '/manager/coding/fixes_apply' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
+	unless ($row) { $c->render(json => { error => 'no such caught error' }); return; }
+	unless (($row->{'status'} // '') eq 'proposed') { $c->render(json => { error => 'nothing is staged on that row yet' }); return; }
+	my $files = eval { decode_json $row->{'files'} } || {};
+	my @names = sort keys %{$files};
+	unless (@names) { $c->render(json => { error => 'that proposal stages no files' }); return; }
+	my $repo = coding_repo();
+	my (%backup, %touched);
+	foreach my $rel ( @names ) {
+		my $abs = coding_path($rel);
+		unless ($abs) { $c->render(json => { error => 'refused: ' . $rel . ' is outside the repo' }); return; }
+		$backup{$abs} = -f $abs ? scalar read_file($abs) : undef;
+		my $content = $files->{$rel};
+		$content = '' unless defined $content;
+		require File::Basename;
+		my $dir = File::Basename::dirname($abs);
+		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
+		eval { write_file($abs, $content) };
+		if ($@) {
+			# put back whatever already landed: a fix applies whole or not at all
+			foreach my $done ( keys %backup ) {
+				if (defined $backup{$done}) { eval { write_file($done, $backup{$done}) }; }
+				else { unlink $done; }
+			}
+			$c->render(json => { error => 'could not write ' . $rel });
+			return;
+		}
+		$touched{$rel} = 1;
+	}
+	# a Perl file must compile before it ships; on failure the files go back
+	my @bad;
+	foreach my $rel ( sort grep { /\.p[lm]$/ } @names ) {
+		my $out = `cd "$repo" && perl -c "$rel" 2>&1`;
+		$out = '' unless defined $out;
+		push @bad, { path => $rel, output => substr($out, 0, 1000) } unless $out =~ /syntax OK/;
+	}
+	if (@bad) {
+		foreach my $abs ( keys %backup ) {
+			if (defined $backup{$abs}) { eval { write_file($abs, $backup{$abs}) }; }
+			else { unlink $abs; }
+		}
+		$c->render(json => { error => 'the change did not compile; nothing was applied', checks => \@bad });
+		return;
+	}
+	# the finishing routine: bump, then commit only what was written (plus
+	# VERSION - never someone else's work in progress), then push
+	my $bump = coding_execute($c, { action => 'bump' }, \%touched);
+	my $commit = coding_execute($c, { action => 'commit', message => ($row->{'summary'} || $row->{'signature'} || 'error watch fix') }, \%touched);
+	my $push = coding_execute($c, { action => 'push' }, \%touched);
+	&subs::db_update('staged_fixes', {
+		status => 'applied',
+		note => 'applied ' . &subs::rightNow(),
+	}, { uuid => $uuid });
+	$c->render(json => {
+		applied => $uuid,
+		version => &subs::jawn_version(),
+		bump => $bump,
+		commit => substr($commit // '', 0, 1200),
+		push => substr($push // '', 0, 800),
+	});
+};
+
+post '/manager/coding/restart' => sub($c) {
+	write_file(&subs::home('~/.president/status'), 'restart');
+	$c->render(json => { ok => 1 });
 };
 
 # ---- the guide looks an appointment over when it opens --------------------
@@ -23116,12 +23227,39 @@ sub update_database($data) {
 			app VARCHAR(255),
 			uuid VARCHAR(255),
 			scope VARCHAR(255),
+			ost VARCHAR(255),
 			additional LONGTEXT
 		)',
+		# every insert runs through db_insert, which stamps ost; a sync_log created
+		# before this column existed failed every tombstone write with "table
+		# sync_log has no column named ost". This adds it to those databases.
+		'alter table sync_log add column ost VARCHAR(255)',
 		'create table if not exists sync_cursors (
 			signatorial VARCHAR(500) PRIMARY KEY,
 			cursor VARCHAR(50)
 		)',
+		# The error watch's catch: an error seen in the running logs, and the fix
+		# the Coding agent proposed for it, staged until a person applies it.
+		# Machine-local (the rows name this repo's files), so the table sits in
+		# gb's forbidden list and never rides the peer sync or a backup.
+		'create table if not exists staged_fixes (
+			uuid VARCHAR(255) unique,
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
+			source VARCHAR(25),
+			signature VARCHAR(500),
+			sample LONGTEXT,
+			tally INT,
+			status VARCHAR(25),
+			model VARCHAR(255),
+			summary LONGTEXT,
+			files LONGTEXT,
+			steps LONGTEXT,
+			note LONGTEXT,
+			last_seen VARCHAR(255)
+		)',
+		'create index if not exists idx1_staged_fixes on staged_fixes (signature)',
+		'create index if not exists idx2_staged_fixes on staged_fixes (status)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',

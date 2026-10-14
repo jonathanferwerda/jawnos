@@ -11861,6 +11861,10 @@ sub jawn_version() {
 	return $jawn_version_cache = $v;
 }
 
+# A bump rewrites ./VERSION under a live process; whatever cached the old number
+# (the Coding agent's commit subject reads it) must be told to forget it.
+sub jawn_version_forget { undef $jawn_version_cache; }
+
 sub code_revision() {
 	return $code_revision_cache if $code_revision_cache;
 	my @files;
@@ -12202,6 +12206,316 @@ sub install_extras {
 		print $fh &subs::rightNow() . " extras: " . join(' ', grep { /\S/ } split "\n", $out) . "\n";
 		close $fh;
 	}
+}
+
+# ---- the error watch: the Coding agent's ears -------------------------
+# The running tree prints its warnings and errors to the pty that the master
+# (`./jawn`) reads, and jawn tees that stream into ~/pty.log. This watcher tails
+# it (and ~/manager.log, for the $log lines that never reach the pty) and records
+# each new error signature once in staged_fixes. When a Coding model is set, the
+# agent reads the error and stages a proposed fix - whole files, not applied yet
+# - for a person to review and apply from the IDE's coding chatbox. President
+# runs the tick, so there is exactly one watcher per machine.
+
+my %error_watch_state;    # source => bytes already read (for this watcher's life)
+my %error_watch_partial;  # source => an unterminated tail line
+
+# Lines that are normal noise rather than errors. jawn() already suppresses the
+# same ones from its own console.
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:/;
+
+sub error_watch_is_error {
+	my $line = shift;
+	$line = '' unless defined $line;
+	return 0 if $line =~ $error_watch_noise;
+	return 1 if $line =~ /\b(?:failed|failure|fatal|panic|abort(?:ed)?|died|denied|malformed|corrupt|not ok|couldn't|could not|can't|cannot|unable to|uninitialized|undefined|out of memory|segmentation|core dumped|database is locked|no such (?:file|table|column)|too many|refused|error)\b/i;
+	return 0;
+}
+
+# One invariant name per distinct error: control codes, addresses and numbers
+# (line numbers, pids, ports, counts) are blanked, so a flood of one fault
+# collapses to a single staged row.
+sub error_signature {
+	my $text = shift;
+	$text = '' unless defined $text;
+	$text =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+	$text =~ s/\r//g;
+	$text =~ s/0x[0-9a-fA-F]+/0xADDR/g;
+	$text =~ s/\b\d+\b/N/g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return substr($text, 0, 300);
+}
+
+sub error_watch_read_new {
+	my ($path, $source) = @_;
+	return () unless defined $path && -f $path;
+	my $size = -s $path;
+	unless (defined $error_watch_state{$source}) {
+		# the pty log is truncated when the master starts, so read it whole;
+		# manager.log is long-lived, so begin at its end - never replay history
+		$error_watch_state{$source} = ($source eq 'log') ? $size : 0;
+	}
+	my $offset = $error_watch_state{$source};
+	if (defined $size && $size < $offset) {
+		# truncated out from under us: take the new file from its start
+		$offset = $error_watch_state{$source} = 0;
+		$error_watch_partial{$source} = '';
+	}
+	open(my $fh, '<', $path) or return ();
+	seek($fh, $offset, 0) or do { close $fh; return (); };
+	my $chunk = '';
+	read($fh, $chunk, 262144);
+	close $fh;
+	return () unless defined $chunk && length $chunk;
+	$error_watch_state{$source} = $offset + length $chunk;
+	my $buffer = ($error_watch_partial{$source} // '') . $chunk;
+	my @lines = split /\n/, $buffer, -1;
+	$error_watch_partial{$source} = pop @lines;   # keep the unterminated tail
+	return @lines;
+}
+
+# A Perl warning is two lines - the message, then " at ./file line N." - so a
+# matched line swallows the source location that follows it before it is caught.
+sub error_watch_catch {
+	my @lines = @_;
+	my (@caught, $pending);
+	foreach my $line ( @lines ) {
+		if (defined $pending && $line =~ /^\s*at\s+\S+\s+line\s+\d+\.?\s*$/) {
+			$pending .= ' ' . $line;
+			next;
+		}
+		if (defined $pending) { push @caught, $pending; undef $pending; }
+		next unless &error_watch_is_error($line);
+		$pending = $line;
+	}
+	push @caught, $pending if defined $pending;
+	return @caught;
+}
+
+# One pass: catch what is new, record it, and hand the oldest waiting error to
+# the Coding agent to propose a fix for. Called from President's schedule.
+sub error_watch_tick {
+	return unless (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on';
+	# the table normally arrives with the schema migration at a login; create it
+	# here too (as run_backfills does for `backfills`) so the watch works from the
+	# first boot after an update, before anyone has logged in
+	my $table = &subs::db_query('select name from pragma_table_info(?) where name = ?', 'staged_fixes', 'uuid')->hashes->[0];
+	unless ($table) {
+		&subs::db_query('create table if not exists staged_fixes (
+			uuid VARCHAR(255) unique,
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
+			source VARCHAR(25),
+			signature VARCHAR(500),
+			sample LONGTEXT,
+			tally INT,
+			status VARCHAR(25),
+			model VARCHAR(255),
+			summary LONGTEXT,
+			files LONGTEXT,
+			steps LONGTEXT,
+			note LONGTEXT,
+			last_seen VARCHAR(255)
+		)');
+		&subs::db_query('create index if not exists idx1_staged_fixes on staged_fixes (signature)');
+		&subs::db_query('create index if not exists idx2_staged_fixes on staged_fixes (status)');
+	}
+	my @caught;
+	foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {
+		my ($kind, $path) = @{$source};
+		push @caught, map { { source => $kind, line => $_ } } &error_watch_catch(&error_watch_read_new($path, $kind));
+	}
+	my %new;
+	foreach my $c ( @caught ) {
+		my $sig = &error_signature($c->{'line'});
+		next unless length $sig;
+		my $row = $new{$sig} //= { source => $c->{'source'}, sample => substr($c->{'line'}, 0, 2000), tally => 0 };
+		$row->{'tally'}++;
+	}
+	foreach my $sig ( sort keys %new ) {
+		my $row = $new{$sig};
+		my $existing = &subs::db_select('staged_fixes', [ 'uuid', 'tally' ], { signature => $sig })->hashes->[0];
+		if ($existing) {
+			&subs::db_update('staged_fixes', {
+				tally => ($existing->{'tally'} || 0) + $row->{'tally'},
+				last_seen => &subs::rightNow(),
+			}, { uuid => $existing->{'uuid'} });
+		}
+		else {
+			&subs::db_insert('staged_fixes', {
+				uuid => &subs::random_string_creator(40),
+				source => $row->{'source'},
+				signature => $sig,
+				sample => $row->{'sample'},
+				tally => $row->{'tally'},
+				status => 'new',
+				last_seen => &subs::rightNow(),
+			});
+		}
+	}
+	# one proposal per tick keeps a model's cost and the tree's patience bounded
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return unless $model;
+	my $waiting = &subs::db_query('select * from staged_fixes where status = ? order by ost asc limit 1', 'new')->hashes->[0];
+	&coding_propose_fix($waiting) if $waiting;
+	return 1;
+}
+
+# The propose loop runs in President, which never loads Manager.pl, so it carries
+# its own copy of the repo-path guard (the same rules as Manager::coding_path).
+# Nothing here can change the repo: every write is staged, so the guard only has
+# to keep the agent's reading inside the tree.
+sub error_watch_repo { return &subs::home('~/jawnos'); }
+
+sub error_watch_rel {
+	my $rel = shift;
+	$rel = '' unless defined $rel;
+	$rel =~ s{^\./+}{};
+	$rel =~ s{^/+}{};
+	return $rel;
+}
+
+sub error_watch_path {
+	my $rel = &error_watch_rel(shift);
+	return undef if $rel =~ /(^|\/)\.\.(\/|$)/;
+	return undef if $rel =~ /[\x00-\x1f"`\\]/;
+	return undef if $rel =~ m{^(?:\.git|\.president|releases|voices)(?:/|$)};
+	return undef if $rel eq 'config.json';
+	return &error_watch_repo() . ($rel eq '' ? '' : '/' . $rel);
+}
+
+# The propose mode's tool loop: the same verbs' shape, but write only stages the
+# whole file, so the agent can change nothing here.
+sub coding_propose_execute {
+	my ($action, $staged) = @_;
+	my $a = $action->{'action'} // '';
+	if ($a eq 'list') {
+		my $abs = &error_watch_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		return 'no such folder' unless -d $abs;
+		opendir(my $dh, $abs) or return 'could not read that folder';
+		my @names = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+		closedir($dh);
+		@names = map { -d "$abs/$_" ? "$_/" : $_ } @names;
+		@names = @names[0 .. 199] if @names > 200;
+		return join("\n", @names);
+	}
+	if ($a eq 'read') {
+		my $abs = &error_watch_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		return 'no such file' unless -f $abs;
+		my $text = eval { read_file($abs) } // '';
+		$text =~ s/\x00//g;
+		if (length $text > 40000) { $text = substr($text, 0, 40000) . "\n... [trimmed]"; }
+		return length($text) ? $text : '(empty file)';
+	}
+	if ($a eq 'write') {
+		my $abs = &error_watch_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		my $rel = &error_watch_rel($action->{'path'});
+		my $content = $action->{'content'};
+		$content = '' unless defined $content;
+		return 'refused: a staged file is capped at 300000 bytes' if length($content) > 300000;
+		return 'refused: at most 10 files in one proposal' if scalar(keys %{$staged}) >= 10 && !exists $staged->{$rel};
+		$staged->{$rel} = $content;
+		return 'staged ' . length($content) . ' bytes for ' . $rel . ' (not written; a person must apply it)';
+	}
+	if ($a eq 'run') {
+		my $cmd = $action->{'command'} // '';
+		$cmd =~ s/^\s+|\s+$//g;
+		return 'refused: only perl -c, perl scripts/*, prove and read-only git are allowed here'
+			unless $cmd =~ m{^(?:perl\s+-c\s+[\w./-]+|perl\s+scripts/[\w./-]+(?:\s+[^\n;|&]*)?|prove(?:\s+[^\n;|&]*)?|git\s+(?:status|diff|log|show|rev-parse|branch|remote)(?:\s+[^\n;|&]*)?)$};
+		my $repo = &error_watch_repo();
+		my $out = `cd "$repo" && $cmd 2>&1`;
+		$out = '' unless defined $out;
+		if (length $out > 8000) { $out = substr($out, 0, 8000) . "\n... [trimmed]"; }
+		return $out =~ /\S/ ? $out : '(no output)';
+	}
+	if ($a eq 'say' || $a eq 'done') {
+		return $action->{'text'} // '';
+	}
+	return 'unknown action: ' . $a;
+}
+
+our $coding_protocols_cache;
+our $coding_protocols_mtime;
+
+# The tracked protocol text the manager-side agent also follows (baked from the
+# gitignored AGENTS.md into docs/coding_agent_protocols.md), so the watcher's
+# proposals obey the same rules. Cached by mtime.
+sub coding_protocols_text {
+	my $repo = &error_watch_repo();
+	my $path = -f "$repo/docs/coding_agent_protocols.md" ? "$repo/docs/coding_agent_protocols.md"
+		: (-f "$repo/AGENTS.md" ? "$repo/AGENTS.md" : '');
+	return '' unless length $path;
+	my $mtime = (stat($path))[9] // 0;
+	if (!defined $coding_protocols_cache || ($coding_protocols_mtime // 0) != $mtime) {
+		my $text = eval { read_file($path) } // '';
+		if (length $text > 20000) { $text = substr($text, 0, 20000) . "\n... [trimmed]"; }
+		$coding_protocols_cache = $text;
+		$coding_protocols_mtime = $mtime;
+	}
+	return $coding_protocols_cache // '';
+}
+
+# One bounded propose run for a staged error: the model picks the next action,
+# write stages the file, repeat until done or the step cap. The proposal lands
+# on the row as whole files, never as a change to the tree.
+sub coding_propose_fix {
+	my $row = shift;
+	return unless ref $row eq 'HASH' && $row->{'uuid'};
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	unless ($model) {
+		&subs::db_update('staged_fixes', { note => 'no Coding model is set (Configure -> Plat)' }, { uuid => $row->{'uuid'} });
+		return;
+	}
+	require &error_watch_repo() . '/help.pl';
+	my $system = &help::coding_propose_prompt();
+	my $protocols = &coding_protocols_text();
+	$system .= "\n\nCodebase protocols (follow these):\n" . $protocols . "\n" if length $protocols;
+	$system .= "\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
+	my @lines = (
+		'AN ERROR WAS CAUGHT IN THE RUNNING SYSTEM (source: ' . ($row->{'source'} || '?') . ' log):',
+		'---',
+		($row->{'sample'} || $row->{'signature'}),
+		'---',
+		'It has been seen ' . ($row->{'tally'} || 1) . ' time(s). Propose one small fix.',
+		'Reply with the single next JSON action.'
+	);
+	my (%staged, @steps);
+	my $final = '';
+	my $tries = 0;
+	while ($tries++ < 10) {
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines));
+		if ($err || !$text) {
+			push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') };
+			$final = 'the model could not be reached: ' . ($err || 'no answer');
+			last;
+		}
+		my $action = eval { decode_json $text };
+		unless ($action && $action->{'action'}) {
+			if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+		}
+		unless ($action && $action->{'action'}) { $final = $text; last; }
+		my $obs = &coding_propose_execute($action, \%staged);
+		push @steps, { action => $action, observation => $obs };
+		push @lines, 'ACTION: ' . encode_json($action);
+		push @lines, 'OBSERVATION: ' . $obs;
+		if ($action->{'action'} eq 'done' || $action->{'action'} eq 'say') { $final = $action->{'text'} // ''; last; }
+	}
+	my $files = scalar(keys %staged) ? encode_json(\%staged) : '';
+	&subs::db_update('staged_fixes', {
+		status => ($files ? 'proposed' : 'failed'),
+		model => $model,
+		summary => substr($final // '', 0, 4000),
+		files => $files,
+		steps => encode_json(\@steps),
+		note => ($files ? '' : 'no file change was proposed'),
+	}, { uuid => $row->{'uuid'} });
+	return $files ? 'proposed' : 'failed';
 }
 
 sub git_watcher_check {

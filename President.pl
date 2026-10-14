@@ -246,6 +246,18 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# The error watch tails the tree's own output (the pty stream jawn tees into
+	# ~/pty.log, plus ~/manager.log) and stages a proposed fix per new error,
+	# for a person to apply from the IDE's coding chatbox. Off until Configure
+	# -> Plat switches it on; a first pass soon after boot, then every minute.
+	&subs::subprocessor(sub {
+		sleep 25;
+		while (1) {
+			eval { &subs::error_watch_tick(); };
+			sleep 60;
+		}
+	}, { name => 'error watch' });
+
 	# The voice models ride the same mesh as the APKs, but they change rarely, so
 	# this is a single pass after boot rather than a loop: a device that lacks a
 	# voice pulls it in and can then serve it. Opening Configure -> Misc refreshes

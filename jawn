@@ -81,6 +81,19 @@ our $logfile = &home('~/manager.log');
 
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+
+# Tee the tree's console into ~/pty.log: everything President.pl and its workers
+# print or warn about passes through this pty, and the error watch reads the file
+# for faults to fix. Truncated here, at the master's start, so each boot begins
+# clean; it lives outside ~/.president, which is wiped below.
+our $pty_log_fh;
+{
+	my $pty_log_path = &home('~/pty.log');
+	if (open(my $fh, '>', $pty_log_path)) {
+		$pty_log_fh = $fh;
+		$pty_log_fh->autoflush(1);
+	}
+}
 my $tmp_dir = '/tmp';
 unless ( -d $tmp_dir ) {
 	$tmp_dir = &home('~/.president/');
@@ -375,6 +388,10 @@ sub terminal_pty_runner() {
 		}
 		unless (grep { $bytes =~ /\Q$_\E/ } @printless) {
 			print $bytes;
+		}
+		# the error watch's copy (an unprintable diagnostic still belongs in it)
+		if ($pty_log_fh) {
+			print {$pty_log_fh} $bytes;
 		}
   });
 
