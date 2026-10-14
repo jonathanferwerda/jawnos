@@ -692,10 +692,13 @@ function theatreModeOff() {
 	$('#music').css({'background-color': $('#music').attr('background_colour')});
 	if ($('#video').attr('type') == 'video') {
 		// the picture goes back to its corner - unless the player itself is
-		// filling the screen, where a corner thumbnail is not what is wanted
+		// filling the screen, where a corner thumbnail is not what is wanted.
+		// Clear theatre_mode first: musicPictureBig reads it, and while it was
+		// still 'on' the check called the theatre itself big and re-applied
+		// big_style, so leaving the theatre never shrank the picture back
+		$('#video').attr('theatre_mode', 'off'); 
 		var style = $('#video').attr(musicPictureBig() ? 'big_style' : 'thumb_style');
 		$('#video').attr('style', style);
-		$('#video').attr('theatre_mode', 'off'); 
 	}
 	else {
 		$('#video').hide();
@@ -992,8 +995,11 @@ function searchMusic(data) {
 	artist = JSON.stringify(artist);
 	album = JSON.stringify(album);
 
-	var artistScroll = $('#music_artists').scrollTop();
-	var albumScroll = $('#music_albums').scrollTop();
+	// the shelves are vertical lists on the desktop but sideways-scrolling
+	// strips on a phone, so the position to hold across the re-render is on both
+	// axes - a selection used to jump the strips back to the start
+	var artistScroll = { top: $('#music_artists').scrollTop(), left: $('#music_artists').scrollLeft() };
+	var albumScroll = { top: $('#music_albums').scrollTop(), left: $('#music_albums').scrollLeft() };
 
 
 	var search = searching || $('#music_search').val();
@@ -1122,8 +1128,8 @@ function searchMusic(data) {
 			}
 			playing_now('update');
 
-			$('#music_albums').scrollTop(albumScroll);
-			$('#music_artists').scrollTop(artistScroll);
+			$('#music_albums').scrollTop(albumScroll.top).scrollLeft(albumScroll.left);
+			$('#music_artists').scrollTop(artistScroll.top).scrollLeft(artistScroll.left);
 			musicInit('search');
 
 			if (configOpen == true) {

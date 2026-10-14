@@ -42,10 +42,11 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
   `cat VERSION` before `git push`. Existing pushes that skipped this were the oversight this rule fixes.
 - **Commit as you go**, staging only your own hunks (`git add -p`).
-- **Finishing routine (the norm): bump → commit → push → restart.** Run `perl scripts/version_bump.pl`,
+- **Finishing routine — ALWAYS run it: bump → commit → push → restart.** This is not optional and not
+  "the norm": every piece of work ends this way, without being asked. Run `perl scripts/version_bump.pl`,
   stage only your own hunks (never someone else's WIP), commit as `v<version> - <summary>`, `git push`,
   then restart (`printf 'restart' > ~/.president/status`; wait for `good`). The bump ships the version
-  prefix and busts the client caches; the restart is what makes `.pl` and `public/js` changes live. This
-  is how a change is normally wrapped up — do it at the end of the work unless the user says otherwise.
+  prefix and busts the client caches; the restart is what makes `.pl` and `public/js` changes live. Do it
+  at the end of every task unless the user explicitly says not to.
 
 ---
