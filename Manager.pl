@@ -4044,8 +4044,10 @@ get '/manager/vault_share' => sub($c) {
 	my $share = &subs::setting_grabber({ app => '__president', setting => 'vault_share' });
 	$share = 'yes' unless defined $share && length $share;
 	unless ($share eq 'yes') { $c->render(json => { ok => 0, error => 'sharing off' }); return; }
-	my @vault = &subs::vault_read();
-	my $suds = $vault[0];
+	# the key this machine holds: the vault first, and a worker that resolved it
+	# before its vault row went missing still knows it (suds_grabber falls back)
+	my $suds = eval { &subs::suds_grabber() };
+	$suds ||= ( &subs::vault_read() )[0];
 	my $seal = $c->param('seal');
 	unless ($suds && $seal && $seal =~ /^[0-9A-Za-z-]{20,80}$/) { $c->render(json => { ok => 0 }); return; }
 	my $sealed = &subs::note_encrypter($seal, $suds);

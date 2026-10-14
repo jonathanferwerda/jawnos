@@ -8306,7 +8306,7 @@ sub vault_pull_from_peer {
 	$gb::vault_pull_last = $now;
 	my ($db) = &database_grabber();
 	return unless $db;
-	my @peers = grep { ($_->{'signatorial'} || '') && ($_->{'manager'} || $_->{'ip'}) } &db_select('remote_machines')->hashes;
+	my @peers = grep { ($_->{'signatorial'} || '') && ($_->{'manager'} || $_->{'ip'}) } @{ &db_select('remote_machines')->hashes || [] };
 	my @active = grep { ($_->{'connection'} || '') eq 'active' } @peers;
 	my @rest = grep { ($_->{'connection'} || '') ne 'active' } @peers;
 	@peers = (@active, @rest);
@@ -8339,7 +8339,7 @@ sub suds_grabber {
 		else {
 			# nothing local validates: a linked machine can hand the key over
 			# (sealed to a one-time secret, over the signed peer rail)
-			my $pulled = &vault_pull_from_peer();
+			my $pulled = eval { &vault_pull_from_peer() };
 			if ($pulled && &suds_current($pulled)) {
 				$suds = $pulled;
 				&vault_seed($suds, 1);
@@ -8397,7 +8397,10 @@ sub peer_sign_request {
 	my ($req) = @_;
 	my ($key) = &peer_key_paths();
 	return unless -e $key && -s $key > 0;
-	my $ts = time();
+	# Time::HiRes overrides time() here, so whole seconds must be asked for:
+	# the verifier reads the header back with /^\d+$/ and a fractional stamp
+	# (1791953166.531) was refused on every hook-signed request.
+	my $ts = int(time());
 	my $nonce = &random_string_creator(24);
 	my $id = &random_string_creator(16);
 	my $msg_file = "/tmp/peer_$id.msg";
