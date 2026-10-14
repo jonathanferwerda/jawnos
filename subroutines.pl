@@ -75,6 +75,15 @@ sub format_name() {
 	return $fname;
 }
 
+# Model rows in the order a chooser should read them: alphabetical by the name the
+# user sees. Kept as a routine rather than a `sort { $a->{'name'} }` in a template
+# because Mojo extracts a template's stash keys into lexicals, so a template whose
+# stash holds `a` (the app name) would sort the app name instead of the rows
+# (the same trap written up in templates/configure/packaging.html.ep).
+sub models_by_name {
+	return sort { &format_name($a->{'name'}) cmp &format_name($b->{'name'}) } @_;
+}
+
 sub unformat_name() {
 	my $name = shift || "";
 	my $fname = lc $name;

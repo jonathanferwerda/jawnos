@@ -8,6 +8,11 @@
 
 
 <% if (scalar @{$models}) { %>
+	<%# the model picker is a chooser, so its options read alphabetically by the name
+	    that is shown (the store keeps its own price ordering); sorted in
+	    subs::models_by_name, since a template whose stash holds `a` would shadow
+	    sort's $a (see configure/packaging) %>
+	<% my @models_by_name = &subs::models_by_name(@{$models}); %>
 	<% if ( scalar keys %{$packaging} > 0 ) { %>
 		<select class="appointment_model_packaging <%= $class_list %>" attribute="packaging" name="app_packaging" value="<%= $l->{'model'}->{'quantity'} %>">
 			<option value="1">Single</option>
@@ -22,7 +27,7 @@
 	<% } %>
 	<select class="appointment_model_selector <%= $class_list %>" attribute="model" name="model" style="width:50%;">
 		<option value="">Main</option>
-		<% foreach my $m (@{$models}) { %>
+		<% foreach my $m (@models_by_name) { %>
 			<option <% if ($l->{'model'}->{'uuid'} eq $m->{'uuid'} || $m->{'uuid'} eq $l->{'data'}->{'model'}->{'uuid'}  || $l->{'data'}->{'model'}->{'def'} eq 'on' ) { %>selected<% } %> value="<%= $m->{'uuid'} %>"><%= &subs::format_name($m->{'name'}) %></option>
 		<% } %>
 	</select>
@@ -32,7 +37,7 @@
 		<% if ($settings->{'source_app'}) { %>
 			<option value="<%= $settings->{'source_app'} %>"><%= &subs::format_name($settings->{'source_app'}) %></option>
 		<% } %>
-		<% foreach my $mo ( @{$models} ) { %>
+		<% foreach my $mo ( @models_by_name ) { %>
 			<option value="<%= $mo->{'name'} %>"><%= &subs::format_name($mo->{'name'}) %></option>
 		<% } %>
 		<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
