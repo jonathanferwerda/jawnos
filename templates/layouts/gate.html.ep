@@ -31,4 +31,5 @@
 	</script>
 	<script src="/js/numeral.min.js"></script>
 	<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+	<script src="/js/device.js?string=<%= &subs::jawn_version() %>"></script>
 </html>

@@ -8337,6 +8337,25 @@ sub peer_verify {
 	return 1;
 }
 
+# Verify an Ed25519 signature (base64) over a message against a PEM public key.
+# The shared primitive behind peer_verify and the paired-device challenge.
+sub signature_verify {
+	my ($pubkey, $msg, $b64sig) = @_;
+	return 0 unless $pubkey && index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $sig = eval { decode_base64 $b64sig } || '';
+	return 0 unless length $sig;
+	my $id = &random_string_creator(16);
+	my $msg_file = "/tmp/sig_$id.msg";
+	my $sig_file = "/tmp/sig_$id.sig";
+	my $key_file = "/tmp/sig_$id.pub";
+	write_file($msg_file, $msg);
+	write_file($sig_file, $sig);
+	write_file($key_file, $pubkey);
+	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
+	`shred -u "$msg_file" "$sig_file" "$key_file" 2>/dev/null`;
+	return $ok ? 1 : 0;
+}
+
 sub c_maker() {
 	my $c = &subs::controller_builder();
 	&subs::suds_grabber();

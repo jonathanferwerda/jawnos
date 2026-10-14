@@ -422,10 +422,13 @@ our %topic = (
 	},
 	'security' => {
 		title => 'Security', category => 'apps', app => 'security',
+		templates => [ 'templates/security.html.ep', 'public/js/manager/security.js' ],
+		verified => '2026-10-13',
 		summary => 'Passwords, pseudonyms, QR codes, screen lock and secrets.',
 		body => [
 			'Security gathers the safety tools: password and pseudonym generation, QR codes, encryption helpers, screen locking and a keyring-style secret store.',
-			'It also shows the neighbour links — which machines are trusted, and with what privilege.'
+			'It also shows the neighbour links — which machines are trusted, and with what privilege.',
+			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again.'
 		],
 		related => [ 'box_office', 'devices_and_mesh', 'sealing_files' ]
 	},

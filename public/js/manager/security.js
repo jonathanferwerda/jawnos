@@ -174,6 +174,19 @@ $(document).on('click', '.neighbour_link_delete', function() {
 	});
 });
 
+$(document).on('click', '.device_revoke', function() {
+	var uuid = $(this).closest('.paired_device').attr('uuid');
+	$.ajax({
+		url: '/manager/security/device_revoke',
+		type: 'POST',
+		data: { uuid: uuid },
+		success: function(response) {
+			$('#security').html(response.html);
+			appointment_chron();
+		}
+	});
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');

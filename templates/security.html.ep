@@ -5,6 +5,7 @@
 		<button class="security_view_select" view="padlock" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
 		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
 		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>
+		<button class="security_view_select" view="devices" style="<% if ($president->{'security_view'} eq 'devices') { %>background-color:lightgreen;<% } %>">Devices</button>
 	</div>
 	<br><br><br><br>
 	<div class="security_view" view="padlock" style="width:100%;position:absolute;bottom:0px;<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
@@ -76,5 +77,26 @@
 
 
 
+	</div>
+	<div class="security_view" view="devices" style="overflow-x:auto;padding-right:8px;<% unless ( $president->{'security_view'} eq 'devices' ) { %>display:none;<% } %>">
+		<table style="width:100%;text-align:center;">
+			<thead>
+				<th>Name</th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th>
+			</thead>
+			<tbody>
+				<% foreach my $d ( @{ $devices || [] } ) { %>
+					<tr class="paired_device" uuid="<%= $d->{'uuid'} %>">
+						<td><%= $d->{'name'} %></td>
+						<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
+						<td class="time" timestamp="<%= $d->{'last_seen'} || $d->{'server_time'} %>"></td>
+						<td>Ed25519</td>
+						<td><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Revoke" class="device_revoke little_thumb hover"></td>
+					</tr>
+				<% } %>
+				<% if (scalar @{ $devices || [] } == 0) { %>
+					<tr><td colspan="5">No paired devices. A citizen session pairs its browser the first time the manager loads; after that it logs itself back in.</td></tr>
+				<% } %>
+			</tbody>
+		</table>
 	</div>
 </div>
