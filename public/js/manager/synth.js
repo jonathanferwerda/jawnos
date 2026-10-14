@@ -51,115 +51,58 @@
 	};
 
 	// ---- the factory patches ---------------------------------------------------
-	// Each is a full patch; loadPreset copies one and set() tweaks it. Values are
-	// all normalised to small numbers so the studio's 0..100 knobs can map onto
-	// them (see jawnosSynth.knob()).
-	var PRESETS = {
-		'Grand Piano': {
-			engine: 'subtractive', wave: 'piano', noise: 0.16, voices: 32,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 0, detune: 4, level: 0.5 }],
-			filter: { type: 'lowpass', cutoff: 3800, q: 0.6, env: 0.25, keytrack: 0.35 },
-			amp: { a: 0.004, d: 2.6, s: 0.0, r: 0.5 },
-			fenv: { a: 0.002, d: 1.4, s: 0.0, r: 0.4 },
-			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Electric Piano': {
-			engine: 'subtractive', wave: 'sine', noise: 0.05, voices: 24,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 1, detune: 3, level: 0.3 }],
-			filter: { type: 'lowpass', cutoff: 2600, q: 0.9, env: 0.4, keytrack: 0.5 },
-			amp: { a: 0.004, d: 1.8, s: 0.0, r: 0.4 },
-			fenv: { a: 0.002, d: 0.9, s: 0.0, r: 0.3 },
-			lfo: { rate: 3.6, pitch: 0, cutoff: 0, amp: 0.12 }
-		},
-		'Bell': {
-			engine: 'subtractive', wave: 'bell', noise: 0.02, voices: 16,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 1, detune: 7, level: 0.4 }],
-			filter: { type: 'bandpass', cutoff: 3000, q: 1.2, env: 0.2, keytrack: 0.6 },
-			amp: { a: 0.002, d: 3.5, s: 0.0, r: 1.2 },
-			fenv: { a: 0.002, d: 2.0, s: 0.0, r: 0.8 },
-			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Warm Pad': {
-			engine: 'subtractive', wave: 'sawtooth', noise: 0.0, voices: 24,
-			osc: [{ octave: 0, detune: -7, level: 0.7 }, { octave: 0, detune: 7, level: 0.7 }],
-			filter: { type: 'lowpass', cutoff: 1400, q: 1.4, env: 0.5, keytrack: 0.2 },
-			amp: { a: 0.9, d: 1.2, s: 0.75, r: 1.6 },
-			fenv: { a: 1.2, d: 1.5, s: 0.4, r: 1.2 },
-			lfo: { rate: 0.5, pitch: 0.04, cutoff: 0.15, amp: 0 }
-		},
-		'Saw Lead': {
-			engine: 'subtractive', wave: 'sawtooth', noise: 0.0, voices: 8,
-			osc: [{ octave: 0, detune: -10, level: 0.8 }, { octave: 0, detune: 10, level: 0.8 }],
-			filter: { type: 'lowpass', cutoff: 3200, q: 3.5, env: 0.6, keytrack: 0.4 },
-			amp: { a: 0.01, d: 0.3, s: 0.7, r: 0.25 },
-			fenv: { a: 0.02, d: 0.5, s: 0.3, r: 0.3 },
-			lfo: { rate: 5.2, pitch: 0.06, cutoff: 0, amp: 0 }
-		},
-		'Sub Bass': {
-			engine: 'subtractive', wave: 'square', noise: 0.0, voices: 6,
-			osc: [{ octave: -1, detune: 0, level: 1.0 }, { octave: 0, detune: 0, level: 0.25 }],
-			filter: { type: 'lowpass', cutoff: 900, q: 4.0, env: 0.7, keytrack: 0.1 },
-			amp: { a: 0.008, d: 0.5, s: 0.6, r: 0.15 },
-			fenv: { a: 0.005, d: 0.35, s: 0.1, r: 0.2 },
-			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Strings': {
-			engine: 'subtractive', wave: 'strings', noise: 0.02, voices: 24,
-			osc: [{ octave: 0, detune: -12, level: 0.6 }, { octave: 0, detune: 12, level: 0.6 }],
-			filter: { type: 'lowpass', cutoff: 2400, q: 0.8, env: 0.3, keytrack: 0.3 },
-			amp: { a: 0.5, d: 0.8, s: 0.8, r: 0.9 },
-			fenv: { a: 0.6, d: 1.0, s: 0.6, r: 0.8 },
-			lfo: { rate: 5.0, pitch: 0.05, cutoff: 0.08, amp: 0 }
-		},
-		'Organ': {
-			engine: 'subtractive', wave: 'organ', noise: 0.0, voices: 16,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 1, detune: 0, level: 0.4 }],
-			filter: { type: 'lowpass', cutoff: 5000, q: 0.4, env: 0.0, keytrack: 0.4 },
-			amp: { a: 0.01, d: 0.1, s: 0.95, r: 0.1 },
-			fenv: { a: 0.01, d: 0.1, s: 1.0, r: 0.1 },
-			lfo: { rate: 6.4, pitch: 0, cutoff: 0, amp: 0.06 }
-		},
-		'Pluck': {
-			engine: 'pluck', damping: 0.5, brightness: 0.6, voices: 24,
-			amp: { a: 0.001, d: 1.6, s: 0.0, r: 0.35 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Marimba': {
-			engine: 'subtractive', wave: 'sine', noise: 0.04, voices: 24,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 2, detune: 0, level: 0.16 }],
-			filter: { type: 'lowpass', cutoff: 2200, q: 0.5, env: 0.3, keytrack: 0.5 },
-			amp: { a: 0.002, d: 0.9, s: 0.0, r: 0.3 },
-			fenv: { a: 0.002, d: 0.4, s: 0.0, r: 0.3 },
-			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Vibraphone': {
-			engine: 'subtractive', wave: 'sine', noise: 0.01, voices: 16,
-			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 1, detune: 2, level: 0.22 }],
-			filter: { type: 'lowpass', cutoff: 3000, q: 0.5, env: 0.2, keytrack: 0.5 },
-			amp: { a: 0.003, d: 2.6, s: 0.0, r: 0.9 },
-			fenv: { a: 0.003, d: 1.0, s: 0.0, r: 0.6 },
-			lfo: { rate: 5.5, pitch: 0, cutoff: 0, amp: 0.25 }
-		},
-		'Honky Tonk': {
-			engine: 'subtractive', wave: 'piano', noise: 0.18, voices: 32,
-			osc: [{ octave: 0, detune: -6, level: 1.0 }, { octave: 0, detune: 8, level: 0.55 }],
-			filter: { type: 'lowpass', cutoff: 3400, q: 0.8, env: 0.25, keytrack: 0.35 },
-			amp: { a: 0.004, d: 2.4, s: 0.0, r: 0.5 },
-			fenv: { a: 0.002, d: 1.3, s: 0.0, r: 0.4 },
-			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Nylon Pluck': {
-			engine: 'pluck', damping: 0.35, brightness: 0.45, voices: 24,
-			amp: { a: 0.001, d: 2.4, s: 0.0, r: 0.5 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Harpsichord': {
-			engine: 'pluck', damping: 0.72, brightness: 0.9, voices: 24,
-			amp: { a: 0.001, d: 1.0, s: 0.0, r: 0.22 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
-		},
-		'Music Box': {
-			engine: 'pluck', damping: 0.78, brightness: 0.98, voices: 24,
-			amp: { a: 0.001, d: 1.9, s: 0.0, r: 0.6 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
+	// Built from the preset library (synth_presets.js, window.jawnosSynthFamilies):
+	// twelve instruments, twenty sounds each, most popular first. A patch is the
+	// family's base with the entry's overrides applied; loadPreset copies one and
+	// set() tweaks it. Values are small numbers so the studio's 0..100 knobs map
+	// onto them (see jawnosSynth.knob()).
+	var PRESETS = {};
+	var FAMILIES = [];
+	var FAMILY_PRESETS = {};
+
+	function presetOverride(patch, key, value) {
+		if (key === 'engine' || key === 'wave' || key === 'noise' || key === 'damping' || key === 'brightness' || key === 'drive' || key === 'voices' || key === 'transpose') {
+			patch[key] = value;
+			return;
 		}
-	};
+		if (key.indexOf('osc1.') === 0) { patch.osc[0][key.slice(5)] = value; return; }
+		if (key.indexOf('osc2.') === 0) {
+			while (patch.osc.length < 2) { patch.osc.push({ octave: 0, detune: 0, level: 0.4 }); }
+			patch.osc[1][key.slice(5)] = value;
+			return;
+		}
+		var parts = key.split('.');
+		var cur = patch;
+		for (var n = 0; n < parts.length - 1; n++) { cur[parts[n]] = cur[parts[n]] || {}; cur = cur[parts[n]]; }
+		cur[parts[parts.length - 1]] = value;
+	}
+
+	function buildPresets() {
+		var fams = window.jawnosSynthFamilies;
+		if (!fams || !fams.length) {
+			// the data file did not ride this build: one usable fallback
+			PRESETS = { 'Grand Piano': { engine: 'subtractive', wave: 'piano', noise: 0.16, voices: 32, osc: [{ octave: 0, detune: 0, level: 1 }, { octave: 0, detune: 4, level: 0.5 }], filter: { type: 'lowpass', cutoff: 3800, q: 0.6, env: 0.25, keytrack: 0.35 }, amp: { a: 0.004, d: 2.6, s: 0, r: 0.5 }, fenv: { a: 0.002, d: 1.4, s: 0, r: 0.4 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 } } };
+			FAMILIES = ['Piano'];
+			FAMILY_PRESETS = { 'Piano': ['Grand Piano'] };
+			return;
+		}
+		PRESETS = {}; FAMILIES = []; FAMILY_PRESETS = {};
+		fams.forEach(function (fam) {
+			FAMILIES.push(fam.name);
+			FAMILY_PRESETS[fam.name] = [];
+			fam.presets.forEach(function (entry) {
+				var name = entry[0];
+				var patch = JSON.parse(JSON.stringify(fam.base));
+				var over = entry[1] || {};
+				Object.keys(over).forEach(function (k) { presetOverride(patch, k, over[k]); });
+				patch.family = fam.name;
+				PRESETS[name] = patch;
+				FAMILY_PRESETS[fam.name].push(name);
+			});
+		});
+	}
+	buildPresets();
+	var DEFAULT_PRESET = FAMILIES.length ? FAMILY_PRESETS[FAMILIES[0]][0] : 'Grand Piano';
 
 	var S = {
 		ctx: null,
@@ -167,7 +110,7 @@
 		drive: null,
 		comp: null,
 		patch: null,
-		preset: 'Grand Piano',
+		preset: DEFAULT_PRESET,
 		voices: {},      // id -> voice
 		order: [],       // note-on order, oldest first
 		nextId: 1,
@@ -181,6 +124,8 @@
 		lfoCutoff: null,
 		lfoAmp: null,
 		arp: { on: false, rate: 8, mode: 'up', octaves: 1, held: [], step: 0, timer: null },
+		learn: { armed: null, map: {} },
+		seq: { on: false, rate: 8, steps: 16, root: 60, rows: 13, cells: {}, step: 0, timer: null, listeners: [] },
 		midi: { access: null, inputs: [], selected: null, listeners: [] }
 	};
 
@@ -215,6 +160,11 @@
 		return cur;
 	}
 
+	function knobMap(name, value) { var k = KNOBS[name]; return k ? k.to(clampNumber(value, 0, 100, 50)) : value; }
+	function knobPosition(name) { var k = KNOBS[name]; return k ? Math.max(0, Math.min(100, k.from(patchGet(name)))) : 50; }
+	function learnPersist() { try { localStorage.setItem('synth_midi_learn', JSON.stringify(S.learn.map)); } catch (e) {} }
+	function learnLoad() { try { var m = JSON.parse(localStorage.getItem('synth_midi_learn') || '{}'); if (m && typeof m === 'object') { S.learn.map = m; } } catch (e) {} }
+
 	// ---- the engine graph ------------------------------------------------------
 
 	function attach(ctx, destination) {
@@ -244,6 +194,7 @@
 		S.lfoAmp.connect(S.out.gain);
 		S.lfo.start();
 		if (!S.patch) { S.patch = copyPatch(PRESETS[S.preset]); }
+		learnLoad();
 		applyLfo();
 		applyDrive();
 		return S;
@@ -319,6 +270,35 @@
 		setTimeout(function () { releaseNote(note); }, gate);
 	}
 
+	// ---- the step sequencer: a looping grid of steps --------------------------
+
+	function seqCellKey(row, step) { return row + ':' + step; }
+
+	function seqEnsure() {
+		if (S.seq.timer) { return; }
+		S.seq.timer = setInterval(seqTick, Math.max(20, 1000 / Math.max(0.5, S.seq.rate)));
+	}
+
+	function seqStop() {
+		if (S.seq.timer) { clearInterval(S.seq.timer); S.seq.timer = null; }
+		S.seq.step = 0;
+	}
+
+	function seqTick() {
+		if (!S.seq.on) { seqStop(); return; }
+		var steps = Math.max(1, S.seq.steps);
+		var step = S.seq.step % steps;
+		var gate = Math.max(40, (1000 / Math.max(0.5, S.seq.rate)) * 0.6);
+		for (var row = 0; row < S.seq.rows; row++) {
+			if (!S.seq.cells[seqCellKey(row, step)]) { continue; }
+			var note = S.seq.root + row;
+			soundNote(note, 0.85);
+			(function (n) { setTimeout(function () { releaseNote(n); }, gate); })(note);
+		}
+		S.seq.step = (step + 1) % steps;
+		S.seq.listeners.forEach(function (fn) { try { fn(S.seq.step); } catch (e) {} });
+	}
+
 	// ---- voices ----------------------------------------------------------------
 
 	function voiceEnv(gainParam, env, t0, peak) {
@@ -343,10 +323,11 @@
 		filter.frequency.exponentialRampToValueAtTime(Math.max(40, baseHz * (0.2 + s * 0.8)), t0 + a + d);
 	}
 
-	function newVoice(note, velocity) {
+	function newVoice(note, velocity, glideFrom) {
 		var ctx = S.ctx, p = S.patch;
 		var t0 = ctx.currentTime;
 		var freq = midiToFreq(note + (S.patch.transpose || 0));
+		S.lastFreq = freq;
 		var amp = ctx.createGain();
 		amp.gain.value = 0.0001;
 		amp.connect(S.out);
@@ -404,7 +385,14 @@
 			var detune = S.bend * 200 + (o.detune || 0) + (S.mod * 50);
 			if (waveType && !o.wave) { osc.setPeriodicWave(waveType); }
 			else { osc.type = o.wave || p.wave || 'sawtooth'; }
-			osc.frequency.value = freq;
+			var oct = Math.pow(2, o.octave || 0);
+			var target = freq * oct;
+			var glide = clampNumber(p.glide, 0, 3, 0);
+			if (glideFrom && glide > 0) {
+				osc.frequency.setValueAtTime(Math.max(1, glideFrom * oct), t0);
+				osc.frequency.exponentialRampToValueAtTime(Math.max(1, target), t0 + glide);
+			}
+			else { osc.frequency.value = target; }
 			osc.detune.value = detune;
 			var g = ctx.createGain();
 			g.gain.value = (o.level == null ? 1 : o.level) / Math.max(1, oscLevels.length);
@@ -457,7 +445,7 @@
 
 	function stealing() {
 		var max = clampNumber((S.patch && S.patch.voices), 1, 64, 32);
-		while (S.order.length >= max) {
+		while (S.order.length > max) {
 			var oldest = S.voices[S.order[0]];
 			if (!oldest) { S.order.shift(); continue; }
 			try { oldest.amp.gain.cancelScheduledValues(S.ctx.currentTime); } catch (e) {}
@@ -465,11 +453,22 @@
 		}
 	}
 
-	function soundNote(note, velocity) {
-		var v = newVoice(note, velocity);
+	function soundNote(note, velocity, glideFrom) {
+		var v = newVoice(note, velocity, glideFrom);
 		S.voices[v.id] = v;
 		S.order.push(v.id);
 		stealing();
+	}
+
+	// Mono (with glide): one voice, moving to the new note instead of stacking.
+	function monoOn(note, velocity) {
+		var glideFrom = S.lastFreq;
+		var now = S.ctx.currentTime;
+		Object.keys(S.voices).forEach(function (id) {
+			var v = S.voices[id];
+			if (!v.released && v.stopSoon) { v.released = true; v.stopSoon(now); }
+		});
+		soundNote(note, velocity, (S.patch.glide > 0) ? glideFrom : 0);
 	}
 
 	function noteOn(note, velocity) {
@@ -482,6 +481,7 @@
 			arpEnsure();
 			return;
 		}
+		if (S.patch && S.patch.mono) { monoOn(note, velocity); return; }
 		soundNote(note, velocity);
 	}
 
@@ -529,6 +529,8 @@
 		if (!S.patch.fenv) { S.patch.fenv = { a: 0.01, d: 0.2, s: 0.0, r: 0.2 }; }
 		if (!S.patch.filter) { S.patch.filter = { type: 'lowpass', cutoff: 3000, q: 1, env: 0, keytrack: 0 }; }
 		if (!S.patch.lfo) { S.patch.lfo = { rate: 0, pitch: 0, cutoff: 0, amp: 0 }; }
+		if (S.patch.mono == null) { S.patch.mono = false; }
+		if (S.patch.glide == null) { S.patch.glide = 0; }
 	}
 
 	function set(param, value) {
@@ -536,6 +538,8 @@
 		if (param === 'preset') { return loadPreset(value); }
 		if (param === 'wave') { S.patch.wave = value; }
 		else if (param === 'drive') { S.patch.drive = clampNumber(value, 0, 1, 0); applyDrive(); }
+		else if (param === 'mono') { S.patch.mono = (value === true || value === 1 || value === '1' || value === 'on'); if (S.patch.mono) { allNotesOff(); } }
+		else if (param === 'glide') { S.patch.glide = clampNumber(value, 0, 3, 0); }
 		else if (param === 'voices') { S.patch.voices = clampNumber(value, 1, 64, 32); }
 		else if (param === 'transpose') { S.patch.transpose = clampNumber(value, -36, 36, 0); }
 		else if (param === 'filter.type') { S.patch.filter.type = value; }
@@ -577,6 +581,9 @@
 		else if (cmd === 0xb0) {
 			if (d[1] === 64) { S.sustain = d[2] >= 64; if (!S.sustain && S.sustainNotes.length) { S.sustainNotes.forEach(releaseNote); S.sustainNotes = []; } }
 			else if (d[1] === 1) { S.mod = d[2] / 127; }
+			// MIDI learn: the next CC binds the armed parameter; mapped CCs drive theirs
+			if (S.learn.armed) { S.learn.map[d[1]] = S.learn.armed; S.learn.armed = null; learnPersist(); }
+			else if (S.learn.map[d[1]]) { set(S.learn.map[d[1]], knobMap(S.learn.map[d[1]], d[2] / 127 * 100)); }
 		}
 		else if (cmd === 0xe0) { S.bend = ((d[2] << 7) + d[1] - 8192) / 8192; }
 		midiListeners().forEach(function (fn) { try { fn(e); } catch (err) {} });
@@ -627,6 +634,26 @@
 		allNotesOff: allNotesOff,
 		releaseAll: allNotesOff,
 		voices: voices,
+		seq: {
+			set: function (opts) {
+				opts = opts || {};
+				if ('on' in opts) { S.seq.on = !!opts.on; if (S.seq.on) { seqEnsure(); } else { seqStop(); } }
+				if ('rate' in opts) { S.seq.rate = clampNumber(opts.rate, 0.5, 30, 8); if (S.seq.timer) { seqStop(); seqEnsure(); } }
+				if ('steps' in opts) { S.seq.steps = Math.round(clampNumber(opts.steps, 4, 32, 16)); S.seq.step = 0; }
+				if ('root' in opts) { S.seq.root = Math.round(clampNumber(opts.root, 12, 108, 60)); }
+				return S.seq.on;
+			},
+			toggleCell: function (row, step) {
+				var key = seqCellKey(row, step);
+				if (S.seq.cells[key]) { delete S.seq.cells[key]; } else { S.seq.cells[key] = 1; }
+				return !!S.seq.cells[key];
+			},
+			cell: function (row, step) { return !!S.seq.cells[seqCellKey(row, step)]; },
+			clear: function () { S.seq.cells = {}; },
+			setCells: function (cells) { S.seq.cells = cells || {}; },
+			get: function () { return { on: S.seq.on, rate: S.seq.rate, steps: S.seq.steps, root: S.seq.root, rows: S.seq.rows, cells: JSON.parse(JSON.stringify(S.seq.cells)) }; },
+			onstep: function (fn) { S.seq.listeners.push(fn); }
+		},
 		arp: {
 			set: function (opts) {
 				opts = opts || {};
@@ -644,11 +671,21 @@
 		getPatch: getPatch,
 		loadPreset: loadPreset,
 		presets: function () { return Object.keys(PRESETS); },
+		families: function () { return FAMILIES.slice(); },
+		familyPresets: function (family) { return (FAMILY_PRESETS[family] || []).slice(); },
+		presetName: function () { return S.preset; },
 		// the 0..100 knob view of a patch parameter, shared by the studio pedal and
 		// the standalone window
-		knob: function (name, value) { var k = KNOBS[name]; return k ? k.to(clampNumber(value, 0, 100, 50)) : value; },
-		knobPos: function (name) { var k = KNOBS[name]; return k ? Math.max(0, Math.min(100, k.from(patchGet(name)))) : 50; },
-		setKnob: function (name, value) { return set(name, this.knob(name, value)); },
+		knob: knobMap,
+		knobPos: knobPosition,
+		setKnob: function (name, value) { return set(name, knobMap(name, value)); },
+		learn: {
+			start: function (param) { S.learn.armed = param || null; return S.learn.armed; },
+			cancel: function () { S.learn.armed = null; },
+			armed: function () { return S.learn.armed; },
+			map: function () { return JSON.parse(JSON.stringify(S.learn.map)); },
+			clear: function () { S.learn.map = {}; learnPersist(); }
+		},
 		knobNames: function () { return Object.keys(KNOBS); },
 		noteName: noteName,
 		midi: {
@@ -736,10 +773,15 @@
 	function synthPopulatePresets() {
 		var sel = $('#synth_preset');
 		if (!sel.length || sel.data('filled')) { return; }
-		window.jawnosSynth.presets().forEach(function (name) {
-			sel.append($('<option></option>').attr('value', name).text(name));
+		window.jawnosSynth.families().forEach(function (fam) {
+			var group = $('<optgroup></optgroup>').attr('label', fam);
+			window.jawnosSynth.familyPresets(fam).forEach(function (name) {
+				group.append($('<option></option>').attr('value', name).text(name));
+			});
+			sel.append(group);
 		});
 		sel.data('filled', 1);
+		sel.val(window.jawnosSynth.presetName());
 	}
 
 	function synthPopulateMidi() {
@@ -760,9 +802,11 @@
 		if (!ctx) { if (!Ctor) { return null; } ctx = new Ctor(); }
 		jawnosSynth.attach(ctx, ctx.destination);
 		synthBuildKeys();
+		synthBuildSeq();
 		synthPopulatePresets();
 		synthSyncSliders();
 		synthPopulateMidi();
+		synthPopulateLearn();
 		synthRenderOctave();
 		synthFocusOctave();
 		return ctx;
@@ -848,6 +892,77 @@
 		});
 	});
 
+	// ---- mono / glide ---------------------------------------------------------
+	$(document).on('click', '#synth_mono_toggle', function () {
+		var mono = window.jawnosSynth.getPatch().mono;
+		window.jawnosSynth.set('mono', !mono);
+		$(this).text('Mono: ' + (!mono ? 'on' : 'off'));
+	});
+	$(document).on('input change', '#synth_glide', function () {
+		window.jawnosSynth.set('glide', parseFloat($(this).val()) / 1000);
+	});
+
+	// ---- MIDI learn -----------------------------------------------------------
+	function synthPopulateLearn() {
+		var sel = $('#synth_learn_param');
+		if (!sel.length || sel.data('filled')) { return; }
+		window.jawnosSynth.knobNames().forEach(function (name) {
+			sel.append($('<option></option>').attr('value', name).text(name));
+		});
+		sel.data('filled', 1);
+	}
+	$(document).on('click', '#synth_learn', function () {
+		var param = $('#synth_learn_param').val();
+		window.jawnosSynth.learn.start(param);
+		$('#synth_learn_state').text('learning ' + param + ' — move a knob');
+	});
+	$(document).on('click', '#synth_learn_clear', function () {
+		window.jawnosSynth.learn.clear();
+		$('#synth_learn_state').text('learned cleared');
+	});
+
+	// ---- step sequencer -------------------------------------------------------
+	function synthBuildSeq() {
+		var host = $('#synth_seq');
+		if (!host.length) { return; }
+		host.empty();
+		var g = window.jawnosSynth.seq.get();
+		for (var row = g.rows - 1; row >= 0; row--) {
+			var line = $('<div class="synth_seq_row"></div>');
+			line.append($('<span class="synth_seq_label"></span>').text(window.jawnosSynth.noteName(g.root + row)));
+			for (var step = 0; step < g.steps; step++) {
+				var cell = $('<span class="synth_seq_cell"></span>').attr('row', row).attr('step', step);
+				if (window.jawnosSynth.seq.cell(row, step)) { cell.addClass('on'); }
+				line.append(cell);
+			}
+			host.append(line);
+		}
+	}
+	$(document).on('click', '.synth_seq_cell', function () {
+		var row = parseInt($(this).attr('row'), 10), step = parseInt($(this).attr('step'), 10);
+		$(this).toggleClass('on', window.jawnosSynth.seq.toggleCell(row, step));
+	});
+	$(document).on('click', '#synth_seq_toggle', function () {
+		var on = window.jawnosSynth.seq.get().on;
+		window.jawnosSynth.seq.set({ on: !on });
+		$(this).text('Seq: ' + (!on ? 'on' : 'off'));
+		if (!jawnosSynth.context()) { pianoInit(); }
+	});
+	$(document).on('change', '#synth_seq_rate, #synth_seq_steps', function () {
+		window.jawnosSynth.seq.set({ rate: $('#synth_seq_rate').val(), steps: $('#synth_seq_steps').val() });
+		synthBuildSeq();
+	});
+	$(document).on('click', '#synth_seq_clear', function () {
+		window.jawnosSynth.seq.clear();
+		$('.synth_seq_cell').removeClass('on');
+	});
+	window.jawnosSynth.seq.onstep(function (step) {
+		var host = $('#synth_seq');
+		if (!host.length) { return; }
+		host.find('.synth_seq_playing').removeClass('synth_seq_playing');
+		host.find('.synth_seq_cell[step="' + step + '"]').addClass('synth_seq_playing');
+	});
+
 	$(document).on('keydown', function (e) {
 		if (!keyboardOn || e.metaKey || e.ctrlKey || e.altKey) { return; }
 		if ($(e.target).is('input, select, textarea, [contenteditable]')) { return; }
@@ -880,6 +995,9 @@
 				if (document.hidden) { return; }
 				var v = window.jawnosSynth.voices();
 				$('#synth_voices').text(v ? (v + ' voice' + (v === 1 ? '' : 's')) : '');
+				var armed = window.jawnosSynth.learn.armed();
+				var mapped = Object.keys(window.jawnosSynth.learn.map()).length;
+				$('#synth_learn_state').text(armed ? ('learning ' + armed + ' — move a knob') : (mapped ? (mapped + ' control' + (mapped === 1 ? '' : 's') + ' learned') : ''));
 			}, 250);
 		}
 	});

@@ -3227,6 +3227,7 @@ my @manager_bundle_files = qw(
 	/js/manager/embedded.js
 	/js/manager/travel.js
 	/js/manager/studio.js
+	/js/manager/synth_presets.js
 	/js/manager/synth.js
 	/js/manager/attributes.js
 	/js/manager/inventory.js
