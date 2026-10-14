@@ -25,7 +25,7 @@ function codingChatAdd(mount, role, text) {
 	if (!log.length) { return; }
 	var safe = $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
 	if (role === 'step') {
-		log.append($('<div style="text-align:center;margin:5px 0;"><span style="font-size:12px;opacity:.6;font-style:italic;">' + safe + '</span></div>'));
+		log.append($('<div style="text-align:center;margin:5px 0;"><span class="chat_step">' + safe + '</span></div>'));
 	}
 	else {
 		var mine = (role === 'user');
@@ -137,7 +137,7 @@ function codingFixesRender(mount, data) {
 		row.append($('<div style="opacity:.55;margin:2px 0 4px;"></div>').text(
 			(f.source === 'js' ? 'browser' : (f.source || '?') + ' log') + ' · seen ' + (f.tally || 1) + '×' + (f.model ? ' · ' + f.model : '')));
 		if (f.sample) {
-			row.append($('<div style="font-family:monospace;font-size:11px;background:rgba(0,0,0,.05);border-radius:5px;padding:4px 6px;margin:0 0 4px;max-height:90px;overflow:auto;white-space:pre-wrap;overflow-wrap:break-word;"></div>').text(String(f.sample).slice(0, 600)));
+			row.append($('<div class="chat_sample" style="font-family:monospace;background:rgba(0,0,0,.05);border-radius:5px;padding:4px 6px;margin:0 0 4px;max-height:90px;overflow:auto;white-space:pre-wrap;overflow-wrap:break-word;"></div>').text(String(f.sample).slice(0, 600)));
 		}
 		if (f.summary) {
 			row.append($('<div style="margin:0 0 4px;"></div>').text('→ ' + String(f.summary).slice(0, 600)));

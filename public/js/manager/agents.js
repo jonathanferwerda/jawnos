@@ -10,14 +10,14 @@
 function jawnosAgentsPanel() {
 	var panel = $('#jawnos_agents');
 	if (panel.length) { return panel; }
-	panel = $('<div id="jawnos_agents" style="position:fixed;left:40px;top:60px;width:340px;max-height:72%;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);overflow:hidden;z-index:995000;">'
+	panel = $('<div id="jawnos_agents" style="position:fixed;left:40px;top:60px;width:360px;max-height:72%;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);overflow:hidden;z-index:995000;">'
 		+ '<div class="jawnos_agents_header" hint="Drag here to move the list" style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line);cursor:move;">'
-		+ '<span style="flex:1;font-weight:bold;font-size:13px;opacity:.85;">Agents</span>'
-		+ '<span class="jawnos_agents_new_guide hover" hint="A new Guide associate, with its own thread" style="cursor:pointer;font-size:12px;opacity:.7;padding:0 3px;">+ guide</span>'
-		+ '<span class="jawnos_agents_new_coding hover" hint="A new Coding agent, with its own thread" style="cursor:pointer;font-size:12px;opacity:.7;padding:0 3px;">+ coding</span>'
-		+ '<span class="jawnos_agents_close hover" hint="Close" style="cursor:pointer;font-size:14px;opacity:.7;padding:0 4px;">✕</span>'
+		+ '<span style="flex:1;font-weight:bold;font-size:14px;opacity:.85;">Agents</span>'
+		+ '<span class="jawnos_agents_new_guide hover" hint="A new Guide associate, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ guide</span>'
+		+ '<span class="jawnos_agents_new_coding hover" hint="A new Coding agent, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ coding</span>'
+		+ '<span class="jawnos_agents_close hover" hint="Close" style="cursor:pointer;font-size:15px;opacity:.7;padding:0 4px;">✕</span>'
 		+ '</div>'
-		+ '<div class="jawnos_agents_rows" style="flex:1;overflow-y:auto;padding:8px 10px;font-size:13px;line-height:1.35;"></div>'
+		+ '<div class="jawnos_agents_rows" style="flex:1;overflow-y:auto;padding:8px 10px;font-size:14px;line-height:1.35;"></div>'
 		+ '</div>');
 	$(document.body).append(panel);
 	panel.draggable({
@@ -34,8 +34,31 @@ function jawnosAgentsPanel() {
 	return panel;
 }
 
-function jawnosAgentsOpen() {
+// Place the list against the button it was called from: underneath it, or just
+// above when the button sits near the foot of the screen. Measured after the
+// rows are in, so the height is the one the list will really wear. The
+// appearance zoom rides on the html element, so a rect (device pixels) and a
+// CSS top (content pixels) part ways by that factor - work in content pixels.
+function jawnosAgentsPosition(panel) {
+	var anchor = panel.data('anchor');
+	if (!anchor || !$(anchor).length) { return; }
+	var zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+	if (!(zoom > 0)) { zoom = 1; }
+	var rect = $(anchor)[0].getBoundingClientRect();
+	var r = { top: rect.top / zoom, bottom: rect.bottom / zoom, left: rect.left / zoom };
+	var w = panel.outerWidth(), h = panel.outerHeight();
+	var winW = $(window).width() / zoom, winH = $(window).height() / zoom;
+	var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+	var below = winH - bar - r.bottom;
+	var top = (below >= h + 10) ? (r.bottom + 6) : (r.top - h - 6);
+	top = Math.max(6, Math.min(top, winH - bar - h - 6));
+	var left = Math.max(6, Math.min(r.left, winW - w - 6));
+	panel.css({ left: left + 'px', top: top + 'px' });
+}
+
+function jawnosAgentsOpen(anchor) {
 	var panel = jawnosAgentsPanel().css('display', 'flex');
+	panel.data('anchor', anchor || null).data('position_next', 1);
 	jawnosAgentsLoad(panel);
 }
 
@@ -65,8 +88,12 @@ function jawnosAgentsLoad(panel) {
 function jawnosAgentsRender(panel, agents) {
 	var rows = panel.find('.jawnos_agents_rows').empty();
 	var open = jawnosAgentsOpenPanels();
+	var place = function () {
+		if (panel.data('position_next')) { panel.data('position_next', 0); jawnosAgentsPosition(panel); }
+	};
 	if (!agents.length) {
 		rows.append($('<div style="opacity:.6;"></div>').text('No conversations yet — ask the Guide\'s associate something, or hand the Coding agent a task.'));
+		place();
 		return;
 	}
 	// active first, then newest first
@@ -118,6 +145,7 @@ function jawnosAgentsRender(panel, agents) {
 		row.on('click', function () { jawnosAgentsShow(key); });
 		rows.append(row);
 	});
+	place();
 }
 
 // Press a row: a panel that is open comes forward; a history row's panel is
@@ -135,10 +163,11 @@ $(document).on('click', '.jawnos_agents_new_guide', function () { assistantSpawn
 $(document).on('click', '.jawnos_agents_new_coding', function () {
 	if (typeof codingChatSpawn === 'function') { codingChatSpawn(null, null); }
 });
-// double-pressing the Assistant button opens the list (a single press still
-// opens the associate itself - the list lands over it)
+// double-pressing the Assistant button opens the list, not the chat: the single
+// press is a beat behind (manager.js), and a second press cancels it
 $(document).on('dblclick', '#assistant, .taskbar_pin[sel$="#assistant"], .assistant_anchor', function (e) {
 	if (typeof jawnos_assistant_dragging !== 'undefined' && jawnos_assistant_dragging) { return; }
 	e.preventDefault();
-	jawnosAgentsOpen();
+	clearTimeout(window.jawnos_assistant_click_timer);
+	jawnosAgentsOpen(this);
 });

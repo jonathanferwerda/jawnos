@@ -39,10 +39,10 @@
 </div>
 
 <div id="top_right_buttons">
-	<div id="assistant_view" class="assistant_view" conversation="assistant" style="position:fixed;height:360px;width:320px;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
+	<div id="assistant_view" class="assistant_view" conversation="assistant" style="position:fixed;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
 		<div class="assistant_header" hint="Drag here to move this associate" style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;gap:6px;padding:0 6px;box-sizing:border-box;border-bottom:1px solid var(--line);cursor:move;">
 			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
-			<span class="assistant_title" style="flex:1;font-weight:bold;font-size:13px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Guide's associate</span>
+			<span class="assistant_title" style="flex:1;font-weight:bold;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Guide's associate</span>
 			<% my $guide_confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' }); %>
 			<span class="assistant_new hover" hint="Open another associate, with its own thread" style="cursor:pointer;font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
 			<img class="assistant_config little_thumb hover" hint="Configure the Guide's associate" src="<%= &subs::icon_for('/images/make believe/set_button.png') %>" jawnos_icon="/images/make believe/set_button.png">
@@ -54,7 +54,7 @@
 		</div>
 		<div class="assistant_chat_log" style="position:absolute;top:38px;bottom:46px;left:0;right:0;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
 		<div class="assistant_input_row" style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);">
-			<textarea class="assistant_question" rows="1" placeholder="Ask the guide…" style="flex:1;box-sizing:border-box;height:32px;min-height:32px;max-height:32px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-size:13px;font-family:inherit;"></textarea>
+			<textarea class="assistant_question" rows="1" placeholder="Ask the guide…" style="flex:1;box-sizing:border-box;height:32px;min-height:32px;max-height:32px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-family:inherit;"></textarea>
 			<button class="assistant_send button" hint="Ask, or ask it to do it" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Ask</button>
 		</div>
 		<div class="assistant_staged_panel" style="position:absolute;top:38px;bottom:0;left:0;right:0;display:none;flex-direction:column;box-sizing:border-box;background:var(--panel);">

@@ -20007,8 +20007,23 @@ post '/manager/agents/save' => sub($c) {
 	my $name = $c->param('name') // '';
 	$name =~ s/[^A-Za-z0-9_-]//g;
 	$name = 'assistant' unless length $name;
-	my $transcript = eval { decode_json $c->param('transcript') } || [];
+	# decode from bytes: Mojo hands params back as character strings, and a single
+	# non-ASCII character (an em dash in the guide's own wording) would make
+	# decode_json fail - which is how a good thread came back as an empty one.
+	my $transcript_json = $c->param('transcript') // '';
+	utf8::encode($transcript_json) if utf8::is_utf8($transcript_json);
+	my $transcript = eval { decode_json $transcript_json } || [];
 	$transcript = [] unless ref $transcript eq 'ARRAY';
+	# An empty save must not wipe a thread that has something in it: a client-side
+	# debounce that outlived its thread, or a decode that met a character, would
+	# otherwise blank the turns the list counts. Nothing clears a conversation
+	# through a save - deleting is its own route.
+	unless (scalar @{$transcript}) {
+		my $standing = $kind eq 'coding' ? coding_conversation_load($name) : guide_conversation_load($name);
+		if (scalar @{$standing}) {
+			return $c->render(json => { ok => 1, skipped => 'empty', name => $name, kind => $kind });
+		}
+	}
 	if ($kind eq 'coding') { coding_conversation_save($name, $transcript); }
 	else { guide_conversation_save($name, $transcript); }
 	my $row = &agent_registry_note($kind, $name, $transcript);

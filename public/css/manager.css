@@ -1411,3 +1411,32 @@ body.dark_theme #ide {
 .ide_tok_var { color: var(--ide-var); }
 .ide_tok_func { color: var(--ide-func); }
 .ide_tok_type { color: var(--ide-type); }
+
+/* The chat panels - the Guide's associates and the Coding agents - are read,
+   not skimmed: on a desk they stand larger with bigger text, and on a small
+   screen they keep the compact sizes. Every panel wears these classes, the
+   mounted ones and the spawned clones alike, so their size lives here and not
+   in each template. */
+.assistant_view { width: 320px; height: 360px; }
+.coding_chat { width: 360px; max-width: 92%; height: 340px; }
+.assistant_chat_log, .coding_chat_log { font-size: 13px; line-height: 1.35; }
+.chat_step { font-size: 11px; font-style: italic; opacity: .6; }
+.chat_sample { font-size: 11px; }
+.chat_meta { font-size: 11px; opacity: .65; }
+.assistant_question, .coding_chat_input { font-size: 13px; }
+.assistant_title, .coding_chat_title { font-size: 13px; }
+.coding_fixes_rows { font-size: 12px; line-height: 1.35; }
+.assistant_staged_list { font-size: 13px; }
+
+@media screen and (min-width: 601px) {
+	.assistant_view { width: 420px; height: 500px; }
+	.coding_chat { width: 460px; height: 480px; }
+	.assistant_chat_log, .coding_chat_log { font-size: 15px; line-height: 1.4; }
+	.chat_step { font-size: 13px; }
+	.chat_sample { font-size: 12px; }
+	.chat_meta { font-size: 12px; }
+	.assistant_question, .coding_chat_input { font-size: 15px; }
+	.assistant_title, .coding_chat_title { font-size: 15px; }
+	.coding_fixes_rows { font-size: 13px; }
+	.assistant_staged_list { font-size: 14px; }
+}

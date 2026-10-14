@@ -183,8 +183,8 @@ function assistantStagedRender(panel, rows) {
 			.attr('uuid', row.uuid)
 			.attr('staged_title', row.title || row.app || '');
 		var text = $('<div style="flex:1;min-width:0;overflow-wrap:break-word;"></div>');
-		text.append($('<div style="font-size:13px;line-height:1.3;"></div>').text(row.title || '(an appointment)'));
-		text.append($('<div style="font-size:11px;opacity:.65;"></div>').text(assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '')));
+		text.append($('<div></div>').text(row.title || '(an appointment)'));
+		text.append($('<div class="chat_meta"></div>').text(assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '')));
 		var trash = $.trim(panel.find('.assistant_trash_icon').text()) || '/icons/trash.png';
 		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:pointer;font-size:15px;opacity:.75;">👍</span>';
 		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:pointer;padding:2px;" src="' + trash + '">';
@@ -245,6 +245,7 @@ var jawnos_assistant_dragging = false;
 var jawnos_assistant_extra = 0;
 var jawnos_assistant_last = null;
 var jawnos_assistant_top = 990000;
+var jawnos_assistant_click_timer = null;
 
 // Which panel a bubble, a drop or the taskbar button aims at: the one it was
 // asked from, the last one touched, or the first (the taskbar's own).
@@ -269,6 +270,9 @@ function assistantRemember(panel, role, content) {
 }
 
 function assistantThreadSave(panel) {
+	// a debounce that outlived its thread sends nothing: an empty save must never
+	// wipe what the server remembers (a guard there holds the same line)
+	if (!assistantThread(panel).length) { return; }
 	$.ajax({
 		url: '/manager/agents/save',
 		type: 'POST',
@@ -310,11 +314,11 @@ function assistantChatAdd(panel, role, text) {
 	if (!log.length) { return $(); }
 	var safe = $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
 	if (role === 'step') {
-		log.append($('<div style="text-align:center;margin:5px 0;"><span style="font-size:11px;opacity:.6;font-style:italic;">' + safe + '</span></div>'));
+		log.append($('<div style="text-align:center;margin:5px 0;"><span class="chat_step">' + safe + '</span></div>'));
 	}
 	else {
 		var mine = (role === 'user');
-		var bubble = '<span style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;font-size:13px;line-height:1.35;'
+		var bubble = '<span class="chat_bubble" style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;'
 			+ (mine ? 'background:#cdeccd;' : 'background:#cfe3f5;') + '">' + safe + '</span>';
 		log.append($('<div style="display:flex;margin:4px 0;' + (mine ? 'justify-content:flex-end;' : 'justify-content:flex-start;') + '">' + bubble + '</div>'));
 	}
@@ -327,7 +331,7 @@ function assistantAnswerBubble(panel) {
 	var log = assistantLog(panel);
 	if (!log.length) { return $(); }
 	var el = $('<div style="display:flex;margin:4px 0;justify-content:flex-start;">'
-		+ '<span style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;font-size:13px;line-height:1.35;background:#cfe3f5;">'
+		+ '<span class="chat_bubble" style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;background:#cfe3f5;">'
 		+ '<span class="assistant_content" style="opacity:.7;">…</span></span></div>');
 	log.append(el);
 	log.scrollTop(log[0].scrollHeight);
@@ -341,11 +345,14 @@ function assistantOpenPanel(panel) {
 		assistantChatAdd(panel, 'guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button onto a picture and I'll take a look.");
 	}
 	if (!panel.is(':visible')) {
+		// measure behind visibility, not display: none - a hidden element has no
+		// box to measure, and the panel would land against a zero width
+		panel.css({ visibility: 'hidden', display: 'flex' });
 		var w = panel.outerWidth(), h = panel.outerHeight();
 		var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 		var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
 		var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
-		panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' }).show();
+		panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '', visibility: '' });
 	}
 	panel.css('z-index', ++jawnos_assistant_top);
 	jawnos_assistant_last = panel;
@@ -491,7 +498,10 @@ $(document).on('click', '.assistant_new', function () { assistantSpawn($(this).c
 $(document).on('mousedown', '.assistant_view', function () { jawnos_assistant_last = $(this); });
 $(document).on('click', '#assistant', function () {
 	if (jawnos_assistant_dragging) { return; }
-	assistantOpen();
+	// wait out a second press: a double-press asks for the agents list (agents.js),
+	// and only a lone press should open the chat panel itself
+	clearTimeout(jawnos_assistant_click_timer);
+	jawnos_assistant_click_timer = setTimeout(function () { assistantOpen(); }, 260);
 });
 
 // Another associate: a clone of an open one, with its own conversation name and

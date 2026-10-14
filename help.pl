@@ -765,9 +765,9 @@ our %topic = (
 		verified => '2026-10-14',
 		summary => 'Every Guide associate and Coding agent conversation, named and kept.',
 		body => [
-			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens: every conversation the Guide\'s associate and the Coding agent have had, newest first. A row whose panel is on screen says open; the rest are history. Press a row and its panel comes forward, or is made again with what was said replayed into it.',
+			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed.',
 			'Every conversation names itself the way a chat thread does: shortly after the first thing is said, the assistant\'s model gives it a title of two to five words (a plain cut of the words when no model is set), and that name follows it in the list and on the panel\'s bar.',
-			'Conversations live in the app\'s settings, so they sync like the rest and a thread begun on one machine is in the list on another. The list\'s + guide and + coding make fresh conversations; the + in an open panel\'s own bar does the same.',
+			'Conversations live in the app\'s settings, so they sync like the rest and a thread begun on one machine is in the list on another. The list\'s + guide and + coding make fresh conversations; the + in an open panel\'s own bar does the same. The chat panels themselves stand larger on a desk, with bigger text; on a small screen they keep the compact size.',
 			'A history row deletes the way this program deletes: the first press arms it red for two seconds, and a second press inside that window throws the conversation away.'
 		],
 		steps => [
