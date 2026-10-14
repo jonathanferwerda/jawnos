@@ -688,7 +688,7 @@ sub rock_and_roll($c) {
 				}
 			}
 			my $suds = &subs::suds_grabber();
-			my $passwords = &subs::db_query('select * from security where level != ? and timestamp <= ? order by timestamp DESC','padlock',$appt_server_time);
+			my $passwords = &subs::db_query('select * from security where level != ? and level != ? and timestamp <= ? order by timestamp DESC','padlock','door',$appt_server_time);
 			my $pwords = $passwords->hashes;
 			foreach my $p ( @{$pwords} ) {
 				my $secret = &subs::decrypter($suds, $p->{'credential'}, $appt_server_time);
@@ -3421,17 +3421,18 @@ post '/sesh_check' => sub ($c) {
 		&update_database($c);
 
 	#	&subs::db_insert('appointments',{ warranty => $me_warranty, uuid => &subs::random_string_creator(40), app => "customs", type => "id", timestamp => $timestamp, server_time => $server_time }) if $db_exists == 1;
-		my $credential = eval { return &subs::db_select('security', ['credential'], { level => 1 })->hash->{credential} };
-		$credential = &subs::decrypter($secret,$credential);
+		# the password opens the door row; the key comes from this machine's
+		# vault (login_gate falls back to the old password-is-the-key world
+		# and migrates it on the spot)
+		my ($authorized, $suds_key) = &subs::login_gate($secret);
 
-		if (secure_compare $secret, $credential) {
+		if ($authorized) {
 			app->sessions->samesite(undef);
 			$c->session('authentication' => 'approved');
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
 			$c->session('database' => $database);
-			&subs::vault_seed($secret, 1);
-			$c->session('suds_id' => &subs::suds_id($secret));
+			$c->session('suds_id' => &subs::suds_id($suds_key));
 			$c->session('warranty' => $warranty);
 			$c->session('string' => &subs::random_string_creator());
 			$c->session('name') => &subs::setting_grabber({ app => 'me', setting => 'name' });
@@ -4621,7 +4622,8 @@ sub remote_device_connect($rdata) {
 
 			my $secret = &subs::db_select('security', ['credential'], { level => 1 })->hash->{credential};
 			my $double = &subs::decrypter($password,$secret);
-			if ((secure_compare $password, $double)) {
+			my $opens = &subs::door_row() ? &subs::door_check($password) : (defined $double && secure_compare($password, $double));
+			if ($opens) {
 				$returner->{'password'} = $secret;
 				my $hs = `hostname`;
 				chomp $hs;
@@ -5916,7 +5918,6 @@ sub ticket_request_mint($c, $request, $privilege, $warranty) {
 		privilege => $privilege,
 		project => $info->{'project'},
 		nic => $nic,
-		suds => $suds,
 		warranty => $warranty,
 		keep_warranty => 1
 	});
@@ -5948,7 +5949,6 @@ get '/manager/qrcode_generator' => sub($c) {
 	my $project = $c->param('project');
 	my $debriefer = $c->param('debriefer');
 	my $nic = $c->param('nic');
-	my $suds = &subs::session_suds($c);
 	my $warranty = $c->param('warranty');
 
 	my $data = &qrcode_generator({
@@ -5959,7 +5959,6 @@ get '/manager/qrcode_generator' => sub($c) {
 		project => $project,
 		debriefer => $debriefer,
 		nic => $nic,
-		suds => $suds,
 		warranty => $warranty
 	});
 	&subs::db_insert('tickets', $data);
@@ -6072,7 +6071,6 @@ sub qrcode_updater($c) {
 		my $sj = decode_json $ts;
 		if ( $t->{'port'} ne $ENV{PORT_AHOY} || $level_one->[0]->{'timestamp'} >= $t->{'server_time'}) {
 		#	$sj->{'ts'} = &subs::rightNow();
-			my $suds = &subs::note_encrypter($sj->{'p'}, &subs::session_suds($c));
 			my $secret_json = encode_json $sj;
 			my $secret = &subs::note_encrypter($t->{'password'}, $secret_json);
 			$secret = url_escape `echo "$secret" | base64 -w 0`;
@@ -6087,7 +6085,6 @@ sub qrcode_updater($c) {
 				port => $ENV{PORT_AHOY},
 				server_time => &subs::rightNow(),
 			#	secret => $secret,
-				suds => $suds
 			},
 			{ uuid => $t->{'uuid'} });
 		}
@@ -6385,11 +6382,19 @@ get '/box_office/:uuid' => sub($c) {
 		$c->redirect_to($base_url . '/manager');
 		return;
 	}
-	$secret = &subs::decrypter($vrai->{'p'},&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
-	my $suds = &subs::note_decrypter($vrai->{'p'}, $ticket->{'suds'});
-	chomp $suds;
+	# the ticket's token is the credential; a legacy row may still carry a sealed
+	# copy of the key, adopted only when this machine has none - otherwise the
+	# machine's vault is the key and nothing here touches it
+	my $genuine = (!$vrai->{'uuid'} || $vrai->{'uuid'} eq $ticket->{'uuid'}) ? 1 : 0;
+	my $suds;
+	if ($ticket->{'suds'}) {
+		$suds = &subs::note_decrypter($vrai->{'p'}, $ticket->{'suds'});
+		chomp $suds if $suds;
+		$suds = undef unless $suds && &subs::suds_current($suds);
+	}
+	$suds ||= eval { &subs::suds_grabber() };
 
-	if ((secure_compare $secret, $suds) && $ticket->{'privilege'} && $ticket->{'status'} eq 'active') {
+	if (($genuine && $suds) && $ticket->{'privilege'} && $ticket->{'status'} eq 'active') {
 		&update_database($c);
 		my $d = { app => 'customs', role => 'citizen', title => 'Your Majesty', message => &subs::format_name($ticket->{'privilege'}) . ': ' . &subs::format_name($ticket->{'name'}), image => "/images/make believe/crown.png" };
 		unless ($c->req->url->base->port eq 3000) {
@@ -6468,7 +6473,7 @@ get '/box_office/:uuid' => sub($c) {
 		# a blacklisted ticket marks the session even when it is expired or
 		# suspended: the secret proves whose browser it is, and a blacklisted one
 		# is allowed no public pages afterwards (an expired ticket still is)
-		if ($ticket->{'privilege'} && $ticket->{'privilege'} eq 'blacklisted' && secure_compare $secret, $suds) {
+		if ($ticket->{'privilege'} && $ticket->{'privilege'} eq 'blacklisted' && $genuine) {
 			$c->session('authentication' => 'denial');
 			$c->session('privilege' => 'blacklisted');
 			$c->session('suds_id' => undef);
@@ -7273,7 +7278,7 @@ get '/manager/download_file' => sub ($c) {
 	if (-e $file) {
 		if ($file =~ /\.enc$/gi) {
 			my $suds = &subs::session_suds($c);
-			my $passwords = &subs::db_query('select * from security where level != ? order by server_time DESC', 'padlock');
+			my $passwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC', 'padlock', 'door');
 			my $pwords = $passwords->hashes;
 
 			foreach my $p ( @{$pwords} ) {
@@ -7647,7 +7652,7 @@ sub sealed_file_bytes {
 	my ($suds, $file) = @_;
 	return read_file($file) unless $file =~ /\.enc$/i;
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-	my $pwords = &subs::db_query('select * from security where level != ? order by server_time DESC', 'padlock')->hashes;
+	my $pwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC', 'padlock', 'door')->hashes;
 	foreach my $p ( @{$pwords} ) {
 		my $secret = &subs::decrypter($suds, $p->{'credential'});
 		next unless $secret;
@@ -11436,6 +11441,9 @@ post '/manager/configure/new_database' => sub($c) {
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', $timestamp);
 
 	$db->insert('security', { level => 1, database => $database, timestamp => $timestamp, server_time => $server_time, credential => $secretive, uuid => &subs::random_string_creator(30) });
+	# the door: the password sealed with itself, apart from the key canary, so a
+	# later password change never re-keys this house
+	$db->insert('security', { level => 'door', database => $database, timestamp => $timestamp, server_time => $server_time, credential => $secretive, uuid => &subs::random_string_creator(30) });
 	foreach my $set ( qw/misc/ ) {
 		my $settings = &subs::db_select('settings', undef, { app => $set })->hashes;
 		foreach my $s ( @{$settings} ) {
@@ -11451,7 +11459,6 @@ post '/manager/configure/new_database' => sub($c) {
 		project => 'personal',
 		debriefer => '{}',
 		nic => 'lo',
-		suds => $secret,
 		warranty => '-100y',
 		db => $db,
 		database => $database
@@ -19831,6 +19838,168 @@ sub coding_conversation_save($name, $rows) {
 	&subs::setting_setter({ app => '__president', setting => 'coding_conversation_' . $name, value => encode_json $rows });
 }
 
+# The Guide associate's threads, the same way (the Coding agent's thread is
+# saved by its own route; both kinds land in the one registry below).
+sub guide_conversation_load($name) {
+	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'guide_conversation_' . $name }) } || [];
+	return ref $rows eq 'ARRAY' ? $rows : [];
+}
+sub guide_conversation_save($name, $rows) {
+	splice @{$rows}, 0, scalar(@{$rows}) - 40 if scalar @{$rows} > 40;
+	&subs::setting_setter({ app => '__president', setting => 'guide_conversation_' . $name, value => encode_json $rows });
+}
+
+# ---- the agents list ---------------------------------------------------------
+# Every named conversation - the Coding agent's threads and the Guide
+# associate's - leaves a row in one registry setting: what to call it, when it
+# last spoke, how long it is, and a line of what it is about. The registry is
+# one setting so it syncs with the rest; the turns stay in the conversation's
+# own setting. The list is opened by double-pressing the Assistant button.
+
+sub agent_registry {
+	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'agent_conversations' }) } || [];
+	return ref $rows eq 'ARRAY' ? $rows : [];
+}
+
+sub agent_registry_write {
+	my ($rows) = @_;
+	&subs::setting_setter({ app => '__president', setting => 'agent_conversations', value => encode_json($rows) });
+}
+
+# A thread names itself the way a chat thread does: one small model call over
+# the first words, with a cut of them as the floor when no model is set.
+sub agent_title {
+	my ($kind, $text) = @_;
+	$text = '' unless defined $text;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return '' unless length $text;
+	my $fallback = $text;
+	$fallback =~ s/^(.{0,32})\b.*$/$1/;
+	$fallback =~ s/\s+$//;
+	my $model = &subs::setting_grabber({ app => 'mail', setting => ($kind eq 'coding' ? 'coding_assistant' : 'help_assistant') })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return $fallback unless $model;
+	my ($out, $err) = &subs::evaluation_model_call(
+		$model,
+		'You name chat threads. Reply with only a short title of two to five words - no quotes, no full stop, no other words.',
+		'Name this thread: ' . substr($text, 0, 400)
+	);
+	return $fallback if $err || !defined $out;
+	$out =~ s/[\r\n"`*]+/ /g;
+	$out =~ s/\s+/ /g;
+	$out =~ s/^\s+|\s+$//g;
+	$out =~ s/[.\x{3002}]\s*$//;
+	return (length $out && length $out <= 60) ? $out : $fallback;
+}
+
+# Note a conversation: upsert its registry row. A row that has no title yet
+# gets one made from the thread's own words; every note carries the turn count
+# and a line of the last thing said.
+sub agent_registry_note {
+	my ($kind, $name, $turns) = @_;
+	return {} unless length($name || '');
+	my $list = ref $turns eq 'ARRAY' ? $turns : [];
+	my @said = grep { ($_->{'role'} || '') eq 'user' && length($_->{'content'} || '') && ($_->{'content'} || '') !~ /^\(/ } @{$list};
+	my $first = @said ? $said[0]->{'content'} : '';
+	my $last = @said ? $said[-1]->{'content'} : '';
+	my $rows = &agent_registry;
+	my ($row) = grep { ($_->{'kind'} || '') eq $kind && ($_->{'name'} || '') eq $name } @{$rows};
+	if (!$row) {
+		$row = { kind => $kind, name => $name, title => '', created => &subs::rightNow(), turns => 0 };
+		push @{$rows}, $row;
+	}
+	if (!length($row->{'title'} || '') && length $first) { $row->{'title'} = &agent_title($kind, $first); }
+	$row->{'turns'} = scalar @{$list};
+	$row->{'updated'} = &subs::rightNow();
+	$row->{'preview'} = substr(($last || $first || ''), 0, 120);
+	&agent_registry_write($rows);
+	return $row;
+}
+
+sub agent_registry_forget {
+	my ($kind, $name) = @_;
+	my $rows = &agent_registry;
+	my @keep = grep { !(($_->{'kind'} || '') eq $kind && ($_->{'name'} || '') eq $name) } @{$rows};
+	&agent_registry_write(\@keep);
+}
+
+# Threads from before the registry existed (the Coding agent's settings rows):
+# give each a row so the history is complete. Only threads with something said.
+sub agent_registry_adopt {
+	my $rows = &agent_registry;
+	my %known = map { ($_->{'kind'} || '') . "/" . ($_->{'name'} || '') => 1 } @{$rows};
+	my $found = 0;
+	my $existing = &subs::db_query("select setting from settings where app = '__president' and setting like 'coding_conversation%' and value is not null and value != '' and value != '[]'")->hashes;
+	foreach my $s ( @{$existing} ) {
+		my $name = $s->{'setting'};
+		$name =~ s/^coding_conversation_//;
+		next unless length $name;
+		next if $known{'coding/' . $name};
+		my $turns = &coding_conversation_load($name);
+		next unless scalar @{$turns};
+		&agent_registry_note('coding', $name, $turns);
+		$found++;
+	}
+	return $found;
+}
+
+# The agents list: newest first. A row that is not open is history - the
+# client keeps the open ones, and pressing a history row re-opens it.
+get '/manager/agents/list' => sub($c) {
+	&agent_registry_adopt();
+	my @out;
+	foreach my $r ( @{ &agent_registry } ) {
+		push @out, {
+			kind => (($r->{'kind'} || '') eq 'coding' ? 'coding' : 'guide'),
+			name => ($r->{'name'} || ''),
+			title => ($r->{'title'} || $r->{'name'} || ''),
+			turns => ($r->{'turns'} || 0) + 0,
+			preview => ($r->{'preview'} || ''),
+			updated => ($r->{'updated'} || $r->{'created'} || 0),
+		};
+	}
+	@out = sort { ($b->{'updated'} || 0) <=> ($a->{'updated'} || 0) } @out;
+	$c->render(json => { agents => \@out });
+};
+
+# One thread's remembered turns (what a re-opened chat shows) and its title.
+get '/manager/agents/thread' => sub($c) {
+	my $kind = ($c->param('kind') // '') eq 'coding' ? 'coding' : 'guide';
+	my $name = $c->param('name') // '';
+	$name =~ s/[^A-Za-z0-9_-]//g;
+	my $turns = $kind eq 'coding' ? coding_conversation_load($name) : guide_conversation_load($name);
+	my ($row) = grep { ($_->{'kind'} || '') eq $kind && ($_->{'name'} || '') eq $name } @{ &agent_registry };
+	$c->render(json => { kind => $kind, name => $name, title => ($row ? ($row->{'title'} || '') : ''), transcript => $turns });
+};
+
+# A guide associate's turns, saved as it goes so the history list knows where
+# the thread stood. (The Coding agent's own route saves its side; this is the
+# Guide half of the same registry.)
+post '/manager/agents/save' => sub($c) {
+	my $kind = ($c->param('kind') // '') eq 'coding' ? 'coding' : 'guide';
+	my $name = $c->param('name') // '';
+	$name =~ s/[^A-Za-z0-9_-]//g;
+	$name = 'assistant' unless length $name;
+	my $transcript = eval { decode_json $c->param('transcript') } || [];
+	$transcript = [] unless ref $transcript eq 'ARRAY';
+	if ($kind eq 'guide') { guide_conversation_save($name, $transcript); }
+	my $row = &agent_registry_note($kind, $name, $transcript);
+	$c->render(json => { ok => 1, title => ($row->{'title'} || ''), name => $name, kind => $kind });
+};
+
+# Throw an archived conversation away: its turns and its row in the registry.
+post '/manager/agents/delete' => sub($c) {
+	my $kind = ($c->param('kind') // '') eq 'coding' ? 'coding' : 'guide';
+	my $name = $c->param('name') // '';
+	$name =~ s/[^A-Za-z0-9_-]//g;
+	return $c->render(json => { error => 'no such conversation' }) unless length $name;
+	&subs::setting_setter({ app => '__president', setting => ($kind eq 'coding' ? 'coding_conversation_' : 'guide_conversation_') . $name, value => encode_json([]) });
+	&agent_registry_forget($kind, $name);
+	$c->render(json => { ok => 1, kind => $kind, name => $name });
+};
+
 # One bounded run of the Coding agent: the model picks the next action, the server
 # runs it, repeat until done or the step cap. The whole thread comes back so the
 # person sees every change, check and ship.
@@ -19874,7 +20043,8 @@ post '/manager/coding/heal' => sub($c) {
 	push @{$remembered}, { role => 'user', content => $task };
 	push @{$remembered}, { role => 'assistant', content => (length $final ? $final : 'done') };
 	coding_conversation_save($conversation, $remembered);
-	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version(), conversation => $conversation });
+	my $noted = &agent_registry_note('coding', $conversation, $remembered);
+	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version(), conversation => $conversation, title => ($noted->{'title'} || '') });
 };
 
 # Start a fresh conversation: forget the stored thread so the next run begins clean.
@@ -19883,6 +20053,7 @@ post '/manager/coding/forget' => sub($c) {
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
 	$conversation = 'coding' unless length $conversation;
 	coding_conversation_save($conversation, []);
+	&agent_registry_note('coding', $conversation, []);
 	$c->render(json => { ok => 1, conversation => $conversation });
 };
 
@@ -21756,14 +21927,20 @@ sub authentication_passer($c) {
 			my $ticket = $tick->hashes->[0];
 			$c->stash('debriefer' => $ticket->{'debriefer'});
 			if ($c->session('server_time') < $ticket->{'server_time'}) {
-				my $secretive = $ticket->{'secret'};
-				my $ver = url_unescape `echo "$secretive" | base64 --decode`;
-				my $ts = &subs::note_decrypter($ticket->{'password'},$ver);
-				my $sj = decode_json $ts;
-				my $suds = &subs::note_decrypter($sj->{'p'}, $ticket->{'suds'});
-				chomp $suds;
-				&subs::vault_seed($suds);
-				$c->session('suds_id' => &subs::suds_id($suds));
+				# a legacy ticket may still carry the key; a retired one carries
+				# nothing and the machine's vault is the key
+				my $suds;
+				if ($ticket->{'suds'}) {
+					my $secretive = $ticket->{'secret'};
+					my $ver = url_unescape `echo "$secretive" | base64 --decode`;
+					my $ts = &subs::note_decrypter($ticket->{'password'},$ver);
+					my $sj = decode_json $ts;
+					$suds = &subs::note_decrypter($sj->{'p'}, $ticket->{'suds'});
+					chomp $suds if $suds;
+				}
+				$suds ||= eval { &subs::suds_grabber() };
+				&subs::vault_seed($suds) if $suds;
+				$c->session('suds_id' => &subs::suds_id($suds)) if $suds;
 				$c->session('server_time' => $server_time);
 				$authentication = 'approved';
 			}
@@ -21821,32 +21998,23 @@ post '/manager/configure/password_update' => sub($c) {
 		$c->rendered;
 		return;
 	}
-	my $secret = &subs::decrypter(&subs::session_suds($c),&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
-	my $credential = &subs::encrypter($numerics,$numerics);
-
-	my $cred_hunt = &subs::db_select('security', ['credential','level','server_time','timestamp'], { });
-	my $creds = $cred_hunt->hashes;
-	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
-	if (secure_compare &subs::session_suds($c), $secret) {
+	# a password change re-keys only the door. The house key stays: the vault,
+	# the canary and every sealed value are untouched, and the recovery code
+	# keeps working. The old credential rows are normalised to the key so
+	# note_decrypter's historical tries stay usable.
+	my $K = &subs::session_suds($c);
+	if ($K && &subs::door_set($numerics)) {
+		my $cred_hunt = &subs::db_select('security', ['credential','level','server_time','timestamp'], { });
+		my $creds = $cred_hunt->hashes;
+		@{$creds} = grep { $_->{'level'} ne 'padlock' && $_->{'level'} ne 'door' && $_->{'level'} ne 1 } @{$creds};
 		foreach my $cr ( @{$creds} ) {
-			my $credjawntial = &subs::decrypter($secret,$cr->{'credential'});
-			my $newjawntial = &subs::encrypter($numerics,$credjawntial);
-			my $level = 2;
-			if ($level eq 'padlock') {
-				$level = 'padlock';
-			}
-			&subs::db_update('security', { level => $level, credential => $newjawntial }, { timestamp => $cr->{'timestamp'}, server_time => $cr->{'server_time'} });
+			my $credjawntial = &subs::decrypter($K,$cr->{'credential'});
+			next unless defined $credjawntial && length $credjawntial;
+			my $newjawntial = &subs::encrypter($K,$credjawntial);
+			next unless $newjawntial;
+			&subs::db_update('security', { credential => $newjawntial }, { timestamp => $cr->{'timestamp'}, server_time => $cr->{'server_time'} });
 		}
-		&subs::db_insert('security', { level => 1, database => $database, credential => $credential, timestamp => $timestamp, server_time => $server_time, uuid => &subs::random_string_creator(30) });
-		&subs::vault_seed($numerics, 1);
-		# the paper code sealed the old key and only a fresh code can be sealed
-		# (the old one is not on hand), so mark it stale for the Security view
-		my $recovery_exists = &subs::db_query('select uuid from settings where app = ? and setting = ? limit 1', '__president', 'recovery')->hashes->[0];
-		if ($recovery_exists) {
-			&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'recovery');
-			&subs::db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'password_update', timestamp => $server_time, server_time => $server_time });
-		}
-		$c->session('suds_id' => &subs::suds_id($numerics));
+		$c->session('suds_id' => &subs::suds_id($K));
 		&subs::db_delete('security', { level => 'padlock' });
 		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });

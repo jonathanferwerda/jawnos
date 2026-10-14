@@ -3011,7 +3011,7 @@ sub note_decrypter() {
 	my ($secret,$contented, $timestamp,$tries) = @_;
 	my $sc = [];
 	if ($timestamp) {
-		my $q = &db_query('select * from security where level != ? and ost <= ? order by ost desc', 'padlock', $timestamp);
+		my $q = &db_query('select * from security where level != ? and level != ? and ost <= ? order by ost desc', 'padlock', 'door', $timestamp);
 		$sc = $q->hashes;
 	}
 	if ($contented) {
@@ -3793,7 +3793,7 @@ sub file_decrypter() {
 						$path = join '/', @f;
 					}
 					$path =~ s/\.enc$//gi;
-					my $passwords = &subs::db_query('select * from security where level != ? order by server_time DESC','padlock');
+					my $passwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC','padlock','door');
 					my $pwords = $passwords->hashes;
 
 					foreach my $p ( @{$pwords} ) {
@@ -5354,7 +5354,7 @@ sub folders_decrypt_job {
 	my $suds = $data->{'suds'};
 	my $standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || "aes-256-ctr";
 	my @passwords = ( $suds );
-	my $secrets = &db_query('select * from security where level != ? order by server_time DESC','padlock');
+	my $secrets = &db_query('select * from security where level != ? and level != ? order by server_time DESC','padlock','door');
 	foreach my $p ( @{$secrets->hashes} ) {
 		my $secret = &decrypter($suds, $p->{'credential'});
 		push @passwords, $secret if (defined $secret && length $secret);
@@ -8179,6 +8179,73 @@ sub suds_current {
 	my $check = &subs::decrypter($suds, $credential);
 	return 0 unless $check;
 	return $check eq $suds ? 1 : 0;
+}
+
+# --- the door and the key -----------------------------------------------------
+# The login password gets its own row (sealed with itself), apart from the level-1
+# key canary, so a password change never re-keys the house: the key lives in the
+# vault, the password only opens the door. On a machine that predates the door
+# the two are still one thing; login_gate migrates it the first time it is used.
+sub door_row {
+	my $q = &db_select('security', ['uuid','credential'], { level => 'door' });
+	return $q ? $q->hash : undef;
+}
+
+sub door_check {
+	my ($typed) = @_;
+	return 0 unless defined $typed && length $typed;
+	my $row = &door_row();
+	return 0 unless $row && $row->{'credential'};
+	my $stored = &decrypter($typed, $row->{'credential'});
+	return ($stored && !ref $stored && $stored eq $typed) ? 1 : 0;
+}
+
+sub door_set {
+	my ($password) = @_;
+	return 0 unless defined $password && length $password;
+	my $sealed = &encrypter($password, $password);
+	return 0 unless $sealed;
+	my ($db,$database) = &database_grabber();
+	my $now = &rightNow();
+	&db_query('delete from security where level = ?', 'door');
+	&db_insert('security', {
+		level => 'door',
+		credential => $sealed,
+		database => $database,
+		timestamp => $now,
+		server_time => $now,
+		uuid => &random_string_creator(30)
+	});
+	return 1;
+}
+
+# The login gate: (authorized, key). The key comes from this machine's vault;
+# the password only has to open the door row. A machine with no door yet still
+# accepts the password-that-is-the-key and is migrated on the spot; a machine
+# whose vault was lost but whose typed password still validates the canary heals
+# its vault here. Neither password nor key ever travel in a session.
+sub login_gate {
+	my ($typed) = @_;
+	return (0, undef) unless defined $typed && length $typed;
+	my @vault = &vault_read();
+	my $vault = $vault[0];
+	if ($vault && &suds_current($vault)) {
+		my $door = &door_row();
+		if ($door) {
+			return (&door_check($typed) ? 1 : 0, $vault);
+		}
+		if (&secure_compare($typed, $vault)) {
+			&door_set($typed);
+			return (1, $vault);
+		}
+		return (0, $vault);
+	}
+	if (&suds_current($typed)) {
+		&vault_seed($typed, 1);
+		&door_set($typed) unless &door_row();
+		return (1, $typed);
+	}
+	return (0, undef);
 }
 
 # The pre-vault derivation: the newest active ticket carries a copy of the suds,
@@ -12312,6 +12379,45 @@ sub warehouse_money_mirror {
 # ---------------------------------------------------------------------------
 sub backfills() {
 	return {
+		'door_seed' => sub {
+			# the login password gets its own row so the key can stay put when
+			# the password changes; on an existing machine the password and the
+			# key are one thing, so the key itself is the door password
+			return 0 if &door_row();
+			my @vault = &vault_read();
+			my $vault = $vault[0];
+			return 0 unless $vault && &suds_current($vault);
+			return &door_set($vault) ? 1 : 0;
+		},
+		'suds_canary_reseal' => sub {
+			# the level-1 canary on older databases can be data written with
+			# the empty passphrase, in which case a db copy decrypts to the key
+			# for free. Re-seal it to the key itself - and only once the door
+			# row exists, because the resealed canary no longer leaks the way in.
+			return 0 unless &door_row();
+			my @vault = &vault_read();
+			my $vault = $vault[0];
+			return 0 unless $vault && &suds_current($vault);
+			my $q = &db_select('security', ['uuid','credential'], { level => 1 });
+			my $row = $q ? $q->hash : undef;
+			return 0 unless $row;
+			my $leak = &decrypter(undef, $row->{'credential'});
+			return 1 unless defined $leak && length $leak && $leak eq $vault;
+			my $sealed = &encrypter($vault, $vault);
+			return 0 unless $sealed && &decrypter($vault, $sealed) eq $vault;
+			&db_update('security', { credential => $sealed }, { uuid => $row->{'uuid'} });
+			return &suds_current($vault) ? 1 : 0;
+		},
+		'ticket_suds_retire' => sub {
+			# tickets no longer carry a copy of the house key: the vault is the
+			# only place it lives. Only scrub where the vault validates, so a
+			# machine that still needs the legacy chain keeps it.
+			my @vault = &vault_read();
+			my $vault = $vault[0];
+			return 0 unless $vault && &suds_current($vault);
+			&db_query("update tickets set suds = '' where suds is not null and suds != ''");
+			return 1;
+		},
 		'warehouse_money_ledger' => sub {
 			# needs the ledger column; defer until the schema migration has run
 			my $has = &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'warehouse', 'kind')->hashes->[0];
