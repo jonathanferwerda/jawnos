@@ -77,4 +77,14 @@ my @cmd = $exists
 		'--notes', "The newest JawnOS app build, served as a release asset.\n\n$product $vn (versionCode $vc)\nsha256: $sha\n",
 		'--latest');
 system(@cmd) == 0 or die "publish failed (exit " . ($? >> 8) . ")\n";
+
+# One build per product: the asset name carries the version, so --clobber alone
+# leaves the older ones behind. Drop this product's stale assets.
+my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[].name' 2>/dev/null`;
+foreach my $name ( split /\s+/, $assets ) {
+	next unless $name =~ /^jawnos-\Q$product\E-\d+-/ && $name ne $filename;
+	system('gh', 'release', 'delete-asset', $tag, $name, '--repo', $repo, '--yes') == 0
+		and print "removed stale asset $name\n";
+}
+
 print "published https://github.com/$repo/releases/tag/$tag\n";
