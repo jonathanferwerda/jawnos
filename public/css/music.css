@@ -498,3 +498,99 @@ body.dark_theme #music {
 	opacity: .45;
 	pointer-events: none;
 }
+
+/* ---- the phone's own draw --------------------------------------------------
+
+   A phone gets its own window. The template marks it (#music
+   phone_layout=yes, apps/music/music.html.ep), the shelves come out as
+   one-line strips and the list is drawn card by card (apps/music/files).
+   Everything here answers that mark and nothing else, so the desktop's draw
+   is left exactly where it was; the geometry itself (the strips' tops, the
+   list between them and the player) is inline in the template, because the
+   saved shelf sizes and the resize maths speak inline too. */
+
+/* the shelves: one line each, the names as pills that scroll sideways, so the
+   list below keeps the height the tracks need */
+#music[phone_layout="yes"] #music_artists,
+#music[phone_layout="yes"] #music_albums {
+	white-space: nowrap;
+	padding: 3px 6px;
+	box-sizing: border-box;
+}
+#music[phone_layout="yes"] .music_artist,
+#music[phone_layout="yes"] .music_album {
+	display: inline-block;
+	max-width: 60%;
+	margin: 1px 3px;
+	padding: 3px 10px;
+	font-size: 13px;
+	line-height: 1.15;
+	border-radius: 999px;
+	border-left: none;
+	background-color: var(--panel-2);
+	vertical-align: middle;
+}
+#music[phone_layout="yes"] .music_artist[active="yes"],
+#music[phone_layout="yes"] .music_album[active="yes"] {
+	background-color: rgba(255, 207, 46, 0.32);
+	box-shadow: inset 0 0 0 2px var(--music-accent);
+}
+/* the strips are one line tall: there is nothing to drag to a new size */
+#music[phone_layout="yes"] #music_artists .ui-resizable-handle,
+#music[phone_layout="yes"] #music_albums .ui-resizable-handle { display: none; }
+
+/* the list: a card per track - the picture, the words, then the time and the i
+   held on the right - with the tags panel dropping to its own line when the i
+   is tapped */
+#music[phone_layout="yes"] #files .music_track {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	box-sizing: border-box;
+	margin: 0 6px 6px;
+	padding: 6px 8px;
+	border: 1px solid var(--music-line);
+	border-radius: 12px;
+}
+#music[phone_layout="yes"] #files .music_track_thumb {
+	flex: 0 0 auto;
+	width: 42px;
+	height: 42px;
+	object-fit: cover;
+	border-radius: 9px;
+	border: 1px solid var(--music-line);
+	background-color: var(--panel-2);
+}
+#music[phone_layout="yes"] #files .music_track_words {
+	flex: 1 1 80px;
+	min-width: 0;
+}
+/* the words may run to two lines; past that they ellipsize */
+#music[phone_layout="yes"] #files .music_track .full_title {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	text-align: left;
+	padding: 0;
+	font-size: 14px;
+	line-height: 1.25;
+}
+#music[phone_layout="yes"] #files .music_track .file_duration {
+	flex: 0 0 auto;
+	padding: 0 2px;
+	font-size: 12px;
+}
+#music[phone_layout="yes"] #files .music_track .music_information_toggle,
+#music[phone_layout="yes"] #files .music_track .music_file_fetch_home {
+	flex: 0 0 auto;
+	height: 24px;
+	width: auto;
+}
+#music[phone_layout="yes"] #files .music_track .track_description {
+	flex: 1 1 100%;
+	width: 100%;
+}

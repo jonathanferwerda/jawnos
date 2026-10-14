@@ -777,6 +777,9 @@ post '/music/search' => sub ($c) {
 			template => 'apps/music/files',
 			crate => $crate,
 			search => $search,
+			# the phone's own list (see apps/music/music.html.ep): this bare
+			# fragment draws whatever the window would have
+			phone => (($device // '') eq 'mobile') ? 1 : 0,
 		);
 		$c->render(text => $contents);
 	}

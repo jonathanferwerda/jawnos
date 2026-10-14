@@ -20,6 +20,15 @@ function musicLocalVolume() {
 function musicVolumeApply() {
 	if (tree && tree.sound) { tree.sound.volume = musicLocalVolume(); }
 }
+// Is the window wearing the phone's own draw? The template says so on #music
+// (see apps/music/music.html.ep): the shelves are one-line strips and the list
+// runs from under them to the player, all of it inline. The desktop's geometry
+// must not be laid over that, so the saved shelf sizes and the shelf drag
+// handles stand down - and because the mark is the markup's, the two can never
+// disagree about which draw is showing.
+function musicPhoneLayout() {
+	return $('#music').attr('phone_layout') == 'yes';
+}
 // The rendered window contents are cached server-side and reused on the next
 // open; key that cache to the code revision, so a template change (which ships
 // with a version bump) is never served stale - the tools toggle went missing
@@ -179,7 +188,7 @@ async function musicInit(method) {
 		if (pd.state == 0 && method != 'search' && method != 'files') {
 			tree.sound.pause();
 		}
-		if (pd.resizes) {
+		if (pd.resizes && !musicPhoneLayout()) {
 			$('#music_albums').height(pd.resizes.music_albums.height);
 			$('#music_albums').scrollTop(pd.resizes.music_albums.scrollTop);
 			$('#music_artists').height(pd.resizes.music_artists.height);
@@ -205,26 +214,28 @@ async function musicInit(method) {
 		}
 	},200);
 
-	$('#music_artists, #music_albums').resizable({
-		start: function(p) {
-		},
-		resize: function(p,j) {
-			if (p.target.id == 'music_artists') {
-				$('#music_albums').height(j.size.height);
+	if (!musicPhoneLayout()) {
+		$('#music_artists, #music_albums').resizable({
+			start: function(p) {
+			},
+			resize: function(p,j) {
+				if (p.target.id == 'music_artists') {
+					$('#music_albums').height(j.size.height);
+				}
+				else if (p.target.id == 'music_albums') {
+					$('#music_artists').height(j.size.height);
+				}
+				var newTop = ($('#music_albums').height() + 100) + 'px';
+				$('#music_files').css({ 'top': newTop });
+				var i = $('#interface').height();
+				var mc = $('#music').find('.media_controls').height();
+				var mm = $('#music_albums').height();
+				$('#music_files').height($('#music').height() - (mm + mc + i));	
+			},
+			stop: function(p) { 
 			}
-			else if (p.target.id == 'music_albums') {
-				$('#music_artists').height(j.size.height);
-			}
-			var newTop = ($('#music_albums').height() + 100) + 'px';
-			$('#music_files').css({ 'top': newTop });
-			var i = $('#interface').height();
-			var mc = $('#music').find('.media_controls').height();
-			var mm = $('#music_albums').height();
-			$('#music_files').height($('#music').height() - (mm + mc + i));	
-		},
-		stop: function(p) { 
-		}
-	});
+		});
+	}
 	var mc = $('#music_configuration');
 	if (mc.is(':visible')) {
 		var z_index = $('#interface').css('z-index') + 1;

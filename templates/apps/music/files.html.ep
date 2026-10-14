@@ -1,8 +1,63 @@
 <% use Mojo::Util qw/term_escape html_unescape url_unescape url_escape/; %>
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<div id="files" style="overflow: scroll; background-color:var(--panel); width:100%; text-align:center; max-width:100%;" >
+<%# $phone_layout comes from the window (apps/music/music.html.ep): on a phone
+    the list below draws a card per track instead of the desktop's table, so a
+    narrow window never has to squeeze three columns into it. A phone that has
+    chosen the icons layout keeps that layout's grid. %>
+<% my $phone_layout = $phone ? 1 : 0; %>
+<% my $compact_list = ($phone_layout && ($crate->{'settings'}->{'layout'} // '') ne 'icons') ? 1 : 0; %>
+<div id="files" style="<% if ($compact_list) { %>overflow:visible; background-color:var(--panel); width:100%; max-width:100%; text-align:left; border:none; border-radius:0;<% } else { %>overflow: scroll; background-color:var(--panel); width:100%; text-align:center; max-width:100%;<% } %>" >
 	<% my $n = 0; %>
-	<% if ($crate->{'settings'}->{'layout'} eq 'icons') { %>
+	<% if ($compact_list) { %>
+		<%# the phone's list: a card per track. The picture leads, the words take
+		    the slack and may run to two lines, and the time and the i sit on the
+		    right where they are always in reach - nothing is pushed off the side
+		    of the window, and the list scrolls the whole way to the player. The
+		    classes and the hidden .file div are the hooks music.js reads, the
+		    same ones the desktop list carries. %>
+		<% if (scalar @{$crate->{'songs'}} > 0) { %>
+			<% foreach my $f (@{$crate->{'songs'}}) { %>
+				<% next unless $f->{'filename'}; %>
+				<% $n = $n + 1; %>
+				<div class="music_file music_track track_item link hover <% if (($f->{'playing'} // '') eq 'yes') { %>playing<% } %>" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'uuid'} %>" number="<%= $n %>" style="background-color:<%= $f->{'colour'} %>">
+					<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+					<div style="display:none;" class="file_json" file="<%= $f->{'file'} %>" file_uuid="<%= $f->{'file_uuid'} %>"><%= &subs::json_chars($f->{'info'}) %></div>
+					<% if ($f->{'type'} eq 'audio') { %>
+						<% if (scalar @{$f->{'thumbs'}} > 0) { %>
+							<img loading="lazy" decoding="async" class="music_track_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+						<% } else { %>
+							<img class="music_track_thumb music_file_thumb" src="<%= &subs::icon_for('/images/decipherable/cdrom.png') %>">
+						<% } %>
+					<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'} && $f->{'info'}->{'height'}) { %>
+						<%# a still frame of the video: the desktop list's hover swap wants a
+						    pointer, so the phone keeps the picture %>
+						<img loading="lazy" decoding="async" class="music_track_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+					<% } else { %>
+						<img class="music_track_thumb" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
+					<% } %>
+					<span class="music_track_words">
+						<% if ($f->{'type'} eq 'audio') { %>
+							<% if ($f->{'info'}->{'tags'}->{'artist'} && $f->{'info'}->{'tags'}->{'title'}) { %>
+								<span class="full_title"><% if ($f->{'info'}->{'tags'}->{'track'}) { %><%= $f->{'info'}->{'tags'}->{'track'} %>. <% } %><%= $f->{'info'}->{'tags'}->{'artist'} %> - <%= $f->{'info'}->{'tags'}->{'title'} %></span>
+							<% } elsif ($f->{'song'} !~ /\Q$f->{'artist'}/gi) { %>
+								<span class="full_title"><%= &subs::format_name($f->{'artist'}) . ' - ' . &subs::format_name($f->{'song'}) %></span>
+							<% } else { %>
+								<span class="full_title"><%= $f->{'formatted_name'} || $f->{'full_title'} %></span>
+							<% } %>
+						<% } else { %>
+							<span class="full_title"><%= $f->{'formatted_name'} || $f->{'full_title'} %></span>
+						<% } %>
+					</span>
+					<span class="file_duration"><%= $f->{'info'}->{'duration'} %></span>
+					<% if ($f->{'remote_uuid'}) { %>
+						<img class="music_file_fetch_home little_thumb hover" src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" file="<%= $f->{'filename'} %>" remote_uuid="<%= $f->{'remote_uuid'} %>">
+					<% } %>
+					<img class="music_information_toggle little_thumb" src="<%= &subs::icon_for('/images/decipherable/information.png') %>" file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>">
+					<%= include 'apps/music/track_description', f => $f %>
+				</div>
+			<% } %>
+		<% } %>
+	<% } elsif ($crate->{'settings'}->{'layout'} eq 'icons') { %>
 		<div style="max-height:100%;display:block;max-width:100%;">
 
 			<% if (scalar @{$crate->{'songs'}} > 0) { %>
@@ -91,46 +146,7 @@
 								<% } else { %>
 									<span class="full_title"><%= $f->{'formatted_name'} || $f->{'full_title'} %></span>
 								<% } %>
-								<div class="track_description" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'file_uuid'} %>" style="display:none;text-align:center;">
-									<span style="text-align:center;">
-										<% if ($f->{'type'} eq 'audio') { %>
-											<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-												<img loading="lazy" decoding="async" class="massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
-											<% } %>
-										<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'}) { %>
-											<% if ($f->{'info'}->{'height'}) { %>
-												<% my $brother = &subs::random_string_creator(); %>
-												<img loading="lazy" decoding="async" class="video_preview_thumb massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-												<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb massive_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
-											<% } %>
-										<% } %>
-									</span>
-									<br>
-									<table style="width:100%;border:solid;border-radius:2px;"><tbody>
-										<% foreach my $t ( qw/artist album track genre title date composer publisher lyrics height width/ ) { %>
-											<% if ($f->{$t}) { %>
-												<tr><td><b><%= &subs::format_name($t) %></b>:</td> <td><%= $f->{$t} %></td></tr>
-											<% } %>
-										<% } %>
-									</tbody></table>
-									<% if ($f->{'info'}->{'chapters'}) { %>
-										<% foreach my $ch ( @{$f->{'info'}->{'chapters'}} ) { %>
-											<% my $brother = &subs::random_string_creator(); %>
-											<table style="display:inline-block;" class="chapter_thumb" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>">
-												<thead>
-													<th>
-														<b><%= $ch->{'tags'}->{'title'} || $ch->{'id'} %></b>
-													</th>
-												</thead>
-												<tbody><tr><td>
-													<img loading="lazy" decoding="async" class="video_preview_thumb large_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
-													<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb large_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
-													<br><%= &subs::duration_sayer($ch->{'start_time'}) %>
-												</td></tr></tbody>
-											</table>
-										<% } %>
-									<% } %>
-								</div>
+								<%= include 'apps/music/track_description', f => $f %>
 
 							</td>
 							<td class="file_duration"><%= $f->{'info'}->{'duration'} %></td>

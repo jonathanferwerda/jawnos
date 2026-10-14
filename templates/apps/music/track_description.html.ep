@@ -1,0 +1,44 @@
+<%# the panel the i toggles open: the picture, the tags table and any chapters.
+    Shared by the desktop list and the phone's compact list (both in
+    apps/music/files), so the two draws can never drift. $f is one song out of
+    the crate. %>
+<div class="track_description" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'file_uuid'} %>" style="display:none;text-align:center;">
+	<span style="text-align:center;">
+		<% if ($f->{'type'} eq 'audio') { %>
+			<% if (scalar @{$f->{'thumbs'}} > 0) { %>
+				<img loading="lazy" decoding="async" class="massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+			<% } %>
+		<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'}) { %>
+			<% if ($f->{'info'}->{'height'}) { %>
+				<% my $brother = &subs::random_string_creator(); %>
+				<img loading="lazy" decoding="async" class="video_preview_thumb massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+				<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb massive_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
+			<% } %>
+		<% } %>
+	</span>
+	<br>
+	<table style="width:100%;border:solid;border-radius:2px;"><tbody>
+		<% foreach my $t ( qw/artist album track genre title date composer publisher lyrics height width/ ) { %>
+			<% if ($f->{$t}) { %>
+				<tr><td><b><%= &subs::format_name($t) %></b>:</td> <td><%= $f->{$t} %></td></tr>
+			<% } %>
+		<% } %>
+	</tbody></table>
+	<% if ($f->{'info'}->{'chapters'}) { %>
+		<% foreach my $ch ( @{$f->{'info'}->{'chapters'}} ) { %>
+			<% my $brother = &subs::random_string_creator(); %>
+			<table style="display:inline-block;" class="chapter_thumb" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>">
+				<thead>
+					<th>
+						<b><%= $ch->{'tags'}->{'title'} || $ch->{'id'} %></b>
+					</th>
+				</thead>
+				<tbody><tr><td>
+					<img loading="lazy" decoding="async" class="video_preview_thumb large_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+					<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb large_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
+					<br><%= &subs::duration_sayer($ch->{'start_time'}) %>
+				</td></tr></tbody>
+			</table>
+		<% } %>
+	<% } %>
+</div>

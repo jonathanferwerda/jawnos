@@ -116,14 +116,15 @@ our %topic = (
 	},
 	'music' => {
 		title => 'Music', category => 'apps', app => 'music',
-		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/video.html.ep', 'public/js/music.js' ],
+		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'public/js/music.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization' ],
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums, folders and playlists, with a mute, a lock and a configuration drawer.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
-			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).'
+			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
+			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines) and the time — with the list running right down to the player, so the time is always in reach.'
 		],
 		steps => [
 			'Open Music; the library lists artists and albums from your media folders.',
