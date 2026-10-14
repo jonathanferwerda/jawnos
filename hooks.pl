@@ -226,6 +226,12 @@ hook before_dispatch => sub {
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||
+		# the same bare signed rail carries a rotated key push and the old-seal
+		# sweep between linked machines, and neither of those has a session either
+		# (key_push_one and legacy_reseal_peer_one send no cookie) - peer_verify is
+		# the gate on both routes, exactly as it is on vault_share
+		$path eq '/manager/key_push' ||
+		$path eq '/manager/legacy_reseal' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
