@@ -4068,6 +4068,30 @@ get '/manager/legacy_reseal' => sub($c) {
 	$c->render(json => { %{$result}, by => &subs::signatorial_designer() });
 };
 
+post '/manager/key_push' => sub($c) {
+	# A linked machine that has just rotated the house key hands the new one
+	# over: the request carries its pinned signature and the new key wrapped
+	# under the key it replaced, so only a machine still on that key can read it
+	# - a machine on a different lineage fails the unwrap and keeps its own. The
+	# adoption is the same worker the local rotation runs (generate replaced by
+	# adopt), and this machine's own sealed files go to its queue.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $K = eval { &subs::suds_grabber() };
+	my $proved = $c->param('proved');
+	unless ($K && $proved) { $c->render(json => { ok => 0, error => 'no key here' }); return; }
+	my $Knew = &subs::crypt_simple_unwrap($K, $proved);
+	unless (defined $Knew && length $Knew) { $c->render(json => { ok => 0, error => 'not for this key' }); return; }
+	$Knew =~ s/\s+$//;
+	if ($Knew eq $K) { $c->render(json => { ok => 1, already => 1 }); return; }
+	my $result = &subs::rotate_house_key($Knew);
+	if ($result->{'ok'}) {
+		eval { &subs::minion_grabber()->enqueue('folders_reseal' => [ { before => $result->{'at'}, budget => 600 } ] => { attempts => 2 }) };
+	}
+	$c->render(json => { ok => $result->{'ok'} ? 1 : 0, error => $result->{'error'}, summary => { settings => $result->{'settings'}, security => $result->{'security'}, links => $result->{'links'} } });
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $direction = $c->param('direction');
@@ -20595,8 +20619,10 @@ post '/manager/security/rotate_key' => sub($c) {
 	my $result = &subs::rotate_house_key();
 	if ($result->{'ok'}) {
 		# the sweep re-sealed the database; the sealed files on disk go to the
-		# queue, which walks them resumably and re-seals each one in place
+		# queue, which walks them resumably and re-seals each one in place, and
+		# the push hands the new key to every linked machine the same sweep
 		eval { &subs::minion_grabber()->enqueue('folders_reseal' => [ { before => $result->{'at'}, budget => 600 } ] => { attempts => 2 }) };
+		eval { &subs::minion_grabber()->enqueue('key_push' => [ {} ] => { attempts => 3 }) };
 	}
 	my $sec = &security_initializer($c);
 	$c->render(json => {

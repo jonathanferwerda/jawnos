@@ -5636,6 +5636,77 @@ sub folders_reseal_job {
 	return;
 }
 
+# --- key propagation -----------------------------------------------------------
+# A rotation has to reach the rest of the house, or the machines drift apart:
+# each one ends up holding a different key, and only the machine that rotated
+# can read what it sealed. So a rotation queues a push: the new key is handed
+# to every linked machine over the signed peer rail, wrapped under the key it
+# replaced. Only a machine still on that key can open it, and a machine on a
+# different lineage fails the unwrap and keeps its own - divergence is not
+# healed by adopting a stranger's key. A machine that is away needs no push: the
+# canary syncs with the database, its next key resolution finds a vault that no
+# longer validates and pulls the new key the way a keyless machine does.
+sub key_push_envelope {
+	my $Knew = &suds_grabber();
+	return unless $Knew;
+	my $rows = &db_query('select credential from security where level = ? order by server_time desc', 'oldkey')->hashes;
+	foreach my $row ( @{$rows} ) {
+		my $Kold = &crypt_simple_unwrap($Knew, $row->{'credential'});
+		next unless defined $Kold && length $Kold;
+		my $proved = &encrypter($Kold, $Knew);
+		next unless defined $proved && length $proved;
+		return { proved => $proved, from => &suds_id($Kold) };
+	}
+	return;
+}
+
+sub key_push_one {
+	my ($rm, $proved) = @_;
+	return unless $rm && $rm->{'signatorial'} && defined $proved && length $proved;
+	my $manager = $rm->{'manager'};
+	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
+	return unless $manager;
+	my $ua = Mojo::UserAgent->new();
+	$ua->max_response_size(0);
+	$ua->insecure(1);
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	my $url = $manager . '/manager/key_push';
+	my $res = eval { $ua->inactivity_timeout(20)->post($url => form => { signatorial => &signatorial_designer(), proved => $proved })->result };
+	return unless $res && $res->is_success;
+	my $json = eval { decode_json $res->body };
+	return unless $json;
+	return { ok => $json->{'ok'} ? 1 : 0, already => $json->{'already'} ? 1 : 0, error => $json->{'error'} };
+}
+
+# The queue's half: push the envelope to every machine with a pinned key. The
+# result names what happened; machines that do not answer ride the pull path
+# instead, the next time their database syncs the new canary in.
+sub key_push_job {
+	my ($job, $data) = @_;
+	my $env = &key_push_envelope();
+	unless ($env) { $job->fail('nothing to push: no wrapped old key on this machine'); return }
+	my $me = &signatorial_designer();
+	# the route pushes to everyone; a driver may name the peers it wants (so a
+	# probe never hands a probe key to the real machines)
+	my %only = map { $_ => 1 } @{ (ref $data->{'only'} eq 'ARRAY') ? $data->{'only'} : [] };
+	my $rms = &db_select('remote_machines')->hashes || [];
+	my $summary = { asked => 0, ok => 0, refused => 0, unreachable => 0 };
+	foreach my $rm ( @{$rms} ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		next if (scalar keys %only) && !$only{$rsig};
+		next unless $rm->{'pubkey'};
+		next unless $rm->{'manager'} || $rm->{'ip'};
+		$summary->{asked}++;
+		my $got = eval { &key_push_one($rm, $env->{'proved'}) };
+		if ($got && ($got->{'ok'} || $got->{'already'})) { $summary->{ok}++; }
+		elsif ($got) { $summary->{refused}++; }
+		else { $summary->{unreachable}++; }
+	}
+	$job->note(progress => 'key pushed: ' . $summary->{ok} . ' took it, ' . $summary->{refused} . ' on another key, ' . $summary->{unreachable} . ' not answering');
+	$job->finish($summary);
+}
+
 # Every job the queue can run, in one place. The worker and the code that
 # enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
@@ -5647,6 +5718,7 @@ sub minion_task_list {
 		folders_encrypt => \&folders_encrypt_job,
 		folders_decrypt => \&folders_decrypt_job,
 		folders_reseal => \&folders_reseal_job,
+		key_push => \&key_push_job,
 		appointment_evaluation => \&appointment_evaluation_job
 	};
 }
@@ -8526,8 +8598,9 @@ sub vault_pull_from_peer {
 # candidate secrets - so content sealed before the rotation still opens. The
 # recovery code sealed the old key and is set aside (recovery_stale). Sessions do
 # not survive: every suds_id changes, so browsers re-admit themselves through
-# their device keys. $target is for probes only (rotate back); the route never
-# passes it.
+# their device keys. $target lets a caller supply the key instead of generating
+# one: probes rotate back with it, and /manager/key_push adopts a peer's new
+# key with it; the local rotation route never passes it.
 # One stored value, re-sealed from one house key to another. Returns undef when
 # the value is sealed with neither the current key nor the legacy empty
 # passphrase; the new sealed value otherwise. The unwrap is exact - Crypt::Simple

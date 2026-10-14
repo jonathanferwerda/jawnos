@@ -1,6 +1,6 @@
 # Ticket, device, and suds — access design
 
-Status: built through phase 4; phase 5 is done except cross-machine propagation of a rotated key. Written 2026-10-13.
+Status: built through phase 4; phase 5 is done. Written 2026-10-13.
 
 ## Goal
 
@@ -167,9 +167,8 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    asks a linked machine over the signed peer rail (`/manager/vault_share`, exempt from the
    gate, gated by peer_verify against a *pinned* key - no trust-on-first-contact for the key
    itself) and adopts the answer only when the local canary accepts it; the donor seals the key
-   to a one-time secret and can switch sharing off (`__president/vault_share`). *(Rotation and the
-   on-disk file re-seal are done in this build; the propagation of a rotated key across machines is
-   still to come.)* The rotation worker (`subs::rotate_house_key`, Security → Recovery): a fresh 200-bit key
+   to a one-time secret and can switch sharing off (`__president/vault_share`). *(Rotation, the
+   on-disk file re-seal and the propagation of a rotated key are all in this build.)* The rotation worker (`subs::rotate_house_key`, Security → Recovery): a fresh 200-bit key
    replaces the one in the vault. The key material moves first - the vault, the level-1 canary and the
    old key wrapped under the new one are written before anything is swept, and `remote_duty` is bumped
    so a write during the sweep seals under the new key rather than landing in the stale one. Then every
@@ -188,7 +187,11 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    seals in place - the original file is only replaced once the new seal is written and verified to
    open back to the identical bytes - skips what was written since the rotation, recognises database
    backups by the standard they append after the ciphertext and leaves them whole, and leaves a file
-   no password opens exactly as it was. A standalone pass (`subs::legacy_reseal`, Security → Recovery's
+   no password opens exactly as it was. The rotation also queues `key_push`: the new key, wrapped
+   under the one it replaced, is handed to every machine with a pinned key over the signed peer rail -
+   each adopts it with the same worker (its own database re-sealed, its own file queue filled), a
+   machine on a different lineage fails the unwrap and keeps its own, and a machine that was away
+   catches up through the pull path as soon as the new canary syncs in. A standalone pass (`subs::legacy_reseal`, Security → Recovery's
    Upgrade Old Seals) does the same legacy upgrade on demand and asks every linked machine to run its
    own over the signed peer rail (`/manager/legacy_reseal`, peer_verify-gated); and `login_gate`
    accepts the house key itself in every vault state - with a door present it authorizes without
