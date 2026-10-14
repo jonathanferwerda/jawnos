@@ -367,16 +367,17 @@ window.jawnosMap = (function () {
 		}
 
 		// A flick glides: the release velocity carries the pan on, easing out, so a
-		// throw of the map has weight instead of stopping dead.
+		// throw of the map has weight instead of stopping dead - but the weight is
+		// spent quickly (half a second or so), not a long coast.
 		var glideFrame = null;
 		function stopGlide() { if (glideFrame) { cancelAnimationFrame(glideFrame); glideFrame = null; } }
 		function glide(vx, vy) {
 			stopGlide();
-			vx = Math.max(-45, Math.min(45, vx));
-			vy = Math.max(-45, Math.min(45, vy));
+			vx = Math.max(-55, Math.min(55, vx));
+			vy = Math.max(-55, Math.min(55, vy));
 			var step = function () {
-				vx *= 0.93; vy *= 0.93;
-				if (Math.abs(vx) < 0.25 && Math.abs(vy) < 0.25) { glideFrame = null; fire(); return; }
+				vx *= 0.86; vy *= 0.86;
+				if (Math.abs(vx) < 0.4 && Math.abs(vy) < 0.4) { glideFrame = null; fire(); return; }
 				panBy(vx, vy);
 				glideFrame = requestAnimationFrame(step);
 			};

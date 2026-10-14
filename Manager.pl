@@ -17972,8 +17972,11 @@ sub travel_point_covered {
 
 # The largest pocket of unmapped ground inside the view: a coarse grid marks the
 # cells whose centre no placed map (or existing guess) covers, and the largest
-# 4-neighbour run of empty cells becomes the pocket's box. Undef when the view is
-# all known ground, or only slivers of it are not.
+# all-empty rectangle in it becomes the pocket. A rectangle - not the bounding box
+# of a connected region: empty ground that wraps around a map (the corridor beside
+# it, the void above it) has a bounding box that swallows the map itself, and a
+# guess there would lie under ground we already know. Undef when the view is all
+# known ground, or only slivers of it are not.
 sub travel_uncovered_pocket {
 	my ($placed, $view) = @_;
 	my $n = 32;
@@ -17988,43 +17991,133 @@ sub travel_uncovered_pocket {
 			$empty[$iy][$ix] = &travel_point_covered($placed, $lat, $lon, 1) ? 0 : 1;
 		}
 	}
-	my %seen;
+	# the largest all-empty rectangle: the usual histogram sweep over the rows
+	my @height;
 	my $best;
 	for my $iy ( 0 .. $n - 1 ) {
 		for my $ix ( 0 .. $n - 1 ) {
-			next unless $empty[$iy][$ix];
-			next if $seen{"$iy,$ix"};
-			my @queue = ( [ $iy, $ix ] );
-			$seen{"$iy,$ix"} = 1;
-			my ($count, $minx, $maxx, $miny, $maxy);
-			while ( my $cell = shift @queue ) {
-				my ($y, $x) = @{$cell};
-				$count++;
-				$minx = $x if !defined $minx || $x < $minx;
-				$maxx = $x if !defined $maxx || $x > $maxx;
-				$miny = $y if !defined $miny || $y < $miny;
-				$maxy = $y if !defined $maxy || $y > $maxy;
-				foreach my $step ( [ 1, 0 ], [ -1, 0 ], [ 0, 1 ], [ 0, -1 ] ) {
-					my ($ny, $nx) = ( $y + $step->[0], $x + $step->[1] );
-					next if $ny < 0 || $nx < 0 || $ny >= $n || $nx >= $n;
-					next unless $empty[$ny][$nx];
-					next if $seen{"$ny,$nx"};
-					$seen{"$ny,$nx"} = 1;
-					push @queue, [ $ny, $nx ];
-				}
+			$height[$ix] = $empty[$iy][$ix] ? (($height[$ix] || 0) + 1) : 0;
+		}
+		my @stack;   # [ start column, height of the run ], heights rising
+		for my $ix ( 0 .. $n ) {
+			my $cur = $ix < $n ? ($height[$ix] || 0) : 0;
+			my $start = $ix;
+			while ( @stack && $stack[-1]->[1] >= $cur ) {
+				my ($sx, $sh) = @{ pop @stack };
+				$start = $sx;
+				my $area = $sh * ($ix - $sx);
+				next unless $area >= 4;
+				$best = { area => $area, minx => $sx, maxx => $ix - 1, miny => $iy - $sh + 1, maxy => $iy }
+					if !$best || $area > $best->{'area'};
 			}
-			$best = { count => $count, minx => $minx, maxx => $maxx, miny => $miny, maxy => $maxy }
-				if !$best || $count > $best->{'count'};
+			push @stack, [ $start, $cur ];
 		}
 	}
 	# a cell or two of sliver is not worth an image
-	return undef unless $best && $best->{'count'} >= 4;
+	return undef unless $best;
+	return { %{$best}, n => $n, empty => \@empty };
+}
+
+# A grid pocket's cells as a ground box - the grid's own arithmetic, read back.
+sub travel_grid_box {
+	my ($view, $pocket) = @_;
+	my $n = $pocket->{'n'};
+	my $lat_step = ($view->{'maxLat'} - $view->{'minLat'}) / $n;
+	my $lon_step = ($view->{'maxLon'} - $view->{'minLon'}) / $n;
 	return {
-		minLat => $view->{'minLat'} + ($best->{'miny'} * $lat_step),
-		maxLat => $view->{'minLat'} + (($best->{'maxy'} + 1) * $lat_step),
-		minLon => $view->{'minLon'} + ($best->{'minx'} * $lon_step),
-		maxLon => $view->{'minLon'} + (($best->{'maxx'} + 1) * $lon_step),
+		minLat => $view->{'minLat'} + ($pocket->{'miny'} * $lat_step),
+		maxLat => $view->{'minLat'} + (($pocket->{'maxy'} + 1) * $lat_step),
+		minLon => $view->{'minLon'} + ($pocket->{'minx'} * $lon_step),
+		maxLon => $view->{'minLon'} + (($pocket->{'maxx'} + 1) * $lon_step),
 	};
+}
+
+# Advance one side of an empty grid pocket by one line, when the whole line is
+# empty ground and still inside the grid. Returns 1 when the line was taken.
+sub travel_pocket_line {
+	my ($pocket, $side, $axis) = @_;
+	my $empty = $pocket->{'empty'};
+	my $n = $pocket->{'n'};
+	if ($axis eq 'x') {
+		if ($side < 0) {
+			return 0 if $pocket->{'minx'} <= 0;
+			for my $y ( $pocket->{'miny'} .. $pocket->{'maxy'} ) { return 0 unless $empty->[$y][$pocket->{'minx'} - 1]; }
+			$pocket->{'minx'}--;
+		}
+		else {
+			return 0 if $pocket->{'maxx'} >= $n - 1;
+			for my $y ( $pocket->{'miny'} .. $pocket->{'maxy'} ) { return 0 unless $empty->[$y][$pocket->{'maxx'} + 1]; }
+			$pocket->{'maxx'}++;
+		}
+	}
+	else {
+		if ($side < 0) {
+			return 0 if $pocket->{'miny'} <= 0;
+			for my $x ( $pocket->{'minx'} .. $pocket->{'maxx'} ) { return 0 unless $empty->[$pocket->{'miny'} - 1][$x]; }
+			$pocket->{'miny'}--;
+		}
+		else {
+			return 0 if $pocket->{'maxy'} >= $n - 1;
+			for my $x ( $pocket->{'minx'} .. $pocket->{'maxx'} ) { return 0 unless $empty->[$pocket->{'maxy'} + 1][$x]; }
+			$pocket->{'maxy'}++;
+		}
+	}
+	return 1;
+}
+
+# The pocket grown by a fraction of each of its own spans, on every side - but only
+# through empty ground: a side advances one grid line at a time and stops at the
+# first line that would touch a map, so the grown box still covers nothing known.
+# The guess fills the blank the measured maps leave, never over them.
+sub travel_pocket_grow {
+	my ($pocket, $fraction) = @_;
+	$pocket = { %{$pocket} };
+	my $room_x = int(((($pocket->{'maxx'} - $pocket->{'minx'}) + 1) * $fraction) + 0.5);
+	my $room_y = int(((($pocket->{'maxy'} - $pocket->{'miny'}) + 1) * $fraction) + 0.5);
+	my ($left, $right, $south, $north) = ($room_x, $room_x, $room_y, $room_y);
+	my $changed = 1;
+	while ( $changed ) {
+		$changed = 0;
+		$changed = 1, $left-- if $left > 0 && &travel_pocket_line($pocket, -1, 'x');
+		$changed = 1, $right-- if $right > 0 && &travel_pocket_line($pocket, 1, 'x');
+		$changed = 1, $south-- if $south > 0 && &travel_pocket_line($pocket, -1, 'y');
+		$changed = 1, $north-- if $north > 0 && &travel_pocket_line($pocket, 1, 'y');
+	}
+	return $pocket;
+}
+
+# Widen a pocket's short axis towards the canvas the picture will be drawn on (the
+# long side 768, the short side never under 256, so about 1:3 at the most), a grid
+# line at a time and only through empty ground - so the picture is not stretched
+# on the canvas, and the widening, like everything else here, still covers nothing
+# known. A map in the way simply stops that side; the picture stretches a little.
+sub travel_pocket_widen {
+	my ($pocket, $view) = @_;
+	my $n = $pocket->{'n'};
+	my $lat_step = ($view->{'maxLat'} - $view->{'minLat'}) / $n;
+	my $lon_step = ($view->{'maxLon'} - $view->{'minLon'}) / $n;
+	my $pi = 3.14159265358979;
+	my $mpd = 6372800 * $pi / 180;
+	my $mid_lat = ($view->{'minLat'} + $view->{'maxLat'}) / 2;
+	my $mpd_lon = $mpd * cos($mid_lat * $pi / 180);
+	my $lon_metres = (($pocket->{'maxx'} - $pocket->{'minx'}) + 1) * $lon_step * $mpd_lon;
+	my $lat_metres = (($pocket->{'maxy'} - $pocket->{'miny'}) + 1) * $lat_step * $mpd;
+	my ($axis, $want, $cell_m);
+	if ($lon_metres >= $lat_metres) {
+		$axis = 'y'; $want = $lon_metres / 3; $cell_m = $lat_step * $mpd;
+	}
+	else {
+		$axis = 'x'; $want = $lat_metres / 3; $cell_m = $lon_step * $mpd_lon;
+	}
+	my $span_m = $axis eq 'y' ? $lat_metres : $lon_metres;
+	my $moved = 1;
+	while ( $moved && $span_m < $want ) {
+		$moved = 0;
+		if (&travel_pocket_line($pocket, -1, $axis)) { $moved = 1; $span_m += $cell_m; }
+		last if $span_m >= $want;
+		if (&travel_pocket_line($pocket, 1, $axis)) { $moved = 1; $span_m += $cell_m; }
+	}
+	return $pocket;
 }
 
 # The box grown by a fraction of each of its own spans, on every side.
@@ -18119,7 +18212,10 @@ sub travel_guess_describe_area {
 }
 
 # The names of the placed maps nearest a box (a map inside or touching it counts
-# as at its edge), for naming the guess after where it lies.
+# as at its edge), for naming the guess after where it lies. A map whose ground
+# lies inside a bigger map's is a detail of it, not a neighbour a guess can sit
+# "between" - naming by it reads oddly (the mall sits inside Sarnia) - so the
+# top-level maps do the naming.
 sub travel_box_names {
 	my ($placed, $box, $want) = @_;
 	my $pi = 3.14159265358979;
@@ -18127,9 +18223,24 @@ sub travel_box_names {
 	my $lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
 	my $lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;
 	my $mpd_lon = $mpd * cos($lat * $pi / 180);
-	my @ranked;
+	my @named;
 	foreach my $p ( @{$placed} ) {
 		next if $p->{'map'}->{'guessed'};
+		my $b = $p->{'bounds'};
+		my $barea = ($b->{'nw'}->{'lat'} - $b->{'se'}->{'lat'}) * ($b->{'se'}->{'lon'} - $b->{'nw'}->{'lon'});
+		my $inside = 0;
+		foreach my $q ( @{$placed} ) {
+			next if $q == $p || $q->{'map'}->{'guessed'};
+			my $c = $q->{'bounds'};
+			next unless ($c->{'nw'}->{'lat'} >= $b->{'nw'}->{'lat'} && $c->{'se'}->{'lat'} <= $b->{'se'}->{'lat'}
+				&& $c->{'nw'}->{'lon'} <= $b->{'nw'}->{'lon'} && $c->{'se'}->{'lon'} >= $b->{'se'}->{'lon'});
+			my $carea = ($c->{'nw'}->{'lat'} - $c->{'se'}->{'lat'}) * ($c->{'se'}->{'lon'} - $c->{'nw'}->{'lon'});
+			$inside = 1 if $carea > $barea;
+		}
+		push @named, $p unless $inside;
+	}
+	my @ranked;
+	foreach my $p ( @named ) {
 		my $b = $p->{'bounds'};
 		my $dlat = 0;
 		$dlat = $b->{'se'}->{'lat'} - $lat if $lat < $b->{'se'}->{'lat'};
@@ -18290,7 +18401,8 @@ sub travel_atlas_home_plates {
 
 get '/manager/travel/continent' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'travel' });
-	my $maps = &travel_atlas_maps(eval { return decode_json $settings->{'maps'} } || []);
+	# guesses ride along only while the guess toggle is on, here as in the viewer
+	my $maps = &travel_atlas_maps(eval { return decode_json $settings->{'maps'} } || [], ($settings->{'guess_enabled'} eq 'enabled'));
 	my $points = &travel_atlas_points($c->param('start'), $c->param('end'));
 	my $appointments = &travel_atlas_appointments($c->param('start'), $c->param('end'));
 	my $home_plates = &travel_atlas_home_plates();
@@ -18307,9 +18419,10 @@ get '/manager/travel/continent' => sub($c) {
 };
 
 # Guess the empty ground in what the client is looking at: the largest pocket of
-# unmapped ground in the view, grown 40% in every direction, drawn by the Plat
-# Image-generation model from a conservative description of what all the maps
-# around it show (the Vision model reads each one's own part of that ground
+# unmapped ground in the view, grown 40% into the blanks around it (never across a
+# measured map - the guess may only ever show where nothing is known), drawn by
+# the Plat Image-generation model from a conservative description of what all the
+# maps around it show (the Vision model reads each one's own part of that ground
 # first). The picture is filed as a travel map georeferenced to exactly that
 # ground, dashed and named 'guess: ...' so it never passes for a measured map; it
 # is drawn under every measured map, so it only ever shows where nothing is
@@ -18335,10 +18448,13 @@ post '/manager/travel/guess_gap' => sub($c) {
 	}
 	unless (@placed) { $c->render(json => { error => 'no placed maps yet to read the ground from' }); return; }
 
-	# only the ground nobody has mapped: the largest empty pocket in the view
+	# only the ground nobody has mapped: the largest empty pocket in the view,
+	# grown through the blanks around it and widened towards the canvas's own
+	# shape, stopping at every map it meets
 	my $pocket = &travel_uncovered_pocket(\@placed, $view);
 	unless ($pocket) { $c->render(json => { covered => 'yes', note => 'everything in this view is already covered' }); return; }
-	my $box = &travel_box_grow($pocket, 0.4);
+	$pocket = &travel_pocket_widen(&travel_pocket_grow($pocket, 0.4), $view);
+	my $box = &travel_grid_box($view, $pocket);
 
 	my $pi = 3.14159265358979;
 	my $mpd = 6372800 * $pi / 180;
@@ -18372,26 +18488,22 @@ post '/manager/travel/guess_gap' => sub($c) {
 	$prompt .= ' Conservative continuation of the surrounding land: roads and rivers run straight on unless the neighbouring maps show otherwise; no invented bends, junctions, towns or landmarks; the same season and imagery style as the neighbouring maps. No borders, no labels, no text, no icons, no arrows.';
 
 	# the canvas: the long side 768, the short side proportional but never under
-	# 256 (the image model refuses less) - and the ground box then fits the canvas,
-	# so the georeference never has to stretch the picture
+	# 256 (the image model refuses less), rounded to the 64s the model likes. The
+	# pocket's short axis has already been widened towards this shape, over empty
+	# ground only; whatever it could not reach just stretches the picture a little -
+	# the ground box itself is never grown over a map
 	my ($px_lon, $px_lat);
 	if ($lon_metres >= $lat_metres) {
 		$px_lon = 768;
 		$px_lat = int(((768 * $lat_metres / $lon_metres) / 64) + 0.5) * 64;
 		$px_lat = 256 if $px_lat < 256;
 		$px_lat = 768 if $px_lat > 768;
-		my $want_lat = $lon_metres * $px_lat / 768;
-		my $extra = ($want_lat - $lat_metres) / 2 / $mpd;
-		$box->{'minLat'} -= $extra; $box->{'maxLat'} += $extra; $lat_metres = $want_lat;
 	}
 	else {
 		$px_lat = 768;
 		$px_lon = int(((768 * $lon_metres / $lat_metres) / 64) + 0.5) * 64;
 		$px_lon = 256 if $px_lon < 256;
 		$px_lon = 768 if $px_lon > 768;
-		my $want_lon = $lat_metres * $px_lon / 768;
-		my $extra = ($want_lon - $lon_metres) / 2 / $mpd_lon;
-		$box->{'minLon'} -= $extra; $box->{'maxLon'} += $extra; $lon_metres = $want_lon;
 	}
 
 	my ($bytes, $mime, $err) = &subs::ai_text_to_image({
