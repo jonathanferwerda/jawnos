@@ -24,9 +24,10 @@ use File::Slurp qw(read_file write_file);
 use File::Path qw(make_path);
 use Crypt::Simple;
 use Getopt::Long qw(GetOptions);
+use Cwd ();
 
 # run from the repo root (the parent of scripts/)
-my $root = "$Bin/..";
+my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!";
 
 my $port       = 3210;
@@ -102,11 +103,8 @@ sub default_search_engines {
 # ---------------------------------------------------------------------------
 sub make_database {
 	my ( $cfg, $params ) = @_;
-	my $name     = $params->{'name'} || 'initial';
 	my $code     = $params->{'code'};
 	my $standard = $params->{'encryption_standard'} || 'aes-256-ctr';
-	my $start    = jawn_home( $cfg->{'start_dir'} || '~/' );
-	$start =~ s{/?$}{/};
 
 	unless ( $code && $code =~ /^[0-9]{4,12}$/ ) {
 		return { error => 'The unlock code must be 4-12 digits.' };
@@ -114,15 +112,16 @@ sub make_database {
 	unless ( -e 'database/schema.sql' ) {
 		return { error => 'database/schema.sql is missing.' };
 	}
-	unless ( -d $start ) {
-		return { error => "The start directory does not exist: $start" };
-	}
 
 	my $tmp = jawn_home('~/.president');
 	make_path($tmp) unless -d $tmp;
 
-	my $live_db  = $start . $name . '.db';
-	my $enc_file = $start . $name . '.enc';
+	# one machine, one database: it lives in the install's database/ dir, its
+	# sealed copy beside it in database/backups/. There is no start directory to
+	# pick and no database to name.
+	my $live_db  = "$root/database/initial.db";
+	my $enc_file = "$root/database/backups/initial.enc";
+	make_path("$root/database/backups") unless -d "$root/database/backups";
 	my $working  = $tmp . '/setup_' . randstr(10) . '.db';
 
 	# fresh database from the shipped schema
@@ -252,7 +251,6 @@ sub WIZARD_HTML {
 			<div><label>Domain / host</label><input id="cfg_domain" value="127.0.0.1"></div>
 		</div>
 		<div class="row">
-			<div><label>Start directory (database + files live here)</label><input id="cfg_start_dir" value="~/"></div>
 			<div><label>HTTP port</label><input id="cfg_port" value="3000"></div>
 		</div>
 		<label>Signatorial file (any file that won't change; encrypts cookies &mdash; leave blank to generate one)</label>
@@ -271,7 +269,6 @@ sub WIZARD_HTML {
 		<h2>3. Database</h2>
 		<p class="note">A fresh database is created from the shipped schema and encrypted with a numeric code you choose. You'll type that code at the gate to unlock JawnOS.</p>
 		<div class="row">
-			<div><label>Database name</label><input id="db_name" value="initial"></div>
 			<div><label>Unlock code (4-12 digits)</label><input id="db_code" inputmode="numeric" pattern="[0-9]*" value=""></div>
 		</div>
 		<p class="note">Leave the code blank to auto-generate one.</p>
@@ -365,7 +362,7 @@ async function post(url, data) {
 async function saveConfig() {
 	var data = {
 		name: val('cfg_name'), device: val('cfg_device'), email: val('cfg_email'),
-		domain: val('cfg_domain'), start_dir: val('cfg_start_dir'), port: val('cfg_port'),
+		domain: val('cfg_domain'), port: val('cfg_port'),
 		signatorial: val('cfg_signatorial'),
 		folders: val('cfg_folders').split('\n').map(function(s){return s.trim();}).filter(Boolean)
 	};
@@ -383,7 +380,7 @@ async function makeDatabase() {
 	if (!code) { code = String(Math.floor(10000000 + Math.random() * 89999999)); }
 	var m = document.getElementById('db-msg');
 	m.innerHTML = 'building&hellip;';
-	var res = await post('api/database', { name: val('db_name'), code: code });
+	var res = await post('api/database', { code: code });
 	if (res.ok) {
 		m.innerHTML = '<span class="ok">Created ' + res.enc_file + '</span>';
 		document.getElementById('db-code-out').textContent = res.code;
@@ -433,9 +430,6 @@ post '/api/config' => sub {
 	my $in = eval { decode_json $c->param('data') } || {};
 	my $existing = read_config() || {};
 
-	my $start_dir = $in->{'start_dir'} || '~/';
-	$start_dir =~ s{/?$}{/};
-
 	my $sig = ensure_signatorial( $in->{'signatorial'} );
 
 	my $cfg = {
@@ -446,7 +440,6 @@ post '/api/config' => sub {
 		domain         => $in->{'domain'} || '127.0.0.1',
 		email          => $in->{'email'} || 'me@email.com',
 		environment    => $in->{'environment'} || 'production',
-		start_dir      => $start_dir,
 		logfile        => $existing->{'logfile'} || '~/manager.log',
 		port           => $in->{'port'} || '3000',
 		working_port   => $existing->{'working_port'} || '45545',
@@ -458,6 +451,11 @@ post '/api/config' => sub {
 		scanners       => $existing->{'scanners'} || [],
 		search_engines => $existing->{'search_engines'} || default_search_engines(),
 	};
+
+	# start_dir is gone from the database's life: the one database lives in the
+	# install's database/ dir, so the key is never written and a stale one from an
+	# older config.json is dropped.
+	delete $cfg->{'start_dir'};
 
 	write_config($cfg);
 	$c->render( json => { ok => 1, config => $cfg, signatorial => $sig } );

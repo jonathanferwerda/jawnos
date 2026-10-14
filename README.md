@@ -485,12 +485,13 @@ On the first run — or any time `config.json` is missing — JawnOS walks you t
    modules and offers to install anything that is missing (using `apt`, `pacman` or Termux's
    `pkg`, plus `cpanm`).
 2. **`config.json`.** A web wizard opens at <http://127.0.0.1:3210/wizard> where you fill in your
-   name, device, start directory, ports and media folders; it writes `config.json` for you. The
+   name, device, ports and media folders; it writes `config.json` for you. The
    `signatorial` is a file that will not change — JawnOS reads it at start-up, hashes it and uses
    it to encrypt cookies. Leave that field blank and the wizard generates one for you.
-3. **Database.** The wizard builds a brand-new database from `database/schema.sql` and encrypts
-   it with a numeric unlock code you choose (it can generate one). Write that code down — you
-   type it at the gate screen to unlock JawnOS.
+3. **Database.** The wizard builds a brand-new database from `database/schema.sql` at
+   `database/initial.db` and encrypts a copy beside it in `database/backups/` with a numeric unlock
+   code you choose (it can generate one). Write that code down — you type it at the gate screen to
+   unlock JawnOS. There is nothing else to pick or move: one machine, one database.
 
 When setup finishes the wizard closes and JawnOS boots. Your browser opens at the gate with the
 new database listed; enter your unlock code to get in.
