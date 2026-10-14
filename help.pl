@@ -647,7 +647,7 @@ our %topic = (
 			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
-			'The evaluation view of the panel also shows the house at a glance: one row per machine that can take AI work, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
+			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine that can take AI work, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
 			'Below it is the API balances table: what is left on each provider account, where the provider reports it. OpenRouter and DeepSeek do; the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq, Cloudflare) have no balance endpoint and read “—”. The read happens in the background every ten minutes, so the page never waits.'
 		],
 		steps => [
@@ -655,9 +655,9 @@ our %topic = (
 			'Find the machine whose jobs you want to change.',
 			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
-			'In the evaluation view, read the house table and the API balances to see the AI work and what is left on each account.'
+			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each account.'
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The evaluation view also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, where only OpenRouter and DeepSeek report a balance and the rest read em-dash. Do not invent job names beyond the ones listed.',
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, where only OpenRouter and DeepSeek report a balance and the rest read em-dash. Do not invent job names beyond the ones listed.',
 		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
 	},
 	'navigation' => {
