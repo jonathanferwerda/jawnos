@@ -12219,10 +12219,33 @@ sub install_extras {
 
 my %error_watch_state;    # source => bytes already read (for this watcher's life)
 my %error_watch_partial;  # source => an unterminated tail line
+my $error_watch_state_loaded = 0;
+
+sub error_watch_offsets_file { return &subs::home('~/.president/error_watch_offsets'); }
+
+# The offsets live in a little file so a President restart (which happens on
+# every code change) does not re-read the whole pty log and count every fault
+# again; ~/.president is wiped when the master starts, so they never outlive the
+# pty log they describe.
+sub error_watch_state_load {
+	my $file = &error_watch_offsets_file();
+	return unless -f $file;
+	my $saved = eval { decode_json scalar read_file($file) } || {};
+	foreach my $source ( keys %{$saved} ) {
+		next unless defined $saved->{$source} && $saved->{$source} =~ /^[0-9]+$/;
+		$error_watch_state{$source} = $saved->{$source} + 0;
+	}
+}
+
+sub error_watch_state_save {
+	return unless %error_watch_state;
+	write_file(&error_watch_offsets_file(), encode_json(\%error_watch_state));
+}
 
 # Lines that are normal noise rather than errors. jawn() already suppresses the
-# same ones from its own console.
-my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:/;
+# same ones from its own console, and the master prints the shutdown line on
+# every restart.
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic/;
 
 sub error_watch_is_error {
 	my $line = shift;
@@ -12254,6 +12277,7 @@ sub error_signature {
 sub error_watch_read_new {
 	my ($path, $source) = @_;
 	return () unless defined $path && -f $path;
+	unless ($error_watch_state_loaded) { &error_watch_state_load(); $error_watch_state_loaded = 1; }
 	my $size = -s $path;
 	unless (defined $error_watch_state{$source}) {
 		# the pty log is truncated when the master starts, so read it whole;
@@ -12273,6 +12297,7 @@ sub error_watch_read_new {
 	close $fh;
 	return () unless defined $chunk && length $chunk;
 	$error_watch_state{$source} = $offset + length $chunk;
+	&error_watch_state_save();
 	my $buffer = ($error_watch_partial{$source} // '') . $chunk;
 	my @lines = split /\n/, $buffer, -1;
 	$error_watch_partial{$source} = pop @lines;   # keep the unterminated tail
