@@ -41,7 +41,9 @@
 	var ideocwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
 
 	ideSearchActive = ($('#ide_search').val() || '') !== '';
+	ideScrollInit(<%== $list_scroll_json %>, <%== $editor_scroll_json %>);
 	ideOpenInit(<%== $open_folders_json %>);
+	ideScrollBind();
 	ideRestoreFolders();
 
 	var windHeight = $('#ide').closest('.wind').height();

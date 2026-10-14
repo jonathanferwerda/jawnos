@@ -1126,7 +1126,10 @@ function jawnosUpdateQuietReload() {
 	save();
 	if (document.hidden) { location.reload(); return; }
 	if ($('#jawnos_update_pill').length) { return; }
-	var pill = $('<div id="jawnos_update_pill" hint="A new build has shipped" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:7px 12px;font-size:13px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.35);">A fix has shipped — <b>press to update</b></div>');
+	// a real button, not a text block: on a phone Chrome reads plain text as
+	// something to touch-and-search, and a tap on "update" offered a web search.
+	// A button with no selectable text is only ever a thing to press.
+	var pill = $('<button type="button" id="jawnos_update_pill" hint="A new build has shipped" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:7px 12px;font-family:inherit;font-size:13px;color:inherit;line-height:1.2;-webkit-appearance:none;appearance:none;cursor:pointer;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;box-shadow:0 6px 18px rgba(0,0,0,.35);">A fix has shipped — <b>press to update</b></button>');
 	pill.on('click', function () { save(); location.reload(); });
 	$('body').append(pill);
 	// the hidden tab does not wait for a press: come back and it is already new

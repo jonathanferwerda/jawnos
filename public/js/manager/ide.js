@@ -94,12 +94,79 @@ function ideRestoreFolders() {
 	})(0);
 }
 
+// ---- remembered scroll ---------------------------------------------------
+// The file list's own scroll and each open file's editor scroll come back with
+// the window. Scroll does not bubble, so each element is bound where it is
+// built rather than delegated from the document.
+var ideListScroll = { x: 0, y: 0 };
+var ideEditorScroll = {};
+var ideScrollSaveTimer;
+
+function ideScrollInit(list, editor) {
+	ideListScroll = (list && typeof list.x == 'number' && typeof list.y == 'number') ? { x: list.x, y: list.y } : { x: 0, y: 0 };
+	ideEditorScroll = (editor && typeof editor == 'object') ? editor : {};
+}
+
+function ideScrollPersist() {
+	settingSetter({ app: 'ide', setting: 'list_scroll', value: JSON.stringify(ideListScroll) });
+	settingSetter({ app: 'ide', setting: 'editor_scroll', value: JSON.stringify(ideEditorScroll) });
+}
+
+function ideScrollQueued() {
+	clearTimeout(ideScrollSaveTimer);
+	ideScrollSaveTimer = setTimeout(ideScrollPersist, 700);
+}
+
+function ideListScrollApply() {
+	var l = $('#ide_list');
+	if (l.length) { l.scrollTop(ideListScroll.y || 0).scrollLeft(ideListScroll.x || 0); }
+}
+
+function ideEditorScrollCapture() {
+	var c = $('#ide_content');
+	var f = c.attr('file');
+	if (!f) { return; }
+	ideEditorScroll[f] = { x: c.scrollLeft() || 0, y: c.scrollTop() || 0 };
+}
+
+// the editor is often still hidden when a file is chosen (the list is showing),
+// and a hidden box has no scroll to set - so this runs again once it is shown
+function ideEditorScrollApply(file) {
+	if (!file) { return; }
+	var s = ideEditorScroll[file];
+	if (!s) { return; }
+	var c = $('#ide_content');
+	c.scrollTop(s.y || 0).scrollLeft(s.x || 0);
+	if (typeof ideCodeScroll == 'function') { ideCodeScroll(); }
+}
+
+function ideScrollBind() {
+	var list = document.getElementById('ide_list');
+	var content = document.getElementById('ide_content');
+	if (list && !list.ide_scroll_bound) {
+		list.ide_scroll_bound = 1;
+		list.addEventListener('scroll', function() {
+			ideListScroll = { x: list.scrollLeft || 0, y: list.scrollTop || 0 };
+			ideScrollQueued();
+		});
+	}
+	if (content && !content.ide_scroll_bound) {
+		content.ide_scroll_bound = 1;
+		content.addEventListener('scroll', function() {
+			ideEditorScrollCapture();
+			ideScrollQueued();
+		});
+	}
+}
+
 // one move in: the words and the file they belong to, so the colours and the
 // caret can never disagree about what is open
 function ideContentSet(text, file) {
+	ideEditorScrollCapture();
 	var c = $('#ide_content');
 	c.val(text).attr('file', file || '');
 	ideCodeRefresh();
+	ideEditorScrollApply(file || '');
 }
 
 
@@ -114,9 +181,11 @@ $(document).on('click', '#ide_hamburger', function() {
 	if (il.is(':visible')) {
 		il.hide();
 		imw.show();
+		ideEditorScrollApply($('#ide_content').attr('file'));
 	}
 	else {
 		il.show();
+		ideListScrollApply();
 		imw.hide();
 	}
 });
@@ -195,6 +264,7 @@ function ideFileOpen(data) {
 				settingSetter({ 'app': 'ide', 'setting': 'active_tab', 'value': file });
 				$('#ide_list').hide();
 				$('#ide_main_window').show();
+				ideEditorScrollApply(response['file']);
 			}
 		}
 	});
@@ -214,11 +284,13 @@ function ideFolderSelector(folder,search) {
 		data: { folder: folder, timestamp: timestamp, search: search },
 		success: function(response) {
 			windowMaker(response.html);
-			ideTabPopulator(response);
 			ideSearchActive = ($('#ide_search').val() || '') !== '';
 			ideOpenInit(response.open_folders);
+			ideTabPopulator(response);
+			ideScrollBind();
 			ideRestoreFolders();
 			$('#ide_list').show();
+			ideListScrollApply();
 			$('#ide_main_window').hide();
 		}
 	});
@@ -226,6 +298,9 @@ function ideFolderSelector(folder,search) {
 
 function ideTabPopulator(response) {
 	$.each(response.tabs, function(i,v) {
+		// keep the tab's content in hand before asking the tab to settle: the file
+		// row for it may not be on screen yet (a lazy tree has to unfold to it)
+		ide[v.file] = v;
 		if (response.settings.active_tab == i) {
 			$('.ide_tab[file="' + v.file + '"]').trigger('click');
 		}

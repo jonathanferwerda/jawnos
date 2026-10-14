@@ -17080,6 +17080,11 @@ sub ide_opener($data) {
 	# left it; the client unfolds them from these paths, one level at a time
 	my @open_folders = eval { @{ decode_json( $settings->{'open_folders'} || '[]' ) } };
 	my $open_folders_json = encode_json(\@open_folders);
+	# where the file list and each open file were scrolled to
+	my $list_scroll = eval { decode_json( $settings->{'list_scroll'} || '{}' ) } || {};
+	$list_scroll = {} unless ref $list_scroll eq 'HASH';
+	my $editor_scroll = eval { decode_json( $settings->{'editor_scroll'} || '{}' ) } || {};
+	$editor_scroll = {} unless ref $editor_scroll eq 'HASH';
 	my $bgc = &subs::setting_grabber({ app => 'misc', setting => 'ide_sidebar_container_background_colour', device => $device });
 	my $contents = $c->render_to_string(
 		files => $files,
@@ -17091,7 +17096,9 @@ sub ide_opener($data) {
 		device => $device,
 		settings => $settings,
 		search => $search,
-		open_folders_json => $open_folders_json
+		open_folders_json => $open_folders_json,
+		list_scroll_json => encode_json($list_scroll),
+		editor_scroll_json => encode_json($editor_scroll)
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'ide', contents => $contents }, $timestamp);
 	return { html => $website, tabs => $tabs, settings => $settings, open_folders => \@open_folders };
