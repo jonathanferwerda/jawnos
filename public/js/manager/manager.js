@@ -80,6 +80,7 @@ $(document).ready(function() {
 	pseudonymFreeSpaceFinder();
 	windowRetriever();
 	nfcListener();
+	if (jawnCameraAvailable()) { $('.native_capture, .native_video').show(); }
 	if ($('#search_engines')) {
 
 	}
@@ -997,6 +998,52 @@ function jawnNfcAdapter() {
 		}
 	};
 }
+
+// ---- the app's own camera (window.JawnCamera) ------------------------
+// The app opens the OS camera or the OS video recorder; it hands the file
+// back as base64 over window.__jawnCameraResult, which is posted to the
+// ordinary upload route - the route files an image/video and creates the
+// appointment for the app, exactly as the termux camera path does.
+function jawnCameraAvailable() {
+	return !!(window.JawnCamera && window.JawnCamera.available && window.JawnCamera.available() === 'yes');
+}
+function jawnCameraUpload(result) {
+	var pending = window.__jawnCameraPending || {};
+	window.__jawnCameraPending = null;
+	if (!result || !result.ok || !result.data) { return; }
+	var kind = result.kind === 'video' ? 'video' : 'image';
+	var ext = kind === 'video' ? '.mp4' : '.jpg';
+	var bin = atob(result.data);
+	var bytes = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+	var blob = new Blob([bytes], { type: result.mime || (kind === 'video' ? 'video/mp4' : 'image/jpeg') });
+	var formData = new FormData();
+	formData.append('app', pending.app || '');
+	formData.append('timestamp', Date.now());
+	formData.append('type', kind);
+	formData.append('blob', blob, (pending.app || 'capture') + ext);
+	$.ajax({
+		url: '/manager/upload_file',
+		type: 'POST',
+		data: formData,
+		success: function(response) {
+			continent_record({ uuid: response.uuid, app: response.app, timestamp: response.timestamp });
+		},
+		cache: false,
+		contentType: false,
+		processData: false
+	});
+}
+// the app calls this from the native side with the file it captured
+window.__jawnCameraResult = function(result) { jawnCameraUpload(result); };
+$(document).on('click', '.native_capture, .native_video', function() {
+	if (!jawnCameraAvailable()) { return; }
+	var b = $(this);
+	var app = b.attr('app') || b.closest('.appointment').attr('app');
+	window.__jawnCameraPending = { app: app };
+	if (b.hasClass('native_video')) { window.JawnCamera.video(); }
+	else { window.JawnCamera.photo(b.attr('capture') || '0'); }
+});
 
 function nfcInitializer() {
 	if (nfc['initialized'] == false) {

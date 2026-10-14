@@ -118,6 +118,11 @@
 						<img class="little_thumb save_appointment row_gap" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
 						<img class="little_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
 					<% } %>
+					<%# the app's own camera: opens the OS camera or the OS video recorder
+					    (window.JawnCamera) - a viewfinder you can see, and the camera's own
+					    processing. Hidden until the app's bridge answers (manager.js). %>
+					<img class="little_thumb native_capture" capture="0" type="camera" app="<%= $a %>" style="display:none;" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (native)">
+					<img class="little_thumb native_video" type="video" app="<%= $a %>" style="display:none;" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>" hint="Video (native)">
 					<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
 						<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
 						<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">

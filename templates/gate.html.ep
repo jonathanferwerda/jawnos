@@ -40,7 +40,17 @@
 	}
 </style>
 
-<img id="welcome_logo" src="<%= &subs::icon_for('/icons/logos/WelcomeLogo.png') %>" hint="Welcome" >
+<img id="welcome_logo" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="JawnOS" >
+
+<br>
+<button id="admin_panel_button" style="display:none;" onClick="if (window.JawnAdmin && window.JawnAdmin.open) { window.JawnAdmin.open(); }">Admin Panel</button>
+<script>
+	// The app's own view carries window.JawnAdmin (JawnWebViewActivity); a plain
+	// browser does not, so the button stays hidden there.
+	if (window.JawnAdmin && window.JawnAdmin.open) {
+		document.getElementById('admin_panel_button').style.display = 'inline-block';
+	}
+</script>
 
 <br><br>
 <img style="vertical-align:bottom;display:inline-block;width:40px;height:40px;border:solid;border-width:4px;border-radius:10px;" id="signatorial_upload_button" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Up" />
