@@ -9,10 +9,14 @@
 #
 # Idempotent: an active forever ticket for the same client is reused, never
 # re-minted (the URL is rebuilt from the row, so a host change is picked up).
-# --rotate mints a fresh one and retires the old.
+# --rotate mints a fresh one and retires the old. --save writes the URL to
+# .shots/ticket.txt (0600) as well: that is the file the desktop's embedded
+# view already reads as its fallback, and an app on this device (the Android
+# fork's dashboard) can open the ticket from there without running anything.
 #
 #   perl scripts/app_ticket.pl desktop          # print the URL (mint if needed)
 #   perl scripts/app_ticket.pl phone --rotate   # mint a fresh one anyway
+#   perl scripts/app_ticket.pl phone --save     # and leave it in .shots/ticket.txt
 use strict;
 use warnings;
 
@@ -24,8 +28,9 @@ eval { require './Manager.pl'; 1 } or die "app_ticket: no house here (config.jso
 
 my $client = shift @ARGV // '';
 $client =~ s/[^A-Za-z0-9_-]//g;
-die "usage: app_ticket.pl <client> [--rotate]\n" unless $client;
+die "usage: app_ticket.pl <client> [--rotate] [--save]\n" unless $client;
 my $rotate = grep { $_ eq '--rotate' } @ARGV;
+my $save = grep { $_ eq '--save' } @ARGV;
 
 my $config = eval { &subs::config_reader() } || {};
 my $domain = $config->{'domain'} || '';
@@ -62,3 +67,17 @@ else {
 	}
 }
 print $url, "\n";
+
+if ($save) {
+	mkdir '.shots' unless -d '.shots';
+	my $path = '.shots/ticket.txt';
+	if (open(my $fh, '>', $path)) {
+		chmod 0600, $path;
+		print $fh $url, "\n";
+		close $fh;
+		print STDERR "saved $path\n";
+	}
+	else {
+		print STDERR "could not write $path: $!\n";
+	}
+}

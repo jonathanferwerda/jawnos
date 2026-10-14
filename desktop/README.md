@@ -93,6 +93,11 @@ login. It is idempotent: an already-stored ticket is never overwritten, and
 `JAWNOS_NO_TICKET=1 ./desktop/install.sh` skips the step. The ticket's row sits
 in the box office beside the others and can be suspended or deleted there.
 
+On a phone or tablet the same script with `--save` writes the URL to
+`.shots/ticket.txt`, which is where the Android app's Open UI button looks for
+it (and the fallback this view reads too): `perl scripts/app_ticket.pl phone
+--save`.
+
 ## Using it
 
 ```sh
