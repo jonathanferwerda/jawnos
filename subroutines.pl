@@ -11478,8 +11478,14 @@ sub ai_text_to_image {
 		return ($binary, 'image/png', undef);
 	}
 	# any other model: whatever the chat layer hands back as an image part (a
-	# multimodal model that draws, or a URL to fetch)
-	my ($parts, $err) = &ai_chat_parts($model, [ { role => 'user', content => $prompt } ]);
+	# multimodal model that draws, or a URL to fetch). The chat layer has no size
+	# field, so a canvas is asked for in the prompt - a model that draws listens to
+	# it or ignores it, and a locally hosted one is where this path is headed
+	my $ask = $prompt;
+	if ($data->{'width'} && $data->{'height'}) {
+		$ask .= ' Produce the image at ' . int($data->{'width'}) . ' by ' . int($data->{'height'}) . ' pixels.';
+	}
+	my ($parts, $err) = &ai_chat_parts($model, [ { role => 'user', content => $ask } ]);
 	return (undef, undef, $err || 'the model returned nothing readable') if $err;
 	foreach my $part ( @{$parts || []} ) {
 		next unless ($part->{'type'} || '') eq 'image';
@@ -12011,6 +12017,55 @@ sub backfills() {
 				&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => "mugshot.$dev.png.enc" });
 			}
 			return 1;
+		},
+		'guess_to_me_folder' => sub {
+			# A guessed map's picture was a loose png in the travel folder; it is
+			# held sealed under the photo location's `me` folder now - the place the
+			# mugshot lives - which is where the atlas and the delete path read it
+			# from. Only the owning device converts its own rows: the sealed file
+			# lives on this machine's disk and is not synced.
+			my $dev = &subs::device_setter();
+			my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev });
+			return 0 unless $folder;
+			my $row = &subs::db_select('settings', undef, { app => 'travel', setting => 'maps', device => $dev })->hashes->[0];
+			return 1 unless $row;
+			my $maps = eval { return decode_json $row->{'value'} } || [];
+			my $location = &subs::home($folder) . '/me';
+			my $secret = &subs::suds_grabber();
+			my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+			my (@converted, $failed);
+			foreach my $map ( @{$maps} ) {
+				next unless $map->{'guessed'} && $map->{'f'};
+				next if $map->{'f'} =~ /\.enc$/;
+				next unless -e $map->{'f'};
+				my $bytes = eval { read_file($map->{'f'}) };
+				next unless $bytes && length $bytes;
+				`mkdir -p "$location"` unless -e $location;
+				my $raw = $location . '/guess_' . $map->{'uuid'} . '.png';
+				my $sealed = $location . '/guess_' . $map->{'uuid'} . '.png.enc';
+				write_file($raw, $bytes);
+				`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$sealed"`;
+				unless (-e $sealed && -s $sealed) { unlink $raw; $failed++; next; }
+				`shred -u "$raw"`;
+				push @converted, [ $map->{'uuid'}, $map->{'f'}, $sealed ];
+				$map->{'f'} = $sealed;
+			}
+			if (@converted) {
+				&subs::setting_setter({ app => 'travel', setting => 'maps', device => $dev, value => encode_json $maps });
+				# the record has to name the sealed copy before the loose one is let
+				# go, so a setter that did not land leaves a working picture behind
+				my $now = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps', device => $dev }) } || [];
+				my %sealed_for = map { $_->{'uuid'} => $_->{'f'} } @{$now};
+				my $n = 0;
+				foreach my $c ( @converted ) {
+					my ($uuid, $old, $sealed) = @{$c};
+					next unless ($sealed_for{$uuid} || '') eq $sealed;
+					unlink $old if $old =~ m{/guess_[^/]+\.png$};
+					$n++;
+				}
+				&subs::say_it("backfill guess_to_me_folder: sealed $n guess picture(s) into $location");
+			}
+			return $failed ? 0 : 1;
 		},
 	};
 }

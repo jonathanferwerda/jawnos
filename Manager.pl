@@ -7868,7 +7868,7 @@ post '/manager/travel/delete_map' => sub($c) {
 	if ($guess) {
 		@{$maps} = grep { $_->{'uuid'} ne $file_uuid } @{$maps};
 		&subs::setting_setter({ app => 'travel', setting => 'maps', value => encode_json $maps });
-		unlink $guess->{'f'} if $guess->{'f'} && $guess->{'f'} =~ m{/travel/guess_[^/]+\.png$};
+		unlink $guess->{'f'} if $guess->{'f'} && $guess->{'f'} =~ m{/guess_[^/]+\.png(\.enc)?$};
 		$c->render(json => { uuid => $file_uuid, deleted => 'yes' });
 		return;
 	}
@@ -17886,7 +17886,10 @@ sub travel_grabber($c) {
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 
 	my $home_plate_enabled = $settings->{'home_plate_enabled'};
-	$settings->{'maps'} = eval { return decode_json $settings->{'maps'} } || [];
+	# the picker is for the maps we measured: a guessed gap is drawn, but it is not
+	# one to select (and it never rides into the settings row of measured maps)
+	my $measured = eval { return decode_json $settings->{'maps'} } || [];
+	$settings->{'maps'} = [ grep { !$_->{'guessed'} } @{$measured} ];
 
 	my $contents = $c->render_to_string(
 		template => '/travel/travel',
@@ -18423,10 +18426,12 @@ get '/manager/travel/continent' => sub($c) {
 # measured map - the guess may only ever show where nothing is known), drawn by
 # the Plat Image-generation model from a conservative description of what all the
 # maps around it show (the Vision model reads each one's own part of that ground
-# first). The picture is filed as a travel map georeferenced to exactly that
-# ground, dashed and named 'guess: ...' so it never passes for a measured map; it
-# is drawn under every measured map, so it only ever shows where nothing is
-# known. A guess covering the same ground is replaced, picture and all.
+# first). The picture is filed sealed under the photo location's `me` folder - the
+# place the mugshot lives - and the record is kept beside the measured maps,
+# georeferenced to exactly that ground, dashed and named 'guess: ...' so it never
+# passes for a measured map. It is drawn under every measured map and counts as
+# ground already known, so a gap is generated once and never again. A guess
+# covering the same ground is replaced, picture and all.
 post '/manager/travel/guess_gap' => sub($c) {
 	my $view = {
 		minLat => 0 + ($c->param('minLat') || 0),
@@ -18487,23 +18492,23 @@ post '/manager/travel/guess_gap' => sub($c) {
 	$prompt .= ' ' . $described if $described && $described =~ /\S/;
 	$prompt .= ' Conservative continuation of the surrounding land: roads and rivers run straight on unless the neighbouring maps show otherwise; no invented bends, junctions, towns or landmarks; the same season and imagery style as the neighbouring maps. No borders, no labels, no text, no icons, no arrows.';
 
-	# the canvas: the long side 768, the short side proportional but never under
+	# the canvas: the long side 1024, the short side proportional but never under
 	# 256 (the image model refuses less), rounded to the 64s the model likes. The
 	# pocket's short axis has already been widened towards this shape, over empty
 	# ground only; whatever it could not reach just stretches the picture a little -
 	# the ground box itself is never grown over a map
 	my ($px_lon, $px_lat);
 	if ($lon_metres >= $lat_metres) {
-		$px_lon = 768;
-		$px_lat = int(((768 * $lat_metres / $lon_metres) / 64) + 0.5) * 64;
+		$px_lon = 1024;
+		$px_lat = int(((1024 * $lat_metres / $lon_metres) / 64) + 0.5) * 64;
 		$px_lat = 256 if $px_lat < 256;
-		$px_lat = 768 if $px_lat > 768;
+		$px_lat = 1024 if $px_lat > 1024;
 	}
 	else {
-		$px_lat = 768;
-		$px_lon = int(((768 * $lon_metres / $lat_metres) / 64) + 0.5) * 64;
+		$px_lat = 1024;
+		$px_lon = int(((1024 * $lon_metres / $lat_metres) / 64) + 0.5) * 64;
 		$px_lon = 256 if $px_lon < 256;
-		$px_lon = 768 if $px_lon > 768;
+		$px_lon = 1024 if $px_lon > 1024;
 	}
 
 	my ($bytes, $mime, $err) = &subs::ai_text_to_image({
@@ -18514,18 +18519,32 @@ post '/manager/travel/guess_gap' => sub($c) {
 	});
 	unless ($bytes) { $c->render(json => { error => $err || 'the image model returned nothing' }); return; }
 
-	# where it is filed: the travel folder, the one the atlas reader resolves to
+	# where it is filed: sealed, under the photo location's `me` folder - the same
+	# place the mugshot lives. A guess is a picture the app keeps (so the same gap
+	# is never generated twice), not an appointment's file, so it sits with the
+	# pictures the device holds for itself
 	my $photo = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
-	my $folder = &subs::home($photo) . '/travel';
+	my $folder = &subs::home($photo) . '/me';
 	`mkdir -p "$folder"`;
 	my $guess_uuid = &subs::random_string_creator(15);
-	my $file_path = $folder . '/guess_' . $guess_uuid . '.png';
-	write_file($file_path, $bytes);
+	my $raw = $folder . '/guess_' . $guess_uuid . '.png';
+	write_file($raw, $bytes);
 
 	my ($w, $h) = (0, 0);
-	open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $file_path);
+	open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $raw);
 	if ($identify) { my $line = <$identify>; close $identify; ($w, $h) = split ' ', ($line || ''); }
 	($w, $h) = ($px_lon, $px_lat) unless $w && $h;
+
+	my $secret = &subs::suds_grabber();
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my $file_path = $folder . '/guess_' . $guess_uuid . '.png.enc';
+	`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$file_path"`;
+	unless (-e $file_path && -s $file_path) {
+		unlink $raw;
+		$c->render(json => { error => 'the guess could not be sealed' });
+		return;
+	}
+	`shred -u "$raw"`;
 
 	my $centre_lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
 	my $centre_lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;
@@ -18569,7 +18588,7 @@ post '/manager/travel/guess_gap' => sub($c) {
 		my $old_covers = ($centre_lat <= $ob->{'nw'}->{'lat'} && $centre_lat >= $ob->{'se'}->{'lat'} && $centre_lon >= $ob->{'nw'}->{'lon'} && $centre_lon <= $ob->{'se'}->{'lon'});
 		my $new_covers = ($old_lat <= $box->{'maxLat'} && $old_lat >= $box->{'minLat'} && $old_lon >= $box->{'minLon'} && $old_lon <= $box->{'maxLon'});
 		next unless $old_covers || $new_covers;
-		unlink $old->{'f'} if $old->{'f'} && $old->{'f'} =~ m{/travel/guess_[^/]+\.png$};
+		unlink $old->{'f'} if $old->{'f'} && $old->{'f'} =~ m{/guess_[^/]+\.png(\.enc)?$};
 		push @replace, $old->{'uuid'};
 	}
 	@{$maps} = grep { my $u = $_->{'uuid'}; !grep { $_ eq $u } @replace } @{$maps};
@@ -18579,12 +18598,23 @@ post '/manager/travel/guess_gap' => sub($c) {
 };
 
 # The picture behind a guessed map (session-guarded, like every manager route).
+# The picture is sealed under the photo location's `me` folder, like the mugshot,
+# so it is opened here the way /mugshot opens one.
 get '/manager/travel/guess_image' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $maps = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps' }) } || [];
 	my ($map) = grep { $_->{'uuid'} eq $uuid && $_->{'guessed'} } @{$maps};
 	unless ($map && $map->{'f'} && -e $map->{'f'}) { $c->rendered(404); return; }
-	my $data = read_file($map->{'f'});
+	my $data;
+	if ($map->{'f'} =~ /\.enc$/) {
+		my $secret = &subs::suds_grabber();
+		my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+		$data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$map->{'f'}" 2>/dev/null`;
+	}
+	else {
+		$data = eval { read_file($map->{'f'}) };
+	}
+	unless (defined $data && length $data) { $c->rendered(404); return; }
 	$c->res->headers->content_type('image/png');
 	$c->res->headers->cache_control('private, max-age=60');
 	$c->render(data => $data);
@@ -18621,7 +18651,11 @@ get '/manager/travel/viewer' => sub($c) {
 
 	my $maps = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps' }) } || [];
 	my ($main_map,$home_bases);
-	@{$main_map} = grep { $_->{'uuid'} eq $map } @{$maps};
+	@{$main_map} = grep { $_->{'uuid'} eq ($map || '') } @{$maps};
+	# the picker lists the measured maps (a guessed gap is drawn, but not offered),
+	# so a stale choice - or none at all - falls back to the first measured map
+	@{$main_map} = grep { !$_->{'guessed'} } @{$maps} unless $main_map->[0];
+	unless ($main_map->[0]) { $c->render(json => { error => 'no measured maps yet', all_maps => [], settings => $settings }); return; }
 
 	my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $main_map->[0]->{'f'}, app => $main_map->[0]->{'app'}, type => $main_map->[0]->{'type'} });
 	$main_map = $main_map->[0];

@@ -78,6 +78,14 @@ function travelMapRender(response) {
 	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val());
 	engine.setMaps(response['all_maps'] || []);
 
+	// a guessed gap is a kept picture, not a picker entry: the newest one is named
+	// on the status line (and that is where it is deleted from)
+	var newest;
+	$.each(response['all_maps'] || [], function(i, m) { if (m['guessed']) { newest = m; } });
+	if (newest && !/\S/.test($('#travel_guess_status').text())) {
+		travelGuessStatus('last guess: ' + (newest['name'] || ''), newest['uuid']);
+	}
+
 	// the picker's choice brings that measured map into the centre of the view
 	if (travelPendingMap) {
 		var chosen;
@@ -144,6 +152,7 @@ function travelViewer(data) {
 		type: 'GET',
 		data: tdata,
 		success: function(response) {
+			if (response && response['error']) { console.log(response['error']); return; }
 			console.log(response);
 			mapData = response;
 			$('#travel_campus').show();
@@ -444,6 +453,47 @@ var travelGuessBusy = 0;
 var travelGuessAt = 0;
 var travelGuessTimer = null;
 
+// The status line is the guess's handle: it names the newest guess, and tapping
+// it arms (turns red, as the trash buttons do) - a second tap drops that guess.
+// A guess is a kept picture rather than a map in the picker, so this is the way
+// a bad one goes; panning after it leaves the gap blank for a fresh guess.
+function travelGuessStatus(text, uuid) {
+	var status = $('#travel_guess_status');
+	status.text(text || '');
+	if (uuid) {
+		status.attr('guess_uuid', uuid).addClass('hover').attr('hint', 'Last guess — tap twice to delete it');
+	}
+	else {
+		status.removeAttr('guess_uuid').removeClass('hover').removeAttr('hint');
+	}
+}
+
+$(document).on('click', '#travel_guess_status', function() {
+	var t = $(this);
+	var uuid = t.attr('guess_uuid');
+	if (!uuid) { return; }
+	if (t.attr('armed') == 'yes') {
+		t.attr('armed', 'no').css('color', '');
+		$.ajax({
+			url: '/manager/travel/delete_map',
+			type: 'POST',
+			data: { file_uuid: uuid, app_uuid: '', app: 'travel' },
+			success: function() {
+				travelGuessStatus('');
+				travelViewer({ timestamp: Date.now() });
+			}
+		});
+	}
+	else {
+		t.attr('armed', 'yes').css('color', '#c62828');
+		var was = t.text();
+		t.text('tap again to delete this guess');
+		setTimeout(function() {
+			if (t.attr('armed') == 'yes') { t.attr('armed', 'no').css('color', '').text(was); }
+		}, 2000);
+	}
+});
+
 $(document).on('click', '#travel_guess_gap', function() {
 	var t = $(this);
 	var status = (t.attr('status') == 'enabled') ? 'disabled' : 'enabled';
@@ -452,7 +502,7 @@ $(document).on('click', '#travel_guess_gap', function() {
 	settingSetter({ 'app': 'travel', 'setting': 'guess_enabled', 'value': status });
 	if (status == 'enabled') { travelGuessCheck('yes'); }
 	else {
-		$('#travel_guess_status').text('');
+		travelGuessStatus('');
 		travelViewer({ timestamp: Date.now() });
 	}
 });
@@ -467,22 +517,22 @@ function travelGuessCheck(force) {
 	if (!b || !isFinite(b.nw.lat) || !isFinite(b.se.lat)) { return; }
 	travelGuessBusy = 1;
 	travelGuessAt = now;
-	var status = $('#travel_guess_status').text('looking for empty ground…');
+	travelGuessStatus('looking for empty ground…');
 	$.ajax({
 		url: '/manager/travel/guess_gap',
 		type: 'POST',
 		data: { minLat: b.se.lat, maxLat: b.nw.lat, minLon: b.nw.lon, maxLon: b.se.lon, timestamp: now },
 		success: function(response) {
 			travelGuessBusy = 0;
-			if (response && response['error']) { status.text(response['error']); return; }
-			if (response && response['covered']) { status.text('all of this view is mapped'); return; }
-			status.text('guessed ' + response['name']);
+			if (response && response['error']) { travelGuessStatus(response['error']); return; }
+			if (response && response['covered']) { travelGuessStatus('all of this view is mapped'); return; }
+			travelGuessStatus('guessed ' + response['name'], response['uuid']);
 			travelPendingMap = response['uuid'];
 			travelViewer({ timestamp: Date.now() });
 		},
 		error: function() {
 			travelGuessBusy = 0;
-			status.text('the guess could not be made - see Configure, Plat');
+			travelGuessStatus('the guess could not be made - see Configure, Plat');
 		}
 	});
 }
