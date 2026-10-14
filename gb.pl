@@ -24,6 +24,7 @@ our $syncing = 'no';
 our $ws_workers = 1;
 our $signatorial;
 our $suds;
+our $vault_pull_last;
 our $secret_maker;
 our $father_time = {};
 our $utility_functions_watcher = 0;

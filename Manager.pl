@@ -4030,6 +4030,28 @@ get '/manager/backup_serve' => sub($c) {
 	$c->rendered(200);
 };
 
+get '/manager/vault_share' => sub($c) {
+	# A linked machine with no key of its own asks for the house key. The request
+	# must carry its peer signature and a key already pinned on file - no
+	# trust-on-first-contact here, since this hands out the key itself - and the
+	# reply is sealed to a one-time secret the asker supplied. Turning off the
+	# __president/vault_share setting refuses everyone. The route is exempt from
+	# the gate (a keyless machine has no session); peer_verify is its gate.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $share = &subs::setting_grabber({ app => '__president', setting => 'vault_share' });
+	$share = 'yes' unless defined $share && length $share;
+	unless ($share eq 'yes') { $c->render(json => { ok => 0, error => 'sharing off' }); return; }
+	my @vault = &subs::vault_read();
+	my $suds = $vault[0];
+	my $seal = $c->param('seal');
+	unless ($suds && $seal && $seal =~ /^[0-9A-Za-z-]{20,80}$/) { $c->render(json => { ok => 0 }); return; }
+	my $sealed = &subs::note_encrypter($seal, $suds);
+	unless ($sealed) { $c->render(json => { ok => 0 }); return; }
+	$c->render(json => { ok => 1, sealed => $sealed });
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $direction = $c->param('direction');

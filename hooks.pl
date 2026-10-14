@@ -219,10 +219,13 @@ hook before_dispatch => sub {
 		$path eq '/manager/tunnel/ws' ||
 		$path eq '/payment' ||
 		$path eq '/box_office/ticket_request' ||
-		# a device logs itself in before it has a session, and the script that
+		# a machine logs itself in before it has a session, and the script that
 		# does it must load on the gate (the routes check the roster themselves)
 		$path =~ '^/manager/device' ||
 		$path eq '/js/device.js' ||
+		# a machine with no session and no key asks a linked machine for the house
+		# key; the route authenticates by peer signature and pinned key itself
+		$path eq '/manager/vault_share' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||

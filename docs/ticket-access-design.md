@@ -1,6 +1,6 @@
 # Ticket, device, and suds — access design
 
-Status: built through phase 4; phase 3 is done both ways (paper code and device approval). Written 2026-10-13.
+Status: built through phase 4; phase 5's first two parts (the password/key split and the peer key pull) are done; rotation is still to come. Written 2026-10-13.
 
 ## Goal
 
@@ -143,8 +143,8 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    the suds to it in `settings('__president','recovery')`; the gate's Recovery Code box
    (`/manager/device/recover`, IP-throttled, judged by the `suds_current` canary) unwraps it,
    seeds the vault, pairs the device and mints the citizen session — the server never stores
-   the code, verification is the decryption, and a password change sets the old code aside
-   (`recovery_stale`) because it changes the suds. The approval door: the asking device posts
+   the code, verification is the decryption; a password change leaves it alone (the password no longer
+   is the suds), and rotating the house key is what sets it aside (`recovery_stale`). The approval door: the asking device posts
    its public key (`/manager/device/request`), the ask waits in Security → Devices with a
    short code shown on both screens, a citizen approves or denies
    (`/manager/security/device_request_decide`), and the asking device polls
@@ -159,6 +159,17 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    remote_auth_test, `/manager/president`. Still legacy: app_release/app_download and
    voice_release/voice_download (the phone app fetches those), the tunnel websocket, and
    the `/mail/msg` neighbour path.
+5. **The password/key split and the key on the mesh** — *(done in this build)* the login
+   password gets its own `door` row, apart from the level-1 key canary: `login_gate` takes
+   the key from the vault and the password only opens the door; `password_update` re-keys the
+   door alone, so the vault, the canary and the recovery code survive it. Tickets stop carrying
+   a suds copy (backfill-scrubbed where the vault validates). A machine whose vault is gone
+   asks a linked machine over the signed peer rail (`/manager/vault_share`, exempt from the
+   gate, gated by peer_verify against a *pinned* key - no trust-on-first-contact for the key
+   itself) and adopts the answer only when the local canary accepts it; the donor seals the key
+   to a one-time secret and can switch sharing off (`__president/vault_share`). Still to come:
+   rotation (a random key, re-sealing the stores) and propagation of a rotated key, since two
+   machines holding different keys do not heal by pulling.
 
 ## What this buys
 

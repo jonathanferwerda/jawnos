@@ -126,10 +126,10 @@
 		<p style="max-width:640px;margin:0 auto;">
 			If every ticket is lost and no paired device is at hand, the recovery code is the way back in:
 			type it at the house's gate and that device is paired on the spot. It is shown once, so write it
-			on paper and keep it with your important documents. It stays good until the password changes.
+			on paper and keep it with your important documents. It stays good until the house key itself is rotated.
 		</p>
 		<% if ($recovery_stale) { %>
-			<p style="color:darkred;"><b>The old code was set aside when the password changed</b> — it will not work. Make a new one.</p>
+			<p style="color:darkred;"><b>The old code was set aside when the house key changed</b> — it will not work. Make a new one.</p>
 		<% } %>
 		<% if ($recovery) { %>
 			<p>The current code was made <span class="time" timestamp="<%= $recovery->{'server_time'} %>"></span>.</p>
@@ -141,5 +141,11 @@
 			<p><b>Write this down now — it will not be shown again.</b></p>
 			<div id="recovery_code_value" style="display:inline-block;font-family:monospace;font-size:26px;letter-spacing:3px;background-color:var(--panel);border:solid;border-radius:8px;padding:14px;"></div>
 		</div>
+		<h3 style="margin-top:18px;">Sharing</h3>
+		<p style="max-width:640px;margin:0 auto;">
+			A linked machine that has lost its key can fetch this house key from here while this is ticked. The
+			request must carry the machine's pinned signature, and the key is sealed to a one-time secret for the trip.
+		</p>
+		<label><input type="checkbox" id="vault_share_tick" <% if (($president->{'vault_share'} // 'yes') eq 'yes') { %>checked<% } %>> Linked machines may fetch the key</label>
 	</div>
 </div>

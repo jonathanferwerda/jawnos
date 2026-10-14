@@ -8273,6 +8273,53 @@ sub session_suds {
 	return eval { &suds_grabber() };
 }
 
+# A machine whose vault is gone can ask a linked machine for the house key
+# over the signed peer rail. The asker supplies a one-time secret; the donor
+# seals the key to it (see /manager/vault_share), so the key never travels
+# naked and a replayed answer is useless. Only a key the local canary accepts
+# is handed back: machines holding different keys are a different problem.
+sub vault_pull_one {
+	my ($rm, $seal) = @_;
+	my $manager = $rm->{'manager'};
+	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
+	return unless $manager;
+	my $ua = Mojo::UserAgent->new();
+	$ua->max_response_size(0);
+	$ua->insecure(1);
+	# every request on the peer rail names this machine and carries a signature
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	my $url = $manager . '/manager/vault_share?signatorial=' . &signatorial_designer() . '&seal=' . url_escape($seal);
+	my $res = eval { $ua->inactivity_timeout(15)->get($url)->result };
+	return unless $res && $res->is_success;
+	my $json = eval { decode_json $res->body } || {};
+	return unless $json->{'ok'} && $json->{'sealed'};
+	my $suds = &note_decrypter($seal, $json->{'sealed'});
+	$suds =~ s/\s+$// if $suds;
+	return $suds;
+}
+
+sub vault_pull_from_peer {
+	# once per five minutes per process; a keyless machine calls this on every
+	# resolution, so it must not hammer the mesh
+	my $now = &rightNow();
+	return if $gb::vault_pull_last && $now - $gb::vault_pull_last < 300000;
+	$gb::vault_pull_last = $now;
+	my ($db) = &database_grabber();
+	return unless $db;
+	my @peers = grep { ($_->{'signatorial'} || '') && ($_->{'manager'} || $_->{'ip'}) } &db_select('remote_machines')->hashes;
+	my @active = grep { ($_->{'connection'} || '') eq 'active' } @peers;
+	my @rest = grep { ($_->{'connection'} || '') ne 'active' } @peers;
+	@peers = (@active, @rest);
+	splice @peers, 3;
+	return unless scalar @peers;
+	my $seal = &code_chars_make(40);
+	foreach my $rm ( @peers ) {
+		my $suds = eval { &vault_pull_one($rm, $seal) };
+		return $suds if $suds;
+	}
+	return;
+}
+
 sub suds_grabber {
 	my $duty_time = &subs::setting_grabber({ app => '__president', setting => 'remote_duty' });
 	if (( !$gb::suds || $duty_time eq '' || !$duty_time || $duty_time != $gb::duty_time || !$gb::duty_time)) {
@@ -8289,10 +8336,19 @@ sub suds_grabber {
 			$suds = $legacy;
 			&vault_seed($suds, 1);
 		}
-		elsif ($vault || $legacy) {
-			# no canary to judge by: keep the best thing this machine has
-			$suds = $vault || $legacy;
-			&vault_seed($suds, 1) unless $vault;
+		else {
+			# nothing local validates: a linked machine can hand the key over
+			# (sealed to a one-time secret, over the signed peer rail)
+			my $pulled = &vault_pull_from_peer();
+			if ($pulled && &suds_current($pulled)) {
+				$suds = $pulled;
+				&vault_seed($suds, 1);
+			}
+			elsif ($vault || $legacy) {
+				# no canary to judge by: keep the best thing this machine has
+				$suds = $vault || $legacy;
+				&vault_seed($suds, 1) unless $vault;
+			}
 		}
 		if ($suds) {
 			&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => $gb::duty_time });

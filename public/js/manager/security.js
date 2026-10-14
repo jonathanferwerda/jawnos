@@ -225,6 +225,10 @@ $(document).on('click', '.device_request_decide', function() {
 	});
 });
 
+$(document).on('change', '#vault_share_tick', function() {
+	settingSetter({ 'app': '__president', 'setting': 'vault_share', 'value': ($(this).is(':checked') ? 'yes' : 'no') });
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');
