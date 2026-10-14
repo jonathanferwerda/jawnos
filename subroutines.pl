@@ -12848,18 +12848,25 @@ sub error_watch_tick {
 		# outer eval; say so, or the row just sits 'new' forever with no trace
 		my $ok = eval { &coding_propose_fix($waiting); 1 };
 		$log->info('error watch: the proposal for "' . substr($waiting->{'signature'} || '?', 0, 60) . '" died: ' . $@) if !$ok && defined $log;
-		# the person's Confirm tick, for fixes: with auto-approve on, a fresh
-		# proposal is written, checked and shipped at once (the restart stays a
-		# word of its own, and a file with uncommitted work stands down)
-		my $auto = $ok && ((&subs::setting_grabber({ app => 'mail', setting => 'error_watch_auto' }) // '') eq 'on');
-		if ($auto && &watch_auto_allowed() && &auto_apply_clean($waiting)) {
-			my $applied = eval { &staged_fix_apply($waiting->{'uuid'}) } || { error => ($@ || 'no result') };
+	}
+	# the person's Confirm tick, for fixes: with auto-approve on, the oldest
+	# waiting proposal is written, checked and shipped. A file with uncommitted
+	# work stands down and is tried again on a later pass, the leash caps the
+	# day, and the restart stays a word of its own.
+	my $auto = ((&subs::setting_grabber({ app => 'mail', setting => 'error_watch_auto' }) // '') eq 'on');
+	if ($auto && &watch_auto_allowed()) {
+		my $pending = &subs::db_query('select * from staged_fixes where status = ? order by ost asc limit 1', 'proposed')->hashes->[0];
+		if ($pending && &auto_apply_clean($pending)) {
+			my $applied = eval { &staged_fix_apply($pending->{'uuid'}) } || { error => ($@ || 'no result') };
 			&watch_auto_count();
-			$log->info('error watch: auto-applied "' . substr($waiting->{'signature'} || '?', 0, 60) . '": ' . ($applied->{'error'} // ('v' . ($applied->{'version'} // '?')))) if defined $log;
+			if (defined $log) {
+				my $note = $applied->{'error'} // ('v' . ($applied->{'version'} // '?'));
+				$note .= ' (push: ' . substr($applied->{'push'}, 0, 120) . ')' if $applied->{'push'} && $applied->{'push'} =~ /reject|fail|error/i;
+				$log->info('error watch: auto-applied "' . substr($pending->{'signature'} || '?', 0, 60) . '": ' . $note);
+			}
 		}
-		elsif ($auto && defined $log) {
-			my $why = &watch_auto_allowed() ? 'a file it would write has uncommitted work' : "today's auto-apply leash is full";
-			$log->info('error watch: auto-apply stood down for "' . substr($waiting->{'signature'} || '?', 0, 60) . '" - ' . $why);
+		elsif ($pending && defined $log) {
+			$log->info('error watch: auto-apply stood down for "' . substr($pending->{'signature'} || '?', 0, 60) . '" - a file it would write has uncommitted work');
 		}
 	}
 	return 1;
