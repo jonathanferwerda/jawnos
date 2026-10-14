@@ -123,12 +123,12 @@ our %topic = (
 		body => [
 			'Music is the player and library: artists, albums, folders and playlists, with a mute, a lock and a configuration drawer.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
-			'An audio track has no picture of its own, so the player can draw the sound instead: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).'
+			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).'
 		],
 		steps => [
 			'Open Music; the library lists artists and albums from your media folders.',
 			'Click a track to play it; the transport along the top controls playback.',
-			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the player opens its Theatre mode to show it.',
+			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
 			'Fullscreen (the player button, or F) fills the screen with the picture.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.'
 		],

@@ -43,9 +43,9 @@ function musicContentCache(html) {
 	shell.find('#music_player_data').empty();
 	shell.find('video.media_out').removeAttr('src');
 	shell.find('#video_subtitles').removeAttr('src');
-	// the visualiser's canvas is live state too: keep its display and bitmap
-	// size, and the stored shell replays a flat black picture over the player
-	shell.find('.media_visualizer').removeAttr('style').removeAttr('width').removeAttr('height');
+	// the visualiser is live state too: the canvas and the video it is played
+	// into are rebuilt by music.js, so the shell stores them bare
+	shell.find('.media_visualizer, .media_visual_media').removeAttr('style').removeAttr('width').removeAttr('height').removeAttr('src');
 	shell.find('[id$="_full_title"]').text('');
 	shell.find('#play_logo').each(function() { var el = $(this), p = el.attr('play_icon'); if (p) { el.attr('src', p); } });
 	shell = shell.html();
@@ -625,6 +625,25 @@ $(document).on('click', '#music_list_view', function() {
 	}
 });
 
+// Does the player's picture take the bigger of its two styles? The theatre is
+// the obvious yes; a full screen is one too - a player that fills the screen
+// should not leave its picture in the corner.
+function musicPictureBig() {
+	if ($('#video').attr('theatre_mode') == 'on') { return true; }
+	var v = document.getElementById('video');
+	var fs = document.fullscreenElement || document.webkitFullscreenElement;
+	return !!(fs && v && (fs == v || fs.contains(v)));
+}
+
+// In and out of fullscreen the player's own picture is put back where it
+// belongs; the visualiser's picture is placed by its own frame loop.
+$(document).on('fullscreenchange webkitfullscreenchange', function() {
+	var v = $('#video');
+	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
+		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
+	}
+});
+
 function theatreModeOn() {
 	$('#music_library').hide();
 	$('#video').show();
@@ -651,8 +670,10 @@ function theatreModeOff() {
 	$('#music_library').show();
 	$('#music').css({'background-color': $('#music').attr('background_colour')});
 	if ($('#video').attr('type') == 'video') {
-		var ts = $('#video').attr('thumb_style');
-		$('#video').attr('style', ts);
+		// the picture goes back to its corner - unless the player itself is
+		// filling the screen, where a corner thumbnail is not what is wanted
+		var style = $('#video').attr(musicPictureBig() ? 'big_style' : 'thumb_style');
+		$('#video').attr('style', style);
 		$('#video').attr('theatre_mode', 'off'); 
 	}
 	else {
@@ -1342,13 +1363,14 @@ $(document).on('click', '.all_music', function() {
 
 // ---- the visualiser ---------------------------------------------------------
 //
-// An audio file has no picture, so a fullscreen music player used to be a black
-// screen. The player's tools panel offers a drawing of the sound instead - the
-// spectrum, dots that dance, a tie-dye that swirls, a painter that follows the
-// mood - on the canvas the video include puts in the player
-// (#<miss>_visualizer, the miss the player element carries). This half owns the
-// drawing; the dropdown in the panel sets the choice, and the choice rides in
-// the player cache like theatre_mode.
+// An audio file has no picture, so the player draws the sound instead - on a
+// canvas that is never itself seen: the drawing is handed to a muted video as
+// its stream (canvas.captureStream), and that video wears the player's own
+// picture styles. The sound's picture therefore reaches the player the way a
+// video track's does: the corner thumbnail while the library is up, the whole
+// player in the theatre or in fullscreen. The four drawings are the dropdown in
+// the tools panel (None leaves the player to its album cover); the choice rides
+// in the player cache like theatre_mode.
 //
 // The sound is tapped with the Web Audio API. An element can only be captured
 // once, so the tap is made lazily (the dropdown is the user gesture that also
@@ -1368,6 +1390,8 @@ var musicVisual = {
 	last: 0,
 	resumeAt: 0,
 	canvas: null,
+	feedCanvas: null,
+	stream: null,
 	painted: null,
 	peaks: [],
 	dots: [],
@@ -1385,9 +1409,9 @@ function musicVisualState() {
 }
 
 // Fullscreen for the player, the way the picture needs it: a video track is the
-// video element as ever; anything else takes the whole player, so the
-// visualisation canvas - which only renders inside the fullscreen element - and
-// the controls (the dropdown that chooses it lives there) come along.
+// video element as ever; anything else takes the whole player, so the sound's
+// picture (the visualiser's video) and the controls - the dropdown that chooses
+// it lives there - come along.
 function musicPlayerFullscreen() {
 	var v = document.getElementById('video');
 	if (!v) { return; }
@@ -1499,18 +1523,27 @@ function musicVisualSample(analyser, dt) {
 	return st;
 }
 
-// The house fit: the bitmap follows the element's css box, at most 2x for a
-// retina screen and 1920 on the long edge - the picture is soft shapes, and a
-// 4K screen should not cost 8M pixels a frame.
-function musicVisualFit(canvas) {
-	var cw = canvas.clientWidth || 0;
-	var ch = canvas.clientHeight || 0;
-	if (cw < 4 || ch < 4) { return false; }
-	var scale = Math.min(window.devicePixelRatio || 1, 2);
-	var long = Math.max(cw, ch);
-	if (long * scale > 1920) { scale = 1920 / long; }
-	var w = Math.max(4, Math.round(cw * scale));
-	var h = Math.max(4, Math.round(ch * scale));
+// The house fit: in the big picture the bitmap follows the canvas' css box, at
+// most 2x for a retina screen and 1920 on the long edge - the picture is soft
+// shapes, and a 4K screen should not cost 8M pixels a frame. The corner is a
+// picture of its own shape, a small 16:9 band, so the thumbnail never inherits
+// the shape of the whole player.
+function musicVisualFit(canvas, big) {
+	var w, h;
+	if (big) {
+		var cw = canvas.clientWidth || 0;
+		var ch = canvas.clientHeight || 0;
+		if (cw < 4 || ch < 4) { return false; }
+		var scale = Math.min(window.devicePixelRatio || 1, 2);
+		var long = Math.max(cw, ch);
+		if (long * scale > 1920) { scale = 1920 / long; }
+		w = Math.max(4, Math.round(cw * scale));
+		h = Math.max(4, Math.round(ch * scale));
+	}
+	else {
+		w = 480;
+		h = 270;
+	}
 	if (canvas.width != w || canvas.height != h) {
 		canvas.width = w;
 		canvas.height = h;
@@ -1520,41 +1553,64 @@ function musicVisualFit(canvas) {
 	return true;
 }
 
-// Where the picture may be shown: in the window only the theatre puts the
-// player on screen (the library covers it otherwise); fullscreen is all
-// picture, and the canvas is inside the player so it comes along with it.
-function musicVisualShowing(el) {
-	var fs = document.fullscreenElement || document.webkitFullscreenElement;
-	if (fs) { return fs == el || fs.contains(el); }
-	return $('#video').attr('theatre_mode') == 'on';
+// The three pieces the drawing lives between: the player element (its miss names
+// the other two), the canvas the drawing goes on, and the video it is played
+// into.
+function musicVisualElements() {
+	var el = document.getElementById('video');
+	var miss = el ? (el.getAttribute('miss') || '') : '';
+	return {
+		el: el,
+		miss: miss,
+		canvas: (miss && document.getElementById(miss + '_visualizer')) || null,
+		feed: (miss && document.getElementById(miss + '_visual_media')) || null
+	};
+}
+
+// The canvas as a picture: its stream, made once per canvas (a re-render hands
+// back a fresh one, and a spent stream with it), given to the muted feed video.
+function musicVisualFeed(parts) {
+	if (!parts.canvas.captureStream) { return; }
+	if (musicVisual.feedCanvas !== parts.canvas) {
+		musicVisual.feedCanvas = parts.canvas;
+		musicVisual.stream = parts.canvas.captureStream(30);
+	}
+	if (!musicVisual.stream) { return; }
+	if (parts.feed.srcObject !== musicVisual.stream) {
+		parts.feed.srcObject = musicVisual.stream;
+		parts.feed.muted = true;
+	}
+	if (parts.feed.paused) {
+		var p = parts.feed.play();
+		if (p && p.catch) { p.catch(function () {}); }
+	}
+}
+
+// The picture's dress and place, taken from the player's own two: the corner
+// thumbnail while the library is up, the whole player in the theatre - or
+// whenever the player itself fills the screen. The canvas wears the same style,
+// so its bitmap matches what is on screen.
+function musicVisualPlace(parts, big) {
+	var style = parts.el.getAttribute(big ? 'big_style' : 'thumb_style') || '';
+	var shown = style + 'display:block;';
+	if (parts.feed.getAttribute('style') != shown) { parts.feed.setAttribute('style', shown); }
+	if (parts.canvas.getAttribute('style') != style) { parts.canvas.setAttribute('style', style); }
 }
 
 function musicVisualStop() {
 	if (musicVisual.raf) { cancelAnimationFrame(musicVisual.raf); musicVisual.raf = 0; }
-	var canvas = musicVisual.canvas;
-	if (!canvas) {
-		// a page that never painted can still be handed the canvas on screen, out
-		// of a stored shell; the element is found the way the frame loop finds it
-		var el = document.getElementById('video');
-		var miss = el ? (el.getAttribute('miss') || '') : '';
-		canvas = (miss && document.getElementById(miss + '_visualizer')) || null;
-	}
-	if (canvas) { canvas.style.display = 'none'; }
+	var feed = musicVisualElements().feed;
+	if (feed && feed.style.display != 'none') { feed.style.display = 'none'; }
 	musicVisual.canvas = null;
 	musicVisual.painted = null;
 	musicVisual.last = 0;
 }
 
-// Put the chosen drawing on screen, opening the theatre for it when the window
-// is showing the library instead: a picture nobody can see is not a picture.
+// Put the chosen drawing on the player: there is nothing to open and nothing to
+// place here - the loop's first frame feeds the video and dresses it.
 function musicVisualApply() {
-	var el = document.getElementById('video');
-	if (!el || musicVisual.mode == 'none') { musicVisualStop(); return; }
-	if (el.getAttribute('type') == 'audio'
-		&& $('#video').attr('theatre_mode') != 'on'
-		&& !(document.fullscreenElement || document.webkitFullscreenElement)) {
-		theatreModeOn();
-	}
+	var parts = musicVisualElements();
+	if (!parts.el || !parts.canvas || !parts.feed || musicVisual.mode == 'none') { musicVisualStop(); return; }
 	if (!musicVisual.raf) { musicVisual.raf = requestAnimationFrame(musicVisualFrame); }
 }
 
@@ -1575,44 +1631,40 @@ $(document).on('change', '.media_visualization', function() {
 
 function musicVisualFrame(ts) {
 	musicVisual.raf = 0;
-	var el = document.getElementById('video');
-	var miss = el ? (el.getAttribute('miss') || '') : '';
-	var canvas = (miss && document.getElementById(miss + '_visualizer')) || null;
-	if (!el || !canvas || musicVisual.mode == 'none') {
+	var parts = musicVisualElements();
+	if (!parts.el || !parts.canvas || !parts.feed || musicVisual.mode == 'none') {
 		musicVisualStop();
 		return;
 	}
-	if (el.getAttribute('type') == 'video' || !musicVisualShowing(el)) {
-		// a picture is chosen but the player has no stage for it right now - a
-		// video track is playing, the theatre is off, the screen is elsewhere.
-		// The canvas is put away (a stale frame must not cover the picture) and
-		// the loop waits, so the drawing comes straight back on its own.
+	if (parts.el.getAttribute('type') != 'audio') {
+		// a video track brings its own picture: the drawing is put away and the
+		// loop waits, so it comes straight back on its own
 		musicVisualStop();
 		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 		return;
 	}
 	// a re-render hands back a fresh dropdown at its default; the drawing is the
 	// truth, so the control is put back in step
-	var select = document.getElementById(miss + '_visualization');
+	var select = document.getElementById(parts.miss + '_visualization');
 	if (select && select.value != musicVisual.mode) { select.value = musicVisual.mode; }
-	// the canvas has to be on screen before it can be measured: with the css
-	// display:none it has no box at all, and the fit below could never let it out
-	if (canvas.style.display != 'block') { canvas.style.display = 'block'; }
-	musicVisual.canvas = canvas;
-	if (!musicVisualFit(canvas)) {
-		// the window is minimized or mid-resize: there is nothing to paint, but
-		// the loop stays on so the picture comes back with the window
+	var big = musicPictureBig();
+	musicVisualFeed(parts);
+	musicVisualPlace(parts, big);
+	if (!musicVisualFit(parts.canvas, big)) {
+		// the player has no box to paint into (mid-resize, collapsed window):
+		// there is nothing to paint, but the loop stays on for when it has one
 		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 		return;
 	}
-	var g = canvas.getContext('2d');
+	musicVisual.canvas = parts.canvas;
+	var g = parts.canvas.getContext('2d');
 	if (!g) { musicVisualStop(); return; }
 	if (musicVisual.painted != musicVisual.mode) {
 		musicVisual.painted = musicVisual.mode;
 		musicVisual.dots = [];
 		musicVisual.peaks = [];
 		musicVisual.art = null;
-		g.clearRect(0, 0, canvas.width, canvas.height);
+		g.clearRect(0, 0, parts.canvas.width, parts.canvas.height);
 	}
 	var now = ts / 1000;
 	var dt = now - (musicVisual.last || now);
@@ -1624,7 +1676,7 @@ function musicVisualFrame(ts) {
 	musicVisualSample(musicVisualAnalyser(), dt);
 	st.hue = (st.hue + dt * (14 + st.level * 160)) % 360;
 	var draw = musicVisualDraw[musicVisual.mode];
-	if (draw) { draw(g, canvas.width, canvas.height, st, dt); }
+	if (draw) { draw(g, parts.canvas.width, parts.canvas.height, st, dt); }
 	musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 }
 
