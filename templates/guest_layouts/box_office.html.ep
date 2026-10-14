@@ -1,25 +1,35 @@
 <html>
 	<style>
-		html {
-			<% my $background_colour; if ($ticket->{'privilege'} eq 'citizen') { $background_colour = 'red'; } elsif ($ticket->{'privilege'} eq 'resident') { $background_colour = 'yellow'; } else { $background_colour = 'green'; } %>
-			background-color:<%= $background_colour %>;
-			text-align:center;
-			vertical-align:center;
+		html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+		#stage {
+			position: fixed; inset: 0;
+			background: #000;
+			display: flex; align-items: center; justify-content: center;
 		}
+		/* The mark (J+F as an 8 with a flat top) sinks into its own lower loop -
+		   the hole, centred, about a third up from the bottom. transform-origin
+		   is that loop, so scaling to nothing is the fall into the hole. */
+		#jawn_mark {
+			height: 58vh; max-width: 58vw;
+			transform-origin: 50% 78%;
+			animation: jawn_in .12s ease-out both,
+			           jawn_sink .18s cubic-bezier(.55, 0, .9, .35) .1s both;
+		}
+		@keyframes jawn_in   { from { opacity: 0; transform: scale(1.08); } to { opacity: 1; transform: scale(1); } }
+		@keyframes jawn_sink { to { opacity: 0; transform: scale(.03); } }
 	</style>
-	<img src="<%= $image %>" style="text-align:center; max-height:600px; height: 100%;">
+	<div id="stage">
+		<img id="jawn_mark" src="<%= $logo || &subs::icon_for('/images/jbuttons/logo1.png') %>">
+	</div>
 	<div id="box_office_stash" style="display:none;">
 		<%= $js %>
 	</div>
-	<div id="box_office_dump">
-	</div>
+	<div id="box_office_dump"></div>
 	<script>
 			var js = $('#box_office_stash').text();
 			var jso = JSON.parse(js);
-			console.log(jso);
-			var jss = JSON.stringify(jso);
-
 			try { gateKeeper(jso); } catch (e) { console.log(e); }
-			window.location = jso['redirector'];
+			// no pause: the mark falls into its hole and the destination loads
+			setTimeout(function () { window.location = jso['redirector']; }, 300);
 	</script>
 </html>

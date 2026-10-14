@@ -6547,7 +6547,10 @@ get '/box_office/:uuid' => sub($c) {
 				device => $device,
 				manager_file => &manager_file_maker($c->session('name')),
 				ticket => $ticket,
-				image => $image
+				image => $image,
+				# the redirect screen's mark: the house's own logo, which sinks into
+				# its lower loop (the hole) rather than showing a privilege icon
+				logo => &subs::setting_grabber({ app => 'me', setting => 'logo' })
 			);
 			my $msg = encode_json { app => 'server', ticket => $ticket, timestamp => $timestamp };
 			if ($ticket->{'privilege'} eq 'citizen') {
