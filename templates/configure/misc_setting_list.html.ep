@@ -256,12 +256,16 @@
 		<h4>Locations</h4>
 		<div class="cfg-grid misc_grid">
 			<% foreach my $l (@locations) { %>
+				<%# these two come straight out of the settings table, which may not carry
+				    the key at all; an unset one compares as blank rather than undef %>
+				<% my $chosen_location = $settings->{$dt}->{$l . '_location'} // ''; %>
+				<% my $chosen_archive = $settings->{$dt}->{$l . '_archive'} // ''; %>
 				<div class="cfg-card">
 					<b><%= &subs::format_name($l) %></b>
 					<label>Location
 						<select id="<%= $l %>_location" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_location">
 							<% foreach my $s ( '', @{$folders}) { %>
-								<option <% if ($settings->{$dt}->{$l . '_location'} eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
+								<option <% if ($chosen_location eq $s ){ %>selected="selected"<% } %>><%= $s %></option>
 							<% } %>
 						</select>
 					</label>
@@ -269,7 +273,7 @@
 						<select id="<%= $l %>_archive" class="misc_setting" device="<%= $dt %>" setting="<%= $l %>_archive">
 							<option value="">None</option>
 							<% foreach my $rm ( @{$remote_machines} ) { %>
-								<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $settings->{$dt}->{$l . '_archive'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
+								<option value="<%= $rm->{'signatorial'} %>" <% if ($rm->{'signatorial'} eq $chosen_archive) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
 							<% } %>
 						</select>
 					</label>
