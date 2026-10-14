@@ -68,9 +68,24 @@ sub alive_file {
 }
 
 sub touch_alive {
+  my ($url, $ports) = @_;
+  my $f = alive_file($url);
+  # The body is how many listeners the hub bound for us (its last pong), or empty
+  # while unknown. A live-but-hollow session (the hub lost our tunnels rows and
+  # bound nothing) then reads as "0" and the checker re-requests instead of
+  # calling a socket that forwards nowhere connected.
+  my $n = (ref $ports eq 'ARRAY') ? scalar(@{$ports}) : '';
+  if (open(my $fh, '>', $f)) { print $fh $n; close $fh; }
+}
+
+# The hub's listener count from the last pong, or undef while unknown.
+sub alive_ports {
   my ($url) = @_;
   my $f = alive_file($url);
-  if (open(my $fh, '>', $f)) { close $fh; }
+  return unless -e $f;
+  my $v = do { local $/; open(my $fh, '<', $f) or return; <$fh> };
+  return undef unless defined $v && $v =~ /^\d+$/;
+  return $v + 0;
 }
 
 # Milliseconds since the holder last heard a pong, or undef if it never has.
@@ -137,7 +152,7 @@ sub hub_session {
     my $op = $m->{'op'} // '';
     $session->{'last_seen'} = time();
     if ($op eq 'ping') {
-      _txt($ws, { op => 'pong' });
+      _txt($ws, { op => 'pong', ports => [ sort keys %{$session->{'listeners'}} ] });
     }
     elsif ($op eq 'ready') {
       my $c = $session->{'channels'}{$m->{'channel'}};
@@ -236,7 +251,7 @@ sub peer_session {
         my ($tx, $str) = @_;
         my $m  = eval { decode_json $str } || {};
         my $op = $m->{'op'} // '';
-        if ($op eq 'pong') { $last_pong = time(); touch_alive($url); return; }
+        if ($op eq 'pong') { $last_pong = time(); touch_alive($url, $m->{'ports'}); return; }
         if ($op eq 'open') {
           my $ch = $m->{'channel'};
           Mojo::IOLoop->client({ address => '127.0.0.1', port => $m->{'dest'} } => sub {

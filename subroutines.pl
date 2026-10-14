@@ -8516,7 +8516,11 @@ sub tunnel_checker() {
 							$rm->{'ua'}->inactivity_timeout(23);
 							my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
 							my $age = &Tunnel::alive_age($rm->{'manager'});
-							my $status = (defined $age && $age < 90000) ? 'connected' : 'unknown';
+							# Connected only if the hub is really listening for us: a fresh pong that
+							# reports zero listeners is a hollow session (the hub lost our tunnels
+							# rows and bound nothing), and re-requesting is what repairs it.
+							my $ports = &Tunnel::alive_ports($rm->{'manager'});
+							my $status = (defined $age && $age < 45000 && (!defined $ports || $ports >= 1)) ? 'connected' : 'unknown';
 							if ($res && $res->is_success) {
 								my $response = eval { decode_json $res->body } || {};
 								if ($response->{'mirrors'}) {
