@@ -927,6 +927,11 @@ function jawnNfcAvailable() {
 	return !!(window.JawnNFC && window.JawnNFC.available() === 'yes');
 }
 function jawnNfcMake() {
+	// The app's own bridge (window.JawnNFC, Android reader mode) is preferred:
+	// a Chromium WebView now exposes NDEFReader too, but the app cannot grant
+	// the WebView's Web NFC the way it grants its bridge, so prefer the one we
+	// drive. Chrome has no window.JawnNFC, so there the native NDEFReader wins.
+	if (window.JawnNFC && window.JawnNFC.available() === 'yes') return jawnNfcAdapter();
 	if ('NDEFReader' in window) return new NDEFReader();
 	return jawnNfcAdapter();
 }

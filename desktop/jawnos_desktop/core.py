@@ -140,7 +140,7 @@ def save_settings(settings):
 
 
 # --------------------------------------------------------------------------
-# self-update: the installed copy follows the repo's desktop/ tree
+# update: the installed copy follows the repo's desktop/ tree, on the button
 # --------------------------------------------------------------------------
 
 def _tree_stamp(root):
@@ -167,30 +167,62 @@ def repo_desktop_dir(settings):
     return os.path.join(settings.get("jawn_dir") or default_jawn_dir(), "desktop")
 
 
-def sync_self(settings):
-    """Copy the repo's desktop/ over this installed copy when it has changed,
-    returning True so the caller re-execs and the new code loads.
+def installed_info():
+    """The stamp and version recorded when this copy was last written."""
+    try:
+        with open(installed_stamp_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {}
 
-    A no-op when this *is* the checkout (nothing to copy) or the repo carries
-    no desktop tree. The stored login ticket lives in the config dir, not here,
-    so a plain copy never disturbs it."""
-    if os.environ.get("JAWNOS_SELFUPDATED"):
-        return False
+
+def _write_installed_stamp(stamp, name, code):
+    try:
+        with open(installed_stamp_path(), "w", encoding="utf-8") as fh:
+            json.dump({"stamp": stamp, "versionName": name, "versionCode": code}, fh)
+            fh.write("\n")
+    except OSError:
+        pass
+
+
+def repo_desktop_ready(settings):
+    """True when the repo carries a desktop tree that is not this very copy."""
     repo = repo_desktop_dir(settings)
     if not os.path.isfile(os.path.join(repo, "jawnos_desktop", "ui.py")):
         return False
     try:
-        if os.path.realpath(repo) == os.path.realpath(DESKTOP_DIR):
-            return False
+        return os.path.realpath(repo) != os.path.realpath(DESKTOP_DIR)
     except OSError:
         return False
+
+
+def update_available(settings):
+    """(versionName, versionCode) of a newer repo desktop tree, or None.
+
+    "Newer" is the tree stamp: any edit under the repo's desktop/ makes the
+    installed copy out of date, the way a bumped versionCode makes an APK so."""
+    if not repo_desktop_ready(settings):
+        return None
+    repo = repo_desktop_dir(settings)
     stamp = _tree_stamp(repo)
-    try:
-        with open(installed_stamp_path(), "r", encoding="utf-8") as fh:
-            if fh.read().strip() == stamp:
-                return False
-    except OSError:
-        pass
+    if installed_info().get("stamp") == stamp:
+        return None
+    code, name = desktop_version(settings.get("jawn_dir") or default_jawn_dir())
+    return (name or "", code)
+
+
+def apply_update(settings):
+    """Copy the repo's desktop/ over this copy and record the new version.
+
+    Returns (ok, versionName, versionCode). The caller restarts to run the new
+    code (a running process cannot swap its own modules). The stored login
+    ticket lives in the config dir, not here, so the copy leaves it alone."""
+    if not repo_desktop_ready(settings):
+        return (False, "", 0)
+    repo = repo_desktop_dir(settings)
     import shutil
     for dirpath, dirnames, filenames in os.walk(repo):
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
@@ -212,12 +244,9 @@ def sync_self(settings):
                 os.chmod(path, 0o755)
             except OSError:
                 pass
-    try:
-        with open(installed_stamp_path(), "w", encoding="utf-8") as fh:
-            fh.write(stamp + "\n")
-    except OSError:
-        pass
-    return True
+    code, vname = desktop_version(settings.get("jawn_dir") or default_jawn_dir())
+    _write_installed_stamp(_tree_stamp(repo), vname, code)
+    return (True, vname, code)
 
 
 # --------------------------------------------------------------------------

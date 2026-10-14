@@ -8,17 +8,6 @@ _here = os.path.dirname(os.path.realpath(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
 
-from jawnos_desktop import core  # noqa: E402
-
-# The CLI follows the repo's desktop/ tree too, so a command runs current code
-# even right after an update; re-exec on the refreshed copy when it changed.
-try:
-    if core.sync_self(core.load_settings()):
-        os.environ["JAWNOS_SELFUPDATED"] = "1"
-        os.execv(sys.executable, [sys.executable, os.path.realpath(__file__)] + sys.argv[1:])
-except OSError:
-    pass
-
 from jawnos_desktop.cli import main  # noqa: E402
 
 if __name__ == "__main__":

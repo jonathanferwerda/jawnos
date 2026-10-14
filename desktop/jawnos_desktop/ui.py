@@ -11,6 +11,7 @@ process.
 """
 
 import os
+import sys
 import threading
 
 import gi
@@ -180,6 +181,13 @@ class Dashboard(Gtk.Window):
         settings_card.pack_start(self.ble_with_jawn, False, True, 0)
         self._card_button(settings_card, "Save settings", self.action_save, primary=True)
 
+        app_card = self._card(box, "App")
+        self.app_note = Gtk.Label(xalign=0)
+        self.app_note.set_line_wrap(True)
+        self.app_note.get_style_context().add_class("dim")
+        app_card.pack_start(self.app_note, False, True, 0)
+        self.update_button = self._card_button(app_card, "Update app", self.action_update, primary=True)
+
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self._on_key)
         # The tray icon keeps the app alive when its window is closed -- closing
@@ -336,6 +344,26 @@ class Dashboard(Gtk.Window):
     def action_show_log(self):
         LogWindow(core.jawn_log_path(self.settings["jawn_dir"]))
 
+    # ---- update the app itself ----
+
+    def action_update(self):
+        ok, name, code = core.apply_update(self.settings)
+        if not ok:
+            self._say("already up to date")
+            self.refresh()
+            return
+        self._say("updated to v%s - restarting..." % name)
+        # A running process cannot swap its own modules, so restart on the new
+        # code (the window closes and reopens on the fresh copy).
+        GLib.timeout_add(400, self._restart_self)
+
+    def _restart_self(self):
+        try:
+            os.execv(sys.executable, [sys.executable, os.path.realpath(sys.argv[0])] + sys.argv[1:])
+        except Exception as exc:
+            self._say("updated - close and reopen to run it (%s)" % exc)
+        return False
+
     # ---- the embedded JawnOS view tab ----
 
     def _on_switch_page(self, _notebook, page, _index):
@@ -435,14 +463,21 @@ class Dashboard(Gtk.Window):
             ticket = secrets.describe()
         except Exception:
             ticket = "?"
-        code, name = core.desktop_version(self.settings.get("jawn_dir", ""))
-        version = ("%s (%s)" % (name, code)) if name else "unknown"
         self.env.set_text(
-            "folder: %s\ndesktop: v%s\nautostart: %s\nlogin ticket: %s" % (
+            "folder: %s\nautostart: %s\nlogin ticket: %s" % (
                 self.settings.get("jawn_dir", ""),
-                version,
                 "enabled" if core.autostart_enabled() else "disabled",
                 ticket))
+        info = core.installed_info()
+        iname = info.get("versionName") or "?"
+        icode = info.get("versionCode") or 0
+        newer = core.update_available(self.settings)
+        if newer:
+            self.app_note.set_text("desktop v%s (%s)\nan update to v%s is ready." % (iname, icode, newer[0] or "newer"))
+            self.update_button.set_sensitive(True)
+        else:
+            self.app_note.set_text("desktop v%s (%s)\nup to date." % (iname, icode))
+            self.update_button.set_sensitive(False)
 
     def _render(self, jawn_up, ble_up):
         if jawn_up:
