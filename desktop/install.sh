@@ -124,6 +124,20 @@ echo "Installed desktop entry and icon"
 # jawn actually is.
 "$DEST/jawnosctl" dir "$JAWN_DIR" >/dev/null
 
+# --- the app's own forever ticket -------------------------------------------
+# A machine that holds the house mints the app a ticket that never expires, so
+# the embedded view opens the manager without ever asking for a login. Skipped
+# when a ticket is already stored (a routine code update must never rotate it)
+# and when there is no house here to mint from; JAWNOS_NO_TICKET=1 turns it off.
+if [ -z "${JAWNOS_NO_TICKET:-}" ] && [ -f "$REPO_ROOT/scripts/app_ticket.pl" ] \
+	&& ! "$DEST/jawnosctl" ticket show >/dev/null 2>&1; then
+	app_ticket=$(cd "$REPO_ROOT" && "$PERL" scripts/app_ticket.pl desktop 2>/dev/null | head -n 1 || true)
+	case "$app_ticket" in
+		https://*) "$DEST/jawnosctl" ticket import "$app_ticket" >/dev/null \
+			&& echo "Stored the desktop's forever ticket" ;;
+	esac
+fi
+
 # --- systemd --user units ---------------------------------------------------
 if [ "$WITH_SYSTEMD" -eq 1 ]; then
 	mkdir -p "$UNITS"

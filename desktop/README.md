@@ -80,6 +80,19 @@ they are missing. On Arch the VA-API plugin used to be a separate
 Every system also needs the **VA-API driver for its GPU** (below), or video
 decodes in software.
 
+## The app's login ticket
+
+The embedded view signs in with a ticket URL, stored encrypted under
+`~/.config/jawnos/`: `jawnosctl ticket import <url>` stores one, `jawnosctl
+ticket show` prints a masked copy, `jawnosctl ticket clear` forgets it.
+
+On a machine that holds the house, `install.sh` mints the app its own ticket
+once (`perl scripts/app_ticket.pl desktop`) and imports it. That ticket carries
+the "forever" warranty, so it never expires and the manager opens without a
+login. It is idempotent: an already-stored ticket is never overwritten, and
+`JAWNOS_NO_TICKET=1 ./desktop/install.sh` skips the step. The ticket's row sits
+in the box office beside the others and can be suspended or deleted there.
+
 ## Using it
 
 ```sh

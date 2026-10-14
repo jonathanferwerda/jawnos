@@ -6083,7 +6083,9 @@ sub qrcode_generator($params) {
 	unless ($params->{'db'} || $params->{'keep_warranty'}) {
 		&subs::setting_setter({ app => 'box_office', setting => 'warranty', value => $warranty });
 	}
-	$warranty = &subs::ago_calc($warranty,$timestamp);
+	# "forever" is the apps' warranty: a far-future epoch no expiry check or
+	# sweep will ever pass, so a ticket baked into an app never expires
+	$warranty = (($warranty || '') =~ /^\s*forever\s*$/i) ? &subs::forever_warranty() : &subs::ago_calc($warranty,$timestamp);
 	my $duration = $warranty - $timestamp;
 
 	my $qr = `qrencode -o - $url`;

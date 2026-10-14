@@ -892,6 +892,14 @@ sub time_span_label() {
 	return $found ? $found->[1] : undef;
 }
 
+# A warranty that never expires, in the epoch milliseconds every warranty here
+# is compared in. Year 3000 is a constant on purpose: no expiry check or sweep
+# will ever reach it, and two machines comparing the same ticket agree. The app
+# tickets carry it, so the desktop and mobile apps never ask for a login again.
+sub forever_warranty {
+	return 32503680000000;    # 3000-01-01T00:00:00Z in ms
+}
+
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
 	$timestamp = &rightNow() unless $timestamp;
@@ -13227,7 +13235,9 @@ sub git_binary {
 #             rewritten hash, so reset hard to origin/main (nothing unique lost)
 #   diverged  has local commits that are not upstream; left alone (use force)
 #   dirty     tracked files are modified; never touched (use force)
-#   error/no-repo  the checkout could not be read
+#   error     the fetch failed (no route, bad credentials) or the checkout
+#             could not be read; nothing was moved
+#   no-repo   not a git checkout
 # A clean tree only, unless force, which skips the dirty guard and hard-resets.
 # Which of two dotted versions is newer - numerically, so 0.1.112 beats 0.1.79
 sub version_cmp {
@@ -13261,9 +13271,14 @@ sub git_repo_update {
 		return ('dirty', $dirty) if $dirty =~ /\S/;
 	}
 	my $out = $run->("\"$git\" fetch origin --quiet");
+	# a failed fetch must never be acted on: the remote-tracking ref may be
+	# stale, so comparing HEAD against it could read as current (or worse, a
+	# force could reset to the stale ref). error sends the watcher to its peer
+	# fallback instead.
+	my $fetch_ok = $? ? 0 : 1;
 	my $head   = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
 	my $origin = `cd "$repo" && "$git" rev-parse origin/main 2>/dev/null`; chomp $origin;
-	return ('error', $out) unless $head && $origin;
+	return ('error', $out) unless $fetch_ok && $head && $origin;
 	return ('current', $out) if $head eq $origin;
 	# force makes the checkout exactly origin/main, whatever the local state
 	if ($force) {
@@ -13286,9 +13301,11 @@ sub git_repo_update {
 
 # Pull the code from a peer: it hands back a git bundle of its own HEAD (a
 # delta since ours when it can), we fetch it and fast-forward or reset by the
-# same rules as a pull from origin. This is the peer half of "whoever has the
-# newest is it", so a machine with no route to GitHub still follows the newest
-# machine - a laptop with commits not yet pushed, say.
+# same rules as a pull from origin. This is the watcher's fallback for a machine
+# with no route to GitHub. ff_only also refuses the reset case: the fallback
+# must never move a tree anywhere a fast-forward cannot reach, or a peer whose
+# advertised version outran its actual tree can drag a machine backward (the
+# rewritten-history reset once did, under "whoever has the newest is it").
 sub git_peer_update {
 	my ($opts) = @_;
 	my $repo = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -13323,7 +13340,7 @@ sub git_peer_update {
 	# a rewritten history landing on the same work (git cherry marks every local
 	# commit '-') is a reset, not a conflict
 	my $cherry = `cd "$repo" && "$git" cherry $target HEAD 2>&1`;
-	return ('diverged', $cherry) if grep { /^\+/ } split /\n/, $cherry;
+	return ('diverged', $cherry) if $opts->{'ff_only'} || grep { /^\+/ } split /\n/, $cherry;
 	my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 	return ('reset', $out);
 }
@@ -13977,31 +13994,52 @@ sub coding_propose_fix {
 	return $files ? 'proposed' : 'failed';
 }
 
+our $git_watcher_dirty_note;
+
 sub git_watcher_check {
 	return unless -d '.git';
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
-	# "whoever has the newest is it": a peer running a newer version is tried
-	# first - it may hold work not yet on origin - and origin is the fallback, so
-	# a machine with no reachable peer still follows GitHub.
-	my ($status, $out) = ('', '');
-	my $mine = &subs::jawn_version();
-	my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
-	my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
-		grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
-	# only a few, so a run of dead peers cannot hold the watcher up
-	@peers = @peers[0 .. 2] if scalar @peers > 3;
-	foreach my $rm ( @peers ) {
-		my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm });
-		if ($st eq 'updated' || $st eq 'reset') { $status = "peer/$st"; $out = $o; last; }
+	# GitHub is the authority: the checkout follows origin/main first, and only a
+	# machine origin cannot move forward - the fetch failed (the mesh answers while
+	# the internet does not), or it holds commits origin/main lacks - consults a
+	# peer as the fallback. A peer pull must be a true fast-forward: the old order
+	# ("whoever has the newest is it") let a peer whose advertised version outran
+	# its actual tree reset this machine backward through the rewritten-history
+	# path, so the watcher never accepts a peer reset. A peer with rewritten
+	# history, or with work the whole house should ride, pushes to GitHub and the
+	# authority carries it everywhere.
+	my ($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	if ($status eq 'dirty') {
+		# a tree with tracked changes never moves; say so once an hour rather
+		# than leaving the machine quietly stuck behind
+		my $now = &subs::rightNow();
+		if ((!$git_watcher_dirty_note || $now - $git_watcher_dirty_note > 3600000) && $subs::logfile) {
+			$git_watcher_dirty_note = $now;
+			open(my $fh, '>>', $subs::logfile);
+			print $fh $now . " git watcher: tree is dirty, left alone\n";
+			close $fh;
+		}
+		return;
 	}
-	unless ($status) {
-		($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	unless ($status eq 'updated' || $status eq 'reset' || $status eq 'current') {
+		my $mine = &subs::jawn_version();
+		my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
+		my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
+			grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
+		# only a few, so a run of dead peers cannot hold the watcher up
+		@peers = @peers[0 .. 2] if scalar @peers > 3;
+		foreach my $rm ( @peers ) {
+			my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm, ff_only => 1 });
+			if ($st eq 'updated') { $status = "peer/$st"; $out = $o; last; }
+		}
 	}
 	return unless $status eq 'updated' || $status eq 'reset';
 	if ($subs::logfile) {
 		my $after = `git rev-parse HEAD 2>/dev/null`; chomp $after;
+		# name the source in the log: origin is the authority, a peer the fallback
+		my $label = ($status =~ m{^peer/}) ? $status : "origin/$status";
 		open(my $fh, '>>', $subs::logfile);
-		print $fh &subs::rightNow() . " git watcher: $status " . substr($before,0,10) . " -> " . substr($after,0,10) . ", restarting\n";
+		print $fh &subs::rightNow() . " git watcher: $label " . substr($before,0,10) . " -> " . substr($after,0,10) . ", restarting\n";
 		close $fh;
 	}
 	# A desktop host keeps an installed copy of the app in
@@ -14038,6 +14076,11 @@ sub peer_useragent {
 		));
 	}
 	$ua->insecure(1);
+	# ride the same signed rail every other peer call rides: once a key is
+	# pinned, an unsigned request is refused, and this UA serves the git bundle,
+	# the APK sync and the voice sync - all peer_verify routes. (Unsigned was
+	# only ever accepted while the peer had no key on file.)
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	return ($ua, $rm);
 }
 
