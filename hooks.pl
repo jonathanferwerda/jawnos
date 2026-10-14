@@ -248,6 +248,15 @@ hook before_dispatch => sub {
 		# so a tunnelled peer whose session lapsed must still reach it. The route
 		# peer_verifies the sig against the roster itself (see Manager.pl).
 		$path eq '/manager/tunnel/alive' ||
+		# the sync rail: a peer asks this machine for a backup (backup_now), pulls
+		# its archive (backup_serve) and confirms it (backup/confirm) over the same
+		# bare signed rail. The session cookie these once relied on lapses, and a
+		# gated reply - the Gate page, not JSON - silently stalled the merge (the
+		# decode failed and the pull did nothing), which is how a machine fell
+		# behind. The routes take a session OR a peer signature (see Manager.pl).
+		$path eq '/manager/configure/backup_now' ||
+		$path eq '/manager/backup_serve' ||
+		$path eq '/manager/backup/confirm' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||

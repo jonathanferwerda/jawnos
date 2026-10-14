@@ -4504,6 +4504,14 @@ sub remote_upgrade($c,$params) {
 };
 
 post '/manager/backup/confirm' => sub($c) {
+	# confirmed over the same gate-exempt signed rail: a session or a peer
+	# signature (the caller names itself in `signatorial`).
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
 	my $backup_confirm = eval { return decode_json $c->param('backup_confirm') };
 	my $backup_data = $backup_confirm->{'backup_data'};
 	my $returner = $backup_data;
@@ -13636,7 +13644,16 @@ get '/manager/notifications/scroll' => sub($c) {
 };
 
 get '/manager/configure/backup_now' => sub($c) {
-
+	# The sync rail is gate-exempt (hooks.pl) because a peer's session cookie
+	# lapses and a gated reply - the Gate page, not JSON - silently stalled the
+	# merge. Authorize here instead: the UI's own session, or a peer that signs
+	# the request against its roster row, exactly like the rest of the peer rail.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
 	unless ($c->param('reason')) {
 		$c->param('reason' => 'backup');
 	}
