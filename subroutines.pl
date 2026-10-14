@@ -8360,27 +8360,41 @@ sub signature_verify {
 # The paper code: eight groups of five from Crockford's alphabet (no I, L, O or
 # U to mistype). Verification is the decryption itself - the code unwraps a copy
 # of the suds sealed to it - so the house keeps no hash, only the sealed blob.
-sub recovery_code_make {
-	# 200 bits straight from /dev/urandom: 40 characters of 5 bits. The code
-	# unwraps the house key, so Perl's rand (predictable, and inherited by forked
-	# workers) is not good enough. Each byte mod 32 is uniform: 256 divides by 32.
+# n characters from Crockford's alphabet, straight from /dev/urandom: the house
+# key material of the recovery code, and the short codes humans compare. Perl's
+# rand (predictable, and inherited by forked workers) is not good enough. Each
+# byte mod 32 is uniform: 256 divides by 32.
+sub code_chars_make {
+	my ($n) = @_;
 	my $chars = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 	my $raw = '';
 	if (open my $fh, '<', '/dev/urandom') {
 		binmode $fh;
 		my $bytes = '';
-		read($fh, $bytes, 40);
+		read($fh, $bytes, $n);
 		close $fh;
-		$raw = join '', map { substr($chars, ord($_) % 32, 1) } split '', $bytes if length($bytes) == 40;
+		$raw = join '', map { substr($chars, ord($_) % 32, 1) } split '', $bytes if length($bytes) == $n;
 	}
-	unless (length($raw) == 40) {
+	unless (length($raw) == $n) {
 		# a last resort only: stretch everything weak we have through md5
-		my $seed = join '|', ($$, time, &random_string_creator(40));
-		my $hex = md5_sum($seed) . md5_sum(reverse $seed);
-		$raw = join '', map { substr($chars, hex($_), 1) } split '', substr($hex, 0, 40);
+		my $seed = join '|', ($$, time, &random_string_creator($n));
+		my $hex = '';
+		$hex .= md5_sum($seed . $hex) for (1 .. int($n / 8) + 1);
+		$raw = join '', map { substr($chars, hex($_), 1) } split '', substr($hex, 0, $n);
 	}
+	return $raw;
+}
+
+sub recovery_code_make {
+	my $raw = &code_chars_make(40);
 	my @groups = $raw =~ /.{5}/g;
 	return join '-', @groups;
+}
+
+# the approval code: short enough to compare across two screens
+sub device_request_code {
+	my $raw = &code_chars_make(6);
+	return substr($raw, 0, 3) . '-' . substr($raw, 3, 3);
 }
 
 sub recovery_code_clean {

@@ -20117,6 +20117,20 @@ sub security_initializer($c) {
 	my $devices = &subs::db_select('paired_devices', undef, {})->hashes || [];
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $recovery_stale = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery_stale')->hashes->[0];
+	# pending device approvals: old ones go, ones whose key is already on the
+	# roster (approved on a peer) are settled, the rest wait with their code
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from device_requests where status != ? and server_time < ?', 'pending', $now - 86400000);
+	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 600000);
+	my $requests = &subs::db_select('device_requests', undef, { status => 'pending' })->hashes || [];
+	foreach my $r ( @{$requests} ) {
+		my $paired = &subs::db_select('paired_devices', undef, { pubkey => $r->{'pubkey'}, status => 'active' })->hashes->[0];
+		if ($paired) {
+			&subs::db_update('device_requests', { status => 'approved', device_uuid => $paired->{'uuid'}, server_time => $now }, { uuid => $r->{'uuid'} });
+			$r->{'status'} = 'approved';
+		}
+	}
+	@{$requests} = grep { $_->{'status'} eq 'pending' } @{$requests};
 	my $president = &subs::settings_grabber({ app => '__president' });
 	if ($c->param('security_view')) {
 		$president->{'security_view'} = $c->param('security_view');
@@ -20130,6 +20144,7 @@ sub security_initializer($c) {
 		devices => $devices,
 		recovery => $recovery,
 		recovery_stale => $recovery_stale,
+		requests => $requests,
 		config => $config
 	);
 	my $padlocker = &subs::db_select('security', undef, { level => 'padlock' })->hashes || [];
@@ -20182,11 +20197,17 @@ post '/manager/security/neighbour_link_privilege' => sub($c) {
 	$c->render(text => &security_initializer($c));
 };
 
-# The paired-device plumbing shared by pair, device login and recovery.
+# The paired-device plumbing shared by pair, device login, recovery and the
+# approval door.
+sub device_pubkey_clean($armor) {
+	return unless $armor;
+	return $armor if $armor =~ /BEGIN PUBLIC KEY/;
+	return "-----BEGIN PUBLIC KEY-----\n" . $armor . "\n-----END PUBLIC KEY-----\n" if $armor =~ /^[A-Za-z0-9+\/=\r\n]+$/;
+	return;
+}
+
 sub device_store_pubkey($armor, $name, $agent) {
-	my $pem;
-	if ($armor =~ /BEGIN PUBLIC KEY/) { $pem = $armor; }
-	elsif ($armor =~ /^[A-Za-z0-9+\/=\r\n]+$/) { $pem = "-----BEGIN PUBLIC KEY-----\n" . $armor . "\n-----END PUBLIC KEY-----\n"; }
+	my $pem = &device_pubkey_clean($armor);
 	return unless $pem;
 	my $now = &subs::rightNow();
 	my $uuid = &subs::random_string_creator(25);
@@ -20324,6 +20345,96 @@ post '/manager/device/recover' => sub($c) {
 	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
 	&device_session_mint($c, $uuid);
 	$c->render(json => { ok => 1, device_uuid => $uuid, name => $name });
+};
+
+# A new device's ask: it posts its public key before it has any session, and a
+# citizen approves it from a device that is already signed in. The short code
+# is the same on both screens, so the wrong request is not approved by habit.
+post '/manager/device/request' => sub($c) {
+	my $pem = &device_pubkey_clean($c->param('pubkey'));
+	unless ($pem) { $c->render(json => { ok => 0, error => 'no key' }); return; }
+	my ($db) = &subs::database_grabber();
+	unless ($db) { $c->render(json => { ok => 0, error => 'no database' }); return; }
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 600000);
+	my $open = &subs::db_select('device_requests', undef, { pubkey => $pem, status => 'pending' })->hashes->[0];
+	if ($open) { $c->render(json => { ok => 1, uuid => $open->{'uuid'}, code => $open->{'code'} }); return; }
+	# the door's throttle: ten asks per address per hour, five waiting at once
+	my $ip = $c->tx->remote_address;
+	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'device_request', $ip . ':%', $now - 3600000)->hash->{'n'} || 0;
+	my $waiting = &subs::db_query('select count(*) as n from device_requests where status = ?', 'pending')->hash->{'n'} || 0;
+	if ($tries >= 10 || $waiting >= 5) { $c->render(json => { ok => 0, error => 'too many' }); return; }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'device_request', app => '__president', server_time => $now, timestamp => $now });
+	my $uuid = &subs::random_string_creator(25);
+	my $name = substr($c->param('name') || 'Device', 0, 60);
+	my $agent = substr($c->req->headers->user_agent // '', 0, 400);
+	my $code = &subs::device_request_code();
+	&subs::db_insert('device_requests', {
+		uuid => $uuid,
+		name => $name,
+		pubkey => $pem,
+		agent => $agent,
+		code => $code,
+		status => 'pending',
+		remote_address => $ip,
+		timestamp => $now,
+		server_time => $now
+	});
+	&device_request_notify($c, $name, $code);
+	$c->render(json => { ok => 1, uuid => $uuid, code => $code });
+};
+
+# The asking device polls this. Approval made on another machine shows up here
+# as fast as the roster merges - the key itself is the proof, so the status is
+# right even before the request row's own copy of the decision arrives.
+post '/manager/device/request_status' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $row = ($uuid && &subs::db_select('device_requests', undef, { uuid => $uuid })->hashes->[0]);
+	unless ($row) { $c->render(json => { ok => 0, status => 'unknown' }); return; }
+	my $now = &subs::rightNow();
+	if ($row->{'status'} eq 'pending') {
+		if ($row->{'server_time'} < $now - 600000) {
+			&subs::db_update('device_requests', { status => 'expired', server_time => $now }, { uuid => $uuid });
+			$c->render(json => { ok => 1, status => 'expired' }); return;
+		}
+		my $paired = &subs::db_select('paired_devices', undef, { pubkey => $row->{'pubkey'}, status => 'active' })->hashes->[0];
+		if ($paired) {
+			&subs::db_update('device_requests', { status => 'approved', device_uuid => $paired->{'uuid'}, server_time => $now }, { uuid => $uuid });
+			$c->render(json => { ok => 1, status => 'approved', device_uuid => $paired->{'uuid'} }); return;
+		}
+		$c->render(json => { ok => 1, status => 'pending' }); return;
+	}
+	$c->render(json => { ok => 1, status => $row->{'status'}, device_uuid => $row->{'device_uuid'} || '' });
+};
+
+sub device_request_notify($c, $name, $code) {
+	my $who = $name || 'A device';
+	my (undef,$database) = &subs::database_grabber();
+	&notification_sender({ app => 'security', role => 'citizen', title => 'Device Request', message => $who . ' asks to pair (code ' . $code . ')', image => $gb::known_appts->{'security'}->{'icon'} }, $database);
+}
+
+post '/manager/security/device_request_decide' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, html => '<p>citizen only</p>' });
+		return;
+	}
+	my $uuid = $c->param('uuid') || '';
+	my $decision = ($c->param('decision') || '') eq 'approve' ? 'approve' : 'deny';
+	my $now = &subs::rightNow();
+	my $row = ($uuid && &subs::db_select('device_requests', undef, { uuid => $uuid, status => 'pending' })->hashes->[0]);
+	if ($row && $row->{'server_time'} > $now - 600000) {
+		if ($decision eq 'approve') {
+			my $device_uuid = &device_store_pubkey($row->{'pubkey'}, $row->{'name'}, $row->{'agent'});
+			if ($device_uuid) {
+				&subs::db_update('device_requests', { status => 'approved', device_uuid => $device_uuid, server_time => $now }, { uuid => $uuid });
+			}
+		}
+		else {
+			&subs::db_update('device_requests', { status => 'denied', server_time => $now }, { uuid => $uuid });
+		}
+	}
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, html => $sec->{'html'} });
 };
 
 post '/manager/security/neighbour_link_delete' => sub($c) {
@@ -23666,6 +23777,9 @@ sub update_database($data) {
 		'alter table remote_machines add column pubkey LONGTEXT',
 		# paired devices: the browsers and phones a citizen has signed in once
 		'create table if not exists paired_devices (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, privilege VARCHAR(25), status VARCHAR(25), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25), last_seen VARCHAR(25), agent VARCHAR(500))',
+		# device approvals: an ask that waits for a citizen, with the short code
+		# shown on both screens (merges like the roster it becomes)
+		'create table if not exists device_requests (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, agent VARCHAR(500), code VARCHAR(25), status VARCHAR(25), device_uuid VARCHAR(255), remote_address VARCHAR(255), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25))',
 		'CREATE INDEX IF NOT EXISTS idx6_warehouse on warehouse (kind)',
 		'CREATE INDEX idx1_tunnels on tunnels (signatorial)',
 		'CREATE INDEX idx2_settings on settings (setting,device)',

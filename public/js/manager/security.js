@@ -208,6 +208,23 @@ $(document).on('click', '#recovery_create', function() {
 	});
 });
 
+$(document).on('click', '.device_request_decide', function() {
+	var row = $(this).closest('.device_request');
+	var uuid = row.attr('uuid');
+	var decision = $(this).attr('decision');
+	$.ajax({
+		url: '/manager/security/device_request_decide',
+		type: 'POST',
+		data: { uuid: uuid, decision: decision },
+		success: function(response) {
+			if (response && response.html) {
+				$('#security').replaceWith(response.html);
+				appointment_chron();
+			}
+		}
+	});
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');

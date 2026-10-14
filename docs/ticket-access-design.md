@@ -1,6 +1,6 @@
 # Ticket, device, and suds — access design
 
-Status: built through phase 4; of phase 3 the paper-code door is done, second-device approval still to come. Written 2026-10-13.
+Status: built through phase 4; phase 3 is done both ways (paper code and device approval). Written 2026-10-13.
 
 ## Goal
 
@@ -138,14 +138,19 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    needed for revocation. Notes: the gate's hook allowlist must admit `/manager/device` and
    `/js/device.js`; and the debrief local-storage snapshot can restore a stale `device_uuid`
    into a fresh browser, so pairing keys on the *keypair* being present, not the uuid.
-3. **Recovery** — *(the paper code is done in this build; second-device approval still to come)*
-   Security → Recovery mints a Crockford code (eight five-character groups drawn from
-   `/dev/urandom`) and seals the suds to it in `settings('__president','recovery')`; the gate's
-   Recovery Code box (`/manager/device/recover`, IP-throttled, judged by the `suds_current`
-   canary) unwraps it, seeds the vault, pairs the device and mints the citizen session. The
-   server never stores the code itself — verification is the decryption. A password change
-   sets the old code aside (`recovery_stale`) because it changes the suds; no code exists until
-   one is made.
+3. **Recovery** — *(done in this build)* two doors at the gate. The paper code: Security →
+   Recovery mints a Crockford code (eight five-character groups from `/dev/urandom`) and seals
+   the suds to it in `settings('__president','recovery')`; the gate's Recovery Code box
+   (`/manager/device/recover`, IP-throttled, judged by the `suds_current` canary) unwraps it,
+   seeds the vault, pairs the device and mints the citizen session — the server never stores
+   the code, verification is the decryption, and a password change sets the old code aside
+   (`recovery_stale`) because it changes the suds. The approval door: the asking device posts
+   its public key (`/manager/device/request`), the ask waits in Security → Devices with a
+   short code shown on both screens, a citizen approves or denies
+   (`/manager/security/device_request_decide`), and the asking device polls
+   (`/manager/device/request_status`) until it can walk in on its key. Requests merge across
+   machines like the roster, and the poll matches the key against the roster, so an approval
+   made on a peer takes effect as soon as the roster reaches the asking machine.
 4. **Peer keys** — *(done in this build)* each machine has an Ed25519 pair (`~/.peer.key`);
    `remote_useragent_maker` signs every peer request (timestamp + nonce over method/path),
    and `subs::peer_verify` checks it against `remote_machines.pubkey`, pinning the key on

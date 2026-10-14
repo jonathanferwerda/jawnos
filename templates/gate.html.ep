@@ -63,6 +63,14 @@
 		<div id="recovery_status" style="min-height:22px;"></div>
 	</div>
 </div>
+<div id="device_door" style="margin-top:6px;">
+	<button id="approval_toggle">Approve From My Device</button>
+	<div id="approval_panel" style="display:none;margin-top:8px;">
+		<button id="approval_start">Ask to pair</button>
+		<div id="approval_code" style="font-family:monospace;font-size:28px;letter-spacing:4px;min-height:34px;"></div>
+		<div id="approval_status" style="min-height:22px;max-width:520px;margin:0 auto;"></div>
+	</div>
+</div>
 <div id="results_grabber" class="results_grabber">
 	<% if (scalar @{$restore_list} > 0) { %>
 		<% foreach my $b ( @{$restore_list} ) { %>

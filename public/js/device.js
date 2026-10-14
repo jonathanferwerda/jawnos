@@ -88,8 +88,76 @@
 		});
 	}
 
+	// the signed walk-in: prove the key, get the session. The last step of the
+	// gate's own key and of the approval door, once a citizen has approved it
+	function signIn(uuid, key, guard) {
+		return post('/manager/device/challenge', { device_uuid: uuid }).then(function (r) {
+			if (!r || !r.ok || !r.nonce) { return; }
+			var msg = 'device-login\n' + uuid + '\n' + r.nonce;
+			return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+				if (guard && !guard()) { return; }
+				return post('/manager/device/login', { device_uuid: uuid, nonce: r.nonce, signature: b64(sig) }).then(function (r2) {
+					if (r2 && r2.ok) { window.location.reload(); }
+				});
+			});
+		});
+	}
+
+	// the approval door: ask the house; a citizen approves the short code on a
+	// device that is already signed in; then walk in on the key made here
+	function wireApproval() {
+		var toggle = document.getElementById('approval_toggle');
+		if (!toggle) { return; }
+		var panel = document.getElementById('approval_panel');
+		var codeEl = document.getElementById('approval_code');
+		var status = document.getElementById('approval_status');
+		var start = document.getElementById('approval_start');
+		var timer = null;
+		function ask() {
+			if (!ed25519()) { status.textContent = 'This browser cannot hold a device key.'; return; }
+			start.disabled = true;
+			status.textContent = 'Asking the house...';
+			crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+					return post('/manager/device/request', { pubkey: b64(spki), name: deviceLabel() }).then(function (r) {
+						if (!r || !r.ok || !r.uuid) {
+							start.disabled = false;
+							status.textContent = (r && r.error === 'too many') ? 'Too many asks. Try again later.' : 'The house did not take the ask.';
+							return;
+						}
+						codeEl.textContent = r.code;
+						status.textContent = 'On a device that is already signed in: Security, then Devices, and approve this code.';
+						var tries = 0;
+						timer = setInterval(function () {
+							tries++;
+							if (tries > 240) { clearInterval(timer); status.textContent = 'The ask expired. Try again.'; start.disabled = false; return; }
+							post('/manager/device/request_status', { uuid: r.uuid }).then(function (s) {
+								if (!s) { return; }
+								if (s.status === 'approved' && s.device_uuid) {
+									clearInterval(timer);
+									status.textContent = 'Approved. Loading...';
+									idbPut('device_key', pair.privateKey).then(function () {
+										localStorage.setItem('device_uuid', s.device_uuid);
+										return signIn(s.device_uuid, pair.privateKey);
+									});
+								}
+								else if (s.status === 'denied') { clearInterval(timer); status.textContent = 'The ask was denied.'; start.disabled = false; }
+								else if (s.status === 'expired' || s.status === 'unknown') { clearInterval(timer); status.textContent = 'The ask expired. Try again.'; start.disabled = false; }
+							});
+						}, 3000);
+					});
+				});
+			}).catch(function () { start.disabled = false; status.textContent = 'The house did not take the ask.'; });
+		}
+		toggle.addEventListener('click', function () {
+			panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+		});
+		start.addEventListener('click', ask);
+	}
+
 	if (onGate) {
 		wireRecovery();
+		wireApproval();
 		// at the gate: walk in on this device's own key, if it has one
 		var uuid = localStorage.getItem('device_uuid');
 		if (!uuid || !ed25519() || !crypto.subtle.importKey) { return; }
@@ -97,17 +165,7 @@
 		setTimeout(function () { arm = false; }, 15000);
 		idbGet('device_key').then(function (key) {
 			if (!key || !arm) { return; }
-			return post('/manager/device/challenge', { device_uuid: uuid }).then(function (r) {
-				if (!r || !r.ok || !r.nonce) { return; }
-				var msg = 'device-login\n' + uuid + '\n' + r.nonce;
-				var enc = new TextEncoder();
-				return crypto.subtle.sign('Ed25519', key, enc.encode(msg)).then(function (sig) {
-					if (!arm) { return; }
-					return post('/manager/device/login', { device_uuid: uuid, nonce: r.nonce, signature: b64(sig) }).then(function (r2) {
-						if (r2 && r2.ok) { window.location.reload(); }
-					});
-				});
-			});
+			return signIn(uuid, key, function () { return arm; });
 		}).catch(function () {});
 		return;
 	}

@@ -80,6 +80,27 @@
 
 	</div>
 	<div class="security_view" view="devices" style="overflow-x:auto;padding-right:8px;<% unless ( $president->{'security_view'} eq 'devices' ) { %>display:none;<% } %>">
+		<% if (scalar @{ $requests || [] } > 0) { %>
+			<h3>Waiting for approval</h3>
+			<table style="width:100%;text-align:center;">
+				<thead>
+					<th>Name</th><th>Code</th><th>Asked</th><th>Agent</th><th>Approve</th><th>Deny</th>
+				</thead>
+				<tbody>
+					<% foreach my $r ( @{$requests} ) { %>
+						<tr class="device_request" uuid="<%= $r->{'uuid'} %>">
+							<td><%= $r->{'name'} %></td>
+							<td style="font-family:monospace;font-size:22px;letter-spacing:3px;"><%= $r->{'code'} %></td>
+							<td class="time" timestamp="<%= $r->{'server_time'} %>"></td>
+							<td style="font-size:11px;"><%= substr($r->{'agent'} || '', 0, 60) %></td>
+							<td><button class="device_request_decide" decision="approve">Approve</button></td>
+							<td><button class="device_request_decide" decision="deny">Deny</button></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+			<p style="font-size:14px;">Approve only when the code matches the one shown on the device that is asking.</p>
+		<% } %>
 		<table style="width:100%;text-align:center;">
 			<thead>
 				<th>Name</th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th>

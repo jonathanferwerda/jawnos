@@ -144,6 +144,19 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 	last_seen VARCHAR(25),
 	agent VARCHAR(500)
 );
+CREATE TABLE IF NOT EXISTS device_requests (
+	uuid VARCHAR(255) unique,
+	name VARCHAR(255),
+	pubkey LONGTEXT,
+	agent VARCHAR(500),
+	code VARCHAR(25),
+	status VARCHAR(25),
+	device_uuid VARCHAR(255),
+	remote_address VARCHAR(255),
+	timestamp VARCHAR(25),
+	server_time VARCHAR(25),
+	ost VARCHAR(25)
+);
 CREATE TABLE "security" (
 level VARCHAR(255),
 credential VARCHAR(255),
