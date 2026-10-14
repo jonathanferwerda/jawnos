@@ -91,22 +91,17 @@ target_word = 'jawn do'          # cell 2, "... + our target word"
 dst = "jawn_do.tflite"           # cell 11, the output copy
 ```
 
-The ready-to-run Kaggle version lives at `training/jawn_do_kaggle.ipynb`:
-upload it (Kaggle → New Notebook → File → Import), GPU on, Internet on, Run
-all. On top of the two edits it starts clean — it clears `generated_samples`
-and `trained_models/wakeword` before they are built, so nothing left by an
-earlier run or phrase can leak in — and its last cell prints the model's md5
-and flags the known `hey_jawn` bytes.
-
-The ready-to-run Colab version lives at `docs/jawn_do_colab.ipynb` (in the
-repo; in Colab use File → Upload notebook, or open it straight from GitHub).
-It is the same pipeline with `target_word = 'jawn do'` and
+The ready-to-run version lives at `docs/jawn_do_colab.ipynb` (in the repo; in
+Colab use File → Upload notebook, or open it straight from GitHub — Runtime →
+Change runtime type → T4 GPU). It is the same pipeline as
+`training/hey_jawn_kaggle.ipynb` with `target_word = 'jawn do'` and
 `dst = 'jawn_do.tflite'` already set, its shell lines use the notebook's
 `!`/`{}` forms (the first generated copy had nested quotes in `get_ipython()`
-calls and five cells would not even parse), and its last cell downloads the
-model. Run all cells on a GPU runtime. (Its sample step still calls the removed
-`generate_samples.py`; see the Kaggle notebook for the working
-`-m piper_sample_generator` form.)
+calls and five cells would not even parse), and it starts clean: it clears
+`generated_samples` and `trained_models/wakeword` before they are built, so
+nothing left by an earlier run or phrase can leak in. Its last cell prints the
+model's md5 and flags the known `hey_jawn` bytes, then downloads the model on
+Colab (on Kaggle, click the link or use the Output panel).
 
 **The trap that bit us:** the first "Jawn Do" model turned out to be a byte copy
 of `hey_jawn.tflite` (both `md5 a3da6184…`), so the watch could only ever fire on
