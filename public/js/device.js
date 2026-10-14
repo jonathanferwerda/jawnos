@@ -77,15 +77,20 @@
 		return;
 	}
 
-	// a signed-in page: pair this browser once, quietly
+	// a signed-in page: pair this browser once, quietly. The keypair (not the
+	// remembered uuid) is what says paired: a debrief can pour a uuid back into
+	// localStorage of a browser that has no key, and that one pairs fresh.
 	if (typeof signatorial !== 'string' || signatorial === 'unknown') { return; }
 	if (!ed25519()) { return; }
-	if (localStorage.getItem('device_uuid')) { return; }
-	crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
-		return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
-			return idbPut('device_key', pair.privateKey).then(function () {
-				return post('/manager/device/pair', { pubkey: b64(spki), name: deviceLabel() }).then(function (r) {
-					if (r && r.ok && r.device_uuid) { localStorage.setItem('device_uuid', r.device_uuid); }
+	idbGet('device_key').then(function (existing) {
+		if (existing) { return; }
+		localStorage.removeItem('device_uuid');
+		return crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+			return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+				return idbPut('device_key', pair.privateKey).then(function () {
+					return post('/manager/device/pair', { pubkey: b64(spki), name: deviceLabel() }).then(function (r) {
+						if (r && r.ok && r.device_uuid) { localStorage.setItem('device_uuid', r.device_uuid); }
+					});
 				});
 			});
 		});

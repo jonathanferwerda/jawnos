@@ -128,9 +128,16 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    ticket chain remains only as the migration fallback; sessions carry a `suds_id`
    fingerprint, never the key. Ticket rows still carry a suds copy until a later pass
    retires it (legacy rows stay readable through the migration).
-2. **Paired devices** — `paired_devices` table, pairing route (burns the ticket token +
-   stores the pubkey), challenge/verify endpoints, server-side sessions, roster + revoke UI in
-   `templates/security.html.ep` (and its help topic).
+2. **Paired devices** — *(done in this build)* a citizen session pairs the browser it runs
+   in (the ticket scan is the grant in spirit — pairing happens once the session exists):
+   `public/js/device.js` keeps a non-extractable Ed25519 key in IndexedDB and stores the
+   public half in `paired_devices`; the gate answers a challenge nonce with a signature and
+   `/manager/device/login` mints the session. `authentication_passer` drops any session whose
+   device row is gone, so revoking in the new Security → Devices view kills the device at its
+   next check (~seconds) — which is why full server-side session storage is deferred, not
+   needed for revocation. Notes: the gate's hook allowlist must admit `/manager/device` and
+   `/js/device.js`; and the debrief local-storage snapshot can restore a stale `device_uuid`
+   into a fresh browser, so pairing keys on the *keypair* being present, not the uuid.
 3. **Recovery** — recovery code at initialization; second-device approval flow.
 4. **Peer keys** — *(done in this build)* each machine has an Ed25519 pair (`~/.peer.key`);
    `remote_useragent_maker` signs every peer request (timestamp + nonce over method/path),
