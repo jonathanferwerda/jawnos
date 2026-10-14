@@ -344,7 +344,10 @@ hook after_render => sub  {
   	my ($c) = @_;
   	if ($c->res->code == 500) {
 
-		foreach my $h (reverse sort @{$c->stash('mojo.log')->{'parent'}->{'history'}} ) {
+		# a request that died before any log line was recorded has no history to
+		# walk: that is a missing record, not a reason to take the tree down with it
+		my $history = eval { $c->stash('mojo.log')->{'parent'}->{'history'} } || [];
+		foreach my $h (reverse sort @{$history} ) {
 			if (eval { $h->[3]->{'message'} }) {
 				my $errors = eval { decode_json &subs::setting_grabber({ app => 'terminal', setting => 'errors' }) } || [];
 				my $uuid = &subs::random_string_creator(12);

@@ -87,7 +87,10 @@ function musicToggle(files, same_order) {
 
 				var window_id = windowMaker(response);
 
-				musicInit();
+				// a handed-over list (the guide's play, a folder's play) skips the
+				// saved track's restore: musicInit('files') brings the volume, mute
+				// and layout back but leaves the player to the list about to start
+				musicInit(files ? 'files' : undefined);
 				if (files) {
 					mediaMaker();
 				}
@@ -141,23 +144,30 @@ async function musicInit(method) {
 
 		// pick the saved track first, so thisTrack slices tree.songs and mediaMaker
 		// then loads THAT track - mediaMaker reads tree.songs[0] and ignores the file
-		// it is handed, so running it before this loaded the first track instead
-		$('.music_file').removeClass('playing');
-		var mf = pd.file ? $('.music_file[file="' + pd.file + '"]') : $();
-		mf.addClass('playing');
-		var playing = $('.playing');
-		tree.current_track = playing.attr('number');
-		thisTrack(playing.closest('.track_item'));
-		$('#video_full_title').text(playing.find('.full_title').text());
+		// it is handed, so running it before this loaded the first track instead.
+		// A window opened on a handed-over list (the guide's play, a folder's play)
+		// must NOT bring the saved track back: the caller is about to start the list,
+		// and the restore used to override it - that is how "watch Star Trek" played
+		// whatever was last on. Volume, mute, theatre and layout still come back;
+		// only the track does not.
+		if (method != 'files') {
+			$('.music_file').removeClass('playing');
+			var mf = pd.file ? $('.music_file[file="' + pd.file + '"]') : $();
+			mf.addClass('playing');
+			var playing = $('.playing');
+			tree.current_track = playing.attr('number');
+			thisTrack(playing.closest('.track_item'));
+			$('#video_full_title').text(playing.find('.full_title').text());
 
-		// only a saved track is restored: a first-ever open (no player cache) must
-		// not start playing on its own
-		if (pd.file) {
-			mediaMaker({ file: pd.file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
-			if (method != 'search') {
-				tree.sound.currentTime = pd.currentTime;
+			// only a saved track is restored: a first-ever open (no player cache) must
+			// not start playing on its own
+			if (pd.file) {
+				mediaMaker({ file: pd.file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
+				if (method != 'search') {
+					tree.sound.currentTime = pd.currentTime;
+				}
+				tree.sound.state = pd.state;
 			}
-			tree.sound.state = pd.state;
 		}
 		$('#music_player_data').text(jpd);
 
@@ -166,7 +176,7 @@ async function musicInit(method) {
 		if ($('#video').attr('type') == 'audio') {
 			$('#video').hide();
 		}
-		if (pd.state == 0 && method != 'search') {
+		if (pd.state == 0 && method != 'search' && method != 'files') {
 			tree.sound.pause();
 		}
 		if (pd.resizes) {
