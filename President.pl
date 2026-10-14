@@ -506,20 +506,14 @@ sub manager_starter() {
 our $current_db_path;
 
 sub get_internal_db {
-    # Resolve the newest .db in start_dir and hand back its path. No handle is
-    # opened here on purpose: the web process, pen.pl and the device scripts are
-    # the database's readers and writers, and a handle held open in this process
-    # only pinned the WAL and kept a stale copy of the data around.
+    # The machine's one database, at its fixed install path. No handle is opened
+    # here on purpose: the web process, pen.pl and the device scripts are the
+    # database's readers and writers, and a handle held open in this process only
+    # pinned the WAL and kept a stale copy of the data around.
     return $current_db_path if $current_db_path && -e $current_db_path;
-    
-    my $dir = $config->{'start_dir'};
-    $dir =~ s/\/$//gi;
-    
-    my @databases = sort { -M $b <=> -M $a } grep { /\.db$/ && -s $_ > 5000 } glob("$dir/*.db");
-    my $database = $databases[0];
 
-    if ($database) {
-        # 2. Cache the clean, raw path string for the next iteration's file test
+    my $database = &subs::database_path();
+    if ($database && -e $database && -s $database > 5000) {
         $current_db_path = $database;
         $log->info('using ' . $database);
         return $current_db_path;

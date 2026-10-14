@@ -45,3 +45,11 @@ __pycache__/
 # --- Agent field notes: kept on disk, never committed ---
 AGENTS.md
 docs/AGENTS-notes.md
+
+# --- The machine's one live database and its backups: install-local, never ---
+# --- committed. database/initial.enc (the seed) and schema.sql ARE tracked; ---
+# --- the working database/initial.db and database/backups/ are not. ---
+database/*.db
+database/*.db-shm
+database/*.db-wal
+database/backups/

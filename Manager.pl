@@ -3989,7 +3989,7 @@ get '/manager/rsync_pack' => sub($c) {
 	my $folder = $c->param('folder') || 'jawnos';
 	$folder =~ s{.*/}{};
 	my $home = &subs::home('~/');
-	my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" "$folder" 2>/dev/null`;
+	my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" --exclude="$folder/database" "$folder" 2>/dev/null`;
 	$c->res->headers->content_type('application/x-gtar');
 	$c->render(data => $tar);
 };
@@ -4126,7 +4126,7 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 		}
 		elsif ($direction eq 'to') {
 			# pack our tree and push it to the peer, then ask it to restart
-			my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" "$folder" 2>/dev/null`;
+			my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" --exclude="$folder/database" "$folder" 2>/dev/null`;
 			my $url = $rm->{'manager'} . '/manager/rsync_unpack?signatorial=' . $me . '&folder=' . $folder;
 			my $res = eval { $rm->{'ua'}->post($url => { 'Content-Type' => 'application/x-gtar' } => $tar)->result };
 			if ($res && $res->is_success) {
@@ -5234,7 +5234,7 @@ post '/manager/nfc/write' => sub($c) {
 post '/manager/leave' => sub($c) {
 	&leave($c);
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my $start_dir = $config->{'start_dir'};
+	my $start_dir = &subs::backups_dir();
 	my $restore_list;
 	unless (-e $database && -s $database > 5000) {
 		$restore_list = &subs::restore_list();
@@ -7287,7 +7287,7 @@ get '/manager/voice_prompt' => sub ($c) {
 get '/download_program' => sub($c) {
 	unless ($c->session('downloading_program')) {
 		my $download_count = &subs::setting_grabber({ app => '__president', setting => 'download_count' }) || 0;
-		my $zipper = `zip -x ./server/* ./config.json ./.git* ./public/images/jonathans/* -r - ./ | cat`;
+		my $zipper = `zip -x ./server/* ./config.json ./.git* ./public/images/jonathans/* ./database/* -r - ./ | cat`;
 		my $timestamp = &subs::rightNow();
 		$c->render_file(data => $zipper, filename => 'president_' . $timestamp . '.zip');
 		$download_count = $download_count + 1;
@@ -11541,7 +11541,7 @@ post '/manager/configure/new_database' => sub($c) {
 #	`shred -u $database.1.db`;
 	`shred -u $database-shm`;
 	`shred -u $database-wal`;
-	my $new_enc_file = &subs::home($config->{'start_dir'}) . $president . '.enc';
+	my $new_enc_file = &subs::database_dir() . '/' . $president . '.enc';
 	`mv -v $enc_file $new_enc_file`;
 #	`rm -R $temp_folder`;
 #	$database = $old_db;
@@ -11565,7 +11565,7 @@ post '/manager/configure/restore_now' => sub($c) {
 		my $cr = &subs::decrypter(&subs::session_suds($c),$cred->{'credential'});
 		if ($path =~ /enc$/gi) {
 			$filename =~ s/.enc$//gi;
-			my $t_database = $filename.'.db';
+			my $t_database = &subs::database_path() . '.restoring';
 #			my $scrypt = `printf "$cr" | scrypt dec -P $path $t_database`;
 			my $data = `tail $path`;
 			my @split_data = split $universal_splitter, $data;
@@ -11576,7 +11576,7 @@ post '/manager/configure/restore_now' => sub($c) {
 				`shred -u $database`;
 				`shred -u $database-shm`;
 				`shred -u $database-wal`;
-				$database = $t_database;
+				`mv -v $t_database $database`;
 				$sql = Mojo::SQLite->new('sqlite:' . $database);
 				my $db = $sql->db;
 
@@ -14133,13 +14133,13 @@ post '/manager/palette' => sub($c) {
 	my $job = { ext => '.png' };
 	my $image;
 	my $duties = eval { return decode_json $c->param('duties') } || [];
-	my $sd = &subs::home($config->{'start_dir'}) . &subs::random_string_creator() . $job->{'ext'};
+	my $sd = &subs::home('~/.president/') . &subs::random_string_creator() . $job->{'ext'};
 	if ($type eq 'snapshot') {
 	}
 	else {
 		$job = &rock_and_roll($c);
 		my $data = $job->{'data'};
-		$sd = &subs::home($config->{'start_dir'}) . &subs::random_string_creator() . $job->{'ext'};
+		$sd = &subs::home('~/.president/') . &subs::random_string_creator() . $job->{'ext'};
 		chomp $data;
 		write_file($sd, $data);
 
@@ -22124,7 +22124,7 @@ sub authentication_passer($c) {
 				@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
 			}
 		}
-		my $start_dir = $config->{'start_dir'};
+		my $start_dir = &subs::backups_dir();
 		if ($c->param('neighbour')) {
 			$c->render(json => { name => $name, purpose => $device, 'restore_list' => $restore_list, signatorial => &subs::signatorial_designer() });
 		}

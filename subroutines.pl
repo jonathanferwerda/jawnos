@@ -1168,10 +1168,11 @@ sub device_setter() {
 }
 
 sub restore_list() {
-	my $directory = shift;
 	my $returner = [];
 	my @backups;
-	$directory =~ s|[^/]+$||;
+	# One database, one backup directory: it no longer varies by caller (start_dir
+	# is gone from this path), so the install's own backups dir is the list.
+	my $directory = &subs::backups_dir() . '/';
 	if ($directory && $directory =~ /\/$/) {
 		my $backup_ls = `ls -t $directory`;
 		@backups = split "\n", $backup_ls;
@@ -1181,14 +1182,11 @@ sub restore_list() {
 	}
 
 	foreach my $b (@backups) {
-		my $status = 'closed';
 		my @stat = stat $b ;
-
-		my $bees = $b;
-		$bees =~ s/\.[^.]*$//;
-		$bees = &home($bees);
-		if (-e $bees . '.db') { $status = 'open'; }
-		my $archive = $bees =~ /\d{10}$/ ? 'archive' : 'current';
+		# one fixed database: the decrypted copy no longer sits beside its backup,
+		# so "open" marks the current snapshot (initial.enc), not a sibling .db
+		my $archive = $b =~ /_\d+\.enc$/ ? 'archive' : 'current';
+		my $status = $archive eq 'current' ? 'open' : 'closed';
 
 		my $size = sprintf('%.2f', ( $stat[7] / 1024 )) . 'kb';
 		my $created = localtime($stat[9] )->strftime('%A %B %d %Y - %I:%M:%S%P %Z');
@@ -2618,7 +2616,7 @@ sub backup_now() {
 	# key, so this stays readable by updated peers too. Remove once every device runs
 	# the per-secret code.
 	my $appendage = $gb::universal_splitter . &subs::encrypter(undef,$encryption_standard);
-	my $path = $databaser;
+	my $path = &subs::backups_dir() . '/' . (do { my $n = $databaser; $n =~ s{.*/}{}; $n });
 	my $temporary_path = &subs::home('~/.president/') . &subs::random_string_creator() . '.sql';
 	my $enc_file = $path . '.enc';
 	my $signatorial = &subs::signatorial_designer();
@@ -5857,6 +5855,33 @@ sub ide_files() {
 
 our $database_holder;
 our $database;
+
+# One machine, one database, at a fixed path inside the install: database/initial.db,
+# beside schema.sql. A machine never picks or moves it - the old "newest .db in
+# start_dir" scan let any stray file silently become the database, and start_dir is
+# gone from this path. Backups (.enc) live in database/backups/, out of ~/. The
+# install dir is this file's own real directory, resolved once, so a probe started
+# from a throwaway tree of symlinks still names the real install.
+our $install_dir;
+BEGIN {
+	require Cwd;
+	require File::Basename;
+	my $real = eval { Cwd::abs_path(__FILE__) };
+	$install_dir = File::Basename::dirname(($real && -e $real) ? $real : Cwd::getcwd());
+}
+sub install_dir { return $install_dir }
+sub database_dir {
+	my $dir = &subs::install_dir() . '/database';
+	unless (-d $dir) { require File::Path; eval { File::Path::make_path($dir) }; }
+	return $dir;
+}
+sub database_path { return &subs::database_dir() . '/initial.db' }
+sub backups_dir {
+	my $dir = &subs::database_dir() . '/backups';
+	unless (-d $dir) { require File::Path; eval { File::Path::make_path($dir) }; }
+	return $dir;
+}
+
 sub database_grabber() {
 	my $connection = shift || '';
 	# A forked child inherits the parent's handle. Detach it so our exit cannot
@@ -5890,19 +5915,11 @@ sub database_grabber() {
 			return ($holder->{'db'}, $holder->{'database'}, $holder->{'sql'});
 		}
 	}
-	my $dir = &subs::home($config->{'start_dir'});
-	$dir =~ s{/+$}{};
-	my @databases;
-	if (opendir my $dh, $dir) {
-		@databases = map { "$dir/$_" } grep { /\.db$/i } readdir $dh;
-		closedir $dh;
-	}
-	# newest first, same order the old `ls -t` gave -- but with no child processes
-	@databases = sort { (-M $b) <=> (-M $a) } @databases;
-	@databases = grep { -s $_ > 5000 } @databases;
-	my $database = $databases[0];
+	# One machine, one database, at its fixed install path - no scan for the
+	# newest .db, so a stray file can never become the database.
+	my $database = &subs::database_path();
 
-	if ($database) {
+	if ($database && -e $database && -s $database > 5000) {
 
 		my $sql = Mojo::SQLite->new('sqlite:' . $database, sqlite_use_immediate_transaction => 0);
 		$sql->options({AutoCommit => 1 });
