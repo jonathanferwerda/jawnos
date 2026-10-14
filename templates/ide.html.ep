@@ -21,17 +21,7 @@
 		</select>
 		<input id="ide_search" value="<%= $search %>" placeholder="Search">
 		<div id="ide_files">
-			<% foreach my $f ( sort { lc $a->{'file'} cmp lc $b->{'file'} } @{$files}) { %>
-				<div class="hover ide_file" type="<%= $f->{'type'} %>" status="closed" location="<%= $f->{'location'} %>" 
-					style="<% if (($search eq '' && $f->{'location'} ne '' && $f->{'location'} ne $settings->{'folder_selector'})) { %>display:none;<% } %>" file="<%= $f->{'file'} %>">
-					<% if ($f->{'type'} eq 'folder') { %>
-						<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><b style="width:70%;"><img src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folders" class="tiny_thumb"><%= $f->{'short_name'} %></b>
-					<% } else { %>
-						<%== '&nbsp;&nbsp;' x $f->{'root_count'} %><span style="width:70%;" ><img src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" class="tiny_thumb"> <%= $f->{'short_name'} %></span>
-					<% } %>
-					<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="tiny_thumb ide_file_delete hover" style="float:right;" type="<%= $f->{'type'} %>" file="<%= $f->{'file'} %>">
-				</div>
-			<% } %>
+			<%== include 'apps/ide_files', files => $files %>
 		</div>
 	</div>
 	<div id="ide_main_window" style="width:100%;height:100%;border:solid;border-width:3px;">
@@ -49,6 +39,10 @@
 <script>
 	var idecwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
 	var ideocwd = '<%= &subs::home($settings->{'folder_selector'}) %>';
+
+	ideSearchActive = ($('#ide_search').val() || '') !== '';
+	ideOpenInit(<%== $open_folders_json %>);
+	ideRestoreFolders();
 
 	var windHeight = $('#ide').closest('.wind').height();
 	$('#ide').height(windHeight);

@@ -5843,6 +5843,41 @@ sub find_program {
 	return $find_program || undef;
 }
 
+# One level of the ide's tree. The editor opens with only the selected root's
+# own children and asks for a folder's children when it unfolds, so a project is
+# not walked and stat'd end to end (~9,400 files) before the window appears.
+# Paths come back exactly as given, relative to the selected root, which is what
+# the rows' file= and location= attributes key on.
+sub ide_folder_listing {
+	my ($folder) = @_;
+	$folder = './' unless defined $folder && length $folder;
+	my $dir = $folder;
+	$dir =~ s{/+$}{};
+	$dir = '.' if $dir eq '' || $dir eq '.';
+	my $prefix = ($dir eq '.') ? '' : $dir . '/';
+	opendir(my $dh, $dir) or return [];
+	my @entries = grep { $_ ne '.' && $_ ne '..' } readdir $dh;
+	closedir $dh;
+	my $tree = [];
+	foreach my $name ( sort { lc $a cmp lc $b } @entries ) {
+		my $path = $prefix . $name;
+		my $temp = { file => $path, type => 'file' };
+		my @stat = stat($path);
+		my @temp_split = split '/', $path;
+		$temp->{'short_name'} = $temp_split[-1];
+		pop @temp_split;
+		$temp->{'root_count'} = @temp_split;
+		$temp->{'location'} = join '/', @temp_split;
+		$temp->{'size'} = $stat[7];
+		$temp->{'modified'} = $stat[9];
+		$temp->{'created'} = $stat[10];
+		$temp->{'accessed'} = $stat[8];
+		$temp->{'type'} = 'folder' if -d $path;
+		push @{$tree}, $temp;
+	}
+	return $tree;
+}
+
 my $ide_files = [];
 sub ide_files() {
 	my $folder = shift;

@@ -17040,7 +17040,12 @@ sub ide_opener($data) {
 	my $settings = &subs::settings_grabber({ app => 'ide' });
 	my $search = $data->{'search'};
 	my $folder = $data->{'folder'};
-	my $files = &subs::ide_files(&subs::home($folder) || &subs::home($settings->{'folder_selector'}) || './');
+	my $root = &subs::home($folder) || &subs::home($settings->{'folder_selector'}) || './';
+	# Opening the editor lists only the root's own children; a folder's children
+	# arrive from /manager/ide/folder_open when it unfolds. A search still has to
+	# read the whole tree - that is what the person asked for - so it keeps the
+	# full walk.
+	my $files = $search ? &subs::ide_files($root) : &subs::ide_folder_listing($root);
 
 	if ($search) {
 		my $searched_files;
@@ -17071,6 +17076,10 @@ sub ide_opener($data) {
 
 		}
 	}
+	# the folders the person had unfolded, so the tree comes back the way they
+	# left it; the client unfolds them from these paths, one level at a time
+	my @open_folders = eval { @{ decode_json( $settings->{'open_folders'} || '[]' ) } };
+	my $open_folders_json = encode_json(\@open_folders);
 	my $bgc = &subs::setting_grabber({ app => 'misc', setting => 'ide_sidebar_container_background_colour', device => $device });
 	my $contents = $c->render_to_string(
 		files => $files,
@@ -17081,19 +17090,46 @@ sub ide_opener($data) {
 		misc_settings => &misc_setting_list(),
 		device => $device,
 		settings => $settings,
-		search => $search
+		search => $search,
+		open_folders_json => $open_folders_json
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'ide', contents => $contents }, $timestamp);
-	return { html => $website, tabs => $tabs, settings => $settings };
+	return { html => $website, tabs => $tabs, settings => $settings, open_folders => \@open_folders };
 }
 
 post '/manager/ide/folder_selector' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $folder = $c->param('folder');
 	my $search = $c->param('search');
+	my $previous = &subs::setting_grabber({ app => 'ide', setting => 'folder_selector' });
+	# a chosen root that actually changed starts clean: folders remembered under the
+	# old root have no rows here to unfold into. An empty folder is the start-menu
+	# open, which keeps whatever the person had unfolded.
+	if (defined $folder && length $folder && $folder ne ($previous // '')) {
+		&subs::setting_setter({ app => 'ide', setting => 'open_folders', value => '[]' });
+	}
 	&subs::setting_setter({ app => 'ide', setting => 'folder_selector', value => $folder });
 	my $website = &ide_opener({ timestamp => $timestamp, folder => $folder, search => $search });
 	$c->render(json => $website);
+};
+
+post '/manager/ide/folder_open' => sub($c) {
+	my $folder = &subs::home($c->param('folder'));
+	my $files = &subs::ide_folder_listing($folder);
+	my $html = $c->render_to_string(template => 'apps/ide_files', files => $files);
+	$c->render(json => { html => $html });
+};
+
+post '/manager/ide/folder_toggle' => sub($c) {
+	my $folder = &subs::home($c->param('folder'));
+	my $status = $c->param('status');
+	my $open = eval { decode_json( &subs::setting_grabber({ app => 'ide', setting => 'open_folders' }) || '[]' ) };
+	$open = [] unless ref $open eq 'ARRAY';
+	my %seen = map { $_ => 1 } @{$open};
+	if ($status eq 'open') { $seen{$folder} = 1; }
+	else { delete $seen{$folder}; }
+	&subs::setting_setter({ app => 'ide', setting => 'open_folders', value => encode_json([ sort keys %seen ]) });
+	$c->render(json => { status => 'ok' });
 };
 
 post '/manager/ide/file_create' => sub($c) {

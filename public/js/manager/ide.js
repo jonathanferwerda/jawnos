@@ -2,6 +2,98 @@ var ide = {};
 
 var ideSearchTimeout;
 
+// Which folders are unfolded. This is the single source of truth for the tree's
+// shape: a row is visible when every folder above it is open. It is mirrored in
+// the ide's open_folders setting so the tree returns as it was left, and a
+// folder's children are fetched only when it first unfolds.
+var ideOpen = {};
+var ideSearchActive = false;
+
+function ideOpenInit(list) {
+	ideOpen = {};
+	if (list && list.length) {
+		for (var i = 0; i < list.length; i++) { ideOpen[list[i]] = true; }
+	}
+}
+
+function ideRowVisible(location) {
+	if (ideSearchActive || !location) { return true; }
+	var parent = $('.ide_file[type="folder"][file="' + location + '"]');
+	if (parent.length < 1) { return true; }
+	if (!ideOpen[location]) { return false; }
+	return ideRowVisible(parent.attr('location'));
+}
+
+function ideApplyVisibility() {
+	if (ideSearchActive) { return; }
+	$('.ide_file').each(function() {
+		var row = $(this);
+		if (ideRowVisible(row.attr('location'))) { row.show(); }
+		else { row.hide(); }
+	});
+}
+
+function ideFolderSet(file, status, quiet) {
+	if (status == 'open') { ideOpen[file] = true; }
+	else { delete ideOpen[file]; }
+	ideApplyVisibility();
+	if (!quiet) {
+		$.ajax({
+			url: '/manager/ide/folder_toggle',
+			type: 'POST',
+			data: { folder: file, status: status, timestamp: Date.now() }
+		});
+	}
+}
+
+function ideFolderExpand(sel, quiet, done) {
+	var file = sel.attr('file');
+	sel.attr('status', 'open');
+	idecwd = file;
+	ideFolderSet(file, 'open', quiet);
+	if (sel.attr('loaded') == 'yes' || $('.ide_file[location="' + file + '"]').length > 0) {
+		sel.attr('loaded', 'yes');
+		ideApplyVisibility();
+		if (done) { done(); }
+		return;
+	}
+	$.ajax({
+		url: '/manager/ide/folder_open',
+		type: 'POST',
+		data: { folder: file, timestamp: Date.now() },
+		success: function(response) {
+			sel.attr('loaded', 'yes');
+			if (response && response.html) { sel.after(response.html); }
+			ideApplyVisibility();
+			if (done) { done(); }
+		},
+		error: function() { if (done) { done(); } }
+	});
+}
+
+function ideFolderCollapse(sel, quiet) {
+	var file = sel.attr('file');
+	var location = sel.attr('location');
+	sel.attr('status', 'closed');
+	idecwd = location || ideocwd;
+	ideFolderSet(file, 'closed', quiet);
+}
+
+// Unfold the remembered folders parent-first, so a child's row exists by the
+// time its own unfold is asked for.
+function ideRestoreFolders() {
+	if (ideSearchActive) { return; }
+	var list = [];
+	for (var k in ideOpen) { list.push(k); }
+	list.sort(function(a, b) { return a.length - b.length; });
+	(function step(i) {
+		if (i >= list.length) { return; }
+		var sel = $('.ide_file[type="folder"][file="' + list[i] + '"]');
+		if (sel.length < 1 || sel.attr('status') == 'open') { step(i + 1); return; }
+		ideFolderExpand(sel, true, function() { step(i + 1); });
+	})(0);
+}
+
 // one move in: the words and the file they belong to, so the colours and the
 // caret can never disagree about what is open
 function ideContentSet(text, file) {
@@ -36,15 +128,23 @@ $(document).on('click', '.ide_file', function(e) {
 		var status = sel.attr('status');
 		var location = sel.attr('location');
 		if (sel.attr('type') == 'folder') {
-			if (status == 'closed') {
-				$('.ide_file[location="' + sel.attr('file') + '"]').show();
-				sel.attr('status','open');
-				idecwd = ideocwd + '/' + file;
+			if (ideSearchActive) {
+				// search already drew the whole matching tree; a folder just folds
+				// its branch
+				if (status == 'closed') {
+					$('.ide_file[location="' + file + '"]').show();
+					sel.attr('status','open');
+				}
+				else {
+					$('.ide_file[location="' + file + '"]').hide();
+					sel.attr('status','closed');
+				}
+			}
+			else if (status == 'closed') {
+				ideFolderExpand(sel);
 			}
 			else {
-				$('.ide_file[location="' + sel.attr('file') + '"]').hide();
-				sel.attr('status','closed');
-				idecwd = ideocwd;
+				ideFolderCollapse(sel);
 			}
 		}
 		else {
@@ -115,6 +215,9 @@ function ideFolderSelector(folder,search) {
 		success: function(response) {
 			windowMaker(response.html);
 			ideTabPopulator(response);
+			ideSearchActive = ($('#ide_search').val() || '') !== '';
+			ideOpenInit(response.open_folders);
+			ideRestoreFolders();
 			$('#ide_list').show();
 			$('#ide_main_window').hide();
 		}
