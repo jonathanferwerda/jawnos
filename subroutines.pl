@@ -8534,6 +8534,34 @@ sub tunnel_port_mapper() {
 	return $tuns;
 }
 
+sub tunnel_peer_connect() {
+	my $signatorial = shift || return;
+	# The hub reaches a tunnelled peer through the hub-side port the tunnel
+	# reserved (remote_device_connect rewrites the manager to that 127.0.0.1
+	# port); the peer's own address still rides in the tunnel's host, so the
+	# roster row keeps a name it can show. This is the "dialled in -> enrolled"
+	# step: the data plane is up by the time this is called, so the peer answers
+	# and remote_device_connect files (or refreshes) the roster row - the buttons,
+	# the tunnel flag and the hub-side manager that remote_upgrade targets.
+	my $tuns = &subs::tunnel_port_mapper({ signatorial => $signatorial });
+	my $ip = $tuns->{'host'} || '127.0.0.1';
+	my $enrollee = eval { &Manager::remote_device_connect({
+		manager => 'https://127.0.0.1:' . ($tuns->{'PORT_AHOY'} || $ENV{PORT_AHOY}) . '/manager',
+		ip => $ip,
+		password => &subs::suds_grabber(),
+		name => &subs::setting_grabber({ app => 'me', setting => 'my_name' }),
+		timestamp => &subs::rightNow(),
+		browser_tab_id => &subs::random_string_creator(22),
+		browser_tab => &subs::random_string_creator(21),
+		signatorial => $signatorial,
+		tunnel => 'yes'
+	}) };
+	if ($enrollee && $enrollee->{'body'} && $enrollee->{'body'}->{'signatorial'}) {
+		&subs::log_writer('tunnel peer connected ' . substr($signatorial, 0, 8));
+	}
+	return $enrollee;
+}
+
 
 sub system_monitor() {
 	my $data = shift;

@@ -4929,6 +4929,14 @@ websocket '/manager/tunnel/ws' => sub ($c) {
 		$listen{$t->{'name'}} = { source => $t->{'in_port'}, dest => $t->{'out_port'} };
 	}
 	&Tunnel::hub_session($c->tx, { signatorial => $signatorial, listen => \%listen });
+	# The tunnel data plane is up now: enrol (or refresh) the peer immediately
+	# rather than waiting for the 5-minute tunnel_checker loop, so a headless hub
+	# can remote_upgrade / remote_relay_request it the moment it dials in. Forked
+	# so the blocking sesh_check never stalls the websocket loop.
+	&subs::subprocessor(sub {
+		sleep 1;  # let the peer's peer_session settle before we dial it
+		&subs::tunnel_peer_connect($signatorial);
+	}, { name => 'tunnel peer connect ' . substr($signatorial, 0, 8) });
 };
 
 post '/manager/tunnel/alive' => sub($c) {
