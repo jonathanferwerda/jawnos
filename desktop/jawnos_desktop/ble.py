@@ -169,6 +169,12 @@ class Bridge(object):
         self.clients = set()
         self.clients_lock = threading.Lock()
 
+        # the last error emitted, so a link that is down does not answer every
+        # attempted send with the same line (the tree retries on its own tick)
+        self._last_error = None
+        self._last_error_at = 0.0
+        self._error_suppressed = 0
+
         self.scanning = False
         self.scan_seen = set()
 
@@ -218,6 +224,17 @@ class Bridge(object):
                     pass
 
     def emit_error(self, message):
+        # a send to a missing link answers the same way every time; repeat the
+        # identical error at most once every 30s, and say how many were folded
+        now = time.time()
+        if message == self._last_error and (now - self._last_error_at) < 30.0:
+            self._error_suppressed += 1
+            return
+        if self._error_suppressed and self._last_error:
+            self.info("error:", "%s (+%d more)" % (self._last_error, self._error_suppressed))
+            self._error_suppressed = 0
+        self._last_error = message
+        self._last_error_at = now
         self.info("error:", message)
         self.emit({"event": "error", "message": message})
 

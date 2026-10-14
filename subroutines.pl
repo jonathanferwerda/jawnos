@@ -651,7 +651,17 @@ sub unix_socket_sender() {
 	} or do {
 		my $err = $@ || 'Unknown transaction failure';
 		$log->info(Dumper $data);
-		$log->error("Socket sender error: $err") if defined $log;
+		# a refused connect to a watch socket that exists is the master between
+		# boots: the sender repeats its report on the next tick, so it is not an
+		# error - a write or protocol failure still is
+		if (defined $log) {
+			if ($err =~ /Socket connection failed|Connection refused/) {
+				$log->info("Socket sender: $err (the master is between boots)");
+			}
+			else {
+				$log->error("Socket sender error: $err");
+			}
+		}
 
 		# Log the state of the socket when it crashed to see if it's bloated
 		if (defined $cached_sockets->{$cache_key}) {
@@ -2614,9 +2624,10 @@ sub backup_now() {
 		my $tables = `sqlite3 $database .tables`;
 		my @tables = sort split ' ', $tables;
 		my $schema_file = $temporary_path . '.schema.sql';
-		# the statistics tables are internal: replaying their CREATE is a parse
-		# error, and ANALYZE builds them again where they are wanted
-		`sqlite3 $database .schema | grep -v sqlite_stat > $schema_file`;
+		# the statistics and sequence tables are internal: replaying their CREATE is
+		# a parse error ("object name reserved for internal use: sqlite_sequence"),
+		# and SQLite builds them again where they are wanted
+		`sqlite3 $database .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $schema_file`;
 		my $command = `sqlite3 $temporary_path < $schema_file`;
 		`shred -u $schema_file`;
 #		my $backup = `sqlite3 $database .schema $temporary_path`;
@@ -12300,7 +12311,7 @@ sub error_watch_state_save {
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
-my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic/;
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe/;
 
 sub error_watch_is_error {
 	my $line = shift;

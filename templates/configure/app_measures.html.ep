@@ -1,13 +1,14 @@
 <% my $am = $settings->{'app_measures'}; %>
-<% my $jam = join ',', keys %{$am}; %>
-% my $gbm = $gb::pos->{$settings->{'pos'}}->{'app_measures'};
-<% if ($gb::pos->{$settings->{'mab'}}->{'app_measures'}) { %>
-	<% foreach my $mb ( keys %{$gb::pos->{$settings->{'mab'}}->{'app_measures'} }) {
-		$gbm->{$mb} = $gb::pos->{$settings->{'mab'}}->{'app_measures'}->{$mb} unless $gbm->{$mb};
+<% my $jam = $am ? join(',', keys %{$am}) : ''; %>
+% my ($pos, $mab) = ($settings->{'pos'} // '', $settings->{'mab'} // '');
+% my $gbm = $gb::pos->{$pos}->{'app_measures'};
+<% if ($gb::pos->{$mab}->{'app_measures'}) { %>
+	<% foreach my $mb ( keys %{$gb::pos->{$mab}->{'app_measures'}} ) {
+		$gbm->{$mb} = $gb::pos->{$mab}->{'app_measures'}->{$mb} unless $gbm->{$mb};
 	} %> 
 <% } %>
 <% my $gb_measures; %>
-<% if ($gb::pos->{$settings->{'pos'}}->{'app_measures'} || $gb::pos->{$settings->{'pos'}}->{'app_measures'} || $am ) { %>
+<% if ($gb::pos->{$pos}->{'app_measures'} || $am ) { %>
 	<% 
 		if ($gbm) {
 			my %gb_measures = %{$gbm};

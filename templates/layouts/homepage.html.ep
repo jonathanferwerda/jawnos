@@ -30,7 +30,7 @@
 		<script src="/js/homepage.js?string=<%= $string %>"></script>
 		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
-		<% if ($c->session('authentication') eq 'approved') { %>
+		<% if (($c->session('authentication') // '') eq 'approved') { %>
 			<script src="/js/jquery-ui.js"></script>
 			<script src="/js/jquery.ui.touch-punch.min.js"></script>
 			<script src="/js/moment.js"></script>

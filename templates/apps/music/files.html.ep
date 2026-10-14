@@ -73,7 +73,7 @@
 									<% } %>
 								<% } %>
 							</td>
-							<td file="<%= $f->{'filename'} %>" class="music_file <% if ($f->{'playing'} eq 'yes') { %>playing<% } %>" number="<%= $n %>" style="text-align:center;font-size:20px;bold">
+							<td file="<%= $f->{'filename'} %>" class="music_file <% if (($f->{'playing'} // '') eq 'yes') { %>playing<% } %>" number="<%= $n %>" style="text-align:center;font-size:20px;bold">
 								<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 								<div style="display:none;" class="file_json" file_uuid="<%= $f->{'file_uuid'} %>"><%= &subs::json_chars($f->{'info'}) %></div>
 								<img class="music_information_toggle little_thumb" src="<%= &subs::icon_for('/images/decipherable/information.png') %>"  file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>" style="float:left;">

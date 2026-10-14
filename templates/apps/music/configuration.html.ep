@@ -14,12 +14,12 @@
 			<%	my $n = $f;
 				$n =~ s/_location//gi;
 			%>
-			<%	my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $f }); %>
+			<%	my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $f }) // ''; %>
 			<button type="button" style="<% if ($status eq 'on') { %>background-color:lightblue;<% } %>"
 				location="<%= $f %>" status="<%= $status %>" class="button music_folder_toggle hover"><%= &subs::shorthand_name($n, 4) %></button>
 		<% } %>
 	<% } %>
-	<% my $archive_status = &subs::setting_grabber({ app => 'music', setting => 'archive' }); %>
+	<% my $archive_status = &subs::setting_grabber({ app => 'music', setting => 'archive' }) // ''; %>
 	<button type="button" style="<% if ($archive_status eq 'on') { %>background-color:lightblue;<% } %>"
 		status="<%= $archive_status %>" class="button music_archive_toggle hover">Archives</button>
 </div>

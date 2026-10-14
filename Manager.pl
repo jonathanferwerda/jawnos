@@ -7613,8 +7613,11 @@ post '/manager/configure/image_function_tool' => sub($c) {
 	}
 	elsif ($tool eq 'scale') {
 		if ($value->{'legend'} =~ /[a-zA-z]/gi) {
+			# a legend with units is stored as metres; a conversion that fails
+			# keeps the text - the client shows it, and the server's ppm/mpp
+			# maths reads a non-number as "no scale" rather than dividing by it
 			my ($fo,$ev,$uom,$format) = &formula_calculator($value->{'legend'} . ' to m' );
-			$value->{'legend'} = $ev;
+			$value->{'legend'} = $ev if defined $ev && $ev =~ /^\s*[0-9.]+\s*$/;
 		}
 	}
 	foreach my $fi ( @{$files} ) {
@@ -11412,9 +11415,10 @@ post '/manager/configure/new_database' => sub($c) {
 	my $server_time = &subs::rightNow();
 	`touch $database`;
 	my $schema_file = $temp_folder . 'schema.sql';
-	# the statistics tables are internal: replaying their CREATE is a parse
-	# error, and ANALYZE builds them again where they are wanted
-	`sqlite3 $old_db .schema | grep -v sqlite_stat > $schema_file`;
+	# the statistics and sequence tables are internal: replaying their CREATE is
+	# a parse error ("object name reserved for internal use: sqlite_sequence"),
+	# and SQLite builds them again where they are wanted
+	`sqlite3 $old_db .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $schema_file`;
 	my $command = `sqlite3 $database < $schema_file`;
 	`shred -u $schema_file`;
 	$sql = Mojo::SQLite->new('sqlite:' . $database);
@@ -11629,7 +11633,7 @@ post '/manager/configure/database_doctor_confirm' => sub($c) {
 	my $tdatabase = $temp_folder . '/' . &subs::random_string_creator(20) . '.db';
 	`touch $tdatabase`;
 	`touch $ndatabase`;
-	`sqlite3 $database .schema | grep -v sqlite_stat > $temp_folder/schema.sql`;
+	`sqlite3 $database .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $temp_folder/schema.sql`;
 	my $backup = `sqlite3 $database ".backup '$tdatabase'"`;
 
 	my $command = `sqlite3 $ndatabase < $temp_folder/schema.sql`;
@@ -18664,8 +18668,15 @@ get '/manager/travel/viewer' => sub($c) {
 
 	$main_map->{'original_scale'} = $main_map->{'scale'}->{'last'}->{'x'} - $main_map->{'scale'}->{'first'}->{'x'};
 
-	$main_map->{'ppm'} = $main_map->{'original_scale'} / $main_map->{'scale'}->{'legend'};
-	$main_map->{'mpp'} = $main_map->{'scale'}->{'legend'} / $main_map->{'original_scale'};
+	# A legend is metres once converted, but a map can carry a text legend (an
+	# older save, or a conversion that failed) and the bar can be missing: the
+	# divide is only meaningful when both are numbers above zero, and the client
+	# reads a 0 as "no scale", which is the honest answer.
+	my $scale_legend = $main_map->{'scale'}->{'legend'};
+	$scale_legend = &map_legend_metres($scale_legend) if defined $scale_legend && $scale_legend =~ /[a-zA-Z]/;
+	$scale_legend = 0 unless defined $scale_legend && $scale_legend =~ /^\s*[0-9.]+\s*$/;
+	$main_map->{'ppm'} = ($scale_legend > 0 && $main_map->{'original_scale'} > 0) ? $main_map->{'original_scale'} / $scale_legend : 0;
+	$main_map->{'mpp'} = ($scale_legend > 0 && $main_map->{'original_scale'} > 0) ? $scale_legend / $main_map->{'original_scale'} : 0;
 	my $proxies = {
 		current_map => $main_map,
 		near => [],

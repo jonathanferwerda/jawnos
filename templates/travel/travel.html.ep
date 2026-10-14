@@ -1,11 +1,11 @@
 <div id="travel" style="background-color:var(--panel);width:100%;overflow:scroll;">
 	<div id="travel_toolbar" style="position:sticky;top:0;z-index:6;background-color:var(--panel);border-bottom:2px solid var(--line);">
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="travel_config_toggle" style="float:right;">
-		<div id="travel_config" status="<%= $settings->{'config_visible'} %>" style="<% if ($settings->{'config_visible'} ne 'visible') { %>display:none;<% } else { %>display:flex;<% } %>flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 30px 3px 3px;">
+		<div id="travel_config" status="<%= $settings->{'config_visible'} %>" style="<% if (($settings->{'config_visible'} // '') ne 'visible') { %>display:none;<% } else { %>display:flex;<% } %>flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 30px 3px 3px;">
 			<button id="travel_home_plate" status="<%= $home_plate_enabled %>">Home Plate</button>
 			<button id="travel_update">Update</button>
 			<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now">
-			<img class="little_thumb hover" id="travel_guess_gap" status="<%= $settings->{'guess_enabled'} %>" hint="Guess the gaps" src="<%= &subs::icon_for('/images/make believe/hat.png') %>" style="<% if ($settings->{'guess_enabled'} eq 'enabled') { %>background-color:#2e7d32;border-radius:6px;<% } %>">
+			<img class="little_thumb hover" id="travel_guess_gap" status="<%= $settings->{'guess_enabled'} %>" hint="Guess the gaps" src="<%= &subs::icon_for('/images/make believe/hat.png') %>" style="<% if (($settings->{'guess_enabled'} // '') eq 'enabled') { %>background-color:#2e7d32;border-radius:6px;<% } %>">
 			<span id="travel_guess_status" style="font-size:12px;opacity:.75;"></span>
 
 			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">

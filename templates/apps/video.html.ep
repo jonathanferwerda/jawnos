@@ -551,7 +551,7 @@
 
 				var apper = $('.wind')[$('.wind').length - 1];
 				var window_app = topWindow('<%= $app || 'video' %>') || $('#search').val();
-				var app_name = window_app || <% if ($c->param('app') eq 'video') { %>musicTitleMaker()<% } else { %>"<%= $app %>"<% } %>;
+				var app_name = window_app || <% if (($c->param('app') // '') eq 'video') { %>musicTitleMaker()<% } else { %>"<%= $app %>"<% } %>;
 
 				$.ajax({
 					url: '/manager/snapshot_save',
