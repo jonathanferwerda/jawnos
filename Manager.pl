@@ -24191,10 +24191,23 @@ sub update_database($data) {
 		return $commands;
 	}
 	else {
+		# The schema is migrated once per version, not on every call. The version
+		# whose pass completed is kept in the database; while it still matches the
+		# code's own version there is nothing new to apply. The commands are
+		# idempotent and each carries its own guard, but that guard is a query per
+		# command - and this runs at every login, every merge and every boot.
+		my $current = &subs::jawn_version();
+		my $local = $data->{'commands'} ? 0 : 1;
+		if ($local) {
+			my $applied = &subs::setting_grabber({ app => '__president', setting => 'schema_version' });
+			return if $applied && $applied eq $current;
+		}
 		my ($db,$database,$sql) = &subs::database_grabber();
+		my $failed = 0;
 		foreach my $command (@{$commands}) {
 			next if &migration_already_applied($command);
-			eval { &subs::db_query($command) };
+			my $ok = eval { &subs::db_query($command); 1 };
+			$failed++ unless $ok;
 		}
 		# Deliberately no pragma tuning here. The handle is shared by the whole
 		# process for its lifetime now, and the tuning that used to live here
@@ -24212,6 +24225,12 @@ sub update_database($data) {
 		# data backfills ride the schema migration: any machine that receives the
 		# new code runs the ones it has not recorded, at its next login / merge.
 		&subs::run_backfills();
+		# Only a clean pass records the version: a command that failed (a locked
+		# database, say) has to be retried on the next call, never skipped because
+		# the version moved on. A peer's command list is not ours to record from.
+		if ($local && !$failed) {
+			&subs::setting_setter({ app => '__president', setting => 'schema_version', value => $current });
+		}
 	}
 
 	if (1 == 0) {
