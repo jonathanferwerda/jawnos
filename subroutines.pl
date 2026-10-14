@@ -13755,13 +13755,26 @@ sub ai_house_publish {
 # and migrates). Called at the top of the watch tick, before the watch toggles
 # are consulted: the ledger gates evaluations and the shared budget too, so a
 # machine must announce itself whatever the watches are set to.
+our $ai_ledger_ready;
 sub ai_house_heartbeat {
-	foreach my $sql (
-		'create table if not exists ai_house (machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), server_time VARCHAR(255))',
-		'create table if not exists ai_jobs (job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), server_time VARCHAR(255))',
-		'create table if not exists ai_budget (machine VARCHAR(255), day VARCHAR(25), tokens INT, server_time VARCHAR(255))'
-	) { eval { &subs::db_query($sql) } }
-	eval { &subs::db_query('create unique index if not exists idx_ai_budget on ai_budget (machine, day)') };
+	# create the ledger once per process (the tables, their index, and the columns
+	# db_insert always writes - uuid and ost - added to any table built before
+	# they existed, so the ledger's own writes land)
+	unless ($ai_ledger_ready) {
+		foreach my $sql (
+			'create table if not exists ai_house (uuid VARCHAR(255), machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
+			'create table if not exists ai_jobs (uuid VARCHAR(255), job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
+			'create table if not exists ai_budget (uuid VARCHAR(255), machine VARCHAR(255), day VARCHAR(25), tokens INT, ost VARCHAR(255), server_time VARCHAR(255))',
+			'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
+			'alter table ai_house add column uuid VARCHAR(255)',
+			'alter table ai_house add column ost VARCHAR(255)',
+			'alter table ai_jobs add column uuid VARCHAR(255)',
+			'alter table ai_jobs add column ost VARCHAR(255)',
+			'alter table ai_budget add column uuid VARCHAR(255)',
+			'alter table ai_budget add column ost VARCHAR(255)'
+		) { eval { &subs::db_query($sql) } }
+		$ai_ledger_ready = 1;
+	}
 	&ai_house_publish();
 }
 

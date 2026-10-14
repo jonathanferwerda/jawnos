@@ -24194,25 +24194,39 @@ sub update_database($data) {
 		# peer sync - the house cannot pay twice for one job and the day's budget is
 		# one pot, not one per machine.
 		'create table if not exists ai_house (
+			uuid VARCHAR(255),
 			machine VARCHAR(255) unique,
 			has_model INT,
 			seen VARCHAR(25),
+			ost VARCHAR(255),
 			server_time VARCHAR(255)
 		)',
 		'create table if not exists ai_jobs (
+			uuid VARCHAR(255),
 			job VARCHAR(255) unique,
 			owner VARCHAR(255),
 			at VARCHAR(25),
 			state VARCHAR(25),
+			ost VARCHAR(255),
 			server_time VARCHAR(255)
 		)',
 		'create table if not exists ai_budget (
+			uuid VARCHAR(255),
 			machine VARCHAR(255),
 			day VARCHAR(25),
 			tokens INT,
+			ost VARCHAR(255),
 			server_time VARCHAR(255)
 		)',
 		'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
+		# db_insert always writes uuid and ost, so a ledger table built before they
+		# were added refuses its own inserts; add them for existing installs.
+		'alter table ai_house add column uuid VARCHAR(255)',
+		'alter table ai_house add column ost VARCHAR(255)',
+		'alter table ai_jobs add column uuid VARCHAR(255)',
+		'alter table ai_jobs add column ost VARCHAR(255)',
+		'alter table ai_budget add column uuid VARCHAR(255)',
+		'alter table ai_budget add column ost VARCHAR(255)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',
