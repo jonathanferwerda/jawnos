@@ -19943,67 +19943,11 @@ post '/manager/coding/fixes_clear' => sub($c) {
 };
 
 post '/manager/coding/fixes_apply' => sub($c) {
-	my $uuid = $c->param('uuid');
-	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
-	unless ($row) { $c->render(json => { error => 'no such caught error' }); return; }
-	unless (($row->{'status'} // '') eq 'proposed') { $c->render(json => { error => 'nothing is staged on that row yet' }); return; }
-	my $files = eval { decode_json $row->{'files'} } || {};
-	my @names = sort keys %{$files};
-	unless (@names) { $c->render(json => { error => 'that proposal stages no files' }); return; }
-	my $repo = coding_repo();
-	my (%backup, %touched);
-	foreach my $rel ( @names ) {
-		my $abs = coding_path($rel);
-		unless ($abs) { $c->render(json => { error => 'refused: ' . $rel . ' is outside the repo' }); return; }
-		$backup{$abs} = -f $abs ? scalar read_file($abs) : undef;
-		my $content = $files->{$rel};
-		$content = '' unless defined $content;
-		require File::Basename;
-		my $dir = File::Basename::dirname($abs);
-		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
-		eval { write_file($abs, $content) };
-		if ($@) {
-			# put back whatever already landed: a fix applies whole or not at all
-			foreach my $done ( keys %backup ) {
-				if (defined $backup{$done}) { eval { write_file($done, $backup{$done}) }; }
-				else { unlink $done; }
-			}
-			$c->render(json => { error => 'could not write ' . $rel });
-			return;
-		}
-		$touched{$rel} = 1;
-	}
-	# a Perl file must compile before it ships; on failure the files go back
-	my @bad;
-	foreach my $rel ( sort grep { /\.p[lm]$/ } @names ) {
-		my $out = `cd "$repo" && perl -c "$rel" 2>&1`;
-		$out = '' unless defined $out;
-		push @bad, { path => $rel, output => substr($out, 0, 1000) } unless $out =~ /syntax OK/;
-	}
-	if (@bad) {
-		foreach my $abs ( keys %backup ) {
-			if (defined $backup{$abs}) { eval { write_file($abs, $backup{$abs}) }; }
-			else { unlink $abs; }
-		}
-		$c->render(json => { error => 'the change did not compile; nothing was applied', checks => \@bad });
-		return;
-	}
-	# the finishing routine: bump, then commit only what was written (plus
-	# VERSION - never someone else's work in progress), then push
-	my $bump = coding_execute($c, { action => 'bump' }, \%touched);
-	my $commit = coding_execute($c, { action => 'commit', message => ($row->{'summary'} || $row->{'signature'} || 'error watch fix') }, \%touched);
-	my $push = coding_execute($c, { action => 'push' }, \%touched);
-	&subs::db_update('staged_fixes', {
-		status => 'applied',
-		note => 'applied ' . &subs::rightNow(),
-	}, { uuid => $uuid });
-	$c->render(json => {
-		applied => $uuid,
-		version => &subs::jawn_version(),
-		bump => $bump,
-		commit => substr($commit // '', 0, 1200),
-		push => substr($push // '', 0, 800),
-	});
+	# the engine lives in subroutines so the watch's auto-approve reaches the same
+	# code: write the files, check the Perl, bump, commit what was written, push
+	my $out = eval { &subs::staged_fix_apply($c->param('uuid')) };
+	$out = { error => 'the apply failed: ' . ($@ || 'no result') } unless ref $out eq 'HASH';
+	$c->render(json => $out);
 };
 
 post '/manager/coding/restart' => sub($c) {

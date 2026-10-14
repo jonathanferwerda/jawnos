@@ -8305,7 +8305,8 @@ sub peer_verify {
 	my $nonce = $c->req->headers->header('X-Peer-Nonce');
 	my $b64sig = $c->req->headers->header('X-Peer-Signature');
 	my $b64key = $c->req->headers->header('X-Peer-Key');
-	return 1 unless $ts || $nonce || $b64sig;
+	# unsigned: fine only while this peer has no key on file yet
+	return ($stored ? 0 : 1) unless $ts || $nonce || $b64sig;
 	return 0 unless $ts && $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
 	return 0 unless $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
 	my $pubkey = $stored;
@@ -12572,6 +12573,108 @@ sub watch_tokens_add {
 	);
 }
 
+# Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a
+# commit and a push; a bad day must not become a hundred). Past that the
+# proposals simply wait for a person, as they always did.
+sub watch_auto_allowed {
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day() });
+	return ((ref $row eq 'HASH' ? ($row->{'count'} || 0) : 0) < 8) ? 1 : 0;
+}
+
+sub watch_auto_count {
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day() }) || {};
+	&subs::cache_set(
+		{ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day(), warranty => '-2d' },
+		{ count => ($row->{'count'} || 0) + 1 }
+	);
+}
+
+# An auto-applied fix writes whole files; if any of them has uncommitted work in
+# the tree, writing would swallow it, so auto-approve stands down and leaves the
+# proposal for a person (the log says why).
+sub auto_apply_clean {
+	my ($row) = @_;
+	my $files = eval { decode_json $row->{'files'} } || {};
+	my @names = sort grep { &error_watch_path($_) } keys %{$files};
+	return 0 unless @names;
+	my $repo = &error_watch_repo();
+	my @q = map { '"' . $_ . '"' } @names;
+	my $dirty = `cd "$repo" && git status --porcelain -- @q 2>&1`;
+	return 0 if defined $dirty && $dirty =~ /\S/;
+	return 1;
+}
+
+# Apply one staged fix: write its files, check the Perl, then the finishing
+# routine - bump, commit only what was written (plus VERSION), push. A failure
+# at the check puts every file back and nothing is committed. Both the panel's
+# Apply and the watch's auto-approve come through here.
+sub staged_fix_apply {
+	my ($uuid) = @_;
+	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
+	return { error => 'no such caught error' } unless $row;
+	return { error => 'nothing is staged on that row yet' } unless (($row->{'status'} // '') eq 'proposed');
+	my $files = eval { decode_json $row->{'files'} } || {};
+	my @names = sort keys %{$files};
+	return { error => 'that proposal stages no files' } unless @names;
+	my $repo = &error_watch_repo();
+	my (%backup, %touched);
+	foreach my $rel ( @names ) {
+		my $abs = &error_watch_path($rel);
+		return { error => 'refused: ' . $rel . ' is outside the repo' } unless $abs;
+		$backup{$abs} = -f $abs ? scalar read_file($abs) : undef;
+		my $content = $files->{$rel};
+		$content = '' unless defined $content;
+		require File::Basename;
+		my $dir = File::Basename::dirname($abs);
+		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
+		eval { write_file($abs, $content) };
+		if ($@) {
+			foreach my $done ( keys %backup ) {
+				if (defined $backup{$done}) { eval { write_file($done, $backup{$done}) }; }
+				else { unlink $done; }
+			}
+			return { error => 'could not write ' . $rel };
+		}
+		$touched{$rel} = 1;
+	}
+	# a Perl file must compile before it ships; on failure the files go back
+	my @bad;
+	foreach my $rel ( sort grep { /\.p[lm]$/ } @names ) {
+		my $out = `cd "$repo" && perl -c "$rel" 2>&1`;
+		$out = '' unless defined $out;
+		push @bad, { path => $rel, output => substr($out, 0, 1000) } unless $out =~ /syntax OK/;
+	}
+	if (@bad) {
+		foreach my $abs ( keys %backup ) {
+			if (defined $backup{$abs}) { eval { write_file($abs, $backup{$abs}) }; }
+			else { unlink $abs; }
+		}
+		return { error => 'the change did not compile; nothing was applied', checks => \@bad };
+	}
+	# the finishing routine: bump, then commit only what was written (plus
+	# VERSION - never someone else's work in progress), then push
+	my $bump = `cd "$repo" && perl scripts/version_bump.pl 2>&1`;
+	$bump = '' unless defined $bump;
+	$bump =~ s/\s+$//;
+	return { error => 'the version bump failed: ' . ($bump || 'no output'), written => [ sort keys %touched ] } unless $bump =~ /^\d+\.\d+\.\d+$/;
+	my $version = eval { read_file("$repo/VERSION") } || '';
+	$version =~ s/\s+$//;
+	my $msg = $row->{'summary'} || $row->{'signature'} || 'error watch fix';
+	$msg =~ s/["`\$\\]/ /g;
+	$msg =~ s/\s+/ /g;
+	$msg =~ s/^\s+|\s+$//g;
+	my @add = map { '"' . $_ . '"' } sort keys %touched;
+	push @add, '"VERSION"';
+	my $commit = `cd "$repo" && git add -- @add 2>&1 && git commit -m "v$version - $msg" 2>&1`;
+	$commit = '' unless defined $commit;
+	$commit = substr($commit, 0, 1200);
+	my $push = `cd "$repo" && git push 2>&1`;
+	$push = '' unless defined $push;
+	$push = substr($push, 0, 800);
+	&subs::db_update('staged_fixes', { status => 'applied', note => 'applied ' . &subs::rightNow() }, { uuid => $uuid });
+	return { applied => $uuid, version => $version, bump => $bump, commit => $commit, push => $push };
+}
+
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
@@ -12726,6 +12829,19 @@ sub error_watch_tick {
 		# outer eval; say so, or the row just sits 'new' forever with no trace
 		my $ok = eval { &coding_propose_fix($waiting); 1 };
 		$log->info('error watch: the proposal for "' . substr($waiting->{'signature'} || '?', 0, 60) . '" died: ' . $@) if !$ok && defined $log;
+		# the person's Confirm tick, for fixes: with auto-approve on, a fresh
+		# proposal is written, checked and shipped at once (the restart stays a
+		# word of its own, and a file with uncommitted work stands down)
+		my $auto = $ok && ((&subs::setting_grabber({ app => 'mail', setting => 'error_watch_auto' }) // '') eq 'on');
+		if ($auto && &watch_auto_allowed() && &auto_apply_clean($waiting)) {
+			my $applied = eval { &staged_fix_apply($waiting->{'uuid'}) } || { error => ($@ || 'no result') };
+			&watch_auto_count();
+			$log->info('error watch: auto-applied "' . substr($waiting->{'signature'} || '?', 0, 60) . '": ' . ($applied->{'error'} // ('v' . ($applied->{'version'} // '?')))) if defined $log;
+		}
+		elsif ($auto && defined $log) {
+			my $why = &watch_auto_allowed() ? 'a file it would write has uncommitted work' : "today's auto-apply leash is full";
+			$log->info('error watch: auto-apply stood down for "' . substr($waiting->{'signature'} || '?', 0, 60) . '" - ' . $why);
+		}
 	}
 	return 1;
 }

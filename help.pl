@@ -762,14 +762,14 @@ our %topic = (
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
 			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.',
 			'Guide commands (runtime) is where you teach the Guide new verbs without a code change. Each is a JSON entry naming a primitive — say, open_app, set_setting, run_command, toggle, stage, find or play_music — and its parameters. The list is a setting, so it syncs to every machine and they all learn the verb.',
-			'Self-healing is the error watch: tick Watch errors and, with a Coding model set, every new error in the tree\'s own log — the pty stream the master tees to ~/pty.log, plus manager.log — is caught and listed in the IDE\'s coding panel with a fix the Coding agent has proposed. The fix waits there: Apply writes it, checks it compiles, bumps the version, commits and pushes, and the panel\'s restart link puts it live. Nothing is written until Apply.',
+			'Self-healing is the error watch: tick Watch errors and, with a Coding model set, every new error in the tree\'s own log — the pty stream the master tees to ~/pty.log, plus manager.log — is caught and listed in the IDE\'s coding panel with a fix the Coding agent has proposed. The fix waits there: Apply writes it, checks it compiles, bumps the version, commits and pushes, and the panel\'s restart link puts it live. Nothing is written until Apply — unless Apply automatically is ticked, when each proposal is written, checked (perl -c, rolled back if it fails) and shipped at once, like the Guide associate\'s Confirm tick; a file that has uncommitted work stands down and waits for you, and Tokens/day caps what the day may spend.',
 		],
 		steps => [
 			'Open Configure and press Plat.',
 			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
 			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.',
 			'Under Guide commands, add a verb as a JSON entry and press Save — every machine picks it up.',
-			'Under Self-healing, tick Watch errors to have the Coding agent watch the tree\'s log and stage a fix for each new error; review and apply them from the fixes list in the IDE\'s coding panel.'
+			'Under Self-healing, tick Watch errors to have the Coding agent watch the tree\'s log and stage a fix for each new error; review and apply them from the fixes list in the IDE\'s coding panel, or tick Apply automatically to have each one written, checked and shipped on its own.',
 		],
 		related => [ 'configure', 'assistant', 'help_app' ]
 	},
