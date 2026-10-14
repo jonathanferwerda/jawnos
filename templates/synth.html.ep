@@ -1,42 +1,116 @@
-<div id="synth" style="background-color:pink;">
+<div id="synth">
+	<div class="synth_toolbar">
+		<label>Sound</label>
+		<select id="synth_preset" class="synth_select" hint="Choose a preset"></select>
+		<label>MIDI</label>
+		<select id="synth_midi" class="synth_select" hint="A connected USB MIDI keyboard"></select>
+		<button id="synth_midi_connect" class="hover" hint="Connect a USB MIDI keyboard">Connect</button>
+		<span id="synth_voices" class="synth_voices"></span>
+	</div>
 
-	<% foreach my $k ( @{$piano} ) { %>
-		<% if ($k->{'note'}) { %>
-			<div class="piano_key <%= $k->{'colour'} %>" freq="<%= $k->{'freq'} %>" note="<%= $k->{'note'} %>"><%= $k->{'note'} %></div>
+	<div class="synth_keys">
+		<% foreach my $k ( @{$piano} ) { %>
+			<% if ($k->{'note'}) { %>
+				<div class="piano_key <%= $k->{'colour'} %>" freq="<%= $k->{'freq'} %>" note="<%= $k->{'note'} %>" hint="<%= $k->{'note'} %>"></div>
+			<% } %>
 		<% } %>
-	<% } %>
-	<select id="synth_waveform" class="appointment_settings" setting="waveform" value="<%= $settings->{'waveform'} %>">
-		<% foreach my $w ( ('sine', 'square', 'triangle', 'sawtooth', 'trapezium',  'exp',
-              'whitenoise',   'tpdfnoise',   'pinknoise',  'brownnoise',  'pluck') ) { %>
-			<option value="<%= $w %>" <% if ($w eq $settings->{'waveform'}) { %>selected <% } %>><%= &subs::format_name($w) %>
-		<% } %>
-	</select>
-	<input type="range" id="synth_length" min="0.01" step=".1" max="5" class="appointment_setting" setting="length" value="<%= $settings->{'length'} %>">
-	<select id="synth_destination" class="appointment_setting" setting="destination" value="<%= $settings->{'destination'} %>">
-		<% foreach my $sd ( qw/browser sox ws/ ) { %>
-			<option value="<%= $sd %>" <% if ($sd eq $settings->{'destination'}) { %>selected <% } %>><%= &subs::format_name($sd) %></option>
-		<% } %>
-	</select>
-	<audio id="synthesizer" autoplay ></audio>
+	</div>
+
+	<div class="synth_controls">
+		<div class="synth_knob"><label>Cutoff</label><input type="range" class="synth_param" param="filter.cutoff" min="0" max="100" value="55"></div>
+		<div class="synth_knob"><label>Resonance</label><input type="range" class="synth_param" param="filter.q" min="0" max="100" value="15"></div>
+		<div class="synth_knob"><label>Filter env</label><input type="range" class="synth_param" param="filter.env" min="0" max="100" value="30"></div>
+		<div class="synth_knob"><label>Attack</label><input type="range" class="synth_param" param="amp.a" min="0" max="100" value="8"></div>
+		<div class="synth_knob"><label>Decay</label><input type="range" class="synth_param" param="amp.d" min="0" max="100" value="30"></div>
+		<div class="synth_knob"><label>Sustain</label><input type="range" class="synth_param" param="amp.s" min="0" max="100" value="60"></div>
+		<div class="synth_knob"><label>Release</label><input type="range" class="synth_param" param="amp.r" min="0" max="100" value="30"></div>
+		<div class="synth_knob"><label>Detune</label><input type="range" class="synth_param" param="osc2.detune" min="0" max="100" value="55"></div>
+		<div class="synth_knob"><label>LFO</label><input type="range" class="synth_param" param="lfo.rate" min="0" max="100" value="0"></div>
+		<div class="synth_knob"><label>Drive</label><input type="range" class="synth_param" param="drive" min="0" max="100" value="0"></div>
+	</div>
+
+	<div class="synth_hint">Play the keys above, or a connected MIDI keyboard. To record, open Studio, set a channel's input to Synth (or drag the JawnSynth pedal onto it), arm the channel, and record.</div>
 </div>
 
 <style>
+	#synth { padding: 8px; }
+	.synth_toolbar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		margin-bottom: 8px;
+	}
+	.synth_toolbar label { opacity: .7; }
+	.synth_select {
+		font-size: 15px;
+		border: solid 1px var(--line);
+		border-radius: 5px;
+		background: var(--panel);
+		color: inherit;
+		padding: 3px 5px;
+	}
+	#synth_midi_connect {
+		font-size: 14px;
+		border: solid 1px var(--line);
+		border-radius: 5px;
+		background: var(--panel);
+		color: inherit;
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.synth_voices { opacity: .55; margin-left: auto; font-size: 13px; }
+
+	.synth_keys {
+		position: relative;
+		height: 120px;
+		white-space: nowrap;
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding-bottom: 4px;
+	}
+	.piano_key {
+		display: inline-block;
+		vertical-align: top;
+		width: 26px;
+		border: solid;
+		border-width: 1px;
+		border-radius: 0 0 4px 4px;
+		cursor: pointer;
+		user-select: none;
+	}
+	.piano_key:active { background: var(--accent, #888); }
 	.piano_key.white {
 		background-color: var(--panel);
-		height: 100px;
-		width: 20px;
-		border: solid;
-		border-width: 2px;
-		float: left;
+		height: 116px;
+		color: #333;
+		position: relative;
+		z-index: 1;
 	}
 	.piano_key.black {
-		background-color: black;
-		color: white;
-		height: 80px;
-		width: 20px;
-		border: solid;
-		border-width: 2px;
-		float: left;
+		background-color: #111;
+		color: #eee;
+		height: 74px;
+		margin-left: -13px;
+		margin-right: -13px;
+		position: relative;
+		z-index: 2;
 	}
-	
+
+	.synth_controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-top: 10px;
+	}
+	.synth_knob {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		width: 74px;
+	}
+	.synth_knob label { font-size: 12px; opacity: .7; margin-bottom: 2px; }
+	.synth_knob input[type=range] { width: 68px; }
+
+	.synth_hint { margin-top: 10px; opacity: .6; font-size: 13px; max-width: 640px; }
 </style>

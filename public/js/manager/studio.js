@@ -198,6 +198,25 @@ function studioInsert(ctx, name) {
 		setters['volume'] = function (v) { rwet.gain.value = (v / 100) * 0.9; };
 		setters['mix'](35);
 	}
+	else if (name == 'JawnSynth' && window.jawnosSynth && typeof window.jawnosSynth.outputNode === 'function') {
+		// A generator pedal: the synth's output replaces the chain from here, so a
+		// channel carrying this pedal records whatever the synth plays. Its knobs are
+		// the synth's controls - each 0..100 slider mapped to a patch parameter.
+		var synth = window.jawnosSynth;
+		if (synth.context() !== ctx) { synth.attach(ctx, ctx.destination); }
+		var src = synth.outputNode();
+		if (src) {
+			src.connect(output);
+			api.destroy = function () { try { src.disconnect(output); } catch (e) {} };
+		}
+		var synthMap = {
+			cutoff: 'filter.cutoff', reso: 'filter.q', attack: 'amp.a',
+			release: 'amp.r', detune: 'osc2.detune', lfo: 'lfo.rate', level: 'drive'
+		};
+		Object.keys(synthMap).forEach(function (control) {
+			setters[control] = function (v) { synth.set(synthMap[control], synth.knob(synthMap[control], v)); };
+		});
+	}
 	else {
 		input.connect(output);
 	}
@@ -281,7 +300,8 @@ function studioSetInsert(ch, name, on) {
 		c.insertByName[name] = ins;
 	}
 	else if (!on && at != -1) {
-		c.inserts.splice(at, 1);
+		var gone = c.inserts.splice(at, 1)[0];
+		if (gone && gone.destroy) { try { gone.destroy(); } catch (e) {} }
 		delete c.insertByName[name];
 	}
 	studioApplyPedals();

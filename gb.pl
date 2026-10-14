@@ -709,6 +709,22 @@ our $studio = {
 		},{
 			control => 'volume', colour => 'red_numbered', direction => 'counter', width => '60px', flip => 180, range => .65, left => '53%', top => '26%'
 		}]
+	},{
+		name => 'JawnSynth',
+		image => 'synth',
+		knobs => [{
+			control => 'cutoff', colour => 'orange', left => '6%', top => '24%', width => '24%'
+		},{
+			control => 'reso', colour => 'red', left => '37%', top => '24%', width => '24%'
+		},{
+			control => 'attack', colour => 'green', left => '68%', top => '24%', width => '24%'
+		},{
+			control => 'release', colour => 'blue', left => '6%', top => '58%', width => '24%'
+		},{
+			control => 'detune', colour => 'yellow', left => '37%', top => '58%', width => '24%'
+		},{
+			control => 'lfo', colour => 'pink', left => '68%', top => '58%', width => '24%'
+		}]
 	}]
 };
 

@@ -153,6 +153,35 @@
 
 	function copyPatch(p) { return JSON.parse(JSON.stringify(p)); }
 
+	// A patch parameter as a 0..100 knob: `to` maps a slider to the parameter, `from`
+	// maps the parameter back to a slider (so loading a preset moves the knobs). One
+	// table drives both the studio's Synth pedal and the standalone window.
+	var KNOBS = {
+		'filter.cutoff': { to: function (v) { return 40 * Math.pow(450, v / 100); }, from: function (c) { return 100 * Math.log(c / 40) / Math.log(450); } },
+		'filter.q': { to: function (v) { return 0.1 + (v / 100) * 18; }, from: function (q) { return (q - 0.1) / 18 * 100; } },
+		'filter.env': { to: function (v) { return v / 100; }, from: function (e) { return e * 100; } },
+		'amp.a': { to: function (v) { return 0.001 + Math.pow(v / 100, 2) * 3; }, from: function (a) { return 100 * Math.sqrt(Math.max(0, (a - 0.001) / 3)); } },
+		'amp.d': { to: function (v) { return 0.01 + Math.pow(v / 100, 2) * 4; }, from: function (d) { return 100 * Math.sqrt(Math.max(0, (d - 0.01) / 4)); } },
+		'amp.s': { to: function (v) { return v / 100; }, from: function (s) { return s * 100; } },
+		'amp.r': { to: function (v) { return 0.02 + Math.pow(v / 100, 2) * 4; }, from: function (r) { return 100 * Math.sqrt(Math.max(0, (r - 0.02) / 4)); } },
+		'osc2.detune': { to: function (v) { return (v / 100) * 40 - 20; }, from: function (d) { return (d + 20) / 40 * 100; } },
+		'lfo.rate': { to: function (v) { return (v / 100) * 12; }, from: function (r) { return r / 12 * 100; } },
+		'lfo.pitch': { to: function (v) { return (v / 100) * 0.1; }, from: function (p) { return p / 0.1 * 100; } },
+		'drive': { to: function (v) { return v / 100; }, from: function (d) { return d * 100; } }
+	};
+
+	function patchGet(path) {
+		var cur = S.patch || PRESETS[S.preset];
+		if (!cur) { return undefined; }
+		if (path === 'osc1.detune' || path === 'osc2.detune') {
+			var i = path === 'osc1.detune' ? 0 : 1;
+			return (cur.osc && cur.osc[i]) ? cur.osc[i].detune : 0;
+		}
+		var parts = String(path).split('.');
+		for (var n = 0; n < parts.length && cur != null; n++) { cur = cur[parts[n]]; }
+		return cur;
+	}
+
 	// ---- the engine graph ------------------------------------------------------
 
 	function attach(ctx, destination) {
@@ -515,6 +544,12 @@
 		getPatch: getPatch,
 		loadPreset: loadPreset,
 		presets: function () { return Object.keys(PRESETS); },
+		// the 0..100 knob view of a patch parameter, shared by the studio pedal and
+		// the standalone window
+		knob: function (name, value) { var k = KNOBS[name]; return k ? k.to(clampNumber(value, 0, 100, 50)) : value; },
+		knobPos: function (name) { var k = KNOBS[name]; return k ? Math.max(0, Math.min(100, k.from(patchGet(name)))) : 50; },
+		setKnob: function (name, value) { return set(name, this.knob(name, value)); },
+		knobNames: function () { return Object.keys(KNOBS); },
 		noteName: noteName,
 		midi: {
 			start: midiStart,
@@ -530,6 +565,34 @@
 
 	var pianoMidiBase = 60;
 
+	// The standalone window's controls. The studio's Synth pedal drives the same
+	// engine through KNOBS, so a patch set in one place reads the same in the other.
+	function synthSyncSliders() {
+		$('.synth_param').each(function () {
+			var param = $(this).attr('param');
+			if (param) { $(this).val(Math.round(window.jawnosSynth.knobPos(param))); }
+		});
+	}
+
+	function synthPopulatePresets() {
+		var sel = $('#synth_preset');
+		if (!sel.length || sel.data('filled')) { return; }
+		window.jawnosSynth.presets().forEach(function (name) {
+			sel.append($('<option></option>').attr('value', name).text(name));
+		});
+		sel.data('filled', 1);
+	}
+
+	function synthPopulateMidi() {
+		var sel = $('#synth_midi');
+		if (!sel.length) { return; }
+		var devs = window.jawnosSynth.midi.devices();
+		sel.empty();
+		if (!devs.length) { sel.append($('<option></option>').attr('value', '').text('no MIDI device')); return; }
+		devs.forEach(function (d) { sel.append($('<option></option>').attr('value', d.id).text(d.name || d.manufacturer || d.id)); });
+		sel.val(window.jawnosSynth.midi.selected() || '');
+	}
+
 	window.pianoInit = function () {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		// ride the studio's context when its window is already open, so the synth is
@@ -537,6 +600,9 @@
 		var ctx = (typeof studioAudio !== 'undefined' && studioAudio.ctx) ? studioAudio.ctx : null;
 		if (!ctx) { if (!Ctor) { return null; } ctx = new Ctor(); }
 		jawnosSynth.attach(ctx, ctx.destination);
+		synthPopulatePresets();
+		synthSyncSliders();
+		synthPopulateMidi();
 		return ctx;
 	};
 
@@ -555,11 +621,43 @@
 	$(document).on('click', '.piano_key', function () {
 		if (!jawnosSynth.context()) { pianoInit(); }
 		var note = parseInt($(this).attr('note'), 10);
-		if (isNaN(note)) { var n = $(this).text(); note = noteNameToMidi(n); }
-		var preset = $('#synth_preset').val() || $('#synth_waveform').val();
-		if (preset && jawnosSynth.presets().indexOf(preset) >= 0) { jawnosSynth.loadPreset(preset); }
+		if (isNaN(note)) { note = noteNameToMidi($(this).text()); }
 		jawnosSynth.noteOn(note, 0.85);
 		setTimeout(function () { jawnosSynth.noteOff(note); }, 700);
+	});
+
+	$(document).on('change', '#synth_preset', function () {
+		window.jawnosSynth.loadPreset($(this).val());
+		synthSyncSliders();
+	});
+
+	$(document).on('input change', '.synth_param', function () {
+		if (!jawnosSynth.context()) { pianoInit(); }
+		window.jawnosSynth.setKnob($(this).attr('param'), $(this).val());
+	});
+
+	$(document).on('click', '#synth_midi_connect', function () {
+		var el = $(this);
+		el.text('connecting…');
+		window.jawnosSynth.midi.start().then(function () {
+			synthPopulateMidi();
+			el.text(window.jawnosSynth.midi.devices().length ? 'MIDI ready' : 'no MIDI device');
+		}).catch(function () { el.text('MIDI unavailable'); });
+	});
+
+	$(document).on('change', '#synth_midi', function () {
+		window.jawnosSynth.midi.select($(this).val());
+	});
+
+	$(function () {
+		if ($('#synth').length) {
+			pianoInit();
+			setInterval(function () {
+				if (document.hidden) { return; }
+				var v = window.jawnosSynth.voices();
+				$('#synth_voices').text(v ? (v + ' voice' + (v === 1 ? '' : 's')) : '');
+			}, 250);
+		}
 	});
 
 	function noteNameToMidi(name) {
