@@ -5887,6 +5887,25 @@ sub backups_dir {
 # when the fixed database is missing, so pulling this build onto an existing
 # machine needs no hand - the first database_grabber migrates it in place.
 sub database_adopt_legacy {
+	# A name change needs its own step first: a machine that already migrated into
+	# the install still has database/initial.db (and initial*.enc backups) from
+	# before the house took its own name, so rename those to jawnos.db /
+	# jawnos*.enc. Without this the fixed path simply does not exist and the
+	# machine is left with no database at all.
+	my $dir_db = &subs::database_dir();
+	if (-e "$dir_db/initial.db" && !-e "$dir_db/jawnos.db") {
+		for my $ext ('', '-shm', '-wal') {
+			rename "$dir_db/initial.db$ext", "$dir_db/jawnos.db$ext" if -e "$dir_db/initial.db$ext";
+		}
+	}
+	my $bdir = &subs::backups_dir();
+	foreach my $enc ( glob("$bdir/initial*.enc") ) {
+		my $leaf = $enc;
+		$leaf =~ s{.*/}{};
+		$leaf =~ s/^initial/jawnos/;
+		rename $enc, "$bdir/$leaf" if !-e "$bdir/$leaf";
+	}
+
 	my $dir = &subs::home($config->{'start_dir'} || '~/');
 	$dir =~ s{/+$}{};
 	my @dbs = grep { -s $_ > 5000 && $_ !~ /-(?:shm|wal)$/ } glob("$dir/*.db");
