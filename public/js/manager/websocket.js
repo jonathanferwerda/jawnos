@@ -299,14 +299,17 @@ function heartbeatSend(app) {
 function wsMessageHandler(event) {
 	if (isJson(event.data)) {
 		var data = JSON.parse(event.data);
-		// the machine's code revision arrives on every connect; if it changed since
-		// this tab loaded, the tab is running stale assets and reloads once. Store
-		// the new value BEFORE reloading - the reloaded page compares against what
-		// is in sessionStorage, so a value that is not stored first reloads forever.
+		// the machine's code revision arrives on every connect. Storing it first is
+		// the reload loop-guard: the reloaded page compares against what is in
+		// sessionStorage, so a value that is not stored first reloads forever.
+		// When it changed since this tab loaded, the tab follows the change the
+		// quiet way - jawnosRevisionArrived decides between updating in place and
+		// asking for one reload (a concatenated classic script cannot run twice
+		// under a live document without doubling every handler it binds).
 		if (data['revision']) {
 			var rv = sessionStorage.getItem('jawnos_revision');
 			sessionStorage.setItem('jawnos_revision', data['revision']);
-			if (rv && rv != data['revision']) { location.reload(); return; }
+			jawnosRevisionArrived(data['revision_parts'], data['version'], rv);
 		}
 		var seenWs = $.grep(seenWsMessages, function(t,i) { return i.uuid == data.uuid });
 		if (seenWs.length > 0) {
@@ -1036,3 +1039,98 @@ document.addEventListener("visibilitychange", function(e) {
 		$('#search').val('');
 	}
 });
+
+// ---- following a code change without throwing the page away -------------------
+// The server stamps the running code with a fingerprint, grouped part by part
+// (subs::code_revision), and sends it on every socket connect. When it moved
+// since this tab loaded, the quietest correct response depends on WHAT moved:
+//
+//   css   - point every stylesheet link at the new build; the browser re-fetches
+//           a changed href, so a restyle lands live
+//   views - re-render the open windows from the server, in place (wire it the
+//   server  same: a Perl or template change shows when a window re-draws)
+//   js    - cannot be swapped under a running page: the bundle is one classic
+//   shell   concatenated script, and running it again would double every handler
+//           it binds. These ask for one reload instead, quietly: at once when
+//           the tab is hidden, otherwise with a small press-to-update pill. A
+//           chat left in a coding agent survives the reload (coding.js saves it).
+
+function jawnosRevisionArrived(parts, version, was) {
+	var stored = null;
+	try { stored = JSON.parse(sessionStorage.getItem('jawnos_revision_parts') || 'null'); } catch (e) { stored = null; }
+	var remember = function () {
+		if (parts) { sessionStorage.setItem('jawnos_revision_parts', JSON.stringify(parts)); }
+		if (version) { sessionStorage.setItem('jawnos_version', version); }
+	};
+	// the first sight of a revision for this tab: nothing to follow yet
+	if (!was || !parts || !stored || !stored.js) { remember(); return; }
+	var moved = function (k) { return (parts[k] || '') !== (stored[k] || ''); };
+	var what = { js: moved('js'), shell: moved('shell'), css: moved('css'), views: moved('views'), server: moved('server') };
+	remember();
+	if (what.js || what.shell) { jawnosUpdateQuietReload(); return; }
+	if (what.css || what.views || what.server) { jawnosUpdateInPlace(version, what); }
+}
+
+// The stylesheet links and the record of each script tag point at the new build;
+// the windows re-render themselves. Nothing here reloads the page.
+function jawnosUpdateInPlace(version, what) {
+	if (version) {
+		var bust = function (sel, attr) {
+			$(sel).each(function () {
+				var url = String($(this).attr(attr) || '');
+				if (url.indexOf('string=') < 0) { return; }
+				$(this).attr(attr, url.replace(/([?&]string=)[^&]*/, '$1' + encodeURIComponent(version)));
+			});
+		};
+		bust('link[rel="stylesheet"]', 'href');
+		// a script element that has already run does not re-run on a new src; this
+		// keeps the page's own record honest for whatever reads it next
+		bust('script[src]', 'src');
+	}
+	if (what.views || what.server || what.css) { jawnosUpdateWindows(); }
+	jawnosUpdateNote('updated live');
+}
+
+// Apps whose openers do more than re-render (they bring a socket, a second
+// session or a viewer with them). They keep their running window and pick the
+// new build up the next time they open; everything else re-draws in place.
+var jawnos_update_bespoke = { gallery: 1, help: 1, handbook: 1, embedded: 1, mailbox: 1, box_office: 1, store: 1, warehouse: 1, market: 1, measures: 1, budget: 1, studio: 1, terminal: 1, folders: 1, process_monitor: 1, music: 1, twirl: 1, cards: 1, marker: 1, editor: 1, synth: 1, ide: 1, relational: 1, travel: 1 };
+
+function jawnosUpdateWindows() {
+	var active = document.activeElement;
+	var busy = active ? $(active).closest('.wind')[0] : null;
+	$('.wind[app]').each(function () {
+		var app = $(this).attr('app');
+		// never yank the window someone is typing in, and leave the bespoke ones be
+		if (!app || this === busy || jawnos_update_bespoke[app]) { return; }
+		if (typeof jawnos_builtin_apps !== 'undefined' && !jawnos_builtin_apps[app]) { return; }
+		if (typeof appWindowOpener === 'function') { appWindowOpener(app, Date.now(), { visible: 'yes' }); }
+	});
+}
+
+// A transient line, the same corner the reload pill uses.
+function jawnosUpdateNote(text) {
+	if (!$('#jawnos_update_note').length) {
+		$('body').append('<div id="jawnos_update_note" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px;opacity:0;transition:opacity .25s ease;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none;"></div>');
+	}
+	var note = $('#jawnos_update_note');
+	note.text(text).css('opacity', .92);
+	clearTimeout(window.jawnos_update_note_timer);
+	window.jawnos_update_note_timer = setTimeout(function () { note.css('opacity', 0); }, 2600);
+}
+
+// A script (or the shell) changed: one reload is the only safe answer, so ask
+// for it - never over someone's typing, and never when they are not looking.
+function jawnosUpdateQuietReload() {
+	var save = function () { if (typeof jawnosCodingChatSave === 'function') { jawnosCodingChatSave(); } };
+	save();
+	if (document.hidden) { location.reload(); return; }
+	if ($('#jawnos_update_pill').length) { return; }
+	var pill = $('<div id="jawnos_update_pill" hint="A new build has shipped" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:7px 12px;font-size:13px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.35);">A fix has shipped — <b>press to update</b></div>');
+	pill.on('click', function () { save(); location.reload(); });
+	$('body').append(pill);
+	// the hidden tab does not wait for a press: come back and it is already new
+	$(document).on('visibilitychange.jawnos_update_pill', function () {
+		if (document.hidden && $('#jawnos_update_pill').length) { save(); location.reload(); }
+	});
+}

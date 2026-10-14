@@ -12198,6 +12198,12 @@ sub jawn_version_forget { undef $jawn_version_cache; }
 sub code_revision() {
 	return $code_revision_cache if $code_revision_cache;
 	my @files;
+	# The fingerprint is grouped as well as whole: a connected browser reads the
+	# parts and asks what changed - a script (it must reload), a stylesheet (it
+	# can point the link at the new build live), a template (re-render the open
+	# windows), the shell or the server (reload / nothing) - before deciding how
+	# to update itself. (See jawnosRevisionArrived in websocket.js.)
+	my %part_canon = ( js => '', css => '', views => '', shell => '', server => '' );
 	find({ no_chdir => 1, wanted => sub {
 		my $n = $File::Find::name;
 		return unless -f $n;
@@ -12208,7 +12214,15 @@ sub code_revision() {
 	my $canon = '';
 	foreach my $f ( @files ) {
 		my $c = eval { read_file($f) };
-		$canon .= $f . ':' . md5_sum(defined $c ? $c : '') . "\n";
+		my $line = $f . ':' . md5_sum(defined $c ? $c : '') . "\n";
+		$canon .= $line;
+		my $part = 'server';
+		$part = 'js' if $f =~ /\.js$/;
+		$part = 'css' if $f =~ /\.css$/;
+		$part = 'views' if $f =~ /\.ep$/;
+		# the shell frames every page at once: it cannot be rebuilt under a live tab
+		$part = 'shell' if $f =~ m{(^|/)manager\.html\.ep$} || $f =~ m{(^|/)templates/layouts/};
+		$part_canon{$part} .= $line;
 	}
 	my $fingerprint = md5_sum($canon);
 	my ($commit,$branch,$dirty) = ('','',0);
@@ -12228,6 +12242,7 @@ sub code_revision() {
 		files => scalar @files,
 		hostname => $hostname,
 		signatorial => &subs::signatorial_designer(),
+		parts => { map { $_ => md5_sum($part_canon{$_}) } sort keys %part_canon },
 	};
 	return $code_revision_cache;
 }
@@ -12749,7 +12764,7 @@ sub staged_fix_apply {
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
-my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe|UDTA parsing failed|source=model_show_cache|Socket sender:|\{"event": "error", "message": "not connected"\}/;
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe|UDTA parsing failed|source=model_show_cache|model recommendations refresh failed|Socket sender:|\{"event": "error", "message": "not connected"\}/;
 
 sub error_watch_is_error {
 	my $line = shift;

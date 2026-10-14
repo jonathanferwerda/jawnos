@@ -25214,7 +25214,12 @@ websocket '/manager/ws' => sub ($c) {
 		connection_id => $connection_id,
 		user_agent => $user_agent,
 		random_string => &subs::random_string_creator(25),
-		# the code this machine is running; the client reloads when it changes
+		# the code this machine is running; the client follows it when it changes -
+		# part by part, so it knows whether a stylesheet, a template, a script or
+		# the shell moved (see jawnosRevisionArrived in websocket.js). The parts and
+		# the version ride the wire only, added just before the send: the websockets
+		# row is a session record, not a home for the code's state, and the table
+		# has no columns for them (an insert that carries them is refused).
 		revision => ($code_rev->{'commit'} || $code_rev->{'fingerprint'}),
 		href => $c->param('href'),
 		pathname => $c->param('pathname'),
@@ -25249,6 +25254,10 @@ websocket '/manager/ws' => sub ($c) {
 
 
 
+	# the wire carries what the row must not: the change-tracking parts and the
+	# version the client compares before deciding how to follow an update
+	$init_data->{'revision_parts'} = $code_rev->{'parts'};
+	$init_data->{'version'} = &subs::jawn_version();
 	&Websocket::send($app, $init_data);
 	if ($c->param('app') eq 'music') {
 		if ($log_me eq 'on') {

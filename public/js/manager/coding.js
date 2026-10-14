@@ -42,7 +42,7 @@ function codingChatToggle(mount) {
 	panel.css('display', panel.is(':visible') ? 'none' : 'flex');
 	var input = panel.find('.coding_chat_input');
 	if (panel.is(':visible') && input.length) { input.focus(); }
-	if (panel.is(':visible')) { codingFixesFetch(mount); }
+	if (panel.is(':visible')) { codingFixesFetch(mount); codingChatRestoreScroll(mount); }
 }
 
 function codingChatSend(mount) {
@@ -226,7 +226,7 @@ $(document).on('click', '.coding_fixes_restart', function () {
 // can be open at once, each remembering its own thread.
 
 var jawnos_coding_agents = 0;
-var jawnos_coding_top = 4000;
+var jawnos_coding_top = 50000;
 
 function codingChatDraggable(panel) {
 	if (!panel.length || !$.fn.draggable) { return; }
@@ -242,17 +242,36 @@ function codingChatDraggable(panel) {
 			p.css({ right: 'auto', bottom: 'auto', left: pos.left + 'px', top: pos.top + 'px' });
 		},
 		drag: function (e, ui) {
-			// the panel lives in its app's window, and ui.position is relative to
-			// that container, so clamp against it - the panel never leaves the
-			// window it belongs to
+			// the panel floats over the whole screen, so the screen is what it is
+			// kept on - and clear of the taskbar wherever that sits (the same rule
+			// the Guide associate's window follows)
 			var p = $(this);
 			var w = p.outerWidth(), h = p.outerHeight();
-			var box = p.offsetParent();
-			var bw = box.length ? box.width() : $(window).width();
-			var bh = box.length ? box.height() : $(window).height();
-			ui.position.left = Math.max(0, Math.min(ui.position.left, bw - w));
-			ui.position.top = Math.max(0, Math.min(ui.position.top, bh - h));
+			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
+			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
 		}
+	});
+}
+
+// A panel belongs to its app's window but lives over the whole screen: on the way
+// in it is lifted out of the window to the body and positioned against the
+// viewport, so it can be dragged anywhere and never clips at the window's edge.
+// source_window remembers where it came from - the observer takes the panel away
+// when that window is closed.
+function codingChatFloat(panel) {
+	if (panel.attr('screen_floating')) { return; }
+	panel.attr('screen_floating', '1');
+	var source = panel.closest('.wind');
+	if (source.length && source.attr('id')) { panel.attr('source_window', source.attr('id')); }
+	panel.detach().appendTo(document.body);
+	panel.css({ position: 'fixed' });
+}
+
+function codingChatReap() {
+	$('.coding_chat[source_window]').each(function () {
+		var id = $(this).attr('source_window');
+		if (id && !$('#' + id).length) { $(this).remove(); }
 	});
 }
 
@@ -263,6 +282,8 @@ function codingChatArmAll(root) {
 	$(root || document).find('.coding_chat:not([drag_armed])').each(function () {
 		var panel = $(this);
 		panel.attr('drag_armed', '1');
+		codingChatFloat(panel);
+		codingChatRestore(panel);
 		codingChatDraggable(panel);
 	});
 }
@@ -278,6 +299,7 @@ function codingChatSpawn(mount) {
 	var clone = src.clone();
 	clone.attr('id', 'coding_chat_' + name).attr('mount', name).attr('conversation', name).attr('spawned', '1');
 	clone.removeAttr('drag_armed');
+	if (src.attr('source_window')) { clone.attr('source_window', src.attr('source_window')); }
 	clone.removeClass('ui-draggable ui-draggable-disabled ui-draggable-handle ui-draggable-dragging');
 	clone.find('.coding_chat_title').text($.trim(src.find('.coding_chat_title').text() || 'Coding agent') + ' ' + jawnos_coding_agents);
 	clone.find('.coding_chat_log, .coding_fixes_rows').empty();
@@ -285,9 +307,9 @@ function codingChatSpawn(mount) {
 	clone.find('.coding_fixes_panel').css('display', 'none');
 	clone.find('.coding_chat_log').css('display', '');
 	clone.find('.coding_chat_composer').css('display', 'flex');
-	clone.css({ display: 'flex', right: 'auto', bottom: 'auto', left: (24 + jawnos_coding_agents * 26) + 'px', top: (40 + jawnos_coding_agents * 26) + 'px' });
-	src.parent().append(clone);
-	codingChatArmAll(src.parent());
+	clone.css({ display: 'flex', position: 'fixed', right: 'auto', bottom: 'auto', left: (24 + jawnos_coding_agents * 26) + 'px', top: (40 + jawnos_coding_agents * 26) + 'px' });
+	$(document.body).append(clone);
+	codingChatArmAll(document.body);
 	clone.find('.coding_chat_input').focus();
 	codingChatAdd(name, 'step', 'A fresh agent — this one keeps its own thread.');
 }
@@ -302,7 +324,53 @@ $(document).on('mousedown', '.coding_chat', function () {
 });
 
 $(document).ready(function () { codingChatArmAll(document); });
-new MutationObserver(function () { codingChatArmAll(document); }).observe(document.documentElement, { childList: true, subtree: true });
+new MutationObserver(function () { codingChatReap(); codingChatArmAll(document); }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- a reload must not cost the conversation -----------------------------------
+// A script change is the one update that cannot land in place, so for it the tab
+// reloads (websocket.js asks first). The chat is saved the moment the page goes -
+// beforeunload covers every reload, ours or a press of F5 - and put back when the
+// panel is built again.
+
+function jawnosCodingChatSave() {
+	try {
+		var state = {};
+		$('.coding_chat').each(function () {
+			var panel = $(this);
+			var log = panel.find('.coding_chat_log');
+			if (!log.length) { return; }
+			state[panel.attr('mount')] = {
+				log: log.html() || '',
+				scroll: log[0] ? log[0].scrollTop : 0,
+				draft: panel.find('.coding_chat_input').val() || ''
+			};
+		});
+		sessionStorage.setItem('jawnos_coding_chat_state', JSON.stringify(state));
+	} catch (e) { /* losing this is a nicety missed, never an error worth showing */ }
+}
+
+function codingChatRestore(panel) {
+	if (panel.attr('spawned') || panel.find('.coding_chat_log').html()) { return; }
+	var state = null;
+	try { state = JSON.parse(sessionStorage.getItem('jawnos_coding_chat_state') || 'null'); } catch (e) { state = null; }
+	var mine = state ? state[panel.attr('mount')] : null;
+	if (!mine) { return; }
+	var log = panel.find('.coding_chat_log');
+	if (log.length && mine.log) { log.html(mine.log); }
+	var input = panel.find('.coding_chat_input');
+	if (input.length && !input.val() && mine.draft) { input.val(mine.draft); }
+}
+
+function codingChatRestoreScroll(mount) {
+	var state = null;
+	try { state = JSON.parse(sessionStorage.getItem('jawnos_coding_chat_state') || 'null'); } catch (e) { state = null; }
+	var mine = state ? state[mount] : null;
+	if (!mine) { return; }
+	var log = codingChatPanel(mount).find('.coding_chat_log');
+	if (log.length && log[0] && mine.scroll) { log[0].scrollTop = mine.scroll; }
+}
+
+window.addEventListener('beforeunload', function () { jawnosCodingChatSave(); });
 
 // ---- the fixed list, read from Configure -> Plat -------------------------------
 // Every error the Coding agent has fixed and shipped, newest first: what it was,
