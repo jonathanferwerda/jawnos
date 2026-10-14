@@ -121,7 +121,9 @@ $SIG{INT} = sub {
 	exit 0;
 };
 
+my ($master_boot_watch, $master_boot_tries);
 $fork = &terminal_pty_runner({ 'program' => './President.pl' });
+&arm_boot_watch();
 
 my $status = 'off';
 
@@ -184,6 +186,7 @@ sub master_time_looper() {
 			# dead until ./jawn is run by hand
 			$master_timer_paused = 0;
 		  &master_time_looper();
+			&arm_boot_watch();
 		}
 	});
 }
@@ -270,40 +273,135 @@ sub shut_down() {
 	# crash (see the close handler in terminal_pty_runner)
 	$fork->{'jawn_deliberate'} = 1 if $fork;
 	$fork->write("\x03");
+	# The named sweep is the workhorse: it takes the tree by process name and full
+	# command line, and whatever still holds the web port. (2026-10-14: this used to
+	# be followed by pid-as-substring matches against `ps -e`, which once matched a
+	# freshly-started President and killed the boot. Only exact, verified pids now.)
 	`./scripts/manager_killer.pl`;
-	my $ps = `ps -e`;
-	my @ps = split /\n/, $ps;
+	# the pids the tree reported to the master, each by its exact number and only
+	# when its command line still names a jawn program - never a substring match, so
+	# a reused pid (or a new process whose number merely contains an old one) is
+	# left alone
+	my @tracked;
 	foreach my $s ( keys %{$subprocesses} ) {
-		if (eval { keys %{$subprocesses->{$s}->{'subprocesses'}} }) {
-			foreach my $pid ( keys %{$subprocesses->{$s}->{'subprocesses'}} ) {
-				if (grep { $_ =~ /\Q$pid/ } @ps) {
-					kill 'INT', $pid;
-					print "Manual Kill " . $pid . "\n";
-					`kill -9 $pid`;
-				}
-			}
-		}
-		my $pid = $s;
-		unless ($pid =~ /[a-zA-Z]/) {
-			if (grep { $_ =~ /\Q$pid/ } @ps) {
-				kill 'INT', $pid;
-				print "Manual PKill " . $pid . "\n";
-				`kill -9 $pid`;
-			}
-		}
+		next if $s =~ /[a-zA-Z]/;
+		push @tracked, $s;
+		my $kids = $subprocesses->{$s}->{'subprocesses'};
+		push @tracked, keys %{$kids} if eval { keys %{$kids} };
 	}
-	$fork->close;
-	my $pid = $fork->pid;
-	if ($pid != 0) {
-		if (grep { $_ =~ /\Q$pid/ } @ps) {
-			kill 'INT', $fork->pid;
-			print "Manual TKill " . $pid . "\n";
-			`kill -9 $pid`;
-		}
+	my %seen;
+	@tracked = grep { /^[0-9]+$/ && !$seen{$_}++ } @tracked;
+	my @sent;
+	foreach my $pid ( grep { &pid_alive($_) && &pid_is_jawn($_) } @tracked ) {
+		kill 'INT', $pid;
+		push @sent, $pid;
+		print "INT $pid\n";
+	}
+	# our own pty child (bash) ends the terminal; it is our direct child, so its
+	# exact pid is safe even though its command line is not a jawn program
+	my $fpid = $fork ? $fork->pid : 0;
+	if ($fpid && &pid_alive($fpid) && $fpid != $$) {
+		kill 'INT', $fpid;
+		push @sent, $fpid;
+		print "INT $fpid (pty)\n";
+	}
+	$fork->close if $fork;
+	# a short grace for the tree to run its own cleanup, then SIGKILL what is left
+	my @alive;
+	for (1 .. 10) {
+		@alive = grep { &pid_alive($_) } @sent;
+		last unless @alive;
+		select(undef, undef, undef, 0.1);
+	}
+	foreach my $pid (@alive) {
+		my $ours = ($pid == $fpid) ? 1 : &pid_is_jawn($pid);
+		next unless $ours;
+		kill 'KILL', $pid;
+		print "KILL $pid\n";
 	}
 	$subprocesses = {};
 	sleep .1;
+}
 
+# A pid is only signalled when it is still there (kill 0) and, for anything but
+# our own pty child, its command line still names a jawn program - so a pid the OS
+# handed to an unrelated process in the meantime is never touched.
+sub pid_alive {
+	my ($pid) = @_;
+	return 0 unless $pid && $pid =~ /^[0-9]+$/;
+	return kill(0, $pid) ? 1 : 0;
+}
+
+sub pid_cmdline {
+	my ($pid) = @_;
+	return '' unless $pid && $pid =~ /^[0-9]+$/;
+	if (open(my $fh, '<', "/proc/$pid/cmdline")) {
+		local $/;
+		my $line = <$fh>;
+		close $fh;
+		$line = '' unless defined $line;
+		$line =~ s/\0/ /g;
+		return $line;
+	}
+	my $ps = `ps -o args= -p $pid 2>/dev/null`;
+	$ps = '' unless defined $ps;
+	$ps =~ s/\s+$//;
+	return $ps;
+}
+
+sub pid_is_jawn {
+	my ($pid) = @_;
+	return &pid_cmdline($pid) =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/ ? 1 : 0;
+}
+
+# Bring the tree up (or not): after a (re)start the master checks that the web
+# port answers, and if it does not within the window it restarts once more, up to
+# a few tries - so a boot that lost a race with another tear-down still recovers.
+sub config_port {
+	my $file = -e './config.json' ? './config.json' : '';
+	return 0 unless $file;
+	my $cfg = eval { return decode_json scalar read_file($file) };
+	my $port = eval { $cfg->{'port'} } || 0;
+	return ($port =~ /^[0-9]+$/) ? $port : 0;
+}
+
+sub tree_serving {
+	my $port = &config_port();
+	return 0 unless $port;
+	require IO::Socket::INET;
+	my $ok = eval {
+		my $sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Timeout => 2);
+		$sock ? (close($sock), 1) : 0;
+	};
+	return $ok ? 1 : 0;
+}
+
+sub arm_boot_watch {
+	return unless &config_port();
+	Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
+	my $deadline = time + 90;
+	$master_boot_watch = Mojo::IOLoop->recurring(3 => sub {
+		my ($loop, $id) = @_;
+		if (&tree_serving()) {
+			print "tree is back up\n";
+			Mojo::IOLoop->remove($id);
+			$master_boot_watch = undef;
+			$master_boot_tries = 0;
+			return;
+		}
+		return if time < $deadline;
+		Mojo::IOLoop->remove($id);
+		$master_boot_watch = undef;
+		$master_boot_tries = ($master_boot_tries || 0) + 1;
+		if ($master_boot_tries <= 3) {
+			print "the tree did not come up in 90s; restarting it (attempt $master_boot_tries)\n";
+			$status = 'frozen';
+		}
+		else {
+			print "the tree did not come up after $master_boot_tries attempts; leaving it for a person\n";
+			$master_boot_tries = 0;
+		}
+	});
 }
 
 sub process_watch() {
