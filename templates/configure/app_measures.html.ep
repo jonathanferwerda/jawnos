@@ -60,25 +60,25 @@
 		<input value="<%= &subs::format_name($m) %>" oldvalue="<%= $m %>" class="app_measure_configuration" setting="measure" style="display:none;">
 		<div class="app_measure_configuration_container" measure="<%= $m %>" app="<%= $a %>">
 			<select class="app_measure_configuration" setting="type" oldvalue="<%= $am->{$m}->{'type'} %>">
-				<option <% if ($am->{$m}->{'type'} eq 'none') { %>selected <% } %> value="none">None</option>
+				<option <% if (($am->{$m}->{'type'} // '') eq 'none') { %>selected <% } %> value="none">None</option>
 				<% foreach my $t ( qw/select multiple_select range text number/ ) { %>
-					<option <% if ($am->{$m}->{'type'} eq $t) { %>selected <% } %> value="<%= $t %>"><%= &subs::format_name($t) %></option>
+					<option <% if (($am->{$m}->{'type'} // '') eq $t) { %>selected <% } %> value="<%= $t %>"><%= &subs::format_name($t) %></option>
 				<% } %>
 			</select>
-			<% if ($am->{$m}->{'type'} eq 'range' || $am->{$m}->{'type'} eq 'number') { %>
+			<% if (($am->{$m}->{'type'} // '') eq 'range' || ($am->{$m}->{'type'} // '') eq 'number') { %>
 				Min:<input type="number" value="<%= $am->{$m}->{'min'} %>" class="app_measure_configuration" setting="min" oldvalue="<%= $am->{$m}->{'min'} %>">
 				Max:<input type="number" value="<%= $am->{$m}->{'max'} %>" class="app_measure_configuration" setting="max" oldvalue="<%= $am->{$m}->{'max'} %>">
-			<% } if ($am->{$m}->{'type'} eq 'select') { %> 
+			<% } if (($am->{$m}->{'type'} // '') eq 'select') { %> 
 				Options:
 				<textarea style="width: 90%;" class="app_measure_configuration" setting="options" oldvalue="<%= join ',', sort @{$am->{$m}->{'options'}} || () %>"><% if ($am->{$m}->{'options'}) { %><%= join ',', sort @{$am->{$m}->{'options'}} %><% } %></textarea>
-			<% } elsif ($am->{$m}->{'type'} eq 'multiple_select') { %>
+			<% } elsif (($am->{$m}->{'type'} // '') eq 'multiple_select') { %>
 				Options:
 				<textarea style="width: 90%;" class="app_measure_configuration" setting="options" oldvalue="<%= join ',', sort @{$am->{$m}->{'options'}} || () %>"><% if ($am->{$m}->{'options'}) { %><%= join ',', sort @{$am->{$m}->{'options'}} %><% } %></textarea>
 			<% } %>
 			<select class="app_measure_configuration" setting="unit" oldvalue="<%= $am->{$m}->{'unit'} %>">
-				<option <% if ($am->{$m}->{'unit'} eq 'none') { %>selected <% } %> value="none">None</option>
+				<option <% if (($am->{$m}->{'unit'} // '') eq 'none') { %>selected <% } %> value="none">None</option>
 				<% foreach my $con ( sort keys %{$gb::measures} ) { %>
-					<option value="<%= $con %>" <% if ($con eq $am->{$m}->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$con}->{'name'}) %></option>
+					<option value="<%= $con %>" <% if ($con eq ($am->{$m}->{'unit'} // '')) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$con}->{'name'}) %></option>
 				<% } %>
 			</select>
 
@@ -88,14 +88,14 @@
 				<div class="app_measure_configuration_matcher_container" app="<%= $a %>" uuid="<%= $cm->{'uuid'} %>" measure="<%= $m %>">
 					<select class="app_measure_configuration_matcher" value="<%= $cm->{'type'} %>" setting="type">
 						<% foreach my $o ( (''), qw/< <= == >= > eq match/ ) { %>
-							<option value="<%= $o %>" <% if ($o eq $cm->{'type'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+							<option value="<%= $o %>" <% if ($o eq ($cm->{'type'} // '')) { %>selected<% } %>><%= &subs::format_name($o) %></option>
 						<% } %>
 					</select>
 					<input class="app_measure_configuration_matcher" placeholder="match" value="<%= $cm->{'match'} %>" setting="match">
 					<input class="app_measure_configuration_matcher" placeholder="app" value="<%= &subs::format_name($cm->{'app'}) %>" setting="app">
 					<select class="app_measure_configuration_matcher" value="<%= $cm->{'action'} %>" setting="action">
 						<% foreach my $s ( (''), sort qw/start toggle usual record/ ) { %>
-							<option value="<%= $s %>" <% if ($cm->{'action'} eq $s) { %>selected<% } %>><%= &subs::format_name($s) %></option>
+							<option value="<%= $s %>" <% if (($cm->{'action'} // '') eq $s) { %>selected<% } %>><%= &subs::format_name($s) %></option>
 						<% } %>
 					</select>
 				</div>
