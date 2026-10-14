@@ -428,7 +428,8 @@ our %topic = (
 		body => [
 			'Security gathers the safety tools: password and pseudonym generation, QR codes, encryption helpers, screen locking and a keyring-style secret store.',
 			'It also shows the neighbour links — which machines are trusted, and with what privilege.',
-			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again.'
+			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again.',
+			'The Recovery view holds the paper code that gets you back in when every ticket is lost and no paired device is at hand: make one and write it down. It is shown once and works until the password changes; enter it under Recovery Code at the gate and that device is paired on the spot.'
 		],
 		related => [ 'box_office', 'devices_and_mesh', 'sealing_files' ]
 	},

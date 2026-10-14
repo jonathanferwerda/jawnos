@@ -1,9 +1,11 @@
-// Paired devices (phase 2): a citizen session pairs this browser once - the
-// ticket scan that signs it in is the pairing grant - and after that the device
-// logs itself back in with a signed challenge: no ticket to lose, no password,
-// any network. The private key is a non-extractable WebCrypto Ed25519 key kept
-// in IndexedDB; the house stores only the public half. Resident and guest
-// access stays ticket-only.
+// Paired devices (phase 2) and the recovery door (phase 3): a citizen session
+// pairs this browser once - the ticket scan that signs it in is the pairing
+// grant - and after that the device logs itself back in with a signed challenge:
+// no ticket to lose, no password, any network. The private key is a
+// non-extractable WebCrypto Ed25519 key kept in IndexedDB; the house stores only
+// the public half. If every device is gone, the paper recovery code typed at the
+// gate unwraps the house key and pairs the device on the spot. Resident and
+// guest access stays ticket-only.
 (function () {
 	function b64(buf) {
 		var bytes = new Uint8Array(buf);
@@ -54,7 +56,40 @@
 
 	var onGate = !!document.getElementById('president');
 
+	// the gate's recovery door: the paper code unwraps the house key and pairs
+	// this browser. Shown to everyone at the gate, but only the code opens it.
+	function wireRecovery() {
+		var toggle = document.getElementById('recovery_toggle');
+		if (!toggle) { return; }
+		var panel = document.getElementById('recovery_panel');
+		var status = document.getElementById('recovery_status');
+		toggle.addEventListener('click', function () {
+			panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+		});
+		document.getElementById('recovery_submit').addEventListener('click', function () {
+			var code = (document.getElementById('recovery_code_input').value || '').trim();
+			if (!code) { status.textContent = 'Type the code first.'; return; }
+			if (!ed25519()) { status.textContent = 'This browser cannot hold a device key.'; return; }
+			status.textContent = 'Checking...';
+			crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+					return post('/manager/device/recover', { code: code, pubkey: b64(spki), name: deviceLabel() }).then(function (r) {
+						if (r && r.ok && r.device_uuid) {
+							return idbPut('device_key', pair.privateKey).then(function () {
+								localStorage.setItem('device_uuid', r.device_uuid);
+								status.textContent = 'Recovered. Loading...';
+								window.location.reload();
+							});
+						}
+						status.textContent = (r && r.error === 'too many') ? 'Too many attempts. Try again later.' : 'That code was not accepted.';
+					});
+				});
+			}).catch(function () { status.textContent = 'That code was not accepted.'; });
+		});
+	}
+
 	if (onGate) {
+		wireRecovery();
 		// at the gate: walk in on this device's own key, if it has one
 		var uuid = localStorage.getItem('device_uuid');
 		if (!uuid || !ed25519() || !crypto.subtle.importKey) { return; }

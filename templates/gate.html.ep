@@ -55,6 +55,14 @@
 	<% } %>
 </div>
 <br>
+<div id="recovery_door" style="margin-top:10px;">
+	<button id="recovery_toggle">Recovery Code</button>
+	<div id="recovery_panel" style="display:none;margin-top:8px;">
+		<input type="text" id="recovery_code_input" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="width:90%;max-width:420px;text-transform:uppercase;">
+		<button id="recovery_submit">Enter</button>
+		<div id="recovery_status" style="min-height:22px;"></div>
+	</div>
+</div>
 <div id="results_grabber" class="results_grabber">
 	<% if (scalar @{$restore_list} > 0) { %>
 		<% foreach my $b ( @{$restore_list} ) { %>

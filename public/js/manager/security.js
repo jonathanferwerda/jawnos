@@ -187,6 +187,27 @@ $(document).on('click', '.device_revoke', function() {
 	});
 });
 
+$(document).on('click', '#recovery_create', function() {
+	$.ajax({
+		url: '/manager/security/recovery/create',
+		type: 'POST',
+		data: { timestamp: Date.now(), security_view: 'recovery' },
+		success: function(response) {
+			if (!response || !response.ok || !response.code) {
+				$('#alert').html('Could not make a recovery code').show();
+				return;
+			}
+			$('#security').replaceWith(response.html);
+			appointment_chron();
+			$('#recovery_code_display').show();
+			$('#recovery_code_value').text(response.code);
+		},
+		error: function() {
+			$('#alert').html('Could not make a recovery code').show();
+		}
+	});
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');

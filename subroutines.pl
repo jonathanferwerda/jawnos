@@ -8356,6 +8356,42 @@ sub signature_verify {
 	return $ok ? 1 : 0;
 }
 
+# --- the recovery code --------------------------------------------------------
+# The paper code: eight groups of five from Crockford's alphabet (no I, L, O or
+# U to mistype). Verification is the decryption itself - the code unwraps a copy
+# of the suds sealed to it - so the house keeps no hash, only the sealed blob.
+sub recovery_code_make {
+	# 200 bits straight from /dev/urandom: 40 characters of 5 bits. The code
+	# unwraps the house key, so Perl's rand (predictable, and inherited by forked
+	# workers) is not good enough. Each byte mod 32 is uniform: 256 divides by 32.
+	my $chars = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+	my $raw = '';
+	if (open my $fh, '<', '/dev/urandom') {
+		binmode $fh;
+		my $bytes = '';
+		read($fh, $bytes, 40);
+		close $fh;
+		$raw = join '', map { substr($chars, ord($_) % 32, 1) } split '', $bytes if length($bytes) == 40;
+	}
+	unless (length($raw) == 40) {
+		# a last resort only: stretch everything weak we have through md5
+		my $seed = join '|', ($$, time, &random_string_creator(40));
+		my $hex = md5_sum($seed) . md5_sum(reverse $seed);
+		$raw = join '', map { substr($chars, hex($_), 1) } split '', substr($hex, 0, 40);
+	}
+	my @groups = $raw =~ /.{5}/g;
+	return join '-', @groups;
+}
+
+sub recovery_code_clean {
+	my ($code) = @_;
+	return '' unless defined $code;
+	$code = uc $code;
+	$code =~ s/[^0-9A-Z]+//gi;
+	$code =~ tr/ILO/110/;
+	return $code;
+}
+
 sub c_maker() {
 	my $c = &subs::controller_builder();
 	&subs::suds_grabber();

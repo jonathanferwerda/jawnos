@@ -1,6 +1,6 @@
 # Ticket, device, and suds — access design
 
-Status: proposal, not built. Written 2026-10-13.
+Status: built through phase 4; of phase 3 the paper-code door is done, second-device approval still to come. Written 2026-10-13.
 
 ## Goal
 
@@ -138,7 +138,14 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    needed for revocation. Notes: the gate's hook allowlist must admit `/manager/device` and
    `/js/device.js`; and the debrief local-storage snapshot can restore a stale `device_uuid`
    into a fresh browser, so pairing keys on the *keypair* being present, not the uuid.
-3. **Recovery** — recovery code at initialization; second-device approval flow.
+3. **Recovery** — *(the paper code is done in this build; second-device approval still to come)*
+   Security → Recovery mints a Crockford code (eight five-character groups drawn from
+   `/dev/urandom`) and seals the suds to it in `settings('__president','recovery')`; the gate's
+   Recovery Code box (`/manager/device/recover`, IP-throttled, judged by the `suds_current`
+   canary) unwraps it, seeds the vault, pairs the device and mints the citizen session. The
+   server never stores the code itself — verification is the decryption. A password change
+   sets the old code aside (`recovery_stale`) because it changes the suds; no code exists until
+   one is made.
 4. **Peer keys** — *(done in this build)* each machine has an Ed25519 pair (`~/.peer.key`);
    `remote_useragent_maker` signs every peer request (timestamp + nonce over method/path),
    and `subs::peer_verify` checks it against `remote_machines.pubkey`, pinning the key on

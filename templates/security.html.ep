@@ -6,6 +6,7 @@
 		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
 		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>
 		<button class="security_view_select" view="devices" style="<% if ($president->{'security_view'} eq 'devices') { %>background-color:lightgreen;<% } %>">Devices</button>
+		<button class="security_view_select" view="recovery" style="<% if ($president->{'security_view'} eq 'recovery') { %>background-color:lightgreen;<% } %>">Recovery</button>
 	</div>
 	<br><br><br><br>
 	<div class="security_view" view="padlock" style="width:100%;position:absolute;bottom:0px;<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
@@ -98,5 +99,26 @@
 				<% } %>
 			</tbody>
 		</table>
+	</div>
+	<div class="security_view" view="recovery" style="text-align:center;padding:10px;<% unless ( $president->{'security_view'} eq 'recovery' ) { %>display:none;<% } %>">
+		<h2>Recovery code</h2>
+		<p style="max-width:640px;margin:0 auto;">
+			If every ticket is lost and no paired device is at hand, the recovery code is the way back in:
+			type it at the house's gate and that device is paired on the spot. It is shown once, so write it
+			on paper and keep it with your important documents. It stays good until the password changes.
+		</p>
+		<% if ($recovery_stale) { %>
+			<p style="color:darkred;"><b>The old code was set aside when the password changed</b> — it will not work. Make a new one.</p>
+		<% } %>
+		<% if ($recovery) { %>
+			<p>The current code was made <span class="time" timestamp="<%= $recovery->{'server_time'} %>"></span>.</p>
+		<% } elsif (!$recovery_stale) { %>
+			<p><b>No recovery code exists yet.</b></p>
+		<% } %>
+		<button id="recovery_create"><%= $recovery ? 'Make a new code' : 'Make a recovery code' %></button>
+		<div id="recovery_code_display" style="display:none;margin-top:14px;">
+			<p><b>Write this down now — it will not be shown again.</b></p>
+			<div id="recovery_code_value" style="display:inline-block;font-family:monospace;font-size:26px;letter-spacing:3px;background-color:var(--panel);border:solid;border-radius:8px;padding:14px;"></div>
+		</div>
 	</div>
 </div>

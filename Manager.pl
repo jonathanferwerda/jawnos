@@ -20088,6 +20088,8 @@ sub security_initializer($c) {
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $neighbour_link = &subs::db_select('neighbour_link')->hashes;
 	my $devices = &subs::db_select('paired_devices', undef, {})->hashes || [];
+	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
+	my $recovery_stale = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery_stale')->hashes->[0];
 	my $president = &subs::settings_grabber({ app => '__president' });
 	if ($c->param('security_view')) {
 		$president->{'security_view'} = $c->param('security_view');
@@ -20099,6 +20101,8 @@ sub security_initializer($c) {
 		window_maker => $c->param('window_maker'),
 		neighbour_link => $neighbour_link,
 		devices => $devices,
+		recovery => $recovery,
+		recovery_stale => $recovery_stale,
 		config => $config
 	);
 	my $padlocker = &subs::db_select('security', undef, { level => 'padlock' })->hashes || [];
@@ -20151,6 +20155,46 @@ post '/manager/security/neighbour_link_privilege' => sub($c) {
 	$c->render(text => &security_initializer($c));
 };
 
+# The paired-device plumbing shared by pair, device login and recovery.
+sub device_store_pubkey($armor, $name, $agent) {
+	my $pem;
+	if ($armor =~ /BEGIN PUBLIC KEY/) { $pem = $armor; }
+	elsif ($armor =~ /^[A-Za-z0-9+\/=\r\n]+$/) { $pem = "-----BEGIN PUBLIC KEY-----\n" . $armor . "\n-----END PUBLIC KEY-----\n"; }
+	return unless $pem;
+	my $now = &subs::rightNow();
+	my $uuid = &subs::random_string_creator(25);
+	&subs::db_insert('paired_devices', {
+		uuid => $uuid,
+		name => substr($name || 'Device', 0, 60),
+		pubkey => $pem,
+		privilege => 'citizen',
+		status => 'active',
+		timestamp => $now,
+		server_time => $now,
+		agent => substr($agent // '', 0, 400)
+	});
+	return $uuid;
+}
+
+sub device_session_mint($c, $device_uuid) {
+	my ($db,$database) = &subs::database_grabber();
+	return unless $db;
+	my $now = &subs::rightNow();
+	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-3h', $now);
+	$c->session('authentication' => 'approved');
+	$c->session('database' => $database);
+	$c->session('suds_id' => &subs::suds_id(&subs::session_suds($c)));
+	$c->session('warranty' => $warranty);
+	$c->session('string' => &subs::random_string_creator());
+	$c->session('name' => &subs::setting_grabber({ app => 'me', setting => 'name' }));
+	$c->session('privilege' => 'citizen');
+	$c->session('source' => 'device');
+	$c->session('device_uuid' => $device_uuid);
+	$c->session('server_time' => $now);
+	&subs::db_update('paired_devices', { last_seen => $now }, { uuid => $device_uuid }) if $device_uuid;
+	return 1;
+}
+
 # --- paired devices -----------------------------------------------------------
 # A citizen session pairs the browser it runs in: the ticket scan (or the
 # password login) is the pairing grant, one public key is stored, and after
@@ -20161,24 +20205,9 @@ post '/manager/device/pair' => sub($c) {
 		$c->render(json => { ok => 0, error => 'citizen session required' });
 		return;
 	}
-	my $armor = $c->param('pubkey') || '';
 	my $name = substr($c->param('name') || 'Device', 0, 60);
-	my $pem;
-	if ($armor =~ /BEGIN PUBLIC KEY/) { $pem = $armor; }
-	elsif ($armor =~ /^[A-Za-z0-9+\/=\r\n]+$/) { $pem = "-----BEGIN PUBLIC KEY-----\n" . $armor . "\n-----END PUBLIC KEY-----\n"; }
-	unless ($pem && $pem =~ /BEGIN PUBLIC KEY/) { $c->render(json => { ok => 0, error => 'no key' }); return; }
-	my $now = &subs::rightNow();
-	my $uuid = &subs::random_string_creator(25);
-	&subs::db_insert('paired_devices', {
-		uuid => $uuid,
-		name => $name,
-		pubkey => $pem,
-		privilege => 'citizen',
-		status => 'active',
-		timestamp => $now,
-		server_time => $now,
-		agent => substr(($c->req->headers->user_agent // ''), 0, 400)
-	});
+	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
+	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
 	$c->session('device_uuid' => $uuid);
 	$c->render(json => { ok => 1, device_uuid => $uuid, name => $name });
 };
@@ -20209,18 +20238,7 @@ post '/manager/device/login' => sub($c) {
 	my $msg = join "\n", ('device-login', $device_uuid, $nonce);
 	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $signature)) { $c->render(json => { ok => 0 }); return; }
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'device_nonce', $stamp);
-	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-3h', $now);
-	$c->session('authentication' => 'approved');
-	$c->session('database' => $database);
-	$c->session('suds_id' => &subs::suds_id(&subs::session_suds($c)));
-	$c->session('warranty' => $warranty);
-	$c->session('string' => &subs::random_string_creator());
-	$c->session('name' => &subs::setting_grabber({ app => 'me', setting => 'name' }));
-	$c->session('privilege' => 'citizen');
-	$c->session('source' => 'device');
-	$c->session('device_uuid' => $device_uuid);
-	$c->session('server_time' => $now);
-	&subs::db_update('paired_devices', { last_seen => $now }, { uuid => $device_uuid });
+	&device_session_mint($c, $device_uuid);
 	$c->render(json => { ok => 1, name => $device->{'name'} });
 };
 
@@ -20232,6 +20250,53 @@ post '/manager/security/device_revoke' => sub($c) {
 	my $uuid = $c->param('uuid');
 	&subs::db_delete('paired_devices', { uuid => $uuid }) if $uuid;
 	$c->render(json => &security_initializer($c));
+};
+
+post '/manager/security/recovery/create' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $code = &subs::recovery_code_make();
+	my $canon = &subs::recovery_code_clean($code);
+	my $suds = &subs::session_suds($c);
+	my $sealed = ($suds && length $suds) ? &subs::note_encrypter($canon, $suds) : undef;
+	unless ($sealed) { $c->render(json => { ok => 0 }); return; }
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'recovery');
+	&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'recovery_stale');
+	&subs::db_insert('settings', { app => '__president', setting => 'recovery', device => 'all', value => $sealed, timestamp => $now, server_time => $now });
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, code => $code, html => $sec->{'html'} });
+};
+
+# The gate's recovery door: the paper code unwraps the sealed suds and the
+# browser is paired on the spot. Throttled per address, and a stale code (the
+# house key changed since it was made) is refused by the canary check.
+post '/manager/device/recover' => sub($c) {
+	my $code = &subs::recovery_code_clean($c->param('code'));
+	unless (length $code >= 20) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	my $ip = $c->tx->remote_address;
+	my $now = &subs::rightNow();
+	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'recovery_attempt', $ip . ':%', $now - 3600000)->hash->{'n'} || 0;
+	if ($tries >= 5) { $c->render(json => { ok => 0, error => 'too many' }); return; }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'recovery_attempt', app => '__president', server_time => $now, timestamp => $now });
+	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
+	unless ($row && $row->{'value'}) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	my $suds = eval { &subs::note_decrypter($code, $row->{'value'}) };
+	$suds =~ s/\s+$// if $suds;
+	unless ($suds && &subs::suds_current($suds)) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	&subs::vault_seed($suds, 1);
+	# this worker must resolve the recovered key at once (the session's suds_id
+	# is minted from it), and the duty stamp nudges the other workers to re-read
+	# the vault instead of their memoized copy
+	$gb::suds = $suds;
+	&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => &subs::rightNow() });
+	my $name = substr($c->param('name') || 'Recovered Device', 0, 60);
+	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
+	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
+	&device_session_mint($c, $uuid);
+	$c->render(json => { ok => 1, device_uuid => $uuid, name => $name });
 };
 
 post '/manager/security/neighbour_link_delete' => sub($c) {
@@ -21636,6 +21701,13 @@ post '/manager/configure/password_update' => sub($c) {
 		}
 		&subs::db_insert('security', { level => 1, database => $database, credential => $credential, timestamp => $timestamp, server_time => $server_time, uuid => &subs::random_string_creator(30) });
 		&subs::vault_seed($numerics, 1);
+		# the paper code sealed the old key and only a fresh code can be sealed
+		# (the old one is not on hand), so mark it stale for the Security view
+		my $recovery_exists = &subs::db_query('select uuid from settings where app = ? and setting = ? limit 1', '__president', 'recovery')->hashes->[0];
+		if ($recovery_exists) {
+			&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'recovery');
+			&subs::db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'password_update', timestamp => $server_time, server_time => $server_time });
+		}
 		$c->session('suds_id' => &subs::suds_id($numerics));
 		&subs::db_delete('security', { level => 'padlock' });
 		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
