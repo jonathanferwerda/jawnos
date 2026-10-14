@@ -3521,14 +3521,21 @@ post '/sesh_check' => sub ($c) {
 			$reject_count = $reject_count + 1;
 			$c->session('reject_count' => $reject_count);
 			my $visitor = $local_address eq $remote_address ? 'Me' : $computer || 'door';
-			&subs::say_it('Access denied: ' . $visitor);
+			# a caller that asked for silence (a peer reconnecting) is refused
+			# quietly: speaking on every attempt turned a stale neighbour link
+			# into an alarm on the machine's own speakers.
+			unless ($c->param('silence')) {
+				&subs::say_it('Access denied: ' . $visitor);
+			}
 			&subs::db_insert('appointments',{ warranty => $me_warranty, uuid => &subs::random_string_creator(40), app => "customs", type => "reject", timestamp => $timestamp, server_time => $server_time }) if $db_exists == 1;
 			$c->render(json => { 'authentication' => 'rejected'});
 			$c->session('authentication' => 'rejected');
-			&subs::say_it('I reject: ' . $remote_address);
 			$c->stash('browser_tab_id' => undef);
 			$c->session('suds_id' => undef);
-			&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB open', image => "/images/make believe/explosion.png" },$database);
+			unless ($c->param('silence')) {
+				&subs::say_it('I reject: ' . $remote_address);
+				&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB open', image => "/images/make believe/explosion.png" },$database);
+			}
 
 		}
 	}
@@ -3536,12 +3543,16 @@ post '/sesh_check' => sub ($c) {
 			my $reject_count = $c->session('reject_count') + 1;
 			$c->session('reject_count' => $reject_count);
 			my $visitor = $local_address eq $remote_address ? 'Me' : 'door';
-			&subs::say_it('Access denied: ' . $visitor);
+			unless ($c->param('silence')) {
+				&subs::say_it('Access denied: ' . $visitor);
+			}
 			$c->render(json => { 'authentication' => 'rejected'});
 			$c->session('authentication' => 'rejected');
 			$c->session('suds_id' => undef);
 			$c->stash('browser_tab_id' => undef);
-			&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB Closed: ' . $c->tx->remote_address . '<br>' . $c->req->url->path, image => "/images/make believe/explosion.png" },$database);
+			unless ($c->param('silence')) {
+				&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB Closed: ' . $c->tx->remote_address . '<br>' . $c->req->url->path, image => "/images/make believe/explosion.png" },$database);
+			}
 	}
 };
 

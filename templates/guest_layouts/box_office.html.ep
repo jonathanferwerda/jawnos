@@ -1,22 +1,20 @@
 <html>
 	<style>
 		html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+		/* the mark, front and centre, with a warm glow behind it - no pause, the
+		   destination loads right after */
 		#stage {
 			position: fixed; inset: 0;
-			background: #000;
 			display: flex; align-items: center; justify-content: center;
+			background: radial-gradient(circle at 50% 46%,
+				rgba(255, 204, 0, .17) 0%, rgba(255, 204, 0, .05) 36%, #000 68%);
+			animation: jawn_in .18s ease-out both;
 		}
-		/* The mark (J+F as an 8 with a flat top) sinks into its own lower loop -
-		   the hole, centred, about a third up from the bottom. transform-origin
-		   is that loop, so scaling to nothing is the fall into the hole. */
 		#jawn_mark {
-			height: 58vh; max-width: 58vw;
-			transform-origin: 50% 78%;
-			animation: jawn_in .12s ease-out both,
-			           jawn_sink .18s cubic-bezier(.55, 0, .9, .35) .1s both;
+			height: 46vh; max-width: 46vw;
+			filter: drop-shadow(0 0 46px rgba(255, 204, 0, .42));
 		}
-		@keyframes jawn_in   { from { opacity: 0; transform: scale(1.08); } to { opacity: 1; transform: scale(1); } }
-		@keyframes jawn_sink { to { opacity: 0; transform: scale(.03); } }
+		@keyframes jawn_in { from { opacity: 0; } to { opacity: 1; } }
 	</style>
 	<div id="stage">
 		<img id="jawn_mark" src="<%= $logo || &subs::icon_for('/images/jbuttons/logo1.png') %>">
@@ -29,7 +27,6 @@
 			var js = $('#box_office_stash').text();
 			var jso = JSON.parse(js);
 			try { gateKeeper(jso); } catch (e) { console.log(e); }
-			// no pause: the mark falls into its hole and the destination loads
-			setTimeout(function () { window.location = jso['redirector']; }, 300);
+			setTimeout(function () { window.location = jso['redirector']; }, 350);
 	</script>
 </html>
