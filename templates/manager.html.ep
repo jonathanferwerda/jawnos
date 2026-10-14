@@ -39,32 +39,33 @@
 </div>
 
 <div id="top_right_buttons">
-	<div id="assistant_view" style="position:fixed;height:360px;width:320px;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
-		<div id="assistant_header" style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;gap:6px;padding:0 6px;box-sizing:border-box;border-bottom:1px solid var(--line);">
-			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb" id="assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
-			<span style="flex:1;font-weight:bold;font-size:13px;opacity:.85;">Guide's associate</span>
+	<div id="assistant_view" class="assistant_view" conversation="assistant" style="position:fixed;height:360px;width:320px;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
+		<div class="assistant_header" hint="Drag here to move this associate" style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;gap:6px;padding:0 6px;box-sizing:border-box;border-bottom:1px solid var(--line);cursor:move;">
+			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
+			<span class="assistant_title" style="flex:1;font-weight:bold;font-size:13px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Guide's associate</span>
 			<% my $guide_confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' }); %>
-			<img id="assistant_config" hint="Configure the Guide's associate" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/set_button.png') %>" jawnos_icon="/images/make believe/set_button.png">
-			<img id="assistant_close" hint="Close" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" jawnos_icon="/images/make believe/cancel_button.png">
+			<span class="assistant_new hover" hint="Open another associate, with its own thread" style="cursor:pointer;font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
+			<img class="assistant_config little_thumb hover" hint="Configure the Guide's associate" src="<%= &subs::icon_for('/images/make believe/set_button.png') %>" jawnos_icon="/images/make believe/set_button.png">
+			<img class="assistant_close little_thumb hover" hint="Close" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" jawnos_icon="/images/make believe/cancel_button.png">
 		</div>
-		<div id="assistant_config_menu" style="position:absolute;top:38px;right:6px;display:none;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;">
-			<label style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;" hint="Confirmation Requirement: with this ticked, the Guide asks before it saves what it proposes; untick it and the Guide saves what it proposes without asking"><input type="checkbox" id="assistant_confirm" <%= (defined $guide_confirm && $guide_confirm eq 'off') ? '' : 'checked' %>> Confirm before saving</label>
-			<div id="assistant_staged_open" class="hover" hint="Show what the Guide has staged and is waiting to save" style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;padding-top:6px;margin-top:6px;border-top:1px solid var(--line);">Staged<span id="assistant_staged_count" style="opacity:.6;"></span></div>
+		<div class="assistant_config_menu" style="position:absolute;top:38px;right:6px;display:none;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;">
+			<label style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;" hint="Confirmation Requirement: with this ticked, the Guide asks before it saves what it proposes; untick it and the Guide saves what it proposes without asking"><input type="checkbox" class="assistant_confirm" <%= (defined $guide_confirm && $guide_confirm eq 'off') ? '' : 'checked' %>> Confirm before saving</label>
+			<div class="assistant_staged_open hover" hint="Show what the Guide has staged and is waiting to save" style="display:flex;align-items:center;gap:5px;font-size:12px;opacity:.9;cursor:pointer;white-space:nowrap;padding-top:6px;margin-top:6px;border-top:1px solid var(--line);">Staged<span class="assistant_staged_count" style="opacity:.6;"></span></div>
 		</div>
 		<div class="assistant_chat_log" style="position:absolute;top:38px;bottom:46px;left:0;right:0;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
-		<div style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);" id="assistant_input_row">
-			<textarea id="assistant_question" rows="1" placeholder="Ask the guide…" style="flex:1;box-sizing:border-box;height:32px;min-height:32px;max-height:32px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-size:13px;font-family:inherit;"></textarea>
-			<button id="assistant_send" class="button" hint="Ask, or ask it to do it" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Ask</button>
+		<div class="assistant_input_row" style="position:absolute;bottom:0;left:0;right:0;height:46px;display:flex;gap:6px;align-items:center;padding:0 8px;box-sizing:border-box;border-top:1px solid var(--line);background:var(--panel);">
+			<textarea class="assistant_question" rows="1" placeholder="Ask the guide…" style="flex:1;box-sizing:border-box;height:32px;min-height:32px;max-height:32px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-size:13px;font-family:inherit;"></textarea>
+			<button class="assistant_send button" hint="Ask, or ask it to do it" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Ask</button>
 		</div>
-		<div id="assistant_staged_panel" style="position:absolute;top:38px;bottom:0;left:0;right:0;display:none;flex-direction:column;box-sizing:border-box;background:var(--panel);">
+		<div class="assistant_staged_panel" style="position:absolute;top:38px;bottom:0;left:0;right:0;display:none;flex-direction:column;box-sizing:border-box;background:var(--panel);">
 			<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);box-sizing:border-box;">
-				<img id="assistant_staged_back" hint="Back to the chat, as you left it" class="little_thumb hover" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" jawnos_icon="/images/make believe/left arrow.png">
+				<img class="assistant_staged_back little_thumb hover" hint="Back to the chat, as you left it" src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" jawnos_icon="/images/make believe/left arrow.png">
 				<span style="font-weight:bold;font-size:13px;opacity:.85;">Staged appointments</span>
 			</div>
-			<div id="assistant_staged_list" style="flex:1;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
+			<div class="assistant_staged_list" style="flex:1;overflow-y:auto;padding:8px 10px;box-sizing:border-box;"></div>
 		</div>
-		<span id="assistant_model" style="display:none;"><%= &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) %></span>
-		<span id="assistant_trash_icon" style="display:none;"><%= &subs::icon_path('trash', '/icons/trash.png') %></span>
+		<span class="assistant_model" style="display:none;"><%= &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) %></span>
+		<span class="assistant_trash_icon" style="display:none;"><%= &subs::icon_path('trash', '/icons/trash.png') %></span>
 	</div>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 			<img id="lock_session" hint="Lock session" style="	<% if (scalar @{$padlock} == 0 || grep { $_ ne 'music' } @{$padlock_sighting}) { %>display:none;<% } %>"class="jonathan little_thumb"  src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>

@@ -68,6 +68,7 @@ function codingChatSend(mount) {
 			});
 			if (r.final) { codingChatAdd(mount, 'guide', r.final); }
 			else { codingChatAdd(mount, 'guide', 'Done — now at version ' + (r.version || '?') + '.'); }
+			if (r.title) { var tpanel = codingChatPanel(mount); tpanel.data('title', r.title); if (tpanel.attr('spawned')) { codingChatTitleShow(tpanel); } }
 			codingFixesFetch(mount);
 		},
 		error: function () { codingChatAdd(mount, 'guide', 'The coding agent could not be reached.'); }
@@ -288,20 +289,23 @@ function codingChatArmAll(root) {
 	});
 }
 
-function codingChatSpawn(mount) {
-	var src = codingChatPanel(mount);
-	if (!src.length) { return; }
-	var name;
-	do {
-		jawnos_coding_agents += 1;
-		name = mount + '_agent_' + jawnos_coding_agents;
-	} while ($('#coding_chat_' + name).length);
+function codingChatSpawn(mount, wanted) {
+	var src = mount ? codingChatPanel(mount) : $('.coding_chat').first();
+	if (!src || !src.length) { return $(); }
+	var base = $.trim(src.attr('mount') || 'coding');
+	var name = wanted || '';
+	if (!name) {
+		do {
+			jawnos_coding_agents += 1;
+			name = base + '_agent_' + jawnos_coding_agents;
+		} while ($('#coding_chat_' + name).length);
+	}
 	var clone = src.clone();
 	clone.attr('id', 'coding_chat_' + name).attr('mount', name).attr('conversation', name).attr('spawned', '1');
 	clone.removeAttr('drag_armed');
 	if (src.attr('source_window')) { clone.attr('source_window', src.attr('source_window')); }
 	clone.removeClass('ui-draggable ui-draggable-disabled ui-draggable-handle ui-draggable-dragging');
-	clone.find('.coding_chat_title').text($.trim(src.find('.coding_chat_title').text() || 'Coding agent') + ' ' + jawnos_coding_agents);
+	clone.find('.coding_chat_title').text($.trim(src.find('.coding_chat_title').text() || 'Coding agent') + (wanted ? '' : ' ' + jawnos_coding_agents));
 	clone.find('.coding_chat_log, .coding_fixes_rows').empty();
 	clone.find('.coding_fixes_count').text('0');
 	clone.find('.coding_fixes_panel').css('display', 'none');
@@ -311,7 +315,58 @@ function codingChatSpawn(mount) {
 	$(document.body).append(clone);
 	codingChatArmAll(document.body);
 	clone.find('.coding_chat_input').focus();
-	codingChatAdd(name, 'step', 'A fresh agent — this one keeps its own thread.');
+	if (wanted) { codingChatHydrate(name); }
+	else { codingChatAdd(name, 'step', 'A fresh agent — this one keeps its own thread.'); }
+	return clone;
+}
+
+function codingChatTitleShow(panel) {
+	var t = panel.data('title');
+	if (t) { panel.find('.coding_chat_title').text(t); }
+}
+
+// Re-open a thread from the agents list: the remembered turns are fetched and
+// replayed into the log (action rows and the tool's observations stay out of it).
+function codingChatHydrate(mount) {
+	var panel = codingChatPanel(mount);
+	if (!panel.length) { return; }
+	$.get('/manager/agents/thread', { kind: 'coding', name: mount }, function (r) {
+		var transcript = (r && r.transcript) || [];
+		if (r && r.title) { panel.data('title', r.title); codingChatTitleShow(panel); }
+		var shown = 0;
+		transcript.forEach(function (m) {
+			var role = m.role || 'user';
+			var content = String(m.content || '');
+			if (role === 'user') { codingChatAdd(mount, 'user', content); shown++; }
+			else if (role === 'assistant' && !/^\s*\{/.test(content) && content !== 'done') { codingChatAdd(mount, 'guide', content); shown++; }
+		});
+		if (!shown) { codingChatAdd(mount, 'step', 'Nothing has been asked here yet.'); }
+	});
+}
+
+// Open the conversation `name`: a panel already wearing it comes forward; else
+// one is made - a clone of any open coding panel, or (with none on screen) the
+// terminal is opened first, since that is where a coding panel lives.
+function codingChatOpenConversation(name) {
+	var existing = $('.coding_chat').filter(function () { return ($(this).attr('conversation') || $(this).attr('mount')) === name; });
+	if (existing.length) {
+		var panel = existing.first();
+		jawnos_coding_top += 1;
+		panel.css({ display: 'flex', 'z-index': jawnos_coding_top });
+		panel.find('.coding_chat_input').focus();
+		return panel;
+	}
+	if ($('.coding_chat').length) { return codingChatSpawn(null, name); }
+	if (typeof appWindowOpener === 'function') {
+		appWindowOpener('terminal', Date.now(), { visible: 'yes' });
+		var tries = 0;
+		var timer = setInterval(function () {
+			tries += 1;
+			if ($('.coding_chat').length) { clearInterval(timer); codingChatSpawn(null, name); }
+			else if (tries > 40) { clearInterval(timer); }
+		}, 250);
+	}
+	return null;
 }
 
 $(document).on('click', '.coding_chat_new', function () {

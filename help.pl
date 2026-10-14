@@ -163,10 +163,10 @@ our %topic = (
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
-			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the app\'s own scripts asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it).',
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
 			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply. Every fix that ships is recorded: Fixed so far in Configure → Plat → Self-healing keeps the list, and review shows it.'
 		],
 		steps => [
@@ -758,11 +758,29 @@ our %topic = (
 		],
 		related => [ 'evaluation', 'help_app', 'platform' ]
 	},
+	'agents' => {
+		title => 'Agents (associates and coding)', category => 'functions',
+		templates => [ 'public/js/manager/agents.js' ],
+		verified => '2026-10-14',
+		summary => 'Every Guide associate and Coding agent conversation, named and kept.',
+		body => [
+			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens: every conversation the Guide\'s associate and the Coding agent have had, newest first. A row whose panel is on screen says open; the rest are history. Press a row and its panel comes forward, or is made again with what was said replayed into it.',
+			'Every conversation names itself the way a chat thread does: shortly after the first thing is said, the assistant\'s model gives it a title of two to five words (a plain cut of the words when no model is set), and that name follows it in the list and on the panel\'s bar.',
+			'Conversations live in the app\'s settings, so they sync like the rest and a thread begun on one machine is in the list on another. The list\'s + guide and + coding make fresh conversations; the + in an open panel\'s own bar does the same.',
+			'A history row deletes the way this program deletes: the first press arms it red for two seconds, and a second press inside that window throws the conversation away.'
+		],
+		steps => [
+			'Double-press the Assistant button for the Agents list.',
+			'Press a row to bring its panel forward, or to re-open its thread.',
+			'Press delete on a history row twice to throw the conversation away.'
+		],
+		related => [ 'help_app', 'ide', 'terminal' ]
+	},
 	'platform' => {
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-10-13',
+		verified => '2026-10-14',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
@@ -852,6 +870,7 @@ our %topic = (
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Ben Folds Five" starts the track. It reports each step as it goes.',
 			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. The Guide\'s associate - the small chat in the corner - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, and the chat you left is still there when you come back. It never sends, pays or deletes.',
+			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents).',
 			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
 			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses.',

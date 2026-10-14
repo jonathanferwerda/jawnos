@@ -90,31 +90,40 @@ $(document).ready(function() {
 	assistantInitializer();
 });
 
-$(document).on('click', '#assistant_close', function() {
-	$('#assistant_view').hide();
-	$('#assistant_config_menu').hide();
+$(document).on('click', '.assistant_close', function() {
+	var panel = $(this).closest('.assistant_view');
+	panel.find('.assistant_config_menu').hide();
+	// a spawned associate was made on a whim: closing it takes it away, while the
+	// one the taskbar button owns stays put to be called back
+	if (panel.attr('spawned')) { panel.remove(); }
+	else { panel.hide(); }
 });
 
 // The configure button in the panel's navbar opens the small configuration menu
 // (today just the Confirmation Requirement); anywhere else closes it.
-$(document).on('click', '#assistant_config', function(e) {
+$(document).on('click', '.assistant_config', function(e) {
 	e.stopPropagation();
-	$('#assistant_config_menu').toggle();
-	if ($('#assistant_config_menu').is(':visible')) { assistantStagedRefreshCount(); }
+	var panel = $(this).closest('.assistant_view');
+	$('.assistant_config_menu').hide();
+	panel.find('.assistant_config_menu').toggle();
+	if (panel.find('.assistant_config_menu').is(':visible')) { assistantStagedRefreshCount(panel); }
 });
 $(document).on('click', function(e) {
-	if (!$(e.target).closest('#assistant_config, #assistant_config_menu').length) { $('#assistant_config_menu').hide(); }
+	if (!$(e.target).closest('.assistant_config, .assistant_config_menu').length) { $('.assistant_config_menu').hide(); }
 });
 
 // The Confirmation Requirement, the tick in the panel's header: with it on the
 // Guide stages a proposed appointment and waits for a yes; with it off the
-// guide saves what it proposes as it makes it (helpDoAction reads this).
-$(document).on('change', '#assistant_confirm', function() {
-	settingSetter({ app: '__president', setting: 'guide_confirm', device: 'all', value: $(this).is(':checked') ? 'on' : 'off' });
+// guide saves what it proposes as it makes it (helpDoAction reads this). It is
+// one setting, so every open associate's tick follows the press.
+$(document).on('change', '.assistant_confirm', function() {
+	var on = $(this).is(':checked');
+	$('.assistant_confirm').prop('checked', on);
+	settingSetter({ app: '__president', setting: 'guide_confirm', device: 'all', value: on ? 'on' : 'off' });
 });
 
 function assistantConfirmRequired() {
-	var box = $('#assistant_confirm');
+	var box = $('.assistant_confirm');
 	if (box.length) { return box.is(':checked'); }
 	return true;
 }
@@ -125,8 +134,8 @@ function assistantConfirmRequired() {
 // (discard) its proposal. The chat itself is only hidden, never rebuilt: going
 // back finds the conversation exactly as it was left.
 
-function assistantStagedRefreshCount() {
-	var at = $('#assistant_staged_count');
+function assistantStagedRefreshCount(panel) {
+	var at = panel.find('.assistant_staged_count');
 	if (!at.length) { return; }
 	$.get('/manager/help/staged', function (r) {
 		var n = (r && r.staged) ? r.staged.length : 0;
@@ -134,15 +143,15 @@ function assistantStagedRefreshCount() {
 	});
 }
 
-function assistantStagedShow() {
-	$('#assistant_view .assistant_chat_log, #assistant_input_row').hide();
-	$('#assistant_staged_panel').css('display', 'flex');
-	assistantStagedLoad();
+function assistantStagedShow(panel) {
+	panel.find('.assistant_chat_log, .assistant_input_row').hide();
+	panel.find('.assistant_staged_panel').css('display', 'flex');
+	assistantStagedLoad(panel);
 }
 
-function assistantStagedHide() {
-	$('#assistant_staged_panel').hide();
-	$('#assistant_view .assistant_chat_log, #assistant_input_row').show();
+function assistantStagedHide(panel) {
+	panel.find('.assistant_staged_panel').hide();
+	panel.find('.assistant_chat_log, .assistant_input_row').show();
 }
 
 function assistantStagedWhen(row) {
@@ -152,19 +161,19 @@ function assistantStagedWhen(row) {
 	return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function assistantStagedLoad() {
-	var list = $('#assistant_staged_list');
+function assistantStagedLoad(panel) {
+	var list = panel.find('.assistant_staged_list');
 	if (!list.length) { return; }
 	list.text('…');
 	$.get('/manager/help/staged', function (r) {
-		assistantStagedRender((r && r.staged) || []);
+		assistantStagedRender(panel, (r && r.staged) || []);
 	}).fail(function () { list.text('I could not read the staged list.'); });
 }
 
-function assistantStagedRender(rows) {
-	var list = $('#assistant_staged_list');
+function assistantStagedRender(panel, rows) {
+	var list = panel.find('.assistant_staged_list');
 	list.empty();
-	$('#assistant_staged_count').text(rows.length ? ' (' + rows.length + ')' : '');
+	panel.find('.assistant_staged_count').text(rows.length ? ' (' + rows.length + ')' : '');
 	if (!rows.length) {
 		list.append($('<div style="font-size:12px;opacity:.7;padding:6px 2px;"></div>').text('Nothing is staged.'));
 		return;
@@ -176,7 +185,7 @@ function assistantStagedRender(rows) {
 		var text = $('<div style="flex:1;min-width:0;overflow-wrap:break-word;"></div>');
 		text.append($('<div style="font-size:13px;line-height:1.3;"></div>').text(row.title || '(an appointment)'));
 		text.append($('<div style="font-size:11px;opacity:.65;"></div>').text(assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '')));
-		var trash = $.trim($('#assistant_trash_icon').text()) || '/icons/trash.png';
+		var trash = $.trim(panel.find('.assistant_trash_icon').text()) || '/icons/trash.png';
 		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:pointer;font-size:15px;opacity:.75;">👍</span>';
 		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:pointer;padding:2px;" src="' + trash + '">';
 		item.append(text).append(approve).append(del);
@@ -184,22 +193,24 @@ function assistantStagedRender(rows) {
 	});
 }
 
-$(document).on('click', '#assistant_staged_open', function (e) {
+$(document).on('click', '.assistant_staged_open', function (e) {
 	e.stopPropagation();
-	$('#assistant_config_menu').hide();
-	assistantStagedShow();
+	var panel = $(this).closest('.assistant_view');
+	panel.find('.assistant_config_menu').hide();
+	assistantStagedShow(panel);
 });
 
-$(document).on('click', '#assistant_staged_back', function () { assistantStagedHide(); });
+$(document).on('click', '.assistant_staged_back', function () { assistantStagedHide($(this).closest('.assistant_view')); });
 
 $(document).on('click', '.assistant_staged_approve', function () {
+	var panel = $(this).closest('.assistant_view');
 	var row = $(this).closest('.assistant_staged_row');
 	var title = row.attr('staged_title') || 'the appointment';
 	$.post('/manager/help/promote', { uuid: row.attr('uuid') }, function (r) {
-		if (!r || r.error) { assistantChatAdd('step', 'I could not save that one.'); return; }
-		assistantChatAdd('step', 'Saved the staged “' + title + '”.');
-		assistantStagedLoad();
-	}).fail(function () { assistantChatAdd('step', 'I could not save that one.'); });
+		if (!r || r.error) { assistantChatAdd(panel, 'step', 'I could not save that one.'); return; }
+		assistantChatAdd(panel, 'step', 'Saved the staged “' + title + '”.');
+		assistantStagedLoad(panel);
+	}).fail(function () { assistantChatAdd(panel, 'step', 'I could not save that one.'); });
 });
 
 $(document).on('click', '.assistant_staged_delete', function () {
@@ -210,8 +221,8 @@ $(document).on('click', '.assistant_staged_delete', function () {
 	if (a.attr('armed') == 'yes') {
 		var title = row.attr('staged_title') || 'the appointment';
 		$.post('/manager/help/discard', { uuid: row.attr('uuid') }, function () {
-			assistantChatAdd('step', 'Deleted the staged “' + title + '”.');
-			assistantStagedLoad();
+			assistantChatAdd(a.closest('.assistant_view'), 'step', 'Deleted the staged “' + title + '”.');
+			assistantStagedLoad(a.closest('.assistant_view'));
 		});
 	}
 	else {
@@ -230,14 +241,72 @@ $(document).on('click', '.assistant_staged_delete', function () {
 // that picture into the chat. It shares the Guide's bubble format and its
 // whitelisted actions, but it is its own little window, not the Help app.
 
-var jawnos_assistant_chat = [];
 var jawnos_assistant_dragging = false;
-var jawnos_assistant_topic = '';
+var jawnos_assistant_extra = 0;
+var jawnos_assistant_last = null;
+var jawnos_assistant_top = 990000;
 
-function assistantLog() { return $('#assistant_view .assistant_chat_log'); }
+// Which panel a bubble, a drop or the taskbar button aims at: the one it was
+// asked from, the last one touched, or the first (the taskbar's own).
+function assistantPanel(el) {
+	if (el && $(el).closest('.assistant_view').length) { return $(el).closest('.assistant_view'); }
+	if (jawnos_assistant_last && jawnos_assistant_last.length) { return jawnos_assistant_last; }
+	return $('.assistant_view').first();
+}
+function assistantConversation(panel) { return panel.attr('conversation') || 'assistant'; }
+function assistantThread(panel) {
+	if (!panel.data('thread')) { panel.data('thread', []); }
+	return panel.data('thread');
+}
+function assistantLog(panel) { return panel.find('.assistant_chat_log'); }
 
-function assistantChatAdd(role, text) {
-	var log = assistantLog();
+// Every turn meant to be remembered goes through here, so the thread is saved
+// (debounced) as it grows and the agents list can name, list and re-open it.
+function assistantRemember(panel, role, content) {
+	assistantThread(panel).push({ role: role, content: content });
+	clearTimeout(panel.data('save_timer'));
+	panel.data('save_timer', setTimeout(function () { assistantThreadSave(panel); }, 900));
+}
+
+function assistantThreadSave(panel) {
+	$.ajax({
+		url: '/manager/agents/save',
+		type: 'POST',
+		dataType: 'json',
+		data: { kind: 'guide', name: assistantConversation(panel), transcript: JSON.stringify(assistantThread(panel)) },
+		success: function (r) {
+			if (r && r.title) { panel.data('title', r.title); assistantTitleShow(panel); }
+		}
+	});
+}
+
+// A reload can arrive (an update) inside the save debounce: flush whatever is
+// still owed as the page goes, or the last turn would be lost from the history.
+function assistantThreadFlush() {
+	$('.assistant_view').each(function () {
+		var panel = $(this);
+		clearTimeout(panel.data('save_timer'));
+		if (!assistantThread(panel).length) { return; }
+		try {
+			$.ajax({
+				url: '/manager/agents/save',
+				type: 'POST',
+				async: false,
+				dataType: 'json',
+				data: { kind: 'guide', name: assistantConversation(panel), transcript: JSON.stringify(assistantThread(panel)) }
+			});
+		} catch (e) { /* the page is going; a lost save is better than a stuck one */ }
+	});
+}
+window.addEventListener('beforeunload', assistantThreadFlush);
+
+function assistantTitleShow(panel) {
+	var t = panel.data('title');
+	if (t) { panel.find('.assistant_title').text(t); }
+}
+
+function assistantChatAdd(panel, role, text) {
+	var log = assistantLog(panel);
 	if (!log.length) { return $(); }
 	var safe = $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
 	if (role === 'step') {
@@ -254,8 +323,8 @@ function assistantChatAdd(role, text) {
 }
 
 // An assistant bubble whose inner .assistant_content the server streams into.
-function assistantAnswerBubble() {
-	var log = assistantLog();
+function assistantAnswerBubble(panel) {
+	var log = assistantLog(panel);
 	if (!log.length) { return $(); }
 	var el = $('<div style="display:flex;margin:4px 0;justify-content:flex-start;">'
 		+ '<span style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;font-size:13px;line-height:1.35;background:#cfe3f5;">'
@@ -265,45 +334,49 @@ function assistantAnswerBubble() {
 	return el.find('.assistant_content');
 }
 
-function assistantOpen() {
-	var av = $('#assistant_view');
-	if (!av.length) { return av; }
-	if (!av.data('greeted')) {
-		av.data('greeted', 1);
-		assistantChatAdd('guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button onto a picture and I'll take a look.");
+function assistantOpenPanel(panel) {
+	if (!panel || !panel.length) { return $(); }
+	if (!panel.data('greeted')) {
+		panel.data('greeted', 1);
+		assistantChatAdd(panel, 'guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button onto a picture and I'll take a look.");
 	}
-	if (!av.is(':visible')) {
-		var w = av.outerWidth(), h = av.outerHeight();
+	if (!panel.is(':visible')) {
+		var w = panel.outerWidth(), h = panel.outerHeight();
 		var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 		var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
 		var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
-		av.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' }).show();
+		panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' }).show();
 	}
-	return av;
+	panel.css('z-index', ++jawnos_assistant_top);
+	jawnos_assistant_last = panel;
+	return panel;
 }
 
-function assistantModel() {
-	var m = $.trim($('#assistant_model').text() || '');
+function assistantOpen() { return assistantOpenPanel(assistantPanel()); }
+
+function assistantModel(panel) {
+	var m = $.trim(panel.find('.assistant_model').text() || '');
 	if (!m && $('#help_model').length) { m = $('#help_model').val() || ''; }
 	return m;
 }
 
 // Text turns go to the same guide agent the Help app uses.
-function assistantAsk() {
-	var q = $.trim($('#assistant_question').val() || '');
+function assistantAsk(panel) {
+	var input = panel.find('.assistant_question');
+	var q = $.trim(input.val() || '');
 	if (!q) { return; }
-	$('#assistant_question').val('');
-	jawnos_assistant_topic = '';
-	assistantOpen();
-	assistantChatAdd('user', q);
-	jawnos_assistant_chat.push({ role: 'user', content: q });
-	assistantGuideStep(0);
+	input.val('');
+	panel.data('topic', '');
+	assistantOpenPanel(panel);
+	assistantChatAdd(panel, 'user', q);
+	assistantRemember(panel, 'user', q);
+	assistantGuideStep(panel, 0);
 }
 
-function assistantGuideStep(n) {
+function assistantGuideStep(panel, n) {
 	if (n >= 6) {
-		assistantChatAdd('step', 'Stopping after several steps.');
-		assistantChatAdd('guide', 'I did not finish that in a few steps — try naming the app, or ask me about it.');
+		assistantChatAdd(panel, 'step', 'Stopping after several steps.');
+		assistantChatAdd(panel, 'guide', 'I did not finish that in a few steps — try naming the app, or ask me about it.');
 		return;
 	}
 	var ctx = (typeof helpContextNow === 'function') ? helpContextNow() : {};
@@ -312,54 +385,54 @@ function assistantGuideStep(n) {
 		type: 'POST',
 		dataType: 'json',
 		data: {
-			transcript: JSON.stringify(jawnos_assistant_chat),
+			transcript: JSON.stringify(assistantThread(panel)),
 			context: JSON.stringify(ctx),
-			topic: jawnos_assistant_topic || '',
-			model: assistantModel()
+			topic: panel.data('topic') || '',
+			model: assistantModel(panel)
 		},
 		success: function (r) {
-			if (r && r.error) { assistantChatAdd('step', r.error); return; }
+			if (r && r.error) { assistantChatAdd(panel, 'step', r.error); return; }
 			var a = (r && r.action) || {};
 			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
-				jawnos_assistant_chat.push({ role: 'assistant', content: a.text || '' });
-				assistantChatAdd('guide', a.text || '');
+				assistantRemember(panel, 'assistant', a.text || '');
+				assistantChatAdd(panel, 'guide', a.text || '');
 				return;
 			}
-			assistantChatAdd('step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
-			jawnos_assistant_chat.push({ role: 'assistant', content: JSON.stringify(a) });
-			if (typeof helpDoAction !== 'function') { assistantChatAdd('step', 'The guide is not available.'); return; }
+			assistantChatAdd(panel, 'step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
+			assistantRemember(panel, 'assistant', JSON.stringify(a));
+			if (typeof helpDoAction !== 'function') { assistantChatAdd(panel, 'step', 'The guide is not available.'); return; }
 			helpDoAction(a, function (obs, friendly) {
-				jawnos_assistant_chat.push({ role: 'tool', content: obs });
+				assistantRemember(panel, 'tool', obs);
 				if (friendly) {
-					jawnos_assistant_chat.push({ role: 'assistant', content: friendly });
-					assistantChatAdd('guide', friendly);
+					assistantRemember(panel, 'assistant', friendly);
+					assistantChatAdd(panel, 'guide', friendly);
 					return;
 				}
-				assistantGuideStep(n + 1);
+				assistantGuideStep(panel, n + 1);
 			});
 		},
-		error: function () { assistantChatAdd('step', 'The guide could not be reached.'); }
+		error: function () { assistantChatAdd(panel, 'step', 'The guide could not be reached.'); }
 	});
 }
 
 // A dropped picture (or voice clip) goes to the assistant; its answer streams
 // into the chat bubble the same way the mailbox one does.
-function assistantDrop(media) {
+function assistantDrop(panel, media) {
 	media = media || {};
-	assistantOpen();
+	assistantOpenPanel(panel);
 	if (media.image) {
-		var log = assistantLog();
+		var log = assistantLog(panel);
 		log.append($('<div style="display:flex;margin:4px 0;justify-content:flex-end;">'
 			+ '<span style="display:inline-block;max-width:84%;border-radius:10px;padding:5px;background:#cdeccd;">'
 			+ '<img style="display:block;max-width:180px;max-height:180px;border-radius:6px;" src="' + media.image + '"></span></div>'));
 		log.scrollTop(log[0].scrollHeight);
-		jawnos_assistant_chat.push({ role: 'user', content: '(I showed you a picture)' });
+		assistantRemember(panel, 'user', '(I showed you a picture)');
 	}
 	else if (media.audio) {
-		assistantChatAdd('user', '(voice clip)');
-		jawnos_assistant_chat.push({ role: 'user', content: '(I played you a voice clip)' });
+		assistantChatAdd(panel, 'user', '(voice clip)');
+		assistantRemember(panel, 'user', '(I played you a voice clip)');
 	}
-	var content = assistantAnswerBubble();
+	var content = assistantAnswerBubble(panel);
 	$.ajax({
 		url: '/manager/assistant',
 		type: 'POST',
@@ -396,45 +469,109 @@ function assistantDescribeElement(el) {
 
 // Dropped onto a control or a window (not a picture): ask the guide about it,
 // carrying the thread on so it remembers what came before.
-function assistantHelpFor(el) {
+function assistantHelpFor(panel, el) {
 	var desc = assistantDescribeElement(el);
-	assistantOpen();
+	assistantOpenPanel(panel);
 	if (!desc) {
-		assistantChatAdd('step', 'Drop me onto a control or a window and I will explain it.');
+		assistantChatAdd(panel, 'step', 'Drop me onto a control or a window and I will explain it.');
 		return;
 	}
 	// the element may name a help topic; hand it over so the guide has the briefing
-	jawnos_assistant_topic = $(el).closest('[help]').attr('help') || '';
-	assistantChatAdd('user', 'Help me with: ' + desc);
-	jawnos_assistant_chat.push({ role: 'user', content: 'The person dragged me onto this element and wants help using it: ' + desc });
-	assistantGuideStep(0);
+	panel.data('topic', $(el).closest('[help]').attr('help') || '');
+	assistantChatAdd(panel, 'user', 'Help me with: ' + desc);
+	assistantRemember(panel, 'user', 'The person dragged me onto this element and wants help using it: ' + desc);
+	assistantGuideStep(panel, 0);
 }
 
-$(document).on('click', '#assistant_send', function () { assistantAsk(); });
-$(document).on('keydown', '#assistant_question', function (e) {
-	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); assistantAsk(); }
+$(document).on('click', '.assistant_send', function () { assistantAsk($(this).closest('.assistant_view')); });
+$(document).on('keydown', '.assistant_question', function (e) {
+	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); assistantAsk($(this).closest('.assistant_view')); }
 });
+$(document).on('click', '.assistant_new', function () { assistantSpawn($(this).closest('.assistant_view')); });
+$(document).on('mousedown', '.assistant_view', function () { jawnos_assistant_last = $(this); });
 $(document).on('click', '#assistant', function () {
 	if (jawnos_assistant_dragging) { return; }
 	assistantOpen();
 });
 
-async function assistantInitializer() {
-	// the whole navbar drags the panel (it spans the width); the corner icon is
-	// left out so it keeps its own drag - drop it on a control or a picture and
-	// the guide looks at whatever is under it (assistantIconInitializer)
-	$('#assistant_view').draggable({
-		revert: "false",
-		zIndex: 999999,
-		handle: '#assistant_header',
-		cancel: '#assistant_anchor, #assistant_close, #assistant_config, #assistant_confirm, input, button, label, textarea',
-		drag: function(p, ui) {
-			// keep the panel on screen and clear of the taskbar, wherever it is dragged
-			var w = $(this).outerWidth(), h = $(this).outerHeight();
-			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
-			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
-			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
-		}
+// Another associate: a clone of an open one, with its own conversation name and
+// thread. Spawned panels are taken away by their close; the taskbar's own stays.
+function assistantSpawn(source) {
+	source = (source && source.length) ? source : $('.assistant_view').first();
+	if (!source.length) { return $(); }
+	var name;
+	do {
+		jawnos_assistant_extra += 1;
+		name = 'assistant_' + jawnos_assistant_extra;
+	} while ($('.assistant_view[conversation="' + name + '"]').length);
+	var clone = source.clone();
+	clone.attr('id', '').attr('conversation', name).attr('spawned', '1');
+	clone.data('thread', []).data('greeted', 0).data('title', '');
+	clone.find('.assistant_chat_log').empty();
+	clone.find('.assistant_staged_panel').hide();
+	clone.find('.assistant_chat_log, .assistant_input_row').show();
+	clone.find('.assistant_config_menu').hide();
+	clone.find('.assistant_title').text('Guide\'s associate ' + jawnos_assistant_extra);
+	clone.removeAttr('drag_armed');
+	clone.find('.assistant_anchor').removeAttr('icon_armed').removeClass('ui-draggable ui-draggable-disabled ui-draggable-handle ui-draggable-dragging');
+	var off = (jawnos_assistant_extra % 6) * 26;
+	clone.css({ display: 'none', right: '', bottom: '', left: Math.max(6, (source.offset().left || 40) + 30 + off) + 'px', top: Math.max(6, (source.offset().top || 40) + 30 + off) + 'px' });
+	$(document.body).append(clone);
+	assistantInitializer();
+	clone.find('.assistant_question').focus();
+	assistantChatAdd(clone, 'step', 'A fresh associate — this one keeps its own thread.');
+	assistantOpenPanel(clone);
+	return clone;
+}
+
+// Re-open a conversation from the agents list (or start its panel if none is
+// open): the remembered turns are fetched and replayed into the log.
+function assistantOpenConversation(name, title) {
+	var existing = $('.assistant_view[conversation="' + name + '"]');
+	if (existing.length) { return assistantOpenPanel(existing.first()); }
+	var panel = assistantSpawn($('.assistant_view').first());
+	if (!panel.length) { return panel; }
+	panel.attr('conversation', name).data('title', title || '').data('greeted', 1);
+	panel.find('.assistant_chat_log').empty();
+	panel.data('thread', []);
+	assistantTitleShow(panel);
+	$.get('/manager/agents/thread', { kind: 'guide', name: name }, function (r) {
+		var transcript = (r && r.transcript) || [];
+		panel.data('thread', transcript);
+		if (r && r.title) { panel.data('title', r.title); assistantTitleShow(panel); }
+		var log = assistantLog(panel);
+		if (!transcript.length) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); return; }
+		var shown = 0;
+		transcript.forEach(function (m) {
+			var role = m.role || 'user';
+			var content = String(m.content || '');
+			if (role === 'user') { assistantChatAdd(panel, 'user', content); shown++; }
+			else if (role === 'assistant' && !/^\s*\{/.test(content)) { assistantChatAdd(panel, 'guide', content); shown++; }
+		});
+		if (!shown) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); }
+		log.scrollTop(log[0] ? log[0].scrollHeight : 0);
+	});
+	return panel;
+}
+
+// The window is armed once per panel: it drags by its header, and every panel
+// wears the same classes, so one arm covers the ones spawned later too.
+function assistantInitializer() {
+	$('.assistant_view:not([drag_armed])').each(function () {
+		var panel = $(this);
+		panel.attr('drag_armed', '1');
+		panel.draggable({
+			revert: 'false',
+			handle: '.assistant_header',
+			cancel: '.assistant_anchor, .assistant_new, .assistant_close, .assistant_config, .assistant_confirm, .assistant_staged_open, input, button, label, textarea',
+			drag: function (e, ui) {
+				// keep the panel on screen and clear of the taskbar, wherever it is dragged
+				var w = $(this).outerWidth(), h = $(this).outerHeight();
+				var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+				ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
+				ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+			}
+		});
 	});
 
 	assistantIconInitializer();
@@ -444,24 +581,28 @@ async function assistantInitializer() {
 // anew on every open, so the drag is armed once at load for the copy the page
 // ships with and again over there after each fetch.
 function assistantIconInitializer() {
-	// the start-menu button, its taskbar pin, and the panel's own corner icon:
+	// the start-menu button, its taskbar pin, and each panel's own corner icon:
 	// drag any of them onto something and the guide looks at whatever is under
-	// the pointer (the panel's copy is excluded from the panel-move handle above)
-	$('#assistant, #assistant_anchor, .taskbar_pin[sel$="#assistant"]').draggable({
-		appendTo: "body",
-		helper: "clone",
-		revert: "invalid",
-		zIndex: 999999,
-		cursorAt: { top: 30, left: 30 },
-		cancel: '',
-		start: function(p,ui) {
-			jawnos_assistant_dragging = true;
-		},
-		drag: function(p,ui) {
-		  ui.position.left = p.pageX - 30;
-		  ui.position.top = p.pageY - 30;
-		},
-		stop: function(p,ui) {
+	// the pointer (the panels' copies are excluded from the panel-move handle
+	// above). Armed once per element - the taskbar re-lays its pins and the
+	// start menu refetches, so a fresh copy arrives unarmed.
+	$('#assistant:not([icon_armed]), .assistant_anchor:not([icon_armed]), .taskbar_pin[sel$="#assistant"]:not([icon_armed])').each(function () {
+		$(this).attr('icon_armed', '1');
+		$(this).draggable({
+			appendTo: "body",
+			helper: "clone",
+			revert: "invalid",
+			zIndex: 999999,
+			cursorAt: { top: 30, left: 30 },
+			cancel: '',
+			start: function(p,ui) {
+				jawnos_assistant_dragging = true;
+			},
+			drag: function(p,ui) {
+			  ui.position.left = p.pageX - 30;
+			  ui.position.top = p.pageY - 30;
+			},
+			stop: function(p,ui) {
 			setTimeout(function () { jawnos_assistant_dragging = false; }, 0);
 			$(this).css('opacity', '1');
 			
@@ -474,7 +615,7 @@ function assistantIconInitializer() {
 			for (var si = 0; si < stack.length; si++) {
 				var cand = stack[si];
 				if (cand === document.body || cand === document.documentElement) { continue; }
-				if ($(cand).closest('#assistant_view, .ui-draggable-dragging').length) { continue; }
+				if ($(cand).closest('.assistant_view, .ui-draggable-dragging').length) { continue; }
 				elementLandedOn = cand;
 				break;
 			}
@@ -555,23 +696,16 @@ function assistantIconInitializer() {
 			}
 			
 			if (image || audio) {
-				assistantDrop({ image: image, base64: base64Data, audio: audio });
+				assistantDrop(assistantPanel(this), { image: image, base64: base64Data, audio: audio });
 			}
 			else {
 				// not a picture: ask the guide about whatever it landed on
-				assistantHelpFor(elementLandedOn);
+				assistantHelpFor(assistantPanel(this), elementLandedOn);
 			}
 
 		}
 	});
-	
-
-
-
-
-
-
-
+	});
 }
 
 // The taskbar rebuilds its pins whenever the order changes, so re-arm the

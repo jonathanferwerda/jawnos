@@ -3242,6 +3242,7 @@ my @manager_bundle_files = qw(
 	/js/manager/notes.js
 	/js/manager/help.js
 	/js/manager/coding.js
+	/js/manager/agents.js
 );
 my $manager_bundle_cache;
 
@@ -19900,8 +19901,8 @@ sub agent_title {
 	$fallback =~ s/^(.{0,32})\b.*$/$1/;
 	$fallback =~ s/\s+$//;
 	my $model = &subs::setting_grabber({ app => 'mail', setting => ($kind eq 'coding' ? 'coding_assistant' : 'help_assistant') })
-		|| &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
-		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	|| &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+	|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	return $fallback unless $model;
 	my ($out, $err) = &subs::evaluation_model_call(
 		$model,
@@ -19972,7 +19973,7 @@ sub agent_registry_adopt {
 get '/manager/agents/list' => sub($c) {
 	&agent_registry_adopt();
 	my @out;
-	foreach my $r ( @{ &agent_registry } ) {
+	foreach my $r ( @{ &agent_registry() } ) {
 		push @out, {
 			kind => (($r->{'kind'} || '') eq 'coding' ? 'coding' : 'guide'),
 			name => ($r->{'name'} || ''),
@@ -19992,7 +19993,7 @@ get '/manager/agents/thread' => sub($c) {
 	my $name = $c->param('name') // '';
 	$name =~ s/[^A-Za-z0-9_-]//g;
 	my $turns = $kind eq 'coding' ? coding_conversation_load($name) : guide_conversation_load($name);
-	my ($row) = grep { ($_->{'kind'} || '') eq $kind && ($_->{'name'} || '') eq $name } @{ &agent_registry };
+	my ($row) = grep { ($_->{'kind'} || '') eq $kind && ($_->{'name'} || '') eq $name } @{ &agent_registry() };
 	$c->render(json => { kind => $kind, name => $name, title => ($row ? ($row->{'title'} || '') : ''), transcript => $turns });
 };
 
@@ -20006,7 +20007,8 @@ post '/manager/agents/save' => sub($c) {
 	$name = 'assistant' unless length $name;
 	my $transcript = eval { decode_json $c->param('transcript') } || [];
 	$transcript = [] unless ref $transcript eq 'ARRAY';
-	if ($kind eq 'guide') { guide_conversation_save($name, $transcript); }
+	if ($kind eq 'coding') { coding_conversation_save($name, $transcript); }
+	else { guide_conversation_save($name, $transcript); }
 	my $row = &agent_registry_note($kind, $name, $transcript);
 	$c->render(json => { ok => 1, title => ($row->{'title'} || ''), name => $name, kind => $kind });
 };
