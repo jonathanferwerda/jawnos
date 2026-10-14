@@ -98,6 +98,13 @@ $(document).ready(function() {
 	assistantInitializer();
 });
 
+// Pressing a control in the associate's header must never begin a drag: the
+// header is the drag handle, and a press that started one swallowed the click
+// (the close button dragged instead of closing).
+$(document).on('mousedown pointerdown touchstart', '.assistant_header .assistant_close, .assistant_header .assistant_config, .assistant_header .assistant_new, .assistant_header .assistant_anchor', function (e) {
+	e.stopPropagation();
+});
+
 $(document).on('click', '.assistant_close', function() {
 	var panel = $(this).closest('.assistant_view');
 	panel.find('.assistant_config_menu').hide();
@@ -443,19 +450,13 @@ function assistantAsk(panel) {
 		else { assistantConversationOn(panel); assistantConversationListen(panel); }
 		return;
 	}
-	// "hey jawn"/"jawn do" open a conversation, "bye jawn" ends one
+	// "bye jawn" ends a conversation; there is no wake phrase to open one - an
+	// empty Ask opens the mic and keeps listening between answers.
 	if (typeof helpConversationBye === 'function' && helpConversationBye(q)) {
 		input.val('');
 		assistantButtonLabel(panel);
 		if (assistantTalking(panel)) { assistantConversationEnd(panel); }
 		return;
-	}
-	var wake_rest = (typeof helpConversationWake === 'function') ? helpConversationWake(q) : null;
-	if (wake_rest !== null) {
-		assistantOpenPanel(panel);
-		assistantConversationOn(panel);
-		if (!wake_rest) { input.val(''); assistantButtonLabel(panel); assistantChatAdd(panel, 'step', 'Yes?'); assistantConversationListen(panel); return; }
-		q = wake_rest;
 	}
 	input.val('');
 	assistantButtonLabel(panel);
@@ -594,9 +595,6 @@ function assistantConversationHeard(panel, text) {
 	var q = $.trim(text || '');
 	if (!q) { assistantConversationListen(panel); return; }
 	if (helpConversationBye(q)) { assistantConversationEnd(panel); return; }
-	var rest = (typeof helpConversationWake === 'function') ? helpConversationWake(q) : null;
-	if (rest !== null) { q = rest; }
-	if (!q) { assistantChatAdd(panel, 'step', 'Yes?'); assistantConversationListen(panel); return; }
 	panel.find('.assistant_question').val('');
 	assistantButtonLabel(panel);
 	assistantOpenPanel(panel);

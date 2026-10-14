@@ -419,15 +419,10 @@ function helpAsk() {
 		helpListenToggle(function (text) { $('#help_question').val(text); helpAsk(); });
 		return;
 	}
-	// the wake and the farewell are read before anything else: "hey jawn" (or
-	// "jawn do") opens a conversation, "bye jawn" closes it
+	// the farewell is read first: "bye jawn" (or the End button) closes a
+	// conversation. No wake phrase is needed to speak - opening the mic is the
+	// whole of it.
 	if (helpConversationBye(q)) { $('#help_question').val(''); if (jawnos_help_talking) { helpConversationEnd(); } return; }
-	var wake_rest = helpConversationWake(q);
-	if (wake_rest !== null) {
-		helpConversationOn();
-		if (!wake_rest) { $('#help_question').val(''); helpChatAdd('step', 'Yes?'); helpConversationListen(); return; }
-		q = wake_rest;
-	}
 	$('#help_question').val('');
 	helpShowChat(true);
 	jawnos_help_chat.push({ role: 'user', content: q });
@@ -587,11 +582,10 @@ function helpListenToggle(onText) {
 }
 
 // ---- conversation mode ----------------------------------------------------
-// The guide as a conversationalist: once opened, the mic comes back after each
-// answer and each utterance is the next turn of the same thread, until "bye
-// jawn" (or the End button) closes it. "hey jawn" and "jawn do" open it,
-// whether typed or heard back from whisper - and an on-device listener will one
-// day call the same entry point (jawnConversationWake) when its model lands.
+// The guide as a conversationalist: once the mic is open, it comes back after
+// each answer and each utterance is the next turn of the same thread, until
+// "bye jawn" (or the End button) closes it. No wake phrase gates it - pressing
+// Converse (or an empty Send) simply starts listening.
 var jawnos_help_talking = false;
 var jawnos_help_converse_timer = null;
 
@@ -599,17 +593,7 @@ function helpConversationBye(q) {
 	return /^(?:bye|goodbye|good ?night|that'?s all|that is all|we'?re done)[,!. ]+jawn\b/i.test(q || '');
 }
 
-// null when the words carry no wake; '' when the wake stood alone; the words
-// after it otherwise
-function helpConversationWake(q) {
-	q = q || '';
-	var m = q.match(/^(?:hey|hi|hello|ok|okay)[,!. ]+jawn\b[,!. ]*(.*)$/i)
-		|| q.match(/^jawn\b[,!. ]+do\b[,!. ]*(.*)$/i)
-		|| q.match(/^jawn\b[,!. ]+(.*)$/i);
-	return m ? $.trim(m[1] || '') : null;
-}
-
-// the wake an on-device listener will call when its model lands
+// the on-device listener's entry point
 function jawnConversationWake() { helpConversationOn(); helpConversationListen(); }
 function jawnConversationEnd() { helpConversationEnd(); }
 
@@ -651,9 +635,6 @@ function helpConversationListen() {
 			var q = $.trim(text || '');
 			if (!q) { helpConversationListen(); return; }
 			if (helpConversationBye(q)) { helpConversationEnd(); return; }
-			var rest = helpConversationWake(q);
-			if (rest !== null) { q = rest; }
-			if (!q) { helpChatAdd('step', 'Yes?'); helpConversationListen(); return; }
 			helpShowChat(true);
 			jawnos_help_chat.push({ role: 'user', content: q });
 			helpChatAdd('user', q);
