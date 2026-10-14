@@ -90,9 +90,11 @@ our %topic = (
 	'studio' => {
 		title => 'Studio', category => 'apps', app => 'studio',
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
+		verified => '2026-10-14',
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
-			'It works with the same library as Music, so recorded and imported tracks sit together.'
+			'It works with the same library as Music, so recorded and imported tracks sit together.',
+			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.'
 		],
 		steps => [
 			'Open Studio and add a track per instrument or take.',
