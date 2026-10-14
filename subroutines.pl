@@ -8214,6 +8214,35 @@ sub tunnel_checker() {
 				&subs::db_update('tunnels', { failures => $tun->{'failures'}, server_time => &subs::rightNow() }, { uuid => $tun->{'uuid'}, signatorial => $tun->{'signatorial'} });
 			}
 		}
+		# A headless hub names a peer only through a roster row, and the tunnel
+		# websocket will not even serve a signatorial it cannot already name - so
+		# a hub whose roster was wiped (a reseed, a restore) can never name the
+		# peers whose tunnels it still holds, and the duty below, which needs the
+		# row, deadlocks. Rebuild the row from the tunnel itself: the port is
+		# live, and remote_device_connect writes the row - its buttons, the
+		# tunnel flag and the hub-side manager included - the moment the peer
+		# approves. It runs only for a signatorial with no row at all, so it is a
+		# one-time repair after a wipe, never a per-tick call on a healthy hub.
+		my %tunnel_enrolled;
+		foreach my $tun ( @{$tunnels} ) {
+			next unless $tun->{'signatorial'} && !$tunnel_enrolled{$tun->{'signatorial'}};
+			next if &subs::db_select('remote_machines', undef, { signatorial => $tun->{'signatorial'} })->hashes->[0];
+			$tunnel_enrolled{$tun->{'signatorial'}} = 1;
+			my $enrollee = eval { &Manager::remote_device_connect({
+				manager => 'https://127.0.0.1:' . ($tun->{'in_port'} || '') . '/manager',
+				ip => ($tun->{'host'} || '127.0.0.1'),
+				password => &subs::suds_grabber(),
+				name => &subs::setting_grabber({ app => 'me', setting => 'my_name' }),
+				timestamp => &subs::rightNow(),
+				browser_tab_id => &subs::random_string_creator(22),
+				browser_tab => &subs::random_string_creator(21),
+				signatorial => $tun->{'signatorial'},
+				tunnel => 'yes'
+			}) };
+			if ($enrollee && $enrollee->{'body'} && $enrollee->{'body'}->{'signatorial'}) {
+				&subs::log_writer('tunnel enrolled ' . substr($tun->{'signatorial'}, 0, 8) . ' from its active tunnel');
+			}
+		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
 			my $rm = &subs::remote_machine_lister({ signatorial => $td->{'signatorial'}, limit => 1 });
