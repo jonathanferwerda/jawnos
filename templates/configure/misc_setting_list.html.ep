@@ -161,7 +161,7 @@
 			); %>
 			<% foreach my $g ( @general ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
-				<% my $chosen = (defined $settings->{$dt}->{$key} && length $settings->{$dt}->{$key}) ? $settings->{$dt}->{$key} : $me_row->{$key}; %>
+				<% my $chosen = (defined $settings->{$dt}->{$key} && length $settings->{$dt}->{$key}) ? $settings->{$dt}->{$key} : ($me_row->{$key} // ''); %>
 				<label>
 					<b><%= $label %></b>
 					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
@@ -199,7 +199,7 @@
 				<%# the bars are read straight from the settings table: the list this template
 				    is handed does not carry them, and the lying dropdown showed the first
 				    option rather than what was stored. Falls back to Me, then nothing. %>
-				<% my $chosen = &subs::misc_setting($key, $dt); %>
+				<% my $chosen = &subs::misc_setting($key, $dt) // ''; %>
 				<% if (ref $opts eq 'ARRAY') { %>
 					<label>
 						<b><%= $label %></b>
