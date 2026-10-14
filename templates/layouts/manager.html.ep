@@ -50,15 +50,16 @@
 						url: '/manager/debrief_grabber',
 						type: 'GET',
 						success: function(deb) {
-							// the debrief is the store's own snapshot; the keys the manager
-							// groups now are folded in on the way, so the old per-thing
-							// names are not seeded back in
+							// the debrief is the store's own snapshot, and it seeds this browser
+							// once: it fills keys this browser has never kept and never writes over
+							// what it already holds, so a stale snapshot cannot drag the store
+							// (and the windows that read it) back to the day the ticket was made
 							if (typeof jawnosStoreFold == 'function') {
-								jawnosStoreFold(deb);
+								jawnosStoreFold(deb, true);
 							}
 							else {
 								$.each(deb,function(i,v) {
-									localStorage.setItem(i,v);
+									if (localStorage.getItem(i) === null) { localStorage.setItem(i,v); }
 								});
 							}
 						}

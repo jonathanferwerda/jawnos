@@ -90,6 +90,16 @@ function jawnosWindowStyleGet(id) {
 function jawnosWindowStyleSet(id, value) {
 	jawnosStore.set('window_places', 'style_' + id, value, id + '_dynamic');
 }
+
+// A floating panel's own spot - the Guide's associate, a Coding agent, the Agents
+// list - kept beside the windows, so it rides the debrief and returns after a
+// restart and not only a refresh.
+function jawnosPanelSpotGet(key) {
+	return jawnosStore.get('window_places', 'panel_' + key, 'panel_' + key);
+}
+function jawnosPanelSpotSet(key, value) {
+	jawnosStore.set('window_places', 'panel_' + key, value, 'panel_' + key);
+}
 function jawnosWhiteboardGet() {
 	return jawnosStore.get('window_places', 'whiteboard', 'whiteboard_position');
 }
@@ -129,7 +139,7 @@ function jawnosWindowSizeSet(timestamp, field, value) {
 // with it. It is folded on the way in now, and with no snapshot the live store
 // is folded instead, one pass at load so the sprawl goes at once rather than a
 // touched thing at a time. Keys that belong to no family are written through.
-function jawnosStoreFold(source) {
+function jawnosStoreFold(source, seed) {
 	var keys = [];
 	if (source) {
 		keys = Object.keys(source);
@@ -138,30 +148,38 @@ function jawnosStoreFold(source) {
 		try { for (var i = 0; i < localStorage.length; i++) { keys.push(localStorage.key(i)); } }
 		catch (e) { return; }
 	}
+	// A seed fills what is missing and never writes over what this browser already
+	// keeps: an old snapshot (a ticket's debrief) landing on a browser that has
+	// since moved on must not drag it back to where it was then.
+	var put = function (group, key, value, legacy) {
+		if (seed && jawnosStore.get(group, key, legacy) !== null) { return; }
+		jawnosStore.set(group, key, value, legacy);
+	};
 	for (var k = 0; k < keys.length; k++) {
 		var key = keys[k];
 		var value = null;
 		try { value = source ? source[key] : localStorage.getItem(key); } catch (e) { continue; }
 		if (value === null || value === undefined) { continue; }
 		if (key.indexOf('pseudonym_location_') === 0) {
-			jawnosStore.set('window_places', 'place_' + key.slice('pseudonym_location_'.length), value, key);
+			put('window_places', 'place_' + key.slice('pseudonym_location_'.length), value, key);
 		}
 		else if (key.slice(-8) === '_dynamic') {
-			jawnosStore.set('window_places', 'style_' + key.slice(0, -8), value, key);
+			put('window_places', 'style_' + key.slice(0, -8), value, key);
 		}
 		else if (key.indexOf('pseudonym_keyboard_') === 0) {
-			jawnosStore.set('dock_icons', key.slice('pseudonym_keyboard_'.length), value, key);
+			put('dock_icons', key.slice('pseudonym_keyboard_'.length), value, key);
 		}
 		else if (key == 'whiteboard_position') {
-			jawnosStore.set('window_places', 'whiteboard', value, key);
+			put('window_places', 'whiteboard', value, key);
 		}
 		else if (key.indexOf('audioinput') === 0 || key.indexOf('audiooutput') === 0 || key.indexOf('videoinput') === 0) {
-			jawnosStore.set('device_picks', key, value, key);
+			put('device_picks', key, value, key);
 		}
 		else if (key.match(/_(note|notes|ago|duration)$/)) {
-			jawnosStore.set('app_data', key, value, key);
+			put('app_data', key, value, key);
 		}
 		else if (source) {
+			if (seed && localStorage.getItem(key) !== null) { continue; }
 			try { localStorage.setItem(key, value); } catch (e) {}
 		}
 	}

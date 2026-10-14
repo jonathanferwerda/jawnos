@@ -363,25 +363,23 @@ function assistantAnswerBubble(panel) {
 // ---- floating panels remember where they were -------------------------------
 // The Guide's associate, the Coding agents and the Agents list float over the
 // whole screen and drag by their header. A panel that has been moved keeps its
-// place per tab in sessionStorage - the store the windows already use - so a
-// reload (ours, or a press of F5) brings it back there. A panel never moved has
-// no place stored and keeps the spot its opener chooses: the associate's corner,
-// the coding panel's right/bottom default, the list's anchor to its button.
-function jawnosPanelStore() {
-	try { return JSON.parse(sessionStorage.getItem('jawnos_panel_pos') || '{}') || {}; }
-	catch (e) { return {}; }
-}
+// place in the app's window_places store - the one the windows use, so it rides
+// the debrief and comes back after a restart, not only a refresh. A panel never
+// moved has no place stored and keeps the spot its opener chooses: the
+// associate's corner, the coding panel's right/bottom default, the list's anchor
+// to its button.
 function jawnosPanelPosSave(key, panel) {
 	if (!key || !panel || !panel.length) { return; }
 	var left = parseFloat(panel.css('left')), top = parseFloat(panel.css('top'));
 	if (isNaN(left) || isNaN(top)) { return; }
-	var store = jawnosPanelStore();
-	store[key] = { left: Math.round(left), top: Math.round(top) };
-	try { sessionStorage.setItem('jawnos_panel_pos', JSON.stringify(store)); } catch (e) {}
+	jawnosPanelSpotSet(key, JSON.stringify({ left: Math.round(left), top: Math.round(top) }));
 }
 function jawnosPanelPosRestore(key, panel) {
 	if (!key || !panel || !panel.length) { return false; }
-	var s = jawnosPanelStore()[key];
+	var raw = (typeof jawnosPanelSpotGet === 'function') ? jawnosPanelSpotGet(key) : null;
+	if (!raw) { return false; }
+	var s = null;
+	try { s = JSON.parse(raw); } catch (e) { return false; }
 	if (!s || typeof s.left !== 'number' || typeof s.top !== 'number') { return false; }
 	// keep it on screen if the window has since shrunk; a hidden panel has no box
 	// to measure, and a zero width simply leaves the stored spot alone
