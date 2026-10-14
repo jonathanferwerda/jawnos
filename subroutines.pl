@@ -13720,19 +13720,30 @@ sub staged_fix_apply {
 		}
 		$touched{$rel} = 1;
 	}
-	# a Perl file must compile before it ships; on failure the files go back
-	my @bad;
-	foreach my $rel ( sort grep { /\.p[lm]$/ } @names ) {
-		my $out = `cd "$repo" && perl -c "$rel" 2>&1`;
-		$out = '' unless defined $out;
-		push @bad, { path => $rel, output => substr($out, 0, 1000) } unless $out =~ /syntax OK/;
+	# the whole change must pass the verifier before it ships: Perl compiles,
+	# JavaScript parses, templates compile, and no file was truncated - the checks
+	# a person would run by hand, run for them. On failure every file goes back
+	# and nothing is committed. (A proposal that reaches here has already been
+	# checked once, as it was staged; this is the check on what is truly on disk.)
+	my ($verify, $vcode) = ('', 0);
+	my $filelist = join(' ', map { '"' . $_ . '"' } sort keys %touched);
+	if ($filelist && -f "$repo/scripts/verify_change.pl") {
+		$verify = `cd "$repo" && perl scripts/verify_change.pl $filelist 2>&1`;
+		$vcode = $? >> 8;
 	}
-	if (@bad) {
+	if ($vcode != 0) {
 		foreach my $abs ( keys %backup ) {
 			if (defined $backup{$abs}) { eval { write_file($abs, $backup{$abs}) }; }
 			else { unlink $abs; }
 		}
-		return { error => 'the change did not compile; nothing was applied', checks => \@bad };
+		# the IDE panel renders checks as a list of { path, output }; keep that shape
+		my (@entries, $cur);
+		foreach my $line (split /\n/, ($verify // '')) {
+			if ($line =~ /^FAIL\s+(\S+)/) { $cur = { path => $1, output => '' }; push @entries, $cur; }
+			elsif ($cur && $line =~ /^\s+(\S.*)$/) { $cur->{'output'} .= ($cur->{'output'} ? '; ' : '') . $1; }
+		}
+		push @entries, { path => 'verifier', output => substr(($verify // ''), 0, 1000) } unless @entries;
+		return { error => 'the change did not pass verification; nothing was applied', checks => \@entries };
 	}
 	# the finishing routine: bump, then commit only what was written (plus
 	# VERSION - never someone else's work in progress), then push
@@ -14069,6 +14080,34 @@ sub error_watch_path {
 	return &error_watch_repo() . ($rel eq '' ? '' : '/' . $rel);
 }
 
+# Check a staged file's text before it is even proposed, against a temp copy of
+# the same basename (the tree is not written to here). The same verifier the
+# Apply path runs, so the agent learns at once instead of staging a file that
+# breaks the tree. Returns '' when it passes, else the reason.
+sub coding_verify_text {
+	my ($rel, $content) = @_;
+	return '' unless defined $content && length $content;
+	my $repo = &error_watch_repo();
+	return '' unless -f "$repo/scripts/verify_change.pl";
+	my $ext = ($rel =~ /\.([A-Za-z0-9]+)$/) ? lc $1 : '';
+	return '' unless $ext =~ /^(?:pl|pm|t|js|mjs|cjs|ep|json)$/;
+	require File::Temp;
+	require File::Spec;
+	my ($fh, $tmp) = File::Temp::tempfile('jawn_verify_XXXXXX', SUFFIX => '.' . $ext, DIR => File::Spec->tmpdir, UNLINK => 1);
+	return '' unless $fh && $tmp;
+	print $fh $content;
+	close $fh;
+	my $out = `cd "$repo" && perl scripts/verify_change.pl --allow-shrink "$tmp" 2>&1`;
+	my $code = $? >> 8;
+	$out = '' unless defined $out;
+	unlink $tmp;
+	return '' if $code == 0;
+	my ($line) = grep { /FAIL|rror|shrank|Unexpected|syntax/ } split /\n/, $out;
+	$line = $out unless defined $line;
+	$line =~ s/^\s+|\s+$//g;
+	return substr($line, 0, 300);
+}
+
 # The propose mode's tool loop: the same verbs' shape, but write only stages the
 # whole file, so the agent can change nothing here.
 sub coding_propose_execute {
@@ -14103,7 +14142,9 @@ sub coding_propose_execute {
 		return 'refused: a staged file is capped at 300000 bytes' if length($content) > 300000;
 		return 'refused: at most 10 files in one proposal' if scalar(keys %{$staged}) >= 10 && !exists $staged->{$rel};
 		$staged->{$rel} = $content;
-		return 'staged ' . length($content) . ' bytes for ' . $rel . ' (not written; a person must apply it)';
+		my $problem = &coding_verify_text($rel, $content);
+		return 'staged ' . length($content) . ' bytes for ' . $rel . ' (not written; a person must apply it)'
+			. ($problem ? ' - IT DOES NOT PASS THE VERIFIER: ' . $problem . '; write the file whole and correct it' : '');
 	}
 	if ($a eq 'run') {
 		my $cmd = $action->{'command'} // '';

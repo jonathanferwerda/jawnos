@@ -1,15 +1,44 @@
 #!/bin/sh
-# pre-push - keep the Help registry honest.
+# pre-push - nothing that does not parse ships, and the Help registry stays honest.
 #
-# Runs the help auditor before a push. Hard errors (a broken related link, a
-# listed template that no longer exists, a control the topic names that is no
-# longer on screen) BLOCK the push. Stale topics are printed as a to-do but do
-# not block, so tidying the code never traps anyone mid-refactor.
+# First, verify the code in the commits being pushed: Perl compiles, JavaScript
+# parses, templates compile, and no file was truncated. A hard failure BLOCKS the
+# push, so a whole-file write gone wrong cannot reach the other machines.
+#
+# Then the help auditor: hard errors (a broken related link, a listed template
+# that no longer exists, a control the topic names that is no longer on screen)
+# BLOCK the push. Stale topics are printed as a to-do but do not block, so
+# tidying the code never traps anyone mid-refactor.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git push --no-verify
 cd "$(git rev-parse --show-toplevel)" || exit 0
 command -v perl >/dev/null 2>&1 || exit 0
+
+# --- the code in this push must parse (scripts/verify_change.pl) ---
+verdict=0
+if [ -f scripts/verify_change.pl ]; then
+	while read local_ref local_sha remote_ref remote_sha; do
+		# a ref being deleted carries no code to check
+		[ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+		base="$remote_sha"
+		if [ "$base" = "0000000000000000000000000000000000000000" ]; then
+			# a brand-new ref has no remote side: check it against its own parent
+			base=$(git rev-parse --verify -q "$local_sha^" 2>/dev/null) || continue
+		fi
+		out=$(perl scripts/verify_change.pl --quiet --range "$base..$local_sha" 2>&1)
+		if [ $? -ne 0 ]; then
+			printf '%s\n' "$out"
+			verdict=1
+		fi
+	done
+fi
+if [ "$verdict" -ne 0 ]; then
+	printf '\nverify_change: the code in this push does not parse (above). Fix it, or push with --no-verify.\n'
+	exit 1
+fi
+
+# --- keep the Help registry honest (scripts/help_audit.pl) ---
 [ -f scripts/help_audit.pl ] || exit 0
 [ -f help.pl ] || exit 0
 
