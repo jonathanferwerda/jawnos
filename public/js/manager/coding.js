@@ -251,6 +251,10 @@ function codingChatDraggable(panel) {
 			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
 			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+		},
+		stop: function () {
+			var p = $(this);
+			jawnosPanelPosSave('coding:' + (p.attr('conversation') || p.attr('mount')), p);
 		}
 	});
 }
@@ -284,6 +288,7 @@ function codingChatArmAll(root) {
 		var panel = $(this);
 		panel.attr('drag_armed', '1');
 		codingChatFloat(panel);
+		jawnosPanelPosRestore('coding:' + (panel.attr('conversation') || panel.attr('mount')), panel);
 		codingChatRestore(panel);
 		codingChatDraggable(panel);
 	});

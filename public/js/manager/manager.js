@@ -360,6 +360,39 @@ function assistantAnswerBubble(panel) {
 	return el.find('.assistant_content');
 }
 
+// ---- floating panels remember where they were -------------------------------
+// The Guide's associate, the Coding agents and the Agents list float over the
+// whole screen and drag by their header. A panel that has been moved keeps its
+// place per tab in sessionStorage - the store the windows already use - so a
+// reload (ours, or a press of F5) brings it back there. A panel never moved has
+// no place stored and keeps the spot its opener chooses: the associate's corner,
+// the coding panel's right/bottom default, the list's anchor to its button.
+function jawnosPanelStore() {
+	try { return JSON.parse(sessionStorage.getItem('jawnos_panel_pos') || '{}') || {}; }
+	catch (e) { return {}; }
+}
+function jawnosPanelPosSave(key, panel) {
+	if (!key || !panel || !panel.length) { return; }
+	var left = parseFloat(panel.css('left')), top = parseFloat(panel.css('top'));
+	if (isNaN(left) || isNaN(top)) { return; }
+	var store = jawnosPanelStore();
+	store[key] = { left: Math.round(left), top: Math.round(top) };
+	try { sessionStorage.setItem('jawnos_panel_pos', JSON.stringify(store)); } catch (e) {}
+}
+function jawnosPanelPosRestore(key, panel) {
+	if (!key || !panel || !panel.length) { return false; }
+	var s = jawnosPanelStore()[key];
+	if (!s || typeof s.left !== 'number' || typeof s.top !== 'number') { return false; }
+	// keep it on screen if the window has since shrunk; a hidden panel has no box
+	// to measure, and a zero width simply leaves the stored spot alone
+	var w = panel.outerWidth() || 0, h = panel.outerHeight() || 0;
+	var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
+	var left = Math.max(0, Math.min(s.left, $(window).width() - w));
+	var top = Math.max(0, Math.min(s.top, $(window).height() - h - bar));
+	panel.css({ left: left + 'px', top: top + 'px', right: 'auto', bottom: 'auto' });
+	return true;
+}
+
 function assistantOpenPanel(panel) {
 	if (!panel || !panel.length) { return $(); }
 	if (!panel.data('greeted')) {
@@ -370,11 +403,14 @@ function assistantOpenPanel(panel) {
 		// measure behind visibility, not display: none - a hidden element has no
 		// box to measure, and the panel would land against a zero width
 		panel.css({ visibility: 'hidden', display: 'flex' });
-		var w = panel.outerWidth(), h = panel.outerHeight();
-		var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
-		var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
-		var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
-		panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '', visibility: '' });
+		if (!jawnosPanelPosRestore('guide:' + (panel.attr('conversation') || 'assistant'), panel)) {
+			var w = panel.outerWidth(), h = panel.outerHeight();
+			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
+			var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
+			panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' });
+		}
+		panel.css('visibility', '');
 	}
 	panel.css('z-index', ++jawnos_assistant_top);
 	jawnos_assistant_last = panel;
@@ -724,6 +760,9 @@ function assistantInitializer() {
 				var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 				ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
 				ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+			},
+			stop: function () {
+				jawnosPanelPosSave('guide:' + ($(this).attr('conversation') || 'assistant'), $(this));
 			}
 		});
 	});

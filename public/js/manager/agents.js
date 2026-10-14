@@ -26,9 +26,12 @@ function jawnosAgentsPanel() {
 		cancel: '.jawnos_agents_close, .jawnos_agents_new_guide, .jawnos_agents_new_coding, input, button',
 		drag: function (e, ui) {
 			var w = $(this).outerWidth(), h = $(this).outerHeight();
-			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
 			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
 			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+		},
+		stop: function () {
+			jawnosPanelPosSave('agents', $(this));
 		}
 	});
 	return panel;
@@ -40,6 +43,9 @@ function jawnosAgentsPanel() {
 // appearance zoom rides on the html element, so a rect (device pixels) and a
 // CSS top (content pixels) part ways by that factor - work in content pixels.
 function jawnosAgentsPosition(panel) {
+	// a list that has been moved keeps that place; one never moved sits against
+	// the button it was called from
+	if (typeof jawnosPanelPosRestore === 'function' && jawnosPanelPosRestore('agents', panel)) { return; }
 	var anchor = panel.data('anchor');
 	if (!anchor || !$(anchor).length) { return; }
 	var zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
