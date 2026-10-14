@@ -149,6 +149,10 @@
 			display: none;
 			background-color: black;
 			pointer-events: none;
+			/* a global canvas rule lifts every canvas to z-index 99, which would put
+			   the picture over the controls and their tools panel. Off that layer
+			   the file order stacks it: after the album cover, before the controls */
+			z-index: auto;
 		}
 		.media_visualization_label {
 			color: #ddd;

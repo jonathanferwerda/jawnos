@@ -43,6 +43,9 @@ function musicContentCache(html) {
 	shell.find('#music_player_data').empty();
 	shell.find('video.media_out').removeAttr('src');
 	shell.find('#video_subtitles').removeAttr('src');
+	// the visualiser's canvas is live state too: keep its display and bitmap
+	// size, and the stored shell replays a flat black picture over the player
+	shell.find('.media_visualizer').removeAttr('style').removeAttr('width').removeAttr('height');
 	shell.find('[id$="_full_title"]').text('');
 	shell.find('#play_logo').each(function() { var el = $(this), p = el.attr('play_icon'); if (p) { el.attr('src', p); } });
 	shell = shell.html();
@@ -1528,7 +1531,15 @@ function musicVisualShowing(el) {
 
 function musicVisualStop() {
 	if (musicVisual.raf) { cancelAnimationFrame(musicVisual.raf); musicVisual.raf = 0; }
-	if (musicVisual.canvas) { musicVisual.canvas.style.display = 'none'; }
+	var canvas = musicVisual.canvas;
+	if (!canvas) {
+		// a page that never painted can still be handed the canvas on screen, out
+		// of a stored shell; the element is found the way the frame loop finds it
+		var el = document.getElementById('video');
+		var miss = el ? (el.getAttribute('miss') || '') : '';
+		canvas = (miss && document.getElementById(miss + '_visualizer')) || null;
+	}
+	if (canvas) { canvas.style.display = 'none'; }
 	musicVisual.canvas = null;
 	musicVisual.painted = null;
 	musicVisual.last = 0;
@@ -1574,7 +1585,9 @@ function musicVisualFrame(ts) {
 	if (el.getAttribute('type') == 'video' || !musicVisualShowing(el)) {
 		// a picture is chosen but the player has no stage for it right now - a
 		// video track is playing, the theatre is off, the screen is elsewhere.
-		// The loop waits, so the drawing comes straight back on its own.
+		// The canvas is put away (a stale frame must not cover the picture) and
+		// the loop waits, so the drawing comes straight back on its own.
+		musicVisualStop();
 		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 		return;
 	}
@@ -1582,14 +1595,16 @@ function musicVisualFrame(ts) {
 	// truth, so the control is put back in step
 	var select = document.getElementById(miss + '_visualization');
 	if (select && select.value != musicVisual.mode) { select.value = musicVisual.mode; }
+	// the canvas has to be on screen before it can be measured: with the css
+	// display:none it has no box at all, and the fit below could never let it out
+	if (canvas.style.display != 'block') { canvas.style.display = 'block'; }
+	musicVisual.canvas = canvas;
 	if (!musicVisualFit(canvas)) {
 		// the window is minimized or mid-resize: there is nothing to paint, but
 		// the loop stays on so the picture comes back with the window
 		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 		return;
 	}
-	musicVisual.canvas = canvas;
-	if (canvas.style.display != 'block') { canvas.style.display = 'block'; }
 	var g = canvas.getContext('2d');
 	if (!g) { musicVisualStop(); return; }
 	if (musicVisual.painted != musicVisual.mode) {
