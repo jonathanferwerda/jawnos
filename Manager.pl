@@ -19886,7 +19886,12 @@ sub coding_execute($c, $action, $touched) {
 		eval { write_file($abs, $content) };
 		return 'could not write that file' if $@;
 		$touched->{ coding_rel($action->{'path'}) } = 1 if $touched;
-		return 'wrote ' . length($content) . ' bytes to ' . ($action->{'path'} // '');
+		# tell the agent at once when what it just wrote cannot parse, so it can
+		# correct the file before it tries to commit (the commit action refuses a
+		# change that does not verify)
+		my $problem = &subs::coding_verify_text(coding_rel($action->{'path'}), $content);
+		return 'wrote ' . length($content) . ' bytes to ' . ($action->{'path'} // '')
+			. ($problem ? ' - IT DOES NOT PASS THE VERIFIER: ' . $problem . '; write the file whole and correct it' : '');
 	}
 	if ($a eq 'run') {
 		my $cmd = $action->{'command'} // '';
@@ -19914,6 +19919,17 @@ sub coding_execute($c, $action, $touched) {
 		$msg =~ s/^\s+|\s+$//g;
 		my $v = &subs::jawn_version();
 		my $repo = coding_repo();
+		# the change must pass the verifier before it is committed: Perl compiles,
+		# JavaScript parses, templates compile, and no file was truncated. A file that
+		# fails is named back to the agent to fix, and nothing is committed.
+		my @check = sort keys %{ $touched || {} };
+		if (@check && -f "$repo/scripts/verify_change.pl") {
+			my $list = join(' ', map { '"' . $_ . '"' } @check);
+			my $vout = `cd "$repo" && perl scripts/verify_change.pl $list 2>&1`;
+			my $vcode = $? >> 8;
+			$vout = '' unless defined $vout;
+			return 'refused: the change does not pass the verifier - fix it before committing:' . "\n" . substr($vout, 0, 1500) if $vcode != 0;
+		}
 		# stage only what the agent actually wrote (plus the version file), so a
 		# commit it makes never sweeps in someone else's work-in-progress
 		my @files = map { '"' . $_ . '"' } sort keys %{ $touched || {} };
