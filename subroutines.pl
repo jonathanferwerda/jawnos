@@ -8578,12 +8578,18 @@ sub vault_pull_one {
 sub vault_pull_from_peer {
 	# once per five minutes per process; a keyless machine calls this on every
 	# resolution, so it must not hammer the mesh
+	my $opts = shift || {};
 	my $now = &rightNow();
 	return if $gb::vault_pull_last && $now - $gb::vault_pull_last < 300000;
 	$gb::vault_pull_last = $now;
 	my ($db) = &database_grabber();
 	return unless $db;
-	my @peers = grep { ($_->{'signatorial'} || '') && ($_->{'manager'} || $_->{'ip'}) } @{ &db_select('remote_machines')->hashes || [] };
+	# a driver may name the peers it wants, so a probe never pulls a key from a
+	# real machine (or counts a real machine's answer as the fixture's)
+	my %only = map { $_ => 1 } @{ (ref $opts->{'only'} eq 'ARRAY') ? $opts->{'only'} : [] };
+	my @peers = grep { ($_->{'signatorial'} || '') && ($_->{'manager'} || $_->{'ip'}) }
+		grep { !(scalar keys %only) || $only{ $_->{'signatorial'} } }
+		@{ &db_select('remote_machines')->hashes || [] };
 	my @active = grep { ($_->{'connection'} || '') eq 'active' } @peers;
 	my @rest = grep { ($_->{'connection'} || '') ne 'active' } @peers;
 	@peers = (@active, @rest);
