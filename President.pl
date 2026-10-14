@@ -258,6 +258,20 @@ sub manager_starter() {
 		}
 	}, { name => 'error watch' });
 
+	# The guide watch reads the Guide's saved conversations (the same rows the
+	# Agents list reads back) for a turn that went nowhere - a thing not found, a
+	# command that could not run, a closing line that says so - and stages each
+	# like an error, so the same Coding agent adjusts the Guide's own training
+	# through the same propose/Apply loop. Off until Configure -> Plat ticks
+	# Watch the Guide; its first pass only takes a baseline.
+	&subs::subprocessor(sub {
+		sleep 40;
+		while (1) {
+			eval { &subs::guide_watch_tick(); };
+			sleep 60;
+		}
+	}, { name => 'guide watch' });
+
 	# The voice models ride the same mesh as the APKs, but they change rarely, so
 	# this is a single pass after boot rather than a loop: a device that lacks a
 	# voice pulls it in and can then serve it. Opening Configure -> Misc refreshes

@@ -81,12 +81,17 @@
 	<% } %>
 
 	<h3>Self-healing</h3>
-	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped.</p>
+	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Tick Watch the Guide and the Guide's own saved conversations are read the same way: a turn that went nowhere - a thing not found, a command that could not run, a closing line that says so - is staged for the Coding agent to adjust the Guide's training itself (its rules and verbs). Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped.</p>
 	<div class="cfg-card">
 		<div class="cfg-row">
 			<label>Watch errors</label>
 			<% my $watching = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // ''); %>
 			<input type="checkbox" class="configure_input" app="mail" setting="error_watch" <% if ($watching eq 'on') { %>checked<% } %>>
+		</div>
+		<div class="cfg-row">
+			<label>Watch the Guide</label>
+			<% my $guide_watching = (&subs::setting_grabber({ app => 'mail', setting => 'guide_watch' }) // ''); %>
+			<input type="checkbox" class="configure_input" app="mail" setting="guide_watch" <% if ($guide_watching eq 'on') { %>checked<% } %>>
 		</div>
 		<div class="cfg-row">
 			<label>Apply automatically</label>
