@@ -37,6 +37,44 @@
 			<% $count++; %>
 		<% } %>
 	</div>
+	<div id="studio_synth" class="studio_synth_panel">
+		<div class="studio_synth_bar">
+			<b class="hover" hint="The JawnOS synth, always here">Synth</b>
+			<select class="studio_synth_select synth_preset" hint="Choose a synth sound"></select>
+			<button id="studio_synth_hide" class="hover" hint="Collapse the synth panel">Hide</button>
+			<button id="studio_synth_show" class="hover" hint="Show the synth panel" style="display:none;">Synth</button>
+		</div>
+		<div class="studio_synth_body">
+			<div class="studio_synth_keys synth_keys"></div>
+			<div class="studio_synth_knobs">
+				<div class="studio_synth_knob"><label>Cutoff</label><input class="synth_param" param="filter.cutoff" type="range" min="0" max="100" value="55"></div>
+				<div class="studio_synth_knob"><label>Resonance</label><input class="synth_param" param="filter.q" type="range" min="0" max="100" value="15"></div>
+				<div class="studio_synth_knob"><label>Attack</label><input class="synth_param" param="amp.a" type="range" min="0" max="100" value="8"></div>
+				<div class="studio_synth_knob"><label>Release</label><input class="synth_param" param="amp.r" type="range" min="0" max="100" value="30"></div>
+				<div class="studio_synth_knob"><label>Detune</label><input class="synth_param" param="osc2.detune" type="range" min="0" max="100" value="55"></div>
+				<div class="studio_synth_knob"><label>Drive</label><input class="synth_param" param="drive" type="range" min="0" max="100" value="0"></div>
+				<span class="studio_synth_note">Play the keys; to record, set a channel's input to Synth.</span>
+			</div>
+		</div>
+	</div>
+	<style>
+		.studio_synth_panel { margin: 4px 0; }
+		.studio_synth_bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+		.studio_synth_select { font-size: 14px; border: solid 1px var(--line); border-radius: 5px; background: var(--panel); color: inherit; padding: 2px 4px; max-width: 220px; }
+		.studio_synth_body { margin-top: 4px; }
+		.studio_synth_keys { position: relative; width: 100%; box-sizing: border-box; height: 96px; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+		.studio_synth_keys .synth_keys_inner { position: relative; height: 92px; white-space: nowrap; }
+		.studio_synth_keys .piano_key { cursor: pointer; user-select: none; border: solid; border-width: 1px; box-sizing: border-box; }
+		.studio_synth_keys .piano_key.white { display: inline-block; vertical-align: top; width: 20px; height: 92px; background: #fdfdfa; color: #666; font-size: 8px; text-align: center; padding-top: 76px; border-radius: 0 0 3px 3px; position: relative; z-index: 1; }
+		.studio_synth_keys .piano_key.black { position: absolute; top: 0; width: 13px; height: 58px; background: #141414; border-color: #000; border-radius: 0 0 3px 3px; z-index: 2; }
+		.studio_synth_keys .piano_key.white.piano_key_on { background: #ffd21e; }
+		.studio_synth_keys .piano_key.black.piano_key_on { background: #b8860b; }
+		.studio_synth_knobs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+		.studio_synth_knob { display: flex; flex-direction: column; align-items: center; width: 64px; }
+		.studio_synth_knob label { font-size: 11px; opacity: .7; }
+		.studio_synth_knob input[type=range] { width: 60px; }
+		.studio_synth_note { opacity: .55; font-size: 12px; }
+	</style>
 	<% my $channel_count = $settings->{'channel_count'} || 4; %>
 	<div id="studio_viewer" style="height:200px;" channel_count="<%= $channel_count %>">
 		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>

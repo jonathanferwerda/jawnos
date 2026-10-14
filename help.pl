@@ -94,7 +94,8 @@ our %topic = (
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.',
-			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.'
+			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.',
+			'A synth panel sits at the top of the window (Hide tucks it away): pick a sound and play its keys right there, then record it by setting a channel\'s input to Synth.'
 		],
 		steps => [
 			'Open Studio and add a track per instrument or take.',
@@ -118,7 +119,8 @@ our %topic = (
 			'Press Keys to play from the computer keyboard (A W S E D F T G Y H U J K; Z and X change octave, and the roll follows).',
 			'Press Arp and hold a chord to arpeggiate it; press Seq to loop a grid; switch on Mono for a gliding lead.',
 			'To map a hardware knob: pick a parameter, press Learn, then move the knob.',
-			'In Studio, set a channel\'s input to Synth (or drag the JawnSynth pedal onto it), arm it, and record what you play.'
+			'In Studio, set a channel\'s input to Synth (or drag the JawnSynth pedal onto it), arm it, and record what you play.',
+			'The same synth also sits as an always-visible panel at the top of Studio, so you can pick a sound and play without leaving it.'
 		],
 		related => [ 'studio', 'music' ]
 	},

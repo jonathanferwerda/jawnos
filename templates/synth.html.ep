@@ -1,7 +1,7 @@
 <div id="synth">
 	<div class="synth_toolbar">
 		<label>Sound</label>
-		<select id="synth_preset" class="synth_select" hint="Choose a preset"></select>
+		<select id="synth_preset" class="synth_select synth_preset" hint="Choose a preset"></select>
 		<label>MIDI</label>
 		<select id="synth_midi" class="synth_select" hint="A connected USB MIDI keyboard"></select>
 		<button id="synth_midi_connect" class="hover" hint="Connect a USB MIDI keyboard">Connect</button>

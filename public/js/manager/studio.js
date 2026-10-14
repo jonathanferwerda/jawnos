@@ -1840,6 +1840,8 @@ function studioInit(data) {
 			studioApplyPedals();
 			studioUpdateFxBadges();
 			studioApplyCapture();
+			// the always-visible synth panel builds its own grid/presets/keys
+			$(document).trigger('jawnos_synth_panel');
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
 

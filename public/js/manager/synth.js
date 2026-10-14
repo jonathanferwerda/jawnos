@@ -712,43 +712,47 @@
 	}
 
 	function synthBuildKeys() {
-		var host = $('#synth_keys');
-		if (!host.length || host.data('built')) { return; }
-		host.empty();
-		// the keys live in an inner strip of full width, so the roll itself is only
-		// ever as wide as its container and the mouse scrolls the strip inside it
-		var inner = $('<div class="synth_keys_inner"></div>');
-		host.append(inner);
-		var whiteCount = 0, i;
-		for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
-			if (synthIsBlack(i)) { continue; }
-			var key = $('<div class="piano_key white"></div>').attr('midi', i).attr('note', i).css('width', WHITE_W + 'px');
-			if (i % 12 === 0) { key.text('C' + (i / 12 - 1)); }
-			inner.append(key);
-			whiteCount++;
-		}
-		var seen = 0;
-		for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
-			if (!synthIsBlack(i)) { seen++; continue; }
-			var black = $('<div class="piano_key black"></div>').attr('midi', i).attr('note', i);
-			black.css('left', (seen * WHITE_W - BLACK_W / 2) + 'px');
-			inner.append(black);
-		}
-		inner.css('width', (whiteCount * WHITE_W) + 'px');
-		host.data('built', 1);
+		$('.synth_keys').each(function () {
+			var host = $(this);
+			if (host.data('built')) { return; }
+			host.empty();
+			// the keys live in an inner strip of full width, so the roll itself is only
+			// ever as wide as its container and the mouse scrolls the strip inside it
+			var inner = $('<div class="synth_keys_inner"></div>');
+			host.append(inner);
+			var whiteCount = 0, i;
+			for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
+				if (synthIsBlack(i)) { continue; }
+				var key = $('<div class="piano_key white"></div>').attr('midi', i).attr('note', i).css('width', WHITE_W + 'px');
+				if (i % 12 === 0) { key.text('C' + (i / 12 - 1)); }
+				inner.append(key);
+				whiteCount++;
+			}
+			var seen = 0;
+			for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
+				if (!synthIsBlack(i)) { seen++; continue; }
+				var black = $('<div class="piano_key black"></div>').attr('midi', i).attr('note', i);
+				black.css('left', (seen * WHITE_W - BLACK_W / 2) + 'px');
+				inner.append(black);
+			}
+			inner.css('width', (whiteCount * WHITE_W) + 'px');
+			host.data('built', 1);
+		});
 	}
 
 	// Bring the octave the computer keyboard is on into view, centred in whatever
-	// width the window gives the roll.
+	// width each roll's window gives it.
 	function synthFocusOctave() {
-		var host = $('#synth_keys');
-		if (!host.length || !host.data('built')) { return; }
-		var base = keyboardOctave * 12 + 12;
-		var key = host.find('.piano_key[midi="' + base + '"]');
-		if (!key.length) { return; }
-		var octaveW = 7 * WHITE_W;
-		var target = key.position().left - Math.max(0, (host.width() - octaveW) / 2);
-		host.stop(true).animate({ scrollLeft: Math.max(0, target) }, 180);
+		$('.synth_keys').each(function () {
+			var host = $(this);
+			if (!host.data('built')) { return; }
+			var base = keyboardOctave * 12 + 12;
+			var key = host.find('.piano_key[midi="' + base + '"]');
+			if (!key.length) { return; }
+			var octaveW = 7 * WHITE_W;
+			var target = key.position().left - Math.max(0, (host.width() - octaveW) / 2);
+			host.stop(true).animate({ scrollLeft: Math.max(0, target) }, 180);
+		});
 	}
 
 	// The computer keyboard plays the piano: the usual A W S E D F T G Y H U J K row,
@@ -771,17 +775,19 @@
 	}
 
 	function synthPopulatePresets() {
-		var sel = $('#synth_preset');
-		if (!sel.length || sel.data('filled')) { return; }
-		window.jawnosSynth.families().forEach(function (fam) {
-			var group = $('<optgroup></optgroup>').attr('label', fam);
-			window.jawnosSynth.familyPresets(fam).forEach(function (name) {
-				group.append($('<option></option>').attr('value', name).text(name));
+		$('.synth_preset').each(function () {
+			var sel = $(this);
+			if (sel.data('filled')) { return; }
+			window.jawnosSynth.families().forEach(function (fam) {
+				var group = $('<optgroup></optgroup>').attr('label', fam);
+				window.jawnosSynth.familyPresets(fam).forEach(function (name) {
+					group.append($('<option></option>').attr('value', name).text(name));
+				});
+				sel.append(group);
 			});
-			sel.append(group);
+			sel.data('filled', 1);
+			sel.val(window.jawnosSynth.presetName());
 		});
-		sel.data('filled', 1);
-		sel.val(window.jawnosSynth.presetName());
 	}
 
 	function synthPopulateMidi() {
@@ -792,6 +798,15 @@
 		if (!devs.length) { sel.append($('<option></option>').attr('value', '').text('no MIDI device')); return; }
 		devs.forEach(function (d) { sel.append($('<option></option>').attr('value', d.id).text(d.name || d.manufacturer || d.id)); });
 		sel.val(window.jawnosSynth.midi.selected() || '');
+	}
+
+	// Make sure the engine is running on whatever context is at hand: the studio's
+	// own when its window is open (so a studio-hosted panel rides it), else a new one.
+	function synthEnsureAudio() {
+		if (window.jawnosSynth.context()) { return; }
+		var Ctor = window.AudioContext || window.webkitAudioContext;
+		var ctx = (typeof studioAudio !== 'undefined' && studioAudio.ctx) ? studioAudio.ctx : (Ctor ? new Ctor() : null);
+		if (ctx) { window.jawnosSynth.attach(ctx, ctx.destination); }
 	}
 
 	window.pianoInit = function () {
@@ -825,7 +840,7 @@
 	});
 
 	$(document).on('mousedown touchstart', '.piano_key', function (e) {
-		if (!jawnosSynth.context()) { pianoInit(); }
+		synthEnsureAudio();
 		var note = parseInt($(this).attr('midi'), 10);
 		if (isNaN(note)) { note = noteNameToMidi($(this).attr('note')); }
 		if (isNaN(note)) { return; }
@@ -841,13 +856,14 @@
 		jawnosSynth.noteOff(note);
 	});
 
-	$(document).on('change', '#synth_preset', function () {
+	$(document).on('change', '.synth_preset', function () {
 		window.jawnosSynth.loadPreset($(this).val());
+		$('.synth_preset').val($(this).val());
 		synthSyncSliders();
 	});
 
 	$(document).on('input change', '.synth_param', function () {
-		if (!jawnosSynth.context()) { pianoInit(); }
+		synthEnsureAudio();
 		window.jawnosSynth.setKnob($(this).attr('param'), $(this).val());
 	});
 
@@ -874,7 +890,7 @@
 			});
 			keyboardHeld = {};
 		}
-		else if (!jawnosSynth.context()) { pianoInit(); }
+		else { synthEnsureAudio(); }
 		synthFocusOctave();
 	});
 
@@ -946,7 +962,7 @@
 		var on = window.jawnosSynth.seq.get().on;
 		window.jawnosSynth.seq.set({ on: !on });
 		$(this).text('Seq: ' + (!on ? 'on' : 'off'));
-		if (!jawnosSynth.context()) { pianoInit(); }
+		synthEnsureAudio();
 	});
 	$(document).on('change', '#synth_seq_rate, #synth_seq_steps', function () {
 		window.jawnosSynth.seq.set({ rate: $('#synth_seq_rate').val(), steps: $('#synth_seq_steps').val() });
@@ -970,7 +986,7 @@
 		if (k === 'z') { keyboardOctave = Math.max(0, keyboardOctave - 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
 		if (k === 'x') { keyboardOctave = Math.min(8, keyboardOctave + 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
 		if (!(k in KEYMAP) || keyboardHeld[k] != null) { return; }
-		if (!jawnosSynth.context()) { pianoInit(); }
+		synthEnsureAudio();
 		var note = synthKeyboardNote(k);
 		keyboardHeld[k] = note;
 		e.preventDefault();
@@ -1001,6 +1017,22 @@
 			}, 250);
 		}
 	});
+
+	// A studio-hosted panel builds itself on the same classes (its own synth engine
+	// is the same singleton), so the standalone window and the studio panel can be
+	// open at once without stepping on each other.
+	$(document).on('click', '#studio_synth_hide', function () {
+		$('#studio_synth .studio_synth_body').hide();
+		$(this).hide();
+		$('#studio_synth_show').show();
+	});
+	$(document).on('click', '#studio_synth_show', function () {
+		$('#studio_synth .studio_synth_body').show();
+		$(this).hide();
+		$('#studio_synth_hide').show();
+	});
+
+	$(document).on('jawnos_synth_panel', function () { synthBuildKeys(); synthBuildSeq(); synthPopulatePresets(); synthSyncSliders(); });
 
 	function noteNameToMidi(name) {
 		var m = /^([A-Ga-g])(#|b)?(-?\d+)$/.exec(String(name).replace(/\s+/g, ''));
