@@ -124,7 +124,7 @@ get '/manager/music' => sub ($c) {
 		}
 	}
 	if ($unlock) {
-		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' })) ) ) {
+		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' })) ) ) {
 			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
 				$permissive = 1;
@@ -209,7 +209,7 @@ any '/music/receiver' => sub($c) {
 	my $toggle = $c->param('toggle');
 	my $seek = $c->param('seek');
 	my $volume = $c->param('volume');
-	my $music_data = &subs::decrypter($c->session('suds'), decode_base64 $c->param('music_data'));
+	my $music_data = &subs::decrypter(&subs::session_suds($c), decode_base64 $c->param('music_data'));
 	my $piped = &subs::home('~/.president/pipe');
 	my $timestamp = $c->param('timestamp');
 	my $latency = $c->param('latency');
@@ -685,7 +685,7 @@ post '/music/search' => sub ($c) {
 	my $misc_settings = &Manager::misc_setting_list();
 
 	if ($unlock) {
-		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
 				$permissive = 1;

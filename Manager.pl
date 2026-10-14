@@ -297,8 +297,7 @@ sub take_picture($c,$data) {
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $app = &subs::unformat_name($data->{'app'} || $c->param('app'));
-	unless ($c->session('suds')) {
-		$c->session('suds' => &subs::suds_grabber());
+	unless (&subs::session_suds($c)) {
 		$c->stash('app' => $app);
 		$c->stash('uuid' => $uuid);
 	}
@@ -408,8 +407,7 @@ sub scan($c,$scandata) {
 	my $timestamp = $scandata->{'timestamp'};
 	my $feed = $scandata->{'feed'};
 	my $uuid = $scandata->{'uuid'};
-	my $suds = $c->session('suds') || &subs::suds_grabber();
-	$c->session('suds' => $suds);
+	my $suds = &subs::session_suds($c);
 	my $source = $scandata->{'source'};
 	my $app = $scandata->{'app'} || $c->param('app');
 	if (!grep { $_ eq $scandata->{'feed'} } @{$gb::capabilities->{&subs::device_setter()}->{'scan'}}) {
@@ -516,7 +514,7 @@ sub ocr_reader($c,$filename) {
 	$text_file = $text_file . '.txt';
 	my $ocr = read_file($text_file);
 	$ocr =~ s/[^\x00-\x7F]+//gi;
-	$ocr = &subs::note_encrypter($c->session('suds'),$ocr);
+	$ocr = &subs::note_encrypter(&subs::session_suds($c),$ocr);
 	`shred -u $text_file`;
 
 	return $ocr;
@@ -2727,7 +2725,7 @@ post '/manager/configure/attribute_upload' => sub($c) {
 	my $write = {
 		timestamp => $timestamp,
 		app => &subs::unformat_name($app),
-		notes => &subs::note_encrypter($c->session('suds'),$linux_file),
+		notes => &subs::note_encrypter(&subs::session_suds($c),$linux_file),
 		type => $upload_type,
 		file => $jfile,
 		uuid => &subs::random_string_creator(20),
@@ -3431,7 +3429,8 @@ post '/sesh_check' => sub ($c) {
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
 			$c->session('database' => $database);
-			$c->session('suds' => $secret);
+			&subs::vault_seed($secret, 1);
+			$c->session('suds_id' => &subs::suds_id($secret));
 			$c->session('warranty' => $warranty);
 			$c->session('string' => &subs::random_string_creator());
 			$c->session('name') => &subs::setting_grabber({ app => 'me', setting => 'name' });
@@ -3522,7 +3521,7 @@ post '/sesh_check' => sub ($c) {
 			$c->session('authentication' => 'rejected');
 			&subs::say_it('I reject: ' . $remote_address);
 			$c->stash('browser_tab_id' => undef);
-			$c->session('suds' => 'go fuck yourself');
+			$c->session('suds_id' => undef);
 			&notification_sender({ app => 'customs', role => 'citizen', title => 'WTFAU', message => 'DB open', image => "/images/make believe/explosion.png" },$database);
 
 		}
@@ -3534,7 +3533,7 @@ post '/sesh_check' => sub ($c) {
 			&subs::say_it($c->session('reject_count') . ' Who the fuck are you? ' . $visitor);
 			$c->render(json => { 'authentication' => 'rejected'});
 			$c->session('authentication' => 'rejected');
-			$c->session('suds' => 'fuck you too!');
+			$c->session('suds_id' => undef);
 			$c->stash('browser_tab_id' => undef);
 			&notification_sender({ app => 'customs', role => 'citizen', title => 'WTFAU', message => 'DB Closed: ' . $c->tx->remote_address . '<br>' . $c->req->url->path, image => "/images/make believe/explosion.png" },$database);
 	}
@@ -4475,7 +4474,7 @@ get '/manager/configure/remote_device_connect' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $ip = $c->param('ip');
 	my $port = $c->param('port');
-	my $password = $c->session('suds');
+	my $password = &subs::session_suds($c);
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $browser_tab = $c->param('browser_tab');
 	my $name = $c->session('name');
@@ -5231,7 +5230,7 @@ sub leave($c) {
 	`shred -u $logfile`;
 	delete $c->session->{'authentication'};
 	delete $c->session->{'database'};
-	delete $c->session->{'suds'};
+	delete $c->session->{'suds_id'};
 	delete $c->session->{'reject_count'};
 	delete $c->session->{'browser_tab_id'};
 	delete $c->session->{'browser_tab'};
@@ -5251,7 +5250,7 @@ sub lock_session($c) {
 	my $now = &subs::rightNow();
 	my ($db) = &subs::database_grabber();
 
-	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($c->session('suds'), $now ) });
+	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now ) });
 	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
 		&subs::setting_deleter({ app => 'gallery', setting => 'combo_unlock' });
 		&subs::window_closer('gallery');
@@ -5287,7 +5286,7 @@ sub lock_session($c) {
 
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
-		my $attempts = &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
+		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
 		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker');
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
@@ -5904,7 +5903,7 @@ sub ticket_request_mint($c, $request, $privilege, $warranty) {
 	my $domain = &subs::config_reader()->{'domain'};
 	$nic = $domain if !$nic && $domain && $addresses->{$domain};
 	$nic = ( grep { $addresses->{$_}->{'ip'} } sort keys %{$addresses} )[0] unless $nic;
-	my $suds = $c->session('suds') || &subs::suds_grabber();
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	return undef unless $nic && $suds;
 	my $data = &qrcode_generator({
 		timestamp => &subs::rightNow(),
@@ -5945,7 +5944,7 @@ get '/manager/qrcode_generator' => sub($c) {
 	my $project = $c->param('project');
 	my $debriefer = $c->param('debriefer');
 	my $nic = $c->param('nic');
-	my $suds = $c->session('suds');
+	my $suds = &subs::session_suds($c);
 	my $warranty = $c->param('warranty');
 
 	my $data = &qrcode_generator({
@@ -6069,7 +6068,7 @@ sub qrcode_updater($c) {
 		my $sj = decode_json $ts;
 		if ( $t->{'port'} ne $ENV{PORT_AHOY} || $level_one->[0]->{'timestamp'} >= $t->{'server_time'}) {
 		#	$sj->{'ts'} = &subs::rightNow();
-			my $suds = &subs::note_encrypter($sj->{'p'}, $c->session('suds'));
+			my $suds = &subs::note_encrypter($sj->{'p'}, &subs::session_suds($c));
 			my $secret_json = encode_json $sj;
 			my $secret = &subs::note_encrypter($t->{'password'}, $secret_json);
 			$secret = url_escape `echo "$secret" | base64 -w 0`;
@@ -6400,7 +6399,7 @@ get '/box_office/:uuid' => sub($c) {
 			# static assets included - and carry no usable credential
 			$c->session('authentication' => 'denial');
 			$c->session('privilege' => 'blacklisted');
-			$c->session('suds' => undef);
+			$c->session('suds_id' => undef);
 			$c->session('database' => undef);
 			$c->render(template => 'guest_layouts/denial');
 		}
@@ -6410,7 +6409,8 @@ get '/box_office/:uuid' => sub($c) {
 			#&subs::db_insert('appointments',{ uuid => &subs::random_string_creator(40), app => $ticket->{'name'}, warranty => $warranty, type => "entry", timestamp => $timestamp, server_time => $server_time });
 			$c->session('database' => $database);
 			$c->session('authentication' => 'approved');
-			$c->session('suds' => $suds);
+			&subs::vault_seed($suds);
+			$c->session('suds_id' => &subs::suds_id($suds));
 			$c->session('server_time' => $server_time);
 			$c->session('warranty' => $ticket->{'warranty'});
 			$c->session('source' => 'ticket');
@@ -6467,7 +6467,7 @@ get '/box_office/:uuid' => sub($c) {
 		if ($ticket->{'privilege'} && $ticket->{'privilege'} eq 'blacklisted' && secure_compare $secret, $suds) {
 			$c->session('authentication' => 'denial');
 			$c->session('privilege' => 'blacklisted');
-			$c->session('suds' => undef);
+			$c->session('suds_id' => undef);
 			$c->session('database' => undef);
 		}
 		$c->render(template => 'guest_layouts/denial');
@@ -7268,7 +7268,7 @@ get '/manager/download_file' => sub ($c) {
 	my ($data,$filename);
 	if (-e $file) {
 		if ($file =~ /\.enc$/gi) {
-			my $suds = $c->session('suds');
+			my $suds = &subs::session_suds($c);
 			my $passwords = &subs::db_query('select * from security where level != ? order by server_time DESC', 'padlock');
 			my $pwords = $passwords->hashes;
 
@@ -7320,7 +7320,7 @@ post '/manager/upload_file' => sub ($c) {
 			my $of = eval { return decode_json $appt->{'file'} } || [];
 			push @uploaded_files, @{$of};
 			$app = $appt->{'app'};
-			$notes = &subs::note_decrypter($c->session('suds'), $appt->{'notes'},$appt->{'server_time'}) . '<br>';
+			$notes = &subs::note_decrypter(&subs::session_suds($c), $appt->{'notes'},$appt->{'server_time'}) . '<br>';
 			$timestamp = $appt->{'timestamp'};
 		}
 	}
@@ -7430,7 +7430,7 @@ post '/manager/upload_file' => sub ($c) {
 	if (@{$seen_appts} > 0) {
 		&subs::db_update('appointments', {
 			timestamp => $timestamp,
-			notes => &subs::note_encrypter($c->session('suds'),$notes . $linux_file),
+			notes => &subs::note_encrypter(&subs::session_suds($c),$notes . $linux_file),
 			file => $jfile,
 			uuid => $uuid,
 			duration => $duration || '1000',
@@ -7446,7 +7446,7 @@ post '/manager/upload_file' => sub ($c) {
 		my $write = {
 			timestamp => $timestamp,
 			app => &subs::unformat_name($app),
-			notes => &subs::note_encrypter($c->session('suds'),$notes . $linux_file),
+			notes => &subs::note_encrypter(&subs::session_suds($c),$notes . $linux_file),
 			type => $upload_type || $c->param('type') || 'upload',
 			file => $jfile,
 			uuid => $uuid,
@@ -7693,7 +7693,7 @@ post '/manager/configure/map_helper' => sub($c) {
 	my ($destination,$asset) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
 	my $path = &subs::home($destination . $asset);
 	unless (-e $path) { $c->render(json => { error => 'the map image is not on this machine' }); return; }
-	my $bytes = &sealed_file_bytes($c->session('suds'), $path);
+	my $bytes = &sealed_file_bytes(&subs::session_suds($c), $path);
 	unless (defined $bytes && length $bytes) { $c->render(json => { error => 'could not open the map image' }); return; }
 
 	my $tmp = '/tmp/jawn_map_' . &subs::random_string_creator(8) . '.png';
@@ -8402,7 +8402,7 @@ sub manager_reset($c) {
 	push @{$appointments}, @{$results->hashes};
 	if (scalar @{$appointments} == 0) { $type = "add" };
 	my $pos = &subs::setting_grabber({ app => $app, setting => 'pos' } ) || 'idea';
-	$notes = &subs::note_encrypter($c->session('suds'),$notes) if $notes;
+	$notes = &subs::note_encrypter(&subs::session_suds($c),$notes) if $notes;
 
 	my ($status,$announced_time);
 
@@ -8549,9 +8549,9 @@ sub manager_reset($c) {
 				my $all_durations = &subs::db_query('select * from appointments where app=? and type=? order by server_time DESC LIMIT 40',$app,'stop')->hashes;
 				my $total_durations = abs $duration;
 				if ($o->{'end_notes'}) {
-					my $n = &subs::note_decrypter($c->session('suds'), $o->{'end_notes'}, $o->{'ost'});
-					$n .= "\n" . &subs::note_decrypter($c->session('suds'), $notes);
-					$notes = &subs::note_encrypter($c->session('suds'), $n);
+					my $n = &subs::note_decrypter(&subs::session_suds($c), $o->{'end_notes'}, $o->{'ost'});
+					$n .= "\n" . &subs::note_decrypter(&subs::session_suds($c), $notes);
+					$notes = &subs::note_encrypter(&subs::session_suds($c), $n);
 				}
 				foreach my $ad ( @{$all_durations} ) {
 					$total_durations += abs $ad->{'duration'};
@@ -9024,10 +9024,10 @@ sub manager_reset($c) {
 			my $began = &subs::db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and timestamp < ? order by timestamp desc limit 1',$app,'record','start',$timestamp,&subs::rightNow());
 			my $old_appts = $began->hashes;
 			foreach my $o ( @{$old_appts} ) {
-				my $n = &subs::note_decrypter($c->session('suds'), $o->{'notes'}, $o->{'ost'});
+				my $n = &subs::note_decrypter(&subs::session_suds($c), $o->{'notes'}, $o->{'ost'});
 				$n .= "\n" if $n =~ /[a-zA-Z0-9.,]/gi;
-				$n .= &subs::note_decrypter($c->session('suds'), $notes);
-				$notes = &subs::note_encrypter($c->session('suds'), $n);
+				$n .= &subs::note_decrypter(&subs::session_suds($c), $notes);
+				$notes = &subs::note_encrypter(&subs::session_suds($c), $n);
 				$already_running = $o->{'uuid'};
 			}
 		}
@@ -9099,7 +9099,7 @@ sub manager_reset($c) {
 	unless ($c->param('account') && $c->param('account') eq 'gallery' && &subs::setting_grabber({ app => 'me', setting => 'gallery_appts' }) eq 'off' ) {
 	#	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });
 	}
-	&subs::file_encrypter({ app => $app, suds => $c->session('suds') });
+	&subs::file_encrypter({ app => $app, suds => &subs::session_suds($c) });
 	return $returner;
 }
 
@@ -9336,7 +9336,7 @@ post '/manager/transaction/record' => sub($c) {
 
 	my $server_time = &subs::rightNow();
 	my $duration = $c->param('duration') || 5000;
-	my $notes = &subs::note_encrypter($c->session('suds'),$c->param('notes'));
+	my $notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('notes'));
 	my $movement = $c->param('movement');
 	my $transaction_information = $c->param('transaction_information');
 	my $warranty = &subs::ago_calc($c->param('warranty') || '-7y' || &subs::setting_grabber({ app => $app, setting => 'warranty' }), $timestamp);
@@ -11410,7 +11410,7 @@ post '/manager/configure/new_database' => sub($c) {
 	$database = $temp_folder . $president . '.db';
 	my $enc_file = $temp_folder . $president . '.enc';
 	my $secret = $c->param('credential');
-	my $credential = $c->session('suds');
+	my $credential = &subs::session_suds($c);
 	my $misc_setting_list = &misc_setting_list();
 	my $server_time = &subs::rightNow();
 	`touch $database`;
@@ -11487,7 +11487,7 @@ post '/manager/configure/restore_now' => sub($c) {
 	my $disposition->{'status'} = 'fail';
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	foreach my $cred ( @{$creds} ) {
-		my $cr = &subs::decrypter($c->session('suds'),$cred->{'credential'});
+		my $cr = &subs::decrypter(&subs::session_suds($c),$cred->{'credential'});
 		if ($path =~ /enc$/gi) {
 			$filename =~ s/.enc$//gi;
 			my $t_database = $filename.'.db';
@@ -11508,7 +11508,8 @@ post '/manager/configure/restore_now' => sub($c) {
 				my $secret = &subs::decrypter($cr,&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
 				if (secure_compare $cr, $secret) {
 					$disposition->{'disposition'} = $database;
-					$c->session('suds' => $secret);
+					&subs::vault_seed($secret, 1);
+					$c->session('suds_id' => &subs::suds_id($secret));
 					$c->session('database' => $database);
 					$disposition->{'status'} = 'succeed';
 					last;
@@ -11772,7 +11773,7 @@ sub merge_database($c,$configuration) {
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my @updateables;
 	my @cache_bucket_updateables;
-	my $suds = $c->session('suds') || &subs::suds_grabber();
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	foreach my $cred ( @{$creds} ) {
 		my $crud = &subs::decrypter($suds,$cred->{'credential'});
 		my $html = '<h3>Testing Keys</h3>';
@@ -13378,7 +13379,7 @@ post '/manager/note_to_appt' => sub($c) {
 	my $note = &subs::db_select('notes', undef, { uuid => $uuid })->hash;
 	return $c->render(json => { error => 'no such note' }) unless $note && defined $note->{'text'};
 	my $text = $note->{'text'};
-	my $suds = $c->session('suds');
+	my $suds = &subs::session_suds($c);
 	my $now = &subs::rightNow();
 	if ($appt_uuid) {
 		my $appt = &subs::db_select('appointments', undef, { uuid => $appt_uuid })->hash;
@@ -14111,7 +14112,7 @@ post '/manager/palette' => sub($c) {
 			encryption_standard => undef,
 		},
 		{ uuid => $uuid, app => $app });
-		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
 	}
 	if ($duty eq 'save') {
@@ -14146,7 +14147,7 @@ post '/manager/palette' => sub($c) {
 			encryption_standard => undef,
 		},
 		{ uuid => $uuid, app => $app });
-		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
 	}
 	else {
@@ -14172,7 +14173,7 @@ get '/manager/note_retriever' => sub ($c) {
 	my $app = $c->param('app');
 	my $reflected_server_time = $c->param('server_time');
 	my $uuid = $c->param('uuid');
-	my $s = $c->session('suds');
+	my $s = &subs::session_suds($c);
 	my $notekeeper = &subs::note_retriever($app, $uuid);
 	$c->render(json => { notes => $notekeeper });
 };
@@ -14964,10 +14965,10 @@ post '/manager/window_closer' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => &subs::unformat_name($app) });
 
 	if ($settings->{'enc'} eq 'on') {
-		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 	}
 	else {
-		&subs::file_decrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+		&subs::file_decrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 	}
 	$c->render('text' => 'ok');
 };
@@ -15034,7 +15035,7 @@ get '/manager/gallery' => sub ($c) {
 	}
 	my $permissive = 0;
 	if ($unlock) {
-		if (help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			$permissive = 1;
 		}
 	}
@@ -15196,7 +15197,7 @@ get '/manager/gallery/scroll' => sub($c) {
 	my $returner = { apps => $apps, count => $count, count_timestamp => $count_timestamp };
 	my $permissive = 0;
 	if ($unlock) {
-		if (help_at_home() && secure_compare(&subs::note_decrypter($c->session('suds'), $unlock), &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
+		if (help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
 			$permissive = 1;
 		}
 	}
@@ -15229,7 +15230,7 @@ get '/manager/file/information' => sub($c) {
 	@{$files} = grep { $_->{'uuid'} eq $file_uuid } @{$files};
 	$file = $files->[0];
 	if ($file->{'ocr'}) {
-		$file->{'ocr'} = &subs::note_decrypter($c->session('suds'), $file->{'ocr'}, $file->{'server_time'});
+		$file->{'ocr'} = &subs::note_decrypter(&subs::session_suds($c), $file->{'ocr'}, $file->{'server_time'});
 		$file->{'ocr'} =~ s/\n/<br>/gi;
 	}
 
@@ -15632,7 +15633,7 @@ post '/manager/studio/save' => sub ($c) {
 		timestamp => $timestamp,
 		app => &subs::unformat_name($app),
 		data => $jdata,
-		notes => &subs::note_encrypter($c->session('suds'),$notepad),
+		notes => &subs::note_encrypter(&subs::session_suds($c),$notepad),
 		type => 'studio',
 		file => $jfile,
 		uuid => $uuid,
@@ -15656,7 +15657,7 @@ post '/manager/studio/save' => sub ($c) {
 	}
 
 	&subs::setting_setter({ app => 'studio', setting => 'last_song', value => $uuid });
-	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 	my $songs = &subs::db_select('appointments', undef, { type => 'studio' })->hashes;
 	my $song_select = $c->render_to_string(
 		template => 'studio/song_select',
@@ -17190,7 +17191,7 @@ post '/manager/mail/email/configure' => sub($c) {
 		$es->{'folders'}->{$folder}->{$subsetting} = $value;
 	}
 	elsif ($setting eq 'password') {
-		$value = &subs::note_encrypter($c->session('suds'), $value);
+		$value = &subs::note_encrypter(&subs::session_suds($c), $value);
 		$es->{$setting} = $value;
 	}
 	else {
@@ -17286,7 +17287,7 @@ get '/manager/mail/email/compose' => sub($c) {
 	}
 	if ($draft) {
 		foreach my $e ( qw/from_email email subject body uuid/ ) {
-			$draft->{$e} = &subs::note_decrypter($c->session('suds'), $draft->{$e});
+			$draft->{$e} = &subs::note_decrypter(&subs::session_suds($c), $draft->{$e});
 
 		}
 		$draft->{'attachments'} = eval { return decode_json $draft->{'attachments'} } || [];
@@ -17314,8 +17315,8 @@ post '/manager/mail/email/draft' => sub($c) {
 	my $message = $msg->{'msg'};
 
 	if ($message->{'to'}) {
-		$message->{'subject'} = &subs::note_encrypter($c->session('suds'), $message->{'subject'});
-		$message->{'body'} = &subs::note_encrypter($c->session('suds'), $message->{'body'});
+		$message->{'subject'} = &subs::note_encrypter(&subs::session_suds($c), $message->{'subject'});
+		$message->{'body'} = &subs::note_encrypter(&subs::session_suds($c), $message->{'body'});
 		if ($message->{'attachments'}) {
 			$message->{'attachments'} = encode_json $message->{'attachments'};
 		}
@@ -17381,7 +17382,7 @@ get '/store/email' => sub($c) {
 	my $drafts = &subs::db_query('select * from mailbox where email=? and status=? order by server_time asc', $settings->{'email'}, 'draft')->hashes;
 	if (scalar @{$drafts} > 0) {
 		foreach my $e ( qw/from_email email subject body uuid/ ) {
-			$drafts->[-1]->{$e} = &subs::note_decrypter($c->session('suds'), $drafts->[-1]->{$e});
+			$drafts->[-1]->{$e} = &subs::note_decrypter(&subs::session_suds($c), $drafts->[-1]->{$e});
 		}
 		$draft = $drafts->[-1];
 		$draft->{'attachments'} = eval { return decode_json $draft->{'attachments'} } || [];
@@ -17491,8 +17492,8 @@ post '/manager/mail/email/send' => sub($c) {
 		email => $email,
 		from_email => $from,
 		sender => $sender,
-		subject => &subs::note_encrypter($c->session('suds'), $subject),
-		body => &subs::note_encrypter($c->session('suds'), $body),
+		subject => &subs::note_encrypter(&subs::session_suds($c), $subject),
+		body => &subs::note_encrypter(&subs::session_suds($c), $body),
 		attachments => $jattachments,
 		status => 'outbox',
 		timestamp => $timestamp
@@ -17736,13 +17737,13 @@ sub mail_checker($c) {
 	&subs::subprocessor(sub {
 		foreach my $m ( @{$mails} ) {
 			if ($m->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
-				&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter($c->session('suds'), $m->{'body'}, $m->{'timestamp'}), $m->{'uuid'});
+				&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $m->{'body'}, $m->{'timestamp'}), $m->{'uuid'});
 			}
 			else {
 				$m->{'body'} = &subs::note_decrypter(&subs::suds_grabber(),$m->{'body'},$m->{'ost'});
 			}
 			if ($m->{'subject'}) {
-				$m->{'subject'} = &subs::note_decrypter($c->session('suds'),$m->{'subject'},$m->{'ost'});
+				$m->{'subject'} = &subs::note_decrypter(&subs::session_suds($c),$m->{'subject'},$m->{'ost'});
 			}
 
 			if ($m->{'phone'} && $m->{'status'} eq 'sent') {
@@ -18176,7 +18177,7 @@ sub travel_map_box_bytes {
 	my ($destination,$asset) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
 	my $path = &subs::home($destination . $asset);
 	return undef unless -e $path;
-	my $bytes = &sealed_file_bytes($c->session('suds'), $path);
+	my $bytes = &sealed_file_bytes(&subs::session_suds($c), $path);
 	return undef unless $bytes && length $bytes;
 	my $tmp = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '.png';
 	write_file($tmp, $bytes);
@@ -20151,7 +20152,7 @@ post '/manager/security/neighbour_link_assign' => sub($c) {
 		name => $name,
 		status => $privilege,
 		uuid => &subs::random_string_creator(252),
-		credential => &subs::encrypter($c->session('suds'),$credential)
+		credential => &subs::encrypter(&subs::session_suds($c),$credential)
 	};
 	&subs::db_insert('neighbour_link', $data);
 	$c->render('text' => 'ok');
@@ -20191,13 +20192,13 @@ post '/manager/security/padlock' => sub($c) {
 	if (scalar @{$pulled} > 0 && scalar @{$padlocker} > 0) {
 		$j_pulled = eval { return encode_json $pulled };
 		$salty = join '', @{$pulled};
-		$saved_pulled = &subs::note_decrypter($salty . $c->session('suds') . $salty, $padlock->{'credential'});
+		$saved_pulled = &subs::note_decrypter($salty . &subs::session_suds($c) . $salty, $padlock->{'credential'});
 	}
 	if ((scalar @{$padlocker} == 0) || (secure_compare( $j_pulled, $saved_pulled )) ) {
 		$combo = eval { return decode_json $combo };
 		$salt = join '', @{$combo};
 		my $combination = eval { return encode_json $combo };
-		$combo = &subs::note_encrypter($salt . $c->session('suds') . $salt,$combination);
+		$combo = &subs::note_encrypter($salt . &subs::session_suds($c) . $salt,$combination);
 		my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '2h';
 		$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
 		$c->session('padlock', $activity_timeout);
@@ -20229,8 +20230,8 @@ post '/manager/security/padlock_pull' => sub($c) {
 		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
 	}
 
-	my $combo = &subs::note_decrypter($salt . $c->session('suds') . $salt, $padlock->{'credential'});
-	my $attempts = &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' })) || 0;
+	my $combo = &subs::note_decrypter($salt . &subs::session_suds($c) . $salt, $padlock->{'credential'});
+	my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' })) || 0;
 	$attempts += 1;
 
 	if ($attempts > 5) {
@@ -20259,26 +20260,26 @@ post '/manager/security/padlock_pull' => sub($c) {
 			my $new_timeout = &subs::rightNow() + $activity_timeout;
 			$c->session('pl_time' => $new_timeout);
 			if ($mode eq 'gallery') {
-				my $combo_unlock = &subs::note_encrypter($c->session('suds'), &subs::random_string_creator(255));
+				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
 				&subs::setting_setter({ app => 'gallery', setting => 'combo_unlock', value => $combo_unlock });
 				&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
 				&Websocket::send('server', { console => 'imageViewer({ "view":"home" })', browser_tab_id => $c->param('browser_tab_id') });
 			}
 			if ($mode eq 'music') {
-				my $combo_unlock = &subs::note_encrypter($c->session('suds'), &subs::random_string_creator(255));
+				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
 				&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
 				&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
 				&Websocket::send('server', { console => 'searchMusic()', browser_tab_id => $c->param('browser_tab_id') });
 			}
 			if ($mode eq 'folders') {
-				my $combo_unlock = &subs::note_encrypter($c->session('suds'), &subs::random_string_creator(255));
+				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
 				&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
 				&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
 				&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
 			}
 			else {
 				&Websocket::send('server', { console => '$(\'#padlock_frame\').html(\'\'); $(\'#padlock_frame\').hide();$(\'#everything\').show();'});
-				&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($c->session('suds'), $new_timeout) });
+				&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $new_timeout) });
 			}
 
 			$c->render(json => { status => 'success', pulled => $combo });
@@ -20307,7 +20308,7 @@ post '/manager/security/padlock_pull' => sub($c) {
 		$c->render(json => { status => 'fail' });
 	}
 
-	$attempts = &subs::note_encrypter($c->session('suds'),$attempts);
+	$attempts = &subs::note_encrypter(&subs::session_suds($c),$attempts);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => $attempts });
 };
 
@@ -20317,14 +20318,14 @@ sub padlock_time_extender($c) {
 		my $server_time = &subs::rightNow();
 		my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes;
 		if ($c->session('authentication') eq 'approved' && $session_timeout > $server_time && scalar @{$padlock} > 0) {
-			my $attempts = &subs::note_decrypter($c->session('suds'), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
+			my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
 			if ($attempts < 5) {
 				my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 				$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
-				my $padlock_time = &subs::decrypter($c->session('suds'), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
+				my $padlock_time = &subs::decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
 				if ($padlock_time > $server_time) {
 					my $new_time = $server_time + $activity_timeout;
-					&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($c->session('suds'), $new_time) });
+					&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $new_time) });
 					$c->session('pl_time' => $new_time);
 				}
 			}
@@ -20650,7 +20651,7 @@ get '/manager/edit_app' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 	my $select = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, timestamp => $timestamp })->hashes->[0];
-	my $s = $c->session('suds');
+	my $s = &subs::session_suds($c);
 	foreach my $note_type (qw/start_notes notes end_notes/) {
 		$select->{$note_type} = &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) if eval { &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) };
 	}
@@ -20688,9 +20689,9 @@ post '/manager/edit_app' => sub($c) {
 	my $init = &subs::setting_initializer($app_name,$server_time);
 	$app_name = $init->{'app'};
 	my ($start_notes,$notes,$end_notes);
-	$start_notes = &subs::note_encrypter($c->session('suds'),$c->param('start_notes')) if $c->param('start_notes');
-	$notes = &subs::note_encrypter($c->session('suds'),$c->param('notes')) if $c->param('notes');
-	$end_notes = &subs::note_encrypter($c->session('suds'),$c->param('end_notes')) if $c->param('end_notes');
+	$start_notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('start_notes')) if $c->param('start_notes');
+	$notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('notes')) if $c->param('notes');
+	$end_notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('end_notes')) if $c->param('end_notes');
 	my $seen = 'yes';
 	if ($timestamp > $server_time) {
 		$seen = undef;
@@ -20816,7 +20817,7 @@ post '/manager/configure/adopt_app_confirm' => sub($c) {
 		type => $upload_type
 	});
 	$c->render('text' => 'ok');
-	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 };
 
 get '/manager/clothesline' => sub($c) {
@@ -21094,7 +21095,7 @@ sub keyboard_maker($c) {
 			}
 			$keys->{$key} = $key;
 		}
-		my $key_cutter = &subs::encrypter($c->session('suds'), encode_json($keys));
+		my $key_cutter = &subs::encrypter(&subs::session_suds($c), encode_json($keys));
 		&subs::setting_setter({ app => 'keyboard', setting => $toggle, value => $key_cutter, timestamp => $timestamp, browser_tab_id => $browser_tab_id });
 	}
 	if ($toggle eq 'delorean') {
@@ -21209,7 +21210,7 @@ get '/manager/keyboard_alias' => sub($c) {
 	my $toggle = $c->param('toggle');
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $value = &subs::db_select('settings', ['value','timestamp'], { app => 'keyboard', setting => $toggle, browser_tab_id => $browser_tab_id })->hash;
-	my $key_cutter = &subs::decrypter($c->session('suds'),$value->{'value'});
+	my $key_cutter = &subs::decrypter(&subs::session_suds($c),$value->{'value'});
 	$key_cutter = decode_json $key_cutter;
 	foreach my $k (keys %{$key_cutter}) {
 		if ($key_cutter->{$k} eq $key) {
@@ -21242,7 +21243,7 @@ post '/manager/keyboard_presser' => sub($c) {
 	my $destination = $c->param('destination');
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $value = &subs::db_select('settings', ['value','timestamp'], { app => 'keyboard', setting => $toggle, browser_tab_id => $browser_tab_id })->hash;
-	my $key_cutter = &subs::decrypter($c->session('suds'),$value->{'value'});
+	my $key_cutter = &subs::decrypter(&subs::session_suds($c),$value->{'value'});
 	$key_cutter = decode_json $key_cutter;
 	foreach my $k (keys %{$key_cutter}) {
 		if ($key_cutter->{$k} eq $key) {
@@ -21426,7 +21427,6 @@ sub authentication_passer($c) {
 	}
 
 	$c->session('server_time' => $server_time);
-	my $suds = $c->session('suds');
 	my $dob = $c->session('database');
 	my $name = $c->param('name');
 	my $warranty = $c->session('warranty');
@@ -21453,9 +21453,9 @@ sub authentication_passer($c) {
 	}
 	else {
 		my ($db,$database,$sql) = &subs::database_grabber();
-		my $hardness;
-		$hardness = &subs::decrypter($suds,&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
-		unless (secure_compare $hardness, $suds) {
+		my $current_suds = eval { &subs::suds_grabber() };
+		my $suds_id = $c->session('suds_id');
+		unless ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds))) {
 			$authentication = 'revoked';
 		}
 		my $pres_settings = &subs::settings_grabber({ app => '__president', settings => [ 'padlock_contexts', 'pl_time' ] });
@@ -21468,7 +21468,7 @@ sub authentication_passer($c) {
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
 
-			$padlock_time = &subs::decrypter($c->session('suds'), $pres_settings->{'pl_time'} ) || 0;
+			$padlock_time = &subs::decrypter(&subs::session_suds($c), $pres_settings->{'pl_time'} ) || 0;
 
 			$c->stash('pl_time' => $padlock_time);
 		}
@@ -21487,7 +21487,8 @@ sub authentication_passer($c) {
 				my $sj = decode_json $ts;
 				my $suds = &subs::note_decrypter($sj->{'p'}, $ticket->{'suds'});
 				chomp $suds;
-				$c->session('suds' => $suds);
+				&subs::vault_seed($suds);
+				$c->session('suds_id' => &subs::suds_id($suds));
 				$c->session('server_time' => $server_time);
 				$authentication = 'approved';
 			}
@@ -21508,7 +21509,7 @@ sub authentication_passer($c) {
 		$c->session('bti', $c->stash('browser_tab_id'));
 		my $restore_list = [];
 		$c->session('database' => undef);
-		$c->session('suds' => undef);
+		$c->session('suds_id' => undef);
 		unless (-e $database) {
 			if ($c->param('restore_list')) {
 				my $list = $c->param('restore_list');
@@ -21545,13 +21546,13 @@ post '/manager/configure/password_update' => sub($c) {
 		$c->rendered;
 		return;
 	}
-	my $secret = &subs::decrypter($c->session('suds'),&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
+	my $secret = &subs::decrypter(&subs::session_suds($c),&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
 	my $credential = &subs::encrypter($numerics,$numerics);
 
 	my $cred_hunt = &subs::db_select('security', ['credential','level','server_time','timestamp'], { });
 	my $creds = $cred_hunt->hashes;
 	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
-	if (secure_compare $c->session('suds'), $secret) {
+	if (secure_compare &subs::session_suds($c), $secret) {
 		foreach my $cr ( @{$creds} ) {
 			my $credjawntial = &subs::decrypter($secret,$cr->{'credential'});
 			my $newjawntial = &subs::encrypter($numerics,$credjawntial);
@@ -21562,7 +21563,8 @@ post '/manager/configure/password_update' => sub($c) {
 			&subs::db_update('security', { level => $level, credential => $newjawntial }, { timestamp => $cr->{'timestamp'}, server_time => $cr->{'server_time'} });
 		}
 		&subs::db_insert('security', { level => 1, database => $database, credential => $credential, timestamp => $timestamp, server_time => $server_time, uuid => &subs::random_string_creator(30) });
-		$c->session('suds' => $numerics);
+		&subs::vault_seed($numerics, 1);
+		$c->session('suds_id' => &subs::suds_id($numerics));
 		&subs::db_delete('security', { level => 'padlock' });
 		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
@@ -23095,7 +23097,7 @@ post '/manager/snapshot_save' => sub($c) {
 		duration => '1'
 	};
 	&appointment_writer($c,$write);
-	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 
 	$c->render(json => $write);
 };
@@ -23129,7 +23131,7 @@ post '/manager/marker/save' => sub ($c) {
 		browser_tab_id => $browser_tab_id
 	};
 	&appointment_writer($c,$write);
-	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => $c->session('suds') });
+	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 
 	my $q = &subs::db_query('select * from appointments where app = ? and file is not null',$app);
 	my $drawings = $q->hashes;
@@ -23840,7 +23842,7 @@ websocket '/mail/ws' => sub ($c) {
 
 				foreach my $d ( @{$m->{'decrypteds'}} ) {
 					my $dm = &subs::db_query('select * from mailbox where uuid = ?', $d)->hashes->[0];
-					$dm->{'body'} = &subs::note_decrypter($c->session('suds'),$dm->{'body'},$dm->{'ost'});
+					$dm->{'body'} = &subs::note_decrypter(&subs::session_suds($c),$dm->{'body'},$dm->{'ost'});
 
 					$dm->{'decrypted'} = 'yes';
 					my $content = $c->render_to_string(
@@ -24046,7 +24048,7 @@ websocket '/mail/ws' => sub ($c) {
 									my $ws_port = $ENV{PORT_MSG};
 									my $od = &subs::setting_grabber({ app => 'watch', setting => 'operator_door' });
 									my $op_d = eval { decode_json $od } || {};
-									my $secret = &subs::note_encrypter($op_d->{'__shutup'}->{'patience'}, $c->session('suds'));
+									my $secret = &subs::note_encrypter($op_d->{'__shutup'}->{'patience'}, &subs::session_suds($c));
 									$secret = `echo "$secret" | base64 -w 0`;
 									my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/chat_received?s=' . $secret . '&timestamp=' . $m->{'timestamp'} . '&uuid=' . $m->{'uuid'};
 
@@ -24095,13 +24097,13 @@ websocket '/mail/ws' => sub ($c) {
 			my $messaging = $q->hashes;
 			foreach my $mess ( @{$messaging} ) {
 				if ($mess->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
-					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter($c->session('suds'), $mess->{'body'}, $mess->{'timestamp'}), $mess->{'uuid'});
+					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $mess->{'body'}, $mess->{'timestamp'}), $mess->{'uuid'});
 				}
 				else {
 					$mess->{'body'} = &subs::note_decrypter(&subs::suds_grabber(), $mess->{'body'}, $mess->{'ost'});
 				}
 				if ($mess->{'subject'}) {
-					$mess->{'subject'} = &subs::note_decrypter($c->session('suds'), $mess->{'subject'}, $mess->{'ost'});
+					$mess->{'subject'} = &subs::note_decrypter(&subs::session_suds($c), $mess->{'subject'}, $mess->{'ost'});
 				}
 				$mess->{'decrypted'} = 'yes';
 				$mess->{'envelope'} = $c->render_to_string(
@@ -24189,7 +24191,7 @@ sub mail_depublicizer($c) {
 	my $publics = &subs::db_query('select * from mailbox where status=?', 'public');
 	my $public = $publics->hashes;
 	foreach my $p ( @{$public} ) {
-		my $enc_body = &subs::note_encrypter($c->session('suds'), $p->{'body'}, $p->{'timestamp'});
+		my $enc_body = &subs::note_encrypter(&subs::session_suds($c), $p->{'body'}, $p->{'timestamp'});
 		&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', $enc_body, $p->{'uuid'});
 
 		my $messenger = {
@@ -24438,7 +24440,7 @@ sub remote_machine_reconnector($c) {
 							my $manager_file = &manager_file_maker($c->session('name'));
 							my $html = '<h2>Reconnecting to ' . $ip . '</h2>';
 							&Websocket::send('tab', { green => $html, uuid => $auuid });
-							my $password = $c->session('suds');
+							my $password = &subs::session_suds($c);
 
 							my $port = $rm->{'port'};
 							my $manager = $rm->{'manager'};

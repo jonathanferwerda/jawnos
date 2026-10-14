@@ -886,7 +886,6 @@ sub utility_functions() {
 				if ($db) {
 					my $c = &subs::controller_builder();
 					my $suds = &subs::suds_grabber();
-					$c->session('suds' => $suds);
 					$c->param('reason' => 'backup');
 					if ($suds ne '') {
 						eval { &subs::backup_now($c); };

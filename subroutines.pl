@@ -2584,7 +2584,7 @@ sub backup_now() {
 	my $filename = &subs::unformat_name( $databaser );
 	$databaser =~ s/_\d+$//;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
-	my $suds = $c->session('suds') || &subs::suds_grabber();
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	# Bridge for peers still on the old fixed-key Crypt::Simple: the appended
 	# encryption-standard must be readable by their decrypter, which only uses the
 	# legacy key (md5 of an empty passphrase). Our decrypter falls back to the same
@@ -2874,7 +2874,6 @@ my $returner = '';
 		my $timestamp = &subs::rightNow();
 		my $c = &subs::controller_builder();
 		my $suds = &suds_grabber();
-		$c->session('suds' => $gb::suds);
 		my $json_list = `termux-sms-list -l 10 --message-sort-order="date DESC"` || '[]';
 		my $list = decode_json $json_list;
 		foreach my $l (grep { $_->{'type'} eq 'draft' || $_->{'type'} eq 'sent' || $_->{'type'} eq 'inbox' } @{$list}) {
@@ -4117,7 +4116,7 @@ sub music_transmitter() {
 					$seek = $seek + (($server_time - $timestamp) / 1000);
 					$music_data = encode_json $music_data;
 
-					$music_data = encode_base64 &subs::encrypter($c->session('suds'), $music_data);
+					$music_data = encode_base64 &subs::encrypter(&subs::session_suds($c), $music_data);
 					my $latency = ($server_time - $timestamp) / 1000;
 					my $url = $rm->{'manager'} . '/music/receiver?timestamp=' . $timestamp . '&latency=' . $latency . '&queuing=' . $queuing . '&file=' . $file . '&domain=' . $config->{'domain'} . '&volume=' . $volume . '&toggle=' . $toggle . '&seek=' . $seek . '&music_data=' . $music_data;
 					my $res = $rm->{'ua'}->post($url)->result;
@@ -7698,7 +7697,6 @@ sub remote_machine_negotiator() {
 	my $data = shift;
 	$gb::suds = &suds_grabber();
 	my $c = &subs::controller_builder();
-	$c->session('suds' => $gb::suds);
 	$c->session('gimme' => $data->{'gimme'});
 
 
@@ -8098,35 +8096,146 @@ sub system_monitor() {
 }
 
 
-sub suds_grabber() {
+# --- the vault ---------------------------------------------------------------
+# The suds at rest, sealed to this machine's own key file (~/.house.key, which
+# never rides the database, a backup, or a code sync). One row per machine, so
+# a merged database still opens on every machine; a database that leaves this
+# machine carries only sealed rows, worthless without the key file.
+sub house_key {
+	my $path = &home('~/.house.key');
+	my $key = '';
+	$key = read_file($path) if -e $path;
+	$key =~ s/\s+//g if $key;
+	unless ($key) {
+		my $raw = '';
+		if (open my $fh, '<', '/dev/urandom') {
+			binmode $fh;
+			read($fh, $raw, 32);
+			close $fh;
+		}
+		$key = encode_base64($raw, '');
+		write_file($path, $key . "\n");
+		chmod 0600, $path;
+	}
+	return $key;
+}
+
+sub vault_read {
+	my $device = &signatorial_designer();
+	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);
+	my $row = $q ? $q->hashes->[0] : undef;
+	return unless $row && $row->{'value'};
+	my $suds = &note_decrypter(&house_key(), $row->{'value'});
+	return unless $suds;
+	$suds =~ s/\s+$//;
+	return ($suds, $row->{'server_time'});
+}
+
+sub vault_seed {
+	my ($suds, $force) = @_;
+	return unless $suds;
+	$suds =~ s/\s+$//;
+	return unless length $suds;
+	my $device = &signatorial_designer();
+	my $q = &db_query('select uuid from settings where app = ? and setting = ? and device = ? limit 1', '__president', 'vault', $device);
+	my $row = $q ? $q->hashes->[0] : undef;
+	return if $row && !$force;
+	my $sealed = &note_encrypter(&house_key(), $suds);
+	return unless $sealed;
+	my $now = &rightNow();
+	if ($row) {
+		&db_update('settings', { value => $sealed, server_time => $now }, { uuid => $row->{'uuid'} });
+	}
+	else {
+		&db_insert('settings', { app => '__president', setting => 'vault', device => $device, value => $sealed, timestamp => $now, server_time => $now });
+	}
+	return 1;
+}
+
+# A fingerprint of the suds, for the session: a session proves it was minted
+# under the current key without ever carrying the key.
+sub suds_id {
+	my ($suds) = @_;
+	return '' unless $suds;
+	$suds =~ s/\s+$//;
+	return &shorthand_name(md5_sum('suds:' . $suds), 12);
+}
+
+# Does this candidate unwrap the level-1 canary (the current password encrypted
+# with itself)? That is the check authentication_passer always made, now usable
+# on any candidate key.
+sub suds_current {
+	my ($suds) = @_;
+	return 0 unless $suds;
+	my $q = &db_select('security', ['credential'], { level => 1 });
+	my $row = $q ? $q->hash : undef;
+	my $credential = $row && $row->{'credential'};
+	return 0 unless $credential;
+	my $check = &subs::decrypter($suds, $credential);
+	return 0 unless $check;
+	return $check eq $suds ? 1 : 0;
+}
+
+# The pre-vault derivation: the newest active ticket carries a copy of the suds,
+# wrapped with the ticket's own one-time key. Kept as the migration path.
+sub legacy_suds {
+	my $q = &db_query('select secret,password,suds,server_time from tickets where status = ? order by server_time desc limit 1', 'active');
+	my $ticket = $q ? $q->hashes->[0] : undef;
+	return unless $ticket && $ticket->{'suds'};
+	my $secret = $ticket->{'secret'};
+	my $ver = url_unescape `echo "$secret" | base64 --decode`;
+	my $verification = &note_decrypter($ticket->{'password'}, $ver);
+	my $vrai = eval { return decode_json $verification } || {};
+	return unless $vrai->{'p'};
+	my $suds = &note_decrypter($vrai->{'p'}, $ticket->{'suds'});
+	return unless $suds;
+	$suds =~ s/\s+$//;
+	return ($suds, $ticket->{'server_time'});
+}
+
+# The suds, resolved server-side. Sessions carry only suds_id now; nothing a
+# client holds can produce the key.
+sub session_suds {
+	my ($c) = @_;
+	return $gb::suds if $gb::suds;
+	return eval { &suds_grabber() };
+}
+
+sub suds_grabber {
 	my $duty_time = &subs::setting_grabber({ app => '__president', setting => 'remote_duty' });
 	if (( !$gb::suds || $duty_time eq '' || !$duty_time || $duty_time != $gb::duty_time || !$gb::duty_time)) {
-		my ($db,$database,$sql) = &subs::database_grabber('new');
-
-	#	my $duty_file = &subs::home('~/.president/on_duty');
-	#	$gb::duty_time = read_file($duty_file);
-		&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => $gb::duty_time });
-		my $tick = &subs::db_query('select verification,secret,password,suds from tickets where status=? order by server_time desc', 'active');
-		my $ticke = $tick->hashes;
-		my $ticket = $ticke->[0];
-		my $v = $ticket->{'verification'};
-		my $secret = $ticket->{'secret'};
-		my $ver = url_unescape `echo "$secret" | base64 --decode`;
-		my $verification = &subs::note_decrypter($ticket->{'password'}, $ver);
-		my $vrai = eval { return decode_json $verification } || {};
-		$secret = &subs::decrypter($vrai->{'p'},&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
-		my $suds = &subs::note_decrypter($vrai->{'p'}, $ticket->{'suds'});
-		$gb::suds = $suds;
-		return $suds;
+		my ($vault) = &vault_read();
+		my ($legacy) = &legacy_suds();
+		my $suds;
+		if ($vault && &suds_current($vault)) {
+			# the steady state: this machine's vault holds the current key
+			$suds = $vault;
+		}
+		elsif ($legacy && &suds_current($legacy)) {
+			# the first boot, or a key change made elsewhere: a ticket minted
+			# under the current password wins and the vault is resealed to it
+			$suds = $legacy;
+			&vault_seed($suds, 1);
+		}
+		elsif ($vault || $legacy) {
+			# no canary to judge by: keep the best thing this machine has
+			$suds = $vault || $legacy;
+			&vault_seed($suds, 1) unless $vault;
+		}
+		if ($suds) {
+			&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => $gb::duty_time });
+			$gb::suds = $suds;
+			return $suds;
+		}
+		return $gb::suds;
 	}
 	return $gb::suds;
 }
 
 sub c_maker() {
 	my $c = &subs::controller_builder();
-	my $suds = &subs::suds_grabber();
+	&subs::suds_grabber();
 
-	$c->session('suds' => $suds);
 	$c->session('server_time' => &subs::rightNow());
 	$c->session('authentication' => 'approved');
 
@@ -8473,7 +8582,7 @@ sub email_send() {
 	my $data = shift;
 
 	my $c = $data->{'c'} ? $data->{'c'} : &subs::c_maker();
-	my $suds = $c->session('suds');
+	my $suds = &subs::session_suds($c);
 	$data->{'attachments'} = [] unless $data->{'attachments'};
 	my $email_server = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
 	return { result => 'no server' } if scalar @{$email_server} == 0;

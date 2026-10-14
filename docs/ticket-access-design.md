@@ -122,8 +122,12 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    Manager, Alarm and watch (teletype and the internal controllers already had it), so the
    `president` cookie is opaque and every earlier cookie is invalidated once. Round-trip
    verified (`.shots/session_encryption_check.pl`).
-1. **Vault + suds out of the session** — the `subs::session_suds($c)` wrapper; login routes
-   stop setting `suds`; `suds_grabber` reads the vault; ticket rows stop carrying a live suds.
+1. **Vault + suds out of the session** — *(done in this build)* `subs::session_suds($c)`
+   resolves the key server-side; the vault (`~/.house.key` + a per-machine sealed row,
+   `subs::vault_seed` at login, `subs::suds_grabber` prefers it) holds the suds and the
+   ticket chain remains only as the migration fallback; sessions carry a `suds_id`
+   fingerprint, never the key. Ticket rows still carry a suds copy until a later pass
+   retires it (legacy rows stay readable through the migration).
 2. **Paired devices** — `paired_devices` table, pairing route (burns the ticket token +
    stores the pubkey), challenge/verify endpoints, server-side sessions, roster + revoke UI in
    `templates/security.html.ep` (and its help topic).
