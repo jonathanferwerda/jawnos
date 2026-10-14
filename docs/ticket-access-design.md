@@ -32,10 +32,10 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
 
 ## Verified weak spots
 
-1. **The session cookie carries the suds in the clear.** Mojolicious signed cookies are
-   Base64 + HMAC, not encrypted. Verified: `.shots/session_encryption_check.pl plain` shows
-   the cookie value literally starting `{"expires":…,"suds":"SUPERS…`. ~100 call sites read
-   `session('suds')` (Manager.pl 93, subroutines.pl 6, hooks.pl 1).
+1. **The session cookie carried the suds in the clear.** Mojolicious signed cookies are
+   Base64 + HMAC, not encrypted; until phase 0 below was applied the cookie value literally
+   started `{"expires":…,"suds":"SUPERS…` (`.shots/session_encryption_check.pl plain`). ~100
+   call sites read `session('suds')` (Manager.pl 93, subroutines.pl 6, hooks.pl 1).
 2. **The ticket row is self-contained.** `password` (plaintext) + `secret` + `suds` in one row:
    anyone who reads the DB — or a copy of it shipped by `remote_upgrade` — can unwrap the suds.
 3. **The suds rides the newest active ticket**, so expiry and rotation are coupled to a ticket.
@@ -118,9 +118,10 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
 
 ## Phases
 
-0. **Encrypted sessions** — uncomment `app->sessions->encrypted(1)`. One line; verified to
-   round-trip in this install (`.shots/session_encryption_check.pl`). Every current cookie is
-   invalidated once.
+0. **Encrypted sessions** — *(done in this build)* `app->sessions->encrypted(1)` is on for
+   Manager, Alarm and watch (teletype and the internal controllers already had it), so the
+   `president` cookie is opaque and every earlier cookie is invalidated once. Round-trip
+   verified (`.shots/session_encryption_check.pl`).
 1. **Vault + suds out of the session** — the `subs::session_suds($c)` wrapper; login routes
    stop setting `suds`; `suds_grabber` reads the vault; ticket rows stop carrying a live suds.
 2. **Paired devices** — `paired_devices` table, pairing route (burns the ticket token +

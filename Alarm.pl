@@ -485,7 +485,7 @@ if ($ENV{PURPOSE} eq "alarm") {
 	app->sessions->samesite('lax');
 	$ENV{MOJO_MAX_MESSAGE_SIZE} = 1023423423473741824;
 	app->renderer->cache->max_keys(0);
-#	app->sessions->encrypted(1);
+	app->sessions->encrypted(1);
 	app->secrets($gb::secret_maker);
 	app->sessions->cookie_name($ENV{'cookie_name'});
 	if ($config->{'environment'} eq 'production') {
