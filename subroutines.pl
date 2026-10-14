@@ -1507,6 +1507,16 @@ sub device_lister() {
 					foreach my $do ( @domains ) {
 						push @neighbourinos, $do->{'domain'} if $do->{'hostname'} eq $hostname;
 					}
+					# `ip neigh` never lists the loopback interface's own address, and the
+					# tunnels this server holds hang off exactly that 127.0.0.1 row below -
+					# so on cloud no tunnelled machine ever showed at all. Put the row in:
+					# it marks this machine, and every active tunnel becomes one of its
+					# neighbours, reached on the hub-side port the tunnel reserved.
+					if (&subs::device_setter() eq 'server'
+						&& ($address->{$nic}->{'ip'} || '') eq '127.0.0.1'
+						&& !grep { (split ' ', $_)[0] eq '127.0.0.1' } @neighbourinos) {
+						push @neighbourinos, '127.0.0.1 ' . &subs::random_string_creator(5);
+					}
 					foreach my $m ( @neighbourinos ) {
 						next if $m =~ /FAILED/;
 						my @l = (split " ", $m);
@@ -1529,8 +1539,12 @@ sub device_lister() {
 									next if grep { $_ eq $tun->{'batch_uuid'} } @batches;
 									push @batches, $tun->{'batch_uuid'};
 									push @{$ip_addresses}, {
-										ip => $tun->{'domain'},
-										domain => $tun->{'domain'},
+										# the peer, not this hub: a hub-side row carries the peer's own
+										# domain in `host` and this hub's in `domain`, so naming the
+										# neighbour by `domain` listed the hub itself, once per
+										# tunnelled machine, and every row collapsed together
+										ip => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
+										domain => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
 										PORT_DOCK => $tun->{'in_port'},
 										tunnel => 'yes',
 										mac => &subs::random_string_creator(10),
