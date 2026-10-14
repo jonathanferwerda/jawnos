@@ -12774,6 +12774,37 @@ sub error_watch_catch {
 	return @caught;
 }
 
+# Record one caught fault: a new row when its signature is new, a tally bump on
+# the row already carrying it. Shared by the log watch and the browser's fatal
+# JavaScript reporter (the signature may come from a shorter text than the
+# sample - a JS fault's stack must not make every occurrence a new signature).
+sub staged_fix_note {
+	my ($params) = @_;
+	my $sample = $params->{'sample'} // '';
+	my $sig = &error_signature(defined $params->{'signature_text'} ? $params->{'signature_text'} : $sample);
+	return {} unless length $sig;
+	my $tally = (($params->{'tally'} || 1) + 0) || 1;
+	my $existing = &subs::db_select('staged_fixes', [ 'uuid', 'tally' ], { signature => $sig })->hashes->[0];
+	if ($existing) {
+		&subs::db_update('staged_fixes', {
+			tally => ($existing->{'tally'} || 0) + $tally,
+			last_seen => &subs::rightNow(),
+		}, { uuid => $existing->{'uuid'} });
+		return { uuid => $existing->{'uuid'}, signature => $sig };
+	}
+	my $uuid = &subs::random_string_creator(40);
+	&subs::db_insert('staged_fixes', {
+		uuid => $uuid,
+		source => ($params->{'source'} || 'pty'),
+		signature => $sig,
+		sample => substr($sample, 0, 2000),
+		tally => $tally,
+		status => 'new',
+		last_seen => &subs::rightNow(),
+	});
+	return { uuid => $uuid, signature => $sig, status => 'new' };
+}
+
 # One pass: catch what is new, record it, and hand the oldest waiting error to
 # the Coding agent to propose a fix for. Called from President's schedule.
 sub error_watch_tick {
@@ -12819,24 +12850,7 @@ sub error_watch_tick {
 	}
 	foreach my $sig ( sort keys %new ) {
 		my $row = $new{$sig};
-		my $existing = &subs::db_select('staged_fixes', [ 'uuid', 'tally' ], { signature => $sig })->hashes->[0];
-		if ($existing) {
-			&subs::db_update('staged_fixes', {
-				tally => ($existing->{'tally'} || 0) + $row->{'tally'},
-				last_seen => &subs::rightNow(),
-			}, { uuid => $existing->{'uuid'} });
-		}
-		else {
-			&subs::db_insert('staged_fixes', {
-				uuid => &subs::random_string_creator(40),
-				source => $row->{'source'},
-				signature => $sig,
-				sample => $row->{'sample'},
-				tally => $row->{'tally'},
-				status => 'new',
-				last_seen => &subs::rightNow(),
-			});
-		}
+		&staged_fix_note({ source => $row->{'source'}, sample => $row->{'sample'}, tally => $row->{'tally'} });
 	}
 	# one proposal per tick keeps a model's cost and the tree's patience bounded
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
@@ -13000,8 +13014,11 @@ sub coding_propose_fix {
 	my $protocols = &coding_protocols_text();
 	$system .= "\n\nCodebase protocols (follow these):\n" . $protocols . "\n" if length $protocols;
 	$system .= "\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
+	my $where = (($row->{'source'} || '') eq 'js')
+		? 'A FATAL JAVASCRIPT ERROR WAS REPORTED BY A BROWSER IN THE JAWNOS INTERFACE:'
+		: 'AN ERROR WAS CAUGHT IN THE RUNNING SYSTEM (source: ' . ($row->{'source'} || '?') . ' log):';
 	my @lines = (
-		'AN ERROR WAS CAUGHT IN THE RUNNING SYSTEM (source: ' . ($row->{'source'} || '?') . ' log):',
+		$where,
 		'---',
 		($row->{'sample'} || $row->{'signature'}),
 		'---',

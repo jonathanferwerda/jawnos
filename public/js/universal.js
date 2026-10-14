@@ -1190,3 +1190,73 @@ function multiselectSweep() {
 }
 $(document).ready(function () { multiselectUpgrade(document.body); });
 new MutationObserver(multiselectSweep).observe(document.documentElement, { childList: true, subtree: true });
+
+// Fatal JavaScript errors report themselves to the error watch (the same
+// staging area the tree's own log feeds), so the Coding agent can propose a
+// fix. Only uncaught things are sent - an uncaught exception, an unhandled
+// promise rejection, a script or stylesheet that would not load - because
+// those are the fatal ones; console chatter is not. Each fault reports once
+// and then at most every ten minutes, carrying the count it has reached; an
+// extension's own errors and the browser's blank cross-origin "Script error."
+// are ignored. Reporting must never be the thing that breaks the page, so the
+// whole thing is wrapped and quiet.
+(function () {
+	if (window.jawnosJSErrorsReady) { return; }
+	window.jawnosJSErrorsReady = true;
+	var sent = {};      // signature -> when it was last sent
+	var counts = {};    // signature -> times seen since that send
+	var RESEND_MS = 10 * 60 * 1000;
+	function report(message, source, line, column, stack) {
+		try {
+			message = String(message == null ? 'Unknown error' : message).slice(0, 500);
+			source = String(source || '').slice(0, 500);
+			stack = String(stack || '').slice(0, 2000);
+			if (/^(?:chrome|moz|safari|edge)-extension:/.test(source)) { return; }
+			if (/^Script error\.?$/.test(message)) { return; }
+			var key = message + '|' + source + '|' + (line || 0);
+			var now = Date.now();
+			counts[key] = (counts[key] || 0) + 1;
+			if (sent[key] && (now - sent[key]) < RESEND_MS) { return; }
+			var count = counts[key];
+			counts[key] = 0;
+			sent[key] = now;
+			var payload = JSON.stringify({
+				page: location.pathname + location.hash,
+				message: message,
+				source: source,
+				line: line || 0,
+				column: column || 0,
+				stack: stack,
+				count: count,
+				agent: navigator.userAgent
+			});
+			if (navigator.sendBeacon) {
+				navigator.sendBeacon('/manager/js_error', new Blob([payload], { type: 'application/json' }));
+			}
+			else {
+				var xhr = new XMLHttpRequest();
+				xhr.open('POST', '/manager/js_error', true);
+				xhr.setRequestHeader('Content-Type', 'application/json');
+				xhr.send(payload);
+			}
+		}
+		catch (e) { /* reporting must never be the error */ }
+	}
+	window.addEventListener('error', function (e) {
+		if (e.target && e.target !== window && e.target.tagName) {
+			var t = e.target.tagName;
+			if (t === 'SCRIPT' || t === 'LINK') {
+				var href = e.target.src || e.target.href || '';
+				report('failed to load ' + t.toLowerCase() + ': ' + href, href, 0, 0, '');
+			}
+			return;
+		}
+		var err = e.error || {};
+		report(e.message, e.filename, e.lineno, e.colno, err.stack || '');
+	}, true);
+	window.addEventListener('unhandledrejection', function (e) {
+		var r = e.reason || {};
+		var msg = (r && r.message) ? r.message : (typeof r === 'string' ? r : 'unknown reason');
+		report('Unhandled promise rejection: ' + msg, '', 0, 0, (r && r.stack) || '');
+	});
+})();

@@ -19957,6 +19957,39 @@ post '/manager/coding/restart' => sub($c) {
 	$c->render(json => { ok => 1 });
 };
 
+# ---- fatal browser JavaScript, reported by public/js/universal.js -----------
+# The watch's third ear: an uncaught exception, an unhandled promise rejection,
+# or a script/stylesheet that would not load, straight from whichever page hit
+# it. Recorded the way the log watch records one (signature first, so a page
+# throwing every frame is one row with a tally), and only while the watch is on.
+post '/manager/js_error' => sub($c) {
+	return $c->render(json => { ok => 0 }) unless (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on';
+	my $body = eval { decode_json($c->req->body // '') } || {};
+	my $message = $body->{'message'} // $c->param('message') // '';
+	my $source = $body->{'source'} // $c->param('source') // '';
+	my $line = (($body->{'line'} // $c->param('line') // 0) + 0);
+	my $stack = $body->{'stack'} // '';
+	my $page = $body->{'page'} // '';
+	my $tally = ((($body->{'count'} // 1) + 0) || 1);
+	$message =~ s/\s+/ /g;
+	$message =~ s/^\s+|\s+$//g;
+	return $c->render(json => { ok => 0 }) unless length $message || length $source;
+	# a floor under a runaway page: the rows are cheap, but a thousand of them is
+	# not a queue anyone wants to read
+	my $staged = &subs::db_query("select count(*) as n from staged_fixes where source = 'js'")->hashes->[0];
+	return $c->render(json => { ok => 0, note => 'enough browser errors staged for now' }) if $staged && ($staged->{'n'} || 0) >= 200;
+	my $sample = 'JavaScript error on page ' . ($page || '?') . ': ' . $message
+		. ($source ? ' (' . $source . ($line ? ':' . $line : '') . ')' : '')
+		. (length $stack ? "\n" . substr($stack, 0, 1200) : '');
+	my $row = &subs::staged_fix_note({
+		source => 'js',
+		sample => $sample,
+		signature_text => $message . ' (' . $source . ':' . $line . ')',
+		tally => $tally,
+	});
+	$c->render(json => { ok => 1, signature => ($row->{'signature'} || '') });
+};
+
 # ---- the guide looks an appointment over when it opens --------------------
 # If the app's name and description do not match its pos (part of speech) or
 # mab, the guide sets the right ones. It marks each app it has looked at in a

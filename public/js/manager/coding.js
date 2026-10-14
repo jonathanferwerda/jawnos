@@ -128,7 +128,7 @@ function codingFixesRender(mount, data) {
 			.append($('<b style="flex:1;overflow-wrap:break-word;"></b>').text(f.signature || '(error)'))
 			.append($('<span style="white-space:nowrap;opacity:.6;"></span>').text(codingFixesState(f))));
 		row.append($('<div style="opacity:.55;margin:2px 0 4px;"></div>').text(
-			(f.source || '?') + ' log · seen ' + (f.tally || 1) + '×' + (f.model ? ' · ' + f.model : '')));
+			(f.source === 'js' ? 'browser' : (f.source || '?') + ' log') + ' · seen ' + (f.tally || 1) + '×' + (f.model ? ' · ' + f.model : '')));
 		if (f.sample) {
 			row.append($('<div style="font-family:monospace;font-size:11px;background:rgba(0,0,0,.05);border-radius:5px;padding:4px 6px;margin:0 0 4px;max-height:90px;overflow:auto;white-space:pre-wrap;overflow-wrap:break-word;"></div>').text(String(f.sample).slice(0, 600)));
 		}
