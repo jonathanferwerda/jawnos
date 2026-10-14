@@ -118,7 +118,7 @@ sub default_search_engines {
 sub make_database {
 	my ( $cfg, $params ) = @_;
 	my $code     = $params->{'code'};
-	my $standard = $params->{'encryption_standard'} || 'aes-256-ctr';
+	my $standard = $params->{'encryption_standard'} || 'aes-256-cbc';
 
 	unless ( $code && $code =~ /^[0-9]{4,12}$/ ) {
 		return { error => 'The unlock code must be 4-12 digits.' };
@@ -207,6 +207,12 @@ sub make_database {
 			} );
 		}
 	}
+
+	# keep only this machine's kind: the seed carries the palette and settings for
+	# every kind of machine, and setting_grabber reads the row for this device
+	# only - the others are dead weight a configure panel would otherwise show
+	my $this_device = $cfg->{'device'} || 'computer';
+	$db->query( 'delete from settings where device is not null and device <> ?', $this_device );
 
 	$db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 	undef $db;
