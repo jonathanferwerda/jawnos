@@ -144,8 +144,15 @@ sub peer_session {
   my %channels;   # channel id => TCP stream to the local service
 
   # sign the ws handshake the way the HTTP peer rail signs its requests, so the
-  # hub verifies identity instead of trusting a name alone
-  $ua->on(start => $opts->{'sign'}) if $opts->{'sign'};
+  # hub verifies identity instead of trusting a name alone. The UA's start event
+  # passes ($ua, $tx), so the signer must be handed the request, exactly as every
+  # HTTP-rail caller does (on(start => sub { ...peer_sign_request($tx->req) })).
+  # Handing it the event directly gave it the UA, and $ua->method killed the
+  # handshake (and the holder) before a byte was signed.
+  if ($opts->{'sign'}) {
+    my $sign = $opts->{'sign'};
+    $ua->on(start => sub { my ($ua, $tx) = @_; $sign->($tx->req); });
+  }
 
   my $connect;
   $connect = sub {
