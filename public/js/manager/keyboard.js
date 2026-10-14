@@ -52,17 +52,20 @@ function jawnosSuperKey(e) {
 	return !!(e.metaKey || keysPressed[91]);
 }
 
-// The desktop app's embedded view exposes a `jawnos` script-message handler.
-// Mark the document so CSS can show the admin-console icon only there (a plain
-// browser tab has no dashboard to go back to), and expose the press.
+// The apps' embedded views expose a way back to their dashboard: the desktop's
+// WebKit view a `jawnos` script-message handler, the Android view a `JawnAdmin`
+// interface (JawnWebViewActivity). Mark the document so CSS can show the
+// admin-console icon only there (a plain browser tab has no dashboard to go
+// back to), and expose the press.
 $(function () {
-	if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.jawnos) {
+	if ((window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.jawnos) || window.JawnAdmin) {
 		$('html').addClass('jawnos_webview');
 	}
 });
 
 function jawnosAdminConsole() {
 	try { window.webkit.messageHandlers.jawnos.postMessage('admin_console'); } catch (e) {}
+	try { window.JawnAdmin && window.JawnAdmin.open(); } catch (e) {}
 }
 // The dock at the bottom of the screen: one centred row of pseudonyms. Icons that
 // are switched off hide, and the rest share the row, shrinking below their full

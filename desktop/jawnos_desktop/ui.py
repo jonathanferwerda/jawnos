@@ -24,6 +24,38 @@ from . import DESKTOP_DIR, core  # noqa: E402
 
 LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 
+# The panel's look: a near-black ground, rounded cards above it, the jawn yellow
+# as the accent - the same language as the Android dashboard's cards.
+_CSS = """
+window { background-color: #101010; }
+label { color: #ededed; }
+label.title { font-size: 22px; font-weight: bold; }
+label.dim { color: #8e8e8e; font-size: 12px; }
+label.h { color: #8e8e8e; font-size: 11px; font-weight: bold; }
+box.card { background-color: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 16px; padding: 12px; }
+button { background-image: none; background-color: #262626; color: #ededed;
+         border: 1px solid #2c2c2c; border-radius: 12px; padding: 9px 14px; box-shadow: none; }
+button:hover { background-color: #303030; }
+button.primary { background-color: #ffcc00; color: #0a0a0a; border: 1px solid #ffcc00; font-weight: bold; }
+button.primary:hover { background-color: #e6b800; }
+entry { background-color: #262626; color: #ededed; border: 1px solid #2c2c2c;
+        border-radius: 10px; padding: 8px; }
+checkbutton { color: #ededed; }
+"""
+
+_CSS_APPLIED = False
+
+
+def _apply_css():
+    global _CSS_APPLIED
+    if _CSS_APPLIED:
+        return
+    _CSS_APPLIED = True
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_CSS.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
 
 class Dashboard(Gtk.Window):
     def __init__(self, settings, start_requested=False, show_web=False, tray=True):
@@ -33,9 +65,10 @@ class Dashboard(Gtk.Window):
         self._web_panel = None
         self._web_failed = False
         self.set_default_size(1080, 820)
+        _apply_css()
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_border_width(18)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_border_width(20)
         # Each control is given hexpand + CENTER alignment (see _centre), so the
         # panel reads as a centred column instead of hugging the left edge.
         scroller = Gtk.ScrolledWindow()
@@ -76,54 +109,63 @@ class Dashboard(Gtk.Window):
             logo.connect("button-press-event", self._on_logo_clicked)
             box.pack_start(self._centre(logo), False, False, 2)
 
-        title = Gtk.Label()
-        title.set_markup("<span size='large' weight='bold'>JawnOS</span>")
-        title.set_xalign(0.5)
+        title = Gtk.Label(label="JawnOS", xalign=0.5)
+        title.get_style_context().add_class("title")
         box.pack_start(self._centre(title), False, False, 0)
 
-        self.live = Gtk.Label(xalign=0.5)
-        box.pack_start(self._centre(self.live), False, False, 4)
+        status = self._card(box, "Status")
+        self.live = Gtk.Label(xalign=0)
+        status.pack_start(self.live, False, False, 0)
 
-        self.env = Gtk.Label(xalign=0.5)
+        self.env = Gtk.Label(xalign=0)
         self.env.set_line_wrap(True)
-        box.pack_start(self._centre(self.env), False, False, 0)
+        self.env.get_style_context().add_class("dim")
+        status.pack_start(self.env, False, False, 0)
 
         self.dir_entry = Gtk.Entry()
         self.dir_entry.set_text(settings.get("jawn_dir", ""))
         self.dir_entry.set_placeholder_text("jawn folder (default ~/jawnos)")
         self.dir_entry.set_width_chars(46)
-        box.pack_start(self._centre(self.dir_entry), False, False, 4)
 
         self.autostart = Gtk.CheckButton(label="Start the BLE bridge at login")
         self.autostart.set_active(core.autostart_enabled())
-        box.pack_start(self._centre(self.autostart), False, False, 0)
 
         self.ble_with_jawn = Gtk.CheckButton(label="Start/stop the BLE bridge with jawn")
         self.ble_with_jawn.set_active(bool(settings.get("ble_with_jawn", True)))
-        box.pack_start(self._centre(self.ble_with_jawn), False, False, 0)
 
-        self._header(box, "Jawn")
-        self._button(box, "Start jawn", self.action_start)
-        self._button(box, "Stop jawn", self.action_stop)
-        self._button(box, "Restart jawn", self.action_restart)
-        # The view is the everyday destination, so it sits right under Restart
-        # rather than down in the Open group.
-        self._button(box, "Open JawnOS view", self.action_open_embedded)
+        jawn = self._card(box, "Jawn")
+        self._card_row(jawn, [
+            ("Start", self.action_start, True),
+            ("Restart", self.action_restart, False),
+            ("Stop", self.action_stop, False),
+        ])
+        # The view is the everyday destination, so it sits right here.
+        self._card_button(jawn, "Open JawnOS view", self.action_open_embedded, primary=True)
 
-        self._header(box, "Open")
-        self._button(box, "Open JawnOS UI", self.action_open_ui)
-        self._button(box, "Show jawn log", self.action_show_log)
-        self._button(box, "Open console", self.action_open_console)
+        opn = self._card(box, "Open")
+        self._card_button(opn, "Open in browser", self.action_open_ui)
+        self._card_row(opn, [
+            ("Show log", self.action_show_log, False),
+            ("Console", self.action_open_console, False),
+        ])
 
-        self._header(box, "Login")
-        self._button(box, "Import login ticket", self.action_import_ticket)
-        self._button(box, "Forget stored ticket", self.action_forget_ticket)
+        login = self._card(box, "Login")
+        self._card_row(login, [
+            ("Import ticket", self.action_import_ticket, False),
+            ("Forget ticket", self.action_forget_ticket, False),
+        ])
 
-        self._header(box, "BLE bridge")
-        self._button(box, "Start BLE bridge", lambda: self._async(core.start_ble))
-        self._button(box, "Stop BLE bridge", lambda: self._async(core.stop_ble))
+        ble = self._card(box, "Bluetooth")
+        self._card_row(ble, [
+            ("Start bridge", lambda: self._async(core.start_ble), False),
+            ("Stop bridge", lambda: self._async(core.stop_ble), False),
+        ])
 
-        self._button(box, "Save settings", self.action_save)
+        settings_card = self._card(box, "Settings")
+        settings_card.pack_start(self.dir_entry, False, False, 0)
+        settings_card.pack_start(self.autostart, False, False, 0)
+        settings_card.pack_start(self.ble_with_jawn, False, False, 0)
+        self._card_button(settings_card, "Save settings", self.action_save, primary=True)
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self._on_key)
@@ -155,6 +197,37 @@ class Dashboard(Gtk.Window):
         button = Gtk.Button(label=text)
         button.connect("clicked", lambda _b: handler())
         box.pack_start(self._centre(button), False, False, 0)
+
+    # ---- cards (the panel's look) ----
+
+    def _card(self, box, title=None):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class("card")
+        if title:
+            label = Gtk.Label(label=title.upper(), xalign=0)
+            label.get_style_context().add_class("h")
+            card.pack_start(label, False, False, 0)
+        box.pack_start(card, False, False, 0)
+        return card
+
+    def _card_button(self, card, text, handler, primary=False):
+        button = Gtk.Button(label=text)
+        if primary:
+            button.get_style_context().add_class("primary")
+        button.connect("clicked", lambda _b, h=handler: h())
+        card.pack_start(button, False, False, 0)
+        return button
+
+    def _card_row(self, card, buttons):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, homogeneous=True)
+        for text, handler, primary in buttons:
+            button = Gtk.Button(label=text)
+            if primary:
+                button.get_style_context().add_class("primary")
+            button.connect("clicked", lambda _b, h=handler: h())
+            row.pack_start(button, True, True, 0)
+        card.pack_start(row, False, False, 0)
+        return row
 
     # ---- settings ----
 
