@@ -44,7 +44,18 @@ my $ua = Mojo::UserAgent->new;
 $ua->insecure(1);
 $ua->max_response_size(0);
 
-sub _log { my ($fmt, @a) = @_; warn sprintf("[tunnel] $fmt\n", @a) if $ENV{TUNNEL_DEBUG}; }
+sub _log {
+  my ($fmt, @a) = @_;
+  my $line = sprintf("[tunnel $$] $fmt\n", @a);
+  warn $line if $ENV{TUNNEL_DEBUG};
+  # A file-gated trace for diagnosing a flapping tunnel on a live device without
+  # restarting to set TUNNEL_DEBUG: touch /tmp/tunnel_debug_arm and the holder
+  # (and hub) append to /tmp/tunnel_debug.log; remove it to go quiet again.
+  if (-e '/tmp/tunnel_debug_arm' && open(my $fh, '>>', '/tmp/tunnel_debug.log')) {
+    print $fh $line;
+    close $fh;
+  }
+}
 
 sub _txt { my ($ws, $h) = @_; $ws->send({ text   => encode_json($h) }); }
 sub _bin { my ($ws, $ch, $d) = @_; $ws->send({ binary => pack('N', $ch) . $d }); }
