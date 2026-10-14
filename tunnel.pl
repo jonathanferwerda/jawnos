@@ -277,23 +277,36 @@ sub peer_session {
         $channels{$ch}->write($payload) if $channels{$ch};
       });
 
-      $tx->on(finish => sub {
-        _log('peer disconnected');
+      # One teardown, whichever notices first: the socket's own finish, or the
+      # heartbeat. A half-open socket (the hub closed but we never saw the FIN)
+      # can make the ping write die inside the timer callback, so the send is
+      # guarded too - otherwise the recurring timer stops firing and nothing
+      # redials until the checker's slow failures path.
+      my $closed = 0;
+      my $closer = sub {
+        return if $closed;
+        $closed = 1;
         Mojo::IOLoop->remove($hb) if $hb;
+        $hb = undef;
         $_->close for values %channels;
         %channels = ();
         _reconnect($connect);
+      };
+
+      $tx->on(finish => sub {
+        _log('peer disconnected');
+        $closer->();
       });
 
       $hb = Mojo::IOLoop->recurring(15 => sub {
-        if (time() - $last_pong > 40) {
-          Mojo::IOLoop->remove($hb) if $hb;
-          $hb = undef;
-          _log('peer heartbeat timeout; redialing');
-          eval { $tx->finish };
-          return;
+        my $stale = (time() - $last_pong > 40) ? 1 : 0;
+        unless ($stale) {
+          $stale = 1 unless eval { _txt($tx, { op => 'ping' }); 1 };
         }
-        _txt($tx, { op => 'ping' });
+        return unless $stale;
+        _log('peer heartbeat timeout; redialing');
+        eval { $tx->finish };
+        $closer->();
       });
     });
   };
