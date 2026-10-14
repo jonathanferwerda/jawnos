@@ -12476,7 +12476,7 @@ sub watch_tokens_add {
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
-my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe|UDTA parsing failed|source=model_show_cache|Socket sender:/;
+my $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President Died, Ctrl\+C! Performing cleanup logic|Broken pipe|UDTA parsing failed|source=model_show_cache|Socket sender:|\{"event": "error", "message": "not connected"\}/;
 
 sub error_watch_is_error {
 	my $line = shift;
@@ -12622,7 +12622,12 @@ sub error_watch_tick {
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	return unless $model;
 	my $waiting = &subs::db_query('select * from staged_fixes where status = ? order by ost asc limit 1', 'new')->hashes->[0];
-	&coding_propose_fix($waiting) if $waiting;
+	if ($waiting) {
+		# a propose run that dies inside the fork would otherwise vanish into the
+		# outer eval; say so, or the row just sits 'new' forever with no trace
+		my $ok = eval { &coding_propose_fix($waiting); 1 };
+		$log->info('error watch: the proposal for "' . substr($waiting->{'signature'} || '?', 0, 60) . '" died: ' . $@) if !$ok && defined $log;
+	}
 	return 1;
 }
 
