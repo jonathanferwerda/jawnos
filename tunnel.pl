@@ -50,6 +50,40 @@ sub _txt { my ($ws, $h) = @_; $ws->send({ text   => encode_json($h) }); }
 sub _bin { my ($ws, $ch, $d) = @_; $ws->send({ binary => pack('N', $ch) . $d }); }
 
 # ---------------------------------------------------------------------------
+# Heartbeat freshness
+# ---------------------------------------------------------------------------
+# Liveness is the data plane's own beat, not a cross-machine round-trip. The
+# peer's holder pings the hub every 15s and stamps a per-hub file on every pong;
+# the manager's tunnel checker reads that stamp's age, so "is the tunnel up?" is
+# answered locally - and the ping keeps a NAT mapping from silently expiring.
+# Keyed by the hub host so a machine with more than one hub keeps one stamp per
+# hub. The stamp lives in $HOME, not the app's state dir: that dir is wiped at
+# boot and the two sides would then disagree about where the stamp is.
+sub alive_file {
+  my ($url) = @_;
+  my $host = eval { Mojo::URL->new($url)->host } || '';
+  $host =~ s/[^A-Za-z0-9.\-]/_/g;
+  my $dir = $ENV{HOME} || '/tmp';
+  return "$dir/.tunnel_alive_$host";
+}
+
+sub touch_alive {
+  my ($url) = @_;
+  my $f = alive_file($url);
+  if (open(my $fh, '>', $f)) { close $fh; }
+}
+
+# Milliseconds since the holder last heard a pong, or undef if it never has.
+sub alive_age {
+  my ($url) = @_;
+  my $f = alive_file($url);
+  return unless -e $f;
+  my $m = (stat($f))[9];
+  return unless $m;
+  return (time() - $m) * 1000;
+}
+
+# ---------------------------------------------------------------------------
 # Hub side
 # ---------------------------------------------------------------------------
 # hub_session($tx, {
@@ -72,7 +106,7 @@ sub hub_session {
 
   my $session = $HUB{$sig} = {
     ws => $ws, signatorial => $sig, channel_next => 1,
-    channels => {}, listeners => {},
+    channels => {}, listeners => {}, last_seen => time(),
   };
   _log('hub session for %s', $sig);
 
@@ -101,7 +135,11 @@ sub hub_session {
     my ($ws, $str) = @_;
     my $m  = eval { decode_json $str } || {};
     my $op = $m->{'op'} // '';
-    if ($op eq 'ready') {
+    $session->{'last_seen'} = time();
+    if ($op eq 'ping') {
+      _txt($ws, { op => 'pong' });
+    }
+    elsif ($op eq 'ready') {
       my $c = $session->{'channels'}{$m->{'channel'}};
       $c->{'tcp'}->start if $c && $c->{'tcp'};
       _log('peer ready on channel %d', $m->{'channel'});
@@ -116,6 +154,7 @@ sub hub_session {
 
   $ws->on(binary => sub {
     my ($ws, $bytes) = @_;
+    $session->{'last_seen'} = time();
     return if length $bytes < 4;
     my $ch      = unpack('N', substr($bytes, 0, 4));
     my $payload = substr($bytes, 4);
@@ -123,8 +162,23 @@ sub hub_session {
     $c->{'tcp'}->write($payload);
   });
 
+  # Drop a peer whose socket went silent: the peer pings every 15s, so 60s of
+  # silence is a half-open death Mojo cannot see, and closing it frees the
+  # listeners for the peer's own redial (which the idle timeout would otherwise
+  # never prompt).
+  my $watchdog;
+  $watchdog = Mojo::IOLoop->recurring(30 => sub {
+    return unless $HUB{$sig} && $HUB{$sig} == $session;
+    if (time() - ($session->{'last_seen'} || time()) > 60) {
+      _log('hub session %s silent; dropping', $sig);
+      Mojo::IOLoop->remove($watchdog) if $watchdog;
+      eval { $ws->finish };
+    }
+  });
+
   $ws->on(finish => sub {
     _log('hub session %s down', $sig);
+    Mojo::IOLoop->remove($watchdog) if $watchdog;
     Mojo::IOLoop->remove(delete $session->{'listeners'}{$_}) for keys %{$session->{'listeners'}};
     $_->{'tcp'}->close for values %{$session->{'channels'}};
     # Only deregister if we are still the current session for this signatorial;
@@ -170,10 +224,19 @@ sub peer_session {
       _txt($tx, { op => 'hello', signatorial => $sig, token => ($opts->{'token'} // '') });
       $opts->{'on_ready'}->($tx) if $opts->{'on_ready'};
 
+      # Heartbeat: a ping every 15s keeps the NAT mapping open and proves the
+      # link is live; silence past 40s is a zombie socket (a NAT/idle drop Mojo
+      # never notices), so redial. Each pong stamps the freshness file the
+      # manager's tunnel checker reads - liveness without a cross-machine ping.
+      my $last_pong = time();
+      my $hb;
+      touch_alive($url);
+
       $tx->on(text => sub {
         my ($tx, $str) = @_;
         my $m  = eval { decode_json $str } || {};
         my $op = $m->{'op'} // '';
+        if ($op eq 'pong') { $last_pong = time(); touch_alive($url); return; }
         if ($op eq 'open') {
           my $ch = $m->{'channel'};
           Mojo::IOLoop->client({ address => '127.0.0.1', port => $m->{'dest'} } => sub {
@@ -201,9 +264,21 @@ sub peer_session {
 
       $tx->on(finish => sub {
         _log('peer disconnected');
+        Mojo::IOLoop->remove($hb) if $hb;
         $_->close for values %channels;
         %channels = ();
         _reconnect($connect);
+      });
+
+      $hb = Mojo::IOLoop->recurring(15 => sub {
+        if (time() - $last_pong > 40) {
+          Mojo::IOLoop->remove($hb) if $hb;
+          $hb = undef;
+          _log('peer heartbeat timeout; redialing');
+          eval { $tx->finish };
+          return;
+        }
+        _txt($tx, { op => 'ping' });
       });
     });
   };

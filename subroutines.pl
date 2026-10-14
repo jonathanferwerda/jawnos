@@ -8493,44 +8493,41 @@ sub tunnel_checker() {
 							my $ps_check = `ps -e | grep $ps`;
 							next if grep { $tun->{'signatorial'} eq $_ || $tun->{'batch_uuid'} eq $_  } @{$batches};
 							push @{$batches}, $tun->{'signatorial'};
-							my $chip_chyea = &subs::random_string_creator(200);
 							my $signatorial = $tun->{'signatorial'};
 							my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
 							my $url = $rm->{'manager'} . '/manager/tunnel/alive';
 							my @batch = grep { $_->{'batch_uuid'} eq $tun->{'batch_uuid'} } @{$tunnels};
+							# The POST is only the mirror/network sync now. Liveness is the
+							# holder's own websocket heartbeat: peer_session pings the hub and
+							# stamps a per-hub freshness file on every pong, so the checker reads
+							# the data plane directly instead of round-tripping a chip_chyea
+							# through the hub (a path that needed a session, the gate and the hub
+							# reaching a NAT'd peer all to line up).
 							my $form_data = {
 								signatorial => &subs::signatorial_designer(),
-								chip_chyea => $chip_chyea,
 								network => encode_json &subs::network_interface_reporter(),
 								interval => $data->{'interval'},
 								tunnel => encode_json \@batch
 							};
 							$rm->{'ua'}->inactivity_timeout(23);
 							my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
-							my $status = 'unknown';
-							if ($res->is_success) {
-								if (eval { return decode_json $res->body }) {
-									my $chippity = &subs::setting_grabber({ app => '__president', subsetting => $tun->{'signatorial'}, setting => 'chip_chyea' });
-									if ($chip_chyea eq $chippity) {
-										$status = 'connected';
-										my $response = decode_json $res->body;
-										if ($response->{'mirrors'}) {
-											foreach my $mirror ( @{$response->{'mirrors'}} ) {
-												my $ip = $rm->{'ip'};
-												$mirror->{'manager'} =~ s/127\.0\.0\.1/$ip/gi;
-												$mirror->{'mirror'} = 'yes';
-												if ($mirror->{'network'}) {
-													$mirror->{'network'} = decode_json $mirror->{'network'};
-												}
-
-											}
-
-											my $jmirror = encode_json $response->{'mirrors'};
-											&subs::db_update('remote_machines', { mirrors => $jmirror, server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
+							my $age = &Tunnel::alive_age($rm->{'manager'});
+							my $status = (defined $age && $age < 90000) ? 'connected' : 'unknown';
+							if ($res && $res->is_success) {
+								my $response = eval { decode_json $res->body } || {};
+								if ($response->{'mirrors'}) {
+									foreach my $mirror ( @{$response->{'mirrors'}} ) {
+										my $ip = $rm->{'ip'};
+										$mirror->{'manager'} =~ s/127\.0\.0\.1/$ip/gi;
+										$mirror->{'mirror'} = 'yes';
+										if ($mirror->{'network'}) {
+											$mirror->{'network'} = decode_json $mirror->{'network'};
 										}
-										else {
-										}
+
 									}
+
+									my $jmirror = encode_json $response->{'mirrors'};
+									&subs::db_update('remote_machines', { mirrors => $jmirror, server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
 								}
 							}
 							if ($status ne 'connected' || $data->{'duty'} eq 'restart') {
