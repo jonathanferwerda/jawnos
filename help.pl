@@ -570,7 +570,7 @@ our %topic = (
 			'The taskbar is an ordered list of slots: the open windows, the clock, the start button, the search box and any apps or keyboards you have pinned. It can sit on any edge, be shown, hidden or set to auto-hide.',
 			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.',
 			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now.',
-			'Click the clock to use it as a time machine: type a time - "-3h", "jul 16", "last dec 25", "dec 25 2025 at 7:04pm" - and press Enter to carry the view there, or Escape to leave it. An empty entry is now.'
+			'Click the clock to use it as a time machine: type a time - "-3h", "jul 16", "last dec 25", "dec 25 2025 at 7:04pm" - and press Enter to carry the view there, or Escape to leave it. An empty entry is now. A phrase the app cannot read itself is handed to the guide to interpret, and the view travels where it says.'
 		],
 		steps => [
 			'Right-click the bar to open its context menu.',

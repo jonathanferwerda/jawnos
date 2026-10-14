@@ -245,13 +245,76 @@ sub record_audio_stop($data) {
 	return $filename;
 }
 
+# What the guide made of a phrase the time machine could not read; cached per
+# phrase so a typed word the poll re-sends every cycle costs one model call, not
+# one per poll. A phrase mapped to undef is one the guide could not read either.
+my %time_machine_guide_cache;
+
+# The time machine's phrase turned into a moment. A written date and a recognized
+# relative offset are read by subs::resolve_when / ago_calc; anything else - a
+# phrase neither can read, or one that lands exactly on the epoch without naming
+# it - is handed to the guide to interpret, and the view travels where it says.
+sub time_machine_resolve {
+	my ($spec, $timestamp) = @_;
+	return $timestamp unless defined $spec && $spec =~ /\S/;
+	my $ms = &subs::resolve_when($spec, $timestamp);
+	if (!defined $ms) {
+		my $relative = 0;
+		if ($spec =~ /^\s*(?:now|today|tomorrow|yesterday|tonight|tom|yes|mon|tue|wed|thu|fri|sat|sun)\s*$/i) { $relative = 1; }
+		# a compact offset ("-3h", "3d 4h", "in 2h"); a spelled-out unit
+		# ("6 months") is left to the guide, which reads the words
+		elsif ($spec =~ /^\s*(?:in\s+)?[+-]?\d/ && $spec !~ /\b(?:second|minute|hour|day|week|month|year|decade|century)s?\b/i) { $relative = 1; }
+		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
+	}
+	if (!defined $ms || ($ms == 0 && $spec !~ /\b(?:1970|epoch|unix)\b/i)) {
+		my $guide = &guide_time_machine($spec, $timestamp);
+		$ms = $guide if defined $guide;
+	}
+	$ms = $timestamp unless defined $ms;
+	return $ms;
+}
+
+# Ask the guide to read a time-machine phrase and give the moment it names. It is
+# told the present so "jul 16", "last friday" or a bare day land in the right
+# year. It answers with a local timestamp, which str2time reads back; anything
+# else is "unknown". No guide model on this machine leaves the phrase unread.
+sub guide_time_machine {
+	my ($spec, $timestamp) = @_;
+	my $key = lc $spec;
+	return $time_machine_guide_cache{$key} if exists $time_machine_guide_cache{$key};
+	my $ms;
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	if ($model) {
+		my $now_text = localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P');
+		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that means a moment in time. '
+			. 'Right now it is ' . $now_text . ' in local time. '
+			. 'Reply with ONLY the moment it names, as YYYY-MM-DD HH:MM:SS in local time, and nothing else. '
+			. 'If it names no moment you can read, reply with exactly: unknown';
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, $spec);
+		if ($text) {
+			$text =~ s/^\s+|\s+$//g;
+			if ($text !~ /\bunknown\b/i) {
+				$text =~ s/\bat\b/ /gi;
+				my $t = eval { str2time($text) };
+				if (!$t && $text =~ /(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/) {
+					my $d = $1; $d =~ s/T/ /;
+					$t = eval { str2time($d) };
+				}
+				$ms = $t * 1000 if $t;
+			}
+		}
+	}
+	$time_machine_guide_cache{$key} = $ms;
+	return $ms;
+}
+
 sub timestamp_adjuster($c) {
 	my $timestamp = $c->param('timestamp');
 	my $time_machine = $c->param('time_machine');
 	my $timeshift = $c->param('timeshift');
 	my $ago = $c->param('ago');
 	if ($time_machine) {
-		$timestamp = &subs::ago_calc($time_machine,$timestamp);
+		$timestamp = &time_machine_resolve($time_machine,$timestamp);
 	}
 	if ($timeshift) {
 		if ($timeshift =~ /[0-9]/gi) {
@@ -12342,7 +12405,7 @@ get '/manager/budget' => sub($c) {
 	}
 	else {
 		if ($time_machine) {
-			$timestamp = &subs::ago_calc($time_machine,$timestamp);
+			$timestamp = &time_machine_resolve($time_machine,$timestamp);
 		}
 		if ($timeshift) {
 			$timestamp = &subs::ago_calc($timeshift,$timestamp);
@@ -13717,7 +13780,7 @@ get '/manager/appointment_viewer' => sub($c) {
 	}
 	else { $chosen_appts = \@appointments; }
 	if ($time_machine) {
-		$timestamp = &subs::ago_calc($time_machine,$timestamp);
+		$timestamp = &time_machine_resolve($time_machine,$timestamp);
 	}
 	# The centre the time machine alone stands for. The timeline writes a slide back
 	# into #time_machine as a relative string, and that string must anchor here -
@@ -13943,7 +14006,7 @@ get '/manager/appointment_details' => sub($c) {
 	my $uuid = $c->param('uuid');
 
 	if ($time_machine) {
-		$timestamp = &subs::ago_calc($time_machine,$timestamp);
+		$timestamp = &time_machine_resolve($time_machine,$timestamp);
 	}
 	if ($timeshift) {
 		$timeshift = &subs::time_abbrev_translator($timeshift);
