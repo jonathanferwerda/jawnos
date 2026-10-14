@@ -73,6 +73,9 @@ require "./help.pl";
 app->hook(before_dispatch => sub {
 	unless ($Manager::schema_checked) {
 		$Manager::schema_checked = 1;
+		# one machine, one database: leftovers from older databases (server.enc,
+		# laptop_*.enc, a stray .db) are discarded here, once per worker at boot
+		eval { &subs::database_tidy(); };
 		eval { &update_database({}); };
 	}
 });

@@ -5882,6 +5882,32 @@ sub backups_dir {
 	return $dir;
 }
 
+# One machine, one database: anything else under database/ is an older
+# database's leftover (server.enc, laptop_*.enc, a stray .db) and is discarded.
+# The working set is the jawnos database and its sidecars, the factory seed, the
+# schema, and the jawnos backups - everything else is shredded. Directories are
+# never touched, so the backups/ dir itself is safe.
+sub database_tidy {
+	my $dir = &subs::database_dir();
+	my $backups = &subs::backups_dir();
+	my @gone;
+	foreach my $f ( glob("$dir/*") ) {
+		next if $f =~ m{/(?:jawnos\.db(?:-shm|-wal)?|schema\.sql|initial\.enc|backups)$};
+		push @gone, $f;
+	}
+	foreach my $f ( glob("$backups/*") ) {
+		next if $f =~ m{/jawnos(?:_\d+)?\.enc$};
+		push @gone, $f;
+	}
+	@gone = grep { !-d $_ } @gone;
+	foreach my $f ( @gone ) {
+		`shred -u "$f" 2>/dev/null`;
+		unlink $f;
+	}
+	&subs::log_writer('database tidy: discarded ' . scalar(@gone) . ' leftover file(s)') if scalar @gone;
+	return scalar @gone;
+}
+
 # Adopt a pre-fixed-path install: move the database the old scan would have
 # chosen, and the .enc backups beside it, into database/. Runs once, and only
 # when the fixed database is missing, so pulling this build onto an existing
