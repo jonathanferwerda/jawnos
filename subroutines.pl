@@ -11291,6 +11291,7 @@ sub ai_chat_raw {
 		my $tx2 = $ua->build_tx(POST => $url => $headers => json => $payload_plain);
 		$ua->start($tx2);
 		$res = $tx2->res unless $tx2->error;
+		$log->info('AI: ' . $model . ' answered 400 to the thinking knob (' . $level . '); the call was retried without it') if defined $log;
 	}
 	unless ($res->is_success) {
 		my $body = substr($res->body || '', 0, 500);

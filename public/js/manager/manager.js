@@ -390,8 +390,30 @@ function assistantModel(panel) {
 function assistantAsk(panel) {
 	var input = panel.find('.assistant_question');
 	var q = $.trim(input.val() || '');
-	if (!q) { return; }
+	if (!q) {
+		// an empty Ask is the conversation switch: the mic opens and the panel
+		// keeps listening between answers until End (or "bye jawn")
+		assistantOpenPanel(panel);
+		if (assistantTalking(panel)) { assistantConversationEnd(panel); }
+		else { assistantConversationOn(panel); assistantConversationListen(panel); }
+		return;
+	}
+	// "hey jawn"/"jawn do" open a conversation, "bye jawn" ends one
+	if (typeof helpConversationBye === 'function' && helpConversationBye(q)) {
+		input.val('');
+		assistantButtonLabel(panel);
+		if (assistantTalking(panel)) { assistantConversationEnd(panel); }
+		return;
+	}
+	var wake_rest = (typeof helpConversationWake === 'function') ? helpConversationWake(q) : null;
+	if (wake_rest !== null) {
+		assistantOpenPanel(panel);
+		assistantConversationOn(panel);
+		if (!wake_rest) { input.val(''); assistantButtonLabel(panel); assistantChatAdd(panel, 'step', 'Yes?'); assistantConversationListen(panel); return; }
+		q = wake_rest;
+	}
 	input.val('');
+	assistantButtonLabel(panel);
 	panel.data('topic', '');
 	assistantOpenPanel(panel);
 	assistantChatAdd(panel, 'user', q);
@@ -423,6 +445,7 @@ function assistantGuideStep(panel, n) {
 				assistantRemember(panel, 'assistant', a.text || '');
 				assistantChatAdd(panel, 'guide', a.text || '');
 				assistantSpeak(a.text);
+				if (assistantTalking(panel)) { assistantConversationListen(panel); }
 				return;
 			}
 			assistantChatAdd(panel, 'step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
@@ -434,6 +457,7 @@ function assistantGuideStep(panel, n) {
 					assistantRemember(panel, 'assistant', friendly);
 					assistantChatAdd(panel, 'guide', friendly);
 					assistantSpeak(friendly);
+					if (assistantTalking(panel)) { assistantConversationListen(panel); }
 					return;
 				}
 				assistantGuideStep(panel, n + 1);
@@ -441,6 +465,75 @@ function assistantGuideStep(panel, n) {
 		},
 		error: function () { assistantChatAdd(panel, 'step', 'The guide could not be reached.'); }
 	});
+}
+
+// ---- the associate as a conversationalist ---------------------------------
+// The same switch the help window's guide has: with a conversation on, the mic
+// opens again after each answer, the clip ends itself once the person stops
+// talking, and each utterance is the next turn of this panel's own thread -
+// until "bye jawn" or the End button. The button says which it is: with the
+// box empty it reads Converse, with words typed it reads Ask, and while a
+// conversation runs it reads End.
+function assistantTalking(panel) { return panel.attr('talking') === 'yes'; }
+
+function assistantButtonLabel(panel) {
+	var b = panel.find('.assistant_send');
+	if (!b.length) { return; }
+	var q = $.trim(panel.find('.assistant_question').val() || '');
+	if (q) { b.text('Ask').css({ 'border-color': 'var(--line)', 'color': '' }).attr('hint', 'Ask, or ask it to do it'); }
+	else if (assistantTalking(panel)) { b.text('End').css({ 'border-color': '#e23b3b', 'color': '#e23b3b' }).attr('hint', 'End the conversation'); }
+	else { b.text('Converse').css({ 'border-color': 'var(--line)', 'color': '' }).attr('hint', 'Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — say “bye jawn” or press End to stop'); }
+}
+
+function assistantConversationOn(panel) {
+	if (assistantTalking(panel)) { return; }
+	panel.attr('talking', 'yes');
+	assistantButtonLabel(panel);
+	assistantChatAdd(panel, 'step', 'Conversation on — I will keep listening after each answer. Press End or say “bye jawn” to stop.');
+}
+
+function assistantConversationEnd(panel) {
+	if (!assistantTalking(panel)) { return; }
+	panel.removeAttr('talking');
+	if (typeof jawn_clip !== 'undefined' && jawn_clip.owner && jawn_clip.owner === panel[0]) { jawnClipStop(true); }
+	assistantButtonLabel(panel);
+	assistantChatAdd(panel, 'guide', 'Alright — I will be here.');
+}
+
+function assistantConversationListen(panel) {
+	if (!assistantTalking(panel)) { return; }
+	setTimeout(function () {
+		if (!assistantTalking(panel)) { return; }
+		if (typeof jawnClipListen !== 'function') { return; }
+		jawnClipListen({
+			talking: true,
+			owner: panel[0],
+			status: function (msg) { assistantChatAdd(panel, 'step', msg); },
+			onText: function (text) { assistantConversationHeard(panel, text); },
+			onFail: function (reason) {
+				if (!assistantTalking(panel)) { return; }
+				// a deaf microphone ends it; anything else just listens again
+				if (reason === 'microphone' || reason === 'no microphone') { assistantConversationEnd(panel); return; }
+				assistantConversationListen(panel);
+			}
+		});
+	}, 350);
+}
+
+function assistantConversationHeard(panel, text) {
+	if (!assistantTalking(panel)) { return; }
+	var q = $.trim(text || '');
+	if (!q) { assistantConversationListen(panel); return; }
+	if (helpConversationBye(q)) { assistantConversationEnd(panel); return; }
+	var rest = (typeof helpConversationWake === 'function') ? helpConversationWake(q) : null;
+	if (rest !== null) { q = rest; }
+	if (!q) { assistantChatAdd(panel, 'step', 'Yes?'); assistantConversationListen(panel); return; }
+	panel.find('.assistant_question').val('');
+	assistantButtonLabel(panel);
+	assistantOpenPanel(panel);
+	assistantChatAdd(panel, 'user', q);
+	assistantRemember(panel, 'user', q);
+	assistantGuideStep(panel, 0);
 }
 
 // A dropped picture (or voice clip) goes to the assistant; its answer streams
@@ -512,6 +605,8 @@ function assistantHelpFor(panel, el) {
 }
 
 $(document).on('click', '.assistant_send', function () { assistantAsk($(this).closest('.assistant_view')); });
+$(document).on('input', '.assistant_question', function () { if (typeof assistantButtonLabel === 'function') { assistantButtonLabel($(this).closest('.assistant_view')); } });
+$(function () { $('.assistant_view').each(function () { assistantButtonLabel($(this)); }); });
 $(document).on('keydown', '.assistant_question', function (e) {
 	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); assistantAsk($(this).closest('.assistant_view')); }
 });
@@ -549,6 +644,7 @@ function assistantSpawn(source) {
 	clone.css({ display: 'none', right: '', bottom: '', left: Math.max(6, (source.offset().left || 40) + 30 + off) + 'px', top: Math.max(6, (source.offset().top || 40) + 30 + off) + 'px' });
 	$(document.body).append(clone);
 	assistantInitializer();
+	assistantButtonLabel(clone);
 	clone.find('.assistant_question').focus();
 	assistantChatAdd(clone, 'step', 'A fresh associate — this one keeps its own thread.');
 	assistantOpenPanel(clone);
