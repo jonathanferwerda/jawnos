@@ -22080,7 +22080,16 @@ sub notification_sender($m,$db) {
 	if ($device eq 'mobile') {
 		my $id = &subs::random_string_creator();
 		my $url = 'https://127.0.0.1:' . $ENV{PORT_AHOY} . '/manager?app=' . $m->{'app'} . '&timestamp=' . $m->{'timestamp'};
-		`echo "$message" | termux-notification -i $id -t "$title" --vibrate "200,150,200,150" --image-path $image`;# --action termux-open "$url"`;# --on-delete "$pwd/scripts/app_displayer.pl '$app' close"`;
+		# The app posts it (JawnNotifyReceiver), so the badge lands on the app's
+		# own launcher icon; termux-notification belongs to the API app, which has
+		# no icon to badge, so it is only the fallback when the app is absent.
+		my ($t, $b) = ($title, $message);
+		$t =~ s/"/'/g;
+		$b =~ s/"/'/g;
+		my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id" 2>&1`;
+		unless ($bc =~ /Broadcast completed/) {
+			`echo "$message" | termux-notification -i $id -t "$title" --vibrate "200,150,200,150" --image-path $image`;
+		}
 	}
 	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {
 
