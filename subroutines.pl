@@ -1393,321 +1393,326 @@ sub same_net_test() {
 	return $same_net;
 }
 
-sub device_lister() {
-	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
-	my ($db,$database,$sql) = &subs::database_grabber();
+sub device_scan() {
+	my ($timestamp, $load_type, $ip_range) = @_;
+	my (undef, $database) = &subs::database_grabber();
 	my ($dev,$devices,@domains);
 	my $user_agent = $gb::user_agent;
 	my $server_time = &subs::rightNow();
-	my $remote_machinery = &subs::db_query('select * from remote_machines');
-	my $remote_machines = $remote_machinery->hashes;
 	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 	my $signatorial = &subs::signatorial_designer();
 	my $chip_ids = [];
-	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {
-		$dev = &subs::db_select('devices');
-		$devices = $dev->hashes;
-		my $ug    = Data::UUID->new;
-		my $uuid = $ug->create_str();
-		foreach my $d (@{$devices}) {
-			if (scalar @{$devices} > 0) {
-				$d->{'address'} = eval { return decode_json $d->{'address'} };
-				if ($d->{'domain'} ne '') {
-					push @domains, { 'domain' => $d->{'domain'} . ' lladdr ' . 'mac_ave', hostname => $d->{'hostname'} };
-				}
+	$dev = &subs::db_select('devices');
+	$devices = $dev->hashes;
+	my $ug    = Data::UUID->new;
+	my $uuid = $ug->create_str();
+	foreach my $d (@{$devices}) {
+		if (scalar @{$devices} > 0) {
+			$d->{'address'} = eval { return decode_json $d->{'address'} };
+			if ($d->{'domain'} ne '') {
+				push @domains, { 'domain' => $d->{'domain'} . ' lladdr ' . 'mac_ave', hostname => $d->{'hostname'} };
 			}
 		}
-		my $hostname = `hostname`;
-		my @me_device = grep { $_->{'hostname'} eq $hostname } @{$devices};
-		chomp $hostname;
-		my $uname = `uname -a`;
-		chomp $uname;
-		my $username = 'jawn';#`whoami`;
-		chomp $username;
+	}
+	my $hostname = `hostname`;
+	my @me_device = grep { $_->{'hostname'} eq $hostname } @{$devices};
+	chomp $hostname;
+	my $uname = `uname -a`;
+	chomp $uname;
+	my $username = 'jawn';#`whoami`;
+	chomp $username;
 
-		my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || $hostname;
-		my $cpuinfo = `cat /proc/cpuinfo`;
-		chomp $cpuinfo;
-		my $ifc = &subs::device_setter() eq 'server' ? '/usr/sbin/ifconfig' : 'ifconfig 2>/dev/null | grep -v "Permission denied"';
-		my @ifconfig = split "\n\n", `$ifc`;
-		my @ifconfig_link;
-		my @ifconfig_inet;
-		my $address = {};
-		my $count = {};
-		my $home_ip;
-		foreach my $if (@ifconfig) {
-			my @ifconfig_list = split "\n", $if;
+	my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || $hostname;
+	my $cpuinfo = `cat /proc/cpuinfo`;
+	chomp $cpuinfo;
+	my $ifc = &subs::device_setter() eq 'server' ? '/usr/sbin/ifconfig' : 'ifconfig 2>/dev/null | grep -v "Permission denied"';
+	my @ifconfig = split "\n\n", `$ifc`;
+	my @ifconfig_link;
+	my @ifconfig_inet;
+	my $address = {};
+	my $count = {};
+	my $home_ip;
+	foreach my $if (@ifconfig) {
+		my @ifconfig_list = split "\n", $if;
 
-			@ifconfig_inet = grep { $_ =~ /inet/ } @ifconfig_list;
+		@ifconfig_inet = grep { $_ =~ /inet/ } @ifconfig_list;
 
-			my $nic = (split ' ', $ifconfig_list[0])[0];
-			$nic =~ s/://;
-			$address->{$nic}->{'nic'} = $nic;
-			my $gw = '$(ip route show 0.0.0.0/0 dev ' . $address->{$nic}->{'nic'} . ' | cut -d\  -f3)';
-			$address->{$nic}->{'gw'} = `echo $gw`;
-			chomp $address->{$nic}->{'gw'};
-			if ($device eq 'computer' || $device eq 'server') {
-				my $gw_mac = '/usr/sbin/arp -a ' . $gw . '  | grep ' . $address->{$nic}->{'nic'};
-				$gw_mac = `$gw_mac`;
-				$address->{$nic}->{'gw_mac'} = (split ' ', $gw_mac)[3] if $gw && $device eq 'computer';
-			}
-			foreach my $i (@ifconfig_inet) {
-				my @inet = split " ", $i;
-				if ($i =~ /inet /) {
-					$address->{$nic}->{'ip'} = $inet[1];
-					$address->{$nic}->{'port'} = $ENV{PORT_AHOY};
-					$address->{$nic}->{'ws_port'} = $ENV{PORT_MSG};
-					$address->{$nic}->{'alarm_port'} = $ENV{PORT_BELL};
-					$address->{$nic}->{'manager'} = 'https://' . $inet[1] . ':' . $ENV{PORT_DOCK} .  '/manager';
-					$address->{$nic}->{'netmask'} = $inet[3];
-					$address->{$nic}->{'broadcast'} = $inet[5];
+		my $nic = (split ' ', $ifconfig_list[0])[0];
+		$nic =~ s/://;
+		$address->{$nic}->{'nic'} = $nic;
+		my $gw = '$(ip route show 0.0.0.0/0 dev ' . $address->{$nic}->{'nic'} . ' | cut -d\  -f3)';
+		$address->{$nic}->{'gw'} = `echo $gw`;
+		chomp $address->{$nic}->{'gw'};
+		if ($device eq 'computer' || $device eq 'server') {
+			my $gw_mac = '/usr/sbin/arp -a ' . $gw . '  | grep ' . $address->{$nic}->{'nic'};
+			$gw_mac = `$gw_mac`;
+			$address->{$nic}->{'gw_mac'} = (split ' ', $gw_mac)[3] if $gw && $device eq 'computer';
+		}
+		foreach my $i (@ifconfig_inet) {
+			my @inet = split " ", $i;
+			if ($i =~ /inet /) {
+				$address->{$nic}->{'ip'} = $inet[1];
+				$address->{$nic}->{'port'} = $ENV{PORT_AHOY};
+				$address->{$nic}->{'ws_port'} = $ENV{PORT_MSG};
+				$address->{$nic}->{'alarm_port'} = $ENV{PORT_BELL};
+				$address->{$nic}->{'manager'} = 'https://' . $inet[1] . ':' . $ENV{PORT_DOCK} .  '/manager';
+				$address->{$nic}->{'netmask'} = $inet[3];
+				$address->{$nic}->{'broadcast'} = $inet[5];
 
-					my @neighbours;
-					my $neighbour_check = `ip neigh show dev $nic`;
-					my @neighbourinos;
-					if ($load_type ne 'ping_scan') {
-						@neighbourinos = (split "\n", $neighbour_check);
-					}
-					if ($ip_range) {
-						# a host or range typed into the box is honoured even when the
-						# neighbour table has entries: the device that pings but sleeps
-						# its wifi (an esp32) is exactly the one missing from the table
-						my $sip = $ip_range;
-						$sip =~ s/[0-9]//gi;
-						$home_ip = $address->{$nic}->{'ip'};
-						my @home_ip = split '\.', $home_ip;
-						my @csv = split ',', $ip_range;
-						my @ip = split '\.', $ip_range;
-						if (scalar @ip == 4) {
-							if (&same_net_test($ip_range,$home_ip)) {
-								push @neighbourinos, $ip_range . ' ' . &subs::random_string_creator(5);
-							}
-						}
-						else {
-							if (scalar @csv > 1) {
-								foreach my $csv (@csv) {
-									pop @home_ip;
-									push @home_ip, $csv;
-									push @neighbourinos, (join '.', @home_ip) . ' ' . &subs::random_string_creator(5);
-								}
-							}
-							elsif ($sip eq '..' ) {
-								my @sips = split '\.\.', $ip_range;
-
-								foreach my $csv ( $sips[0] .. $sips[1] ) {
-									pop @home_ip;
-									push @home_ip, $csv;
-									push @neighbourinos, (join '.', @home_ip ). ' ' . &subs::random_string_creator(5);
-								}
-							}
+				my @neighbours;
+				my $neighbour_check = `ip neigh show dev $nic`;
+				my @neighbourinos;
+				if ($load_type ne 'ping_scan') {
+					@neighbourinos = (split "\n", $neighbour_check);
+				}
+				if ($ip_range) {
+					# a host or range typed into the box is honoured even when the
+					# neighbour table has entries: the device that pings but sleeps
+					# its wifi (an esp32) is exactly the one missing from the table
+					my $sip = $ip_range;
+					$sip =~ s/[0-9]//gi;
+					$home_ip = $address->{$nic}->{'ip'};
+					my @home_ip = split '\.', $home_ip;
+					my @csv = split ',', $ip_range;
+					my @ip = split '\.', $ip_range;
+					if (scalar @ip == 4) {
+						if (&same_net_test($ip_range,$home_ip)) {
+							push @neighbourinos, $ip_range . ' ' . &subs::random_string_creator(5);
 						}
 					}
-					foreach my $do ( @domains ) {
-						push @neighbourinos, $do->{'domain'} if $do->{'hostname'} eq $hostname;
-					}
-					# `ip neigh` never lists the loopback interface's own address, and the
-					# tunnels this server holds hang off exactly that 127.0.0.1 row below -
-					# so on cloud no tunnelled machine ever showed at all. Put the row in:
-					# it marks this machine, and every active tunnel becomes one of its
-					# neighbours, reached on the hub-side port the tunnel reserved.
-					if (&subs::device_setter() eq 'server'
-						&& ($address->{$nic}->{'ip'} || '') eq '127.0.0.1'
-						&& !grep { (split ' ', $_)[0] eq '127.0.0.1' } @neighbourinos) {
-						push @neighbourinos, '127.0.0.1 ' . &subs::random_string_creator(5);
-					}
-					foreach my $m ( @neighbourinos ) {
-						next if $m =~ /FAILED/;
-						my @l = (split " ", $m);
-						my $n = {
-							ip => $l[0],
-							mac => $l[2] || &subs::random_string_creator(10),
-							uuid => &subs::random_string_creator(25)
-						};
-						my $ping_ip = $n->{'ip'};
-						# a sleeping esp32 can take a second to answer the first packet
-						my $alive = `timeout 1.2 ping -c 1 -W 1 $ping_ip`;
-						my $ip_addresses = [ ];
-						if ($n->{'ip'} eq '127.0.0.1') {
-							push @{$ip_addresses}, $n;
-							if (&subs::device_setter() eq 'server') {
-								my $tunnels = &subs::db_select('tunnels', undef, { status => 'active' })->hashes;
-								my @batches;
-								foreach my $tun ( @{$tunnels} ) {
-									next unless $tun->{'name'} eq 'PORT_DOCK';
-									next if grep { $_ eq $tun->{'batch_uuid'} } @batches;
-									push @batches, $tun->{'batch_uuid'};
-									push @{$ip_addresses}, {
-										# the peer, not this hub: a hub-side row carries the peer's own
-										# domain in `host` and this hub's in `domain`, so naming the
-										# neighbour by `domain` listed the hub itself, once per
-										# tunnelled machine, and every row collapsed together
-										ip => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
-										domain => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
-										PORT_DOCK => $tun->{'in_port'},
-										tunnel => 'yes',
-										mac => &subs::random_string_creator(10),
-										signatorial => $tun->{'signatorial'},
-										uuid => &subs::random_string_creator(25)
-									};
+					else {
+						if (scalar @csv > 1) {
+							foreach my $csv (@csv) {
+								pop @home_ip;
+								push @home_ip, $csv;
+								push @neighbourinos, (join '.', @home_ip) . ' ' . &subs::random_string_creator(5);
+							}
+						}
+						elsif ($sip eq '..' ) {
+							my @sips = split '\.\.', $ip_range;
 
-
-								}
+							foreach my $csv ( $sips[0] .. $sips[1] ) {
+								pop @home_ip;
+								push @home_ip, $csv;
+								push @neighbourinos, (join '.', @home_ip ). ' ' . &subs::random_string_creator(5);
+							}
+						}
+					}
+				}
+				foreach my $do ( @domains ) {
+					push @neighbourinos, $do->{'domain'} if $do->{'hostname'} eq $hostname;
+				}
+				# `ip neigh` never lists the loopback interface's own address, and the
+				# tunnels this server holds hang off exactly that 127.0.0.1 row below -
+				# so on cloud no tunnelled machine ever showed at all. Put the row in:
+				# it marks this machine, and every active tunnel becomes one of its
+				# neighbours, reached on the hub-side port the tunnel reserved.
+				if (&subs::device_setter() eq 'server'
+					&& ($address->{$nic}->{'ip'} || '') eq '127.0.0.1'
+					&& !grep { (split ' ', $_)[0] eq '127.0.0.1' } @neighbourinos) {
+					push @neighbourinos, '127.0.0.1 ' . &subs::random_string_creator(5);
+				}
+				foreach my $m ( @neighbourinos ) {
+					next if $m =~ /FAILED/;
+					my @l = (split " ", $m);
+					my $n = {
+						ip => $l[0],
+						mac => $l[2] || &subs::random_string_creator(10),
+						uuid => &subs::random_string_creator(25)
+					};
+					my $ping_ip = $n->{'ip'};
+					# a sleeping esp32 can take a second to answer the first packet
+					my $alive = `timeout 1.2 ping -c 1 -W 1 $ping_ip`;
+					my $ip_addresses = [ ];
+					if ($n->{'ip'} eq '127.0.0.1') {
+						push @{$ip_addresses}, $n;
+						if (&subs::device_setter() eq 'server') {
+							my $tunnels = &subs::db_select('tunnels', undef, { status => 'active' })->hashes;
+							my @batches;
+							foreach my $tun ( @{$tunnels} ) {
+								next unless $tun->{'name'} eq 'PORT_DOCK';
+								next if grep { $_ eq $tun->{'batch_uuid'} } @batches;
+								push @batches, $tun->{'batch_uuid'};
+								push @{$ip_addresses}, {
+									# the peer, not this hub: a hub-side row carries the peer's own
+									# domain in `host` and this hub's in `domain`, so naming the
+									# neighbour by `domain` listed the hub itself, once per
+									# tunnelled machine, and every row collapsed together
+									ip => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
+									domain => ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'}),
+									PORT_DOCK => $tun->{'in_port'},
+									tunnel => 'yes',
+									mac => &subs::random_string_creator(10),
+									signatorial => $tun->{'signatorial'},
+									uuid => &subs::random_string_creator(25)
+								};
 
 
 							}
+
+
 						}
-						elsif ($n->{'ip'} =~ /127\.0\.0/) { next; }
-						else { push @{$ip_addresses}, $n; }
-						foreach my $n ( @{$ip_addresses} ) {
-							if ( $n->{'ip'} && ($n->{'tunnel'} eq 'yes' || $alive =~ /ttl/gi )) { #&& $n->{'ip'} ne $address->{$nic}->{'ip'}) {
-								my $ua = Mojo::UserAgent->new();
-								$ua->inactivity_timeout(15);
-								my $manager = $n->{'tunnel'} eq 'yes' ? 'https://127.0.0.1:' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager'
-									: 'https://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager';
-								my $res = eval { $ua->insecure(1)->get($manager . '/gate?restore_list=' . $config->{'start_dir'} . '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . $signatorial => {user_agent => $user_agent})->result };
-								if (eval { $res->is_success }){
-									if (eval { decode_json $res->body }) {
-										my $rb = decode_json $res->body;
+					}
+					elsif ($n->{'ip'} =~ /127\.0\.0/) { next; }
+					else { push @{$ip_addresses}, $n; }
+					foreach my $n ( @{$ip_addresses} ) {
+						if ( $n->{'ip'} && ($n->{'tunnel'} eq 'yes' || $alive =~ /ttl/gi )) { #&& $n->{'ip'} ne $address->{$nic}->{'ip'}) {
+							my $ua = Mojo::UserAgent->new();
+							$ua->inactivity_timeout(15);
+							my $manager = $n->{'tunnel'} eq 'yes' ? 'https://127.0.0.1:' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager'
+								: 'https://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager';
+							my $res = eval { $ua->insecure(1)->get($manager . '/gate?restore_list=' . $config->{'start_dir'} . '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . $signatorial => {user_agent => $user_agent})->result };
+							if (eval { $res->is_success }){
+								if (eval { decode_json $res->body }) {
+									my $rb = decode_json $res->body;
+									$n->{'purpose'} = $rb->{'purpose'};
+									$n->{'restore_list'} = encode_json $rb->{'restore_list'};
+									$n->{'signatorial'} = $rb->{'signatorial'};
+									$n->{'name'} = $rb->{'name'};
+								}
+								$n->{'manager'} = $manager;
+							}
+							else {
+								my $manager = 'http://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/device_query';
+								my $res = eval { $ua->insecure(1)->get($manager) };
+								if (eval { $res->result->body }) {
+									if (eval { decode_json $res->result->body }) {
+										my $rb = decode_json $res->result->body;
 										$n->{'purpose'} = $rb->{'purpose'};
-										$n->{'restore_list'} = encode_json $rb->{'restore_list'};
-										$n->{'signatorial'} = $rb->{'signatorial'};
-										$n->{'name'} = $rb->{'name'};
+										$n->{'model'} = $rb->{'model'};
+										$n->{'pins'} = $rb->{'pins'} if $rb->{'pins'};
+										$n->{'name'} = $rb->{'name'} if $rb->{'name'};
+										$n->{'chip_id'} = $rb->{'chip_id'};
+										$n->{'mac_addresses'} = $rb->{'mac_addresses'};
+										$n->{'mac'} = $rb->{'mac_addresses'}->{'base'};
+										$n->{'service_uuid'} = $rb->{'SERVICE_UUID'} if $rb->{'SERVICE_UUID'};
+										$n->{'characteristic_uuid_rx'} = $rb->{'CHARACTERISTIC_UUID_RX'} if $rb->{'CHARACTERISTIC_UUID_RX'};
+										$n->{'characteristic_uuid_tx'} = $rb->{'CHARACTERISTIC_UUID_TX'} if $rb->{'CHARACTERISTIC_UUID_TX'};
+										push @{$chip_ids}, { id => $n->{'chip_id'}, name => $n->{'name'}, purpose => $n->{'purpose'}, server_time => &subs::rightNow() };
 									}
-									$n->{'manager'} = $manager;
 								}
 								else {
-									my $manager = 'http://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/device_query';
-									my $res = eval { $ua->insecure(1)->get($manager) };
-									if (eval { $res->result->body }) {
-										if (eval { decode_json $res->result->body }) {
-											my $rb = decode_json $res->result->body;
-											$n->{'purpose'} = $rb->{'purpose'};
-											$n->{'model'} = $rb->{'model'};
-											$n->{'pins'} = $rb->{'pins'} if $rb->{'pins'};
-											$n->{'name'} = $rb->{'name'} if $rb->{'name'};
-											$n->{'chip_id'} = $rb->{'chip_id'};
-											$n->{'mac_addresses'} = $rb->{'mac_addresses'};
-											$n->{'mac'} = $rb->{'mac_addresses'}->{'base'};
-											$n->{'service_uuid'} = $rb->{'SERVICE_UUID'} if $rb->{'SERVICE_UUID'};
-											$n->{'characteristic_uuid_rx'} = $rb->{'CHARACTERISTIC_UUID_RX'} if $rb->{'CHARACTERISTIC_UUID_RX'};
-											$n->{'characteristic_uuid_tx'} = $rb->{'CHARACTERISTIC_UUID_TX'} if $rb->{'CHARACTERISTIC_UUID_TX'};
-											push @{$chip_ids}, { id => $n->{'chip_id'}, name => $n->{'name'}, purpose => $n->{'purpose'}, server_time => &subs::rightNow() };
-										}
+									$n->{'purpose'} = 'hmmm';
+								}
+							}
+						}
+						foreach my $d (@{$devices}) {
+							foreach my $a (keys %{$d->{'address'}} ) {
+								foreach my $g (grep { $_->{'ip'} eq $n->{'ip'} || $_->{'ip_address'} eq $n->{'ip'} } @{$d->{'address'}->{$a}->{'neigh'}} ) {
+									$g->{'ip'} =~ /([0-9]+)$/gi;
+									my $last_d = $1;
+									$n->{'ip'} =~ /([0-9]+)$/gi;
+									my $last_n = $1;
+									$n->{'fqdn'} = $g->{'fqdn'};
+									$n->{'mac'} = $g->{'mac'} || $n->{'mac'};
+									$n->{'ip_address'} = $g->{'ip_address'};
+									if ($g->{'purpose'} && !$n->{'purpose'}){# && $last_d == $last_n) {
+										$n->{'purpose'} = $g->{'purpose'};
 									}
-									else {
-										$n->{'purpose'} = 'hmmm';
+									if ($g->{'locked'} eq 'yes') {
+										$g->{'uuid'} = $n->{'uuid'} unless $g->{'uuid'};
+										$n = $g;
 									}
 								}
 							}
-							foreach my $d (@{$devices}) {
-								foreach my $a (keys %{$d->{'address'}} ) {
-									foreach my $g (grep { $_->{'ip'} eq $n->{'ip'} || $_->{'ip_address'} eq $n->{'ip'} } @{$d->{'address'}->{$a}->{'neigh'}} ) {
-										$g->{'ip'} =~ /([0-9]+)$/gi;
-										my $last_d = $1;
-										$n->{'ip'} =~ /([0-9]+)$/gi;
-										my $last_n = $1;
-										$n->{'fqdn'} = $g->{'fqdn'};
-										$n->{'mac'} = $g->{'mac'} || $n->{'mac'};
-										$n->{'ip_address'} = $g->{'ip_address'};
-										if ($g->{'purpose'} && !$n->{'purpose'}){# && $last_d == $last_n) {
-											$n->{'purpose'} = $g->{'purpose'};
-										}
-										if ($g->{'locked'} eq 'yes') {
-											$g->{'uuid'} = $n->{'uuid'} unless $g->{'uuid'};
-											$n = $g;
-										}
-									}
-								}
-							}
-							push @neighbours, $n;
 						}
+						push @neighbours, $n;
+					}
 
 
-					}
-					foreach my $n ( @neighbours ) {
-						@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $n->{'ip'} } @{$address->{$nic}->{'neigh'}};
-						push @{$address->{$nic}->{'neigh'}}, $n;
-					}
-					# One row per address: the typed host and the neighbour table can name
-					# the same device, and the scan rendered it twice (2026-10-09). The
-					# richer row wins -- the one the device itself answered.
-					my %neigh_seen;
-					my @neigh_deduped;
-					foreach my $n ( @neighbours ) {
-						my $neigh_ip = $n->{'ip'};
-						if (my $had = $neigh_seen{$neigh_ip}) {
-							foreach my $f ( qw/chip_id purpose name model mac mac_addresses uuid fqdn/ ) {
-								$had->{$f} = $n->{$f} if $n->{$f} && !$had->{$f};
-							}
-							next;
+				}
+				foreach my $n ( @neighbours ) {
+					@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $n->{'ip'} } @{$address->{$nic}->{'neigh'}};
+					push @{$address->{$nic}->{'neigh'}}, $n;
+				}
+				# One row per address: the typed host and the neighbour table can name
+				# the same device, and the scan rendered it twice (2026-10-09). The
+				# richer row wins -- the one the device itself answered.
+				my %neigh_seen;
+				my @neigh_deduped;
+				foreach my $n ( @neighbours ) {
+					my $neigh_ip = $n->{'ip'};
+					if (my $had = $neigh_seen{$neigh_ip}) {
+						foreach my $f ( qw/chip_id purpose name model mac mac_addresses uuid fqdn/ ) {
+							$had->{$f} = $n->{$f} if $n->{$f} && !$had->{$f};
 						}
-						$neigh_seen{$neigh_ip} = $n;
-						push @neigh_deduped, $n;
+						next;
 					}
-					@neighbours = @neigh_deduped;
-					@{$address->{$nic}->{'neigh'}} = @neighbours;
+					$neigh_seen{$neigh_ip} = $n;
+					push @neigh_deduped, $n;
+				}
+				@neighbours = @neigh_deduped;
+				@{$address->{$nic}->{'neigh'}} = @neighbours;
 
-				}
-				if ($i =~ /inet6 /) {
-					$address->{$nic}->{'ip6'} = $inet[1];
-				}
 			}
-			@ifconfig_link = grep { $_ =~ /ether/ } @ifconfig_list;
-			foreach my $m (@ifconfig_link) {
-				my @mac = split " ", $m;
-				if ($m =~ /ether/) {
-					$address->{$nic}->{'mac'} = $mac[1];
-				}
+			if ($i =~ /inet6 /) {
+				$address->{$nic}->{'ip6'} = $inet[1];
 			}
-			#here
+		}
+		@ifconfig_link = grep { $_ =~ /ether/ } @ifconfig_list;
+		foreach my $m (@ifconfig_link) {
+			my @mac = split " ", $m;
+			if ($m =~ /ether/) {
+				$address->{$nic}->{'mac'} = $mac[1];
+			}
+		}
+		#here
 
-			foreach my $d (@{$devices}) {
-				foreach my $a (keys %{$d->{'address'}} ) {
-					if ($d->{'address'}->{$nic}->{'neigh'} && $a eq $nic) {
-						foreach my $rd ( @{$d->{'address'}->{$nic}->{'neigh'}} ) {
-							if ($rd->{'locked'} eq 'yes') {
-								@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $rd->{'ip'} } @{$address->{$nic}->{'neigh'}};
-								push @{$address->{$nic}->{'neigh'}}, $rd;
-								push @{$chip_ids}, { id => $rd->{'chip_id'}, name => $rd->{'name'}, purpose => $rd->{'purpose'}, server_time => &subs::rightNow() } if $rd->{'chip_id'};
-							}
+		foreach my $d (@{$devices}) {
+			foreach my $a (keys %{$d->{'address'}} ) {
+				if ($d->{'address'}->{$nic}->{'neigh'} && $a eq $nic) {
+					foreach my $rd ( @{$d->{'address'}->{$nic}->{'neigh'}} ) {
+						if ($rd->{'locked'} eq 'yes') {
+							@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $rd->{'ip'} } @{$address->{$nic}->{'neigh'}};
+							push @{$address->{$nic}->{'neigh'}}, $rd;
+							push @{$chip_ids}, { id => $rd->{'chip_id'}, name => $rd->{'name'}, purpose => $rd->{'purpose'}, server_time => &subs::rightNow() } if $rd->{'chip_id'};
 						}
 					}
 				}
 			}
 		}
+	}
 
-		my $json_address = encode_json $address;
+	my $json_address = encode_json $address;
 
-		my @my_device = grep { ($_->{'hostname'} && $_->{'hostname'} eq $hostname) } @{$devices};
-		my $president = $database;
+	my @my_device = grep { ($_->{'hostname'} && $_->{'hostname'} eq $hostname) } @{$devices};
+	my $president = $database;
 
 
-		my $oldjchips = $my_device[0]->{'chip_ids'};
-		my $oldchips = eval { return decode_json $oldjchips } || [];
-		if (scalar @{$oldchips} > 0) {
-			foreach my $ci ( @{$oldchips} ) {
-				push @{$chip_ids}, $ci unless grep { $_->{'id'} eq $ci->{'id'} } @{$chip_ids};
-			}
+	my $oldjchips = $my_device[0]->{'chip_ids'};
+	my $oldchips = eval { return decode_json $oldjchips } || [];
+	if (scalar @{$oldchips} > 0) {
+		foreach my $ci ( @{$oldchips} ) {
+			push @{$chip_ids}, $ci unless grep { $_->{'id'} eq $ci->{'id'} } @{$chip_ids};
 		}
-		my $jchips = encode_json $chip_ids;
-		my $me = {
-			timestamp => $timestamp,
-			hostname => $hostname,
-			uname => $uname,
-			address => $json_address,
-			protocol => 'https',
-			port => $ENV{PORT_AHOY},
-			server_time => $server_time,
-			president => $president,
-			uuid => $uuid,
-			chip_ids => $jchips
-		};
-		if (scalar @my_device == 0 || scalar @{$devices} == 0) {
-			&subs::db_insert('devices', $me);
-		}
-		else {
-			&subs::db_update('devices', { chip_ids => $jchips, address => $json_address, timestamp => $timestamp }, { hostname => $hostname });
-		}
+	}
+	my $jchips = encode_json $chip_ids;
+	my $me = {
+		timestamp => $timestamp,
+		hostname => $hostname,
+		uname => $uname,
+		address => $json_address,
+		protocol => 'https',
+		port => $ENV{PORT_AHOY},
+		server_time => $server_time,
+		president => $president,
+		uuid => $uuid,
+		chip_ids => $jchips
+	};
+	if (scalar @my_device == 0 || scalar @{$devices} == 0) {
+		&subs::db_insert('devices', $me);
+	}
+	else {
+		&subs::db_update('devices', { chip_ids => $jchips, address => $json_address, timestamp => $timestamp }, { hostname => $hostname });
+	}
+}
+
+sub device_lister() {
+	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
+	my ($dev,$devices);
+	my $remote_machines = &subs::db_query('select * from remote_machines')->hashes;
+	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {
+		&device_scan($timestamp, $load_type, $ip_range);
 	}
 	$dev = &subs::db_select('devices');
 	$devices = $dev->hashes;
