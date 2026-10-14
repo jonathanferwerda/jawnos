@@ -33,7 +33,9 @@ $(document).on('click', '.piano_key', function() {
 		oscillator.connect(piano.destination);
 		oscillator.type = waveform;
 		oscillator.connect(piano.destination);
-		synth.src = piano;
+		if (synth) {
+			synth.src = piano;
+		}
 		oscillator.start();
 
 		var pInt = setInterval(function() {
@@ -50,21 +52,10 @@ $(document).on('click', '.piano_key', function() {
 
 
 function pianoInit() {
-	piano = new AudioContext;
+	piano = new AudioContext();
 	oscillator = piano.createOscillator();
 	var synth = document.getElementById('synthesizer');
 
 
 	return piano;
 }
-
-
-
-
-
-
-
-
-
-
-
