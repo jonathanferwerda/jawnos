@@ -1819,7 +1819,7 @@ $(document).on('keydown', function(e) {
 		closeWindow(timestamp);
 	} else if (e.keyCode == 16 && keysPressed[91]) {
 		appSwitcher();
-	} else if (!$(e.target).is('input') && !$(e.target).is('textarea') && !$(e.target).hasClass('.text_editor') && e.ctrlKey == false && topWindow() == 'music') {
+	} else if (!$(e.target).is('input') && !$(e.target).is('textarea') && !$(e.target).is('select') && !$(e.target).hasClass('.text_editor') && e.ctrlKey == false && topWindow() == 'music') {
 			e.preventDefault();
 			if (e.keyCode == 32 && !keysPressed[91]) {
 				console.log('space bar');
@@ -1838,7 +1838,10 @@ $(document).on('keydown', function(e) {
 				$('.last_chapter').trigger('click');
 			}
 			if (e.keyCode == 70 && !keysPressed[91]) {
-				tree.sound.requestFullscreen();
+				// music.js owns the target: an audio track has no picture, so the
+				// whole player goes fullscreen (the visualisation rides along)
+				if (typeof musicPlayerFullscreen == 'function') { musicPlayerFullscreen(); }
+				else { tree.sound.requestFullscreen(); }
 			}
 		
 		

@@ -133,6 +133,8 @@ async function musicInit(method) {
 		musicVolumeApply();
 		$('#video').attr('theatre_mode', pd.theatre_mode);
 		$('#video').attr('type', pd.type);
+		// the drawing the player was left on; musicVisualApply below puts it back
+		musicVisual.mode = pd.visualization || 'none';
 
 		// pick the saved track first, so thisTrack slices tree.songs and mediaMaker
 		// then loads THAT track - mediaMaker reads tree.songs[0] and ignores the file
@@ -176,6 +178,7 @@ async function musicInit(method) {
 			$('#music_files').height($('#music').height() - (mm + mc + i));
 		}
 		playerCacheSaver();
+		musicVisualApply();
 	}
 
 
@@ -236,6 +239,7 @@ function playerCacheSaver(type) {
 				music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() }
 			},
 			type: $('#video').attr('type'),
+			visualization: musicVisual.mode,
 			method: 'playerCache',
 			subtitle_mode: tree.sound.textTracks[0].mode
 		};
@@ -1332,6 +1336,523 @@ $(document).on('click', '.all_music', function() {
 	new_settings[setting] = enabled;
 	searchMusic({ 'new_settings': new_settings });
 });
+
+// ---- the visualiser ---------------------------------------------------------
+//
+// An audio file has no picture, so a fullscreen music player used to be a black
+// screen. The player's tools panel offers a drawing of the sound instead - the
+// spectrum, dots that dance, a tie-dye that swirls, a painter that follows the
+// mood - on the canvas the video include puts in the player
+// (#<miss>_visualizer, the miss the player element carries). This half owns the
+// drawing; the dropdown in the panel sets the choice, and the choice rides in
+// the player cache like theatre_mode.
+//
+// The sound is tapped with the Web Audio API. An element can only be captured
+// once, so the tap is made lazily (the dropdown is the user gesture that also
+// lets the context start) and then kept for the page: the graph is a
+// pass-through, source -> analyser -> destination, and the element still
+// behaves as it normally would, so volume, mute, seeking and src changes all
+// still do what they did - what you hear is what is drawn.
+
+var musicVisual = {
+	mode: 'none',
+	ctx: null,
+	el: null,
+	source: null,
+	analyser: null,
+	freq: null,
+	raf: 0,
+	last: 0,
+	resumeAt: 0,
+	canvas: null,
+	painted: null,
+	peaks: [],
+	dots: [],
+	dotW: 0,
+	dotH: 0,
+	art: null,
+	st: null
+};
+
+function musicVisualState() {
+	if (!musicVisual.st) {
+		musicVisual.st = { t: 0, bass: 0.05, mid: 0.05, treble: 0.05, level: 0.05, centroid: 0.1, avg: 0.05, beat: false, lastBeat: -1, hue: 0 };
+	}
+	return musicVisual.st;
+}
+
+// Fullscreen for the player, the way the picture needs it: a video track is the
+// video element as ever; anything else takes the whole player, so the
+// visualisation canvas - which only renders inside the fullscreen element - and
+// the controls (the dropdown that chooses it lives there) come along.
+function musicPlayerFullscreen() {
+	var v = document.getElementById('video');
+	if (!v) { return; }
+	var target = v;
+	if (v.getAttribute('type') == 'video') {
+		$(v).show();
+	}
+	else {
+		$(v).hide();
+		var miss = v.getAttribute('miss');
+		var container = miss ? document.getElementById(miss + '_container') : null;
+		if (container) { target = container; }
+	}
+	var p = target.requestFullscreen ? target.requestFullscreen()
+		: (target.webkitRequestFullscreen ? target.webkitRequestFullscreen() : null);
+	if (p && p.catch) { p.catch(function () {}); }
+}
+
+// The analyser, made on first use and kept for the page: an element can only be
+// captured once, and the graph has to stay in place or the sound goes with it.
+function musicVisualAnalyser() {
+	var el = document.getElementById('video');
+	if (!el) { return null; }
+	if (!musicVisual.ctx) {
+		var Ctor = window.AudioContext || window.webkitAudioContext;
+		if (!Ctor) { return null; }
+		try { musicVisual.ctx = new Ctor(); } catch (e) { return null; }
+	}
+	if (musicVisual.el !== el) {
+		// a re-opened window hands back a fresh element; the old tap is spent
+		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
+		musicVisual.source = null;
+		musicVisual.analyser = null;
+		try {
+			musicVisual.source = musicVisual.ctx.createMediaElementSource(el);
+			musicVisual.analyser = musicVisual.ctx.createAnalyser();
+			musicVisual.analyser.fftSize = 2048;
+			musicVisual.analyser.smoothingTimeConstant = 0.82;
+			musicVisual.source.connect(musicVisual.analyser).connect(musicVisual.ctx.destination);
+			musicVisual.el = el;
+		}
+		catch (e) {
+			musicVisual.source = null;
+			return null;
+		}
+	}
+	if (musicVisual.ctx.state == 'suspended') {
+		// the dropdown is the usual gesture that lets the context start; this is
+		// the retry for one that was interrupted (a phone call, say)
+		var now = Date.now();
+		if (now - musicVisual.resumeAt > 1000) {
+			musicVisual.resumeAt = now;
+			var p = musicVisual.ctx.resume();
+			if (p && p.catch) { p.catch(function () {}); }
+		}
+	}
+	return musicVisual.analyser;
+}
+
+// One moment of the sound: the band levels (0..1), where its weight sits (the
+// centroid), a beat, and the smoothed versions the drawings are made from. With
+// nothing to hear the levels idle along a slow breath, so a paused player is
+// calm rather than dead.
+function musicVisualSample(analyser, dt) {
+	var st = musicVisualState();
+	var bass = 0, mid = 0, treble = 0, level = 0, centroid = st.centroid;
+	if (analyser) {
+		var f = musicVisual.freq;
+		if (!f || f.length != analyser.frequencyBinCount) {
+			f = musicVisual.freq = new Uint8Array(analyser.frequencyBinCount);
+		}
+		analyser.getByteFrequencyData(f);
+		var n = f.length;
+		var bEnd = Math.max(1, Math.round(n * 0.06));
+		var mEnd = Math.max(bEnd + 1, Math.round(n * 0.35));
+		var tEnd = Math.max(mEnd + 1, Math.round(n * 0.85));
+		var sum = 0, weighted = 0;
+		for (var i = 0; i < n; i++) {
+			sum += f[i];
+			weighted += f[i] * i;
+			if (i < bEnd) { bass += f[i]; }
+			else if (i < mEnd) { mid += f[i]; }
+			else if (i < tEnd) { treble += f[i]; }
+		}
+		bass = bass / (bEnd * 255);
+		mid = mid / ((mEnd - bEnd) * 255);
+		treble = treble / ((tEnd - mEnd) * 255);
+		level = (bass * 1.35 + mid + treble * 0.75) / 3.1;
+		centroid = sum > 0 ? (weighted / sum) / n : 0;
+	}
+	// the idle breath: a few percent of the scale, so nothing is ever still
+	var idle = 0.05 + 0.028 * Math.sin(st.t * 0.8);
+	if (level < 0.02) {
+		level = idle;
+		bass = idle;
+		mid = idle * 0.8;
+		treble = idle * 0.55;
+	}
+	var k = Math.min(1, dt * 7);
+	st.bass += (bass - st.bass) * k;
+	st.mid += (mid - st.mid) * k;
+	st.treble += (treble - st.treble) * k;
+	st.level += (level - st.level) * k;
+	st.centroid += (centroid - st.centroid) * Math.min(1, dt * 2.5);
+	// a beat is the bass standing over its own slow average
+	st.avg = st.avg * 0.96 + st.bass * 0.04;
+	st.beat = !!(st.bass > 0.12 && st.bass > st.avg * 1.3 && (st.t - st.lastBeat) > 0.22);
+	if (st.beat) { st.lastBeat = st.t; }
+	return st;
+}
+
+// The house fit: the bitmap follows the element's css box, at most 2x for a
+// retina screen and 1920 on the long edge - the picture is soft shapes, and a
+// 4K screen should not cost 8M pixels a frame.
+function musicVisualFit(canvas) {
+	var cw = canvas.clientWidth || 0;
+	var ch = canvas.clientHeight || 0;
+	if (cw < 4 || ch < 4) { return false; }
+	var scale = Math.min(window.devicePixelRatio || 1, 2);
+	var long = Math.max(cw, ch);
+	if (long * scale > 1920) { scale = 1920 / long; }
+	var w = Math.max(4, Math.round(cw * scale));
+	var h = Math.max(4, Math.round(ch * scale));
+	if (canvas.width != w || canvas.height != h) {
+		canvas.width = w;
+		canvas.height = h;
+		musicVisual.dots = [];
+		musicVisual.peaks = [];
+	}
+	return true;
+}
+
+// Where the picture may be shown: in the window only the theatre puts the
+// player on screen (the library covers it otherwise); fullscreen is all
+// picture, and the canvas is inside the player so it comes along with it.
+function musicVisualShowing(el) {
+	var fs = document.fullscreenElement || document.webkitFullscreenElement;
+	if (fs) { return fs == el || fs.contains(el); }
+	return $('#video').attr('theatre_mode') == 'on';
+}
+
+function musicVisualStop() {
+	if (musicVisual.raf) { cancelAnimationFrame(musicVisual.raf); musicVisual.raf = 0; }
+	if (musicVisual.canvas) { musicVisual.canvas.style.display = 'none'; }
+	musicVisual.canvas = null;
+	musicVisual.painted = null;
+	musicVisual.last = 0;
+}
+
+// Put the chosen drawing on screen, opening the theatre for it when the window
+// is showing the library instead: a picture nobody can see is not a picture.
+function musicVisualApply() {
+	var el = document.getElementById('video');
+	if (!el || musicVisual.mode == 'none') { musicVisualStop(); return; }
+	if (el.getAttribute('type') == 'audio'
+		&& $('#video').attr('theatre_mode') != 'on'
+		&& !(document.fullscreenElement || document.webkitFullscreenElement)) {
+		theatreModeOn();
+	}
+	if (!musicVisual.raf) { musicVisual.raf = requestAnimationFrame(musicVisualFrame); }
+}
+
+function musicVisualChoose(mode) {
+	musicVisual.mode = mode || 'none';
+	musicVisual.painted = null;
+	musicVisualApply();
+}
+
+$(document).on('change', '.media_visualization', function() {
+	musicVisualChoose(this.value);
+	// the choice is part of the player cache, so it comes back with the track
+	if (typeof tree != 'undefined' && tree && tree.songs && tree.songs.length) {
+		tree.lastCache = 0;
+		playerCacheSaver();
+	}
+});
+
+function musicVisualFrame(ts) {
+	musicVisual.raf = 0;
+	var el = document.getElementById('video');
+	var miss = el ? (el.getAttribute('miss') || '') : '';
+	var canvas = (miss && document.getElementById(miss + '_visualizer')) || null;
+	if (!el || !canvas || musicVisual.mode == 'none') {
+		musicVisualStop();
+		return;
+	}
+	if (el.getAttribute('type') == 'video' || !musicVisualShowing(el)) {
+		// a picture is chosen but the player has no stage for it right now - a
+		// video track is playing, the theatre is off, the screen is elsewhere.
+		// The loop waits, so the drawing comes straight back on its own.
+		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
+		return;
+	}
+	// a re-render hands back a fresh dropdown at its default; the drawing is the
+	// truth, so the control is put back in step
+	var select = document.getElementById(miss + '_visualization');
+	if (select && select.value != musicVisual.mode) { select.value = musicVisual.mode; }
+	if (!musicVisualFit(canvas)) {
+		// the window is minimized or mid-resize: there is nothing to paint, but
+		// the loop stays on so the picture comes back with the window
+		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
+		return;
+	}
+	musicVisual.canvas = canvas;
+	if (canvas.style.display != 'block') { canvas.style.display = 'block'; }
+	var g = canvas.getContext('2d');
+	if (!g) { musicVisualStop(); return; }
+	if (musicVisual.painted != musicVisual.mode) {
+		musicVisual.painted = musicVisual.mode;
+		musicVisual.dots = [];
+		musicVisual.peaks = [];
+		musicVisual.art = null;
+		g.clearRect(0, 0, canvas.width, canvas.height);
+	}
+	var now = ts / 1000;
+	var dt = now - (musicVisual.last || now);
+	musicVisual.last = now;
+	if (dt <= 0) { dt = 0.001; }
+	if (dt > 0.1) { dt = 0.1; }
+	var st = musicVisualState();
+	st.t += dt;
+	musicVisualSample(musicVisualAnalyser(), dt);
+	st.hue = (st.hue + dt * (14 + st.level * 160)) % 360;
+	var draw = musicVisualDraw[musicVisual.mode];
+	if (draw) { draw(g, canvas.width, canvas.height, st, dt); }
+	musicVisual.raf = requestAnimationFrame(musicVisualFrame);
+}
+
+var musicVisualDraw = {
+
+	// The spectrum: one bar per band, the hue walking with the pitch and a cap
+	// that falls back so a hit is read twice.
+	equalizer: function(g, w, h, st, dt) {
+		var f = musicVisual.freq;
+		var bars = Math.max(16, Math.min(110, Math.round(w / 16)));
+		var gap = Math.max(1, Math.round(w * 0.003));
+		var bw = (w - gap * (bars + 1)) / bars;
+		g.fillStyle = '#000';
+		g.fillRect(0, 0, w, h);
+		if (musicVisual.peaks.length != bars) { musicVisual.peaks = new Array(bars).fill(0); }
+		var have = f && f.length > 8;
+		var step = have ? (f.length * 0.72) / bars : 0;
+		var fall = h * dt;
+		for (var i = 0; i < bars; i++) {
+			var v = 0;
+			if (have) {
+				var a = Math.floor(i * step);
+				var b = Math.max(a + 1, Math.floor((i + 1) * step));
+				for (var k = a; k < b && k < f.length; k++) { if (f[k] > v) { v = f[k]; } }
+			}
+			v = v / 255;
+			// the quiet bands keep a small life of their own
+			var mag = Math.pow(Math.max(v, 0.015 + 0.012 * Math.sin(st.t * 1.4 + i * 0.6)), 1.2);
+			var bh = Math.max(2, mag * (h - 6) * 0.96);
+			var x = gap + i * (bw + gap);
+			var hue = (st.hue + (i / bars) * 312) % 360;
+			g.fillStyle = 'hsl(' + Math.round(hue) + ',92%,' + (40 + Math.round(mag * 26)) + '%)';
+			g.fillRect(x, h - bh, bw, bh);
+			musicVisual.peaks[i] = Math.max(musicVisual.peaks[i] - fall * (0.35 + v), bh);
+			g.fillStyle = 'hsl(' + Math.round(hue) + ',96%,78%)';
+			g.fillRect(x, h - musicVisual.peaks[i] - 3, bw, 3);
+		}
+	},
+
+	// The dancers: a band of dots carried by the music, each its own colour,
+	// with a low-alpha black in place of a clear so they carry tails. Now and
+	// then one grows a face and legs - the music is lively; so are they.
+	dots: function(g, w, h, st, dt) {
+		var size = Math.min(w, h);
+		if (musicVisual.dots.length == 0 || musicVisual.dotW != w || musicVisual.dotH != h) {
+			musicVisual.dotW = w;
+			musicVisual.dotH = h;
+			musicVisual.dots = [];
+			var count = Math.max(16, Math.min(64, Math.round(w * h / 46000)));
+			for (var n = 0; n < count; n++) {
+				musicVisual.dots.push({
+					x: Math.random() * w,
+					y: Math.random() * h,
+					a: Math.random() * Math.PI * 2,
+					wander: (Math.random() - 0.5) * 2.2,
+					v: 0.05 + Math.random() * 0.13,
+					r: size * (0.008 + Math.random() * 0.012),
+					hue: Math.random() * 360,
+					pulse: 0,
+					face: false,
+					life: 0
+				});
+			}
+		}
+		g.fillStyle = 'rgba(0,0,0,0.3)';
+		g.fillRect(0, 0, w, h);
+		var faces = 0;
+		for (var c = 0; c < musicVisual.dots.length; c++) { if (musicVisual.dots[c].face) { faces++; } }
+		for (var i = 0; i < musicVisual.dots.length; i++) {
+			var d = musicVisual.dots[i];
+			d.a += d.wander * dt * (0.5 + st.mid * 2.5);
+			var sp = d.v * size * (0.35 + st.level * 2.6) * (1 + st.bass * 1.2);
+			d.x += Math.cos(d.a) * sp * dt;
+			d.y += Math.sin(d.a) * sp * dt;
+			if (d.x < -d.r * 2) { d.x = w + d.r * 2; }
+			if (d.x > w + d.r * 2) { d.x = -d.r * 2; }
+			if (d.y < -d.r * 2) { d.y = h + d.r * 2; }
+			if (d.y > h + d.r * 2) { d.y = -d.r * 2; }
+			if (st.beat && d.pulse <= 0 && Math.random() < 0.35) {
+				d.pulse = 0.9;
+				d.a += (Math.random() - 0.5) * 0.6;
+				if (!d.face && faces < 3 && Math.random() < 0.22) {
+					d.face = true;
+					d.life = 6 + Math.random() * 8;
+					faces++;
+				}
+			}
+			if (d.pulse > 0) { d.pulse = Math.max(0, d.pulse - dt * 1.4); }
+			if (d.face) {
+				d.life -= dt;
+				if (d.life <= 0) { d.face = false; }
+			}
+			var r = d.r * (1 + st.bass * 1.9 + d.pulse * 0.8);
+			var hue = (st.hue + d.hue) % 360;
+			g.fillStyle = 'hsla(' + Math.round(hue) + ',95%,60%,0.16)';
+			g.beginPath();
+			g.arc(d.x, d.y, r * 2.6, 0, 6.2832);
+			g.fill();
+			g.fillStyle = 'hsla(' + Math.round(hue) + ',92%,62%,0.95)';
+			g.beginPath();
+			g.arc(d.x, d.y, r, 0, 6.2832);
+			g.fill();
+			if (d.face) { musicVisualDotFace(g, d, r, st); }
+		}
+	},
+
+	// The tie-dye: soft rings and spiral arms over a slow fade, so the colour
+	// builds like ink in water. The bass drives the swirl, the treble the
+	// wobble, and the beat makes the whole thing breathe.
+	psychedelic: function(g, w, h, st, dt) {
+		// the fade is what makes it move: every frame leaves a ghost of itself
+		g.globalCompositeOperation = 'source-over';
+		g.fillStyle = 'rgba(0,0,0,0.06)';
+		g.fillRect(0, 0, w, h);
+		g.globalCompositeOperation = 'lighter';
+		var cx = w / 2 + Math.sin(st.t * 0.17) * w * 0.13;
+		var cy = h / 2 + Math.cos(st.t * 0.12) * h * 0.12;
+		var size = Math.max(w, h);
+		var spin = st.t * (0.2 + st.level * 1.5);
+		var wobble = 0.08 + st.treble * 0.55;
+		var arms = 6;
+		g.lineCap = 'round';
+		for (var arm = 0; arm < arms; arm++) {
+			var base = spin + (arm / arms) * Math.PI * 2;
+			var first = true;
+			g.beginPath();
+			for (var a = 0; a <= Math.PI * 3.2; a += 0.16) {
+				var f = a / (Math.PI * 3.2);
+				var rad = (0.06 + f * 0.54) * size;
+				var wave = Math.sin(a * 2.3 + st.t * (0.8 + st.bass * 2.4) + arm) * wobble * rad * 0.35;
+				var th = base + a + Math.sin(a * 1.7 + st.t * 0.4) * 0.3;
+				var x = cx + Math.cos(th) * (rad + wave);
+				var y = cy + Math.sin(th) * (rad + wave) * 0.94;
+				if (first) { g.moveTo(x, y); first = false; }
+				else { g.lineTo(x, y); }
+			}
+			var hue = (st.hue + arm * (360 / arms)) % 360;
+			g.strokeStyle = 'hsla(' + Math.round(hue) + ',95%,55%,0.3)';
+			g.lineWidth = size * (0.035 + st.bass * 0.045);
+			g.stroke();
+		}
+		// rings on the beat, so the whole thing breathes
+		var rings = 3;
+		for (var r2 = 0; r2 < rings; r2++) {
+			var rr = ((st.t * (0.06 + st.level * 0.25) + r2 / rings) % 1) * size * 0.7;
+			g.strokeStyle = 'hsla(' + Math.round((st.hue + r2 * 70) % 360) + ',90%,60%,0.22)';
+			g.lineWidth = size * 0.012 * (1 + st.bass * 2);
+			g.beginPath();
+			g.arc(cx, cy, rr, 0, 6.2832);
+			g.stroke();
+		}
+		g.globalCompositeOperation = 'source-over';
+	},
+
+	// Modern Art: a stroke for the moment - the colour is where the sound sits
+	// (weight low is warm, weight high is cool), the width is the bass, the
+	// length the level - and every stroke is answered across the middle, so the
+	// picture keeps a composition. The fade is a whisper, so the painting grows
+	// rather than flickers.
+	modern_art: function(g, w, h, st, dt) {
+		var size = Math.max(w, h);
+		g.globalCompositeOperation = 'source-over';
+		g.fillStyle = 'rgba(0,0,0,0.012)';
+		g.fillRect(0, 0, w, h);
+		if (!musicVisual.art) {
+			musicVisual.art = { x: Math.random() * w, y: Math.random() * h, a: Math.random() * Math.PI * 2, wait: 0 };
+		}
+		var art = musicVisual.art;
+		art.wait -= dt;
+		if (art.wait > 0) { return; }
+		// a stroke every half second in quiet, ten a second at full tilt
+		art.wait = (0.45 - Math.min(0.4, st.level * 0.5)) * (0.5 + Math.random());
+		var hue = (st.centroid * 780 + st.hue * 0.2) % 360;
+		var lum = 34 + Math.round(Math.min(1, st.level) * 38);
+		var width = Math.max(2, size * (0.004 + st.bass * 0.04));
+		var len = size * (0.02 + st.level * 0.14);
+		art.a += (Math.random() - 0.5) * (0.4 + st.treble * 3);
+		var nx = art.x + Math.cos(art.a) * len;
+		var ny = art.y + Math.sin(art.a) * len;
+		// the brush bends mid-stroke, the way a wrist does
+		var mx = (art.x + nx) / 2 + (Math.random() - 0.5) * width * 2.5;
+		var my = (art.y + ny) / 2 + (Math.random() - 0.5) * width * 2.5;
+		g.strokeStyle = 'hsla(' + Math.round(hue) + ',85%,' + lum + '%,0.8)';
+		g.lineWidth = width;
+		g.lineCap = 'round';
+		g.beginPath();
+		g.moveTo(art.x, art.y);
+		g.quadraticCurveTo(mx, my, nx, ny);
+		g.stroke();
+		g.beginPath();
+		g.moveTo(w - art.x, art.y);
+		g.quadraticCurveTo(w - mx, my, w - nx, ny);
+		g.stroke();
+		if (st.beat && Math.random() < 0.4) {
+			// a bold gesture, the way a wrist makes one
+			var bw = size * (0.02 + st.mid * 0.18);
+			var bh = size * (0.015 + st.bass * 0.16);
+			var bx = Math.random() * (w - bw);
+			var by = Math.random() * (h - bh);
+			g.fillStyle = 'hsla(' + Math.round((hue + 170) % 360) + ',80%,58%,0.16)';
+			g.fillRect(bx, by, bw, bh);
+			g.fillRect(w - bx - bw, by, bw, bh);
+		}
+		art.x = nx;
+		art.y = ny;
+		// the wrist does not leave the page
+		if (art.x < 0 || art.x > w) { art.a = Math.PI - art.a; art.x = Math.max(0, Math.min(w, art.x)); }
+		if (art.y < 0 || art.y > h) { art.a = -art.a; art.y = Math.max(0, Math.min(h, art.y)); }
+	}
+};
+
+// A dot with a face: eyes that look where it is going, a smile that opens with
+// the bass, and legs swinging as it goes.
+function musicVisualDotFace(g, d, r, st) {
+	var dx = Math.cos(d.a);
+	var dy = Math.sin(d.a);
+	var ex = -dy * r * 0.42;
+	var ey = dx * r * 0.42;
+	var er = Math.max(1.4, r * 0.24);
+	var look = Math.min(1, 0.4 + st.level * 1.6) * r * 0.16;
+	g.fillStyle = 'rgba(20,10,30,0.92)';
+	g.beginPath(); g.arc(d.x + ex, d.y + ey, er, 0, 6.2832); g.fill();
+	g.beginPath(); g.arc(d.x - ex, d.y - ey, er, 0, 6.2832); g.fill();
+	g.fillStyle = '#fff';
+	g.beginPath(); g.arc(d.x + ex + dx * look, d.y + ey + dy * look, er * 0.42, 0, 6.2832); g.fill();
+	g.beginPath(); g.arc(d.x - ex + dx * look, d.y - ey + dy * look, er * 0.42, 0, 6.2832); g.fill();
+	var mouth = r * (0.35 + st.bass * 0.45);
+	g.strokeStyle = 'rgba(20,10,30,0.92)';
+	g.lineWidth = Math.max(1.2, r * 0.14);
+	g.beginPath();
+	g.arc(d.x + dx * r * 0.15, d.y + dy * r * 0.15, mouth, Math.PI * 0.15, Math.PI * 0.85);
+	g.stroke();
+	var swing = Math.sin(st.t * 7 + d.hue) * r * 0.5;
+	var lx = -dy * r * 0.5;
+	var ly = dx * r * 0.5;
+	g.beginPath();
+	g.moveTo(d.x + lx, d.y + ly);
+	g.lineTo(d.x + lx + swing, d.y + ly + r * 0.9);
+	g.moveTo(d.x - lx, d.y - ly);
+	g.lineTo(d.x - lx - swing, d.y - ly + r * 0.9);
+	g.stroke();
+	g.lineWidth = 1;
+}
 
 
 

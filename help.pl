@@ -116,14 +116,20 @@ our %topic = (
 	},
 	'music' => {
 		title => 'Music', category => 'apps', app => 'music',
+		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/video.html.ep', 'public/js/music.js' ],
+		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization' ],
+		verified => '2026-10-13',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums, folders and playlists, with a mute, a lock and a configuration drawer.',
-			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.'
+			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
+			'An audio track has no picture of its own, so the player can draw the sound instead: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).'
 		],
 		steps => [
 			'Open Music; the library lists artists and albums from your media folders.',
 			'Click a track to play it; the transport along the top controls playback.',
+			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the player opens its Theatre mode to show it.',
+			'Fullscreen (the player button, or F) fills the screen with the picture.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.'
 		],
 		related => [ 'studio', 'synth' ]

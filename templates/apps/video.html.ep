@@ -136,6 +136,34 @@
 		}
 		.media_tools_panel.shown { display: flex; }
 		.media_tools_panel > * { position: static !important; left: auto !important; right: auto !important; top: auto !important; bottom: auto !important; margin: 0; }
+		/* the visualisation surface and its picker: an audio track has no
+		   picture, so the player can draw the sound instead (music.js does the
+		   drawing). The canvas fills the player, lies over the album cover and
+		   under the controls, and never takes a click. */
+		.media_visualizer {
+			position: absolute;
+			left: 0px;
+			top: 0px;
+			width: 100%;
+			height: 100%;
+			display: none;
+			background-color: black;
+			pointer-events: none;
+		}
+		.media_visualization_label {
+			color: #ddd;
+			font-size: 12px;
+			letter-spacing: .3px;
+		}
+		.media_visualization {
+			height: 30px;
+			max-width: 150px;
+			border: solid 2px #777;
+			border-radius: 6px;
+			background-color: #111;
+			color: #eee;
+			font-size: 13px;
+		}
 		/* the music player's own bar: it wraps to two rows - the full-width seek
 		   on top, then the transport, shuffle/repeat, title, theatre and extras.
 		   The controls that were absolutely placed in the foot are reset to static
@@ -246,6 +274,12 @@
 			</video>
 		<% } %>
 		<img style="display:none;width:80%;height:80%;top:10%;left:10%;;left:10%;position:absolute;" id="music_album_cover">
+		<% if ($source eq 'music') { %>
+			<%# the visualisation surface: it is shown only by the visualiser in
+			    public/js/music.js, and it comes before the controls so they draw
+			    over it %>
+			<canvas id="<%= $miss %>_visualizer" class="media_visualizer" miss="<%= $miss %>"></canvas>
+		<% } %>
 		<div class="media_controls<%= $source eq 'music' ? ' music_player_bar' : '' %>" id="<%= $miss %>_controls" style="background-color:black;opacity:1;position:absolute;bottom:0px;height:110px;width:100%;">
 <% if ($source eq 'music') { %>
 			<%# the seek spans its own full-width row above the rest %>
@@ -268,6 +302,16 @@
 				<img id="<%= $miss %>_loop_end" hint="Set loop end" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb loop_control hover" loop_control="end" src="<%= &subs::icon_for('/images/make believe/end.png') %>">
 				<img id="<%= $miss %>_back" hint="Previous chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover last_chapter" src="<%= &subs::icon_for('/images/studio/back.png') %>">
 				<img id="<%= $miss %>_forward" hint="Next chapter" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover next_chapter" src="<%= &subs::icon_for('/images/studio/forward.png') %>">
+				<%# the sound's own picture, for the tracks that have none: the
+				    visualiser's four drawings, plus None for the plain black one %>
+				<span class="media_visualization_label">Visualizer</span>
+				<select id="<%= $miss %>_visualization" hint="Visualization" class="media_visualization hover">
+					<option value="none">None</option>
+					<option value="equalizer">Equalizer</option>
+					<option value="dots">Dots</option>
+					<option value="psychedelic">Psychedelic</option>
+					<option value="modern_art">Modern Art</option>
+				</select>
 				<img id="<%= $id %>_subtitle_toggle" hint="Subtitles" style="" status="<%= ((eval { $crate->{'settings'}->{'subtitles'} } || '') eq 'showing') ? 'showing' : 'hidden' %>" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
 				<img id="<%= $miss %>_full_screen" hint="Fullscreen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
 				<span id="<%= $miss %>_jog_wheel_frame" class=" hover">
@@ -434,7 +478,7 @@
 			var <%= $miss %>Tools = { toolbarTimeout: 0, toolbarReset: 0, lastX: 0, lastY: 0 };
 			window.jawnos_vid_tools = window.jawnos_vid_tools || {};
 			window.jawnos_vid_tools['<%= $id %>'] = <%= $miss %>Tools;
-			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_controls', function() {
+			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_container, #<%= $miss %>_controls', function() {
 
 				var controls = $('#<%= $miss %>_controls');
 				if (!controls.is(':visible')) { controls.fadeIn(); }
@@ -445,7 +489,7 @@
 					}
 				<% } %>
 
-				$('#<%= $id %>').css({'cursor': 'auto'});
+				$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'auto'});
 				// Only rebuild the auto-hide timer a few times a second rather than
 				// on every mousemove event.
 				var jawnos_now = Date.now();
@@ -453,11 +497,11 @@
 				<%= $miss %>Tools['toolbarReset'] = jawnos_now;
 				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
 				<%= $miss %>Tools['toolbarTimeout'] = setInterval(function() {
-					if ($('#<%= $id %>').attr('theatre_mode') == 'on' || '<%= $id %>' != 'video') {
+					if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || '<%= $id %>' != 'video') {
 						var mouse = mouse_position();
 						var el = document.elementsFromPoint(mouse.x,mouse.y);	
 						var seen = 0;
-						$('#<%= $id %>').css({'cursor': 'none'});
+						$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
 						$.each(el, function(i,v) {
 							if (<% if ($id eq 'video') { %> $(v).attr('id') == 'interface' || <% } %> $(v).attr('id') == '<%= $miss %>_controls') {
 								seen = 1;
@@ -465,7 +509,7 @@
 							else if ($(v).attr('id') == '<%= $id %>' && seen == 0) {
 								if (mouse.lastX == mouse.x && mouse.lastY == mouse.y &&  $(v).attr('id') != '<%= $miss %>_controls') {
 									seen = 0;
-									$('#<%= $id %>').css({'cursor': 'none'});
+									$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
 								}
 								else {
 									seen = 1;
@@ -591,10 +635,22 @@
 					}
 				});
 			}
-			vidOn('dblclick', '#<%= $id %>', function() {
-				var v = document.getElementById('<%= $id %>');
-				v.requestFullscreen();
+			vidOn('dblclick', '#<%= $id %><% if ($source eq 'music') { %>, #music_album_cover<% } %>', function() {
+				<%= $miss %>Fullscreen();
 			});
+			// an audio track has no picture, so the whole player goes fullscreen
+			// instead of the element - that is what lets the visualisation canvas
+			// (which only renders inside the fullscreen element) and the controls,
+			// with the dropdown that chooses it, come along. music.js owns the
+			// choice; the plain element is the fallback for a render without it.
+			function <%= $miss %>Fullscreen() {
+<% if ($source eq 'music') { %>
+				if (typeof musicPlayerFullscreen == 'function') { musicPlayerFullscreen(); return; }
+<% } %>
+				$('#<%= $id %>').show();
+				var v = document.getElementById('<%= $id %>');
+				if (v.requestFullscreen) { v.requestFullscreen(); }
+			}
 
 			vidOn('click', '.loop_control', function() {
 				var a = $(this);
@@ -697,11 +753,10 @@
 
 			vidOn('click', '#<%= $miss %>_full_screen', function() {
 				var a = $(this);
-				$('#<%= $id %>').show();
-				var v = document.getElementById('<%= $id %>');
 				var timestamp = Date.now();
 				if (a.attr('timestamp') < timestamp - 100) {
-					v.requestFullscreen();
+					a.attr('timestamp', timestamp);
+					<%= $miss %>Fullscreen();
 				}
 			});
 
