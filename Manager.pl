@@ -20054,6 +20054,22 @@ post '/manager/agents/delete' => sub($c) {
 	$c->render(json => { ok => 1, kind => $kind, name => $name });
 };
 
+# The associate's replies, spoken: the same house voice the watch's answers use
+# (Piper first - see say_it), on the machine the person is at. The ask is the
+# associate's own setting, ticked in its config menu; the route re-checks it, so
+# a stale page cannot speak after the tick is off.
+post '/manager/assistant/say' => sub($c) {
+	my $text = $c->param('text') // '';
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return $c->render(json => { ok => 0 }) unless length $text;
+	if ((&subs::setting_grabber({ app => '__president', setting => 'assistant_speech', device => 'all' }) // '') ne 'on') {
+		return $c->render(json => { ok => 0, note => 'speech is off' });
+	}
+	&subs::say_it(substr($text, 0, 800));
+	$c->render(json => { ok => 1 });
+};
+
 # One bounded run of the Coding agent: the model picks the next action, the server
 # runs it, repeat until done or the step cap. The whole thread comes back so the
 # person sees every change, check and ship.

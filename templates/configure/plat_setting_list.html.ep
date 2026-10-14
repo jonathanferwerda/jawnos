@@ -14,6 +14,12 @@
 	my $catalogue = &subs::ai_model_catalogue();
 	my $providers = &subs::ai_providers();
 	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
+	# which providers can answer here at all: a key entered, or a running Ollama.
+	# The role lists below only offer these - the rest are named under them, so it
+	# is clear which of them wants a key (or a daemon). Until the tree restarts
+	# onto this build the helper does not exist yet, and the panel keeps its old
+	# shape for those requests rather than dying on it.
+	my %provider_ready = map { $_->{'id'} => (defined &subs::ai_provider_ready ? &subs::ai_provider_ready($_->{'id'}) : 1) } @{$catalogue};
 	# which billing buckets are stood down (out of credit) - one check per bucket
 	my %bucket_ok;
 	foreach my $p ( @{$catalogue} ) {
@@ -45,6 +51,7 @@
 				<select class="configure_input" app="mail" setting="<%= $setting %>">
 					<option value="">— none —</option>
 					<% foreach my $provider ( @{$catalogue} ) {
+						next unless $provider_ready{ $provider->{'id'} };
 						my @models = grep {
 							my $m = $_;
 							scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) && (!$m->{'paid'} || $bucket_ok{ $m->{'bucket'} })
@@ -67,6 +74,11 @@
 			</div>
 		<% } %>
 	</div>
+
+	<% my @not_ready = grep { !$provider_ready{ $_->{'id'} } } @{$catalogue}; %>
+	<% if (@not_ready) { %>
+		<p class="cfg-note">Not offered until they can answer: <% foreach my $p (@not_ready) { %><b><%= $p->{'label'} %></b><%= ($p->{'id'} eq 'ollama' ? ' (not running)' : ' (no key)') %><%= ($p->{'id'} eq $not_ready[-1]->{'id'} ? '' : ', ') %><% } %>. Paste a key under Provider access and press Plat again, or start Ollama for the local models.</p>
+	<% } %>
 
 	<h3>Self-healing</h3>
 	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped.</p>
@@ -126,7 +138,7 @@
 			<% } %>
 		</div>
 	<% } %>
-	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare.</p>
+	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare. The lists only offer providers that can answer: a key entered (and an account not out of credit), or a local Ollama that is running.</p>
 
 	<h3>Guide commands (runtime)</h3>
 	<p class="cfg-note">Extra verbs the Guide can run, added without a code change. Each entry is JSON: a <code>name</code>, a <code>desc</code>, an optional <code>args</code> map, and a <code>primitive</code> with its <code>params</code>. The primitives are <code>say</code>, <code>open_app</code>, <code>set_setting</code>, <code>run_command</code>, <code>toggle</code>, <code>stage</code>, <code>find</code> and <code>play_music</code>; a param value may contain <code>{name}</code> to take one of the model's arguments. The list is a setting, so it syncs to every machine and they all learn the verb.</p>

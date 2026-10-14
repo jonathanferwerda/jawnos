@@ -122,6 +122,25 @@ $(document).on('change', '.assistant_confirm', function() {
 	settingSetter({ app: '__president', setting: 'guide_confirm', device: 'all', value: on ? 'on' : 'off' });
 });
 
+// Speak the replies: one setting for every associate, like the Confirm tick.
+// With it on, each written answer also goes to the house voice (Piper first,
+// see say_it) on this machine - the route re-checks the setting as it speaks.
+$(document).on('change', '.assistant_speak', function() {
+	var on = $(this).is(':checked');
+	$('.assistant_speak').prop('checked', on);
+	settingSetter({ app: '__president', setting: 'assistant_speech', device: 'all', value: on ? 'on' : 'off' });
+});
+
+function assistantSpeakWanted() {
+	return $('.assistant_speak').length && $('.assistant_speak').first().is(':checked');
+}
+
+function assistantSpeak(text) {
+	text = $.trim(text == null ? '' : String(text));
+	if (!text || /^\{/.test(text) || !assistantSpeakWanted()) { return; }
+	$.post('/manager/assistant/say', { text: text.slice(0, 800) });
+}
+
 function assistantConfirmRequired() {
 	var box = $('.assistant_confirm');
 	if (box.length) { return box.is(':checked'); }
@@ -403,6 +422,7 @@ function assistantGuideStep(panel, n) {
 			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
 				assistantRemember(panel, 'assistant', a.text || '');
 				assistantChatAdd(panel, 'guide', a.text || '');
+				assistantSpeak(a.text);
 				return;
 			}
 			assistantChatAdd(panel, 'step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
@@ -413,6 +433,7 @@ function assistantGuideStep(panel, n) {
 				if (friendly) {
 					assistantRemember(panel, 'assistant', friendly);
 					assistantChatAdd(panel, 'guide', friendly);
+					assistantSpeak(friendly);
 					return;
 				}
 				assistantGuideStep(panel, n + 1);

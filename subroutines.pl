@@ -10723,6 +10723,29 @@ sub ai_key_settings() {
 	return map { $_->[0] } map { @{ $_->{'keys'} } } @{ &subs::ai_providers() };
 }
 
+# Whether a provider can answer here at all: the key (or account) it needs is
+# entered, and for the local Ollama the daemon is actually running. "Valid"
+# beyond that is only knowable by calling it - the bucket tracker already stands
+# down an account that answered with no credit, and the Plat panel hides those
+# paid models. The model lists only offer providers that pass this.
+sub ai_provider_ready {
+	my ($id) = @_;
+	return 0 unless defined $id && length $id;
+	my ($p) = grep { ($_->{'id'} || '') eq $id } @{ &subs::ai_providers() };
+	return 0 unless $p;
+	if ($id eq 'ollama') {
+		my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3, request_timeout => 4);
+		my $res = eval { $ua->get('http://localhost:11434/api/tags')->result };
+		return ($res && $res->is_success) ? 1 : 0;
+	}
+	my $values = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @{ $p->{'keys'} || [] } ] });
+	foreach my $k ( @{ $p->{'keys'} || [] } ) {
+		my $v = $values->{ $k->[0] };
+		return 0 unless defined $v && length $v;
+	}
+	return 1;
+}
+
 # The model choices, grouped by provider, for the dropdowns. Ollama and
 # Cloudflare are read live; the rest are the fixed lists above.
 #
