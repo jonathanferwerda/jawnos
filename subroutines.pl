@@ -8885,6 +8885,25 @@ sub peer_sign_message {
 
 # Name this machine and sign the request it is about to make. Attached to a
 # peer user agent's start event, so every request on that rail is signed.
+# The signing dance writes throwaway files (a message, a signature, a public
+# key). They live in the app's own state dir on fresh File::Temp names, not on
+# /tmp under a pseudo-random name: a phone without shred leaves /tmp names
+# behind, and a leftover file the process cannot truncate turned every signed
+# request into a 500 (Fe, found over the mesh), while a world-writable /tmp
+# also lets a local name be pre-made as a symlink to clobber.
+sub peer_temp_file {
+	my ($tag) = @_;
+	my $dir = &home('~/.president');
+	unless (-d $dir) {
+		eval { File::Path::make_path($dir) };
+	}
+	$dir = '/tmp' unless -d $dir;
+	require File::Temp;
+	my ($fh, $path) = File::Temp::tempfile('peer_' . ($tag || 'tmp') . '_XXXXXXXX', DIR => $dir, UNLINK => 0);
+	close $fh if $fh;
+	return $path;
+}
+
 sub peer_sign_request {
 	my ($req) = @_;
 	my ($key) = &peer_key_paths();
@@ -8894,12 +8913,11 @@ sub peer_sign_request {
 	# (1791953166.531) was refused on every hook-signed request.
 	my $ts = int(time());
 	my $nonce = &random_string_creator(24);
-	my $id = &random_string_creator(16);
-	my $msg_file = "/tmp/peer_$id.msg";
-	my $sig_file = "/tmp/peer_$id.sig";
+	my $msg_file = &peer_temp_file('sign_msg');
+	my $sig_file = &peer_temp_file('sign_sig');
 	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
 	`openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg_file" -out "$sig_file" 2>/dev/null`;
-	my $sig = (-e $sig_file) ? read_file($sig_file) : '';
+	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	my $pub = &peer_pubkey();
 	if ($sig && $pub) {
 		$req->headers->header('X-Peer-Timestamp', $ts);
@@ -8907,7 +8925,7 @@ sub peer_sign_request {
 		$req->headers->header('X-Peer-Signature', encode_base64($sig, ''));
 		$req->headers->header('X-Peer-Key', encode_base64($pub, ''));
 	}
-	`shred -u "$msg_file" "$sig_file" 2>/dev/null`;
+	unlink $msg_file, $sig_file;
 	return 1;
 }
 
@@ -8936,15 +8954,14 @@ sub peer_verify {
 	my $q = &db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'peer_nonce', $stamp);
 	my $seen = $q ? $q->hashes->[0] : undef;
 	return 0 if $seen && $seen->{'server_time'};
-	my $id = &random_string_creator(16);
-	my $msg_file = "/tmp/peer_$id.msg";
-	my $sig_file = "/tmp/peer_$id.sig";
-	my $key_file = "/tmp/peer_$id.pub";
+	my $msg_file = &peer_temp_file('verify_msg');
+	my $sig_file = &peer_temp_file('verify_sig');
+	my $key_file = &peer_temp_file('verify_pub');
 	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce));
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
 	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
-	`shred -u "$msg_file" "$sig_file" "$key_file" 2>/dev/null`;
+	unlink $msg_file, $sig_file, $key_file;
 	return 0 unless $ok;
 	# the nonce is spent; the first verified contact pins the offered key
 	&db_query('delete from cache where context = ? and uuid = ?', 'peer_nonce', $stamp);
@@ -8962,15 +8979,14 @@ sub signature_verify {
 	return 0 unless $pubkey && index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
 	my $sig = eval { decode_base64 $b64sig } || '';
 	return 0 unless length $sig;
-	my $id = &random_string_creator(16);
-	my $msg_file = "/tmp/sig_$id.msg";
-	my $sig_file = "/tmp/sig_$id.sig";
-	my $key_file = "/tmp/sig_$id.pub";
+	my $msg_file = &peer_temp_file('device_msg');
+	my $sig_file = &peer_temp_file('device_sig');
+	my $key_file = &peer_temp_file('device_pub');
 	write_file($msg_file, $msg);
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
 	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
-	`shred -u "$msg_file" "$sig_file" "$key_file" 2>/dev/null`;
+	unlink $msg_file, $sig_file, $key_file;
 	return $ok ? 1 : 0;
 }
 
