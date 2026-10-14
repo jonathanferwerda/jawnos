@@ -8206,6 +8206,10 @@ sub tunnel_starter() {
 	my $data = shift;
 	my $ip = $data->{'ip'};
 	my $signatorial = $data->{'signatorial'};
+	# A fresh batch supersedes any half-built one: a batch whose holder never came
+	# up leaves 'connecting' rows that nothing reaps (tunnel_stopper only removes
+	# active rows), so drop them here rather than let them pile up across dials.
+	&subs::db_delete('tunnels', { signatorial => $signatorial, status => 'connecting' });
 	my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
 	my $domain = $data->{'domain'} || $rm->{'domain'} || $rm->{'ip'};
 	my $status = 'active';
@@ -8530,7 +8534,7 @@ sub tunnel_checker() {
 									&subs::db_update('remote_machines', { mirrors => $jmirror, server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
 								}
 							}
-							if ($status ne 'connected' || $data->{'duty'} eq 'restart') {
+							if ($status ne 'connected') {
 								$tun->{'failures'} += 1;
 								$tun->{'server_time'} = &subs::rightNow();
 								if ($tun->{'failures'} >= 3 || $data->{'duty'} eq 'restart') {
