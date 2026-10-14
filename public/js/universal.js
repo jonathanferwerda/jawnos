@@ -3,9 +3,11 @@ var appointment_chronicler;
 var appointment_windows = {};
 var errorDotTimeout;
 var errorInfo = [];
-if (!signatorial in window) {
-	globalThis.signatorial = 'unknown';
-}
+	// `!signatorial in window` parses as `(!signatorial) in window` and throws on
+	// pages that never define it (the public homepage), so use typeof instead
+	if (typeof signatorial === 'undefined' || !signatorial) {
+		globalThis.signatorial = 'unknown';
+	}
 
 // The repaint work (the appointment chrons, the calculators, the little
 // animations) only matters while the page is really being looked at. A hidden
