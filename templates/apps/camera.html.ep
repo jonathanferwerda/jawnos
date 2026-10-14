@@ -1,0 +1,25 @@
+<%# The Camera app: the app's own camera (window.JawnCamera), not the device
+    silently shelling out to termux-camera-photo. The buttons render only in the
+    app (manager.js puts jawn-app on <html> when the bridge answers), so a
+    browser shows the note instead. Captures file under the Camera app. %>
+<style>
+	.camera_app_actions { display: none; gap: 14px; justify-content: center; }
+	html.jawn-app .camera_app_actions { display: flex; }
+</style>
+
+<div id="camera_app" class="camera_app" style="padding:14px;text-align:center;">
+	<div class="camera_app_actions">
+		<img class="medium_thumb camera_app_photo" capture="0" hint="Take a photo" src="<%= &subs::icon_for('/images/decipherable/camera back.png') %>">
+		<img class="medium_thumb camera_app_video" hint="Record a video" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
+	</div>
+
+	<div class="camera_app_browser_note" style="color:#8e8e8e;font-size:13px;">
+		The camera opens in the JawnOS app. Open this panel there to take a photo
+		or record a video.
+	</div>
+	<style>
+		html.jawn-app .camera_app_browser_note { display: none; }
+	</style>
+
+	<div class="camera_app_status" style="min-height:22px;margin-top:12px;color:#8e8e8e;"></div>
+</div>

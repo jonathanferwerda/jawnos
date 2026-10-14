@@ -11,6 +11,14 @@ if (typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
 }
 else { nfc['ndef'] = undefined; }
 
+// The app's own camera (window.JawnCamera): mark the document so the native
+// camera/video buttons render (appointment_wrapper keys its CSS off this class).
+// Done at load, not on ready: a browser never sets it, and later-inserted
+// appointment markup still inherits the rule.
+if (typeof jawnCameraAvailable === 'function' && jawnCameraAvailable()) {
+	document.documentElement.classList.add('jawn-app');
+}
+
 $(document).on('click', '.president_restart_trigger', function() {
 	$.ajax({
 		url:'/manager/president/restart',
@@ -80,7 +88,6 @@ $(document).ready(function() {
 	pseudonymFreeSpaceFinder();
 	windowRetriever();
 	nfcListener();
-	if (jawnCameraAvailable()) { $('.native_capture, .native_video').show(); }
 	if ($('#search_engines')) {
 
 	}
@@ -1010,7 +1017,12 @@ function jawnCameraAvailable() {
 function jawnCameraUpload(result) {
 	var pending = window.__jawnCameraPending || {};
 	window.__jawnCameraPending = null;
-	if (!result || !result.ok || !result.data) { return; }
+	var status = pending.status;
+	var setStatus = function (text) { if (status) { $(status).text(text); } };
+	if (!result || !result.ok || !result.data) {
+		setStatus(result && result.error && result.error !== 'cancelled' ? ('Capture failed: ' + result.error) : '');
+		return;
+	}
 	var kind = result.kind === 'video' ? 'video' : 'image';
 	var ext = kind === 'video' ? '.mp4' : '.jpg';
 	var bin = atob(result.data);
@@ -1027,8 +1039,10 @@ function jawnCameraUpload(result) {
 		type: 'POST',
 		data: formData,
 		success: function(response) {
+			setStatus('Saved.');
 			continent_record({ uuid: response.uuid, app: response.app, timestamp: response.timestamp });
 		},
+		error: function() { setStatus('Upload failed.'); },
 		cache: false,
 		contentType: false,
 		processData: false

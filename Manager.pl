@@ -3247,6 +3247,7 @@ my @manager_bundle_files = qw(
 	/js/manager/help.js
 	/js/manager/coding.js
 	/js/manager/agents.js
+	/js/manager/camera.js
 );
 my $manager_bundle_cache;
 
@@ -13462,6 +13463,14 @@ get '/manager/notes' => sub($c) {
 		notes => $notes
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notes', title => 'Notes', contents => $content }, $c->param('timestamp'));
+	$c->render(text => $contents);
+};
+
+get '/manager/camera' => sub($c) {
+	# The Camera app: a panel whose buttons drive the app's own camera
+	# (window.JawnCamera). In a browser there is no bridge, so the panel says so.
+	my $content = $c->render_to_string(template => 'apps/camera');
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'camera', title => 'Camera', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
 };
 

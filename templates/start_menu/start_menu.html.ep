@@ -84,6 +84,7 @@
 				<img class="jonathan little_thumb" id="upload" category="accessories" src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Upload" />
 				<br>
 				<img id="image_toggle" category="media" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="jonathan gallery"></img>
+				<img id="camera_toggle" category="media" src="<%= &subs::icon_for('/images/decipherable/camera back.png') %>" hint="Camera" class="jonathan camera"></img>
 				<img id="synth_toggle" category="media" src="<%= &subs::icon_for('/images/decipherable/piano.png') %>" hint="Synth" class="jonathan synth"></img>
 				<img id="editor_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>" hint="Editor" class="jonathan editor"></img>
 				<img id="marker_toggle" class="jonathan marker" category="media" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker"></img>
