@@ -14,6 +14,7 @@ use Time::Duration;
 use Date::Parse;
 use Time::Piece;
 use Time::Local;
+use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use Crypt::Simple;
 use File::Slurp;
 use File::Find;
@@ -900,9 +901,129 @@ sub forever_warranty {
 	return 32503680000000;    # 3000-01-01T00:00:00Z in ms
 }
 
+# Read a typed time the way a person writes one. A relative offset ("-3h", "in 2
+# days", "3d 4h") belongs to ago_calc's own arithmetic and is left to it; a
+# calendar date is read here, so a bare "jul 16", an ordinal "16th 2", a "last
+# dec 25" and a full "dec 25 2025 at 7:04pm" all land where they say. A date with
+# no time of day keeps the present time of day; a date with no year is this year,
+# and a leading "last"/"next" moves it by one. A bare ordinal day with no month
+# rolls to the next month once it is already behind. Returns undef when the text
+# is not a calendar date, so ago_calc keeps its old path untouched.
+sub resolve_when {
+	my ($text,$now) = @_;
+	$now = &rightNow() unless $now;
+	my $t = lc($text // '');
+	$t =~ s/[.,]/ /g;             # "Jan.", "dec 25, 2025"
+	$t =~ s/\s+/ /g;
+	$t =~ s/^\s+|\s+$//g;
+	return undef unless length $t;
+	return $now + 0 if $t eq 'now';
+	# a spelled-out or joined offset ("2 hours", "3d 4h") is arithmetic, not a date
+	return undef if $t =~ /\b(?:milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|decades?|centur(?:y|ies))\b/;
+	# a leading modifier moves the whole date a year: "last dec 25", "next jul 16"
+	my $year_shift = 0;
+	if ($t =~ s/^last\s+//) { $year_shift = -1; }
+	elsif ($t =~ s/^next\s+//) { $year_shift = 1; }
+	$t =~ s/^\s+|\s+$//g;
+	return undef unless length $t;
+
+	my %month = (
+		january=>1, february=>2, march=>3, april=>4, may=>5, june=>6, july=>7,
+		august=>8, september=>9, october=>10, november=>11, december=>12,
+		sept=>9, jan=>1, feb=>2, mar=>3, apr=>4, jun=>6, jul=>7,
+		aug=>8, sep=>9, oct=>10, nov=>11, dec=>12
+	);
+	my @now = localtime($now / 1000);
+
+	# the time of day, when one is written
+	my ($hour, $min, $sec) = ($now[2], $now[1], $now[0]);
+	my $has_time = 0;
+	my $scan = $t;
+	if ($scan =~ /\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\b/) {
+		($hour, $min, $sec) = ($1 + 0, $2 + 0, ($3 // 0) + 0);
+		my $ap = $4;
+		$hour += 12 if defined $ap && $ap eq 'pm' && $hour < 12;
+		$hour = 0   if defined $ap && $ap eq 'am' && $hour == 12;
+		$has_time = 1;
+	}
+	elsif ($scan =~ /\b(\d{1,2})\s*(am|pm)\b/) {
+		($hour, $min, $sec) = ($1 + 0, 0, 0);
+		$hour += 12 if $2 eq 'pm' && $hour < 12;
+		$hour = 0   if $2 eq 'am' && $hour == 12;
+		$has_time = 1;
+	}
+	# drop the time so the day and the year are not read out of it
+	$scan =~ s/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b/ /g;
+	$scan =~ s/\b\d{1,2}\s*(?:am|pm)\b/ /g;
+
+	my ($mon, $day, $year);
+	my $date_like = 0;
+	my $year_given = 0;
+	if ($scan =~ /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/) {
+		($year, $mon, $day) = ($1 + 0, $2 + 0, $3 + 0);
+		$date_like = $year_given = 1;
+	}
+	elsif ($scan =~ /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/) {
+		($mon, $day) = ($1 + 0, $2 + 0);
+		$date_like = 1;
+		if (defined $3) { $year = $3 < 100 ? ($3 < 70 ? 2000 + $3 : 1900 + $3) : $3 + 0; $year_given = 1; }
+	}
+	if (!$date_like && $scan =~ /\b(1\d{3}|2\d{3})\b/) { $year = $1 + 0; $date_like = $year_given = 1; }
+	if (!$mon && $scan =~ /\b(january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/) {
+		$mon = $month{$1};
+		$date_like = 1;
+	}
+	my $month_named = $mon ? 1 : 0;
+	my $ordinal = 0;
+	if ($scan =~ /\b(\d{1,2})(?:st|nd|rd|th)\b/) { $day = $1 + 0; $date_like = 1; $ordinal = 1; }
+	return undef unless $date_like;
+
+	# what is left once the month, year and any date form are removed: the day, if
+	# a month was named but no ordinal, and then a lone small number is the hour
+	my $residual = ' ' . $scan . ' ';
+	$residual =~ s/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/ /g;
+	$residual =~ s{\b\d{4}-\d{1,2}-\d{1,2}\b}{ }g;
+	$residual =~ s{\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b}{ }g;
+	if (defined $year) { $residual =~ s/\b\Q$year\E\b/ /g; }
+	if (defined $day) {
+		$residual =~ s/\b0*\Q$day\E(?:st|nd|rd|th)?\b/ /g;
+	}
+	elsif ($residual =~ /\b(\d{1,2})\b/) {
+		$day = $1 + 0;
+		$residual =~ s/\b0*\Q$day\E\b/ /g;
+	}
+	if (!$has_time && $residual =~ /\b(\d{1,2})\b/) {
+		$hour = $1 + 0; $min = 0; $sec = 0; $has_time = 1;
+	}
+
+	$year = $now[5] + 1900 unless defined $year;
+	$year += $year_shift;
+	$mon = $now[4] + 1 unless defined $mon;
+	$day = $now[3] unless defined $day;
+	my $epoch = eval { int(POSIX::mktime($sec, $min, $hour, $day, $mon - 1, $year - 1900)) };
+	return undef unless defined $epoch;
+	my $ms = $epoch * 1000;
+	# a bare ordinal day ("16th 2") with no month or year rolls to the next month
+	# once the moment it names is behind
+	if ($ordinal && !$month_named && !$year_given) {
+		for (my $i = 0; $i < 24 && $ms < $now; $i++) {
+			$mon++;
+			if ($mon > 12) { $mon = 1; $year++; }
+			my $e = eval { int(POSIX::mktime($sec, $min, $hour, $day, $mon - 1, $year - 1900)) };
+			last unless defined $e;
+			$ms = $e * 1000;
+		}
+	}
+	return $ms;
+}
+
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
 	$timestamp = &rightNow() unless $timestamp;
+	# a written calendar date is read whole here; a relative offset ("-3h") and
+	# everything else falls through to the arithmetic below, unchanged
+	my $resolved = &resolve_when($ago, $timestamp);
+	return $resolved if defined $resolved;
 	my $server_time = &subs::rightNow();
 	my $server_dow = localtime($timestamp / 1000)->[6];
 	my $time_dow = localtime($timestamp / 1000)->[6];
