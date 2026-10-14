@@ -133,12 +133,26 @@ sub shrink_problem {
 	return "shrank from $old_lines to $new_lines lines against $base - a truncated write?";
 }
 
+# What a file is, so it gets the right check: by extension, or - for an
+# extension-less entry point like ./jawn - by its shebang.
+sub source_kind {
+	my ($rel, $src) = @_;
+	my $ext = ($rel =~ /\.([A-Za-z0-9]+)$/) ? lc $1 : '';
+	return 'perl' if $ext eq 'pl' || $ext eq 'pm' || $ext eq 't';
+	return 'js'   if $ext eq 'js' || $ext eq 'mjs' || $ext eq 'cjs';
+	return 'ep'   if $ext eq 'ep';
+	return 'json' if $ext eq 'json';
+	my ($first) = split /\n/, ($src // '');
+	return 'perl' if defined $first && $first =~ /^#!.*\bperl\b/;
+	return '';
+}
+
 sub check {
 	my ($rel, $src, $path) = @_;
 	my @probs;
-	my $ext = ($rel =~ /\.([A-Za-z0-9]+)$/) ? lc $1 : '';
+	my $kind = &source_kind($rel, $src);
 
-	if ($ext eq 'pl' || $ext eq 'pm' || $ext eq 't') {
+	if ($kind eq 'perl') {
 		my $out = `cd "$root" && perl -c "$path" 2>&1`;
 		$out = '' unless defined $out;
 		unless ($out =~ /syntax OK/) {
@@ -149,7 +163,7 @@ sub check {
 			push @probs, 'perl -c: ' . &first_line($out) unless $again =~ /syntax OK/;
 		}
 	}
-	elsif ($ext eq 'js' || $ext eq 'mjs' || $ext eq 'cjs') {
+	elsif ($kind eq 'js') {
 		if ($node) {
 			my $out = `cd "$root" && node --check "$path" 2>&1`;
 			my $code = $? >> 8;
@@ -157,7 +171,7 @@ sub check {
 			push @probs, 'node --check: ' . &first_line($out) if $code != 0;
 		}
 	}
-	elsif ($ext eq 'ep') {
+	elsif ($kind eq 'ep') {
 		my $ok = eval {
 			require Mojo::Template;
 			Mojo::Template->new(vars => 1)->name($rel)->parse($src);
@@ -165,7 +179,7 @@ sub check {
 		};
 		push @probs, 'ep compile: ' . &first_line("$@") unless $ok;
 	}
-	elsif ($ext eq 'json') {
+	elsif ($kind eq 'json') {
 		my $ok = eval { require Mojo::JSON; Mojo::JSON::decode_json($src); 1 };
 		push @probs, 'json: ' . &first_line("$@") unless $ok;
 	}
@@ -192,7 +206,11 @@ sub collect_files {
 				my $rel = $p;
 				$rel =~ s{^\Q$root/\E}{};
 				return if $rel =~ m{(?:^|/)\.};
-				return unless $rel =~ /\.(?:pl|pm|t|js|mjs|cjs|ep|json)$/;
+				my $known = $rel =~ /\.(?:pl|pm|t|js|mjs|cjs|ep|json)$/;
+				# an extension-less entry point (./jawn) or a scripts/ tool is judged
+				# by its shebang in check()
+				my $tool = $rel =~ m{^(?:[^/]+|scripts/[^/]+)$} && $rel !~ m{\.[^./]+$};
+				return unless $known || $tool;
 				push @f, $rel;
 			},
 		}, $root);

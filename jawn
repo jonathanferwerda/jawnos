@@ -144,6 +144,22 @@ sub master_time_looper() {
 		  Mojo::IOLoop->remove($master_timer);
 		  return if $master_timer_paused == 1;
 			$master_timer_paused = 1;
+			# A requested restart on a live tree is verified first: a change that does
+			# not parse would only come back broken (or blank, like the /manager page a
+			# truncated manager.js once blanked), so refuse it, keep the running tree
+			# serving and say so. The failure is printed into the pty, where the error
+			# watch reads it and offers a fix. A frozen tree is already down, so it is
+			# restarted regardless - there is nothing serving to protect.
+			if ($f_status eq 'restart' && $status ne 'frozen') {
+				my $proof = &tree_verify();
+				unless ($proof->{'ok'}) {
+					write_file($status_file, 'good');
+					print "restart refused - the tree is still serving; the code does not verify:\n" . $proof->{'report'} . "\n";
+					$master_timer_paused = 0;
+					&master_time_looper();
+					return;
+				}
+			}
 			# the request is ours now: left standing, the next two-second tick reads
 			# it again, kills the fresh boot before it writes "good", and restarts
 			# forever
@@ -172,6 +188,22 @@ sub master_time_looper() {
 	});
 }
 
+
+# Verify the tree before a restart loads it. scripts/verify_change.pl checks that
+# every Perl file compiles, every JavaScript file parses and every template
+# compiles, across the whole tree. It runs here, once, while the old tree is
+# still serving, so it adds nothing to the interruption; the restart only goes
+# ahead when it passes. Returns { ok => 1 } when it passes (or when the script is
+# not present yet), else the tail of its report to print.
+sub tree_verify() {
+	return { ok => 1 } unless -f 'scripts/verify_change.pl';
+	my $out = `perl scripts/verify_change.pl --all --quiet 2>&1`;
+	my $code = $? >> 8;
+	$out = '' unless defined $out;
+	return { ok => 1 } if $code == 0;
+	$out =~ s/\s+$//;
+	return { ok => 0, report => substr($out, 0, 2000) };
+}
 
 
 # A config.json is usable once it exists and names a signatorial (the file the
@@ -234,6 +266,9 @@ Mojo::IOLoop->recurring(2 => sub {
 
 sub shut_down() {
 	print "pres Ctrl+C! Closing...\n";
+	# this tear-down is on purpose, so the fork's own close must not be read as a
+	# crash (see the close handler in terminal_pty_runner)
+	$fork->{'jawn_deliberate'} = 1 if $fork;
 	$fork->write("\x03");
 	`./scripts/manager_killer.pl`;
 	my $ps = `ps -e`;
@@ -395,9 +430,17 @@ sub terminal_pty_runner() {
 		}
   });
 
+	my $this_fork = $fork;
   $fork->on(close => sub () {
-		my ($fork, $exit_code) = @_;
+		my ($exit_value, $signal) = @_;
 		print "closing fork";
+		# the tree's own terminal exited: unless the master tore it down for a
+		# restart (shut_down marks the fork), it died on its own - recover it rather
+		# than leave the tree down
+		unless ($this_fork->{'jawn_deliberate'}) {
+			print "tree exited on its own (exit=$exit_value signal=$signal) - recovering\n";
+			$status = 'frozen';
+		}
   });
 
 	$fork->on(drain => sub () {
