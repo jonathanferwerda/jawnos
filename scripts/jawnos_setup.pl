@@ -64,6 +64,20 @@ sub encrypter {
 	return encrypt($content);
 }
 
+sub decrypter {
+	my ( $secret, $content ) = @_;
+	local *encrypt;
+	local *decrypt;
+	Crypt::Simple->import( passphrase => $secret );
+	return decrypt($content);
+}
+
+# The factory seed database/initial.enc is sealed under this code (must match
+# scripts/factory_seed.pl). It is not a secret - it guards an empty factory
+# template - so it ships in the clear: provisioning opens the seed with it and
+# re-seals the result under the user's own unlock code.
+our $FACTORY_CODE = 'JAWNOS-FACTORY-SEED-v1';
+
 sub config_exists { return -e './config.json'; }
 
 sub read_config {
@@ -109,9 +123,6 @@ sub make_database {
 	unless ( $code && $code =~ /^[0-9]{4,12}$/ ) {
 		return { error => 'The unlock code must be 4-12 digits.' };
 	}
-	unless ( -e 'database/schema.sql' ) {
-		return { error => 'database/schema.sql is missing.' };
-	}
 
 	my $tmp = jawn_home('~/.president');
 	make_path($tmp) unless -d $tmp;
@@ -123,12 +134,30 @@ sub make_database {
 	my $enc_file = "$root/database/backups/jawnos.enc";
 	make_path("$root/database/backups") unless -d "$root/database/backups";
 	my $working  = $tmp . '/setup_' . randstr(10) . '.db';
-
-	# fresh database from the shipped schema
 	unlink $working if -e $working;
-	my $build = `sqlite3 $working < database/schema.sql 2>&1`;
-	if ( $? != 0 || !-e $working ) {
-		return { error => "Could not build the database: $build" };
+
+	# the template: the factory seed when it is there and opens, else a fresh
+	# database from the shipped schema. The seed carries the factory settings
+	# (appearance and configuration defaults); the schema build carries the same
+	# few defaults inserted below.
+	my $seeded = 0;
+	if ( -e 'database/initial.enc' ) {
+		my $seed_standard = $standard;
+		my $data = `tail database/initial.enc`;
+		my ( undef, $app ) = split /\Q$splitter\E/, $data, 2;
+		my $decoded = $app ? decrypter( $FACTORY_CODE, $app ) : '';
+		$seed_standard = $decoded if $decoded && $decoded =~ /^[a-z0-9-]+$/i;
+		`openssl enc -d -k "$FACTORY_CODE" -$seed_standard -pbkdf2 -in database/initial.enc -out $working 2>/dev/null`;
+		$seeded = 1 if -s $working > 5000;
+	}
+	unless ($seeded) {
+		unless ( -e 'database/schema.sql' ) {
+			return { error => 'database/schema.sql is missing.' };
+		}
+		my $build = `sqlite3 $working < database/schema.sql 2>&1`;
+		if ( $? != 0 || !-e $working ) {
+			return { error => "Could not build the database: $build" };
+		}
 	}
 
 	my $sql = Mojo::SQLite->new('sqlite:' . $working);
@@ -136,39 +165,56 @@ sub make_database {
 	$db->query('PRAGMA journal_mode=WAL');
 	$db->query('PRAGMA synchronous=NORMAL');
 
+	# the unlock code is this machine's key canary: replace whatever the seed or
+	# the schema carried
 	my $now = time() * 1000;
-	$db->insert( 'security', {
-		level       => 1,
-		database    => $live_db,
-		timestamp   => $now,
-		server_time => $now,
-		credential  => encrypter( $code, $code ),
-		uuid        => randstr(30),
-	} );
-
-	foreach my $s (
-		[ 'misc', 'encryption_standard', $standard ],
-		[ 'me',   'name',                $cfg->{'name'} || 'Me' ],
-		[ 'me',   'warranty',            '-10d' ],
-		[ 'me',   'currency',            'CAD' ],
-		[ 'me',   'worth',               '0' ],
-	) {
-		$db->insert( 'settings', {
-			app         => $s->[0],
-			setting     => $s->[1],
-			value       => $s->[2],
+	my $level_one = $db->query('select uuid from security where level = 1')->hash;
+	if ($level_one) {
+		$db->update( 'security', {
+			credential  => encrypter( $code, $code ),
+			database    => $live_db,
+			server_time => $now,
+		}, { uuid => $level_one->{'uuid'} } );
+	}
+	else {
+		$db->insert( 'security', {
+			level       => 1,
+			database    => $live_db,
 			timestamp   => $now,
 			server_time => $now,
-			device      => $cfg->{'device'} || 'computer',
-			uuid        => randstr(20),
+			credential  => encrypter( $code, $code ),
+			uuid        => randstr(30),
 		} );
+	}
+
+	# a schema build starts with no settings; the seed already carries them
+	unless ($seeded) {
+		foreach my $s (
+			[ 'misc', 'encryption_standard', $standard ],
+			[ 'me',   'name',                $cfg->{'name'} || 'Me' ],
+			[ 'me',   'warranty',            '-10d' ],
+			[ 'me',   'currency',            'CAD' ],
+			[ 'me',   'worth',               '0' ],
+		) {
+			$db->insert( 'settings', {
+				app         => $s->[0],
+				setting     => $s->[1],
+				value       => $s->[2],
+				timestamp   => $now,
+				server_time => $now,
+				device      => $cfg->{'device'} || 'computer',
+				uuid        => randstr(20),
+			} );
+		}
 	}
 
 	$db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 	undef $db;
 	undef $sql;
 
-	# encrypt exactly the way the app expects
+	# the live database is written straight out - no gate pick-a-database step -
+	# and a copy is sealed beside it exactly the way the app expects
+	`cp -f $working $live_db`;
 	my $temp_backup = $working . '.1.db';
 	`sqlite3 $working ".backup '$temp_backup'"`;
 	`openssl enc -e -k "$code" -$standard -pbkdf2 -in $temp_backup -out $enc_file`;
@@ -185,7 +231,7 @@ sub make_database {
 	`shred -u $working $temp_backup $working-wal $working-shm 2>/dev/null`;
 	`rm -f $working-wal $working-shm $temp_backup`;
 
-	return { ok => 1, enc_file => $enc_file, database => $live_db, code => $code };
+	return { ok => 1, enc_file => $enc_file, database => $live_db, code => $code, seeded => $seeded };
 }
 
 # ---------------------------------------------------------------------------
@@ -265,25 +311,11 @@ sub WIZARD_HTML {
 		<br><button onclick="saveConfig()">Save configuration</button>
 	</div>
 
-	<div class="step locked" id="step-db">
-		<h2>3. Database</h2>
-		<p class="note">A fresh database is created from the shipped schema and encrypted with a numeric code you choose. You'll type that code at the gate to unlock JawnOS.</p>
-		<div class="row">
-			<div><label>Unlock code (4-12 digits)</label><input id="db_code" inputmode="numeric" pattern="[0-9]*" value=""></div>
-		</div>
-		<p class="note">Leave the code blank to auto-generate one.</p>
-		<div class="msg" id="db-msg"></div>
-		<br><button onclick="makeDatabase()">Create database</button>
-		<div id="db-result" style="display:none;margin-top:16px;">
-			<div class="note">Your unlock code is:</div>
-			<div class="code" id="db-code-out"></div>
-			<div class="note">Write it down &mdash; you'll enter it at the gate login screen.</div>
-		</div>
-	</div>
-
 	<div class="step locked" id="step-finish">
-		<h2>4. Finish</h2>
-		<p class="note">When you're ready, start JawnOS. This wizard will close.</p>
+		<h2>3. Finish</h2>
+		<p class="note">Your install is built and ready &mdash; there is nothing else to configure, and no database to pick or move. This is your unlock code:</p>
+		<div class="code" id="db-code-out"></div>
+		<p class="note">Write it down &mdash; you'll enter it at the gate login screen to unlock JawnOS.</p>
 		<button onclick="finish()">Start JawnOS</button>
 	</div>
 </div>
@@ -367,24 +399,11 @@ async function saveConfig() {
 		folders: val('cfg_folders').split('\n').map(function(s){return s.trim();}).filter(Boolean)
 	};
 	var m = document.getElementById('config-msg');
-	m.innerHTML = 'saving&hellip;';
+	m.innerHTML = 'building your install&hellip;';
 	var res = await post('api/config', data);
 	if (res.ok) {
-		m.innerHTML = '<span class="ok">Saved. Signatorial: ' + res.signatorial + '</span>';
-		unlock('step-db');
-	} else { m.innerHTML = '<span class="bad">' + (res.error || 'failed') + '</span>'; }
-}
-
-async function makeDatabase() {
-	var code = val('db_code');
-	if (!code) { code = String(Math.floor(10000000 + Math.random() * 89999999)); }
-	var m = document.getElementById('db-msg');
-	m.innerHTML = 'building&hellip;';
-	var res = await post('api/database', { code: code });
-	if (res.ok) {
-		m.innerHTML = '<span class="ok">Created ' + res.enc_file + '</span>';
-		document.getElementById('db-code-out').textContent = res.code;
-		document.getElementById('db-result').style.display = 'block';
+		m.innerHTML = '<span class="ok">Saved.</span>';
+		document.getElementById('db-code-out').textContent = res.code || '(existing install) ';
 		unlock('step-finish');
 	} else { m.innerHTML = '<span class="bad">' + (res.error || 'failed') + '</span>'; }
 }
@@ -458,7 +477,20 @@ post '/api/config' => sub {
 	delete $cfg->{'start_dir'};
 
 	write_config($cfg);
-	$c->render( json => { ok => 1, config => $cfg, signatorial => $sig } );
+
+	# zero touch: build the machine's one database now, from the factory seed, so
+	# the first boot only asks for the code below. The wizard never asks where a
+	# database goes or what to call it. An install that already has its database
+	# is left alone (re-running --setup only re-writes config.json).
+	my $code;
+	unless ( -e "$root/database/jawnos.db" ) {
+		$code = sprintf('%08d', int(rand(100000000)));
+		my $made = make_database( $cfg, { code => $code } );
+		unless ( $made->{'ok'} ) {
+			return $c->render( json => { ok => 0, error => $made->{'error'} || 'could not build the database' } );
+		}
+	}
+	$c->render( json => { ok => 1, config => $cfg, signatorial => $sig, code => $code } );
 };
 
 post '/api/database' => sub {

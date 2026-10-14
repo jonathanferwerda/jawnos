@@ -488,10 +488,11 @@ On the first run — or any time `config.json` is missing — JawnOS walks you t
    name, device, ports and media folders; it writes `config.json` for you. The
    `signatorial` is a file that will not change — JawnOS reads it at start-up, hashes it and uses
    it to encrypt cookies. Leave that field blank and the wizard generates one for you.
-3. **Database.** The wizard builds a brand-new database from `database/schema.sql` at
-   `database/initial.db` and encrypts a copy beside it in `database/backups/` with a numeric unlock
-   code you choose (it can generate one). Write that code down — you type it at the gate screen to
-   unlock JawnOS. There is nothing else to pick or move: one machine, one database.
+3. **Database.** There is nothing to pick or move. The wizard builds the machine's one database,
+   `database/jawnos.db`, from the shipped factory seed (`database/initial.enc`) and shows you a
+   numeric unlock code it generated. Write that code down — you type it at the gate screen to
+   unlock JawnOS. The copy it seals into `database/backups/` is the app's own backup; `initial.enc`
+   stays the factory template (regenerate it with `perl scripts/factory_seed.pl`).
 
 When setup finishes the wizard closes and JawnOS boots. Your browser opens at the gate with the
 new database listed; enter your unlock code to get in.
