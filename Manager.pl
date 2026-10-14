@@ -25159,6 +25159,31 @@ get '/manager/remote_auth_test' => sub($c) {
 
 
 
+# Log a peer back in so the session cookie we keep for it is fresh. The relay and
+# the sync rail post to a peer's ordinary routes carrying that cookie, and those
+# routes are gated; the cookie lapses without a word - most often when the peer
+# renames its database, which the session remembers - so a relayed request comes
+# back with the Gate page where the route's reply was expected. Reuses the same
+# credentialed login (the peer's /sesh_check) the reconnect path uses.
+sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) {
+	my $rdc = {
+		manager => $rm->{'manager'},
+		filename => $rm->{'data'}->{'database'},
+		timestamp => $timestamp,
+		ip => $ip,
+		password => &subs::session_suds($c),
+		name => $c->session('name'),
+		browser_tab_id => $browser_tab_id,
+		browser_tab => $browser_tab,
+		port => $rm->{'port'},
+		signatorial => $rm->{'signatorial'},
+		nic => $rm->{'nic'},
+		tunnel => $rm->{'tunnel'}
+	};
+	$rm->{'cookie'} = undef;
+	return &remote_device_connect($rdc);
+}
+
 sub remote_machine_reconnector($c) {
 
 
@@ -25171,6 +25196,14 @@ sub remote_machine_reconnector($c) {
 	eval {
 		my $remote_machines = &subs::remote_machine_lister({ });
 
+		# A peer's stored session cookie lapses unnoticed: the handshake below is
+		# signed and gate-exempt, so it keeps answering JSON while every relayed
+		# request to a gated route comes back as the Gate page, and the relay quietly
+		# does nothing. Every few minutes, once per pass, probe a peer with its stored
+		# cookie and log it back in when the cookie no longer authenticates, so the
+		# relay and the sync rail ride a fresh session.
+		my $auth_probe_due = (&subs::rightNow() - (&subs::setting_grabber({ app => '__president', setting => 'remote_auth_probe_timer' }) || 0)) > 180000;
+		my $auth_probe_filed = 0;
 		my @accomplished;
 		foreach my $rm ( @{$remote_machines} ) {
 			# never a turn for ourselves: the 'me' pseudo and any self row that
@@ -25250,26 +25283,7 @@ sub remote_machine_reconnector($c) {
 							my $manager_file = &manager_file_maker($c->session('name'));
 							my $html = '<h2>Reconnecting to ' . $ip . '</h2>';
 							&Websocket::send('tab', { green => $html, uuid => $auuid });
-							my $password = &subs::session_suds($c);
-
-							my $port = $rm->{'port'};
-							my $manager = $rm->{'manager'};
-							my $rdc = {
-								manager => $manager,
-								filename => $rm->{'data'}->{'database'},
-								timestamp => $timestamp,
-								ip => $ip,
-								password => $password,
-								name => $c->session('name'),
-								browser_tab_id => $browser_tab_id,
-								browser_tab => $browser_tab,
-								port => $rm->{'port'},
-								signatorial => $rm->{'signatorial'},
-								nic => $rm->{'nic'},
-								tunnel => $rm->{'tunnel'}
-							};
-							$rm->{'cookie'} = undef;
-							my $returner = &remote_device_connect($rdc);
+							my $returner = &remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab);
 							if ($returner->{'body'}->{'signatorial'}) {
 								$ping_test = 'ok';
 							}
@@ -25281,6 +25295,16 @@ sub remote_machine_reconnector($c) {
 					}
 					else {
 						my $rj = eval { return decode_json $rm->{'res'}->body };
+						# The handshake answered JSON, but a gate-exempt route answers even to
+						# a lapsed cookie, so ask a gated but read-only route with the stored
+						# cookie too. HTML back (not the route's JSON) means the session is
+						# dead; log in again so the relay stops handing the caller the Gate.
+						if ($auth_probe_due && $rm->{'ua'} && $rm->{'data'}->{'database'}) {
+							if (!$auth_probe_filed) { &subs::setting_setter({ app => '__president', setting => 'remote_auth_probe_timer', value => &subs::rightNow() }); $auth_probe_filed = 1; }
+							my $probe_tx = eval { $rm->{'ua'}->inactivity_timeout(10)->get($rm->{'manager'} . '/manager/configure/tunnel/list' => { Accept => 'application/json, text/html' }) };
+							my $probe_body = eval { $probe_tx->res->body } || '';
+							&remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) if length $probe_body && $probe_body !~ /^\s*[\{\[]/;
+						}
 						next if $rj->{'signatorial'} eq $signatorial;
 						my $appt = &subs::db_query('select server_time,app from appointments order by server_time DESC LIMIT 1')->hashes->[0];
 						if ($rj->{'fqdn'}) {
