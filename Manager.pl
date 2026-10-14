@@ -3514,21 +3514,21 @@ post '/sesh_check' => sub ($c) {
 			$c->render(json => $js);
 		}
 		elsif ($reject_count > 2) {
-			my $denial = $c->render_to_string(template => 'guest_layouts/denial', message => '... and fuck you too!');
+			my $denial = $c->render_to_string(template => 'guest_layouts/denial', message => '... access denied.');
 			$c->render(json => { 'authentication' => 'denial', denial => $denial });
 		}
 		else {
 			$reject_count = $reject_count + 1;
 			$c->session('reject_count' => $reject_count);
 			my $visitor = $local_address eq $remote_address ? 'Me' : $computer || 'door';
-			&subs::say_it('Who the fuck are you? ' . $visitor . ' ' . $c->session('reject_count'));
+			&subs::say_it('Access denied: ' . $visitor);
 			&subs::db_insert('appointments',{ warranty => $me_warranty, uuid => &subs::random_string_creator(40), app => "customs", type => "reject", timestamp => $timestamp, server_time => $server_time }) if $db_exists == 1;
 			$c->render(json => { 'authentication' => 'rejected'});
 			$c->session('authentication' => 'rejected');
 			&subs::say_it('I reject: ' . $remote_address);
 			$c->stash('browser_tab_id' => undef);
 			$c->session('suds_id' => undef);
-			&notification_sender({ app => 'customs', role => 'citizen', title => 'WTFAU', message => 'DB open', image => "/images/make believe/explosion.png" },$database);
+			&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB open', image => "/images/make believe/explosion.png" },$database);
 
 		}
 	}
@@ -3536,12 +3536,12 @@ post '/sesh_check' => sub ($c) {
 			my $reject_count = $c->session('reject_count') + 1;
 			$c->session('reject_count' => $reject_count);
 			my $visitor = $local_address eq $remote_address ? 'Me' : 'door';
-			&subs::say_it($c->session('reject_count') . ' Who the fuck are you? ' . $visitor);
+			&subs::say_it('Access denied: ' . $visitor);
 			$c->render(json => { 'authentication' => 'rejected'});
 			$c->session('authentication' => 'rejected');
 			$c->session('suds_id' => undef);
 			$c->stash('browser_tab_id' => undef);
-			&notification_sender({ app => 'customs', role => 'citizen', title => 'WTFAU', message => 'DB Closed: ' . $c->tx->remote_address . '<br>' . $c->req->url->path, image => "/images/make believe/explosion.png" },$database);
+			&notification_sender({ app => 'customs', role => 'citizen', title => 'Access', message => 'DB Closed: ' . $c->tx->remote_address . '<br>' . $c->req->url->path, image => "/images/make believe/explosion.png" },$database);
 	}
 };
 
@@ -22085,8 +22085,8 @@ sub authentication_passer($c) {
 
 	my $authentication = $c->session('authentication') || 'revoked';
 	if ($c->session('authentication') eq 'denial' || $c->session('reject_count') > 3 || ($c->stash('no') && $c->stash('no') == 1)) {
-		my $denial = $c->render(template => 'guest_layouts/denial', message => '... and fuck you too!');
-		$c->session('authentication' => 'fuck you');
+		my $denial = $c->render(template => 'guest_layouts/denial', message => '... access denied.');
+		$c->session('authentication' => 'denied');
 		$authentication = 'denial';
 		$c->rendered;
 		return;
@@ -22102,7 +22102,7 @@ sub authentication_passer($c) {
 	my $warranty = $c->session('warranty');
 
 	my $visitor = $c->tx->local_address eq $c->tx->remote_address ? 'Me' : ($c->param('manager_file') || $c->tx->remote_address);
-	my $string = $c->tx->req->url->to_string;
+	my $string = $c->tx->req->url->path->to_string;
 	unless ($c->stash('browser_tab_id') && ($authentication eq 'approved' || $authentication eq 'revoked')) {
 		# Not every retry deserves a Dingaling: a browser reconnecting after a
 		# network change hammers this, so alert at most once per visitor per

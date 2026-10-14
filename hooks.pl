@@ -75,7 +75,7 @@ hook before_dispatch => sub {
 	# A denial session - or one carrying a blacklisted privilege, however it was
 	# minted - is refused every path, public pages and static assets included.
 	if ($c->session('authentication') eq 'denial' || $c->session('privilege') eq 'blacklisted') {
-		my $denial = $c->render(template => 'guest_layouts/denial', message => '... and fuck you too!');
+		my $denial = $c->render(template => 'guest_layouts/denial', message => '... access denied.');
 		$c->session('authentication' => 'denial');
 		$c->rendered;
 		return;
@@ -87,11 +87,11 @@ hook before_dispatch => sub {
 		foreach my $u ( @uploads ) {
 			$total_upload += $u->size;
 		}
-		if ($total_upload > 10000000 || $c->session('authentication') eq 'fuck you') {
+		if ($total_upload > 10000000 || $c->session('authentication') eq 'denied') {
 			$c->stash('no' => 1);
-			my $denial = $c->render(template => 'guest_layouts/denial', message => '... and fuck you too!');
-			$c->session('authentication' => 'fuck you');
-			&subs::say_it('fuck you! time consumer');
+			my $denial = $c->render(template => 'guest_layouts/denial', message => '... access denied.');
+			$c->session('authentication' => 'denied');
+			&subs::say_it('Upload denied');
 			$c->rendered;
 		}
 	}
