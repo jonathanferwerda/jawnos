@@ -5,7 +5,7 @@
 			<button id="travel_home_plate" status="<%= $home_plate_enabled %>">Home Plate</button>
 			<button id="travel_update">Update</button>
 			<img class="little_thumb hover travel_now" src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Now">
-			<img class="little_thumb hover" id="travel_guess_gap" hint="Guess the gap" src="<%= &subs::icon_for('/images/make believe/hat.png') %>">
+			<img class="little_thumb hover" id="travel_guess_gap" status="<%= $settings->{'guess_enabled'} %>" hint="Guess the gaps" src="<%= &subs::icon_for('/images/make believe/hat.png') %>" style="<% if ($settings->{'guess_enabled'} eq 'enabled') { %>background-color:#2e7d32;border-radius:6px;<% } %>">
 			<span id="travel_guess_status" style="font-size:12px;opacity:.75;"></span>
 
 			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">

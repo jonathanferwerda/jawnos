@@ -17956,108 +17956,198 @@ sub travel_map_bounds {
 	return { nw => $at->(0, 0), se => $at->($w, $h) };
 }
 
-# The ground gap between two placed maps, when one axis overlaps and the other is
-# apart: the rectangle between their facing edges, the side each map sits on, and
-# the gap's length in metres. A diagonal pair (apart on both axes) returns nothing
-# in this pass.
-sub travel_gap_between {
-	my ($a, $b) = @_;
-	my $pi = 3.14159265358979;
-	my $mpd = 6372800 * $pi / 180;
-	my ($alat0, $alat1) = ($a->{'bounds'}->{'se'}->{'lat'}, $a->{'bounds'}->{'nw'}->{'lat'});
-	my ($alon0, $alon1) = ($a->{'bounds'}->{'nw'}->{'lon'}, $a->{'bounds'}->{'se'}->{'lon'});
-	my ($blat0, $blat1) = ($b->{'bounds'}->{'se'}->{'lat'}, $b->{'bounds'}->{'nw'}->{'lat'});
-	my ($blon0, $blon1) = ($b->{'bounds'}->{'nw'}->{'lon'}, $b->{'bounds'}->{'se'}->{'lon'});
-	my $lat0 = $alat0 > $blat0 ? $alat0 : $blat0;
-	my $lat1 = $alat1 < $blat1 ? $alat1 : $blat1;
-	my $lon0 = $alon0 > $blon0 ? $alon0 : $blon0;
-	my $lon1 = $alon1 < $blon1 ? $alon1 : $blon1;
-	my $mid_lat = ($lat0 + $lat1) / 2;
-	# east-west: the latitudes overlap, the longitudes are apart
-	if ($lat1 > $lat0 && $alon1 < $blon0) {
-		return { axis => 'x', a => $a, b => $b, a_side => 'East', b_side => 'West', minLon => $alon1, maxLon => $blon0, minLat => $lat0, maxLat => $lat1, span => ($blon0 - $alon1) * $mpd * cos($mid_lat * $pi / 180) };
+# Whether the ground at a point is already known: inside any placed map's bounds -
+# and, when $with_guesses, inside a guess already drawn, so a pocket is not
+# guessed over twice.
+sub travel_point_covered {
+	my ($placed, $lat, $lon, $with_guesses) = @_;
+	foreach my $p ( @{$placed} ) {
+		next if !$with_guesses && $p->{'map'}->{'guessed'};
+		my $b = $p->{'bounds'};
+		return 1 if ($lat <= $b->{'nw'}->{'lat'} && $lat >= $b->{'se'}->{'lat'}
+			&& $lon >= $b->{'nw'}->{'lon'} && $lon <= $b->{'se'}->{'lon'});
 	}
-	if ($lat1 > $lat0 && $blon1 < $alon0) {
-		return { axis => 'x', a => $b, b => $a, a_side => 'East', b_side => 'West', minLon => $blon1, maxLon => $alon0, minLat => $lat0, maxLat => $lat1, span => ($alon0 - $blon1) * $mpd * cos($mid_lat * $pi / 180) };
-	}
-	# north-south: the longitudes overlap, the latitudes are apart
-	if ($lon1 > $lon0 && $alat1 < $blat0) {
-		return { axis => 'y', a => $a, b => $b, a_side => 'North', b_side => 'South', minLon => $lon0, maxLon => $lon1, minLat => $alat1, maxLat => $blat0, span => ($blat0 - $alat1) * $mpd };
-	}
-	if ($lon1 > $lon0 && $blat1 < $alat0) {
-		return { axis => 'y', a => $b, b => $a, a_side => 'North', b_side => 'South', minLon => $lon0, maxLon => $lon1, minLat => $blat1, maxLat => $alat0, span => ($alat0 - $blat1) * $mpd };
-	}
-	return undef;
+	return 0;
 }
 
-# A ground rectangle's area in square metres (the same equirectangular reading the
-# bounds themselves are built with), used to prefer substantial maps when two
-# candidate gaps are otherwise as long as each other.
-sub travel_bounds_area {
-	my ($bounds) = @_;
-	my $pi = 3.14159265358979;
-	my $mpd = 6372800 * $pi / 180;
-	my $lat = ($bounds->{'nw'}->{'lat'} + $bounds->{'se'}->{'lat'}) / 2;
-	my $x = ($bounds->{'se'}->{'lon'} - $bounds->{'nw'}->{'lon'}) * $mpd * cos($lat * $pi / 180);
-	my $y = ($bounds->{'nw'}->{'lat'} - $bounds->{'se'}->{'lat'}) * $mpd;
-	return $x * $y;
-}
-
-# The pair of placed maps with the largest gap between them (when a map is named,
-# only the pairs it belongs to). Gaps within a whisker of the longest prefer the
-# pair with the more substantial maps, so a sliver of a tiny tucked-in map does
-# not name the guess when a real map faces the same corridor.
-sub travel_widest_gap {
-	my ($placed, $only) = @_;
-	my @gaps;
-	for (my $i = 0; $i < scalar @{$placed}; $i++) {
-		for (my $j = $i + 1; $j < scalar @{$placed}; $j++) {
-			next if $only && $placed->[$i]->{'uuid'} ne $only && $placed->[$j]->{'uuid'} ne $only;
-			my $gap = &travel_gap_between($placed->[$i], $placed->[$j]);
-			push @gaps, $gap if $gap;
+# The largest pocket of unmapped ground inside the view: a coarse grid marks the
+# cells whose centre no placed map (or existing guess) covers, and the largest
+# 4-neighbour run of empty cells becomes the pocket's box. Undef when the view is
+# all known ground, or only slivers of it are not.
+sub travel_uncovered_pocket {
+	my ($placed, $view) = @_;
+	my $n = 32;
+	my $lat_step = ($view->{'maxLat'} - $view->{'minLat'}) / $n;
+	my $lon_step = ($view->{'maxLon'} - $view->{'minLon'}) / $n;
+	return undef unless $lat_step > 0 && $lon_step > 0;
+	my @empty;
+	for my $iy ( 0 .. $n - 1 ) {
+		for my $ix ( 0 .. $n - 1 ) {
+			my $lat = $view->{'minLat'} + (($iy + 0.5) * $lat_step);
+			my $lon = $view->{'minLon'} + (($ix + 0.5) * $lon_step);
+			$empty[$iy][$ix] = &travel_point_covered($placed, $lat, $lon, 1) ? 0 : 1;
 		}
 	}
-	return undef unless @gaps;
-	my $longest = 0;
-	foreach my $gap ( @gaps ) { $longest = $gap->{'span'} if $gap->{'span'} > $longest; }
+	my %seen;
 	my $best;
-	foreach my $gap ( @gaps ) {
-		next if $gap->{'span'} < $longest * 0.95;
-		my $small = &travel_bounds_area($gap->{'a'}->{'bounds'});
-		my $other = &travel_bounds_area($gap->{'b'}->{'bounds'});
-		$small = $other if $other < $small;
-		$gap->{'min_area'} = $small;
-		$best = $gap if (!$best || $small > $best->{'min_area'});
+	for my $iy ( 0 .. $n - 1 ) {
+		for my $ix ( 0 .. $n - 1 ) {
+			next unless $empty[$iy][$ix];
+			next if $seen{"$iy,$ix"};
+			my @queue = ( [ $iy, $ix ] );
+			$seen{"$iy,$ix"} = 1;
+			my ($count, $minx, $maxx, $miny, $maxy);
+			while ( my $cell = shift @queue ) {
+				my ($y, $x) = @{$cell};
+				$count++;
+				$minx = $x if !defined $minx || $x < $minx;
+				$maxx = $x if !defined $maxx || $x > $maxx;
+				$miny = $y if !defined $miny || $y < $miny;
+				$maxy = $y if !defined $maxy || $y > $maxy;
+				foreach my $step ( [ 1, 0 ], [ -1, 0 ], [ 0, 1 ], [ 0, -1 ] ) {
+					my ($ny, $nx) = ( $y + $step->[0], $x + $step->[1] );
+					next if $ny < 0 || $nx < 0 || $ny >= $n || $nx >= $n;
+					next unless $empty[$ny][$nx];
+					next if $seen{"$ny,$nx"};
+					$seen{"$ny,$nx"} = 1;
+					push @queue, [ $ny, $nx ];
+				}
+			}
+			$best = { count => $count, minx => $minx, maxx => $maxx, miny => $miny, maxy => $maxy }
+				if !$best || $count > $best->{'count'};
+		}
 	}
-	return $best;
+	# a cell or two of sliver is not worth an image
+	return undef unless $best && $best->{'count'} >= 4;
+	return {
+		minLat => $view->{'minLat'} + ($best->{'miny'} * $lat_step),
+		maxLat => $view->{'minLat'} + (($best->{'maxy'} + 1) * $lat_step),
+		minLon => $view->{'minLon'} + ($best->{'minx'} * $lon_step),
+		maxLon => $view->{'minLon'} + (($best->{'maxx'} + 1) * $lon_step),
+	};
 }
 
-# The two facing edges of a gap, read by the Vision model into a paragraph the
-# image model can draw from. Undef when no vision model is set or the read fails -
-# the guess then rests on the map names alone.
-sub travel_guess_describe_edges {
-	my ($c, $a, $b, $gap_km) = @_;
-	my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
-	return undef unless $model;
+# The box grown by a fraction of each of its own spans, on every side.
+sub travel_box_grow {
+	my ($box, $fraction) = @_;
+	my $lat = ($box->{'maxLat'} - $box->{'minLat'}) * $fraction;
+	my $lon = ($box->{'maxLon'} - $box->{'minLon'}) * $fraction;
+	return {
+		minLat => $box->{'minLat'} - $lat, maxLat => $box->{'maxLat'} + $lat,
+		minLon => $box->{'minLon'} - $lon, maxLon => $box->{'maxLon'} + $lon,
+	};
+}
+
+# The part of one map that falls inside a ground box, as picture bytes: the
+# georeference read backwards (a box corner to an image pixel), cropped and shrunk
+# for the Vision model. Undef when the map is not on this machine or the box
+# misses it.
+sub travel_map_box_bytes {
+	my ($c, $map, $box) = @_;
+	my $p = &travel_map_home_plate($map);
+	my $s = $map->{'scale'} || {};
+	my $first = $s->{'first'} || {};
+	my $last = $s->{'last'} || {};
+	my $pi = 3.14159265358979;
+	my $lat0 = 0 + ($p->{'latitude'} || 0);
+	my $lon0 = 0 + ($p->{'longitude'} || 0);
+	my $w = 0 + ($p->{'width'} || 0);
+	my $h = 0 + ($p->{'height'} || 0);
+	my $legend = 0 + ($s->{'legend'} || 0);
+	return undef unless defined $p->{'latitude'} && defined $p->{'longitude'} && $w > 0 && $h > 0 && $legend > 0;
+	my $sdx = (0 + ($s->{'width'} || 0)) > 0 ? $w / (0 + $s->{'width'}) : 1;
+	my $sdy = (0 + ($s->{'height'} || 0)) > 0 ? $h / (0 + $s->{'height'}) : 1;
+	my $dx = ((0 + ($last->{'x'} || 0)) - (0 + ($first->{'x'} || 0))) * $sdx;
+	my $dy = ((0 + ($last->{'y'} || 0)) - (0 + ($first->{'y'} || 0))) * $sdy;
+	my $bar = sqrt(($dx * $dx) + ($dy * $dy));
+	return undef unless $bar > 0;
+	my $ppm = $bar / $legend;
+	my $mpd = 6372800 * $pi / 180;
+	my $mpd_lon = $mpd * cos($lat0 * $pi / 180);
+	# the box in the home plate's own pixels
+	my $x0 = ($p->{'x'} || 0) + (($box->{'minLon'} - $lon0) * $ppm * $mpd_lon);
+	my $x1 = ($p->{'x'} || 0) + (($box->{'maxLon'} - $lon0) * $ppm * $mpd_lon);
+	my $y0 = ($p->{'y'} || 0) - (($box->{'maxLat'} - $lat0) * $ppm * $mpd);
+	my $y1 = ($p->{'y'} || 0) - (($box->{'minLat'} - $lat0) * $ppm * $mpd);
+	$x0 = 0 if $x0 < 0; $y0 = 0 if $y0 < 0;
+	$x1 = $w if $x1 > $w; $y1 = $h if $y1 > $h;
+	my ($cw, $ch) = ( $x1 - $x0, $y1 - $y0 );
+	return undef unless $cw > 2 && $ch > 2;
+	my ($destination,$asset) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
+	my $path = &subs::home($destination . $asset);
+	return undef unless -e $path;
+	my $bytes = &sealed_file_bytes($c->session('suds'), $path);
+	return undef unless $bytes && length $bytes;
+	my $tmp = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '.png';
+	write_file($tmp, $bytes);
+	# the file may be at another resolution than the plate space was measured in
+	my ($aw, $ah) = (0, 0);
+	open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $tmp);
+	if ($identify) { my $line = <$identify>; close $identify; ($aw, $ah) = split ' ', ($line || ''); }
+	return undef unless $aw && $ah;
+	my $geo = sprintf('%dx%d+%d+%d', int($cw * $aw / $w), int($ch * $ah / $h), int($x0 * $aw / $w), int($y0 * $ah / $h));
+	my $crop = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '_crop.png';
+	`magick "$tmp" -crop $geo +repage -resize '512x512>' "$crop" 2>/dev/null`;
+	unlink $tmp;
+	return undef unless -e $crop;
+	my $out = read_file($crop);
+	unlink $crop;
+	return $out;
+}
+
+# What the maps around a pocket show of it: their own parts of that ground, read
+# by the Vision model into a conservative paragraph the image model can draw from.
+# Returns the description and the names of the maps that fed it; both may be empty.
+sub travel_guess_describe_area {
+	my ($c, $placed, $box) = @_;
 	my @images;
-	foreach my $side ( [ $a, $a->{'side'} ], [ $b, $b->{'side'} ] ) {
-		my $map = $side->[0]->{'map'};
-		my ($destination,$asset) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} });
-		my $path = &subs::home($destination . $asset);
-		next unless -e $path;
-		my $bytes = &sealed_file_bytes($c->session('suds'), $path);
-		next unless $bytes && length $bytes;
-		my $tmp = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '.png';
-		write_file($tmp, $bytes);
-		my $strip = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '_edge.png';
-		`magick "$tmp" -gravity $side->[1] -crop 20%x100%+0+0 +repage -resize '512x512>' "$strip" 2>/dev/null`;
-		unlink $tmp;
-		if (-e $strip) { push @images, MIME::Base64::encode_base64(read_file($strip), ''); unlink $strip; }
+	my @names;
+	my $context = &travel_box_grow($box, 0.3);
+	foreach my $p ( @{$placed} ) {
+		next if $p->{'map'}->{'guessed'};
+		last if scalar @images >= 5;
+		my $bytes = &travel_map_box_bytes($c, $p->{'map'}, $context);
+		next unless $bytes;
+		push @images, MIME::Base64::encode_base64($bytes, '');
+		push @names, &subs::format_name($p->{'name'});
 	}
-	return undef unless scalar @images == 2;
-	my $ask = 'The first image is the edge of a map of ' . &subs::format_name($a->{'name'}) . ', the second is the facing edge of a map of ' . &subs::format_name($b->{'name'}) . ', and about ' . $gap_km . ' km of ground lies between them. In one paragraph (no preamble, no lists), describe what most likely fills that ground, as a prompt for an image generator: terrain, land use (fields, forest, towns, industry), roads, water, season and the look of the imagery. Describe the ground between these two places, not somewhere else.';
-	my ($text) = &subs::ai_chat($model, [ { role => 'system', content => 'You describe real places for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ]);
-	return $text;
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
+	return (undef, \@names) unless $model && @images;
+	my $ask = 'These pictures are the parts of our own maps that fall in or beside one patch of ground we have not mapped' . (@names ? ' (the maps are: ' . join(', ', @names) . ')' : '') . '. Each is a crop, not a whole map. In one paragraph (no preamble, no lists), describe what most likely fills the unmapped patch, as a prompt for an image generator: terrain, land use, roads that visibly continue from the crops, water, season and the look of the imagery. Stay conservative: only say what these crops support; do not invent turns, junctions, buildings or landmarks.';
+	my ($text) = &subs::ai_chat($model, [ { role => 'system', content => 'You describe real places conservatively, for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ]);
+	return ($text, \@names);
+}
+
+# The names of the placed maps nearest a box (a map inside or touching it counts
+# as at its edge), for naming the guess after where it lies.
+sub travel_box_names {
+	my ($placed, $box, $want) = @_;
+	my $pi = 3.14159265358979;
+	my $mpd = 6372800 * $pi / 180;
+	my $lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
+	my $lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;
+	my $mpd_lon = $mpd * cos($lat * $pi / 180);
+	my @ranked;
+	foreach my $p ( @{$placed} ) {
+		next if $p->{'map'}->{'guessed'};
+		my $b = $p->{'bounds'};
+		my $dlat = 0;
+		$dlat = $b->{'se'}->{'lat'} - $lat if $lat < $b->{'se'}->{'lat'};
+		$dlat = $b->{'nw'}->{'lat'} - $lat if $lat > $b->{'nw'}->{'lat'};
+		my $dlon = 0;
+		$dlon = $b->{'nw'}->{'lon'} - $lon if $lon < $b->{'nw'}->{'lon'};
+		$dlon = $b->{'se'}->{'lon'} - $lon if $lon > $b->{'se'}->{'lon'};
+		my $d = sqrt((($dlat * $mpd) ** 2) + (($dlon * $mpd_lon) ** 2));
+		push @ranked, [ $d, &subs::format_name($p->{'name'}) ];
+	}
+	@ranked = sort { $a->[0] <=> $b->[0] } @ranked;
+	my @names;
+	foreach my $r ( @ranked ) {
+		last if scalar @names >= ($want || 2);
+		next if grep { $_ eq $r->[1] } @names;
+		push @names, $r->[1];
+	}
+	return @names;
 }
 
 # The measured maps, normalised for the client engine: a file URL the browser can
@@ -18067,9 +18157,11 @@ sub travel_guess_describe_edges {
 # placed (no plate, still ungeoreferenced) is left out rather than sent to be
 # silently skipped.
 sub travel_atlas_maps {
-	my $maps = shift || [];
+	my ($maps, $with_guesses) = @_;
+	$with_guesses = 1 unless defined $with_guesses;
 	my $out = [];
 	foreach my $map ( @{$maps} ) {
+		next if $map->{'guessed'} && !$with_guesses;
 		next unless $map->{'home_plate'} && $map->{'scale'};
 		my $home_plate = &travel_map_home_plate($map);
 		next unless $home_plate->{'latitude'} && $home_plate->{'longitude'};
@@ -18214,14 +18306,25 @@ get '/manager/travel/continent' => sub($c) {
 	});
 };
 
-# Guess what lies between two measured maps: the Plat Image-generation model
-# draws the gap, prompted with the maps' names and - when a Vision model is set -
-# by a description of the two facing edges it reads first. The picture is filed
-# as a travel map georeferenced to exactly the gap, dashed and named 'guess: ...'
-# so it never passes for a measured map. A second guess for the same pair
-# replaces the first, picture and all.
+# Guess the empty ground in what the client is looking at: the largest pocket of
+# unmapped ground in the view, grown 40% in every direction, drawn by the Plat
+# Image-generation model from a conservative description of what all the maps
+# around it show (the Vision model reads each one's own part of that ground
+# first). The picture is filed as a travel map georeferenced to exactly that
+# ground, dashed and named 'guess: ...' so it never passes for a measured map; it
+# is drawn under every measured map, so it only ever shows where nothing is
+# known. A guess covering the same ground is replaced, picture and all.
 post '/manager/travel/guess_gap' => sub($c) {
-	my $chosen = $c->param('map');
+	my $view = {
+		minLat => 0 + ($c->param('minLat') || 0),
+		maxLat => 0 + ($c->param('maxLat') || 0),
+		minLon => 0 + ($c->param('minLon') || 0),
+		maxLon => 0 + ($c->param('maxLon') || 0),
+	};
+	unless ($view->{'maxLat'} > $view->{'minLat'} && $view->{'maxLon'} > $view->{'minLon'}) {
+		$c->render(json => { error => 'no view of the ground was given' });
+		return;
+	}
 	my $maps = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps' }) } || [];
 	my @placed;
 	foreach my $map ( @{$maps} ) {
@@ -18230,39 +18333,56 @@ post '/manager/travel/guess_gap' => sub($c) {
 		next unless $bounds;
 		push @placed, { uuid => $map->{'uuid'}, name => ($map->{'name'} || $map->{'uuid'}), map => $map, bounds => $bounds };
 	}
-	unless (scalar @placed >= 2) { $c->render(json => { error => 'there are not yet two placed maps to bridge' }); return; }
+	unless (@placed) { $c->render(json => { error => 'no placed maps yet to read the ground from' }); return; }
 
-	my $gap = &travel_widest_gap(\@placed, $chosen);
-	unless ($gap) { $c->render(json => { error => 'no gap was found between the placed maps' }); return; }
-	my ($a, $b) = ( { map => $gap->{'a'}->{'map'}, name => $gap->{'a'}->{'name'}, uuid => $gap->{'a'}->{'uuid'}, side => $gap->{'a_side'} },
-		{ map => $gap->{'b'}->{'map'}, name => $gap->{'b'}->{'name'}, uuid => $gap->{'b'}->{'uuid'}, side => $gap->{'b_side'} } );
-	my $a_name = &subs::format_name($a->{'name'});
-	my $b_name = &subs::format_name($b->{'name'});
-	my $gap_km = sprintf('%.1f', $gap->{'span'} / 1000);
+	# only the ground nobody has mapped: the largest empty pocket in the view
+	my $pocket = &travel_uncovered_pocket(\@placed, $view);
+	unless ($pocket) { $c->render(json => { covered => 'yes', note => 'everything in this view is already covered' }); return; }
+	my $box = &travel_box_grow($pocket, 0.4);
 
 	my $pi = 3.14159265358979;
 	my $mpd = 6372800 * $pi / 180;
-	my $min_lat = $gap->{'minLat'};
-	my $max_lat = $gap->{'maxLat'};
-	my $min_lon = $gap->{'minLon'};
-	my $max_lon = $gap->{'maxLon'};
-	my $mid_lat = ($min_lat + $max_lat) / 2;
+	my $mid_lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
+	my $mid_lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;
 	my $mpd_lon = $mpd * cos($mid_lat * $pi / 180);
-	# never wider than four to one, so the model has a canvas it can draw on
-	my $lon_metres = ($max_lon - $min_lon) * $mpd_lon;
-	my $lat_metres = ($max_lat - $min_lat) * $mpd;
-	# the canvas: the long side 768, the short side proportional but never under 256
-	# (the image model refuses less) - and the ground box then matches the canvas
-	# exactly, so the georeference never has to stretch the picture
+	my $lon_metres = ($box->{'maxLon'} - $box->{'minLon'}) * $mpd_lon;
+	my $lat_metres = ($box->{'maxLat'} - $box->{'minLat'}) * $mpd;
+	# never longer than 30 km, so a huge blank is filled in sane pieces
+	my $longest = $lon_metres > $lat_metres ? $lon_metres : $lat_metres;
+	if ($longest > 30000) {
+		my $shrink = 30000 / $longest;
+		my $half_lat = ($lat_metres * $shrink) / 2 / $mpd;
+		my $half_lon = ($lon_metres * $shrink) / 2 / $mpd_lon;
+		$box->{'minLat'} = $mid_lat - $half_lat; $box->{'maxLat'} = $mid_lat + $half_lat;
+		$box->{'minLon'} = $mid_lon - $half_lon; $box->{'maxLon'} = $mid_lon + $half_lon;
+		$lat_metres *= $shrink;
+		$lon_metres *= $shrink;
+	}
+
+	# what the maps around the pocket show of it, read conservatively
+	my ($described) = &travel_guess_describe_area($c, \@placed, $box);
+	my @names = &travel_box_names(\@placed, $box, 2);
+	my $name = 'guess';
+	$name .= ' near ' . $names[0] if scalar @names == 1;
+	$name .= ' between ' . $names[0] . ' and ' . $names[1] if scalar @names >= 2;
+	$name .= ' ' . sprintf('%.3f,%.3f', $mid_lat, $mid_lon) unless scalar @names;
+
+	my $prompt = 'A seamless top-down aerial satellite photograph filling one unmapped patch of ground' . (@names ? ' among maps of ' . join(' and ', @names) : '') . '.';
+	$prompt .= ' ' . $described if $described && $described =~ /\S/;
+	$prompt .= ' Conservative continuation of the surrounding land: roads and rivers run straight on unless the neighbouring maps show otherwise; no invented bends, junctions, towns or landmarks; the same season and imagery style as the neighbouring maps. No borders, no labels, no text, no icons, no arrows.';
+
+	# the canvas: the long side 768, the short side proportional but never under
+	# 256 (the image model refuses less) - and the ground box then fits the canvas,
+	# so the georeference never has to stretch the picture
 	my ($px_lon, $px_lat);
-	if (($gap->{'axis'} || '') eq 'x') {
+	if ($lon_metres >= $lat_metres) {
 		$px_lon = 768;
 		$px_lat = int(((768 * $lat_metres / $lon_metres) / 64) + 0.5) * 64;
 		$px_lat = 256 if $px_lat < 256;
 		$px_lat = 768 if $px_lat > 768;
 		my $want_lat = $lon_metres * $px_lat / 768;
 		my $extra = ($want_lat - $lat_metres) / 2 / $mpd;
-		$min_lat -= $extra; $max_lat += $extra; $lat_metres = $want_lat;
+		$box->{'minLat'} -= $extra; $box->{'maxLat'} += $extra; $lat_metres = $want_lat;
 	}
 	else {
 		$px_lat = 768;
@@ -18271,26 +18391,12 @@ post '/manager/travel/guess_gap' => sub($c) {
 		$px_lon = 768 if $px_lon > 768;
 		my $want_lon = $lat_metres * $px_lon / 768;
 		my $extra = ($want_lon - $lon_metres) / 2 / $mpd_lon;
-		$min_lon -= $extra; $max_lon += $extra; $lon_metres = $want_lon;
+		$box->{'minLon'} -= $extra; $box->{'maxLon'} += $extra; $lon_metres = $want_lon;
 	}
-	# tuck a little under each neighbouring map, so no seam of bare canvas shows
-	my $pad_lon = ($max_lon - $min_lon) * 0.04;
-	my $pad_lat = ($max_lat - $min_lat) * 0.04;
-	$min_lon -= $pad_lon; $max_lon += $pad_lon;
-	$min_lat -= $pad_lat; $max_lat += $pad_lat;
-	$lon_metres += 2 * $pad_lon * $mpd_lon;
-	$lat_metres += 2 * $pad_lat * $mpd;
-
-	# the vision read of the two facing edges, when one is set - the drawn gap is
-	# meant to sit between them in the same imagery style
-	my $described = &travel_guess_describe_edges($c, $a, $b, $gap_km);
-	my $prompt = 'A seamless top-down aerial satellite photograph of the open ground between ' . $a_name . ' and ' . $b_name . '.';
-	$prompt .= ' ' . $described if $described;
-	$prompt .= ' One continuous map tile of the countryside: no borders, no labels, no text, no icons, no arrows.';
 
 	my ($bytes, $mime, $err) = &subs::ai_text_to_image({
 		prompt => $prompt,
-		negative_prompt => 'text, labels, letters, watermark, border, frame, user interface, legend',
+		negative_prompt => 'text, labels, letters, watermark, border, frame, user interface, legend, invented landmarks, fantasy, horizon, perspective view, close-up',
 		width => $px_lon,
 		height => $px_lat
 	});
@@ -18309,21 +18415,20 @@ post '/manager/travel/guess_gap' => sub($c) {
 	if ($identify) { my $line = <$identify>; close $identify; ($w, $h) = split ' ', ($line || ''); }
 	($w, $h) = ($px_lon, $px_lat) unless $w && $h;
 
-	my $centre_lat = ($min_lat + $max_lat) / 2;
-	my $centre_lon = ($min_lon + $max_lon) / 2;
+	my $centre_lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
+	my $centre_lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;
 	my $bar_metres = int(($lon_metres / 4) + 0.5);
 	$bar_metres = 1 if $bar_metres < 1;
-	my $pair = join '|', sort ($a->{'uuid'}, $b->{'uuid'});
 	my $entry = {
 		uuid => $guess_uuid,
 		app => 'travel',
 		type => 'image',
 		function => 'map',
-		name => 'guess: ' . $a_name . ' to ' . $b_name,
+		name => $name,
 		'f' => $file_path,
 		guessed => 1,
-		guess_for => $pair,
-		guess_of => [ $a->{'uuid'}, $b->{'uuid'} ],
+		guess_area => $box,
+		guess_names => \@names,
 		guess_prompt => $prompt,
 		guessed_by => &subs::setting_grabber({ app => 'mail', setting => 'text_to_image_assistant' }),
 		server_time => &subs::rightNow(),
@@ -18340,15 +18445,25 @@ post '/manager/travel/guess_gap' => sub($c) {
 		},
 		rotate => 0
 	};
-	# a second guess for the same pair replaces the first, picture and all
+	# a guess covering the same ground is a re-roll: it replaces the old one,
+	# picture and all; guesses beside it are kept
+	my @replace;
 	foreach my $old ( @{$maps} ) {
-		next unless $old->{'guessed'} && ($old->{'guess_for'} || '') eq $pair;
+		next unless $old->{'guessed'};
+		my $ob = &travel_map_bounds($old);
+		next unless $ob;
+		my $old_lat = ($ob->{'nw'}->{'lat'} + $ob->{'se'}->{'lat'}) / 2;
+		my $old_lon = ($ob->{'nw'}->{'lon'} + $ob->{'se'}->{'lon'}) / 2;
+		my $old_covers = ($centre_lat <= $ob->{'nw'}->{'lat'} && $centre_lat >= $ob->{'se'}->{'lat'} && $centre_lon >= $ob->{'nw'}->{'lon'} && $centre_lon <= $ob->{'se'}->{'lon'});
+		my $new_covers = ($old_lat <= $box->{'maxLat'} && $old_lat >= $box->{'minLat'} && $old_lon >= $box->{'minLon'} && $old_lon <= $box->{'maxLon'});
+		next unless $old_covers || $new_covers;
 		unlink $old->{'f'} if $old->{'f'} && $old->{'f'} =~ m{/travel/guess_[^/]+\.png$};
+		push @replace, $old->{'uuid'};
 	}
-	@{$maps} = grep { !($_->{'guessed'} && ($_->{'guess_for'} || '') eq $pair) } @{$maps};
+	@{$maps} = grep { my $u = $_->{'uuid'}; !grep { $_ eq $u } @replace } @{$maps};
 	push @{$maps}, $entry;
 	&subs::setting_setter({ app => 'travel', setting => 'maps', value => encode_json $maps });
-	$c->render(json => { uuid => $guess_uuid, name => $entry->{'name'}, from => $a_name, to => $b_name, prompt => $prompt, width => $w, height => $h });
+	$c->render(json => { uuid => $guess_uuid, name => $entry->{'name'}, prompt => $prompt, width => $w, height => $h, names => \@names });
 };
 
 # The picture behind a guessed map (session-guarded, like every manager route).
@@ -18415,8 +18530,9 @@ get '/manager/travel/viewer' => sub($c) {
 		end_time => $t2
 	};
 	# every measured map for the pan-able engine, and the machine's current
-	# position (the 'temporary' row) so the view opens on it when there is one
-	$proxies->{'all_maps'} = &travel_atlas_maps($maps);
+	# position (the 'temporary' row) so the view opens on it when there is one.
+	# Guesses ride along only while the guess toggle is on.
+	$proxies->{'all_maps'} = &travel_atlas_maps($maps, ($settings->{'guess_enabled'} eq 'enabled'));
 	$proxies->{'position'} = &travel_here_position();
 	my $locations = [];
 	if ($settings->{'home_plate_enabled'} eq 'enabled') {

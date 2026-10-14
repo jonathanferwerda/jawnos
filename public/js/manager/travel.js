@@ -46,6 +46,14 @@ function travelMapEngine() {
 	// a tap on a place opens its appointment window; a numbered one unfolds its list
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
 	travelMap.onChange(jawnosMarkerListHide);
+	// with the hat on, a pause in the pan asks for the empty ground on screen to
+	// be guessed (the server decides what is empty; a guess only ever shows where
+	// nothing is mapped)
+	travelMap.onChange(function() {
+		if ($('#travel_guess_gap').attr('status') != 'enabled') { return; }
+		clearTimeout(travelGuessTimer);
+		travelGuessTimer = setTimeout(function() { travelGuessCheck(); }, 2500);
+	});
 	travelFramed = false;
 	return travelMap;
 }
@@ -427,33 +435,57 @@ $(document).on('click', '.travel_now', function() {
 	travelViewer({ timestamp: timestamp, settings: settings });
 });
 
-// The guess button: the server picks the widest gap between the placed maps (or
-// between the selected map and its nearest neighbour), has the Plat models draw
-// the missing ground, and files it as a dashed 'guess' map - this just asks,
-// shows what is happening, and frames the answer when it lands.
+// The hat is a toggle: with it on, the map asks the server to guess the empty
+// ground in what you are looking at (the Plat models draw it, and every measured
+// map is drawn over it, so it only shows where nothing is known); with it off,
+// the blanks stay blank. A pause in the pan does the asking, and the guess lands
+// framed where it lies.
+var travelGuessBusy = 0;
+var travelGuessAt = 0;
+var travelGuessTimer = null;
+
 $(document).on('click', '#travel_guess_gap', function() {
-	var b = $(this);
-	if (b.attr('busy') == 'yes') { return; }
-	b.attr('busy', 'yes').css({ 'opacity': '0.4' });
-	var status = $('#travel_guess_status').text('guessing the gap…');
-	var sel = $('.travel_map_selector').find('option[selected]');
+	var t = $(this);
+	var status = (t.attr('status') == 'enabled') ? 'disabled' : 'enabled';
+	t.attr('status', status);
+	t.css(status == 'enabled' ? { 'background-color': '#2e7d32', 'border-radius': '6px' } : { 'background-color': '', 'border-radius': '' });
+	settingSetter({ 'app': 'travel', 'setting': 'guess_enabled', 'value': status });
+	if (status == 'enabled') { travelGuessCheck('yes'); }
+	else {
+		$('#travel_guess_status').text('');
+		travelViewer({ timestamp: Date.now() });
+	}
+});
+
+function travelGuessCheck(force) {
+	if (!travelMap || !window.jawnosMap) { return; }
+	if ($('#travel_guess_gap').attr('status') != 'enabled') { return; }
+	if (travelGuessBusy) { return; }
+	var now = Date.now();
+	if (!force && (now - travelGuessAt) < 20000) { return; }
+	var b = travelMap.viewBounds();
+	if (!b || !isFinite(b.nw.lat) || !isFinite(b.se.lat)) { return; }
+	travelGuessBusy = 1;
+	travelGuessAt = now;
+	var status = $('#travel_guess_status').text('looking for empty ground…');
 	$.ajax({
 		url: '/manager/travel/guess_gap',
 		type: 'POST',
-		data: { map: sel.val(), timestamp: Date.now() },
+		data: { minLat: b.se.lat, maxLat: b.nw.lat, minLon: b.nw.lon, maxLon: b.se.lon, timestamp: now },
 		success: function(response) {
-			b.attr('busy', 'no').css({ 'opacity': '' });
+			travelGuessBusy = 0;
 			if (response && response['error']) { status.text(response['error']); return; }
+			if (response && response['covered']) { status.text('all of this view is mapped'); return; }
 			status.text('guessed ' + response['name']);
 			travelPendingMap = response['uuid'];
 			travelViewer({ timestamp: Date.now() });
 		},
 		error: function() {
-			b.attr('busy', 'no').css({ 'opacity': '' });
+			travelGuessBusy = 0;
 			status.text('the guess could not be made - see Configure, Plat');
 		}
 	});
-});
+}
 
 $(document).on('change', '#travel_search', function() {
 	var search = $(this).val();

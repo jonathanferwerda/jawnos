@@ -546,7 +546,12 @@ window.jawnosMap = (function () {
 						})(entry);
 					}
 				});
-				maps.sort(function (a, b) { return b.span - a.span; });
+				maps.sort(function (a, b) {
+					// a guess lies under every measured map (it may only show where
+					// nothing is known); among each kind the finest stays on top
+					if (a.guess != b.guess) { return a.guess ? -1 : 1; }
+					return b.span - a.span;
+				});
 				draw();
 			},
 			setPoints: function (list) { points = list || []; draw(); },
@@ -565,6 +570,13 @@ window.jawnosMap = (function () {
 			fitBounds: function (bounds, margin) {
 				if (!bounds || !bounds.nw || !bounds.se) { return; }
 				fitBox(bounds.se.lat, bounds.nw.lat, bounds.nw.lon, bounds.se.lon, margin || 1.15);
+			},
+			// The ground the viewport is showing, as a { nw, se } box - the map's
+			// view, so a guess can be asked for exactly what is on screen.
+			viewBounds: function () {
+				var dim = size();
+				var o = originFor(view, dim.w, dim.h);
+				return { nw: geoAt(o.x, o.y, view.z), se: geoAt(o.x + dim.w, o.y + dim.h, view.z) };
 			},
 			// Frame a point: the tightest measured map that covers it (so the local map
 			// is legible), but never closer than minSpan degrees, else just minSpan.
