@@ -92,6 +92,7 @@ get '/manager/music' => sub ($c) {
 		$misses->{'video'} = &subs::random_string_creator(25,"Aa");
 	}
 	$files = eval { return decode_json $c->param('files') } || undef;
+	my $same_order = $c->param('same_order');
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];
 	$settings->{'album'} = eval { return decode_json $settings->{'album'} } || [];
@@ -131,7 +132,7 @@ get '/manager/music' => sub ($c) {
 			}
 		}
 	}
-	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files });
+	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files, same_order => $same_order });
 	my $timestamp = &subs::rightNow();
 	my $jmao = &subs::setting_grabber({ app => 'music', setting => 'mao' });
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
@@ -447,7 +448,7 @@ sub music_search($data) {
 	if ($data->{'return_files'}) {
 		return { files => \@local_files, count => scalar @local_files };
 	}
-	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing });
+	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing, same_order => $data->{'same_order'} });
 	$permissive = 0;
 	return $crate;
 }

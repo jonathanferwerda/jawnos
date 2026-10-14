@@ -70,7 +70,7 @@ $(document).on('click', '#music_toggle', function() {
 	musicToggle();
 });
 
-function musicToggle(files) {
+function musicToggle(files, same_order) {
 	var url = '/manager/music';
 	var timestamp = Date.now();
 	var jmiss = JSON.stringify(misses);
@@ -82,7 +82,7 @@ function musicToggle(files) {
 		$.ajax({
 			url: url,
 			type: 'GET',
-			data: { window_maker: 'yes', timestamp: timestamp, misses: jmiss, files: jfiles },
+			data: { window_maker: 'yes', timestamp: timestamp, misses: jmiss, files: jfiles, same_order: same_order ? 1 : 0 },
 			success: function(response) {
 
 				var window_id = windowMaker(response);

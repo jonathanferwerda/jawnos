@@ -19315,13 +19315,19 @@ get '/manager/help/measure' => sub($c) {
 # best match first (a "Ben Folds Five" album folder and a "Mess" track are the
 # same request). Hands back the one file to play. Shared by the guide's route and
 # the remote command channel.
-sub help_music_file($c, $q) {
+sub help_music_file($c, $q, $shuffle) {
 	$q = '' unless defined $q;
 	$q =~ s/^\s+//; $q =~ s/\s+$//;
 	return { q => $q, found => 0 } unless length $q;
+	$shuffle = $shuffle ? 1 : 0;
 	my $settings = &subs::settings_grabber({ app => 'music' });
-	$settings->{'artist'} = eval { decode_json $settings->{'artist'} } || [];
-	$settings->{'album'} = eval { decode_json $settings->{'album'} } || [];
+	# The guide searches the whole library, not the music window's browsing pick:
+	# music_search reads a selected artist or album as *the folder set to walk*,
+	# so with one artist lit the guide answered "found nothing" while the file
+	# sat in the library ("Ben Folds Five Army" against a lit ac/dc). The
+	# person's own words are the scope here.
+	$settings->{'artist'} = [];
+	$settings->{'album'} = [];
 	my $misc = &misc_setting_list();
 	my $device = &subs::device_setter();
 	my @every = sort grep { /_location$/ } keys %{ $misc->{$device} || {} };
@@ -19345,18 +19351,30 @@ sub help_music_file($c, $q) {
 	return { q => $q, found => 0 } unless @hits;
 	# the words landing earliest in the path is the tighter match (the album folder
 	# holds the artist, the track name holds the song); a shorter path breaks a tie
-	my ($best) = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
-	my $file = $best->{'file'};
+	my @ranked = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
+	my $file = $ranked[0]->{'file'};
 	my $title = $file;
 	$title =~ s{.*/}{};
 	$title =~ s/\.[a-z0-9]+$//i;
-	return { q => $q, found => scalar @hits, file => $file, title => $title };
+	# Every match rides along, so "watch friends" plays the whole show rather
+	# than one episode. The player splices its queue to the max_files setting, so
+	# only what it will actually play is handed over; a requested shuffle happens
+	# here, and same_order keeps the player from re-sorting it away.
+	my @all = map { $_->{'file'} } @ranked;
+	my $max = &subs::setting_grabber({ app => 'misc', setting => 'max_files' }) || 30;
+	@all = @all[0 .. $max - 1] if scalar @all > $max;
+	my $same_order = 0;
+	if ($shuffle && scalar @all > 1) {
+		@all = shuffle(@all);
+		$same_order = 1;
+	}
+	return { q => $q, found => scalar @hits, file => $file, title => $title, files => \@all, same_order => $same_order };
 }
 
 get '/manager/help/music' => sub($c) {
 	my $q = $c->param('q') // '';
 	if (!length $q) { $c->render(json => { error => 'no music named' }); return; }
-	$c->render(json => help_music_file($c, $q));
+	$c->render(json => help_music_file($c, $q, $c->param('shuffle')));
 };
 
 get '/manager/help/permitted' => sub($c) {
@@ -19413,11 +19431,12 @@ sub remote_command_execute($c, $action) {
 		return 'opened the ' . $action->{'app'} . ' window';
 	}
 	if ($a eq 'play_music' && $action->{'query'}) {
-		my $r = help_music_file($c, $action->{'query'});
+		my $r = help_music_file($c, $action->{'query'}, $action->{'shuffle'});
 		return 'found nothing to play for "' . $action->{'query'} . '"' unless $r->{'found'};
-		my $js = 'if (typeof musicToggle === "function") { musicToggle([' . encode_json($r->{'file'}) . ']); }';
+		my $list = ($r->{'files'} && scalar @{$r->{'files'}}) ? $r->{'files'} : [ $r->{'file'} ];
+		my $js = 'if (typeof musicToggle === "function") { musicToggle(' . encode_json($list) . ', ' . ($r->{'same_order'} ? 1 : 0) . '); }';
 		&Websocket::send('server', { console => $js });
-		return 'now playing ' . $r->{'title'};
+		return scalar(@{$list}) > 1 ? ('now playing ' . scalar(@{$list}) . ' matches') : ('now playing ' . $r->{'title'});
 	}
 	if ($a eq 'measure') {
 		my $r = help_measure($action->{'measure'}, $action->{'period'}, $action->{'target'});
@@ -19660,11 +19679,12 @@ sub guide_verb_execute($c, $action) {
 		return @apps ? ('found in: ' . join(', ', @apps)) : ('nothing found for "' . $q . '"');
 	}
 	if ($prim eq 'play_music') {
-		my $r = help_music_file($c, $p{'query'});
+		my $r = help_music_file($c, $p{'query'}, $p{'shuffle'});
 		return 'found nothing to play' unless $r->{'found'};
-		my $js = 'if (typeof musicToggle === "function") { musicToggle([' . encode_json($r->{'file'}) . ']); }';
+		my $list = ($r->{'files'} && scalar @{$r->{'files'}}) ? $r->{'files'} : [ $r->{'file'} ];
+		my $js = 'if (typeof musicToggle === "function") { musicToggle(' . encode_json($list) . ', ' . ($r->{'same_order'} ? 1 : 0) . '); }';
 		&Websocket::send('server', { console => $js });
-		return 'now playing ' . $r->{'title'};
+		return scalar(@{$list}) > 1 ? ('now playing ' . scalar(@{$list}) . ' matches') : ('now playing ' . $r->{'title'});
 	}
 	return 'unknown primitive: ' . $prim;
 }

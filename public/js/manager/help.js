@@ -236,7 +236,12 @@ function helpDoAction(a, cb) {
 		// resolve plain names (one or several) to real app names first, so the
 		// person's own words find the apps that exist
 		var resolve = function (names, done) {
-			names = (names || []).filter(function (n) { return n && n.length; });
+			names = (names || []).map(function (n) {
+				// the model sometimes sends {name:...} objects where the schema says
+				// plain strings; take the name out, or “friends” becomes the literal
+				// “[object Object]” and the gallery opens on nothing
+				return (n && typeof n === 'object') ? (n.name || n.app || '') : n;
+			}).filter(function (n) { return n && n.length; });
 			if (!names.length) { done([]); return; }
 			var found = [], pending = names.length;
 			names.forEach(function (n) {
@@ -354,7 +359,7 @@ function helpDoAction(a, cb) {
 		return;
 	}
 	if (a.action === 'play_music') {
-		helpPlayMusic(a.query || '', cb);
+		helpPlayMusic(a.query || '', cb, a.shuffle);
 		return;
 	}
 	if (a.action === 'remote') {
@@ -377,17 +382,25 @@ function helpDoAction(a, cb) {
 	}).fail(function () { cb('That command did not run.'); });
 }
 
-// Play music by artist or track: ask the server (which runs the music app's own
-// search) for the file, then open the music app on it. The music app does the
-// playing; the guide only has to name the track.
-function helpPlayMusic(query, cb) {
+// Play music or an episode by its name: ask the server (which runs the music
+// app's own search) for every match, then open the music app on the list - a
+// show plays through as a queue of episodes. The music app does the playing;
+// the guide only has to name the thing.
+function helpPlayMusic(query, cb, shuffle) {
 	var q = $.trim(query || '');
 	if (!q) { cb('I did not catch what to play.'); return; }
-	$.get('/manager/help/music', { q: q }, function (r) {
+	$.get('/manager/help/music', { q: q, shuffle: shuffle ? 1 : 0 }, function (r) {
 		if (!r || !r.found) { cb('I searched the library for “' + q + '” but found nothing to play.'); return; }
-		if (typeof musicToggle === 'function') { musicToggle([r.file]); }
-		else { cb('The music app is not available here.'); return; }
-		cb('Playing ' + r.title + '.', 'Now playing ' + r.title + '.');
+		if (typeof musicToggle !== 'function') { cb('The music app is not available here.'); return; }
+		// every match rides along, so a show plays as a list of its episodes
+		var list = (r.files && r.files.length) ? r.files : [r.file];
+		musicToggle(list, r.same_order ? 1 : 0);
+		if (list.length > 1) {
+			cb('Playing ' + list.length + ' matches.', 'Now playing ' + list.length + ' matches.');
+		}
+		else {
+			cb('Playing ' + r.title + '.', 'Now playing ' + r.title + '.');
+		}
 	}).fail(function () { cb('I could not reach the music library.'); });
 }
 

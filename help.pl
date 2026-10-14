@@ -870,7 +870,7 @@ our %topic = (
 		verified => '2026-10-13',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
-			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Ben Folds Five" starts the track. It reports each step as it goes.',
+			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. It reports each step as it goes.',
 			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. The Guide\'s associate - the small chat in the corner - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, and the chat you left is still there when you come back. It never sends, pays or deletes.',
 			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents). Its config menu also carries Speak the replies; ticked, each answer is spoken as well as written, through the voice set under Configure → Misc → Speech (Piper first — the same voice the watch\'s answers use).',
 			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
@@ -1139,9 +1139,9 @@ sub actions_prompt {
 Rules:
 - Navigate and search only. Never delete, send, pay, or change any data.
 - Choose only from the actions listed above; there is no other verb here.
-- When the person names something you should show them, use find first, then open
-  what the result points at. If find returns an app, pass that exact app name to
-  open_gallery - do not hand open_gallery a free-text name instead.
+- When the person names a photo, a record or an app to show them, use find first,
+  then open what the result points at. If find returns an app, pass that exact app
+  name to open_gallery - do not hand open_gallery a free-text name instead.
 - The moment an OBSERVATION shows the thing they asked to see or do is now on
   screen, STOP and reply with done - for example
   {"action":"done","text":"Here are the photos."}. Do not follow a success with a
@@ -1159,7 +1159,10 @@ $create_rule
   places we have measured, so an odd name is matched against the things named for it.
 - For "how far did I walk" use measure with measure "walk"; for a weight goal use
   measure with measure "weight". Do not guess a number - always take it from measure.
-- For music, use play_music with the artist and track; it plays the first match.
+- To play or watch anything (a song, an artist, an album, a show or its
+  episodes), use play_music with the person's own words; it plays every match as
+  a list. Set "shuffle":1 when they ask for a shuffle or a surprise. Do not
+  reach for find or open_gallery when the thing is to be watched or listened to.
 - Keep every text field short and in plain, everyday words.
 TXT
 	return $header . $lines . "\n" . $rules;
