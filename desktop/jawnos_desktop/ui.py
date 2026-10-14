@@ -27,7 +27,7 @@ LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 # The panel's look: a near-black ground, rounded cards above it, the jawn yellow
 # as the accent - the same language as the Android dashboard's cards.
 _CSS = """
-window { background-color: #101010; }
+window, notebook, scrolledwindow, viewport { background-color: #000000; }
 label { color: #ededed; }
 label.title { font-size: 24px; font-weight: bold; }
 label.dim { color: #8e8e8e; font-size: 12px; }

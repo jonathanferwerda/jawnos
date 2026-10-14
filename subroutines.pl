@@ -14711,12 +14711,47 @@ sub peer_useragent {
 	return ($ua, $rm);
 }
 
+# Append one line to the app-release sync's own log (the manager log). Quiet
+# when there is no logfile yet (an early boot).
+sub app_release_log {
+	my $line = shift;
+	return unless $subs::logfile;
+	open(my $fh, '>>', $subs::logfile) or return;
+	print $fh &subs::rightNow() . " app release: $line\n";
+	close $fh;
+}
+
+# The public app-release manifest on GitHub - a source that needs no peer to
+# answer, or to hold a valid cookie for us. The release carries app_release.json
+# (product, versionCode, versionName, filename, sha256) beside the APK, under a
+# fixed tag so the URL never moves; the download is a plain github.com asset,
+# not the rate-limited API. Returns the manifest plus the asset base url, or
+# undef when there is no release (or no network).
+sub github_release_manifest {
+	my ($repo, $tag) = @_;
+	return undef unless $repo && $repo =~ m{^[^/\s]+/[^/\s]+\z};
+	$tag ||= 'releases';
+	my $base = "https://github.com/$repo/releases/download/$tag";
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 30);
+	$ua->max_response_size(0);
+	# a release asset 302s to the CDN, so the redirect must be followed
+	$ua->max_redirects(5);
+	my $res = eval { $ua->get("$base/app_release.json")->result };
+	return undef unless $res && $res->is_success;
+	my $man = eval { decode_json $res->body };
+	return undef unless $man && ref $man eq 'HASH'
+		&& $man->{'product'} && $man->{'versionCode'} && $man->{'filename'};
+	$man->{'base'} = $base;
+	return $man;
+}
+
 # Reconcile the staged app releases (the APKs under releases/) with the newest a
 # reachable peer holds: a device that is behind pulls the APK in, so every
 # device becomes a holder and a source. The APK is a blob (gitignored) carried
 # over http, not through git - a ~35 MB binary per version in git history would
 # be untenable. Pull, on the watcher's slow tick; the code watcher keeps the
-# Perl tree current.
+# Perl tree current. GitHub's release manifest is consulted too, so a device
+# with no reachable peer (or no valid peer cookie) still updates.
 sub app_release_sync {
 	my $dir = &subs::home('~/jawnos/releases');
 	mkdir $dir unless -d $dir;
@@ -14727,6 +14762,39 @@ sub app_release_sync {
 		next unless $product;
 		$local{$product} = $vc if !$local{$product} || $vc > $local{$product};
 	}
+	# GitHub first: a public source that needs no peer, so a device with no
+	# reachable peer (or a stale peer cookie) still updates. The manifest names
+	# the newest app build; the asset is a github.com download. Failing that, the
+	# peer loop below still catches it.
+	my $gh = &github_release_manifest(
+		$config->{'github_repo'} || 'jonathanferwerda/jawnos',
+		$config->{'github_release_tag'} || 'releases');
+	if ($gh && $gh->{'product'} && ($gh->{'versionCode'} || 0) > 0) {
+		my $gp = $gh->{'product'};
+		my $gv = $gh->{'versionCode'} + 0;
+		my $gf = $gh->{'filename'};
+		if ((!$local{$gp} || $gv > $local{$gp})
+			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/) {
+			my $gua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300);
+			$gua->max_response_size(0);
+			$gua->max_redirects(5);   # the asset 302s to the CDN
+			my $res = eval { $gua->get($gh->{'base'} . '/' . $gf)->result };
+			my $blob = ($res && $res->is_success) ? $res->body : undef;
+			unless (defined $blob && length $blob) {
+				&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; falling back to peers');
+			}
+			my $sha = (defined $blob && length $blob) ? eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) } : undef;
+			if (defined $blob && length $blob && (!$gh->{'sha256'} || ($sha && $sha eq $gh->{'sha256'}))) {
+				my $dest = "$dir/$gf";
+				write_file("$dest.tmp", $blob);
+				unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$gp-*.apk");
+				if (rename("$dest.tmp", $dest)) {
+					$local{$gp} = $gv;
+					&app_release_log('pulled ' . $gp . ' v' . $gv . ' (' . length($blob) . ' bytes) from github');
+				}
+			}
+		}
+	}
 	my $rms = &subs::db_select('remote_machines')->hashes || [];
 	foreach my $rm ( @{$rms} ) {
 		my $rsig = $rm->{'signatorial'};
@@ -14735,7 +14803,11 @@ sub app_release_sync {
 		next unless $ua;
 		my $res = eval { $ua->inactivity_timeout(20)->get($p->{'manager'} . '/manager/app_release?signatorial=' . $me)->result };
 		next unless $res && $res->is_success;
-		my $body = eval { decode_json $res->body } || {};
+		my $body = eval { decode_json $res->body };
+		unless ($body && ref $body eq 'HASH') {
+			&app_release_log('peer ' . ($rm->{'hostname'} || $rsig) . ' did not answer app_release with JSON (stale session cookie?)');
+			next;
+		}
 		my $phost = $body->{'hostname'} || $rm->{'hostname'} || $rsig;
 		foreach my $rel ( @{ $body->{'releases'} || [] } ) {
 			my ($product, $vc) = ($rel->{'product'}, ($rel->{'versionCode'} || 0) + 0);
@@ -14759,11 +14831,7 @@ sub app_release_sync {
 		write_file("$dest.tmp", $blob);
 		unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$product-*.apk");
 		rename("$dest.tmp", $dest) or next;
-		if ($subs::logfile) {
-			open(my $fh, '>>', $subs::logfile);
-			print $fh &subs::rightNow() . " app release: pulled $product v" . $b->{'versionCode'} . " (" . length($blob) . " bytes) from " . $b->{'host'} . "\n";
-			close $fh;
-		}
+		&app_release_log('pulled ' . $product . ' v' . $b->{'versionCode'} . ' (' . length($blob) . ' bytes) from ' . $b->{'host'});
 	}
 }
 
