@@ -6,12 +6,20 @@ live in PSRAM). When the DMA pool is tight the allocation fails and whole
 bands of the frame are dropped (setup_dma_priv_buffer / priv TX buffer).
 Stage whole rows through a preallocated internal-DMA buffer instead.
 
+esp_lcd queues color transfers asynchronously and says the caller keeps the
+source buffer alive until on_color_trans_done fires - so the staging buffer is
+held still between chunks (binary semaphore given by the panel IO callback).
+Without that wait the next chunk's memcpy landed on the buffer the SPI DMA was
+still reading: horizontal streaks through the frame at the chunk rhythm, which
+is how it looked on the watch. The display begin() also prints the staging
+state over Serial ("[lcd] SPI flush staging ready: 3840 bytes, ...") because
+the LILYGO_LOG levels compile out at CORE_DEBUG_LEVEL=0.
+
 Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
 (already applied in the local tree; the same edit carries the jawnos comments)
-
 --- a/LilyGoLib/src/display/LilyGoDispInterface.h
 +++ b/LilyGoLib/src/display/LilyGoDispInterface.h
-@@ -386,6 +386,13 @@
+@@ -386,6 +386,22 @@
      esp_lcd_panel_handle_t panel_handle = NULL;
      int _backlight;
      uint8_t _rotation = 0;
@@ -22,6 +30,15 @@ Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
 +    // Failed to allocate priv TX buffer").
 +    uint16_t *_bounce = nullptr;
 +    size_t _bounce_pixels = 0;
++    // jawnos: completion signal for the staged flushes. The panel IO queues
++    // color transfers asynchronously (esp_lcd_panel_io_tx_color: "the caller
++    // should take care of the lifecycle of the color buffer. Recycling of
++    // color buffer should be done in the callback on_color_trans_done()"), so
++    // the shared staging buffer must not be rewritten until its transfer has
++    // finished - otherwise the SPI DMA reads bytes the CPU already overwrote
++    // and the frame streaks with horizontal lines through text and buttons.
++    SemaphoreHandle_t _bounce_done = nullptr;
++    static bool bounce_done_cb(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx);
  public:
      /** Current logical display size. */
      uint16_t _width, _height;
@@ -39,7 +56,7 @@ Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
      esp_lcd_panel_del(panel_handle);
      esp_lcd_panel_io_del(io_handle);
      spi_bus_free(SPI_DEV_HOST_ID);
-@@ -711,6 +716,18 @@
+@@ -711,6 +716,32 @@
      std::vector<uint16_t> draw_buf(_width * _height * 2, 0x000);
      esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, _width, _height, draw_buf.data());
  
@@ -48,18 +65,45 @@ Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
 +    _bounce_pixels = (size_t)_width * 8;
 +    _bounce = (uint16_t *)heap_caps_aligned_alloc(4, _bounce_pixels * sizeof(uint16_t),
 +                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-+    if (!_bounce) {
-+        _bounce_pixels = 0;
-+        LILYGO_LOG_W("jawnos: SPI flush bounce not allocated; PSRAM flushes will bounce per transfer");
-+    } else {
-+        LILYGO_LOG_D("jawnos: SPI flush bounce %u bytes", (unsigned)(_bounce_pixels * sizeof(uint16_t)));
++    // jawnos: the completion signal. esp_lcd wants the source buffer to stay
++    // intact until on_color_trans_done fires (the queue is drained in the
++    // background by DMA); the chunked reuse in pushColors leans on this.
++    _bounce_done = xSemaphoreCreateBinary();
++    esp_lcd_panel_io_callbacks_t done_cbs = {};
++    done_cbs.on_color_trans_done = bounce_done_cb;
++    if (!_bounce || !_bounce_done ||
++        esp_lcd_panel_io_register_event_callbacks(io_handle, &done_cbs, this) != ESP_OK) {
++        if (_bounce_done) {
++            vSemaphoreDelete(_bounce_done);
++            _bounce_done = nullptr;
++        }
++        LILYGO_LOG_W("jawnos: SPI flush staging not ready; PSRAM flushes will bounce per transfer");
 +    }
++    // plain Serial: the LILYGO_LOG levels compile out at CORE_DEBUG_LEVEL=0
++    Serial.printf("[lcd] SPI flush staging %s: %u bytes, dma=%u max=%u\n",
++                  (_bounce && _bounce_done) ? "ready" : "FAILED",
++                  (unsigned)(_bounce ? _bounce_pixels * sizeof(uint16_t) : 0),
++                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
++                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
 +
      return true;
  }
  
-@@ -749,6 +766,35 @@
+@@ -747,8 +778,57 @@
+     return _rotation;
+ }
  
++bool LilyGoDispSPI::bounce_done_cb(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t *, void *ctx)
++{
++    auto *self = static_cast<LilyGoDispSPI *>(ctx);
++    if (!self || !self->_bounce_done) {
++        return false;
++    }
++    BaseType_t must_yield = pdFALSE;
++    xSemaphoreGiveFromISR(self->_bounce_done, &must_yield);
++    return must_yield == pdTRUE;
++}
++
  void LilyGoDispSPI::pushColors(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t *color)
  {
 +    assert(panel_handle);
@@ -68,7 +112,7 @@ Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
 +    // tight that allocation fails and whole bands of the frame are dropped.
 +    // Copy through our own preallocated internal-DMA buffer instead, whole rows
 +    // at a time.
-+    if (_bounce && color && x2 > 0 && y2 > 0 && !esp_ptr_dma_capable(color)) {
++    if (_bounce && _bounce_done && color && x2 > 0 && y2 > 0 && !esp_ptr_dma_capable(color)) {
 +        size_t rows = _bounce_pixels / x2;
 +        if (rows < 1) { rows = 1; }
 +        uint16_t *src = color;
@@ -77,8 +121,17 @@ Apply from the watch-libs root: patch -p1 < lilygolib-spi-dma-bounce.patch
 +            size_t chunk = y2 - row;
 +            if (chunk > rows) { chunk = rows; }
 +            size_t n = (size_t)x2 * chunk;
++            // drop a stale give (a wait that timed out) so it cannot pass the
++            // next chunk off as already transferred
++            xSemaphoreTake(_bounce_done, 0);
 +            memcpy(_bounce, src, n * sizeof(uint16_t));
 +            esp_lcd_panel_draw_bitmap(panel_handle, x1, y1 + row, x1 + x2, y1 + row + chunk, _bounce);
++            // the transfer reads _bounce in the background: hold the buffer
++            // still until the panel IO says the color data has finished
++            if (xSemaphoreTake(_bounce_done, pdMS_TO_TICKS(200)) != pdTRUE) {
++                Serial.printf("[lcd] flush chunk wait timed out: %ux%u at y=%u\n",
++                              (unsigned)x2, (unsigned)chunk, (unsigned)(y1 + row));
++            }
 +            src += n;
 +            row += chunk;
 +        }
