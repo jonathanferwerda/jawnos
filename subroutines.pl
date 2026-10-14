@@ -12706,8 +12706,10 @@ sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
 	# the queue is per-machine and the settings are shared, so this is what keeps
-	# one wish from running on every machine's queue at once
-	my $chosen = &subs::evaluation_machine();
+	# one wish from running on every machine's queue at once. With no machine named,
+	# the house ledger picks the evaluation's home, so "Any machine" now means once
+	# for the house rather than once per queue.
+	my $chosen = &subs::evaluation_machine() || &ai_job_owner('eval:' . $app);
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
 	if ($chosen && $chosen ne &subs::signatorial_designer()) {
 		$job->finish({ app => $app, skipped => 'not the evaluation machine' });
@@ -12724,6 +12726,7 @@ sub appointment_evaluation_job {
 		$job->finish({ app => $app, skipped => 'no evaluation model reachable here' });
 		return;
 	}
+	&ai_job_note('eval:' . $app);
 	my $report = &subs::evaluation_agent($app);
 	if ($report->{'error'}) {
 		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'failed', note => substr($report->{'error'}, 0, 120) });
@@ -13682,8 +13685,13 @@ sub error_watch_state_save {
 sub watch_tokens_day { return localtime()->strftime('%Y-%m-%d'); }
 
 sub watch_tokens_spent {
+	# the purse is the house's: this machine's spend plus every peer's, which ride in
+	# with the ordinary settings/database sync. The local cache stays as the floor,
+	# so a machine with no ledger row yet never reads itself as having spent nothing.
+	my $house = eval { &ai_house_budget_spent() } || 0;
 	my $row = &subs::cache_get({ app => '__president', context => 'watch_tokens', subcontext => &watch_tokens_day() });
-	return (ref $row eq 'HASH') ? ($row->{'total'} || 0) : 0;
+	my $local = (ref $row eq 'HASH') ? ($row->{'total'} || 0) : 0;
+	return $house > $local ? $house : $local;
 }
 
 sub watch_tokens_add {
@@ -13694,6 +13702,117 @@ sub watch_tokens_add {
 		{ app => '__president', context => 'watch_tokens', subcontext => &watch_tokens_day(), warranty => '-2d' },
 		{ total => ($row->{'total'} || 0) + $tokens, proposals => ($row->{'proposals'} || 0) + 1 }
 	);
+	# and add it to the shared purse, so every machine's ceiling sees the whole
+	# house's spend and the day's budget is one pot, not one per machine
+	eval { &ai_house_budget_add($tokens) };
+}
+
+# ---- the house AI ledger -----------------------------------------------------
+# One machine runs each AI job, and the day's purse is shared. A "job" is a unit
+# of work with a name: an error's fix, an app's evaluation. Ownership is
+# deterministic - a stable hash ranks the house and the job's home is the member
+# ranked first - so every machine computes the same home with no lock service and
+# no shared write to race. Only the home's own watcher proposes a given fix or
+# runs a given evaluation.
+#
+# Eligibility rides the same synced tables: each machine publishes its own row
+# (does it have an AI model, when it was last seen) and its own day's spend. The
+# house is the members whose row says they have a model and were seen recently;
+# a machine with nothing synced yet sees only itself, so it still works alone.
+
+sub ai_house_today { return localtime()->strftime('%Y-%m-%d'); }
+
+sub ai_house_have_model {
+	return ( &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' }) ) ? 1 : 0;
+}
+
+sub ai_house_me { return eval { &subs::signatorial_designer() } || ''; }
+
+# Publish this machine's capability and heartbeat, throttled: a row every couple
+# of minutes is enough to keep it counted, and the peers see it when next synced.
+sub ai_house_publish {
+	my $me = &ai_house_me();
+	return unless length $me;
+	my $now = &subs::rightNow();
+	my $have = &ai_house_have_model();
+	my $row = eval { &subs::db_select('ai_house', undef, { machine => $me })->hashes->[0] };
+	return if $row && ($row->{'seen'} + 0) > ($now - 120000) && (($row->{'has_model'} || 0) ? 1 : 0) == $have;
+	&subs::db_delete('ai_house', { machine => $me });
+	&subs::db_insert('ai_house', { machine => $me, has_model => $have, seen => $now, server_time => $now });
+}
+
+# The machines that can take AI work: those that published a model and were seen
+# in the last ten minutes, plus this machine (so a lone or not-yet-synced machine
+# is never left with nobody). Sorted, so every machine ranks the same house.
+sub ai_house_members {
+	my $me = &ai_house_me();
+	my $now = &subs::rightNow();
+	my %member;
+	$member{$me} = 1 if length $me && &ai_house_have_model();
+	my $rows = eval { &subs::db_select('ai_house')->hashes } || [];
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'machine'} && $r->{'has_model'};
+		next unless ($r->{'seen'} + 0) > ($now - 600000);
+		$member{ $r->{'machine'} } = 1;
+	}
+	$member{$me} = 1 if length $me && !%member;   # alone: this machine is the house
+	return sort keys %member;
+}
+
+sub ai_job_rank {
+	my ($job, $member) = @_;
+	my $h = 5381;
+	foreach my $c ( split //, ($job // '') . '|' . ($member // '') ) { $h = ( ($h * 33) + ord($c) ) % 2147483647; }
+	return $h;
+}
+
+# the job's home machine - the first of the house by the job's own order
+sub ai_job_owner {
+	my ($job) = @_;
+	my @house = &ai_house_members();
+	return undef unless @house;
+	my @ranked = sort { &ai_job_rank($job, $a) <=> &ai_job_rank($job, $b) } @house;
+	return $ranked[0];
+}
+
+# May this machine run $job? Only when it is the job's home. The ledger row is a
+# note of who ran what and when, for the review list rather than a lock.
+sub ai_job_may_run {
+	my ($job) = @_;
+	return 1 unless length($job // '');
+	my $owner = &ai_job_owner($job);
+	return 1 unless defined $owner;
+	return ($owner eq &ai_house_me()) ? 1 : 0;
+}
+
+sub ai_job_note {
+	my ($job) = @_;
+	return unless length($job // '');
+	my $now = &subs::rightNow();
+	eval { &subs::db_delete('ai_jobs', { job => $job }) };
+	eval { &subs::db_insert('ai_jobs', { job => $job, owner => &ai_house_me(), at => $now, state => 'ran', server_time => $now }) };
+}
+
+# the shared purse: what the whole house has spent today
+sub ai_house_budget_spent {
+	my $row = eval { &subs::db_query('select sum(tokens) as total from ai_budget where day = ?', &ai_house_today())->hashes->[0] };
+	return ($row && defined $row->{'total'}) ? ($row->{'total'} + 0) : 0;
+}
+
+sub ai_house_budget_add {
+	my ($n) = @_;
+	return unless $n;
+	my $me = &ai_house_me() || 'me';
+	my $day = &ai_house_today();
+	# one row per machine per day, so two machines' writes never clobber each other
+	# and the sync just adds them up
+	my $row = eval { &subs::db_select('ai_budget', undef, { machine => $me, day => $day })->hashes->[0] };
+	my $total = (($row && $row->{'tokens'}) ? $row->{'tokens'} : 0) + $n;
+	&subs::db_delete('ai_budget', { machine => $me, day => $day });
+	&subs::db_insert('ai_budget', { machine => $me, day => $day, tokens => $total, server_time => &subs::rightNow() });
+	return $total;
 }
 
 # Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a
@@ -13958,6 +14077,17 @@ sub error_watch_tick {
 		&subs::db_query('create index if not exists idx1_staged_fixes on staged_fixes (signature)');
 		&subs::db_query('create index if not exists idx2_staged_fixes on staged_fixes (status)');
 	}
+	# The house AI ledger: who can take AI work (ai_house), which machine ran which
+	# job (ai_jobs) and what each machine has spent today (ai_budget). All three
+	# carry server_time and are not in the forbidden list, so they ride the ordinary
+	# peer sync; created here so the watch works before anyone has logged in.
+	foreach my $sql (
+		'create table if not exists ai_house (machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), server_time VARCHAR(255))',
+		'create table if not exists ai_jobs (job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), server_time VARCHAR(255))',
+		'create table if not exists ai_budget (machine VARCHAR(255), day VARCHAR(25), tokens INT, server_time VARCHAR(255))'
+	) { eval { &subs::db_query($sql) } }
+	eval { &subs::db_query('create unique index if not exists idx_ai_budget on ai_budget (machine, day)') };
+	&ai_house_publish();
 	if ($errors_on) {
 		my @caught;
 		foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {
@@ -14236,6 +14366,15 @@ sub coding_propose_fix {
 		&subs::db_update('staged_fixes', { note => 'no Coding model is set (Configure -> Plat)' }, { uuid => $row->{'uuid'} });
 		return;
 	}
+	# One machine proposes each fix: a stable hash over the house picks the fix's
+	# home and only that machine spends on it, so two machines never pay to propose
+	# the same repair. The cost is bounded below by the house-wide purse.
+	my $job = 'fix:' . ($row->{'source'} || 'log') . ':' . ($row->{'signature'} || $row->{'uuid'});
+	unless (&ai_job_may_run($job)) {
+		&subs::db_update('staged_fixes', { note => 'the house ledger has another machine on this one' }, { uuid => $row->{'uuid'} });
+		return 'another machine';
+	}
+	&ai_job_note($job);
 	# The purse: a proposal costs a handful of calls. The day's ceiling (a
 	# setting, in tokens) stops the watch before a runaway spend, and one run
 	# stops at its own cap below.

@@ -24185,6 +24185,32 @@ sub update_database($data) {
 		)',
 		'create index if not exists idx1_staged_fixes on staged_fixes (signature)',
 		'create index if not exists idx2_staged_fixes on staged_fixes (status)',
+		# The house AI ledger: which machines can take AI work and were seen
+		# recently (ai_house), which machine ran which job (ai_jobs), and each
+		# machine's spend for the day (ai_budget). Unlike staged_fixes these carry
+		# server_time and are not in gb's forbidden list, so they ride the ordinary
+		# peer sync - the house cannot pay twice for one job and the day's budget is
+		# one pot, not one per machine.
+		'create table if not exists ai_house (
+			machine VARCHAR(255) unique,
+			has_model INT,
+			seen VARCHAR(25),
+			server_time VARCHAR(255)
+		)',
+		'create table if not exists ai_jobs (
+			job VARCHAR(255) unique,
+			owner VARCHAR(255),
+			at VARCHAR(25),
+			state VARCHAR(25),
+			server_time VARCHAR(255)
+		)',
+		'create table if not exists ai_budget (
+			machine VARCHAR(255),
+			day VARCHAR(25),
+			tokens INT,
+			server_time VARCHAR(255)
+		)',
+		'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',
