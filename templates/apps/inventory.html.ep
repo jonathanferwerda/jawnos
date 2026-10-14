@@ -170,6 +170,7 @@
 					<% } %>
 				</tr>
 			<% } %>
+			<% } %>
 			<tr>
 
 			</tr>
@@ -177,8 +178,8 @@
 	</table >
 	</div >
 	<br>
-	<% if (keys %{$returner->{'budgets'}}) { %>
-		<% foreach my $b (keys %{$returner->{'budgets'}}) { %>
+	<% if (keys %{$returner->{'budgets'} || {}}) { %>
+		<% foreach my $b (keys %{$returner->{'budgets'} || {}}) { %>
 			<b><%= &subs::format_name($b) %>:</b> <%= $returner->{'budgets'}->{$b} %><br>
 		<% } %>
 	<% } %>
