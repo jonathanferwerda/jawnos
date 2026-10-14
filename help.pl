@@ -431,7 +431,8 @@ our %topic = (
 			'It also shows the neighbour links — which machines are trusted, and with what privilege.',
 			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again. A new device can also ask to pair from the gate: its request waits at the top of this view with a short code, and Approve lets it in — but only when that code matches the one on the new device\'s screen.',
 			'The Recovery view holds the paper code that gets you back in when every ticket is lost and no paired device is at hand: make one and write it down. It is shown once and keeps working through password changes — only rotating the house key replaces it; enter it under Recovery Code at the gate and that device is paired on the spot.',
-			'The Recovery view also carries the sharing tick: while it is on, a linked machine that has lost its key can fetch the house key from here - the request must carry the machine\'s pinned signature, and the key is sealed to a one-time secret for the trip.'
+			'The Recovery view also carries the sharing tick: while it is on, a linked machine that has lost its key can fetch the house key from here - the request must carry the machine\'s pinned signature, and the key is sealed to a one-time secret for the trip.',
+			'Under Rotation, the house key can be replaced with a fresh random one: the database\'s sealed values are re-sealed in place, sessions start again (paired devices re-admit themselves), the recovery code is set aside - write down a new one - and the old key stays wrapped under the new one, so files and notes sealed before the rotation still open.'
 		],
 		related => [ 'box_office', 'devices_and_mesh', 'sealing_files' ]
 	},

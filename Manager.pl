@@ -20515,6 +20515,20 @@ post '/manager/security/recovery/create' => sub($c) {
 	$c->render(json => { ok => 1, code => $code, html => $sec->{'html'} });
 };
 
+post '/manager/security/rotate_key' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $result = &subs::rotate_house_key();
+	my $sec = &security_initializer($c);
+	$c->render(json => {
+		ok => $result->{'ok'} ? 1 : 0,
+		summary => { settings => $result->{'settings'}, security => $result->{'security'}, links => $result->{'links'} },
+		html => $sec->{'html'}
+	});
+};
+
 # The gate's recovery door: the paper code unwraps the sealed suds and the
 # browser is paired on the spot. Throttled per address, and a stale code (the
 # house key changed since it was made) is refused by the canary check.

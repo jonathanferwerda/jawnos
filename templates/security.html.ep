@@ -147,5 +147,14 @@
 			request must carry the machine's pinned signature, and the key is sealed to a one-time secret for the trip.
 		</p>
 		<label><input type="checkbox" id="vault_share_tick" <% if (($president->{'vault_share'} // 'yes') eq 'yes') { %>checked<% } %>> Linked machines may fetch the key</label>
+		<h3 style="margin-top:18px;">Rotation</h3>
+		<p style="max-width:640px;margin:0 auto;">
+			Rotating replaces the house key with a fresh random one: every sealed value in the database is
+			re-sealed, sessions start again (your devices re-admit themselves), and the recovery code above is
+			set aside, so write down a new one. The old key stays wrapped under the new one — files and notes
+			sealed before the rotation still open.
+		</p>
+		<button id="rotate_key">Rotate the house key</button>
+		<div id="rotate_key_note" style="min-height:22px;color:darkred;"></div>
 	</div>
 </div>

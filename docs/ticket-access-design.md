@@ -1,6 +1,6 @@
 # Ticket, device, and suds — access design
 
-Status: built through phase 4; phase 5's first two parts (the password/key split and the peer key pull) are done; rotation is still to come. Written 2026-10-13.
+Status: built through phase 4; phase 5 is done except the on-disk file re-seal and cross-machine propagation of a rotated key. Written 2026-10-13.
 
 ## Goal
 
@@ -167,9 +167,22 @@ the way they do today (`remote_upgrade` and friends), just with a real credentia
    asks a linked machine over the signed peer rail (`/manager/vault_share`, exempt from the
    gate, gated by peer_verify against a *pinned* key - no trust-on-first-contact for the key
    itself) and adopts the answer only when the local canary accepts it; the donor seals the key
-   to a one-time secret and can switch sharing off (`__president/vault_share`). Still to come:
-   rotation (a random key, re-sealing the stores) and propagation of a rotated key, since two
-   machines holding different keys do not heal by pulling.
+   to a one-time secret and can switch sharing off (`__president/vault_share`). *(Rotation is done in
+   this build; the on-disk file re-seal and the propagation of a rotated key across machines still to
+   come.)* The rotation worker (`subs::rotate_house_key`, Security → Recovery): a fresh 200-bit key
+   replaces the one in the vault. The key material moves first - the vault, the level-1 canary and the
+   old key wrapped under the new one are written before anything is swept, and `remote_duty` is bumped
+   so a write during the sweep seals under the new key rather than landing in the stale one. Then every
+   settings value, security credential (the canary is replaced outright; padlock and door hold no key
+   material) and neighbour-link credential that *proves* its seal is re-sealed in place: Crypt::Simple
+   checks its own digest, so the unwrap is a proof rather than a guess, and values from the era when
+   `encrypter` sealed under the empty passphrase are upgraded too - that key is public knowledge, so
+   leaving them would leave them readable to anyone with a copy of the database. Notes carry their
+   marker inside the outer layer and their openssl layer is keyed to the same secret, so they are
+   remade whole rather than re-wrapped half-way. The `oldkey` row keeps the file and note candidate
+   walks reaching content sealed before the rotation; the recovery code is set aside
+   (`recovery_stale`). Sessions do not survive a rotation by design - every suds_id changes, and
+   paired devices re-admit themselves.
 
 ## What this buys
 

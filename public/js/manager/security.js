@@ -229,6 +229,41 @@ $(document).on('change', '#vault_share_tick', function() {
 	settingSetter({ 'app': '__president', 'setting': 'vault_share', 'value': ($(this).is(':checked') ? 'yes' : 'no') });
 });
 
+$(document).on('click', '#rotate_key', function() {
+	var button = $(this);
+	if (button.attr('armed') != 'yes') {
+		button.attr('armed', 'yes');
+		button.css({ 'background-color': 'red' });
+		$('#rotate_key_note').text('Press again to rotate: sessions restart and the recovery code is set aside.');
+		setTimeout(function() {
+			button.css({ 'background-color': '' });
+			button.attr('armed', 'no');
+		}, 3000);
+		return;
+	}
+	button.attr('armed', 'no');
+	button.prop('disabled', true);
+	$.ajax({
+		url: '/manager/security/rotate_key',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				$('#rotate_key_note').text('Rotation did not run.');
+				return;
+			}
+			$('#security').replaceWith(response.html);
+			appointment_chron();
+			$('#rotate_key_note').text('Rotated. Write down a new recovery code.');
+		},
+		error: function() {
+			button.prop('disabled', false);
+			$('#rotate_key_note').text('Rotation did not run.');
+		}
+	});
+});
+
 $(document).on('click', '.signatorial_selection', function() {
 	var sig = $(this);
 	var file = sig.attr('file');

@@ -8320,6 +8320,126 @@ sub vault_pull_from_peer {
 	return;
 }
 
+# --- rotation -----------------------------------------------------------------
+# Replace the house key with a fresh random one. Everything the database seals is
+# re-sealed in place: the vault, the level-1 canary, the security history (earlier
+# oldkey wraps included), note-shaped and binary-shaped settings values, and the
+# neighbour-link credentials. The old key is wrapped under the new one as an
+# 'oldkey' security row, which the file and note paths consult when deriving
+# candidate secrets - so content sealed before the rotation still opens. The
+# recovery code sealed the old key and is set aside (recovery_stale). Sessions do
+# not survive: every suds_id changes, so browsers re-admit themselves through
+# their device keys. $target is for probes only (rotate back); the route never
+# passes it.
+# One stored value, re-sealed from one house key to another. Returns undef when
+# the value is sealed with neither the current key nor the legacy empty
+# passphrase; the new sealed value otherwise. The unwrap is exact - Crypt::Simple
+# checks its own digest and refuses a key that did not seal the value - so a
+# value's bytes are proven, not guessed (its output is base64, so a shape test
+# would say nothing). A note carries ':::---:::' inside that outer layer, and its
+# own openssl layer is keyed to the real secret: it is remade whole, since
+# re-wrapping only the outer layer would not open later. Values from the era when
+# encrypter sealed under the empty passphrase are upgraded too - that key is
+# public knowledge, so leaving them is leaving them readable to anyone holding a
+# copy of the database.
+sub crypt_simple_unwrap {
+	my ($secret, $v) = @_;
+	local *encrypt;
+	local *decrypt;
+	Crypt::Simple->import(passphrase => $secret);
+	my $plain = eval { decrypt($v) };
+	return $plain;
+}
+
+sub rotation_reseal_value {
+	my ($v, $K, $Knew) = @_;
+	return unless defined $v && length $v && $K && $Knew;
+	my $inner = &crypt_simple_unwrap($K, $v);
+	$inner = &crypt_simple_unwrap('', $v) unless defined $inner;
+	return unless defined $inner;
+	if (index($inner, ':::---:::') >= 0) {
+		# note_decrypter's own outer call falls back, so this reaches a legacy
+		# note's inner layer under $K; the remake below is fully under $Knew
+		my $plain = &note_decrypter($K, $v);
+		return unless defined $plain && length $plain;
+		my $re = &note_encrypter($Knew, $plain);
+		return unless $re && &note_decrypter($Knew, $re) eq $plain;
+		return $re;
+	}
+	my $re = &encrypter($Knew, $inner);
+	return unless $re && &decrypter($Knew, $re) eq $inner;
+	return $re;
+}
+
+sub rotate_house_key {
+	my ($target) = @_;
+	my $K = &suds_grabber();
+	return { ok => 0, error => 'no key on this machine' } unless $K;
+	my $Knew = $target || &code_chars_make(40);
+	return { ok => 0, error => 'the new key is the old key' } if $Knew eq $K;
+	my $canary = &encrypter($Knew, $Knew);
+	my $wrapped = &encrypter($Knew, $K);
+	my $sealed = &note_encrypter(&house_key(), $Knew);
+	return { ok => 0, error => 'the new key would not seal' } unless $canary && $wrapped && $sealed;
+	my ($db,$database) = &database_grabber();
+	return { ok => 0, error => 'no database' } unless $db;
+	my $now = &rightNow();
+	my $counts = { settings => 0, security => 0, links => 0 };
+
+	# The key material moves first, and remote_duty with it: every worker
+	# re-resolves on its next settings write, so a write during the sweep below
+	# seals under the new key instead of landing in the old one. The old key is
+	# wrapped under the new one before anything is swept, so even a sweep cut
+	# short leaves every pre-rotation value one way or another reachable.
+	&vault_seed($Knew, 1);
+	&db_query('update security set credential = ? where level = 1', $canary);
+	&db_insert('security', { level => 'oldkey', credential => $wrapped, database => $database, timestamp => $now, server_time => $now });
+	$gb::suds = $Knew;
+	&setting_setter({ app => '__president', setting => 'remote_duty', value => $now });
+
+	# settings: every value that proves its seal is re-sealed (see
+	# rotation_reseal_value); a handful of API keys and blobs usually pass, but
+	# the sweep must find them all
+	my $settings = &db_select('settings', ['rowid','setting','value'], {})->hashes;
+	foreach my $row ( @{$settings} ) {
+		my $re = &rotation_reseal_value($row->{'value'}, $K, $Knew);
+		next unless defined $re;
+		&db_update('settings', { value => $re }, { rowid => $row->{'rowid'} });
+		$counts->{settings}++;
+	}
+
+	# security: apart from the canary and the door, every credential that
+	# proves its seal is re-sealed; the history keeps each layer one decrypt
+	# away from the live key. Padlock and door hold no key material.
+	my $secs = &db_select('security', ['rowid','level','credential'], {})->hashes;
+	foreach my $row ( @{$secs} ) {
+		next if $row->{'level'} eq 'padlock' || $row->{'level'} eq 'door' || $row->{'level'} eq '1';
+		my $re = &rotation_reseal_value($row->{'credential'}, $K, $Knew);
+		next unless defined $re;
+		&db_update('security', { credential => $re }, { rowid => $row->{'rowid'} });
+		$counts->{security}++;
+	}
+
+	# neighbour-link credentials (the mesh's stored secrets)
+	my $links = &db_select('neighbour_link', ['rowid','credential'], {})->hashes;
+	foreach my $row ( @{$links} ) {
+		my $re = &rotation_reseal_value($row->{'credential'}, $K, $Knew);
+		next unless defined $re;
+		&db_update('neighbour_link', { credential => $re }, { rowid => $row->{'rowid'} });
+		$counts->{links}++;
+	}
+
+	# the recovery code sealed the old key; it is set aside with the note to
+	# write down a new one
+	my $recovery = &db_select('settings', ['rowid'], { app => '__president', setting => 'recovery' })->hashes;
+	if (scalar @{$recovery}) {
+		&db_delete('settings', { app => '__president', setting => 'recovery' });
+		&db_delete('settings', { app => '__president', setting => 'recovery_stale' });
+		&db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'key_rotation', timestamp => $now, server_time => $now });
+	}
+	return { ok => 1, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
+}
+
 sub suds_grabber {
 	my $duty_time = &subs::setting_grabber({ app => '__president', setting => 'remote_duty' });
 	if (( !$gb::suds || $duty_time eq '' || !$duty_time || $duty_time != $gb::duty_time || !$gb::duty_time)) {
