@@ -5513,8 +5513,8 @@ sub reads_as_backup {
 # since the rotation
 # (mtime past `before`) is skipped without opening, since it is already under
 # the new key. Batched by a time budget; when the budget runs out the job
-# queues its own follow-up, so a big home resumes by re-walking (already
-# re-sealed files skip in one cheap opening).
+# queues its own follow-up carrying a cursor - the walk is sorted, so the next
+# run starts where this one stopped instead of re-walking the whole home.
 sub folders_reseal_job {
 	my ($job, $data) = @_;
 	my $suds = eval { &suds_grabber() };
@@ -5530,17 +5530,24 @@ sub folders_reseal_job {
 	@passwords = grep { !$seen{$_}++ } @passwords;
 	my $before = $data->{'before'} || 0;
 	my $budget = $data->{'budget'} || 600;
+	my $after = defined $data->{'after'} ? $data->{'after'} : '';
 	my $roots = (ref $data->{'roots'} && scalar @{$data->{'roots'}}) ? $data->{'roots'} : [ &home('~/') ];
 	my $references = &file_reference_read();
 	my $started = time();
 	my @files = &sealed_files_under($roots);
-	my ($resealed, $current, $unopened, $skipped, $backups, $count) = (0, 0, 0, 0, 0, 0);
+	my ($resealed, $current, $unopened, $skipped, $backups, $passed, $count) = (0, 0, 0, 0, 0, 0, 0);
 	my (@errors, $out_of_time, $cancelled);
+	my $last = $after;
 	foreach my $file ( @files ) {
 		$count++;
 		$job->note(progress => "re-sealed $resealed, current $current of " . scalar(@files) . " sealed files") if $count % 10 == 0;
+		# a run that ran out of time left its cursor: everything at or before it
+		# is already walked (the list is sorted, so this stays stable)
+		if (length $after && $file le $after) { $passed++; next; }
 		if (($job->info->{'notes'} || {})->{'cancel'}) { $cancelled = 1; last; }
 		if (time() - $started > $budget) { $out_of_time = 1; last; }
+		$last = $file;
+		$job->note(cursor => $last) if $count % 25 == 0;
 		# written since the rotation: already under the new key (stat is in
 		# seconds, the stamps in milliseconds)
 		if ($before && ((stat($file))[9] || 0) * 1000 > $before) { $skipped++; next; }
@@ -5563,7 +5570,7 @@ sub folders_reseal_job {
 				# opening is read as a file the way the decrypt job reads one
 				my $head = '';
 				if (open my $fh, '<', $clear) { binmode $fh; read $fh, $head, 1024; close $fh; }
-				my $type = File::Type->new()->mime_type($head);
+				my $type = File::Type->new()->checktype_contents($head);
 				if ($type ne 'application/octet-stream' || $head =~ /webm/ || &folders_reads_as_text($head) || ((-s $clear) == 0 && (-s $file) <= 48)) {
 					$opened_with = $password;
 					$opened_standard = $which;
@@ -5615,15 +5622,16 @@ sub folders_reseal_job {
 		system('shred', '-u', $verify) if -e $verify;
 		$resealed++;
 	}
-	my $result = { resealed => $resealed, current => $current, unopened => $unopened, skipped => $skipped, backups => $backups, files => scalar @files };
+	my $result = { resealed => $resealed, current => $current, unopened => $unopened, skipped => $skipped, backups => $backups, passed => $passed, cursor => $last, files => scalar @files };
 	if (scalar @errors) { $result->{'errors'} = \@errors; $job->fail($result); return; }
 	$result->{'cancelled'} = 1 if $cancelled;
 	$job->note(progress => "re-sealed $resealed, current $current, unopened $unopened of " . scalar(@files));
 	$job->finish($result);
-	# out of time, not out of files: hand the next stretch to a fresh job
-	if ($out_of_time) {
+	# out of time, not out of files: hand the next stretch to a fresh job (a
+	# driver that carries the cursor itself passes nofollow)
+	if ($out_of_time && length $last && !$data->{'nofollow'}) {
 		my $run = ($data->{'run'} || 1) + 1;
-		eval { &minion_grabber()->enqueue('folders_reseal' => [ { before => $before, budget => $budget, run => $run, roots => $data->{'roots'} } ] => { attempts => 2 }) } if $run <= 20;
+		eval { &minion_grabber()->enqueue('folders_reseal' => [ { before => $before, budget => $budget, run => $run, roots => $data->{'roots'}, after => $last } ] => { attempts => 2 }) } if $run <= 20;
 	}
 	return;
 }
@@ -13477,7 +13485,12 @@ sub error_watch_tick {
 	# settings may have changed since this long-lived fork last read them (the
 	# setting memo lasts the process), so each pass starts from a fresh read
 	%setting_memo = ();
-	return unless (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on';
+	# either watch may want this pass: the error watch for its logs, the guide
+	# watch for the Guide's conversations (its rows are proposed from here too,
+	# so one proposer, one budget, one Apply)
+	my $errors_on = ((&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on');
+	my $guide_on = ((&subs::setting_grabber({ app => 'mail', setting => 'guide_watch' }) // '') eq 'on');
+	return unless $errors_on || $guide_on;
 	# the table normally arrives with the schema migration at a login; create it
 	# here too (as run_backfills does for `backfills`) so the watch works from the
 	# first boot after an update, before anyone has logged in
@@ -13502,21 +13515,23 @@ sub error_watch_tick {
 		&subs::db_query('create index if not exists idx1_staged_fixes on staged_fixes (signature)');
 		&subs::db_query('create index if not exists idx2_staged_fixes on staged_fixes (status)');
 	}
-	my @caught;
-	foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {
-		my ($kind, $path) = @{$source};
-		push @caught, map { { source => $kind, line => $_ } } &error_watch_catch(&error_watch_read_new($path, $kind));
-	}
-	my %new;
-	foreach my $c ( @caught ) {
-		my $sig = &error_signature($c->{'line'});
-		next unless length $sig;
-		my $row = $new{$sig} //= { source => $c->{'source'}, sample => substr($c->{'line'}, 0, 2000), tally => 0 };
-		$row->{'tally'}++;
-	}
-	foreach my $sig ( sort keys %new ) {
-		my $row = $new{$sig};
-		&staged_fix_note({ source => $row->{'source'}, sample => $row->{'sample'}, tally => $row->{'tally'} });
+	if ($errors_on) {
+		my @caught;
+		foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {
+			my ($kind, $path) = @{$source};
+			push @caught, map { { source => $kind, line => $_ } } &error_watch_catch(&error_watch_read_new($path, $kind));
+		}
+		my %new;
+		foreach my $c ( @caught ) {
+			my $sig = &error_signature($c->{'line'});
+			next unless length $sig;
+			my $row = $new{$sig} //= { source => $c->{'source'}, sample => substr($c->{'line'}, 0, 2000), tally => 0 };
+			$row->{'tally'}++;
+		}
+		foreach my $sig ( sort keys %new ) {
+			my $row = $new{$sig};
+			&staged_fix_note({ source => $row->{'source'}, sample => $row->{'sample'}, tally => $row->{'tally'} });
+		}
 	}
 	# one proposal per tick keeps a model's cost and the tree's patience bounded
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
@@ -13549,6 +13564,93 @@ sub error_watch_tick {
 			$log->info('error watch: auto-apply stood down for "' . substr($pending->{'signature'} || '?', 0, 60) . '" - a file it would write has uncommitted work');
 		}
 	}
+	return 1;
+}
+
+# ---- the guide watch: the Coding agent's other ear --------------------------
+# The Guide's conversations are saved as they go (guide_conversation_<name>,
+# the rows the Agents list reads back), tool observations and all. This reads
+# the ones that changed since last time and stages a turn that went nowhere -
+# a thing not found, a command that could not run, a closing line that says so
+# ("[object Object]" among them) - like an error, so the same propose/Apply
+# loop adjusts the Guide's training: its rules in help.pl, its verbs in gb.pl.
+# A signature dedupes repeats, and a small offset file keeps each conversation
+# from being read twice. The first pass only takes a baseline, so switching the
+# watch on does not stage the whole history at once.
+sub guide_watch_state_file { return &subs::home('~/.president/guide_watch_seen'); }
+
+sub guide_watch_state_load {
+	my $file = &guide_watch_state_file();
+	my $saved = -e $file ? eval { decode_json read_file($file) } : undef;
+	return (ref $saved eq 'HASH') ? $saved : {};
+}
+
+# The words that read like the turn went nowhere. The Guide's phrasebook is
+# small and its observations are its own client's strings, so this is the same
+# text the person sees. "is hidden here" is left out on purpose: refusing a
+# hidden thing is the rule working, not a miss.
+sub guide_watch_trouble {
+	my $text = shift;
+	return 0 unless defined $text && length $text;
+	return 1 if $text =~ /\[object /i;
+	return 1 if $text =~ /could not|cannot|can'?t |unable to/i;
+	return 1 if $text =~ /does not exist|doesn'?t exist|there is no |no such /i;
+	return 1 if $text =~ /found nothing|nothing found|found 0 record/i;
+	return 1 if $text =~ /did not run|no app named|not available here/i;
+	return 0;
+}
+
+sub guide_watch_tick {
+	%setting_memo = ();
+	return unless ((&subs::setting_grabber({ app => 'mail', setting => 'guide_watch' }) // '') eq 'on');
+	my $fresh = !-e &guide_watch_state_file();
+	my $seen = &guide_watch_state_load();
+	my $rows = &subs::db_query("select setting, device, value from settings where app = ? and setting like ?", '__president', 'guide_conversation_%')->hashes;
+	return unless scalar @{$rows};
+	my $noted = 0;
+	my %live;
+	foreach my $row ( @{$rows} ) {
+		next unless length($row->{'setting'} // '');
+		my $key = $row->{'setting'} . '|' . ($row->{'device'} // '');
+		$live{$key} = 1;
+		my $turns = eval { decode_json($row->{'value'} // '') } || [];
+		next unless ref $turns eq 'ARRAY' && scalar @{$turns};
+		my $from = $seen->{$key} || 0;
+		# a thread that shrank was deleted and remade: read it from the top
+		$from = 0 if $from > scalar @{$turns};
+		$seen->{$key} = scalar @{$turns};
+		next if $fresh || $from >= scalar @{$turns};
+		# walk the new rows, carrying the turn as the client saved it: a user
+		# line opens one, and it is judged where the Guide's own words end it -
+		# a step that failed mid-turn and was recovered from is not staged
+		my ($question, $trouble, @said);
+		foreach my $t ( @{$turns}[$from .. $#{$turns}] ) {
+			next unless ref $t eq 'HASH';
+			my $role = $t->{'role'} || 'user';
+			my $text = $t->{'content'} // '';
+			if ($role eq 'user') { $question = $text; $trouble = undef; @said = (); next; }
+			# the action line is not words to judge; the final wording is
+			next if $role eq 'assistant' && $text =~ /^\s*\{/;
+			push @said, (($role eq 'tool' ? '  observed: ' : '  said: ') . substr($text, 0, 300));
+			shift @said while scalar @said > 12;
+			$trouble //= $text if &guide_watch_trouble($text);
+			next unless $role eq 'assistant' && defined $trouble;
+			last if $noted >= 2;
+			$noted++;
+			my $sample = 'The person asked: ' . (defined $question && length $question ? $question : '(nothing said)') . "\n"
+				. "The Guide's turn went:\n" . join("\n", @said) . "\n"
+				. 'The line that reads like trouble: ' . substr($trouble, 0, 500);
+			&staged_fix_note({
+				source => 'guide',
+				signature_text => 'guide: ' . ($question // '') . ' | ' . $trouble,
+				sample => $sample,
+			});
+			$trouble = undef;
+		}
+	}
+	# forget conversations that are gone
+	foreach my $key ( keys %{$seen} ) { delete $seen->{$key} unless $live{$key}; }
+	write_file(&guide_watch_state_file(), encode_json($seen));
 	return 1;
 }
 
@@ -13682,6 +13784,8 @@ sub coding_propose_fix {
 	$system .= "\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . '.';
 	my $where = (($row->{'source'} || '') eq 'js')
 		? 'A FATAL JAVASCRIPT ERROR WAS REPORTED BY A BROWSER IN THE JAWNOS INTERFACE:'
+		: (($row->{'source'} || '') eq 'guide')
+		? "A GUIDE CONVERSATION DID NOT ACCOMPLISH WHAT THE PERSON ASKED. The transcript follows; adjust the Guide's training so this would land next time. Its rules live in help.pl (actions_prompt), its verbs and their descriptions in gb.pl (guide_tools), and the acting loop's resolvers in Manager.pl and public/js/manager/help.js. A rule or a verb's words usually beats code - change the code only when words cannot reach:"
 		: 'AN ERROR WAS CAUGHT IN THE RUNNING SYSTEM (source: ' . ($row->{'source'} || '?') . ' log):';
 	my @lines = (
 		$where,
