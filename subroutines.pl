@@ -8337,6 +8337,56 @@ sub tunnel_checker() {
 				&subs::log_writer('tunnel enrolled ' . substr($tun->{'signatorial'}, 0, 8) . ' from its active tunnel');
 			}
 		}
+		# and name each tunnelled peer in this hub's own device row, so Configure ->
+		# Devices and anything that reads the address map sees a tunnel that came up
+		# since the last scan, and remote_upgrade can target it without a scan. This
+		# mirrors the scan path in device_lister (one PORT_DOCK row per batch, hung
+		# off the loopback NIC that marks this hub), so the two agree on shape. The
+		# write is skipped when nothing changed, so a healthy hub does not churn.
+		{
+			my $hostname = `hostname`; chomp $hostname;
+			my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+			if ($me) {
+				my $address = eval { decode_json $me->{'address'} } || {};
+				my $before = encode_json $address;
+				my $nic;
+				foreach my $k (keys %{$address}) { $nic = $k if ($address->{$k}->{'ip'} || '') eq '127.0.0.1'; }
+				$nic ||= (grep { $_ eq 'lo' } keys %{$address})[0] || (keys %{$address})[0] || 'lo';
+				$address->{$nic}->{'ip'} ||= '127.0.0.1';
+				my $neigh = $address->{$nic}->{'neigh'} || [];
+
+				my @seen_batches;
+				my %active_signatorial;
+				my $dock_tunnels = &subs::db_select('tunnels', undef, { status => 'active' })->hashes;
+				foreach my $tun ( @{$dock_tunnels} ) {
+					next unless $tun->{'name'} && $tun->{'name'} eq 'PORT_DOCK';
+					next unless $tun->{'signatorial'};
+					next if grep { $_ eq $tun->{'batch_uuid'} } @seen_batches;
+					push @seen_batches, $tun->{'batch_uuid'};
+					$active_signatorial{$tun->{'signatorial'}} = 1;
+					my ($entry) = grep { ($_->{'signatorial'} || '') eq $tun->{'signatorial'} } @{$neigh};
+					my $ip = ($tun->{'host'} || $tun->{'ip'} || $tun->{'domain'} || '127.0.0.1');
+					my %vals = (
+						ip => $ip,
+						domain => $ip,
+						PORT_DOCK => $tun->{'in_port'},
+						tunnel => 'yes',
+						signatorial => $tun->{'signatorial'},
+						mac => ($entry && $entry->{'mac'} ? $entry->{'mac'} : &subs::random_string_creator(10)),
+						uuid => ($entry && $entry->{'uuid'} ? $entry->{'uuid'} : &subs::random_string_creator(25)),
+					);
+					if ($entry) { $entry->{$_} = $vals{$_} for keys %vals; }
+					else { push @{$neigh}, { %vals }; }
+				}
+				# a tunnel neighbour whose signatorial no longer has an active tunnel
+				# is dropped, so a peer that stops dialling does not linger on the map
+				@{$neigh} = grep { !($_->{'tunnel'} && $_->{'tunnel'} eq 'yes') || $active_signatorial{$_->{'signatorial'}} } @{$neigh};
+
+				$address->{$nic}->{'neigh'} = $neigh;
+				my $after = encode_json $address;
+				&subs::db_update('devices', { address => $after }, { uuid => $me->{'uuid'} }) if ($after ne $before);
+			}
+		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
 			my $rm = &subs::remote_machine_lister({ signatorial => $td->{'signatorial'}, limit => 1 });
