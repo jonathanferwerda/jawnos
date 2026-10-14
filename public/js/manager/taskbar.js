@@ -202,26 +202,26 @@ function jawnosClockText(timestamp) {
 	}
 	return parts.weekday + ' ' + date_text + parts.year + ' ' + time;
 }
-// Whether the clock's face is the present moment. A live view feeds it the
-// machine's own clock on every poll - the request carries Date.now and the
-// server echoes it back unless the time machine or a timeshift moves the view -
-// so the face agrees with now to within that interval. Further off than one
-// interval, the view is wearing another time. The face is only ever as fresh as
-// the poll that fed it, so the lag one interval allows is not counted against it.
+// Whether the clock's face is off the present. The face is the view's centre,
+// which the time machine or a timeshift moves; while either is set, the face
+// wears another time and is not now. Staleness is deliberately not counted: a
+// poll that has only fallen behind leaves the face where it was, so this reads
+// the travel settings and never the wall clock. (A '0s' time machine is the
+// present itself, and graphicalize clears it.)
 function jawnosClockAstray() {
-	if (jawnosClockStamp === null || jawnosClockStamp === undefined) { return false; }
-	var freq = parseInt(localStorage.getItem('update_frequency'), 10);
-	var slack = ((isFinite(freq) && freq > 0) ? freq : 0) + 5000;
-	return Math.abs(Date.now() - jawnosClockStamp) > slack;
+	var time_machine = localStorage.getItem('time_machine');
+	if (time_machine && time_machine != '0s' && time_machine != 'in 0s') { return true; }
+	var timeshift = parseFloat(localStorage.getItem('timeshift'));
+	return isFinite(timeshift) && timeshift != 0;
 }
-// Light the clock's plate while its face is not now, so a view that has slipped
-// off the present - down the time machine, under a timeshift, or simply gone
-// stale between polls - cannot be read as the present.
+// Light the clock's plate while the view is carried off the present - down the
+// time machine or under a timeshift - so its face cannot be read as the present.
 function jawnosClockAstrayApply() {
 	$('#taskbar_clock').attr('astray', jawnosClockAstray() ? 'yes' : 'no');
 }
 // The clock is redrawn from the last timestamp it was given, so a change to its
-// format shows at once rather than at the next view refresh.
+// format shows at once rather than at the next view refresh. The astray flag
+// rides along: every travel change rides a fresh render in through here anyway.
 var jawnosClockStamp = null;
 function jawnosClockShow(timestamp) {
 	if (timestamp !== undefined && timestamp !== null) { jawnosClockStamp = timestamp; }
@@ -229,9 +229,6 @@ function jawnosClockShow(timestamp) {
 	$('#taskbar_clock').html(jawnosClockText(jawnosClockStamp));
 	jawnosClockAstrayApply();
 }
-// The present keeps moving whether or not anything is fetched, so the plate is
-// re-read on its own beat: a stalled poll cannot leave a stale face unlit.
-setInterval(jawnosClockAstrayApply, 1000);
 
 // The search's own home: the taskbar's right end, the start menu's corner
 // beside the leave, now and bird buttons, or the dock's row. One writer, so the
