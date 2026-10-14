@@ -20100,6 +20100,8 @@ post '/manager/coding/heal' => sub($c) {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	unless ($model) { $c->render(json => { error => "No Coding model is set (Configure \x{2192} Platform)." }); return; }
+	# the thinking effort set beside the Coding model (none/low/high/max)
+	my $thinking = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' });
 	# which thread this belongs to, so the same chatbox remembers across turns
 	my $conversation = $c->param('conversation') || 'coding';
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
@@ -20117,7 +20119,7 @@ post '/manager/coding/heal' => sub($c) {
 	my $tries = 0;
 	while ($tries++ < 12) {
 		my $system = coding_system_prompt();
-		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines) . "\n\nReply with the single next JSON action.");
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines) . "\n\nReply with the single next JSON action.", $thinking);
 		if ($err || !$text) { push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') }; last; }
 		my $action = eval { decode_json $text };
 		unless ($action && $action->{'action'}) {

@@ -11187,7 +11187,7 @@ sub ai_response_text {
 }
 
 sub ai_chat_raw {
-	my ($model, $messages) = @_;
+	my ($model, $messages, $thinking) = @_;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
 	my $suds = &subs::suds_grabber();
@@ -11252,10 +11252,46 @@ sub ai_chat_raw {
 		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0 };
 	}
 
+	# Thinking effort (none/low/high/max): a hint each provider reads its own way.
+	# none adds nothing, so a call with no level is byte-identical to the old one.
+	my $level = &ai_thinking_level($thinking);
+	my $payload_plain = { %{$payload} };
+	if (length $level) {
+		if ($provider eq 'anthropic') {
+			# the budget must sit under max_tokens, and 1024 is the floor
+			my $budget = ($level eq 'low' ? 1024 : $level eq 'high' ? 4096 : 8192);
+			$payload->{'max_tokens'} = $budget + 2048;
+			$payload->{'thinking'} = { type => 'enabled', budget_tokens => $budget };
+		}
+		elsif ($provider eq 'google') {
+			$payload->{'generationConfig'} = { thinkingConfig => { thinkingBudget => ($level eq 'low' ? 1024 : $level eq 'high' ? 8192 : 24576) } };
+		}
+		elsif ($provider eq 'ollama') {
+			$payload->{'think'} = ($level eq 'max' ? 'high' : $level);
+		}
+		elsif ($provider eq 'openrouter') {
+			$payload->{'reasoning'} = { effort => ($level eq 'max' ? 'high' : $level) };
+		}
+		else {
+			# the OpenAI-compatible crowd reads reasoning_effort (high is every
+			# list's top rung, so max lands there); one that does not is retried
+			# without below
+			$payload->{'reasoning_effort'} = ($level eq 'max' ? 'high' : $level);
+		}
+	}
+
 	my $tx = $ua->build_tx(POST => $url => $headers => json => $payload);
 	$ua->start($tx);
 	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
 	my $res = $tx->res;
+	# A model that does not understand the thinking knob (an older local model, a
+	# provider that never adopted the field) must not cost the call: put the same
+	# request on the wire again without it and carry on.
+	if (length $level && !$res->is_success && $res->code == 400 && ($res->body || '') =~ /reason|think|unknown|unrecognized|unsupported|invalid/i) {
+		my $tx2 = $ua->build_tx(POST => $url => $headers => json => $payload_plain);
+		$ua->start($tx2);
+		$res = $tx2->res unless $tx2->error;
+	}
 	unless ($res->is_success) {
 		my $body = substr($res->body || '', 0, 500);
 		# out of credit reads the same at every provider: stand the bucket down, so
@@ -11286,18 +11322,18 @@ sub ai_chat_raw {
 # model whose bucket is stood down steps down to a free one here, so every caller
 # gets the fallback.
 sub ai_chat_parts {
-	my ($model, $messages) = @_;
+	my ($model, $messages, $thinking) = @_;
 	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
 		my $free = &ai_free_model();
 		if ($free) { &subs::say_it('AI: ' . $model . ' is stood down (no credit); using the free model ' . $free); $model = $free; }
 	}
-	my ($body, $err) = &ai_chat_raw($model, $messages);
+	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking);
 	$ai_last_model = $model;
 	# a fresh credit failure (marked down inside the call) also falls back, once
 	if ($err && &ai_model_paid($model)) {
 		my $free = &ai_free_model();
 		if ($free && $free ne $model) {
-			my ($body2, $err2) = &ai_chat_raw($free, $messages);
+			my ($body2, $err2) = &ai_chat_raw($free, $messages, $thinking);
 			if (!$err2) { ($body, $err) = ($body2, undef); $model = $free; $ai_last_model = $model; &subs::say_it('AI: answered with the free model ' . $free); }
 		}
 	}
@@ -11322,8 +11358,8 @@ sub ai_chat_parts {
 }
 
 sub ai_chat {
-	my ($model, $messages) = @_;
-	my ($parts, $err) = &ai_chat_parts($model, $messages);
+	my ($model, $messages, $thinking) = @_;
+	my ($parts, $err) = &ai_chat_parts($model, $messages, $thinking);
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
@@ -11331,9 +11367,18 @@ sub ai_chat {
 
 # the same wire pen_message uses, but the answer is read whole: the evaluation
 # is a report, not a conversation
+# The thinking levels the Plat panel stores: none means "let the model answer
+# as it always has" (no field is added anywhere).
+sub ai_thinking_level {
+	my $v = shift;
+	return '' unless defined $v && length $v;
+	return $v if $v =~ /^(?:low|high|max)$/;
+	return '';
+}
+
 sub evaluation_model_call() {
-	my ($model, $system, $user) = @_;
-	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ]);
+	my ($model, $system, $user, $thinking) = @_;
+	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
 }
 
 # Whether this machine can actually run the evaluation right now. The wish to
@@ -13775,6 +13820,8 @@ sub coding_propose_fix {
 		return 'over-budget';
 	}
 	my $ai_start = { calls => $ai_tokens->{'calls'}, in => $ai_tokens->{'in'}, out => $ai_tokens->{'out'} };
+	# the coding agent's thinking effort, set in Configure -> Plat beside its model
+	my $thinking = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' });
 	# a fallback model's stand-down notice must not speak from this fork
 	local $say_quiet = 1;
 	require &error_watch_repo() . '/help.pl';
@@ -13799,7 +13846,7 @@ sub coding_propose_fix {
 	my $final = '';
 	my $tries = 0;
 	while ($tries++ < 10) {
-		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines));
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines), $thinking);
 		if ($err || !$text) {
 			push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') };
 			$final = 'the model could not be reached: ' . ($err || 'no answer');

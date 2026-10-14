@@ -34,7 +34,7 @@
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
 	<h3>Agent models</h3>
-	<p class="cfg-note">Which model each assistant uses. Each list offers only models that fit the role, and marks whether a model is free or paid.</p>
+	<p class="cfg-note">Which model each assistant uses. Each list offers only models that fit the role, and marks whether a model is free or paid. The Coding agent also carries Thinking — none lets it answer as it always has, and low/high/max ask it to reason longer first; a provider or model without such a knob simply ignores it.</p>
 	<% if (@down) { %>
 		<p class="cfg-note">Out of credit just now, so their paid models are hidden:
 			<% foreach my $b ( @down ) { %><span style="white-space:nowrap;"><b><%= $b %></b> <button class="ai_avail_clear" bucket="<%= $b %>" style="font-size:11px;">Clear</button></span> <% } %>
@@ -72,6 +72,18 @@
 					<% } %>
 				</select>
 			</div>
+			<% if ($setting eq 'coding_assistant') {
+				my $think = (&subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' }) // 'none');
+			%>
+				<div class="cfg-row">
+					<label>Thinking</label>
+					<select class="configure_input" app="mail" setting="coding_thinking">
+						<% foreach my $lvl (qw/none low high max/) { %>
+							<option value="<%= $lvl %>" <% if ($think eq $lvl) { %>selected="selected"<% } %>><%= $lvl %></option>
+						<% } %>
+					</select>
+				</div>
+			<% } %>
 		<% } %>
 	</div>
 

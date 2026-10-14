@@ -125,6 +125,7 @@
 			<textarea id="help_question" rows="1" placeholder="Ask the guide — or tell it what you want to do…" data-default="<%= $default_question %>"
 				style="flex:1;box-sizing:border-box;height:36px;min-height:36px;max-height:36px;overflow-y:auto;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 9px;font-size:13px;font-family:inherit;"></textarea>
 			<button id="help_ask" class="button" hint="Ask, or ask it to do it" style="padding:8px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;white-space:nowrap;">Guide me</button>
+			<button id="help_converse" class="button" hint="Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — press End when you are done, or say “bye jawn”" style="padding:8px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;white-space:nowrap;">Converse</button>
 		</div>
 	</div>
 </div>

@@ -153,6 +153,8 @@ function helpGuideAnswer(text) {
 	bar.attr('data-q', q).attr('data-a', text);
 	log.append(bar);
 	log.scrollTop(log[0].scrollHeight);
+	// in a conversation the guide listens again the moment it has answered
+	if (jawnos_help_talking) { helpConversationListen(); }
 }
 
 $(document).on('click', '.help_chat_log span[verdict]', function () {
@@ -417,6 +419,15 @@ function helpAsk() {
 		helpListenToggle(function (text) { $('#help_question').val(text); helpAsk(); });
 		return;
 	}
+	// the wake and the farewell are read before anything else: "hey jawn" (or
+	// "jawn do") opens a conversation, "bye jawn" closes it
+	if (helpConversationBye(q)) { $('#help_question').val(''); if (jawnos_help_talking) { helpConversationEnd(); } return; }
+	var wake_rest = helpConversationWake(q);
+	if (wake_rest !== null) {
+		helpConversationOn();
+		if (!wake_rest) { $('#help_question').val(''); helpChatAdd('step', 'Yes?'); helpConversationListen(); return; }
+		q = wake_rest;
+	}
 	$('#help_question').val('');
 	helpShowChat(true);
 	jawnos_help_chat.push({ role: 'user', content: q });
@@ -451,14 +462,44 @@ function helpListenToggle(onText) {
 		jawnos_help_recorder = rec;
 		jawnos_help_listening = true;
 		$('#help_ask').text('Stop');
-		helpChatAdd('step', 'Listening — press Stop when you are done.');
 		rec.ondataavailable = function (e) { if (e.data && e.data.size) { jawnos_help_chunks.push(e.data); } };
 		rec.onstop = function () {
 			jawnos_help_listening = false;
+			helpListenCleanup();
 			$('#help_ask').text('Send');
 			stream.getTracks().forEach(function (t) { t.stop(); });
+			if (jawnos_help_listen_discard) { jawnos_help_listen_discard = false; return; }
 			helpListenSend(new Blob(jawnos_help_chunks, { type: rec.mimeType || 'audio/webm' }));
 		};
+		if (jawnos_help_talking) {
+			// hands-free: the clip ends by itself after a spell of speech and a
+			// moment of silence, so a conversation needs no Stop between turns
+			helpChatAdd('step', 'Listening…');
+			try {
+				var ctx = new (window.AudioContext || window.webkitAudioContext)();
+				var src = ctx.createMediaStreamSource(stream);
+				var an = ctx.createAnalyser();
+				an.fftSize = 1024;
+				src.connect(an);
+				var data = new Uint8Array(an.fftSize);
+				var heard = false, quiet_since = 0;
+				jawnos_help_audioctx = ctx;
+				jawnos_help_meter = setInterval(function () {
+					an.getByteTimeDomainData(data);
+					var rms = 0;
+					for (var i = 0; i < data.length; i++) { var d = (data[i] - 128) / 128; rms += d * d; }
+					rms = Math.sqrt(rms / data.length);
+					if (rms > 0.04) { heard = true; quiet_since = 0; return; }
+					if (!heard) { return; }
+					if (!quiet_since) { quiet_since = Date.now(); return; }
+					if (Date.now() - quiet_since > 1100) { helpListenStop(); }
+				}, 120);
+				jawnos_help_maxtimer = setTimeout(helpListenStop, 30000);
+			} catch (e) { jawnos_help_audioctx = null; }
+		}
+		else {
+			helpChatAdd('step', 'Listening — press Stop when you are done.');
+		}
 		rec.start();
 	}).catch(function () {
 		jawnos_help_listening = false;
@@ -468,7 +509,7 @@ function helpListenToggle(onText) {
 }
 
 function helpListenSend(blob) {
-	if (!blob || !blob.size) { helpChatAdd('step', 'I did not catch any audio.'); return; }
+	if (!blob || !blob.size) { helpChatAdd('step', 'I did not catch any audio.'); if (jawnos_help_talking) { helpConversationListen(); } return; }
 	helpChatAdd('step', 'Transcribing…');
 	$.ajax({
 		url: '/manager/help/listen',
@@ -477,14 +518,102 @@ function helpListenSend(blob) {
 		processData: false,
 		contentType: 'application/octet-stream',
 		success: function (r) {
-			if (!r || r.error || !r.text) { helpChatAdd('step', (r && r.error) || 'I could not make out any words.'); return; }
+			if (!r || r.error || !r.text) { helpChatAdd('step', (r && r.error) || 'I could not make out any words.'); if (jawnos_help_talking) { helpConversationListen(); } return; }
 			var cb = jawnos_help_listen_cb;
 			jawnos_help_listen_cb = null;
 			if (cb) { cb(r.text); } else { $('#help_question').val(r.text); }
 		},
-		error: function () { helpChatAdd('step', 'I could not transcribe that.'); }
+		error: function () { helpChatAdd('step', 'I could not transcribe that.'); if (jawnos_help_talking) { helpConversationListen(); } }
 	});
 }
+
+// ---- conversation mode ----------------------------------------------------
+// The guide as a conversationalist: once opened, the mic comes back after each
+// answer and each utterance is the next turn of the same thread, until "bye
+// jawn" (or the End button) closes it. "hey jawn" and "jawn do" open it,
+// whether typed or heard back from whisper - and an on-device listener will one
+// day call the same entry point (jawnConversationWake) when its model lands.
+var jawnos_help_talking = false;
+var jawnos_help_converse_timer = null;
+var jawnos_help_listen_discard = false;
+var jawnos_help_meter = null;
+var jawnos_help_maxtimer = null;
+var jawnos_help_audioctx = null;
+
+function helpListenCleanup() {
+	if (jawnos_help_meter) { clearInterval(jawnos_help_meter); jawnos_help_meter = null; }
+	if (jawnos_help_maxtimer) { clearTimeout(jawnos_help_maxtimer); jawnos_help_maxtimer = null; }
+	if (jawnos_help_audioctx) { try { jawnos_help_audioctx.close(); } catch (e) {} jawnos_help_audioctx = null; }
+}
+
+// end the clip now (the silence watch and the cap call this)
+function helpListenStop() {
+	helpListenCleanup();
+	if (jawnos_help_recorder && jawnos_help_recorder.state !== 'inactive') { jawnos_help_recorder.stop(); }
+}
+
+function helpConversationBye(q) {
+	return /^(?:bye|goodbye|good ?night|that'?s all|that is all|we'?re done)[,!. ]+jawn\b/i.test(q || '');
+}
+
+// null when the words carry no wake; '' when the wake stood alone; the words
+// after it otherwise
+function helpConversationWake(q) {
+	q = q || '';
+	var m = q.match(/^(?:hey|hi|hello|ok|okay)[,!. ]+jawn\b[,!. ]*(.*)$/i)
+		|| q.match(/^jawn\b[,!. ]+do\b[,!. ]*(.*)$/i)
+		|| q.match(/^jawn\b[,!. ]+(.*)$/i);
+	return m ? $.trim(m[1] || '') : null;
+}
+
+// the wake an on-device listener will call when its model lands
+function jawnConversationWake() { helpConversationOn(); helpConversationListen(); }
+function jawnConversationEnd() { helpConversationEnd(); }
+
+function helpConversationOn() {
+	if (jawnos_help_talking) { return; }
+	jawnos_help_talking = true;
+	$('#help_converse').text('End').css({ 'border-color': '#e23b3b', 'color': '#e23b3b' }).attr('hint', 'End the conversation');
+	helpChatAdd('step', 'Conversation on — I will keep listening after each answer. Press End or say “bye jawn” to stop.');
+}
+
+function helpConversationEnd() {
+	if (!jawnos_help_talking) { return; }
+	jawnos_help_talking = false;
+	if (jawnos_help_converse_timer) { clearTimeout(jawnos_help_converse_timer); jawnos_help_converse_timer = null; }
+	if (jawnos_help_listening) { jawnos_help_listen_discard = true; helpListenStop(); }
+	$('#help_converse').text('Converse').css({ 'border-color': 'var(--line)', 'color': '' })
+		.attr('hint', 'Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — press End when you are done, or say “bye jawn”');
+	helpChatAdd('guide', 'Alright — I will be here.');
+}
+
+function helpConversationListen() {
+	if (!jawnos_help_talking) { return; }
+	if (jawnos_help_converse_timer) { clearTimeout(jawnos_help_converse_timer); }
+	jawnos_help_converse_timer = setTimeout(function () {
+		jawnos_help_converse_timer = null;
+		if (!jawnos_help_talking) { return; }
+		helpListenToggle(function (text) {
+			if (!jawnos_help_talking) { return; }
+			var q = $.trim(text || '');
+			if (!q) { helpConversationListen(); return; }
+			if (helpConversationBye(q)) { helpConversationEnd(); return; }
+			var rest = helpConversationWake(q);
+			if (rest !== null) { q = rest; }
+			if (!q) { helpChatAdd('step', 'Yes?'); helpConversationListen(); return; }
+			helpShowChat(true);
+			jawnos_help_chat.push({ role: 'user', content: q });
+			helpChatAdd('user', q);
+			if (jawnos_help_coding) { helpCodingRun(q); return; }
+			helpAgentStep(0);
+		});
+	}, 350);
+}
+
+$(document).on('click', '#help_converse', function () {
+	if (jawnos_help_talking) { helpConversationEnd(); }
+	else { helpConversationOn(); helpConversationListen(); }
+});
 
 // ---- the coding agent ----------------------------------------------------
 // When the Coding box is ticked the composer drives the self-healing agent
