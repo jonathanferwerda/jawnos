@@ -103,6 +103,46 @@
 		});
 	}
 
+	// the signed-in session carries a warranty that lapses while a tab idles (phone
+	// asleep, tab backgrounded) and the next touch would flash the gate. Prove the
+	// key again quietly - challenge then login, no reload, no gate - so the warranty
+	// is renewed under the user instead of asking them to walk back in.
+	function reauth() {
+		var uuid = localStorage.getItem('device_uuid');
+		if (!uuid) { return Promise.resolve(); }
+		return idbGet('device_key').then(function (key) {
+			if (!key) { return; }
+			return post('/manager/device/challenge', { device_uuid: uuid }).then(function (r) {
+				if (!r || !r.ok || !r.nonce) { return; }
+				var msg = 'device-login\n' + uuid + '\n' + r.nonce;
+				return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+					return post('/manager/device/login', { device_uuid: uuid, nonce: r.nonce, signature: b64(sig) });
+				});
+			});
+		}).catch(function () {});
+	}
+
+	// keep the warranty warm: re-prove the key when the page becomes visible again
+	// (the moment a sleeping phone or background tab wakes) and on a slow timer, so
+	// an always-visible but idle desktop does not lapse either. Throttled so a burst
+	// of focus/visibility/pageshow events does not hammer the house.
+	function wireKeepalive() {
+		if (!ed25519() || !localStorage.getItem('device_uuid')) { return; }
+		var last = Date.now();
+		function maybe() {
+			var now = Date.now();
+			if (now - last < 60000) { return; }
+			last = now;
+			reauth();
+		}
+		document.addEventListener('visibilitychange', function () {
+			if (document.visibilityState === 'visible') { maybe(); }
+		});
+		window.addEventListener('focus', maybe);
+		window.addEventListener('pageshow', maybe);
+		setInterval(maybe, 25 * 60 * 1000);
+	}
+
 	// the approval door: ask the house; a citizen approves the short code on a
 	// device that is already signed in; then walk in on the key made here
 	function wireApproval() {
@@ -188,4 +228,5 @@
 			});
 		});
 	}).catch(function () {});
+wireKeepalive();
 })();
