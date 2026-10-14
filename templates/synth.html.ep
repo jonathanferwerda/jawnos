@@ -6,6 +6,16 @@
 		<select id="synth_midi" class="synth_select" hint="A connected USB MIDI keyboard"></select>
 		<button id="synth_midi_connect" class="hover" hint="Connect a USB MIDI keyboard">Connect</button>
 		<button id="synth_keyboard_toggle" class="hover" hint="Play the piano with your computer keyboard (A W S E D F T G Y H U J K …)">Keys: off</button>
+		<button id="synth_arp_toggle" class="hover" hint="Arpeggiate the notes you hold">Arp: off</button>
+		<select id="synth_arp_rate" class="synth_select" hint="Arpeggiator speed (steps per second)">
+			<option value="4">4</option><option value="6">6</option><option value="8" selected>8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+		</select>
+		<select id="synth_arp_mode" class="synth_select" hint="Arpeggiator pattern">
+			<option value="up">up</option><option value="down">down</option><option value="updown">up/down</option><option value="random">random</option>
+		</select>
+		<select id="synth_arp_octaves" class="synth_select" hint="Arpeggiator octaves">
+			<option value="1">1 oct</option><option value="2">2 oct</option><option value="3">3 oct</option><option value="4">4 oct</option>
+		</select>
 		<span id="synth_octave" class="synth_voices" style="margin-left:0;" hint="Octave for the computer keyboard (Z down, X up)"></span>
 		<span id="synth_voices" class="synth_voices"></span>
 	</div>
@@ -29,7 +39,7 @@
 </div>
 
 <style>
-	#synth { padding: 8px; }
+	#synth { padding: 8px; max-width: 100%; box-sizing: border-box; }
 	.synth_toolbar {
 		display: flex;
 		align-items: center;
@@ -59,12 +69,18 @@
 
 	.synth_keys {
 		position: relative;
+		width: 100%;
+		box-sizing: border-box;
 		height: 124px;
 		overflow-x: auto;
 		overflow-y: hidden;
-		white-space: nowrap;
 		padding-bottom: 4px;
 		border-radius: 4px;
+	}
+	.synth_keys_inner {
+		position: relative;
+		height: 118px;
+		white-space: nowrap;
 	}
 	.piano_key {
 		cursor: pointer;

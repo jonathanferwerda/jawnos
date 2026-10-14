@@ -180,6 +180,7 @@
 		lfoPitch: null,
 		lfoCutoff: null,
 		lfoAmp: null,
+		arp: { on: false, rate: 8, mode: 'up', octaves: 1, held: [], step: 0, timer: null },
 		midi: { access: null, inputs: [], selected: null, listeners: [] }
 	};
 
@@ -279,6 +280,43 @@
 		}
 		S.drive.curve = curve;
 		S.drive.oversample = '4x';
+	}
+
+	// ---- the arpeggiator: held notes are stepped through, in time ---------------
+
+	function arpEnsure() {
+		if (S.arp.timer) { return; }
+		S.arp.timer = setInterval(arpTick, Math.max(20, 1000 / Math.max(0.5, S.arp.rate)));
+	}
+
+	function arpStop() {
+		if (S.arp.timer) { clearInterval(S.arp.timer); S.arp.timer = null; }
+		S.arp.step = 0;
+	}
+
+	function arpPattern() {
+		var held = S.arp.held.slice();
+		if (!held.length) { return []; }
+		var notes = [];
+		for (var o = 0; o < Math.max(1, S.arp.octaves); o++) {
+			held.forEach(function (n) { notes.push(n + o * 12); });
+		}
+		notes.sort(function (a, b) { return a - b; });
+		if (S.arp.mode === 'down') { notes.reverse(); }
+		else if (S.arp.mode === 'updown' && notes.length > 2) { notes = notes.concat(notes.slice(1, -1).reverse()); }
+		else if (S.arp.mode === 'random') { notes.sort(function () { return Math.random() - 0.5; }); }
+		return notes;
+	}
+
+	function arpTick() {
+		if (!S.arp.on || !S.arp.held.length) { arpStop(); return; }
+		var pattern = arpPattern();
+		if (!pattern.length) { return; }
+		var note = pattern[S.arp.step % pattern.length];
+		S.arp.step++;
+		var gate = Math.max(40, (1000 / Math.max(0.5, S.arp.rate)) * 0.6);
+		soundNote(note, 0.85);
+		setTimeout(function () { releaseNote(note); }, gate);
 	}
 
 	// ---- voices ----------------------------------------------------------------
@@ -427,20 +465,35 @@
 		}
 	}
 
-	function noteOn(note, velocity) {
-		if (!S.ctx) { return; }
-		note = Math.round(clampNumber(note, 0, 127, 60));
-		velocity = clampNumber(velocity, 0, 1, 0.8);
-		S.playing[note] = true;
+	function soundNote(note, velocity) {
 		var v = newVoice(note, velocity);
 		S.voices[v.id] = v;
 		S.order.push(v.id);
 		stealing();
 	}
 
+	function noteOn(note, velocity) {
+		if (!S.ctx) { return; }
+		note = Math.round(clampNumber(note, 0, 127, 60));
+		velocity = clampNumber(velocity, 0, 1, 0.8);
+		S.playing[note] = true;
+		if (S.arp.on) {
+			if (S.arp.held.indexOf(note) === -1) { S.arp.held.push(note); }
+			arpEnsure();
+			return;
+		}
+		soundNote(note, velocity);
+	}
+
 	function noteOff(note) {
 		if (!S.ctx) { return; }
 		note = Math.round(clampNumber(note, 0, 127, 60));
+		if (S.arp.on) {
+			var at = S.arp.held.indexOf(note);
+			if (at >= 0) { S.arp.held.splice(at, 1); }
+			if (!S.arp.held.length) { arpStop(); }
+			return;
+		}
 		if (S.sustain) { S.sustainNotes.push(note); return; }
 		releaseNote(note);
 	}
@@ -456,6 +509,8 @@
 
 	function allNotesOff() {
 		S.sustainNotes = [];
+		arpStop();
+		S.arp.held = [];
 		Object.keys(S.voices).forEach(function (id) {
 			var v = S.voices[id];
 			if (!v.released) { v.released = true; if (v.stopSoon) { v.stopSoon(S.ctx.currentTime); } }
@@ -572,6 +627,18 @@
 		allNotesOff: allNotesOff,
 		releaseAll: allNotesOff,
 		voices: voices,
+		arp: {
+			set: function (opts) {
+				opts = opts || {};
+				if ('on' in opts) { S.arp.on = !!opts.on; if (!S.arp.on) { arpStop(); S.arp.held = []; } }
+				if ('rate' in opts) { S.arp.rate = clampNumber(opts.rate, 0.5, 30, 8); if (S.arp.timer) { arpStop(); arpEnsure(); } }
+				if ('mode' in opts) { S.arp.mode = String(opts.mode); }
+				if ('octaves' in opts) { S.arp.octaves = Math.round(clampNumber(opts.octaves, 1, 4, 1)); }
+				if (S.arp.on && S.arp.held.length) { arpEnsure(); }
+				return S.arp.on;
+			},
+			get: function () { return { on: S.arp.on, rate: S.arp.rate, mode: S.arp.mode, octaves: S.arp.octaves }; }
+		},
 		set: set,
 		setPatch: setPatch,
 		getPatch: getPatch,
@@ -611,12 +678,16 @@
 		var host = $('#synth_keys');
 		if (!host.length || host.data('built')) { return; }
 		host.empty();
+		// the keys live in an inner strip of full width, so the roll itself is only
+		// ever as wide as its container and the mouse scrolls the strip inside it
+		var inner = $('<div class="synth_keys_inner"></div>');
+		host.append(inner);
 		var whiteCount = 0, i;
 		for (i = SYNTH_FIRST; i <= SYNTH_LAST; i++) {
 			if (synthIsBlack(i)) { continue; }
 			var key = $('<div class="piano_key white"></div>').attr('midi', i).attr('note', i).css('width', WHITE_W + 'px');
 			if (i % 12 === 0) { key.text('C' + (i / 12 - 1)); }
-			host.append(key);
+			inner.append(key);
 			whiteCount++;
 		}
 		var seen = 0;
@@ -624,18 +695,23 @@
 			if (!synthIsBlack(i)) { seen++; continue; }
 			var black = $('<div class="piano_key black"></div>').attr('midi', i).attr('note', i);
 			black.css('left', (seen * WHITE_W - BLACK_W / 2) + 'px');
-			host.append(black);
+			inner.append(black);
 		}
-		host.css('min-width', (whiteCount * WHITE_W) + 'px');
+		inner.css('width', (whiteCount * WHITE_W) + 'px');
 		host.data('built', 1);
 	}
 
-	function synthScrollToMiddle() {
+	// Bring the octave the computer keyboard is on into view, centred in whatever
+	// width the window gives the roll.
+	function synthFocusOctave() {
 		var host = $('#synth_keys');
-		if (!host.length) { return; }
-		var key = host.find('.piano_key[midi="60"]');
+		if (!host.length || !host.data('built')) { return; }
+		var base = keyboardOctave * 12 + 12;
+		var key = host.find('.piano_key[midi="' + base + '"]');
 		if (!key.length) { return; }
-		host.scrollLeft(Math.max(0, key.position().left - host.width() / 2));
+		var octaveW = 7 * WHITE_W;
+		var target = key.position().left - Math.max(0, (host.width() - octaveW) / 2);
+		host.stop(true).animate({ scrollLeft: Math.max(0, target) }, 180);
 	}
 
 	// The computer keyboard plays the piano: the usual A W S E D F T G Y H U J K row,
@@ -688,7 +764,7 @@
 		synthSyncSliders();
 		synthPopulateMidi();
 		synthRenderOctave();
-		synthScrollToMiddle();
+		synthFocusOctave();
 		return ctx;
 	};
 
@@ -755,14 +831,29 @@
 			keyboardHeld = {};
 		}
 		else if (!jawnosSynth.context()) { pianoInit(); }
+		synthFocusOctave();
+	});
+
+	$(document).on('click', '#synth_arp_toggle', function () {
+		var on = window.jawnosSynth.arp.get().on;
+		window.jawnosSynth.arp.set({ on: !on });
+		$(this).text('Arp: ' + (!on ? 'on' : 'off'));
+	});
+
+	$(document).on('change', '#synth_arp_rate, #synth_arp_mode, #synth_arp_octaves', function () {
+		window.jawnosSynth.arp.set({
+			rate: $('#synth_arp_rate').val(),
+			mode: $('#synth_arp_mode').val(),
+			octaves: $('#synth_arp_octaves').val()
+		});
 	});
 
 	$(document).on('keydown', function (e) {
 		if (!keyboardOn || e.metaKey || e.ctrlKey || e.altKey) { return; }
 		if ($(e.target).is('input, select, textarea, [contenteditable]')) { return; }
 		var k = String(e.key || '').toLowerCase();
-		if (k === 'z') { keyboardOctave = Math.max(0, keyboardOctave - 1); synthRenderOctave(); e.preventDefault(); return; }
-		if (k === 'x') { keyboardOctave = Math.min(8, keyboardOctave + 1); synthRenderOctave(); e.preventDefault(); return; }
+		if (k === 'z') { keyboardOctave = Math.max(0, keyboardOctave - 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
+		if (k === 'x') { keyboardOctave = Math.min(8, keyboardOctave + 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
 		if (!(k in KEYMAP) || keyboardHeld[k] != null) { return; }
 		if (!jawnosSynth.context()) { pianoInit(); }
 		var note = synthKeyboardNote(k);

@@ -109,12 +109,14 @@ our %topic = (
 		verified => '2026-10-14',
 		body => [
 			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys (a full 88-key range, A0 to C8, that scrolls sideways), a connected USB MIDI keyboard, or your computer keyboard. It shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
-			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. Fifteen presets are included: Grand Piano, Electric Piano, Bell, Warm Pad, Saw Lead, Sub Bass, Strings, Organ, Pluck, Marimba, Vibraphone, Honky Tonk, Nylon Pluck, Harpsichord and Music Box.'
+			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. Fifteen presets are included: Grand Piano, Electric Piano, Bell, Warm Pad, Saw Lead, Sub Bass, Strings, Organ, Pluck, Marimba, Vibraphone, Honky Tonk, Nylon Pluck, Harpsichord and Music Box.',
+			'The piano roll is the full 88 keys, as wide as its window and scrolled to the octave you are playing from the computer keyboard. An arpeggiator (Arp) turns a held chord into a running figure - up, down, up/down or random, over one to four octaves, at a settable rate.'
 		],
 		steps => [
 			'Open Synth.',
 			'Choose a preset, play the on-screen keys, or press Connect and play a USB MIDI keyboard.',
-			'Press Keys to play from the computer keyboard (A W S E D F T G Y H U J K; Z and X change octave).',
+			'Press Keys to play from the computer keyboard (A W S E D F T G Y H U J K; Z and X change octave, and the roll follows).',
+			'Press Arp and hold a chord to arpeggiate it; set the rate, pattern and octaves beside it.',
 			'In Studio, set a channel\'s input to Synth (or drag the JawnSynth pedal onto it), arm it, and record what you play.'
 		],
 		related => [ 'studio', 'music' ]
