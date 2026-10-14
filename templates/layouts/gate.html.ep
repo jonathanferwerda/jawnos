@@ -1,11 +1,9 @@
 <!DOCTYPE html>
 <html>
   <head>
-		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
-			<link rel='icon' type='image/png' href="<%= $logo %>">
-		<% } else { %>
-		  <link rel='icon' href="/images/make believe/Pillow.png"/>
-		<% } %>
+		<%# the gate wears the house's own picture, not the person's: the chosen logo
+		    is theirs, and the gate is shown before anyone has signed in %>
+		<link rel='icon' href="/images/make believe/Pillow.png"/>
 
     <title><%= title %></title>
 

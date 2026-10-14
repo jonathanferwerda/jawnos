@@ -123,8 +123,11 @@ function gateKeeper(response) {
 			// a ticket minted without a debriefer parses to null; guard it or this
 			// throws and the caller (the box office splash) never redirects
 			if (d && typeof d === 'object') {
+				// seed, don't clobber: the ticket's snapshot fills what this browser has
+				// never kept and never writes over what it already holds, so it cannot
+				// drag a browser that has moved on back to the day the ticket was made
 				$.each(d,function(i,v) {
-					localStorage.setItem(i,v);
+					if (localStorage.getItem(i) === null) { localStorage.setItem(i,v); }
 				});
 				if(!d.redirector) {
 					window.location.reload();

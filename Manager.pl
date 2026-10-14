@@ -3546,6 +3546,13 @@ post '/sesh_check' => sub ($c) {
 };
 
 get '/manager/debrief_grabber' => sub($c) {
+	# a debrief is this browser's own store - personal data. Only an authenticated
+	# session gets it back, and only its own ticket's snapshot; anyone at the gate
+	# gets nothing.
+	unless ($c->session('authentication') eq 'approved' && $c->session('ticket_uuid')) {
+		$c->render(json => {});
+		return;
+	}
 	my $ticket_uuid = $c->session('ticket_uuid');
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $q = &subs::db_query('select debriefer from tickets where uuid = ?', $ticket_uuid);
@@ -5263,7 +5270,6 @@ post '/manager/nfc/write' => sub($c) {
 post '/manager/leave' => sub($c) {
 	&leave($c);
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my $start_dir = &subs::backups_dir();
 	my $restore_list;
 	unless (-e $database && -s $database > 5000) {
 		$restore_list = &subs::restore_list();
@@ -5281,7 +5287,9 @@ post '/manager/leave' => sub($c) {
 		template => 'gate',
 		layout => 'gate',
 		restore_list => $restore_list,
-		start_dir => $start_dir,
+		# the gate carries no home path: it is shown before anyone has signed in, and
+		# a field prefilled with the person's own directory hands a visitor their name
+		start_dir => '',
 		config => { 'gate' => {'background_colour' => 'grey' } },
 	);
 };
@@ -22215,7 +22223,6 @@ sub authentication_passer($c) {
 				@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
 			}
 		}
-		my $start_dir = &subs::backups_dir();
 		if ($c->param('neighbour')) {
 			$c->render(json => { name => $name, purpose => $device, 'restore_list' => $restore_list, signatorial => &subs::signatorial_designer() });
 		}
@@ -22224,7 +22231,8 @@ sub authentication_passer($c) {
 				template => 'gate',
 				layout => 'gate',
 				restore_list => $restore_list,
-				start_dir => $start_dir,
+				# no home path on the gate: shown before anyone has signed in
+				start_dir => '',
 				config => { 'gate' => {'background_colour' => $config->{'gate'}->{'background_colour'} } },
 			);
 		}

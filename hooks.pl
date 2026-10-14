@@ -134,6 +134,10 @@ hook before_dispatch => sub {
 			$path ne '/manifest.json' &&
 			$path ne '/denial' && 
 			$path !~ /^\/images\/jbuttons/ && 
+			# the gate's own pictures resolve through the selected icon set (and the
+			# hand-drawn originals for the handdrawn set); these are drawn icons, no
+			# more personal than the gate's own frame
+			$path !~ m{^/icons/(?:sets|original)/} &&
 			$path ne '/manager/gate' && 
 			$path ne '/manager/say_it' && 
 			$path ne '/images/decipherable/envelope.png' && 
@@ -194,6 +198,9 @@ hook before_dispatch => sub {
 		$path eq "/images/make%20believe/up.png" ||
 		$path eq "/images/decipherable/gift.png" ||
 		$path eq "/images/decipherable/envelope.png" ||
+		# the gate wears the selected icon set's welcome picture and its upload arrow,
+		# or the hand-drawn originals when that set is chosen
+		$path =~ m{^/icons/(?:sets|original)/} ||
 		$path =~ '^/images/jbuttons' ||
 		$path eq '/sesh_check' || 
 		$path eq '/gate' ||
