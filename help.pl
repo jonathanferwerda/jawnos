@@ -105,16 +105,17 @@ our %topic = (
 	},
 	'synth' => {
 		title => 'Synth', category => 'apps', app => 'synth',
-		summary => 'A polyphonic synthesiser you play from the screen or a MIDI keyboard.',
+		summary => 'A polyphonic synthesiser with 88 keys, MIDI, and a computer-keyboard mode.',
 		verified => '2026-10-14',
 		body => [
-			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys or a connected USB MIDI keyboard, and it shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
-			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano or guitar without any samples. Pick a sound from the preset list — Grand Piano, Electric Piano, Bell, Warm Pad, Saw Lead, Sub Bass, Strings, Organ, Pluck, Nylon Pluck — and shape it with the controls.'
+			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys (a full 88-key range, A0 to C8, that scrolls sideways), a connected USB MIDI keyboard, or your computer keyboard. It shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
+			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. Fifteen presets are included: Grand Piano, Electric Piano, Bell, Warm Pad, Saw Lead, Sub Bass, Strings, Organ, Pluck, Marimba, Vibraphone, Honky Tonk, Nylon Pluck, Harpsichord and Music Box.'
 		],
 		steps => [
 			'Open Synth.',
-			'Choose a preset, or play the on-screen keys, or connect a USB MIDI keyboard.',
-			'In Studio, set a channel\'s input to Synth, arm it, and record what you play.'
+			'Choose a preset, play the on-screen keys, or press Connect and play a USB MIDI keyboard.',
+			'Press Keys to play from the computer keyboard (A W S E D F T G Y H U J K; Z and X change octave).',
+			'In Studio, set a channel\'s input to Synth (or drag the JawnSynth pedal onto it), arm it, and record what you play.'
 		],
 		related => [ 'studio', 'music' ]
 	},

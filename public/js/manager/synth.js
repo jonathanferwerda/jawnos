@@ -123,9 +123,41 @@
 			engine: 'pluck', damping: 0.5, brightness: 0.6, voices: 24,
 			amp: { a: 0.001, d: 1.6, s: 0.0, r: 0.35 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
 		},
+		'Marimba': {
+			engine: 'subtractive', wave: 'sine', noise: 0.04, voices: 24,
+			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 2, detune: 0, level: 0.16 }],
+			filter: { type: 'lowpass', cutoff: 2200, q: 0.5, env: 0.3, keytrack: 0.5 },
+			amp: { a: 0.002, d: 0.9, s: 0.0, r: 0.3 },
+			fenv: { a: 0.002, d: 0.4, s: 0.0, r: 0.3 },
+			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
+		},
+		'Vibraphone': {
+			engine: 'subtractive', wave: 'sine', noise: 0.01, voices: 16,
+			osc: [{ octave: 0, detune: 0, level: 1.0 }, { octave: 1, detune: 2, level: 0.22 }],
+			filter: { type: 'lowpass', cutoff: 3000, q: 0.5, env: 0.2, keytrack: 0.5 },
+			amp: { a: 0.003, d: 2.6, s: 0.0, r: 0.9 },
+			fenv: { a: 0.003, d: 1.0, s: 0.0, r: 0.6 },
+			lfo: { rate: 5.5, pitch: 0, cutoff: 0, amp: 0.25 }
+		},
+		'Honky Tonk': {
+			engine: 'subtractive', wave: 'piano', noise: 0.18, voices: 32,
+			osc: [{ octave: 0, detune: -6, level: 1.0 }, { octave: 0, detune: 8, level: 0.55 }],
+			filter: { type: 'lowpass', cutoff: 3400, q: 0.8, env: 0.25, keytrack: 0.35 },
+			amp: { a: 0.004, d: 2.4, s: 0.0, r: 0.5 },
+			fenv: { a: 0.002, d: 1.3, s: 0.0, r: 0.4 },
+			lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
+		},
 		'Nylon Pluck': {
 			engine: 'pluck', damping: 0.35, brightness: 0.45, voices: 24,
 			amp: { a: 0.001, d: 2.4, s: 0.0, r: 0.5 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
+		},
+		'Harpsichord': {
+			engine: 'pluck', damping: 0.72, brightness: 0.9, voices: 24,
+			amp: { a: 0.001, d: 1.0, s: 0.0, r: 0.22 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
+		},
+		'Music Box': {
+			engine: 'pluck', damping: 0.78, brightness: 0.98, voices: 24,
+			amp: { a: 0.001, d: 1.9, s: 0.0, r: 0.6 }, lfo: { rate: 0, pitch: 0, cutoff: 0, amp: 0 }
 		}
 	};
 
@@ -288,7 +320,8 @@
 			delay.delayTime.value = period;
 			var damp = ctx.createBiquadFilter();
 			damp.type = 'lowpass';
-			damp.frequency.value = Math.min(18000, freq * (2 + (p.brightness || 0.5) * 12));
+			// a harder strike opens the loop filter (velocity is timbre, not only level)
+			damp.frequency.value = Math.min(18000, freq * (2 + (p.brightness || 0.5) * 12) * (0.6 + 0.8 * velocity));
 			var fb = ctx.createGain();
 			fb.gain.value = Math.min(0.999, 0.8 + (p.damping || 0.5) * 0.199);
 			delay.connect(damp);
@@ -358,7 +391,7 @@
 			voice.nodes.push(nsrc, ng);
 		}
 		if (S.lfoCutoff) { S.lfoCutoff.connect(filter.frequency); }
-		filterEnv(filter, (p.filter && p.filter.cutoff) || 3000, (p.fenv && { a: p.fenv.a, d: p.fenv.d, s: p.fenv.s, amount: (p.filter && p.filter.env) || 0 }) || { a: 0.01, d: 0.2, s: 0, amount: 0 }, t0, (p.filter && p.filter.keytrack) || 0, freq);
+		filterEnv(filter, ((p.filter && p.filter.cutoff) || 3000) * (0.6 + 0.7 * velocity), (p.fenv && { a: p.fenv.a, d: p.fenv.d, s: p.fenv.s, amount: (p.filter && p.filter.env) || 0 }) || { a: 0.01, d: 0.2, s: 0, amount: 0 }, t0, (p.filter && p.filter.keytrack) || 0, freq);
 		voiceEnv(amp.gain, p.amp || { a: 0.01, d: 0.3, s: 0.7, r: 0.3 }, t0, 0.25 + velocity * 0.6);
 		voice.stopSoon = function (t1) {
 			var r = Math.max(0.02, (p.amp && p.amp.r) || 0.3);
