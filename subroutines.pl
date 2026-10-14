@@ -1053,10 +1053,15 @@ sub say_player_command() {
 	return 'play -q';
 }
 
+our $say_quiet;
+
 sub say_it() {
 	my $text = shift;
 	my $voice_override = shift;
 	return unless defined $text && length $text;
+	# the error watch's propose runs are headless: a stand-down notice must not
+	# speak (or block on audio) inside a background fork
+	return if $say_quiet;
   &subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
@@ -12551,6 +12556,9 @@ sub error_watch_catch {
 # One pass: catch what is new, record it, and hand the oldest waiting error to
 # the Coding agent to propose a fix for. Called from President's schedule.
 sub error_watch_tick {
+	# settings may have changed since this long-lived fork last read them (the
+	# setting memo lasts the process), so each pass starts from a fresh read
+	%setting_memo = ();
 	return unless (&subs::setting_grabber({ app => 'mail', setting => 'error_watch' }) // '') eq 'on';
 	# the table normally arrives with the schema migration at a login; create it
 	# here too (as run_backfills does for `backfills`) so the watch works from the
@@ -12739,6 +12747,8 @@ sub coding_propose_fix {
 		return 'over-budget';
 	}
 	my $ai_start = { calls => $ai_tokens->{'calls'}, in => $ai_tokens->{'in'}, out => $ai_tokens->{'out'} };
+	# a fallback model's stand-down notice must not speak from this fork
+	local $say_quiet = 1;
 	require &error_watch_repo() . '/help.pl';
 	my $system = &help::coding_propose_prompt();
 	my $protocols = &coding_protocols_text();
