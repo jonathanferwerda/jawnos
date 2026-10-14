@@ -13750,6 +13750,21 @@ sub ai_house_publish {
 	&subs::db_insert('ai_house', { machine => $me, has_model => $have, seen => $now, server_time => $now });
 }
 
+# Publish this machine's capability and heartbeat, and make sure the ledger tables
+# exist (so it works from the first boot after an update, before anyone logs in
+# and migrates). Called at the top of the watch tick, before the watch toggles
+# are consulted: the ledger gates evaluations and the shared budget too, so a
+# machine must announce itself whatever the watches are set to.
+sub ai_house_heartbeat {
+	foreach my $sql (
+		'create table if not exists ai_house (machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), server_time VARCHAR(255))',
+		'create table if not exists ai_jobs (job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), server_time VARCHAR(255))',
+		'create table if not exists ai_budget (machine VARCHAR(255), day VARCHAR(25), tokens INT, server_time VARCHAR(255))'
+	) { eval { &subs::db_query($sql) } }
+	eval { &subs::db_query('create unique index if not exists idx_ai_budget on ai_budget (machine, day)') };
+	&ai_house_publish();
+}
+
 # The machines that can take AI work: those that published a model and were seen
 # in the last ten minutes, plus this machine (so a lone or not-yet-synced machine
 # is never left with nobody). Sorted, so every machine ranks the same house.
@@ -14193,6 +14208,10 @@ sub error_watch_tick {
 	# settings may have changed since this long-lived fork last read them (the
 	# setting memo lasts the process), so each pass starts from a fresh read
 	%setting_memo = ();
+	# the house ledger heartbeat runs whatever the watches are set to: the ledger
+	# gates evaluations and the shared budget as well as the watches, so this
+	# machine must announce itself and its model even when both watches are off
+	&ai_house_heartbeat();
 	# either watch may want this pass: the error watch for its logs, the guide
 	# watch for the Guide's conversations (its rows are proposed from here too,
 	# so one proposer, one budget, one Apply)
@@ -14223,17 +14242,6 @@ sub error_watch_tick {
 		&subs::db_query('create index if not exists idx1_staged_fixes on staged_fixes (signature)');
 		&subs::db_query('create index if not exists idx2_staged_fixes on staged_fixes (status)');
 	}
-	# The house AI ledger: who can take AI work (ai_house), which machine ran which
-	# job (ai_jobs) and what each machine has spent today (ai_budget). All three
-	# carry server_time and are not in the forbidden list, so they ride the ordinary
-	# peer sync; created here so the watch works before anyone has logged in.
-	foreach my $sql (
-		'create table if not exists ai_house (machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), server_time VARCHAR(255))',
-		'create table if not exists ai_jobs (job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), server_time VARCHAR(255))',
-		'create table if not exists ai_budget (machine VARCHAR(255), day VARCHAR(25), tokens INT, server_time VARCHAR(255))'
-	) { eval { &subs::db_query($sql) } }
-	eval { &subs::db_query('create unique index if not exists idx_ai_budget on ai_budget (machine, day)') };
-	&ai_house_publish();
 	if ($errors_on) {
 		my @caught;
 		foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {

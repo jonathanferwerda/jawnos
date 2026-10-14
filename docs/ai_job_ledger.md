@@ -41,7 +41,10 @@ A machine is in the house when its `ai_house` row says it has a model and its
 `seen` is fresh (ten minutes). A machine with nothing synced yet sees only
 itself, so a lone or freshly-provisioned machine still works. Publishing is a
 heartbeat: `ai_house_publish()` writes this machine's row (throttled to a couple
-of minutes) from the watch tick.
+of minutes) from the watch tick, and it runs **whatever the watch toggles say** —
+the ledger gates evaluations and the shared budget too, so a machine announces
+itself even with both watches off. `ai_house_heartbeat()` creates the tables and
+publishes, so the ledger works from the first boot after an update.
 
 ### Ownership and failover
 
@@ -100,8 +103,9 @@ by every machine, rather than a private allowance each machine can exhaust.
 
 - **Helpers** — `subroutines.pl`: `ai_house_members`, `ai_job_rank`,
   `ai_job_runner`, `ai_job_may_run`, `ai_job_note`, `ai_house_publish`,
-  `ai_house_budget_spent`, `ai_house_budget_add`, and the rewired
-  `watch_tokens_spent` / `watch_tokens_add`.
+  `ai_house_heartbeat`, `ai_house_report`, `ai_balance_report`,
+  `ai_balance_refresh`, `ai_house_budget_spent`, `ai_house_budget_add`, and the
+  rewired `watch_tokens_spent` / `watch_tokens_add`.
 - **Schema** — `Manager.pl` `update_database` (and the watch creates them too, so
   the watch works before a login migrates).
 - **Gates** — `coding_propose_fix` (error and guide fixes) and
