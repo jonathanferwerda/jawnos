@@ -137,8 +137,11 @@ function assistantSpeakWanted() {
 
 function assistantSpeak(text) {
 	text = $.trim(text == null ? '' : String(text));
-	if (!text || /^\{/.test(text) || !assistantSpeakWanted()) { return; }
-	$.post('/manager/assistant/say', { text: text.slice(0, 800) });
+	if (!text || /^\{/.test(text) || !assistantSpeakWanted()) { return null; }
+	// the words go to the house voice in a fork of its own; the request comes
+	// back with an estimate of how long they take to say, so a conversation can
+	// hold its mic until the voice has stopped
+	return $.post('/manager/assistant/say', { text: text.slice(0, 800) });
 }
 
 function assistantConfirmRequired() {
@@ -444,8 +447,8 @@ function assistantGuideStep(panel, n) {
 			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
 				assistantRemember(panel, 'assistant', a.text || '');
 				assistantChatAdd(panel, 'guide', a.text || '');
-				assistantSpeak(a.text);
-				if (assistantTalking(panel)) { assistantConversationListen(panel); }
+				var spoke = assistantSpeak(a.text);
+				if (assistantTalking(panel)) { assistantConversationListen(panel, spoke); }
 				return;
 			}
 			assistantChatAdd(panel, 'step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
@@ -456,8 +459,8 @@ function assistantGuideStep(panel, n) {
 				if (friendly) {
 					assistantRemember(panel, 'assistant', friendly);
 					assistantChatAdd(panel, 'guide', friendly);
-					assistantSpeak(friendly);
-					if (assistantTalking(panel)) { assistantConversationListen(panel); }
+					var spoke = assistantSpeak(friendly);
+					if (assistantTalking(panel)) { assistantConversationListen(panel, spoke); }
 					return;
 				}
 				assistantGuideStep(panel, n + 1);
@@ -500,24 +503,48 @@ function assistantConversationEnd(panel) {
 	assistantChatAdd(panel, 'guide', 'Alright — I will be here.');
 }
 
-function assistantConversationListen(panel) {
+function assistantConversationListen(panel, spoken) {
 	if (!assistantTalking(panel)) { return; }
-	setTimeout(function () {
-		if (!assistantTalking(panel)) { return; }
-		if (typeof jawnClipListen !== 'function') { return; }
-		jawnClipListen({
-			talking: true,
-			owner: panel[0],
-			status: function (msg) { assistantChatAdd(panel, 'step', msg); },
-			onText: function (text) { assistantConversationHeard(panel, text); },
-			onFail: function (reason) {
-				if (!assistantTalking(panel)) { return; }
-				// a deaf microphone ends it; anything else just listens again
-				if (reason === 'microphone' || reason === 'no microphone') { assistantConversationEnd(panel); return; }
-				assistantConversationListen(panel);
-			}
+	var begin = function () {
+		setTimeout(function () {
+			if (!assistantTalking(panel)) { return; }
+			if (typeof jawnClipListen !== 'function') { return; }
+			jawnClipListen({
+				talking: true,
+				owner: panel[0],
+				selfWords: assistantLastWords(panel),
+				status: function (msg) { assistantChatAdd(panel, 'step', msg); },
+				onText: function (text) { assistantConversationHeard(panel, text); },
+				onEcho: function () { assistantConversationListen(panel); },
+				onFail: function (reason) {
+					if (!assistantTalking(panel)) { return; }
+					// a deaf microphone ends it; anything else just listens again
+					if (reason === 'microphone' || reason === 'no microphone') { assistantConversationEnd(panel); return; }
+					assistantConversationListen(panel);
+				}
+			});
+		}, 350);
+	};
+	if (spoken && spoken.done) {
+		// the reply is being said aloud: hold the mic until the voice is done
+		spoken.done(function (r) {
+			var secs = parseFloat((r && r.seconds) || 0) || 0;
+			setTimeout(function () { if (assistantTalking(panel)) { begin(); } }, Math.min(30000, 1000 * secs));
 		});
-	}, 350);
+		spoken.fail(function () { begin(); });
+	}
+	else { begin(); }
+}
+
+// the panel's own last words, so a conversation's mic can tell the speaker from
+// the person
+function assistantLastWords(panel) {
+	var t = (typeof assistantThread === 'function') ? assistantThread(panel) : [];
+	for (var i = t.length - 1; i >= 0; i--) {
+		var m = t[i] || {};
+		if ((m.role || '') === 'assistant' && m.content && !/^\s*\{/.test(m.content)) { return m.content; }
+	}
+	return '';
 }
 
 function assistantConversationHeard(panel, text) {

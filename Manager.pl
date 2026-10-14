@@ -20086,8 +20086,14 @@ post '/manager/assistant/say' => sub($c) {
 	if ((&subs::setting_grabber({ app => '__president', setting => 'assistant_speech', device => 'all' }) // '') ne 'on') {
 		return $c->render(json => { ok => 0, note => 'speech is off' });
 	}
-	&subs::say_it(substr($text, 0, 800));
-	$c->render(json => { ok => 1 });
+	my $spoken = substr($text, 0, 800);
+	&subs::say_it($spoken);
+	# the voice runs in a fork of its own, so the caller cannot hear it finish:
+	# hand an estimate along (Piper paces about 2.5 words a second) so a spoken
+	# conversation can hold its mic until the voice has had its say
+	my $words = scalar( split /\s+/, $spoken );
+	my $seconds = $words ? (0.8 + $words / 2.5) : 0;
+	$c->render(json => { ok => 1, seconds => sprintf('%.1f', $seconds) });
 };
 
 # One bounded run of the Coding agent: the model picks the next action, the server

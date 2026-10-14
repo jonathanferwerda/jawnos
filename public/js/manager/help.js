@@ -524,6 +524,29 @@ function jawnClipListen(opts) {
 	return true;
 }
 
+// Words that are mostly the reply the machine just spoke are the speaker's,
+// not the person's: a conversation's mic reopens while Piper may still be
+// talking, so without this the guide transcribes itself. A genuine trailing
+// run (three or more words that are not in the reply) is kept - that is the
+// person speaking over the tail.
+function jawnEchoCheck(text, mine) {
+	var out = { echo: false, text: text };
+	if (!mine || !text) { return out; }
+	var clean = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean); };
+	var words = clean(text);
+	if (words.length < 3) { return out; }
+	var mine_set = {};
+	clean(mine).forEach(function (w) { mine_set[w] = 1; });
+	var hits = 0;
+	words.forEach(function (w) { if (mine_set[w]) { hits++; } });
+	if ((hits / words.length) < 0.75) { return out; }
+	var trailing = 0;
+	for (var i = words.length - 1; i >= 0; i--) { if (!mine_set[words[i]]) { trailing++; } else { break; } }
+	if (trailing >= 3) { out.text = words.slice(words.length - trailing).join(' '); return out; }
+	out.echo = true;
+	return out;
+}
+
 function jawnClipSend(blob, opts) {
 	opts = opts || {};
 	if (!blob || !blob.size) { if (opts.status) { opts.status('I did not catch any audio.'); } if (opts.onFail) { opts.onFail('empty'); } return; }
@@ -536,6 +559,11 @@ function jawnClipSend(blob, opts) {
 		contentType: 'application/octet-stream',
 		success: function (r) {
 			if (!r || r.error || !r.text) { if (opts.status) { opts.status((r && r.error) || 'I could not make out any words.'); } if (opts.onFail) { opts.onFail('unreadable'); } return; }
+			if (opts.selfWords) {
+				var verdict = jawnEchoCheck(r.text, opts.selfWords);
+				if (verdict.echo) { if (opts.onEcho) { opts.onEcho(); } return; }
+				r = { text: verdict.text };
+			}
 			if (opts.onText) { opts.onText(r.text); }
 		},
 		error: function () { if (opts.status) { opts.status('I could not transcribe that.'); } if (opts.onFail) { opts.onFail('network'); } }
@@ -548,6 +576,8 @@ function helpListenToggle(onText) {
 	jawnClipListen({
 		talking: jawnos_help_talking,
 		owner: '#help',
+		selfWords: jawnos_help_talking ? helpLastWords() : '',
+		onEcho: function () { if (jawnos_help_talking) { helpConversationListen(); } },
 		onText: onText || function (text) { $('#help_question').val(text); },
 		status: function (msg) { helpChatAdd('step', msg); },
 		onFail: function (reason) { if (jawnos_help_talking && reason !== 'microphone' && reason !== 'no microphone') { helpConversationListen(); } },
@@ -598,6 +628,16 @@ function helpConversationEnd() {
 	$('#help_converse').text('Converse').css({ 'border-color': 'var(--line)', 'color': '' })
 		.attr('hint', 'Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — press End when you are done, or say “bye jawn”');
 	helpChatAdd('guide', 'Alright — I will be here.');
+}
+
+// the help guide's own last words, so a conversation's mic can tell the speaker
+// from the person
+function helpLastWords() {
+	for (var i = jawnos_help_chat.length - 1; i >= 0; i--) {
+		var m = jawnos_help_chat[i] || {};
+		if ((m.role || '') === 'assistant' && m.content && !/^\s*\{/.test(m.content)) { return m.content; }
+	}
+	return '';
 }
 
 function helpConversationListen() {
