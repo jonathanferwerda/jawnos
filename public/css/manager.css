@@ -326,6 +326,22 @@ html, body {
 	background-color: var(--panel);
 	box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
 }
+/* The clock's face is not the present: the time machine or a timeshift has
+   carried the view off now, or the poll that advances it has stopped. The plate
+   then lights up like a lamp - a warm rim and a halo that breathes - until the
+   face reads the present again. The inset keeps the sunk-plate shadow. */
+#taskbar_clock[astray="yes"] {
+	border-color: #e0a400;
+	background-color: rgba(255, 205, 40, 0.22);
+	animation: taskbar_clock_astray 1.5s ease-in-out infinite;
+}
+@keyframes taskbar_clock_astray {
+	0%, 100% { box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35), 0 0 5px 1px rgba(255, 205, 40, 0.55); }
+	50% { box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35), 0 0 14px 4px rgba(255, 205, 40, 0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+	#taskbar_clock[astray="yes"] { animation: none; box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35), 0 0 9px 3px rgba(255, 205, 40, 0.8); }
+}
 /* the corner's own buttons come aboard while the bar stands: bare tiles of the
    bar's inner height, sitting between the window list and the clock */
 #taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; padding-left: 6px; }
