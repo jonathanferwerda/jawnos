@@ -5856,7 +5856,7 @@ sub ide_files() {
 our $database_holder;
 our $database;
 
-# One machine, one database, at a fixed path inside the install: database/initial.db,
+# One machine, one database, at a fixed path inside the install: database/jawnos.db,
 # beside schema.sql. A machine never picks or moves it - the old "newest .db in
 # start_dir" scan let any stray file silently become the database, and start_dir is
 # gone from this path. Backups (.enc) live in database/backups/, out of ~/. The
@@ -5875,7 +5875,7 @@ sub database_dir {
 	unless (-d $dir) { require File::Path; eval { File::Path::make_path($dir) }; }
 	return $dir;
 }
-sub database_path { return &subs::database_dir() . '/initial.db' }
+sub database_path { return &subs::database_dir() . '/jawnos.db' }
 sub backups_dir {
 	my $dir = &subs::database_dir() . '/backups';
 	unless (-d $dir) { require File::Path; eval { File::Path::make_path($dir) }; }
@@ -5900,7 +5900,14 @@ sub database_adopt_legacy {
 	`mv -f "$legacy-shm" "$target-shm" 2>/dev/null`;
 	`mv -f "$legacy-wal" "$target-wal" 2>/dev/null`;
 	my $backups = &subs::backups_dir();
-	`mv -f "$dir/$base"*.enc "$backups/" 2>/dev/null`;
+	# the working database is jawnos.db now, so the legacy backups are renamed as
+	# they move in (initial_<ts>.enc -> jawnos_<ts>.enc)
+	foreach my $enc ( glob("$dir/$base*.enc") ) {
+		my $leaf = $enc;
+		$leaf =~ s{.*/}{};
+		$leaf =~ s/^\Q$base\E/jawnos/;
+		`mv -f "$enc" "$backups/$leaf" 2>/dev/null`;
+	}
 	&subs::log_writer('database adopted into the install: ' . $target);
 	return $target;
 }

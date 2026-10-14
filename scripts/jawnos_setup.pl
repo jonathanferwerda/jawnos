@@ -119,8 +119,8 @@ sub make_database {
 	# one machine, one database: it lives in the install's database/ dir, its
 	# sealed copy beside it in database/backups/. There is no start directory to
 	# pick and no database to name.
-	my $live_db  = "$root/database/initial.db";
-	my $enc_file = "$root/database/backups/initial.enc";
+	my $live_db  = "$root/database/jawnos.db";
+	my $enc_file = "$root/database/backups/jawnos.enc";
 	make_path("$root/database/backups") unless -d "$root/database/backups";
 	my $working  = $tmp . '/setup_' . randstr(10) . '.db';
 
