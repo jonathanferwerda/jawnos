@@ -24870,16 +24870,24 @@ get '/manager/remote_auth_test' => sub($c) {
 	my $remote_domain = $c->param('domain') || $ip;
 	my $chip_chyea = $c->param('chip_chyea');
 	my $signatorial = $c->param('signatorial');
-	if ($c->param('chip_chyea')) {
+
+	# The peer rail authenticates by signature, not by session: the request must
+	# name a known machine and carry that machine's fresh signature (an unsigned
+	# call passes only while no key is on file yet, so machines can upgrade
+	# without a flag day). The session gate steps aside for this route in
+	# hooks.pl, so a peer whose session has lapsed can still handshake - this
+	# check is the whole of the route's access control.
+	my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
+	unless (scalar @{$rm} > 0 && &subs::peer_verify($c, $rm->[-1])) {
+		$c->rendered(403);
+		return;
+	}
+
+	if ($chip_chyea) {
 		&subs::setting_setter({ app => '__president', setting => 'chip_chyea', subsetting => $signatorial, value => $chip_chyea });
 		$c->render(json => { chip_chyea => $chip_chyea });
 	}
 	elsif ($c->param('auth_test') eq 'yes') {
-		my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
-		unless (scalar @{$rm} > 0 && &subs::peer_verify($c, $rm->[-1])) {
-			$c->rendered(403);
-			return;
-		}
 		my $now = &subs::rightNow();
 		my $appt = &subs::db_query('select server_time,app from appointments where (status is null or status != ?) and server_time < ? order by server_time DESC LIMIT 1', 'deleting', $now - 2500)->hashes->[0];
 		if (scalar @{$rm} > 0) {

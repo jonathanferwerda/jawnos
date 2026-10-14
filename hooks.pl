@@ -232,6 +232,10 @@ hook before_dispatch => sub {
 		# the gate on both routes, exactly as it is on vault_share
 		$path eq '/manager/key_push' ||
 		$path eq '/manager/legacy_reseal' ||
+		# the handshake at the head of the peer rail: it authenticates by signature
+		# against the roster (peer_verify), so a peer whose session cookie has
+		# lapsed can still handshake and reconnect
+		$path eq '/manager/remote_auth_test' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
