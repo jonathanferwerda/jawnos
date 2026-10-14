@@ -927,6 +927,10 @@ sub resolve_when {
 	$t =~ s/^\s+|\s+$//g;
 	return undef unless length $t;
 	return $now + 0 if $t eq 'now';
+	# the day-words, whole days from the present at the same time of day, read
+	# here so ago_calc's string surgery (which mangles "yesterday") is not used
+	my %day_word = (today => 0, tonight => 0, tomorrow => 1, tom => 1, yesterday => -1, yes => -1);
+	return $now + $day_word{$t} * 86400000 if defined $day_word{$t};
 	# a spelled-out or joined offset ("2 hours", "3d 4h") is arithmetic, not a date
 	return undef if $t =~ /\b(?:milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|decades?|centur(?:y|ies))\b/;
 	# a leading modifier moves the whole date a year: "last dec 25", "next jul 16"

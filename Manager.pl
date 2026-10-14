@@ -288,6 +288,8 @@ sub guide_time_machine {
 		my $now_text = localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P');
 		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that means a moment in time. '
 			. 'Right now it is ' . $now_text . ' in local time. '
+			. 'If the phrase names no time of day, keep the present time of day. '
+			. 'A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
 			. 'Reply with ONLY the moment it names, as YYYY-MM-DD HH:MM:SS in local time, and nothing else. '
 			. 'If it names no moment you can read, reply with exactly: unknown';
 		my ($text, $err) = &subs::evaluation_model_call($model, $system, $spec);
