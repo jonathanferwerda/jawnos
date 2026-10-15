@@ -267,8 +267,14 @@ sub time_machine_resolve {
 		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
 	}
 	if (!defined $ms) {
-		# "<person>'s Nth birthday": look up the birth date, count the years here
-		$ms = &guide_birthday_of($spec, $timestamp);
+		# a time of day that is a habit ("breakfast", "next coffee time"): the hour
+		# the person usually does it, from their own records, else a plain hour
+		$ms = &subs::usual_ritual_time($spec, $timestamp);
+	}
+	if (!defined $ms) {
+		# "<person>'s [Nth] birthday": a saved birthday first, then the guide, with
+		# the years counted here
+		$ms = &person_birthday_of($spec, $timestamp);
 	}
 	if (!defined $ms || ($ms == 0 && $spec !~ /\b(?:1970|epoch|unix)\b/i)) {
 		my $guide = &guide_time_machine($spec, $timestamp);
@@ -393,16 +399,25 @@ sub help_search($q) {
 	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
 }
 
-# A person's Nth birthday: the guide is asked for the person's birth date (it
-# knows "Abraham Lincoln's birthday"), and the years are counted here, so the
-# arithmetic is exact rather than left to the model. undef when the phrase is not
-# of that shape or the birth date cannot be found, so the guide still runs.
-sub guide_birthday_of {
+# A person's birthday: "<name>'s birthday", "<name>'s Nth birthday", "when was
+# <name> born". The person's saved birthday (Configure -> App -> Birthdays) is read
+# first; failing that the guide looks the person up (it knows "Abraham Lincoln's
+# birthday"). For the Nth form the years are counted here, so the arithmetic is
+# exact rather than left to the model. undef when the phrase is none of these or
+# the date cannot be found, so the guide still runs.
+sub person_birthday_of {
 	my ($spec, $timestamp) = @_;
-	return undef unless $spec =~ /^\s*(.+?)[\x{2019}']?s\s+(\d{1,3})\s*(?:st|nd|rd|th)\s+birthday\s*$/i;
-	my ($person, $n) = ($1, $2);
-	my $birth = &guide_time_machine($person . "'s birthday", $timestamp);
+	my ($name, $n);
+	if    ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+(\d{1,3})\s*(?:st|nd|rd|th)\s+birthday\s*$/i) { ($name, $n) = ($1, $2); }
+	elsif ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+birthday\s*$/i)                        { ($name) = ($1); }
+	elsif ($spec =~ /^\s*(?:when\s+)?(?:was|is)\s+(.+?)\s+born\s*$/i)                 { ($name) = ($1); }
+	else { return undef; }
+	$name =~ s/^\s+|\s+$//g;
+	return undef unless length $name;
+	my $birth = &subs::saved_birthday_ms($name, $timestamp);
+	$birth = &guide_time_machine($name . "'s birthday", $timestamp) unless defined $birth;
 	return undef unless defined $birth;
+	return $birth unless defined $n;
 	my @b = localtime($birth / 1000);
 	my $when = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $b[5] + 1900 + $n, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]);
 	return &subs::resolve_when($when, $timestamp);
@@ -431,7 +446,7 @@ sub guide_time_machine {
 		my $birthday = ($config->{'birthday'} ? ('Their birthday is ' . $config->{'birthday'} . '. ') : '');
 		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that names a moment, or asks you to start or log something. '
 			. 'Right now it is ' . $now_text . ' in local time. ' . $birthday . $dossier
-			. 'If the phrase names a person or a past event ("Abraham Lincoln\'s birthday", "the day the Berlin Wall fell"), use what you know of history to work out the date it names. '
+			. 'If the phrase names a person or an event, past or future ("Abraham Lincoln\'s birthday", "the day the Berlin Wall fell", "when the first world war ended"), use what you know of history and give the moment it names - including the hour and minute when history records one (the moment JFK was shot, the hour the armistice took effect). '
 			. 'If the phrase names no time of day, keep the present time of day. A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
 			. 'Reply with ONE JSON action and nothing else: '
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '

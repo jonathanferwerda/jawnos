@@ -1129,6 +1129,120 @@ sub iso_local {
 	return $t->strftime('%Y-%m-%d %H:%M:%S');
 }
 
+# The birthdays the person keeps (Configure -> App -> Birthdays), one to a line as
+# "Name = date" ("Abraham Lincoln = February 12 1809"). Read across devices - the
+# newest value wins - so a save on any machine is seen everywhere.
+sub saved_birthdays() {
+	my $row = &db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', 'me', 'birthdays')->hashes->[0];
+	my %bday;
+	foreach my $line ( split /\n/, ($row->{'value'} // '') ) {
+		next unless $line =~ /\S/;
+		my ($name, $when) = split /\s*=\s*/, $line, 2;
+		if (!defined $when) { ($name, $when) = split /\s*:\s*/, $line, 2; }
+		next unless defined $when && $when =~ /\S/ && $name =~ /\S/;
+		$name = lc $name;
+		$name =~ s/['\x{2019}]//g;
+		$name =~ s/\s+/ /g; $name =~ s/^\s+|\s+$//g;
+		$bday{$name} = $when;
+	}
+	return \%bday;
+}
+
+# The saved birthday for a named person, in ms, or undef. A thing named for the
+# person (its app) carries its own Birthday setting, and that is read first; then
+# the list; failing both, a name whose words all sit inside the other's, so
+# "Lincoln" finds "Abraham Lincoln".
+sub saved_birthday_ms() {
+	my ($name, $now) = @_;
+	return undef unless defined $name && $name =~ /\S/;
+	$now = &rightNow() unless $now;
+	my $own = &setting_grabber({ app => &unformat_name($name), setting => 'birthday' });
+	return &resolve_when($own, $now) if defined $own && $own =~ /\S/;
+	my $clean = lc $name;
+	$clean =~ s/['\x{2019}]//g;
+	$clean =~ s/\s+/ /g; $clean =~ s/^\s+|\s+$//g;
+	my $all = &saved_birthdays();
+	my $hit = $all->{$clean};
+	unless (defined $hit) {
+		my %q = map { $_ => 1 } split ' ', $clean;
+		foreach my $k ( sort keys %{$all} ) {
+			my %kw = map { $_ => 1 } split ' ', $k;
+			my ($all_in, $all_out) = (1, 1);
+			$all_in = 0 foreach grep { !$kw{$_} } keys %q;
+			$all_out = 0 foreach grep { !$q{$_} } keys %kw;
+			if ($all_in || $all_out) { $hit = $all->{$k}; last; }
+		}
+	}
+	return undef unless defined $hit;
+	return &resolve_when($hit, $now);
+}
+
+# The hour and minute an app's records cluster around: the busiest hour among its
+# recent appointments, and the busiest minute within it. undef with no records, so
+# a caller falls back to a plain clock time.
+sub usual_hour_for() {
+	my ($app) = @_;
+	return undef unless $app;
+	my $rows = &db_query('select timestamp from appointments where app = ? order by timestamp desc limit 500', $app)->hashes;
+	my (%hour, %min);
+	foreach my $r (@{$rows}) {
+		next unless defined $r->{'timestamp'} && $r->{'timestamp'} =~ /^-?\d+$/;
+		my @t = localtime($r->{'timestamp'} / 1000);
+		$hour{$t[2]}++;
+		push @{ $min{$t[2]} }, $t[1];
+	}
+	return undef unless scalar keys %hour;
+	my ($bh) = sort { $hour{$b} <=> $hour{$a} || $a <=> $b } keys %hour;
+	my %m;
+	$m{$_}++ foreach @{ $min{$bh} };
+	my ($bm) = sort { $m{$b} <=> $m{$a} || $a <=> $b } keys %m;
+	return ($bh + 0, ($bm // 0) + 0);
+}
+
+# A time of day that is a habit rather than a date ("breakfast", "tea time", "next
+# coffee time"): the hour the person usually does it, read from that app's own
+# records, and a plain hour when there is nothing to read. undef when the phrase
+# names no such habit.
+sub usual_ritual_time() {
+	my ($spec, $now) = @_;
+	$now = &rightNow() unless $now;
+	my $t = lc($spec // '');
+	$t =~ s/['\x{2019}]//g;
+	$t =~ s/[.,]/ /g; $t =~ s/\s+/ /g; $t =~ s/^\s+|\s+$//g;
+	return undef unless length $t;
+	my $next = 0;
+	if ($t =~ s/^next\s+//) { $next = 1; }
+	my %ritual = (
+		'breakfast'   => [ 'breakfast', 8, 0 ],
+		'brekkie'     => [ 'breakfast', 8, 0 ],
+		'lunch'       => [ 'lunch', 12, 0 ],
+		'brunch'      => [ 'brunch', 11, 0 ],
+		'dinner'      => [ 'dinner', 18, 0 ],
+		'supper'      => [ 'dinner', 18, 0 ],
+		'tea'         => [ 'tea', 16, 0 ],
+		'tea time'    => [ 'tea', 16, 0 ],
+		'coffee'      => [ 'coffee', 10, 0 ],
+		'coffee time' => [ 'coffee', 10, 0 ],
+		'bed'         => [ 'bed', 22, 0 ],
+		'bed time'    => [ 'bed', 22, 0 ],
+		'bedtime'     => [ 'bed', 22, 0 ],
+	);
+	my $r = $ritual{$t};
+	return undef unless $r;
+	my ($app, $hour, $min) = @{$r};
+	my @usual = &usual_hour_for($app);
+	if (defined $usual[0]) { $hour = $usual[0]; $min = $usual[1]; }
+	my @n = localtime($now / 1000);
+	my $epoch = eval { int(POSIX::mktime(0, $min, $hour, $n[3], $n[4], $n[5])) };
+	return undef unless defined $epoch;
+	my $ms = $epoch * 1000;
+	if ($next && $ms <= $now) {
+		my $e2 = eval { int(POSIX::mktime(0, $min, $hour, $n[3] + 1, $n[4], $n[5])) };
+		$ms = $e2 * 1000 if defined $e2;
+	}
+	return $ms;
+}
+
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
 	$timestamp = &rightNow() unless $timestamp;

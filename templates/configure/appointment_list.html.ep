@@ -88,6 +88,12 @@
 						<label>Colour</label>
 						<span app="<%= $a %>"><input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>"></span>
 					</div>
+					<%# a thing that is a person (the app named for them) can carry their
+					    birthday here; the time machine reads it before asking the guide %>
+					<div class="cfg-row">
+						<label>Birthday</label>
+						<span app="<%= $a %>"><input setting="birthday" class="configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'birthday'} %>" placeholder="e.g. February 12 1809"></span>
+					</div>
 					<div class="app_checks">
 						<% foreach my $check_set ( qw/visible unique permanent/ ) { %>
 							<span>
