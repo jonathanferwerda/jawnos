@@ -1050,6 +1050,18 @@ $(document).on('change', '#ghost_appointments', function() {
 	if (typeof calculator == 'function') { calculator(); }
 });
 
+// A work claim says which machine is on a job, so two agents do not take the same
+// one. It rides the 'claims' app, which the mesh carries to every machine.
+$(document).on('click', '.work_claim_take, .work_claim_release', function(e) {
+	e.preventDefault();
+	var link = $(this);
+	var url = link.hasClass('work_claim_release') ? '/manager/work_claim/release' : '/manager/work_claim';
+	$.post(url, { task: link.attr('task') }, function () {
+		keyboardConfigToggle('delorean');
+		keyboardConfigToggle('delorean');
+	});
+});
+
 $(document).on('click', '.keyboard_base', function() {
 	var b = $(this);
 	var toggle = b.attr('toggle');

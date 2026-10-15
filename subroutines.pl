@@ -1422,6 +1422,56 @@ sub ghost_rows_for() {
 	return [ map { { ghost => 1, app => $app, type => 'usual', timestamp => $_, duration => $duration, formatted_name => &format_name($app) } } @in ];
 }
 
+# Work claims: who is sorting out what, so two agents - or two machines - do not
+# take the same job. They live as settings on the 'claims' app, which is NOT one of
+# @gb::protected, so the mesh merge carries each claim to every machine; the
+# protected __president settings (the agent registry among them) stay local.
+sub work_claims() {
+	my $rows = &db_query(q{select setting, value from settings where app = 'claims' order by cast(server_time as integer) desc})->hashes;
+	my %claims;
+	foreach my $r (@{$rows}) {
+		next unless ($r->{'setting'} || '') =~ /^claim_(.+)$/;
+		my $task = $1;
+		next if $claims{$task};   # newest first, so the first row for a task wins
+		my $c = eval { decode_json $r->{'value'} } || {};
+		next unless ref $c eq 'HASH' && $c->{'by'};
+		$claims{$task} = $c;
+	}
+	return \%claims;
+}
+
+sub work_claim() {
+	my ($task) = @_;
+	return undef unless defined $task && $task =~ /\S/;
+	return (&work_claims())->{$task};
+}
+
+sub claim_work() {
+	my ($task, $note) = @_;
+	return undef unless defined $task && $task =~ /\S/;
+	my $value = encode_json({ by => &signatorial_designer(), machine => &machine_name(), at => &rightNow(), note => ($note // '') });
+	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => $value });
+	return &work_claim($task);
+}
+
+# The machine's own name, for a claim a person has to read. The signatorial is the
+# mesh identity; this is what to show beside it.
+sub machine_name() {
+	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
+	return $name if defined $name && $name =~ /\S/;
+	my $h = `hostname`;
+	chomp $h;
+	return $h;
+}
+
+# Released by writing it empty rather than deleting it, so the release rides the
+# same mesh merge the claim does.
+sub release_work() {
+	my ($task) = @_;
+	return unless defined $task && $task =~ /\S/;
+	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => '' });
+}
+
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
 	$timestamp = &rightNow() unless $timestamp;
@@ -16421,53 +16471,3 @@ foreach my $rm ( @{$rms} ) {
 }
 
 1;
-# Work claims: who is sorting out what, so two agents - or two machines - do not
-# take the same job. They live as settings on the 'claims' app, which is NOT one of
-# @gb::protected, so the mesh merge carries each claim to every machine; the
-# protected __president settings (the agent registry among them) stay local.
-sub work_claims() {
-	my $rows = &db_query(q{select setting, value from settings where app = 'claims' order by cast(server_time as integer) desc})->hashes;
-	my %claims;
-	foreach my $r (@{$rows}) {
-		next unless ($r->{'setting'} || '') =~ /^claim_(.+)$/;
-		my $task = $1;
-		next if $claims{$task};   # newest first, so the first row for a task wins
-		my $c = eval { decode_json $r->{'value'} } || {};
-		next unless ref $c eq 'HASH' && $c->{'by'};
-		$claims{$task} = $c;
-	}
-	return \%claims;
-}
-
-sub work_claim() {
-	my ($task) = @_;
-	return undef unless defined $task && $task =~ /\S/;
-	return (&work_claims())->{$task};
-}
-
-sub claim_work() {
-	my ($task, $note) = @_;
-	return undef unless defined $task && $task =~ /\S/;
-	my $value = encode_json({ by => &signatorial_designer(), machine => &machine_name(), at => &rightNow(), note => ($note // '') });
-	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => $value });
-	return &work_claim($task);
-}
-
-# The machine's own name, for a claim a person has to read. The signatorial is the
-# mesh identity; this is what to show beside it.
-sub machine_name() {
-	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
-	return $name if defined $name && $name =~ /\S/;
-	my $h = `hostname`;
-	chomp $h;
-	return $h;
-}
-
-# Released by writing it empty rather than deleting it, so the release rides the
-# same mesh merge the claim does.
-sub release_work() {
-	my ($task) = @_;
-	return unless defined $task && $task =~ /\S/;
-	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => '' });
-}
-

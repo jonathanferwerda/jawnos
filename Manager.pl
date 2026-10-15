@@ -20730,6 +20730,29 @@ sub agent_registry_adopt {
 
 # The agents list: newest first. A row that is not open is history - the
 # client keeps the open ones, and pressing a history row re-opens it.
+# Work claims: who is sorting out what, so two agents - or two machines - do not
+# take the same job. Stored on the 'claims' app (not one of @gb::protected), so the
+# mesh merge carries them to every machine, the same way appointments stay in step.
+get '/manager/work_claims' => sub($c) {
+	$c->render(json => { claims => &subs::work_claims() });
+};
+
+post '/manager/work_claim' => sub($c) {
+	my $task = $c->param('task') // '';
+	$task =~ s/[^A-Za-z0-9_-]//g;
+	unless (length $task) { $c->render(json => { error => 'need a task' }); return; }
+	my $claim = &subs::claim_work($task, $c->param('note'));
+	$c->render(json => { ok => 1, task => $task, claim => $claim });
+};
+
+post '/manager/work_claim/release' => sub($c) {
+	my $task = $c->param('task') // '';
+	$task =~ s/[^A-Za-z0-9_-]//g;
+	unless (length $task) { $c->render(json => { error => 'need a task' }); return; }
+	&subs::release_work($task);
+	$c->render(json => { ok => 1, task => $task });
+};
+
 get '/manager/agents/list' => sub($c) {
 	&agent_registry_adopt();
 	my @out;
