@@ -23,6 +23,10 @@ function jawnosAgentsPanel() {
 	panel.draggable({
 		revert: 'false',
 		handle: '.jawnos_agents_header',
+		// a short delay and a few pixels of travel before a drag begins, so a tap on
+		// a touchscreen does not move the panel - a press-and-hold still drags
+		delay: 150,
+		distance: 8,
 		cancel: '.jawnos_agents_close, .jawnos_agents_new_guide, .jawnos_agents_new_coding, input, button',
 		drag: function (e, ui) {
 			var w = $(this).outerWidth(), h = $(this).outerHeight();

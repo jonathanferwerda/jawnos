@@ -137,6 +137,14 @@ $(document).on('change', '.assistant_confirm', function() {
 	settingSetter({ app: '__president', setting: 'guide_confirm', device: 'all', value: on ? 'on' : 'off' });
 });
 
+// Its own tick for deletes: deleting is worth asking about even when the person has
+// turned the save-confirmation off, so it keeps a separate switch.
+$(document).on('change', '.assistant_confirm_delete', function() {
+	var on = $(this).is(':checked');
+	$('.assistant_confirm_delete').prop('checked', on);
+	settingSetter({ app: '__president', setting: 'guide_confirm_delete', device: 'all', value: on ? 'on' : 'off' });
+});
+
 // Speak the replies: one setting for every associate, like the Confirm tick.
 // With it on, each written answer also goes to the house voice (Piper first,
 // see say_it) on this machine - the route re-checks the setting as it speaks.
@@ -161,6 +169,11 @@ function assistantSpeak(text) {
 
 function assistantConfirmRequired() {
 	var box = $('.assistant_confirm');
+	if (box.length) { return box.is(':checked'); }
+	return true;
+}
+function assistantConfirmDeleteRequired() {
+	var box = $('.assistant_confirm_delete');
 	if (box.length) { return box.is(':checked'); }
 	return true;
 }
@@ -784,7 +797,11 @@ function assistantInitializer() {
 		panel.draggable({
 			revert: 'false',
 			handle: '.assistant_header',
-			cancel: '.assistant_anchor, .assistant_new, .assistant_close, .assistant_config, .assistant_confirm, .assistant_staged_open, input, button, label, textarea',
+			// a short delay and a few pixels of travel before a drag begins, so a tap
+			// on a touchscreen does not move the panel - a press-and-hold still drags
+			delay: 150,
+			distance: 8,
+			cancel: '.assistant_anchor, .assistant_new, .assistant_close, .assistant_config, .assistant_confirm, .assistant_confirm_delete, .assistant_staged_open, input, button, label, textarea',
 			drag: function (e, ui) {
 				// keep the panel on screen and clear of the taskbar, wherever it is dragged
 				var w = $(this).outerWidth(), h = $(this).outerHeight();

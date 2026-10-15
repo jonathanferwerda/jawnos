@@ -20640,6 +20640,11 @@ sub guide_promote_update($c, $row) {
 sub guide_promote_delete($c, $row) {
 	my $target = &subs::db_select('appointments', undef, { uuid => $row->{'target_uuid'} })->hash;
 	return { error => 'that appointment is gone' } unless $target;
+	# keep the whole row, so "undo that" can put the appointment back
+	&guide_undo_push({
+		kind => 'delete', app => $target->{'app'}, uuid => $target->{'uuid'},
+		title => $row->{'title'}, row => $target,
+	});
 	&Manager::delete_app($target->{'app'}, $target->{'uuid'}, ($target->{'server_time'} || &subs::rightNow()), 'guide');
 	&subs::appt_toggle_checker($target->{'app'});
 	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
@@ -20692,6 +20697,17 @@ post '/manager/help/delete' => sub($c) {
 post '/manager/help/undo' => sub($c) {
 	my $rec = guide_undo_pop();
 	return $c->render(json => { ok => 0, error => 'there is nothing to undo' }) unless $rec && $rec->{'uuid'};
+	# undoing a delete puts the row back; undoing a change restores the fields it set
+	if (($rec->{'kind'} || '') eq 'delete') {
+		my $row = $rec->{'row'};
+		return $c->render(json => { ok => 0, error => 'there is nothing to put back' }) unless ref $row eq 'HASH' && scalar keys %{$row};
+		my %insert = %{$row};
+		$insert{'server_time'} = &subs::rightNow();
+		&subs::db_insert('appointments', \%insert);
+		&subs::appt_toggle_checker($rec->{'app'});
+		&guide_refresh_app($rec->{'app'}, $rec->{'uuid'});
+		return $c->render(json => { ok => 1, app => $rec->{'app'}, summary => 'put back the "' . &subs::format_name($rec->{'app'}) . '" appointment' });
+	}
 	my $target = &subs::db_select('appointments', undef, { uuid => $rec->{'uuid'} })->hash;
 	return $c->render(json => { ok => 0, error => 'that appointment is gone' }) unless $target;
 	my %set = ( timestamp => $rec->{'timestamp'}, server_time => &subs::rightNow() );

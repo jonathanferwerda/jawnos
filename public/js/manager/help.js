@@ -363,7 +363,7 @@ function helpDoAction(a, cb) {
 		$.post('/manager/help/delete', { app: a.app || '', title: a.title || '', when: a.when || '', which: a.which || '' }, function (r) {
 			if (!r || r.error) { cb('I could not find that appointment: ' + ((r && r.error) || 'not found') + '.', 'I could not find that one.'); return; }
 			var what = r.summary || ('delete the ' + (r.app || a.app || '') + ' appointment');
-			if (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired()) {
+			if (typeof assistantConfirmDeleteRequired === 'function' ? !assistantConfirmDeleteRequired() : (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired())) {
 				$.post('/manager/help/promote', { uuid: r.staged }, function (p) {
 					if (p && p.error) { cb('I could not delete that: ' + p.error); return; }
 					cb('Done - ' + what + '.', 'Done - ' + what + '.');
