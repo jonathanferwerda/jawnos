@@ -6858,8 +6858,14 @@ sub setting_initializer() {
 
 &signatorial_establisher();
 
-sub signatorial_establisher() {
+sub signatorial_establisher {
 	my $context = shift;
+	# Pin the session secret even when the signatorial image is missing. Left
+	# unpinned, each Mojolicious worker signs sessions with its own random key, so
+	# a session the dock mints (a ticket) will not verify at the manager - the
+	# Gate a client lands on holding a perfectly good ticket. The fallback is
+	# deterministic (the configured path), so the tree's workers share it.
+	$gb::secret_maker ||= [ md5_sum('signatorial:' . ($config->{'signatorial'} || 'jawnos')) ];
 	if ($config->{'signatorial'} && -e $config->{'signatorial'}) {
 
 		my $j = &subs::terminal_name(&subs::home($config->{'signatorial'}));
