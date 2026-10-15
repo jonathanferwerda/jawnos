@@ -1643,9 +1643,9 @@ our $say_quiet;
 # the watch). Returns the path of a fresh WAV, or '' when no piper render is
 # possible on this machine. The caller owns (and unlinks) the file.
 sub say_render_wav() {
-	my ($text) = @_;
+	my ($text, $pick_hint) = @_;
 	return '' unless defined $text && length $text;
-	my $pick = &subs::misc_setting('say_voice') || &subs::say_default_voice();
+	my $pick = $pick_hint || &subs::misc_setting('say_voice') || &subs::say_default_voice();
 	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
 	return '' unless $spec && (($spec->{'engine'} || '') eq 'piper');
 	my @piper_argv = &subs::say_piper_argv();
@@ -1685,7 +1685,7 @@ sub say_it() {
 		# Piper first, on every device, so the voice is uniform wherever it can
 		# run: the models are shared (voice_sync), only the binary is per-device.
 		if (($spec->{'engine'} || '') eq 'piper') {
-			my $wav = &subs::say_render_wav($text);
+			my $wav = &subs::say_render_wav($text, $pick);
 			if ($wav) {
 				my $player = &subs::say_player_command();
 				# a headless server has no sink; a failed play is not our problem
