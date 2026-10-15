@@ -7,6 +7,8 @@
 		[ 'eval_assistant',          'Evaluation',           'chat' ],
 		[ 'visual_assistant',        'Vision (reads images)', 'vision' ],
 		[ 'text_to_image_assistant', 'Image generation',     'image' ],
+		[ 'text_to_audio_assistant', 'Audio generation',     'audio-gen' ],
+		[ 'text_to_video_assistant', 'Video generation',     'video-gen' ],
 		[ 'chatbot_model',           'Pen chat (default)',   'chat' ],
 		[ 'coding_assistant',        'Coding (self-healing)', 'chat' ],
 	);
@@ -68,7 +70,7 @@
 			# generation does not - and the chosen model must be one that reasons
 			# (ai_model_thinks). The row rides the model, appearing and going as the
 			# pick changes.
-			my $thinking_cap = ($cap ne 'image') ? 1 : 0;
+			my $thinking_cap = ($cap eq 'chat' || $cap eq 'vision') ? 1 : 0;
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;

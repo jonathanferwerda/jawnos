@@ -10475,8 +10475,9 @@ sub pen_message() {
 
 	# 2. Maintain a tiny string buffer for incomplete stream chunks
 	my $buffer = '';
-	my $is_generating_image = 0;
-	my $image_prompt_buffer = '';
+	my $is_generating = 0;
+	my $generating_kind = '';
+	my $prompt_buffer = '';
 	my $accumulated_text = '';
 	# 3. UNSUBSCRIBE the default parser, then attach your custom reader
 	$tx->res->content->unsubscribe('read')->on(read => sub {
@@ -10492,16 +10493,19 @@ sub pen_message() {
 		      my $adata = eval { decode_json($line) };
 		      next if $@;
     			if (my $text = unidecode($adata->{message}{content})) {
-						$accumulated_text .= $text;
-	          if ($accumulated_text =~ /dalle\.text2/ || $is_generating_image) {
-
-							if ($is_generating_image == 0) {
-								$image_prompt_buffer = $accumulated_text;
-							}
-							else {
-	              $image_prompt_buffer .= $text;
-							}
-            	$is_generating_image = 1;
+					$accumulated_text .= $text;
+          if ($is_generating || $accumulated_text =~ /(dalle\.text2|audio\.text2|video\.text2)/) {
+						if (!$is_generating) {
+							($generating_kind) = ($accumulated_text =~ /(dalle\.text2|audio\.text2|video\.text2)/);
+							$generating_kind = 'image' if $generating_kind eq 'dalle.text2';
+							$generating_kind = 'audio' if $generating_kind eq 'audio.text2';
+							$generating_kind = 'video' if $generating_kind eq 'video.text2';
+							$prompt_buffer = $accumulated_text;
+						}
+						else {
+              $prompt_buffer .= $text;
+						}
+            	$is_generating = 1;
           	}
 
 
@@ -10531,28 +10535,41 @@ sub pen_message() {
 	# 3. Perform the transaction synchronously
 	$ua->start($tx);
 	my $attachments = [];
-	if ($is_generating_image == 1) {
-		$image_prompt_buffer =~ s/<br>//gi;
-		my $action = eval { return decode_json $image_prompt_buffer };
+	if ($is_generating) {
+		$prompt_buffer =~ s/<br>//gi;
+		my $action = eval { return decode_json $prompt_buffer };
 		my $action_input = eval { return decode_json $action->{'action_input'} };
 		my $extracted_prompt = $action_input->{'prompt'};
 
 		if ($extracted_prompt) {
+			# name who is doing the work, before the (slow) generation call
+			my $gen_model = ($generating_kind eq 'image') ? ($settings->{'text_to_image_assistant'} || $model)
+				: ($generating_kind eq 'audio') ? ($settings->{'text_to_audio_assistant'} || '')
+				: ($settings->{'text_to_video_assistant'} || '');
+			&Websocket::mail_send({
+				type => 'writing',
+				uuid => $msg_data->{'uuid'} || $data->{'uuid'},
+				new_text => ' Generating ' . $generating_kind . ' with ' . ($gen_model || 'the ' . $generating_kind . ' agent') . '…',
+				mail_contact => 'pen'
+			});
 
-	    my ($image_url,$attachment) = &generate_ai_image({
+	    my ($media_url,$attachment) = &generate_ai_media({
 				ua => $ua,
+				kind => $generating_kind,
 				prompt => $extracted_prompt,
 				msg_uuid => $data->{'uuid'},
 				settings => $settings,
-				model => $model,
+				model => $gen_model,
 				conversation => $conversation,
 				mail_contact => $mail_contact
 			});
 	    $attachments = $attachment if $attachment;
-	    if ($image_url) {
-        my $html_img = '<img src="' . $image_url . '" class="chat-generated-img" style="width:100%;"/><br>';
-        $accumulated_text = $html_img;
-				$response_text = $html_img;
+	    if ($media_url) {
+        my $html = ($generating_kind eq 'image')
+					? '<img src="' . $media_url . '" class="chat-generated-img" style="width:100%;"/><br>'
+					: '<a href="' . $media_url . '" class="chat-generated-file">' . $generating_kind . '</a><br>';
+        $accumulated_text = $html;
+				$response_text = $html;
 				unless ($data->{'type'} eq 'assistant') {
 					&Websocket::mail_send({
 						type => 'writing',
@@ -10564,14 +10581,15 @@ sub pen_message() {
 					$accumulated_text =~ s/'/\\'/gi;
 
 					&Websocket::send('tab', {
-						console => '$(\'.assistant_content[uuid="' . $data->{'uuid'} . '"]\').html(\'' . $accumulated_text . '\');'
+						console => '$(\.assistant_content[uuid="' . $data->{'uuid'} . '"]\)\.html(\'' . $accumulated_text . '\');'
 					});
 				}
 	    }
 		}
 		# Reset markers and clear buffer strings
-		$is_generating_image = 0;
-		$image_prompt_buffer = '';
+		$is_generating = 0;
+		$generating_kind = '';
+		$prompt_buffer = '';
 	}
 	return ($response_text,$attachments);
 
@@ -11874,6 +11892,8 @@ sub ai_model_caps_by_name {
 	my ($name) = @_;
 	my $n = lc($name || '');
 	return ('image') if $n =~ /(dall-e|gpt-image|stable-?diffusion|sdxl|sd3|flux|imagen|playground-v2|kandinsky|dreamshaper|lucid|phoenix|text-to-image|text2image)/;
+	return ('video-gen') if $n =~ /(veo|runway|sora|video-?gen|text-?to-?video|image-?to-?video|stable-?video|kling|luma|mochi|pika|wan-?video|haiper|flux-?video)/;
+	return ('audio-gen') if $n =~ /(musicgen|audio-?gen|music-?gen|audio-?lm|suno|riffusion|stable-?audio|bark|elevenlabs|melod)/;
 	return ('audio') if $n =~ /(whisper|asr|speech|melotts|aura-|\btts\b)/;
 	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
 	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision)/;
@@ -11885,6 +11905,8 @@ sub ai_model_caps_by_task {
 	my ($task) = @_;
 	my $t = lc($task || '');
 	return ('image') if $t =~ /text-to-image|image generation|image-to-image|inpaint|image editing/;
+	return ('video-gen') if $t =~ /text-to-video|video generation|image-to-video/;
+	return ('audio-gen') if $t =~ /audio generation|text-to-audio|music/;
 	return ('vision') if $t =~ /image-to-text|visual question|image classification|object detection|vision/;
 	return ('audio') if $t =~ /speech|audio|asr|text-to-speech|tts/;
 	return ('chat') if $t =~ /text generation|conversational|summariz|chat/;
@@ -12266,17 +12288,36 @@ sub ai_chat_parts {
 	my @parts;
 	my $text = &ai_response_text($body);
 	push @parts, { type => 'text', text => $text } if defined $text && length $text;
-	# an image the model drew or returned (OpenAI-style, Gemini inline_data, Anthropic blocks)
+	# media the model drew or returned: OpenAI-style images/audio/video, Gemini
+	# inline_data (any mime), Anthropic media blocks. The type is read off the
+	# mime, so a caller can ask for the part it wants (image/audio/video).
 	foreach my $u ( @{ $body->{'choices'}->[0]->{'message'}->{'images'} || [] } ) {
 		my $url = (ref $u eq 'HASH') ? ($u->{'image_url'}->{'url'} || $u->{'url'}) : $u;
 		push @parts, { type => 'image', url => $url } if $url;
 	}
+	my $msg = $body->{'choices'}->[0]->{'message'} || $body->{'result'}->{'choices'}->[0]->{'message'} || {};
+	foreach my $field ( qw/audio video/ ) {
+		my $m = $msg->{$field};
+		next unless $m;
+		if (ref $m eq 'HASH') {
+			push @parts, { type => $field, url => $m->{'url'} } if $m->{'url'};
+			push @parts, { type => $field, mime => $m->{'mime'} || $m->{'mime_type'}, data => $m->{'data'} } if $m->{'data'};
+		}
+		elsif (!ref $m && length $m) {
+			push @parts, { type => $field, url => $m };
+		}
+	}
 	foreach my $p ( @{ $body->{'candidates'}->[0]->{'content'}->{'parts'} || [] } ) {
-		push @parts, { type => 'image', mime => $p->{'inline_data'}->{'mime_type'}, data => $p->{'inline_data'}->{'data'} } if $p->{'inline_data'};
+		next unless $p->{'inline_data'};
+		my $mime = $p->{'inline_data'}->{'mime_type'} || '';
+		my $type = ($mime =~ m{^audio/}) ? 'audio' : ($mime =~ m{^video/}) ? 'video' : 'image';
+		push @parts, { type => $type, mime => $mime, data => $p->{'inline_data'}->{'data'} };
 	}
 	if (ref $body->{'content'} eq 'ARRAY') {
 		foreach my $b ( @{ $body->{'content'} } ) {
-			push @parts, { type => 'image', mime => $b->{'source'}->{'media_type'}, data => $b->{'source'}->{'data'} } if (($b->{'type'} || '') eq 'image' && $b->{'source'});
+			my $bt = $b->{'type'} || '';
+			next unless $b->{'source'} && ($bt eq 'image' || $bt eq 'audio' || $bt eq 'video');
+			push @parts, { type => $bt, mime => $b->{'source'}->{'media_type'}, data => $b->{'source'}->{'data'} };
 		}
 	}
 	return (\@parts, undef);
@@ -13408,8 +13449,43 @@ sub ai_text_to_image {
 	return (undef, undef, 'the model answered without an image');
 }
 
-sub generate_ai_image {
+# The audio/video twin of ai_text_to_image's generic path: the chosen generation
+# model is asked for the media and the first part of the right kind it returns is
+# the answer. Pen uses this so a described audio/video prompt is filed by the
+# agent that takes care of that kind.
+sub ai_text_to_media {
+	my ($kind, $data) = @_;
+	my $prompt = $data->{'prompt'} || '';
+	return (undef, undef, 'no prompt') unless length $prompt;
+	my $setting = ($kind eq 'audio' ? 'text_to_audio_assistant' : 'text_to_video_assistant');
+	my $label = ($kind eq 'audio' ? 'Audio' : 'Video');
+	my $model = $data->{'model'} || &subs::setting_grabber({ app => 'mail', setting => $setting });
+	return (undef, undef, "no $kind model is set (Configure, Plat, $label generation)") unless $model;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
+	my $ask = $prompt;
+	if ($kind eq 'video' && $data->{'width'} && $data->{'height'}) {
+		$ask .= ' Produce the video at ' . int($data->{'width'}) . ' by ' . int($data->{'height'}) . ' pixels.';
+	}
+	my ($parts, $err) = &ai_chat_parts($model, [ { role => 'user', content => $ask } ]);
+	return (undef, undef, $err || 'the model returned nothing readable') if $err;
+	foreach my $part ( @{$parts || []} ) {
+		next unless ($part->{'type'} || '') eq $kind;
+		if ($part->{'data'}) {
+			my $bytes = MIME::Base64::decode_base64($part->{'data'});
+			return ($bytes, $part->{'mime'}, undef) if $bytes && length $bytes;
+		}
+		elsif ($part->{'url'}) {
+			my $fetch = $ua->get($part->{'url'});
+			my $bytes = $fetch->res->body;
+			return ($bytes, $fetch->res->headers->content_type || '', undef) if $bytes && length $bytes;
+		}
+	}
+	return (undef, undef, "the model answered without $kind");
+}
+
+sub generate_ai_media {
   my ($data) = @_;
+	my $kind = $data->{'kind'} || 'image';
 	my $c = &subs::controller_builder();
 	my $msg_uuid = $data->{'msg_uuid'};
   my $ua       = $data->{'ua'};
@@ -13425,32 +13501,27 @@ sub generate_ai_image {
 	$app = &subs::unformat_name($app);
 
   $log->info(Dumper $data);
-	# the picture comes through the Plat Image-generation model; the storing, the
-	# appointment and the reply are this routine's own work
-	my ($binary, $mime, $img_err) = &subs::ai_text_to_image({ prompt => $prompt });
-	if ($img_err || !defined $binary || !length $binary) {
-		$log->error('Image generation failed: ' . ($img_err || 'nothing returned'));
+	# the media comes through the Plat generation model for this kind; the
+	# storing, the appointment and the reply are this routine's own work
+	my ($binary, $mime, $gen_err) = ($kind eq 'image')
+		? &subs::ai_text_to_image({ prompt => $prompt })
+		: &subs::ai_text_to_media($kind, { prompt => $prompt });
+	if ($gen_err || !defined $binary || !length $binary) {
+		$log->error(ucfirst($kind) . ' generation failed: ' . ($gen_err || 'nothing returned'));
 		return undef;
 	}
-	my $folder;
-	my $location;
-	my $filename = 'img_' . &subs::rightNow() . '.png';
-	my $upload_type = 'image';
-	my $ft = File::Type->new();
-	my $fd = $ft->checktype_contents($binary);
-	if ($fd =~ /image/) {
-		$upload_type = 'image';
-		$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-		$location = &subs::home($folder) . '/' . $app;
-	}
-
-	my $public_dir = $location || &subs::home('~/Public/generated_images');
+	my $upload_type = $kind;
+	my $filename = $kind . '_' . &subs::rightNow() . ($kind eq 'image' ? '.png' : $kind eq 'audio' ? '.mp3' : '.mp4');
+	my $setting = ($kind eq 'image' ? 'photo_location' : $kind eq 'audio' ? 'music_location' : 'video_location');
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => $setting, device => $device });
+	my $location = $folder ? (&subs::home($folder) . '/' . $app) : '';
+	my $public_dir = $location || &subs::home('~/Public/generated_' . $kind);
 	`mkdir $public_dir` unless -d $public_dir;
 
 	my $file_path = $public_dir . '/' . $filename;
 	write_file($file_path, $binary);
 	my $ocr;
-	if ($fd =~ /image/) {
+	if ($kind eq 'image') {
 		my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
 		`magick $file_path -resize $resolution $file_path` unless lc $resolution eq 'raw';
 		$ocr = &Manager::ocr_reader($c,$file_path);
@@ -13475,6 +13546,12 @@ sub generate_ai_image {
 	&Manager::centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
 
 	return ('/file_open?appt_uuid=' . $appt_uuid . '&file_uuid=' . $file_uuid . '&app=' . $app,$u_data);
+}
+
+sub generate_ai_image {
+	my ($data) = @_;
+	$data->{'kind'} = 'image';
+	return &generate_ai_media($data);
 }
 
 
