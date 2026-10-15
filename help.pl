@@ -904,7 +904,7 @@ our %topic = (
 		body => [
 			'The devices speak Bluetooth Low Energy, but JawnOS itself is reached over the network, so a small bridge sits in between: a Bluetooth central (on a phone, or on a desktop) that links to a device and relays messages to and from JawnOS over a local socket.',
 			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.',
-			'A watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine.',
+			'A watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine. If the homebase goes quiet - a phone that switches off - another machine takes the watch over after a short wait, and hands it back the moment the homebase answers again.',
 		],
 		related => [ 'watch', 'tdeck', 'pico' ]
 	},

@@ -2087,23 +2087,29 @@ sub ble_bridge_client() {
 # that a device genuinely gone drops off.
 sub ble_presence_window() { return 1800000; }
 
-sub ble_owns() {
-	# May this machine hold a device's Bluetooth link? A watch is a one-link
-	# peripheral: a machine that is not its homebase that connects STEALS the
-	# link from the machine the person paired it to, and the taps then land on
-	# the wrong box (or nowhere). So only the homebase may hold it. The homebase
-	# is the address the last Now Me stored in the device's operator_door specs,
-	# which syncs, so every machine can check. A device nobody has placed leaves
-	# us owning it, so a brand-new one still works out of the box.
+sub ble_homebase_ip() {
+	# The address a device calls home, from the last Now Me (its operator_door
+	# specs, which sync): just the host, the port stripped. undef when nobody has
+	# placed it.
 	my ($edt, $chip_id) = @_;
-	return 1 unless $chip_id;
+	return undef unless $chip_id;
 	my $od = &subs::setting_grabber({ app => $edt || 'watch', setting => 'operator_door', subsetting => $chip_id });
 	my $op_d = eval { decode_json $od } || {};
 	my $home = $op_d->{'__specs'}->{'homebase'};
-	return 1 unless $home;
+	return undef unless $home;
 	$home =~ s/:\d+$//;
-	# Cache this machine's addresses for a moment: ble_owns runs on every send,
-	# and a toggle fan-out asks once per watch.
+	return $home;
+}
+
+sub ble_owns() {
+	# Is this machine the device's homebase - the machine the person paired it
+	# to? A watch is a one-link peripheral, so only the homebase should hold its
+	# link. A device nobody has placed (no homebase on file) is ours.
+	my ($edt, $chip_id) = @_;
+	my $home = &ble_homebase_ip($edt, $chip_id);
+	return 1 unless $home;
+	# Cache this machine's addresses for a moment: this runs on every send, and a
+	# toggle fan-out asks once per watch.
 	my $now = time();
 	unless ($gb::ble_mine_ips && $now - ($gb::ble_mine_ips_at || 0) <= 5) {
 		my $addrs = &subs::network_interface_reporter();
@@ -2111,6 +2117,44 @@ sub ble_owns() {
 		$gb::ble_mine_ips_at = $now;
 	}
 	return $gb::ble_mine_ips->{$home} ? 1 : 0;
+}
+
+sub ble_homebase_reachable() {
+	# Did the device's homebase answer a ping? Cached a few seconds, and the
+	# moment it first went quiet is kept, so a momentary blip does not hand the
+	# watch on to another machine.
+	my ($edt, $chip_id) = @_;
+	my $home = &ble_homebase_ip($edt, $chip_id);
+	return 1 unless $home;
+	my $now = time();
+	my $c = $gb::ble_home_ping->{$chip_id};
+	my $alive;
+	if ($c && $now - $c->[0] <= 10) {
+		$alive = $c->[1];
+	}
+	else {
+		$alive = (`timeout .3 ping -c 1 -W 1 $home 2>/dev/null` =~ /ttl/i) ? 1 : 0;
+		$gb::ble_home_ping->{$chip_id} = [ $now, $alive ];
+	}
+	delete $gb::ble_home_down_from->{$chip_id} if $alive;
+	return $alive;
+}
+
+sub ble_may_serve() {
+	# May this machine hold/serve the device's link right now? Its homebase may,
+	# always. Nobody else may while the homebase answers - the watch stays on the
+	# machine it was paired to, permanently, which is what the person asked for.
+	# But once the homebase has been quiet past the grace period, another machine
+	# may take the watch over, so a dead phone does not strand it. That machine
+	# serves WITHOUT re-homing, so the stored homebase is untouched and the phone
+	# reclaims the watch the moment it returns.
+	my ($edt, $chip_id) = @_;
+	return 1 if &ble_owns($edt, $chip_id);
+	return 0 if &ble_homebase_reachable($edt, $chip_id);
+	my $now = time();
+	my $from = $gb::ble_home_down_from->{$chip_id};
+	unless ($from) { $gb::ble_home_down_from->{$chip_id} = $now; return 0; }
+	return ($now - $from >= 120) ? 1 : 0;
 }
 
 sub ble_chip_by_mac() {
@@ -2144,19 +2188,26 @@ sub ble_yield() {
 }
 
 sub ble_enforce_hosts() {
-	# Keep a machine that does NOT host a device from holding or chasing its link.
-	# The desktop bridge auto-connects from its saved target on every start, so
-	# without this a machine the watch merely passed by keeps trying to wedge in
-	# until it happens to hear a message and yields. Only devices placed on
-	# another machine (a stored homebase that is not one of our addresses) are
-	# touched - the host's own bridge is left to connect and serve.
+	# Keep every machine on the right side of the link. The desktop bridge
+	# auto-connects from its saved target on every start, so a machine the watch
+	# merely passed by would otherwise keep trying to wedge in - and a machine
+	# that has to take over (its homebase went quiet) would never connect at all,
+	# because it was told to stop.
+	#   may serve  -> make sure this bridge is linked (connect; a no-op if it is)
+	#   may not    -> release whatever it holds and stop chasing
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
+	my $client = &ble_bridge_client() || return;
 	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
 		next unless $d->{'chip_ids'};
 		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
 			next unless $c->{'id'} && $c->{'bluetooth'};
-			next if &ble_owns($c->{'purpose'} || 'watch', $c->{'id'});
-			&ble_yield($c->{'id'});
+			if (&ble_may_serve($c->{'purpose'} || 'watch', $c->{'id'})) {
+				my $mac = $c->{'bluetooth'};
+				&subs::subprocessor(sub { system($client, 'connect', $mac); }, { name => 'ble host connect' });
+			}
+			else {
+				&ble_yield($c->{'id'});
+			}
 		}
 	}
 }
@@ -2266,11 +2317,12 @@ sub ble_device_from_chip() {
 sub bluetooth_sender() {
 	my $data = shift;
 	return unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::ble_bridge_capable();
-	# Only the device's homebase may drive the bridge: another machine connecting
-	# would steal the single link (and the person's taps with it) from the machine
-	# they paired it to. This is also what stops every machine answering a
-	# toggle-changed broadcast with its own connect.
-	return unless &ble_owns($data->{'edt'}, $data->{'chip_id'});
+	# Only the device's homebase may drive the bridge - or, once the homebase has
+	# gone quiet past the grace, a machine taking it over. Another machine
+	# connecting would steal the single link (and the person's taps with it). This
+	# is also what stops every machine answering a toggle-changed broadcast with
+	# its own connect.
+	return unless &ble_may_serve($data->{'edt'}, $data->{'chip_id'});
 	my $intent = $data->{'intent'};
 	my $message = $data->{'message'};
 	my $embedded = &subs::device_lister(&subs::rightNow(),$data->{'edt'},undef,$data->{'chip_id'});
@@ -2353,19 +2405,22 @@ sub watch_toggle_pusher() {
 
 sub ble_rehome_check() {
 	# A watch that has bridged to a machine that is not its homebase must not be
-	# kept there: it is a one-link peripheral, so holding it steals it from the
-	# machine the person paired it to, and its taps land here instead of there.
-	# Yield the link. When the machine IS the homebase, the only thing left to
-	# fix is a watch whose own idea of its homebase has drifted from the record -
-	# re-home it to itself by pushing now_me over the link, which rewrites the
-	# watch's homebase, rotates the authorization its tap urls carry, and carries
-	# the screen timeout (so an idle watch stops dropping the link).
+	# kept there while the homebase is up: it is a one-link peripheral, so holding
+	# it steals it from the machine the person paired it to. Yield it. A machine
+	# serving as the FALLBACK (the homebase has gone quiet) serves on, but never
+	# re-homes - the person wants the watch to come back to the phone, so the
+	# stored homebase must stay the phone. Only when this machine IS the homebase
+	# is there anything to fix: a watch whose own idea of its homebase has drifted
+	# from the record. Re-home it to itself by pushing now_me over the link, which
+	# rewrites the watch's homebase, rotates the authorization its tap urls carry,
+	# and carries the screen timeout (so an idle watch stops dropping the link).
 	my ($edt, $chip_id, $reported) = @_;
 	return unless $edt && $chip_id && &subs::ble_bridge_capable();
-	unless (&ble_owns($edt, $chip_id)) {
+	unless (&ble_may_serve($edt, $chip_id)) {
 		&ble_yield($chip_id);
 		return;
 	}
+	return unless &ble_owns($edt, $chip_id);
 	# The watch's *own* homebase, as it reports it: the stored operator_door
 	# specs can already name this machine while the watch still points
 	# elsewhere (a push that never landed left them out of step), so the compare
@@ -2848,6 +2903,51 @@ sub ble_message_processor() {
 		}
 		return;
 	}
+	if ($type && $type eq 'button') {
+		# A button tap the watch sent over the link. Apply it HERE, on the machine
+		# holding the bridge, instead of fetching the url the tap carries: that url
+		# names the watch's homebase, which is the wrong machine whenever this one
+		# is serving as the fallback, and a machine fetching that url from itself
+		# is a needless round trip (it timed out in practice, losing the tap). Runs
+		# the same worker /watch/button runs, then pushes the resulting state back.
+		my $payload = $msg->{'payload'} || {};
+		my $edt = $msg->{'edt'} || 'watch';
+		my $chip_id = $msg->{'chip_id'};
+		if ((!$chip_id || !$msg->{'edt'}) && $msg->{'url'}) {
+			my ($c) = $msg->{'url'} =~ /[?&]chip_id=([^&]+)/;
+			my ($e) = $msg->{'url'} =~ /[?&]edt=([^&]+)/;
+			$chip_id ||= $c;
+			$edt = $e if $e && !$msg->{'edt'};
+		}
+		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		if (!$ws->{'__specs'}) {
+			$log->info('BLE button for ' . ($chip_id || '?') . ': no placed settings, dropped');
+			return;
+		}
+		my $tog = (($payload->{'toggle'} || 0) == 1) ? 'off' : 'on';
+		my $returner = eval {
+			&subs::edt_button_presser({
+				timestamp => (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+				room => $payload->{'room'},
+				watch_settings => $ws,
+				button => $payload->{'button'},
+				edt => $edt,
+				chip_id => $chip_id,
+				remote_address => 'bluetooth',
+				toggle => $tog
+			});
+		};
+		$log->error('BLE button press failed: ' . $@) if $@;
+		if ($returner && ref $returner eq 'HASH') {
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'button', data => $returner }
+			});
+		}
+		return;
+	}
 	my $url = $msg->{'url'};
 	if (!$url) {
 		$log->info('BLE message without url: ' . $data);
@@ -2877,10 +2977,17 @@ sub ble_listener_start() {
 	return if $gb::ble_listener;
 	my $client = &ble_bridge_client();
 	return unless &ble_bridge_enabled() && $client;
-	# Before the listener starts taking messages: drop any link this machine is
-	# merely chasing for a device that belongs to another machine. Best-effort:
-	# a failure here must not stop the listener from coming up.
+	# Before the listener starts taking messages: put every bridge on the right
+	# side of its link (drop a chase that is not ours, start one we must serve).
+	# Best-effort: a failure here must not stop the listener from coming up.
 	eval { &ble_enforce_hosts(); };
+	# And keep it that way: the homebase may go quiet (a dead phone), when this
+	# machine has to take the watch over, and come back, when it must hand it
+	# back. One timer per process.
+	unless ($gb::ble_enforce_timer) {
+		$gb::ble_enforce_timer = 1;
+		Mojo::IOLoop->recurring(60 => sub { eval { &ble_enforce_hosts(); }; });
+	}
 	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
 	$gb::ble_listener->on(read => sub() {
@@ -2901,10 +3008,10 @@ sub ble_listener_start() {
 			# needs the address from these link events.
 			if ($name eq 'connected') {
 				$gb::ble_link_mac = $event->{'mac'};
-				# Linked to a device that belongs to another machine? Release it at
-				# once, before it even speaks, so the homebase keeps the link.
+				# Linked to a device this machine may not serve? Release it at once,
+				# before it even speaks, so the homebase keeps the link.
 				my $chip = &ble_chip_by_mac($event->{'mac'});
-				&ble_yield($chip->{'id'}) if $chip && !&ble_owns($chip->{'purpose'} || 'watch', $chip->{'id'});
+				&ble_yield($chip->{'id'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
 			}
 			elsif ($name eq 'disconnected') {
 				$gb::ble_link_mac = undef;
@@ -2915,7 +3022,7 @@ sub ble_listener_start() {
 				# here too when it is not ours to hold.
 				if ($event->{'connected'}) {
 					my $chip = &ble_chip_by_mac($event->{'mac'});
-					&ble_yield($chip->{'id'}) if $chip && !&ble_owns($chip->{'purpose'} || 'watch', $chip->{'id'});
+					&ble_yield($chip->{'id'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
 				}
 			}
 			elsif ($name eq 'message') {
