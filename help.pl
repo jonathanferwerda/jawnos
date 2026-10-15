@@ -425,6 +425,24 @@ our %topic = (
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	},
+	'email' => {
+		title => 'Email', category => 'apps', app => 'email',
+		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'public/js/manager/email.js' ],
+		verified => '2026-10-15',
+		summary => 'IMAP and SMTP mail, straight on the desktop.',
+		body => [
+			'Email is the mailbox\'s mail half, split out as an app of its own. It speaks IMAP and SMTP directly, so mail arrives on the desktop rather than in a separate client, and a new message raises the dot in the start menu.',
+			'Pick a folder - contacts, inbox, drafts, outbox or sent - and then the address to read. New file composes a message; when you send it the attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to.',
+			'The gear opens the server settings and the saved templates for the address you are on.'
+		],
+		steps => [
+			'Open Email from the start menu.',
+			'Choose a folder and the address to read.',
+			'New file composes; sending files the mail and seals its attachments.',
+			'The gear configures the server and its templates.'
+		],
+		related => [ 'mailbox', 'sealing_files' ]
+	},
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],

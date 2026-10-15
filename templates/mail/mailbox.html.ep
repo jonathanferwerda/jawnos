@@ -36,13 +36,17 @@
 	<% my $privilege = $c->session('privilege'); %>
 	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
-			<% if ($privilege eq 'citizen') { %>
-				<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
-					<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+			<%# an app that owns one section shows no switcher: the umbrella's
+			    buttons belong to Mailbox itself, which still carries every section %>
+			<% if (!$scope) { %>
+				<% if ($privilege eq 'citizen') { %>
+					<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
+						<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+					<% } %>
+					<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+				<% } else { %>
+					<button class="mail_subsection active" section="dial" disabled>Dial</button>
 				<% } %>
-				<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
-			<% } else { %>
-				<button class="mail_subsection active" section="dial" disabled>Dial</button>
 			<% } %>
 			<br><br><br>
 

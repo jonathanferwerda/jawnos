@@ -3651,6 +3651,7 @@ my @manager_bundle_files = qw(
 	/js/manager/ide.js
 	/js/manager/ide_code.js
 	/js/mailbox.js
+	/js/manager/email.js
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js
 	/js/manager/calendarprinter.js
@@ -17963,6 +17964,18 @@ get '/manager/mailbox' => sub ($c) {
 #	});
 };
 
+get '/manager/email' => sub ($c) {
+	# The Email app: Mailbox's email section as an app of its own. The panel is
+	# still the shared mailbox render (the conversation view, the message list,
+	# the socket), scoped to this one section; the section's own markup and
+	# behaviour move out of the umbrella in the commits that follow.
+	$c->stash('mail_scope' => 'email');
+	my $timestamp = $c->param('timestamp');
+	my $contents = &mail_checker($c)->{'contents'};
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'email', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+};
+
 get '/manager/mail/picker' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 
@@ -18496,6 +18509,13 @@ sub mail_checker($c) {
 	my $list = [];
 	my $q;
 	my @selection = split '---', $settings->{'mail_list'};
+	# An app that owns one section of the mailbox (email, messages, chat, lora,
+	# pen) opens on its own section and hides the umbrella's switcher. The scope is
+	# per request, so the shared 'mail' subsection setting is left alone and the
+	# umbrella keeps working while the sections move out one at a time.
+	my $scope = $c->stash('mail_scope');
+	$settings->{'subsection'} = $scope if $scope && $privilege ne 'guest';
+
 	if ($settings->{'subsection'} eq 'list') {
 		my $listing = &subs::db_query('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp)->hashes;
 		foreach my $l ( @{$listing} ) {
@@ -18615,6 +18635,7 @@ sub mail_checker($c) {
 		mail_email => $email,
 		config => &subs::config_reader(),
 		settings => $settings,
+		scope => $scope,
 		list => $list,
 		me => $me,
 		incoming_data => $incoming_data,
