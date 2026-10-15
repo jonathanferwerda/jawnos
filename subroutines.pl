@@ -2378,16 +2378,23 @@ sub device_lister() {
 	if ($ble_types{$load_type} && $chip_id) {
 		my $window = &ble_presence_window();
 		my $now = &subs::rightNow();
-		my @ble;
+		# One entry per chip, the freshest sighting. The same watch is recorded in
+		# every machine's synced `devices` row, so iterating them all listed - and
+		# later pushed to - the same radio many times over: a single toggle became a
+		# burst of identical sends.
+		my %ble_by_id;
 		foreach my $d ( @{$devices} ) {
 			next unless $d->{'chip_ids'};
 			my $chips = eval { decode_json $d->{'chip_ids'} } || [];
 			foreach my $c ( @{$chips} ) {
 				next unless $c->{'id'} && ($c->{'ble'} || $c->{'bluetooth'});
 				next unless $window > $now - ($c->{'ble_seen'} || 0);
-				push @ble, $c;
+				my $id = $c->{'id'};
+				$ble_by_id{$id} = $c
+					if !$ble_by_id{$id} || ($c->{'ble_seen'} || 0) > ($ble_by_id{$id}->{'ble_seen'} || 0);
 			}
 		}
+		my @ble = values %ble_by_id;
 		if ($chip_id eq 'all') {
 			push @{$all_chips}, map { &ble_device_from_chip($_, $load_type) } @ble;
 		}
@@ -2618,10 +2625,15 @@ sub ble_enforce_hosts() {
 	#   may not    -> release whatever it holds and stop chasing
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
 	my $client = &ble_bridge_client() || return;
+	# One pass per chip: the same watch sits in every machine's synced `devices`
+	# row, so the raw walk ran the connect/yield decision over and over for a
+	# single radio.
+	my %done;
 	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
 		next unless $d->{'chip_ids'};
 		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
 			next unless $c->{'id'} && $c->{'bluetooth'};
+			next if $done{ $c->{'id'} }++;
 			if (&ble_may_serve($c->{'purpose'} || 'watch', $c->{'id'})) {
 				my $mac = $c->{'bluetooth'};
 				my $u = &ble_nus_uuids();
@@ -2823,9 +2835,10 @@ sub watch_toggle_pusher() {
 	my $watches = &subs::device_lister(&subs::rightNow(), 'watch', undef, 'all');
 	return unless ref $watches eq 'ARRAY' && scalar @{$watches};
 	my @targets;
+	my %seen;
 	foreach my $w ( @{$watches} ) {
 		next unless ref $w eq 'HASH' && $w->{'chip_id'};
-		push @targets, $w->{'chip_id'};
+		push @targets, $w->{'chip_id'} unless $seen{ $w->{'chip_id'} }++;
 	}
 	return unless scalar @targets;
 	&subs::subprocessor(sub {
@@ -16408,3 +16421,53 @@ foreach my $rm ( @{$rms} ) {
 }
 
 1;
+# Work claims: who is sorting out what, so two agents - or two machines - do not
+# take the same job. They live as settings on the 'claims' app, which is NOT one of
+# @gb::protected, so the mesh merge carries each claim to every machine; the
+# protected __president settings (the agent registry among them) stay local.
+sub work_claims() {
+	my $rows = &db_query(q{select setting, value from settings where app = 'claims' order by cast(server_time as integer) desc})->hashes;
+	my %claims;
+	foreach my $r (@{$rows}) {
+		next unless ($r->{'setting'} || '') =~ /^claim_(.+)$/;
+		my $task = $1;
+		next if $claims{$task};   # newest first, so the first row for a task wins
+		my $c = eval { decode_json $r->{'value'} } || {};
+		next unless ref $c eq 'HASH' && $c->{'by'};
+		$claims{$task} = $c;
+	}
+	return \%claims;
+}
+
+sub work_claim() {
+	my ($task) = @_;
+	return undef unless defined $task && $task =~ /\S/;
+	return (&work_claims())->{$task};
+}
+
+sub claim_work() {
+	my ($task, $note) = @_;
+	return undef unless defined $task && $task =~ /\S/;
+	my $value = encode_json({ by => &signatorial_designer(), machine => &machine_name(), at => &rightNow(), note => ($note // '') });
+	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => $value });
+	return &work_claim($task);
+}
+
+# The machine's own name, for a claim a person has to read. The signatorial is the
+# mesh identity; this is what to show beside it.
+sub machine_name() {
+	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
+	return $name if defined $name && $name =~ /\S/;
+	my $h = `hostname`;
+	chomp $h;
+	return $h;
+}
+
+# Released by writing it empty rather than deleting it, so the release rides the
+# same mesh merge the claim does.
+sub release_work() {
+	my ($task) = @_;
+	return unless defined $task && $task =~ /\S/;
+	&setting_setter({ app => 'claims', setting => 'claim_' . $task, value => '' });
+}
+
