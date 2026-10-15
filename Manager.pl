@@ -7224,8 +7224,14 @@ sub log_reader {
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'centre_view') {
 		#centre_view
-		$appointments = &subs::db_raw("select max(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC", $chosen_app,$time_definition);
-		push @{$appointments}, @{&subs::db_raw("select min(timestamp) as timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector", $chosen_app,$time_definition)};
+		# The column is text, so max()/min() over it and a plain compare are both
+		# lexicographic: before 1970 (a negative timestamp) that picks the wrong row
+		# ("-441..." reads above "-315...", so the earlier appointment would win the
+		# max). Cast the compare and the order, and take the row by limit rather than
+		# max() - the aggregate would still choose lexicographically. The query is
+		# per-app, so the cast rides the app index and costs nothing.
+		$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) <=? order by cast($timestamp_selector as integer) DESC limit 1", $chosen_app,$time_definition);
+		push @{$appointments}, @{&subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) >=? order by cast($timestamp_selector as integer) limit 1", $chosen_app,$time_definition)};
 
 
 		@{$appointments} = grep { $_->{'app'} eq $chosen_app } @{$appointments};
@@ -7244,14 +7250,19 @@ sub log_reader {
 		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp);
+		# the window is drawn from the travelled time, so it can be before 1970 (a
+		# negative timestamp): the text column then compares lexicographically and
+		# finds nothing. Cast only when the window is pre-epoch, so the common modern
+		# range keeps its index (the same choice the appointment_viewer makes above).
+		my $tint = (($t || 0) < 0 || ($t2 || 0) < 0) ? "cast($timestamp_selector as integer)" : $timestamp_selector;
 		if ($data->{'uuid'}) {
 			$results = &subs::db_raw("select * from appointments where app=? and uuid=? order by server_time DESC", $chosen_app, $data->{'uuid'});
 		}
 		elsif ($data->{'filter'} ne 'all') {
-			$results = &subs::db_raw("select * from appointments where app=? and type=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app, $data->{'filter'}, $t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and type=? and (($tint >= ? AND $tint <= ?) or ($tint <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app, $data->{'filter'}, $t,$t2,$t2,'start','record');
 		}
 		else {
-			$results = &subs::db_raw("select * from appointments where app=? and (($timestamp_selector >= ? AND $timestamp_selector <= ?) or ($timestamp_selector <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app,$t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and (($tint >= ? AND $tint <= ?) or ($tint <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app,$t,$t2,$t2,'start','record');
 		}
 		$appointments = $results;
 	}
