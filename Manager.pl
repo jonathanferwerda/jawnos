@@ -3652,6 +3652,7 @@ my @manager_bundle_files = qw(
 	/js/manager/ide_code.js
 	/js/mailbox.js
 	/js/manager/email.js
+	/js/manager/chat.js
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js
 	/js/manager/calendarprinter.js
@@ -17996,6 +17997,18 @@ get '/manager/email' => sub ($c) {
 	$c->render(text => $website);
 };
 
+get '/manager/chat' => sub ($c) {
+	# The Chat app: the house's conversations - sms, the dial, the list, ticket
+	# threads and lora - gathered as an app of its own. Same shared render as
+	# email, scoped to the chat group, so its sidebar carries only those sections
+	# and nothing the mailbox carries besides.
+	$c->stash('mail_scope' => 'chat');
+	my $timestamp = $c->param('timestamp');
+	my $contents = &mail_checker($c)->{'contents'};
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'chat', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+};
+
 get '/manager/mail/picker' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 
@@ -18458,6 +18471,20 @@ post '/manager/mail/public_channel' => sub($c) {
 	$c->render(json => { public => $public, count => scalar @kept });
 };
 
+# Which sections each app owns. Mailbox (no scope) carries them all. An app that
+# owns one section shows no switcher; one that owns several (chat) shows just its
+# own, so its sidebar is that app's navigation and nothing else. Declared here,
+# beside the renderer, because the scope is what picks the sidebar's buttons.
+sub mail_scope_sections($scope) {
+	return () unless $scope;
+	my %groups = (
+		email => [qw/email/],
+		chat  => [qw/sms dial list tickets lora/],
+		pen   => [qw/pen/],
+	);
+	return @{ $groups{$scope} || [$scope] };
+}
+
 sub mail_checker($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $incoming_data = eval { return decode_json $c->param('incoming_data') } || {};
@@ -18534,7 +18561,10 @@ sub mail_checker($c) {
 	# per request, so the shared 'mail' subsection setting is left alone and the
 	# umbrella keeps working while the sections move out one at a time.
 	my $scope = $c->stash('mail_scope') || $c->param('scope');
-	$settings->{'subsection'} = $scope if $scope && $privilege ne 'guest';
+	my @scope_sections = ($scope && $privilege ne 'guest') ? &mail_scope_sections($scope) : ();
+	unless (grep { $_ eq $settings->{'subsection'} } @scope_sections) {
+		$settings->{'subsection'} = $scope_sections[0] if @scope_sections;
+	}
 
 	if ($settings->{'subsection'} eq 'list') {
 		my $listing = &subs::db_query('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp)->hashes;
@@ -18656,6 +18686,7 @@ sub mail_checker($c) {
 		config => &subs::config_reader(),
 		settings => $settings,
 		scope => $scope,
+		scope_sections => [@scope_sections],
 		list => $list,
 		me => $me,
 		incoming_data => $incoming_data,

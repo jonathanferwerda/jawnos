@@ -425,6 +425,25 @@ our %topic = (
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	},
+	'chat' => {
+		title => 'Chat', category => 'apps', app => 'chat',
+		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/chat.js' ],
+		verified => '2026-10-15',
+		summary => 'The house\'s conversations: sms, the dial, ticket threads and lora.',
+		body => [
+			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the six groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
+			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down - except on the guest\'s own ticket thread, the one conversation the house opened for them.',
+			'Advertise opens the tuned set to guests, who may then tune the same channel from the public page. Room bubbles that are not kept are dashed to say so.'
+		],
+		steps => [
+			'Open Chat from the start menu.',
+			'Pick a section from the sidebar - sms, dial, list, tickets or lora.',
+			'Sms: tap a number, then write in the box below the conversation.',
+			'Dial: pick a set, then press Advertise to open it to guests.',
+			'List: add and configure the sets the dial picks from.'
+		],
+		related => [ 'mailbox', 'phone', 'email' ]
+	},
 	'email' => {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'public/js/manager/email.js' ],

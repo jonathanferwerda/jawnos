@@ -14,11 +14,14 @@
 	<% my $privilege = $c->session('privilege'); %>
 	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">
-			<%# an app that owns one section shows no switcher: the umbrella's
-			    buttons belong to Mailbox itself, which still carries every section %>
-			<% if (!$scope) { %>
+			<%# an app shows its own sections here and nothing else: Mailbox (no
+			    scope) lists every section, chat lists the five it owns, and an app
+			    that owns a single section shows no switcher at all %>
+			<% my @scope_list = @{ $scope_sections || [] }; %>
+			<% my @sections_listed = @scope_list ? @scope_list : qw/sms email lora list dial pen tickets/; %>
+			<% if (!$scope || scalar(@sections_listed) > 1) { %>
 				<% if ($privilege eq 'citizen') { %>
-					<% foreach my $ss ( qw/sms email lora list dial pen tickets/ ) { %>
+					<% foreach my $ss ( @sections_listed ) { %>
 						<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
 					<% } %>
 					<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
