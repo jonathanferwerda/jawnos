@@ -281,7 +281,7 @@ our $known_appts = {
 # shape is settled, and is only offered to the model once its resolver lands.
 our @guide_tools = (
 	{ name => 'find', args => { query => 'a name' }, example => '{"action":"find","query":"a name"}',
-	  desc => 'search their records and images by name; returns matching apps, file names, and last (the date of the newest match)' },
+	  desc => 'search their records by name; returns matching apps and files, the named things in the other tables, and first, last and next (the dates of the oldest, newest and next such matches - use these to answer "when did I last/first ...")' },
 	{ name => 'open_gallery', args => { names => [ 'a', 'b' ], app => 'x', search => 'x' }, example => '{"action":"open_gallery","names":["a","b"]}',
 	  desc => 'open the photo browser to one or more named things, each resolved to the app that holds it ("app":"x" scopes to one; "search":"x" filters by text)' },
 	{ name => 'open_app', args => { app => 'gallery' }, example => '{"action":"open_app","app":"gallery"}',

@@ -274,10 +274,128 @@ sub time_machine_resolve {
 	return $ms;
 }
 
-# Ask the guide to read a time-machine phrase and give the moment it names. It is
-# told the present so "jul 16", "last friday" or a bare day land in the right
-# year. It answers with a local timestamp, which str2time reads back; anything
-# else is "unknown". No guide model on this machine leaves the phrase unread.
+# A staged appointment's time, read the same way the time machine reads a typed
+# time. A value already in milliseconds passes straight through; anything else
+# ("in 20 minutes", "jul 16", "next friday") is resolved by the one resolver the
+# clock uses, guide fallback and all, so a create lands where it says.
+sub guide_when_ms {
+	my ($when) = @_;
+	my $now = &subs::rightNow();
+	return $now unless defined $when && $when =~ /\S/;
+	return $when + 0 if $when =~ /^\s*\d{12,}\s*$/;
+	return &time_machine_resolve($when, $now);
+}
+
+# The words worth searching a phrase for: its nouns, with the small connective
+# words dropped, so "the last time I had a beer" searches for "beer".
+sub guide_time_keywords {
+	my ($spec) = @_;
+	$spec = lc($spec // '');
+	$spec =~ s/['\x{2019}]\w+//g;   # drop contractions: "i'll" leaves "i"
+	my %stop = map { $_ => 1 } qw(
+		the a an of to in on at by for with about from into over after before
+		my your their his her our its this that these those
+		last first next previous following time times day date when
+		was were is are am be been being
+		did do does have had has i me you it we they he she them us
+		and or but if then than so as
+		saw see seen meet met went go got get
+		what whats how who whom whose which please tell give show find
+		will would shall should can could may might must
+	);
+	my @w = grep { length($_) > 1 && $_ =~ /^[a-z0-9_]+$/ && !$stop{$_} } split /\s+/, $spec;
+	@w = @w[0 .. 4] if @w > 5;
+	return @w;
+}
+
+# A one-line report of a help_search, for a prompt.
+sub help_search_summary {
+	my ($f) = @_;
+	my @bits;
+	push @bits, 'apps: ' . join(', ', map { $_->{'app'} } @{ $f->{'apps'} || [] }) if @{ $f->{'apps'} || [] };
+	push @bits, 'names: ' . join(', ', @{ $f->{'named'} || [] }) if @{ $f->{'named'} || [] };
+	push @bits, 'oldest match: ' . $f->{'first'}->{'when'} . ' (' . $f->{'first'}->{'app'} . ')' if $f->{'first'};
+	push @bits, 'newest match: ' . $f->{'last'}->{'when'} . ' (' . $f->{'last'}->{'app'} . ')' if $f->{'last'};
+	push @bits, 'next match from now: ' . $f->{'next'}->{'when'} . ' (' . $f->{'next'}->{'app'} . ')' if $f->{'next'};
+	return @bits ? join('; ', @bits) : 'nothing found';
+}
+
+# The content tables the guide may search by name, beyond the appointments log.
+# Only tables that hold the person's own words: the settings, credentials,
+# device and cache tables are deliberately left out, so a secret cannot ride out
+# to a model on a search.
+our %help_search_tables = (
+	notes           => [qw/text app/],
+	mailbox         => [qw/subject from_email email contact person/],
+	magazine        => [qw/title teaser/],
+	backups         => [qw/destination reason/],
+	model           => [qw/name app manufacturer description/],
+	option          => [qw/name app manufacturer description/],
+	subcategory     => [qw/name app manufacturer description/],
+	option_category => [qw/supplier app name/],
+);
+
+# One search over the person's records: the appointments that match (by app, file
+# or notes), the files they carry, the first, newest and next such moments, and
+# any named thing in the content tables. This is the read behind the guide's find
+# action and the time machine's own fallback.
+sub help_search($q) {
+	$q = '' unless defined $q;
+	my $like = '%' . join('%', split /\s+/, $q) . '%';
+	my $now = &subs::rightNow();
+	my (%apps, %files, %named, $first, $last, $next);
+	my $visible_count = 0;
+	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
+	if (length $q) {
+		my $rows = &subs::db_query('select app, uuid, file, notes, timestamp from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
+		foreach my $r ( @{$rows} ) {
+			next unless help_app_visible($r->{'app'});
+			$visible_count++;
+			$apps{ $r->{'app'} }++ if $r->{'app'};
+			my $fl = eval { decode_json $r->{'file'} } || [];
+			foreach my $f ( @{$fl} ) {
+				my $n = $f->{'name'} || $f->{'f'};
+				next unless $n && lc($n) =~ /$fpat/i;
+				$n =~ s{.*/}{};
+				$files{ $n } = 1;
+			}
+			my $ts = $r->{'timestamp'};
+			next unless defined $ts && $ts =~ /^\d+$/;
+			$ts += 0;
+			my $when = eval { localtime($ts / 1000)->strftime('%A %B %d, %Y') };
+			next unless $when;
+			my $hit = { app => $r->{'app'}, ts => $ts, when => $when };
+			$first = $hit if !$first || $ts < $first->{'ts'};
+			$last  = $hit if !$last  || $ts > $last->{'ts'};
+			$next  = $hit if $ts >= $now && (!$next || $ts < $next->{'ts'});
+		}
+		foreach my $table ( sort keys %help_search_tables ) {
+			my @cols = @{ $help_search_tables{$table} };
+			my $where = join(' or ', map { "$_ like ?" } @cols);
+			my $rs = eval { &subs::db_query("select " . join(', ', @cols) . " from $table where $where limit 20", (map { $like } @cols)) };
+			next unless $rs;
+			foreach my $r ( @{ $rs->hashes } ) {
+				foreach my $col ( @cols ) {
+					next unless defined $r->{$col} && $r->{$col} =~ /\S/ && $r->{$col} !~ /^\d+$/;
+					$named{ $r->{$col} } = 1;
+				}
+			}
+		}
+	}
+	my @apps = map { { app => $_, count => $apps{$_} } } sort { $apps{$b} <=> $apps{$a} } keys %apps;
+	my @all = sort keys %files;
+	@all = @all[0 .. 7] if @all > 8;
+	my @named = sort keys %named;
+	@named = @named[0 .. 15] if @named > 16;
+	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
+}
+
+# The time machine's own fallback: read a phrase neither a written date nor a
+# relative offset could. The records are looked up first and handed to the guide,
+# which answers with the moment it means - or, when the phrase asks the person's
+# thing to be started, with an appointment it has it write (through
+# appointment_writer, so alarms, budgets and any embedded relay all fire). No
+# guide model on this machine leaves the phrase unread.
 sub guide_time_machine {
 	my ($spec, $timestamp) = @_;
 	my $key = lc $spec;
@@ -286,23 +404,52 @@ sub guide_time_machine {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	if ($model) {
 		my $now_text = localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P');
-		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that means a moment in time. '
-			. 'Right now it is ' . $now_text . ' in local time. '
-			. 'If the phrase names no time of day, keep the present time of day. '
-			. 'A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
-			. 'Reply with ONLY the moment it names, as YYYY-MM-DD HH:MM:SS in local time, and nothing else. '
-			. 'If it names no moment you can read, reply with exactly: unknown';
+		my @words = &guide_time_keywords($spec);
+		my $dossier = '';
+		if (@words) {
+			my $found = &help_search(join(' ', @words));
+			$dossier = 'Here is what their records show for "' . join(' ', @words) . '": ' . &help_search_summary($found) . '. ';
+		}
+		my $birthday = ($config->{'birthday'} ? ('Their birthday is ' . $config->{'birthday'} . '. ') : '');
+		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that names a moment, or asks you to start or log something. '
+			. 'Right now it is ' . $now_text . ' in local time. ' . $birthday . $dossier
+			. 'If the phrase names no time of day, keep the present time of day. A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
+			. 'Reply with ONE JSON action and nothing else: '
+			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '
+			. 'or {"action":"create","app":"lunch","title":"Lunch","when":"in 20 minutes","type":"start"} to make an appointment, when they ask you to start, begin or log something ("type" is start, record or command for something the alarm fires). '
+			. 'If the phrase names no moment and asks for nothing, reply {"action":"time","when":"unknown"}';
 		my ($text, $err) = &subs::evaluation_model_call($model, $system, $spec);
 		if ($text) {
-			$text =~ s/^\s+|\s+$//g;
-			if ($text !~ /\bunknown\b/i) {
-				$text =~ s/\bat\b/ /gi;
-				my $t = eval { str2time($text) };
-				if (!$t && $text =~ /(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/) {
-					my $d = $1; $d =~ s/T/ /;
-					$t = eval { str2time($d) };
+			my $action = eval { decode_json $text };
+			if (!$action && $text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+			$action = { action => 'time', when => $text } unless $action && $action->{'action'};
+			my $act = $action->{'action'};
+			if ($act eq 'create' && $spec =~ /\b(?:start|begin|log|record|add|create|schedule|make|new|remind)\b/i) {
+				my $when_ms = &guide_when_ms($action->{'when'});
+				my $app = &subs::unformat_name($action->{'app'} || $action->{'title'} || 'appointment');
+				&appointment_writer(undef, {
+					uuid => &subs::random_string_creator(40),
+					app => $app,
+					type => ($action->{'type'} || 'usual'),
+					timestamp => $when_ms,
+					server_time => &subs::rightNow(),
+					notes => $action->{'title'} || '',
+					source => 'guide',
+					device => &subs::device_setter(),
+				});
+				$ms = $when_ms;
+			}
+			elsif ($act eq 'time') {
+				my $w = $action->{'when'};
+				if (defined $w && $w !~ /unknown/i) {
+					$w =~ s/\bat\b/ /gi;
+					my $t = eval { str2time($w) };
+					if (!$t && $w =~ /(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/) {
+						my $d = $1; $d =~ s/T/ /;
+						$t = eval { str2time($d) };
+					}
+					$ms = $t * 1000 if $t;
 				}
-				$ms = $t * 1000 if $t;
 			}
 		}
 	}
@@ -19204,6 +19351,7 @@ post '/manager/help/act' => sub($c) {
 	# the guide is given the wall clock so it can turn "last year", "yesterday" and
 	# "next Friday" into the absolute dates where_when and create need
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+	$system .= 'Their birthday is ' . $config->{'birthday'} . ".\n" if $config->{'birthday'};
 	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
 	$system .= &help::briefing($topic) . "\n" if $topic;
 	$system .= &help::inventory($topic) . "\n" if $topic;
@@ -19247,45 +19395,7 @@ post '/manager/help/act' => sub($c) {
 # What the guide's find action sees: appointments whose app, file or notes match,
 # summarised as the apps involved and a few matching file names.
 get '/manager/help/find' => sub($c) {
-	my $q = $c->param('q') // '';
-	if (!length $q) {
-		$c->render(json => { query => $q, count => 0, apps => [], files => [] });
-		return;
-	}
-	my $like = '%' . join('%', split /\s+/, $q) . '%';
-	my $rows = &subs::db_query('select app, uuid, file, notes from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
-	my (%apps, %files);
-	my $visible_count = 0;
-	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
-	foreach my $r ( @{$rows} ) {
-		next unless help_app_visible($r->{'app'});
-		$visible_count++;
-		$apps{ $r->{'app'} }++ if $r->{'app'};
-		my $fl = eval { decode_json $r->{'file'} } || [];
-		foreach my $f ( @{$fl} ) {
-			# the file list stores each entry as {f => <path>, ...}; older rows used name
-			my $n = $f->{'name'} || $f->{'f'};
-			next unless $n && lc($n) =~ /$fpat/i;
-			$n =~ s{.*/}{};
-			$files{ $n } = 1;
-		}
-	}
-	my @apps = map { { app => $_, count => $apps{$_} } } sort { $apps{$b} <=> $apps{$a} } keys %apps;
-	my @all = sort keys %files;
-	@all = @all[0 .. 7] if @all > 8;
-	# when the person asks "when did I last see X", the answer is the newest match:
-	# hand the guide that one row's date along with the matches
-	my $last_rows = &subs::db_query('select app, timestamp from appointments where (app like ? or file like ? or notes like ?) order by timestamp desc limit 60', $like, $like, $like)->hashes;
-	my $last;
-	foreach my $lr ( @{$last_rows} ) {
-		next unless help_app_visible($lr->{'app'});
-		if ($lr->{'timestamp'} && $lr->{'timestamp'} =~ /^\d+$/) {
-			my $when = eval { localtime($lr->{'timestamp'} / 1000)->strftime('%A %B %d, %Y') };
-			$last = { app => $lr->{'app'}, when => $when } if $when;
-		}
-		last;
-	}
-	$c->render(json => { query => $q, count => $visible_count, apps => \@apps, files => \@all, last => $last });
+	$c->render(json => help_search($c->param('q') // ''));
 };
 
 # ---- what the acting guide reads to answer, instead of guessing --------
@@ -19765,7 +19875,7 @@ sub guide_stage_appointment($c, $params) {
 	my $now = &subs::rightNow();
 	my $app = &subs::unformat_name($params->{'app'} || '');
 	my $type = $params->{'type'} || 'usual';
-	my $timestamp = $params->{'timestamp'} || $now;
+	my $timestamp = &guide_when_ms($params->{'timestamp'});
 	my $title = $params->{'title'} || '';
 	my $notes = $params->{'notes'} || '';
 	my $data = $params->{'data'} || '';
@@ -19890,7 +20000,7 @@ sub guide_verb_execute($c, $action) {
 		my $uuid = &subs::random_string_creator(40);
 		&subs::db_insert('staged_appointments', {
 			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
-			app => $app, type => ($p{'type'} || 'usual'), timestamp => ($p{'when'} || &subs::rightNow()),
+			app => $app, type => ($p{'type'} || 'usual'), timestamp => &guide_when_ms($p{'when'}),
 			title => ($p{'title'} || ''), notes => ($p{'notes'} || ''), data => '',
 			device => &subs::device_setter(), status => 'pending'
 		});
@@ -19899,10 +20009,7 @@ sub guide_verb_execute($c, $action) {
 	if ($prim eq 'find') {
 		my $q = $p{'query'} // '';
 		return 'no search given' unless length $q;
-		my $like = '%' . join('%', split /\s+/, $q) . '%';
-		my $rows = &subs::db_query('select app from appointments where (app like ? or file like ? or notes like ?) group by app limit 12', $like, $like, $like)->hashes;
-		my @apps = map { $_->{'app'} } @{$rows};
-		return @apps ? ('found in: ' . join(', ', @apps)) : ('nothing found for "' . $q . '"');
+		return &help_search_summary(&help_search($q));
 	}
 	if ($prim eq 'play_music') {
 		my $r = help_music_file($c, $p{'query'}, $p{'shuffle'});
