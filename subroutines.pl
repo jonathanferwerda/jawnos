@@ -1055,10 +1055,12 @@ sub resolve_when {
 sub iso_local {
 	my ($ms) = @_;
 	return '' unless defined $ms;
-	my @t = localtime($ms / 1000);
-	my $y = $t[5] + 1900;
-	my $sign = $y < 0 ? '-' : '';
-	return sprintf('%s%04d-%02d-%02d %02d:%02d:%02d', $sign, abs($y), $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
+	# the same idiom every other printer uses, so this agrees with the screens;
+	# strftime %Y already writes a negative year as "-44" and year 1 as "1", and
+	# resolve_when reads both back
+	my $t = localtime($ms / 1000);
+	return '' unless ref $t;
+	return $t->strftime('%Y-%m-%d %H:%M:%S');
 }
 
 sub ago_calc() {
@@ -2599,7 +2601,7 @@ sub voice_brain() {
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
-	my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.");
+	my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
 	my $action = $out ? eval { decode_json $out } : undef;
 	if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
 	return undef unless $action && ref $action eq 'HASH' && $action->{'action'};
@@ -10352,6 +10354,10 @@ sub pen_message() {
 			num_thread => $nproc - 2,
 			num_ctx    => 32768
 		},
+		# thinking, where the chat model is a local one that reasons (Ollama's own
+		# think field); Cloudflare's endpoint takes none
+		my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
+		$payload->{'think'} = ($lvl eq 'max' ? 'high' : $lvl) if length $lvl && &subs::ai_model_thinks($model);
 	}
 
 	$log->info($url);
@@ -12188,6 +12194,40 @@ sub ai_thinking_level {
 	return '';
 }
 
+# Whether a model reasons before it answers - whether the thinking knob (see
+# ai_chat_raw) means anything to it. No provider publishes this, so it is read
+# from the model id: the reasoning families by name. A model not named here
+# simply never offers the choice, and a level sent to a model that ignores the
+# knob is still caught (a 400) and the call retried without it, so a miss costs
+# nothing. Names are given without their provider: prefix.
+sub ai_model_thinks {
+	my ($model) = @_;
+	return 0 unless defined $model && length $model;
+	my $v = lc $model;
+	$v =~ s/^\@cf\///;   # Cloudflare's own @cf/... ids
+	# strip a leading provider: only when it names a real provider, so an Ollama
+	# tag (qwen3:8b) keeps the colon that carries its size
+	foreach my $p ( @{ &subs::ai_providers() } ) {
+		my $id = $p->{'id'};
+		if ($v =~ /^\Q$id\E:(.*)$/) { $v = $1; last; }
+	}
+	return 1 if $v =~ /(?:^|[-_.\/])(?:o1|o3|o4|gpt-5|qwq|qwen3|magistral|gpt-oss|deepseek-(?:r1|reasoner|v4-pro)|reason|thinking)(?:$|[-_.:\/])/;
+	return 1 if $v =~ /^claude/ && $v =~ /(?:3[.-]7|[4-9])/;
+	return 1 if $v =~ /^(?:gemini-(?:2\.5|3)|grok-(?:3|4))/;
+	return 0;
+}
+
+# The thinking effort chosen in Configure -> Plat beside a role's model, '' when
+# none is set. The Coding agent's own coding_thinking predates the per-role
+# settings, so it is read as that one role's fallback.
+sub ai_role_thinking {
+	my ($role) = @_;
+	return '' unless defined $role && length $role;
+	my $v = &subs::setting_grabber({ app => 'mail', setting => $role . '_thinking' });
+	$v = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' }) if (!defined $v || !length $v) && $role eq 'coding_assistant';
+	return defined $v ? $v : '';
+}
+
 sub evaluation_model_call() {
 	my ($model, $system, $user, $thinking) = @_;
 	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
@@ -12619,7 +12659,7 @@ sub evaluation_agent() {
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
-		($text, $error) = &evaluation_model_call($model, $system, $user);
+		($text, $error) = &evaluation_model_call($model, $system, $user, &subs::ai_role_thinking('eval_assistant'));
 	}
 	else {
 		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
@@ -14989,7 +15029,7 @@ sub coding_propose_fix {
 	}
 	my $ai_start = { calls => $ai_tokens->{'calls'}, in => $ai_tokens->{'in'}, out => $ai_tokens->{'out'} };
 	# the coding agent's thinking effort, set in Configure -> Plat beside its model
-	my $thinking = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' });
+	my $thinking = &subs::ai_role_thinking('coding_assistant');
 	# a fallback model's stand-down notice must not speak from this fork
 	local $say_quiet = 1;
 	require &error_watch_repo() . '/help.pl';

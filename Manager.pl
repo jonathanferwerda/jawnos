@@ -417,7 +417,7 @@ sub guide_time_machine {
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '
 			. 'or {"action":"create","app":"lunch","title":"Lunch","when":"in 20 minutes","type":"start"} to make an appointment, when they ask you to start, begin or log something ("type" is start, record or command for something the alarm fires). '
 			. 'If the phrase names no moment and asks for nothing, reply {"action":"time","when":"unknown"}';
-		my ($text, $err) = &subs::evaluation_model_call($model, $system, $spec);
+		my ($text, $err) = &subs::evaluation_model_call($model, $system, $spec, &subs::ai_role_thinking('help_assistant'));
 		if ($text) {
 			my $action = eval { decode_json $text };
 			if (!$action && $text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
@@ -8088,7 +8088,7 @@ post '/manager/configure/map_helper' => sub($c) {
 		unless ($model) { unlink $tmp; $c->render(json => { error => 'no vision model is set (Configure, Plat, Vision)' }); return; }
 		my $system = 'You label a single map screenshot for JawnOS. The map is meant to be north-up.';
 		my $ask = 'Return ONLY JSON, no prose: {"legend":"the scale-bar text exactly as printed (e.g. 200 m or 1 km), or empty","rotate":degrees to turn the image CLOCKWISE so its north points up (a number; 0 if already north-up),"bar":{"x1":0.0,"y1":0.0,"x2":0.0,"y2":0.0}}. For bar, give the two ends of the scale bar as fractions of the image width and height, each between 0 and 1 (x1,y1 the left end, x2,y2 the right end). Judge the rotation from the map content (roads, labels, the graticule), not from the scale bar, which is drawn horizontally however the map is turned.';
-		my ($text, $err) = &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ]);
+		my ($text, $err) = &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ], &subs::ai_role_thinking('visual_assistant'));
 		unlink $tmp;
 		unless ($text) { $c->render(json => { error => $err || 'the vision model returned nothing' }); return; }
 		my ($json) = $text =~ /(\{.*\})/s;
@@ -10652,7 +10652,7 @@ sub inventory_cell_summary($data) {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
 	my ($text, $error);
 	if ($model) {
-		($text, $error) = &subs::evaluation_model_call($model, $system, encode_json($briefing));
+		($text, $error) = &subs::evaluation_model_call($model, $system, encode_json($briefing), &subs::ai_role_thinking('eval_assistant'));
 	}
 	else {
 		$error = 'no evaluation model is chosen';
@@ -18666,7 +18666,7 @@ sub travel_guess_describe_area {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
 	return (undef, \@names) unless $model && @images;
 	my $ask = 'These pictures are the parts of our own maps that fall in or beside one patch of ground we have not mapped' . (@names ? ' (the maps are: ' . join(', ', @names) . ')' : '') . '. Each is a crop, not a whole map. In one paragraph (no preamble, no lists), describe what most likely fills the unmapped patch, as a prompt for an image generator: terrain, land use, roads that visibly continue from the crops, water, season and the look of the imagery. Stay conservative: only say what these crops support; do not invent turns, junctions, buildings or landmarks.';
-	my ($text) = &subs::ai_chat($model, [ { role => 'system', content => 'You describe real places conservatively, for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ]);
+	my ($text) = &subs::ai_chat($model, [ { role => 'system', content => 'You describe real places conservatively, for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ], &subs::ai_role_thinking('visual_assistant'));
 	return ($text, \@names);
 }
 
@@ -19310,7 +19310,7 @@ post '/manager/help/ask' => sub($c) {
 		$system .= ".\n";
 	}
 	$system .= "\nAnswer in plain text. Keep it under about 180 words unless they ask for more.";
-	my ($text, $err) = &subs::evaluation_model_call($model, $system, $question);
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, $question, &subs::ai_role_thinking('help_assistant'));
 	if ($err || !$text) {
 		$c->render(json => { error => $err || 'the guide returned nothing readable' });
 		return;
@@ -19401,7 +19401,7 @@ post '/manager/help/act' => sub($c) {
 		push @lines, $label . ': ' . ($m->{'content'} || '');
 	}
 	push @lines, '', 'Reply with the single next JSON action.';
-	my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines));
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines), &subs::ai_role_thinking('help_assistant'));
 	if ($err || !$text) {
 		$c->render(json => { error => $err || 'the guide returned nothing readable' });
 		return;
@@ -19772,7 +19772,7 @@ sub remote_command_run($c, $data) {
 		# cannot pick an action whose effect has nowhere to go.
 		my %remote_verbs = map { $_ => 1 } qw/open_app play_music measure where_when say ask done/;
 		my $system = &help::actions_prompt(\%remote_verbs) . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
-		my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.");
+		my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
 		$action = $out ? eval { decode_json $out } : undef;
 		if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
 		return { ok => 0, error => 'the guide returned nothing readable' } unless $action && $action->{'action'};
@@ -20320,7 +20320,8 @@ sub agent_title {
 	my ($out, $err) = &subs::evaluation_model_call(
 		$model,
 		'You name chat threads. Reply with only a short title of two to five words - no quotes, no full stop, no other words.',
-		'Name this thread: ' . substr($text, 0, 400)
+		'Name this thread: ' . substr($text, 0, 400),
+		&subs::ai_role_thinking($kind eq 'coding' ? 'coding_assistant' : 'help_assistant')
 	);
 	return $fallback if $err || !defined $out;
 	$out =~ s/[\r\n"`*]+/ /g;
@@ -20485,7 +20486,7 @@ post '/manager/coding/heal' => sub($c) {
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	unless ($model) { $c->render(json => { error => "No Coding model is set (Configure \x{2192} Platform)." }); return; }
 	# the thinking effort set beside the Coding model (none/low/high/max)
-	my $thinking = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' });
+	my $thinking = &subs::ai_role_thinking('coding_assistant');
 	# which thread this belongs to, so the same chatbox remembers across turns
 	my $conversation = $c->param('conversation') || 'coding';
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
@@ -20703,7 +20704,7 @@ post '/manager/help/review' => sub($c) {
 	my $system = 'You check one JawnOS appointment\'s part of speech. An appointment logs one kind of activity; its "pos" (part of speech) is what sort of thing it is, and "mab" (might also be) names a second reading when the name is ambiguous. The valid pos values are: '
 		. join(', ', @poses) . '. Given the app\'s name and any description, reply with EXACTLY ONE JSON object and nothing else: {"pos":"<a valid pos>"} to correct it, or {"pos":"' . $pos . '","keep":true} when the current one already fits. Add "mab":"<a valid pos>" only if a second reading clearly applies.';
 	my $user = 'App: ' . $app . '\nCurrent pos: ' . $pos . '\nCurrent mab: ' . $mab . ($description ? ('\nDescription: ' . $description) : '');
-	my ($text, $err) = &subs::evaluation_model_call($model, $system, $user);
+	my ($text, $err) = &subs::evaluation_model_call($model, $system, $user, &subs::ai_role_thinking('help_assistant'));
 	my $action;
 	if ($text) { $action = eval { decode_json $text }; }
 	if (!$action || ($action->{'keep'} && !$action->{'mab'})) {

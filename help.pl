@@ -439,7 +439,7 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
-		verified => '2026-10-14',
+		verified => '2026-10-15',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
@@ -822,10 +822,11 @@ our %topic = (
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-10-14',
+		verified => '2026-10-15',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
+			'Thinking is set per agent, beside its model: every language agent — the Help guide, Evaluation, Vision, the Pen and Coding — carries one, while Image generation does not. The level reaches each agent\'s own model calls, and a level a model does not understand is dropped and the call retried without it.',
 			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.',
 			'Beside each provider that is set up sits the money left on its account, where the provider reports one: OpenRouter and DeepSeek publish a figure, and the rest read —. The reading is kept fresh in the background (off the page), so opening Plat never waits on a provider.',
 			'Guide commands (runtime) is where you teach the Guide new verbs without a code change. Each is a JSON entry naming a primitive — say, open_app, set_setting, run_command, toggle, stage, find or play_music — and its parameters. The list is a setting, so it syncs to every machine and they all learn the verb.',
@@ -833,7 +834,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Configure and press Plat.',
-			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. Coding also carries Thinking — none, low, high or max — how long it may reason before it answers; a provider without such a knob ignores it. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
+			'Under Agent models, pick the model each assistant should use — the Help guide, Evaluation, Vision, Image generation, the Pen and Coding. Each list only offers models that fit the role, so a text assistant is not offered a vision-only model and the Vision role is not offered a plain text one; a model already chosen stays listed even if it does not fit. Each choice is marked free or paid. Every language agent carries a Thinking choice beside its model — none, low, high or max — how long it may reason before it answers (Image generation has none), and a model that ignores the hint answers as it always did. A provider that runs out of credit has its paid models hidden and its chats step down to a free model until the account is topped up.',
 			'Under Provider access, paste the key or account for each provider you want to reach. A field that already shows “••• set” is kept unless you type a new value.',
 			'The balance beside a set-up provider is what is left on that account, where the provider reports it.',
 			'Under Guide commands, add a verb as a JSON entry and press Save — every machine picks it up.',
