@@ -5976,9 +5976,18 @@ post '/manager/configure/pseudonym_icon_changer' => sub ($c) {
 
 # Ticket management is the citizen's desk: minting, deleting, suspending,
 # renewing and reinstating are the owner's acts, and the hooks' path
-# allowances do not enforce that on their own.
+# allowances do not enforce that on their own. A neighbouring machine on the
+# mesh is admitted too, over the same signed rail the other peer routes use: it
+# names itself in `signatorial` and peer_verify checks its pinned key. The desk
+# is exactly the thing a device without a ticket of its own needs, and the
+# request it holds may live on a neighbour's database, so the owner must be
+# able to answer it from a machine that is not the citizen session itself.
 sub ticket_desk_allowed($c) {
-	return $c->session('privilege') eq 'citizen' ? 1 : 0;
+	return 1 if $c->session('privilege') eq 'citizen';
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	return 1 if $rm && &subs::peer_verify($c, $rm);
+	return 0;
 }
 
 # The request desk's policy and its blacklist are rows read by the newest
