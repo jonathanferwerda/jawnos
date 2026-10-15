@@ -2319,27 +2319,49 @@ sub ble_bridge_client() {
 # that a device genuinely gone drops off.
 sub ble_presence_window() { return 1800000; }
 
-sub ble_homebase_ip() {
-	# The address a device calls home, from the last Now Me (its operator_door
-	# specs, which sync): just the host, the port stripped. undef when nobody has
-	# placed it.
+sub ble_device_specs() {
+	# A device's __specs from its operator_door (which syncs): the durable id of
+	# the machine it was paired to, and the address that machine last handed it.
+	# Cached briefly, as it is asked on every send.
 	my ($edt, $chip_id) = @_;
-	return undef unless $chip_id;
+	return {} unless $chip_id;
+	my $key = ($edt || 'watch') . '|' . $chip_id;
+	my $now = time();
+	my $c = $gb::ble_specs->{$key};
+	return $c->[1] if $c && $now - $c->[0] <= 5;
 	my $od = &subs::setting_grabber({ app => $edt || 'watch', setting => 'operator_door', subsetting => $chip_id });
 	my $op_d = eval { decode_json $od } || {};
-	my $home = $op_d->{'__specs'}->{'homebase'};
-	return undef unless $home;
-	$home =~ s/:\d+$//;
-	return $home;
+	my $specs = $op_d->{'__specs'} || {};
+	$gb::ble_specs->{$key} = [ $now, $specs ];
+	return $specs;
+}
+
+sub ble_manager_file() {
+	# This machine's durable id, the same string a device's record names as its
+	# "computer". Cached: manager_file_maker reads the database.
+	my $now = time();
+	return $gb::ble_mf->[1] if $gb::ble_mf && $now - $gb::ble_mf->[0] <= 10;
+	my $mf = eval { &Manager::manager_file_maker() } || '';
+	$gb::ble_mf = [ $now, $mf ];
+	return $mf;
 }
 
 sub ble_owns() {
 	# Is this machine the device's homebase - the machine the person paired it
 	# to? A watch is a one-link peripheral, so only the homebase should hold its
-	# link. A device nobody has placed (no homebase on file) is ours.
+	# link. The pairing is recorded by the machine's durable id, not by an address,
+	# so it survives that machine changing network - the address form is only a
+	# fallback for older records. A device nobody has placed is ours.
 	my ($edt, $chip_id) = @_;
-	my $home = &ble_homebase_ip($edt, $chip_id);
+	my $specs = &ble_device_specs($edt, $chip_id);
+	my $who = $specs->{'computer'};
+	if ($who) {
+		my $mine = &ble_manager_file();
+		return ($mine && $who eq $mine) ? 1 : 0;
+	}
+	my $home = $specs->{'homebase'};
 	return 1 unless $home;
+	$home =~ s/:\d+$//;
 	# Cache this machine's addresses for a moment: this runs on every send, and a
 	# toggle fan-out asks once per watch.
 	my $now = time();
@@ -2351,42 +2373,37 @@ sub ble_owns() {
 	return $gb::ble_mine_ips->{$home} ? 1 : 0;
 }
 
-sub ble_homebase_reachable() {
-	# Did the device's homebase answer a ping? Cached a few seconds, and the
-	# moment it first went quiet is kept, so a momentary blip does not hand the
-	# watch on to another machine.
+sub ble_homebase_alive() {
+	# Is the machine the device was paired to still on the mesh? Its own peer row
+	# is the authority - not a ping of the address it last had, which is wrong the
+	# moment that machine leaves the LAN (a phone on cellular), and made two
+	# machines fight over the watch. A row that is active and refreshed within the
+	# window means the homebase is alive; a stale one means it is gone. A record
+	# that names no machine (older form) is assumed alive, so we never usurp one.
 	my ($edt, $chip_id) = @_;
-	my $home = &ble_homebase_ip($edt, $chip_id);
-	return 1 unless $home;
-	my $now = time();
-	my $c = $gb::ble_home_ping->{$chip_id};
-	my $alive;
-	if ($c && $now - $c->[0] <= 10) {
-		$alive = $c->[1];
+	my $who = &ble_device_specs($edt, $chip_id)->{'computer'};
+	return 1 unless $who;
+	my $now = &subs::rightNow();
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		next unless $rm->{'manager_file'} && $rm->{'manager_file'} eq $who;
+		next unless ($rm->{'connection'} || '') eq 'active';
+		return (($rm->{'server_time'} || 0) + 0 > $now - 600000) ? 1 : 0;
 	}
-	else {
-		$alive = (`timeout .3 ping -c 1 -W 1 $home 2>/dev/null` =~ /ttl/i) ? 1 : 0;
-		$gb::ble_home_ping->{$chip_id} = [ $now, $alive ];
-	}
-	delete $gb::ble_home_down_from->{$chip_id} if $alive;
-	return $alive;
+	return 1;
 }
 
 sub ble_may_serve() {
 	# May this machine hold/serve the device's link right now? Its homebase may,
-	# always. Nobody else may while the homebase answers - the watch stays on the
-	# machine it was paired to, permanently, which is what the person asked for.
-	# But once the homebase has been quiet past the grace period, another machine
-	# may take the watch over, so a dead phone does not strand it. That machine
-	# serves WITHOUT re-homing, so the stored homebase is untouched and the phone
-	# reclaims the watch the moment it returns.
+	# always: the watch stays on the machine it was paired to for as long as that
+	# machine is on the mesh, which is what the person asked for. Only when the
+	# homebase has dropped off the mesh may another machine take the watch over,
+	# so a dead phone does not strand it. That machine serves WITHOUT re-homing,
+	# so the stored pairing is untouched and the phone reclaims the watch the
+	# moment its row comes back.
 	my ($edt, $chip_id) = @_;
 	return 1 if &ble_owns($edt, $chip_id);
-	return 0 if &ble_homebase_reachable($edt, $chip_id);
-	my $now = time();
-	my $from = $gb::ble_home_down_from->{$chip_id};
-	unless ($from) { $gb::ble_home_down_from->{$chip_id} = $now; return 0; }
-	return ($now - $from >= 120) ? 1 : 0;
+	return 0 if &ble_homebase_alive($edt, $chip_id);
+	return 1;
 }
 
 sub ble_chip_by_mac() {
