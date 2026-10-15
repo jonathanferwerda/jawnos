@@ -835,6 +835,11 @@ function assistantIconInitializer() {
 			revert: "invalid",
 			zIndex: 999999,
 			cursorAt: { top: 30, left: 30 },
+			// the button is both a tap (open the associate) and a drag (drop it on a
+			// picture): a tap must not turn into a drag, so wait for a short hold and a
+			// little travel before dragging - a finger's jitter stays a tap
+			delay: 150,
+			distance: 10,
 			cancel: '',
 			start: function(p,ui) {
 				jawnos_assistant_dragging = true;
