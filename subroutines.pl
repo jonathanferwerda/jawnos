@@ -8622,7 +8622,22 @@ sub telephone_call_log_check() {
 		$duration = &subs::time_abbrev_translator($duration);
 
 
-		my $phone = &subs::db_query('select * from settings where setting=? and value like ?', 'phone', '%' . $number)->hashes->[0];
+		# the log carries the number in whatever shape the carrier sent it (+1…,
+		# bare digits, sometimes with the country code) while the house keeps its
+		# contacts as they were typed (519-849-5604, 2263493283, the odd +1…).
+		# Match on the last ten digits of both: a raw substring test meant a
+		# contact stored without the country code (or with dashes) never met its
+		# own call - which is why a working termux-call-log still filed nothing.
+		my $tail = substr $number, -10;
+		my $contacts = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
+		my ($phone) = grep {
+			my $v = $_->{'value'};
+			$v =~ s/\D+//g;
+			$v && (length($v) >= 10 ? substr($v, -10) : $v) eq $tail;
+		} @{$contacts};
+		# an unknown caller is still a call: file it on the fallback app, the one
+		# the live path already uses, rather than dropping it on the floor
+		my $app = ($phone && $phone->{'app'}) ? $phone->{'app'} : 'phone';
 
 		# the live phone app may already have written this call as it happened
 		# (window.JawnPhoneEvent): skip it so a live call and its call-log trail
@@ -8630,22 +8645,20 @@ sub telephone_call_log_check() {
 		my $live = &subs::db_query('select uuid from appointments where subtype=? and timestamp between ? and ? limit 1', 'phone', $timestamp - 180000, $timestamp + 180000)->hashes;
 		next if scalar @{$live} > 0;
 
-		if ($phone->{'app'}) {
-			my $appts = &subs::db_query('select * from appointments where app=? and timestamp = ?', $phone->{'app'}, $timestamp)->hashes;
-			unless (scalar @{$appts} > 0) {
-				my $data = {
-					app => $phone->{'app'},
-					type => 'start',
-					duration => '-' . $duration,
-					timestamp => $timestamp,
-					stop_timestamp => ($timestamp + $duration),
-					seen => 'yes',
-					subtype => 'phone'
-				};
+		my $appts = &subs::db_query('select * from appointments where app=? and timestamp = ?', $app, $timestamp)->hashes;
+		unless (scalar @{$appts} > 0) {
+			my $data = {
+				app => $app,
+				type => 'start',
+				duration => '-' . $duration,
+				timestamp => $timestamp,
+				stop_timestamp => ($timestamp + $duration),
+				seen => 'yes',
+				subtype => 'phone'
+			};
 
-				my $c = &subs::controller_builder();
-				&Manager::appointment_writer($c,$data);
-			}
+			my $c = &subs::controller_builder();
+			&Manager::appointment_writer($c,$data);
 		}
 	}
 }
