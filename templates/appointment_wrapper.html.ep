@@ -14,6 +14,12 @@
 <% } %>
 <% no warnings 'uninitialized'; %>
 <% my $pseudonyms; %>
+<%# the house's tickets by name, newest first, so an appointment's Chat button
+    can name the road: the ticket thread when one is open in the person's name,
+    else their phone %>
+<% my $ticket_rows = &subs::db_query('select uuid, name from tickets order by server_time desc')->hashes; %>
+<% my %ticket_uuid_by_name; %>
+<% foreach my $t (@{$ticket_rows}) { $ticket_uuid_by_name{lc($t->{'name'} || '')} ||= $t->{'uuid'}; } %>
 
 <span timestamp="<%= $timestamp %>" id="<%= $timestamp %>" class="appointment_contents" app="<%= $appointments->[0] %>" style="overflow:scroll; background-color:var(--panel);">
 	<% foreach my $a (@{$appointments}) { %>
@@ -105,8 +111,11 @@
 							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
-					<% if ($appts->{$a}->{'setting'}->{'phone'} && ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) ) { %>
-						<img app="<%= $a %>" type="sms" digits="<%= $appts->{$a}->{'setting'}->{'phone'} %>" class="save_appointment little_thumb sms" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>" hint="Send SMS">
+					<% if ($appts->{$a}->{'setting'}->{'phone'} || $ticket_uuid_by_name{lc($a)}) { %>
+						<%# Chat: the person the appointment belongs to is the conversation, and
+						    it opens right in this window (see chat.js .chat_launcher) - the
+						    ticket thread when one is open in their name, else their phone %>
+						<img app="<%= $a %>" uuid="<%= $ticket_uuid_by_name{lc($a)} || '' %>" phone="<%= $appts->{$a}->{'setting'}->{'phone'} || '' %>" class="little_thumb app_act chat_launcher" src="<%= &subs::icon_path('phone_sms', '/images/make believe/phone_sms.png') %>" hint="Chat">
 					<% } %>
 				</div>
 			<% } %>

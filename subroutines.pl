@@ -7709,7 +7709,10 @@ sub icon_plate_colours() {
 sub render_signature() {
 	my $device = &device_setter();
 	my $config = &config_reader();
-	my @parts = ( &icon_set() || '' );
+	# the version is part of the signature so every release (each push bumps it)
+	# discards cached appointment renders - without it a template change to an
+	# appointment window would sit behind a cache row that matched forever
+	my @parts = ( &icon_set() || '', &jawn_version() );
 	foreach my $k ( @gb::misc_settings ) {
 		push @parts, $k . '=' . ($config->{$device}->{$k}->{'background_colour'} || '');
 	}

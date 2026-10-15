@@ -39,3 +39,44 @@ $(document).on('click', '#chat_friends .chat_friend', function () {
 	}
 	setTimeout(function () { mailMaker(); }, 50);
 });
+
+// The Chat button an appointment wears (in its Connect group): the person the
+// appointment belongs to is the conversation, so the window itself becomes the
+// chat - its contents swap to the chat render for that person, keyed to their
+// ticket when one is open in their name, else their phone. The title bar keeps
+// the person's name and colour; closing the window closes the chat, and opening
+// the person again brings their appointment back.
+$(document).on('click', '.appointment .chat_launcher', function () {
+	var wind = $(this).closest('.wind');
+	var uuid = $(this).attr('uuid') || '';
+	var phone = $(this).attr('phone') || '';
+	localStorage.setItem('mail_contact', uuid);
+	localStorage.setItem('mail_phone', phone);
+	var data = {
+		timestamp: Date.now(),
+		window_maker: 'yes',
+		// the section is set on the way in, so the sidebar's active button and the
+		// transport dropdown agree with the thread the window opens on
+		incoming_data: JSON.stringify({ settings: [{ setting: 'subsection', value: uuid ? 'tickets' : 'sms' }] })
+	};
+	if (uuid) { data.mail_contact = uuid; }
+	else { data.phone = phone; }
+	$.ajax({
+		url: '/manager/chat',
+		type: 'GET',
+		data: data,
+		success: function (response) {
+			var contents = $(response).filter('.wind').find('.window_contents').html();
+			wind.find('.window_contents').html(contents);
+			wind.attr('app', 'chat');
+			// no ticket: the next message must travel by sms, or it would file on a
+			// name that has no ticket thread to read it back from
+			if (!uuid) { wind.find('#mail_transport').val('sms'); }
+			chatTransportOptions();
+			textareaUpgrader();
+			mailWebSocketStart();
+			mailScrollBottom('load');
+			mailDotClear();
+		}
+	});
+});
