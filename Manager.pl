@@ -446,22 +446,23 @@ sub help_search($q) {
 	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
 }
 
-# A person's birthday. "<name>'s [next|last] [Nth] birthday" names the annual
-# occasion - this year by default, next/last shifting a year and the Nth the year
-# they turn N, all counted here from the saved birthday (Configure -> App ->
-# Birthdays). "when was <name> born" and "the day <name> was born" name the actual
-# date. Failing a saved birthday the guide looks the person up (it knows "Abraham
-# Lincoln's birthday"). undef when the phrase is none of these or the date cannot
-# be found, so the guide still runs.
+# A person's birthday. "<name>'s [next|last] [Nth] birthday" (and "when is/was
+# <name>'s birthday") names the annual occasion: the plain form is the next one to
+# come, "was"/"last" the last one that passed, and the Nth the year they turn N -
+# all counted here from the saved birthday (Configure -> App -> Birthdays). "when
+# was <name> born" and "the day <name> was born" name the actual date. Failing a
+# saved birthday the guide looks the person up (it knows "Abraham Lincoln's
+# birthday"). undef when the phrase is none of these or the date cannot be found,
+# so the guide still runs.
 sub person_birthday_of {
 	my ($spec, $timestamp) = @_;
-	my ($name, $n, $mod) = ('', undef, '');
+	my ($name, $n, $mod, $tense) = ('', undef, '', '');
 	my $annual = 0;
 	if    ($spec =~ /^\s*(?:when\s+)?(?:was|is)\s+(.+?)\s+born\s*$/i)                 { ($name) = ($1); }
 	elsif ($spec =~ /^\s*(?:the\s+)?(?:day|date)\s+(.+?)\s+(?:was|is)\s+born\s*$/i)   { ($name) = ($1); }
 	elsif ($spec =~ /^\s*(?:what|which)\s+(?:day|date)\s+(?:was|is)\s+(.+?)\s+born\s*$/i) { ($name) = ($1); }
-	elsif ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+(?:(next|last)\s+)?(?:(\d{1,3})\s*(?:st|nd|rd|th)\s+)?birthday\s*$/i) {
-		($name, $mod, $n) = ($1, lc($2 // ''), $3);
+	elsif ($spec =~ /^\s*(?:when\s+(is|was)\s+|when['\x{2019}]s\s+)?(.+?)[\x{2019}']?s\s+(?:(next|last)\s+)?(?:(\d{1,3})\s*(?:st|nd|rd|th)\s+)?birthday\s*$/i) {
+		($tense, $name, $mod, $n) = (lc($1 // ''), $2, lc($3 // ''), $4);
 		$annual = 1;
 	}
 	else { return undef; }
@@ -473,18 +474,21 @@ sub person_birthday_of {
 	# "when was <name> born" / "the day <name> was born" name the actual date
 	return $birth unless $annual;
 	my @b = localtime($birth / 1000);
-	my $year;
-	if (defined $n) {
-		# "the Nth birthday" is the year they turn N
-		$year = $b[5] + 1900 + $n;
+	# the occasion in a given year, at the birthday's own time of day
+	my $in_year = sub {
+		my ($year) = @_;
+		return &subs::resolve_when(sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]), $timestamp);
+	};
+	# "the Nth birthday" is the year they turn N
+	return $in_year->($b[5] + 1900 + $n) if defined $n;
+	# the occasion falls each year: the next one to come, or the last one that passed
+	my @now = localtime($timestamp / 1000);
+	my $this = $in_year->($now[5] + 1900);
+	my $past = ($tense eq 'was') || ($mod eq 'last');
+	if ($past) {
+		return (defined $this && $this <= $timestamp) ? $this : $in_year->($now[5] + 1899);
 	}
-	else {
-		# the occasion falls each year: this year, with next/last shifting a year
-		my @now = localtime($timestamp / 1000);
-		$year = $now[5] + 1900 + ($mod eq 'next' ? 1 : $mod eq 'last' ? -1 : 0);
-	}
-	my $when = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]);
-	return &subs::resolve_when($when, $timestamp);
+	return (defined $this && $this >= $timestamp) ? $this : $in_year->($now[5] + 1901);
 }
 
 # The time machine's own fallback: read a phrase neither a written date nor a
