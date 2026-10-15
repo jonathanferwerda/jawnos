@@ -18509,7 +18509,7 @@ sub mail_checker($c) {
 
 
 	my $bgc = &subs::setting_grabber({ app => 'misc', setting => 'mail_sidebar_container_background_colour', device => $device });
-	my $contacters = &subs::db_query('select * from tickets');
+	my $contacters = &subs::db_query('select * from tickets order by server_time desc');
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $contacts = $contacters->hashes;
 	my $picker = eval { return decode_json $c->param('picker') } || {};
@@ -18521,8 +18521,12 @@ sub mail_checker($c) {
 	my $me = &manager_file_maker($c->session('name'));
 	$settings->{'mail_config'} = eval {return decode_json $settings->{'mail_config'} } || {};
 	foreach my $contact ( @{$contacts} ) {
-		$contact->{'contact_name'} = lc &manager_file_maker($contact->{'name'});
-		$contact->{'app'} = $contact->{'contact_name'};
+		# the person the ticket names, not the session that carries it: the friends
+		# list joins a ticket to a friend by this, the tickets section shows it,
+		# and the ticket thread's re-key looks the person's phone up by it (the
+		# manager-file string these used to carry matched none of those)
+		$contact->{'contact_name'} = &subs::format_name($contact->{'name'} || '');
+		$contact->{'app'} = &subs::unformat_name($contact->{'name'} || '');
 	}
 	my $contact = $c->param('mail_contact');
 	my $phone = $c->param('phone');

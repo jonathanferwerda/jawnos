@@ -10,6 +10,10 @@
 </style>
 <div id="mail" style="width:100%;background-color:pink;">
 	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
+	<%# back to the appointment this window came from: the in-window chat hides
+	    the regular window contents, and this puts them back (chat.js shows it
+	    only on a window that swapped in from an appointment) %>
+	<img src="<%= &subs::icon_path('back', '/images/jbuttons/appts.png') %>" hint="Back to the appointment" class="little_thumb hover chat_back_to_appointment" style="display:none;">
 	<span style="font-size:20px;"><%= $main_title %></span>
 	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 1 %>
 	<% my $privilege = $c->session('privilege'); %>
