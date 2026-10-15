@@ -1057,10 +1057,19 @@ $(document).on('click', '#plat_setting', function() {
 
 // the thinking choice rides beside an agent's model and is shown only while the
 // chosen model is one that reasons; each option carries what it thinks, so the
-// row moves with the pick (the stored level is kept either way)
+// row moves with the pick (the stored level is kept either way). The fallback
+// select mirrors the model list minus the primary, so it follows the pick too.
 $(document).on('change', '.ai_role_model', function() {
+	var role = $(this).closest('.ai_role');
 	var thinks = $(this).find('option:selected').data('thinks');
-	$(this).closest('.ai_role').find('.ai_thinking_row').toggle(!!thinks);
+	role.find('.ai_thinking_row').toggle(!!thinks);
+	var primary = $(this).val();
+	var fb = role.find('.ai_role_fallback');
+	fb.find('option').each(function() {
+		var o = $(this);
+		o.prop('disabled', o.val() !== '' && o.val() === primary);
+	});
+	if (fb.val() === primary) { fb.val(''); }
 });
 
 // the Speech setting's Preview button: speak a test phrase in the voice chosen

@@ -2712,7 +2712,7 @@ sub voice_brain() {
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
-	my ($out) = &subs::evaluation_model_call($model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
+	my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
 	my $action = $out ? eval { decode_json $out } : undef;
 	if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
 	return undef unless $action && ref $action eq 'HASH' && $action->{'action'};
@@ -12443,6 +12443,63 @@ sub ai_role_models {
 	return (defined $primary ? $primary : '', defined $fallback ? $fallback : '');
 }
 
+# One role's chat call, retried on the role's fallback model when the primary
+# errors (an outage). The fallback is the same catalogue minus the primary, set
+# in Configure -> Plat beside the model.
+sub ai_chat_parts_role {
+	my ($role, $messages, $thinking) = @_;
+	my ($primary, $fallback) = &ai_role_models($role);
+	return (undef, "no $role model is set") unless $primary;
+	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking);
+	return ($parts, undef) unless $err;
+	if ($fallback && $fallback ne $primary) {
+		&subs::say_it('AI: ' . $role . ' failed (' . $err . '); trying the fallback ' . $fallback);
+		return &ai_chat_parts($fallback, $messages, $thinking);
+	}
+	return (undef, $err);
+}
+
+sub ai_chat_role {
+	my ($role, $messages, $thinking) = @_;
+	my ($parts, $err) = &ai_chat_parts_role($role, $messages, $thinking);
+	return (undef, $err) if $err;
+	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
+	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
+}
+
+sub evaluation_model_call_role {
+	my ($role, $system, $user, $thinking) = @_;
+	return &ai_chat_role($role, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
+}
+
+# The same retry, for a caller that already holds its primary (the Guide's
+# per-session model, the Coding agent's own fallback): primary first, then the
+# role's fallback setting.
+sub ai_chat_parts_with_fallback {
+	my ($primary, $fallback, $messages, $thinking) = @_;
+	return (undef, 'no model given') unless $primary;
+	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking);
+	return ($parts, undef) unless $err;
+	if ($fallback && $fallback ne $primary) {
+		&subs::say_it('AI: ' . $primary . ' failed (' . $err . '); trying the fallback ' . $fallback);
+		return &ai_chat_parts($fallback, $messages, $thinking);
+	}
+	return (undef, $err);
+}
+
+sub evaluation_model_call_with_fallback {
+	my ($primary, $fallback, $system, $user, $thinking) = @_;
+	return &ai_chat_with_fallback($primary, $fallback, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
+}
+
+sub ai_chat_with_fallback {
+	my ($primary, $fallback, $messages, $thinking) = @_;
+	my ($parts, $err) = &ai_chat_parts_with_fallback($primary, $fallback, $messages, $thinking);
+	return (undef, $err) if $err;
+	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
+	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
+}
+
 sub evaluation_model_call() {
 	my ($model, $system, $user, $thinking) = @_;
 	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
@@ -12874,7 +12931,7 @@ sub evaluation_agent() {
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model) {
-		($text, $error) = &evaluation_model_call($model, $system, $user, &subs::ai_role_thinking('eval_assistant'));
+		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking('eval_assistant'));
 	}
 	else {
 		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
@@ -15305,7 +15362,7 @@ sub coding_propose_fix {
 	my $final = '';
 	my $tries = 0;
 	while ($tries++ < 10) {
-		my ($text, $err) = &subs::evaluation_model_call($model, $system, join("\n", @lines), $thinking);
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines), $thinking);
 		if ($err || !$text) {
 			push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') };
 			$final = 'the model could not be reached: ' . ($err || 'no answer');

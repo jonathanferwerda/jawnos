@@ -75,6 +75,20 @@
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;
+			my $fallback = $role_settings->{$setting . '_fallback'} // '';
+			# the models this role can use, flattened once for the fallback (which is
+			# the same list, the primary disabled)
+			my @role_models;
+			foreach my $provider ( @{$catalogue} ) {
+				next unless $provider_ready{ $provider->{'id'} };
+				my @models = grep {
+					my $m = $_;
+					scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) && (!$m->{'paid'} || $bucket_ok{ $m->{'bucket'} })
+				} @{ $provider->{'models'} };
+				foreach my $m ( @models ) {
+					push @role_models, { %{$m}, group => $provider->{'label'} };
+				}
+			}
 		%>
 			<div class="ai_role" setting="<%= $setting %>">
 				<div class="cfg-row">
@@ -100,6 +114,17 @@
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>
 						<% if ($current && !$shown) { %>
 							<option value="<%= $current %>" data-thinks="<%= $thinks %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
+						<% } %>
+					</select>
+				</div>
+				<div class="cfg-row ai_fallback_row">
+					<label>Fallback</label>
+					<select class="configure_input ai_role_fallback" app="mail" setting="<%= $setting %>_fallback">
+						<option value="">— none —</option>
+						<% foreach my $m ( @role_models ) {
+							my @mcaps = grep { $_ ne 'other' } @{ $m->{'caps'} };
+						%>
+							<option value="<%= $m->{'value'} %>" <% if ($current && $m->{'value'} eq $current) { %>disabled="disabled"<% } %> <% if ($fallback eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'group'} %> · <%= $m->{'name'} %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
 						<% } %>
 					</select>
 				</div>
