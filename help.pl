@@ -507,6 +507,7 @@ our %topic = (
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
+			'A watch or board that is off its network but bridged over Bluetooth still appears: its row reads Bluetooth in place of an address, and its Now Me and settings go out over that bridge.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), plus its room count and screen timeout.'
 		],
 		steps => [

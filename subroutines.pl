@@ -1985,6 +1985,36 @@ sub device_lister() {
 			}
 		}
 	}
+	# Off its access point, an embedded device bridged over Bluetooth is not in
+	# any machine's neighbour table, so the loops above never see it - yet it is
+	# still reachable and told us so when it last spoke over the bridge
+	# (ble_device_record keeps that sighting in the machine's chip_ids). Fall
+	# back to it, but only while the sighting is fresh: a device away longer
+	# than the window is treated like any other gone device.
+	my %ble_types = map { $_ => 1 } qw/watch teletype microcontroller/;
+	if ($ble_types{$load_type} && $chip_id) {
+		my $window = &ble_presence_window();
+		my $now = &subs::rightNow();
+		my @ble;
+		foreach my $d ( @{$devices} ) {
+			next unless $d->{'chip_ids'};
+			my $chips = eval { decode_json $d->{'chip_ids'} } || [];
+			foreach my $c ( @{$chips} ) {
+				next unless $c->{'id'} && ($c->{'ble'} || $c->{'bluetooth'});
+				next unless $window > $now - ($c->{'ble_seen'} || 0);
+				push @ble, $c;
+			}
+		}
+		if ($chip_id eq 'all') {
+			push @{$all_chips}, map { &ble_device_from_chip($_, $load_type) } @ble;
+		}
+		else {
+			foreach my $c ( @ble ) {
+				next unless $c->{'id'} eq $chip_id;
+				return &ble_device_from_chip($c, $load_type);
+			}
+		}
+	}
 	if (scalar @{$all_chips} > 0) {
 		return $all_chips;
 	}
@@ -2024,6 +2054,115 @@ sub ble_bridge_client() {
 		return $c if -e $c;
 	}
 	return undef;
+}
+
+# How long a Bluetooth sighting keeps an embedded device listed in the Embedded
+# app after its last bridge message. A watch's radio sleeps and re-links on the
+# next advert, and even awake it only talks when something changes, so this must
+# outlast a quiet spell - not merely a nap. Long enough for both, short enough
+# that a device genuinely gone drops off.
+sub ble_presence_window() { return 1800000; }
+
+sub ble_nus_uuids() {
+	# The Nordic UART service the watch and boards advertise (see jw/jw.ino). A
+	# device recorded only over Bluetooth never answered a /device_query with its
+	# own constants, so its bridge link is opened with these fixed defaults.
+	return {
+		service_uuid           => '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+		characteristic_uuid_rx => '6e400002-b5a3-f393-e0a9-e50e24dcca9e',
+		characteristic_uuid_tx => '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
+	};
+}
+
+sub ble_device_record() {
+	# Remember an embedded device seen over the Bluetooth bridge, so it can be
+	# listed in the Embedded app while it is off its access point. The sighting
+	# lives in this machine's own `devices` row - the chip_ids blob device_scan
+	# already keeps and syncs - so an entry added here outlives the next scan
+	# (its oldchips merge keeps it) and reaches the other machines with the row.
+	my $data = shift;
+	my $chip_id = $data->{'chip_id'} || return;
+	my $edt = $data->{'edt'} || 'watch';
+	my $now = &subs::rightNow();
+	my $hostname = $gb::ble_hostname;
+	unless ($hostname) {
+		$hostname = `hostname`;
+		chomp $hostname;
+		$gb::ble_hostname = $hostname;
+	}
+	my $row;
+	foreach my $r ( @{ &subs::db_select('devices')->hashes } ) {
+		my $h = $r->{'hostname'} || '';
+		$h =~ s/\s+$//;
+		if ($h eq $hostname) { $row = $r; last; }
+	}
+	my $chips = ($row && $row->{'chip_ids'}) ? (eval { decode_json $row->{'chip_ids'} } || []) : [];
+	my $found;
+	foreach my $c ( @{$chips} ) {
+		next unless $c->{'id'} && $c->{'id'} eq $chip_id;
+		$found = $c;
+		last;
+	}
+	unless ($found) {
+		$found = { id => $chip_id };
+		push @{$chips}, $found;
+	}
+	my $name = $data->{'name'};
+	if (!$name && !($found && $found->{'name'})) {
+		my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id });
+		my $op_d = eval { decode_json $od } || {};
+		$name = $op_d->{'__specs'}->{'name'};
+	}
+	$found->{'name'} = $name if $name;
+	$found->{'purpose'} = $edt;
+	$found->{'bluetooth'} = $data->{'mac'} if $data->{'mac'};
+	$found->{'ble'} = 1;
+	$found->{'ble_seen'} = $now;
+	$found->{'server_time'} = $now;
+	my $json = encode_json $chips;
+	if ($row) {
+		&subs::db_update('devices', { chip_ids => $json }, { hostname => $row->{'hostname'} });
+	}
+	else {
+		# A machine that never ran a scan still has to carry the sighting, or a
+		# Bluetooth-only fleet could not be listed at all.
+		&subs::db_insert('devices', {
+			hostname => $hostname,
+			address => '{}',
+			chip_ids => $json,
+			server_time => $now,
+			timestamp => $now,
+			uuid => &subs::random_string_creator(25)
+		});
+	}
+	return $found;
+}
+
+sub ble_device_from_chip() {
+	# Build the device row device_lister hands its callers, from a chip the
+	# bridge saw. It carries what the Embedded panel and a Now Me need: the
+	# Bluetooth address to reach it, the link's fixed service uuids, and this
+	# machine as the homebase (the watch has no address of its own off its LAN).
+	my ($chip, $load_type) = @_;
+	my $addrs = &subs::network_interface_reporter();
+	my ($my_ip) = map { $addrs->{$_}->{'ip'} }
+		grep { $addrs->{$_}->{'ip'} && $addrs->{$_}->{'ip'} !~ /^127\./ } keys %{$addrs};
+	$my_ip ||= '127.0.0.1';
+	my $dev = {
+		chip_id => $chip->{'id'},
+		name => $chip->{'name'},
+		purpose => $chip->{'purpose'} || $load_type,
+		edt => $chip->{'purpose'} || $load_type,
+		ble => 1,
+		# no address of its own: a Bluetooth-only device has none, and leaving ip
+		# empty is also what makes now_me skip the LAN ping and take the bridge
+		# (homebase still names this machine, where the bridge lives).
+		homebase => $my_ip,
+		mac => $chip->{'bluetooth'},
+		mac_addresses => { bluetooth => $chip->{'bluetooth'} },
+		%{ &ble_nus_uuids() }
+	};
+	return $dev;
 }
 
 sub bluetooth_sender() {
@@ -2517,6 +2656,19 @@ sub ble_message_processor() {
 		return;
 	}
 	my $type = $msg->{'type'};
+	# Every embedded device that speaks over the bridge is remembered here, so it
+	# can still be listed in the Embedded app while it is off its access point
+	# (see device_lister's Bluetooth fallback). The message names the chip, not
+	# the radio, so the link's address comes from the bridge events the listener
+	# tracks in $gb::ble_link_mac.
+	if ($msg->{'chip_id'}) {
+		&subs::ble_device_record({
+			chip_id => $msg->{'chip_id'},
+			edt => $msg->{'edt'} || 'watch',
+			name => $msg->{'name'},
+			mac => $gb::ble_link_mac
+		});
+	}
 	# the newer bridge messages are dispatches, not url fetches
 	if ($type && $type eq 'state_request') {
 		my $chip_id = $msg->{'chip_id'};
@@ -2632,8 +2784,23 @@ sub ble_listener_start() {
 		}
 		while ($gb::ble_listener_buffer =~ s/^(.*?)\n//) {
 			my $event = eval { decode_json $1 };
-			next unless $event && ref $event eq 'HASH' && ($event->{'event'} || '') eq 'message';
-			&ble_message_processor($event->{'data'});
+			next unless $event && ref $event eq 'HASH';
+			my $name = $event->{'event'} || '';
+			# Track which radio the bridge is linked to: a watch's payload names
+			# its chip, not its address, so the sighting recorded against that chip
+			# needs the address from these link events.
+			if ($name eq 'connected') {
+				$gb::ble_link_mac = $event->{'mac'};
+			}
+			elsif ($name eq 'disconnected') {
+				$gb::ble_link_mac = undef;
+			}
+			elsif ($name eq 'status') {
+				$gb::ble_link_mac = $event->{'connected'} ? $event->{'mac'} : undef;
+			}
+			elsif ($name eq 'message') {
+				&ble_message_processor($event->{'data'});
+			}
 		}
 	});
 	$gb::ble_listener->on(close => sub() {

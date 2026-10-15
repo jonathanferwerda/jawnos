@@ -17,9 +17,13 @@
 			<option value="<%= $chip->{'id'} %>" <% if ($chip_id eq $chip->{'id'}) { %>selected<% } %>><%= $chip->{'name'} || $chip->{'id'} %></option>
 		<% } %>
 	</select>
-	<% if (eval {$embedded->{'ip'} }) { %>
+	<% if (eval {$embedded->{'ip'} || $embedded->{'ble'}}) { %>
 		<br>
-		<span style="font-size:23px;"><b><%= $embedded->{'ip'} %></b> <%= $embedded->{'mac'} %></span>
+		<% if ($embedded->{'ble'}) { %>
+			<span style="font-size:23px;"><b>Bluetooth</b> <%= $embedded->{'mac_addresses'}->{'bluetooth'} %></span>
+		<% } else { %>
+			<span style="font-size:23px;"><b><%= $embedded->{'ip'} %></b> <%= $embedded->{'mac'} %></span>
+		<% } %>
 		<div id="teletype_homebase" style="background-color:orange">
 			<% if ($device_type eq 'teletype') { %>
 				<input type="text" id="teletype_authorization" value="<%= $tauthorization %>"><br>
@@ -62,8 +66,10 @@
 			<% } else { %>
 
 			<% } %>
-			<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_wigi hover">WIGI</button>
-			<button ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" class="embedded_device_query hover">Query</button>
+			<% unless ($embedded->{'ble'}) { %>
+				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_wigi hover">WIGI</button>
+				<button ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" class="embedded_device_query hover">Query</button>
+			<% } %>
 			<div class="embedded_device_info" style="width:100%;display:none;background-color:var(--panel-2);" chip_id="<%= $chip_id %>"></div>
 			<% if ($edt eq 'microcontroller') { %>
 				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_jobs">Jobs</button>
@@ -145,7 +151,7 @@
 			<% } else { %>
 				<!-- esp32 boards: OTA streams a picked .bin over wifi, or USB has the manager
 				     run the PlatformIO upload on the machine the board is plugged into -->
-				<button id="embedded_ota_uploader_wifi" ip="<%= $embedded->{'ip'} %>" style="vertical-align:top;">OTA</button>
+				<button id="embedded_ota_uploader_wifi" ip="<%= $embedded->{'ip'} %>" style="vertical-align:top;display:<%= $embedded->{'ble'} ? 'none' : 'inline-block' %>;">OTA</button>
 				<button id="embedded_usb_uploader" style="vertical-align:top;">USB</button>
 				<select id="embedded_usb_port" style="display:none;"></select>
 				<input type="file" id="embedded_ota_file" accept=".bin" style="display:none;">

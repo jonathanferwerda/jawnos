@@ -110,6 +110,10 @@ elsif ($cmd eq 'disconnect') {
 	$last = wait_for(sub { $_[0]->{'event'} =~ /^(disconnected|status|error)$/ }, 10);
 }
 elsif ($cmd eq 'listen') {
+	# Ask for the current link up front: the daemon auto-connects to its stored
+	# target, so a listener that attaches after that connect would otherwise
+	# never see a 'connected' event and not know which radio is linked.
+	send_cmd({ cmd => 'status' });
 	$last = wait_for(sub { 0 }, 86400 * 365);
 	exit 0;
 }
