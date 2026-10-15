@@ -20621,9 +20621,31 @@ sub coding_conversation_save($name, $rows) {
 
 # The Guide associate's threads, the same way (the Coding agent's thread is
 # saved by its own route; both kinds land in the one registry below).
+# The warranty a guide message expires on: the appointment's own when the thread
+# is scoped to an app (its conversation name is app_<name>), otherwise the house
+# default. Each message carries it, so old turns drop the way everything else does.
+sub guide_message_warranty($name) {
+	my $now = &subs::rightNow();
+	my $default = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', $now);
+	if ($name && $name =~ /^app_(.+)$/) {
+		my $app = $1;
+		my $rows = &subs::db_query('select warranty from appointments where app = ? order by timestamp desc limit 1', $app)->hashes;
+		if (scalar @{$rows} && defined $rows->[0]->{'warranty'} && ($rows->[0]->{'warranty'} + 0) > 0) {
+			return $rows->[0]->{'warranty'} + 0;
+		}
+	}
+	return $default;
+}
+
 sub guide_conversation_load($name) {
 	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'guide_conversation_' . $name }) } || [];
-	return ref $rows eq 'ARRAY' ? $rows : [];
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my $now = &subs::rightNow();
+	my @live = grep {
+		my $w = $_->{'warranty'};
+		!defined($w) || !($w + 0) || ($w + 0) >= $now
+	} @{$rows};
+	return \@live;
 }
 sub guide_conversation_save($name, $rows) {
 	splice @{$rows}, 0, scalar(@{$rows}) - 40 if scalar @{$rows} > 40;
@@ -20806,7 +20828,11 @@ post '/manager/agents/save' => sub($c) {
 		}
 	}
 	if ($kind eq 'coding') { coding_conversation_save($name, $transcript); }
-	else { guide_conversation_save($name, $transcript); }
+	else {
+		my $warranty = &guide_message_warranty($name);
+		foreach my $m ( @{$transcript} ) { $m->{'warranty'} = $warranty; }
+		guide_conversation_save($name, $transcript);
+	}
 	my $row = &agent_registry_note($kind, $name, $transcript);
 	$c->render(json => { ok => 1, title => ($row->{'title'} || ''), name => $name, kind => $kind });
 };

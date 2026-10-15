@@ -651,7 +651,7 @@ our %topic = (
 		summary => 'Hover (or long-press) a control to learn what it does.',
 		body => [
 			'Most controls carry a hint. On a desk you hover over one and a small label appears; on a touchscreen you press and hold instead. That is the fastest way to learn an unfamiliar button.',
-			'For anything longer than a label, open this Help app — press F1, or use the question-mark button in a window\'s title bar, or search here. The Help agent can then walk you through it.'
+			'For anything longer than a label, open this Help app — press F1, or search here. The question-mark button in a window\'s title bar opens a Guide associate for that window instead, so it already knows what you were looking at.'
 		],
 		related => [ 'help_app', 'start_menu' ]
 	},
@@ -942,7 +942,7 @@ our %topic = (
 		summary => 'The map you are reading now, and its guide.',
 		verified => '2026-10-14',
 		body => [
-			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on, or use the question-mark button in a window\'s title bar. It already knows what you were looking at when you asked.',
+			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes.',
 			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. The Guide\'s associate - the small chat in the corner, the same Guide and so carrying every one of these powers - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, and the chat you left is still there when you come back. It never sends, pays or deletes.',
 			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents). Its config menu also carries Speak the replies; ticked, each answer is spoken as well as written, through the voice set under Configure → Misc → Speech (Piper first — the same voice the watch\'s answers use).',

@@ -767,7 +767,7 @@ $(document).on('click', '.help_button', function (e) {
 	e.stopPropagation();
 	var app = $(this).attr('app');
 	jawnos_help_source = helpSourceFrom(app);
-	assistantOpen();
+	assistantAppOpen(app);
 });
 
 $(document).on('click', '.help_topic_link', function () {

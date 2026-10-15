@@ -432,6 +432,14 @@ function assistantOpenPanel(panel) {
 
 function assistantOpen() { return assistantOpenPanel(assistantPanel()); }
 
+// Open a fresh Guide associate scoped to one app: its conversation is kept under
+// the app's own name (app_<name>), so the thread comes back next time the ? is
+// pressed in that window, and each turn expires on the app's warranty.
+function assistantAppOpen(app) {
+	var name = 'app_' + (app || 'window');
+	return assistantOpenConversation(name, (app || 'Window'));
+}
+
 function assistantModel(panel) {
 	var m = $.trim(panel.find('.assistant_model').text() || '');
 	if (!m && $('#help_model').length) { m = $('#help_model').val() || ''; }
