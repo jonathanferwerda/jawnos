@@ -266,6 +266,10 @@ sub time_machine_resolve {
 		elsif ($spec =~ /^\s*(?:in\s+)?[+-]?\d/ && $spec !~ /\b(?:second|minute|hour|day|week|month|year|decade|century)s?\b/i) { $relative = 1; }
 		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
 	}
+	if (!defined $ms) {
+		# "<person>'s Nth birthday": look up the birth date, count the years here
+		$ms = &guide_birthday_of($spec, $timestamp);
+	}
 	if (!defined $ms || ($ms == 0 && $spec !~ /\b(?:1970|epoch|unix)\b/i)) {
 		my $guide = &guide_time_machine($spec, $timestamp);
 		$ms = $guide if defined $guide;
@@ -389,6 +393,21 @@ sub help_search($q) {
 	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
 }
 
+# A person's Nth birthday: the guide is asked for the person's birth date (it
+# knows "Abraham Lincoln's birthday"), and the years are counted here, so the
+# arithmetic is exact rather than left to the model. undef when the phrase is not
+# of that shape or the birth date cannot be found, so the guide still runs.
+sub guide_birthday_of {
+	my ($spec, $timestamp) = @_;
+	return undef unless $spec =~ /^\s*(.+?)[\x{2019}']?s\s+(\d{1,3})\s*(?:st|nd|rd|th)\s+birthday\s*$/i;
+	my ($person, $n) = ($1, $2);
+	my $birth = &guide_time_machine($person . "'s birthday", $timestamp);
+	return undef unless defined $birth;
+	my @b = localtime($birth / 1000);
+	my $when = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $b[5] + 1900 + $n, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]);
+	return &subs::resolve_when($when, $timestamp);
+}
+
 # The time machine's own fallback: read a phrase neither a written date nor a
 # relative offset could. The records are looked up first and handed to the guide,
 # which answers with the moment it means - or, when the phrase asks the person's
@@ -412,6 +431,7 @@ sub guide_time_machine {
 		my $birthday = ($config->{'birthday'} ? ('Their birthday is ' . $config->{'birthday'} . '. ') : '');
 		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that names a moment, or asks you to start or log something. '
 			. 'Right now it is ' . $now_text . ' in local time. ' . $birthday . $dossier
+			. 'If the phrase names a person or a past event ("Abraham Lincoln\'s birthday", "the day the Berlin Wall fell"), use what you know of history to work out the date it names. '
 			. 'If the phrase names no time of day, keep the present time of day. A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
 			. 'Reply with ONE JSON action and nothing else: '
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '

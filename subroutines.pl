@@ -910,6 +910,38 @@ sub forever_warranty {
 	return 32503680000000;    # 3000-01-01T00:00:00Z in ms
 }
 
+# The age a phrase names, if it names one: "when I'm 60", "when I am 60", "60yo",
+# "60 years old", "my 35th birthday". The caller matches the lowercased phrase
+# with its apostrophes already dropped, so "I'm" reads as "im".
+sub age_phrase_target {
+	my ($t) = @_;
+	return $1 if $t =~ /\bwhen\s+i\s+(?:am|turn)\s+(\d{1,3})\b/;
+	return $1 if $t =~ /\bwhen\s+im\s+(\d{1,3})\b/;
+	return $1 if $t =~ /\b(\d{1,3})\s*yo\b/;
+	return $1 if $t =~ /\b(\d{1,3})\s*years?\s*old\b/;
+	return $1 if $t =~ /\bmy\s+(\d{1,3})(?:st|nd|rd|th)?\s+birthday\b/;
+	return undef;
+}
+
+# The moment the person is a given age: the present time of day, in the year they
+# reach it ("today, but when I'm 60"). Reads the birthday the way every other
+# date is read, so a written birthday works. undef when none is set or the sum
+# will not make a date, so the caller falls through.
+sub birthday_moment_for_age {
+	my ($target, $now) = @_;
+	return undef unless $config->{'birthday'};
+	my $born = &resolve_when($config->{'birthday'}, $now);
+	return undef unless defined $born;
+	my @n = localtime($now / 1000);
+	my @b = localtime($born / 1000);
+	my $age = ($n[5] + 1900) - ($b[5] + 1900);
+	$age-- if $n[4] < $b[4] || ($n[4] == $b[4] && $n[3] < $b[3]);
+	my $year = $n[5] + 1900 + ($target - $age);
+	my $epoch = eval { int(POSIX::mktime($n[0], $n[1], $n[2], $n[3], $n[4], $year - 1900)) };
+	return undef unless defined $epoch;
+	return $epoch * 1000;
+}
+
 # Read a typed time the way a person writes one. A relative offset ("-3h", "in 2
 # days", "3d 4h") belongs to ago_calc's own arithmetic and is left to it; a
 # calendar date is read here, so a bare "jul 16", an ordinal "16th 2", a "last
@@ -922,6 +954,7 @@ sub resolve_when {
 	my ($text,$now) = @_;
 	$now = &rightNow() unless $now;
 	my $t = lc($text // '');
+	$t =~ s/['\x{2019}]//g;       # "when I'm 60" reads as "when im 60", "new year's" as "new years"
 	$t =~ s/[.,]/ /g;             # "Jan.", "dec 25, 2025"
 	$t =~ s/\s+/ /g;
 	$t =~ s/^\s+|\s+$//g;
@@ -931,14 +964,47 @@ sub resolve_when {
 	# here so ago_calc's string surgery (which mangles "yesterday") is not used
 	my %day_word = (today => 0, tonight => 0, tomorrow => 1, tom => 1, yesterday => -1, yes => -1);
 	return $now + $day_word{$t} * 86400000 if defined $day_word{$t};
-	# a spelled-out or joined offset ("2 hours", "3d 4h") is arithmetic, not a date
-	return undef if $t =~ /\b(?:milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|decades?|centur(?:y|ies))\b/;
-	# a leading modifier moves the whole date a year: "last dec 25", "next jul 16"
+	# a leading modifier moves the whole date a year: "last dec 25", "next jul 16";
+	# "this christmas" pins it to this year
 	my $year_shift = 0;
 	if ($t =~ s/^last\s+//) { $year_shift = -1; }
 	elsif ($t =~ s/^next\s+//) { $year_shift = 1; }
+	elsif ($t =~ s/^this\s+//) { $year_shift = 0; }
 	$t =~ s/^\s+|\s+$//g;
 	return undef unless length $t;
+
+	# a named holiday, at this year's date, moved by the modifier above: "this
+	# christmas" is December 25 of this year, "next christmas" next year's. Read
+	# here, before the offset words below, or "new year" would be taken for an
+	# amount of time. Only the fixed dates - a movable feast (Thanksgiving, Easter)
+	# is left to the guide, which counts the days.
+	my %holiday = (
+		christmas => [12,25], xmas => [12,25],
+		'new year' => [1,1], 'new years' => [1,1], 'new years day' => [1,1],
+		'new years eve' => [12,31],
+		halloween => [10,31],
+		'valentines day' => [2,14], valentines => [2,14],
+		'independence day' => [7,4],
+	);
+	if (my $h = $holiday{$t}) {
+		my @n = localtime($now / 1000);
+		my $yr = $n[5] + 1900 + $year_shift;
+		my $e = eval { int(POSIX::mktime($n[0], $n[1], $n[2], $h->[1], $h->[0] - 1, $yr - 1900)) };
+		return $e * 1000 if defined $e;
+	}
+
+	# an age, read against the person's birthday: the present time of day in the
+	# year they reach that age ("today, but when I'm 60")
+	if (my $age_target = &age_phrase_target($t)) {
+		my $aged = &birthday_moment_for_age($age_target, $now);
+		return $aged if defined $aged;
+	}
+	# any other "birthday" phrase names an age or a person, not a day of the month:
+	# "<name>'s 35th birthday" would otherwise read as "the 35th" and overflow into
+	# the next month. Leave it to the guide, which looks the person up.
+	return undef if $t =~ /\bbirthday\b/;
+	# a spelled-out or joined offset ("2 hours", "3d 4h") is arithmetic, not a date
+	return undef if $t =~ /\b(?:milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|decades?|centur(?:y|ies))\b/;
 
 	# a year written in words: "44 bc" is the year -44, the negative year the app
 	# shows B.C. as; "ad"/"ce" leaves the year as written
@@ -998,7 +1064,7 @@ sub resolve_when {
 	}
 	my $month_named = $mon ? 1 : 0;
 	my $ordinal = 0;
-	if ($scan =~ /\b(\d{1,2})(?:st|nd|rd|th)\b/) { $day = $1 + 0; $date_like = 1; $ordinal = 1; }
+	if ($scan =~ /\b(\d{1,2})(?:st|nd|rd|th)\b/ && $1 >= 1 && $1 <= 31) { $day = $1 + 0; $date_like = 1; $ordinal = 1; }
 	return undef unless $date_like;
 
 	# what is left once the month, year and any date form are removed: the day, if
