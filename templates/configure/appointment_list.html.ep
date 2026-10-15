@@ -168,7 +168,7 @@
 					<% } %>
 					<div class="app_abilities">
 						<h4 class="app_abilities_title">Abilities</h4>
-						<% foreach my $b (sort (keys %{$abilities}, 'birthday', 'evaluation')) { %>
+						<% foreach my $b (sort keys %{$abilities}) { %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
 								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, $b eq 'birthday' ? '/images/decipherable/cake.png' : '/images/decipherable/gear.png') %>"><span class="ability_label">
 									<% if ($b eq 'evaluation') { %>

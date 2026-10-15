@@ -607,7 +607,13 @@ our $abilities = {
 	quantity => {},
 	home_plate => {},
 	nfc => {},
-	navigation => { config => 'select', options => ['none','once','1s','3s','5s','10s','20s','30s','1m','2m','5m','7m','10m','20m','30m','45m','1h','2h','3h','6h','12h','24h','2d','3d','5d','1w','2w','3w','4w','1M'] }
+	navigation => { config => 'select', options => ['none','once','1s','3s','5s','10s','20s','30s','1m','2m','5m','7m','10m','20m','30m','45m','1h','2h','3h','6h','12h','24h','2d','3d','5d','1w','2w','3w','4w','1M'] },
+	# birthday and evaluation wear the shape of an ability in the App panel (a date
+	# input, the evaluation controls/report) but are special-cased there. Registering
+	# them keeps the ability filter in /manager/configure/appointment_display from
+	# dropping them when the panel refreshes just that one tile after a save.
+	birthday => {},
+	evaluation => {}
 };
 
 our $numerics = {
