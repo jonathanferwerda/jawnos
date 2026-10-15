@@ -2452,7 +2452,19 @@ sub ble_enforce_hosts() {
 			next unless $c->{'id'} && $c->{'bluetooth'};
 			if (&ble_may_serve($c->{'purpose'} || 'watch', $c->{'id'})) {
 				my $mac = $c->{'bluetooth'};
-				&subs::subprocessor(sub { system($client, 'connect', $mac); }, { name => 'ble host connect' });
+				my $u = &ble_nus_uuids();
+				# Always name the service and characteristics. A bare connect
+				# overwrites the daemon's stored target, and the Android bridge keeps
+				# only mac+mtu from it: with no uuids saved it can no longer find the
+				# watch's characteristics and the link fails forever (this is what
+				# made the phone bounce). So never connect without them.
+				&subs::subprocessor(sub {
+					system($client, 'connect', $mac,
+						'--service', $u->{'service_uuid'},
+						'--rx', $u->{'characteristic_uuid_rx'},
+						'--tx', $u->{'characteristic_uuid_tx'},
+						'--mtu', '512');
+				}, { name => 'ble host connect' });
 			}
 			else {
 				&ble_yield($c->{'id'});
@@ -2575,9 +2587,14 @@ sub bluetooth_sender() {
 	my $intent = $data->{'intent'};
 	my $message = $data->{'message'};
 	my $embedded = &subs::device_lister(&subs::rightNow(),$data->{'edt'},undef,$data->{'chip_id'});
-	my $service_uuid = $embedded->{'service_uuid'};
-	my $characteristic_uuid_rx = $embedded->{'characteristic_uuid_rx'};
-	my $characteristic_uuid_tx = $embedded->{'characteristic_uuid_tx'};
+	# The link's service and characteristics: use what the device record carries,
+	# but fall back to the Nordic UART uuids the watch and boards advertise, so a
+	# connect is never issued without them (a bare one clears the daemon's saved
+	# target, and then its link can never be found again).
+	my $ble_uuids = &ble_nus_uuids();
+	my $service_uuid = $embedded->{'service_uuid'} || $ble_uuids->{'service_uuid'};
+	my $characteristic_uuid_rx = $embedded->{'characteristic_uuid_rx'} || $ble_uuids->{'characteristic_uuid_rx'};
+	my $characteristic_uuid_tx = $embedded->{'characteristic_uuid_tx'} || $ble_uuids->{'characteristic_uuid_tx'};
 	if ($embedded->{'mac_addresses'}->{'bluetooth'}) {
 		my $bt_mac = $embedded->{'mac_addresses'}->{'bluetooth'};
 		my $name = $embedded->{'name'};
