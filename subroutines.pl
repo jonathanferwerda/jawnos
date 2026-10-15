@@ -2141,6 +2141,24 @@ sub ble_yield() {
 	&subs::subprocessor(sub { system($client, 'disconnect'); }, { name => 'ble yield' });
 }
 
+sub ble_enforce_hosts() {
+	# Keep a machine that does NOT host a device from holding or chasing its link.
+	# The desktop bridge auto-connects from its saved target on every start, so
+	# without this a machine the watch merely passed by keeps trying to wedge in
+	# until it happens to hear a message and yields. Only devices placed on
+	# another machine (a stored homebase that is not one of our addresses) are
+	# touched - the host's own bridge is left to connect and serve.
+	return unless &ble_bridge_capable() && &ble_bridge_enabled();
+	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+		next unless $d->{'chip_ids'};
+		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+			next unless $c->{'id'} && $c->{'bluetooth'};
+			next if &ble_owns($c->{'purpose'} || 'watch', $c->{'id'});
+			&ble_yield($c->{'id'});
+		}
+	}
+}
+
 sub ble_nus_uuids() {
 	# The Nordic UART service the watch and boards advertise (see jw/jw.ino). A
 	# device recorded only over Bluetooth never answered a /device_query with its
@@ -2857,6 +2875,9 @@ sub ble_listener_start() {
 	return if $gb::ble_listener;
 	my $client = &ble_bridge_client();
 	return unless &ble_bridge_enabled() && $client;
+	# Before the listener starts taking messages: drop any link this machine is
+	# merely chasing for a device that belongs to another machine.
+	&ble_enforce_hosts();
 	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
 	$gb::ble_listener->on(read => sub() {
