@@ -8,6 +8,7 @@ $(document).on('click', '.tasks', function() {
 		container.hide();
 	}
 	else {
+		appActExclusive(app, 'tasks');
 		appointmentTasksGrabber(app,timestamp);
 	}
 });

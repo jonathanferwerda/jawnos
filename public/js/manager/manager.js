@@ -2255,6 +2255,7 @@ $(document).on('click','.inventory', function() {
 	var iq = $(this).closest('.appointment').find('.inventory_details');
 	var app = $(this).closest('.appointment').attr('app');
 	if (iq.is(':hidden')) {
+		appActExclusive(app, 'inventory');
 		iq.show();
 		inventoryDetails(app);
 	}
@@ -3421,6 +3422,7 @@ $(document).on('click', '.reset', function() {
 		details.hide();
 	}
 	else {
+		appActExclusive(app, 'reset');
 		details.show();
 	}
 
@@ -3643,6 +3645,7 @@ $(document).on('click', '.measures', function() {
 		container.hide();
 	}
 	else {
+		appActExclusive(app, 'measures');
 		appointmentMeasuresGrabber(a);
 		container.show();
 	}
@@ -3990,6 +3993,7 @@ $(document).on('click', '.det', function() {
 		container.html('<span class="detail_json" app="' + app + '">{}</span>').hide();
 	}
 	else {
+		appActExclusive(app, 'det');
 		appointmentDetailsGrabber(a);
 		container.show();
 	}
@@ -4004,6 +4008,7 @@ $(document).on('click', '.register', function() {
 		container.html('').hide();
 	}
 	else {
+		appActExclusive(app, 'register');
 		registerGrabber(app);
 		container.show();
 	}

@@ -274,7 +274,7 @@ $(document).on('change', '.configure_input', function(e) {
 		success: function(response) {
 			display.html(response);
 			localStorage.removeItem('manager_search_cache');
-			button.html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
+			button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
 			configurationGrabber({ app: app, setting: [setting] });
 		}
 	});
@@ -328,7 +328,7 @@ function budgetGoalsSave(container) {
 	settingSetter({ 'app': app, 'setting': setting, 'value': value });
 	var button = $('.app_configure_toggle[setting="' + setting + '"][app="' + app + '"]');
 	if (button.length) {
-		button.html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0, 20));
+		button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0, 20));
 	}
 }
 $(document).on('change', '.budget_goals_row .budget_goals_value, .budget_goals_row .budget_goals_direction, .budget_goals_row .budget_goals_measure, .budget_goals_row .budget_goals_count, .budget_goals_row .budget_goals_unit', function() {
@@ -355,7 +355,7 @@ $(document).on('click', '.app_measure_configuration_adder', function() {
 		type: 'POST',
 		data: { app: app },
 		success: function(response) {
-			button.html('<b>' + button.attr('formatted_setting') + ':</b> ' + response.header.slice(0,20));
+			button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + response.header.slice(0,20));
 			var ta = appmc.find('.configure_input[setting="app_measures"]');
 			appmc.html(response.config);
 			$('.re_measures[app="' + app + '"]').html(response.app_measure);
@@ -396,7 +396,7 @@ $(document).on('change', '.app_measure_configuration', function() {
 		type: 'POST',
 		data: { app: app, setting: setting, value: value, measure: measure, oldvalue: oldvalue },
 		success: function(response) {
-			button.html('<b>' + button.attr('formatted_setting') + ':</b> ' + response.header.slice(0,20));
+			button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + response.header.slice(0,20));
 			var ta = appmc.find('.configure_input[setting="app_measures"]');
 			ta.val(response.header);
 			appmc.html(response.config);
@@ -1503,6 +1503,7 @@ $(document).on('click', '.appointment_configuration_grabber', function() {
 		t.attr('status', 'active');
 	}
 	else {
+		appActExclusive(app, 'appointment_configuration_grabber');
 		configurationGrabber({ app: app, display: display });
 		t.attr('status', 'active');
 	}
@@ -1544,7 +1545,7 @@ function configurationGrabber(data) {
 				display.html(response).show();
 			}
 			$.each(visible, function(i,v) {
-				$('.app_configure_input[app="' + app + '"][setting="' + v + '"]').show();
+				$('.app_configure_input[app="' + app + '"][setting="' + v + '"]').show().closest('.configuration_ability_container').addClass('open');
 			});
 			if ($(display).length == elementCount) {
 				$(focused).focus();
@@ -1847,11 +1848,14 @@ $(document).on('click', '.app_configure_toggle', function() {
 	var app = $(this).attr('app');
 	var setting = $(this).attr('setting');
 	var input = $('.app_configure_input[app="' + app + '"][setting="' + setting + '"]');
+	var container = $(this).closest('.configuration_ability_container');
 	if (input.is(':visible')) {
 		input.hide();
+		container.removeClass('open');
 	}
 	else {
 		input.show();
+		container.addClass('open');
 	}
 });
 

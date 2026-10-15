@@ -1,13 +1,31 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
 <% no warnings 'uninitialized'; %>
+<%
+	# ability -> icon name; &subs::icon_path picks the current icon set's tile by
+	# that name, or the fallback image when the name has no tile (build.js renders
+	# one tile per set). Keeps the App panel's ability grid recognisable at a glance.
+	my %ability_icon = (
+		notifications => 'bell', category => 'category', description => 'note',
+		duration => 'metronome', warranty => 'badge', schedule => 'title',
+		phone => 'phone_sms', notes => 'note', email => 'envelope', web => 'web_button',
+		logo => 'gallery', address => 'place', specs => 'list', command => 'code',
+		position => 'marker', formulas => 'calculator', kill => 'scraper', cost => 'cash',
+		worth => 'chart', minimum => 'down', aka => 'person', budget => 'chart',
+		goals => 'bullseye', measures => 'measures', packaging => 'inventory',
+		record => 'record', currency => 'cash', unit => 'ruler',
+		manufacturer => 'manufacturer', inventory_method => 'inventory',
+		quantity => 'calculator', home_plate => 'home', nfc => 'key',
+		navigation => 'gps', evaluation => 'checkmark',
+	);
+%>
 <div id="configuration_container" class="cfg">
 	<style>
 	/* The App panel is the largest Configure tab: one card per app. The card's
 	   head holds the window/actions, the name, the colour and the three flags;
 	   Part of Speech and Might Also Be sit side by side (stacking under 560px
-	   through .cfg-grid). Each ability is a full-width toggle so its panel -
-	   measures, packaging, budgets, a web table - gets the whole card on any
-	   screen. */
+	   through .cfg-grid). The abilities sit in a grid of icon tiles; opening one
+	   spans the whole card, so its panel - measures, packaging, budgets, a web
+	   table - has the room it needs. */
 	#configuration_container .app_block_head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; }
 	#configuration_container .app_block_head .navbar_buttons { position:static; right:auto; display:inline-flex; flex-wrap:wrap; gap:6px; align-items:center; }
 	#configuration_container .app_block_head .navbar_buttons img,
@@ -23,9 +41,14 @@
 	#configuration_container .app_block_name .name_change { width:100%; font-weight:600; }
 	#configuration_container .app_checks { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:8px 0; font-size:13px; }
 	#configuration_container .app_checks > span { display:inline-flex; align-items:center; gap:5px; }
-	#configuration_container .app_abilities { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+	#configuration_container .app_abilities { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; margin-top:10px; align-items:start; }
 	#configuration_container .configuration_ability_container { display:block; min-width:0; }
-	#configuration_container .configuration_ability_container .app_configure_toggle { width:100%; text-align:left; }
+	/* an opened ability takes the whole card - its panel is a measures table, a
+	   budget list, a web table - so it spans every column of the grid */
+	#configuration_container .configuration_ability_container.open { grid-column:1 / -1; }
+	#configuration_container .configuration_ability_container .app_configure_toggle { width:100%; text-align:left; display:flex; align-items:center; gap:6px; min-width:0; }
+	#configuration_container .app_configure_toggle .ability_icon { flex:0 0 auto; width:22px; height:22px; }
+	#configuration_container .app_configure_toggle .ability_label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 	#configuration_container .app_configure_input { padding:10px; margin:2px 0 4px; border:1px solid var(--line); border-radius:8px; background:var(--panel); overflow-x:auto; }
 	#configuration_container .app_configure_input .configure_input,
 	#configuration_container .app_configure_input .app_measure_configuration,
@@ -139,7 +162,7 @@
 					<div class="app_abilities">
 						<% foreach my $b (sort keys %{$abilities}) { %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
-								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %></button>
+								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, '/images/decipherable/gear.png') %>"><span class="ability_label"><b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %></span></button>
 								<div style="display:none;" class="app_configure_input" setting="<%= $b %>" app="<%= $a %>">
 									<% if ($b eq 'notifications') { %>
 										<div class="app_notification_configurator" app="<%= $a %>">
@@ -277,7 +300,7 @@
 						    the controls that run one and the report it last left, so an app's
 						    evaluation is configured where the app is %>
 						<span class="configuration_ability_container" setting="evaluation">
-							<button app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><b>Evaluation:</b> <%= do { my $c = &subs::evaluation_cadence($a); $c eq 'off' ? 'on demand' : ($c eq 'each_run' ? 'every run' : $c) } %></button>
+							<button app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><img class="ability_icon" alt="" hint="Evaluation" src="<%= &subs::icon_path($ability_icon{'evaluation'}, '/images/decipherable/gear.png') %>"><span class="ability_label"><b>Evaluation:</b> <%= do { my $c = &subs::evaluation_cadence($a); $c eq 'off' ? 'on demand' : ($c eq 'each_run' ? 'every run' : $c) } %></span></button>
 							<div style="display:none;" class="app_configure_input" setting="evaluation" app="<%= $a %>">
 								<%= include 'apps/evaluation_controls', app => $a %>
 								<%# the report the app last produced; a run that could not reach the

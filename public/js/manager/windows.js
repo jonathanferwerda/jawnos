@@ -10,6 +10,18 @@ var appt_containers = {
 	're_register': 'register'
 };
 
+// The app_act row (measures, tasks, reset, configure, inventory, details,
+// register) opens one panel at a time: opening any of them closes whichever
+// other one was showing, so a second tap never leaves two panels stacked.
+function appActExclusive(app, keep) {
+	var appointment = $('.appointment[app="' + app + '"]');
+	$.each(appt_containers, function(container, opener) {
+		if (opener == keep) { return; }
+		var panel = appointment.find('.' + container);
+		if (panel.is(':visible')) { panel.hide(); }
+	});
+}
+
 var config_appt_containers = {
 	'me_setting_list': 'me_settings',
 	'backup_list': 'restore_list',
