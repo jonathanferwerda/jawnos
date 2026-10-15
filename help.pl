@@ -828,6 +828,8 @@ our %topic = (
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
+			'Other machines\' own Ollama models are offered too, each listed under the machine that runs it (Ollama · that machine). Their model lists are cached in the background, so Plat opens without waiting on the network; picking one runs the call on that machine.',
+			'Google Veo is offered as a Video-generation model: it runs the job on Google\'s side and the tree polls it until the video is ready.',
 			'Thinking is set per agent, beside its model, and shown for the language agents — the Help guide, Evaluation, Vision, the Pen and Coding — when the chosen model can reason; Image generation never carries one. A model that does not reason is not offered the choice (the families that do: the o-series, GPT-5, Claude 3.7/4, Gemini 2.5+, Grok 3/4, DeepSeek R1/v4/flash, Magistral, Qwen3 and the like). The level reaches each agent\'s own model calls, and a level a model does not understand is dropped and the call retried without it.',
 			'Image, Audio and Video generation are their own agents, each holding the model that produces that kind of file; a prompt Pen (or a Guide associate) describes is filed by the matching one, with a “Generating … with …” note while it runs. Transcription (speech in) is its own agent too: it tries the chosen cloud model first and falls back to the local whisper.cpp when that fails.',
 			'Every agent also carries a Fallback choice beside its model — the same list minus the primary. When the primary errors (an outage), the call steps down to the fallback instead of failing; the transcription agent adds whisper.cpp after that.',
@@ -1185,7 +1187,7 @@ sub actions_prompt {
 		: "- To make an appointment, use create - it only stages a proposal. Tell the person what you staged and ask them to confirm; call promote only once they agree, and never say it is saved before promote returns. Use discard if they decline.";
 	my $rules = <<"TXT";
 Rules:
-- Navigate and search only. Never delete, send, pay, or change any data.
+- Navigate, search and make media only. Never delete, send, pay, or change any other data.
 - Choose only from the actions listed above; there is no other verb here.
 - When the person names a photo, a record or an app to show them, use find first,
   then open what the result points at. If find returns an app, pass that exact app
@@ -1211,6 +1213,12 @@ $create_rule
   episodes), use play_music with the person's own words; it plays every match as
   a list. Set "shuffle":1 when they ask for a shuffle or a surprise. Do not
   reach for find or open_gallery when the thing is to be watched or listened to.
+- To make an image, a sound or a video, use generate with "kind" (image, audio
+  or video) and a full, self-contained "prompt". Set "app" to the appointment it
+  is for only when you are sure of it - if the person did not say which
+  appointment, or the room holds more than one, ask which before you generate;
+  with no "app" the media waits in the Camera pool to be filed. It is slow, so
+  say what you are making rather than making several at once.
 - Keep every text field short and in plain, everyday words.
 TXT
 	return $header . $lines . "\n" . $rules;

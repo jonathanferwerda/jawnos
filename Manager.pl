@@ -4718,6 +4718,37 @@ post '/manager/app_release_sync' => sub($c) {
 	$c->render(json => { ok => 1, syncing => 1 });
 };
 
+# The local Ollama's model list, for a peer that offers (and routes to) this
+# machine's models - the app-release rail, with the same signatorial gate.
+get '/manager/ollama_models' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 8, request_timeout => 12);
+	my $res = eval { $ua->get('http://localhost:11434/api/tags')->result };
+	my $models = [];
+	if ($res && $res->is_success) {
+		my $b = eval { $res->json } || {};
+		$models = $b->{'models'} if ref $b->{'models'} eq 'ARRAY';
+	}
+	my $hn = `hostname`; chomp $hn;
+	$c->render(json => { hostname => $hn, models => $models });
+};
+
+# A peer's chat turn, run against this machine's Ollama. The caller already
+# decided the model lives here; this only carries the call and its answer back.
+post '/manager/ollama_chat' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	my $payload = eval { $c->req->json } || {};
+	my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 300, request_timeout => 600);
+	my $res = eval { $ua->post('http://localhost:11434/api/chat' => json => $payload)->result };
+	unless ($res) { $c->render(json => { error => 'the local Ollama did not answer' }); return; }
+	$c->res->headers->content_type('application/json');
+	$c->render(data => $res->body);
+};
+
 # The voice models this machine can serve - the *.onnx files and their json under
 # voices/. Only the models are shared: the piper binary is per-arch and stays
 # local (say_piper_binary), so it is not listed here.
@@ -20151,6 +20182,32 @@ post '/manager/help/discard' => sub($c) {
 	$c->render(json => { discarded => $uuid });
 };
 
+# The Guide makes media: an image, a sound or a video through the matching agent,
+# filed onto the appointment it is for when the Guide names one, else left in the
+# Camera pool to be claimed. The generation itself is generate_ai_media's own work.
+post '/manager/help/generate' => sub($c) {
+	my $kind = $c->param('kind') || 'image';
+	$kind = 'image' unless grep { $_ eq $kind } qw/image audio video/;
+	my $prompt = $c->param('prompt') || '';
+	$prompt =~ s/^\s+|\s+$//g;
+	return $c->render(json => { ok => 0, error => 'tell me what to make' }) unless length $prompt;
+	my $app = &subs::unformat_name($c->param('app') || '');
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'text_to_image_assistant', 'text_to_audio_assistant', 'text_to_video_assistant' ] });
+	my ($url, $att) = eval {
+		&subs::generate_ai_media({
+			kind => $kind,
+			prompt => $prompt,
+			settings => $settings,
+			conversation => {},
+			mail_contact => $app,
+			unclaimed => ($app ? 0 : 1),
+		});
+	};
+	my $model = $kind eq 'image' ? $settings->{'text_to_image_assistant'} : $kind eq 'audio' ? $settings->{'text_to_audio_assistant'} : $settings->{'text_to_video_assistant'};
+	return $c->render(json => { ok => 0, error => 'the ' . $kind . ' agent could not make that (is a ' . $kind . ' model set?)' }) unless $url;
+	$c->render(json => { ok => 1, kind => $kind, model => $model, app => ($app ? &subs::format_name($app) : ''), unclaimed => ($app ? 0 : 1) });
+};
+
 get '/manager/help/staged' => sub($c) {
 	my $rows = &subs::db_select('staged_appointments', undef, { status => 'pending' })->hashes;
 	$c->render(json => { staged => $rows });
@@ -24555,6 +24612,9 @@ sub update_database($data) {
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
 		'alter table remote_machines add column sync_cursor VARCHAR(50)',
 		'alter table remote_machines add column version VARCHAR(25)',
+		# the peer's cached Ollama model list, so Plat can offer models by the machine
+		# they live on without waiting on the network (filled by ollama_models_sync)
+		'alter table remote_machines add column ollama_models LONGTEXT',
 		# the Guide writes here, not into appointments: a staged row is a proposal a
 		# person can look over and promote (or drop) before it becomes real
 		'create table if not exists staged_appointments (

@@ -243,6 +243,16 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# A peer's Ollama model list is cached on a slower tick, so Plat can offer
+	# models by the machine they run on without waiting on the network.
+	&subs::subprocessor(sub {
+		sleep 60;
+		while (1) {
+			eval { &subs::ollama_models_sync(); };
+			sleep 600;
+		}
+	}, { name => 'ollama models sync' });
+
 	# The error watch tails the tree's own output (the pty stream jawn tees into
 	# ~/pty.log, plus ~/manager.log) and stages a proposed fix per new error,
 	# for a person to apply from the IDE's coding chatbox. Off until Configure

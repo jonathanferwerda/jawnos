@@ -316,6 +316,15 @@ function helpDoAction(a, cb) {
 		}).fail(function () { cb('I could not drop that.'); });
 		return;
 	}
+	if (a.action === 'generate') {
+		var kind = (a.kind === 'audio' || a.kind === 'video') ? a.kind : 'image';
+		$.post('/manager/help/generate', { kind: kind, prompt: a.prompt || '', app: a.app || '' }, function (r) {
+			if (!r || !r.ok) { cb((r && r.error) || 'I could not make that.', 'I could not make that.'); return; }
+			var where = r.unclaimed ? '; it waits in the Camera pool to be filed' : (' onto “' + (r.app || 'the appointment') + '”');
+			cb('Made ' + kind + ' with ' + (r.model || 'the agent') + where + '.', 'Done - I made it.');
+		}).fail(function () { cb('I could not make that.', 'I could not make that.'); });
+		return;
+	}
 	if (a.action === 'show_place') {
 		$.get('/manager/help/place', { q: a.place || '' }, function (r) {
 			if (!r || r.error || !r.latitude) { cb((r && r.error) || ('I have no place called “' + (a.place || '') + '” measured yet.')); return; }

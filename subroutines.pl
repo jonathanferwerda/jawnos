@@ -12160,7 +12160,7 @@ sub ai_providers() {
 		{ id => 'anthropic',  label => 'Anthropic (Claude)',    keys => [ [ 'anthropic_key', 'API key' ] ],
 			models => [ qw/claude-sonnet-4-20250514 claude-opus-4-20250514 claude-3-7-sonnet-latest claude-3-5-sonnet-latest claude-3-5-haiku-latest/ ] },
 		{ id => 'google',     label => 'Google (Gemini)',       keys => [ [ 'google_key', 'API key' ] ],
-			models => [ qw/gemini-2.5-pro gemini-2.5-flash gemini-2.0-flash/ ] },
+			models => [ qw/gemini-2.5-pro gemini-2.5-flash gemini-2.0-flash veo-3.0-generate-preview veo-3.1-generate-preview/ ] },
 		{ id => 'xai',        label => 'xAI (Grok)',            keys => [ [ 'xai_key', 'API key' ] ],
 			models => [ qw/grok-3 grok-3-mini grok-2-1212/ ] },
 		{ id => 'deepseek',   label => 'DeepSeek',              keys => [ [ 'deepseek_key', 'API key' ] ],
@@ -12189,6 +12189,8 @@ sub ai_key_settings() {
 sub ai_provider_ready {
 	my ($id) = @_;
 	return 0 unless defined $id && length $id;
+	# a peer's own Ollama we hold a cached model list for is offered by its device
+	return 1 if $id =~ /^ollama:/;
 	my ($p) = grep { ($_->{'id'} || '') eq $id } @{ &subs::ai_providers() };
 	return 0 unless $p;
 	if ($id eq 'ollama') {
@@ -12256,8 +12258,18 @@ sub ai_model_caps {
 sub ai_model_provider {
 	my ($model) = @_;
 	return 'cloudflare' if $model =~ /^\@cf/;
+	# a peer's own Ollama: @<device>/<model>, so a model can be picked by the
+	# machine that runs it
+	return 'ollama_remote' if $model =~ /^\@[^\/]+\/.+$/;
 	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/;
 	return 'ollama';
+}
+
+# The machine a @<device>/<model> names, or ''.
+sub ai_model_device {
+	my ($model) = @_;
+	return $1 if $model =~ /^\@([^\/]+)\/.+$/;
+	return '';
 }
 
 # The billing bucket a model draws on. Local Ollama and Cloudflare (its plan is
@@ -12265,14 +12277,14 @@ sub ai_model_provider {
 sub ai_model_bucket {
 	my ($model) = @_;
 	my $provider = &ai_model_provider($model);
-	return 'ollama_cloud' if $provider eq 'ollama' && $model =~ /:cloud\b/i;
+	return 'ollama_cloud' if ($provider eq 'ollama' || $provider eq 'ollama_remote') && $model =~ /:cloud\b/i;
 	return $provider;
 }
 
 sub ai_model_paid {
 	my ($model) = @_;
 	my $bucket = &ai_model_bucket($model);
-	return 0 if $bucket eq 'cloudflare' || $bucket eq 'ollama';
+	return 0 if $bucket eq 'cloudflare' || $bucket eq 'ollama' || $bucket eq 'ollama_remote';
 	return 1;
 }
 
@@ -12341,6 +12353,23 @@ sub ai_model_catalogue {
 		}
 		@models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @models if $cap;
 		push @out, { id => $p->{'id'}, label => $p->{'label'}, models => \@models } if @models;
+	}
+	# a peer's own Ollama models, from the list cached by ollama_models_sync, each
+	# offered under the machine that runs it
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes || [] } ) {
+		my $cached = eval { decode_json($rm->{'ollama_models'} || '') } || [];
+		next unless ref $cached eq 'ARRAY' && @{$cached};
+		my $device = $rm->{'hostname'} || $rm->{'name'} || '';
+		next unless length $device;
+		my @rm_models;
+		foreach my $mi ( @{$cached} ) {
+			my $name = $mi->{'model'} || $mi->{'name'};
+			next unless defined $name && length $name;
+			my $value = '@' . $device . '/' . $name;
+			push @rm_models, { value => $value, name => $name, caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($value), bucket => &ai_model_bucket($value) };
+		}
+		@rm_models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @rm_models if $cap;
+		push @out, { id => 'ollama:' . $device, label => 'Ollama \x{00b7} ' . $device, models => \@rm_models } if @rm_models;
 	}
 	return \@out;
 }
@@ -12468,6 +12497,7 @@ sub ai_chat_raw {
 	};
 	my ($provider, $real) = ('ollama', $model);
 	if ($model =~ /^\@cf/) { ($provider, $real) = ('cloudflare', $model); }
+	elsif ($model =~ /^\@([^\/]+)\/(.+)$/) { ($provider, $real) = ('ollama_remote', $2); }
 	elsif ($model =~ /^([a-z]+):(.+)$/) {
 		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/) { ($provider, $real) = ($1, $2); }
 	}
@@ -12479,6 +12509,27 @@ sub ai_chat_raw {
 		else { push @msgs, $m; }
 	}
 	my @wire = map { &ai_wire_message($provider, $_) } @msgs;
+
+	# a peer's own Ollama: carry the call to that machine's manager, which runs it
+	# against its local daemon and hands the answer back over the same rail
+	if ($provider eq 'ollama_remote') {
+		my $device = &ai_model_device($model);
+		my $me = &subs::signatorial_designer();
+		my ($rm) = grep { ($_->{'hostname'} || '') eq $device || ($_->{'name'} || '') eq $device || ($_->{'signatorial'} || '') eq $device } @{ &subs::db_select('remote_machines')->hashes || [] };
+		return (undef, 'no machine is known for ' . $model) unless $rm;
+		my ($pua, $p) = &subs::peer_useragent($rm);
+		return (undef, 'could not reach ' . $device) unless $pua;
+		my $level = &ai_thinking_level($thinking);
+		my $nproc = 4;
+		if (open(my $fh, "-|", "nproc")) { $nproc = <$fh>; chomp($nproc); close($fh); }
+		my $rp = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0, options => { num_thread => $nproc - 2, num_ctx => 32768 } };
+		$rp->{'think'} = ($level eq 'max' ? 'high' : $level) if length $level && &ai_model_thinks($real);
+		my $rres = eval { $pua->inactivity_timeout(600)->post($p->{'manager'} . '/manager/ollama_chat?signatorial=' . $me => json => $rp)->result };
+		return (undef, 'could not reach ' . $device . ': ' . ($@ || 'no answer')) unless $rres && $rres->is_success;
+		my $rbody = eval { $rres->json } || {};
+		return ($rbody, undef) if $rbody->{'message'} || $rbody->{'response'};
+		return (undef, 'the remote Ollama returned nothing');
+	}
 
 	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
 	my ($url, $headers, $payload);
@@ -13852,6 +13903,9 @@ sub ai_text_to_media {
 	my $label = ($kind eq 'audio' ? 'Audio' : 'Video');
 	my $model = $data->{'model'} || &subs::setting_grabber({ app => 'mail', setting => $setting });
 	return (undef, undef, "no $kind model is set (Configure, Plat, $label generation)") unless $model;
+	# a dedicated video provider (Google Veo) runs a job on its side and is polled,
+	# not asked as a chat turn; the chat layer is the fallback for everything else
+	return &ai_text_to_video_veo($model, $prompt, $data) if $kind eq 'video' && $model =~ /^(?:google:)?veo/i;
 	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300, request_timeout => 600);
 	my $ask = $prompt;
 	if ($kind eq 'video' && $data->{'width'} && $data->{'height'}) {
@@ -13872,6 +13926,47 @@ sub ai_text_to_media {
 		}
 	}
 	return (undef, undef, "the model answered without $kind");
+}
+
+# Google Veo, the video-generation job: submit a prompt, poll the long-running
+# operation until it is done, then fetch the file it names. Returns
+# ($bytes, $mime, $error), the same shape as the other generators.
+sub ai_text_to_video_veo {
+	my ($model, $prompt, $data) = @_;
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
+	my $key = eval { &subs::note_decrypter(&subs::suds_grabber(), $settings->{'google_key'}) } || $settings->{'google_key'};
+	return (undef, undef, 'no Google key is set (Configure, Plat, Provider access)') unless $key;
+	my $name = $model; $name =~ s/^google://;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 120, request_timeout => 600);
+	my $base = 'https://generativelanguage.googleapis.com/v1beta';
+	my $payload = { instances => [ { prompt => $prompt } ] };
+	$payload->{'parameters'}->{'aspectRatio'} = $data->{'aspect_ratio'} if $data->{'aspect_ratio'};
+	my $submit = $ua->post($base . '/models/' . $name . ':predictLongRunning?key=' . url_escape($key) => json => $payload);
+	return (undef, undef, 'could not reach the video model: ' . $submit->error->{'message'}) if $submit->error;
+	my $body = eval { return $submit->res->json } || {};
+	my $op = $body->{'name'};
+	return (undef, undef, 'the video model did not start a job: ' . substr($submit->res->body || '', 0, 200)) unless $op;
+	# poll the operation; a Veo render is minutes, so give it a long leash
+	my $video_uri;
+	for (my $i = 0; $i < 90; $i++) {
+		sleep 5 if $i;
+		my $poll = $ua->get($base . '/' . $op . '?key=' . url_escape($key));
+		next if $poll->error;
+		my $pb = eval { return $poll->res->json } || {};
+		next unless $pb->{'done'};
+		if ($pb->{'error'}) { return (undef, undef, 'the video model failed: ' . ($pb->{'error'}->{'message'} || 'unknown')); }
+		$video_uri = $pb->{'response'}->{'generateVideoResponse'}->{'generatedSamples'}->[0]->{'video'}->{'uri'}
+			|| $pb->{'response'}->{'generatedVideos'}->[0]->{'video'}->{'uri'};
+		last;
+	}
+	return (undef, undef, 'the video model did not finish in time') unless $video_uri;
+	my $sep = (index($video_uri, '?') >= 0) ? '&' : '?';
+	my $fetch = $ua->get($video_uri . $sep . 'key=' . url_escape($key));
+	return (undef, undef, 'could not download the video: ' . $fetch->error->{'message'}) if $fetch->error;
+	my $bytes = $fetch->res->body;
+	return (undef, undef, 'the video model returned nothing') unless defined $bytes && length $bytes;
+	return ($bytes, $fetch->res->headers->content_type || 'video/mp4', undef);
 }
 
 sub generate_ai_media {
@@ -15862,6 +15957,29 @@ sub github_release_manifest {
 # be untenable. Pull, on the watcher's slow tick; the code watcher keeps the
 # Perl tree current. GitHub's release manifest is consulted too, so a device
 # with no reachable peer (or no valid peer cookie) still updates.
+# Cache each reachable peer's Ollama model list, so Plat can offer models by the
+# machine they run on without waiting on the network. Runs on a slow tick; a
+# peer that goes quiet keeps its last list until it answers again.
+sub ollama_models_sync {
+	my $me = &subs::signatorial_designer();
+	my $rms = &subs::db_select('remote_machines')->hashes || [];
+	foreach my $rm ( @{$rms} ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		my ($ua, $p) = &subs::peer_useragent($rm);
+		next unless $ua;
+		my $res = eval { $ua->inactivity_timeout(15)->get($p->{'manager'} . '/manager/ollama_models?signatorial=' . $me)->result };
+		next unless $res && $res->is_success;
+		my $body = eval { decode_json $res->body };
+		next unless $body && ref $body eq 'HASH';
+		my $models = $body->{'models'};
+		next unless ref $models eq 'ARRAY';
+		my $update = { ollama_models => encode_json($models) };
+		$update->{'hostname'} = $body->{'hostname'} if $body->{'hostname'};
+		&subs::db_update('remote_machines', $update, { signatorial => $rsig });
+	}
+}
+
 sub app_release_sync {
 	my $dir = &subs::home('~/jawnos/releases');
 	mkdir $dir unless -d $dir;
