@@ -28,8 +28,10 @@ function calendarPrinter(appts,sort) {
 		'July', 'August', 'September', 'October', 'November', 'December'];
 	var weekNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-	// which apps have something on which day of the month
+	// which apps have something on which day of the month, and which days a habit
+	// is predicted to land on (drawn faded, after the real dots)
 	var spots = {};
+	var ghost_spots = {};
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
 		$.each(v['list'] || [], function(n,l) {
@@ -41,6 +43,16 @@ function calendarPrinter(appts,sort) {
 			if (!spots[day]) { spots[day] = []; }
 			var colour = (v['setting'] && v['setting']['colour']) || ink;
 			if (spots[day].indexOf(colour) == -1) { spots[day].push(colour); }
+		});
+		var ghost_colour = (v['setting'] && v['setting']['colour']) || ink;
+		$.each(v['ghosts'] || [], function(n,gh) {
+			var t = numeral(gh['timestamp']).value();
+			if (!isFinite(t) || t <= 0) { return true; }
+			var d = new Date(t);
+			if (d.getFullYear() != year || d.getMonth() != month) { return true; }
+			var day = d.getDate();
+			if (!ghost_spots[day]) { ghost_spots[day] = []; }
+			if (ghost_spots[day].indexOf(ghost_colour) == -1) { ghost_spots[day].push(ghost_colour); }
 		});
 	});
 
@@ -114,6 +126,23 @@ function calendarPrinter(appts,sort) {
 		var dy = cy + rowHeight - 10;
 		$.each(colours.slice(0, 8), function(i2,colour) {
 			ctx.save();
+			ctx.fillStyle = colour;
+			ctx.beginPath();
+			ctx.arc(dx, dy, 4, 0, (Math.PI * 2));
+			ctx.fill();
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = 1;
+			ctx.stroke();
+			ctx.restore();
+			dx += 11;
+			if (dx > cx + cell - 10) { dx = cx + 11; dy -= 10; }
+		});
+
+		// the ghosts: what a habit predicts for the day's empty cells, picked up
+		// where the real dots left off and drawn in the same faded ink
+		$.each((ghost_spots[day] || []).slice(0, 8), function(i3,colour) {
+			ctx.save();
+			ctx.globalAlpha = 0.3;
 			ctx.fillStyle = colour;
 			ctx.beginPath();
 			ctx.arc(dx, dy, 4, 0, (Math.PI * 2));

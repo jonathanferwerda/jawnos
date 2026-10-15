@@ -62,6 +62,16 @@ function timelinePrinter(appts,sort,offset) {
 	// dot wide - the widest ring it wears - so the whole circle stays visible
 	var dotEdge = dotRadius + (halo ? dotHalo : dotRing) / 2;
 	var column = canvas.width - dotEdge * 2;
+	// a ghost carries no percent of its own: it is placed from its moment the way
+	// an edge-pinned row is, clamped to the same 0..2 a true percent runs over
+	var ghostPct = function(l) {
+		var pct = parseFloat(l[scope + '_percent']);
+		if ( !isFinite(pct) && isFinite(l['timestamp']) ) {
+			pct = (l['timestamp'] - appts['__specs']['start']) / (appts['__specs']['timestamp'] - appts['__specs']['start']);
+		}
+		if ( !isFinite(pct) ) { pct = 0; }
+		return Math.min(Math.max(pct, 0), 2);
+	};
 
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
@@ -188,6 +198,47 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			rowRight = Math.max(rowRight, labelEnd);
 			magRight = Math.max(magRight, labelEnd);
+		});
+		// the ghosts: what the habit predicts but nobody has made, on the row at the
+		// place their moment works out to, faded, and pushed into nothing - a ghost
+		// answers no press and adds nothing to the extent the row is measured by
+		$.each(v.ghosts || [], function(g,gh) {
+			if ( !gh || !isFinite(gh['timestamp']) ) { return true; }
+			var gx = dotEdge + (column * ghostPct(gh) / 2);
+			ctx.save();
+			ctx.globalAlpha = 0.3;
+			var gStartPct = parseFloat(gh[scope + '_start_percent']);
+			if ( !isFinite(gStartPct) && gh['duration'] ) {
+				gStartPct = (gh['timestamp'] - gh['duration'] - appts['__specs']['start']) / (appts['__specs']['timestamp'] - appts['__specs']['start']);
+			}
+			if ( isFinite(gStartPct) ) {
+				gStartPct = Math.min(Math.max(gStartPct, 0), 2);
+				var gStartX = dotEdge + (column * gStartPct / 2);
+				ctx.strokeStyle = colour;
+				ctx.lineWidth = 16;
+				ctx.lineCap = 'round';
+				ctx.beginPath();
+				ctx.moveTo(gStartX, rowY);
+				ctx.lineTo(gx, rowY);
+				ctx.stroke();
+			}
+			if (halo) {
+				ctx.strokeStyle = halo;
+				ctx.lineWidth = dotHalo;
+				ctx.beginPath();
+				ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
+				ctx.stroke();
+			}
+			ctx.fillStyle = ink;
+			ctx.beginPath();
+			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
+			ctx.fill();
+			ctx.strokeStyle = colour;
+			ctx.lineWidth = dotRing;
+			ctx.beginPath();
+			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
+			ctx.stroke();
+			ctx.restore();
 		});
 		// a row with nothing drawn has nothing to answer for
 		if (rowLeft == undefined) { return true; }

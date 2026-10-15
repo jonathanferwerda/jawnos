@@ -1041,6 +1041,15 @@ $(document).on('change', '#timestamp_in_view', function() {
 	settingSetter({ 'app': 'keyboard', 'setting': 'timestamp_in_view', 'value': value });
 });
 
+// Ghost appointments: the events the records say will probably happen. The setting
+// rides the server (it builds the ghosts into the viewer's payload), so a change
+// only has to re-fetch the view.
+$(document).on('change', '#ghost_appointments', function() {
+	var value = $(this).is(':checked') ? 'checked' : 'unchecked';
+	settingSetter({ 'app': 'keyboard', 'setting': 'ghost_appointments', 'value': value });
+	if (typeof calculator == 'function') { calculator(); }
+});
+
 $(document).on('click', '.keyboard_base', function() {
 	var b = $(this);
 	var toggle = b.attr('toggle');

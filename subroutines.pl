@@ -1295,6 +1295,106 @@ sub usual_ritual_time() {
 	return $ms;
 }
 
+# The times an app is expected to happen, for the ghost appointments a clock draws
+# ahead of now. The record's own habit comes first (the hours its appointments
+# cluster around); with too little to read, the app's saved clothesline hours; and
+# with none, the hours of its own 'usual' occurrences. Memoized briefly, so the
+# viewer's poll does not re-read the history on every tick.
+our %ghost_times_memo;
+sub ghost_times_for() {
+	my ($app) = @_;
+	return [] unless defined $app && length $app;
+	my $cache = $ghost_times_memo{$app};
+	return $cache->{'times'} if $cache && &rightNow() - $cache->{'at'} < 300000;
+	my @out = &usual_times_for($app);
+	if (!@out) {
+		my $cl = eval { return decode_json &setting_grabber({ app => $app, setting => 'clothesline' }) } || {};
+		foreach my $h ( @{ $cl->{'time_plinko'}->{'hour'} || [] } ) {
+			my $hh = &hour_from_words($h);
+			push @out, [ $hh, 0 ] if defined $hh;
+		}
+	}
+	if (!@out) {
+		my $rows = &db_query(q{select timestamp from appointments where app = ? and type = 'usual' order by timestamp desc limit 200}, $app)->hashes;
+		my (%h, %m);
+		foreach my $r (@{$rows}) {
+			next unless defined $r->{'timestamp'} && $r->{'timestamp'} =~ /^-?\d+$/;
+			my @t = localtime($r->{'timestamp'} / 1000);
+			$h{$t[2]}++;
+			push @{ $m{$t[2]} }, $t[1];
+		}
+		foreach my $hh ( sort { $a <=> $b } keys %h ) {
+			my %mm; $mm{$_}++ foreach @{ $m{$hh} };
+			my ($bm) = sort { $mm{$b} <=> $mm{$a} || $a <=> $b } keys %mm;
+			push @out, [ $hh + 0, ($bm // 0) + 0 ];
+		}
+	}
+	$ghost_times_memo{$app} = { at => &rightNow(), times => \@out };
+	return \@out;
+}
+
+# An hour written the clothesline's way ("9am", "10pm", "12am") as a number 0-23.
+sub hour_from_words() {
+	my ($h) = @_;
+	my $s = lc($h // '');
+	return undef unless $s =~ /^(\d{1,2})\s*(am|pm)?$/;
+	my ($n, $ap) = ($1 + 0, $2);
+	if (defined $ap) {
+		return 0 if $ap eq 'am' && $n == 12;
+		return 12 if $ap eq 'pm' && $n == 12;
+		return $n + 12 if $ap eq 'pm';
+		return $n;
+	}
+	return $n <= 23 ? $n : undef;
+}
+
+# The span a ghost should wear: the app's own recent average, its duration setting,
+# else nothing.
+sub usual_duration_for() {
+	my ($app) = @_;
+	my $rows = &db_query(q{select duration from appointments where app = ? and type = 'stop' order by timestamp desc limit 20}, $app)->hashes;
+	my @d = map { (defined $_->{'duration'} && $_->{'duration'} =~ /^-?\d+$/) ? abs($_->{'duration'}) + 0 : () } @{$rows};
+	if (@d) {
+		my $t = 0; $t += $_ for @d;
+		return int($t / scalar @d);
+	}
+	my $s = &setting_grabber({ app => $app, setting => 'duration' });
+	return &time_abbrev_translator($s) if defined $s && $s =~ /\S/;
+	return 0;
+}
+
+# The ghost rows for one app: its expected times on the days ahead that fall inside
+# the view, capped. Empty when it has no expected time.
+sub ghost_rows_for() {
+	my ($app, $now, $view_end) = @_;
+	return [] unless defined $view_end && $view_end > $now;
+	my $times = &ghost_times_for($app);
+	return [] unless @{$times};
+	my $duration = &usual_duration_for($app);
+	my @n = localtime($now / 1000);
+	my @rows;
+	for my $d (0 .. 7) {
+		last if scalar @rows >= 6;
+		foreach my $tm ( @{$times} ) {
+			my $e = eval { int(POSIX::mktime(0, $tm->[1], $tm->[0], $n[3] + $d, $n[4], $n[5])) };
+			next unless defined $e;
+			my $ms = $e * 1000;
+			next unless $ms > $now && $ms <= $view_end;
+			push @rows, {
+				ghost => 1,
+				app => $app,
+				type => 'usual',
+				timestamp => $ms,
+				duration => $duration,
+				formatted_name => &format_name($app),
+			};
+		}
+	}
+	@rows = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @rows;
+	@rows = @rows[0 .. 5] if @rows > 6;
+	return \@rows;
+}
+
 sub ago_calc() {
 	my ($ago,$timestamp) = @_;
 	$timestamp = &rightNow() unless $timestamp;

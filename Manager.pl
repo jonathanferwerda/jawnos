@@ -14335,6 +14335,18 @@ get '/manager/appointment_viewer' => sub($c) {
 			$appts->{$a}->{$scope . '_formatted_duration'} = &subs::duration_sayer($appts->{$a}->{$scope . '_duration'} / 1000) if $appts->{$a}->{$scope . '_duration'};
 		}
 	};
+	# Ghost appointments: the events an app's records say will probably happen, that
+	# are not scheduled - drawn faded ahead of now. Gated on the delorean toggle,
+	# and only within the view the clock is showing.
+	if ((&subs::setting_grabber({ app => 'keyboard', setting => 'ghost_appointments' }) || '') eq 'checked') {
+		my $ghost_now = &subs::rightNow();
+		my $ghost_end = (defined $period && $period) ? ($timestamp + ($timestamp - $period)) : $timestamp;
+		foreach my $a (@{$chosen_appts}) {
+			next if $appts->{$a}->{'setting'}->{'visible'} eq 'unchecked';
+			my $g = &subs::ghost_rows_for($a, $ghost_now, $ghost_end);
+			$appts->{$a}->{'ghosts'} = $g if scalar @{$g};
+		}
+	}
 	$appts->{'__specs'}->{'pseudonyms'} = &pseudonym_maker('viewer','');
 	my $clothesline = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
 	if ($c->param('background_images') eq 'on') {

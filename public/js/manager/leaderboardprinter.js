@@ -157,6 +157,27 @@ function leaderboardPrinter(appts) {
 			cx = cx - w - 16;
 		});
 
+		// the ghosts: what the app is predicted to make, worn on its own row as faded
+		// pips after the time - the board has no time axis to place them on - and
+		// pushed nowhere, so a ghost is no part of the row's extent
+		if (v['ghosts'] && v['ghosts'].length) {
+			var pipX = timeX + timeWidth + 12;
+			$.each(v['ghosts'].slice(0, 8), function(gi,gh) {
+				if ( !gh || !isFinite(gh['timestamp']) ) { return true; }
+				ctx.save();
+				ctx.globalAlpha = 0.3;
+				ctx.fillStyle = colour;
+				ctx.beginPath();
+				ctx.arc(pipX, rowY, 4, 0, (Math.PI * 2));
+				ctx.fill();
+				ctx.strokeStyle = ink;
+				ctx.lineWidth = 1;
+				ctx.stroke();
+				ctx.restore();
+				pipX += 11;
+			});
+		}
+
 		// ring the first row whose moment has passed - the board's "you are here"
 		if (!nowWatch && v['timestamp'] && v['timestamp'] < presently) {
 			nowWatch = 1;

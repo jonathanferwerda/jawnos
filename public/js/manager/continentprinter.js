@@ -34,6 +34,10 @@ function jawnosContinentOverlay() {
 }
 
 function continentPrinter(appts, sort) {
+	// no ghosts here: a ghost carries a moment and a name but no place - the
+	// contract gives it no latitude or longitude - and this layout draws only what
+	// has been on the ground (the engine's markers, and the __continent places in
+	// the fallback below), so there is nothing to hang a prediction on
 	var places = appts['__continent'] || [];
 	jawnosContinentAppts = appts;
 

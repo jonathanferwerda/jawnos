@@ -49,6 +49,8 @@ function clockfacePrinter(appts) {
 	var ink = jawnosInk();
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var appointment_events = appointmentEventMaker(appts,'size');
+	// the scope in view owns the only window the payload gives a percent against
+	var scope = localStorage.getItem('scope');
 
 	// the wheel zoom, sane and centred on the default
 	var zoom = numeral(localStorage.getItem('scrollPositioner')).value() / 0.4;
@@ -160,6 +162,50 @@ function clockfacePrinter(appts) {
 			hit[2] = Math.max(hit[2], box[2]);
 			hit[3] = Math.max(hit[3], box[3]);
 			jawnosPrinterText(ctx, text, lx, ly, { font: '400 13px Arial', align: align, colour: ink, halo: halo });
+		});
+	});
+
+	// the ghosts: the occurrences a habit predicts. A ghost carries no percent of
+	// its own and the payload knows only the scope in view's window, so it goes on
+	// that scope's ring by the same fallback the timeline uses - faded, and pushed
+	// nowhere, so a ghost never answers a press
+	var ghostRing = $.grep(rings, function(n,ri) { return n['scope'] == scope; })[0] || rings[0];
+	$.each(appts, function(i,v) {
+		if ( i.match(/^__/) ) { return true; }
+		if ( !v['ghosts'] || !v['ghosts'].length ) { return true; }
+		var colour = (v['setting'] && v['setting']['colour']) || ink;
+		$.each(v['ghosts'], function(gi,gh) {
+			if ( !gh || !isFinite(gh['timestamp']) ) { return true; }
+			var pct = parseFloat(gh[scope + '_percent']);
+			if ( !isFinite(pct) ) {
+				pct = (gh['timestamp'] - appts['__specs']['start']) / (appts['__specs']['timestamp'] - appts['__specs']['start']);
+			}
+			if ( !isFinite(pct) ) { pct = 0; }
+			pct = Math.min(Math.max(pct, 0), 2);
+			var ga = pct * Math.PI * 2;
+			var grr = ghostRing.r + ((gi % 3) * 9);
+			var gx = cx + Math.sin(ga) * grr;
+			var gy = cy - Math.cos(ga) * grr;
+
+			ctx.save();
+			ctx.globalAlpha = 0.3;
+			if (halo) {
+				ctx.strokeStyle = halo;
+				ctx.lineWidth = 4;
+				ctx.beginPath();
+				ctx.arc(gx, gy, 6, 0, (Math.PI * 2));
+				ctx.stroke();
+			}
+			ctx.fillStyle = colour;
+			ctx.beginPath();
+			ctx.arc(gx, gy, 6, 0, (Math.PI * 2));
+			ctx.fill();
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.arc(gx, gy, 6, 0, (Math.PI * 2));
+			ctx.stroke();
+			ctx.restore();
 		});
 	});
 
