@@ -22996,6 +22996,34 @@ sub embedded_grabber($c,$timestamp) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
 	my $view = $c->param('view') || ($edt eq 'microcontroller' ? 'pins' : 'gpio');
+	# The panel opens with the device picker blank, and the response then remembers
+	# the chip it drew. So a blank has to resolve to a device here, or the panel
+	# draws none and its buttons never appear. The neighbour-table branch of
+	# device_lister answers it for a device on the LAN; a Bluetooth-only watch is
+	# in no neighbour table, so its freshest bridge sighting stands in - the same
+	# chip_ids sighting the BLE fallback lists it from.
+	if (!$chip_id) {
+		my $first = &subs::device_lister($timestamp,$edt,undef,$chip_id);
+		$chip_id = $first->{'chip_id'} if ref $first eq 'HASH' && $first->{'chip_id'};
+		unless ($chip_id) {
+			my ($best, $seen);
+			my $window = &subs::ble_presence_window();
+			my $now = &subs::rightNow();
+			foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+				next unless $d->{'chip_ids'};
+				foreach my $ch ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+					next unless ref $ch eq 'HASH' && $ch->{'id'};
+					next if ($ch->{'purpose'} || '') ne $edt;
+					next unless $ch->{'ble'} || $ch->{'bluetooth'};
+					next if $seen->{ $ch->{'id'} }++;
+					my $when = $ch->{'ble_seen'} || 0;
+					next unless $when && $window > $now - $when;
+					$best = $ch if !$best || $when > ($best->{'ble_seen'} || 0);
+				}
+			}
+			$chip_id = $best->{'id'} if $best;
+		}
+	}
 	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
 	$timestamp = $c->param('timestamp');
 	my $tty_enabled = &subs::setting_grabber({ app => $edt, setting => 'enabled' });

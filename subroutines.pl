@@ -2373,23 +2373,53 @@ sub ble_owns() {
 	return $gb::ble_mine_ips->{$home} ? 1 : 0;
 }
 
-sub ble_homebase_alive() {
-	# Is the machine the device was paired to still on the mesh? Its own peer row
-	# is the authority - not a ping of the address it last had, which is wrong the
-	# moment that machine leaves the LAN (a phone on cellular), and made two
-	# machines fight over the watch. A row that is active and refreshed within the
-	# window means the homebase is alive; a stale one means it is gone. A record
-	# that names no machine (older form) is assumed alive, so we never usurp one.
+sub ble_fallback_grace() {
+	# How long a device's homebase may be off the mesh before another machine
+	# takes its watch over. The person wants the watch to stay on the machine it
+	# was paired to, so the takeover must outlast a homebase that merely left the
+	# LAN - a phone on cellular, a wifi roam, a machine that syncs in bursts. The
+	# old ten-minute window grabbed the watch on every blink, which was the
+	# tug-of-war the person saw between the phone and the laptop/tablet. Long
+	# enough that only a homebase genuinely gone hands it over.
+	return 900000;
+}
+
+sub ble_homebase_last_seen() {
+	# When the device's homebase was last known to be on the mesh, from its own
+	# peer row's server_time and held as a high-water mark per (homebase, chip).
+	# The peer row flickers - a sync gap briefly serves a stale copy - and a
+	# single stale read must not make a live homebase look gone, because that
+	# flip is what let a second machine connect and steal the link. Keyed by the
+	# homebase id too, so a re-home to a fresh machine starts from its own row
+	# rather than the old homebase's last sighting. undef means no row names the
+	# machine, which the caller reads as "assume alive".
 	my ($edt, $chip_id) = @_;
 	my $who = &ble_device_specs($edt, $chip_id)->{'computer'};
-	return 1 unless $who;
-	my $now = &subs::rightNow();
+	return undef unless $who;
+	my $key = $who . '|' . ($edt || 'watch') . '|' . $chip_id;
 	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
 		next unless $rm->{'manager_file'} && $rm->{'manager_file'} eq $who;
-		next unless ($rm->{'connection'} || '') eq 'active';
-		return (($rm->{'server_time'} || 0) + 0 > $now - 600000) ? 1 : 0;
+		my $seen = ($rm->{'server_time'} || 0) + 0;
+		next unless $seen;
+		$gb::ble_hb_seen->{$key} = $seen
+			if !defined $gb::ble_hb_seen->{$key} || $seen > $gb::ble_hb_seen->{$key};
 	}
-	return 1;
+	return $gb::ble_hb_seen->{$key};
+}
+
+sub ble_homebase_alive() {
+	# Has the machine the device was paired to been gone long enough to stop
+	# waiting for it? Its own peer row is the authority - not a ping of the
+	# address it last had, which was wrong the moment that machine left the LAN
+	# (a phone on cellular). A sighting counts until it is older than the
+	# fallback grace; only then may another machine take the watch over. A record
+	# that names no machine, or names one we hold no sighting for, is assumed
+	# alive, so we never usurp a homebase we cannot judge.
+	my ($edt, $chip_id) = @_;
+	return 1 unless &ble_device_specs($edt, $chip_id)->{'computer'};
+	my $seen = &ble_homebase_last_seen($edt, $chip_id);
+	return 1 unless defined $seen;
+	return ((&subs::rightNow() - $seen) < &ble_fallback_grace()) ? 1 : 0;
 }
 
 sub ble_may_serve() {
