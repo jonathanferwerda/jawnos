@@ -15,7 +15,7 @@
 		record => 'record', currency => 'cash', unit => 'ruler',
 		manufacturer => 'manufacturer', inventory_method => 'inventory',
 		quantity => 'calculator', home_plate => 'home', nfc => 'key',
-		navigation => 'gps', evaluation => 'checkmark',
+		navigation => 'gps', birthday => 'cake', evaluation => 'checkmark',
 	);
 %>
 <div id="configuration_container" class="cfg">
@@ -31,7 +31,13 @@
 	#configuration_container .app_block_head .navbar_buttons img,
 	#configuration_container .app_block_head > a img { height:38px; }
 	#configuration_container .app_block_name { margin:0 0 6px; }
+	#configuration_container .app_block_head .app_block_name { flex:1 1 180px; min-width:0; margin:0; }
 	#configuration_container .app_block_name span { display:flex; }
+	#configuration_container .app_block_meta { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:8px 0; }
+	#configuration_container .app_block_meta .app_checks { margin:0; }
+	#configuration_container .app_block_meta .colour_field { display:inline-flex; align-items:center; gap:7px; font-size:13px; opacity:.9; }
+	#configuration_container .app_block_meta .colour_field label { min-width:0; }
+	#configuration_container .app_block_meta .colour_field input.colour { width:40px; height:28px; padding:1px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
 	#configuration_container .cfg-row > span { flex:1 1 220px; min-width:0; display:flex; }
 	#configuration_container .cfg-row > span > select,
 	#configuration_container .cfg-row > span > input { flex:1 1 auto; width:100%; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
@@ -40,8 +46,9 @@
 	#configuration_container .cfg-row > span > input.colour { width:auto; }
 	#configuration_container .app_block_name .name_change { width:100%; font-weight:600; }
 	#configuration_container .app_checks { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:8px 0; font-size:13px; }
-	#configuration_container .app_checks > span { display:inline-flex; align-items:center; gap:5px; }
+	#configuration_container .app_checks > span { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border:1px solid var(--line); border-radius:999px; background:var(--panel-2, var(--panel)); }
 	#configuration_container .app_abilities { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; margin-top:10px; align-items:start; }
+	#configuration_container .app_abilities_title { grid-column:1 / -1; margin:8px 0 0; font-size:15px; opacity:.85; }
 	#configuration_container .configuration_ability_container { display:block; min-width:0; }
 	/* an opened ability takes the whole card - its panel is a measures table, a
 	   budget list, a web table - so it spans every column of the grid */
@@ -92,6 +99,9 @@
 			<div class="cfg-card app_block" app="<%= $a %>">
 				<div class="app_block_head">
 					<a href="/manager?app=<%= $a %>&timestamp=<%= $timestamp %>" target="_blank" timestamp="<%= $timestamp %>"><img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" hint="Window" class="medium_thumb" app="<%= $a %>"></a>
+					<div class="app_block_name">
+						<span app="<%= $a %>"><input setting="name_change" class="name_change timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'formatted_name'} %>"></span>
+					</div>
 					<span class="navbar_buttons" style="right:7px;">
 						<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="vacuum_app medium_thumb" app="<%= $a %>">
 						<img src="<%= &subs::icon_for('/images/decipherable/adopt.png') %>" hint="Adopt" class="adopt_app medium_thumb" app="<%= $a %>">
@@ -108,26 +118,19 @@
 					<div class="cfg-scroll"><%= include $mab_template, appts => $appts, a => $a %></div>
 				<% } %>
 				<div>
-					<div class="app_block_name">
-						<span app="<%= $a %>"><input setting="name_change" class="name_change timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'formatted_name'} %>"></span>
-					</div>
-					<div class="cfg-row">
-						<label>Colour</label>
-						<span app="<%= $a %>"><input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>"></span>
-					</div>
-					<%# a thing that is a person (the app named for them) can carry their
-					    birthday here; the time machine reads it before asking the guide %>
-					<div class="cfg-row">
-						<label>Birthday</label>
-						<span app="<%= $a %>"><input setting="birthday" class="configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'birthday'} %>" placeholder="e.g. February 12 1809"></span>
-					</div>
-					<div class="app_checks">
-						<% foreach my $check_set ( qw/visible unique permanent/ ) { %>
-							<span>
-								<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
-									<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>"></input> <%= &subs::format_name($check_set) %>
-							</span>
-						<% } %>
+					<div class="app_block_meta">
+						<span class="colour_field">
+							<label>Colour</label>
+							<input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>">
+						</span>
+						<span class="app_checks">
+							<% foreach my $check_set ( qw/visible unique permanent/ ) { %>
+								<span>
+									<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
+										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>"></input> <%= &subs::format_name($check_set) %>
+								</span>
+							<% } %>
+						</span>
 					</div>
 
 					<div class="cfg-grid">
@@ -164,6 +167,18 @@
 						</span>
 					<% } %>
 					<div class="app_abilities">
+						<h4 class="app_abilities_title">Abilities</h4>
+						<%# the app's birthday reads like an ability: a tile whose panel holds the
+						    one input; the time machine reads it before asking the guide %>
+						<span class="configuration_ability_container" setting="birthday">
+							<button app="<%= $a %>" formatted_setting="Birthday" setting="birthday" class="app_configure_toggle"><img class="ability_icon" alt="" hint="Birthday" src="<%= &subs::icon_path($ability_icon{'birthday'}, '/images/decipherable/cake.png') %>"><span class="ability_label"><b>Birthday:</b> <%= $appts->{$a}->{'setting'}->{'birthday'} || 'not set' %></span></button>
+							<div style="display:none;" class="app_configure_input" setting="birthday" app="<%= $a %>">
+								<div class="cfg-row">
+									<label>Birthday</label>
+									<span app="<%= $a %>"><input setting="birthday" class="configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'birthday'} %>" placeholder="e.g. February 12 1809"></span>
+								</div>
+							</div>
+						</span>
 						<% foreach my $b (sort keys %{$abilities}) { %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
 								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, '/images/decipherable/gear.png') %>"><span class="ability_label"><b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %></span></button>
