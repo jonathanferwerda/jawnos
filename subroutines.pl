@@ -3413,6 +3413,10 @@ sub ble_message_processor() {
 			$chip_id ||= $c;
 			$edt = $e if $e && !$msg->{'edt'};
 		}
+		# Say so on arrival: the tap is otherwise applied silently, so a tap that
+		# never lands (or lands with no chip) is invisible in the log. This is the
+		# one line that tells the two apart.
+		$log->info('BLE button for ' . ($chip_id || '?') . ': room ' . ($payload->{'room'} || '?') . ', button ' . ($payload->{'button'} || '?'));
 		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
 		if (!$ws->{'__specs'}) {
 			$log->info('BLE button for ' . ($chip_id || '?') . ': no placed settings, dropped');
