@@ -8505,6 +8505,12 @@ sub telephone_call_log_check() {
 
 		my $phone = &subs::db_query('select * from settings where setting=? and value like ?', 'phone', '%' . $number)->hashes->[0];
 
+		# the live phone app may already have written this call as it happened
+		# (window.JawnPhoneEvent): skip it so a live call and its call-log trail
+		# are one appointment, not two
+		my $live = &subs::db_query('select uuid from appointments where subtype=? and timestamp between ? and ? limit 1', 'phone', $timestamp - 180000, $timestamp + 180000)->hashes;
+		next if scalar @{$live} > 0;
+
 		if ($phone->{'app'}) {
 			my $appts = &subs::db_query('select * from appointments where app=? and timestamp = ?', $phone->{'app'}, $timestamp)->hashes;
 			unless (scalar @{$appts} > 0) {

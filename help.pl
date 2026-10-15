@@ -239,13 +239,14 @@ our %topic = (
 	'phone' => {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
-		controls => [ 'Recents', 'Contacts', 'Dial', 'Call' ],
+		controls => [ 'Recents', 'Contacts', 'Dial', 'Call', 'Caller ID' ],
 		verified => '2026-10-15',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the contacts the house knows. Recents lists the latest calls; a row opens that person\'s thread.',
 			'Contacts is the known phone numbers. On a phone, tapping a contact fills the dial pad with their number. In the app the device\'s own address book (window.JawnContacts) replaces this list once its permission is granted.',
-			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.'
+			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
+			'With Caller ID on (the button asks for the Call screening role), a call writes itself as it happens: the ring starts an appointment on the caller\'s own app - or the phone app when the number is not known - the hangup stops it, and a missed call cancels it. Without Caller ID the house\'s own call-log check files the call a moment later.'
 		],
 		steps => [
 			'Open Phone from the start menu, or pin it to the taskbar.',

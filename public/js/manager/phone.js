@@ -1,7 +1,8 @@
-// The Phone app. Recent calls are the appointments whose subtype is 'phone';
+// The Phone app. Recents are the appointments whose subtype is 'phone';
 // contacts are the house's known phone numbers; the dial pad places a call on a
 // phone through /manager/phone/dial (termux-telephony-call). In the app it also
-// reads the device's own contacts and live call state from window.JawnContacts.
+// reads the device's own contacts and live call state from window.JawnContacts,
+// and writes a call appointment as the call happens.
 var jawnPhoneApp = { number: '' };
 
 function jawnPhoneAppStatus(text) {
@@ -31,6 +32,62 @@ function jawnPhoneAppRender() {
 		}
 	});
 }
+
+// ---- live calls -----------------------------------------------------------
+// While the app is up, a ring starts a call appointment (on the caller's own
+// app when the number is known - the Call screening role supplies it at ring -
+// else the fallback 'phone' app), a hangup stops it and a miss cancels it. In a
+// browser the bridge is absent, so nothing fires here and the house's own
+// call-log poll backfills instead.
+var jawnPhoneAppCall = { prev: 'idle', uuid: '' };
+
+function jawnPhoneAppNumber() {
+	try {
+		if (window.JawnContacts && typeof window.JawnContacts.incomingNumber === 'function') {
+			return window.JawnContacts.incomingNumber() || '';
+		}
+	} catch (e) { }
+	return '';
+}
+
+function jawnPhoneAppCallStart(direction) {
+	if (jawnPhoneAppCall.uuid) return;
+	$.ajax({
+		url: '/manager/phone/call',
+		type: 'POST',
+		data: { event: 'ring', number: jawnPhoneAppNumber(), direction: direction, timestamp: Date.now() },
+		success: function (res) { if (res && res.ok) { jawnPhoneAppCall.uuid = res.uuid || ''; } }
+	});
+}
+
+function jawnPhoneAppCallFinish(event) {
+	var uuid = jawnPhoneAppCall.uuid;
+	jawnPhoneAppCall.uuid = '';
+	if (!uuid) return;
+	$.ajax({ url: '/manager/phone/call', type: 'POST', data: { event: event, uuid: uuid, timestamp: Date.now() } });
+}
+
+function jawnPhoneAppOnState(state) {
+	var prev = jawnPhoneAppCall.prev;
+	if (state === 'RINGING') {
+		jawnPhoneAppStatus('Incoming call…');
+		if (prev !== 'RINGING') jawnPhoneAppCallStart('incoming');
+	} else if (state === 'OFFHOOK') {
+		jawnPhoneAppStatus('On a call');
+		if (prev === 'idle') jawnPhoneAppCallStart('outgoing');
+	} else {
+		jawnPhoneAppStatus('Idle');
+		if (prev === 'RINGING') jawnPhoneAppCallFinish('miss');
+		else if (prev === 'OFFHOOK') jawnPhoneAppCallFinish('end');
+	}
+	jawnPhoneAppCall.prev = state;
+}
+
+// The native bridge pushes call state here (window.JawnContacts -> the app).
+window.__jawnPhoneEvent = function (type, payload) {
+	if (type !== 'state') return;
+	jawnPhoneAppOnState(payload && payload.state);
+};
 
 $(document).on('click', '#phone_toggle', function () {
 	$.ajax({
@@ -90,9 +147,6 @@ $(document).on('click', '#phone_app .phone_app_row', function () {
 });
 
 // ---- native (window.JawnContacts) ----------------------------------------
-// Ask for the contact/call permissions, and replace the server's contact list
-// with the device's own once they are granted. Live call state lands here too,
-// so the status line reads Ringing / On a call / Idle as the phone does.
 function jawnPhoneAppArm() {
 	if (!window.JawnContacts || typeof window.JawnContacts.available !== 'function') { return; }
 	if (window.JawnContacts.available() !== 'yes') {
@@ -100,15 +154,25 @@ function jawnPhoneAppArm() {
 	}
 	window.__jawnContactsEvent = function (type, payload) {
 		if (type === 'permission' && payload && payload.granted) { jawnPhoneAppNativeContacts(); }
+		if (type === 'screening') { jawnPhoneAppCallerId(); }
 	};
-	window.__jawnPhoneEvent = function (type, payload) {
-		if (type !== 'state') return;
-		var state = payload && payload.state;
-		if (state === 'RINGING') jawnPhoneAppStatus('Incoming call…');
-		else if (state === 'OFFHOOK') jawnPhoneAppStatus('On a call');
-		else jawnPhoneAppStatus('Idle');
-	};
+	jawnPhoneAppCallerId();
 }
+
+// The Caller ID (call screening) role. Held, the app learns who is calling at
+// ring; not held, the button asks for the role.
+function jawnPhoneAppCallerId() {
+	if (!window.JawnContacts || typeof window.JawnContacts.screeningRole !== 'function') { return; }
+	var held = false;
+	try { held = window.JawnContacts.screeningRole() === 'yes'; } catch (e) { }
+	$('#phone_app .phone_app_callerid').toggle(!held);
+	$('#phone_app .phone_app_callerid_state').text(held ? 'Caller ID is on' : '');
+}
+$(document).on('click', '#phone_app .phone_app_callerid', function () {
+	if (window.JawnContacts && typeof window.JawnContacts.requestScreening === 'function') {
+		window.JawnContacts.requestScreening();
+	}
+});
 
 function jawnPhoneAppNativeContacts() {
 	if (!window.JawnContacts || typeof window.JawnContacts.list !== 'function') return;

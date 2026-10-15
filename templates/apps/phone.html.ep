@@ -38,6 +38,10 @@
 		<span class="phone_app_tab" pane="dial" hint="Dial">Dial</span>
 	</div>
 	<div class="phone_app_status" id="phone_app_status">Idle</div>
+	<div class="phone_app_callerid_row" style="text-align:center;margin-bottom:10px;">
+		<span class="phone_app_callerid_state" style="color:var(--muted,#8e8e8e);font-size:12px;"></span>
+		<button class="phone_app_callerid" hint="Caller ID" style="display:none;">Turn on Caller ID</button>
+	</div>
 
 	<div class="phone_app_pane on" pane="recents">
 		<% if (@{$calls}) { %>

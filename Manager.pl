@@ -13980,6 +13980,57 @@ post '/manager/phone/dial' => sub($c) {
 	$c->render(json => { ok => 1, number => $number, out => $out });
 };
 
+post '/manager/phone/call' => sub($c) {
+	# The live half of the phone app: 'ring' starts the call's appointment (on the
+	# caller's own app when the number is known - the Call screening role supplies
+	# it at ring - else the fallback 'phone' app), 'end' stops it and 'miss'
+	# cancels it. The house's own call-log poll skips what this wrote, so a live
+	# call and its call-log trail are one appointment, not two.
+	my $event = $c->param('event') || '';
+	my $number = $c->param('number') || '';
+	$number =~ s/[^\d+#*]//g;
+	my $uuid = $c->param('uuid') || '';
+	my $timestamp = &timestamp_adjuster($c);
+
+	my $app = 'phone';
+	if ($number) {
+		my $contact = &subs::db_query('select app from settings where setting=? and value like ? order by server_time desc limit 1', 'phone', '%' . $number)->hashes->[0];
+		$app = $contact->{'app'} if $contact && $contact->{'app'};
+	}
+
+	if ($event eq 'ring') {
+		my $wrote = &appointment_writer($c, {
+			app => $app,
+			type => 'start',
+			subtype => 'phone',
+			timestamp => $timestamp,
+			account => $number,
+			data => encode_json({ direction => ($c->param('direction') || 'incoming'), number => $number }),
+		});
+		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
+		return;
+	}
+
+	if (($event eq 'end' || $event eq 'miss') && $uuid) {
+		my $row = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+		if ($row && $row->{'app'}) {
+			my $data = { stop_seen => 'yes', stop_timestamp => $timestamp, server_time => &subs::rightNow() };
+			if ($event eq 'miss') {
+				$data->{'type'} = 'cancel';
+			}
+			else {
+				$data->{'type'} = 'stop';
+				$data->{'duration'} = $timestamp - $row->{'timestamp'};
+			}
+			&subs::db_update('appointments', $data, { uuid => $uuid });
+		}
+		$c->render(json => { ok => 1, event => $event });
+		return;
+	}
+
+	$c->render(json => { ok => 0, error => 'unknown event' });
+};
+
 post '/manager/note_save' => sub($c) {
 	# Write a note by hand, or save one being edited: a uuid that is already a note
 	# updates in place, anything else is a new note. Every open Notes window is
