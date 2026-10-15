@@ -129,7 +129,12 @@ function gateKeeper(response) {
 				$.each(d,function(i,v) {
 					if (localStorage.getItem(i) === null) { localStorage.setItem(i,v); }
 				});
-				if(!d.redirector) {
+				// Reloading is the fallback for a caller that was told nowhere to go-
+				// the gate form, which reloads into the session it just won. The box
+				// office splash hands over its own redirector and navigates there
+				// itself; reloading it restarted the splash mid-load, every time, so
+				// it never reached its redirect and the view sat at the gate.
+				if(!d.redirector && !response.redirector) {
 					window.location.reload();
 				}
 			}

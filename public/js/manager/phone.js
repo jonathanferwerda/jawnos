@@ -39,7 +39,12 @@ function jawnPhoneAppRender() {
 // else the fallback 'phone' app), a hangup stops it and a miss cancels it. In a
 // browser the bridge is absent, so nothing fires here and the house's own
 // call-log poll backfills instead.
-var jawnPhoneAppCall = { prev: 'idle', uuid: '' };
+// 'prev' holds the bridge's own vocabulary (IDLE/RINGING/OFFHOOK): the native
+// side spells the states in capitals, so comparing against a lowercase 'idle'
+// never matched - and registering the listener delivers the current state
+// (IDLE) immediately, which is the event that precedes every ring or dial. That
+// left the outgoing start unreachable; keep this in step with the bridge.
+var jawnPhoneAppCall = { prev: 'IDLE', uuid: '' };
 
 function jawnPhoneAppNumber() {
 	try {
@@ -68,13 +73,14 @@ function jawnPhoneAppCallFinish(event) {
 }
 
 function jawnPhoneAppOnState(state) {
+	state = (state || '').toUpperCase();
 	var prev = jawnPhoneAppCall.prev;
 	if (state === 'RINGING') {
 		jawnPhoneAppStatus('Incoming call…');
 		if (prev !== 'RINGING') jawnPhoneAppCallStart('incoming');
 	} else if (state === 'OFFHOOK') {
 		jawnPhoneAppStatus('On a call');
-		if (prev === 'idle') jawnPhoneAppCallStart('outgoing');
+		if (prev === 'IDLE') jawnPhoneAppCallStart('outgoing');
 	} else {
 		jawnPhoneAppStatus('Idle');
 		if (prev === 'RINGING') jawnPhoneAppCallFinish('miss');
