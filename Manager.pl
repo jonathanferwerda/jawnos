@@ -258,6 +258,12 @@ sub time_machine_resolve {
 	my ($spec, $timestamp) = @_;
 	return $timestamp unless defined $spec && $spec =~ /\S/;
 	my $ms = &subs::resolve_when($spec, $timestamp);
+	# a date with a name still attached ("sept 11 attacks") is an event, not that
+	# date: the guide reads it, and the plain date is kept only if it has nothing
+	if (defined $ms && &subs::date_leftover($subs::resolve_when_residual)) {
+		my $guide = &guide_time_machine($spec, $timestamp);
+		$ms = $guide if defined $guide;
+	}
 	if (!defined $ms) {
 		my $relative = 0;
 		if ($spec =~ /^\s*(?:now|today|tomorrow|yesterday|tonight|tom|yes|mon|tue|wed|thu|fri|sat|sun)\s*$/i) { $relative = 1; }
@@ -446,7 +452,7 @@ sub guide_time_machine {
 		my $birthday = ($config->{'birthday'} ? ('Their birthday is ' . $config->{'birthday'} . '. ') : '');
 		my $system = 'You are the time machine inside JawnOS. The person typed a phrase that names a moment, or asks you to start or log something. '
 			. 'Right now it is ' . $now_text . ' in local time. ' . $birthday . $dossier
-			. 'If the phrase names a person or an event, past or future ("Abraham Lincoln\'s birthday", "the day the Berlin Wall fell", "when the first world war ended"), use what you know of history and give the moment it names - including the hour and minute when history records one (the moment JFK was shot, the hour the armistice took effect). '
+			. 'If the phrase names a person or an event, past or future ("Abraham Lincoln\'s birthday", "the day the Berlin Wall fell", "when the first world war ended"), use what you know of history and give the moment it names - including the hour and minute when history records one (the moment JFK was shot, the hour the armistice took effect). For a period or an era that has no single day (the American Revolution, the Renaissance), give the moment it began. '
 			. 'If the phrase names no time of day, keep the present time of day. A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
 			. 'Reply with ONE JSON action and nothing else: '
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '
