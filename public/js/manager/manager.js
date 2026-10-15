@@ -797,9 +797,8 @@ function assistantInitializer() {
 		panel.draggable({
 			revert: 'false',
 			handle: '.assistant_header',
-			// a short delay and a few pixels of travel before a drag begins, so a tap
-			// on a touchscreen does not move the panel - a press-and-hold still drags
-			delay: 150,
+			// a few pixels of travel before a drag begins (with the touch threshold in
+			// touch-threshold.js), so a tap never moves the panel
 			distance: 8,
 			cancel: '.assistant_anchor, .assistant_new, .assistant_close, .assistant_config, .assistant_confirm, .assistant_confirm_delete, .assistant_staged_open, input, button, label, textarea',
 			drag: function (e, ui) {
@@ -836,9 +835,8 @@ function assistantIconInitializer() {
 			zIndex: 999999,
 			cursorAt: { top: 30, left: 30 },
 			// the button is both a tap (open the associate) and a drag (drop it on a
-			// picture): a tap must not turn into a drag, so wait for a short hold and a
-			// little travel before dragging - a finger's jitter stays a tap
-			delay: 150,
+			// picture): a little travel before a drag begins keeps a tap a tap (with the
+			// touch threshold in touch-threshold.js)
 			distance: 10,
 			cancel: '',
 			start: function(p,ui) {

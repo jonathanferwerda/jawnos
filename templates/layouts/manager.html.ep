@@ -143,6 +143,7 @@
 		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
+		<script src="/js/touch-threshold.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/moment.js"></script>
 		<script src="/js/manager/bundle.js?string=<%= $string %>"></script>

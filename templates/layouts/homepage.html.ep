@@ -33,6 +33,7 @@
 		<% if (($c->session('authentication') // '') eq 'approved') { %>
 			<script src="/js/jquery-ui.js"></script>
 			<script src="/js/jquery.ui.touch-punch.min.js"></script>
+			<script src="/js/touch-threshold.js"></script>
 			<script src="/js/moment.js"></script>
 			<script src="/js/mailbox.js?string=<%= $string %>"></script>
 			<script src="/js/paperboy.js?string=<%= $string %>"></script>
