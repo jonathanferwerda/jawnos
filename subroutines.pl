@@ -10449,6 +10449,92 @@ sub email_send() {
 	return $result;
 }
 
+# The instruction that tells a chat model how to ask for media, appended to the
+# system message so the trigger does not depend on a magic marker the model may
+# or may not emit: any model that can follow a JSON shape works. Empty when no
+# generation agent is configured.
+sub ai_generation_instruction {
+	my ($settings) = @_;
+	my @kinds;
+	push @kinds, 'image' if $settings->{'text_to_image_assistant'};
+	push @kinds, 'audio' if $settings->{'text_to_audio_assistant'};
+	push @kinds, 'video' if $settings->{'text_to_video_assistant'};
+	return '' unless @kinds;
+	my $list = join ', ', map { '"' . $_ . '"' } @kinds;
+	return "\n\nYou can create media for the person through these agents: $list. "
+		. 'When the person asks for an image, a sound, or a video, reply with ONLY one JSON object and nothing else, '
+		. 'in exactly this shape: {"action":"generate","kind":"image","prompt":"a full, self-contained description for the agent"}. '
+		. 'Set "kind" to one of the agents above, and put everything the agent needs in "prompt" - do not rely on the conversation. '
+		. 'Never wrap it in prose or code fences, and never invent a different shape.';
+}
+
+# The first balanced {...} object in a string, respecting quoted strings, or
+# undef. Lets a reply that mixes prose with the action still be read.
+sub ai_first_json_object {
+	my ($text) = @_;
+	return undef unless defined $text;
+	my $start = index($text, '{');
+	return undef if $start < 0;
+	my $depth = 0;
+	my $in_str = 0;
+	my $esc = 0;
+	my $len = length($text);
+	for (my $i = $start; $i < $len; $i++) {
+		my $ch = substr($text, $i, 1);
+		if ($in_str) {
+			if ($esc) { $esc = 0; }
+			elsif ($ch eq '\\') { $esc = 1; }
+			elsif ($ch eq '"') { $in_str = 0; }
+		}
+		elsif ($ch eq '"') { $in_str = 1; }
+		elsif ($ch eq '{') { $depth++; }
+		elsif ($ch eq '}') {
+			$depth--;
+			return substr($text, $start, $i - $start + 1) if $depth <= 0;
+		}
+	}
+	return undef;
+}
+
+# Read a chat model's reply for a media request. Prefers the explicit JSON action
+# the instruction above asks for ({"action":"generate","kind":...,"prompt":...}),
+# and falls back to the legacy markers (dalle.text2 and kin) so a conversation
+# configured the old way keeps working. Returns (kind, prompt) or ().
+sub ai_extract_generation_action {
+	my ($text) = @_;
+	return () unless defined $text && length $text;
+	my $clean = $text;
+	$clean =~ s/<br>//gi;
+	my $json = &ai_first_json_object($clean);
+	if ($json) {
+		my $action = eval { return decode_json $json };
+		if ($action && ref $action eq 'HASH' && ($action->{'action'} || '') =~ /^generate/i) {
+			my $kind = lc($action->{'kind'} || '');
+			my $label = lc($action->{'action'} || '');
+			$kind = 'image' if !$kind && $label =~ /image|dall/;
+			$kind = 'audio' if !$kind && $label =~ /audio|sound|speech|music/;
+			$kind = 'video' if !$kind && $label =~ /video|movie|clip/;
+			$kind =~ s/_gen$//;
+			my $prompt = $action->{'prompt'} || '';
+			if (!$prompt && $action->{'action_input'}) {
+				my $inner = eval { return decode_json $action->{'action_input'} };
+				$prompt = ($inner && ref $inner eq 'HASH') ? ($inner->{'prompt'} || '') : $action->{'action_input'};
+			}
+			return ($kind, $prompt) if $prompt && grep { $_ eq $kind } qw/image audio video/;
+		}
+	}
+	# the legacy markers, so an older conversation still generates
+	my %legacy = ('dalle.text2' => 'image', 'audio.text2' => 'audio', 'video.text2' => 'video');
+	foreach my $marker ( sort keys %legacy ) {
+		next unless $clean =~ /\Q$marker\E/;
+		my $outer = eval { return decode_json($json || '') } || {};
+		my $inner = eval { return decode_json($outer->{'action_input'} || '') } || {};
+		my $prompt = $inner->{'prompt'} || $outer->{'prompt'} || '';
+		return ($legacy{$marker}, $prompt) if $prompt && ref $outer eq 'HASH';
+	}
+	return ();
+}
+
 sub pen_message() {
 	my $data = shift;
 	my $msg = $data->{'msg'};
@@ -10563,10 +10649,17 @@ sub pen_message() {
 		  chomp($nproc);
 		  close($fh);
 	}
+	# Tell the model, in code, how to ask for media: an explicit JSON action,
+	# rather than a magic marker it may or may not emit. Only added when a
+	# generation agent is configured.
+	my $system_message = $data->{'system_msg'} || $conversation->{'chatbot_system_message'} || '';
+	if (my $gen_hint = &ai_generation_instruction($settings)) {
+		$system_message .= $gen_hint;
+	}
 	my $payload = {
 		  model    => $model, # Replace with your installed model
 		  messages => [
-		      { role => 'system', content => $data->{'system_msg'} || $conversation->{'chatbot_system_message'} },
+		      { role => 'system', content => $system_message },
 		     	@{$history}
 		  ],
 		  stream   => \1 # Tells Ollama to stream the response (JSON true)
@@ -10597,9 +10690,6 @@ sub pen_message() {
 
 	# 2. Maintain a tiny string buffer for incomplete stream chunks
 	my $buffer = '';
-	my $is_generating = 0;
-	my $generating_kind = '';
-	my $prompt_buffer = '';
 	my $accumulated_text = '';
 	# 3. UNSUBSCRIBE the default parser, then attach your custom reader
 	$tx->res->content->unsubscribe('read')->on(read => sub {
@@ -10616,19 +10706,6 @@ sub pen_message() {
 		      next if $@;
     			if (my $text = unidecode($adata->{message}{content})) {
 					$accumulated_text .= $text;
-          if ($is_generating || $accumulated_text =~ /(dalle\.text2|audio\.text2|video\.text2)/) {
-						if (!$is_generating) {
-							($generating_kind) = ($accumulated_text =~ /(dalle\.text2|audio\.text2|video\.text2)/);
-							$generating_kind = 'image' if $generating_kind eq 'dalle.text2';
-							$generating_kind = 'audio' if $generating_kind eq 'audio.text2';
-							$generating_kind = 'video' if $generating_kind eq 'video.text2';
-							$prompt_buffer = $accumulated_text;
-						}
-						else {
-              $prompt_buffer .= $text;
-						}
-            	$is_generating = 1;
-          	}
 
 
 						unless ($data->{'type'} eq 'assistant') {
@@ -10657,12 +10734,10 @@ sub pen_message() {
 	# 3. Perform the transaction synchronously
 	$ua->start($tx);
 	my $attachments = [];
-	if ($is_generating) {
-		$prompt_buffer =~ s/<br>//gi;
-		my $action = eval { return decode_json $prompt_buffer };
-		my $action_input = eval { return decode_json $action->{'action_input'} };
-		my $extracted_prompt = $action_input->{'prompt'};
-
+	# Read the reply for a media request: the explicit JSON action the system
+	# message asks for, or the legacy markers so older conversations still work.
+	my ($generating_kind, $extracted_prompt) = &ai_extract_generation_action($accumulated_text);
+	if ($generating_kind) {
 		if ($extracted_prompt) {
 			# name who is doing the work, before the (slow) generation call
 			my $gen_model = ($generating_kind eq 'image') ? ($settings->{'text_to_image_assistant'} || $model)
@@ -10709,10 +10784,6 @@ sub pen_message() {
 				}
 	    }
 		}
-		# Reset markers and clear buffer strings
-		$is_generating = 0;
-		$generating_kind = '';
-		$prompt_buffer = '';
 	}
 	return ($response_text,$attachments);
 

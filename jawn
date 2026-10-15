@@ -402,8 +402,13 @@ sub arm_boot_watch {
 			$status = 'frozen';
 		}
 		else {
-			print "the tree did not come up after $master_boot_tries attempts; leaving it for a person\n";
+			# The tree could not boot after several tries. Standing down (rather than
+			# sitting alive-but-idle) lets a fresh launch take over: the mobile app's
+			# autostart sees the master gone and starts a clean one, instead of reading
+			# a half-dead master as "restarting..." forever.
+			print "the tree did not come up after $master_boot_tries attempts; standing down for a fresh launch\n";
 			$master_boot_tries = 0;
+			exit 1;
 		}
 	});
 }
