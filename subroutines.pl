@@ -2876,8 +2876,9 @@ sub ble_listener_start() {
 	my $client = &ble_bridge_client();
 	return unless &ble_bridge_enabled() && $client;
 	# Before the listener starts taking messages: drop any link this machine is
-	# merely chasing for a device that belongs to another machine.
-	&ble_enforce_hosts();
+	# merely chasing for a device that belongs to another machine. Best-effort:
+	# a failure here must not stop the listener from coming up.
+	eval { &ble_enforce_hosts(); };
 	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
 	$gb::ble_listener->on(read => sub() {
