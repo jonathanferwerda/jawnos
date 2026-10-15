@@ -23,7 +23,7 @@
 
 	</div>
 	<div id="just_hit_send" style="text-align:center;">
-		<% if ($chat_ui) { %>
+		<% if ($c->stash('chat_ui')) { %>
 			<%# how the next message travels: the conversation is the person's, the
 			    transport is just the road (chat rides the ticket thread, sms the
 			    phone, lora the radio - webrtc joins them later) %>
