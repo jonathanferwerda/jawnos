@@ -1,0 +1,33 @@
+<%# The Pen app's panel: the assistant conversations, the last section moved out
+    of the Mailbox umbrella and into an app of its own. It keeps the same
+    wrapper id and the same inner ids (#mail, #mail_sidebar, #mailbox, #message,
+    #send_it) so public/js/mailbox.js - the conversation, the thread, the
+    socket - goes on working untouched; what changes is what the sidebar
+    carries: only the conversation picker, and no section switcher, because the
+    pen is the one section this app owns. The hidden marker below is what tells
+    the shared sender and the socket which section the window is. %>
+<% no warnings 'uninitialized'; %>
+<style>
+	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
+</style>
+<div id="mail" style="width:100%;background-color:pink;">
+	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
+	<span style="font-size:20px;"><%= $main_title %></span>
+	<%# the section marker sendIt and mailAddressGrabber read: this window is the
+	    pen, whatever the umbrella's switcher was last left on %>
+	<span class="mail_subsection active" section="pen" style="display:none;"></span>
+	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
+	<% my $privilege = $c->session('privilege'); %>
+	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
+		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
+			<% if ($privilege eq 'citizen') { %>
+				<%= include 'mail/pen_sections', settings => $settings, chatbot_models => $chatbot_models %>
+			<% } else { %>
+				<button class="mail_subsection active" section="dial" disabled>Dial</button>
+			<% } %>
+		</div>
+	<% } %>
+</div>
+<script>
+	last_mail_message = Date.now();
+</script>

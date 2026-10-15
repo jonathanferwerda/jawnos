@@ -1,0 +1,35 @@
+<%# The Pen's panels: the conversation picker, one row per assistant, each with
+    its name, model and system message, and the hidden JSON the client's
+    pen_settings saves read back. Shared between the Pen app and the Mailbox
+    umbrella (which still carries every section until it retires), like
+    chat_sections. Expects: settings (the app's 'mail' row), chatbot_models (the
+    list mail_checker gathered for the pen section). %>
+<% use Mojo::JSON qw/decode_json/; %>
+<% no warnings 'uninitialized'; %>
+% my $conversations = eval { return decode_json $settings->{'chatbot_conversations'} } || {};
+% my $new_uuid = &subs::random_string_creator(35);
+% unshift @{$chatbot_models}, {};
+% $conversations->{$new_uuid} = { uuid => $new_uuid, model => $settings->{'chatbot_model'}, system_message => $settings->{'chatbot_system_message'}, server_time => &subs::rightNow() };
+<% foreach my $uuid ( sort { $conversations->{$a}{'chatbot_conversation_name'} cmp $conversations->{$b}{'chatbot_conversation_name'} } keys %{$conversations} ) { %>
+	% next unless $conversations->{$uuid};
+	% my $con = $conversations->{$uuid};
+
+	<div class="chatbot_configure <% if ($uuid eq $settings->{'chatbot_conversation'}) { %> selected<% }%>" uuid="<%= $uuid %>">
+		<input class="pen_settings" setting="chatbot_conversation_name" value="<%= &subs::format_name($con->{'chatbot_conversation_name'}) %>">
+		<% if ($uuid ne $new_uuid) { %>
+			<input class="chatbot_conversation_select" type="checkbox" <% if ($uuid eq $settings->{'chatbot_conversation'}) { %>checked="checked"<% } %> style="vertical-align:bottom;">
+			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
+		<% } %>
+	    <select class="pen_settings" setting="chatbot_model" value="<%= $con->{'chatbot_model'} %>">
+	      <% foreach my $cm ( @{$chatbot_models}) { %>
+	        <option value="<%= $cm->{'model'} %>" <% if ($con->{'chatbot_model'} eq $cm->{'model'}) { %>selected<% } %>><%= $cm->{'name'} %><% if ($cm->{'price'}) { %> <%= $cm->{'price'} %><% } %></option>
+	      <% } %>
+	    </select>
+		<br>
+		<textarea style="width:98%;" class="pen_settings" setting="chatbot_system_message"><%= $con->{'chatbot_system_message'} %></textarea>
+	</div>
+<% } %>
+<div id="pen_chatbot_data" style="display:none;"><%= $settings->{'chatbot_conversations'} || '{}' %></div>
+<div style="font-size:12px;opacity:.75;border:solid;border-radius:6px;padding:8px;margin-top:8px;line-height:1.4;">
+	Model choices and provider keys have moved to <b>Configure → Plat</b>, so every assistant is set in one place.
+</div>

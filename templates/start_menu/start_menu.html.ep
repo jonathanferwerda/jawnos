@@ -70,6 +70,7 @@
 				<img id="mailbox_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/mailbox.png') %>" hint="Mailbox" class="jonathan mail">
 								<img id="email_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Email" class="jonathan email">
 								<img id="chat_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/phone_sms.png') %>" hint="Chat" class="jonathan chat">
+								<img id="pen_toggle" category="business" src="<%= &subs::icon_for('/icons/edit.png') %>" hint="Pen" class="jonathan pen">
 				<br>
 
 

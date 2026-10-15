@@ -272,6 +272,7 @@ our $known_appts = {
 	phone => { icon => '/images/decipherable/phone.png' },
 	email => { icon => '/images/decipherable/envelope.png' },
 	chat => { icon => '/images/make believe/phone_sms.png' },
+	pen => { icon => '/icons/edit.png' },
 	help => { icon => '/images/decipherable/question mark.png' }
 };
 

@@ -444,6 +444,23 @@ our %topic = (
 		],
 		related => [ 'mailbox', 'phone', 'email' ]
 	},
+	'pen' => {
+		title => 'Pen', category => 'apps', app => 'pen',
+		templates => [ 'templates/apps/pen.html.ep', 'templates/mail/pen_sections.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/pen.js' ],
+		verified => '2026-10-15',
+		summary => 'The assistant conversations, each with its own model and voice.',
+		body => [
+			'Pen is the house\'s assistant, split out of the mailbox as an app of its own: a row of conversations, each a picked model with its own name and system message, and one thread of letters per conversation.',
+			'Tick a conversation to read and write on it; the newest row (no tick) is a new one waiting for its name. The trash arms first, so a slip does not throw a conversation away.',
+			'Model choices and provider keys live under Configure → Plat, so every assistant is set in one place - a conversation without a model of its own uses the one picked there.'
+		],
+		steps => [
+			'Open Pen from the start menu.',
+			'Pick a conversation, or name the new one and choose its model.',
+			'Write in the box below the conversation and send; the reply lands on the same thread.'
+		],
+		related => [ 'mailbox', 'configure', 'assistant' ]
+	},
 	'email' => {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'public/js/manager/email.js' ],

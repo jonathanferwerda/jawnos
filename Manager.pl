@@ -3653,6 +3653,7 @@ my @manager_bundle_files = qw(
 	/js/mailbox.js
 	/js/manager/email.js
 	/js/manager/chat.js
+	/js/manager/pen.js
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js
 	/js/manager/calendarprinter.js
@@ -18009,6 +18010,17 @@ get '/manager/chat' => sub ($c) {
 	$c->render(text => $website);
 };
 
+get '/manager/pen' => sub ($c) {
+	# The Pen app: the assistant conversations, the last section out of the
+	# mailbox umbrella. Same shared render, scoped to the pen group, so its
+	# sidebar carries only the conversation picker and no switcher.
+	$c->stash('mail_scope' => 'pen');
+	my $timestamp = $c->param('timestamp');
+	my $contents = &mail_checker($c)->{'contents'};
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'pen', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+};
+
 get '/manager/mail/picker' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 
@@ -18700,7 +18712,7 @@ sub mail_checker($c) {
 		push @{$channel_list}, { %{$ch}, label => &mail_channel_label($ch), key => &mail_channel_key($ch), picker => encode_json $ch };
 	}
 	my $combined_data = {
-		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : 'mail/mailbox',
+		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : ($scope && $scope eq 'pen') ? 'apps/pen' : 'mail/mailbox',
 		mail => $mails,
 		friends => $friends,
 		window_maker => $c->param('window_maker'),
