@@ -1,0 +1,34 @@
+<%# The Chat app's panel: the house's conversations - sms, the dial, the list,
+    ticket threads and lora - as an app of its own. Same wrapper id and inner ids
+    (#mail, #mail_sidebar, #mailbox, #message, #send_it) so public/js/mailbox.js
+    keeps working untouched; the sidebar lists only the five sections chat owns,
+    and their panels are the shared partial. The conversation half is the shared
+    partial, the same one Mailbox and Email include. %>
+<% no warnings 'uninitialized'; %>
+<style>
+	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
+</style>
+<div id="mail" style="width:100%;background-color:pink;">
+	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
+	<span style="font-size:20px;"><%= $main_title %></span>
+	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
+	<% my $privilege = $c->session('privilege'); %>
+	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
+		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
+			<% if ($privilege eq 'citizen') { %>
+				<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
+					<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+				<% } %>
+				<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+			<% } else { %>
+				<button class="mail_subsection active" section="dial" disabled>Dial</button>
+			<% } %>
+			<br><br><br>
+
+			<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege %>
+		</div>
+	<% } %>
+</div>
+<script>
+	last_mail_message = Date.now();
+</script>

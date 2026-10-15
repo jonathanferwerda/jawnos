@@ -31,24 +31,8 @@
 			<% } %>
 			<br><br><br>
 
-			<% if ($settings->{'subsection'} eq 'sms') { %>
-				<% my $phone_numbers = &subs::db_select('settings', undef, { setting => 'phone', device => &subs::device_setter() })->hashes; %>
-				<div id="mail_phone_picker mail_list_picker">
-					<table style="font-size:20px;width:100%;text-align:center;">
-						<thead>
-							<th></th>
-						</thead>
-						<tbody>
-							<% foreach my $phone ( sort { $a->{'app'} cmp $b->{'app'} } @{$phone_numbers} ) { %>
-								<% $phone->{'value'} =~ s/\S\d(?=\d{10})//; %>
-								<tr type="phone" phone="<%= $phone->{'value'} %>" class="mail_phone hover <% if ($mail_phone eq $phone->{'value'}) { %>active <% } %>">
-									<td class="" colspan="3"><%= &subs::format_name($phone->{'app'}) %></td>
-									<td class="" colspan="3"><%= &subs::format_name($phone->{'value'}) %></td>
-								</tr>
-							<% } %>
-						</tbody>
-					</table>
-				</div>
+			<% if (grep { $_ eq $settings->{'subsection'} } qw/sms tickets dial list/) { %>
+				<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege %>
 			<% } elsif ($settings->{'subsection'} eq 'email') { %>
 
 				<div id="email_main_buttons">
@@ -107,70 +91,6 @@
 					Model choices and provider keys have moved to <b>Configure → Plat</b>, so every assistant is set in one place.
 				</div>
 
-			<% } elsif ($settings->{'subsection'} eq 'tickets') { %>
-				<div id="mail_contacts_list" style="height:100px;font-size:20px;max-height:100px;text-align:center;">
-					<% foreach my $contact ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$contacts} ) { %>
-						<div class="<% if ($mail_contact eq $contact->{'uuid'}) {%>active <% } %>mail_contact hover" uuid="<%= $contact->{'uuid'} %>"
-							name="<%= &subs::unformat_name($contact->{'name'}) %>"
-							contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><%= $contact->{'contact_name'} %></div>
-					<% } %>
-
-				</div>
-			<% } elsif ($settings->{'subsection'} eq 'dial') { %>
-				<% if ($privilege eq 'citizen') { %>
-					<button id="mail_picker_default" style="float:right;">Default</button>
-					<button id="mail_public_toggle" public="<%= $channel_public ? 'yes' : 'no' %>" style="float:right;margin-right:5px;" hint="Advertise this dial to guests"><%= $channel_public ? 'Advertised' : 'Advertise' %></button><br>
-					<% foreach my $group ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
-						<b><%= &subs::format_name($group->{'name'}) %></b><br>
-						<% if (scalar @{$group->{'list'}} >= 0) { %>
-							<select class="mail_picker" group="<%= $group->{'name'} %>" id="mail_<%= $group->{'sing'} %>_picker">
-								<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::format_name($group->{'def'}) %></option>
-								<% foreach my $list ( @{$group->{'list'}} ) { %>
-									<% if ($list->{'app'} ne $group->{'def'}) { %>
-										<option value="<%= $list->{'app'} %>" <% if ($group->{'value'} eq $list->{'app'}) { %>selected<% } %>><%= &subs::format_name($list->{'app'}) %></option>
-									<% } %>
-								<% } %>
-							</select><br>
-						<% } %>
-					<% } %>
-				<% } else { %>
-					<div style="font-size:14px;opacity:.8;">Tune a set the house advertises. You hear a channel while tuned to it; a visitor's words are heard, not kept.</div>
-					<table id="mail_public_channel_list" style="width:100%;font-size:18px;text-align:center;">
-						<% foreach my $ch ( @{$public_channels} ) { %>
-							<tr class="mail_public_channel hover <% if ($channel_key && $channel_key eq $ch->{'key'}) { %>active <% } %>" picker="<%= $ch->{'picker'} %>" key="<%= $ch->{'key'} %>">
-								<td><%= $ch->{'label'} %></td>
-							</tr>
-						<% } %>
-					</table>
-					<% if (scalar @{$public_channels} == 0) { %><div style="font-size:14px;opacity:.8;">Nothing is advertised right now.</div><% } %>
-				<% } %>
-			<% } elsif ($settings->{'subsection'} eq 'list') { %>
-				<div class="mail_list_picker" style="width:100%;">
-					<table style="width:100%;text-align:center;">
-						<thead>
-							<th></th>
-							<% foreach my $sc ( sort keys %{$sc} ) { %>
-								<th><%= &subs::format_name($sc) %></th>
-							<% } %>
-						</thead>
-						<tbody>
-							<% foreach my $ls ( @{$list} ) { %>
-								<% my $uuid = $ls->{'uuid'}; %>
-								<tr class="mail_list hover  <% if ($uuid eq $settings->{'mail_list'}) { %>active " chosen="yes<% } %>" uuid="<%= $uuid %>">
-									<td><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="tiny_thumb mail_config_toggle hover" uuid="<%= $uuid %>"></td>
-									<% if ($ls->{'config'}->{'room'}) { %>
-										<td class="mail_list_selection" type="room" colspan="6" uuid="<%= $uuid %>"><%= &subs::format_name($ls->{'config'}->{'room'}) %></td>
-									<% } else { %>
-										<% foreach my $sc ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
-											<td class="mail_list_selection" type="ticket" uuid="<%= $uuid %>" group="<%= $sc->{'name'} %>" sc="<%= $ls->{$sc->{'sing'}} %>" ><%= &subs::format_name($ls->{$sc->{'sing'}}) %></td>
-										<% } %>
-									<% } %>
-								</tr>
-								<tr style="display:none;"><td colspan="7" class="mail_config_container" uuid="<%= $uuid %>"></td></tr>
-							<% } %>
-						</tbody>
-					</table>
-				</div>
 			<% } %>
 		</div>
 	<% } %>

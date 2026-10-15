@@ -18671,7 +18671,7 @@ sub mail_checker($c) {
 		push @{$channel_list}, { %{$ch}, label => &mail_channel_label($ch), key => &mail_channel_key($ch), picker => encode_json $ch };
 	}
 	my $combined_data = {
-		template => ($scope && $scope eq 'email') ? 'apps/email' : 'mail/mailbox',
+		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : 'mail/mailbox',
 		mail => $mails,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,
