@@ -33,7 +33,9 @@ fallback is skipped); return `undef`/`{}` and it is filed as a note. The fast la
     { edt, chip_id, ts, voice }
 
 - `ts` — **when the utterance began** (the wake word), epoch ms. Stamp any appointment/note
-  the brain creates with it, not with `rightNow()`.
+  the brain creates with it, not with `rightNow()`. (The watch sends epoch *seconds* —
+  `timestamp_maker` in `jw.ino` — and `voice_ingest` normalizes to ms; the raw seconds stay
+  in `meta->{'ts_watch'}` for `voice_clip_ack`, which must echo the watch's own clock.)
 - `voice` — the capture mode, tagged with the **active model** (`vad`, `hey_jawn`, `jawn_do`).
   A wake-word capture already consumed the phrase on the watch, so **its transcript is the
   command itself**; a `vad` capture still opens with the phrase. (This is why `voice_ingest`

@@ -3196,7 +3196,9 @@ sub voice_clip_ack() {
 		intent => 'com.jawn.president.bt.connect',
 		chip_id => $meta->{'chip_id'},
 		edt => $meta->{'edt'} || 'watch',
-		message => { type => 'voice_done', ts => (0 + ($meta->{'ts'} || 0)) }
+		# echo the watch's own clock (seconds), which voice_ingest parks in ts_watch
+		# while ts carries the normalized ms everything else reads
+		message => { type => 'voice_done', ts => (0 + ($meta->{'ts_watch'} || $meta->{'ts'} || 0)) }
 	});
 }
 
@@ -3291,6 +3293,17 @@ sub voice_ingest() {
 	# bridge funnel into, so the two transports behave identically.
 	my ($raw, $meta) = @_;
 	$meta ||= {};
+	# The watch stamps the clip with its own clock in epoch SECONDS
+	# (timestamp_maker in jw.ino). Everything downstream - appointment_writer,
+	# notes, guide_when_ms - wants epoch ms, so a bare seconds stamp filed the
+	# appointment at the start of the epoch (a 'start email test' landed in 1970).
+	# Normalize once here. The raw seconds ride along as ts_watch: the voice_done
+	# ack must echo the watch's own clock, because the watch compares the echo
+	# against voice_clip_ts - ms would never match and its clip would never delete.
+	if (($meta->{'ts'} || 0) && (0 + $meta->{'ts'}) < 100000000000) {
+		$meta->{'ts_watch'} = 0 + $meta->{'ts'};
+		$meta->{'ts'} = $meta->{'ts_watch'} * 1000;
+	}
 	my $text = &subs::whisper_transcribe($raw);
 	return { status => 'silence' } unless $text;
 	$log->info('voice: heard "' . $text . '"');
