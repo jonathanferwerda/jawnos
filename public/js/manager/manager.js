@@ -231,9 +231,11 @@ function assistantStagedRender(panel, rows) {
 			.attr('uuid', row.uuid)
 			.attr('staged_title', row.title || row.app || '');
 		var text = $('<div style="flex:1;min-width:0;overflow-wrap:break-word;"></div>');
-		text.append($('<div></div>').text((row.kind === 'update' ? 'Change: ' : '') + (row.title || '(an appointment)')));
-		var meta = (row.kind === 'update' ? 'change — ' : '') + assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '');
-		if (row.kind !== 'update' && row.type && row.type !== 'usual') { meta += ' · ' + row.type; }
+		var kind = row.kind || 'create';
+		var prefix = kind === 'update' ? 'Change: ' : (kind === 'delete' ? 'Delete: ' : '');
+		text.append($('<div></div>').text(prefix + (row.title || '(an appointment)')));
+		var meta = (kind === 'update' ? 'change — ' : (kind === 'delete' ? 'delete — ' : '')) + assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '');
+		if (kind === 'create' && row.type && row.type !== 'usual') { meta += ' · ' + row.type; }
 		var lasted = assistantStagedDuration(row.duration);
 		if (lasted) { meta += ' · lasts ' + lasted; }
 		text.append($('<div class="chat_meta"></div>').text(meta));
@@ -261,6 +263,7 @@ $(document).on('click', '.assistant_staged_approve', function () {
 	$.post('/manager/help/promote', { uuid: row.attr('uuid') }, function (r) {
 		if (!r || r.error) { assistantChatAdd(panel, 'step', 'I could not save that one.'); return; }
 		if (r.kind === 'update') { assistantChatAdd(panel, 'step', 'Changed: ' + (r.summary || title) + '.'); }
+		else if (r.kind === 'delete') { assistantChatAdd(panel, 'step', 'Deleted: ' + (r.summary || title) + '.'); }
 		else { assistantChatAdd(panel, 'step', 'Saved the staged “' + title + '”.'); }
 		assistantStagedLoad(panel);
 	}).fail(function () { assistantChatAdd(panel, 'step', 'I could not save that one.'); });

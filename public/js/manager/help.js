@@ -180,6 +180,8 @@ function helpActionLabel(a) {
 	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
 	if (a.action === 'update') { return 'Changing “' + (a.app || a.title || 'the appointment') + '”…'; }
 	if (a.action === 'undo') { return 'Putting the last change back…'; }
+	if (a.action === 'stop') { return 'Stopping ' + (a.app || 'the appointment') + '…'; }
+	if (a.action === 'delete') { return 'Finding the ' + (a.app || 'appointment') + ' to delete…'; }
 	var bits = [];
 	if (a.app) { bits.push(a.app); }
 	if (a.search) { bits.push('“' + a.search + '”'); }
@@ -347,6 +349,30 @@ function helpDoAction(a, cb) {
 			if (!r || !r.ok) { cb((r && r.error) || 'There is nothing to undo.', 'There is nothing to undo.'); return; }
 			cb('Put it back - ' + (r.summary || 'the last change was undone') + '.', 'Done - I put it back.');
 		}).fail(function () { cb('I could not undo that.'); });
+		return;
+	}
+	if (a.action === 'stop') {
+		// a stop acts at once (not staged): the server stops what the app has running
+		$.post('/manager/help/stop', { app: a.app || '', when: a.when || '', title: a.title || '' }, function (r) {
+			if (!r || !r.ok) { cb((r && r.error) || 'There was nothing running to stop.', 'There is nothing running to stop.'); return; }
+			cb('Done - ' + (r.summary || 'stopped it') + '. Say "undo that" to put it back.', 'Done - ' + (r.summary || 'stopped it') + '.');
+		}).fail(function () { cb('I could not stop that.'); });
+		return;
+	}
+	if (a.action === 'delete') {
+		$.post('/manager/help/delete', { app: a.app || '', title: a.title || '', when: a.when || '', which: a.which || '' }, function (r) {
+			if (!r || r.error) { cb('I could not find that appointment: ' + ((r && r.error) || 'not found') + '.', 'I could not find that one.'); return; }
+			var what = r.summary || ('delete the ' + (r.app || a.app || '') + ' appointment');
+			if (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired()) {
+				$.post('/manager/help/promote', { uuid: r.staged }, function (p) {
+					if (p && p.error) { cb('I could not delete that: ' + p.error); return; }
+					cb('Done - ' + what + '.', 'Done - ' + what + '.');
+				}).fail(function () { cb('I staged the delete but could not carry it out.'); });
+				return;
+			}
+			jawnos_help_last_staged = r.staged;
+			cb('I will ' + what + '. It is NOT deleted yet.', 'I have staged it - say yes and I will delete it.');
+		}).fail(function () { cb('I could not do that.'); });
 		return;
 	}
 	if (a.action === 'generate') {

@@ -20356,8 +20356,9 @@ sub guide_stage_appointment($c, $params) {
 sub guide_promote_staged($c, $uuid) {
 	my $row = &subs::db_select('staged_appointments', undef, { uuid => $uuid })->hash;
 	return { error => 'no such staged appointment' } unless $row;
-	# a staged change edits an appointment that already exists; a staged create makes
-	# a new one - the row's kind tells them apart
+	# a staged change edits an appointment that already exists, a staged delete
+	# removes one, a staged create makes a new one - the row's kind tells them apart
+	return guide_promote_delete($c, $row) if (($row->{'kind'} || '') eq 'delete');
 	return guide_promote_update($c, $row) if (($row->{'kind'} || '') eq 'update');
 	my $real_uuid = &subs::random_string_creator(40);
 	my $notes = $row->{'title'} ? ($row->{'title'} . ($row->{'notes'} ? (" \x{2014} " . $row->{'notes'}) : '')) : $row->{'notes'};
@@ -20391,12 +20392,32 @@ sub guide_promote_staged($c, $uuid) {
 # staged the way a create is, so the person sees what will happen and confirms it,
 # and it is applied in place - an edit, not a new event.
 
-# The appointment a change names, or undef.
-sub guide_find_target($app, $title) {
+# The appointment a guide action names, or undef. The app is the thing; its
+# appointments are its events. Which one is picked by $opts: "which" is "upcoming"
+# (the next one) or "last" (the most recent past one); "at" is a named moment
+# ("yesterday around 3:30pm", "a week from now") matched to the closest
+# appointment; "title" is a match on the note; the latest by default.
+sub guide_find_target($app, $opts) {
+	$opts = {} unless ref $opts eq 'HASH';
 	$app = &subs::unformat_name($app || '');
 	return undef unless length $app;
-	if (defined $title && $title =~ /\S/) {
-		my $by_title = &subs::db_query('select * from appointments where app = ? and uuid is not null and notes like ? order by timestamp desc limit 1', $app, '%' . $title . '%')->hashes;
+	my $now = &subs::rightNow();
+	my $which = lc($opts->{'which'} // '');
+	if ($which =~ /^(?:upcoming|next|soon|future)$/) {
+		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null and timestamp >= ? order by timestamp asc limit 1', $app, $now)->hashes;
+		return $r->[0] if scalar @{$r};
+	}
+	if ($which =~ /^(?:last|previous|past|latest)$/) {
+		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null and timestamp <= ? order by timestamp desc limit 1', $app, $now)->hashes;
+		return $r->[0] if scalar @{$r};
+	}
+	if (defined $opts->{'at'} && $opts->{'at'} =~ /\S/) {
+		my $ms = &guide_when_ms($opts->{'at'});
+		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null order by abs(timestamp - ?) asc limit 1', $app, $ms)->hashes;
+		return $r->[0] if scalar @{$r};
+	}
+	if (defined $opts->{'title'} && $opts->{'title'} =~ /\S/) {
+		my $by_title = &subs::db_query('select * from appointments where app = ? and uuid is not null and notes like ? order by timestamp desc limit 1', $app, '%' . $opts->{'title'} . '%')->hashes;
 		return $by_title->[0] if scalar @{$by_title};
 	}
 	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null order by timestamp desc limit 1', $app)->hashes;
@@ -20454,14 +20475,11 @@ sub guide_update_summary($target, $changes) {
 	return join(', and ', @parts);
 }
 
-sub guide_stage_update($c, $params) {
-	my $app = $params->{'app'} || '';
-	my $target = &guide_find_target($app, $params->{'title'});
-	return { error => 'I could not find "' . ($app || 'that') . '" to change' } unless $target;
-	my $changes = &guide_update_changes($target, $params);
-	return { error => 'nothing to change' } unless scalar keys %{$changes};
+# Stage a change to an appointment that already exists, the shape promote applies:
+# the row names the appointment (kind "update", target_uuid) and carries the fields
+# to set.
+sub guide_stage_change($target, $changes, $summary) {
 	my $uuid = &subs::random_string_creator(40);
-	my $summary = &guide_update_summary($target, $changes);
 	&subs::db_insert('staged_appointments', {
 		uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
 		kind => 'update', target_uuid => $target->{'uuid'},
@@ -20473,6 +20491,89 @@ sub guide_stage_update($c, $params) {
 		device => &subs::device_setter(), status => 'pending'
 	});
 	return { staged => $uuid, app => $target->{'app'}, kind => 'update', summary => $summary, timestamp => $changes->{'timestamp'} };
+}
+
+sub guide_stage_update($c, $params) {
+	my $app = $params->{'app'} || '';
+	my $target = &guide_find_target($app, { title => $params->{'title'} });
+	return { error => 'I could not find "' . ($app || 'that') . '" to change' } unless $target;
+	my $changes = &guide_update_changes($target, $params);
+	return { error => 'nothing to change' } unless scalar keys %{$changes};
+	return &guide_stage_change($target, $changes, &guide_update_summary($target, $changes));
+}
+
+# The app's running appointment: a start (or a recording) that has begun and has not
+# been stopped. This is what "stop it" means.
+sub guide_open_target($app) {
+	$app = &subs::unformat_name($app || '');
+	return undef unless length $app;
+	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1', $app, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
+	return $rows->[0];
+}
+
+# When a stop should land: a length from now ("in 10 minutes", "10 minutes") is a
+# delay; "now" and anything else (a clock time) is read as a moment.
+sub guide_stop_when($when) {
+	my $now = &subs::rightNow();
+	return $now unless defined $when && $when =~ /\S/;
+	my $s = lc $when;
+	$s =~ s/^\s+|\s+$//g;
+	return $now if $s eq 'now';
+	if ($s =~ /^(?:in\s+)?\d/) {
+		my $ms = &guide_duration_ms($when, 'usual');
+		return $now + $ms if defined $ms && $ms != 0;
+	}
+	return &guide_when_ms($when);
+}
+
+# Stop the running appointment. Not staged: a stop is a control the person wants at
+# once, and it is on the undo stack. Stopping now goes the way the stop button does
+# (the writer stops the open start/record, finalises any recording and redraws the
+# header); a stop at a named moment is a scheduled stop - a stop_timestamp the alarm
+# clock fires when it comes.
+sub guide_stop_appointment($c, $params) {
+	my $app = $params->{'app'} || '';
+	my $target = &guide_open_target($app);
+	return { error => 'nothing of "' . (&subs::format_name(&subs::unformat_name($app)) || $app) . '" is running to stop' } unless $target;
+	my $ts = &guide_stop_when($params->{'when'});
+	&guide_undo_push({
+		app => $target->{'app'}, uuid => $target->{'uuid'}, title => 'stop "' . &subs::format_name($target->{'app'}) . '"',
+		timestamp => $target->{'timestamp'}, duration => $target->{'duration'}, notes => $target->{'notes'},
+		seen => $target->{'seen'}, stop_seen => $target->{'stop_seen'},
+		type => $target->{'type'}, stop_timestamp => $target->{'stop_timestamp'},
+	});
+	if ($ts <= &subs::rightNow() + 1000) {
+		&Manager::appointment_writer($c, { app => $target->{'app'}, type => 'stop', timestamp => &subs::rightNow(), server_time => &subs::rightNow() });
+	}
+	else {
+		&subs::db_update('appointments', { stop_timestamp => $ts, stop_seen => undef, server_time => &subs::rightNow() }, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+		my $fresh = &subs::db_select('appointments', undef, { uuid => $target->{'uuid'} })->hash;
+		&subs::appt_alarm_setter($fresh) if $fresh;
+	}
+	&subs::appt_toggle_checker($target->{'app'});
+	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
+	my $when_words = $ts <= &subs::rightNow() + 1000 ? 'now' : ('at ' . localtime($ts / 1000)->strftime('%b %e, %I:%M%p'));
+	return { ok => 1, app => $target->{'app'}, summary => 'stopping "' . &subs::format_name($target->{'app'}) . '" ' . $when_words };
+}
+
+# Stage a delete of one of the app's appointments. Staged like any other change, so
+# the person confirms which one goes; promote removes it.
+sub guide_stage_delete($c, $params) {
+	my $app = $params->{'app'} || '';
+	my $target = &guide_find_target($app, { title => $params->{'title'}, at => $params->{'when'}, which => $params->{'which'} });
+	return { error => 'I could not find that appointment' } unless $target;
+	my $uuid = &subs::random_string_creator(40);
+	my $when_words = localtime(($target->{'timestamp'} + 0) / 1000)->strftime('%b %e, %I:%M%p');
+	my $summary = 'delete the "' . &subs::format_name($target->{'app'}) . '" appointment at ' . $when_words
+		. ($target->{'notes'} ? (' (' . substr($target->{'notes'}, 0, 40) . ')') : '');
+	&subs::db_insert('staged_appointments', {
+		uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
+		kind => 'delete', target_uuid => $target->{'uuid'},
+		app => $target->{'app'}, type => ($target->{'type'} || 'usual'),
+		timestamp => $target->{'timestamp'}, title => $summary, notes => '', data => '',
+		device => &subs::device_setter(), status => 'pending'
+	});
+	return { staged => $uuid, app => $target->{'app'}, kind => 'delete', summary => $summary, timestamp => $target->{'timestamp'} };
 }
 
 # The undo stack: one record per applied change, the appointment's fields as they
@@ -20513,6 +20614,7 @@ sub guide_promote_update($c, $row) {
 		app => $target->{'app'}, uuid => $target->{'uuid'}, title => $row->{'title'},
 		timestamp => $target->{'timestamp'}, duration => $target->{'duration'}, notes => $target->{'notes'},
 		seen => $target->{'seen'}, stop_seen => $target->{'stop_seen'},
+		type => $target->{'type'}, stop_timestamp => $target->{'stop_timestamp'},
 	});
 	my %set = %{$changes};
 	$set{'server_time'} = &subs::rightNow();
@@ -20530,6 +20632,19 @@ sub guide_promote_update($c, $row) {
 	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'update', summary => $row->{'title'} };
+}
+
+# Apply a staged delete: remove the appointment it names the way the program always
+# deletes one - the file rows, the warehouse rows, a payment to unwind, and the
+# tombstone that tells the peers - then redraw the app.
+sub guide_promote_delete($c, $row) {
+	my $target = &subs::db_select('appointments', undef, { uuid => $row->{'target_uuid'} })->hash;
+	return { error => 'that appointment is gone' } unless $target;
+	&Manager::delete_app($target->{'app'}, $target->{'uuid'}, ($target->{'server_time'} || &subs::rightNow()), 'guide');
+	&subs::appt_toggle_checker($target->{'app'});
+	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
+	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
+	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'delete', summary => $row->{'title'} };
 }
 
 post '/manager/help/stage' => sub($c) {
@@ -20559,6 +20674,20 @@ post '/manager/help/update' => sub($c) {
 	}));
 };
 
+# Stop the app's running appointment (now, or at a named moment). Not staged - a stop
+# acts at once, and the undo stack can put it back.
+post '/manager/help/stop' => sub($c) {
+	$c->render(json => guide_stop_appointment($c, { app => $c->param('app'), when => $c->param('when'), title => $c->param('title') }));
+};
+
+# Delete one of the app's appointments: stage the delete as a proposal a promote
+# carries out.
+post '/manager/help/delete' => sub($c) {
+	$c->render(json => guide_stage_delete($c, {
+		app => $c->param('app'), title => $c->param('title'), when => $c->param('when'), which => $c->param('which')
+	}));
+};
+
 # Undo the Guide's last appointment change: put back the fields it set.
 post '/manager/help/undo' => sub($c) {
 	my $rec = guide_undo_pop();
@@ -20570,6 +20699,8 @@ post '/manager/help/undo' => sub($c) {
 	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
 	$set{'seen'} = $rec->{'seen'} if exists $rec->{'seen'};
 	$set{'stop_seen'} = $rec->{'stop_seen'} if exists $rec->{'stop_seen'};
+	$set{'type'} = $rec->{'type'} if exists $rec->{'type'};
+	$set{'stop_timestamp'} = $rec->{'stop_timestamp'} if exists $rec->{'stop_timestamp'};
 	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
 	&subs::appt_toggle_checker($target->{'app'});
 	&guide_refresh_app($target->{'app'}, $target->{'uuid'});

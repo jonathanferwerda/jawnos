@@ -314,6 +314,10 @@ our @guide_tools = (
 	  desc => 'change an appointment that already exists, named by "app" (add "title" when you know it). "delay" pushes it later by the length the person said ("5 minutes", "1 hour"); "when" moves it to a named moment instead; "duration" sets how long it lasts; "notes" replaces the note. Give only the fields that change. It is staged as a proposal for the person to confirm, never written straight in' },
 	{ name => 'undo', args => { }, example => '{"action":"undo"}',
 	  desc => 'undo the change you last made to an appointment, putting it back the way it was' },
+	{ name => 'stop', args => { app => 'email test', when => 'in 10 minutes', title => '' }, example => '{"action":"stop","app":"email test"}',
+	  desc => 'stop what the app has running. With no "when" it stops now; give "when" as a length from now ("in 10 minutes") or a clock time ("at 5pm") to stop it then. It stops at once, not staged - say briefly what you stopped' },
+	{ name => 'delete', args => { app => 'email test', title => '', when => 'yesterday at 3:30pm', which => 'upcoming' }, example => '{"action":"delete","app":"email test","which":"upcoming"}',
+	  desc => 'delete one of the app\'s appointments. Choose it with "which" - "upcoming" (the next one) or "last" (the most recent past one) - or give "when" as a named moment ("yesterday around 3:30pm", "a week from now") to pick the closest one. Add "title" to match the note. It is staged as a proposal for the person to confirm, never deleted straight away' },
 );
 
 # Every appointment type the Guide's create may stage, so the model is told the
