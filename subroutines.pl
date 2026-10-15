@@ -14905,7 +14905,10 @@ sub github_release_manifest {
 	$tag ||= 'releases';
 	my $base = "https://github.com/$repo/releases/download/$tag";
 	my $body = &github_fetch("$base/app_release.json", 30);
-	return undef unless defined $body && length $body;
+	unless (defined $body && length $body) {
+		&app_release_log('github manifest fetch failed (' . $base . ')');
+		return undef;
+	}
 	my $man = eval { decode_json $body };
 	return undef unless $man && ref $man eq 'HASH'
 		&& $man->{'product'} && $man->{'versionCode'} && $man->{'filename'};
