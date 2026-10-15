@@ -23901,7 +23901,12 @@ sub now_me($data) {
 	# bluetooth_sender refuses the send anyway, so a Now Me here would only
 	# desync the record. The edit that triggered it still saves; the watch gets
 	# it from its homebase. Leave the record alone.
-	if ($watch->{'ble'} && !&subs::ble_owns($edt, $chip_id)) {
+	# A Bluetooth-only watch belongs to one machine, and a machine that is not the
+	# homebase must not quietly rewrite the pairing. But an EXPLICIT "BT Now Me"
+	# (method 'bluetooth', the watch-row action) is the person moving the watch to
+	# this machine on purpose, so let that one through - it is how you re-home a
+	# watch whose homebase is gone (a phone that died) onto the machine in hand.
+	if ($watch->{'ble'} && !&subs::ble_owns($edt, $chip_id) && ($method || '') ne 'bluetooth') {
 		$log->info('Now Me for ' . ($chip_id || '?') . ' skipped: homebase is ' . ($watch->{'homebase'} || '?'));
 		return 'hosted elsewhere';
 	}
