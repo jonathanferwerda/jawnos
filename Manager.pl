@@ -7254,15 +7254,28 @@ sub log_reader {
 		# negative timestamp): the text column then compares lexicographically and
 		# finds nothing. Cast only when the window is pre-epoch, so the common modern
 		# range keeps its index (the same choice the appointment_viewer makes above).
-		my $tint = (($t || 0) < 0 || ($t2 || 0) < 0) ? "cast($timestamp_selector as integer)" : $timestamp_selector;
+		my $pre_epoch = (($t || 0) < 0 || ($t2 || 0) < 0);
+		my $tint = $pre_epoch ? "cast($timestamp_selector as integer)" : $timestamp_selector;
+		my $stopint = $pre_epoch ? 'cast(stop_timestamp as integer)' : 'stop_timestamp';
+		# Show every appointment that has any presence in the period, using the same
+		# three tests the appointment_viewer draws its bands with: its own moment
+		# (its start, for a span) lands inside the period; it stopped inside it; or it
+		# is a span still running (a start/record row with no stop) that had already
+		# begun by the period's end. A completed span is a 'stop' row whose timestamp
+		# is its start and whose stop_timestamp is its stop, so the middle test is
+		# what catches a span that began before the period and was still going when it
+		# opened; the old test only ever looked at start/record rows and so missed
+		# them.
+		my $presence = "(($tint >= ? AND $tint <= ?) OR ($stopint >= ? AND $stopint <= ?) OR (stop_timestamp IS NULL AND type IN (?,?) AND $tint <= ?))";
+		my @presence = ($t, $t2, $t, $t2, 'start', 'record', $t2);
 		if ($data->{'uuid'}) {
 			$results = &subs::db_raw("select * from appointments where app=? and uuid=? order by server_time DESC", $chosen_app, $data->{'uuid'});
 		}
 		elsif ($data->{'filter'} ne 'all') {
-			$results = &subs::db_raw("select * from appointments where app=? and type=? and (($tint >= ? AND $tint <= ?) or ($tint <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app, $data->{'filter'}, $t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and type=? and $presence order by timestamp DESC", $chosen_app, $data->{'filter'}, @presence);
 		}
 		else {
-			$results = &subs::db_raw("select * from appointments where app=? and (($tint >= ? AND $tint <= ?) or ($tint <= ? and (type=? or type=?))) order by timestamp DESC", $chosen_app,$t,$t2,$t2,'start','record');
+			$results = &subs::db_raw("select * from appointments where app=? and $presence order by timestamp DESC", $chosen_app, @presence);
 		}
 		$appointments = $results;
 	}
