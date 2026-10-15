@@ -63,6 +63,14 @@
 						<% } %>
 					</select>
 				<% } %>
+				<br>
+				<%# whether the guide associate's answer is spoken on the device as well
+				    as shown on it. Saved into the operator door like the voice mode, so
+				    the machine holding the bridge reads it when it answers. On by
+				    default; the t-deck gets the same switch for when it grows the
+				    feature. %>
+				<% my $audio_replies = $operator_door->{'__specs'}->{'audio_replies'} || 'on'; %>
+				<button class="hover audio_replies_toggle" setting="audio_replies" chip_id="<%= $chip_id %>" edt="<%= $edt %>" status="<%= $audio_replies %>">Audio replies: <%= ($audio_replies eq 'on') ? 'On' : 'Off' %></button>
 			<% } else { %>
 
 			<% } %>

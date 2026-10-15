@@ -311,6 +311,10 @@ JSONVar stepped;
 #include <AudioOutputI2S.h>
 #include <AudioFileSourceFATFS.h>
 #include "AudioGeneratorWAV.h"
+// the guide associate's spoken reply arrives as MP3 (a quarter of the bytes of
+// 8 kHz PCM, which is what keeps it close behind the text); the WAV path stays
+// for the fallback when a machine has no mp3 encoder
+#include "AudioGeneratorMP3.h"
 #include "AudioFileSourceFunction.h"
 String https_request(String url, String method = "GET", String payloadData = "");
 
@@ -362,7 +366,9 @@ class LilyGoAudioSink : public AudioOutput
     AudioOutputIf *codec;
 };
 
-AudioGeneratorWAV       *wav = nullptr;
+// both generators derive from AudioGenerator, so the player task does not care
+// which one a clip was: the base class is what it drives
+AudioGenerator         *wav = nullptr;
 AudioFileSourceFATFS    *file_source = nullptr;
 LilyGoAudioSink         *out_hardware = nullptr;
 
@@ -374,7 +380,6 @@ static lv_obj_t *face_sec = nullptr;
 static lv_obj_t *face_steps = nullptr;
 static lv_obj_t *face_battery = nullptr;
 static lv_obj_t *face_percent = nullptr;
-static lv_obj_t *face_volts = nullptr;
 static lv_obj_t *face_name = nullptr;
 static lv_obj_t *face_ip = nullptr;
 static lv_obj_t *face_gw = nullptr;
@@ -468,9 +473,11 @@ static inline bool ble_link_ready() {
 // draws the text and decodes/plays the clip. The audio rides base64 so the
 // whole envelope stays text on the wire, the same way a voice clip ships up.
 #define REPLY_WAV_PATH "/reply.wav"
+#define REPLY_MP3_PATH "/reply.mp3"
 #define SAY_TEXT_MS 8000          // how long the answer stays on screen
 static String say_text;
 static String say_audio_b64;
+static String say_audio_format;   // "mp3" (the server's default) or "wav"
 static volatile bool say_text_pending = false;
 static volatile bool say_audio_pending = false;
 static uint32_t say_shown_at = 0;
@@ -1333,6 +1340,7 @@ void setup() {
     room_count = server.arg("room_count").toInt();
   //  room_max = server.arg("room_max").toInt();
     { String vt = server.arg("voice_trigger"); if (vt.length()) { voice_trigger = vt; voice_trigger_apply(); } }
+    { String cn = server.arg("computer_name"); if (cn.length()) { computer_name = cn; } }
 
     pmuIrq = true;
     buttoned_before = false;
@@ -1563,7 +1571,9 @@ void loop() {
   ip_writer();
   int volts = watch.getBatteryPercent();
   // the status strip belongs to the watch face; the Set room owns that space
-  // for its tab row, so leave the labels empty while we are in there
+  // for its tab row, so leave the labels empty while we are in there. Off the
+  // clock room the face (and its clock) is not on screen, so its corner shows
+  // the time instead - the battery reading only means something beside the clock.
   if (face_battery && jw_room != "configure") {
     lv_color_t status_colour;
     if (volts < 20) {
@@ -1577,11 +1587,16 @@ void loop() {
     }
     lv_obj_set_style_text_color(face_battery, status_colour, LV_PART_MAIN);
     lv_obj_set_style_text_color(face_percent, status_colour, LV_PART_MAIN);
-    lv_obj_set_style_text_color(face_volts, status_colour, LV_PART_MAIN);
-    lv_label_set_text_fmt(face_battery, "%d", volts);
-    lv_label_set_text(face_percent, "%");
-    // the library hands out millivolts; a watch face wants volts
-    lv_label_set_text_fmt(face_volts, "%.2f", watch.getBattVoltage() / 1000.0f);
+    if (jw_room == "watch") {
+      lv_label_set_text_fmt(face_battery, "%d", volts);
+      lv_label_set_text(face_percent, "%");
+    }
+    else {
+      lv_label_set_text(face_battery, rtc.getTime("%H:%M").c_str());
+      lv_label_set_text(face_percent, "");
+    }
+    // the machine serving the watch, by name; the address is the fallback until
+    // a Now Me has ever named it
     if (computer_name != "") {
       lv_label_set_text(face_name, computer_name.c_str());
     }
@@ -1754,13 +1769,13 @@ void loop() {
     say_shown_at = 0;
   }
   if (say_audio_pending) {
-    String a;
+    String a, f;
     bool has = false;
     if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
-      if (say_audio_pending) { has = true; a = say_audio_b64; say_audio_pending = false; say_audio_b64 = ""; }
+      if (say_audio_pending) { has = true; a = say_audio_b64; f = say_audio_format; say_audio_pending = false; say_audio_b64 = ""; say_audio_format = ""; }
       xSemaphoreGive(taskMutex);
     }
-    if (has) { say_audio_decode_play(a); }
+    if (has) { say_audio_decode_play(a, f); }
   }
   if (buttonMillis != 0 && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     if (voiceShipping) {
@@ -2030,6 +2045,10 @@ void loop2(void * pvParameters) {
                 const char *vt = (const char *)params["voice_trigger"];
                 if (vt) { voice_trigger = vt; voice_trigger_apply(); }
               }
+              if (params.hasOwnProperty("computer_name")) {
+                const char *cn = (const char *)params["computer_name"];
+                if (cn && cn[0]) { computer_name = cn; }
+              }
               if (DEFAULT_SCREEN_TIMEOUT < 30000) {
                 DEFAULT_SCREEN_TIMEOUT = 30000;
               }
@@ -2127,17 +2146,20 @@ void loop2(void * pvParameters) {
             }
           }
           else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio") {
-            // the spoken answer as a base64 8 kHz mono PCM WAV: loop() decodes
-            // it to flash and plays it (never here: FFat is core-1 territory)
+            // the spoken answer as a base64 clip (MP3, or the 8 kHz PCM fallback):
+            // loop() decodes it to flash and plays it (never here: FFat is
+            // core-1 territory)
             if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("audio")) {
-              String a;
+              String a, f;
               if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
                 a = (const char *)btMsg["data"]["audio"];
+                f = (const char *)btMsg["data"]["format"];
                 say_audio_b64 = a;
+                say_audio_format = f;
                 say_audio_pending = true;
                 xSemaphoreGive(taskMutex);
               }
-              Serial.printf("[say] audio %u b64 chars\n", (unsigned)a.length());
+              Serial.printf("[say] audio %u b64 chars (%s)\n", (unsigned)a.length(), f.length() ? f.c_str() : "mp3");
             }
           }
         }
@@ -2527,7 +2549,6 @@ static void face_forget()
   face_steps = nullptr;
   face_battery = nullptr;
   face_percent = nullptr;
-  face_volts = nullptr;
   face_name = nullptr;
   face_ip = nullptr;
   face_gw = nullptr;
@@ -2554,16 +2575,13 @@ void watch_face_maker()
   // the panel only scrolls up and down, sideways nothing is allowed to stick out
   lv_obj_set_scroll_dir(lv_scr_act(), LV_DIR_VER);
 
-  // status bar along the top
-  face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 30);
+  // status bar along the top: the battery (or, off the clock room, the time) on
+  // the left, and the serving machine's name hard against the right edge - the
+  // label sizes itself, so its LAST character sits 2 px from the edge whatever
+  // the name is. The label box is auto-width for exactly that.
+  face_battery = face_label_maker(10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00));
   face_percent = face_label_maker(42, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 14);
-  // the homebase shows as ip:port here: the smaller face plus dot-truncation
-  // keeps it on exactly one line above the clock, however long the name gets
-  face_name = face_label_maker(0, 4, &lv_font_montserrat_14, lv_color_hex(0x00FF00), 128, LV_ALIGN_TOP_MID);
-  if (face_name) {
-    lv_label_set_long_mode(face_name, LV_LABEL_LONG_DOT);
-  }
-  face_volts = face_label_maker(-10, 4, &lv_font_montserrat_16, lv_color_hex(0x00FF00), 45, LV_ALIGN_TOP_RIGHT);
+  face_name = face_label_maker(-2, 4, &lv_font_montserrat_14, lv_color_hex(0x00FF00), 0, LV_ALIGN_TOP_RIGHT);
 
   // the clock, centred under the status bar; the digits come from clock_font
   // (72 px). The label box is nudged left so the seconds fit beside it.
@@ -4037,9 +4055,10 @@ void audio_playback_loop_task(void *pvParameters) {
 // Decode the base64 reply clip onto flash and play it. Runs on core 1 (loop),
 // where FFat and the audio globals are safe to touch; the mic task and the
 // playback task also run here, and isPlaying/isRecording arbitrate between them.
-static void say_audio_decode_play(const String &b64) {
+static void say_audio_decode_play(const String &b64, const String &format) {
   if (isPlaying || isRecording) { return; }
   if (b64.length() < 16) { return; }
+  bool mp3 = !(format == "wav");   // the server's default is mp3
   size_t cap = (b64.length() * 3) / 4 + 8;
   uint8_t *buf = (uint8_t *)ps_malloc(cap);
   if (!buf) { buf = (uint8_t *)malloc(cap); }
@@ -4054,23 +4073,28 @@ static void say_audio_decode_play(const String &b64) {
     Serial.printf("[say] audio decode failed rc=%d len=%u\n", rc, (unsigned)olen);
     return;
   }
-  File f = FFat.open(REPLY_WAV_PATH, FILE_WRITE);
+  const char *path = mp3 ? REPLY_MP3_PATH : REPLY_WAV_PATH;
+  File f = FFat.open(path, FILE_WRITE);
   if (!f) {
     free(buf);
-    Serial.println("[say] audio: /reply.wav open failed");
+    Serial.println("[say] audio: reply file open failed");
     return;
   }
   f.write(buf, olen);
   f.close();
   free(buf);
-  Serial.printf("[say] audio wrote %u bytes\n", (unsigned)olen);
+  Serial.printf("[say] audio wrote %u bytes to %s\n", (unsigned)olen, path);
   if (isPlaying || isRecording) { return; }
   isPlaying = true;
   out_hardware = new LilyGoAudioSink(watch.getAudioOutput());
-  file_source = new AudioFileSourceFATFS(REPLY_WAV_PATH);
-  wav = new AudioGeneratorWAV();
+  file_source = new AudioFileSourceFATFS(path);
+  // libmad decodes on the task's own stack, so the reply's task gets more of it
+  // than the WAV recorder's
+  uint32_t stack = mp3 ? 8192 : 4096;
+  if (mp3) { wav = new AudioGeneratorMP3(); }
+  else { wav = new AudioGeneratorWAV(); }
   wav->begin(file_source, out_hardware);
-  xTaskCreatePinnedToCore(audio_playback_loop_task, "ReplyTask", 4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(audio_playback_loop_task, "ReplyTask", stack, NULL, 2, NULL, 1);
 }
 
 

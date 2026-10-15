@@ -872,6 +872,29 @@ $(document).on('change', '#teletype_authorization', function() {
 		}
 	});
 });
+// the watch/deck toggle for spoken replies: one click flips it, the save route
+// writes it into the device's operator door, and the device gets a fresh Now Me
+$(document).on('click', '.audio_replies_toggle', function() {
+	var t = $(this);
+	var value = t.attr('status') == 'on' ? 'off' : 'on';
+	$.ajax({
+		url: '/manager/embedded/setting',
+		type: 'POST',
+		data: {
+			timestamp: Date.now(),
+			setting: t.attr('setting'),
+			value: value,
+			edt: t.attr('edt'),
+			chip_id: t.attr('chip_id')
+		},
+		success: function(response) {
+			t.attr('status', value);
+			t.text('Audio replies: ' + (value == 'on' ? 'On' : 'Off'));
+			embeddedNowMePush();
+		}
+	});
+});
+
 $(document).on('click', '#tty_enabled', function() {
 	var t = $(this);
 	var enabled = t.attr('status');
