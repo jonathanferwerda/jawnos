@@ -20625,16 +20625,9 @@ sub coding_conversation_save($name, $rows) {
 # is scoped to an app (its conversation name is app_<name>), otherwise the house
 # default. Each message carries it, so old turns drop the way everything else does.
 sub guide_message_warranty($name) {
-	my $now = &subs::rightNow();
-	my $default = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', $now);
-	if ($name && $name =~ /^app_(.+)$/) {
-		my $app = $1;
-		my $rows = &subs::db_query('select warranty from appointments where app = ? order by timestamp desc limit 1', $app)->hashes;
-		if (scalar @{$rows} && defined $rows->[0]->{'warranty'} && ($rows->[0]->{'warranty'} + 0) > 0) {
-			return $rows->[0]->{'warranty'} + 0;
-		}
-	}
-	return $default;
+	# The logic lives in subs so the data backfill can stamp old turns from the
+	# boot process, before this Manager worker is loaded.
+	return &subs::guide_message_warranty($name);
 }
 
 sub guide_conversation_load($name) {

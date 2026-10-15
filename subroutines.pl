@@ -14856,6 +14856,25 @@ sub warehouse_money_mirror {
 # prerequisites are not ready yet (left for the next pass, e.g. the column the
 # schema migration adds is not there), and dies on a real error (logged).
 # ---------------------------------------------------------------------------
+
+# The warranty a guide message expires on: the appointment's own when the thread
+# is scoped to an app (its conversation name is app_<name>), otherwise the house
+# default. It lives here - not in Manager - so the backfill below can stamp old
+# turns from the boot process too, before the Manager worker is loaded.
+sub guide_message_warranty() {
+	my ($name) = @_;
+	my $now = &subs::rightNow();
+	my $default = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', $now);
+	if ($name && $name =~ /^app_(.+)$/) {
+		my $app = $1;
+		my $rows = &subs::db_query('select warranty from appointments where app = ? order by timestamp desc limit 1', $app)->hashes;
+		if (scalar @{$rows} && defined $rows->[0]->{'warranty'} && ($rows->[0]->{'warranty'} + 0) > 0) {
+			return $rows->[0]->{'warranty'} + 0;
+		}
+	}
+	return $default;
+}
+
 sub backfills() {
 	return {
 		'door_seed' => sub {
@@ -14990,6 +15009,31 @@ sub backfills() {
 				&subs::say_it("backfill guess_to_me_folder: sealed $n guess picture(s) into $location");
 			}
 			return $failed ? 0 : 1;
+		},
+		'guide_message_warranty' => sub {
+			# Guide turns were saved before each message carried its own warranty;
+			# stamp the ones missing it so they age out the way everything else does.
+			my $rows = &subs::db_query("select setting, value from settings where app = ? and setting like ?", '__president', 'guide_conversation_%')->hashes;
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				my $setting = $row->{'setting'} // '';
+				next unless $setting =~ /^guide_conversation_(.+)$/;
+				my $name = $1;
+				my $transcript = eval { decode_json $row->{'value'} } || [];
+				$transcript = [] unless ref $transcript eq 'ARRAY';
+				my $warranty = &guide_message_warranty($name);
+				my $changed = 0;
+				foreach my $m ( @{$transcript} ) {
+					next if defined $m->{'warranty'};
+					$m->{'warranty'} = $warranty;
+					$changed++;
+				}
+				next unless $changed;
+				&subs::setting_setter({ app => '__president', setting => 'guide_conversation_' . $name, value => encode_json $transcript });
+				$n += $changed;
+			}
+			&subs::say_it("backfill guide_message_warranty: stamped $n guide message(s)");
+			return 1;
 		},
 	};
 }

@@ -111,13 +111,6 @@
 				</div>
 			<% } %>
 
-			<%# the evaluation's output, when one has been run for this app: the
-			    same report the evaluate strip shows, quiet until there is one %>
-			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
-			<% if (($app_evaluation->{'text'} || '') ne '') { %>
-				<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
-			<% } %>
-
 			<br>
 			<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="width:16%;" />
 			<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" style="width:16%;" />
@@ -159,10 +152,9 @@
 			<div app="<%= $a %>" style="display:none;" class="appointment_details"></div>
 			<span class="media_out vid"></span>
 			<span class="media_out snd" style="width:100%;"><audio autoplay="true" controls style="width:100%;display:none;" id="<%= $a %>_snd"></audio></span>
-			<span class="media_out scr"><video autoplay="true" controls id="<%= $a %>_scr" style="display:none;"></video></span><br>
+			<span class="media_out scr"><video autoplay="true" controls id="<%= $a %>_scr" style="display:none;"></video></span>
 			<% if ($from ne 'store') { %>
-				&nbsp;
-				<canvas id="visualizer_<%= $a %>" class="visualizer" app="<%= $a %>" style="display:none;"></canvas><br>
+				<canvas id="visualizer_<%= $a %>" class="visualizer" app="<%= $a %>" style="display:none;"></canvas>
 				<span class="enablers">
 					<img class="public_button medium_thumb enabler" type="public" app="<%= $a %>" off_colour="black" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'public'} eq 'on' ) { %>status="on" style="background-color:green"<% } else { %>
@@ -184,6 +176,13 @@
 							src="<%= &subs::icon_path('off', '/images/decipherable/off.png') %>" hint="Toggle" status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %> />
 					<img src="<%= &subs::icon_path('burger', '/images/make believe/burger.png') %>" hint="Lock" class="medium_thumb appointment_locking_mechanism">
 				</span><br>
+			<% } %>
+
+			<%# the evaluation's output, when one has been run for this app: the
+			    same report the evaluate strip shows, quiet until there is one %>
+			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
+			<% if (($app_evaluation->{'text'} || '') ne '') { %>
+				<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
 			<% } %>
 		</div>
 	<% } %>
