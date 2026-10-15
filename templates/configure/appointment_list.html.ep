@@ -48,8 +48,9 @@
 	#configuration_container .configuration_ability_container.open { grid-column:1 / -1; }
 	/* a <button> is not a reliable flex container in every browser/WebView, so the
 	   tile stacks with plain block layout: the icon on its own line, the label
-	   beneath it */
-	#configuration_container .configuration_ability_container .app_configure_toggle { width:100%; text-align:center; min-width:0; }
+	   beneath it. height:auto overrides the shell's global button height (34px),
+	   which would otherwise clip the tile to a band behind the icon */
+	#configuration_container .configuration_ability_container .app_configure_toggle { width:100%; height:auto; text-align:center; min-width:0; }
 	#configuration_container .app_configure_toggle .ability_icon { display:block; margin:0 auto 4px; width:34px; height:34px; }
 	#configuration_container .app_configure_toggle .ability_label { display:block; min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 	#configuration_container .app_configure_input { padding:10px; margin:2px 0 4px; border:1px solid var(--line); border-radius:8px; background:var(--panel); overflow-x:auto; }
