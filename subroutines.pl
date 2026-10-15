@@ -2460,14 +2460,70 @@ sub ble_rehome_check() {
 	} or $log->error('BLE re-home failed: ' . $@);
 }
 
+# Speech -> text through a cloud model. The transcription model (Configure -> Plat)
+# is either Cloudflare's @cf/openai/whisper or an OpenAI-compatible /audio/
+# transcriptions endpoint (Groq whisper-large-v3*, OpenAI whisper-1). '' on any
+# failure, so the caller falls back to the local whisper.cpp pipeline.
+sub ai_transcribe_cloud {
+	my ($model, $raw) = @_;
+	return '' unless $model && defined $raw && length $raw;
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @key_settings ] });
+	my $suds = &subs::suds_grabber();
+	my $secret = sub {
+		my $v = shift;
+		return '' unless defined $v && length $v;
+		my $d = eval { &subs::note_decrypter($suds, $v) };
+		return ($d && length $d) ? $d : $v;
+	};
+	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 30, request_timeout => 45);
+	if ($model =~ /^\@cf/) {
+		my $account = $settings->{'cloudflare_account'};
+		my $token = $secret->($settings->{'cloudflare_token'});
+		return '' unless $account && $token;
+		my $tx = $ua->post('https://api.cloudflare.com/client/v4/accounts/' . $account . '/ai/run/' . $model => {
+			'Authorization' => 'Bearer ' . $token,
+			'Content-Type' => 'application/json'
+		} => json => { audio => encode_base64($raw, '') });
+		return '' if $tx->error || !$tx->res->is_success;
+		my $d = eval { $tx->res->json } || {};
+		my $text = $d->{'result'}->{'text'} || $d->{'result'}->{'transcription'} || $d->{'result'};
+		$text = '' if ref $text;
+		return ($text || '');
+	}
+	# openai-compatible transcription: groq, openai, mistral (any provider whose
+	# /audio/transcriptions speaks the same multipart shape)
+	my ($provider, $real) = ('groq', $model);
+	if ($model =~ /^([a-z]+):(.+)$/) { ($provider, $real) = ($1, $2); }
+	my %ep = ( openai => 'https://api.openai.com/v1/audio/transcriptions', groq => 'https://api.groq.com/openai/v1/audio/transcriptions' );
+	my $url = $ep{$provider} or return '';
+	my %key = ( openai => 'openai_key', groq => 'groq_key' );
+	my $key = $secret->($settings->{ $key{$provider} });
+	return '' unless $key;
+	my $tx = $ua->post($url => {
+		'Authorization' => 'Bearer ' . $key
+	} => form => {
+		model => $real,
+		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
+		response_format => 'json'
+	});
+	return '' if $tx->error || !$tx->res->is_success;
+	my $d = eval { $tx->res->json } || {};
+	return ($d->{'text'} || '');
+}
+
 sub whisper_transcribe() {
-	# Speech -> text, the one place the whisper.cpp pipeline lives. Raw audio
-	# bytes in (any container ffmpeg reads - the watch sends 16 kHz mono WAV),
-	# the transcript out. ffmpeg normalises to the 16 kHz mono PCM whisper wants;
-	# whisper-cli reads stdin with --file - and prints the text on stdout. '' on
-	# any failure, so a caller only has to check for text.
+	# Speech -> text. A cloud transcription model (Configure -> Plat) answers
+	# first, so the phone's slow whisper.cpp is the fallback rather than the
+	# whole path. Raw audio bytes in (any container ffmpeg reads), the transcript
+	# out. '' on any failure, so a caller only has to check for text.
 	my ($raw) = @_;
 	return '' unless $raw;
+	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
+	foreach my $m ( grep { $_ } ($primary, $fallback) ) {
+		my $text = &ai_transcribe_cloud($m, $raw);
+		return $text if $text;
+	}
 	require IPC::Open3;
 	require Symbol;
 	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
@@ -11847,7 +11903,7 @@ sub ai_providers() {
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
-			models => [ qw/llama-3.3-70b-versatile llama-3.1-8b-instant mixtral-8x7b-32768/ ] },
+			models => [ qw/llama-3.3-70b-versatile llama-3.1-8b-instant mixtral-8x7b-32768 whisper-large-v3-turbo playai-tts/ ] },
 		{ id => 'openrouter', label => 'OpenRouter',            keys => [ [ 'openrouter_key', 'API key' ] ],
 			models => [ qw{openai/gpt-4o anthropic/claude-3.5-sonnet meta-llama/llama-3.3-70b-instruct google/gemini-2.0-flash-001} ] },
 	];
@@ -11893,8 +11949,8 @@ sub ai_model_caps_by_name {
 	my $n = lc($name || '');
 	return ('image') if $n =~ /(dall-e|gpt-image|stable-?diffusion|sdxl|sd3|flux|imagen|playground-v2|kandinsky|dreamshaper|lucid|phoenix|text-to-image|text2image)/;
 	return ('video-gen') if $n =~ /(veo|runway|sora|video-?gen|text-?to-?video|image-?to-?video|stable-?video|kling|luma|mochi|pika|wan-?video|haiper|flux-?video)/;
-	return ('audio-gen') if $n =~ /(musicgen|audio-?gen|music-?gen|audio-?lm|suno|riffusion|stable-?audio|bark|elevenlabs|melod)/;
-	return ('audio') if $n =~ /(whisper|asr|speech|melotts|aura-|\btts\b)/;
+	return ('audio-gen') if $n =~ /(musicgen|audio-?gen|music-?gen|audio-?lm|suno|riffusion|stable-?audio|bark|elevenlabs|melod|melotts|aura-|\btts\b|speech-?synth)/;
+	return ('audio') if $n =~ /(whisper|asr|transcri|speech-to-text|\bstt\b|deepgram|nova-?2|parakeet)/;
 	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
 	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision)/;
 	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision)/;
@@ -12374,6 +12430,17 @@ sub ai_role_thinking {
 	my $v = &subs::setting_grabber({ app => 'mail', setting => $role . '_thinking' });
 	$v = &subs::setting_grabber({ app => 'mail', setting => 'coding_thinking' }) if (!defined $v || !length $v) && $role eq 'coding_assistant';
 	return defined $v ? $v : '';
+}
+
+# The primary and fallback models chosen for a role (the fallback list is the
+# same catalogue minus the primary, set in Configure -> Plat). A caller retries
+# the fallback when the primary is down. whisper.cpp is the transcription role's
+# own final fallback, read in whisper_transcribe.
+sub ai_role_models {
+	my ($role) = @_;
+	my $primary = &subs::setting_grabber({ app => 'mail', setting => $role });
+	my $fallback = &subs::setting_grabber({ app => 'mail', setting => $role . '_fallback' });
+	return (defined $primary ? $primary : '', defined $fallback ? $fallback : '');
 }
 
 sub evaluation_model_call() {

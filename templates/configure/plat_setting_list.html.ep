@@ -11,6 +11,7 @@
 		[ 'text_to_video_assistant', 'Video generation',     'video-gen' ],
 		[ 'chatbot_model',           'Pen chat (default)',   'chat' ],
 		[ 'coding_assistant',        'Coding (self-healing)', 'chat' ],
+		[ 'transcription_assistant', 'Transcription (speech in)', 'audio' ],
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $catalogue = &subs::ai_model_catalogue();
