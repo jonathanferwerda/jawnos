@@ -604,20 +604,17 @@ get '/manager/unclaimed' => sub($c) {
 	$c->render(json => { ok => 1, items => \@items });
 };
 
-# Search appointments by the name typed in the claim box: returns the apps whose
-# name (or slug) matches, newest appointment first, so the claim route can file
-# straight onto one.
+# Search appointments by the name typed in the claim box: returns the distinct
+# apps whose slug matches, bounded for the dropdown, so the claim route can file
+# straight onto one (the claim route resolves the newest appointment row itself).
 get '/manager/unclaimed/appointments' => sub($c) {
 	my $search = &subs::unformat_name($c->param('search') || '');
 	my @out;
 	if (length $search) {
-		my $rows = &subs::db_query('select app, uuid, server_time from appointments where app is not null and app != ? and app like ? order by server_time desc', '', '%' . $search . '%')->hashes || [];
-		my %seen;
+		my $rows = &subs::db_query('select distinct app from appointments where app is not null and app != ? and app like ? limit 50', '', '%' . $search . '%')->hashes || [];
 		foreach my $r ( @{$rows} ) {
-			my $app = $r->{'app'};
-			next unless $app;
-			next if $seen{$app}++;
-			push @out, { app => $app, uuid => $r->{'uuid'}, name => &subs::format_name($app) };
+			next unless $r->{'app'};
+			push @out, { app => $r->{'app'}, name => &subs::format_name($r->{'app'}) };
 		}
 	}
 	$c->render(json => { ok => 1, appointments => \@out });
