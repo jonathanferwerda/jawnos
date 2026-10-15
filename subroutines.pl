@@ -1363,36 +1363,63 @@ sub usual_duration_for() {
 	return 0;
 }
 
-# The ghost rows for one app: its expected times on the days ahead that fall inside
-# the view, capped. Empty when it has no expected time.
+# The real appointments an app has near now, cached briefly, for matching an
+# expected time to the occurrence a real one belongs to. Only called for apps that
+# have a habit, so the range stays small.
+our %ghost_done_memo;
+sub ghost_done_times_for() {
+	my ($app) = @_;
+	my $cache = $ghost_done_memo{$app};
+	return $cache->{'reals'} if $cache && &rightNow() - $cache->{'at'} < 60000;
+	my $now = &rightNow();
+	my $rows = &db_query('select timestamp from appointments where app = ? and cast(timestamp as integer) between ? and ? order by timestamp', $app, $now - 86400000, $now + 8 * 86400000)->hashes;
+	my @reals = map { $_->{'timestamp'} + 0 } grep { defined $_->{'timestamp'} && $_->{'timestamp'} =~ /^-?\d+$/ } @{$rows};
+	$ghost_done_memo{$app} = { at => $now, reals => \@reals };
+	return \@reals;
+}
+
+# The ghost rows for one app: its expected times that have not been met and are not
+# already scheduled. An expected time is dropped once a real appointment sits
+# nearest to it (a started or scheduled occurrence - the coffee that just began
+# stops being a ghost until tomorrow's comes round). The next expected time beyond
+# the view is kept too, so a clock shows it clamped at the edge rather than
+# nothing.
 sub ghost_rows_for() {
 	my ($app, $now, $view_end) = @_;
-	return [] unless defined $view_end && $view_end > $now;
 	my $times = &ghost_times_for($app);
 	return [] unless @{$times};
-	my $duration = &usual_duration_for($app);
 	my @n = localtime($now / 1000);
-	my @rows;
-	for my $d (0 .. 7) {
-		last if scalar @rows >= 6;
+	# the expected times from yesterday to a week out, so a real appointment can be
+	# matched to the occurrence it belongs to
+	my @cand;
+	for my $d (-1 .. 7) {
 		foreach my $tm ( @{$times} ) {
 			my $e = eval { int(POSIX::mktime(0, $tm->[1], $tm->[0], $n[3] + $d, $n[4], $n[5])) };
-			next unless defined $e;
-			my $ms = $e * 1000;
-			next unless $ms > $now && $ms <= $view_end;
-			push @rows, {
-				ghost => 1,
-				app => $app,
-				type => 'usual',
-				timestamp => $ms,
-				duration => $duration,
-				formatted_name => &format_name($app),
-			};
+			push @cand, $e * 1000 if defined $e;
 		}
 	}
-	@rows = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @rows;
-	@rows = @rows[0 .. 5] if @rows > 6;
-	return \@rows;
+	my %done;
+	foreach my $r ( @{ &ghost_done_times_for($app) } ) {
+		my ($bi, $bd);
+		for my $i (0 .. $#cand) {
+			my $d = abs($cand[$i] - $r);
+			if (!defined $bd || $d < $bd) { $bd = $d; $bi = $i; }
+		}
+		$done{$cand[$bi]} = 1 if defined $bi && $bd <= 3 * 3600000;
+	}
+	my @in;
+	my $beyond;
+	foreach my $ts (@cand) {
+		next unless $ts > $now;
+		next if $done{$ts};
+		if (defined $view_end && $ts <= $view_end) { push @in, $ts; }
+		elsif (!defined $beyond || $ts < $beyond) { $beyond = $ts; }
+	}
+	@in = sort { $a <=> $b } @in;
+	@in = @in[0 .. 5] if @in > 6;
+	push @in, $beyond if !@in && defined $beyond;
+	my $duration = &usual_duration_for($app);
+	return [ map { { ghost => 1, app => $app, type => 'usual', timestamp => $_, duration => $duration, formatted_name => &format_name($app) } } @in ];
 }
 
 sub ago_calc() {
