@@ -10653,7 +10653,7 @@ sub pen_message() {
 	my $data = shift;
 	my $msg = $data->{'msg'};
 	my $msg_data = $data->{'msg_data'};
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', 'ollama_key', 'visual_assistant', 'chatbot_conversation', 'chatbot_conversations', 'chatbot_model', 'chatbot_system_message' ] });
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', 'ollama_key', 'visual_assistant', 'chatbot_conversation', 'chatbot_conversations', 'chatbot_model', 'chatbot_model_fallback', 'chatbot_system_message' ] });
 	my $conversations = eval { return decode_json $settings->{'chatbot_conversations'} } || {};
 	my $mail_contact = $data->{'mail_contact'};
 	my $conversation_uuid = $data->{'conversation_uuid'} || $settings->{'chatbot_conversation'};
@@ -10770,83 +10770,98 @@ sub pen_message() {
 	if (my $gen_hint = &ai_generation_instruction($settings)) {
 		$system_message .= $gen_hint;
 	}
-	my $payload = {
-		  model    => $model, # Replace with your installed model
-		  messages => [
-		      { role => 'system', content => $system_message },
-		     	@{$history}
-		  ],
-		  stream   => \1 # Tells Ollama to stream the response (JSON true)
-	};
-	# Ollama Chat API Endpoint
-	my ($key,$url);
-	if ($model =~ /^\@cf/ && $settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) {
-		$url = 'https://api.cloudflare.com/client/v4/accounts/'. $settings->{'cloudflare_account'} . '/ai/run/' . $model;
-		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'});
-	} else {
-		$url = 'http://localhost:11434/api/chat';
-		$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'ollama_key'});
-		$payload->{'options'} = {
-			num_thread => $nproc - 2,
-			num_ctx    => 32768
-		},
-		# thinking, where the chat model is a local one that reasons (Ollama's own
-		# think field); Cloudflare's endpoint takes none
-		my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
-		$payload->{'think'} = ($lvl eq 'max' ? 'high' : $lvl) if length $lvl && &subs::ai_model_thinks($model);
-	}
-
-	$log->info($url);
-	my $tx = $ua->build_tx(POST => $url => {
-			'Authorization' => "Bearer $key",
-			'Content-Type'  => 'application/json'
-		} => json => $payload);
-
-	# 2. Maintain a tiny string buffer for incomplete stream chunks
+	my %chat_seen;
+	my @chat_candidates = grep { !$chat_seen{$_}++ } grep { defined $_ && length $_ } ($model, $settings->{'chatbot_model_fallback'});
 	my $buffer = '';
 	my $accumulated_text = '';
-	# 3. UNSUBSCRIBE the default parser, then attach your custom reader
-	$tx->res->content->unsubscribe('read')->on(read => sub {
-		  my ($content, $bytes) = @_;
+	my $tx;
+	foreach my $try_model ( @chat_candidates ) {
+		$buffer = '';
+		$accumulated_text = '';
+		$response_text = '';
+		my $payload = {
+			  model    => $try_model, # Replace with your installed model
+			  messages => [
+			      { role => 'system', content => $system_message },
+			     	@{$history}
+			  ],
+			  stream   => \1 # Tells Ollama to stream the response (JSON true)
+		};
+		# Ollama Chat API Endpoint
+		my ($key,$url);
+		if ($try_model =~ /^\@cf/ && $settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) {
+			$url = 'https://api.cloudflare.com/client/v4/accounts/'. $settings->{'cloudflare_account'} . '/ai/run/' . $try_model;
+			$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'});
+		} else {
+			$url = 'http://localhost:11434/api/chat';
+			$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'ollama_key'});
+			$payload->{'options'} = {
+				num_thread => $nproc - 2,
+				num_ctx    => 32768
+			},
+			# thinking, where the chat model is a local one that reasons (Ollama's own
+			# think field); Cloudflare's endpoint takes none
+			my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
+			$payload->{'think'} = ($lvl eq 'max' ? 'high' : $lvl) if length $lvl && &subs::ai_model_thinks($try_model);
+		}
 
-		  $buffer .= $bytes;
+		$log->info($url);
+		$tx = $ua->build_tx(POST => $url => {
+				'Authorization' => "Bearer $key",
+				'Content-Type'  => 'application/json'
+			} => json => $payload);
 
-		  # Process full lines out of our buffer
-		  while ($buffer =~ s/^([^\n]*)\n//) {
-		      my $line = $1;
-		      next unless $line;
+		# 2. Maintain a tiny string buffer for incomplete stream chunks
+		# 3. UNSUBSCRIBE the default parser, then attach your custom reader
+		$tx->res->content->unsubscribe('read')->on(read => sub {
+			  my ($content, $bytes) = @_;
 
-		      my $adata = eval { decode_json($line) };
-		      next if $@;
-    			if (my $text = unidecode($adata->{message}{content})) {
-					$accumulated_text .= $text;
+			  $buffer .= $bytes;
+
+			  # Process full lines out of our buffer
+			  while ($buffer =~ s/^([^\n]*)\n//) {
+			      my $line = $1;
+			      next unless $line;
+
+			      my $adata = eval { decode_json($line) };
+			      next if $@;
+	    			if (my $text = unidecode($adata->{message}{content})) {
+						$accumulated_text .= $text;
 
 
-						unless ($data->{'type'} eq 'assistant') {
-							$text =~ s/\n/<br>/gi;
-							$response_text .= $text;
-							&Websocket::mail_send({
-								type => 'writing',
-								uuid => $msg_data->{'uuid'} || $data->{'uuid'},
-								new_text => $text,
-								all_text => $response_text,
-								mail_contact => 'pen'
-							});
-						} else {
-							$text =~ s/\n/<br>/gi;
-							$text =~ s/'/\\'/gi;
-							$response_text .= $text;
-							&Websocket::send('tab', {
-								console => '$(\'.assistant_content[uuid="' . $data->{'uuid'} . '"]\').html(\'' . $response_text . '\');'
-							});
-						}
-	          *STDOUT->flush;
-		      }
-		  }
-	});
+							unless ($data->{'type'} eq 'assistant') {
+								$text =~ s/\n/<br>/gi;
+								$response_text .= $text;
+								&Websocket::mail_send({
+									type => 'writing',
+									uuid => $msg_data->{'uuid'} || $data->{'uuid'},
+									new_text => $text,
+									all_text => $response_text,
+									mail_contact => 'pen'
+								});
+							} else {
+								$text =~ s/\n/<br>/gi;
+								$text =~ s/'/\\'/gi;
+								$response_text .= $text;
+								&Websocket::send('tab', {
+									console => '$(\'.assistant_content[uuid="' . $data->{'uuid'} . '"]\').html(\'' . $response_text . '\');'
+								});
+							}
+		          *STDOUT->flush;
+			      }
+			  }
+		});
 
-	# 3. Perform the transaction synchronously
-	$ua->start($tx);
+		# 3. Perform the transaction synchronously
+		$ua->start($tx);
+
+		# a call that never answered falls through to the next model; one that
+		# streamed anything is kept, so a retry never doubles the reply
+		last unless $tx && $tx->error;
+		last if length $response_text;
+		next if $try_model eq $chat_candidates[-1];
+		&subs::say_it('AI: ' . $try_model . ' failed (' . (($tx->error && $tx->error->{'message'}) || 'no answer') . '); trying the fallback');
+	}
 	my $attachments = [];
 	# Read the reply for a media request: the explicit JSON action the system
 	# message asks for, or the legacy markers so older conversations still work.
@@ -13881,10 +13896,20 @@ sub generate_ai_media {
 
   $log->info(Dumper $data);
 	# the media comes through the Plat generation model for this kind; the
-	# storing, the appointment and the reply are this routine's own work
-	my ($binary, $mime, $gen_err) = ($kind eq 'image')
-		? &subs::ai_text_to_image({ prompt => $prompt })
-		: &subs::ai_text_to_media($kind, { prompt => $prompt });
+	# storing, the appointment and the reply are this routine's own work. The
+	# agent's fallback is tried when the primary fails (an outage, no credit).
+	my $role = $kind eq 'image' ? 'text_to_image_assistant' : $kind eq 'audio' ? 'text_to_audio_assistant' : 'text_to_video_assistant';
+	my ($primary, $fallback) = &subs::ai_role_models($role);
+	my %gen_seen;
+	my @gen_candidates = grep { !$gen_seen{$_}++ } grep { defined $_ && length $_ } ($data->{'model'}, $primary, $fallback);
+	my ($binary, $mime, $gen_err);
+	foreach my $candidate ( @gen_candidates ) {
+		($binary, $mime, $gen_err) = ($kind eq 'image')
+			? &subs::ai_text_to_image({ prompt => $prompt, model => $candidate })
+			: &subs::ai_text_to_media($kind, { prompt => $prompt, model => $candidate });
+		last if defined $binary && length $binary;
+		&subs::say_it('AI: ' . $kind . ' with ' . $candidate . ' failed (' . ($gen_err || 'nothing returned') . ')') if @gen_candidates > 1;
+	}
 	if ($gen_err || !defined $binary || !length $binary) {
 		$log->error(ucfirst($kind) . ' generation failed: ' . ($gen_err || 'nothing returned'));
 		return undef;
