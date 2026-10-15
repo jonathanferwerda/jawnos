@@ -257,6 +257,23 @@ hook before_dispatch => sub {
 		$path eq '/manager/configure/backup_now' ||
 		$path eq '/manager/backup_serve' ||
 		$path eq '/manager/backup/confirm' ||
+		# the ticket desk rides the same bare signed rail: a linked machine reads
+		# the desk from, or answers a request held on, a neighbour's database, so
+		# its routes take a session OR a peer signature. Each checks the roster and
+		# the pinned key itself (Manager::ticket_desk_allowed), so the gate here is
+		# skipped only to let a sessionless peer reach that check.
+		$path eq '/manager/box_office' ||
+		$path eq '/manager/box_office/approve' ||
+		$path eq '/manager/box_office/decline' ||
+		$path eq '/manager/box_office/blacklist' ||
+		$path eq '/manager/box_office/blacklist/remove' ||
+		$path eq '/manager/box_office/policy' ||
+		$path eq '/manager/qrcode_generator' ||
+		$path eq '/manager/ticket_privilege' ||
+		$path eq '/manager/delete_ticket' ||
+		$path eq '/manager/suspend_ticket' ||
+		$path eq '/manager/renew_ticket' ||
+		$path eq '/manager/reinstate_ticket' ||
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
