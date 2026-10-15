@@ -520,15 +520,56 @@ static void queue_ble_message(String &message) {
     }
 }
 
+// Send a payload over the Nordic UART TX characteristic as one or more framed
+// notifies. A central that negotiates a small MTU (Android leaves it at the BLE
+// floor, 23) can only carry MTU-3 = 20 bytes per notification; a longer payload
+// set on the characteristic is silently truncated there, which is why a watch
+// state_request (~120 bytes) arrived as a 20-byte stub and never parsed. So
+// split it into "<i>/<n>:" parts the bridge reassembles (the same shape
+// ble_frame_ingest and the server's ble_message_processor expect). With a big
+// MTU (the desktop's 512) a small message stays a single part.
+static void ble_notify_payload(const String &payload) {
+    if (!ble_link_ready()) {
+        return;
+    }
+    uint16_t mtu = 23;
+    if (pServer) {
+        uint16_t m = pServer->getPeerMTU(pServer->getConnId());
+        if (m >= 23) {
+            mtu = m;
+        }
+    }
+    int frame = (int)mtu - 3;      // the notify payload limit
+    int budget = frame - 8;        // reserve room for the "<i>/<n>:" prefix
+    if (budget < 1) {
+        budget = 1;
+    }
+    int len = (int)payload.length();
+    int total = (len + budget - 1) / budget;
+    if (total < 1) {
+        total = 1;
+    }
+    for (int i = 0; i < total; i++) {
+        int from = i * budget;
+        int to = from + budget;
+        if (to > len) {
+            to = len;
+        }
+        String part = String(i) + "/" + String(total) + ":";
+        part += payload.substring(from, to);
+        pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
+        pTxCharacteristic->notify();
+        delay(8);                  // pace the parts; a flat burst outruns the link
+    }
+}
+
 // small outbound message over the Nordic UART TX characteristic; used for the
 // bridge requests (state_request / room_request) from either core
 static void ble_send(JSONVar message) {
     if (!ble_link_ready()) {
         return;
     }
-    String payload = JSON.stringify(message);
-    pTxCharacteristic->setValue(payload.c_str());
-    pTxCharacteristic->notify();
+    ble_notify_payload(JSON.stringify(message));
 }
 
 //64:e8:33:4B:38:39
@@ -3941,12 +3982,9 @@ void when_i_get_in(JSONVar wigi_item, String url) {
     String payload = JSON.stringify(envelope);
     String message = "Hello from T-Watch!";
     Serial.println(message);
-    // Set the character value to your message
-    pTxCharacteristic->setValue(payload.c_str());
-    
-    // Fire the notification to the connected phone
-    pTxCharacteristic->notify();
-    
+    // Fire the notification to the connected phone (chunked to the link's MTU)
+    ble_notify_payload(payload);
+
     Serial.print("Sent to Tasker: ");
     Serial.println(message);
   } else {
@@ -4036,8 +4074,7 @@ void ble_flush_wigi() {
     envelope["payload"] = item;
     envelope["url"] = url_maker(url);
     String payload = JSON.stringify(envelope);
-    pTxCharacteristic->setValue(payload.c_str());
-    pTxCharacteristic->notify();
+    ble_notify_payload(payload);
     Serial.println("Flushed a queued tap over BLE");
     delay(50);
   }
@@ -4089,8 +4126,7 @@ static void ble_push_steps(bool force) {
   if (payload.length() > 480) {
     return;
   }
-  pTxCharacteristic->setValue(payload.c_str());
-  pTxCharacteristic->notify();
+  ble_notify_payload(payload);
   bleStepsBase = counter;
   ble_steps_pushed_at = millis();
   Serial.printf("[ble] steps %u pushed\n", (unsigned)counter);
