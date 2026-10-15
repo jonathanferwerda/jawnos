@@ -27,9 +27,10 @@
 		return 'not read yet' unless $balance->{'at'};
 		return '—';
 	};
-	# the thinking level chosen for a role: guarded the same way as ai_provider_ready
-	# below, so a request served before the tree restarts onto this build keeps the
-	# panel's old shape instead of dying on an unknown sub.
+	# which model can reason, and the level chosen for a role: guarded the same way
+	# as ai_provider_ready below, so a request served before the tree restarts onto
+	# this build keeps the panel's old shape instead of dying on an unknown sub.
+	my $thinks_of = defined &subs::ai_model_thinks ? \&subs::ai_model_thinks : sub { 0 };
 	my $thinking_of = defined &subs::ai_role_thinking ? \&subs::ai_role_thinking : sub { '' };
 	# which providers can answer here at all: a key entered, or a running Ollama.
 	# The role lists below only offer these - the rest are named under them, so it
@@ -62,17 +63,20 @@
 			my ($setting, $label, $cap) = @{$r};
 			my $current = $role_settings->{$setting} // '';
 			my $shown = 0;
-			# Thinking is the language agents' knob: the Help guide, Evaluation,
-			# Vision, the Pen and Coding can reason before they answer, so each
-			# carries the choice beside its model. Image generation never does.
+			# Thinking needs both halves. The agent's kind must call for it - the
+			# language agents (Help, Evaluation, Vision, the Pen and Coding) do, image
+			# generation does not - and the chosen model must be one that reasons
+			# (ai_model_thinks). The row rides the model, appearing and going as the
+			# pick changes.
 			my $thinking_cap = ($cap ne 'image') ? 1 : 0;
+			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;
 		%>
 			<div class="ai_role" setting="<%= $setting %>">
 				<div class="cfg-row">
 					<label><%= $label %></label>
-					<select class="configure_input" app="mail" setting="<%= $setting %>">
+					<select class="configure_input ai_role_model" app="mail" setting="<%= $setting %>">
 						<option value="">— none —</option>
 						<% foreach my $provider ( @{$catalogue} ) {
 							next unless $provider_ready{ $provider->{'id'} };
@@ -86,18 +90,18 @@
 								<% foreach my $m ( @models ) {
 									my @mcaps = grep { $_ ne 'other' } @{ $m->{'caps'} };
 								%>
-									<option value="<%= $m->{'value'} %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
+									<option value="<%= $m->{'value'} %>" data-thinks="<%= ($thinking_cap && $thinks_of->($m->{'value'})) ? 1 : 0 %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
 								<% } %>
 							</optgroup>
 						<% } %>
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>
 						<% if ($current && !$shown) { %>
-							<option value="<%= $current %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
+							<option value="<%= $current %>" data-thinks="<%= $thinks %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
 						<% } %>
 					</select>
 				</div>
 				<% if ($thinking_cap) { %>
-					<div class="cfg-row ai_thinking_row">
+					<div class="cfg-row ai_thinking_row"<% if (!$thinks) { %> style="display:none;"<% } %>>
 						<label>Thinking</label>
 						<select class="configure_input" app="mail" setting="<%= $setting %>_thinking">
 							<% foreach my $lvl (qw/none low high max/) { %>

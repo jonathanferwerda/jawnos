@@ -12318,7 +12318,7 @@ sub ai_model_thinks {
 		my $id = $p->{'id'};
 		if ($v =~ /^\Q$id\E:(.*)$/) { $v = $1; last; }
 	}
-	return 1 if $v =~ /(?:^|[-_.\/])(?:o1|o3|o4|gpt-5|qwq|qwen3|magistral|gpt-oss|deepseek-(?:r1|reasoner|v4-pro)|reason|thinking)(?:$|[-_.:\/])/;
+	return 1 if $v =~ /(?:^|[-_.\/])(?:o1|o3|o4|gpt-5|qwq|qwen3|magistral|gpt-oss|deepseek-(?:r1|reasoner|v4-pro|flash)|reason|thinking)(?:$|[-_.:\/])/;
 	return 1 if $v =~ /^claude/ && $v =~ /(?:3[.-]7|[4-9])/;
 	return 1 if $v =~ /^(?:gemini-(?:2\.5|3)|grok-(?:3|4))/;
 	return 0;

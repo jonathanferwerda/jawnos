@@ -1055,6 +1055,14 @@ $(document).on('click', '#plat_setting', function() {
 		}
 	});
 
+// the thinking choice rides beside an agent's model and is shown only while the
+// chosen model is one that reasons; each option carries what it thinks, so the
+// row moves with the pick (the stored level is kept either way)
+$(document).on('change', '.ai_role_model', function() {
+	var thinks = $(this).find('option:selected').data('thinks');
+	$(this).closest('.ai_role').find('.ai_thinking_row').toggle(!!thinks);
+});
+
 // the Speech setting's Preview button: speak a test phrase in the voice chosen
 // for that device, rather than waiting for a real say_it to happen
 $(document).on('click', '.say_voice_test', function() {
