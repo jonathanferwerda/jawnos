@@ -2384,42 +2384,57 @@ sub ble_fallback_grace() {
 	return 900000;
 }
 
-sub ble_homebase_last_seen() {
-	# When the device's homebase was last known to be on the mesh, from its own
-	# peer row's server_time and held as a high-water mark per (homebase, chip).
-	# The peer row flickers - a sync gap briefly serves a stale copy - and a
-	# single stale read must not make a live homebase look gone, because that
+sub ble_fallback_stop_grace() {
+	# A homebase that stopped on purpose - it marked itself, or the mesh marked it,
+	# inactive - is gone now, not merely off the LAN: its jawn is down, so waiting
+	# the full grace just strands the watch. A restart flips the row back to active
+	# within seconds, so this short wait rides that out without handing the watch
+	# over on a blip.
+	return 180000;
+}
+
+sub ble_homebase_sighting() {
+	# The device's homebase as the mesh last knew it: the newest of its peer rows
+	# (server_time) and whether that row was active. Held as a high-water mark per
+	# (homebase, chip): the row flickers - a sync gap briefly serves a stale copy -
+	# and a single stale read must not make a live homebase look gone, because that
 	# flip is what let a second machine connect and steal the link. Keyed by the
-	# homebase id too, so a re-home to a fresh machine starts from its own row
-	# rather than the old homebase's last sighting. undef means no row names the
-	# machine, which the caller reads as "assume alive".
+	# homebase id, so a re-home to a fresh machine starts from its own row. undef
+	# means no row names the machine, which the caller reads as alive.
 	my ($edt, $chip_id) = @_;
 	my $who = &ble_device_specs($edt, $chip_id)->{'computer'};
 	return undef unless $who;
 	my $key = $who . '|' . ($edt || 'watch') . '|' . $chip_id;
+	my ($seen, $active);
 	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
 		next unless $rm->{'manager_file'} && $rm->{'manager_file'} eq $who;
-		my $seen = ($rm->{'server_time'} || 0) + 0;
-		next unless $seen;
-		$gb::ble_hb_seen->{$key} = $seen
-			if !defined $gb::ble_hb_seen->{$key} || $seen > $gb::ble_hb_seen->{$key};
+		my $t = ($rm->{'server_time'} || 0) + 0;
+		next unless $t;
+		if (!defined $seen || $t > $seen) {
+			$seen = $t;
+			$active = (($rm->{'connection'} || '') eq 'active') ? 1 : 0;
+		}
 	}
+	return undef unless defined $seen;
+	my $c = $gb::ble_hb_seen->{$key};
+	$gb::ble_hb_seen->{$key} = [ $seen, $active ] if !$c || $seen > $c->[0];
 	return $gb::ble_hb_seen->{$key};
 }
 
 sub ble_homebase_alive() {
 	# Has the machine the device was paired to been gone long enough to stop
-	# waiting for it? Its own peer row is the authority - not a ping of the
-	# address it last had, which was wrong the moment that machine left the LAN
-	# (a phone on cellular). A sighting counts until it is older than the
-	# fallback grace; only then may another machine take the watch over. A record
-	# that names no machine, or names one we hold no sighting for, is assumed
-	# alive, so we never usurp a homebase we cannot judge.
+	# waiting for it? Its own peer row is the authority - not a ping of the address
+	# it last had, which was wrong the moment that machine left the LAN (a phone on
+	# cellular). A sighting counts until it is older than the grace: a deliberate
+	# stop waits the short one, a homebase merely off the LAN (still marked active)
+	# the long one. A record that names no machine, or names one we hold no
+	# sighting for, is assumed alive, so we never usurp a homebase we cannot judge.
 	my ($edt, $chip_id) = @_;
 	return 1 unless &ble_device_specs($edt, $chip_id)->{'computer'};
-	my $seen = &ble_homebase_last_seen($edt, $chip_id);
+	my $seen = &ble_homebase_sighting($edt, $chip_id);
 	return 1 unless defined $seen;
-	return ((&subs::rightNow() - $seen) < &ble_fallback_grace()) ? 1 : 0;
+	my $grace = $seen->[1] ? &ble_fallback_grace() : &ble_fallback_stop_grace();
+	return ((&subs::rightNow() - $seen->[0]) < $grace) ? 1 : 0;
 }
 
 sub ble_may_serve() {
