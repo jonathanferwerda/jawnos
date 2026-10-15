@@ -12,6 +12,24 @@
 	.camera_app_no_camera { color: #8e8e8e; font-size: 13px; }
 	html.camera-native .camera_app_no_camera,
 	html.camera-webcam .camera_app_no_camera { display: none; }
+
+	/* the pool of unclaimed media waiting to be filed onto an appointment */
+	.camera_unclaimed_pool { display: flex; flex-wrap: wrap; gap: 8px; }
+	.camera_unclaimed_item { position: relative; width: 104px; border: 1px solid var(--line);
+		border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--panel); }
+	.camera_unclaimed_item.selected { outline: 3px solid var(--accent, #4a90d9); }
+	.camera_unclaimed_thumb { width: 100%; height: 72px; object-fit: cover; display: block; background: #000; }
+	.camera_unclaimed_icon { object-fit: contain; padding: 12px; }
+	.camera_unclaimed_check { position: absolute; top: 4px; left: 4px; transform: scale(1.2); }
+	.camera_unclaimed_meta { font-size: 11px; padding: 3px 5px; line-height: 1.2; }
+	.camera_unclaimed_type { text-transform: capitalize; }
+	.camera_unclaimed_time { display: block; color: #8e8e8e; }
+	.camera_unclaimed_results { position: absolute; z-index: 50; background: var(--panel);
+		max-height: 160px; overflow: auto; }
+	.camera_unclaimed_result { padding: 6px 8px; cursor: pointer; }
+	.camera_unclaimed_result:hover { background: var(--line); }
+	.camera_unclaimed_drop { transition: background .15s; }
+	.camera_unclaimed_drop_hover { background: var(--line); }
 </style>
 
 <div id="camera_app" class="camera_app" style="padding:14px;text-align:center;">
@@ -24,4 +42,24 @@
 	<div class="camera_app_no_camera">No camera is reachable here.</div>
 
 	<div class="camera_app_status" style="min-height:22px;margin-top:12px;color:#8e8e8e;"></div>
+
+	<div class="camera_unclaimed" style="margin-top:16px;text-align:left;border-top:1px solid var(--line);padding-top:10px;">
+		<div style="display:flex;align-items:center;gap:8px;">
+			<b hint="Unclaimed media">Unclaimed media</b>
+			<span class="camera_unclaimed_count" style="opacity:.7;"></span>
+			<label class="camera_unclaimed_select_all_wrap" style="margin-left:auto;display:none;" hint="Select all">
+				<input type="checkbox" class="camera_unclaimed_select_all"> Select all
+			</label>
+		</div>
+		<div class="camera_unclaimed_pool" style="max-height:240px;overflow:auto;margin-top:8px;"></div>
+
+		<div class="camera_unclaimed_claim" style="display:none;margin-top:10px;position:relative;">
+			<div class="camera_unclaimed_target" style="margin-bottom:6px;"></div>
+			<input type="text" class="camera_unclaimed_search" placeholder="Type an appointment name…" style="width:68%;">
+			<button class="camera_unclaimed_file" style="display:none;margin-left:6px;" hint="File selected">File selected</button>
+			<div class="camera_unclaimed_results" style="display:none;border:solid;border-radius:6px;width:68%;"></div>
+			<div class="camera_unclaimed_drop" style="display:none;border:2px dashed var(--line);border-radius:8px;padding:14px;text-align:center;margin-top:8px;">Drop here to file into <span class="camera_unclaimed_drop_name"></span></div>
+		</div>
+		<div class="camera_unclaimed_status" style="min-height:18px;margin-top:6px;color:#8e8e8e;"></div>
+	</div>
 </div>

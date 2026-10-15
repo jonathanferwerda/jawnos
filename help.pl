@@ -220,17 +220,19 @@ our %topic = (
 	'camera' => {
 		title => 'Camera', category => 'apps', app => 'camera',
 		templates => [ 'templates/apps/camera.html.ep' ],
-		controls => [ 'Take a photo', 'Record a video' ],
-		verified => '2026-10-14',
-		summary => 'The device camera and video recorder, from the app.',
+		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'File selected' ],
+		verified => '2026-10-15',
+		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
 			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
-			'A capture is filed under the Camera app. In the app the same pair of buttons also rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.'
+			'A capture is filed under the Camera app. In the app the same pair of buttons also rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.',
+			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then type an appointment name and File selected, or drop them onto the drop zone.'
 		],
 		steps => [
 			'Open Camera from the start menu, or pin it to the taskbar.',
 			'Tap Take a photo or Record a video; the OS camera opens.',
-			'The capture is saved when you accept it in the camera.'
+			'The capture is saved when you accept it in the camera.',
+			'To file unclaimed media onto an appointment, tick items, type the appointment name, and choose File selected.'
 		],
 		related => [ 'gallery' ]
 	},

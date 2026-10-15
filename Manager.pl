@@ -527,7 +527,14 @@ post '/manager/unclaimed/claim' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app') || '');
 	my $uuid = $c->param('uuid') || '';
 	my @file_uuids = grep { $_ } split /,/, ($c->param('file_uuids') || '');
-	unless ($app && $uuid && @file_uuids) { $c->render(json => { ok => 0, error => 'need app, uuid and file_uuids' }); return; }
+	unless ($app && @file_uuids) { $c->render(json => { ok => 0, error => 'need app and file_uuids' }); return; }
+	# the claim box hands over an app name; when no specific appointment was chosen,
+	# file onto that app's most recent appointment row
+	if (!$uuid) {
+		my $latest = &subs::db_query('select uuid from appointments where app=? and uuid is not null order by server_time desc limit 1', $app)->hash;
+		$uuid = $latest->{'uuid'};
+	}
+	unless ($uuid) { $c->render(json => { ok => 0, error => 'no such appointment to claim onto' }); return; }
 	my $target = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0];
 	unless ($target) { $c->render(json => { ok => 0, error => 'no such appointment to claim onto' }); return; }
 
@@ -569,6 +576,51 @@ post '/manager/unclaimed/claim' => sub($c) {
 	&centre_view_grabber({ c => $c, app => $app, timestamp => &subs::rightNow(), cached => 'no' });
 	&centre_view_grabber({ c => $c, app => 'camera', timestamp => &subs::rightNow(), cached => 'no' });
 	$c->render(json => { ok => 1, claimed => $claimed });
+};
+
+# List the unclaimed media waiting on the Camera app: a flat, newest-first list of
+# every file row held by a source=unclaimed Camera appointment, with the id pair
+# /file_open needs (appt_uuid + file_uuid) and the warranty it expires on.
+get '/manager/unclaimed' => sub($c) {
+	my $holders = &subs::db_select('appointments', undef, { app => 'camera', source => 'unclaimed' })->hashes || [];
+	my @items;
+	foreach my $h ( @{$holders} ) {
+		my $files = eval { return decode_json $h->{'file'} } || [];
+		foreach my $f ( @{$files} ) {
+			next unless $f && $f->{'uuid'};
+			my $name = $f->{'f'} || '';
+			$name =~ s{.*/}{};
+			push @items, {
+				file_uuid  => $f->{'uuid'},
+				appt_uuid  => $h->{'uuid'},
+				type       => $f->{'type'} || &file_type_recognizer($f->{'f'} || '')->{'type'} || 'file',
+				name       => $name,
+				server_time => $f->{'server_time'} || $h->{'server_time'} || $h->{'timestamp'} || 0,
+				warranty   => $h->{'warranty'} || 0,
+			};
+		}
+	}
+	@items = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @items;
+	$c->render(json => { ok => 1, items => \@items });
+};
+
+# Search appointments by the name typed in the claim box: returns the apps whose
+# name (or slug) matches, newest appointment first, so the claim route can file
+# straight onto one.
+get '/manager/unclaimed/appointments' => sub($c) {
+	my $search = &subs::unformat_name($c->param('search') || '');
+	my @out;
+	if (length $search) {
+		my $rows = &subs::db_query('select app, uuid, server_time from appointments where app is not null and app != ? and app like ? order by server_time desc', '', '%' . $search . '%')->hashes || [];
+		my %seen;
+		foreach my $r ( @{$rows} ) {
+			my $app = $r->{'app'};
+			next unless $app;
+			next if $seen{$app}++;
+			push @out, { app => $app, uuid => $r->{'uuid'}, name => &subs::format_name($app) };
+		}
+	}
+	$c->render(json => { ok => 1, appointments => \@out });
 };
 
 sub take_picture($c,$data) {
@@ -7921,6 +7973,13 @@ post '/manager/upload_file' => sub ($c) {
 			duration => $duration || '1000',
 			browser_tab_id => $c->param('browser_tab_id')
 		};
+
+		# a capture taken in the Camera app itself, not on an appointment, is
+		# unclaimed media: it waits a week on the Camera app to be claimed
+		if (&subs::unformat_name($app) eq 'camera') {
+			$write->{'source'} = 'unclaimed';
+			$write->{'warranty'} = &subs::rightNow() + (7 * 24 * 60 * 60 * 1000);
+		}
 
 		&appointment_writer($c,$write);
 	}
