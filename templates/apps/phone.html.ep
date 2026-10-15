@@ -5,9 +5,9 @@
     reads the device's own contacts from window.JawnContacts. %>
 <style>
 	/* the panel is the window's only child and the window's contents are a flex
-	   box, so this div has to claim the width itself: without it the flex parent
+	   box, so this div has to claim the space itself: without it the flex parent
 	   shrink-wraps it to its widest row and the whole app sits off to the left. */
-	#phone_app { width:100%; max-width:560px; margin:0 auto; box-sizing:border-box; }
+	#phone_app { width:100%; height:100%; box-sizing:border-box; }
 	.phone_app_tabs { display:flex; gap:6px; justify-content:center; margin-bottom:10px; }
 	.phone_app_tab { padding:6px 16px; border:1px solid var(--line); border-radius:999px;
 		background:var(--panel); cursor:pointer; font-size:13px; user-select:none; }

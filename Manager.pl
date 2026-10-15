@@ -14038,12 +14038,28 @@ post '/manager/phone/dial' => sub($c) {
 	my $number = $c->param('number') || '';
 	$number =~ s/[^\d+#*]//g;
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
-	unless (&subs::device_setter() eq 'mobile') {
-		$c->render(json => { ok => 0, error => 'Dialing is only available on a phone.' });
+	if (&subs::device_setter() eq 'mobile') {
+		my $out = `termux-telephony-call "$number" 2>&1`;
+		$c->render(json => { ok => 1, number => $number, out => $out });
 		return;
 	}
-	my $out = `termux-telephony-call "$number" 2>&1`;
-	$c->render(json => { ok => 1, number => $number, out => $out });
+	# Not a phone: hand the call to one through remote_machines, the way an SMS is
+	# handed over, so the pad dials for real from the laptop. The phone's own copy
+	# of this route is what knows to run the command.
+	my $dialled;
+	foreach my $rm ( @{ &subs::db_query('select * from remote_machines where connection=? and device=?', 'active', 'mobile')->hashes } ) {
+		last if $dialled;
+		my $ru = eval { &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm }) };
+		next unless $ru && $ru->{'ua'} && $ru->{'manager'};
+		my $res = eval { $ru->{'ua'}->inactivity_timeout(20)->post($ru->{'manager'} . '/manager/phone/dial?number=' . $number) };
+		my $body = eval { decode_json $res->body } || {};
+		$dialled = $rm if $body->{'ok'};
+	}
+	if ($dialled) {
+		$c->render(json => { ok => 1, number => $number, via => ($dialled->{'hostname'} || $dialled->{'name'} || $dialled->{'ip'}) });
+		return;
+	}
+	$c->render(json => { ok => 0, error => 'No phone is reachable to dial from.' });
 };
 
 post '/manager/phone/call' => sub($c) {
