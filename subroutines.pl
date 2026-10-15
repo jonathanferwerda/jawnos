@@ -2496,12 +2496,13 @@ sub ble_bridge_client() {
 	return undef;
 }
 
-# How long a Bluetooth sighting keeps an embedded device listed in the Embedded
-# app after its last bridge message. A watch's radio sleeps and re-links on the
-# next advert, and even awake it only talks when something changes, so this must
-# outlast a quiet spell - not merely a nap. Long enough for both, short enough
-# that a device genuinely gone drops off.
-sub ble_presence_window() { return 1800000; }
+	# How long a Bluetooth sighting keeps an embedded device listed in the Embedded
+	# app after its last bridge message. A watch's radio sleeps and re-links on the
+	# next advert, and even awake it only talks when something changes, so this must
+	# outlast a quiet spell - not merely a nap. Two hours, so a watch that speaks
+	# rarely (a connected one says nothing for a long time) stays on the list even
+	# across a spell where its jawn was down; a device genuinely gone still drops.
+	sub ble_presence_window() { return 7200000; }
 
 sub ble_device_specs() {
 	# A device's __specs from its operator_door (which syncs): the durable id of
@@ -2703,6 +2704,21 @@ sub ble_enforce_hosts() {
 			else {
 				&ble_yield($c->{'id'});
 			}
+		}
+	}
+	# A watch linked right now is present, whatever its last payload said: it
+	# speaks only on connect and on steps, so its own messages can be hours apart
+	# and its sighting would age out of the Embedded list while it sits connected.
+	# Refresh it every pass.
+	if ($gb::ble_link_mac) {
+		my $linked = &ble_chip_by_mac($gb::ble_link_mac);
+		if ($linked && $linked->{'id'} && &ble_may_serve($linked->{'purpose'} || 'watch', $linked->{'id'})) {
+			&ble_device_record({
+				chip_id => $linked->{'id'},
+				edt => $linked->{'purpose'} || 'watch',
+				name => $linked->{'name'},
+				mac => $gb::ble_link_mac
+			});
 		}
 	}
 }
@@ -3378,11 +3394,20 @@ sub ble_message_processor() {
 	# can still be listed in the Embedded app while it is off its access point
 	# (see device_lister's Bluetooth fallback). The message names the chip, not
 	# the radio, so the link's address comes from the bridge events the listener
-	# tracks in $gb::ble_link_mac.
-	if ($msg->{'chip_id'}) {
+	# tracks in $gb::ble_link_mac. A tap names its chip only in the url it carries,
+	# so read that too - otherwise a connected watch that only ever taps would age
+	# out of the list.
+	my ($seen_chip, $seen_edt) = ($msg->{'chip_id'}, $msg->{'edt'});
+	if (!$seen_chip && ($msg->{'url'} || '') =~ /[?&]chip_id=([^&]+)/) {
+		$seen_chip = $1;
+	}
+	if (!$seen_edt && ($msg->{'url'} || '') =~ /[?&]edt=([^&]+)/) {
+		$seen_edt = $1;
+	}
+	if ($seen_chip) {
 		&subs::ble_device_record({
-			chip_id => $msg->{'chip_id'},
-			edt => $msg->{'edt'} || 'watch',
+			chip_id => $seen_chip,
+			edt => $seen_edt || 'watch',
 			name => $msg->{'name'},
 			mac => $gb::ble_link_mac
 		});
