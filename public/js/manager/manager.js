@@ -1039,6 +1039,7 @@ function jawnCameraUpload(result) {
 		success: function(response) {
 			setStatus('Saved.');
 			continent_record({ uuid: response.uuid, app: response.app, timestamp: response.timestamp });
+			if (pending.app === 'camera' && typeof jawnCameraAppPool === 'function') { jawnCameraAppPool(); }
 		},
 		error: function() { setStatus('Upload failed.'); },
 		cache: false,

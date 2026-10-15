@@ -13654,9 +13654,27 @@ sub generate_ai_media {
 		`magick $file_path -resize $resolution $file_path` unless lc $resolution eq 'raw';
 		$ocr = &Manager::ocr_reader($c,$file_path);
 	}
+	# a still thumbnail for image and video, made up front so the unclaimed
+	# pool can show it at once instead of waiting on the full file
+	my $thumb;
+	if ($upload_type eq 'image' || $upload_type eq 'video') {
+		my $thumb_dir = $public_dir . '/thumbs';
+		`mkdir -p $thumb_dir` unless -d $thumb_dir;
+		my $t = $thumb_dir . '/' . $filename;
+		$t =~ s/\.[^.]+$/.png/;
+		my $thumbnail_size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
+		if ($thumbnail_size ne 'none') {
+			my $cmd = ($upload_type eq 'video')
+				? 'ffmpeg -ss 00:00:00.010 -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
+				: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
+			`$cmd`;
+			$thumb = $t if -e $t;
+		}
+	}
 	my $appt_uuid = &subs::random_string_creator(33);
 	my $file_uuid = &subs::random_string_creator(21);
 	my $u_data = [{ server_time => &subs::rightNow(), appt_uuid => $appt_uuid, mail_uuid => $msg_uuid, ocr => $ocr, f => $file_path, uuid => $file_uuid, type => $upload_type }];
+	$u_data->[0]->{'thumb'} = $thumb if $thumb;
 	$log->info(Dumper $u_data);
 	my $jfile = encode_json $u_data;
 

@@ -65,7 +65,8 @@ function jawnCameraAppUpload(blob, name, kind) {
 $(document).on('click', '.camera_app_photo', function () {
 	if (jawnCameraAppNative()) {
 		window.__jawnCameraPending = { app: 'camera', status: '#camera_app .camera_app_status' };
-		window.JawnCamera.photo($(this).attr('capture') || '0');
+		// open the OS camera in image mode; the user picks front/back in its UI
+		window.JawnCamera.photo();
 		return;
 	}
 	if (!jawnCameraAppWebcam()) { jawnCameraAppStatus('No camera here.'); return; }
@@ -158,7 +159,8 @@ function jawnCameraUnclaimedMedia(item) {
 		return $('<img class="camera_unclaimed_thumb" loading="lazy">').attr('src', jawnCameraUnclaimedSrc(item, true));
 	}
 	if (item.type === 'video') {
-		return $('<video class="camera_unclaimed_thumb" muted preload="metadata" playsinline>').attr('src', jawnCameraUnclaimedSrc(item, false));
+		var img = $('<img class="camera_unclaimed_thumb" loading="lazy">').attr('src', jawnCameraUnclaimedSrc(item, true));
+		return $('<div class="camera_unclaimed_media"></div>').append(img).append('<span class="camera_unclaimed_play">▶</span>');
 	}
 	if (item.type === 'audio') {
 		return $('<img class="camera_unclaimed_thumb camera_unclaimed_icon">').attr('src', '/images/make believe/music.png');
@@ -216,10 +218,33 @@ function jawnCameraUnclaimedClaimState() {
 	var ids = jawnCameraUnclaimedSelectedIds();
 	var claim = $('#camera_app .camera_unclaimed_claim');
 	var fileBtn = $('#camera_app .camera_unclaimed_file');
+	var notice = $('#camera_app .camera_unclaimed_target');
 	claim.toggle(ids.length > 0);
-	fileBtn.text('File ' + ids.length + ' selected');
-	fileBtn.toggle(!!jawnCameraUnclaimed.target);
+	if (jawnCameraUnclaimed.target) {
+		notice.text(jawnCameraUnclaimedSummary() + ' to ' + jawnCameraUnclaimed.target.name);
+	} else {
+		notice.text('');
+	}
+	fileBtn.toggle(!!jawnCameraUnclaimed.target && ids.length > 0);
 	jawnCameraUnclaimedDropState();
+}
+
+function jawnCameraUnclaimedSummary() {
+	var counts = { image: 0, video: 0, audio: 0, other: 0 };
+	$.each(jawnCameraUnclaimed.items, function (i, item) {
+		if (jawnCameraUnclaimed.selected[item.file_uuid]) {
+			if (item.type === 'image') { counts.image++; }
+			else if (item.type === 'video') { counts.video++; }
+			else if (item.type === 'audio') { counts.audio++; }
+			else { counts.other++; }
+		}
+	});
+	var parts = [];
+	if (counts.image) { parts.push(counts.image + (counts.image === 1 ? ' image' : ' images')); }
+	if (counts.video) { parts.push(counts.video + (counts.video === 1 ? ' video' : ' videos')); }
+	if (counts.audio) { parts.push(counts.audio + ' audio'); }
+	if (counts.other) { parts.push(counts.other + (counts.other === 1 ? ' file' : ' files')); }
+	return parts.join(' and ') || 'media';
 }
 
 function jawnCameraUnclaimedDropState() {
@@ -250,7 +275,6 @@ function jawnCameraUnclaimedSearch() {
 						.attr('app', a.app).attr('uuid', a.uuid || '').text(a.name);
 					row.on('click', function () {
 						jawnCameraUnclaimed.target = { app: a.app, uuid: a.uuid || '', name: a.name };
-						$('#camera_app .camera_unclaimed_target').text('Filing into ' + a.name);
 						results.hide();
 						input.val(a.name);
 						jawnCameraUnclaimedClaimState();

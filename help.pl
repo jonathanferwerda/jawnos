@@ -220,7 +220,7 @@ our %topic = (
 	'camera' => {
 		title => 'Camera', category => 'apps', app => 'camera',
 		templates => [ 'templates/apps/camera.html.ep' ],
-		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'File selected' ],
+		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
 		verified => '2026-10-15',
 		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
