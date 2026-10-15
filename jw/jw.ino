@@ -23,6 +23,8 @@
 #include <BLE2902.h>
 // ble_gap_conn_find: the connected central's address, for the net room's BT line
 #include <host/ble_gap.h>
+// the guide associate's spoken reply arrives as base64 (see say_audio)
+#include <mbedtls/base64.h>
 #include "FS.h"
 #include "FFat.h"
 #include "voice_models.h"
@@ -460,6 +462,19 @@ static volatile bool ble_notify_ready = false;
 static inline bool ble_link_ready() {
   return ble_radio_up && deviceConnected && ble_notify_ready && pTxCharacteristic != nullptr;
 }
+
+// ---- guide associate replies (type "say" / "say_audio") ---------------------
+// loop2 hands the message over; loop() (core 1, where LVGL and FFat live)
+// draws the text and decodes/plays the clip. The audio rides base64 so the
+// whole envelope stays text on the wire, the same way a voice clip ships up.
+#define REPLY_WAV_PATH "/reply.wav"
+#define SAY_TEXT_MS 8000          // how long the answer stays on screen
+static String say_text;
+static String say_audio_b64;
+static volatile bool say_text_pending = false;
+static volatile bool say_audio_pending = false;
+static uint32_t say_shown_at = 0;
+static lv_obj_t *say_label = nullptr;   // the on-screen answer (top layer)
 
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -1720,6 +1735,33 @@ void loop() {
       voice_border_show(voice_border_on);
     }
   }
+  // a guide associate reply: draw the text, then play the spoken clip. The text
+  // hides itself after SAY_TEXT_MS; the clip plays once and is not kept.
+  if (say_text_pending) {
+    String t;
+    bool has = false;
+    if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+      if (say_text_pending) { has = true; t = say_text; say_text_pending = false; }
+      xSemaphoreGive(taskMutex);
+    }
+    if (has) {
+      say_label_show(t);
+      say_shown_at = millis();
+    }
+  }
+  if (say_label && say_shown_at && millis() - say_shown_at > SAY_TEXT_MS) {
+    say_label_show("");
+    say_shown_at = 0;
+  }
+  if (say_audio_pending) {
+    String a;
+    bool has = false;
+    if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+      if (say_audio_pending) { has = true; a = say_audio_b64; say_audio_pending = false; say_audio_b64 = ""; }
+      xSemaphoreGive(taskMutex);
+    }
+    if (has) { say_audio_decode_play(a); }
+  }
   if (buttonMillis != 0 && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     if (voiceShipping) {
       // A payload is still going out, so the radio (and the chip) must stay up.
@@ -2070,6 +2112,33 @@ void loop2(void * pvParameters) {
             long t = btMsg["ts"];
             voice_acked_ts = t;
             Serial.printf("[voice] recv ack ts=%ld\n", t);
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say") {
+            // the guide associate's answer: loop() shows it on the screen
+            if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("text")) {
+              String t;
+              if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+                t = (const char *)btMsg["data"]["text"];
+                say_text = t;
+                say_text_pending = true;
+                xSemaphoreGive(taskMutex);
+              }
+              Serial.printf("[say] %s\n", t.c_str());
+            }
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio") {
+            // the spoken answer as a base64 8 kHz mono PCM WAV: loop() decodes
+            // it to flash and plays it (never here: FFat is core-1 territory)
+            if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("audio")) {
+              String a;
+              if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+                a = (const char *)btMsg["data"]["audio"];
+                say_audio_b64 = a;
+                say_audio_pending = true;
+                xSemaphoreGive(taskMutex);
+              }
+              Serial.printf("[say] audio %u b64 chars\n", (unsigned)a.length());
+            }
           }
         }
         }
@@ -3672,6 +3741,32 @@ static void voice_border_show(bool on) {
   }
 }
 
+// The guide associate's answer, drawn on the top layer so the per-room rebuilds
+// never sweep it away (the same trick the orange ring uses). Hidden by loop()
+// after SAY_TEXT_MS, or by passing an empty string.
+static void say_label_show(const String &t) {
+  if (!say_label) {
+    say_label = lv_label_create(lv_layer_top());
+    lv_obj_set_width(say_label, LV_PCT(90));
+    lv_label_set_long_mode(say_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_bg_opa(say_label, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(say_label, lv_color_hex(0x101428), LV_PART_MAIN);
+    lv_obj_set_style_text_color(say_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_radius(say_label, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(say_label, 8, LV_PART_MAIN);
+    lv_obj_align(say_label, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (t.length()) {
+    lv_label_set_text(say_label, t.c_str());
+    lv_obj_remove_flag(say_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(say_label);
+  }
+  else {
+    lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 static void voiceListenTask(void *pv) {
   if (voiceDbg) { Serial.printf("[voice] task int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   AudioInputIf *mic = watch.getAudioInput();
@@ -3929,11 +4024,53 @@ void audio_playback_loop_task(void *pvParameters) {
     if(file_source) { delete file_source; file_source = nullptr; }
     if(out_hardware) { delete out_hardware; out_hardware = nullptr; }
 
-    // Safely restore playback button graphics text layer
-    lv_obj_t * btn_label = lv_obj_get_child(playbtn1, 0);
-    lv_label_set_text(btn_label, "Play Recording");
+    // Safely restore playback button graphics text layer (a reply playback may
+    // have used the same task; the button can also be gone after a room rebuild)
+    if (playbtn1) {
+      lv_obj_t * btn_label = lv_obj_get_child(playbtn1, 0);
+      if (btn_label) { lv_label_set_text(btn_label, "Play Recording"); }
+    }
 
     vTaskDelete(NULL);
+}
+
+// Decode the base64 reply clip onto flash and play it. Runs on core 1 (loop),
+// where FFat and the audio globals are safe to touch; the mic task and the
+// playback task also run here, and isPlaying/isRecording arbitrate between them.
+static void say_audio_decode_play(const String &b64) {
+  if (isPlaying || isRecording) { return; }
+  if (b64.length() < 16) { return; }
+  size_t cap = (b64.length() * 3) / 4 + 8;
+  uint8_t *buf = (uint8_t *)ps_malloc(cap);
+  if (!buf) { buf = (uint8_t *)malloc(cap); }
+  if (!buf) {
+    Serial.println("[say] audio: no buffer");
+    return;
+  }
+  size_t olen = 0;
+  int rc = mbedtls_base64_decode(buf, cap, &olen, (const unsigned char *)b64.c_str(), b64.length());
+  if (rc != 0 || olen < 44) {
+    free(buf);
+    Serial.printf("[say] audio decode failed rc=%d len=%u\n", rc, (unsigned)olen);
+    return;
+  }
+  File f = FFat.open(REPLY_WAV_PATH, FILE_WRITE);
+  if (!f) {
+    free(buf);
+    Serial.println("[say] audio: /reply.wav open failed");
+    return;
+  }
+  f.write(buf, olen);
+  f.close();
+  free(buf);
+  Serial.printf("[say] audio wrote %u bytes\n", (unsigned)olen);
+  if (isPlaying || isRecording) { return; }
+  isPlaying = true;
+  out_hardware = new LilyGoAudioSink(watch.getAudioOutput());
+  file_source = new AudioFileSourceFATFS(REPLY_WAV_PATH);
+  wav = new AudioGeneratorWAV();
+  wav->begin(file_source, out_hardware);
+  xTaskCreatePinnedToCore(audio_playback_loop_task, "ReplyTask", 4096, NULL, 2, NULL, 1);
 }
 
 

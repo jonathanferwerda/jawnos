@@ -1639,6 +1639,38 @@ sub say_player_command() {
 
 our $say_quiet;
 
+# Piper render, shared by say_it (local playback) and watch_reply (BLE push to
+# the watch). Returns the path of a fresh WAV, or '' when no piper render is
+# possible on this machine. The caller owns (and unlinks) the file.
+sub say_render_wav() {
+	my ($text) = @_;
+	return '' unless defined $text && length $text;
+	my $pick = &subs::misc_setting('say_voice') || &subs::say_default_voice();
+	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
+	return '' unless $spec && (($spec->{'engine'} || '') eq 'piper');
+	my @piper_argv = &subs::say_piper_argv();
+	my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
+	return '' unless scalar @piper_argv && -e $model;
+	# a bundle carries its own espeak-ng data; point piper at it (the glibc
+	# launcher, unlike a native run, does not find it on its own)
+	my $piper_bin = $piper_argv[-1] || '';
+	(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
+	my @espeak_data = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
+	my $tmp_dir = $gb::tmp_dir || '/tmp';
+	my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
+	my $made = 0;
+	# the words go to piper on stdin, so nothing has to be quoted for a shell.
+	# no -q: the flag exists in the 1.2.0 build but not in the newer CLI, and
+	# an unknown flag is a hard argparse error there.
+	if (my $pid = open(my $piper_in, '|-', @piper_argv, @espeak_data, '-m', $model, '-f', $wav)) {
+		print {$piper_in} $text;
+		close $piper_in;
+		$made = 1 if -s $wav;
+	}
+	unlink $wav if -e $wav && !$made;
+	return $made ? $wav : '';
+}
+
 sub say_it() {
 	my $text = shift;
 	my $voice_override = shift;
@@ -1653,33 +1685,13 @@ sub say_it() {
 		# Piper first, on every device, so the voice is uniform wherever it can
 		# run: the models are shared (voice_sync), only the binary is per-device.
 		if (($spec->{'engine'} || '') eq 'piper') {
-			my @piper_argv = &subs::say_piper_argv();
-			my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
-			# a bundle carries its own espeak-ng data; point piper at it (the glibc
-			# launcher, unlike a native run, does not find it on its own)
-			my $piper_bin = $piper_argv[-1] || '';
-			(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
-			my @espeak_data = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
-			if (scalar @piper_argv && -e $model) {
-				my $tmp_dir = $gb::tmp_dir || '/tmp';
-				my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
-				# the words go to piper on stdin, so nothing has to be quoted for a shell.
-				# no -q: the flag exists in the 1.2.0 build but not in the newer CLI, and
-				# an unknown flag is a hard argparse error there.
-				my $made = 0;
-				if (my $pid = open(my $piper_in, '|-', @piper_argv, @espeak_data, '-m', $model, '-f', $wav)) {
-					print {$piper_in} $text;
-					close $piper_in;
-					$made = 1 if -s $wav;
-				}
-				if ($made) {
-					my $player = &subs::say_player_command();
-					# a headless server has no sink; a failed play is not our problem
-					`$player "$wav" 2>/dev/null`;
-					unlink $wav;
-					return;
-				}
-				unlink $wav if -e $wav;
+			my $wav = &subs::say_render_wav($text);
+			if ($wav) {
+				my $player = &subs::say_player_command();
+				# a headless server has no sink; a failed play is not our problem
+				`$player "$wav" 2>/dev/null`;
+				unlink $wav;
+				return;
 			}
 		}
 		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
@@ -1694,6 +1706,53 @@ sub say_it() {
 		my $voice = $spec->{'voice'} || 'en-us';
 		`espeak -a70 -v $voice "$safe" 2>/dev/null`;
 	}, { name => 'say it' });
+}
+
+# A spoken answer to a voice command that came from the watch: push the reply
+# text (the watch shows it on screen) and the spoken answer (a short piper clip
+# the watch plays) over the bridge, so the answer lands on the wrist. No local
+# say_it: the machine holding the bridge would double-talk with the watch.
+sub watch_reply() {
+	my ($meta, $text) = @_;
+	return unless $meta && $meta->{'chip_id'} && defined $text && length $text;
+	&subs::bluetooth_sender({
+		intent => 'com.jawn.president.bt.connect',
+		chip_id => $meta->{'chip_id'},
+		edt => $meta->{'edt'} || 'watch',
+		message => { type => 'say', data => { text => $text } }
+	});
+	# Piper takes a couple of seconds and the WiFi path runs voice_ingest inline
+	# in the request: render off the request, then push. The child re-dials the
+	# database itself (bluetooth_sender reads it), so forking here is safe.
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		my $wav = &subs::say_render_wav($text);
+		if ($wav) {
+			# the watch reassembles one message of at most 64 KB, and base64 grows
+			# a third: 8 kHz mono PCM (16 B/ms) keeps a short sentence inside it.
+			my $small = $wav . '.8k.wav';
+			system('ffmpeg', '-loglevel', 'error', '-y', '-i', $wav, '-ar', '8000', '-ac', '1', '-acodec', 'pcm_s16le', $small);
+			if (-e $small && -s $small && ((-s $small) * 4 / 3 + 4096) < 65536) {
+				require MIME::Base64;
+				my $b64 = '';
+				if (open(my $fh, '<:raw', $small)) {
+					local $/;
+					$b64 = MIME::Base64::encode_base64(<$fh> // '', '');
+					close $fh;
+				}
+				if (length $b64) {
+					&subs::bluetooth_sender({
+						intent => 'com.jawn.president.bt.connect',
+						chip_id => $meta->{'chip_id'},
+						edt => $meta->{'edt'} || 'watch',
+						message => { type => 'say_audio', data => { rate => 8000, audio => $b64 } }
+					});
+				}
+			}
+			unlink $small if -e $small;
+			unlink $wav;
+		}
+	}, { name => 'watch reply audio' });
 }
 
 sub main_icon_maker() {
@@ -3221,6 +3280,18 @@ sub voice_brain() {
 	my ($text, $meta) = @_;
 	$meta ||= {};
 	return undef unless defined $text && length $text;
+	# A reply to a watch-addressed utterance lands on the watch (text on screen,
+	# the spoken answer over its speaker); any other utterance speaks locally.
+	my $reply = sub {
+		my ($speech) = @_;
+		return unless defined $speech && length $speech;
+		if (($meta->{'chip_id'} || '') ne '') {
+			&subs::watch_reply($meta, $speech);
+		}
+		else {
+			&subs::say_it($speech);
+		}
+	};
 	# the guide's own model (Configure -> Plat); without one the caller keeps the
 	# note fallback
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
@@ -3257,13 +3328,13 @@ sub voice_brain() {
 			my $promoted = eval { &Manager::guide_promote_staged(&subs::controller_builder(), $staged->{'staged'}) };
 			if ($promoted && !$promoted->{'error'}) {
 				my $speech = 'Saved ' . $what . '.';
-				&subs::say_it($speech);
+				$reply->($speech);
 				$log->info('voice: brain saved "' . $what . '"');
 				return { handled => 1, action => 'create', saved => 1, said => $speech };
 			}
 		}
 		my $speech = 'I staged ' . $what . '. Promote it in the Guide and it is saved.';
-		&subs::say_it($speech);
+		$reply->($speech);
 		$log->info('voice: brain staged "' . $what . '"');
 		return { handled => 1, action => 'create', staged => $staged->{'staged'}, said => $speech };
 	}
@@ -3271,7 +3342,7 @@ sub voice_brain() {
 	if ($a eq 'say' || $a eq 'ask' || $a eq 'done') {
 		my $speech = $action->{'text'} || '';
 		return undef unless length $speech;
-		&subs::say_it($speech);
+		$reply->($speech);
 		$log->info('voice: brain said "' . $speech . '"');
 		return { handled => 1, action => $a, said => $speech };
 	}
@@ -3280,7 +3351,7 @@ sub voice_brain() {
 	if ($a eq 'measure' || $a eq 'where_when' || $a eq 'play_music' || $a eq 'open_app') {
 		my $obs = eval { &Manager::remote_command_execute(&subs::controller_builder(), $action) };
 		return undef unless defined $obs && length $obs;
-		&subs::say_it($obs);
+		$reply->($obs);
 		$log->info('voice: brain ' . $a . ' (' . $obs . ')');
 		return { handled => 1, action => $a, observation => $obs };
 	}

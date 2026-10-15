@@ -602,18 +602,19 @@ our %topic = (
 	'voice' => {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-10-14',
+		verified => '2026-10-15',
 		summary => 'Speak to the watch; it listens for a phrase and files the rest.',
 		body => [
 			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
 			'How the watch listens is the Voice setting on the watch row in the Embedded panel. There are four choices: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn or Voice: Jawn Do - which waits for that phrase and records what follows.',
-			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" and "Jawn Do" are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all.'
+			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" and "Jawn Do" are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all.',
+			'When the guide associate answers a spoken request, the reply lands on the watch itself: the words appear on its screen, and the spoken answer plays over its speaker.'
 		],
 		steps => [
 			'Open Embedded and find the watch in the device list.',
 			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn or Voice: Jawn Do.',
 			'The choice is pushed to the watch as a fresh Now Me, and the watch starts listening in that mode.',
-			'Speak: a command runs, and anything else is saved as a note.'
+			'Speak: a command runs, and anything else is saved as a note. Answers to requests the guide associate handles are shown and spoken on the watch.'
 		],
 		related => [ 'watch', 'embedded', 'notes', 'ble_bridge' ],
 		prompt => 'Describe the Voice select on the watch row in the Embedded panel and its four choices exactly: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, Voice: Jawn Do. Only those two phrases are trained - do not name any other wake word.'
