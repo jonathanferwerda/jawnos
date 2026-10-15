@@ -940,6 +940,13 @@ sub resolve_when {
 	$t =~ s/^\s+|\s+$//g;
 	return undef unless length $t;
 
+	# a year written in words: "44 bc" is the year -44, the negative year the app
+	# shows B.C. as; "ad"/"ce" leaves the year as written
+	my $bc = 0;
+	if ($t =~ s/\b(\d{1,4})\s*(?:bc|bce)\b//i) { $bc = $1 + 0; }
+	else { $t =~ s/\b(\d{1,4})\s*(?:ad|ce)\b//i; }
+	$t =~ s/^\s+|\s+$//g;
+
 	my %month = (
 		january=>1, february=>2, march=>3, april=>4, may=>5, june=>6, july=>7,
 		august=>8, september=>9, october=>10, november=>11, december=>12,
@@ -972,7 +979,7 @@ sub resolve_when {
 	my ($mon, $day, $year);
 	my $date_like = 0;
 	my $year_given = 0;
-	if ($scan =~ /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/) {
+	if ($scan =~ /(?:^|[^\d-])(-?\d{1,4})-(\d{1,2})-(\d{1,2})(?![\d-])/) {
 		($year, $mon, $day) = ($1 + 0, $2 + 0, $3 + 0);
 		$date_like = $year_given = 1;
 	}
@@ -981,7 +988,10 @@ sub resolve_when {
 		$date_like = 1;
 		if (defined $3) { $year = $3 < 100 ? ($3 < 69 ? 2000 + $3 : 1900 + $3) : $3 + 0; $year_given = 1; }
 	}
-	if (!$date_like && $scan =~ /\b(1\d{3}|2\d{3})\b/) { $year = $1 + 0; $date_like = $year_given = 1; }
+	elsif ($bc) { $year = -$bc; $date_like = $year_given = 1; }
+	# any four-figure year, including "0001" and the hundreds ("first christmas"
+	# is year 1); a lone four-figure number is read as a year
+	if (!$date_like && $scan =~ /\b(\d{4})\b/) { $year = $1 + 0; $date_like = $year_given = 1; }
 	if (!$mon && $scan =~ /\b(january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/) {
 		$mon = $month{$1};
 		$date_like = 1;
@@ -995,7 +1005,7 @@ sub resolve_when {
 	# a month was named but no ordinal, and then a lone small number is the hour
 	my $residual = ' ' . $scan . ' ';
 	$residual =~ s/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/ /g;
-	$residual =~ s{\b\d{4}-\d{1,2}-\d{1,2}\b}{ }g;
+	$residual =~ s{-?\d{1,4}-\d{1,2}-\d{1,2}}{ }g;
 	$residual =~ s{\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b}{ }g;
 	if (defined $year) { $residual =~ s/\b\Q$year\E\b/ /g; }
 	if (defined $day) {
@@ -1037,6 +1047,18 @@ sub resolve_when {
 		}
 	}
 	return $ms;
+}
+
+# A local time as an unambiguous ISO string, its year signed so B.C. reads as a
+# negative year ("-0044-03-15 00:00:00"). resolve_when reads this back exactly,
+# which is what the walkman's jump buttons hand the time machine.
+sub iso_local {
+	my ($ms) = @_;
+	return '' unless defined $ms;
+	my @t = localtime($ms / 1000);
+	my $y = $t[5] + 1900;
+	my $sign = $y < 0 ? '-' : '';
+	return sprintf('%s%04d-%02d-%02d %02d:%02d:%02d', $sign, abs($y), $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
 }
 
 sub ago_calc() {

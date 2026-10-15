@@ -325,14 +325,13 @@ sub help_search_summary {
 # device and cache tables are deliberately left out, so a secret cannot ride out
 # to a model on a search.
 our %help_search_tables = (
-	notes           => [qw/text app/],
-	mailbox         => [qw/subject from_email email contact person/],
+	notes           => [qw/text/],
+	mailbox         => [qw/subject/],
 	magazine        => [qw/title teaser/],
-	backups         => [qw/destination reason/],
-	model           => [qw/name app manufacturer description/],
-	option          => [qw/name app manufacturer description/],
-	subcategory     => [qw/name app manufacturer description/],
-	option_category => [qw/supplier app name/],
+	model           => [qw/name description manufacturer/],
+	option          => [qw/name description manufacturer/],
+	subcategory     => [qw/name description manufacturer/],
+	option_category => [qw/name/],
 );
 
 # One search over the person's records: the appointments that match (by app, file
@@ -427,28 +426,42 @@ sub guide_time_machine {
 			if ($act eq 'create' && $spec =~ /\b(?:start|begin|log|record|add|create|schedule|make|new|remind)\b/i) {
 				my $when_ms = &guide_when_ms($action->{'when'});
 				my $app = &subs::unformat_name($action->{'app'} || $action->{'title'} || 'appointment');
-				&appointment_writer(undef, {
-					uuid => &subs::random_string_creator(40),
-					app => $app,
-					type => ($action->{'type'} || 'usual'),
-					timestamp => $when_ms,
-					server_time => &subs::rightNow(),
-					notes => $action->{'title'} || '',
-					source => 'guide',
-					device => &subs::device_setter(),
-				});
+				my $title = $action->{'title'} || '';
+				my $type = $action->{'type'} || 'start';
+				# the Confirmation Requirement: unticked, the appointment is written at
+				# once (through appointment_writer, so its alarm and any embedded relay
+				# fire); ticked, it is staged for the person to confirm instead
+				my $confirm = (&subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' }) // 'on');
+				if ($confirm eq 'off') {
+					&appointment_writer(undef, {
+						uuid => &subs::random_string_creator(40),
+						app => $app,
+						type => $type,
+						timestamp => $when_ms,
+						server_time => &subs::rightNow(),
+						notes => $title,
+						source => 'guide',
+						device => &subs::device_setter(),
+					});
+				}
+				else {
+					&guide_stage_appointment(undef, { app => $app, type => $type, timestamp => $when_ms, title => $title, source => 'guide' });
+				}
 				$ms = $when_ms;
 			}
 			elsif ($act eq 'time') {
 				my $w = $action->{'when'};
 				if (defined $w && $w !~ /unknown/i) {
-					$w =~ s/\bat\b/ /gi;
-					my $t = eval { str2time($w) };
-					if (!$t && $w =~ /(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/) {
-						my $d = $1; $d =~ s/T/ /;
-						$t = eval { str2time($d) };
+					# read the answer with the same resolver, so a year-1 or B.C. answer
+					# ("0001-12-25", "-0044-03-15") lands right - str2time reads year 1
+					# as 2001 and refuses a negative year
+					my $r = &subs::resolve_when($w, $timestamp);
+					if (!defined $r) {
+						$w =~ s/\bat\b/ /gi;
+						my $t = eval { str2time($w) };
+						$r = $t * 1000 if $t;
 					}
-					$ms = $t * 1000 if $t;
+					$ms = $r if defined $r;
 				}
 			}
 		}
@@ -3846,38 +3859,40 @@ get '/manager/time_jump' => sub($c) {
 	my $t2 = ($t1 + $timestamp + $t1);
 	my $query;
 	my $date = localtime( time() )->strftime('%a %B %d %Y %I:%M%P');
+	# cast: the column is text, so a plain < compares lexicographically and finds
+	# nothing once the view is before 1970 (a negative timestamp)
 	if ($type eq 'prev') {
 		if ($filter ne 'all') {
-			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and timestamp < ? order by timestamp DESC LIMIT 1',
+			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and cast(timestamp as integer) < ? order by cast(timestamp as integer) DESC LIMIT 1',
 				$app,$filter,$t);
 		}
 		else {
-			$query = &subs::db_query('select timestamp from appointments where app=? and timestamp < ? order by timestamp DESC LIMIT 1',
+			$query = &subs::db_query('select timestamp from appointments where app=? and cast(timestamp as integer) < ? order by cast(timestamp as integer) DESC LIMIT 1',
 				$app,$t);
 		}
 	}
 	elsif ($type eq 'next') {
 		if ($filter ne 'all') {
-			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and timestamp > ? order by timestamp ASC LIMIT 1',
+			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and cast(timestamp as integer) > ? order by cast(timestamp as integer) ASC LIMIT 1',
 				$app,$filter,$t2);
 		}
 		else {
-			$query = &subs::db_query('select timestamp from appointments where app=? and timestamp > ? order by timestamp ASC LIMIT 1',
+			$query = &subs::db_query('select timestamp from appointments where app=? and cast(timestamp as integer) > ? order by cast(timestamp as integer) ASC LIMIT 1',
 				$app,$t2);
 		}
 	}
 
 	my $res = $query->hashes;
 
-	if ($res->[0]->{'timestamp'} == undef) {
-		$query = &subs::db_query('select timestamp from appointments where app=? and timestamp = ? order by timestamp ASC LIMIT 1',
+	unless (defined $res->[0] && defined $res->[0]->{'timestamp'}) {
+		$query = &subs::db_query('select timestamp from appointments where app=? and cast(timestamp as integer) = ? order by cast(timestamp as integer) ASC LIMIT 1',
 			$app,$timestamp);
 		$res = $query->hashes;
 	}
 
-	$date = localtime($res->[0]->{'timestamp'} / 1000 )->strftime('%a %B %d %Y %I:%M:%S%P') unless $timestamp == 0 || $timestamp == undef;
+	$date = &subs::iso_local($res->[0]->{'timestamp'}) if defined $res->[0] && defined $res->[0]->{'timestamp'};
 
-	$c->render(json => { date => $date, sent_timestamp => $timestamp, new_timestamp => $res->[0]->{'timestamp'} });
+	$c->render(json => { date => $date, sent_timestamp => $timestamp, new_timestamp => (defined $res->[0] ? $res->[0]->{'timestamp'} : undef) });
 
 };
 
@@ -6134,7 +6149,7 @@ post '/manager/configure/pseudonym_icon_changer' => sub ($c) {
 # this desk hands out citizenship, so a machine that has merely linked and not
 # yet completed a signed exchange must not reach it before its key is on file.
 sub ticket_desk_allowed($c) {
-	return 1 if $c->session('privilege') eq 'citizen';
+	return 1 if $c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen';
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
@@ -6468,6 +6483,11 @@ get '/manager/box_office' => sub($c) {
 		$t->{'access_log'} = $al;
 	}
 	my $people = $persons->hashes;
+	# this path rides the bare signed rail (see hooks.pl), so the device/string
+	# stash the hook sets for a gated path is absent; the desk template and
+	# window_maker both read them, so set them here for citizen and peer alike
+	$Manager::random_caching_string = &subs::jawn_version();
+	$c->stash('device' => &subs::device_setter(), 'string' => $Manager::random_caching_string);
 	my $content = $c->render_to_string(
 		template => 'box_office',
 		timestamp => $timestamp,
@@ -7040,6 +7060,11 @@ sub log_reader {
 		my $fetch_end = $in_view_only ? ($timestamp + $t1) : $t2;
 		# the client prunes by this; the oldest row carried settles it below
 		my $fetch_start = $in_view_only ? $t : $t - $t1;
+		# the column is text, so a numeric compare is lexicographic and finds nothing
+		# once the window is before 1970 (a negative timestamp): cast only then, so the
+		# common modern-range queries keep their index
+		my $tint = (($t || 0) < 0 || ($fetch_end || 0) < 0) ? "cast($timestamp_selector as integer)" : $timestamp_selector;
+		my $stopint = (($t || 0) < 0) ? 'cast(stop_timestamp as integer)' : 'stop_timestamp';
 		# A finished appointment behind the view is left alone: it was over before
 		# anything on screen, so its dot would pile against the edge with no band to
 		# explain it. The line is "stopped inside the window" or "still running".
@@ -7050,12 +7075,12 @@ sub log_reader {
 		# and the second reaches the few start/record rows by type. The merge below
 		# already de-duplicates and re-sorts whatever both hands back.
 		my @stick_clauses = (
-			[ 'appointments', '(stop_timestamp between ? and ?)', [ $t, $fetch_end ] ],
+			[ 'appointments', "($stopint between ? and ?)", [ $t, $fetch_end ] ],
 			# the still-running line wants the type index: left to choose, the planner
 			# takes "stop_timestamp is null" for an equality and walks every
 			# never-stopped row (tens of thousands) instead of the dozen start/record
 			# rows. idx12_appts (type,app) is the one it should use.
-			[ 'appointments indexed by idx12_appts', '(stop_timestamp is null and type in (?,?) and timestamp <= ?)', [ 'start', 'record', $fetch_end ] ],
+			[ 'appointments indexed by idx12_appts', '(stop_timestamp is null and type in (?,?) and ' . $tint . ' <= ?)', [ 'start', 'record', $fetch_end ] ],
 		);
 		my $stick_suffix = '';
 		my @stick_suffix_variables;
@@ -7093,11 +7118,11 @@ sub log_reader {
 
 				my $query;
 				if ($data->{'filter'} && $data->{'filter'} ne 'all') {
-					$query = "select timestamp,app,server_time,type,duration from appointments where app = ? AND $timestamp_selector between ? and ? and type = ?";
+					$query = "select timestamp,app,server_time,type,duration from appointments where app = ? AND $tint between ? and ? and type = ?";
 					push @query_variables, $data->{'filter'};
 				}
 				else {
-					$query = "select timestamp,app,server_time,type,duration from appointments where app = ? AND $timestamp_selector between ? and ?";
+					$query = "select timestamp,app,server_time,type,duration from appointments where app = ? AND $tint between ? and ?";
 				}
 				if ($project && $project ne 'all') {
 					$query .= " and project = ? ";
@@ -7120,11 +7145,11 @@ sub log_reader {
 			my $query;
 			my @query_variables = ( $t, $fetch_end );
 			if ($data->{'filter'} && $data->{'filter'} ne 'all') {
-				$query = "select distinct(app) as app,* from appointments where $timestamp_selector between ? and ? and type = ?";
+				$query = "select distinct(app) as app,* from appointments where $tint between ? and ? and type = ?";
 				push @query_variables, $data->{'filter'};
 			}
 			else {
-				$query = "select distinct(app) as app,* from appointments where $timestamp_selector between ? and ?";
+				$query = "select distinct(app) as app,* from appointments where $tint between ? and ?";
 
 			}
 			if ($project && $project ne 'all') {
