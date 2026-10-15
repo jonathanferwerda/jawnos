@@ -153,12 +153,12 @@ sub check {
 	my $kind = &source_kind($rel, $src);
 
 	if ($kind eq 'perl') {
-		my $out = `cd "$root" && perl -c "$path" 2>&1`;
+		my $out = `cd "$root" && "$^X" -c "$path" 2>&1`;
 		$out = '' unless defined $out;
 		unless ($out =~ /syntax OK/) {
 			# an app fragment (hooks.pl) leans on the DSL and imports Manager.pl
 			# brings in, so retry with them before calling it broken
-			my $again = `cd "$root" && perl -Mfeature=signatures -MMojolicious::Lite -MMojo::JSON=decode_json,encode_json -c "$path" 2>&1`;
+			my $again = `cd "$root" && "$^X" -Mfeature=signatures -MMojolicious::Lite -MMojo::JSON=decode_json,encode_json -c "$path" 2>&1`;
 			$again = '' unless defined $again;
 			push @probs, 'perl -c: ' . &first_line($out) unless $again =~ /syntax OK/;
 		}

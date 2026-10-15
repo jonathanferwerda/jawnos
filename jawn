@@ -277,7 +277,11 @@ sub shut_down() {
 	# command line, and whatever still holds the web port. (2026-10-14: this used to
 	# be followed by pid-as-substring matches against `ps -e`, which once matched a
 	# freshly-started President and killed the boot. Only exact, verified pids now.)
-	`./scripts/manager_killer.pl`;
+	# run it with this interpreter, not by its shebang: on Termux perl is not at
+	# /usr/bin/perl, so './scripts/manager_killer.pl' fails to exec and the sweep
+	# silently never runs (leftover processes keep the web port and wedge the
+	# next boot). $^X is the interpreter running this master.
+	`"$^X" ./scripts/manager_killer.pl`;
 	# the pids the tree reported to the master, each by its exact number and only
 	# when its command line still names a jawn program - never a substring match, so
 	# a reused pid (or a new process whose number merely contains an old one) is
