@@ -1715,43 +1715,64 @@ sub say_it() {
 sub watch_reply() {
 	my ($meta, $text) = @_;
 	return unless $meta && $meta->{'chip_id'} && defined $text && length $text;
+	my $edt = $meta->{'edt'} || 'watch';
 	&subs::bluetooth_sender({
 		intent => 'com.jawn.president.bt.connect',
 		chip_id => $meta->{'chip_id'},
-		edt => $meta->{'edt'} || 'watch',
+		edt => $edt,
 		message => { type => 'say', data => { text => $text } }
 	});
+	# The spoken half is optional: the Embedded panel's Audio replies toggle, on
+	# by default, writes audio_replies into the device's operator_door specs.
+	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} }) } || {};
+	my $want = $op->{'__specs'}->{'audio_replies'};
+	return if defined $want && $want eq 'off';
 	# Piper takes a couple of seconds and the WiFi path runs voice_ingest inline
 	# in the request: render off the request, then push. The child re-dials the
 	# database itself (bluetooth_sender reads it), so forking here is safe.
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
 		my $wav = &subs::say_render_wav($text);
-		if ($wav) {
-			# the watch reassembles one message of at most 64 KB, and base64 grows
-			# a third: 8 kHz mono PCM (16 B/ms) keeps a short sentence inside it.
-			my $small = $wav . '.8k.wav';
+		return unless $wav;
+		my $tmp_dir = $gb::tmp_dir || '/tmp';
+		# MP3, not raw PCM: the watch decodes it (AudioGeneratorMP3), and 32 kbps
+		# mono is a quarter of 8 kHz PCM's bytes, so the clip crosses the bridge in
+		# well under a second instead of trailing the text by several. The watch
+		# reassembles one message of at most 64 KB and base64 grows a third, so this
+		# carries ~10 s of audio - far more than the brain's one-or-two sentences.
+		my $mp3 = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.mp3';
+		system('ffmpeg', '-loglevel', 'error', '-y', '-i', $wav, '-ac', '1', '-ar', '24000', '-b:a', '32k', $mp3);
+		my ($file, $format, $rate) = (-e $mp3 && -s $mp3) ? ($mp3, 'mp3', 24000) : (undef, undef, 0);
+		my $small = '';
+		if (!$file) {
+			# no mp3 encoder here: the 8 kHz PCM WAV the watch also plays
+			$small = $wav . '.8k.wav';
 			system('ffmpeg', '-loglevel', 'error', '-y', '-i', $wav, '-ar', '8000', '-ac', '1', '-acodec', 'pcm_s16le', $small);
-			if (-e $small && -s $small && ((-s $small) * 4 / 3 + 4096) < 65536) {
-				require MIME::Base64;
-				my $b64 = '';
-				if (open(my $fh, '<:raw', $small)) {
-					local $/;
-					$b64 = MIME::Base64::encode_base64(<$fh> // '', '');
-					close $fh;
-				}
-				if (length $b64) {
-					&subs::bluetooth_sender({
-						intent => 'com.jawn.president.bt.connect',
-						chip_id => $meta->{'chip_id'},
-						edt => $meta->{'edt'} || 'watch',
-						message => { type => 'say_audio', data => { rate => 8000, audio => $b64 } }
-					});
-				}
-			}
-			unlink $small if -e $small;
-			unlink $wav;
+			($file, $format, $rate) = ($small, 'wav', 8000) if -e $small && -s $small;
 		}
+		if ($file && ((-s $file) * 4 / 3 + 4096) < 65536) {
+			require MIME::Base64;
+			my $b64 = '';
+			if (open(my $fh, '<:raw', $file)) {
+				local $/;
+				$b64 = MIME::Base64::encode_base64(<$fh> // '', '');
+				close $fh;
+			}
+			if (length $b64) {
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $meta->{'chip_id'},
+					edt => $edt,
+					message => { type => 'say_audio', data => { format => $format, rate => $rate, audio => $b64 } }
+				});
+			}
+		}
+		elsif ($file) {
+			$log->info('voice: reply audio too long for one bridge message; text only');
+		}
+		unlink $mp3 if -e $mp3;
+		unlink $small if length $small && -e $small;
+		unlink $wav;
 	}, { name => 'watch reply audio' });
 }
 
@@ -7380,6 +7401,29 @@ sub db_raw() {
 	my $rows = eval { $sth->fetchall_arrayref({}) };
 	# finish it: a statement left active pins the connection's read snapshot in
 	# SQLite, so later reads would see the world as it was here, not as it is
+	eval { $sth->finish };
+	return $rows || [];
+}
+
+# db_raw's fresh twin: the same read, but on a freshly prepared statement, so it
+# cannot inherit a cached handle that a dead request left executed-but-unfetched
+# - such a handle answers 0 rows to every later read of the same SQL, and the
+# mailbox threads hit exactly that. A fresh prepare costs microseconds, which
+# the once-per-render readers can spare; the per-poll hot paths stay on db_raw.
+sub db_fresh() {
+	my $query = shift;
+	my @params = @_;
+	my ($db) = &database_grabber();
+	return [] unless $db;
+	my $sth = eval { $db->dbh->prepare($query) };
+	return [] unless $sth;
+	my $n = $sth->{NUM_OF_PARAMS};
+	if (defined $n) {
+		splice(@params, $n) if @params > $n;
+		push @params, undef while @params < $n;
+	}
+	return [] unless eval { $sth->execute(@params); 1 };
+	my $rows = eval { $sth->fetchall_arrayref({}) };
 	eval { $sth->finish };
 	return $rows || [];
 }

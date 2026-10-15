@@ -13886,7 +13886,7 @@ sub budget_autocalc($data) {
 	my $mcalc = $is_measure ? &measure_calc_for($app, $circumstance, $settings->{'s_calc'}) : undef;
 	# The whole history, not the last thousand: a window can reach a year back, and
 	# the cap left the long scopes reading only the recent stretch. Read by
-	# timestamp (app,timestamp is indexed) and only the columns the walk needs.
+	# timestamp (app,timestamp is indexed) and only the columns the sum needs.
 	my $cols = 'timestamp';
 	$cols .= ',duration' if $circumstance eq 'duration';
 	$cols .= ',total' if $circumstance eq 'total';
@@ -13898,19 +13898,23 @@ sub budget_autocalc($data) {
 		@{$appts} = grep { $_->{'timestamp'} > $beginning } @{$appts};
 	}
 
-	# One pass to number each appointment and pull the value the walk slides over:
-	# a duration, an amount, or a measure's summed samples (with the sample count,
-	# so an averaged window can tell a level from an empty one). An appointment
-	# with no measures is left out of a measure's walk - it offers that measure
-	# nothing, and an averaged window may not be read from it.
-	my @rows;
+	# Sum the value each appointment offers the reading, and note the span it was
+	# offered over: the typical amount in a window is that sum spread over the span,
+	# so a 'week' reading is what a week holds. An appointment that carries no such
+	# measure offers a measure's reading nothing, and does not stretch its span.
+	my $total = 0;
+	my $samples = 0;
+	my ($first, $last);
 	foreach my $appt ( @{$appts} ) {
-		my ($sum, $samples) = (0, 0);
-		if ($circumstance eq 'duration') {
-			$sum = abs( $appt->{'duration'} || 0 );
+		my ($value, $count) = (0, 0);
+		if ($circumstance eq 'occurences') {
+			$value = 1;
+		}
+		elsif ($circumstance eq 'duration') {
+			$value = abs( $appt->{'duration'} || 0 );
 		}
 		elsif ($circumstance eq 'total') {
-			$sum = $appt->{'total'} + 0;
+			$value = $appt->{'total'} + 0;
 		}
 		elsif ($is_measure) {
 			next unless $appt->{'measures'};
@@ -13920,66 +13924,55 @@ sub budget_autocalc($data) {
 			}
 			foreach my $m ( @{$appt->{'measures'}} ) {
 				next unless defined $m->{$circumstance};
-				$sum += $m->{$circumstance};
-				$samples++;
+				$value += $m->{$circumstance};
+				$count++;
 			}
+			next unless $count;
 		}
-		push @rows, { ts => ($appt->{'timestamp'} + 0), sum => $sum, samples => $samples };
+		$total += $value;
+		$samples += $count;
+		my $ts = $appt->{'timestamp'} + 0;
+		$first = $ts if !defined $first || $ts < $first;
+		$last = $ts if !defined $last || $ts > $last;
 	}
-	@rows = sort { $a->{'ts'} <=> $b->{'ts'} } @rows;
-	my $n = scalar @rows;
+	my $span = (defined $first && defined $last) ? ($last - $first) : 0;
 
 	foreach my $r ( @windows ) {
 		my $width = &subs::time_abbrev_translator(1 . $returner->{$r}->{'symbol'}, $server_time);
 		$returner->{$r}->{'duration'} = $width;
-		my $half = $width / 2;
-		# A window per appointment, walked with two pointers over the sorted rows:
-		# as the appointment moves forward both edges move forward too, so every
-		# window is read in one pass - O(n) a window, not the O(n^2) scan of the
-		# whole list that made the full history too slow to read.
-		my ($lo, $hi, $wsum, $wsamples) = (0, 0, 0, 0);
-		my ($total, $count) = (0, 0);
-		for (my $k = 0; $k < $n; $k++) {
-			my $right = $rows[$k]->{'ts'} + $half;
-			my $left = $rows[$k]->{'ts'} - $half;
-			while ($hi < $n && $rows[$hi]->{'ts'} <= $right) {
-				$wsum += $rows[$hi]->{'sum'};
-				$wsamples += $rows[$hi]->{'samples'};
-				$hi++;
-			}
-			while ($lo < $hi && $rows[$lo]->{'ts'} < $left) {
-				$wsum -= $rows[$lo]->{'sum'};
-				$wsamples -= $rows[$lo]->{'samples'};
-				$lo++;
-			}
-			my $value;
-			if ($circumstance eq 'occurences') {
-				$value = $hi - $lo;
-			}
-			elsif ($is_measure && $mcalc eq 'average') {
-				# an averaged measure is read only from a window that holds a
-				# sample; an empty one is no level at all and is left out
-				next unless $wsamples;
-				$value = $wsum / $wsamples;
-			}
-			else {
-				$value = $wsum;
-			}
-			$total += $value;
-			$count++;
+		# The reading is the sum spread over the span, not the average of the
+		# overlapping per-appointment windows the walk used to take. That average
+		# read the short scopes far too high - a window centred on an appointment
+		# is never empty, so the count could not fall below one a window - and the
+		# long ones too low, since a window wider than the history can only hold
+		# the whole of it. Spreading the sum holds all six scopes in step, which is
+		# what a typical scope is.
+		my $result;
+		if ($is_measure && $mcalc eq 'average') {
+			# an averaged measure is a level, not a rate: the reading is the mean of
+			# its samples, so it stands the same at every window
+			$result = $samples ? ($total / $samples) : 0;
 		}
-		$returner->{$r}->{'result'} = $count ? ($total / $count) : 0;
-		if ($circumstance eq 'occurences') {
-			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $returner->{$r}->{'result'}) . '/' . $r;
-		}
-		elsif ($circumstance eq 'total') {
-			$returner->{$r}->{'formatted_result'} = &subs::price_formatter( $returner->{$r}->{'result'} ) . '/' . $returner->{$r}->{'symbol'};
-		}
-		elsif ($circumstance eq 'duration') {
-			$returner->{$r}->{'formatted_result'} = &subs::duration_sayer($returner->{$r}->{'result'} / 1000) . '/' . $r;
+		elsif ($span > 0) {
+			$result = $total * $width / $span;
 		}
 		else {
-			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $returner->{$r}->{'result'}) . $circumstance . '/' . $r;
+			# a lone reading (or none) has no span to rate against; it is its own
+			# whole history
+			$result = $total;
+		}
+		$returner->{$r}->{'result'} = $result;
+		if ($circumstance eq 'occurences') {
+			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $result) . '/' . $r;
+		}
+		elsif ($circumstance eq 'total') {
+			$returner->{$r}->{'formatted_result'} = &subs::price_formatter( $result ) . '/' . $returner->{$r}->{'symbol'};
+		}
+		elsif ($circumstance eq 'duration') {
+			$returner->{$r}->{'formatted_result'} = &subs::duration_sayer($result / 1000) . '/' . $r;
+		}
+		else {
+			$returner->{$r}->{'formatted_result'} = sprintf("%.3f", $result) . $circumstance . '/' . $r;
 		}
 	}
 
@@ -18602,7 +18595,7 @@ sub mail_checker($c) {
 	}
 
 	if ($settings->{'subsection'} eq 'list') {
-		my $listing = &subs::db_query('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp)->hashes;
+		my $listing = &subs::db_fresh('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp);
 		foreach my $l ( @{$listing} ) {
 			my $seen = 0;
 			foreach my $soc_con ( keys %{$gb::social_constructs} ) {
@@ -18620,7 +18613,7 @@ sub mail_checker($c) {
 			}
 		}
 
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and account=? and club = ? and community = ? and person = ? and project = ? and team = ? and contact is null order by timestamp desc LIMIT 30',
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and account=? and club = ? and community = ? and person = ? and project = ? and team = ? and contact is null order by timestamp desc LIMIT 30',
 			$timestamp,
 			$selection[0],
 			$selection[1],
@@ -18637,18 +18630,18 @@ sub mail_checker($c) {
 
 	  $chatbot_models = &subs::pen_model_list();
 		push @{$chatbot_models}, @{&subs::cloudflare_model_list()};
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and contact = ? and conversation_uuid = ? order by timestamp desc LIMIT 30', $timestamp, 'pen', $settings->{'chatbot_conversation'});
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? and conversation_uuid = ? order by timestamp desc LIMIT 30', $timestamp, 'pen', $settings->{'chatbot_conversation'});
 		&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
 		$main_title = 'Pen';
 	}
 	elsif ($phone) {
 		$phone =~ s/\D+//gi;
 		$phone =~ s/^1//;
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and phone = ? order by timestamp desc LIMIT 30', $timestamp, $phone);
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and phone = ? order by timestamp desc LIMIT 30', $timestamp, $phone);
 		$main_title = &subs::format_name(&subs::db_select('settings', undef, { setting => 'phone', value => $phone })->hashes->[0]->{'app'}) . ' ' . $phone;
 	}
 	elsif ($email) {
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and email = ? order by timestamp desc LIMIT 30', $timestamp, $email);
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and email = ? order by timestamp desc LIMIT 30', $timestamp, $email);
 		$main_title = &subs::format_name(&subs::db_select('settings', undef, { setting => 'email', value => $email })->hashes->[0]->{'app'}) . ' ' . $email;
 	}
 	elsif ($contact) {
@@ -18664,10 +18657,10 @@ sub mail_checker($c) {
 			$pn =~ s/^1//;
 			&subs::db_query('update mailbox set contact = ? where contact is null and phone = ?', $contact, $pn) if $pn;
 		}
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
 	}
 	else {
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and project = ? and account = ? and community = ? and team = ? and club = ? and person = ? order by timestamp desc LIMIT 30',
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and project = ? and account = ? and community = ? and team = ? and club = ? and person = ? order by timestamp desc LIMIT 30',
 			$timestamp,
 			($picker->{'projects'} || $gb::social_constructs->{'projects'}->{'def'}),
 			($picker->{'accounts'} || $gb::social_constructs->{'accounts'}->{'def'}),
@@ -18683,7 +18676,7 @@ sub mail_checker($c) {
 			($picker->{'clubs'} || $gb::social_constructs->{'clubs'}->{'def'}) . ' ' .
 			($picker->{'people'} || $gb::social_constructs->{'people'}->{'def'}));
 	}
-	my $mails = $q->hashes;
+	my $mails = ref($q) eq 'ARRAY' ? $q : ($q ? $q->hashes : []);
 	&subs::subprocessor(sub {
 		foreach my $m ( @{$mails} ) {
 			if ($m->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
@@ -24630,7 +24623,8 @@ sub now_me($data) {
 		month => $t[4] + 1,
 		year => $t[5] + 1900
 	};
-	my $computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
+	my $computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' }) || `hostname`;
+	$computer_name =~ s/^\s+|\s+$//g;
 	$op_d->{'__specs'}->{'computer'} = &manager_file_maker() || $op_d->{'__specs'}->{'homebase'};
 	my $room_count = $op_d->{'__specs'}->{'room_count'};
 	if ($edt eq 'watch') {
@@ -24668,6 +24662,12 @@ sub now_me($data) {
 		# how the watch should start a voice capture: off / vad / a wake word. The
 		# watch defaults to off when it is absent.
 		voice_trigger  => $op_d->{'__specs'}->{'voice_trigger'},
+		# whether the guide associate's answers are spoken on the device as well as
+		# shown (the Embedded panel's Audio replies toggle); absent means on
+		audio_replies  => $op_d->{'__specs'}->{'audio_replies'},
+		# the machine serving this device, by the name a person knows it by (the
+		# same name the neighbour list shows); the watch prints it in the status bar
+		computer_name  => $computer_name,
 		twshomebase    => "$watch->{homebase}:$ENV{PORT_COMS}",
 		thomebase      => "$watch->{homebase}:$ENV{PORT_BESTOW}",
 	};
@@ -26101,21 +26101,21 @@ websocket '/mail/ws' => sub ($c) {
 			my $last_message = $m->{'last_message'} || 0;
 			my $q;
 			if ($address->{'phone'}) {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and phone = ? order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and phone = ? order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
 			}
 			elsif ($address->{'email'}) {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and email = ? order by timestamp desc LIMIT 20', $last_message, $address->{'email'});
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and email = ? order by timestamp desc LIMIT 20', $last_message, $address->{'email'});
 			}
 			elsif ($address->{'contact'} || $address->{'ticket'}) {
 				my $contact = $address->{'contact'} || $address->{'ticket'};
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $last_message, $contact);
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $last_message, $contact);
 			}
 			else {
-				$q = &subs::db_query('select * from mailbox where timestamp > ? and project=? and account =? and community = ? and club = ? and team = ? and person = ? order by timestamp desc LIMIT 20',
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and project=? and account =? and community = ? and club = ? and team = ? and person = ? order by timestamp desc LIMIT 20',
 					$last_message, $picker->{'projects'}, $picker->{'accounts'}, $picker->{'communities'}, $picker->{'clubs'}, $picker->{'teams'}, $picker->{'people'}
 				);
 			}
-			my $messaging = $q->hashes;
+			my $messaging = ref($q) eq 'ARRAY' ? $q : $q->hashes;
 			foreach my $mess ( @{$messaging} ) {
 				if ($mess->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
 					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $mess->{'body'}, $mess->{'timestamp'}), $mess->{'uuid'});
