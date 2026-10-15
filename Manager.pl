@@ -19797,15 +19797,23 @@ post '/manager/help/act' => sub($c) {
 	my @lines;
 	foreach my $m ( @{$transcript} ) {
 		my $role = $m->{'role'} || 'user';
-		# the guide's own earlier words are shown to the person but left out here:
-		# served back as "ASSISTANT:" turns they flip the model into chat mode and
-		# it greets instead of acting. Only what the person said and what the
-		# actions reported carry the thread.
-		next if $role eq 'assistant';
+		my $content = $m->{'content'} || '';
+		if ($role eq 'assistant') {
+			# The guide's own turns say how the turn before them ended. A JSON action is
+			# already told by the observation that follows, so it is left out; a plain
+			# answer is carried as "ANSWERED:" so the model can see that question was
+			# already dealt with, and turns to the newest one instead of answering the
+			# whole backlog. Served back as an "ASSISTANT:" turn, the model flips into
+			# chat mode and greets instead of acting.
+			next if $content =~ /^\s*\{/;
+			$content =~ s/\s+/ /g;
+			push @lines, 'ANSWERED: ' . $content;
+			next;
+		}
 		my $label = $role eq 'tool' ? 'OBSERVATION' : 'USER';
-		push @lines, $label . ': ' . ($m->{'content'} || '');
+		push @lines, $label . ': ' . $content;
 	}
-	push @lines, '', 'Reply with the single next JSON action.';
+	push @lines, '', 'Answer only the newest USER line - the USER lines before it are history you already answered. Reply with the single next JSON action.';
 	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }), $system, join("\n", @lines), &subs::ai_role_thinking('help_assistant'));
 	if ($err || !$text) {
 		$c->render(json => { error => $err || 'the guide returned nothing readable' });

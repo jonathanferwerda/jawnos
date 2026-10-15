@@ -1250,6 +1250,9 @@ Rules:
   searching the same way.
 - Read the OBSERVATION lines in the conversation to see what each action did
   before choosing the next one.
+- The conversation may hold several USER lines. The earlier ones are history you
+  have already handled - each is followed by the ANSWERED: note of what you said.
+  Act only on the newest USER line; never answer an earlier turn again.
 - For "when did I last see/do X", use find and answer from its last date - do not
   guess a date.
 $create_rule
