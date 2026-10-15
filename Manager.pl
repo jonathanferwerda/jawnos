@@ -20459,10 +20459,21 @@ sub guide_promote_update($c, $row) {
 	&guide_undo_push({
 		app => $target->{'app'}, uuid => $target->{'uuid'}, title => $row->{'title'},
 		timestamp => $target->{'timestamp'}, duration => $target->{'duration'}, notes => $target->{'notes'},
+		seen => $target->{'seen'}, stop_seen => $target->{'stop_seen'},
 	});
 	my %set = %{$changes};
 	$set{'server_time'} = &subs::rightNow();
+	# a change that moves the moment of an appointment that has already happened has
+	# to re-arm the alarm: the clock only runs what it has not seen, so clear the seen
+	# flags the row carried, or a delayed appointment would never fire again
+	if (exists $changes->{'timestamp'} && ($target->{'timestamp'} + 0) <= &subs::rightNow()) {
+		$set{'seen'} = undef;
+		$set{'stop_seen'} = undef;
+	}
 	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+	# the app's toggle tracks whether a start/record is open, so it is read again now
+	# the moment moved
+	&subs::appt_toggle_checker($target->{'app'});
 	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'update', summary => $row->{'title'} };
@@ -20504,7 +20515,10 @@ post '/manager/help/undo' => sub($c) {
 	my %set = ( timestamp => $rec->{'timestamp'}, server_time => &subs::rightNow() );
 	$set{'duration'} = $rec->{'duration'} if exists $rec->{'duration'};
 	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
+	$set{'seen'} = $rec->{'seen'} if exists $rec->{'seen'};
+	$set{'stop_seen'} = $rec->{'stop_seen'} if exists $rec->{'stop_seen'};
 	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+	&subs::appt_toggle_checker($target->{'app'});
 	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
 	$c->render(json => { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') });
 };
