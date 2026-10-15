@@ -22686,7 +22686,7 @@ get '/manager/embedded' => sub($c) {
 sub embedded_grabber($c,$timestamp) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
-	my $view = $c->param('view') || 'everything';
+	my $view = $c->param('view') || ($edt eq 'microcontroller' ? 'pins' : 'gpio');
 	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
 	$timestamp = $c->param('timestamp');
 	my $tty_enabled = &subs::setting_grabber({ app => $edt, setting => 'enabled' });
@@ -22759,9 +22759,18 @@ sub embedded_grabber($c,$timestamp) {
 	my $tauthorization = &subs::setting_grabber({ app => $edt, setting => 'tauthorization' });
 
 	my $chip_ids = [];
+	my %chip_seen;
 	foreach my $chip ( @{&subs::db_select('devices')->hashes}) {
 		$chip->{'chip_ids'} = eval { return decode_json $chip->{'chip_ids'} } || [{}];
-		push @{$chip_ids}, @{$chip->{'chip_ids'}};
+		# One option per chip: the same device can be sighted by more than one
+		# machine (a watch bridged over Bluetooth is listed by its homebase and,
+		# briefly, by whichever machine it was linked to), and the rows all sync.
+		foreach my $c ( @{$chip->{'chip_ids'}} ) {
+			next unless ref $c eq 'HASH';
+			my $id = $c->{'id'};
+			next if $id && $chip_seen{$id}++;
+			push @{$chip_ids}, $c;
+		}
 	}
 
 	my $returner = {
@@ -23607,6 +23616,15 @@ sub now_me($data) {
 
 
 	my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+	# A Bluetooth-only watch belongs to one machine. A different machine must not
+	# rotate its homebase and authorization, or re-push the watch onto itself -
+	# bluetooth_sender refuses the send anyway, so a Now Me here would only
+	# desync the record. The edit that triggered it still saves; the watch gets
+	# it from its homebase. Leave the record alone.
+	if ($watch->{'ble'} && !&subs::ble_owns($edt, $chip_id)) {
+		$log->info('Now Me for ' . ($chip_id || '?') . ' skipped: homebase is ' . ($watch->{'homebase'} || '?'));
+		return 'hosted elsewhere';
+	}
 	my $watch_port = $ENV{PORT_ARM};
 
 	my $ws_port = $ENV{PORT_MSG};

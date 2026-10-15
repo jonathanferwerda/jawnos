@@ -503,11 +503,11 @@ our %topic = (
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-14',
+		verified => '2026-10-15',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
-			'A watch or board that is off its network but bridged over Bluetooth still appears: its row reads Bluetooth in place of an address, and its Now Me and settings go out over that bridge.',
+			'A watch or board that is off its network but bridged over Bluetooth still appears: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), plus its room count and screen timeout.'
 		],
 		steps => [
@@ -877,7 +877,7 @@ our %topic = (
 		body => [
 			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command.',
 			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words.',
-			'It talks to JawnOS over Bluetooth through a bridge running on a nearby phone or desktop.'
+			'It talks to JawnOS over Bluetooth through a bridge running on a nearby phone or desktop, and stays with the machine it was paired to (its homebase) - another machine that links to it lets it go again.',
 		],
 		related => [ 'voice', 'ble_bridge', 'tdeck', 'embedded' ]
 	},
@@ -902,7 +902,8 @@ our %topic = (
 		summary => 'How the watch and boards reach JawnOS.',
 		body => [
 			'The devices speak Bluetooth Low Energy, but JawnOS itself is reached over the network, so a small bridge sits in between: a Bluetooth central (on a phone, or on a desktop) that links to a device and relays messages to and from JawnOS over a local socket.',
-			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.'
+			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.',
+			'A watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine.',
 		],
 		related => [ 'watch', 'tdeck', 'pico' ]
 	},
