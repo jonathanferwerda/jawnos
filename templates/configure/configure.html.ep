@@ -25,6 +25,14 @@
 	.cfg button, .cfg .button { font:inherit; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; white-space:nowrap; }
 	.cfg .cfg-inline { flex:1 1 220px; min-width:0; display:flex; gap:8px; align-items:center; }
 	.cfg .cfg-inline > input { flex:1 1 auto; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+	/* The shell gives a bare select a fixed 36px and an input 28px, but this row
+	   pads each by 7px top and bottom, so the text's lower half was clipped inside
+	   that height (an input's content box came to 12px for an 18px line). Let a
+	   control grow to fit its text instead; boxes and swatches keep their shape. */
+	.cfg-row > select,
+	.cfg-row > input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),
+	.cfg-row > textarea,
+	.cfg .cfg-inline > input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]) { height:auto; min-height:36px; }
 	.cfg-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
 	/* Uploaded images (a logo, a mugshot) keep their own shape rather than being
 	   cropped into the fixed thumb box, and don't stretch to fill a stacked row. */
