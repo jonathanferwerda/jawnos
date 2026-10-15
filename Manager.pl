@@ -25918,6 +25918,13 @@ websocket '/mail/ws' => sub ($c) {
 			my $e_msg = &subs::note_encrypter(&subs::suds_grabber(),$m->{'msg'});
 
 			my $picker = eval { return decode_json $m->{'picker'} } || {};
+			# a phone is stored and read bare (digits only, no leading country
+			# code), whatever road wore it - the reader strips the same way, so the
+			# thread a message is filed on is the thread that reads it back
+			if ($m->{'phone'}) {
+				$m->{'phone'} =~ s/\D+//g;
+				$m->{'phone'} =~ s/^1//;
+			}
 			# the six social constructs are defaulted the way the mailbox reads
 			# them, so a message sent from a tab with its pickers hidden still
 			# lands on the thread the reader will open; a message addressed to a
