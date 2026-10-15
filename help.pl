@@ -530,7 +530,7 @@ our %topic = (
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
-			'A watch or board that is off its network but bridged over Bluetooth still appears: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
+			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), plus its room count and screen timeout.'
 		],
 		steps => [
@@ -905,10 +905,11 @@ our %topic = (
 		title => 'The T-Watch', category => 'devices',
 		summary => 'A wrist clock, notifications and app buttons.',
 		body => [
-			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command.',
+			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command. A button you press on it runs that app\'s movement in JawnOS, and a command button runs on every machine unless it names one.',
 			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words.',
 			'It talks to JawnOS over Bluetooth through a bridge running on a nearby phone or desktop, and stays with the machine it was paired to (its homebase) - another machine that links to it lets it go again.',
 		],
+		verified => '2026-10-15',
 		related => [ 'voice', 'ble_bridge', 'tdeck', 'embedded' ]
 	},
 	'tdeck' => {
@@ -930,10 +931,11 @@ our %topic = (
 	'ble_bridge' => {
 		title => 'The Bluetooth bridge', category => 'devices',
 		summary => 'How the watch and boards reach JawnOS.',
+		verified => '2026-10-15',
 		body => [
 			'The devices speak Bluetooth Low Energy, but JawnOS itself is reached over the network, so a small bridge sits in between: a Bluetooth central (on a phone, or on a desktop) that links to a device and relays messages to and from JawnOS over a local socket.',
 			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.',
-			'A watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine. If the homebase drops off the mesh - a phone that switches off - another machine takes the watch over after a while, and hands it back the moment the homebase is seen again.',
+			'A T-Watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine. If the homebase drops off the mesh - a phone that switches off - another machine takes the watch over after a while, and hands it back the moment the homebase is seen again. A homebase that merely leaves the network keeps it - only one gone long enough to stop waiting hands over. A button you press on the watch is applied by the machine holding the link, so it lands whatever machine you were looking at; a command button runs on every machine unless it names one.',
 		],
 		related => [ 'watch', 'tdeck', 'pico' ]
 	},
