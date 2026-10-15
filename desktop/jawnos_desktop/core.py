@@ -12,9 +12,11 @@ The start/stop semantics deliberately match the phone:
   a log file. On Android this is a background Termux task.
 * ``stop`` runs ``scripts/manager_killer.pl master`` -- the Android app's Stop
   button does exactly this, because stopping the terminal session alone only
-  SIGKILLs the tree and leaves the master answering ``~/.process_watch``.
-* ``restart`` prefers jawn's own sanctioned path (write ``restart`` to
-  ``~/.president/status``) and falls back to stop-then-start.
+  SIGKILLs the tree and leaves the master answering ``~/.process_watch``. Any
+  master still alive after the killer is terminated directly.
+* ``restart`` is a real stop-then-start: it kills the master and starts a fresh
+  one, then waits for the tree to answer, so it cannot leave a half-boot window
+  or a second master.
 """
 
 import json
@@ -324,6 +326,23 @@ def pid_alive(pid):
         return False
 
 
+def _jawn_master_pids():
+    """PIDs of a running 'perl ./jawn' master, if any (scans /proc)."""
+    pids = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open(os.path.join("/proc", name, "cmdline"), "rb") as fh:
+                raw = fh.read().replace(b"\x00", b" ")
+        except OSError:
+            continue
+        cmd = raw.decode("utf-8", "replace")
+        if "perl" in cmd and "./jawn" in cmd:
+            pids.append(int(name))
+    return pids
+
+
 # --------------------------------------------------------------------------
 # process helpers
 # --------------------------------------------------------------------------
@@ -380,9 +399,11 @@ def spawn_detached(argv, cwd, log_path, env=None):
 
 
 def start_jawn(jawn_dir):
-    """Start jawn. Skips if it is already up. Returns (ok, message)."""
+    """Start jawn. Skips if it is already up, or a master is mid-restart."""
     if jawn_up(jawn_dir):
         return True, "jawn is already running"
+    if _jawn_master_pids():
+        return True, "a jawn master is already running (mid-restart); not starting a second"
     if not os.path.exists(os.path.join(jawn_dir, "jawn")):
         return False, "no 'jawn' launcher in %s" % jawn_dir
     argv = [_perl(), "./jawn"]
@@ -391,32 +412,43 @@ def start_jawn(jawn_dir):
 
 
 def stop_jawn(jawn_dir, wait=12.0):
-    """Take the whole tree down via jawn's own killer (the phone's Stop path)."""
+    """Take the whole tree and the master down. The killer is the clean path;
+    any master still alive after it is terminated directly, so stop is never a
+    no-op when the master is wedged."""
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir
     subprocess.run([_perl(), "scripts/manager_killer.pl", "master"], cwd=jawn_dir, env=_perl_env())
     deadline = time.time() + wait
     while time.time() < deadline:
-        if not jawn_up(jawn_dir):
+        if not jawn_up(jawn_dir) and not _jawn_master_pids():
             return True, "jawn stopped"
         time.sleep(0.3)
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        for pid in _jawn_master_pids():
+            try:
+                os.kill(pid, signum)
+            except OSError:
+                pass
+        time.sleep(0.5)
+        if not _jawn_master_pids():
+            return True, "jawn stopped"
     return False, "jawn still answering after the sweep"
 
 
 def restart_jawn(jawn_dir):
-    """Restart without a full stop. jawn's own status file is the clean path."""
-    status_file = os.path.join(home(), ".president", "status")
-    if jawn_up(jawn_dir) and os.path.isdir(os.path.dirname(status_file)):
-        try:
-            with open(status_file, "w", encoding="utf-8") as fh:
-                fh.write("restart")
-            return True, "restart queued (jawn reboots President.pl in ~2s)"
-        except OSError as exc:
-            return False, "could not write %s: %s" % (status_file, exc)
+    """A real restart: kill the master, start a fresh one, and wait for it to
+    answer, so the caller can trust the result (no half-boot window)."""
     stop_jawn(jawn_dir)
     ok, message = start_jawn(jawn_dir)
-    return ok, message
+    if not ok:
+        return ok, message
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
+        if jawn_up(jawn_dir):
+            return True, "jawn restarted"
+        time.sleep(0.5)
+    return False, "jawn did not come back up (see %s)" % jawn_log_path()
 
 
 # --------------------------------------------------------------------------
@@ -521,8 +553,8 @@ def stop_all(jawn_dir, with_ble=True, wait=12.0):
 
 def restart_all(jawn_dir, with_ble=True):
     ok, message = restart_jawn(jawn_dir)
-    # A queued status-file restart leaves the bridge alone; only bring it back
-    # if the checkbox asks for it and it is actually down.
+    # a real restart takes the bridge down with the tree only if it was tied; if
+    # it is actually down afterwards and the checkbox asks for it, bring it back
     if ok and with_ble and not ble_up():
         _ok, ble_message = start_ble()
         message = "%s; %s" % (message, ble_message)
