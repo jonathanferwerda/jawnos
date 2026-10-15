@@ -135,58 +135,89 @@ my @printless = (
 
 
 my ($master_timer,$master_timer_paused);
+my ($tree_ticks,$tree_misses) = (0,0);
 &master_time_looper();
 sub master_time_looper() {
+	# In this Mojo the recurring callback is handed the loop as its only argument
+	# (Mojo::IOLoop::_timer runs `$self->$cb`), so no timer id is passed to the
+	# callback at all. The old code took one anyway (`$master_timer = $timer_id`)
+	# and therefore stored undef: every `Mojo::IOLoop->remove($master_timer)` below
+	# was a silent no-op, so each restart left the previous ticker running and the
+	# master multiplied its own restart logic - thousands of "tree is back up"
+	# lines and 43k uninit-$id warnings in jawn-stdout.log - until a stray tick tore
+	# down the tree it had just started and the master sat alive-but-idle forever
+	# (2026-10-15). One ticker now, its id taken from the return value, never
+	# removed: the state machine below is idempotent, and a permanent ticker is
+	# also the liveness watchdog that recovers a tree which died unnoticed.
+	return if $master_timer;
 	$master_timer = Mojo::IOLoop->recurring(2 => sub {
-		my ($loop, $timer_id) = @_;
-		$master_timer = $timer_id;
+		# the sleeps below block the loop, so a restart cannot re-enter; guard anyway
+		# so a fatality mid-sequence cannot wedge the master permanently
+		return if $master_timer_paused;
 		my $status_file = &home('~/.president/status');
 		my $f_status = -e $status_file ? read_file($status_file) : '';
-		if ($status eq 'frozen' || $f_status eq 'restart') {
-		  Mojo::IOLoop->remove($master_timer);
-		  return if $master_timer_paused == 1;
-			$master_timer_paused = 1;
-			# A requested restart on a live tree is verified first: a change that does
-			# not parse would only come back broken (or blank, like the /manager page a
-			# truncated manager.js once blanked), so refuse it, keep the running tree
-			# serving and say so. The failure is printed into the pty, where the error
-			# watch reads it and offers a fix. A frozen tree is already down, so it is
-			# restarted regardless - there is nothing serving to protect.
-			if ($f_status eq 'restart' && $status ne 'frozen') {
-				my $proof = &tree_verify();
-				unless ($proof->{'ok'}) {
-					write_file($status_file, 'good');
-					print "restart refused - the tree is still serving; the code does not verify:\n" . $proof->{'report'} . "\n";
-					$master_timer_paused = 0;
-					&master_time_looper();
-					return;
+		# Liveness watchdog: 'started' means the tree should be serving. Probe the
+		# port every 30s; two dead probes (~a minute) mean the pty close handler was
+		# missed or the tree died without its terminal noticing - recover it rather
+		# than idle. This is exactly the case that used to leave the master alive
+		# with nothing on 3000/45545 and no President.pl.
+		if ($status eq 'started') {
+			if (++$tree_ticks >= 15) {
+				$tree_ticks = 0;
+				if (&tree_serving()) { $tree_misses = 0 }
+				elsif (++$tree_misses >= 2) {
+					print "the web port has been dead for ~" . ($tree_misses * 30) . "s with status 'started'; recovering\n";
+					$tree_misses = 0;
+					$status = 'frozen';
 				}
 			}
-			# the request is ours now: left standing, the next two-second tick reads
-			# it again, kills the fresh boot before it writes "good", and restarts
-			# forever
-			write_file($status_file, 'good') if $f_status eq 'restart';
-			&shut_down();
-			$status = 'dead';
 		}
-		if ($status eq 'dead') {
-
-			$status = 'restarting';
-			print "restarting president in 3";
-			sleep 1;
-			print "... 2";
-			sleep 1;
-			print "... 1";
-			sleep 1;
-			$fork = undef;
-
-			$fork = &terminal_pty_runner({ 'program' => './President.pl' });
-			# the paused flag only guards this restart sequence; clear it or the next
-			# restart trigger takes the early return above and the master loop stays
-			# dead until ./jawn is run by hand
+		else { $tree_ticks = 0; $tree_misses = 0 }
+		if ($status eq 'frozen' || $f_status eq 'restart') {
+			$master_timer_paused = 1;
+			my $died = '';
+			eval {
+				my $refused = 0;
+				# A requested restart on a live tree is verified first: a change that
+				# does not parse would only come back broken (or blank, like the /manager
+				# page a truncated manager.js once blanked), so refuse it, keep the
+				# running tree serving and say so. The failure is printed into the pty,
+				# where the error watch reads it and offers a fix. A frozen tree is
+				# already down, so it is restarted regardless - nothing serving to protect.
+				if ($f_status eq 'restart' && $status ne 'frozen') {
+					my $proof = &tree_verify();
+					unless ($proof->{'ok'}) {
+						write_file($status_file, 'good');
+						print "restart refused - the tree is still serving; the code does not verify:\n" . $proof->{'report'} . "\n";
+						$refused = 1;
+					}
+				}
+				unless ($refused) {
+					# the request is ours now: left standing, the next two-second tick
+					# reads it again, kills the fresh boot before it writes "good", and
+					# restarts forever
+					write_file($status_file, 'good') if $f_status eq 'restart';
+					&shut_down();
+					$status = 'restarting';
+					print "restarting president in 3";
+					sleep 1;
+					print "... 2";
+					sleep 1;
+					print "... 1";
+					sleep 1;
+					$fork = undef;
+					$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+					&arm_boot_watch();
+				}
+				1;
+			} or $died = $@ || 'unknown error';
+			if ($died ne '') {
+				print "restart sequence failed: $died\n";
+				# arm_boot_watch may already be watching; only force a retry when the
+				# sequence died before it armed (a mid-spawn death is recovered there)
+				$status = 'frozen' unless $status eq 'restarting';
+			}
 			$master_timer_paused = 0;
-		  &master_time_looper();
-			&arm_boot_watch();
 		}
 	});
 }
@@ -323,6 +354,32 @@ sub shut_down() {
 		kill 'KILL', $pid;
 		print "KILL $pid\n";
 	}
+	# A last, independent sweep of /proc by command line: anything that booted into
+	# the tree while we were tearing it down (a respawned worker, a manager that
+	# re-registered) still holds the web port or the watch socket and would fight
+	# the next boot. Stop and Restart both end here, so both leave the box provably
+	# clear. Compile probes are left alone: another agent's `perl -c Manager.pl`
+	# looks like a worker by name, so a command line carrying -c/-e/-M is skipped.
+	my @leftovers;
+	if (opendir(my $procs, '/proc')) {
+		for my $entry (readdir $procs) {
+			next unless $entry =~ /^([0-9]+)$/;
+			my $pid = $1;
+			next if $pid == $$ || $pid == $fpid;
+			my $cmd = &pid_cmdline($pid);
+			next if $cmd =~ / (?:-c|-e|-M) /;
+			push @leftovers, $pid if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/;
+		}
+		closedir $procs;
+	}
+	my $cleared = 0;
+	foreach my $pid (@leftovers) {
+		next unless &pid_alive($pid);
+		kill 'KILL', $pid;
+		$cleared++;
+		print "KILL leftover $pid\n";
+	}
+	print "leftover check: " . ($cleared ? "$cleared cleared" : 'clean') . "; web port " . (&config_port() || 0) . " is " . (&tree_serving() ? 'STILL ANSWERING' : 'free') . "\n";
 	$subprocesses = {};
 	sleep .1;
 }
@@ -383,18 +440,23 @@ sub tree_serving {
 sub arm_boot_watch {
 	return unless &config_port();
 	Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
+	$master_boot_watch = undef;
 	my $deadline = time + 90;
+	# Same callback-argument rule as the master ticker: the id comes from the return
+	# value, never from the callback (it is not passed), so the "tree is back up"
+	# branch can actually remove this timer. Taken from the callback instead, it was
+	# undef, the remove was a no-op, and this ticked every 3s forever printing "tree
+	# is back up" (18715 lines in jawn-stdout.log).
 	$master_boot_watch = Mojo::IOLoop->recurring(3 => sub {
-		my ($loop, $id) = @_;
 		if (&tree_serving()) {
 			print "tree is back up\n";
-			Mojo::IOLoop->remove($id);
+			Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
 			$master_boot_watch = undef;
 			$master_boot_tries = 0;
 			return;
 		}
 		return if time < $deadline;
-		Mojo::IOLoop->remove($id);
+		Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
 		$master_boot_watch = undef;
 		$master_boot_tries = ($master_boot_tries || 0) + 1;
 		if ($master_boot_tries <= 3) {
