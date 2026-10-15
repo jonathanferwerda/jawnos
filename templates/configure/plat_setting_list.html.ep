@@ -14,6 +14,19 @@
 	my $catalogue = &subs::ai_model_catalogue();
 	my $providers = &subs::ai_providers();
 	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
+	# provider id -> its balance row, read from the report the ai balance loop keeps
+	# fresh off the page (President.pl refreshes it every ten minutes), so a panel
+	# load only ever reads the cache and never waits on a provider.
+	my $balance = &subs::ai_balance_report();
+	my %balance_for = map { ($_->{'provider'} || '') => $_ } @{ $balance->{'rows'} || [] };
+	my $balance_of = sub {
+		my ($id) = @_;
+		my $b = $balance_for{$id};
+		return sprintf('%.2f %s', $b->{'available'}, $b->{'currency'} || '') if $b && defined $b->{'available'};
+		return ($b->{'note'} || '—') if $b;
+		return 'not read yet' unless $balance->{'at'};
+		return '—';
+	};
 	# which providers can answer here at all: a key entered, or a running Ollama.
 	# The role lists below only offer these - the rest are named under them, so it
 	# is clear which of them wants a key (or a daemon). Until the tree restarts
@@ -135,8 +148,15 @@
 	<h3>Provider access</h3>
 	<p class="cfg-note">Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows “••• set” — leave it alone to keep it, or type a new value to replace it.</p>
 	<% foreach my $p ( @{$providers} ) { %>
+		<% my $set_up = scalar( grep { my $v = $key_values->{$_->[0]}; defined $v && length $v } @{ $p->{'keys'} } ); %>
 		<div class="cfg-card">
-			<h4 style="margin-top:0;"><%= $p->{'label'} %></h4>
+			<h4 style="margin-top:0;display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
+				<span><%= $p->{'label'} %></span>
+				<%# the account's money, where the provider reports it, beside its key(s) %>
+				<% if ($set_up) { %>
+					<span class="cfg-note" style="margin:0;font-weight:normal;font-size:12px;white-space:nowrap;">balance <%= $balance_of->($p->{'id'}) %><% if ($balance->{'at'}) { %> · <span class="time" timestamp="<%= $balance->{'at'} %>"></span><% } %></span>
+				<% } %>
+			</h4>
 			<% foreach my $k ( @{ $p->{'keys'} } ) { %>
 				<% my ($name, $label) = @{$k}; my $val = $key_values->{$name}; my $is_secret = ($name =~ /_(key|token)$/) ? 1 : 0; my $set = (defined $val && length $val) ? 1 : 0; %>
 				<div class="cfg-row">
