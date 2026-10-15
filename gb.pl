@@ -310,6 +310,10 @@ our @guide_tools = (
 	  desc => 'save the appointment you just staged, after the person says yes' },
 	{ name => 'discard', args => { }, example => '{"action":"discard"}',
 	  desc => 'throw away the appointment you just staged, if the person declines' },
+	{ name => 'update', args => { app => 'email test', title => '', delay => '5 minutes', when => '', duration => '10 minutes', notes => '' }, example => '{"action":"update","app":"email test","delay":"5 minutes"}',
+	  desc => 'change an appointment that already exists, named by "app" (add "title" when you know it). "delay" pushes it later by the length the person said ("5 minutes", "1 hour"); "when" moves it to a named moment instead; "duration" sets how long it lasts; "notes" replaces the note. Give only the fields that change. It is staged as a proposal for the person to confirm, never written straight in' },
+	{ name => 'undo', args => { }, example => '{"action":"undo"}',
+	  desc => 'undo the change you last made to an appointment, putting it back the way it was' },
 );
 
 # Every appointment type the Guide's create may stage, so the model is told the

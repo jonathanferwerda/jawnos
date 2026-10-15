@@ -946,7 +946,7 @@ our %topic = (
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes.',
-			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. The Guide\'s associate - the small chat in the corner, the same Guide and so carrying every one of these powers - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, showing what it is, when, and - when you gave one - how long it lasts, and the chat you left is still there when you come back. It never sends, pays or deletes.',
+			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. Ask it to change one you already have — "delay email test by 5 minutes", "make it last 10 minutes", "move it to tomorrow at 3pm" — and it stages that too, then applies it in place; say "undo that" and it puts the appointment back the way it was. The Guide\'s associate - the small chat in the corner, the same Guide and so carrying every one of these powers - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, showing what it is, when, and - when you gave one - how long it lasts, and the chat you left is still there when you come back. It never sends, pays or deletes.',
 			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents). Its config menu also carries Speak the replies; ticked, each answer is spoken as well as written, through the voice set under Configure → Misc → Speech (Piper first — the same voice the watch\'s answers use).',
 			'A thing you have marked not-visible is neither named nor opened here unless its padlock is open and you are at home, so a hidden album stays hidden out in public.',
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
@@ -1199,6 +1199,9 @@ sub actions_prompt {
 		if ($auto_save && $t->{'name'} eq 'create') {
 			$desc = 'make the appointment and save it right away: the Confirmation Requirement is off, so create writes it straight in - do not ask for a yes and there is nothing to promote';
 		}
+		if ($auto_save && $t->{'name'} eq 'update') {
+			$desc = 'change an appointment that already exists, named by "app" (add "title" when you know it). "delay" pushes it later by the length the person said; "when" moves it to a named moment instead; "duration" sets how long it lasts; "notes" replaces the note. Give only the fields that change. The Confirmation Requirement is off, so the change is saved the moment it is made - do not ask for a yes and there is nothing to promote';
+		}
 		my $ex = $t->{'example'} || ('{"action":"' . $t->{'name'} . '"}');
 		# pad to the shared column, but never let a long example swallow the gap
 		my $gap = ' ' x (length($ex) < 46 ? (46 - length($ex)) : 2);
@@ -1210,9 +1213,13 @@ sub actions_prompt {
 	my $create_rule = $auto_save
 		? "- To make an appointment, use create - the Confirmation Requirement is off, so it is saved the moment it is made. Do not ask the person to confirm and do not call promote; say briefly that it is saved."
 		: "- To make an appointment, use create - it only stages a proposal. Tell the person what you staged and ask them to confirm; call promote only once they agree, and never say it is saved before promote returns. Use discard if they decline.";
+	my $update_rule = $auto_save
+		? "- To change an appointment that already exists (\"delay email test by 5 minutes\", \"make it last 10 minutes\", \"move it to tomorrow at 3pm\"), use update and name it by app. The Confirmation Requirement is off, so the change is saved the moment it is made - do not ask and do not call promote; say briefly what changed."
+		: "- To change an appointment that already exists (\"delay email test by 5 minutes\", \"make it last 10 minutes\", \"move it to tomorrow at 3pm\"), use update and name it by app. It only stages the change - tell the person what will change and call promote only once they agree; call discard if they decline. Never say it is changed before promote returns.";
 	my $rules = <<"TXT";
 Rules:
-- Navigate, search and make media only. Never delete, send, pay, or change any other data.
+- Navigate, search, make media and change appointments (update). Never delete, send or
+  pay, and never change anything else.
 - Choose only from the actions listed above; there is no other verb here.
 - When the person names a photo, a record or an app to show them, use find first,
   then open what the result points at. If find returns an app, pass that exact app
@@ -1228,6 +1235,9 @@ Rules:
 - For "when did I last see/do X", use find and answer from its last date - do not
   guess a date.
 $create_rule
+$update_rule
+- If the person says "undo that" or "put it back", use undo to reverse your last
+  appointment change.
 - "Where was I" and "when did I last see X" are different questions. For a place
   at a time, use where_when with an absolute date. For a record or photo, use find.
 - For "show me <place> on a map", use show_place - it works offline from the

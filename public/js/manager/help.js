@@ -178,6 +178,8 @@ function helpActionLabel(a) {
 	if (a.action === 'where_when') { return 'Looking up where you were…'; }
 	if (a.action === 'measure') { return 'Measuring…'; }
 	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
+	if (a.action === 'update') { return 'Changing “' + (a.app || a.title || 'the appointment') + '”…'; }
+	if (a.action === 'undo') { return 'Putting the last change back…'; }
 	var bits = [];
 	if (a.app) { bits.push(a.app); }
 	if (a.search) { bits.push('“' + a.search + '”'); }
@@ -305,6 +307,10 @@ function helpDoAction(a, cb) {
 		$.post('/manager/help/promote', { uuid: id }, function (r) {
 			jawnos_help_last_staged = null;
 			if (r && r.error) { cb('I could not save that: ' + r.error); return; }
+			if (r && r.kind === 'update') {
+				cb('Done - ' + (r.summary || 'I made the change') + '. Say "undo that" to put it back.', 'Done - ' + (r.summary || 'I made the change') + '.');
+				return;
+			}
 			cb('Saved it as a real appointment.', 'Done - it is saved.');
 		}).fail(function () { cb('I could not save that.'); });
 		return;
@@ -316,6 +322,31 @@ function helpDoAction(a, cb) {
 			jawnos_help_last_staged = null;
 			cb('Dropped the staged appointment.', 'Done - I threw it away.');
 		}).fail(function () { cb('I could not drop that.'); });
+		return;
+	}
+	if (a.action === 'update') {
+		// a change to an appointment that already exists: the server resolves the
+		// appointment and the fields, and stages the change as a proposal
+		$.post('/manager/help/update', { app: a.app || '', title: a.title || '', delay: a.delay || '', when: a.when || '', duration: a.duration || '', notes: a.notes || '' }, function (r) {
+			if (!r || r.error) { cb('I could not change that: ' + ((r && r.error) || 'no such appointment') + '.', 'I could not make that change.'); return; }
+			var what = r.summary || ('change ' + (r.app || a.app || 'the appointment'));
+			if (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired()) {
+				$.post('/manager/help/promote', { uuid: r.staged }, function (p) {
+					if (p && p.error) { cb('I could not change that: ' + p.error); return; }
+					cb('Done - ' + what + '. Say "undo that" to put it back.', 'Done - ' + what + '.');
+				}).fail(function () { cb('I staged the change but could not save it.'); });
+				return;
+			}
+			jawnos_help_last_staged = r.staged;
+			cb('I will ' + what + '. It is NOT changed yet.', 'I have staged it - say yes and I will change it.');
+		}).fail(function () { cb('I could not change that.'); });
+		return;
+	}
+	if (a.action === 'undo') {
+		$.post('/manager/help/undo', {}, function (r) {
+			if (!r || !r.ok) { cb((r && r.error) || 'There is nothing to undo.', 'There is nothing to undo.'); return; }
+			cb('Put it back - ' + (r.summary || 'the last change was undone') + '.', 'Done - I put it back.');
+		}).fail(function () { cb('I could not undo that.'); });
 		return;
 	}
 	if (a.action === 'generate') {

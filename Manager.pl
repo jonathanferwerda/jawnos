@@ -447,7 +447,8 @@ sub help_search($q) {
 }
 
 # A person's birthday: "<name>'s birthday", "<name>'s Nth birthday", "when was
-# <name> born". The person's saved birthday (Configure -> App -> Birthdays) is read
+# <name> born", "the day <name> was born". The person's saved birthday
+# (Configure -> App -> Birthdays) is read
 # first; failing that the guide looks the person up (it knows "Abraham Lincoln's
 # birthday"). For the Nth form the years are counted here, so the arithmetic is
 # exact rather than left to the model. undef when the phrase is none of these or
@@ -458,6 +459,8 @@ sub person_birthday_of {
 	if    ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+(\d{1,3})\s*(?:st|nd|rd|th)\s+birthday\s*$/i) { ($name, $n) = ($1, $2); }
 	elsif ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+birthday\s*$/i)                        { ($name) = ($1); }
 	elsif ($spec =~ /^\s*(?:when\s+)?(?:was|is)\s+(.+?)\s+born\s*$/i)                 { ($name) = ($1); }
+	elsif ($spec =~ /^\s*(?:the\s+)?(?:day|date)\s+(.+?)\s+(?:was|is)\s+born\s*$/i)   { ($name) = ($1); }
+	elsif ($spec =~ /^\s*(?:what|which)\s+(?:day|date)\s+(?:was|is)\s+(.+?)\s+born\s*$/i) { ($name) = ($1); }
 	else { return undef; }
 	$name =~ s/^\s+|\s+$//g;
 	return undef unless length $name;
@@ -20286,6 +20289,9 @@ sub guide_stage_appointment($c, $params) {
 sub guide_promote_staged($c, $uuid) {
 	my $row = &subs::db_select('staged_appointments', undef, { uuid => $uuid })->hash;
 	return { error => 'no such staged appointment' } unless $row;
+	# a staged change edits an appointment that already exists; a staged create makes
+	# a new one - the row's kind tells them apart
+	return guide_promote_update($c, $row) if (($row->{'kind'} || '') eq 'update');
 	my $real_uuid = &subs::random_string_creator(40);
 	my $notes = $row->{'title'} ? ($row->{'title'} . ($row->{'notes'} ? (" \x{2014} " . $row->{'notes'}) : '')) : $row->{'notes'};
 	# Write through appointment_writer, not straight to the table. A bare insert
@@ -20312,6 +20318,136 @@ sub guide_promote_staged($c, $uuid) {
 	return { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} };
 }
 
+# ---- the Guide's change path: update an appointment that already exists -------
+# A change names the appointment by its app (the app is the thing; its appointments
+# are its events), the latest one unless a title picks among them. The change is
+# staged the way a create is, so the person sees what will happen and confirms it,
+# and it is applied in place - an edit, not a new event.
+
+# The appointment a change names, or undef.
+sub guide_find_target($app, $title) {
+	$app = &subs::unformat_name($app || '');
+	return undef unless length $app;
+	if (defined $title && $title =~ /\S/) {
+		my $by_title = &subs::db_query('select * from appointments where app = ? and uuid is not null and notes like ? order by timestamp desc limit 1', $app, '%' . $title . '%')->hashes;
+		return $by_title->[0] if scalar @{$by_title};
+	}
+	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null order by timestamp desc limit 1', $app)->hashes;
+	return $rows->[0];
+}
+
+# The fields a change would set, read from the person's words: "delay" pushes the
+# moment later by the length they gave, "when" moves it to a named time instead,
+# "duration" sets how long it lasts, "notes" replaces the note. Only the fields
+# actually named come back, so the change touches nothing else.
+sub guide_update_changes($target, $p) {
+	my %c;
+	if (defined $p->{'delay'} && $p->{'delay'} =~ /\S/) {
+		my $ms = &guide_duration_ms($p->{'delay'}, 'usual');
+		$c{'timestamp'} = ($target->{'timestamp'} + 0) + $ms if defined $ms && $ms != 0;
+	}
+	if (defined $p->{'when'} && $p->{'when'} =~ /\S/) {
+		my $w = &guide_when_ms($p->{'when'});
+		$c{'timestamp'} = $w if defined $w;
+	}
+	if (defined $p->{'duration'} && $p->{'duration'} =~ /\S/) {
+		my $d = &guide_duration_ms($p->{'duration'}, $target->{'type'});
+		$c{'duration'} = $d if defined $d && $d != 0;
+	}
+	if (defined $p->{'notes'} && length $p->{'notes'}) {
+		$c{'notes'} = $p->{'notes'};
+	}
+	return \%c;
+}
+
+sub guide_length_words($ms) {
+	my $mins = int(abs($ms + 0) / 60000);
+	return $mins . ' min' if $mins < 60;
+	my $h = int($mins / 60);
+	my $m = $mins % 60;
+	return $h . 'h' . ($m ? (' ' . $m . 'm') : '');
+}
+
+# Plain words for what a change does, shown in the chat and on the staged row.
+sub guide_update_summary($target, $changes) {
+	my $who = &subs::format_name($target->{'app'});
+	my @parts;
+	if (exists $changes->{'timestamp'}) {
+		my $delta = $changes->{'timestamp'} - ($target->{'timestamp'} + 0);
+		my $word = $delta >= 0 ? 'delay' : 'bring forward';
+		push @parts, $word . ' "' . $who . '" by ' . &guide_length_words($delta)
+			. ' (to ' . localtime($changes->{'timestamp'} / 1000)->strftime('%b %e, %I:%M%p') . ')';
+	}
+	if (exists $changes->{'duration'}) {
+		push @parts, 'set "' . $who . '" to last ' . &guide_length_words($changes->{'duration'});
+	}
+	if (exists $changes->{'notes'}) {
+		push @parts, 'change the note on "' . $who . '"';
+	}
+	return join(', and ', @parts);
+}
+
+sub guide_stage_update($c, $params) {
+	my $app = $params->{'app'} || '';
+	my $target = &guide_find_target($app, $params->{'title'});
+	return { error => 'I could not find "' . ($app || 'that') . '" to change' } unless $target;
+	my $changes = &guide_update_changes($target, $params);
+	return { error => 'nothing to change' } unless scalar keys %{$changes};
+	my $uuid = &subs::random_string_creator(40);
+	my $summary = &guide_update_summary($target, $changes);
+	&subs::db_insert('staged_appointments', {
+		uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
+		kind => 'update', target_uuid => $target->{'uuid'},
+		app => $target->{'app'}, type => ($target->{'type'} || 'usual'),
+		timestamp => (exists $changes->{'timestamp'} ? $changes->{'timestamp'} : $target->{'timestamp'}),
+		title => $summary, notes => '', data => '',
+		changes => encode_json $changes,
+		duration => (exists $changes->{'duration'} ? $changes->{'duration'} : ($target->{'duration'} || '')),
+		device => &subs::device_setter(), status => 'pending'
+	});
+	return { staged => $uuid, app => $target->{'app'}, kind => 'update', summary => $summary, timestamp => $changes->{'timestamp'} };
+}
+
+# The undo stack: one record per applied change, the appointment's fields as they
+# were before it, newest last. One setting, capped, so it syncs but cannot grow.
+sub guide_undo_push($rec) {
+	my $stack = eval { decode_json(&subs::setting_grabber({ app => 'me', setting => 'guide_undo' }) || '[]') } || [];
+	$stack = [] unless ref $stack eq 'ARRAY';
+	push @{$stack}, $rec;
+	splice @{$stack}, 0, scalar(@{$stack}) - 10 if scalar @{$stack} > 10;
+	&subs::setting_setter({ app => 'me', setting => 'guide_undo', value => encode_json $stack });
+}
+sub guide_undo_pop() {
+	my $stack = eval { decode_json(&subs::setting_grabber({ app => 'me', setting => 'guide_undo' }) || '[]') } || [];
+	$stack = [] unless ref $stack eq 'ARRAY';
+	my $rec = pop @{$stack};
+	&subs::setting_setter({ app => 'me', setting => 'guide_undo', value => encode_json $stack });
+	return $rec;
+}
+
+# Apply a staged change in place, remembering how to undo it. The alarm is re-armed
+# after the edit, and the open tabs are told to redraw.
+sub guide_promote_update($c, $row) {
+	my $changes = eval { decode_json($row->{'changes'} || '{}') } || {};
+	return { error => 'nothing to change' } unless ref $changes eq 'HASH' && scalar keys %{$changes};
+	my $target = &subs::db_select('appointments', undef, { uuid => $row->{'target_uuid'} })->hash;
+	return { error => 'that appointment is gone' } unless $target;
+	&guide_undo_push({
+		app => $target->{'app'}, uuid => $target->{'uuid'}, title => $row->{'title'},
+		timestamp => $target->{'timestamp'}, duration => $target->{'duration'}, notes => $target->{'notes'},
+	});
+	my %set = %{$changes};
+	$set{'server_time'} = &subs::rightNow();
+	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+	my $fresh = &subs::db_select('appointments', undef, { uuid => $target->{'uuid'} })->hash;
+	&subs::appt_alarm_setter($fresh) if $fresh;
+	my $js = 'appointmentDetailGrabber(' . encode_json($target->{'app'}) . ',' . encode_json($target->{'uuid'}) . ');';
+	&Websocket::send('tab', { console => $js });
+	&Websocket::send('server', { console => $js });
+	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
+	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'update', summary => $row->{'title'} };
+}
+
 post '/manager/help/stage' => sub($c) {
 	$c->render(json => guide_stage_appointment($c, {
 		app => $c->param('app'), type => $c->param('type'), timestamp => $c->param('timestamp'),
@@ -20328,6 +20464,33 @@ post '/manager/help/discard' => sub($c) {
 	my $uuid = $c->param('uuid');
 	&subs::db_update('staged_appointments', { status => 'discarded' }, { uuid => $uuid });
 	$c->render(json => { discarded => $uuid });
+};
+
+# The Guide changes an appointment that already exists: stage the change as a
+# proposal (promote applies it), the same shape a create uses.
+post '/manager/help/update' => sub($c) {
+	$c->render(json => guide_stage_update($c, {
+		app => $c->param('app'), title => $c->param('title'), delay => $c->param('delay'),
+		when => $c->param('when'), duration => $c->param('duration'), notes => $c->param('notes')
+	}));
+};
+
+# Undo the Guide's last appointment change: put back the fields it set.
+post '/manager/help/undo' => sub($c) {
+	my $rec = guide_undo_pop();
+	return $c->render(json => { ok => 0, error => 'there is nothing to undo' }) unless $rec && $rec->{'uuid'};
+	my $target = &subs::db_select('appointments', undef, { uuid => $rec->{'uuid'} })->hash;
+	return $c->render(json => { ok => 0, error => 'that appointment is gone' }) unless $target;
+	my %set = ( timestamp => $rec->{'timestamp'}, server_time => &subs::rightNow() );
+	$set{'duration'} = $rec->{'duration'} if exists $rec->{'duration'};
+	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
+	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+	my $fresh = &subs::db_select('appointments', undef, { uuid => $target->{'uuid'} })->hash;
+	&subs::appt_alarm_setter($fresh) if $fresh;
+	my $js = 'appointmentDetailGrabber(' . encode_json($target->{'app'}) . ',' . encode_json($target->{'uuid'}) . ');';
+	&Websocket::send('tab', { console => $js });
+	&Websocket::send('server', { console => $js });
+	$c->render(json => { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') });
 };
 
 # The Guide makes media: an image, a sound or a video through the matching agent,
@@ -24864,6 +25027,12 @@ sub update_database($data) {
 		# the Guide's create now carries a length ("lasts 5 minutes") as the negative
 		# accrual the tree stores; a staged row keeps it so promote writes it on
 		'alter table staged_appointments add column duration VARCHAR(25)',
+		# a staged row may instead be a change to an appointment that already exists:
+		# "kind" tells the two apart, "target_uuid" names the appointment the change
+		# edits, and "changes" is the JSON of the fields to set on promote
+		'alter table staged_appointments add column kind VARCHAR(25)',
+		'alter table staged_appointments add column target_uuid VARCHAR(255)',
+		'alter table staged_appointments add column changes LONGTEXT',
 		'create index if not exists idx1_staged on staged_appointments (status, staged_time)',
 		'create table if not exists sync_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
