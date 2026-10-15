@@ -50,6 +50,7 @@ require "./Websocket.pl";
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
+our $resolve_when_residual = '';   # what resolve_when could not read as a date (see date_leftover)
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 my $universal_splitter = $gb::universal_splitter;
@@ -953,6 +954,7 @@ sub birthday_moment_for_age {
 sub resolve_when {
 	my ($text,$now) = @_;
 	$now = &rightNow() unless $now;
+	$resolve_when_residual = '';
 	my $t = lc($text // '');
 	$t =~ s/['\x{2019}]//g;       # "when I'm 60" reads as "when im 60", "new year's" as "new years"
 	$t =~ s/[.,]/ /g;             # "Jan.", "dec 25, 2025"
@@ -1093,6 +1095,7 @@ sub resolve_when {
 			$year_given = 1;
 		}
 	}
+	$resolve_when_residual = $residual;
 
 	$year = $now[5] + 1900 unless defined $year;
 	$year += $year_shift;
@@ -1113,6 +1116,17 @@ sub resolve_when {
 		}
 	}
 	return $ms;
+}
+
+# Whether the last resolve_when read only a date, or left words it could not read.
+# "dec 25 at 7pm" leaves only connective words, but "sept 11 attacks" leaves a
+# name - which the guide should read instead of the bare date (so the phrase means
+# the 2001 attacks, not this year's September 11).
+sub date_leftover {
+	my ($r) = @_;
+	$r = lc($r // '');
+	$r =~ s/\b(?:at|on|in|of|the|a|an|and|am|pm|o|clock|oclock)\b/ /g;
+	return $r =~ /[a-z]/ ? 1 : 0;
 }
 
 # A local time as an unambiguous ISO string, its year signed so B.C. reads as a
@@ -1177,12 +1191,13 @@ sub saved_birthday_ms() {
 	return &resolve_when($hit, $now);
 }
 
-# The hour and minute an app's records cluster around: the busiest hour among its
-# recent appointments, and the busiest minute within it. undef with no records, so
-# a caller falls back to a plain clock time.
-sub usual_hour_for() {
+# The times of day an app's records cluster around: the busiest hours (a habit can
+# fall more than once a day - coffee mid-morning and again mid-afternoon), each
+# with the minute that clusters within it. Empty with no records, so a caller
+# falls back to a plain clock time.
+sub usual_times_for() {
 	my ($app) = @_;
-	return undef unless $app;
+	return unless $app;
 	my $rows = &db_query('select timestamp from appointments where app = ? order by timestamp desc limit 500', $app)->hashes;
 	my (%hour, %min);
 	foreach my $r (@{$rows}) {
@@ -1191,18 +1206,35 @@ sub usual_hour_for() {
 		$hour{$t[2]}++;
 		push @{ $min{$t[2]} }, $t[1];
 	}
-	return undef unless scalar keys %hour;
-	my ($bh) = sort { $hour{$b} <=> $hour{$a} || $a <=> $b } keys %hour;
-	my %m;
-	$m{$_}++ foreach @{ $min{$bh} };
-	my ($bm) = sort { $m{$b} <=> $m{$a} || $a <=> $b } keys %m;
-	return ($bh + 0, ($bm // 0) + 0);
+	return unless scalar keys %hour;
+	# the peaks: take the busiest hour, drop the hours beside it, and take the next
+	# busiest that is left - so a two-a-day habit yields two times. A walk-off peak
+	# below a quarter of the top is a tail, not a second habit.
+	my $top = (sort { $b <=> $a } values %hour)[0] || 1;
+	my (%taken, @peaks);
+	foreach my $h ( sort { $hour{$b} <=> $hour{$a} || $a <=> $b } keys %hour ) {
+		next if $taken{$h};
+		last if $hour{$h} < $top * 0.25;
+		last if scalar @peaks >= 5;
+		push @peaks, $h;
+		my $x = $h - 2;
+		$taken{$x++} = 1 for 1 .. 5;
+	}
+	my @times;
+	foreach my $h ( sort { $a <=> $b } @peaks ) {
+		my %m;
+		$m{$_}++ foreach @{ $min{$h} };
+		my ($bm) = sort { $m{$b} <=> $m{$a} || $a <=> $b } keys %m;
+		push @times, [ $h + 0, ($bm // 0) + 0 ];
+	}
+	return @times;
 }
 
 # A time of day that is a habit rather than a date ("breakfast", "tea time", "next
-# coffee time"): the hour the person usually does it, read from that app's own
-# records, and a plain hour when there is nothing to read. undef when the phrase
-# names no such habit.
+# coffee time"): the times the person usually does it, read from that app's own
+# records, and a plain hour when there is nothing to read. "next" is the next of
+# those times after now (today, else tomorrow); otherwise it is the one nearest
+# now, today. undef when the phrase names no such habit.
 sub usual_ritual_time() {
 	my ($spec, $now) = @_;
 	$now = &rightNow() unless $now;
@@ -1230,15 +1262,35 @@ sub usual_ritual_time() {
 	my $r = $ritual{$t};
 	return undef unless $r;
 	my ($app, $hour, $min) = @{$r};
-	my @usual = &usual_hour_for($app);
-	if (defined $usual[0]) { $hour = $usual[0]; $min = $usual[1]; }
+	my @times = &usual_times_for($app);
+	@times = ( [ $hour, $min ] ) unless @times;
 	my @n = localtime($now / 1000);
-	my $epoch = eval { int(POSIX::mktime(0, $min, $hour, $n[3], $n[4], $n[5])) };
-	return undef unless defined $epoch;
-	my $ms = $epoch * 1000;
-	if ($next && $ms <= $now) {
-		my $e2 = eval { int(POSIX::mktime(0, $min, $hour, $n[3] + 1, $n[4], $n[5])) };
-		$ms = $e2 * 1000 if defined $e2;
+	my $today = sub {
+		my ($tm) = @_;
+		my $e = eval { int(POSIX::mktime(0, $tm->[1], $tm->[0], $n[3], $n[4], $n[5])) };
+		return defined $e ? $e * 1000 : undef;
+	};
+	my $ms;
+	if ($next) {
+		foreach my $tm ( @times ) {
+			my $c = $today->($tm);
+			next unless defined $c;
+			if ($c > $now) { $ms = $c; last; }
+		}
+		unless (defined $ms) {
+			my $e = eval { int(POSIX::mktime(0, $times[0]->[1], $times[0]->[0], $n[3] + 1, $n[4], $n[5])) };
+			$ms = $e * 1000 if defined $e;
+		}
+	}
+	else {
+		my $best;
+		foreach my $tm ( @times ) {
+			my $c = $today->($tm);
+			next unless defined $c;
+			my $d = abs($c - $now);
+			$best = [ $d, $c ] if !$best || $d < $best->[0];
+		}
+		$ms = $best->[1] if $best;
 	}
 	return $ms;
 }
@@ -10868,16 +10920,28 @@ sub pen_message() {
 	my ($generating_kind, $extracted_prompt) = &ai_extract_generation_action($accumulated_text);
 	if ($generating_kind) {
 		if ($extracted_prompt) {
-			# name who is doing the work, before the (slow) generation call
+			# name who is doing the work, before the (slow) generation call, as a
+			# visible working note with a spinner (the client shows all_text)
 			my $gen_model = ($generating_kind eq 'image') ? ($settings->{'text_to_image_assistant'} || $model)
 				: ($generating_kind eq 'audio') ? ($settings->{'text_to_audio_assistant'} || '')
 				: ($settings->{'text_to_video_assistant'} || '');
-			&Websocket::mail_send({
-				type => 'writing',
-				uuid => $msg_data->{'uuid'} || $data->{'uuid'},
-				new_text => ' Generating ' . $generating_kind . ' with ' . ($gen_model || 'the ' . $generating_kind . ' agent') . '…',
-				mail_contact => 'pen'
-			});
+			my $gen_note = '<span class="ai_generating" style="display:inline-flex;align-items:center;gap:7px;opacity:.85;">'
+				. '<span style="width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:ai_generating_spin .8s linear infinite;"></span>'
+				. 'Generating ' . $generating_kind . ' with ' . ($gen_model || 'the ' . $generating_kind . ' agent') . "\x{2026}"
+				. '<style>@keyframes ai_generating_spin{to{transform:rotate(360deg)}}</style>'
+				. '</span>';
+			if ($data->{'type'} eq 'assistant') {
+				my $js = '$(' . encode_json('.assistant_content[uuid="' . $data->{'uuid'} . '"]') . ').html(' . encode_json($gen_note) . ');';
+				&Websocket::send('tab', { console => $js });
+			}
+			else {
+				&Websocket::mail_send({
+					type => 'writing',
+					uuid => $msg_data->{'uuid'} || $data->{'uuid'},
+					all_text => $gen_note,
+					mail_contact => 'pen'
+				});
+			}
 
 	    my ($media_url,$attachment) = &generate_ai_media({
 				ua => $ua,
