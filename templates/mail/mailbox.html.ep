@@ -10,29 +10,7 @@
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb email_config_toggle hover" style="">
 	<% } %>
 	<span style="font-size:20px;"><%= $main_title %></span>
-	<div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
-		<div id="mailbox_realtime_controls" style="display:none;">
-			<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
-			<img id="mailbox_video" src="<%= &subs::icon_for('/images/make believe/camera.png') %>" hint="Camera" class="little_thumb">
-			<img id="mailbox_screen" src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb">
-			<img id="mailbox_marker" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker" class="little_thumb">
-			<div id="mailbox_video_container" style="position:absolute;width:100%;bottom:30px;left:0px;">
-				<video id="mailbox_video_monitor" mute autoplay></video>
-			</div>
-		</div>
-
-		<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:var(--panel);border:solid;border-color:black;border-radius:20px;">
-
-			<% foreach my $m ( sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$mail} ) { %>
-				<%= include 'mail/message', m => $m %>
-			<% } %>
-
-		</div>
-		<div id="just_hit_send" style="text-align:center;">
-			<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
-			<button id="send_it" style="width:12%;vertical-align:top;">></button>
-		</div>
-	</div>
+	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
 	<% my $privilege = $c->session('privilege'); %>
 	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">

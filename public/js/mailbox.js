@@ -31,6 +31,17 @@ function mailArrival(data) {
 	mailDotSet(data ? data['message'] : '');
 }
 
+// Which mail app's window is open. A panel it rebuilds has to stay that app's:
+// a scoped app carries no section switcher, so losing the scope on a folder
+// switch would hand the umbrella back to the wrong window.
+function mailAppScope() {
+	var apps = ['email', 'messages', 'chat', 'lora', 'pen'];
+	for (var i = 0; i < apps.length; i++) {
+		if ($('.wind[app="' + apps[i] + '"]').length) { return apps[i]; }
+	}
+	return '';
+}
+
 function mailMaker(incomingData) {
 	if (!incomingData) { incomingData = {}; }
 	var jData = JSON.stringify(incomingData);
@@ -50,7 +61,7 @@ function mailMaker(incomingData) {
 	$.ajax({
 		url: url,
 		type: 'GET',
-		data: { window_maker: 'yes', timestamp: timestamp, email: mail_email, phone: mail_phone, mail_contact: contact_uuid, picker: picked, incoming_data: jData },
+		data: { window_maker: 'yes', timestamp: timestamp, email: mail_email, phone: mail_phone, mail_contact: contact_uuid, picker: picked, incoming_data: jData, scope: mailAppScope() },
 		success: function(response) {
 			if (incomingData['scroll'] != 1) {
 				windowMaker(response);

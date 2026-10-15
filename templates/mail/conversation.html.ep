@@ -1,0 +1,29 @@
+<%# The conversation half of every mail app: the realtime controls (microphone,
+    camera, monitor, marker), the message list, and the composer. It is the same
+    for Mailbox and for the apps that own one section (email now, chat and pen
+    as they move out), so it lives here once. Expects:
+      $mail          - the rows to render, oldest first
+      $incoming_data - the panel's data (sidebar, scroll) as sent by the client %>
+<div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
+	<div id="mailbox_realtime_controls" style="display:none;">
+		<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
+		<img id="mailbox_video" src="<%= &subs::icon_for('/images/make believe/camera.png') %>" hint="Camera" class="little_thumb">
+		<img id="mailbox_screen" src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb">
+		<img id="mailbox_marker" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Marker" class="little_thumb">
+		<div id="mailbox_video_container" style="position:absolute;width:100%;bottom:30px;left:0px;">
+			<video id="mailbox_video_monitor" mute autoplay></video>
+		</div>
+	</div>
+
+	<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:var(--panel);border:solid;border-color:black;border-radius:20px;">
+
+		<% foreach my $m ( sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$mail} ) { %>
+			<%= include 'mail/message', m => $m %>
+		<% } %>
+
+	</div>
+	<div id="just_hit_send" style="text-align:center;">
+		<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
+		<button id="send_it" style="width:12%;vertical-align:top;">></button>
+	</div>
+</div>

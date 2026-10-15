@@ -18533,7 +18533,7 @@ sub mail_checker($c) {
 	# pen) opens on its own section and hides the umbrella's switcher. The scope is
 	# per request, so the shared 'mail' subsection setting is left alone and the
 	# umbrella keeps working while the sections move out one at a time.
-	my $scope = $c->stash('mail_scope');
+	my $scope = $c->stash('mail_scope') || $c->param('scope');
 	$settings->{'subsection'} = $scope if $scope && $privilege ne 'guest';
 
 	if ($settings->{'subsection'} eq 'list') {
@@ -18641,7 +18641,7 @@ sub mail_checker($c) {
 		push @{$channel_list}, { %{$ch}, label => &mail_channel_label($ch), key => &mail_channel_key($ch), picker => encode_json $ch };
 	}
 	my $combined_data = {
-		template => 'mail/mailbox',
+		template => ($scope && $scope eq 'email') ? 'apps/email' : 'mail/mailbox',
 		mail => $mails,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,
