@@ -446,30 +446,44 @@ sub help_search($q) {
 	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
 }
 
-# A person's birthday: "<name>'s birthday", "<name>'s Nth birthday", "when was
-# <name> born", "the day <name> was born". The person's saved birthday
-# (Configure -> App -> Birthdays) is read
-# first; failing that the guide looks the person up (it knows "Abraham Lincoln's
-# birthday"). For the Nth form the years are counted here, so the arithmetic is
-# exact rather than left to the model. undef when the phrase is none of these or
-# the date cannot be found, so the guide still runs.
+# A person's birthday. "<name>'s [next|last] [Nth] birthday" names the annual
+# occasion - this year by default, next/last shifting a year and the Nth the year
+# they turn N, all counted here from the saved birthday (Configure -> App ->
+# Birthdays). "when was <name> born" and "the day <name> was born" name the actual
+# date. Failing a saved birthday the guide looks the person up (it knows "Abraham
+# Lincoln's birthday"). undef when the phrase is none of these or the date cannot
+# be found, so the guide still runs.
 sub person_birthday_of {
 	my ($spec, $timestamp) = @_;
-	my ($name, $n);
-	if    ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+(\d{1,3})\s*(?:st|nd|rd|th)\s+birthday\s*$/i) { ($name, $n) = ($1, $2); }
-	elsif ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+birthday\s*$/i)                        { ($name) = ($1); }
-	elsif ($spec =~ /^\s*(?:when\s+)?(?:was|is)\s+(.+?)\s+born\s*$/i)                 { ($name) = ($1); }
+	my ($name, $n, $mod) = ('', undef, '');
+	my $annual = 0;
+	if    ($spec =~ /^\s*(?:when\s+)?(?:was|is)\s+(.+?)\s+born\s*$/i)                 { ($name) = ($1); }
 	elsif ($spec =~ /^\s*(?:the\s+)?(?:day|date)\s+(.+?)\s+(?:was|is)\s+born\s*$/i)   { ($name) = ($1); }
 	elsif ($spec =~ /^\s*(?:what|which)\s+(?:day|date)\s+(?:was|is)\s+(.+?)\s+born\s*$/i) { ($name) = ($1); }
+	elsif ($spec =~ /^\s*(.+?)[\x{2019}']?s\s+(?:(next|last)\s+)?(?:(\d{1,3})\s*(?:st|nd|rd|th)\s+)?birthday\s*$/i) {
+		($name, $mod, $n) = ($1, lc($2 // ''), $3);
+		$annual = 1;
+	}
 	else { return undef; }
 	$name =~ s/^\s+|\s+$//g;
 	return undef unless length $name;
 	my $birth = &subs::saved_birthday_ms($name, $timestamp);
 	$birth = &guide_time_machine($name . "'s birthday", $timestamp) unless defined $birth;
 	return undef unless defined $birth;
-	return $birth unless defined $n;
+	# "when was <name> born" / "the day <name> was born" name the actual date
+	return $birth unless $annual;
 	my @b = localtime($birth / 1000);
-	my $when = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $b[5] + 1900 + $n, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]);
+	my $year;
+	if (defined $n) {
+		# "the Nth birthday" is the year they turn N
+		$year = $b[5] + 1900 + $n;
+	}
+	else {
+		# the occasion falls each year: this year, with next/last shifting a year
+		my @now = localtime($timestamp / 1000);
+		$year = $now[5] + 1900 + ($mod eq 'next' ? 1 : $mod eq 'last' ? -1 : 0);
+	}
+	my $when = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]);
 	return &subs::resolve_when($when, $timestamp);
 }
 
@@ -20425,8 +20439,18 @@ sub guide_undo_pop() {
 	return $rec;
 }
 
-# Apply a staged change in place, remembering how to undo it. The alarm is re-armed
-# after the edit, and the open tabs are told to redraw.
+# Redraw an app on screen the moment a change lands: the header a window shows
+# (appointment_header) and the open detail view. appt_header_printer also re-arms
+# the app's alarms through its header worker, so a moved appointment fires at its
+# new time.
+sub guide_refresh_app($app, $uuid) {
+	&subs::appt_header_printer({ app => $app, timestamp => &subs::rightNow() });
+	my $js = 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');';
+	&Websocket::send('tab', { console => $js });
+	&Websocket::send('server', { console => $js });
+}
+
+# Apply a staged change in place, remembering how to undo it, then redraw it.
 sub guide_promote_update($c, $row) {
 	my $changes = eval { decode_json($row->{'changes'} || '{}') } || {};
 	return { error => 'nothing to change' } unless ref $changes eq 'HASH' && scalar keys %{$changes};
@@ -20439,11 +20463,7 @@ sub guide_promote_update($c, $row) {
 	my %set = %{$changes};
 	$set{'server_time'} = &subs::rightNow();
 	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
-	my $fresh = &subs::db_select('appointments', undef, { uuid => $target->{'uuid'} })->hash;
-	&subs::appt_alarm_setter($fresh) if $fresh;
-	my $js = 'appointmentDetailGrabber(' . encode_json($target->{'app'}) . ',' . encode_json($target->{'uuid'}) . ');';
-	&Websocket::send('tab', { console => $js });
-	&Websocket::send('server', { console => $js });
+	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'update', summary => $row->{'title'} };
 }
@@ -20485,11 +20505,7 @@ post '/manager/help/undo' => sub($c) {
 	$set{'duration'} = $rec->{'duration'} if exists $rec->{'duration'};
 	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
 	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
-	my $fresh = &subs::db_select('appointments', undef, { uuid => $target->{'uuid'} })->hash;
-	&subs::appt_alarm_setter($fresh) if $fresh;
-	my $js = 'appointmentDetailGrabber(' . encode_json($target->{'app'}) . ',' . encode_json($target->{'uuid'}) . ');';
-	&Websocket::send('tab', { console => $js });
-	&Websocket::send('server', { console => $js });
+	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
 	$c->render(json => { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') });
 };
 
