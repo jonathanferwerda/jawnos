@@ -25958,7 +25958,12 @@ websocket '/mail/ws' => sub ($c) {
 			# dial or list tab is watching
 			&mailws_sender($m);
 			if ($trusted && $m->{'phone'}) {
-				&sms_message_send($m->{'phone'},$m->{'msg'});
+				# the phone wants the words, not the display copy: msg wears <br>
+				# for the thread, body (set above, before that) is the raw text,
+				# minus the trailing newline Enter left in the composer
+				my $sms_msg = $m->{'body'} || $m->{'msg'};
+				$sms_msg =~ s/\n+$//;
+				&sms_message_send($m->{'phone'}, $sms_msg);
 			}
 			if ($m->{'mail_contact'} && $m->{'mail_contact'} eq 'pen') {
 				my $mesg = {
