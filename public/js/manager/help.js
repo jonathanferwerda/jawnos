@@ -4,7 +4,9 @@
 //   - the start menu's Help icon, and appWindowOpener('help'), open it;
 //   - F1 opens the topic for the window you are focused on (or for whatever
 //     control you are hovering, when it declares a `help="topic"` attribute);
-//   - the question-mark button in a window's title bar opens that window's app;
+	// the question-mark button in a window's title bar opens the Guide's associate
+	// with that window's context (which app, which view), so it can answer about
+	// what is on screen and drive the window for the person.
 //   - the Guide: ask it a question and it becomes a chat; ask it to DO
 //     something and it drives the screen - opening apps, searching, showing
 //     photos - one whitelisted action at a time, reporting each step.
@@ -765,7 +767,7 @@ $(document).on('click', '.help_button', function (e) {
 	e.stopPropagation();
 	var app = $(this).attr('app');
 	jawnos_help_source = helpSourceFrom(app);
-	helpOpener(app);
+	assistantOpen();
 });
 
 $(document).on('click', '.help_topic_link', function () {

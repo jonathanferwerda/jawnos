@@ -168,22 +168,30 @@
 					<% } %>
 					<div class="app_abilities">
 						<h4 class="app_abilities_title">Abilities</h4>
-						<%# the app's birthday reads like an ability: a tile whose panel holds the
-						    one input; the time machine reads it before asking the guide %>
-						<span class="configuration_ability_container" setting="birthday">
-							<button app="<%= $a %>" formatted_setting="Birthday" setting="birthday" class="app_configure_toggle"><img class="ability_icon" alt="" hint="Birthday" src="<%= &subs::icon_path($ability_icon{'birthday'}, '/images/decipherable/cake.png') %>"><span class="ability_label"><b>Birthday:</b> <%= $appts->{$a}->{'setting'}->{'birthday'} || 'not set' %></span></button>
-							<div style="display:none;" class="app_configure_input" setting="birthday" app="<%= $a %>">
-								<div class="cfg-row">
-									<label>Birthday</label>
-									<span app="<%= $a %>"><input setting="birthday" class="configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'birthday'} %>" placeholder="e.g. February 12 1809"></span>
-								</div>
-							</div>
-						</span>
-						<% foreach my $b (sort keys %{$abilities}) { %>
+						<% foreach my $b (sort (keys %{$abilities}, 'birthday', 'evaluation')) { %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
-								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, '/images/decipherable/gear.png') %>"><span class="ability_label"><b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %></span></button>
+								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, $b eq 'birthday' ? '/images/decipherable/cake.png' : '/images/decipherable/gear.png') %>"><span class="ability_label">
+									<% if ($b eq 'evaluation') { %>
+										<b>Evaluation:</b> <%= do { my $c = &subs::evaluation_cadence($a); $c eq 'off' ? 'on demand' : ($c eq 'each_run' ? 'every run' : $c) } %>
+									<% } elsif ($b eq 'birthday') { %>
+										<b>Birthday:</b> <%= $appts->{$a}->{'setting'}->{'birthday'} || 'not set' %>
+									<% } else { %>
+										<b><%= &subs::format_name($b) %>:</b> <%= &subs::shorthand_name($appts->{$a}->{'setting'}->{$b},20) %>
+									<% } %>
+								</span></button>
 								<div style="display:none;" class="app_configure_input" setting="<%= $b %>" app="<%= $a %>">
-									<% if ($b eq 'notifications') { %>
+									<% if ($b eq 'birthday') { %>
+										<div class="cfg-row">
+											<label>Birthday</label>
+											<span app="<%= $a %>"><input setting="birthday" class="configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'birthday'} %>" placeholder="e.g. February 12 1809"></span>
+										</div>
+									<% } elsif ($b eq 'evaluation') { %>
+										<%= include 'apps/evaluation_controls', app => $a %>
+										<% my $app_evaluation = &subs::evaluation_report_for($a); %>
+										<% if (($app_evaluation->{'text'} || '') ne '') { %>
+											<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
+										<% } %>
+									<% } elsif ($b eq 'notifications') { %>
 										<div class="app_notification_configurator" app="<%= $a %>">
 											<% foreach my $when ( ('','start_','stop_','budget_')) { %>
 												<h4><%= &subs::format_name($when || 'default') %></h4>
@@ -315,21 +323,6 @@
 								</div>
 							</span>
 						<% } %>
-						<%# the evaluation wears the shape of an ability too: the toggle opens
-						    the controls that run one and the report it last left, so an app's
-						    evaluation is configured where the app is %>
-						<span class="configuration_ability_container" setting="evaluation">
-							<button app="<%= $a %>" formatted_setting="Evaluation" setting="evaluation" class="app_configure_toggle"><img class="ability_icon" alt="" hint="Evaluation" src="<%= &subs::icon_path($ability_icon{'evaluation'}, '/images/decipherable/gear.png') %>"><span class="ability_label"><b>Evaluation:</b> <%= do { my $c = &subs::evaluation_cadence($a); $c eq 'off' ? 'on demand' : ($c eq 'each_run' ? 'every run' : $c) } %></span></button>
-							<div style="display:none;" class="app_configure_input" setting="evaluation" app="<%= $a %>">
-								<%= include 'apps/evaluation_controls', app => $a %>
-								<%# the report the app last produced; a run that could not reach the
-								    model is not shown as one (the controls keep the durable note) %>
-								<% my $app_evaluation = &subs::evaluation_report_for($a); %>
-								<% if (($app_evaluation->{'text'} || '') ne '') { %>
-									<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
-								<% } %>
-							</div>
-						</span>
 					</div>
 				</div>
 			</div>
