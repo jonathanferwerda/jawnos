@@ -18566,6 +18566,25 @@ sub mail_checker($c) {
 		$settings->{'subsection'} = $scope_sections[0] if @scope_sections;
 	}
 
+	# Chat's friends: the people the house knows (the settings phone rows - each is
+	# a named person with a number), joined to a ticket when one is open in their
+	# name, so one row per friend carries every road they can be reached on. The
+	# number is the thread until they hold a ticket; then the ticket is.
+	my $friends = [];
+	if ($scope && $scope eq 'chat' && $privilege eq 'citizen') {
+		my $phone_rows = &subs::db_query("select app, value from settings where setting=? and value != ''", 'phone')->hashes;
+		my %ticket_by_app;
+		foreach my $t ( @{$contacts} ) { $ticket_by_app{lc($t->{'app'} || $t->{'name'} || '')} ||= $t->{'uuid'}; }
+		foreach my $p ( @{$phone_rows} ) {
+			push @{$friends}, {
+				app => $p->{'app'},
+				contact_name => $p->{'app'},
+				phone => $p->{'value'},
+				uuid => ($ticket_by_app{lc($p->{'app'} || '')} || '')
+			};
+		}
+	}
+
 	if ($settings->{'subsection'} eq 'list') {
 		my $listing = &subs::db_query('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp)->hashes;
 		foreach my $l ( @{$listing} ) {
@@ -18617,9 +18636,19 @@ sub mail_checker($c) {
 		$main_title = &subs::format_name(&subs::db_select('settings', undef, { setting => 'email', value => $email })->hashes->[0]->{'app'}) . ' ' . $email;
 	}
 	elsif ($contact) {
-		$q = &subs::db_query('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
 		my @cont = grep { $_->{'uuid'} eq $contact } @{$contacts};
 		$main_title = &subs::format_name($cont[0]->{'name'});
+		# history that was once filed under the phone number joins the person's
+		# one thread, so a conversation started over sms continues in chat and
+		# back without splitting (rows the live path files already carry both)
+		my $c_phone = &subs::db_query('select value from settings where setting=? and app=? and value != ? limit 1', 'phone', ($cont[0]->{'app'} || $cont[0]->{'contact_name'} || ''), '')->hashes->[0];
+		if ($c_phone && $c_phone->{'value'}) {
+			my $pn = $c_phone->{'value'};
+			$pn =~ s/\D+//g;
+			$pn =~ s/^1//;
+			&subs::db_query('update mailbox set contact = ? where contact is null and phone = ?', $contact, $pn) if $pn;
+		}
+		$q = &subs::db_query('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
 	}
 	else {
 		$q = &subs::db_query('select * from mailbox where timestamp < ? and project = ? and account = ? and community = ? and team = ? and club = ? and person = ? order by timestamp desc LIMIT 30',
@@ -18673,6 +18702,7 @@ sub mail_checker($c) {
 	my $combined_data = {
 		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : 'mail/mailbox',
 		mail => $mails,
+		friends => $friends,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,
 		contacts => $contacts,

@@ -728,6 +728,15 @@ function sendIt() {
 		picked = {};
 		
 	}
+	// Chat's transport dropdown: one conversation per person, the transport just
+	// names the road. A message that travels by sms is still filed on the
+	// person's thread; the number only marks which road it took.
+	var transport = ($('#mail_transport').length && $('#mail_transport').is(':visible')) ? $('#mail_transport').val() : '';
+	if (transport) {
+		mail_contact = localStorage.getItem('mail_contact') || '';
+		picked = {};
+		if (transport == 'sms') { phone = localStorage.getItem('mail_phone') || ''; }
+	}
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
 	var m = JSON.stringify({ 
 		msg: msg,
@@ -779,6 +788,14 @@ function mailAddressGrabber() {
 	}
 	else if (section == 'tickets') {
 		address.mail_contact = localStorage.getItem('mail_contact') || '';
+	}
+	// Chat's transport dropdown: the socket watches the person's thread whatever
+	// the transport, so a reply on any road arrives on the one conversation.
+	var transport = ($('#mail_transport').length && $('#mail_transport').is(':visible')) ? $('#mail_transport').val() : '';
+	if (transport) {
+		address.section = 'tickets';
+		address.mail_contact = localStorage.getItem('mail_contact') || '';
+		address.phone = (transport == 'sms') ? (localStorage.getItem('mail_phone') || '') : '';
 	}
 	return address;
 }
