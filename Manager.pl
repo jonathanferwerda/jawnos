@@ -520,6 +520,57 @@ post '/manager/take_picture' => sub($c) {
 	$c->render(json => { files => $file, ocr => $ocr });
 };
 
+# Claim unclaimed media onto an appointment: each named file row moves from its
+# Camera-app holder onto the chosen appointment, and a holder emptied by the move
+# is deleted. The media itself stays where it was sealed; only the row moves.
+post '/manager/unclaimed/claim' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app') || '');
+	my $uuid = $c->param('uuid') || '';
+	my @file_uuids = grep { $_ } split /,/, ($c->param('file_uuids') || '');
+	unless ($app && $uuid && @file_uuids) { $c->render(json => { ok => 0, error => 'need app, uuid and file_uuids' }); return; }
+	my $target = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0];
+	unless ($target) { $c->render(json => { ok => 0, error => 'no such appointment to claim onto' }); return; }
+
+	my $holders = &subs::db_select('appointments', undef, { app => 'camera', source => 'unclaimed' })->hashes || [];
+	my %taken = map { $_ => 1 } @file_uuids;
+	my %owner;   # file_uuid -> 1 when it is really unclaimed here
+	foreach my $h ( @{$holders} ) {
+		my $of = eval { return decode_json $h->{'file'} } || [];
+		foreach my $f ( @{$of} ) {
+			$owner{ $f->{'uuid'} } = 1;
+		}
+	}
+
+	my $tf = eval { return decode_json $target->{'file'} } || [];
+	my @target_files = @{$tf};
+	my $claimed = 0;
+	foreach my $h ( @{$holders} ) {
+		my $of = eval { return decode_json $h->{'file'} } || [];
+		my @orig = @{$of};
+		my @move = grep { $taken{ $_->{'uuid'} } && $owner{ $_->{'uuid'} } } @orig;
+		foreach my $f ( @move ) {
+			$f->{'appt_uuid'} = $uuid;
+			push @target_files, $f;
+			$claimed++;
+		}
+		my @left = grep { !$taken{ $_->{'uuid'} } } @orig;
+		if (@move) {
+			if (@left) {
+				&subs::db_update('appointments', { file => encode_json(\@left), server_time => &subs::rightNow() }, { app => 'camera', uuid => $h->{'uuid'} });
+			}
+			else {
+				&delete_app('camera', $h->{'uuid'}, $h->{'server_time'}, 'claimed');
+			}
+		}
+	}
+
+	unless ($claimed) { $c->render(json => { ok => 0, error => 'none of those files are unclaimed' }); return; }
+	&subs::db_update('appointments', { file => encode_json(\@target_files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
+	&centre_view_grabber({ c => $c, app => $app, timestamp => &subs::rightNow(), cached => 'no' });
+	&centre_view_grabber({ c => $c, app => 'camera', timestamp => &subs::rightNow(), cached => 'no' });
+	$c->render(json => { ok => 1, claimed => $claimed });
+};
+
 sub take_picture($c,$data) {
 	my $uuid = $data->{'uuid'} || undef;
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
@@ -579,16 +630,25 @@ sub take_picture($c,$data) {
 	else {
 		$uuid = &subs::random_string_creator(20);
 		my $jfiles = encode_json $files;
-		&appointment_writer($c, {
+		my $write = {
 			app => $app,
 			type => 'image',
 			file => $jfiles,
 			timestamp => $timestamp,
 			server_time => $server_time,
 			uuid => $uuid,
-			warranty => $warranty,
-			duration => $duration
-		});
+			duration => $duration,
+		};
+		# a capture taken in the Camera app itself, not on an appointment, is
+		# unclaimed media: it waits a week on the Camera app to be claimed
+		if ($app eq 'camera') {
+			$write->{'source'} = 'unclaimed';
+			$write->{'warranty'} = &subs::rightNow() + (7 * 24 * 60 * 60 * 1000);
+		}
+		else {
+			$write->{'warranty'} = $warranty;
+		}
+		&appointment_writer($c, $write);
 	}
 	my $jfiles = encode_json $files;
 	&subs::file_encrypter({ app => $app });

@@ -10617,7 +10617,8 @@ sub pen_message() {
 				settings => $settings,
 				model => $gen_model,
 				conversation => $conversation,
-				mail_contact => $mail_contact
+				mail_contact => $mail_contact,
+				unclaimed => ($conversation->{'chatbot_conversation_name'} ? 0 : 1)
 			});
 	    $attachments = $attachment if $attachment;
 	    if ($media_url) {
@@ -13618,8 +13619,11 @@ sub generate_ai_media {
 	my $conversation = $data->{'conversation'};
 	my $mail_contact = $data->{'mail_contact'};
 	my $start_timestamp = &subs::rightNow();
-	my $app = $mail_contact;
-	if ($conversation->{'chatbot_conversation_name'}) {
+	# Unclaimed media (a Guide associate, or Pen with no name for the chat) lands
+	# on the Camera app, where it waits a week to be claimed onto an appointment.
+	my $unclaimed = ($data->{'unclaimed'}) ? 1 : 0;
+	my $app = $unclaimed ? 'camera' : $mail_contact;
+	if (!$unclaimed && $conversation->{'chatbot_conversation_name'}) {
 		$app = $conversation->{'chatbot_conversation_name'};
 	}
 	$app = &subs::unformat_name($app);
@@ -13665,6 +13669,8 @@ sub generate_ai_media {
 		uuid => $appt_uuid,
 		duration => &subs::rightNow() - $start_timestamp,
 	};
+	$write->{'source'} = 'unclaimed' if $unclaimed;
+	$write->{'warranty'} = &subs::rightNow() + (7 * 24 * 60 * 60 * 1000) if $unclaimed;
 	&Manager::appointment_writer($c,$write);
 	&subs::file_encrypter({ app => &subs::unformat_name($app) });
 	&Manager::centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
