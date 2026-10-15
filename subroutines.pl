@@ -14864,6 +14864,35 @@ sub app_release_log {
 	close $fh;
 }
 
+# Fetch a URL into a string. curl first, forced to IPv4: on a network whose IPv6
+# path to GitHub's asset CDN stalls, Mojo::UserAgent (which does not pin the
+# address family) hangs where curl -4 completes. Falls back to Mojo when curl is
+# absent, then to curl without -4 for a host that has no A record.
+sub github_fetch {
+	my ($url, $timeout) = @_;
+	$timeout ||= 60;
+	my $curl = `command -v curl 2>/dev/null`;
+	chomp $curl;
+	if ($curl) {
+		foreach my $args ( ['-4'], [] ) {
+			my $tmp = "/tmp/jawn_gh_" . $$ . "_" . int(rand(1_000_000));
+			my $rc = system($curl, @{$args}, '-sSL', '--max-time', "$timeout", '-o', $tmp, $url);
+			if ($rc == 0 && -s $tmp) {
+				my $body;
+				if (open(my $fh, '<', $tmp)) { binmode $fh; local $/; $body = <$fh>; close $fh; }
+				unlink $tmp;
+				return $body if defined $body && length $body;
+			}
+			unlink $tmp;
+		}
+	}
+	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => $timeout);
+	$ua->max_response_size(0);
+	$ua->max_redirects(5);
+	my $res = eval { $ua->get($url)->result };
+	return ($res && $res->is_success) ? $res->body : undef;
+}
+
 # The public app-release manifest on GitHub - a source that needs no peer to
 # answer, or to hold a valid cookie for us. The release carries app_release.json
 # (product, versionCode, versionName, filename, sha256) beside the APK, under a
@@ -14875,13 +14904,9 @@ sub github_release_manifest {
 	return undef unless $repo && $repo =~ m{^[^/\s]+/[^/\s]+\z};
 	$tag ||= 'releases';
 	my $base = "https://github.com/$repo/releases/download/$tag";
-	my $ua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 30);
-	$ua->max_response_size(0);
-	# a release asset 302s to the CDN, so the redirect must be followed
-	$ua->max_redirects(5);
-	my $res = eval { $ua->get("$base/app_release.json")->result };
-	return undef unless $res && $res->is_success;
-	my $man = eval { decode_json $res->body };
+	my $body = &github_fetch("$base/app_release.json", 30);
+	return undef unless defined $body && length $body;
+	my $man = eval { decode_json $body };
 	return undef unless $man && ref $man eq 'HASH'
 		&& $man->{'product'} && $man->{'versionCode'} && $man->{'filename'};
 	$man->{'base'} = $base;
@@ -14918,11 +14943,7 @@ sub app_release_sync {
 		my $gf = $gh->{'filename'};
 		if ((!$local{$gp} || $gv > $local{$gp})
 			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/) {
-			my $gua = Mojo::UserAgent->new(connect_timeout => 10, inactivity_timeout => 300);
-			$gua->max_response_size(0);
-			$gua->max_redirects(5);   # the asset 302s to the CDN
-			my $res = eval { $gua->get($gh->{'base'} . '/' . $gf)->result };
-			my $blob = ($res && $res->is_success) ? $res->body : undef;
+			my $blob = &github_fetch($gh->{'base'} . '/' . $gf, 600);
 			unless (defined $blob && length $blob) {
 				&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; falling back to peers');
 			}
