@@ -302,6 +302,47 @@ sub guide_when_ms {
 	return &time_machine_resolve($when, $now);
 }
 
+# A length the person gave ("5 minutes", "lasts 2h") as the tree stores it. Read
+# here rather than through time_abbrev_translator: that parser reads a compact unit
+# ("5m", "1h") but treats a number followed by a spelled-out word as a bare number -
+# minutes - so a model's "90 seconds" arrived as ninety minutes and "1 hour" as one
+# minute. A model writes words, so both forms are read here, and a phrase may name
+# several parts ("1 hour 30 minutes").
+sub guide_duration_ms {
+	my ($phrase, $type) = @_;
+	return undef unless defined $phrase && $phrase =~ /\S/;
+	my %mult = (
+		ms => 1, millisecond => 1, milliseconds => 1,
+		s => 1000, sec => 1000, secs => 1000, second => 1000, seconds => 1000,
+		m => 60000, min => 60000, mins => 60000, minute => 60000, minutes => 60000,
+		h => 3600000, hr => 3600000, hrs => 3600000, hour => 3600000, hours => 3600000,
+		d => 86400000, day => 86400000, days => 86400000,
+		w => 604800000, week => 604800000, weeks => 604800000,
+	);
+	my $total = 0;
+	my $seen = 0;
+	while ($phrase =~ /(\d+(?:\.\d+)?)\s*([a-z]*)/gi) {
+		my ($n, $u) = ($1, lc($2 || ''));
+		$u = 'm' if $u eq '';   # a bare number is minutes, as the app's own input reads it
+		my $m = $mult{$u};
+		if (!defined $m) {
+			# a unit we do not know (months, years): let the app's own parser, whose
+			# month/year handling counts real calendar days, read just this part
+			my $ms = eval { &subs::time_abbrev_translator($n . $u, &subs::rightNow()) };
+			next unless defined $ms && $ms =~ /^-?[0-9.]+$/;
+			$m = int($ms) / $n;
+		}
+		$total += $n * $m;
+		$seen = 1;
+	}
+	return undef unless $seen && $total > 0;
+	# Time is an accrual: a start/record is stored as a NEGATIVE offset, so a
+	# start/stop pair writes start - stop and a five-minute office visit is -300000ms.
+	# Other types keep the plain length. Mirrors the appointment's own duration input,
+	# whose start/record rule negates what the person typed.
+	return (($type || '') =~ /^(?:start|record)$/) ? -int($total) : int($total);
+}
+
 # The words worth searching a phrase for: its nouns, with the small connective
 # words dropped, so "the last time I had a beer" searches for "beer".
 sub guide_time_keywords {
@@ -456,7 +497,7 @@ sub guide_time_machine {
 			. 'If the phrase names no time of day, keep the present time of day. A bare amount of time with no direction ("6 months", "2 hours") points into the past; a leading minus points ahead. '
 			. 'Reply with ONE JSON action and nothing else: '
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '
-			. 'or {"action":"create","app":"lunch","title":"Lunch","when":"in 20 minutes","type":"start"} to make an appointment, when they ask you to start, begin or log something ("type" is start, record or command for something the alarm fires). '
+			. 'or {"action":"create","app":"lunch","title":"Lunch","when":"in 20 minutes","type":"start","duration":"20 minutes"} to make an appointment, when they ask you to start, begin or log something ("type" is start, record or command for something the alarm fires; "duration" is how long it lasts, only when they say it - give a plain positive length, the tree stores it as the negative accrual itself). '
 			. 'If the phrase names no moment and asks for nothing, reply {"action":"time","when":"unknown"}';
 		my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $spec, &subs::ai_role_thinking('help_assistant'));
 		if ($text) {
@@ -469,12 +510,13 @@ sub guide_time_machine {
 				my $app = &subs::unformat_name($action->{'app'} || $action->{'title'} || 'appointment');
 				my $title = $action->{'title'} || '';
 				my $type = $action->{'type'} || 'start';
+				my $duration = &guide_duration_ms($action->{'duration'}, $type);
 				# the Confirmation Requirement: unticked, the appointment is written at
 				# once (through appointment_writer, so its alarm and any embedded relay
 				# fire); ticked, it is staged for the person to confirm instead
 				my $confirm = (&subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' }) // 'on');
 				if ($confirm eq 'off') {
-					&appointment_writer(undef, {
+					my $appt = {
 						uuid => &subs::random_string_creator(40),
 						app => $app,
 						type => $type,
@@ -483,10 +525,12 @@ sub guide_time_machine {
 						notes => $title,
 						source => 'guide',
 						device => &subs::device_setter(),
-					});
+					};
+					$appt->{'duration'} = $duration if defined $duration;
+					&appointment_writer(undef, $appt);
 				}
 				else {
-					&guide_stage_appointment(undef, { app => $app, type => $type, timestamp => $when_ms, title => $title, source => 'guide' });
+					&guide_stage_appointment(undef, { app => $app, type => $type, timestamp => $when_ms, title => $title, duration => $action->{'duration'}, source => 'guide' });
 				}
 				$ms = $when_ms;
 			}
@@ -20227,12 +20271,16 @@ sub guide_stage_appointment($c, $params) {
 	my $title = $params->{'title'} || '';
 	my $notes = $params->{'notes'} || '';
 	my $data = $params->{'data'} || '';
+	# resolved to the tree's own sign now (a start accrues negative), so the staged
+	# row shows the length the person will get
+	my $duration = &guide_duration_ms($params->{'duration'}, $type);
 	&subs::db_insert('staged_appointments', {
 		uuid => $uuid, staged_time => $now, source => ($params->{'source'} || 'guide'),
 		app => $app, type => $type, timestamp => $timestamp, title => $title,
-		notes => $notes, data => $data, device => ($params->{'device'} || &subs::device_setter()), status => 'pending'
+		notes => $notes, data => $data, duration => (defined $duration ? $duration : ''),
+		device => ($params->{'device'} || &subs::device_setter()), status => 'pending'
 	});
-	return { staged => $uuid, app => $app, type => $type, timestamp => $timestamp, title => $title };
+	return { staged => $uuid, app => $app, type => $type, timestamp => $timestamp, title => $title, duration => $duration };
 }
 
 sub guide_promote_staged($c, $uuid) {
@@ -20257,6 +20305,8 @@ sub guide_promote_staged($c, $uuid) {
 	};
 	# only hand data on when it is real JSON; an empty string is not
 	$appt->{'data'} = $row->{'data'} if defined $row->{'data'} && $row->{'data'} =~ /^\s*[\[\{]/;
+	# the length the person gave rides through as the negative accrual the tree stores
+	$appt->{'duration'} = $row->{'duration'} if defined $row->{'duration'} && $row->{'duration'} =~ /^-?[0-9]+$/ && $row->{'duration'} != 0;
 	&Manager::appointment_writer($c, $appt);
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $uuid });
 	return { promoted => $uuid, uuid => $real_uuid, app => $row->{'app'} };
@@ -20266,7 +20316,7 @@ post '/manager/help/stage' => sub($c) {
 	$c->render(json => guide_stage_appointment($c, {
 		app => $c->param('app'), type => $c->param('type'), timestamp => $c->param('timestamp'),
 		title => $c->param('title'), notes => $c->param('notes'), data => $c->param('data'),
-		source => $c->param('source')
+		duration => $c->param('duration'), source => $c->param('source')
 	}));
 };
 
@@ -20372,10 +20422,13 @@ sub guide_verb_execute($c, $action) {
 		my $app = &subs::unformat_name($p{'app'} || '');
 		return 'no app named' unless length $app;
 		my $uuid = &subs::random_string_creator(40);
+		my $type = $p{'type'} || 'usual';
+		my $duration = &guide_duration_ms($p{'duration'}, $type);
 		&subs::db_insert('staged_appointments', {
 			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
-			app => $app, type => ($p{'type'} || 'usual'), timestamp => &guide_when_ms($p{'when'}),
+			app => $app, type => $type, timestamp => &guide_when_ms($p{'when'}),
 			title => ($p{'title'} || ''), notes => ($p{'notes'} || ''), data => '',
+			duration => (defined $duration ? $duration : ''),
 			device => &subs::device_setter(), status => 'pending'
 		});
 		return 'staged a "' . ($p{'title'} || $app) . '" appointment (not saved yet)';
@@ -24802,11 +24855,15 @@ sub update_database($data) {
 			title VARCHAR(500),
 			notes LONGTEXT,
 			data LONGTEXT,
+			duration VARCHAR(25),
 			device VARCHAR(255),
 			status VARCHAR(25)
 		)',
 		'alter table staged_appointments add column server_time VARCHAR(255)',
 		'alter table staged_appointments add column ost VARCHAR(25)',
+		# the Guide's create now carries a length ("lasts 5 minutes") as the negative
+		# accrual the tree stores; a staged row keeps it so promote writes it on
+		'alter table staged_appointments add column duration VARCHAR(25)',
 		'create index if not exists idx1_staged on staged_appointments (status, staged_time)',
 		'create table if not exists sync_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -280,7 +280,7 @@ function helpDoAction(a, cb) {
 		// the server reads the time the same way the clock does - dates, relative
 		// phrases and the guide's own fallback - so the raw words go across, not a
 		// client-side guess
-		$.post('/manager/help/stage', { app: a.app || '', title: a.title || '', notes: a.notes || '', timestamp: a.when || '' }, function (r) {
+		$.post('/manager/help/stage', { app: a.app || '', title: a.title || '', notes: a.notes || '', timestamp: a.when || '', type: a.type || '', duration: a.duration || '' }, function (r) {
 			if (!r || !r.staged) { cb('I could not stage that.'); return; }
 			var when_text = r.timestamp ? (' for ' + new Date(parseInt(r.timestamp, 10)).toLocaleString()) : '';
 			var who = a.title || a.app || '';

@@ -198,6 +198,17 @@ function assistantStagedWhen(row) {
 	return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// A stored duration is a negative accrual in ms (a start/stop pair writes
+// start - stop); show the length it stands for rather than the raw sign.
+function assistantStagedDuration(ms) {
+	var n = Math.abs(parseInt(ms, 10)) || 0;
+	if (!n) { return ''; }
+	var mins = Math.round(n / 60000);
+	if (mins < 60) { return mins + ' min'; }
+	var h = Math.floor(mins / 60), m = mins % 60;
+	return h + 'h' + (m ? (' ' + m + 'm') : '');
+}
+
 function assistantStagedLoad(panel) {
 	var list = panel.find('.assistant_staged_list');
 	if (!list.length) { return; }
@@ -221,7 +232,11 @@ function assistantStagedRender(panel, rows) {
 			.attr('staged_title', row.title || row.app || '');
 		var text = $('<div style="flex:1;min-width:0;overflow-wrap:break-word;"></div>');
 		text.append($('<div></div>').text(row.title || '(an appointment)'));
-		text.append($('<div class="chat_meta"></div>').text(assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '')));
+		var meta = assistantStagedWhen(row) + (row.app ? ' — ' + row.app : '');
+		if (row.type && row.type !== 'usual') { meta += ' · ' + row.type; }
+		var lasted = assistantStagedDuration(row.duration);
+		if (lasted) { meta += ' · lasts ' + lasted; }
+		text.append($('<div class="chat_meta"></div>').text(meta));
 		var trash = $.trim(panel.find('.assistant_trash_icon').text()) || '/icons/trash.png';
 		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:pointer;font-size:15px;opacity:.75;">👍</span>';
 		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:pointer;padding:2px;" src="' + trash + '">';
