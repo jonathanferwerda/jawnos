@@ -4688,6 +4688,21 @@ get '/manager/app_download' => sub($c) {
 	$c->rendered(200);
 };
 
+# Trigger a fresh app-release pull on demand: the mobile app's "Update app"
+# button calls this so a stale 5-minute sync doesn't report "up to date". The
+# pull runs in a forked child (a slow peer or a 35 MB download must not block
+# the event loop); the caller re-scans the releases dir afterwards.
+post '/manager/app_release_sync' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		$c->rendered(403);
+		return;
+	}
+	&subs::subprocessor(sub {
+		eval { &subs::app_release_sync(); };
+	}, { name => 'app release sync (on demand)' });
+	$c->render(json => { ok => 1, syncing => 1 });
+};
+
 # The voice models this machine can serve - the *.onnx files and their json under
 # voices/. Only the models are shared: the piper binary is per-arch and stays
 # local (say_piper_binary), so it is not listed here.

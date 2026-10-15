@@ -347,6 +347,12 @@ class Dashboard(Gtk.Window):
     # ---- update the app itself ----
 
     def action_update(self):
+        # a fresh check on tap: the dashboard note reflects the last refresh, so
+        # look at the repo's desktop/ tree now rather than trusting that note.
+        if not core.update_available(self.settings):
+            self._say("already up to date")
+            self.refresh()
+            return
         ok, name, code = core.apply_update(self.settings)
         if not ok:
             self._say("already up to date")
@@ -474,10 +480,9 @@ class Dashboard(Gtk.Window):
         newer = core.update_available(self.settings)
         if newer:
             self.app_note.set_text("desktop v%s (%s)\nan update to v%s is ready." % (iname, icode, newer[0] or "newer"))
-            self.update_button.set_sensitive(True)
         else:
-            self.app_note.set_text("desktop v%s (%s)\nup to date." % (iname, icode))
-            self.update_button.set_sensitive(False)
+            self.app_note.set_text("desktop v%s (%s)\nup to date - tap Update app to check again." % (iname, icode))
+        self.update_button.set_sensitive(True)
 
     def _render(self, jawn_up, ble_up):
         if jawn_up:
