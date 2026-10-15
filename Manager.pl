@@ -14040,7 +14040,11 @@ post '/manager/phone/dial' => sub($c) {
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
 	if (&subs::device_setter() eq 'mobile') {
 		my $out = `termux-telephony-call "$number" 2>&1`;
-		$c->render(json => { ok => 1, number => $number, out => $out });
+		# a machine with no telephony (a wifi tablet is a 'mobile' device here too)
+		# answers this same route: report success only when the dial really went
+		# out, so a caller can fall through to the next mobile peer.
+		my $ok = ($out =~ /error|exception|unable|denied|not found|no service/i) ? 0 : 1;
+		$c->render(json => { ok => $ok, number => $number, out => $out });
 		return;
 	}
 	# Not a phone: hand the call to one through remote_machines, the way an SMS is
