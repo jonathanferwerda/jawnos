@@ -3623,6 +3623,7 @@ my @manager_bundle_files = qw(
 	/js/manager/coding.js
 	/js/manager/agents.js
 	/js/manager/camera.js
+	/js/manager/phone.js
 );
 my $manager_bundle_cache;
 
@@ -13949,6 +13950,34 @@ get '/manager/camera' => sub($c) {
 	my $content = $c->render_to_string(template => 'apps/camera');
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'camera', title => 'Camera', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
+};
+
+get '/manager/phone' => sub($c) {
+	# The Phone app: recent calls (the appointments whose subtype is 'phone'), the
+	# contacts jawnos knows (settings rows where setting='phone'), and the dial
+	# pad. The pad places a call on a phone (termux-telephony-call); the app's own
+	# address book and live call state ride the native JawnContacts bridge.
+	my $calls = &subs::db_query('select app,uuid,timestamp,type,duration from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes;
+	my $contacts = &subs::db_query('select app,value from settings where setting=? and value != ? order by app asc', 'phone', '')->hashes;
+	my $content = $c->render_to_string(
+		template => 'apps/phone',
+		calls => $calls,
+		contacts => $contacts,
+	);
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
+	$c->render(text => $contents);
+};
+
+post '/manager/phone/dial' => sub($c) {
+	my $number = $c->param('number') || '';
+	$number =~ s/[^\d+#*]//g;
+	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
+	unless (&subs::device_setter() eq 'mobile') {
+		$c->render(json => { ok => 0, error => 'Dialing is only available on a phone.' });
+		return;
+	}
+	my $out = `termux-telephony-call "$number" 2>&1`;
+	$c->render(json => { ok => 1, number => $number, out => $out });
 };
 
 post '/manager/note_save' => sub($c) {

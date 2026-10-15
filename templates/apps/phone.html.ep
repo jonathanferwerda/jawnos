@@ -1,0 +1,89 @@
+<%# The Phone app: recent calls (the appointments subtype 'phone'), the contacts
+    jawnos knows (each a settings 'phone' row), and a dial pad. On a phone the
+    dial pad places a call through /manager/phone/dial (termux-telephony-call);
+    in the app it also shows live call state from window.__jawnPhoneEvent and
+    reads the device's own contacts from window.JawnContacts. %>
+<style>
+	.phone_app_tabs { display:flex; gap:6px; justify-content:center; margin-bottom:10px; }
+	.phone_app_tab { padding:6px 16px; border:1px solid var(--line); border-radius:999px;
+		background:var(--panel); cursor:pointer; font-size:13px; user-select:none; }
+	.phone_app_tab.on { background:var(--accent,#4a90d9); color:#fff; border-color:transparent; }
+	.phone_app_status { text-align:center; min-height:20px; color:var(--muted,#8e8e8e); font-size:13px; margin-bottom:10px; }
+	.phone_app_pane { display:none; }
+	.phone_app_pane.on { display:block; }
+	.phone_app_list { max-height:340px; overflow:auto; }
+	.phone_app_row { display:flex; align-items:center; gap:10px; padding:9px 10px;
+		border-bottom:1px solid var(--line); cursor:pointer; border-radius:8px; }
+	.phone_app_row:hover { background:var(--line); }
+	.phone_app_avatar { width:34px; height:34px; border-radius:50%; background:var(--line);
+		display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+	.phone_app_avatar img { width:20px; height:20px; }
+	.phone_app_name { flex:1 1 auto; font-size:15px; }
+	.phone_app_sub { font-size:12px; color:var(--muted,#8e8e8e); }
+	.phone_app_missed .phone_app_name { color:#e0444e; }
+	.phone_app_dial { max-width:300px; margin:0 auto; }
+	.phone_app_display { min-height:40px; font-size:27px; text-align:center; letter-spacing:2px; }
+	.phone_app_keys { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
+	.phone_app_key { padding:15px 0; font-size:21px; text-align:center; border:1px solid var(--line);
+		border-radius:12px; background:var(--panel); cursor:pointer; user-select:none; }
+	.phone_app_key:active { background:var(--line); }
+	.phone_app_call { margin-top:14px; text-align:center; }
+	.phone_app_empty { color:var(--muted,#8e8e8e); font-size:13px; text-align:center; padding:18px; }
+</style>
+
+<div id="phone_app" class="phone_app" style="padding:14px;">
+	<div class="phone_app_tabs">
+		<span class="phone_app_tab on" pane="recents" hint="Recents">Recents</span>
+		<span class="phone_app_tab" pane="contacts" hint="Contacts">Contacts</span>
+		<span class="phone_app_tab" pane="dial" hint="Dial">Dial</span>
+	</div>
+	<div class="phone_app_status" id="phone_app_status">Idle</div>
+
+	<div class="phone_app_pane on" pane="recents">
+		<% if (@{$calls}) { %>
+			<div class="phone_app_list">
+			<% foreach my $call (@{$calls}) { %>
+				<% my $name = &subs::format_name($call->{'app'} || 'phone'); %>
+				<div class="phone_app_row <% if (($call->{'type'} || '') eq 'cancel') { %>phone_app_missed<% } %>"
+					app="<%= $call->{'app'} %>" uuid="<%= $call->{'uuid'} %>" timestamp="<%= $call->{'timestamp'} %>">
+					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
+					<span class="phone_app_name"><%= $name %></span>
+					<span class="phone_app_sub" duration="<%= $call->{'duration'} %>"><%= &subs::formatted_time($call->{'timestamp'}) %></span>
+				</div>
+			<% } %>
+			</div>
+		<% } else { %>
+			<div class="phone_app_empty">No calls yet.</div>
+		<% } %>
+	</div>
+
+	<div class="phone_app_pane" pane="contacts">
+		<% if (@{$contacts}) { %>
+			<div class="phone_app_list">
+			<% foreach my $contact (@{$contacts}) { %>
+				<div class="phone_app_row" number="<%= $contact->{'value'} %>" app="<%= $contact->{'app'} %>">
+					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
+					<span class="phone_app_name"><%= &subs::format_name($contact->{'app'}) %></span>
+					<span class="phone_app_sub"><%= $contact->{'value'} %></span>
+				</div>
+			<% } %>
+			</div>
+		<% } else { %>
+			<div class="phone_app_empty">No contacts here yet.</div>
+		<% } %>
+	</div>
+
+	<div class="phone_app_pane" pane="dial">
+		<div class="phone_app_dial">
+			<div class="phone_app_display" id="phone_app_display"></div>
+			<div class="phone_app_keys">
+				<% foreach my $k ( (1 .. 9), '*', 0, '#' ) { %>
+					<div class="phone_app_key" key="<%= $k %>"><%= $k %></div>
+				<% } %>
+			</div>
+			<div class="phone_app_call">
+				<img class="medium_thumb phone_app_dial_btn" hint="Call" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
+			</div>
+		</div>
+	</div>
+</div>
