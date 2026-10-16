@@ -5380,6 +5380,15 @@ sub cache_get() {
 # race in exactly one is "fresh" and the rest are dropped. cache is local (never
 # synced), and the rows are pruned by age, so a machine forgets a relay only
 # long after it has stopped circulating.
+sub stale_action_ms() {
+	# How old a user action may be before it is treated as a replay rather than a
+	# press: a machine that comes back after being away flushes the actions it
+	# queued, and applying those minutes or hours later re-closes sessions the
+	# person already stopped. Fifteen minutes is longer than any live press takes
+	# to arrive over the mesh and far shorter than an offline spell.
+	return 15 * 60 * 1000;
+}
+
 sub relay_fresh() {
 	my ($id) = @_;
 	return 1 unless $id;

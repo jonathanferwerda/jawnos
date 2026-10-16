@@ -1509,7 +1509,19 @@ sub appointment_writer($c,$app) {
 		}
 	}
 	if ($app->{'type'} eq 'stop') {
-
+		# A stop's own timestamp is the moment it was pressed. One that is hours old
+		# is not a press - it is a machine coming back and flushing actions it queued
+		# while it was away, and applying it re-closes sessions the person stopped
+		# long ago (their rows get a fresh server_time and read as just-stopped, and
+		# the catch-up sweep below can close several of them at once). Those replays
+		# are dropped: the session simply stays open for a live stop, which is the
+		# harmless failure.
+		my $ages_ms = &subs::rightNow() - (0 + ($app->{'timestamp'} || 0));
+		if ($app->{'timestamp'} && $ages_ms > &subs::stale_action_ms()) {
+			$log->info('stale stop ignored for ' . $app->{'app'} . ': pressed ' . int($ages_ms / 60000) . ' minutes ago (a replayed action)')
+				if $log;
+				return {};
+		}
 		my $appts = &subs::db_query('select * from appointments where app=? and (type=? or type = ? ) and timestamp < ? order by timestamp asc', $app->{'app'},'start','record',$app->{'timestamp'})->hashes;
 		return {} unless scalar @{$appts} > 0;
 		foreach my $appt ( @{$appts} ) {

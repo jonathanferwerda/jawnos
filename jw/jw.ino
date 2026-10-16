@@ -478,8 +478,8 @@ static inline bool ble_link_ready() {
 #define SAY_TEXT_MS 8000          // how long the answer stays on screen
 #define SAY_STREAM_BYTES 32768    // ~2 s of 8 kHz mono audio of slack
 #define SAY_STREAM_STALL_MS 4000  // silence this long ends the stream
-#define SAY_PRELOAD_MIN 8000      // never wait for less than half a second
-#define SAY_PRELOAD_MAX 24576     // never wait for more than a second and a half
+#define SAY_PRELOAD_MIN 12000     // never wait for less than three quarters of a second
+#define SAY_PRELOAD_MAX 32768     // never wait for more than two seconds
 static String say_text;
 static volatile bool say_text_pending = false;
 static uint32_t say_shown_at = 0;
@@ -2176,12 +2176,12 @@ void loop2(void * pvParameters) {
                   say_stream_dead = false;
                   say_stream_rate = (rate > 4000 && rate < 96000) ? (uint32_t)rate : 8000;
                   // The sender's estimate of the whole clip decides how much to
-                  // hold back before speaking: half of it, so playback starts
-                  // with a cushion against the link's jitter and never has to
-                  // pause, but a short answer is not made to wait for a routine
-                  // that is longer than the answer itself.
+                  // hold back before speaking. Hold the lot when the answer is
+                  // short enough to fit (the common case - then it cannot pause
+                  // at all), and two seconds of it otherwise: enough cushion to
+                  // ride out the link's jitter, which is what a pause is.
                   uint32_t total = (uint32_t)json_int(btMsg["data"]["total"]);
-                  uint32_t pre = total ? total / 2 : SAY_PRELOAD_MIN;
+                  uint32_t pre = total ? total : SAY_PRELOAD_MIN;
                   if (pre < SAY_PRELOAD_MIN) { pre = SAY_PRELOAD_MIN; }
                   if (pre > SAY_PRELOAD_MAX) { pre = SAY_PRELOAD_MAX; }
                   say_stream_total = total;
