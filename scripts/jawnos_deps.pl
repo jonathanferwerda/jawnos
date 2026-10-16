@@ -183,7 +183,12 @@ sub install_piper {
 	}
 	system('mkdir', '-p', $piper_dir);
 	my $url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$arch.tar.gz";
-	my $tmp = "/tmp/jawnos_piper_$$.tgz";
+	# a writable scratch dir: /tmp is not writable on a Termux/Android host, where
+	# TMPDIR points into the prefix. Downloading to /tmp there failed with
+	# "Permission denied" and left the fallback in place forever.
+	my $tmp_dir = ($ENV{'TMPDIR'} && -d $ENV{'TMPDIR'} && -w $ENV{'TMPDIR'}) ? $ENV{'TMPDIR'} : '/tmp';
+	$tmp_dir = $piper_dir unless -w $tmp_dir;
+	my $tmp = "$tmp_dir/jawnos_piper_$$.tgz";
 	if (run('curl', '-L', '--fail', '-o', $tmp, $url) != 0) {
 		print "  piper: download failed; leaving the fallback in place.\n";
 		return;

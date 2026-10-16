@@ -16391,9 +16391,11 @@ sub records_audit_prompt {
 
 sub records_audit {
 	my ($window_ms) = @_;
-	$window_ms = 172800000 unless defined $window_ms && $window_ms =~ /^[0-9]+$/ && $window_ms > 0;
+	# 0 means all time: the sweep predates the fix by weeks, so the default window is
+	# only a convenience for a quick look
+	$window_ms = 172800000 unless defined $window_ms && $window_ms =~ /^[0-9]+$/;
 	my $now = &rightNow();
-	my $since = $now - $window_ms;
+	my $since = $window_ms > 0 ? $now - $window_ms : 0;
 	my $report = {
 		generated_at => $now, window_ms => $window_ms, since => $since,
 		sweep => [], dupes => [], orphans => [], impossible => [],
@@ -16475,6 +16477,57 @@ sub records_audit {
 		impossible => scalar @{$report->{'impossible'}},
 	};
 	return $report;
+}
+
+sub records_reconcile {
+	my ($window_ms, $opts) = @_;
+	$opts ||= {};
+	my $apply = $opts->{'apply'} ? 1 : 0;
+	my $report = &records_audit($window_ms);
+	my $now = &rightNow();
+	my @actions;
+
+	# a helper: tombstone a row and drop it here, quietly. This is the bulk-admin
+	# shape (as Alarm.pl writes appointments directly): Manager::delete_app also
+	# pushes to every open window, which 800-odd rows must not do.
+	my $remove = sub {
+		my ($app, $uuid, $why) = @_;
+		push @actions, { action => 'tombstone', app => $app, uuid => $uuid, why => $why };
+		return unless $apply;
+		&tombstone_writer({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single' });
+		&db_delete('continent', { app => $app, uuid => $uuid });
+		&db_query('delete from continent where app = ? and uuid like ?', $app, $uuid . '%');
+		&db_delete('appointments', { uuid => $uuid, app => $app });
+	};
+
+	# DUPLICATES - keep one of each, tombstone the rest
+	foreach my $g ( @{ $report->{'dupes'} } ) {
+		foreach my $rowid ( @{ $g->{'remove_rowids'} } ) {
+			my $r = &db_query('select uuid, app from appointments where rowid = ?', $rowid)->hashes->[0];
+			next unless $r && $r->{'uuid'};
+			$remove->($r->{'app'}, $r->{'uuid'}, 'duplicate of row ' . $g->{'keep_rowid'});
+		}
+	}
+
+	# SWEEP - the one press belongs to one row; the rest are repaired to the app's
+	# own length or, when the app sets none, tombstoned
+	foreach my $g ( @{ $report->{'sweep'} } ) {
+		foreach my $r ( @{ $g->{'rows'} } ) {
+			next if $r->{'suggested'} eq 'keep';
+			if (($r->{'suggested'} // '') eq 'repair' && defined $r->{'repair_stop_timestamp'}) {
+				my $stop = 0 + $r->{'repair_stop_timestamp'};
+				my $dur = (0 + $r->{'timestamp'}) - $stop;
+				push @actions, { action => 'repair', app => $g->{'app'}, uuid => $r->{'uuid'}, stop_timestamp => $stop, duration => $dur };
+				next unless $apply;
+				&db_update('appointments', { stop_timestamp => $stop, duration => $dur, stop_seen => 'yes', type => 'stop', seen => 'yes', server_time => $now }, { uuid => $r->{'uuid'}, app => $g->{'app'} });
+			}
+			else {
+				$remove->($g->{'app'}, $r->{'uuid'}, 'spare swept session');
+			}
+		}
+	}
+
+	return { applied => $apply, actions => scalar @actions, summary => $report->{'summary'}, list => \@actions };
 }
 
 # One pass: catch what is new, record it, and hand the oldest waiting error to

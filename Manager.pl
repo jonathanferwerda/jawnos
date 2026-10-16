@@ -22235,7 +22235,9 @@ post '/manager/coding/forget' => sub($c) {
 # the prompt the Coding agent would be given, and writes nothing. Staging,
 # approval and Apply follow the error watch's shape (staged_records).
 get '/manager/records/audit' => sub($c) {
-	my $hours = ($c->param('hours') && $c->param('hours') =~ /^[0-9]+$/) ? $c->param('hours') : 48;
+	my $h = $c->param('hours');
+	# hours=0 is all time
+	my $hours = (defined $h && $h =~ /^[0-9]+$/) ? $h : 48;
 	my $report = &subs::records_audit($hours * 3600000);
 	$c->render(json => { report => $report, prompt => &subs::records_audit_prompt() });
 };
