@@ -1,6 +1,35 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
 <% my $destinations = [ grep { $_->{'hostname'} && ($_->{'connection'} || 'active') eq 'active' } @{ &subs::remote_machine_lister({}) || [] } ]; %>
 <div id="embedded" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
+	<%# The Embedded app carries its own styles, like every other app: the classes
+	    below (embedded_*, teletype_*, centre_view/watch_*) were used but styled
+	    nowhere, so the app rendered raw while the rest of the house wore the theme
+	    tokens. Scoped on #embedded so it cannot leak. Colours come from the tokens
+	    (--panel/--panel-2/--line/--ink) and so follow the light and dark themes. %>
+	<style>
+	#embedded { font: inherit; }
+	#embedded select, #embedded input, #embedded button, #embedded textarea { font: inherit; color: var(--ink); }
+	#embedded button { padding: 3px 10px; margin: 3px 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+	#embedded .hover:hover { filter: brightness(1.08); }
+	#embedded .embedded_now_me, #embedded .embedded_bt_now_me { background: var(--panel); font-weight: 700; }
+	#embedded .embedded_device_info { text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 6px 10px; margin: 6px auto; max-width: 720px; }
+	#embedded .embedded_device_info table { width: 100%; border-collapse: collapse; }
+	#embedded .embedded_device_info th, #embedded .embedded_device_info td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+	#embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: inline-block; text-align: left; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink); padding: 6px 10px; margin: 8px; }
+	#embedded .teletype_card b, #embedded #teletype_wifi b, #embedded #teletype_router b { color: var(--ink); }
+	#embedded .teletype_wifi_config, #embedded .teletype_appearance, #embedded .embedded_setting { margin: 2px; }
+	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: pointer; }
+	#embedded .embedded_jobs, #embedded .embedded_job { text-align: left; }
+	#embedded .embedded_job + .embedded_job { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }
+	#embedded #watch_buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+	#embedded .watch_button_container, #embedded .embedded_container { display: inline-block; }
+	#embedded .watch_button, #embedded .watch_component { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 4px 8px; min-width: 84px; }
+	#embedded .component_name { font-weight: 700; }
+	#embedded .component_type { opacity: .7; font-size: 85%; }
+	#embedded #embedded_diagrams table { margin: 0 auto; }
+	#embedded table { border-collapse: collapse; }
+	@media (max-width: 640px) { #embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: block; margin: 8px 0; } }
+	</style>
 	<select id="embedded_view"> value="<%= $view %>">
 		<% foreach my $v ( qw/gpio pins diagrams/ ) { %>
 			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
@@ -24,7 +53,7 @@
 		<% } else { %>
 			<span style="font-size:23px;"><b><%= $embedded->{'ip'} %></b> <%= $embedded->{'mac'} %></span>
 		<% } %>
-		<div id="teletype_homebase" style="background-color:orange">
+		<div id="teletype_homebase" class="teletype_card">
 			<% if ($device_type eq 'teletype') { %>
 				<input type="text" id="teletype_authorization" value="<%= $tauthorization %>"><br>
 				<button id="tty_enabled" status="<%= $tty_enabled %>"><% unless ($tty_enabled == 1) { %>Enable <% } else { %>Disable<% } %></button>
@@ -96,7 +125,7 @@
 				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_wigi hover">WIGI</button>
 				<button ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" class="embedded_device_query hover">Query</button>
 			<% } %>
-			<div class="embedded_device_info" style="width:100%;display:none;background-color:var(--panel-2);" chip_id="<%= $chip_id %>"></div>
+			<div class="embedded_device_info" style="width:100%;display:none;" chip_id="<%= $chip_id %>"></div>
 			<% if ($edt eq 'microcontroller') { %>
 				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_jobs">Jobs</button>
 				<div id="embedded_jobs_results" style="display:none;width:100%;"></div>
@@ -143,13 +172,13 @@
 			<br>
 
 			<div id="teletype" style="text-align:center;background-color:var(--panel);">
-				<div id="teletype_wifi" style="background-color:blue">
+				<div id="teletype_wifi" class="teletype_card">
 					<b>AP SSID</b>
 					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid"><br>
 					<b>AP Password</b>
 					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="<%= $wifi->{'ap_password'} %>" field="ap_password"><br>
 				</div>
-				<div id="teletype_router" style="background-color:red">
+				<div id="teletype_router" class="teletype_card">
 					<b>SSID</b>
 					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
 					<b>Password</b>
@@ -160,7 +189,7 @@
 			</div>
 
 			<% if ($device_type eq 'teletype') { %>
-				<div id="teletype_appearance" style="background-color:green">
+				<div id="teletype_appearance" class="teletype_card">
 					<% foreach my $f (qw/typewriter_text_colour typewriter_background_colour chat_text_colour chat_background_colour pen_text_colour pen_background_colour/) { %>
 						<label><%= &subs::format_name($f) %>: </label>
 						<input value="<%= $operator_door->{'__specs'}->{$f} %>" type="color" class="teletype_appearance" field="<%= $f %>" id="teletype_<%= $f %>"><br>
