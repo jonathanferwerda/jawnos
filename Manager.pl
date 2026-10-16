@@ -22338,14 +22338,49 @@ post '/manager/sms/mms' => sub($c) {
 	}
 };
 
+# The house encrypts files at rest, renaming them to random .enc paths; an
+# attachment carried on a message names its file by uuid, so the current paths
+# are read from the filing the upload made, not from the snapshot the page sent.
+# Returns (f, thumb, encryption_standard) - f is the current path, possibly .enc.
+sub attachment_resolve($att) {
+	my $fu = $att->{'uuid'} || '';
+	my $f = $att->{'f'} || '';
+	return ($f, $att->{'thumb'}, undef) if $f && -e $f;
+	return (undef, undef, undef) unless $fu;
+	my $row = &subs::db_query('select * from appointments where file like ? limit 1', '%' . $fu . '%')->hashes->[0];
+	return (undef, undef, undef) unless $row;
+	my $files = eval { return decode_json $row->{'file'} } || [];
+	$files = [ $files ] if eval { $files->{'f'} };
+	my ($entry) = grep { ($_->{'uuid'} || '') eq $fu } @{$files};
+	return (undef, undef, undef) unless $entry;
+	return ($entry->{'f'}, $entry->{'thumb'}, $row->{'encryption_standard'});
+}
+
+# An attachment's file as plain bytes on disk: encrypted at rest, so a copy is
+# decrypted to the house's sms_parts drawer and that path is returned.
+sub attachment_plain_path($att) {
+	my ($f, undef, $standard) = &attachment_resolve($att);
+	return undef unless $f && -e $f;
+	return $f unless $f =~ /\.enc$/;
+	my $dir = &subs::home('~/.shots/sms_parts');
+	`mkdir -p $dir` unless -e $dir;
+	my $name = $att->{'name'} || 'part';
+	$name =~ s{[^A-Za-z0-9._-]}{_}g;
+	my $plain = $dir . '/' . &subs::random_string_creator(8) . '-' . $name;
+	$standard ||= &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my $secret = &subs::suds_grabber();
+	`openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$f" -out "$plain" 2>/dev/null`;
+	return (-e $plain) ? $plain : undef;
+}
+
 # An attachment on the sms road: on the phone the parts are already local files
 # the bridge reads; anywhere else they are read, base64'd and relayed to the
 # phone's /manager/sms/mms.
 sub sms_mms_relay($digits, $subject, $attachments) {
 	my $parts = [];
 	foreach my $att ( @{$attachments || []} ) {
-		my $f = ($att->{'file'} && ref $att->{'file'} eq 'HASH') ? $att->{'file'}->{'f'} : $att->{'f'};
-		my $mime = $att->{'mime'} || ($att->{'file'} && ref $att->{'file'} eq 'HASH' ? $att->{'file'}->{'type'} : $att->{'type'}) || 'image/jpeg';
+		my $f = &attachment_plain_path($att);
+		my $mime = $att->{'mime'} || $att->{'type'} || 'image/jpeg';
 		next unless $f;
 		if (&subs::device_setter() eq 'mobile') {
 			push @{$parts}, { path => $f, mime => $mime };
@@ -26101,6 +26136,20 @@ websocket '/mail/ws' => sub ($c) {
 			my $constructs = &mailws_constructs($picker);
 			if ($m->{'mail_contact'} || $m->{'phone'} || $m->{'email'}) { $constructs = {}; }
 			my ($db,$database,$sql) = &subs::database_grabber();
+			# the house encrypts files at rest and renames them, so the paths the
+			# page sent are stale by the time the message files: each attachment's
+			# current paths are read from the upload's filing (by file uuid)
+			my $m_attachments = undef;
+			if (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0) {
+				my @atts;
+				foreach my $att ( @{$m->{'attachments'}} ) {
+					my ($f, $thumb, undef) = &attachment_resolve($att);
+					$att->{'f'} = $f if $f;
+					$att->{'thumb'} = $thumb if $thumb;
+					push @atts, $att;
+				}
+				$m_attachments = encode_json \@atts;
+			}
 			my $msg = {
 				uuid => $m->{'uuid'},
 				timestamp => $m->{'timestamp'},
@@ -26118,7 +26167,7 @@ websocket '/mail/ws' => sub ($c) {
 				email => $m->{'email'},
 				person => $constructs->{'people'},
 				conversation_uuid => $m->{'conversation_uuid'},
-				attachments => (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0 ? encode_json $m->{'attachments'} : undef)
+				attachments => $m_attachments
 			};
 			# filed words are stored; a visitor's room words are only ever heard
 			# live by whoever is tuned in, so they are never written down
