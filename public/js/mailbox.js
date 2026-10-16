@@ -673,6 +673,9 @@ $(document).on('click', '.mailbox_message', function(e) {
 
 $(document).on('click', '.email_deleter', function() {
 	var b = $(this);
+	// the Email app files a delete to Trash and offers an undo itself
+	// (see public/js/manager/email.js); the umbrella and Chat keep the armed delete
+	if (b.closest('.wind[app="email"]').length) { return; }
 	var armed = b.attr('armed');
 	if (armed == 'yes') {
 		b.addClass('superactive');

@@ -24,7 +24,7 @@
 		my $editable = ($m->{'status'} eq 'outbox' || $m->{'status'} eq 'draft');
 		my $starred = ($m->{'starred'} || '') eq 'yes';
 	%>
-		<div class="mail_reader_message" uuid="<%= $m->{'uuid'} %>">
+		<div class="mail_reader_message" uuid="<%= $m->{'uuid'} %>" folder="<%= $m->{'status'} %>">
 			<div class="mail_reader_actions">
 				<button class="mail_action" mail_action="reply" uuid="<%= $m->{'uuid'} %>" hint="Reply">Reply</button>
 				<button class="mail_action" mail_action="reply_all" uuid="<%= $m->{'uuid'} %>" hint="Reply to the sender and everyone copied">Reply all</button>
@@ -33,6 +33,9 @@
 				<button class="mail_action" mail_action="unread" uuid="<%= $m->{'uuid'} %>" hint="Mark unread">Unread</button>
 				<% if ($editable) { %>
 					<button class="mail_action" mail_action="edit" uuid="<%= $m->{'uuid'} %>" hint="Edit this draft">Edit</button>
+				<% } %>
+				<% if (($m->{'status'} || '') eq 'trash') { %>
+					<button class="mail_action" mail_action="restore" uuid="<%= $m->{'uuid'} %>" hint="Put this letter back in the inbox">Restore</button>
 				<% } %>
 				<span class="mail_reader_actions_right">
 					<button class="mail_action" mail_action="move" uuid="<%= $m->{'uuid'} %>" hint="Move to a folder">Move</button>

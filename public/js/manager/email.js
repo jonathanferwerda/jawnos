@@ -6,8 +6,10 @@
 // The email window reads and writes in place rather than in the window drawer:
 // opening a letter (or Compose) fills #mail_reader over the list, and Back (or
 // Cancel, or a completed Send) returns to it. Switching a folder or an address
-// refetches just #mail_list. Everything here is scoped to .wind[app="email"] so
-// the Mailbox umbrella and Chat keep their own behaviour.
+// refetches just #mail_list. The list loads a page at a time as it is scrolled
+// (/manager/mail/email/list) and the Search box asks the server, which can read
+// the sealed words (/manager/mail/email/search). Everything here is scoped to
+// .wind[app="email"] so the Mailbox umbrella and Chat keep their own behaviour.
 $(document).on('click', '#email_toggle', function () {
 	$.ajax({
 		url: '/manager/email',
@@ -17,8 +19,11 @@ $(document).on('click', '#email_toggle', function () {
 	});
 });
 
-// Pull just the list pane (the folder's messages, or the account picker) and swap
-// it in, so the window and the folder rail are left alone.
+// ---- the list, a page at a time ---------------------------------------------
+var emailLoadingMore = 0;
+
+// Pull just the list pane (the folder's first page, or the account picker) and
+// swap it in, so the window and the folder rail are left alone.
 function emailListRefresh(done) {
 	$.ajax({
 		url: '/manager/email',
@@ -27,18 +32,51 @@ function emailListRefresh(done) {
 		success: function (response) {
 			var fresh = $(response).find('#mail_list').html();
 			if (fresh !== undefined && fresh !== null) { $('#mail_list').html(fresh); }
-			emailSearchApply();
+			emailLoadingMore = 0;
+			$('#mail_list').attr('searching', 'no').scrollTop(0);
 			if (typeof mailDotClear == 'function') { mailDotClear(); }
 			if (typeof done == 'function') { done(); }
 		}
 	});
 }
 
+// The next page of the current folder, appended below what is already shown.
+function emailLoadMore() {
+	var m = $('#email_list_more');
+	if (emailLoadingMore || m.attr('data-more') != '1') { return; }
+	emailLoadingMore = 1;
+	m.text('Loading more\u2026');
+	$.ajax({
+		url: '/manager/mail/email/list',
+		type: 'GET',
+		data: { folder: m.attr('data-folder'), offset: m.attr('data-offset'), limit: 50 },
+		success: function (r) {
+			$('#email_list_body').append(r.html);
+			m.attr('data-offset', r.offset).attr('data-more', r.more ? '1' : '0');
+			m.text(r.more ? 'Loading more\u2026' : '');
+			emailLoadingMore = 0;
+		},
+		error: function () { emailLoadingMore = 0; m.text(''); }
+	});
+}
+
+// The list loads the next page as it is scrolled to the foot. A scroll does not
+// bubble, so this is a capture-phase listener rather than a delegated one (the
+// list element is kept and only its insides are swapped, so one listener lasts).
+document.addEventListener('scroll', function (e) {
+	var t = e.target;
+	if (!t || t.id !== 'mail_list') { return; }
+	var m = document.getElementById('email_list_more');
+	if (!m || m.getAttribute('data-more') != '1') { return; }
+	if (t.scrollTop + t.clientHeight >= t.scrollHeight - 160) { emailLoadMore(); }
+}, true);
+
 // A folder: remember it, mark it, reload the list (and leave the reading pane).
 function emailFolder(button) {
 	settingSetter({ 'app': 'mail', 'setting': 'email_folder_selection', 'value': button });
 	$('.email_folder_button').removeClass('selected');
 	$('.email_folder_button[button="' + button + '"]').addClass('selected');
+	$('#email_search').val('');
 	emailShowList();
 	emailListRefresh();
 }
@@ -91,14 +129,55 @@ $(document).on('click', '#email_rail_toggle', function () {
 	$('#mail_sidebar').toggle();
 });
 
-function emailSearchApply() {
-	var q = ($('#email_search').val() || '').toLowerCase();
-	$('#mail_list tr.email_message').each(function () {
-		var hay = ($(this).find('.email_party').text() + ' ' + $(this).find('.email_subject').text()).toLowerCase();
-		$(this).toggle(q == '' || hay.indexOf(q) >= 0);
-	});
+// Search the words themselves: subject, body, sender and the copies. The server
+// decrypts to match, so this is a request rather than a filter of what is
+// already on screen.
+var emailSearchTimeout;
+function emailSearchRun(q) {
+	clearTimeout(emailSearchTimeout);
+	emailSearchTimeout = setTimeout(function () {
+		if (q.length < 2) {
+			$('#mail_list').attr('searching', 'no');
+			emailListRefresh();
+			return;
+		}
+		$.ajax({
+			url: '/manager/mail/email/search',
+			type: 'GET',
+			data: { q: q, folder: $('.email_folder_button.selected').attr('button') },
+			success: function (r) {
+				$('#email_list_body').html(r.html);
+				$('#email_list_more').attr('data-more', '0').text('');
+				$('#mail_list').attr('searching', 'yes');
+				if (typeof emailToast == 'function') {
+					emailToast(r.count + (r.count == 1 ? ' message' : ' messages') + ' for \u201c' + q + '\u201d');
+				}
+			}
+		});
+	}, 300);
 }
-$(document).on('input', '#email_search', function () { emailSearchApply(); });
+$(document).on('input', '#email_search', function () { emailSearchRun($(this).val()); });
+
+$(document).on('click', '#email_refresh', function () {
+	$('#email_search').val('');
+	$('#mail_list').attr('searching', 'no');
+	emailListRefresh();
+});
+
+$(document).on('click', '#email_mark_read', function () {
+	var folder = $('.email_folder_button.selected').attr('button') || 'inbox';
+	$.post('/manager/mail/email/mark_read', { folder: folder }, function (r) {
+		emailListRefresh();
+		emailToast((r.count || 0) + ' marked read');
+	});
+});
+
+$(document).on('click', '#email_empty_trash', function () {
+	$.post('/manager/mail/email/empty_trash', {}, function (r) {
+		emailListRefresh();
+		emailToast((r.count || 0) + ' deleted from Trash');
+	});
+});
 
 // Open one message (its whole thread) in the pane from the list or a flag change.
 function emailOpenMessage(uuid) {
@@ -111,11 +190,12 @@ function emailOpenMessage(uuid) {
 }
 
 // The reading pane's actions: Reply / Reply all / Forward (the server builds the
-// draft from the letter it answers), Edit a draft, Star, mark Unread, and
-// Archive. Compose and Cancel ride the shared code.
+// draft from the letter it answers), Edit a draft, Star, mark Unread, Restore
+// out of Trash, Archive, and Move. Compose and Cancel ride the shared code.
 $(document).on('click', '.wind[app="email"] .mail_action', function () {
 	var action = $(this).attr('mail_action');
 	var uuid = $(this).attr('uuid');
+	var folder = $(this).closest('.mail_reader_message').attr('folder') || '';
 	if (action == 'edit') { emailCompose('email', uuid); return; }
 	if (action == 'reply' || action == 'reply_all' || action == 'forward') {
 		$.ajax({
@@ -135,17 +215,27 @@ $(document).on('click', '.wind[app="email"] .mail_action', function () {
 		$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'seen', value: 'no' }, function () { emailReaderClose(); });
 		return;
 	}
+	if (action == 'restore') {
+		$.post('/manager/mail/email/restore', { uuid: uuid }, function () {
+			emailReaderClose();
+			emailToast('Restored to Inbox');
+		});
+		return;
+	}
 	if (action == 'move') {
-		emailMoveMenu(uuid, $(this));
+		emailMoveMenu(uuid, $(this), folder);
 		return;
 	}
 });
 
 // The move-to-folder menu: the folders a letter can be filed into (Trash is the
-// delete). It floats under the button and closes on the next click elsewhere.
-function emailMoveMenu(uuid, $btn) {
+// soft delete). In Trash it offers the way back and the real delete instead. It
+// floats under the button and closes on the next click elsewhere.
+function emailMoveMenu(uuid, $btn, folder) {
 	$('#email_move_menu').remove();
-	var items = [ ['inbox', 'Inbox'], ['archive', 'Archive'], ['drafts', 'Drafts'], ['trash', 'Trash'] ];
+	var items = (folder == 'trash')
+		? [ ['restore', 'Restore to Inbox'], ['delete_forever', 'Delete forever'] ]
+		: [ ['inbox', 'Inbox'], ['archive', 'Archive'], ['drafts', 'Drafts'], ['sent', 'Sent'], ['trash', 'Trash'] ];
 	var m = $('<div id="email_move_menu" class="email_move_menu"></div>');
 	$.each(items, function (i, it) {
 		m.append($('<button class="email_move_item"></button>').attr('uuid', uuid).attr('to', it[0]).text(it[1]));
@@ -159,6 +249,14 @@ $(document).on('click', '#email_move_menu .email_move_item', function () {
 	var uuid = $(this).attr('uuid');
 	var to = $(this).attr('to');
 	$('#email_move_menu').remove();
+	if (to == 'delete_forever') {
+		$.post('/manager/mail/email/delete', { uuid: uuid }, function () { emailReaderClose(); });
+		return;
+	}
+	if (to == 'restore') {
+		$.post('/manager/mail/email/restore', { uuid: uuid }, function () { emailReaderClose(); });
+		return;
+	}
 	$.post('/manager/mail/email/move', { uuid: uuid, to: to }, function () { emailReaderClose(); });
 });
 
@@ -174,16 +272,52 @@ $(document).on('click', '.wind[app="email"] .email_star', function () {
 	$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'starred', value: next }, function () { emailListRefresh(); });
 });
 
-// Deleting from the reading pane should return to the list once the second press
-// has actually deleted it (the shared handler arms on the first, deletes on the
-// second, so the pane's own flag mirrors that).
-$(document).on('click', '#mail_reader .email_deleter', function () {
-	var d = $(this);
-	if (d.attr('reader_armed') == 'yes') {
-		d.attr('reader_armed', 'no');
-		setTimeout(emailReaderClose, 400);
+// ---- deleting: Trash, with an Undo ------------------------------------------
+// A delete is a move to Trash and nothing is thrown away there until it is
+// emptied, so the toast's Undo simply puts it back. The row's trash icon and the
+// reading pane's both come through here (the shared mailbox handler stands down
+// inside this window).
+function emailTrash(uuid, closeReader) {
+	$.post('/manager/mail/email/move', { uuid: uuid, to: 'trash' }, function () {
+		if (closeReader) { emailShowList(); }
+		emailListRefresh();
+		emailToast('Moved to Trash', 'Undo', function () {
+			$.post('/manager/mail/email/restore', { uuid: uuid }, function () { emailListRefresh(); });
+		});
+	});
+}
+
+$(document).on('click', '.wind[app="email"] .email_deleter', function (e) {
+	e.stopPropagation();
+	var uuid = $(this).attr('uuid');
+	if (!uuid) { return; }
+	var inReader = $(this).closest('#mail_reader').length > 0;
+	// a second press in the reader deletes for good (the letter is already in Trash)
+	if (inReader && $(this).closest('.mail_reader_message').attr('folder') == 'trash') {
+		if ($(this).attr('armed') == 'yes') {
+			$(this).attr('armed', 'no');
+			$.post('/manager/mail/email/delete', { uuid: uuid }, function () { emailReaderClose(); });
+		}
+		else {
+			$(this).attr('armed', 'yes');
+			emailToast('Press Delete again to remove it for good');
+		}
+		return;
 	}
-	else {
-		d.attr('reader_armed', 'yes');
-	}
+	emailTrash(uuid, inReader);
 });
+
+// ---- the toast --------------------------------------------------------------
+function emailToast(text, actionLabel, onAction) {
+	$('#email_toast').remove();
+	var t = $('<div id="email_toast" class="email_toast"></div>');
+	t.append($('<span class="email_toast_text"></span>').text(text));
+	if (actionLabel) {
+		t.append($('<button class="email_toast_action"></button>').text(actionLabel).on('click', function () {
+			$('#email_toast').remove();
+			onAction();
+		}));
+	}
+	$('body').append(t);
+	setTimeout(function () { $('#email_toast').fadeOut(200, function () { $(this).remove(); }); }, 6000);
+}

@@ -4987,150 +4987,267 @@ sub decrypter() {
 	return $notes;
 }
 
-sub note_encrypter() {
-	my ($secret,$content) = @_;
-	if ($content) {
-		$content =~ s/\r?\n$//;
-		# Removed shell-quote escaping line since we no longer pass text to a shell
-		my $md5 = md5_sum $content;
-		$md5 = &shorthand_name($md5, 5);
-		my $encryption_standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
+# ---- note encryption ---------------------------------------------------------
+#
+# A note is sealed in two layers: an inner cipher - an openssl `enc` container
+# ("Salted__" + an 8-byte salt + the ciphertext), keyed by PBKDF2-HMAC-SHA256 of
+# the secret - and an outer Crypt::Simple layer keyed by the same secret. The
+# standard travels inside the payload, so a note written under any standard still
+# reads back.
+#
+# The inner cipher runs in-process for the AES family (through CryptX) and falls
+# back to the openssl binary for the rest; both produce the identical container,
+# so notes are interchangeable either way. The old pipeline forked base64 and
+# openssl for every single note - tens of milliseconds each, which is why a page
+# of mail took seconds - this one costs microseconds.
 
-		# --- SECURE PIPELINE START ---
-		# Pipe $content directly into openssl, then pipe openssl output into base64
-		my ($ssl_out, $ssl_in, $b64_out, $b64_in);
+# The standards the Encryption Standard setting offers. The AES family runs
+# in-process; the rest through openssl. A standard not listed here can still be
+# read (any cipher the openssl binary knows), it just cannot be chosen.
+sub note_encryption_standards {
+	return [
+		'aes-256-ctr', 'aes-192-ctr', 'aes-128-ctr',
+		'aes-256-cbc', 'aes-192-cbc', 'aes-128-cbc',
+		'camellia-256-ctr', 'camellia-192-ctr', 'camellia-128-ctr',
+		'camellia-256-cbc', 'camellia-192-cbc', 'camellia-128-cbc',
+		'chacha20', 'des-ede3-cbc', 'sm4-cbc', 'aria-256-cbc',
+	];
+}
 
-		my $pid1 = open2($ssl_out, $ssl_in, 'openssl', 'enc', '-e', '-k', $secret, "-$encryption_standard", '-pbkdf2');
-		my $pid2 = open2($b64_out, $b64_in, 'base64', '-w', '0');
+# The in-process cipher for a standard, or undef when only openssl can run it.
+# aes-NNN-ctr/cbc map onto AES with the key length the number names; CTR keeps a
+# big-endian, full-block counter, which is what openssl's EVP uses.
+sub note_cipher_spec {
+	my ($standard) = @_;
+	my %family = (
+		'aes-128-ctr' => [ 'ctr', 16 ], 'aes-192-ctr' => [ 'ctr', 24 ], 'aes-256-ctr' => [ 'ctr', 32 ],
+		'aes-128-cbc' => [ 'cbc', 16 ], 'aes-192-cbc' => [ 'cbc', 24 ], 'aes-256-cbc' => [ 'cbc', 32 ],
+	);
+	my $f = $family{$standard} or return undef;
+	return { family => $f->[0], cipher => 'AES', keylen => $f->[1] };
+}
 
-		# Stream content to openssl
-		print $ssl_in $content;
-		close $ssl_in;
+# The standard to seal a new note with: the setting when it names a cipher this
+# machine can actually run, otherwise the default. The setting used to be filled
+# from every cipher `openssl enc -ciphers` lists, most of which this scheme cannot
+# use - choosing one wrote letters that could never be read back. Validating here
+# means a bad setting degrades to the default instead of losing data.
+sub note_encryption_standard {
+	my $standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	return $standard if grep { $_ eq $standard } @{ &note_encryption_standards() };
+	return $standard if &note_cipher_spec($standard);
+	return 'aes-256-ctr';
+}
 
-		# Stream openssl output to base64
-		while (<$ssl_out>) {
-			print $b64_in $_;
-		}
-		close $ssl_out;
-		close $b64_in;
+# PBKDF2-HMAC-SHA256, 10000 rounds - openssl enc -pbkdf2 with its default digest.
+sub note_kdf {
+	my ($secret, $salt, $len) = @_;
+	require Crypt::KeyDerivation;
+	return Crypt::KeyDerivation::pbkdf2($secret, $salt, 10000, 'SHA256', $len);
+}
 
-		# Collect final base64 string
-		my $encrypted = do { local $/; <$b64_out> };
-		close $b64_out;
+sub note_ctr_mode { require Crypt::Mode::CTR; return Crypt::Mode::CTR->new('AES', 1, 16); }
+sub note_cbc_mode { require Crypt::Mode::CBC; return Crypt::Mode::CBC->new('AES', 1); }
 
-		waitpid($pid1, 0);
-		waitpid($pid2, 0);
-		# --- SECURE PIPELINE END ---
+sub note_random_salt {
+	return Crypt::PRNG::random_bytes(8) if eval { require Crypt::PRNG; 1 };
+	open(my $fh, '<', '/dev/urandom') or return undef;
+	my $bytes; read($fh, $bytes, 8); close $fh;
+	return $bytes;
+}
 
-		my $almost_ready = $encrypted . ':::---:::' . $encryption_standard . ':::---:::' . $md5;
-		my $returner = &subs::encrypter($secret, $almost_ready);
-		return $returner;
+# Seal $content with the inner cipher, returning the openssl container (or undef).
+sub note_seal_container {
+	my ($content, $secret, $standard) = @_;
+	my $spec = &note_cipher_spec($standard);
+	if ($spec) {
+		my $salt = &note_random_salt();
+		return undef unless defined $salt && length $salt == 8;
+		my $kiv = eval { &note_kdf($secret, $salt, $spec->{'keylen'} + 16) };
+		return undef unless defined $kiv && length $kiv == $spec->{'keylen'} + 16;
+		my ($key, $iv) = (substr($kiv, 0, $spec->{'keylen'}), substr($kiv, $spec->{'keylen'}, 16));
+		my $ct = eval {
+			$spec->{'family'} eq 'ctr' ? &note_ctr_mode()->encrypt($content, $key, $iv)
+			                           : &note_cbc_mode()->encrypt($content, $key, $iv)
+		};
+		return undef unless defined $ct;
+		return 'Salted__' . $salt . $ct;
 	}
+	# not a cipher we can run in-process: let openssl do it
+	my ($out, $in);
+	my $pid = open2($out, $in, 'openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2', '-a', '-A');
+	return undef unless $pid;
+	binmode $in; binmode $out;
+	print $in $content; close $in;
+	my $b64 = do { local $/; <$out> }; close $out; waitpid($pid, 0);
+	return undef if $?;
+	$b64 =~ s/\s+//g;
+	my $container = decode_base64($b64);
+	return length $container ? $container : undef;
+}
+
+sub note_encrypter() {
+	my ($secret, $content) = @_;
+	return undef unless defined $content && length $content;
+	$content =~ s/\r?\n$//;
+	my $md5 = &shorthand_name(md5_sum($content), 5);
+	my $standard = &note_encryption_standard();
+	my $container = &note_seal_container($content, $secret, $standard);
+	# never hand back a letter that cannot be read again
+	return undef unless defined $container && length $container;
+	my $almost_ready = encode_base64($container, '') . ':::---:::' . $standard . ':::---:::' . $md5;
+	my $returner = &subs::encrypter($secret, $almost_ready);
+	return $returner;
 }
 
 
+# Open an openssl container with the inner cipher; undef when it will not open.
+sub note_open_container {
+	my ($container, $secret, $standard) = @_;
+	my $spec = &note_cipher_spec($standard);
+	if ($spec) {
+		# The AES family runs in-process and there is deliberately no openssl
+		# fallback here: a wrong key then costs nothing but a failed padding check,
+		# instead of two forked openssl processes per attempt while the credential
+		# history is walked.
+		return undef unless substr($container, 0, 8) eq 'Salted__' && length($container) > 16;
+		my $salt = substr($container, 8, 8);
+		my $ct = substr($container, 16);
+		my $kiv = eval { &note_kdf($secret, $salt, $spec->{'keylen'} + 16) };
+		return undef unless defined $kiv && length $kiv == $spec->{'keylen'} + 16;
+		my ($key, $iv) = (substr($kiv, 0, $spec->{'keylen'}), substr($kiv, $spec->{'keylen'}, 16));
+		return eval {
+			$spec->{'family'} eq 'ctr' ? &note_ctr_mode()->decrypt($ct, $key, $iv)
+			                           : &note_cbc_mode()->decrypt($ct, $key, $iv)
+		};
+	}
+	# a cipher we cannot run in-process: openssl, and a second try through the
+	# legacy provider for the older ciphers
+	my $plain = &note_openssl_open($container, $secret, $standard);
+	return $plain if defined $plain && length $plain;
+	return &note_openssl_open($container, $secret, $standard, 1);
+}
+
+sub note_openssl_open {
+	my ($container, $secret, $standard, $legacy) = @_;
+	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2', '-a', '-A');
+	push @args, '-provider', 'default', '-provider', 'legacy' if $legacy;
+	my ($out, $in);
+	my $pid = open2($out, $in, @args);
+	return undef unless $pid;
+	binmode $in; binmode $out;
+	print $in encode_base64($container, ''); close $in;
+	my $plain = do { local $/; <$out> }; close $out; waitpid($pid, 0);
+	return undef if $?;
+	return $plain;
+}
+
+# The security credentials a note of a given moment could have been sealed under,
+# newest first. The rows are the same for every note on a page, so they are held
+# for a few seconds rather than fetched for each note.
+our $note_security_memo;
+sub note_security_rows {
+	my ($timestamp) = @_;
+	my $now = time;
+	if (!$note_security_memo || $now - $note_security_memo->{'at'} > 3) {
+		my $q = &db_query('select * from security where level != ? and level != ? order by ost desc', 'padlock', 'door');
+		$note_security_memo = { at => $now, rows => ($q ? $q->hashes : []) };
+	}
+	my @rows = @{ $note_security_memo->{'rows'} };
+	@rows = grep { ($_->{'ost'} || 0) <= $timestamp } @rows if $timestamp;
+	return \@rows;
+}
+
+# Unseal one note with one key: the outer Crypt::Simple layer, then the inner
+# cipher, then the md5 in the payload to prove the plaintext is the right one.
+# Returns undef when the key does not open it, so the caller can try the next.
+sub note_unseal {
+	my ($key, $contented) = @_;
+	my $payload = &subs::decrypter($key, $contented);
+	return undef unless defined $payload && length $payload;
+	my ($b64, $standard, $md5) = split ':::---:::', $payload, 3;
+	return undef unless defined $b64 && length $b64;
+	$standard = 'aes-256-ctr' unless defined $standard && length $standard;
+	my $container = decode_base64($b64);
+	return undef unless defined $container && length $container;
+	my $plain = &note_open_container($container, $key, $standard);
+	return undef unless defined $plain && length $plain;
+	if (defined $md5 && length $md5) {
+		# the md5 names the plaintext: when it matches, the key was the right one.
+		# (The old check compared a full digest against the short marker and so
+		# never actually verified anything.)
+		my $mark = lc substr($md5, 0, 5);
+		return $plain if &shorthand_name(md5_sum($plain), 5) eq $mark;
+		my $chopped = $plain; chomp $chopped;
+		return $chopped if &shorthand_name(md5_sum($chopped), 5) eq $mark;
+		# the marker does not name it and the bytes are not text: the wrong key
+		return undef if $plain =~ /[^\x00-\x7F]/;
+	}
+	return $plain;
+}
+
+# A note's plaintext never changes for a given key and ciphertext, and the same
+# notes are read again and again (a page reload, a second window, the socket),
+# so the results are held for the life of the worker. Key derivation is the price
+# of the scheme - PBKDF2 at 10000 rounds is around twenty milliseconds - and this
+# is what keeps the second read of a letter from paying it again. Bounded by
+# total size, oldest first, so a long-lived worker cannot grow without limit.
+our (%note_memo, @note_memo_order);
+our $note_memo_bytes = 0;
+my $NOTE_MEMO_MAX = 8 * 1024 * 1024;
+sub note_memo_put {
+	my ($key, $value) = @_;
+	return if exists $note_memo{$key};
+	$note_memo{$key} = $value;
+	$note_memo_bytes += length($value) + 40;
+	push @note_memo_order, $key;
+	while ($note_memo_bytes > $NOTE_MEMO_MAX && @note_memo_order) {
+		my $old = shift @note_memo_order;
+		next unless exists $note_memo{$old};
+		$note_memo_bytes -= length($note_memo{$old}) + 40;
+		delete $note_memo{$old};
+	}
+}
+
 sub note_decrypter() {
-	my ($secret,$contented, $timestamp,$tries) = @_;
-	my $sc = [];
-	if ($timestamp) {
-		my $q = &db_query('select * from security where level != ? and level != ? and ost <= ? order by ost desc', 'padlock', 'door', $timestamp);
-		$sc = $q->hashes;
+	my ($secret, $contented, $timestamp, $tries) = @_;
+	$tries ||= 0;
+	return '' unless defined $contented && length $contented;
+
+	# a plain note is memoised on (key, ciphertext); '' there means a known miss
+	my $memo_key;
+	if (!$timestamp) {
+		$memo_key = md5_sum($secret) . ':' . md5_sum($contented);
+		return $note_memo{$memo_key} if defined $note_memo{$memo_key};
 	}
-	if ($contented) {
-		if (scalar @{$sc} > 0) {
-			foreach my $s ( @{$sc} ) {
-				my $tsecret = &decrypter($secret, $s->{'credential'} );
-				my $content = &subs::decrypter($tsecret, $contented);
-				my @returns = split ':::---:::', $content;
-				my $encryption_standard = $returns[1];
-				$content = $returns[0];
 
-				# --- SECURE PIPELINE START ---
-				my ($b64_out, $b64_in, $ssl_out, $ssl_in);
+	# the key in use now opens almost every note, and one in-process try costs
+	# nothing, so it is tried alone first
+	my $plain = &note_unseal($secret, $contented);
 
-				my $pid1 = open2($b64_out, $b64_in, 'base64', '--decode');
-				my $pid2 = open2($ssl_out, $ssl_in, 'openssl', 'enc', '-d', '-k', $tsecret, "-$encryption_standard", '-pbkdf2');
-
-				print $b64_in $content;
-				close $b64_in;
-
-				while (<$b64_out>) {
-					print $ssl_in $_;
-				}
-				close $b64_out;
-				close $ssl_in;
-
-				my $returner = do { local $/; <$ssl_out> };
-				close $ssl_out;
-
-				waitpid($pid1, 0);
-				waitpid($pid2, 0);
-				# --- SECURE PIPELINE END ---
-
-				chomp $returner;
-				if ($returner =~ /[A-Za-z0-9]/gi) {
-					my $md5 = md5_sum $returner;
-					if ($returns[2] && &shorthand_name($md5, 5) eq &shorthand_name($returns[2],5)) {
-						return $returner;
-					}
-					elsif ($returns[2]) {
-						next;
-					}
-					elsif ($returner !~ /[^\x00-\x7F]+/) {
-						return $returner;
-					}
-				}
-			}
-		}
-		else {
-			my $content = &subs::decrypter($secret, $contented);
-			my @returns = split ':::---:::', $content;
-			my $encryption_standard = $returns[1];
-			$content = $returns[0];
-
-			# --- SECURE PIPELINE START ---
-			my ($b64_out, $b64_in, $ssl_out, $ssl_in);
-
-			my $pid1 = open2($b64_out, $b64_in, 'base64', '--decode');
-			my $pid2 = open2($ssl_out, $ssl_in, 'openssl', 'enc', '-d', '-k', $secret, "-$encryption_standard", '-pbkdf2');
-
-			print $b64_in $content;
-			close $b64_in;
-
-			while (<$b64_out>) {
-				print $ssl_in $_;
-			}
-			close $b64_out;
-			close $ssl_in;
-
-			my $returner = do { local $/; <$ssl_out> };
-			close $ssl_out;
-
-			waitpid($pid1, 0);
-			waitpid($pid2, 0);
-			# --- SECURE PIPELINE END ---
-
-			if ($returns[2] && md5_sum $returner eq $returns[2]) {
-				chomp $returner;
-				return $returner;
-			}
-			elsif ($returns[2]) {
-				# Note: 'next' here will trigger a warning or error if outside a loop.
-				# If intended to skip to the recursive step below, consider changing this behavior.
-				next;
-			}
-			elsif ($returner !~ /[^\x00-\x7F]+/) {
-				chomp $returner;
-				return $returner;
-			}
-			else {
-				if ($tries <= 2) {
-					return &note_decrypter($secret,$contented,&subs::rightNow() * 10000, $tries + 1);
-				}
-			}
+	# it did not: the note was written before the key rotated, under one of the
+	# credentials that were current at $timestamp (or, given none, the whole
+	# history), newest first. Working those keys out is not free, so it only
+	# happens for the notes that need them.
+	unless (defined $plain) {
+		foreach my $row ( @{ &note_security_rows($timestamp) } ) {
+			my $old = &decrypter($secret, $row->{'credential'});
+			next unless defined $old && length $old;
+			$plain = &note_unseal($old, $contented);
+			last if defined $plain;
 		}
 	}
-	return '';
+
+	# nothing opened it: the note may predate the oldest credential we hold, so ask
+	# again from a moment further back, twice at most
+	if (!defined $plain && !$timestamp && $tries < 2) {
+		my $deep = &note_decrypter($secret, $contented, &subs::rightNow() * 10000, $tries + 1);
+		$plain = $deep if defined $deep && length $deep;
+	}
+
+	$plain = '' unless defined $plain;
+	&note_memo_put($memo_key, $plain) if defined $memo_key;
+	return $plain;
 }
 
 
@@ -12000,7 +12117,7 @@ sub email_receiver() {
 							status => $status,
 							email => $email,
 							cc => $cc,
-							thread => ($h_thread || &subs::email_thread_key($subject, $from)),
+							thread => ($h_thread || $h_message_id || undef),
 							message_id => $h_message_id,
 							in_reply_to => $h_in_reply_to,
 							thread_refs => $h_references,
@@ -12175,23 +12292,6 @@ sub sent_mail_filer {
 	});
 	&file_encrypter({ app => $app, timestamp => $appt->{'timestamp'}, suds => &subs::suds_grabber() }) if $appt && $appt->{'uuid'};
 	return $appt;
-}
-
-# A conversation key for an email: the subject with any leading Re:/Fwd: stripped
-# and lowercased, plus the other party's address. Two letters about the same thing
-# with the same person land on one key, so the list can show one row per thread
-# and the reading pane can open the whole exchange. Used when a letter is written
-# or received, and rebuilt from the subject for rows that predate the column.
-sub email_thread_key {
-	my ($subject, $other) = @_;
-	$subject = '' unless defined $subject;
-	my $s = $subject;
-	$s =~ s/^\s*((re|fwd|fw)\s*:\s*)+//ig;
-	$s =~ s/^\s+|\s+$//g;
-	$s = lc $s;
-	$other = defined $other ? lc $other : '';
-	$other =~ s/\s+//g;
-	return substr($s . '::' . $other, 0, 240);
 }
 
 sub email_send() {

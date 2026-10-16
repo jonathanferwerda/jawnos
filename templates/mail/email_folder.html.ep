@@ -1,70 +1,44 @@
-<% 
+<%# The message list for the folder the settings name: the account picker under
+    Contacts, otherwise the folder's threads. Only the first page (50) is
+    rendered; the sentinel below the table carries the folder, the offset and
+    whether more wait, and the app appends the next page as the list is scrolled.
+    Expects `$settings->{'email_folder_selection'}` and `$mail_email`. %>
+<%
 	use Mojo::JSON qw/decode_json encode_json/;
 	my $sel = $settings->{'email_folder_selection'};
-	my $emails = [];
-	if ($sel eq 'outbox') {
-		$emails = &subs::db_query('select * from mailbox where status = ?', 'outbox')->hashes;
-	} elsif ($sel eq 'drafts') {
-		$emails = &subs::db_query('select * from mailbox where status = ?', 'draft')->hashes;
-	} elsif ($sel eq 'inbox') {
-		$emails = &subs::db_query('select * from mailbox where status = ? and email is not null', 'inbox')->hashes;
-	} elsif ($sel eq 'sent') {
-		$emails = &subs::db_query('select * from mailbox where status = ? and email is not null', 'sent')->hashes;
-	} elsif ($sel eq 'archive') {
-		$emails = &subs::db_query('select * from mailbox where status = ?', 'archive')->hashes;
-	} elsif ($sel eq 'starred') {
-		$emails = &subs::db_query("select * from mailbox where starred = ?", 'yes')->hashes;
+	my $limit = 50;
+	my $threads = [];
+	my $more = 0;
+	my $sql = ($sel && $sel ne 'contacts') ? &Manager::email_folder_sql($sel) : undef;
+	if ($sql) {
+		my $all = &Manager::email_threads(&subs::db_query($sql)->hashes);
+		$more = scalar @{$all} > $limit ? 1 : 0;
+		my @first = @{$all}[0 .. ($limit - 1)];
+		@first = grep { defined } @first;
+		&Manager::email_thread_annotate(\@first, &subs::suds_grabber());
+		$threads = \@first;
 	}
 	$settings->{'email_server'} = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
-	my $suds = &subs::suds_grabber();
-
-	# One row per conversation: letters that answer one another share the thread key
-	# their subject and party make, so a thread shows once and wears its count.
-	my %threads;
-	my @order;
-	foreach my $m ( @{$emails} ) {
-		my $subject = &subs::note_decrypter($suds, $m->{'subject'} || '');
-		my $key = $m->{'thread'};
-		unless (defined $key && length $key) {
-			# no stored key: build one, but never group on an empty subject - a row
-			# whose subject will not decrypt would fold every such letter together
-			$key = length $subject ? &subs::email_thread_key($subject, $m->{'email'}) : 'solo:' . $m->{'uuid'};
-		}
-		unless ($threads{$key}) {
-			$threads{$key} = { key => $key, party => $m->{'email'}, rows => [] };
-			push @order, $threads{$key};
-		}
-		push @{ $threads{$key}->{'rows'} }, $m;
-	}
-	foreach my $t ( @order ) {
-		$t->{'rows'} = [ sort { ($a->{'timestamp'} || 0) <=> ($b->{'timestamp'} || 0) } @{ $t->{'rows'} } ];
-		my $last = $t->{'rows'}->[-1];
-		$t->{'last'} = $last;
-		$t->{'subject'} = &subs::note_decrypter($suds, $last->{'subject'} || '');
-		$t->{'unread'} = scalar grep { ($_->{'seen'} || '') ne 'yes' && ($_->{'status'} || '') eq 'inbox' } @{ $t->{'rows'} };
-		$t->{'starred'} = scalar grep { ($_->{'starred'} || '') eq 'yes' } @{ $t->{'rows'} };
-		$t->{'party'} = $last->{'email'};
-	}
-	@order = sort { ($b->{'last'}->{'timestamp'} || 0) <=> ($a->{'last'}->{'timestamp'} || 0) } @order;
-	my $party_label = ($sel eq 'inbox') ? 'From' : 'To';
 %>
-<table style="width:100%;">
-	<thead>
-		<th>Time</th><th><%= $party_label %></th><th>Subject</th><th></th>
-	</thead>
-	<tbody>
-		<% foreach my $t ( @order ) {
-			my $last = $t->{'last'};
-		%>
-			<tr class="email_message" uuid="<%= $last->{'uuid'} %>" folder="<%= $sel %>" seen="<%= $t->{'unread'} ? 'no' : 'yes' %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>">
-				<td class="time" timestamp="<%= $last->{'timestamp'} %>"></td>
-				<td class="email_party"><%= $t->{'party'} %><% if (scalar @{ $t->{'rows'} } > 1) { %> <span class="email_thread_count"><%= scalar @{ $t->{'rows'} } %></span><% } %></td>
-				<td class="email_subject"><%= $t->{'subject'} %></td>
-				<td class="email_row_tools">
-					<button class="email_star" hint="Star this thread" uuid="<%= $last->{'uuid'} %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>"><%= $t->{'starred'} ? "\x{2605}" : "\x{2606}" %></button>
-					<img class="tiny_thumb email_deleter" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" uuid="<%= $last->{'uuid'} %>">
-				</td>
-			</tr>
+<% if (!$sel || $sel eq 'contacts') { %>
+	<% my $email_addresses = &subs::db_select('settings', undef, { setting => 'email', device => &subs::device_setter() })->hashes; %>
+	<div id="mail_email_picker" class="mail_list_picker email_accounts">
+		<% foreach my $email ( sort { $a->{'app'} cmp $b->{'app'} } @{$email_addresses} ) { %>
+			<% $email->{'value'} =~ s/\S\d(?=\d{10})//; %>
+			<div type="email" email="<%= $email->{'value'} %>" class="email_account_row <% if ($mail_email eq $email->{'value'}) { %>active <% } %>">
+				<span class="email_account_app"><%= &subs::format_name($email->{'app'}) %></span>
+				<span class="email_account_addr"><%= $email->{'value'} %></span>
+			</div>
 		<% } %>
-	</tbody>
-</table>
+	</div>
+<% } else { %>
+	<table class="email_message_table" style="width:100%;">
+		<thead>
+			<th>Time</th><th><%= ($sel eq 'inbox') ? 'From' : 'To' %></th><th>Subject</th><th></th>
+		</thead>
+		<tbody id="email_list_body">
+			<%= include 'mail/email_rows', threads => $threads %>
+		</tbody>
+	</table>
+	<div id="email_list_more" class="email_list_more" data-folder="<%= $sel %>" data-offset="<%= scalar @{$threads} %>" data-more="<%= $more %>"><% if ($more) { %>Loading more&hellip;<% } %></div>
+<% } %>

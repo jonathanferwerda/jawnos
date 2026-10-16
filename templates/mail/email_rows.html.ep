@@ -1,0 +1,22 @@
+<%# One row per conversation. Rendered inside the folder template for the first
+    page, appended a page at a time as the list is scrolled (see
+    /manager/mail/email/list), and used for the results of a search. Only rows,
+    no table wrapper, so the caller owns the table. Expects `threads`, the list
+    from Manager::email_threads. %>
+<% no warnings 'uninitialized'; %>
+<% foreach my $t ( @{$threads} ) {
+	my $last = $t->{'last'};
+%>
+	<tr class="email_message" uuid="<%= $last->{'uuid'} %>" folder="<%= $last->{'status'} %>" seen="<%= $t->{'unread'} ? 'no' : 'yes' %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>">
+		<td class="time" timestamp="<%= $last->{'timestamp'} %>"></td>
+		<td class="email_party"><%= $t->{'party'} %><% if ($t->{'count'} > 1) { %> <span class="email_thread_count"><%= $t->{'count'} %></span><% } %></td>
+		<td class="email_subject">
+			<span class="email_subject_text"><%= $t->{'subject'} %></span>
+			<% if (length $t->{'snippet'}) { %><span class="email_snippet"><%= $t->{'snippet'} %></span><% } %>
+		</td>
+		<td class="email_row_tools">
+			<button class="email_star" hint="Star this thread" uuid="<%= $last->{'uuid'} %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>"><%= $t->{'starred'} ? "\x{2605}" : "\x{2606}" %></button>
+			<img class="tiny_thumb email_deleter" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" uuid="<%= $last->{'uuid'} %>">
+		</td>
+	</tr>
+<% } %>

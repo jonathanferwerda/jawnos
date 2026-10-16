@@ -5085,11 +5085,10 @@ get '/manager/configure/misc_setting_list' => sub($c) {
 		&subs::subprocessor(sub { Mojo::IOLoop->reset; eval { &subs::voice_sync(); }; }, { name => 'voice sync' });
 	}
 	my $settings = &misc_setting_list();
-	my $encryption_standards = `openssl enc -ciphers`;
-	my @encryption_standards = split ' ', $encryption_standards;
-	@encryption_standards = map { $_ =~ s/^-//; $_ } @encryption_standards;
-	shift @encryption_standards;
-	shift @encryption_standards;
+	# only the standards this house can actually seal with (the AES family runs
+	# in-process, the rest through openssl); `openssl enc -ciphers` offered every
+	# cipher openssl lists, most of which the scheme cannot use
+	my @encryption_standards = @{ &subs::note_encryption_standards() };
 	$c->render(
 		template => 'configure/misc_setting_list',
 		settings => $settings,
@@ -19539,23 +19538,24 @@ get '/manager/mail/email/read' => sub($c) {
 	my $m = &subs::db_select('mailbox', undef, { uuid => $uuid })->hashes->[0];
 	return $c->render(json => { html => '' }) unless $m;
 
-	# opening a letter marks it read, so the list can bold what is still unread.
-	# server_time rides along so the flag reaches every machine.
-	if ($m->{'status'} eq 'inbox' && ($m->{'seen'} || '') ne 'yes') {
-		&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $uuid });
-		$m->{'seen'} = 'yes';
-	}
-
-	# the whole conversation: every letter sharing the thread key, oldest first. A
-	# row from before the thread column has no key, so it stands alone.
+	# the whole conversation: every letter sharing the thread key, oldest first. The
+	# key is a header chain, set when each letter was written or received; a row
+	# from before the column has none, so it stands alone rather than guessing at a
+	# subject that two unrelated letters might share.
 	my $key = $m->{'thread'};
-	unless (defined $key && length $key) {
-		my $subject = &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'} || '');
-		$key = length $subject ? &subs::email_thread_key($subject, $m->{'email'}) : '';
-	}
-	my $messages = $key ? &subs::db_select('mailbox', undef, { thread => $key })->hashes : [];
+	my $messages = ($key && length $key) ? &subs::db_select('mailbox', undef, { thread => $key })->hashes : [];
 	@{$messages} = ($m) unless scalar @{$messages};
 	@{$messages} = sort { ($a->{'timestamp'} || 0) <=> ($b->{'timestamp'} || 0) } @{$messages};
+
+	# opening a thread reads it whole: every unread inbox letter in it is marked
+	# seen, so a two-letter exchange does not stay bold once it has been read.
+	# server_time rides along so the flag reaches every machine.
+	foreach my $msg ( @{$messages} ) {
+		if (($msg->{'status'} || '') eq 'inbox' && ($msg->{'seen'} || '') ne 'yes') {
+			&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $msg->{'uuid'} });
+			$msg->{'seen'} = 'yes';
+		}
+	}
 
 	my $html = $c->render_to_string(
 		template => 'mail/email',
@@ -19575,20 +19575,194 @@ post '/manager/mail/email/flag' => sub($c) {
 	$c->render(json => { result => 'ok', flag => $flag, value => $value });
 };
 
-# move a letter between folders (a status change); Trash is the delete
+# move a letter between folders (a status change). Trash is a soft delete: the
+# row keeps its letter and comes back with Restore, so nothing is lost by a
+# stray press - only Delete (or Empty Trash) throws a row away for good.
 post '/manager/mail/email/move' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $to = $c->param('to') || '';
 	return $c->render(json => { result => 'no uuid' }) unless $uuid;
-	if ($to eq 'trash') {
-		&subs::db_delete('mailbox', { uuid => $uuid });
-		return $c->render(json => { result => 'deleted' });
-	}
-	my %ok = map { $_ => 1 } qw/inbox archive drafts sent outbox/;
+	my %ok = map { $_ => 1 } qw/inbox archive drafts sent outbox trash/;
 	return $c->render(json => { result => 'bad folder' }) unless $ok{$to};
 	&subs::db_update('mailbox', { status => $to, server_time => &subs::rightNow() }, { uuid => $uuid });
 	$c->render(json => { result => 'ok', folder => $to });
 };
+
+# the real deletions: one letter, or every letter in Trash
+post '/manager/mail/email/delete' => sub($c) {
+	my $uuid = $c->param('uuid');
+	return $c->render(json => { result => 'no uuid' }) unless $uuid;
+	&subs::db_delete('mailbox', { uuid => $uuid });
+	$c->render(json => { result => 'deleted' });
+};
+
+post '/manager/mail/email/empty_trash' => sub($c) {
+	my $count = scalar @{ &subs::db_query("select uuid from mailbox where status = 'trash'")->hashes };
+	&subs::db_query("delete from mailbox where status = 'trash'");
+	$c->render(json => { result => 'ok', count => $count });
+};
+
+# put a letter back in the inbox (the undo of a delete, and the way out of Trash)
+post '/manager/mail/email/restore' => sub($c) {
+	my $uuid = $c->param('uuid');
+	return $c->render(json => { result => 'no uuid' }) unless $uuid;
+	&subs::db_update('mailbox', { status => 'inbox', server_time => &subs::rightNow() }, { uuid => $uuid });
+	$c->render(json => { result => 'ok' });
+};
+
+# mark every letter in a folder read (Inbox's Mark all read)
+post '/manager/mail/email/mark_read' => sub($c) {
+	my $folder = $c->param('folder') || 'inbox';
+	my $sql = &email_folder_sql($folder);
+	return $c->render(json => { result => 'bad folder' }) unless $sql;
+	my $count = 0;
+	foreach my $row ( @{ &subs::db_query($sql)->hashes } ) {
+		next if ($row->{'seen'} || '') eq 'yes';
+		&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $row->{'uuid'} });
+		$count++;
+	}
+	$c->render(json => { result => 'ok', count => $count });
+};
+
+# The list pane, a page at a time: a folder's threads from an offset on, so a
+# folder of thousands loads as it is scrolled rather than all in one go.
+get '/manager/mail/email/list' => sub($c) {
+	my $folder = $c->param('folder') || 'inbox';
+	my $offset = $c->param('offset') || 0;
+	my $limit  = $c->param('limit')  || 50;
+	my $sql = &email_folder_sql($folder);
+	return $c->render(json => { html => '', more => 0, offset => $offset }) unless $sql;
+	my $threads = &email_threads(&subs::db_query($sql)->hashes);
+	my $last = $offset + $limit - 1;
+	$last = $#{$threads} if $last > $#{$threads};
+	my @slice = ($offset <= $last) ? @{$threads}[$offset .. $last] : ();
+	my $more = scalar(@{$threads}) > $offset + $limit ? 1 : 0;
+	&email_thread_annotate(\@slice, &subs::suds_grabber());
+	$c->render(json => {
+		html => $c->render_to_string(template => 'mail/email_rows', threads => \@slice),
+		more => $more,
+		offset => $offset + scalar @slice
+	});
+};
+
+# Search the words themselves. Subject and body are sealed, so a LIKE over the
+# ciphertext would match nothing: the rows are decrypted and matched here, over
+# the party addresses, the Cc and Bcc, the subject and the body.
+get '/manager/mail/email/search' => sub($c) {
+	my $q = $c->param('q') || '';
+	my $folder = $c->param('folder') || '';
+	$q =~ s/^\s+|\s+$//g;
+	return $c->render(json => { html => '', more => 0, count => 0 }) unless length $q;
+	my $suds = &subs::suds_grabber();
+	my $sql = &email_folder_sql($folder) || "select * from mailbox where status != 'trash' order by timestamp desc";
+	my $needle = lc $q;
+	my @matched;
+	foreach my $m ( @{ &subs::db_query($sql)->hashes } ) {
+		my $hay = lc join ' ',
+			&subs::note_decrypter($suds, $m->{'subject'} || ''),
+			&subs::note_decrypter($suds, $m->{'body'} || ''),
+			($m->{'email'} || ''), ($m->{'cc'} || ''), ($m->{'bcc'} || ''),
+			($m->{'from_email'} || '');
+		push @matched, $m if index($hay, $needle) >= 0;
+	}
+	my $threads = &email_threads(\@matched);
+	my $count = scalar @{$threads};
+	my $cap = 200;
+	my @slice = ($count > $cap) ? @{$threads}[0 .. $cap - 1] : @{$threads};
+	&email_thread_annotate(\@slice, $suds);
+	$c->render(json => {
+		html => $c->render_to_string(template => 'mail/email_rows', threads => \@slice),
+		more => 0,
+		count => $count
+	});
+};
+
+# The mailbox rows a folder holds. Email folders are statuses; Starred is the
+# flagged subset of everything not thrown away; Trash is the soft delete.
+sub email_folder_sql {
+	my ($folder) = @_;
+	my %sql = (
+		outbox  => "select * from mailbox where status = 'outbox' order by timestamp desc",
+		drafts  => "select * from mailbox where status = 'draft' order by timestamp desc",
+		inbox   => "select * from mailbox where status = 'inbox' and email is not null order by timestamp desc",
+		sent    => "select * from mailbox where status = 'sent' and email is not null order by timestamp desc",
+		archive => "select * from mailbox where status = 'archive' order by timestamp desc",
+		trash   => "select * from mailbox where status = 'trash' order by timestamp desc",
+		starred => "select * from mailbox where starred = 'yes' and status != 'trash' order by timestamp desc",
+	);
+	return $sql{$folder};
+}
+
+# A short plain-text preview of a letter's body, for the list's second line.
+sub email_snippet {
+	my ($suds, $body) = @_;
+	my $text = &subs::note_decrypter($suds, $body || '');
+	return '' unless defined $text && length $text;
+	$text =~ s/<[^>]*>/ /g;
+	$text =~ s/&nbsp;/ /g;
+	$text =~ s/&amp;/&/g;
+	$text =~ s/&lt;/</g;
+	$text =~ s/&gt;/>/g;
+	$text =~ s/&quot;/"/g;
+	$text =~ s/&#39;/'/g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return substr($text, 0, 180);
+}
+
+# Group a folder's letters into conversations, newest first, each with its newest
+# letter's row. This touches no ciphertext, so it is cheap for a whole folder;
+# the readable bits (subject, snippet, counts) are added per page instead
+# (email_thread_annotate), so a folder of thousands only decrypts what it shows.
+# Grouping rides the stored thread key only (a header chain, set when a letter is
+# written or received); a row from before the column has no key and stands alone.
+# A key is never rebuilt from the subject here - two unrelated letters that
+# happen to share a subject must not fold into one thread.
+sub email_threads {
+	my ($emails) = @_;
+	my (%threads, @order);
+	foreach my $m ( @{$emails} ) {
+		my $key = $m->{'thread'};
+		$key = 'solo:' . $m->{'uuid'} unless defined $key && length $key;
+		unless ($threads{$key}) { $threads{$key} = { key => $key, rows => [] }; push @order, $threads{$key}; }
+		push @{ $threads{$key}->{'rows'} }, $m;
+	}
+	foreach my $t ( @order ) {
+		$t->{'rows'} = [ sort { ($a->{'timestamp'} || 0) <=> ($b->{'timestamp'} || 0) } @{ $t->{'rows'} } ];
+		$t->{'last'} = $t->{'rows'}->[-1];
+	}
+	return [ sort { ($b->{'last'}->{'timestamp'} || 0) <=> ($a->{'last'}->{'timestamp'} || 0) } @order ];
+}
+
+# The readable half of a thread: the newest letter's party and subject, its star,
+# how many letters it holds and how many are unread, and a snippet of the newest
+# body. This is the part that decrypts, so it runs on one page of threads, not a
+# whole folder.
+sub email_thread_annotate {
+	my ($threads, $suds) = @_;
+	foreach my $t ( @{$threads} ) {
+		my $last = $t->{'last'};
+		$t->{'party'} = $last->{'email'};
+		$t->{'subject'} = &subs::note_decrypter($suds, $last->{'subject'} || '');
+		$t->{'count'} = scalar @{ $t->{'rows'} };
+		$t->{'unread'} = scalar grep { ($_->{'seen'} || '') ne 'yes' && ($_->{'status'} || '') eq 'inbox' } @{ $t->{'rows'} };
+		$t->{'starred'} = scalar grep { ($_->{'starred'} || '') eq 'yes' } @{ $t->{'rows'} };
+		$t->{'snippet'} = &email_snippet($suds, $last->{'body'} || '');
+	}
+	return $threads;
+}
+
+# What the folder rail wears beside each name: the unread count for Inbox and
+# Starred, the total for Drafts and Trash, nothing for the rest.
+sub email_folder_counts {
+	my %counts = (
+		inbox   => scalar @{ &subs::db_query("select uuid from mailbox where status = 'inbox' and email is not null and (seen is null or seen != 'yes')")->hashes },
+		starred => scalar @{ &subs::db_query("select uuid from mailbox where starred = 'yes' and status = 'inbox' and (seen is null or seen != 'yes')")->hashes },
+		drafts  => scalar @{ &subs::db_query("select uuid from mailbox where status = 'draft'")->hashes },
+		trash   => scalar @{ &subs::db_query("select uuid from mailbox where status = 'trash'")->hashes },
+	);
+	return \%counts;
+}
 
 
 get '/store/email' => sub($c) {
@@ -19718,14 +19892,18 @@ post '/manager/mail/email/send' => sub($c) {
 	my $message_id = '<' . $uuid . '@jawnos>';
 	my $in_reply_to = '';
 	my $references = '';
-	my $thread = &subs::email_thread_key($subject, $email);
+	# the thread this letter belongs to. A fresh letter names only itself, so it
+	# stands alone; a reply inherits the chain it answers (In-Reply-To / References)
+	# rather than a guess at the subject, which would fold unrelated letters that
+	# happen to share one.
+	my $thread = $message_id;
 	my $reply_uuid = $c->param('in_reply_to_uuid');
 	if ($reply_uuid) {
 		my $orig = &subs::db_select('mailbox', undef, { uuid => $reply_uuid })->hashes->[0];
 		if ($orig) {
 			$in_reply_to = $orig->{'message_id'} || '';
 			$references = join(' ', grep { length } ($orig->{'thread_refs'} || '', $orig->{'message_id'} || ''));
-			$thread = $orig->{'thread'} || $orig->{'message_id'} || $thread;
+			$thread = $orig->{'thread'} || $orig->{'message_id'} || $message_id;
 		}
 	}
 
@@ -20137,6 +20315,7 @@ sub mail_checker($c) {
 		settings => $settings,
 		scope => $scope,
 		scope_sections => [@scope_sections],
+		email_counts => (($scope && $scope eq 'email') ? &email_folder_counts() : {}),
 		list => $list,
 		me => $me,
 		incoming_data => $incoming_data,

@@ -20,7 +20,9 @@
 	<div id="mail_toolbar">
 		<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Folders" class="little_thumb hover" id="email_rail_toggle">
 		<span class="email_title">Email</span>
-		<input type="search" id="email_search" class="email_search" placeholder="Search mail" hint="Filter the list by sender or subject">
+		<img src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Refresh" class="little_thumb email_tool hover" id="email_refresh">
+		<img src="<%= &subs::icon_for('/images/decipherable/checkmark.png') %>" hint="Mark this folder read" class="little_thumb email_tool hover" id="email_mark_read">
+		<input type="search" id="email_search" class="email_search" placeholder="Search mail" hint="Search the subject, body, sender and copies">
 		<button id="email_compose" class="email_compose_button" hint="Write a new email">Compose</button>
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Server settings" class="little_thumb email_config_toggle hover">
 	</div>
@@ -30,11 +32,12 @@
 			<div id="mail_sidebar" class="email_rail">
 				<div class="email_rail_title">Folders</div>
 				<div id="email_main_buttons">
-					<% foreach my $b ( qw/contacts inbox starred drafts outbox sent archive/ ) { %>
-						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"><%= &subs::format_name($b) %></button>
+					<% foreach my $b ( qw/inbox starred drafts sent outbox archive trash contacts/ ) { %>
+						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"><span class="email_folder_name"><%= &subs::format_name($b) %></span><% if ($email_counts->{$b}) { %> <span class="email_folder_count"><%= $email_counts->{$b} %></span><% } %></button>
 					<% } %>
 				</div>
 				<div class="email_rail_account"><%= $mail_email || 'No address selected' %></div>
+				<button id="email_empty_trash" class="email_empty_trash" hint="Delete every letter in Trash for good">Empty Trash</button>
 			</div>
 			<div id="mail_main">
 				<div id="mail_list">
