@@ -1913,6 +1913,19 @@ sub market_lists {
 	my $lists = eval { return decode_json $raw } || {};
 	return ref $lists eq 'HASH' ? $lists : {};
 }
+# The lists the dropdown offers: every category the house keeps, plus any list
+# already in use. A category app is a list by default, so the names line up with
+# the budget's categories.
+sub market_lists_for_menu {
+	my $learned = &market_lists();
+	my %menu = map { $_ => { name => ($learned->{$_}->{'name'} || &subs::format_name($_)) } } keys %{$learned};
+	my $cats = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ?", 'category')->hashes;
+	foreach my $c ( @{$cats} ) {
+		my $app = $c->{'app'};
+		$menu{$app} ||= { name => &subs::format_name($app) };
+	}
+	return \%menu;
+}
 sub market_list_key {
 	my ($name) = @_;
 	return '' unless defined $name && $name ne '';
@@ -2018,7 +2031,7 @@ sub market_maker {
 		list => $list,
 		vendors => &market_vendors(),
 		vendor => $vendor,
-		lists => &market_lists(),
+		lists => &market_lists_for_menu(),
 		nearby => $nearby
 	);
 }
@@ -2033,9 +2046,9 @@ get '/manager/market' => sub($c) {
 post '/manager/market/item_add' => sub($c) {
 	my $text = $c->param('text') || '';
 	$text =~ s/^\s+|\s+$//g;
-	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
 	my $list_name = $c->param('list') || '';
 	my $list_key = &market_list_key($list_name);
+	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
 	return $c->render(json => { error => 'empty' }) unless $text ne '';
 	my $list = &market_list();
 	my $item = {
@@ -2048,7 +2061,7 @@ post '/manager/market/item_add' => sub($c) {
 	};
 	unshift @{$list}, $item;
 	&market_save_list($list);
-	&market_lists_touch_vendor($list_key, $list_name, $vendor) if $list_key && $vendor;
+	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
 	$c->render(json => { item => $item });
 };
 

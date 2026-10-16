@@ -414,7 +414,7 @@ our %topic = (
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
-			'Market is where what you need to buy gathers. A Lists dropdown groups the list by kind - Grocery, Hardware, Clothing, a name of your own (they are drawn from the house\'s categories) - and a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',
+			'Market is where what you need to buy gathers. A Lists dropdown groups what to buy by kind, prepopulated with the house\'s categories (Clothes, Food, Household, Tech, and the rest) and remembering any list already in use; a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
 			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
