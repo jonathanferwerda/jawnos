@@ -3195,6 +3195,41 @@ sub ai_transcribe_cloud {
 	return ($d->{'text'} || '');
 }
 
+sub voice_silence_hallucination() {
+	# Both transcribers invent a stock phrase when a clip said nothing: whisper.cpp
+	# writes "Thank you." and the cloud models "Thanks for watching!" - the well
+	# known silence hallucinations. Near-empty clips do happen (a wake phrase that
+	# no command followed, and whatever the phone's listener sends), and a
+	# transcript that is nothing but one of these is silence, not speech. Without
+	# saying so, the guide associate answers a sentence nobody spoke - which is
+	# exactly the "it always thinks I said thank you" reply.
+	#
+	# Only a transcript that is *entirely* one of them counts. A lone word can never
+	# be acted on anyway - voice_command_parse needs a verb and a target, and
+	# voice_note_store wants three words - so trimming these costs nothing.
+	my ($text) = @_;
+	return 0 unless defined $text && length $text;
+	my $bare = lc $text;
+	$bare =~ s/[\[\(][^\]\)]*[\]\)]//g;   # [BLANK_AUDIO], (music), [ Silence ]
+	$bare =~ s/[^a-z0-9' ]+/ /g;
+	$bare =~ s/\s+/ /g;
+	$bare =~ s/^\s+|\s+$//g;
+	return 1 unless length $bare;
+	my %stock = map { $_ => 1 } (
+		'thank you', 'thanks', 'thank you very much', 'thanks very much',
+		'thank you so much', 'thanks a lot', 'many thanks', 'thank you thank you',
+		'thank you for watching', 'thanks for watching',
+		'thank you for watching everyone', 'thanks for watching everyone',
+		'thank you for watching this video', 'thanks for watching this video',
+		'thank you so much for watching', 'thanks for watching and see you next time',
+		'please subscribe', 'please like and subscribe', 'like and subscribe',
+		'subscribe to my channel', 'please subscribe to my channel',
+		'you', 'yeah', 'yep', 'okay', 'ok', 'hmm', 'mm hmm', 'uh huh',
+		'bye', 'bye bye', 'goodbye', 'the end', 'that is it', 'so', 'oh',
+	);
+	return $stock{$bare} ? 1 : 0;
+}
+
 sub whisper_transcribe() {
 	# Speech -> text. A cloud transcription model (Configure -> Plat) answers
 	# first, so the phone's slow whisper.cpp is the fallback rather than the
@@ -3205,6 +3240,7 @@ sub whisper_transcribe() {
 	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
 	foreach my $m ( grep { $_ } ($primary, $fallback) ) {
 		my $text = &ai_transcribe_cloud($m, $raw);
+		next if $text && &subs::voice_silence_hallucination($text);
 		return $text if $text;
 	}
 	require IPC::Open3;
@@ -3236,6 +3272,10 @@ sub whisper_transcribe() {
 	$text =~ s/\r//g;
 	$text =~ s/^\s+|\s+$//g;
 	$text =~ s/\n+/ /g;
+	if (&subs::voice_silence_hallucination($text)) {
+		$log->info('voice: dropping a stock silence transcript ("' . $text . '")');
+		return '';
+	}
 	return $text;
 }
 

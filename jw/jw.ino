@@ -3546,8 +3546,11 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_WAKE_RMS_FLOOR 400     // fallback end floor, for the first frames before the room has been read
 #define VOICE_AUTO_MARGIN 120        // the 'auto' floor holds at least this far above the room it read
 #define VOICE_AUTO_DIVIDER 8         // ... and a further eighth of the room's own level, so a loud room scales
-#define VOICE_AMBIENT_RISE 2         // how fast the room estimate climbs, per 30 ms frame: slow enough that a voice cannot lift it
+#define VOICE_AMBIENT_RISE 8         // the most the room estimate may climb in one 30 ms frame: a voice cannot drag it up faster
 #define VOICE_FLOOR_MAX 12000        // a very loud room must not push the floor past a shout
+#define VOICE_COMMAND_MS 900         // a burst this long is the phrase and the command run together, not the phrase alone
+#define VOICE_GAP_MS 200             // a burst that begins after this much quiet is the command, not the tail of the phrase
+#define VOICE_LEAD_MS 2000           // a wake capture with no command at all gives up after this much quiet
 #define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
 #define VOICE_BLE_PACE_MS 45         // between parts: ~one per connection interval, so the controller queue does not overflow and drop parts
 #define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
@@ -3569,6 +3572,48 @@ static uint32_t voice_end_floor() {
   uint32_t f = voice_ambient_rms + margin;
   if (f > VOICE_FLOOR_MAX) { f = VOICE_FLOOR_MAX; }
   return f;
+}
+
+// The microphone arrives on a pedestal: a steady ~1500 of a possible 32768 rides
+// on every sample. It is board and codec offset, not sound - but it is not
+// invisible to the two things that read these frames. The wake model's front-end
+// turns them into log-mel features, where the pedestal is a term that dwarfs the
+// speech: the model read about 5% on a phrase it should read 90% on, so "hey jawn"
+// only landed when it was spoken right into the microphone. And every level test
+// saw a room that never went quiet. One pole of high pass takes the pedestal off
+// before either of them sees it, and the clip that ships is centred the way a
+// transcriber expects.
+static float voice_dc_x1 = 0.0f, voice_dc_y1 = 0.0f;
+static bool voice_dc_primed = false;
+static int64_t voice_dc_sum = 0;      // for the debug line: the pedestal as it arrives
+static uint32_t voice_dc_n = 0;
+static void voice_dc_reset() {
+  voice_dc_x1 = voice_dc_y1 = 0.0f;
+  voice_dc_primed = false;
+  voice_dc_sum = 0;
+  voice_dc_n = 0;
+}
+static void voice_dc_block(int16_t *s, int n) {
+  const float R = 0.995f;             // ~13 Hz corner at 16 kHz, far below speech
+  for (int i = 0; i < n; i++) {
+    float x = (float)s[i];
+    if (voiceDbg) { voice_dc_sum += s[i]; }
+    if (!voice_dc_primed) {
+      // start level with the first sample, so the pedestal is never a step in
+      voice_dc_x1 = x;
+      voice_dc_y1 = 0.0f;
+      voice_dc_primed = true;
+    }
+    float y = x - voice_dc_x1 + R * voice_dc_y1;
+    voice_dc_x1 = x;
+    voice_dc_y1 = y;
+    // a transient can overshoot what the sample type holds; wrap-around there
+    // would be heard as a click, so clamp instead
+    if (y > 32767.0f) { y = 32767.0f; }
+    else if (y < -32768.0f) { y = -32768.0f; }
+    s[i] = (int16_t)y;
+  }
+  if (voiceDbg) { voice_dc_n += n; }
 }
 
 // POST the finished clip to the homebase. Streamed from flash: the WAV is tens
@@ -3916,6 +3961,15 @@ static void voice_stream_end() {
   voice_stream_stop = true;
 }
 
+// Capture over with nothing in it: abandon the stream rather than finish it. The
+// last part is the only thing that tells the server a clip is whole - it ingests
+// nothing before that - so the parts already sent are dropped unseen and age out
+// of the bridge's half-clip sweep (see voice_stream in ble_message_processor).
+static void voice_stream_abort() {
+  if (!voice_stream_run) { return; }
+  voice_stream_dead = true;
+}
+
 static bool voice_compress_clip() {
   File in = FFat.open(VOICE_WAV_PATH.c_str(), FILE_READ);
   if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
@@ -4096,6 +4150,7 @@ static void voiceListenTask(void *pv) {
     }
   }
   // bring in the voice model the setting asks for (VAD or a wake word)
+  voice_dc_reset();   // the mic has just been opened: prime the pedestal filter on it
   if (!voice_models_init(voice_trigger)) { Serial.println("[voice] no voice model loaded"); }
   if (voiceDbg) {
     // the display's SPI flush bounces through the DMA-capable pool, so watch it
@@ -4115,10 +4170,16 @@ static void voiceListenTask(void *pv) {
       break;   // the screen is off: the listener only runs while it is on
     }
     bool recording = false;
+    // A wake-word capture ends on a level test, a VAD capture on its model (see the
+    // end-of-speech block below).
+    bool wake_mode = (voice_mode_name && strcmp(voice_mode_name, "vad") != 0);
     int speech_run = 0;      // held-energy frames seen before a capture commits
     bool have_onset = false; // the first speech of this utterance stamps the clip
     uint32_t onset_ts = 0;
     uint32_t end_floor = 0;  // fixed when the capture commits (see voice_end_floor)
+    uint32_t loud_ms = 0;    // the run above the floor, currently
+    bool command_seen = false; // the command is under way, not just the wake phrase
+    bool gave_up = false;      // nothing was said: drop the clip rather than ship it
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
     File f;
     while (voiceListening) {
@@ -4135,6 +4196,9 @@ static void voiceListenTask(void *pv) {
       if (got <= 0) { continue; }
       int n = got / 2;
       int16_t *s = (int16_t *)buf;
+      // take the microphone's pedestal off first: the model's features and every
+      // level below are read from what is left (see voice_dc_block)
+      voice_dc_block(s, n);
       // the neural model reads the frame as speech (VAD) or the wake phrase
       bool speech = voice_active_frame(s, n);
       // the frame's own level, taken once: the room estimate, the [vdbg] line and
@@ -4144,14 +4208,15 @@ static void voiceListenTask(void *pv) {
       for (int k = 0; k < n; k++) { sq += (int32_t)s[k] * (int32_t)s[k]; }
       uint32_t rms = (uint32_t)sqrtf((float)sq / (float)(n > 0 ? n : 1));
       // Learn the room while nothing is being captured, and never during one: it
-      // is what 'auto' stands on. The estimate drops to a quieter frame at once
-      // and climbs only VOICE_AMBIENT_RISE per frame, so a voice or a running tap
-      // cannot be mistaken for the room it is measured against.
+      // is what 'auto' stands on. A quieter frame is the room and is taken at once;
+      // a louder one is climbed towards at a capped pace, so a voice or a running
+      // tap cannot be mistaken for the room it is measured against.
       if (!recording) {
-        if (!voice_ambient_rms) { voice_ambient_rms = rms; }
+        if (!voice_ambient_rms || rms <= voice_ambient_rms) { voice_ambient_rms = rms; }
         else {
-          uint32_t risen = voice_ambient_rms + VOICE_AMBIENT_RISE;
-          voice_ambient_rms = (rms < risen) ? rms : risen;
+          uint32_t step = (rms - voice_ambient_rms) / 8;
+          if (step > VOICE_AMBIENT_RISE) { step = VOICE_AMBIENT_RISE; }
+          voice_ambient_rms += step;
         }
       }
       if (voiceDbg) {
@@ -4163,14 +4228,17 @@ static void voiceListenTask(void *pv) {
         if (rms > vdbg_rms_max) { vdbg_rms_max = rms; }
         vdbg_frames++;
         if (millis() - vdbg_at >= 1000) {
-          Serial.printf("[vdbg] frames=%u maxamp=%d rms=%u rms_max=%u ambient=%u efloor=%u voice=%s model=%s peak=%u fires=%u\n",
+          Serial.printf("[vdbg] frames=%u maxamp=%d rms=%u rms_max=%u dc=%ld ambient=%u efloor=%u voice=%s model=%s cut=%u peak=%u fires=%u\n",
                         (unsigned)vdbg_frames, (int)vdbg_amp,
                         (unsigned)(vdbg_rms_n ? vdbg_rms_sum / vdbg_rms_n : 0), (unsigned)vdbg_rms_max,
+                        (long)(voice_dc_n ? voice_dc_sum / (int64_t)voice_dc_n : 0),
                         (unsigned)voice_ambient_rms, (unsigned)voice_end_floor(), voice_floor.c_str(),
                         voice_mode_name ? voice_mode_name : "?",
+                        (unsigned)(voice_active ? voice_active->cutoff_q : 0),
                         (unsigned)voice_dbg_peak, (unsigned)voice_dbg_fires);
           vdbg_at = millis(); vdbg_frames = 0; vdbg_amp = 0; voice_dbg_peak = 0; voice_dbg_fires = 0;
           vdbg_rms_sum = 0; vdbg_rms_n = 0; vdbg_rms_max = 0;
+          voice_dc_sum = 0; voice_dc_n = 0;
         }
       }
       if (!recording) {
@@ -4223,16 +4291,49 @@ static void voiceListenTask(void *pv) {
       // capture, end on the frame's energy instead: the room reads quiet, the
       // command does not. A VAD capture keeps using the model, which is speech
       // for as long as the person is speaking.
+      //
+      // The phrase and the command are two bursts with a pause between them, and
+      // taking that pause for the end is what cut every command off a second after
+      // "hey jawn" - shipping a clip with no command in it, which the transcribers
+      // answer with a stock phrase ("thank you"). So a short first burst does not
+      // end the capture; it arms a window for the command. A burst long enough to
+      // be the phrase and the command run together is the command itself.
       bool quiet = speech;
-      if (recording && voice_mode_name && strcmp(voice_mode_name, "vad") != 0) {
-        quiet = (rms < end_floor);
+      if (recording && wake_mode) {
+        bool loud = (rms >= end_floor);
+        if (loud) {
+          // a burst that begins after a real gap is the command, not the phrase
+          if (!loud_ms && silence_ms >= VOICE_GAP_MS) { command_seen = true; }
+          loud_ms += VOICE_FRAME_MS;
+        }
+        else {
+          if (loud_ms >= VOICE_COMMAND_MS) { command_seen = true; }
+          loud_ms = 0;
+        }
+        quiet = !loud;
       }
       rec_ms += VOICE_FRAME_MS;
       silence_ms = quiet ? silence_ms + VOICE_FRAME_MS : 0;
-      if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) { break; }
+      if (silence_ms >= VOICE_SILENCE_MS && rec_ms >= VOICE_MIN_MS) {
+        // a wake capture the command never reached waits the lead window out, so
+        // that a pause after the phrase is not mistaken for the end of one
+        if (!wake_mode || command_seen) { break; }
+        if (silence_ms >= VOICE_LEAD_MS) { gave_up = true; break; }
+      }
       if (rec_ms >= VOICE_MAX_MS) { break; }
     }
-    if (recording && !isRecording && !isPlaying) {
+    if (recording && !isRecording && !isPlaying && gave_up) {
+      // The wake phrase fired and no command followed. Drop the clip rather than
+      // ship it: a near-silent clip is what the transcribers turn into "thank
+      // you", and the guide associate then answers a sentence nobody said. The
+      // parts already streamed are never finished, so the server never assembles
+      // and never ingests them.
+      f.close();
+      voiceRecording = false;
+      voice_stream_abort();
+      Serial.printf("[voice] no command after %s; clip dropped\n", voice_mode_name ? voice_mode_name : "?");
+    }
+    else if (recording && !isRecording && !isPlaying) {
       f.close();
       voiceRecording = false;
       voice_stream_end();   // encode the tail and let the last part go out
