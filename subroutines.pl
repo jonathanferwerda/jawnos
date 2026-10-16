@@ -17837,10 +17837,10 @@ sub records_audit {
 	# and a person still reviews every row (it is never bulk-applied).
 	my $wrong = &db_query('select a.app, a.rowid, a.uuid, a.type, a.timestamp, a.stop_timestamp, a.duration
 		from appointments a join appointments b on a.app = b.app
-		where a.stop_timestamp is not null and a.server_time > ?
+		where a.stop_timestamp is not null and a.server_time > ? and a.stop_timestamp <= ?
 		  and b.timestamp > a.timestamp and b.timestamp < a.stop_timestamp
 		  and (b.stop_timestamp is null or b.stop_timestamp > a.stop_timestamp)
-		group by a.rowid order by a.stop_timestamp desc', $since)->hashes;
+		group by a.rowid order by a.stop_timestamp desc', $since, $now)->hashes;
 	foreach my $r ( @{$wrong} ) {
 		next if $exempt->{ $r->{'app'} };
 		my $d = $app_duration{ $r->{'app'} };
