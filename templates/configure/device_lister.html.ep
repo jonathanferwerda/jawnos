@@ -70,6 +70,37 @@
 				<% } %>
 			</div>
 		<% } %>
+		<% if (scalar @{$ble_devices || []}) { %>
+			<%# the fleet's radios: a BLE-only device off its access point sits in no machine's neighbour table, so it is listed here from the bridge's own sightings %>
+			<div class="device_card">
+				<div class="device_head">
+					<span class="network_cidr">Bluetooth</span>
+					<span class="device_when">radios the bridge has seen</span>
+				</div>
+				<div class="device_nic">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th>device</th><th>purpose</th><th>bluetooth</th><th>seen</th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $b ( @{$ble_devices} ) { %>
+							<tr class="ble_device" chip_id="<%= $b->{'id'} %>" purpose="<%= $b->{'purpose'} %>">
+								<td>
+									<b><%= $b->{'name'} || $b->{'id'} %></b><br>
+									<span class="remote_ip" style="opacity:.6;font-size:88%;"><%= $b->{'id'} %></span>
+								</td>
+								<td><%= &subs::format_name($b->{'purpose'} || '') %></td>
+								<td><span class="remote_ip"><%= $b->{'bluetooth'} %></span></td>
+								<td><span class="device_when"><%= $b->{'seen_display'} || '' %><% if ($b->{'hostname'}) { %> · <%= $b->{'hostname'} %><% } %></span></td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
 		<% foreach my $g ( @{$networks || []} ) { %>
 			<div class="device_card network_card" cidr="<%= $g->{'cidr'} %>">
 				<div class="device_head">

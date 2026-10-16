@@ -92,6 +92,7 @@ our $timeouts = {
 	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90 },
 	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390 },
 	'tunnels' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), ip_addresses => [], network => {}, toggle => 'off', timeout => 390 },
+	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120 },
 	'htop' => { interval => 40, toggle => 'off', timeout => 360 },
 	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20 }
 };

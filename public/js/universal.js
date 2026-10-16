@@ -436,8 +436,14 @@ $.ajaxSetup({
 	
 	error: function(e,t,r,settings) {
 	//	errorInfo.push(e);
+		var url = (settings && settings.url) ? settings.url : 'request';
+		var body = (e.responseText || '').replace(/\s+/g, ' ').trim();
+		var message = e.status + ': ' + url + (body ? ' — ' + body : '');
+		if (message.length > 200) {
+			message = message.slice(0, 200) + '…';
+		}
 		$('#red_dot').show();
-		$('#red_dot').find('.dot_info').text(e.status);// + ': ' + settings.url);
+		$('#red_dot').find('.dot_info').text(message);
 		errorDotTimeout = setTimeout(function() {
 			$('#red_dot').fadeOut();
 		},15000);

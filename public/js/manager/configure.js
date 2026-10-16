@@ -584,6 +584,9 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 					}
 				});
 			}
+		}).fail(function(e) {
+			b.text(text);
+			$('#ping_results').text('scan failed (' + e.status + ')');
 		});
 	}
 });
@@ -851,6 +854,9 @@ $(document).on('click', '.ping', function() {
 			$('#ping_results').html(response);
 			ping.text('ping');
 		}
+	}).fail(function(e) {
+		ping.text('ping');
+		$('#ping_results').text('ping failed (' + e.status + ')');
 	});
 });
 

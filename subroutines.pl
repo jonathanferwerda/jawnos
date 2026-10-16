@@ -2846,6 +2846,42 @@ sub device_scan() {
 	}
 }
 
+# This machine's own row in `devices`, created without a browser. The one Scan
+# that used to build it runs in Configure -> Dev, so a headless server never had
+# a self row - and with no row this hub has no `address` map at all, so the
+# tunnels it holds can never be listed as its own neighbours (tunnel_checker
+# hangs them off that row; device_scan is otherwise the only writer). Built from
+# the same interface report device_scan writes, so the two agree on shape. Cheap
+# when the row already exists (one select), so a per-tick caller is fine.
+sub ensure_self_device() {
+	my $hostname = `hostname`;
+	chomp $hostname;
+	# A blank or loopback hostname is no name to file a machine under (and would
+	# make a second, shadow self row on a phone); leave those alone.
+	return undef if !$hostname || $hostname eq 'localhost';
+	my $existing = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+	return $existing if $existing;
+	my $address = &subs::network_interface_reporter();
+	return undef unless $address && scalar keys %{$address};
+	my $uname = `uname -a`;
+	chomp $uname;
+	my (undef, $database) = &subs::database_grabber();
+	&subs::db_insert('devices', {
+		timestamp => &subs::rightNow(),
+		hostname => $hostname,
+		uname => $uname,
+		address => encode_json $address,
+		protocol => 'https',
+		port => $ENV{PORT_AHOY},
+		server_time => &subs::rightNow(),
+		president => $database,
+		uuid => &subs::random_string_creator(25),
+		chip_ids => '[]',
+	});
+	&subs::log_writer('self device row created for ' . $hostname);
+	return &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+}
+
 sub device_lister() {
 	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
 	my ($dev,$devices);
@@ -3519,6 +3555,36 @@ sub ble_device_from_chip() {
 		%{ &ble_nus_uuids() }
 	};
 	return $dev;
+}
+
+# The Bluetooth devices the bridge has seen, for the Dev panel. A BLE-only device
+# off its access point is in no machine's neighbour table, so the network listing
+# never shows it; the bridge records each sighting in a machine's `chip_ids`
+# (ble_device_record), which device_lister already falls back to for the Embedded
+# app. Same source here: one row per chip, the freshest sighting, and only while
+# the presence window still holds - so a headless hub (or any machine with no
+# browser scan) still lists the fleet's radios.
+sub ble_device_listing() {
+	my $window = &ble_presence_window();
+	my $now = &subs::rightNow();
+	my %seen;
+	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+		next unless $d->{'chip_ids'};
+		my $chips = eval { decode_json $d->{'chip_ids'} } || [];
+		foreach my $c ( @{$chips} ) {
+			next unless $c->{'id'} && ($c->{'ble'} || $c->{'bluetooth'});
+			next unless $window > $now - ($c->{'ble_seen'} || 0);
+			my $id = $c->{'id'};
+			next if $seen{$id} && ($seen{$id}->{'ble_seen'} || 0) >= ($c->{'ble_seen'} || 0);
+			$seen{$id} = { %{$c}, hostname => $d->{'hostname'} };
+		}
+	}
+	my @rows = map {
+		my $c = $seen{$_};
+		$c->{'seen_display'} = &subs::formatted_time($c->{'ble_seen'}) if $c->{'ble_seen'};
+		$c;
+	} keys %seen;
+	return [ sort { ($a->{'name'} || $a->{'id'}) cmp ($b->{'name'} || $b->{'id'}) } @rows ];
 }
 
 sub bluetooth_sender() {
@@ -10770,6 +10836,47 @@ sub remote_machine_negotiator() {
 }
 
 
+# Relay a request with no browser behind it. remote_relay_request reads the
+# caller's request - its path, method and params - which a headless machine (the
+# cloud, a utility job, a CLI) does not have; build a bare controller and hand it
+# a synthesized request instead, so a server with no page can still hand a change
+# on to its peers over exactly the rail the browser uses. $data:
+#   path        => '/manager/...'           (required)
+#   method      => 'post' | 'get'            (default post)
+#   params      => { ... }                    (request params)
+#   remote_uuid => a single target, else a flood to every reachable peer
+#   extra       => extra_params for remote_relay_request (e.g. dissemination)
+sub relay_headless {
+	my ($data) = @_;
+	$data ||= {};
+	my $path = $data->{'path'} || return;
+	my $c = &subs::controller_builder();
+	my $req = $c->req;
+	$req->url->path($path);
+	$req->method(uc($data->{'method'} || 'POST'));
+	my $params = { %{ $data->{'params'} || {} } };
+	$params->{'remote_uuid'} = $data->{'remote_uuid'} if $data->{'remote_uuid'};
+	$req->body_params(Mojo::Parameters->new(%{$params}));
+	return &Manager::remote_relay_request($c, $data->{'extra'} || {});
+}
+
+# Drain the headless relay queue: a JSON list of relay_headless calls left by a
+# job or a CLI with no browser to drive. Each entry is relayed once and the queue
+# is cleared, so a machine that has been away does not replay a stale backlog on
+# every tick.
+sub remote_relay_queue_run {
+	my $raw = &subs::setting_grabber({ app => '__president', setting => 'remote_relay_queue' });
+	my $queue = eval { decode_json $raw } || [];
+	return 0 unless ref $queue eq 'ARRAY' && scalar @{$queue};
+	&subs::setting_setter({ app => '__president', setting => 'remote_relay_queue', value => '[]' });
+	my $n = 0;
+	foreach my $item ( @{$queue} ) {
+		next unless ref $item eq 'HASH' && $item->{'path'};
+		eval { &subs::relay_headless($item); $n++; };
+	}
+	return $n;
+}
+
 # The hub websocket endpoint a NAT'd peer dials out to. Preferred source is the
 # hub's OWN manager URL from the handshake (e.g. https://thejunderground.com:45545),
 # rewritten to wss -- so the peer dials the right host AND port instead of
@@ -10942,6 +11049,10 @@ sub tunnel_checker() {
 	my $batches = [];
 	my $device = &subs::device_setter();
 
+	# A headless server has no browser to press Scan, so make sure this machine
+	# names itself first: the hub's own device row is where its tunnels become
+	# addresses, and without it the block below has nothing to hang them off.
+	&subs::ensure_self_device() if $device eq 'server';
 
 	if ($device eq 'server') {
 		my $tunnels = &subs::db_select('tunnels', undef, { status => 'active', direction => 'out' })->hashes;

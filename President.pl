@@ -1049,6 +1049,12 @@ sub utility_functions() {
 				};
 			}
 		};
+		# The headless relay: drain the queue a job or a CLI leaves (see
+		# subs::remote_relay_queue_run), so a machine with no browser can still
+		# hand a change on to its peers over the same rail the browser uses.
+		$gb::timeouts->{'remote_relay'}->{'subroutine'} = sub {
+			eval { &subs::remote_relay_queue_run(); };
+		};
 		# Battery sampling for the start menu's System view. This task used to
 		# clock the utility worker's own CPU time - after a ten-million-iteration
 		# spin loop to give the chart a signal - as if it were the machine's load.

@@ -4784,12 +4784,14 @@ get '/manager/configure/device_lister' => sub($c) {
 	my $ping_scan = $c->param('ping_scan');
 	my $devices = &subs::device_lister($timestamp,$load_type,$ip);
 	my $networks = &subs::network_groups($devices);
+	my $ble_devices = &subs::ble_device_listing();
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
 
 	$c->render(
 		template => 'configure/device_lister',
 		devices => $devices,
 		networks => $networks,
+		ble_devices => $ble_devices,
 		ping => $ping,
 		ping_scan => $ping_scan,
 		ip => $ip,
