@@ -17033,7 +17033,7 @@ sub records_recover_scan {
 	my ($opts) = @_;
 	$opts ||= {};
 	my $min_ms = (defined $opts->{'older_than_ms'} && $opts->{'older_than_ms'} =~ /^[0-9]+$/) ? $opts->{'older_than_ms'} : 86400000;
-	my @apps = @{ $opts->{'apps'} || [ 'home', 'alone', 'urbaniak', 'eczema', 'snowing', 'winter', 'autumn' ] };
+	my @apps = @{ $opts->{'apps'} || [ 'home', 'alone', 'urbaniak', 'eczema', 'snow', 'winter', 'autumn' ] };
 	my $backup = $opts->{'backup'} || &records_latest_backup();
 	my $result = { backup => $backup, older_than_ms => $min_ms, apps => [ @apps ], candidates => [], summary => {}, error => '' };
 	unless ($backup && -e $backup) { $result->{'error'} = 'there is no snapshot to compare against'; return $result; }

@@ -23,7 +23,7 @@ chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './subroutines.pl';
 
 my ($backup, $apply, $json, $older, $any) = (undef, 0, 0, 86400000, 0);
-my @apps = ('home', 'alone', 'urbaniak', 'eczema', 'snowing', 'winter', 'autumn');
+my @apps = ('home', 'alone', 'urbaniak', 'eczema', 'snow', 'winter', 'autumn');
 for (my $i = 0; $i < @ARGV; $i++) {
 	$backup = $ARGV[$i + 1] if $ARGV[$i] eq '--backup' && defined $ARGV[$i + 1];
 	$apply = 1 if $ARGV[$i] eq '--apply';
