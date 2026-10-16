@@ -215,14 +215,17 @@ sub alarm_clock() {
 					# no uuid: keying on the appointment's made a start and a stop
 					# notification the same notifications row, so the second insert met
 					# the unique index and was dropped with a complaint
-					&Manager::notification_sender({ 
-						app => $app, 
-						role => 'all', 
+					# a call rings: the app's own start sound wins, else a phone call rings
+					# (ring.mp3) and anything else keeps the house's usual ding
+					my $default_sound = (($a->{'subtype'} || '') eq 'phone') ? 'ring.mp3' : 'crystal.mp3';
+					&Manager::notification_sender({
+						app => $app,
+						role => 'all',
 						type => $type,
 						message => $settings->{'notification_text'},
-						settings => $settings, 
-						sound => 'crystal.mp3', 
-						title => $name, 
+						settings => $settings,
+						sound => $default_sound,
+						title => $name,
 					},$dot);
 				}
 				# the record setting is the kind of recording (audio/video/screen), not

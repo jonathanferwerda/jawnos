@@ -95,13 +95,25 @@ window.__jawnPhoneEvent = function (type, payload) {
 	jawnPhoneAppOnState(payload && payload.state);
 };
 
-$(document).on('click', '#phone_toggle', function () {
+// Pull the whole app again and land on a pane: after a block or an unblock the
+// panes a number touches have all changed, and a reload of the window is what
+// keeps every one of them honest.
+function jawnPhoneAppReload(pane) {
 	$.ajax({
 		url: '/manager/phone',
 		type: 'GET',
 		data: { timestamp: Date.now(), window_maker: 'yes' },
-		success: function (response) { windowMaker(response); jawnPhoneAppRender(); jawnPhoneAppArm(); }
+		success: function (response) {
+			windowMaker(response);
+			jawnPhoneAppRender();
+			jawnPhoneAppArm();
+			if (pane) { $('#phone_app .phone_app_tab[pane="' + pane + '"]').trigger('click'); }
+		}
 	});
+}
+
+$(document).on('click', '#phone_toggle', function () {
+	jawnPhoneAppReload();
 });
 
 // tab switching
@@ -139,11 +151,24 @@ $(document).on('click', '#phone_app .phone_app_dial_btn', function () {
 	});
 });
 
-// a recent row's Block: the number joins the desk's blacklist (the same list the
-// Box Office edits), so the next call from it is turned away before it rings
+// Block a recent call: the first press arms it, the second within two seconds
+// does it - the house's two-press habit for anything that leaves a lasting rule
 $(document).on('click', '#phone_app .phone_app_block', function (e) {
 	e.stopPropagation();
-	var row = $(this).closest('.phone_app_row');
+	var b = $(this);
+	if (b.attr('armed') !== 'yes') {
+		b.attr('armed', 'yes');
+		b.css({ 'background-color': 'red', 'border-radius': '50%', 'padding': '2px' });
+		setTimeout(function () {
+			b.css({ 'background-color': '', 'border-radius': '', 'padding': '' });
+			b.attr('armed', 'no');
+		}, 2000);
+		jawnPhoneAppStatus('Press again to block');
+		return;
+	}
+	b.attr('armed', 'no');
+	b.css({ 'background-color': '', 'border-radius': '', 'padding': '' });
+	var row = b.closest('.phone_app_row');
 	var number = row.attr('number') || row.attr('app') || '';
 	if (!number) { jawnPhoneAppStatus('No number to block.'); return; }
 	$.ajax({
@@ -153,13 +178,38 @@ $(document).on('click', '#phone_app .phone_app_block', function (e) {
 		success: function (res) {
 			if (res && res.ok) {
 				jawnPhoneAppStatus('Blocked ' + res.number);
-				row.fadeOut();
 				if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+				jawnPhoneAppReload('recent');
 			} else {
 				jawnPhoneAppStatus('Enter a number.');
 			}
 		},
 		error: function () { jawnPhoneAppStatus('Could not block.'); }
+	});
+});
+
+// Unblock: the same two presses. The number comes off the desk's list, so it
+// rings again (and may ask for a ticket at the door again)
+$(document).on('click', '#phone_app .phone_app_unblock', function (e) {
+	e.stopPropagation();
+	var b = $(this);
+	if (b.attr('armed') !== 'yes') {
+		b.attr('armed', 'yes');
+		setTimeout(function () { b.attr('armed', 'no'); }, 2000);
+		jawnPhoneAppStatus('Press again to unblock');
+		return;
+	}
+	b.attr('armed', 'no');
+	$.ajax({
+		url: '/manager/box_office/blacklist/remove',
+		type: 'POST',
+		data: { timestamp: Date.now(), stamp: b.attr('stamp') },
+		success: function () {
+			jawnPhoneAppStatus('Unblocked ' + (b.attr('number') || ''));
+			if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+			jawnPhoneAppReload('blocked');
+		},
+		error: function () { jawnPhoneAppStatus('Could not unblock.'); }
 	});
 });
 
@@ -209,7 +259,7 @@ function jawnPhoneAppNativeContacts() {
 	try {
 		var data = JSON.parse(window.JawnContacts.list(''));
 		if (!data || !data.contacts || !data.contacts.length) return;
-		var pane = $('#phone_app .phone_app_pane[pane="contacts"]');
+		var pane = $('#phone_app .phone_app_pane[pane="known"]');
 		var list = $('<div class="phone_app_list"></div>');
 		$.each(data.contacts, function (i, c) {
 			var number = (c.numbers && c.numbers[0] && c.numbers[0].number) || '';

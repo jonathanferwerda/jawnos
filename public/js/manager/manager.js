@@ -1182,7 +1182,8 @@ function jawnPhoneSync() {
 				try {
 					window.JawnPhone.setFacts(JSON.stringify({
 						blocked: (response && response.blocked) || [],
-						names: (response && response.names) || {}
+						names: (response && response.names) || {},
+						avatars: (response && response.avatars) || {}
 					}));
 				} catch (e) { }
 			}
@@ -1643,9 +1644,21 @@ $(document).on('click', '.ticket_blacklist_remove', function() {
 // The blocked numbers: the desk's blacklist seen as calls. Block adds one by
 // hand (the same list the Phone app's Block button writes to), Remove takes an
 // entry off, and the whole list is handed to the phone on the next jawnPhoneSync.
+// Blocking is a lasting rule, so it takes two presses like every other one here.
 $(document).on('click', '#blocked_number_add_button', function() {
+	var b = $(this);
+	if (b.attr('armed') !== 'yes') {
+		if (!$('#blocked_number_input').val()) { $('#blocked_number_status').text('Enter a number.'); return; }
+		b.attr('armed', 'yes');
+		var bg = b.css('background-color');
+		b.css({ 'background-color': 'red' });
+		$('#blocked_number_status').text('Press again to block');
+		setTimeout(function() { b.css({ 'background-color': bg }); b.attr('armed', 'no'); }, 2000);
+		return;
+	}
+	b.attr('armed', 'no');
+	b.css({ 'background-color': '' });
 	var number = $('#blocked_number_input').val();
-	if (!number) { $('#blocked_number_status').text('Enter a number.'); return; }
 	$.ajax({
 		url: '/manager/box_office/blacklist/number',
 		type: 'POST',

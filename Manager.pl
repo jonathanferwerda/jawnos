@@ -6870,6 +6870,77 @@ sub phone_names() {
 	return \%names;
 }
 
+# Every number the house holds, split the way the Phone app's panes want it: the
+# people it knows, and the numbers that are only numbers (a stranger's call makes
+# its number an app of its own, so those rows are the ones still to be named).
+# One row per app - the newest wins, the same way the phone's own rows are read.
+sub phone_directory() {
+	my $rows = &subs::db_query('select app, value from settings where setting=? and value != ? order by server_time desc', 'phone', '')->hashes;
+	my (%seen, @known, @numbers);
+	foreach my $r ( @{$rows} ) {
+		next if $seen{ $r->{'app'} }++;
+		if ( $r->{'app'} =~ /^\d+$/ ) { push @numbers, $r; }
+		else { push @known, $r; }
+	}
+	@known = sort { lc $a->{'app'} cmp lc $b->{'app'} } @known;
+	@numbers = sort { $a->{'app'} cmp $b->{'app'} } @numbers;
+	return { known => \@known, numbers => \@numbers };
+}
+
+# The desk's blacklist seen as calls: the numbers to refuse, each with whatever
+# the desk knew about it (a name when the request carried one, the note).
+sub phone_blocked() {
+	my @blocked;
+	foreach my $b ( @{&ticket_blacklist()} ) {
+		next unless ref $b eq 'HASH';
+		my $number = &ticket_contact_clean('phone', $b->{'phone'});
+		next unless $number;
+		push @blocked, {
+			number => $number,
+			name => $b->{'name'} || '',
+			note => $b->{'note'} || '',
+			stamp => $b->{'timestamp'} || '',
+		};
+	}
+	return \@blocked;
+}
+
+# A small square picture of a person for the app's call screen: the house's own
+# image when there is one, downscaled once and kept beside the database, keyed by
+# the source's name, size and mtime so a new picture makes a new thumbnail. The
+# app shows its own logo when there is none, so nothing is drawn here for that.
+sub phone_avatar_thumb($file) {
+	return '' unless $file && -e $file;
+	my $dir = &subs::database_dir() . '/thumbs';
+	mkdir $dir unless -d $dir;
+	my @stat = stat($file);
+	my $base = $file;
+	$base =~ s{.*/}{};
+	$base =~ s/[^A-Za-z0-9._-]+/-/g;
+	my $thumb = $dir . '/' . $base . '-' . ($stat[7] || 0) . '-' . ($stat[9] || 0) . '.jpg';
+	return $thumb if -e $thumb && -s $thumb > 0;
+	`magick "$file" -resize 160x160^ -gravity center -extent 160x160 -quality 82 "$thumb" 2>/dev/null`;
+	return (-e $thumb && -s $thumb > 0) ? $thumb : '';
+}
+
+# The person's picture as a data URI, for the one fetch the app makes: it hands
+# the whole directory over at once, so an image per call would be a fetch the app
+# (which may be ringing with no page up) cannot wait for.
+sub phone_avatar_data($app) {
+	my $settings = &subs::settings_grabber({ app => $app }) || {};
+	return '' unless $settings->{'main_image'};
+	my ($destination,$asset) = &subs::file_device_renamer({ file => $settings->{'main_image'}, app => $app, type => 'image' });
+	my $thumb = &phone_avatar_thumb($destination . $asset);
+	return '' unless $thumb;
+	open(my $fh, '<', $thumb) or return '';
+	binmode $fh;
+	local $/;
+	my $bytes = <$fh>;
+	close $fh;
+	return '' unless defined $bytes && length $bytes;
+	return 'data:image/jpeg;base64,' . encode_base64($bytes, '');
+}
+
 sub ticket_contact_clean($kind,$value) {
 	return '' unless defined $value && length $value;
 	if ($kind eq 'email') {
@@ -14504,16 +14575,26 @@ get '/manager/camera' => sub($c) {
 };
 
 get '/manager/phone' => sub($c) {
-	# The Phone app: recent calls (the appointments whose subtype is 'phone'), the
-	# contacts jawnos knows (settings rows where setting='phone'), and the dial
-	# pad. The pad places a call on a phone (termux-telephony-call); the app's own
-	# address book and live call state ride the native JawnContacts bridge.
+	# The Phone app: the house's numbers (known, and the numbers that are only
+	# numbers), recent calls (the appointments whose subtype is 'phone'), the desk's
+	# blocked numbers, and the dial pad. The pad places a call on a phone
+	# (termux-telephony-call); the app's own address book and live call state ride
+	# the native JawnContacts bridge.
 	my $calls = &subs::db_query('select app,uuid,timestamp,type,duration,account from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes;
-	my $contacts = &subs::db_query('select app,value from settings where setting=? and value != ? order by app asc', 'phone', '')->hashes;
+	my $directory = &phone_directory();
+	my $blocked = &phone_blocked();
+	my %blocked_number = map { $_->{'number'} => 1 } @{$blocked};
+	# a row says so itself when its number is on the desk's list, so the panes need
+	# no lookup of their own
+	foreach my $r ( @{ $directory->{'known'} }, @{ $directory->{'numbers'} } ) {
+		$r->{'blocked'} = $blocked_number{ &ticket_contact_clean('phone', $r->{'value'}) } ? 1 : 0;
+	}
 	my $content = $c->render_to_string(
 		template => 'apps/phone',
 		calls => $calls,
-		contacts => $contacts,
+		known => $directory->{'known'},
+		numbers => $directory->{'numbers'},
+		blocked => $blocked,
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
@@ -14636,11 +14717,20 @@ post '/manager/phone/call' => sub($c) {
 get '/manager/phone/sync' => sub($c) {
 	# What the app's native phone half needs, handed over in one fetch: the desk's
 	# blacklist (the CallScreeningService refuses a listed caller before the phone
-	# rings) and the house's numbers by name (the in-call screen names the caller,
-	# and the app's contact list shows the house's own names).
+	# rings), the house's numbers by name (the in-call screen names the caller, and
+	# the app's contact list shows the house's own names), and a small picture per
+	# person, as a data URI, for the call screen - who is calling, before the phone
+	# has finished ringing. The app wears its own logo for anyone without one.
+	my %names = %{ &phone_names() };
+	my %avatars;
+	foreach my $number ( keys %names ) {
+		my $picture = &phone_avatar_data($names{$number});
+		$avatars{$number} = $picture if $picture;
+	}
 	$c->render(json => {
 		blocked => &ticket_blacklist_numbers(),
-		names => &phone_names(),
+		names => \%names,
+		avatars => \%avatars,
 	});
 };
 
@@ -14666,6 +14756,51 @@ post '/manager/box_office/blacklist/number' => sub($c) {
 	}
 	$log->info('call blacklist: ' . $blocked . ' blocked');
 	$c->render(json => { ok => 1, number => $blocked, numbers => &ticket_blacklist_numbers() });
+};
+
+post '/manager/configure/notification_sound' => sub($c) {
+	# A custom ringtone: the audio an app's notification plays. It lands beside the
+	# shipped ones (public/sounds/notifications) so every sound list in Configure
+	# picks it up with no further wiring; only audio is accepted, named after the
+	# file itself so the list reads well, and never overwriting what is there.
+	unless (&authentication_passer($c) eq 'approved') {
+		$c->render(json => { ok => 0, error => 'denied' });
+		return;
+	}
+	my $upload = $c->req->upload('sound');
+	unless ($upload) {
+		$c->render(json => { ok => 0, error => 'no file' });
+		return;
+	}
+	my ($ext) = $upload->filename =~ /\.(mp3|ogg|oga|wav|m4a|aac|opus|flac)$/i;
+	unless ($ext) {
+		$c->render(json => { ok => 0, error => 'audio files only' });
+		return;
+	}
+	$ext = lc $ext;
+	if ($upload->size > 12 * 1024 * 1024) {
+		$c->render(json => { ok => 0, error => 'that file is too big' });
+		return;
+	}
+	my $name = $upload->filename;
+	$name =~ s/\.[^.]*$//;
+	$name = lc $name;
+	$name =~ s/[^a-z0-9]+/-/g;
+	$name =~ s/^-+|-+$//g;
+	$name = 'sound' unless length $name;
+	my $dir = 'public/sounds/notifications';
+	my $file = "$dir/$name.$ext";
+	my $i = 2;
+	while (-e $file) { $file = "$dir/$name-" . $i++ . ".$ext"; }
+	eval { $upload->move_to($file) };
+	unless (-e $file && -s $file > 0) {
+		$c->render(json => { ok => 0, error => 'could not save that' });
+		return;
+	}
+	(my $shown = $file) =~ s{.*/}{};
+	$shown =~ s/\.[^.]*$//;
+	$log->info('notification sound added: ' . $file);
+	$c->render(json => { ok => 1, sound => './' . $file, name => &subs::format_name($shown) });
 };
 
 post '/manager/note_save' => sub($c) {

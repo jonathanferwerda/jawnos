@@ -239,21 +239,23 @@ our %topic = (
 	'phone' => {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
-		controls => [ 'Recents', 'Contacts', 'Dial', 'Call', 'Caller ID', 'Block' ],
+		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'Dial', 'Call', 'Caller ID', 'Block', 'Unblock' ],
 		verified => '2026-10-15',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
-			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the contacts the house knows. Recents lists the latest calls; a row opens that person\'s thread.',
-			'Contacts is the known phone numbers. On a phone, tapping a contact fills the dial pad with their number. In the app the device\'s own address book (window.JawnContacts) replaces this list once its permission is granted.',
+			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
+			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, so it still shows in Recent.',
+			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
-			'With Caller ID on (the button asks for the Call screening role), a call writes itself as it happens: the ring starts an appointment on the caller\'s own app - or the phone app when the number is not known - the hangup stops it, and a missed call cancels it. In the app that same role lets the house name the caller: an incoming call wakes the screen over the lock screen with the caller\'s name, the number, and Answer and Decline. Without Caller ID the house\'s own call-log check files the call a moment later.',
-			'A recent call\'s Block button puts that number on the Box Office\'s blacklist (the Blocked numbers panel in the Box Office edits the same list). A blocked number never rings: the phone turns the call away and files it as a cancelled call, so it still shows up here.'
+			'With Caller ID on (the button asks for the Call screening role), a call writes itself as it happens: the ring starts an appointment on the caller\'s own app - or the phone app when the number is not known - the hangup stops it, and a missed call cancels it. In the app that same role lets the house name the caller: an incoming call wakes the screen over the lock screen with the caller\'s picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without Caller ID the house\'s own call-log check files the call a moment later.',
+			'A recent call\'s Block button - twice, the house\'s habit for anything that leaves a lasting rule - puts that number on the Box Office\'s blacklist, and Unblock in the Blocked pane takes it off again.'
 		],
 		steps => [
 			'Open Phone from the start menu, or pin it to the taskbar.',
-			'Recents: tap a call to open the caller\'s appointment thread.',
-			'Recents: press Block on a call to bar that number from ringing again.',
-			'Contacts: tap one to dial them.',
+			'Known: tap a number to fill the dial pad.',
+			'Recent: tap a call to open the caller\'s appointment thread.',
+			'Recent: press Block twice on a call to bar that number from ringing again.',
+			'Blocked: press Unblock twice to let a number through again.',
 			'Dial: key a number and press Call.'
 		],
 		related => [ 'mailbox', 'box_office' ]
@@ -538,13 +540,15 @@ our %topic = (
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
 			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (LJSpeech, LibriTTS-R, Alba) or an eSpeak fallback, each chosen per device.',
-			'The App panel is one card per app. An app\'s abilities — measures, budgets, goals, notifications, packaging, a web table and the rest — sit as a grid of icon tiles under its name and colour; tap one to open its settings, and that tile opens out across the card. The icon set you pick under Misc gives every tile its look.'
+			'The App panel is one card per app. An app\'s abilities — measures, budgets, goals, notifications, packaging, a web table and the rest — sit as a grid of icon tiles under its name and colour; tap one to open its settings, and that tile opens out across the card. The icon set you pick under Misc gives every tile its look.',
+			'Notifications, on a card, sets what an app says and sounds like: a sound and a line of text for the default, for a start, for a stop and for a budget. The sounds are the ones in the house (Ring, Chime, Sonar, Pulse, Crystal, Ding, Rattle), and (default) leaves the choice to the house. Add your own sound takes an audio file from your device and files it with the rest, so it appears in every app\'s list from then on.'
 		],
 		steps => [
 			'Open Configure.',
 			'Use the tabs to move between appearance, devices, utilities and the mesh.',
 			'The Plat tab holds every AI model choice and provider key.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
+			'To give an app a ringtone, open its card on the App panel, tap Notifications, and pick a sound — or add your own sound from there.',
 			'Changes save as you make them; a bar or theme change is felt at once.'
 		],
 		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform', 'assistant' ]

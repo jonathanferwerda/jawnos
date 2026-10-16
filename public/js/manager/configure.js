@@ -280,6 +280,44 @@ $(document).on('change', '.configure_input', function(e) {
 	});
 });
 
+// A custom notification sound: the file is uploaded to the house, which files it
+// beside the shipped ones, and every sound select is re-drawn so the new one can
+// be picked (here and on any other app's Notifications panel)
+$(document).on('change', '.app_notification_sound_upload', function () {
+	var input = this;
+	var app = $(this).attr('app');
+	var status = $('.app_notification_sound_status[app="' + app + '"]');
+	var f = input.files && input.files[0];
+	if (!f) { return; }
+	status.text('adding ' + f.name + '…');
+	var data = new FormData();
+	data.append('app', app);
+	data.append('timestamp', Date.now());
+	data.append('sound', f);
+	$.ajax({
+		url: '/manager/configure/notification_sound',
+		type: 'POST',
+		data: data,
+		processData: false,
+		contentType: false,
+		success: function (response) {
+			input.value = '';
+			if (response && response.ok) {
+				// the sound is on the house now: offer it in this app's selects without
+				// re-drawing the panel (a re-draw would take the message with it)
+				$('.app_notification_sound_selector[app="' + app + '"]').each(function () {
+					if ($(this).find('option[value="' + response.sound + '"]').length) { return; }
+					$(this).append($('<option></option>').attr('value', response.sound).text(response.name));
+				});
+				status.text('added ' + response.name + ' - pick it above');
+			} else {
+				status.text((response && response.error) || 'could not add that');
+			}
+		},
+		error: function () { input.value = ''; status.text('could not add that'); }
+	});
+});
+
 // The runtime Guide commands are one JSON list in a textarea, saved whole rather
 // than on every keystroke, so a half-typed entry never reaches the server.
 $(document).on('click', '#guide_verbs_save', function () {

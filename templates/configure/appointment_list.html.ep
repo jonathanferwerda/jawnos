@@ -196,7 +196,8 @@
 											<% foreach my $when ( ('','start_','stop_','budget_')) { %>
 												<h4><%= &subs::format_name($when || 'default') %></h4>
 												<select class="app_notification_sound_selector configure_input" setting="<%= $when %>notification_sound" when="<%= $when %>" app="<%= $a %>">
-													<% foreach my $sound ( split /\n/, `ls ./public/sounds/notifications/*.mp3` ) { %>
+													<option value="">(default)</option>
+													<% foreach my $sound ( sort split /\n/, `ls ./public/sounds/notifications/*.mp3 2>/dev/null` ) { %>
 														<% 
 															my @fs = split '/', $sound;
 															my @t = split '\.', $fs[-1];
@@ -207,6 +208,13 @@
 
 												<textarea app="<%= $a %>" setting="<%= $when %>notification_text" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %>" placeholder="<%= &subs::format_name($when . 'text') %>"><%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %></textarea>
 											<% } %>
+											<%# your own sound: the file lands beside the shipped ones, so it
+											    appears in all four selects above (and on every other app's) %>
+											<div class="cfg-row">
+												<label>Add your own sound</label>
+												<input type="file" class="app_notification_sound_upload" app="<%= $a %>" accept="audio/*" hint="Add sound">
+												<span class="app_notification_sound_status" app="<%= $a %>"></span>
+											</div>
 										</div>
 									<% } elsif ($b eq 'measures') { %>
 										<div class="app_measures_configurator" app="<%= $a %>">
