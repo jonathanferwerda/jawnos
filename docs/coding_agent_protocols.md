@@ -42,8 +42,22 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
   `cat VERSION` before `git push`. Existing pushes that skipped this were the oversight this rule fixes.
 - **Commit as you go**, staging only your own hunks (`git add -p`).
-- **Appointments that do not match what the person remembers - or a long appointment that looks cut
-  short - are checked before anything is edited.** `perl scripts/records_recover.pl` (dry run) compares
+- **Appointments that do not match what the person remembers - one still open from hours ago, a
+  session far longer than the app's usual, or one that looks cut short - are checked before anything is
+  edited.** `perl scripts/records_audit.pl` (dry run; `--all` for the whole history) is the records
+  watch's audit of the appointments table: **SWEEP** (one press closed more than one session),
+  **WRONG-END** (an older session left open while a newer one of the same app began, so the older row
+  took its end from a press that was not its own - a run of stops that each closed the wrong session),
+  **DUPES** (the same event written twice), **ORPHANS** and **IMPOSSIBLE**. This is the class a stop
+  bug makes: `subs::stop_target_row` closes the session a stop names, and the header names the app's
+  **running (newest)** session - a stale open session must never stand, or the next stop sweeps it.
+  Fixed in v0.1.591: a named stop is a hard match (a repeated or late copy is a no-op) and the header
+  never names a stale session. `perl scripts/records_audit.pl --apply` tombstones the dupes and repairs
+  a sweep; repair a WRONG-END row to its own start + the app's `duration` and stamp a current
+  `server_time` so every machine takes it. The watch (Configure -> Plat -> Watch records) stages
+  findings for a person to review; auto-apply covers exact duplicates only. Mark a genuinely long app
+  (an eight-month ailment) leave-alone rather than repairing it.
+  `perl scripts/records_recover.pl` (dry run) is the other direction - it compares
   an older sealed snapshot against the live appointments table and lists every session a repair
   shortened or dropped: `--backup <path>` names the snapshot (default the newest), `--apps a,b` the app
   names that legitimately run long, `--older-than 1d` the length above which any app is listed. A

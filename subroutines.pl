@@ -17738,6 +17738,7 @@ sub records_audit_prompt {
 		'- DUPES (identical app/type/timestamp/stop_timestamp): keep one, tombstone the rest.',
 		'- ORPHAN (start/record, stop_seen null): do NOT stop it - it may be real and still running. Leave it unless the app sets a duration and it has run far past that, in which case repair it to start + duration.',
 		'- IMPOSSIBLE (a stop before its own start): repair to a sane end or tombstone.',
+		'- WRONG-END (an older session whose span contains a newer session\'s start of the same app): the older row was ended by a press that belonged to the newer one, so it ran on. Repair it to its own start + the app\'s length when the app sets one; leave it alone when it has no length or the person says it is real.',
 		'',
 		'Rules that must not be broken:',
 		'- Do NOT judge by duration length alone: home is legitimately a full day, a walk an hour. Compare against the app\'s own history and its configured duration, never a fixed threshold.',
@@ -17781,7 +17782,7 @@ sub records_audit {
 	my $exempt = &records_exempt();
 	my $report = {
 		generated_at => $now, window_ms => $window_ms, since => $since,
-		sweep => [], dupes => [], orphans => [], impossible => [],
+		sweep => [], wrong_end => [], dupes => [], orphans => [], impossible => [],
 		apps_with_duration => {}, summary => {},
 	};
 
@@ -17825,6 +17826,36 @@ sub records_audit {
 		push @{$report->{'sweep'}}, { app => $g->{'app'}, stop_timestamp => $g->{'stop_timestamp'}, expected_ms => $d, rows => \@out };
 	}
 
+	# WRONG-END - an older session of an app left open while a NEWER session of the
+	# same app had already begun, so the press that closed the older one was not its
+	# own (the header the client stopped named the wrong session, and the older row
+	# ran on to a later press). The overlap is the signature: the older span contains
+	# the newer session's start, and the older one was still open at that tick. The
+	# SWEEP pass owns the case where both closed together, so this is the one-per-press
+	# shape it cannot see. Judged only against the app's own configured length - a real
+	# appointment can be surprisingly long, so nothing is reported without a yardstick,
+	# and a person still reviews every row (it is never bulk-applied).
+	my $wrong = &db_query('select a.app, a.rowid, a.uuid, a.type, a.timestamp, a.stop_timestamp, a.duration
+		from appointments a join appointments b on a.app = b.app
+		where a.stop_timestamp is not null and a.server_time > ?
+		  and b.timestamp > a.timestamp and b.timestamp < a.stop_timestamp
+		  and (b.stop_timestamp is null or b.stop_timestamp > a.stop_timestamp)
+		group by a.rowid order by a.stop_timestamp desc', $since)->hashes;
+	foreach my $r ( @{$wrong} ) {
+		next if $exempt->{ $r->{'app'} };
+		my $d = $app_duration{ $r->{'app'} };
+		next unless $d;
+		my $span = (0 + $r->{'stop_timestamp'}) - (0 + $r->{'timestamp'});
+		next unless $span > 2 * $d;
+		push @{$report->{'wrong_end'}}, {
+			app => $r->{'app'}, rowid => $r->{'rowid'}, uuid => $r->{'uuid'}, type => $r->{'type'},
+			timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'stop_timestamp'}, duration => $r->{'duration'},
+			expected_ms => $d, suggested => 'repair',
+			why => 'ended by a press that belonged to a newer session of the app',
+			repair_stop_timestamp => (0 + $r->{'timestamp'}) + $d,
+		};
+	}
+
 	# DUPES - the same event written more than once
 	my $dupes = &db_query('select app, type, timestamp, stop_timestamp, count(*) c, group_concat(rowid) rowids from appointments where server_time > ? group by app, type, timestamp, stop_timestamp having c > 1 order by timestamp desc', $since)->hashes;
 	foreach my $g ( @{$dupes} ) {
@@ -17857,6 +17888,7 @@ sub records_audit {
 	$report->{'summary'} = {
 		sweep_groups => scalar @{$report->{'sweep'}},
 		sweep_spare_rows => $extra,
+		wrong_end => scalar @{$report->{'wrong_end'}},
 		dupe_groups => scalar @{$report->{'dupes'}},
 		dupe_spare_rows => $dupe_extra,
 		orphans => scalar @{$report->{'orphans'}},
@@ -18023,6 +18055,14 @@ sub records_stage_scan {
 			signature => 'orphan:' . $r->{'app'} . ':' . $r->{'timestamp'},
 			sample => 'open ' . int($r->{'age_ms'} / 3600000) . 'h, far past the app length',
 			proposed => { app => $r->{'app'}, actions => [ { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} } ], context => [ { uuid => $r->{'uuid'}, type => $r->{'type'}, timestamp => $r->{'timestamp'}, duration => undef, age_ms => $r->{'age_ms'} } ] },
+		}); $staged++;
+	}
+	foreach my $r ( @{$report->{'wrong_end'}} ) {
+		&records_stage({
+			kind => 'wrong_end', app => $r->{'app'},
+			signature => 'wrong_end:' . $r->{'app'} . ':' . $r->{'timestamp'},
+			sample => 'ended by a press meant for a newer session; ran ' . int(((0 + $r->{'stop_timestamp'}) - (0 + $r->{'timestamp'})) / 60000) . 'm, this app runs ' . int((0 + ($r->{'expected_ms'} || 0)) / 60000) . 'm',
+			proposed => { app => $r->{'app'}, actions => [ { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} } ], context => [ { uuid => $r->{'uuid'}, type => $r->{'type'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'stop_timestamp'}, duration => $r->{'duration'}, suggested => 'repair' } ] },
 		}); $staged++;
 	}
 	return { staged => $staged, summary => $report->{'summary'} };

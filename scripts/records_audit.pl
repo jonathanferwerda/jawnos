@@ -43,8 +43,8 @@ if ($json) {
 
 my $s = $report->{'summary'};
 printf "records audit - window %s, generated %s\n", ($report->{'window_ms'} ? $hours . 'h' : 'all time'), $report->{'generated_at'};
-printf "sweep: %d group(s) / %d spare row(s) | dupes: %d group(s) / %d spare | orphans: %d | impossible: %d\n\n",
-	$s->{'sweep_groups'}, $s->{'sweep_spare_rows'}, $s->{'dupe_groups'}, $s->{'dupe_spare_rows'}, $s->{'orphans'}, $s->{'impossible'};
+printf "sweep: %d group(s) / %d spare row(s) | wrong-end: %d | dupes: %d group(s) / %d spare | orphans: %d | impossible: %d\n\n",
+	$s->{'sweep_groups'}, $s->{'sweep_spare_rows'}, ($s->{'wrong_end'} // 0), $s->{'dupe_groups'}, $s->{'dupe_spare_rows'}, $s->{'orphans'}, $s->{'impossible'};
 
 print "== SWEEP (one press, more than one session)\n";
 foreach my $g ( @{ $report->{'sweep'} } ) {
@@ -56,7 +56,14 @@ foreach my $g ( @{ $report->{'sweep'} } ) {
 	}
 }
 
-print "\n== DUPES (same row written more than once)\n";
+print "\n== WRONG-END (ended by a press meant for a newer session)\n";
+foreach my $r ( @{ $report->{'wrong_end'} } ) {
+	printf "%s row %s start %s stop %s dur %s -> repair to %s (runs %sms)\n",
+		$r->{'app'}, $r->{'rowid'}, $r->{'timestamp'}, $r->{'stop_timestamp'}, ($r->{'duration'} // '-'),
+		$r->{'repair_stop_timestamp'}, $r->{'expected_ms'};
+}
+
+print "== DUPES (same row written more than once)\n";
 foreach my $g ( @{ $report->{'dupes'} } ) {
 	printf "%s %s start %s stop %s  keep row %s, drop %s\n",
 		$g->{'app'}, $g->{'type'}, $g->{'timestamp'}, ($g->{'stop_timestamp'} // '-'), $g->{'keep_rowid'}, join(',', @{ $g->{'remove_rowids'} });
