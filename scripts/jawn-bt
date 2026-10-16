@@ -109,11 +109,17 @@ elsif ($cmd eq 'sendloop') {
 	# fresh client (a perl start, on a phone) per part would cost more than the
 	# audio itself. No waiting for 'sent' here: the daemon serialises the writes,
 	# and the stream's own end-of-parts message is the only confirmation needed.
+	# The socket is made blocking for this: the script's dial() sets it
+	# non-blocking for the listen path, and a plain print to a non-blocking socket
+	# silently loses a line when it cannot go out at once, which is exactly how a
+	# stream would arrive with parts missing.
+	$sock->blocking(1);
 	while (defined(my $line = <STDIN>)) {
 		chomp $line;
 		next unless length $line;
-		send_cmd({ cmd => 'send', message => $line });
+		print {$sock} JSON::PP->new->encode({ cmd => 'send', message => $line }), "\n";
 	}
+	close $sock;
 }
 elsif ($cmd eq 'status') {
 	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, 10);
