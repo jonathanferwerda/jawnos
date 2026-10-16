@@ -69,6 +69,19 @@ function clotheslineHanger(clothes) {
 		var canvas = layout ? document.getElementById(layout) : undefined;
 		if (!canvas) { hangingClothes = 0; return; }
 		ctx = canvas.getContext('2d');
+		// Keep at least one garment on screen: however far a drag or a glide pushes
+		// the line, the row can never be scrolled off into empty space. The first
+		// tile is pinned so its left edge stays inside the right of the canvas, and
+		// the last so its right edge stays inside the left; between those bounds an
+		// item always fills the view.
+		if (clothes.length > 0 && canvas.width) {
+			var lastRight = (maxWidth * clothes.length);
+			var minX = -(lastRight - maxWidth);
+			var maxX = canvas.width - maxWidth;
+			if (maxX < minX) { maxX = minX; }
+			if (clothesLinePos['x'] > maxX) { clothesLinePos['x'] = maxX; }
+			if (clothesLinePos['x'] < minX) { clothesLinePos['x'] = minX; }
+		}
 		// Each garment is now its own solid coloured tile, so it no longer floats
 		// over the page: a tile border wears the themed ink and the label wears
 		// jawnosContrastInk of the tile's own fill. No halo here - a label that

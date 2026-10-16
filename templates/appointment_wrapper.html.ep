@@ -58,6 +58,16 @@
 				<% } %>
 
 			</span><br>
+			<%# the appointment's own controls, on the row right under the record /
+			    play / stop / note buttons above %>
+			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
+			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
+			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />
+			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" />
+			<img app="<%= $a %>" class="app_act little_thumb inventory" src="<%= &subs::icon_path('spreadsheet', '/images/decipherable/spreadsheet.png') %>" hint="Inventory" />
+			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" hint="Details" />
+			<img app="<%= $a %>" class="app_act little_thumb register" src="<%= &subs::icon_path('register', '/images/decipherable/register.png') %>" hint="Register" />
+			<br>
 			<%# the appointment's own action buttons, tucked behind Media / Extra /
 			    Connect so the row under the record/play/stop/note buttons stays short %>
 			<% if ($from ne 'store') { %>
@@ -119,22 +129,15 @@
 					<% } %>
 				</div>
 			<% } %>
-
-			<br>
-			<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="width:16%;" />
-			<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" style="width:16%;" />
-			<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity" style="width:16%;">
-			<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="schedule" style="width:16%;" />
-			<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" style="width:16%;" />
+			<div class="main_inputs_row" app="<%= $a %>" style="display:flex;gap:3px;width:100%;">
+				<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="flex:1 1 0;min-width:0;" />
+				<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" style="flex:1 1 0;min-width:0;" />
+				<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity" style="flex:1 1 0;min-width:0;">
+				<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="schedule" style="flex:1 1 0;min-width:0;" />
+				<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" style="flex:1 1 0;min-width:0;" />
+			</div>
 			<br>
 			<textarea  class="timed_input notes" rows="3" app="<%= $a %>" text="notes" style="width:99%" placeholder="notes" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
-			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
-			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
-			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />
-			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" />
-			<img app="<%= $a %>" class="app_act little_thumb inventory" src="<%= &subs::icon_path('spreadsheet', '/images/decipherable/spreadsheet.png') %>" hint="Inventory" />
-			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" hint="Details" />
-			<img app="<%= $a %>" class="app_act little_thumb register" src="<%= &subs::icon_path('register', '/images/decipherable/register.png') %>" hint="Register" />
 			<br>
 			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
 				<%= include 'apps/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>
