@@ -747,11 +747,15 @@ function sendIt() {
 		timestamp:timestamp,
 		type: 'message',
 		picker: picked,
-		conversation_uuid: conversation_uuid
+		conversation_uuid: conversation_uuid,
+		// the paperclip's files ride the message; on the sms road they go as an MMS
+		attachments: mailAttachments
 	});
 	mailws.send(m);
 	$('#message').val('');
 	$('#message').trigger('click');
+	mailAttachments = [];
+	$('#mail_attachments').empty();
 
 }
 
@@ -759,6 +763,85 @@ var mailws = undefined;
 var mailwsInterval;
 var mailwsLastAnswer = 0;
 var mailwsSignature = '';
+
+// ---- the app's own messaging (window.JawnSms) ------------------------
+// The phone is the device with the radio, so the server asks its page to send:
+// the page bridges it natively (SmsManager), or falls back to the phone's own
+// termux-sms-send while the app that carries the bridge has not landed yet.
+function jawnSmsSend(digits, message) {
+	if (window.JawnSms && window.JawnSms.send) {
+		window.JawnSms.send(digits, message);
+		return 'bridge';
+	}
+	$.post('/manager/sms/termux_fallback', { digits: digits, message: message });
+	return 'termux';
+}
+
+// An attachment on the sms road: MMS through the bridge when JawnOS is the
+// default sms app, else the OS messaging app is handed the first file to send.
+function jawnSmsMms(digits, subject, parts) {
+	if (!(window.JawnSms && window.JawnSms.mms)) { return 'no bridge'; }
+	if (window.JawnSms.isDefaultSms && window.JawnSms.isDefaultSms() === 'yes') {
+		window.JawnSms.mms(digits, subject, JSON.stringify(parts || []));
+	}
+	else {
+		var p = (parts && parts[0]) || {};
+		window.JawnSms.share(digits, subject, p.path, p.mime);
+	}
+	return 'ok';
+}
+
+// the bridge's answer (sent, failed, shared), posted to the manager's log
+window.__jawnSmsResult = function (result) {
+	$.post('/manager/sms/result', result || {});
+};
+
+// ---- the paperclip: files that ride the next message -----------------
+var mailAttachments = [];
+function mailAttachmentChip(att) {
+	var img = att.thumb ? ('/file_open?thumb=1&file=' + encodeURIComponent(att.thumb)) : (att.src || '/images/decipherable/file.png');
+	return '<span class="mail_attachment_chip" uuid="' + (att.uuid || '') + '">' +
+		'<img class="little_thumb" src="' + img + '">' +
+		(att.name || 'file') +
+		'<img class="tiny_thumb mail_attachment_remove" hint="Remove" src="/images/make believe/cancel_button.png">' +
+		'</span>';
+}
+$(document).on('click', '#mail_paperclip', function() {
+	$('#mail_attachment_input').trigger('click');
+});
+$(document).on('change', '#mail_attachment_input', function() {
+	var input = this;
+	$.each(input.files, function(i, f) {
+		var formData = new FormData();
+		formData.append('app', 'mail');
+		formData.append('timestamp', Date.now());
+		formData.append('type', 'chat');
+		formData.append('blob', f, f.name);
+		$.ajax({
+			url: '/manager/upload_file',
+			type: 'POST',
+			data: formData,
+			cache: false,
+			contentType: false,
+			processData: false,
+			success: function(response) {
+				var file = response && response.file ? JSON.parse(response.file) : [];
+				$.each(file, function(i, a) {
+					a.name = f.name;
+					a.mime = f.type;
+					mailAttachments.push(a);
+					$('#mail_attachments').append(mailAttachmentChip(a));
+				});
+			}
+		});
+	});
+	input.value = '';
+});
+$(document).on('click', '.mail_attachment_remove', function() {
+	var uuid = $(this).closest('.mail_attachment_chip').attr('uuid');
+	mailAttachments = mailAttachments.filter(function(a) { return a.uuid !== uuid; });
+	$(this).closest('.mail_attachment_chip').remove();
+});
 // the echo of each heartbeat is the proof the socket is alive; a dead one
 // still reads readyState 1, so three missed beats call it dead
 var mailwsStaleAfter = 6000;

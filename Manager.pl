@@ -8139,6 +8139,9 @@ post '/manager/upload_file' => sub ($c) {
 	&subs::file_encrypter({ app => &subs::unformat_name($app) });
 
 	$returner->{'cv'} = &centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => $timestamp, cached => 'no' });
+	# the files just written, so a caller (the chat's paperclip) can carry them
+	# on the message without asking again
+	$returner->{'file'} = $jfile;
 
 
 	$c->render(json => $returner);
@@ -22224,12 +22227,38 @@ sub padlock_time_extender($c) {
 #	}, { name => 'padlock time extender' });
 }
 
+# A self-contained page command for a phone-side send: the new bundle's helper
+# when it is there, the bridge when the bundle is old but the app is new, and
+# the phone's own termux when neither has landed yet - so a message always goes
+# out during the hand-over from termux-sms-send.
+sub sms_send_command($digits, $message) {
+	return 'typeof jawnSmsSend === "function" ? jawnSmsSend(' . encode_json($digits) . ',' . encode_json($message) . ')'
+		. ' : (window.JawnSms && window.JawnSms.send ? (window.JawnSms.send(' . encode_json($digits) . ',' . encode_json($message) . '), "bridge")'
+		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . encode_json($digits) . ', message: ' . encode_json($message) . '}); return "termux"; })())';
+}
+sub sms_mms_command($digits, $subject, $parts) {
+	return 'typeof jawnSmsMms === "function" ? jawnSmsMms(' . encode_json($digits) . ',' . encode_json($subject) . ',' . encode_json($parts) . ') : "no bridge"';
+}
+
 sub sms_message_send($digits,$message) {
 	$digits =~ s/\S\d(?=\d{10})//;
+	my $via = 'relay';
 	if (&subs::device_setter() eq 'mobile') {
 		if ( $digits ) {
-			$message =~ s/\$/\\\$/gi;
-			`termux-sms-send -n $digits "$message"`;
+			# the app's own bridge sends it natively (SmsManager): the page calls
+			# window.JawnSms.send, or falls back to termux-sms-send while the app
+			# that carries the bridge has not landed. No page open: termux, since
+			# there is no WebView to bridge through.
+			my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
+			if (scalar @{$tabs} > 0) {
+				&Websocket::send('tab', { console => &sms_send_command($digits, $message) });
+				$via = 'bridge';
+			}
+			else {
+				$message =~ s/\$/\\\$/gi;
+				`termux-sms-send -n $digits "$message"`;
+				$via = 'termux';
+			}
 		}
 	}
 	else {
@@ -22246,8 +22275,109 @@ sub sms_message_send($digits,$message) {
 			}
 		}, { name => 'sms msg send' });
 	}
-	return ($digits,$message);
+	return ($digits,$message,$via);
 }
+
+# The page's fallback when the app that carries the JawnSms bridge has not
+# landed yet: the phone's own termux sends it the old way, so a message still
+# goes out during the hand-over. Retires with termux-sms-send itself.
+post '/manager/sms/termux_fallback' => sub($c) {
+	my $digits = $c->param('digits') || '';
+	my $message = $c->param('message') || '';
+	$digits =~ s/\S\d(?=\d{10})//;
+	if ($digits) {
+		$message =~ s/\$/\\\$/gi;
+		`termux-sms-send -n $digits "$message"`;
+	}
+	$c->render(json => { ok => 1, via => 'termux' });
+};
+
+# The bridge's answer (window.__jawnSmsResult posts here): the send is logged,
+# so a message that failed is visible in the log even when the UI is not.
+post '/manager/sms/result' => sub($c) {
+	my $ok = $c->param('ok');
+	my $error = $c->param('error') || '';
+	my $via = $c->param('via') || 'sms';
+	my $id = $c->param('id') || '';
+	$log->info('sms bridge result: ok=' . ($ok || '?') . ' via=' . $via . ' id=' . $id . ' error=' . $error);
+	$c->render(json => { received => 1 });
+};
+
+# A message with attachments on the sms road rides an MMS. The parts arrive as
+# base64 (the sending machine may be any device in the house); they are written
+# where the app can read them (the house's own termux home, same UID) and the
+# page is handed the paths - window.JawnSms.mms sends them, or share() hands the
+# OS messaging app the first when JawnOS is not the default sms app.
+post '/manager/sms/mms' => sub($c) {
+	my $digits = $c->param('digits') || '';
+	my $subject = $c->param('subject') || '';
+	my $parts = eval { return decode_json $c->param('parts') } || [];
+	$digits =~ s/\D+//g;
+	$digits =~ s/^1//;
+	my @local;
+	foreach my $p ( @{$parts} ) {
+		my $data = $p->{'data'} || '';
+		next unless $data;
+		my $name = $p->{'name'} || 'part';
+		$name =~ s{[^A-Za-z0-9._-]}{_}g;
+		my $mime = $p->{'mime'} || 'image/jpeg';
+		my $dir = &subs::home('~/.shots/sms_parts');
+		`mkdir -p $dir` unless -e $dir;
+		my $file = $dir . '/' . &subs::random_string_creator(8) . '-' . $name;
+		my $bytes = decode_base64($data);
+		&write_file($file, $bytes);
+		push @local, { path => $file, mime => $mime };
+	}
+	my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
+	if (scalar @{$tabs} > 0 && scalar @local > 0) {
+		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, \@local) });
+		$c->render(json => { ok => 1, via => 'bridge', parts => scalar @local });
+	}
+	else {
+		$c->render(json => { ok => 0, error => 'no app page open for mms', parts => scalar @local });
+	}
+};
+
+# An attachment on the sms road: on the phone the parts are already local files
+# the bridge reads; anywhere else they are read, base64'd and relayed to the
+# phone's /manager/sms/mms.
+sub sms_mms_relay($digits, $subject, $attachments) {
+	my $parts = [];
+	foreach my $att ( @{$attachments || []} ) {
+		my $f = ($att->{'file'} && ref $att->{'file'} eq 'HASH') ? $att->{'file'}->{'f'} : $att->{'f'};
+		my $mime = $att->{'mime'} || ($att->{'file'} && ref $att->{'file'} eq 'HASH' ? $att->{'file'}->{'type'} : $att->{'type'}) || 'image/jpeg';
+		next unless $f;
+		if (&subs::device_setter() eq 'mobile') {
+			push @{$parts}, { path => $f, mime => $mime };
+		}
+		else {
+			next unless -e $f;
+			my $size = -s $f;
+			next if $size <= 0 || $size > (8 * 1024 * 1024);
+			open my $fh, '<', $f or next;
+			binmode $fh;
+			local $/;
+			my $bytes = <$fh>;
+			close $fh;
+			my ($name) = $f =~ m{([^/]+)$};
+			push @{$parts}, { name => $name || 'part', mime => $mime, data => encode_base64($bytes) };
+		}
+	}
+	return { ok => 0, error => 'no parts' } unless scalar @{$parts} > 0;
+	if (&subs::device_setter() eq 'mobile') {
+		my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
+		return { ok => 0, error => 'no app page open' } unless scalar @{$tabs} > 0;
+		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, $parts) });
+		return { ok => 1, via => 'bridge' };
+	}
+	my $remote_machines = &subs::db_query('select * from remote_machines where connection=? and device=?', 'active', 'mobile')->hashes;
+	foreach my $rm ( @{$remote_machines} ) {
+		$rm = &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
+		my $res = $rm->{'ua'}->post($rm->{'manager'} . '/manager/sms/mms', form => { digits => $digits, subject => $subject, parts => encode_json $parts });
+		if (eval {decode_json $res}) { return { ok => 1, via => 'relay' }; }
+	}
+	return { ok => 0, error => 'no phone reached' };
+};
 
 post '/manager/sms/message' => sub($c) {
 	my $digits = $c->param('digits');
@@ -25987,7 +26117,8 @@ websocket '/mail/ws' => sub ($c) {
 				phone => $m->{'phone'},
 				email => $m->{'email'},
 				person => $constructs->{'people'},
-				conversation_uuid => $m->{'conversation_uuid'}
+				conversation_uuid => $m->{'conversation_uuid'},
+				attachments => (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0 ? encode_json $m->{'attachments'} : undef)
 			};
 			# filed words are stored; a visitor's room words are only ever heard
 			# live by whoever is tuned in, so they are never written down
@@ -26010,6 +26141,11 @@ websocket '/mail/ws' => sub ($c) {
 				my $sms_msg = $m->{'body'} || $m->{'msg'};
 				$sms_msg =~ s/\n+$//;
 				&sms_message_send($m->{'phone'}, $sms_msg);
+				# an attachment on the sms road rides an MMS through the phone
+				if (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0) {
+					my $mms = &sms_mms_relay($m->{'phone'}, $sms_msg, $m->{'attachments'});
+					$log->info('mms relay: ' . ($mms->{'via'} || $mms->{'error'} || '?'));
+				}
 			}
 			if ($m->{'mail_contact'} && $m->{'mail_contact'} eq 'pen') {
 				my $mesg = {

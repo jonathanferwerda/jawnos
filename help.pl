@@ -433,6 +433,7 @@ our %topic = (
 		body => [
 			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the six groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down - except on the guest\'s own ticket thread, the one conversation the house opened for them.',
+			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
 			'Advertise opens the tuned set to guests, who may then tune the same channel from the public page. Room bubbles that are not kept are dashed to say so.',
 			'An appointment\'s Connect group carries a Chat button: it opens that person\'s one conversation right in the window - the ticket thread when they hold a ticket, the phone otherwise - and the window keeps their name and colour on the way. A back button beside the menu puts the appointment back, and closing the window closes the chat.'
 		],

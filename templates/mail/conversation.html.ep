@@ -33,7 +33,12 @@
 				<option value="lora">lora</option>
 			</select>
 		<% } %>
+		<%# the paperclip: files ride the message (an attachment on the sms road
+		    goes as an MMS through the phone's bridge) %>
+		<img id="mail_paperclip" src="<%= &subs::icon_path('paperclip', '/images/decipherable/file.png') %>" hint="Attach a file" class="little_thumb hover">
+		<input type="file" id="mail_attachment_input" multiple style="display:none;">
 		<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
 		<button id="send_it" style="width:12%;vertical-align:top;">></button>
 	</div>
+	<div id="mail_attachments" style="text-align:center;"></div>
 </div>

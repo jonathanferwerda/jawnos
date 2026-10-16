@@ -25,6 +25,9 @@
 				<span style="float:right;padding-right:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>
 			</span>
 		<% } %>
+		<%# the paperclip's files ride the message, whichever road it took %>
+		<% my $chat_atts = eval { return decode_json $m->{'attachments'} } || []; %>
+		<% if (scalar @{$chat_atts} > 0) { %><span class="mail_message_attachments" style="display:block;clear:both;"><% foreach my $att (@{$chat_atts}) { %><img class="little_thumb" src="<%= ($att->{'thumb'} ? '/file_open?thumb=1&file=' . $att->{'thumb'} : ($att->{'src'} || '/images/decipherable/file.png')) %>" hint="<%= $att->{'name'} || 'Attachment' %>"><% } %></span><% } %>
 		<br>
 	</span>
 <% } %>
