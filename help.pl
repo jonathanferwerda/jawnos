@@ -536,12 +536,14 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
 			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (LJSpeech, LibriTTS-R, Alba) or an eSpeak fallback, each chosen per device.',
 			'The App panel is one card per app. An app\'s abilities — measures, budgets, goals, notifications, packaging, a web table and the rest — sit as a grid of icon tiles under its name and colour; tap one to open its settings, and that tile opens out across the card. The icon set you pick under Misc gives every tile its look.',
+			'A person can keep more than one number or address: Phone and Email each hold the one line calls and mail route on, and the Phones and Emails tiles beside them list any others, each with a type — Mobile, Home, Work, or a Custom label. A call, a text or a letter from any of them still names the person, and contact sync fills the list rather than overwriting the line.',
+			'Renaming an app into a name the house already knows opens the merge panel: for each setting the two records share, pick which value keeps the name, and a value nobody chose (marked <i>house default</i>) loses. Contacts either side holds are carried over unless you drop them, and window state — where the window was left, how big it was — is never asked about. Phone and email, like nfc and measures, keep both sides.',
 			'Notifications, on a card, sets what an app says and sounds like: a sound and a line of text for the default, for a start, for a stop and for a budget. The sounds are the ones in the house (Ring, Chime, Sonar, Pulse, Crystal, Ding, Rattle), and (default) leaves the choice to the house. Add your own sound takes an audio file from your device and files it with the rest, so it appears in every app\'s list from then on.'
 		],
 		steps => [
@@ -550,6 +552,7 @@ our %topic = (
 			'The Plat tab holds every AI model choice and provider key.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'To give an app a ringtone, open its card on the App panel, tap Notifications, and pick a sound — or add your own sound from there.',
+			'To add another number or address to a person, open their card, tap Phones or Emails, pick a type and press Add Phone (or Add Email).',
 			'Changes save as you make them; a bar or theme change is felt at once.'
 		],
 		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform', 'assistant' ]
