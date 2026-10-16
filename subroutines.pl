@@ -1935,7 +1935,8 @@ sub restore_list() {
 
 		my $size = sprintf('%.2f', ( $stat[7] / 1024 )) . 'kb';
 		my $created = localtime($stat[9] )->strftime('%A %B %d %Y - %I:%M:%S%P %Z');
-		push @{$returner}, { archive => $archive, status => $status, directory => $directory, filename => $b, size => $size, created => $created, blocks => $stat[12] };
+		(my $name = $b) =~ s{.*/}{};
+		push @{$returner}, { archive => $archive, status => $status, directory => $directory, filename => $b, name => $name, size => $size, created => $created, blocks => $stat[12] };
 	}
 
 	return $returner;
@@ -11163,6 +11164,18 @@ sub tunnel_checker() {
 				&subs::db_update('devices', { address => $after }, { uuid => $me->{'uuid'} }) if ($after ne $before);
 			}
 		}
+		# Enrol each tunnelled peer with no browser behind it: the peer's own /gate
+		# gives its name and its jawnos.enc backups, and remote_device_connect files
+		# the roster row with its buttons - exactly what pressing Connect does. A peer
+		# whose row already reads active is left alone, so this is quiet when healthy.
+		my %enrolled;
+		foreach my $tun ( @{$tunnels} ) {
+			next unless $tun->{'signatorial'} && $tun->{'name'} && $tun->{'name'} eq 'PORT_AHOY';
+			next if $enrolled{ $tun->{'signatorial'} }++;
+			my $row = &subs::db_select('remote_machines', undef, { signatorial => $tun->{'signatorial'} })->hashes->[0];
+			next if $row && ($row->{'connection'} || '') eq 'active';
+			&subs::tunnel_peer_enrol($tun->{'signatorial'});
+		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
 			my $rm = &subs::remote_machine_lister({ signatorial => $td->{'signatorial'}, limit => 1 });
@@ -11339,6 +11352,49 @@ sub tunnel_peer_connect() {
 	return $enrollee;
 }
 
+
+# What device_scan does for a neighbour it finds on the LAN, done headlessly for a
+# peer the hub holds a tunnel to: ask the peer's own /gate for its name, purpose,
+# signatorial and restore list (its jawnos.enc backups), write them onto the
+# neighbour row in this machine's own device address, then run the same handshake
+# the Dev panel's Connect button does (remote_device_connect) so the roster row
+# carries the buttons and hub-side manager. Without a browser nothing else does
+# this for a tunnel, so the peer appeared in Dev with no name and no backup to
+# restore from.
+sub tunnel_peer_enrol {
+	my ($signatorial) = @_;
+	return unless $signatorial;
+	my $tuns = &subs::tunnel_port_mapper({ signatorial => $signatorial });
+	my $dock = $tuns->{'PORT_DOCK'};
+	return unless $dock;
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
+	my $ua = Mojo::UserAgent->new();
+	my $url = 'https://127.0.0.1:' . $dock . '/manager/gate?restore_list=' . ($config->{'start_dir'} || '')
+		. '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . &subs::signatorial_designer();
+	my $res = eval { $ua->insecure(1)->get($url)->result };
+	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
+	if ($body && $body->{'signatorial'}) {
+		my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+		if ($me) {
+			my $address = eval { decode_json $me->{'address'} } || {};
+			my $changed = 0;
+			foreach my $nic ( keys %{$address} ) {
+				foreach my $n ( @{$address->{$nic}->{'neigh'} || []} ) {
+					next unless ($n->{'signatorial'} || '') eq $signatorial;
+					$n->{'name'} = $body->{'name'} if $body->{'name'};
+					$n->{'purpose'} = $body->{'purpose'} if $body->{'purpose'};
+					$n->{'signatorial'} = $body->{'signatorial'};
+					$n->{'restore_list'} = encode_json $body->{'restore_list'} if $body->{'restore_list'};
+					$changed = 1;
+				}
+			}
+			&subs::db_update('devices', { address => encode_json $address }, { uuid => $me->{'uuid'} }) if $changed;
+		}
+	}
+	return &subs::tunnel_peer_connect($signatorial);
+}
 
 sub system_monitor() {
 	my $data = shift;

@@ -571,12 +571,15 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 							$(v).html('');
 							$.each(neighbour, function(i,val) {
 								if (val['archive'] != 'archive') {
+									// show the file's own name, not its long path; the button still
+									// carries the full filename for the action
+									var label = val['name'] || (val['filename'] || '').replace(/^.*\//, '');
 									if (neighbour['verified'] == true) {
-										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connected' + val['filename'] + '</button>');
+										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connected ' + label + '</button>');
 										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connect</button>');
 									}
 									else {
-										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">' + val['filename'] + '</button>');
+										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">' + label + '</button>');
 									}
 								}
 							});
