@@ -541,6 +541,8 @@ async function usbSendData(string) {
 $(document).on('change', '.teletype_wifi_config', function() {
 	var field = $(this).attr('field');
 	var val = $(this).val();
+	// a password field shows only that it is set; an empty value means "leave it"
+	if (/password/.test(field) && !val) { return; }
 	var timestamp = Date.now();
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
 	var chip_id = localStorage.getItem('embedded_chip_id') || '';
@@ -863,6 +865,9 @@ function usb_flash_poll(count) {
 }
 $(document).on('change', '#teletype_authorization', function() {
 	var tauthorization = $(this).val();
+	// the field shows only whether a secret is set, never the secret itself:
+	// an empty value means "leave it", not "clear it"
+	if (!tauthorization) { return; }
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/embedded/tauthorization',
