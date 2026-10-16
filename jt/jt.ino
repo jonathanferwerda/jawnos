@@ -94,9 +94,6 @@ static const uint16_t screenHeight = 240;
 #define MIC_TDM_SLOTS               4
 #define MIC_TDM_FRAMES              512      // frames per read
 #define MIC_TDM_BUFFER_BYTES        (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
-#define VAD_SAMPLE_RATE_HZ          16000
-#define VAD_FRAME_LENGTH_MS         30
-#define VAD_BUFFER_LENGTH           (VAD_FRAME_LENGTH_MS * VAD_SAMPLE_RATE_HZ / 1000)
 #define LVGL_BUFFER_SIZE            (TFT_WIDTH * TFT_HEIGHT * sizeof(lv_color_t))
 
 
@@ -512,9 +509,6 @@ static void recordingPlay(lv_event_t *e);
 bool es7210Begin();
 static void speakerSelfTest();
 static void pruneRecordings(int keep);
-static lv_obj_t *vad_btn_label;
-static uint32_t vad_detected_counter = 0;
-static TaskHandle_t vadTaskHandler;
 bool        transmissionFlag = true;
 bool        radioInterrupt = true;
 int         transmissionState;
@@ -589,14 +583,7 @@ lcd_cmd_t lcd_st7789v[] = {
   {0x29, {0}, 0},
   {0x2C, {0}, 0},
 };
-#ifdef USE_ESP_VAD
-#include <esp_vad.h>
-int16_t         *vad_buff;
-vad_handle_t    vad_inst;
-const size_t    vad_buffer_size = VAD_BUFFER_LENGTH * sizeof(short);
-#else
 uint16_t loopbackBuffer[3200] = {0};
-#endif
 
 
 #define BOARD_POWERON       10
@@ -5746,25 +5733,6 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
     return;
   }
   i2s_channel_enable(mic_rx_handle);
-
-#ifdef USE_ESP_VAD
-  // Initialize esp-sr vad detected
-#if ESP_IDF_VERSION_VAL(4,4,1) == ESP_IDF_VERSION
-  vad_inst = vad_create(VAD_MODE_0, MIC_I2S_SAMPLE_RATE, VAD_FRAME_LENGTH_MS);
-#elif  ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4,4,1)
-  vad_inst = vad_create(VAD_MODE_0);
-#else
-#error "No support this version."
-#endif
-  vad_buff = (int16_t *)ps_malloc(vad_buffer_size);
-  if (vad_buff == NULL) {
-    while (1) {
-      Serial.println("Memory allocation failed!");
-      delay(1000);
-    }
-  }
-  xTaskCreate(vadTask, "vad", 8 * 1024, NULL, 12, &vadTaskHandler);
-#endif
 
 }
 
