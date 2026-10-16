@@ -27,6 +27,14 @@
 #device_listings .machine_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:5px 0; }
 #device_listings .machine_row + .machine_row { border-top:1px solid var(--line); }
 #device_listings .machine_row .device_domain { flex:1 1 200px; min-width:140px; margin:0; }
+#device_listings .printer_ink { display:flex; flex-direction:column; gap:4px; min-width:150px; }
+#device_listings .inker { display:flex; gap:6px; align-items:center; font-size:85%; }
+#device_listings .ink_name { flex:0 0 auto; min-width:58px; opacity:.85; }
+#device_listings .ink_bar { flex:1 1 70px; height:9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); overflow:hidden; }
+#device_listings .ink_fill { display:block; height:100%; }
+#device_listings .ink_pct { flex:0 0 auto; font-variant-numeric:tabular-nums; opacity:.8; }
+#device_listings .inker.ink_low .ink_pct { color:#c0392b; font-weight:700; }
+#device_listings .printer_state { font-size:80%; opacity:.7; }
 /* On a phone the neighbour table becomes a stack of cards, so the purpose
    controls (lock, mirror, scan, delete) are never off the right edge. */
 @media (max-width:640px) {
@@ -111,11 +119,7 @@
 														<button class="teletype_backup" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>">Backup</button>
 													<% } %>
 													<% if ($n->{'purpose'} eq 'printer') { %>
-														<select id="printer_brand_select">
-															<% foreach my $pr ( keys %{$gb::printer_brands}) { %>
-																<option value="<%= $pr %>"><%= &subs::format_name($pr) %></option>
-															<% } %>
-														</select>
+														<span class="printer_ink" ip="<%= $n->{'ip'} %>" title="ink and toner"><span class="printer_ink_body">reading…</span></span>
 													<% } %>
 												</td>
 												<td>

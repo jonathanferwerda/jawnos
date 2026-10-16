@@ -2205,6 +2205,98 @@ sub mdns_printers() {
 	return { by_ip => \%by_ip, by_mac => \%by_mac };
 }
 
+# What a printer says about its own consumables, read over IPP. A printer that
+# advertises _ipp._tcp answers Get-Printer-Attributes: marker-levels is the ink or
+# toner left in each cartridge, with marker-names, marker-colors (one #rrggbb, or
+# several for a tri-colour cartridge) and marker-types labelling each one, and
+# printer-state / printer-state-reasons saying whether it needs attention.
+# Returns a hashref of the markers and the state, or { error => ... } when nothing
+# answers - so a printer that is off leaves its row saying so, not blank.
+sub printer_ink_levels() {
+	my ($ip) = @_;
+	return { error => 'no address' } unless $ip && $ip =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $ipptool = `command -v ipptool 2>/dev/null`;
+	chomp $ipptool;
+	# the manager's PATH is not the login shell's, so try the usual homes too
+	for my $p (qw(/usr/bin/ipptool /usr/local/bin/ipptool /bin/ipptool)) {
+		$ipptool ||= $p if -x $p;
+	}
+	return { error => 'ipptool not installed' } unless $ipptool && -x $ipptool;
+	# ask only for what an ink readout needs, so a chatty printer's reply stays small
+	my $test = <<'IPP';
+{
+	OPERATION get-printer-attributes
+	VERSION 2.0
+	GROUP operation
+	ATTR charset attributes-charset utf-8
+	ATTR language attributes-natural-language en
+	ATTR uri printer-uri $uri
+	ATTR keyword requested-attributes printer-make-and-model,printer-state,printer-state-reasons,marker-names,marker-colors,marker-types,marker-levels
+	STATUS successful-ok
+	DISPLAY printer-make-and-model
+	DISPLAY printer-state
+	DISPLAY printer-state-reasons
+	DISPLAY marker-names
+	DISPLAY marker-colors
+	DISPLAY marker-types
+	DISPLAY marker-levels
+}
+IPP
+	require File::Temp;
+	my ($fh, $path) = File::Temp::tempfile('jawn_ipp_XXXXXX', SUFFIX => '.test', DIR => File::Spec->tmpdir, UNLINK => 1);
+	print $fh $test;
+	close $fh;
+	# ipp/print is the resource path (_ipp._tcp advertises rp=ipp/print on almost
+	# every printer); fall back to ipp/printer for one that names it differently
+	my (%attr, $answered);
+	foreach my $rp ('ipp/print', 'ipp/printer') {
+		my $out = `timeout 6 $ipptool -tv ipp://$ip:631/$rp $path 2>/dev/null`;
+		foreach my $line (split "\n", $out) {
+			next unless $line =~ /^\s*([a-z0-9-]+)\s*(?:\([^)]*\))?\s*=\s*(.*)$/;
+			$attr{$1} = $2;
+		}
+		$answered = 1 if %attr;
+		last if $attr{'marker-levels'} || $attr{'printer-make-and-model'};
+	}
+	return { error => 'no answer from the printer' } unless $answered;
+	# each attribute is a 1setOf, printed comma-separated and parallel across the
+	# lists, so index i is the same cartridge in every one
+	my @names  = split /\s*,\s*/, ($attr{'marker-names'}  || '');
+	my @colors = split /\s*,\s*/, ($attr{'marker-colors'} || '');
+	my @types  = split /\s*,\s*/, ($attr{'marker-types'}  || '');
+	my @levels = split /\s*,\s*/, ($attr{'marker-levels'} || '');
+	my @markers;
+	foreach my $i (0 .. $#levels) {
+		my $level = $levels[$i];
+		next unless defined $level && $level =~ /^-?\d+$/;
+		# marker-levels is already a percentage of capacity; a negative value is
+		# the printer saying it does not know, so leave the percentage out and let
+		# the row show a question mark instead of a wrong number
+		my $pct;
+		if ($level >= 0) {
+			$pct = $level + 0;
+			$pct = 100 if $pct > 100;
+		}
+		push @markers, {
+			name    => ($names[$i] || ('marker ' . ($i + 1))),
+			type    => $types[$i],
+			# marker-colors is #rrggbb (or several, run together, for a
+			# tri-colour cartridge): keep each as its own swatch
+			colors  => [ map { '#' . $_ } grep { length } split /#/, ($colors[$i] || '') ],
+			level   => $level + 0,
+			percent => $pct,
+		};
+	}
+	my @reasons = grep { $_ ne 'none' } split /\s*,\s*/, ($attr{'printer-state-reasons'} || '');
+	return {
+		ip      => $ip,
+		make    => $attr{'printer-make-and-model'},
+		state   => $attr{'printer-state'},
+		reasons => \@reasons,
+		markers => \@markers,
+	};
+}
+
 # The JawnOS devices the local network advertises on _jawnos._tcp, keyed by
 # address, MAC and chip_id so a scanned device is recognised however it is known.
 # The firmware puts purpose/model/caps in the TXT records (see jw/jt/alarmclock).

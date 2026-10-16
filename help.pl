@@ -550,6 +550,7 @@ our %topic = (
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
 			'The Dev panel lists the devices by the network they are on: a section per network, named by its subnet, with the machines and interfaces that reach it and a table of the devices found there. Scan sweeps the local network first, so a device nobody has talked to yet - a printer, a fresh appliance - still appears and can be given its purpose.',
 			'A device names itself as it joins. A watch, deck or pico advertises what it is - its purpose, model and abilities (screen, keyboard, mic, gps, pins and the like) - over mDNS, and a printer is recognised the same way, so a new device appears in the list with its purpose and its abilities within seconds, without pressing Scan.',
+			'A printer in the list reads out its own ink and toner: a bar per cartridge (a tri-colour cartridge draws as one band), with the printer\'s state under it - idle, or what it is asking for, such as paper. The reading comes from the printer itself over IPP; click it to ask again after changing a cartridge.',
 			'The Misc panel holds the routine settings, and its Speech section sets which voice the desktop speaks with — the neural Piper voices (LJSpeech, LibriTTS-R, Alba) or an eSpeak fallback, each chosen per device.',
 			'The App panel is one card per app. An app\'s abilities — measures, budgets, goals, notifications, packaging, a web table and the rest — sit as a grid of icon tiles under its name and colour; tap one to open its settings, and that tile opens out across the card. The icon set you pick under Misc gives every tile its look.',
 			'A person can keep more than one number or address: Phone and Email each hold the one line calls and mail route on, and the Phones and Emails tiles beside them list any others, each with a type — Mobile, Home, Work, or a Custom label. A call, a text or a letter from any of them still names the person, and contact sync fills the list rather than overwriting the line.',
@@ -562,6 +563,7 @@ our %topic = (
 			'The Plat tab holds every AI model choice and provider key.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'To give an app a ringtone, open its card on the App panel, tap Notifications, and pick a sound — or add your own sound from there.',
+			'To see how much ink or toner a printer has left, look at its row in the Dev panel; click the reading to refresh it.',
 			'To add another number or address to a person, open their card, tap Phones or Emails, pick a type and press Add Phone (or Add Email).',
 			'Changes save as you make them; a bar or theme change is felt at once.'
 		],

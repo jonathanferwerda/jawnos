@@ -4759,6 +4759,13 @@ get '/manager/configure/device_lister' => sub($c) {
 	);
 };
 
+# A printer's own ink and toner, asked over IPP when its row in the Dev panel
+# opens. A separate call, so a printer that is off cannot stall the whole device
+# listing - the readout fills in a moment later, or says the printer is away.
+get '/manager/configure/printer_ink' => sub($c) {
+	$c->render(json => &subs::printer_ink_levels($c->param('ip')));
+};
+
 post '/manager/configure/device_purpose' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my ($db,$database,$sql) = &subs::database_grabber();

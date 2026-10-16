@@ -558,6 +558,7 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			success: function(response) {
 				$('#device_list').html(response);
 				$('#ping_results').html(ping);
+				printerInkLoad($('#device_list'));
 				if (jawnosConfigureShow('device_lister', $('#device_list'))) {
 					b.attr('status', 'active');
 				}
@@ -585,6 +586,57 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			}
 		});
 	}
+});
+
+// A printer's ink and toner, asked over IPP once its row is in the Dev panel. The
+// table is already on screen when this runs, so a printer that is off cannot hold
+// up the whole listing: each readout fills in on its own call, or reports that the
+// printer did not answer.
+function printerInkBars(r) {
+	if (!r || r.error || !r.markers || !r.markers.length) {
+		var why = (r && r.error) ? r.error : 'no levels';
+		return '<span class="printer_state">' + why + '</span>';
+	}
+	var html = '';
+	$.each(r.markers, function(i, m) {
+		var pct = (m.percent === null || m.percent === undefined) ? null : m.percent;
+		var fill = '';
+		if (m.colors && m.colors.length > 1) { fill = 'linear-gradient(90deg,' + m.colors.join(',') + ')'; }
+		else if (m.colors && m.colors.length) { fill = m.colors[0]; }
+		var low = (pct !== null && pct <= 10) ? ' ink_low' : '';
+		html += '<span class="inker' + low + '" title="' + (m.name || '') + '">';
+		html += '<span class="ink_name">' + (m.name || '') + '</span>';
+		html += '<span class="ink_bar"><span class="ink_fill" style="width:' + (pct === null ? 0 : pct) + '%;background:' + fill + ';"></span></span>';
+		html += '<span class="ink_pct">' + (pct === null ? '?' : pct + '%') + '</span>';
+		html += '</span>';
+	});
+	var state = [];
+	if (r.state) { state.push(r.state); }
+	if (r.reasons && r.reasons.length) { state = state.concat(r.reasons); }
+	if (state.length) { html += '<span class="printer_state">' + state.join(' · ') + '</span>'; }
+	return html;
+}
+
+function printerInkLoad(scope) {
+	var set = $(scope || document).find('.printer_ink');
+	if (scope) { set = set.add($(scope).filter('.printer_ink')); }
+	set.each(function() {
+		var el = $(this);
+		if (el.data('ink_loaded')) { return; }
+		el.data('ink_loaded', true);
+		$.getJSON('/manager/configure/printer_ink', { ip: el.attr('ip') })
+			.done(function(r) { el.find('.printer_ink_body').html(printerInkBars(r)); })
+			.fail(function() { el.find('.printer_ink_body').html('<span class="printer_state">ink unavailable</span>'); });
+	});
+}
+
+// Clicking a readout asks the printer again, so a cartridge just changed shows at
+// once without waiting for another Scan.
+$(document).on('click', '.printer_ink', function() {
+	var el = $(this);
+	el.removeData('ink_loaded');
+	el.find('.printer_ink_body').text('reading…');
+	printerInkLoad(el);
 });
 
 $(document).on('click', '#tunnel_lister', function() {

@@ -113,12 +113,6 @@ our $chairs = {
 
 our @device_types = qw/mobile computer server/;
 our $settings;
-our $printer_brands = {
-	hp => {},
-	brother => {},
-	canon => {},
-	epson => {}
-};
 
 our $piano = [
 	{ '__specs' => { ratio => 1.05945454545 } },
