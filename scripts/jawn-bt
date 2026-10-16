@@ -4,6 +4,7 @@
 #   jawn-bt scan [seconds]                     list BLE devices
 #   jawn-bt connect <mac> [--service U] [--rx U] [--tx U]
 #   jawn-bt send <text>                        (or pipe text on stdin)
+#   jawn-bt sendloop                           one connection, each stdin line a message
 #   jawn-bt listen                             stream events as JSON lines
 #   jawn-bt status
 #   jawn-bt disconnect
@@ -101,6 +102,18 @@ elsif ($cmd eq 'send') {
 	die "jawn-bt send: empty message\n" unless defined $text && length $text;
 	send_cmd({ cmd => 'send', message => $text });
 	$last = wait_for(sub { $_[0]->{'event'} =~ /^(sent|error)$/ }, 30);
+}
+elsif ($cmd eq 'sendloop') {
+	# One connection, many messages: each stdin line is forwarded to the daemon as
+	# a send. A streamed reply is a dozen messages in a couple of seconds, and a
+	# fresh client (a perl start, on a phone) per part would cost more than the
+	# audio itself. No waiting for 'sent' here: the daemon serialises the writes,
+	# and the stream's own end-of-parts message is the only confirmation needed.
+	while (defined(my $line = <STDIN>)) {
+		chomp $line;
+		next unless length $line;
+		send_cmd({ cmd => 'send', message => $line });
+	}
 }
 elsif ($cmd eq 'status') {
 	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, 10);

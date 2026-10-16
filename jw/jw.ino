@@ -311,11 +311,11 @@ JSONVar stepped;
 #include <AudioOutputI2S.h>
 #include <AudioFileSourceFATFS.h>
 #include "AudioGeneratorWAV.h"
-// the guide associate's spoken reply arrives as MP3 (a quarter of the bytes of
-// 8 kHz PCM, which is what keeps it close behind the text); the WAV path stays
-// for the fallback when a machine has no mp3 encoder
-#include "AudioGeneratorMP3.h"
 #include "AudioFileSourceFunction.h"
+// the guide associate's spoken reply arrives as streamed PCM parts (see the
+// say_audio handler): the watch writes them straight to the codec, so no decoder
+// is involved and the rate is whatever the message names
+#include "freertos/stream_buffer.h"
 String https_request(String url, String method = "GET", String payloadData = "");
 
 // Hardware settings matching the template parameters
@@ -469,19 +469,24 @@ static inline bool ble_link_ready() {
 }
 
 // ---- guide associate replies (type "say" / "say_audio") ---------------------
-// loop2 hands the message over; loop() (core 1, where LVGL and FFat live)
-// draws the text and decodes/plays the clip. The audio rides base64 so the
-// whole envelope stays text on the wire, the same way a voice clip ships up.
-#define REPLY_WAV_PATH "/reply.wav"
-#define REPLY_MP3_PATH "/reply.mp3"
+// loop2 hands the words over; loop() (core 1, where LVGL and the codec live)
+// draws them and starts the sound. The spoken half arrives as PCM parts, one
+// bridge message at a time, so the answer is heard while the rest of it is still
+// being made: a stream buffer is the one-writer/one-reader pipe between the BLE
+// task (producer) and the playback task (consumer), and the playback task writes
+// what it pulls straight to the codec.
 #define SAY_TEXT_MS 8000          // how long the answer stays on screen
+#define SAY_STREAM_BYTES 24576    // ~1.5 s of 8 kHz mono audio of slack
+#define SAY_STREAM_STALL_MS 4000  // silence this long ends the stream
 static String say_text;
-static String say_audio_b64;
-static String say_audio_format;   // "mp3" (the server's default) or "wav"
 static volatile bool say_text_pending = false;
-static volatile bool say_audio_pending = false;
 static uint32_t say_shown_at = 0;
 static lv_obj_t *say_label = nullptr;   // the on-screen answer (top layer)
+static StreamBufferHandle_t say_stream = nullptr;
+static volatile bool say_stream_last = false;    // the final part has arrived
+static volatile bool say_stream_start = false;   // loop() should open the codec
+static volatile uint32_t say_stream_rate = 8000; // the part's sample rate (Hz)
+static volatile uint32_t say_stream_at = 0;      // when the last part landed
 
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -1750,8 +1755,8 @@ void loop() {
       voice_border_show(voice_border_on);
     }
   }
-  // a guide associate reply: draw the text, then play the spoken clip. The text
-  // hides itself after SAY_TEXT_MS; the clip plays once and is not kept.
+  // a guide associate reply: draw the words, then hear them - the parts arrive
+  // into the stream buffer, and the playback task drains them as they come.
   if (say_text_pending) {
     String t;
     bool has = false;
@@ -1768,14 +1773,9 @@ void loop() {
     say_label_show("");
     say_shown_at = 0;
   }
-  if (say_audio_pending) {
-    String a, f;
-    bool has = false;
-    if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
-      if (say_audio_pending) { has = true; a = say_audio_b64; f = say_audio_format; say_audio_pending = false; say_audio_b64 = ""; say_audio_format = ""; }
-      xSemaphoreGive(taskMutex);
-    }
-    if (has) { say_audio_decode_play(a, f); }
+  if (say_stream_start) {
+    say_stream_start = false;
+    say_stream_play();
   }
   if (buttonMillis != 0 && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     if (voiceShipping) {
@@ -2146,20 +2146,59 @@ void loop2(void * pvParameters) {
             }
           }
           else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio") {
-            // the spoken answer as a base64 clip (MP3, or the 8 kHz PCM fallback):
-            // loop() decodes it to flash and plays it (never here: FFat is
-            // core-1 territory)
+            // one part of the spoken answer: PCM, base64, with the sample rate on
+            // the first part and a last flag on the final one. Decoded and pushed
+            // into the stream here (core 0, the BLE task's own loop); the codec
+            // work happens on the playback task loop() starts.
             if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("audio")) {
-              String a, f;
-              if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
-                a = (const char *)btMsg["data"]["audio"];
-                f = (const char *)btMsg["data"]["format"];
-                say_audio_b64 = a;
-                say_audio_format = f;
-                say_audio_pending = true;
-                xSemaphoreGive(taskMutex);
+              int seq = json_int(btMsg["data"]["seq"]);
+              int rate = json_int(btMsg["data"]["rate"]);
+              bool last = btMsg["data"]["last"] ? true : false;
+              String a = (const char *)btMsg["data"]["audio"];
+              // A part carries a sequence number. One without it is a whole clip
+              // in an older format (the MP3 the first cut of this feature sent):
+              // play nothing rather than push an mp3 through the PCM writer.
+              if (!btMsg["data"].hasOwnProperty("seq")) {
+                Serial.println("[say] audio without a part number (older sender) ignored");
               }
-              Serial.printf("[say] audio %u b64 chars (%s)\n", (unsigned)a.length(), f.length() ? f.c_str() : "mp3");
+              else if (seq <= 0) {
+                if (!say_stream) {
+                  say_stream = xStreamBufferCreate(SAY_STREAM_BYTES, 128);
+                }
+                if (say_stream) {
+                  xStreamBufferReset(say_stream);
+                  say_stream_last = false;
+                  say_stream_rate = (rate > 4000 && rate < 96000) ? (uint32_t)rate : 8000;
+                  say_stream_start = true;
+                }
+              }
+              if (say_stream && a.length()) {
+                size_t cap = (a.length() * 3) / 4 + 8;
+                uint8_t *buf = (uint8_t *)ps_malloc(cap);
+                if (!buf) { buf = (uint8_t *)malloc(cap); }
+                if (buf) {
+                  size_t olen = 0;
+                  int rc = mbedtls_base64_decode(buf, cap, &olen, (const unsigned char *)a.c_str(), a.length());
+                  if (rc == 0 && olen) {
+                    size_t sent = 0;
+                    while (sent < olen) {
+                      size_t n = xStreamBufferSend(say_stream, buf + sent, olen - sent, pdMS_TO_TICKS(800));
+                      if (!n) {
+                        Serial.println("[say] audio part stalled");
+                        break;
+                      }
+                      sent += n;
+                    }
+                    say_stream_at = millis();
+                  }
+                  else {
+                    Serial.printf("[say] audio part decode failed rc=%d\n", rc);
+                  }
+                  free(buf);
+                }
+              }
+              if (last) { say_stream_last = true; }
+              Serial.printf("[say] audio part %d%s (%u chars)\n", seq, last ? " last" : "", (unsigned)a.length());
             }
           }
         }
@@ -4052,49 +4091,51 @@ void audio_playback_loop_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-// Decode the base64 reply clip onto flash and play it. Runs on core 1 (loop),
-// where FFat and the audio globals are safe to touch; the mic task and the
-// playback task also run here, and isPlaying/isRecording arbitrate between them.
-static void say_audio_decode_play(const String &b64, const String &format) {
+// The reply's playback task: open the codec at the stream's own rate, then write
+// whatever the stream hands over, until the final part has played out. It is its
+// own task rather than the generator one because there is no file here: the
+// samples are still being synthesized on the other machine.
+void say_playback_task(void *pvParameters) {
+  AudioOutputIf *codec = watch.getAudioOutput();
+  uint32_t rate = say_stream_rate;
+  if (!codec || !codec->open(16, 1, rate)) {
+    Serial.println("[say] codec open failed");
+    isPlaying = false;
+    vTaskDelete(NULL);
+  }
+  codec->setVolume(volumeLevel);
+  Serial.printf("[say] playing at %u Hz\n", (unsigned)rate);
+  uint8_t buf[512];
+  uint32_t started = millis();
+  uint32_t bytes = 0;
+  bool starved = false;
+  while (true) {
+    size_t n = say_stream ? xStreamBufferReceive(say_stream, buf, sizeof(buf), pdMS_TO_TICKS(SAY_STREAM_STALL_MS)) : 0;
+    if (!n) {
+      if (say_stream_last && (say_stream ? xStreamBufferIsEmpty(say_stream) : true)) {
+        break;   // the answer has arrived and played
+      }
+      // nothing for a while and more is promised: wait, but not forever
+      if (millis() - say_stream_at > 6000) { starved = true; break; }
+      continue;
+    }
+    if (!codec->write(buf, n)) { break; }
+    bytes += n;
+  }
+  codec->close();
+  uint32_t spent = millis() - started;
+  Serial.printf("[say] played %u bytes in %u ms%s\n", (unsigned)bytes, (unsigned)spent, starved ? " (starved)" : "");
+  isPlaying = false;
+  vTaskDelete(NULL);
+}
+
+// Start the spoken answer. Called from loop() (core 1) when the first part has
+// landed, so the codec and the task live where the other audio does.
+static void say_stream_play() {
   if (isPlaying || isRecording) { return; }
-  if (b64.length() < 16) { return; }
-  bool mp3 = !(format == "wav");   // the server's default is mp3
-  size_t cap = (b64.length() * 3) / 4 + 8;
-  uint8_t *buf = (uint8_t *)ps_malloc(cap);
-  if (!buf) { buf = (uint8_t *)malloc(cap); }
-  if (!buf) {
-    Serial.println("[say] audio: no buffer");
-    return;
-  }
-  size_t olen = 0;
-  int rc = mbedtls_base64_decode(buf, cap, &olen, (const unsigned char *)b64.c_str(), b64.length());
-  if (rc != 0 || olen < 44) {
-    free(buf);
-    Serial.printf("[say] audio decode failed rc=%d len=%u\n", rc, (unsigned)olen);
-    return;
-  }
-  const char *path = mp3 ? REPLY_MP3_PATH : REPLY_WAV_PATH;
-  File f = FFat.open(path, FILE_WRITE);
-  if (!f) {
-    free(buf);
-    Serial.println("[say] audio: reply file open failed");
-    return;
-  }
-  f.write(buf, olen);
-  f.close();
-  free(buf);
-  Serial.printf("[say] audio wrote %u bytes to %s\n", (unsigned)olen, path);
-  if (isPlaying || isRecording) { return; }
+  if (!say_stream) { return; }
   isPlaying = true;
-  out_hardware = new LilyGoAudioSink(watch.getAudioOutput());
-  file_source = new AudioFileSourceFATFS(path);
-  // libmad decodes on the task's own stack, so the reply's task gets more of it
-  // than the WAV recorder's
-  uint32_t stack = mp3 ? 8192 : 4096;
-  if (mp3) { wav = new AudioGeneratorMP3(); }
-  else { wav = new AudioGeneratorWAV(); }
-  wav->begin(file_source, out_hardware);
-  xTaskCreatePinnedToCore(audio_playback_loop_task, "ReplyTask", stack, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(say_playback_task, "SayTask", 4096, NULL, 2, NULL, 1);
 }
 
 

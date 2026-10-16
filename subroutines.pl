@@ -1639,30 +1639,57 @@ sub say_player_command() {
 
 our $say_quiet;
 
-# Piper render, shared by say_it (local playback) and watch_reply (BLE push to
-# the watch). Returns the path of a fresh WAV, or '' when no piper render is
-# possible on this machine. The caller owns (and unlinks) the file.
+# The piper invocation shared by the local player and the streaming reply:
+# (argv, extra args, model path, the model's own sample rate). '' when no piper
+# render is possible on this machine.
+sub say_piper_parts() {
+	my ($pick_hint) = @_;
+	my $pick = $pick_hint || &subs::misc_setting('say_voice') || &subs::say_default_voice();
+	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
+	return () unless $spec && (($spec->{'engine'} || '') eq 'piper');
+	my @argv = &subs::say_piper_argv();
+	my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
+	return () unless scalar @argv && -e $model;
+	# a bundle carries its own espeak-ng data; point piper at it (the glibc
+	# launcher, unlike a native run, does not find it on its own)
+	my $piper_bin = $argv[-1] || '';
+	(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
+	my @espeak = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
+	# the model's own rate: piper writes raw PCM at it, and ffmpeg needs to know
+	my $rate = 22050;
+	if (open(my $jf, '<', $model . '.json')) {
+		local $/;
+		my $cfg = eval { decode_json(<$jf> // '') };
+		close $jf;
+		$rate = $cfg->{'audio'}->{'sample_rate'} if $cfg && $cfg->{'audio'}->{'sample_rate'};
+	}
+	return (\@argv, \@espeak, $model, $rate);
+}
+
+# Shell-quote one command of a pipeline ("arg with space" -> 'arg with space'),
+# so the paths the voice settings name survive the sh -c that runs piper | ffmpeg.
+sub pipeline_quote {
+	return join ' ', map {
+		my $a = defined $_ ? $_ : '';
+		$a =~ s/'/'\\''/g;
+		"'" . $a . "'";
+	} @_;
+}
+
+# Piper render to a file (the local player's path). Returns the path of a fresh
+# WAV, or '' when no piper render is possible. The caller owns (and unlinks) it.
 sub say_render_wav() {
 	my ($text, $pick_hint) = @_;
 	return '' unless defined $text && length $text;
-	my $pick = $pick_hint || &subs::misc_setting('say_voice') || &subs::say_default_voice();
-	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
-	return '' unless $spec && (($spec->{'engine'} || '') eq 'piper');
-	my @piper_argv = &subs::say_piper_argv();
-	my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
-	return '' unless scalar @piper_argv && -e $model;
-	# a bundle carries its own espeak-ng data; point piper at it (the glibc
-	# launcher, unlike a native run, does not find it on its own)
-	my $piper_bin = $piper_argv[-1] || '';
-	(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
-	my @espeak_data = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
+	my ($argv, $espeak, $model) = &subs::say_piper_parts($pick_hint);
+	return '' unless $argv && $model;
 	my $tmp_dir = $gb::tmp_dir || '/tmp';
 	my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
 	my $made = 0;
 	# the words go to piper on stdin, so nothing has to be quoted for a shell.
 	# no -q: the flag exists in the 1.2.0 build but not in the newer CLI, and
 	# an unknown flag is a hard argparse error there.
-	if (my $pid = open(my $piper_in, '|-', @piper_argv, @espeak_data, '-m', $model, '-f', $wav)) {
+	if (my $pid = open(my $piper_in, '|-', @{$argv}, @{$espeak}, '-m', $model, '-f', $wav)) {
 		print {$piper_in} $text;
 		close $piper_in;
 		$made = 1 if -s $wav;
@@ -1727,53 +1754,75 @@ sub watch_reply() {
 	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} }) } || {};
 	my $want = $op->{'__specs'}->{'audio_replies'};
 	return if defined $want && $want eq 'off';
-	# Piper takes a couple of seconds and the WiFi path runs voice_ingest inline
-	# in the request: render off the request, then push. The child re-dials the
-	# database itself (bluetooth_sender reads it), so forking here is safe.
+	# Piper synthesizes far faster than the answer is spoken, and the WiFi path
+	# runs voice_ingest inline in the request: do all of this off the request. The
+	# child re-dials the database itself (bluetooth_sender reads it), so forking
+	# here is safe.
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
-		my $wav = &subs::say_render_wav($text);
-		return unless $wav;
-		my $tmp_dir = $gb::tmp_dir || '/tmp';
-		# MP3, not raw PCM: the watch decodes it (AudioGeneratorMP3), and 32 kbps
-		# mono is a quarter of 8 kHz PCM's bytes, so the clip crosses the bridge in
-		# well under a second instead of trailing the text by several. The watch
-		# reassembles one message of at most 64 KB and base64 grows a third, so this
-		# carries ~10 s of audio - far more than the brain's one-or-two sentences.
-		my $mp3 = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.mp3';
-		system('ffmpeg', '-loglevel', 'error', '-y', '-i', $wav, '-ac', '1', '-ar', '24000', '-b:a', '32k', $mp3);
-		my ($file, $format, $rate) = (-e $mp3 && -s $mp3) ? ($mp3, 'mp3', 24000) : (undef, undef, 0);
-		my $small = '';
-		if (!$file) {
-			# no mp3 encoder here: the 8 kHz PCM WAV the watch also plays
-			$small = $wav . '.8k.wav';
-			system('ffmpeg', '-loglevel', 'error', '-y', '-i', $wav, '-ar', '8000', '-ac', '1', '-acodec', 'pcm_s16le', $small);
-			($file, $format, $rate) = ($small, 'wav', 8000) if -e $small && -s $small;
-		}
-		if ($file && ((-s $file) * 4 / 3 + 4096) < 65536) {
-			require MIME::Base64;
-			my $b64 = '';
-			if (open(my $fh, '<:raw', $file)) {
-				local $/;
-				$b64 = MIME::Base64::encode_base64(<$fh> // '', '');
-				close $fh;
-			}
-			if (length $b64) {
-				&subs::bluetooth_sender({
-					intent => 'com.jawn.president.bt.connect',
-					chip_id => $meta->{'chip_id'},
-					edt => $edt,
-					message => { type => 'say_audio', data => { format => $format, rate => $rate, audio => $b64 } }
-				});
-			}
-		}
-		elsif ($file) {
-			$log->info('voice: reply audio too long for one bridge message; text only');
-		}
-		unlink $mp3 if -e $mp3;
-		unlink $small if length $small && -e $small;
-		unlink $wav;
+		&subs::watch_reply_stream($meta, $text);
 	}, { name => 'watch reply audio' });
+}
+
+# Stream the spoken answer to the watch as PCM parts. Piper writes raw samples as
+# it makes them; ffmpeg resamples them to 8 kHz mono (16 KB/s, which the BLE link
+# carries comfortably) as it goes, so parts leave while the sentence is still
+# being synthesized - the watch starts talking back almost at once instead of
+# after the whole clip has been rendered and pushed. Each part is its own bridge
+# message (all over one connection, see bluetooth_stream_open), so a long answer
+# is no longer capped by the 64 KB message limit.
+sub watch_reply_stream() {
+	my ($meta, $text) = @_;
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	return 0 unless $argv && $model;
+	require MIME::Base64;
+	require IPC::Open3;
+	require Symbol;
+	# the words go first as their own message; the sound rides this one connection
+	my $bt = &subs::bluetooth_stream_open({
+		intent => 'com.jawn.president.bt.connect',
+		chip_id => $meta->{'chip_id'},
+		edt => $meta->{'edt'} || 'watch'
+	});
+	return 0 unless $bt;
+	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
+	# Resample to 8 kHz when ffmpeg is here (the whisper path uses it, so it is on
+	# every machine that can already hear). Otherwise piper's own rate rides along
+	# in the messages and the watch opens the codec at it.
+	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
+		"ffmpeg -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f s16le -");
+	my $done = 0;
+	for my $attempt ( [ $pipeline, 8000 ], [ &subs::pipeline_quote(@piper), $rate ] ) {
+		my ($pipe, $out_rate) = @{$attempt};
+		my $err = Symbol::gensym();
+		my ($pin, $pout);
+		my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipe) };
+		next unless $pid;
+		print {$pin} $text;
+		close $pin;
+		binmode($pout);
+		my ($seq, $sent) = (0, 0);
+		while (1) {
+			my $chunk = '';
+			my $n = read($pout, $chunk, 16384);
+			last unless defined $n && $n > 0;
+			my $b64 = MIME::Base64::encode_base64($chunk, '');
+			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, audio => $b64 } }) . "\n";
+			$seq++;
+			$sent += $n;
+		}
+		close $pout;
+		waitpid($pid, 0);
+		if ($sent) {
+			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, audio => '' } }) . "\n";
+			$done = 1;
+			last;
+		}
+		# nothing came out (ffmpeg missing, say): try piper alone at its own rate
+	}
+	close $bt;
+	$log->info('voice: no reply audio rendered for the watch (text only)') unless $done;
+	return $done;
 }
 
 sub main_icon_maker() {
@@ -2949,6 +2998,34 @@ sub bluetooth_sender() {
 		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$b64' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
 		return `$cmd`;
 	}
+}
+
+# One bridge connection for a run of messages, for a streamed reply: the daemon
+# reads command lines per connection, so a dozen parts ride one client process
+# instead of starting one per part (a perl start each time, on a phone, costs
+# more than the audio). Returns a filehandle to print message JSON lines to, or
+# undef when this machine may not drive the bridge. The caller closes it.
+sub bluetooth_stream_open() {
+	my $data = shift;
+	return undef unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::ble_bridge_capable();
+	# the same homebase-only rule as bluetooth_sender: one link, and it must not
+	# be stolen by a machine the watch merely passed by
+	return undef unless &ble_may_serve($data->{'edt'}, $data->{'chip_id'});
+	my $embedded = &subs::device_lister(&subs::rightNow(), $data->{'edt'}, undef, $data->{'chip_id'});
+	my $bt_mac = $embedded->{'mac_addresses'}->{'bluetooth'} or return undef;
+	my $ble_uuids = &ble_nus_uuids();
+	my $service_uuid = $embedded->{'service_uuid'} || $ble_uuids->{'service_uuid'};
+	my $rx = $embedded->{'characteristic_uuid_rx'} || $ble_uuids->{'characteristic_uuid_rx'};
+	my $tx = $embedded->{'characteristic_uuid_tx'} || $ble_uuids->{'characteristic_uuid_tx'};
+	my $client = &ble_bridge_client() or return undef;
+	return undef unless &ble_bridge_enabled() && $client;
+	my $status = `$client status 2>/dev/null`;
+	unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
+		system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512');
+	}
+	my $fh;
+	open($fh, '|-', $client, 'sendloop') or return undef;
+	return $fh;
 }
 
 sub watch_room_payload() {
