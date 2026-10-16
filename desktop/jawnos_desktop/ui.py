@@ -54,6 +54,10 @@ DIM_RGB = (0x8E / 255.0, 0x8E / 255.0, 0x8E / 255.0)
 
 _CSS_APPLIED = False
 
+# The tray badge is drawn at this size; the pixbufs are cached per colour.
+_TRAY_PX = 64
+_TRAY_PIXBUFS = {}
+
 
 def _apply_css():
     global _CSS_APPLIED
@@ -498,6 +502,8 @@ class Dashboard(Gtk.Window):
             js, colour = "not running", RED_RGB
         self.jawn_state.set_text("jawn  —  " + js)
         self._set_dot(self.jawn_dot, colour)
+        # The tray mirrors jawn's colour, so its state reads without the window.
+        _safe_tray_apply(self, colour)
         self.ble_state.set_text("BLE bridge  —  " + ("running" if ble_up else "stopped"))
         self._set_dot(self.ble_dot, GREEN_RGB if ble_up else DIM_RGB)
         return False
@@ -524,6 +530,64 @@ class LogWindow(Gtk.Window):
         end = self.buffer.get_end_iter()
         self.buffer.place_cursor(end)
         return True
+
+
+def _tray_pixbuf(rgb):
+    """The jawnos mark scaled for the tray, with a status dot in its corner.
+
+    The status card carries separate jawn/BLE dots, but a tray icon has no room
+    for that, so it gets one: green running, amber starting/restarting, red
+    stopped. Built once per colour and cached."""
+    key = tuple(rgb)
+    cached = _TRAY_PIXBUFS.get(key)
+    if cached is None:
+        cached = _build_tray_pixbuf(rgb)
+        _TRAY_PIXBUFS[key] = cached
+    return cached
+
+
+def _build_tray_pixbuf(rgb):
+    import cairo
+    base = GdkPixbuf.Pixbuf.new_from_file_at_scale(LOGO, _TRAY_PX, _TRAY_PX, True)
+    width, height = base.get_width(), base.get_height()
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+    cr = cairo.Context(surface)
+    Gdk.cairo_set_source_pixbuf(cr, base, 0.0, 0.0)
+    cr.paint()
+    # The dot sits in the corner, sized to the icon, with a dark rim so it reads
+    # against a light or a dark panel.
+    radius = max(3.0, width * 0.19)
+    cx, cy = width - radius - 1.0, height - radius - 1.0
+    cr.arc(cx, cy, radius + 1.5, 0.0, 6.283185307)
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.85)
+    cr.fill()
+    cr.arc(cx, cy, radius, 0.0, 6.283185307)
+    cr.set_source_rgb(*rgb)
+    cr.fill()
+    return Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
+
+
+def _tray_icon_path(rgb):
+    """A PNG of the badged icon, for the indicator backend, which sets its icon
+    by name or path. Written once per colour under the state dir."""
+    directory = os.path.join(core.state_dir(), "tray")
+    os.makedirs(directory, exist_ok=True)
+    name = "%02x%02x%02x.png" % tuple(int(round(c * 255.0)) for c in rgb)
+    path = os.path.join(directory, name)
+    if not os.path.exists(path):
+        _tray_pixbuf(rgb).savev(path, "png", [], [])
+    return path
+
+
+def _safe_tray_apply(window, rgb):
+    """Recolour the tray badge, if a tray is present and the icon builds."""
+    apply = getattr(window, "_tray_apply", None)
+    if apply is None:
+        return
+    try:
+        apply(rgb)
+    except Exception:
+        pass
 
 
 def _tray_menu(window):
@@ -562,6 +626,9 @@ def _make_tray(window):
         indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         indicator.set_menu(menu)
         window._tray_indicator = indicator
+        # The indicator sets its icon by name or path, so hand it the badged PNG.
+        window._tray_apply = lambda rgb: indicator.set_icon_full(_tray_icon_path(rgb), "JawnOS")
+        _safe_tray_apply(window, DIM_RGB)
         return indicator
     except Exception:
         pass
@@ -574,6 +641,8 @@ def _make_tray(window):
                      lambda i, button, activate_time: menu.popup(
                          None, None, None, None, button, activate_time))
         window._tray_statusicon = icon
+        window._tray_apply = lambda rgb: icon.set_from_pixbuf(_tray_pixbuf(rgb))
+        _safe_tray_apply(window, DIM_RGB)
         return icon
     except Exception:
         return None
