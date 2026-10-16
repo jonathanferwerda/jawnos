@@ -25,6 +25,8 @@
 	.phone_app_name { flex:1 1 auto; font-size:15px; }
 	.phone_app_sub { font-size:12px; color:var(--muted,#8e8e8e); }
 	.phone_app_missed .phone_app_name { color:#e0444e; }
+	.phone_app_block { flex:0 0 auto; opacity:0.55; cursor:pointer; }
+	.phone_app_block:hover { opacity:1; }
 	.phone_app_dial { max-width:300px; margin:0 auto; }
 	.phone_app_display { min-height:40px; font-size:27px; text-align:center; letter-spacing:2px; }
 	.phone_app_keys { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
@@ -53,10 +55,11 @@
 			<% foreach my $call (@{$calls}) { %>
 				<% my $name = &subs::format_name($call->{'app'} || 'phone'); %>
 				<div class="phone_app_row <% if (($call->{'type'} || '') eq 'cancel') { %>phone_app_missed<% } %>"
-					app="<%= $call->{'app'} %>" uuid="<%= $call->{'uuid'} %>" timestamp="<%= $call->{'timestamp'} %>">
+					app="<%= $call->{'app'} %>" uuid="<%= $call->{'uuid'} %>" number="<%= defined $call->{'account'} ? $call->{'account'} : '' %>" timestamp="<%= $call->{'timestamp'} %>">
 					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
 					<span class="phone_app_name"><%= $name %></span>
 					<span class="phone_app_sub" duration="<%= $call->{'duration'} %>"><%= &subs::formatted_time($call->{'timestamp'}) %></span>
+					<img class="little_thumb phone_app_block" hint="Block" src="<%= &subs::icon_path('ne pas', '/images/decipherable/padlock.png') %>">
 				</div>
 			<% } %>
 			</div>

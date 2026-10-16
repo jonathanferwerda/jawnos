@@ -93,6 +93,26 @@
 				<% } %>
 			</tbody>
 		</table>
+		<div id="blocked_numbers">
+			<h3>Blocked numbers</h3>
+			<div id="blocked_numbers_hint">A call from a number here is turned away before it rings - the phone checks this list when it rings. The same list is the door's blacklist, so a number blocked here is refused a request as well.</div>
+			<div id="blocked_numbers_add">
+				<input type="text" id="blocked_number_input" placeholder="number" style="width:160px;">
+				<input type="text" id="blocked_number_note" placeholder="why (optional)" style="width:200px;">
+				<button id="blocked_number_add_button">Block</button>
+				<span id="blocked_number_status"></span>
+			</div>
+			<div id="blocked_number_list">
+				<% my @blocked_phones = grep { ($_->{'phone'} || '') ne '' } grep { ref $_ eq 'HASH' } @{$blacklist}; %>
+				<% if (scalar @blocked_phones) { %>
+					<% foreach my $b ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @blocked_phones ) { %>
+						<span class="blocked_number" stamp="<%= $b->{'timestamp'} %>"><%= $b->{'phone'} %><% if (($b->{'name'} || '') ne '') { %> &middot; <%= &subs::format_name($b->{'name'}) %><% } %><% if (($b->{'note'} || '') ne '') { %> <i><%= $b->{'note'} %></i><% } %><button class="blocked_number_remove" stamp="<%= $b->{'timestamp'} %>">Remove</button></span>
+					<% } %>
+				<% } else { %>
+					<span id="blocked_numbers_empty">None yet.</span>
+				<% } %>
+			</div>
+		</div>
 	<% } else { %>
 		<div id="ticket_request_policy">
 			<label><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> Issue guest tickets on request</label>
@@ -154,4 +174,11 @@
 	#ticket_network_ip {
 		font-size: 20px;
 	}
+	#blocked_numbers { margin-top:18px; }
+	#blocked_numbers_hint { font-size:12px; opacity:0.7; max-width:640px; margin:4px 0 8px; }
+	#blocked_numbers_add { margin-bottom:8px; }
+	#blocked_number_status { margin-left:8px; font-size:12px; }
+	.blocked_number { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
+		border-radius:999px; padding:4px 10px; margin:0 6px 6px 0; font-size:13px; }
+	.blocked_number button { font-size:11px; padding:2px 8px; border-radius:999px; }
 </style>

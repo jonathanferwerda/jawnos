@@ -6667,6 +6667,57 @@ sub ticket_blacklist_save($list) {
 	&subs::setting_setter({ app => 'box_office', setting => 'blacklist', value => encode_json $list });
 }
 
+# The call blacklist is that same desk list seen from the phone: every entry
+# that carries a phone, as the bare digits the app compares. A listed number is
+# turned away before it can ring (the app's CallScreeningService reads this), so
+# the numbers are handed to the phone on its own route.
+sub ticket_blacklist_numbers() {
+	my @numbers;
+	foreach my $b ( @{&ticket_blacklist()} ) {
+		next unless ref $b eq 'HASH';
+		my $number = &ticket_contact_clean('phone', $b->{'phone'});
+		push @numbers, $number if $number;
+	}
+	my %seen;
+	return [ grep { !$seen{$_}++ } @numbers ];
+}
+
+# Block a number straight from the desk or from the phone's recents: one entry,
+# keyed by the number so a second press never doubles it. The label is the app
+# that owns the number when the house knows it, blank otherwise.
+sub ticket_blacklist_block($number,$label,$note) {
+	my $clean = &ticket_contact_clean('phone', $number);
+	return '' unless $clean;
+	my $list = &ticket_blacklist();
+	foreach my $b ( @{$list} ) {
+		next unless ref $b eq 'HASH';
+		return $clean if &ticket_contact_clean('phone', $b->{'phone'}) eq $clean;
+	}
+	push @{$list}, {
+		name => defined $label && length $label ? &subs::format_name($label) : '',
+		email => '',
+		phone => $clean,
+		note => defined $note && length $note ? $note : 'blocked call',
+		timestamp => &subs::rightNow()
+	};
+	&ticket_blacklist_save($list);
+	return $clean;
+}
+
+# The house's numbers by name, for the app's in-call screen and its contact
+# list: the same settings 'phone' rows the Phone app shows, keyed by the bare
+# digits so the native side compares them the way it compares the blacklist.
+sub phone_names() {
+	my $rows = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
+	my %names;
+	foreach my $r ( @{$rows} ) {
+		my $number = &ticket_contact_clean('phone', $r->{'value'});
+		next unless $number;
+		$names{$number} = $r->{'app'};
+	}
+	return \%names;
+}
+
 sub ticket_contact_clean($kind,$value) {
 	return '' unless defined $value && length $value;
 	if ($kind eq 'email') {
@@ -14305,7 +14356,7 @@ get '/manager/phone' => sub($c) {
 	# contacts jawnos knows (settings rows where setting='phone'), and the dial
 	# pad. The pad places a call on a phone (termux-telephony-call); the app's own
 	# address book and live call state ride the native JawnContacts bridge.
-	my $calls = &subs::db_query('select app,uuid,timestamp,type,duration from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes;
+	my $calls = &subs::db_query('select app,uuid,timestamp,type,duration,account from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes;
 	my $contacts = &subs::db_query('select app,value from settings where setting=? and value != ? order by app asc', 'phone', '')->hashes;
 	my $content = $c->render_to_string(
 		template => 'apps/phone',
@@ -14362,8 +14413,11 @@ post '/manager/phone/call' => sub($c) {
 
 	my $app = 'phone';
 	if ($number) {
-		my $contact = &subs::db_query('select app from settings where setting=? and value like ? order by server_time desc limit 1', 'phone', '%' . $number)->hashes->[0];
-		$app = $contact->{'app'} if $contact && $contact->{'app'};
+		# the caller's own app: their name when the house knows the number, else the
+		# number's own app (phone_number_app makes it known), the way the call-log
+		# check files an unknown caller - so a stranger's call is an app to rename
+		# later rather than a drop on the floor
+		$app = &subs::phone_number_app($number) || 'phone';
 	}
 
 	if ($event eq 'ring') {
@@ -14375,6 +14429,34 @@ post '/manager/phone/call' => sub($c) {
 			account => $number,
 			data => encode_json({ direction => ($c->param('direction') || 'incoming'), number => $number }),
 		});
+		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
+		return;
+	}
+
+	if ($event eq 'ignore') {
+		# a call the desk's blacklist turned away: it never rang, so there is no
+		# ring to stop - the appointment is written and closed at once, as a
+		# cancelled call on the caller's own app. Filing it here also tells the
+		# call-log poll (which skips a phone appointment within minutes of a log
+		# entry) that this call is already accounted for.
+		my $wrote = &appointment_writer($c, {
+			app => $app,
+			type => 'start',
+			subtype => 'phone',
+			timestamp => $timestamp,
+			account => $number,
+			data => encode_json({ direction => 'incoming', number => $number, blocked => 'yes' }),
+		});
+		unless ($wrote && $wrote->{'uuid'}) {
+			$c->render(json => { ok => 0, error => 'no appointment' });
+			return;
+		}
+		&subs::db_update('appointments', {
+			type => 'cancel',
+			stop_seen => 'yes',
+			stop_timestamp => $timestamp,
+			server_time => &subs::rightNow(),
+		}, { uuid => $wrote->{'uuid'} });
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}
@@ -14397,6 +14479,41 @@ post '/manager/phone/call' => sub($c) {
 	}
 
 	$c->render(json => { ok => 0, error => 'unknown event' });
+};
+
+get '/manager/phone/sync' => sub($c) {
+	# What the app's native phone half needs, handed over in one fetch: the desk's
+	# blacklist (the CallScreeningService refuses a listed caller before the phone
+	# rings) and the house's numbers by name (the in-call screen names the caller,
+	# and the app's contact list shows the house's own names).
+	$c->render(json => {
+		blocked => &ticket_blacklist_numbers(),
+		names => &phone_names(),
+	});
+};
+
+post '/manager/box_office/blacklist/number' => sub($c) {
+	# Block a number by hand: the desk's own input, or the Phone app's Block on a
+	# recent call. The list is the box office's, so one route serves both. A recent
+	# call filed from the device's call log carries the caller's app but not always
+	# the number, so an app with no number given is looked up the way the phone's
+	# own rows hold it.
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $number = $c->param('number') || '';
+	my $app = $c->param('app') || '';
+	unless ($number =~ /\d/) {
+		$number = $app ? (&subs::setting_grabber({ app => $app, setting => 'phone' }) || '') : '';
+	}
+	my $blocked = &ticket_blacklist_block($number, $c->param('name') || $app, $c->param('note'));
+	unless ($blocked) {
+		$c->render(json => { ok => 0, error => 'no number' });
+		return;
+	}
+	$log->info('call blacklist: ' . $blocked . ' blocked');
+	$c->render(json => { ok => 1, number => $blocked, numbers => &ticket_blacklist_numbers() });
 };
 
 post '/manager/note_save' => sub($c) {

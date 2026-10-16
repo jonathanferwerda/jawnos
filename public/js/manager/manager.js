@@ -1164,6 +1164,47 @@ $(document).on('click', '.native_capture, .native_video', function() {
 	else { window.JawnCamera.photo(b.attr('capture') || '0'); }
 });
 
+// ---- the house's phone facts (window.JawnPhone) -------------------------
+// A call arrives when no page is open, so what the native half needs is handed
+// to it and kept: the desk's blacklist (the CallScreeningService turns a listed
+// caller away before the phone rings) and the house's numbers by name (the
+// in-call screen names the caller). The calls it refused are picked up here and
+// filed, so an ignored call still shows in the log. Refreshed on load and every
+// few minutes; a browser has no window.JawnPhone and nothing happens.
+function jawnPhoneSync() {
+	if (!window.JawnPhone) { return; }
+	if (typeof window.JawnPhone.setFacts === 'function') {
+		$.ajax({
+			url: '/manager/phone/sync',
+			type: 'GET',
+			data: { timestamp: Date.now() },
+			success: function(response) {
+				try {
+					window.JawnPhone.setFacts(JSON.stringify({
+						blocked: (response && response.blocked) || [],
+						names: (response && response.names) || {}
+					}));
+				} catch (e) { }
+			}
+		});
+	}
+	if (typeof window.JawnPhone.takeBlockedCalls === 'function') {
+		var calls = [];
+		try { calls = JSON.parse(window.JawnPhone.takeBlockedCalls()) || []; } catch (e) { calls = []; }
+		$.each(calls, function(i, c) {
+			$.ajax({
+				url: '/manager/phone/call',
+				type: 'POST',
+				data: { event: 'ignore', number: (c && c.number) || '', timestamp: (c && c.at) || Date.now() }
+			});
+		});
+	}
+}
+if (window.JawnPhone) {
+	jawnPhoneSync();
+	setInterval(jawnPhoneSync, 300000);
+}
+
 function nfcInitializer() {
 	if (nfc['initialized'] == false) {
 		nfc['initialized'] = true;
@@ -1596,6 +1637,33 @@ $(document).on('click', '.ticket_blacklist_remove', function() {
 		type: 'POST',
 		data: { timestamp: Date.now(), stamp: stamp },
 		success: function(response) { boxOffice(); }
+	});
+});
+
+// The blocked numbers: the desk's blacklist seen as calls. Block adds one by
+// hand (the same list the Phone app's Block button writes to), Remove takes an
+// entry off, and the whole list is handed to the phone on the next jawnPhoneSync.
+$(document).on('click', '#blocked_number_add_button', function() {
+	var number = $('#blocked_number_input').val();
+	if (!number) { $('#blocked_number_status').text('Enter a number.'); return; }
+	$.ajax({
+		url: '/manager/box_office/blacklist/number',
+		type: 'POST',
+		data: { timestamp: Date.now(), number: number, note: $('#blocked_number_note').val() },
+		success: function(response) {
+			if (response && response.ok) { jawnPhoneSync(); boxOffice(); }
+			else { $('#blocked_number_status').text('Enter a number.'); }
+		}
+	});
+});
+
+$(document).on('click', '.blocked_number_remove', function() {
+	var stamp = $(this).attr('stamp');
+	$.ajax({
+		url: '/manager/box_office/blacklist/remove',
+		type: 'POST',
+		data: { timestamp: Date.now(), stamp: stamp },
+		success: function(response) { jawnPhoneSync(); boxOffice(); }
 	});
 });
 

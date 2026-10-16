@@ -139,6 +139,30 @@ $(document).on('click', '#phone_app .phone_app_dial_btn', function () {
 	});
 });
 
+// a recent row's Block: the number joins the desk's blacklist (the same list the
+// Box Office edits), so the next call from it is turned away before it rings
+$(document).on('click', '#phone_app .phone_app_block', function (e) {
+	e.stopPropagation();
+	var row = $(this).closest('.phone_app_row');
+	var number = row.attr('number') || row.attr('app') || '';
+	if (!number) { jawnPhoneAppStatus('No number to block.'); return; }
+	$.ajax({
+		url: '/manager/box_office/blacklist/number',
+		type: 'POST',
+		data: { timestamp: Date.now(), number: number, app: row.attr('app') || '', name: row.attr('app') || '' },
+		success: function (res) {
+			if (res && res.ok) {
+				jawnPhoneAppStatus('Blocked ' + res.number);
+				row.fadeOut();
+				if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+			} else {
+				jawnPhoneAppStatus('Enter a number.');
+			}
+		},
+		error: function () { jawnPhoneAppStatus('Could not block.'); }
+	});
+});
+
 // a contact tap fills the dial pad; a recent tap opens the caller's own thread
 $(document).on('click', '#phone_app .phone_app_row', function () {
 	var number = $(this).attr('number');

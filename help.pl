@@ -239,22 +239,24 @@ our %topic = (
 	'phone' => {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
-		controls => [ 'Recents', 'Contacts', 'Dial', 'Call', 'Caller ID' ],
+		controls => [ 'Recents', 'Contacts', 'Dial', 'Call', 'Caller ID', 'Block' ],
 		verified => '2026-10-15',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the contacts the house knows. Recents lists the latest calls; a row opens that person\'s thread.',
 			'Contacts is the known phone numbers. On a phone, tapping a contact fills the dial pad with their number. In the app the device\'s own address book (window.JawnContacts) replaces this list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
-			'With Caller ID on (the button asks for the Call screening role), a call writes itself as it happens: the ring starts an appointment on the caller\'s own app - or the phone app when the number is not known - the hangup stops it, and a missed call cancels it. Without Caller ID the house\'s own call-log check files the call a moment later.'
+			'With Caller ID on (the button asks for the Call screening role), a call writes itself as it happens: the ring starts an appointment on the caller\'s own app - or the phone app when the number is not known - the hangup stops it, and a missed call cancels it. In the app that same role lets the house name the caller: an incoming call wakes the screen over the lock screen with the caller\'s name, the number, and Answer and Decline. Without Caller ID the house\'s own call-log check files the call a moment later.',
+			'A recent call\'s Block button puts that number on the Box Office\'s blacklist (the Blocked numbers panel in the Box Office edits the same list). A blocked number never rings: the phone turns the call away and files it as a cancelled call, so it still shows up here.'
 		],
 		steps => [
 			'Open Phone from the start menu, or pin it to the taskbar.',
 			'Recents: tap a call to open the caller\'s appointment thread.',
+			'Recents: press Block on a call to bar that number from ringing again.',
 			'Contacts: tap one to dial them.',
 			'Dial: key a number and press Call.'
 		],
-		related => [ 'mailbox' ]
+		related => [ 'mailbox', 'box_office' ]
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
@@ -564,13 +566,14 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
-		verified => '2026-10-14',
+		verified => '2026-10-15',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
 			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
 			'The Requests view holds what the public page asked for: each request shows its name, contact, description and whether the house already knows the contact. Approve mints the ticket (the waiting page lets itself in), Decline forgets it, Blacklist remembers the identifiers so the door refuses them before a request is ever queued.',
 			'Issue guest tickets on request keeps the door open: a request is minted a guest ticket on the spot at the guest warranty. Leave it unticked and requests queue for approval instead.',
-			'A blacklisted ticket is the deny: its holder is shown the denial page and that browser is then locked out of the house — public pages included — with no redirect.'
+			'A blacklisted ticket is the deny: its holder is shown the denial page and that browser is then locked out of the house — public pages included — with no redirect.',
+			'The tickets view also carries Blocked numbers: a number typed there — or added by the Phone app\'s Block button on a recent call — is turned away before it can ring, and the same list keeps that number (or a request from the same email) out at the door. Removing a number from the list lets it ring again.'
 		],
 		steps => [
 			'Open the Box Office.',
@@ -578,9 +581,10 @@ our %topic = (
 			'Copy the link and give it to whoever needs it.',
 			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.',
 			'Change a ticket\'s privilege from the select in its row; the next login wears it.',
-			'Open the Requests view to approve, decline or blacklist what the public page asked for.'
+			'Open the Requests view to approve, decline or blacklist what the public page asked for.',
+			'Block a nuisance number under Blocked numbers — or from the Phone app\'s Recents — and remove it there when it is welcome again.'
 		],
-		related => [ 'tickets', 'security' ]
+		related => [ 'tickets', 'security', 'phone' ]
 	},
 	'handbook' => {
 		title => 'Handbook', category => 'apps', app => 'handbook',
