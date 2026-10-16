@@ -27,7 +27,6 @@
 	#embedded .component_name { font-weight: 700; }
 	#embedded .component_type { opacity: .7; font-size: 85%; }
 	#embedded #embedded_diagrams table { margin: 0 auto; }
-	#embedded #teletype_homebase, #embedded .embedded_device_info, #embedded #teletype, #embedded #watch_buttons { width: 96%; margin-left: auto; margin-right: auto; }
 	#embedded table { border-collapse: collapse; }
 	@media (max-width: 640px) { #embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: block; margin: 8px 0; } }
 	</style>
@@ -56,9 +55,7 @@
 		<% } %>
 		<div id="teletype_homebase" class="teletype_card">
 			<% if ($device_type eq 'teletype') { %>
-				<%# the stored secret is never shown: like Plat config, say it is set and
-				    take a new value only if one is typed %>
-				<input type="password" id="teletype_authorization" value="" data-set="<%= length($tauthorization || '') ? 1 : 0 %>" placeholder="<%= length($tauthorization || '') ? '••• set — type to replace' : 'not set' %>"><br>
+				<input type="text" id="teletype_authorization" value="<%= $tauthorization %>"><br>
 				<button id="tty_enabled" status="<%= $tty_enabled %>"><% unless ($tty_enabled == 1) { %>Enable <% } else { %>Disable<% } %></button>
 			<% } %>
 			Name:<input id="embedded_device_name" value="<%= $embedded->{'name'} %>"><br>
@@ -136,23 +133,18 @@
 		</div>
 
 		<canvas id="embedded_campus" style="display:none;"></canvas>
-		<br><input type=text" value="<%= $embedded_scope %>" id="watch_scope" style="width:90px">
-		<br><button id="watch_list_proxy">List Proxy</button>
+		<input type=text" value="<%= $embedded_scope %>" id="watch_scope" style="width:90px">
+		<button id="watch_list_proxy">List Proxy</button>
 		<button id="watch_set_proxy">Set Proxy</button><br>
 		<div id="watch_proxy_view"></div><br>
 
 		<% if ($view eq 'gpio') { %>
 		
 			<div id="watch_buttons">
-				<%# two rows, like the device's own screen: the teletype has 8 buttons
-				    (4+4), the watch 6 (3+3), a board 28 pins (14+14). room_max is the
-				    count; the break below is at room_max/2, so only the bound must not
-				    multiply by room_count for the button devices. %>
-				<% my $slots = ($edt eq 'microcontroller') ? ($room_max * $room_count) : $room_max; %>
 				<% foreach my $component ( sort keys %{$components} ) { %>
 					<% if ($component) { %>
 						<h4><%= &subs::format_name($component) %></h4>
-						<% for (my $n = $start_n; $n <= $slots; $n++) { %>
+						<% for (my $n = $start_n; $n <= $room_max * $room_count; $n++) { %>
 
 							<%= include 'embedded/component', 
 								n => $n, 
@@ -182,15 +174,15 @@
 			<div id="teletype" style="text-align:center;background-color:var(--panel);">
 				<div id="teletype_wifi" class="teletype_card">
 					<b>AP SSID</b>
-					<input type="text" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" class="teletype_wifi_config" field="ap_ssid"><br>
+					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid"><br>
 					<b>AP Password</b>
-					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="" data-set="<%= length($wifi->{'ap_password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'ap_password'} || '') ? '••• set — type to replace' : 'not set' %>" field="ap_password"><br>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="<%= $wifi->{'ap_password'} %>" field="ap_password"><br>
 				</div>
 				<div id="teletype_router" class="teletype_card">
 					<b>SSID</b>
 					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
 					<b>Password</b>
-					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set' %>" field="password"></br>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="<%= $wifi->{'password'} %>" field="password"></br>
 				</div>
 				<button id="teletype_wifi_update">Update Wifi</button>
 				<button id="teletype_usb_update">Update USB</button>
