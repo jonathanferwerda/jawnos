@@ -19722,6 +19722,46 @@ post '/manager/mail/email/folder/remove' => sub($c) {
 	$c->render(json => { result => 'ok', folders => $folders });
 };
 
+# A letter from someone the house does not know: make them a person, so their mail
+# and the attachments waiting in the unclaimed pool have somewhere to live. The
+# pool's file rows that came in with this letter move onto a new appointment on
+# the new app; the media itself stays where it was sealed.
+post '/manager/mail/email/sender_app' => sub($c) {
+	my $email = $c->param('email') || '';
+	my $mail_uuid = $c->param('uuid') || '';
+	$email =~ s/^\s+|\s+$//g;
+	return $c->render(json => { result => 'no email' }) unless length $email;
+	my $known = &subs::db_query('select app from settings where setting = ? and value = ?', 'email', $email)->hashes->[0];
+	my $app = $known ? $known->{'app'} : '';
+	unless ($app) {
+		my ($local) = split /\@/, $email;
+		$local =~ s/[^A-Za-z0-9]+//g;
+		$local = 'friend' unless length $local;
+		$app = &subs::unformat_name($local);
+		&subs::setting_initializer($app);
+		&subs::setting_setter({ app => $app, setting => 'email', value => $email });
+	}
+	my $appt = &Manager::appointment_writer($c, {
+		app => $app,
+		type => 'email',
+		timestamp => &subs::rightNow(),
+		notes => &subs::note_encrypter(&subs::suds_grabber(), 'Mail from ' . $email),
+	});
+	my $moved = 0;
+	foreach my $h ( @{ &subs::db_select('appointments', undef, { app => 'camera', source => 'unclaimed' })->hashes || [] } ) {
+		my $of = eval { return decode_json $h->{'file'} } || [];
+		my @move = grep { $mail_uuid && ($_->{'mail_uuid'} || '') eq $mail_uuid } @{$of};
+		next unless @move;
+		my @left = grep { !($mail_uuid && ($_->{'mail_uuid'} || '') eq $mail_uuid) } @{$of};
+		my $tf = eval { return decode_json $appt->{'file'} } || [];
+		foreach my $f ( @move ) { $f->{'appt_uuid'} = $appt->{'uuid'}; push @{$tf}, $f; $moved++; }
+		&subs::db_update('appointments', { file => encode_json($tf), server_time => &subs::rightNow() }, { app => $app, uuid => $appt->{'uuid'} });
+		if (@left) { &subs::db_update('appointments', { file => encode_json(\@left), server_time => &subs::rightNow() }, { app => 'camera', uuid => $h->{'uuid'} }); }
+		else { &delete_app('camera', $h->{'uuid'}, $h->{'server_time'}, 'claimed'); }
+	}
+	$c->render(json => { result => 'ok', app => $app, moved => $moved });
+};
+
 # the folder rail, refetched after a folder is made or removed
 get '/manager/mail/email/rail' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'mail' });

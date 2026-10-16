@@ -12031,6 +12031,12 @@ sub email_receiver() {
 							push @{$checked_addresses}, { app => $ca_app };
 						}
 					}
+					# Nobody the house knows sent this: the letter still comes in, and its
+					# attachments wait in the unclaimed pool (a month to claim) rather than
+					# being dropped with the parse.
+					if (!scalar @{$checked_addresses} && $to eq $es->{'email'} && lc $f ne 'drafts') {
+						push @{$checked_addresses}, { app => 'camera', unclaimed => 1 };
+					}
 					foreach my $ca ( @{$checked_addresses} ) {
 						# check for appointments
 						my $timestamp = &subs::ago_calc($sum->date,&subs::rightNow());
@@ -12129,6 +12135,12 @@ sub email_receiver() {
 							file => $jfile,
 							data => encode_json({ mail_uuid => $mailbox_uuid, email => $email })
 						};
+						# an unknown sender's letter lands in the unclaimed pool, which expires
+						# after a month if nobody claims it onto an appointment
+						if ($ca->{'unclaimed'}) {
+							$appt_data->{'source'} = 'unclaimed';
+							$appt_data->{'warranty'} = &subs::rightNow() + (30 * 24 * 60 * 60 * 1000);
+						}
 						&Manager::appointment_writer($c,$appt_data);
 
 						my $email_data = {

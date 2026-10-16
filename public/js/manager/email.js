@@ -432,6 +432,13 @@ $(document).on('click', '.wind[app="email"] .mail_action', function () {
 		});
 		return;
 	}
+	if (action == 'sender_app') {
+		$.post('/manager/mail/email/sender_app', { email: $(this).attr('email'), uuid: uuid }, function (r) {
+			emailToast(r.result == 'ok' ? ('Made them an appointment' + (r.moved ? ' (' + r.moved + ' files filed)' : '')) : 'Could not make the appointment');
+			emailOpenMessage(uuid);
+		});
+		return;
+	}
 	if (action == 'move') {
 		emailMoveMenu(uuid, $(this), folder);
 		return;

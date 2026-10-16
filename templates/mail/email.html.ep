@@ -37,6 +37,9 @@
 				<% if (($m->{'status'} || '') eq 'trash') { %>
 					<button class="mail_action" mail_action="restore" uuid="<%= $m->{'uuid'} %>" hint="Put this letter back in the inbox">Restore</button>
 				<% } %>
+				<% if (($m->{'status'} || '') eq 'inbox' && $from && !&subs::db_query('select app from settings where setting = ? and value = ?', 'email', $from)->hashes->[0]) { %>
+					<button class="mail_action" mail_action="sender_app" uuid="<%= $m->{'uuid'} %>" email="<%= $from %>" hint="Make an appointment for this sender, and file their attachments there">New sender</button>
+				<% } %>
 				<span class="mail_reader_actions_right">
 					<button class="mail_action" mail_action="move" uuid="<%= $m->{'uuid'} %>" hint="Move to a folder">Move</button>
 					<img class="little_thumb email_deleter hover" hint="Delete" uuid="<%= $m->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>">
@@ -60,7 +63,7 @@
 								my $ahref = $asrc ? $asrc : ($afile ? '/file_open?file=' . $afile . ($a->{'uuid'} ? '&uuid=' . $a->{'uuid'} : '') : '');
 							%>
 								<% if ($ahref) { %>
-									<a class="mail_reader_att" href="<%= $ahref %>" target="_blank" title="Open <%= $aname %>"><%= $aname %></a>
+									<a class="mail_reader_att" href="<%= $ahref %>" download="<%= $aname %>" target="_blank" title="Download <%= $aname %>"><%= $aname %></a>
 								<% } else { %>
 									<span class="mail_reader_att"><%= $aname %></span>
 								<% } %>
