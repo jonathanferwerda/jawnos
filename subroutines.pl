@@ -5515,12 +5515,14 @@ sub setting_setter() {
 		}
 	}
 
-	# A row is keyed by (app, setting, device, subsetting), but a delete on an undef
-	# subsetting matched nothing - SQL 'subsetting = NULL' is never true - so every
-	# write left the old row behind and cost/… accumulated duplicate rows (342
-	# groups of same-value cost/mobile rows). 'is' is NULL-safe: two NULLs compare
-	# equal, anything else as '='.
-	my $old_set = eval { &db_query('delete from settings where app = ? and setting = ? and device is ? and subsetting is ?', $app, $setting, $dev, $subsetting) };
+	# A row is keyed by (app, setting, device, subsetting). The delete that clears the
+	# previous row used '=', so an undef in ANY key column matched nothing (SQL
+	# 'x = NULL' is never true): every write left its predecessor behind and cost/…
+	# piled up duplicate rows (342 groups on one machine), and a window-state save
+	# whose app was missing (the 'tab' frames push scrollTop/jopen with no app) kept
+	# adding a fresh app-null row. 'is' is NULL-safe - two NULLs compare equal,
+	# anything else as '=' - so every key column clears properly.
+	my $old_set = eval { &db_query('delete from settings where app is ? and setting is ? and device is ? and subsetting is ?', $app, $setting, $dev, $subsetting) };
 	&db_insert('settings', {
 		app => $app,
 		timestamp => $timestamp,
@@ -16181,16 +16183,19 @@ sub backfills() {
 			&subs::say_it("backfill guide_message_warranty: stamped $n guide message(s)");
 			return 1;
 		},
-		'settings_dedupe' => sub {
+		'settings_dedupe_null_keys' => sub {
 			# A settings row is keyed by (app, setting, device, subsetting), but the
-			# setter's delete on an undef subsetting matched nothing - SQL
-			# 'subsetting = NULL' is never true - so every write left its predecessor
-			# behind. That is invisible (mostly same-value cost/mobile rows) but it grew
-			# the table and every sync, which is the 'Now merging N settings' that looked
-			# stuck. The setter is fixed; this collapses what is already there. Keep the
-			# row the reader returns - settings_grabber assigns in row order, so the last
-			# write (highest rowid) is the visible value - and drop the rest. A peer that
-			# still carries a duplicate cannot bring it back: a merge skips a row it
+			# setter's delete used '=', so an undef in any key column (a missing
+			# subsetting, or a window-state save with no app) matched nothing and every
+			# write left its predecessor behind: thousands of invisible same-value
+			# duplicates (342 groups, 1640 rows on one machine) that grew the table and
+			# every sync - the 'Now merging N settings' that looked stuck. The setter is
+			# fixed now; this collapses what is already there, and runs again (under this
+			# new name) so a machine that had already run the first pass, and kept
+			# accumulating the app-null rows it could not prevent, is cleaned too. Keep
+			# the row the reader returns - settings_grabber assigns in row order, so the
+			# last write (highest rowid) is the visible value - and drop the rest. A peer
+			# that still carries a duplicate cannot bring it back: a merge skips a row it
 			# already holds at >= server_time. Group by the column itself, not
 			# coalesce(subsetting,''): SQLite groups NULLs together but apart from '', and
 			# those are two keys, so a non-null subsetting row is never mistaken for a
@@ -16201,7 +16206,7 @@ sub backfills() {
 				     select max(rowid) from settings
 				     group by app, setting, device, subsetting)}) };
 			return 0 unless $sth;   # a locked database: retry on the next pass
-			&subs::say_it('backfill settings_dedupe: collapsed ' . $sth->rows . ' duplicate settings row(s)');
+			&subs::say_it('backfill settings_dedupe_null_keys: collapsed ' . $sth->rows . ' duplicate settings row(s)');
 			return 1;
 		},
 	};
