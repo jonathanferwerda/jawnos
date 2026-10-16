@@ -21,29 +21,29 @@ If JawnOS is useful to you, sponsoring is the most direct way to keep it moving.
 ## About
 
 How did this happen? I was at the library in college, measuring where my life would go after
-graduation, it had been almost 2 years since I heard about Linux, and I thought, there's no way I
-have any hope of building something technical. But, people kept bringing me their computers to
-fix, and there was this phase of my life where I worked til midnight at a call centre, and I'd
-start and end my day roaming the internet, learning as much as I could about programming as I
-could to bring myself out of this horrible situation where I had to sit tethered to a desk for 8
-hours a day and act happy to hear people call about their phones.
+graduation; it had been almost 2 years since I heard about Linux, and I thought, there's no way I
+have any hope of building something technical. But people kept bringing me their computers to fix,
+and there was this phase of my life where I worked til midnight at a call centre, and I'd start
+and end my day roaming the internet, learning as much about programming as I could to bring myself
+out of this horrible situation where I had to sit tethered to a desk for 8 hours a day and act
+happy to hear people call about their phones.
 
 I started my first business a year later, fixing computers, and in 6 months I was tired of working
-on other people's computers. I wanted to build, and had a couple customers that I ended up
-building business databases for. I learned the hard way that when people buy software, they think
-they're buying you.
+on other people's computers. I wanted to build, and I had a couple of customers I ended up building
+business databases for. I learned the hard way that when people buy software, they think they're
+buying you.
 
-Four years ago, after recovering from a long stretch of burn out, I decided I'd take a run at it
-again. First, I need to say, I'm not a great coder... make no mistake, there would be massive bugs
+Four years ago, after recovering from a long stretch of burnout, I decided I'd take a run at it
+again. First, I need to say: I'm not a great coder... make no mistake, there would be massive bugs
 in my code if I didn't have AI helping me. I'm the kind of programmer that starts a feature, then
 says, oh look! A feature! And jumps over to it to start building. So again I say, thank heavens
 we've got AI to finish my work. Four years of writing a prompt in Perl by hand.
 
-So, help me. Please sponsor my project, send me a cheque, e-transfer, drop cash off. Or better, do
-you have an api key I can bum? This code is being updated live, so if you try to install it, you'll
-find you need to refresh the window at least 12 times a day, and things will break on you all day
-long. So, don't even try. I promise, that as soon as I'm finished it'll work... probably, see the
-licence about warranty.
+So, help me. Please sponsor my project, send me a cheque, an e-transfer, or drop cash off. Or
+better, do you have an API key I can bum? This code is being updated live, so if you try to install
+it, you'll find you need to refresh the window at least 12 times a day, and things will break on
+you all day long. So, don't even try. I promise that as soon as I'm finished it'll work... probably,
+see the licence about warranty.
 
 It is not an operating system in the kernel sense, but a self-hosted personal environment that
 runs as an ordinary application and presents itself through the browser. It integrates natively
