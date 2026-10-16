@@ -44,7 +44,14 @@ Still to do:
 Done: **Phone**, **Email**, **Chat** split into their own apps; the appointment
 Connect group's Chat button opens a person's one conversation in-window with a
 back button; friends list = one row per person with every line; per-line sms
-choice in the transport dropdown; history under any of a person's numbers re-files
+choice in the transport dropdown; history under any of a person's numbers
+re-files onto their ticket thread. The **Email** window is now a mail client of
+its own - a folder rail, the message list beside it, Compose in the toolbar, and
+a message or a draft in a reading pane - with its styling scoped to
+`.wind[app="email"]` (the shared conversation partial is kept for the thread) so
+Mailbox and Chat are untouched. Switching a folder or an address refreshes just
+the list in place: the shared `mailMaker()` used to send the split apps to
+`/manager/mailbox`, which answered `app="mailbox"` and made a *second* window.
 onto their ticket thread.
 
 Still to do:

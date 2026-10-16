@@ -1,52 +1,60 @@
 <%# The Email app's panel: Mailbox's email section, moved out of the umbrella and
-    into an app of its own. It keeps the same wrapper id and the same inner ids
-    (#mail, #mail_sidebar, #mailbox, #message, #send_it) so public/js/mailbox.js -
-    the conversation, the pickers, the socket - goes on working untouched; what
-    changes is what the sidebar carries: the folders, the address to read, and
-    the compose and configure buttons, and nothing from the other sections. The
-    conversation half is the shared partial. %>
+    into an app of its own. It keeps the wrapper id and the inner ids the shared
+    public/js/mailbox.js drives (#mail, #mail_sidebar, #mailbox, #message,
+    #send_it) so the conversation, the pickers and the socket go on working; what
+    changes here is the shape - a mail client rather than the umbrella's panel.
+
+    Layout: a toolbar (Folders / title / Compose / settings), then a body split
+    into a folder rail on the left and the message list on the right. The shared
+    conversation partial is kept in the DOM (so the socket and composer still
+    work) but is hidden until the rail is toggled, when it overlays the list.
+    Styling lives in public/css/manager.css, scoped to .wind[app="email"], so
+    nothing here reaches Mailbox or Chat. %>
 <% no warnings 'uninitialized'; %>
 <style>
 	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
 </style>
-<div id="mail" style="width:100%;background-color:pink;">
-	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
-	<img src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="New file" class="little_thumb hover" id="email_compose" style="">
-	<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb email_config_toggle hover" style="">
-	<span style="font-size:20px;"><%= $main_title %></span>
-	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
-	<% my $privilege = $c->session('privilege'); %>
-	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
-		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
-			<div id="email_main_buttons">
-				<% foreach my $b ( qw/contacts inbox drafts outbox sent/ ) { %>
-					<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"
-						onclick="settingSetter({ 'app': 'mail', 'setting': 'email_folder_selection', 'value': '<%= $b %>' });setTimeout(function() { mailMaker(); },50);"><%= &subs::format_name($b) %></button>
-				<% } %>
+<div id="mail" class="email_app">
+	<div id="mail_toolbar">
+		<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Folders" class="little_thumb hover" id="mail_hamburger">
+		<span class="email_title">Email</span>
+		<span class="email_toolbar_spacer"></span>
+		<button id="email_compose" class="email_compose_button" hint="Write a new email">Compose</button>
+		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Server settings" class="little_thumb email_config_toggle hover">
+	</div>
+	<div id="mail_body">
+		<% my $privilege = $c->session('privilege'); %>
+		<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
+			<div id="mail_sidebar" class="email_rail">
+				<div class="email_rail_title">Folders</div>
+				<div id="email_main_buttons">
+					<% foreach my $b ( qw/contacts inbox drafts outbox sent/ ) { %>
+						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"><%= &subs::format_name($b) %></button>
+					<% } %>
+				</div>
+				<div class="email_rail_account"><%= $mail_email || 'No address selected' %></div>
 			</div>
-			<% if (!$settings->{'email_folder_selection'} || $settings->{'email_folder_selection'} eq 'contacts') { %>
-				<% my $email_addresses = &subs::db_select('settings', undef, { setting => 'email', device => &subs::device_setter() })->hashes; %>
-				<div id="mail_email_picker mail_list_picker">
-					<table style="font-size:20px;width:100%;text-align:center;">
-						<thead>
-							<th></th>
-						</thead>
-						<tbody>
+			<div id="mail_main">
+				<div id="mail_list">
+					<% if (!$settings->{'email_folder_selection'} || $settings->{'email_folder_selection'} eq 'contacts') { %>
+						<% my $email_addresses = &subs::db_select('settings', undef, { setting => 'email', device => &subs::device_setter() })->hashes; %>
+						<div id="mail_email_picker" class="mail_list_picker email_accounts">
 							<% foreach my $email ( sort { $a->{'app'} cmp $b->{'app'} } @{$email_addresses} ) { %>
 								<% $email->{'value'} =~ s/\S\d(?=\d{10})//; %>
-								<tr type="email" email="<%= $email->{'value'} %>" class="mail_email hover <% if ($mail_email eq $email->{'value'}) { %>active <% } %>">
-									<td class="" colspan="3"><%= &subs::format_name($email->{'app'}) %></td>
-									<td class="" colspan="3"><%= $email->{'value'} %></td>
-								</tr>
+								<div type="email" email="<%= $email->{'value'} %>" class="email_account_row <% if ($mail_email eq $email->{'value'}) { %>active <% } %>">
+									<span class="email_account_app"><%= &subs::format_name($email->{'app'}) %></span>
+									<span class="email_account_addr"><%= $email->{'value'} %></span>
+								</div>
 							<% } %>
-						</tbody>
-					</table>
+						</div>
+					<% } else { %>
+						<%= include 'mail/email_folder', settings => $settings %>
+					<% } %>
 				</div>
-			<% } else { %>
-				<%= include 'mail/email_folder', settings => $settings %>
-			<% } %>
-		</div>
-	<% } %>
+				<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
+			</div>
+		<% } %>
+	</div>
 </div>
 <script>
 	last_mail_message = Date.now();

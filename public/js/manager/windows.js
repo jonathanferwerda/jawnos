@@ -688,7 +688,7 @@ function appWindowOpener(i,timestamp,v) {
 			embeddedDevicesOpener();
 		}
 		else if (i == 'mailbox') {
-			mailMaker();
+			mailMaker(null, 'mailbox');
 		}
 		else if (i == 'box_office') {
 			// box office runs its own opener: the ticket key and the chosen view

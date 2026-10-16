@@ -1459,3 +1459,176 @@ body.dark_theme #ide {
 	.coding_fixes_rows { font-size: 13px; }
 	.assistant_staged_list { font-size: 14px; }
 }
+
+/* ============================== Email app ============================== */
+/* The Email window's own look: a two-pane mail client instead of the umbrella's
+   pink/teal panel - a folder rail on the left, the message list on the right,
+   and the shared conversation kept for the thread (hidden until the rail is
+   toggled, when it covers the list). Everything is scoped to .wind[app="email"]
+   so Mailbox and Chat, which share the same partials, are untouched. */
+.wind[app="email"] #mail.email_app {
+	display: flex; flex-direction: column;
+	box-sizing: border-box; width: 100%; height: 100%;
+	background-color: var(--panel); color: var(--ink);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	font-size: 16px; text-align: left;
+}
+
+/* toolbar */
+.wind[app="email"] #mail_toolbar {
+	display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+	padding: 8px 14px; background-color: var(--panel-2);
+	border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] #mail_toolbar .little_thumb { width: 30px; height: 30px; }
+.wind[app="email"] .email_title { font-size: 20px; font-weight: 600; }
+.wind[app="email"] .email_toolbar_spacer { flex: 1 1 auto; }
+.wind[app="email"] #email_compose.email_compose_button {
+	height: 34px; min-width: 0; padding: 0 18px; font-size: 15px; font-weight: 600;
+	background-color: #7542ff; color: #ffffff; border: none; border-radius: 17px;
+}
+.wind[app="email"] #email_compose.email_compose_button:hover { filter: brightness(1.12); }
+
+/* body split */
+.wind[app="email"] #mail_body { display: flex; flex: 1 1 auto; min-height: 0; }
+.wind[app="email"] #mail_sidebar.email_rail {
+	flex: 0 0 208px; width: 208px; height: auto; box-sizing: border-box;
+	padding: 12px 8px; overflow-y: auto; overflow-x: hidden;
+	background-color: var(--panel-2); color: var(--ink);
+	border: none; border-right: 1px solid var(--line); border-radius: 0;
+}
+.wind[app="email"] .email_rail_title {
+	font-size: 12px; letter-spacing: .07em; text-transform: uppercase;
+	color: var(--ink-muted); padding: 4px 10px 8px;
+}
+.wind[app="email"] #email_main_buttons { display: flex; flex-direction: column; gap: 2px; }
+.wind[app="email"] .email_folder_button {
+	display: block; width: 100%; height: 36px; min-width: 0;
+	text-align: left; padding: 0 12px; font-size: 16px;
+	background-color: transparent; border: none; border-radius: 8px;
+}
+.wind[app="email"] .email_folder_button:hover { background-color: var(--panel); }
+.wind[app="email"] .email_folder_button.selected { background-color: #7542ff; color: #ffffff; font-weight: 600; }
+.wind[app="email"] .email_rail_account {
+	margin-top: 12px; padding: 10px 10px 0; font-size: 13px; color: var(--ink-muted);
+	border-top: 1px solid var(--line); overflow-wrap: anywhere;
+}
+
+/* the list / accounts pane */
+.wind[app="email"] #mail_main { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.wind[app="email"] #mail_list { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.wind[app="email"] #mail_list > table {
+	width: 100%; border-collapse: collapse; table-layout: fixed; background-color: transparent;
+}
+.wind[app="email"] #mail_list thead th {
+	position: sticky; top: 0; z-index: 1;
+	text-align: left; font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
+	color: var(--ink-muted); background-color: var(--panel);
+	padding: 10px 16px; border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] #mail_list tbody tr.email_message {
+	border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] #mail_list tbody tr.email_message td {
+	padding: 11px 16px; font-size: 15px; vertical-align: top;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(1) { width: 104px; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(2) { width: 34%; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(4) { width: 44px; }
+.wind[app="email"] #mail_list tbody tr.email_message:hover { background-color: var(--panel-2); }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(3) { font-weight: 600; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(4) { width: 40px; text-align: right; }
+.wind[app="email"] #mail_list tbody tr.email_message .email_deleter {
+	width: 22px; opacity: .35;
+}
+.wind[app="email"] #mail_list tbody tr.email_message:hover .email_deleter { opacity: .85; }
+.wind[app="email"] #mail_list tbody tr.email_message .time { color: var(--ink-muted); font-size: 14px; }
+
+/* the account picker (the contacts folder) */
+.wind[app="email"] .email_accounts { display: flex; flex-direction: column; }
+.wind[app="email"] .email_account_row {
+	display: flex; flex-direction: column; gap: 2px;
+	padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] .email_account_row:hover { background-color: var(--panel-2); }
+.wind[app="email"] .email_account_row.active { background-color: #7542ff; color: #ffffff; }
+.wind[app="email"] .email_account_app { font-weight: 600; font-size: 16px; }
+.wind[app="email"] .email_account_addr { font-size: 13px; color: var(--ink-muted); }
+.wind[app="email"] .email_account_row.active .email_account_addr { color: #ffffff; opacity: .85; }
+
+/* the thread pane: hidden until the rail is toggled, then it covers the list */
+.wind[app="email"] #conversation {
+	display: none; position: absolute; inset: 0; z-index: 6; box-sizing: border-box;
+	padding: 10px 12px; margin: 0 !important;
+	width: auto !important; height: auto !important; bottom: 0 !important;
+	background-color: var(--panel); border: none !important; border-radius: 0 !important;
+}
+.wind[app="email"] #conversation > #mailbox {
+	position: static !important; box-sizing: border-box;
+	width: 100% !important; height: calc(100% - 54px) !important; max-height: none !important;
+	overflow-y: auto !important; padding: 12px !important;
+	background-color: var(--panel) !important;
+	border: 1px solid var(--line) !important; border-radius: 12px !important;
+}
+.wind[app="email"] #conversation .mailbox_message {
+	display: block !important; width: 100% !important; margin: 0 0 10px !important;
+}
+.wind[app="email"] #conversation .mailbox_message > span {
+	float: none !important; display: block !important; box-sizing: border-box;
+	width: 100% !important; padding: 8px 12px !important;
+	background-color: var(--panel-2) !important;
+	border: 1px solid var(--line) !important; border-radius: 12px !important;
+}
+.wind[app="email"] #just_hit_send {
+	display: flex !important; align-items: center; gap: 8px;
+	text-align: left !important; margin-top: 8px;
+}
+.wind[app="email"] #just_hit_send #message {
+	flex: 1 1 auto; width: auto !important; height: 38px !important;
+	font-family: inherit; font-size: 16px; padding: 8px 14px;
+	border: 1px solid var(--line) !important; border-radius: 19px !important;
+}
+.wind[app="email"] #just_hit_send #send_it {
+	flex: 0 0 auto; width: auto !important; min-width: 46px; height: 38px !important;
+	font-size: 18px; background-color: #7542ff; color: #ffffff;
+	border: none !important; border-radius: 19px !important;
+}
+
+/* the read and compose drawer */
+.wind[app="email"] .window_drawer { background-color: var(--panel-2) !important; }
+.wind[app="email"] .window_drawer_contents { padding: 18px 20px !important; box-sizing: border-box; }
+.wind[app="email"] .window_drawer_contents > table {
+	width: 100% !important; max-width: 100% !important; border-collapse: collapse;
+	background-color: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+}
+.wind[app="email"] .window_drawer_contents > table td {
+	padding: 10px 14px; font-size: 15px; vertical-align: top; border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] .window_drawer_contents > table td b { color: var(--ink-muted); font-weight: 600; }
+.wind[app="email"] .email_message_action_buttons { float: none !important; text-align: right; margin-bottom: 10px; }
+.wind[app="email"] .email_message_action_buttons img { width: 28px; height: 28px; }
+
+/* the compose form */
+.wind[app="email"] .email_compose_form > table {
+	width: 100% !important; border-collapse: separate; border-spacing: 0 8px;
+}
+.wind[app="email"] .email_compose_form > table td { font-size: 15px; vertical-align: middle; }
+.wind[app="email"] .email_compose_form input,
+.wind[app="email"] .email_compose_form select { width: 100% !important; box-sizing: border-box; }
+.wind[app="email"] .email_compose_form .email_send,
+.wind[app="email"] .email_compose_form .email_discard,
+.wind[app="email"] .email_compose_form .email_draft_change { width: 30px; height: 30px; }
+.wind[app="email"] #email_compose_body {
+	height: 320px !important; width: 100% !important; box-sizing: border-box;
+	font-family: inherit; font-size: 16px; padding: 12px; border-radius: 12px;
+}
+
+/* on a narrow window the rail shrinks and the list keeps a single readable column */
+@media (max-width: 700px) {
+	.wind[app="email"] #mail_sidebar.email_rail { flex-basis: 132px; width: 132px; padding: 10px 6px; }
+	.wind[app="email"] .email_folder_button { height: 32px; padding: 0 10px; font-size: 15px; }
+	.wind[app="email"] #mail_list thead th { padding: 8px 12px; }
+	.wind[app="email"] #mail_list tbody tr.email_message td { padding: 9px 12px; font-size: 14px; }
+	.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(1) { width: 78px; }
+}

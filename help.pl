@@ -493,17 +493,19 @@ our %topic = (
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
 		verified => '2026-10-16',
-		summary => 'IMAP and SMTP mail, straight on the desktop.',
+		summary => 'A mail client: folders down the left, the list beside them, the message or the draft in the pane.',
 		body => [
-			'Email is the mailbox\'s mail half, split out as an app of its own. It speaks IMAP and SMTP directly, so mail arrives on the desktop rather than in a separate client, and a new message raises the dot in the start menu.',
-			'Pick a folder - contacts, inbox, drafts, outbox or sent - and then the address to read. New file composes a message; when you send it the attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to.',
-			'The gear opens the server settings and the saved templates.'
+			'Email is the mailbox\'s mail half as an app of its own: it speaks IMAP and SMTP directly, so mail arrives on the desktop, and a new message raises the dot in the start menu.',
+			'The window is laid out like a mail client. The folders - contacts, inbox, drafts, outbox and sent - sit down the left, with the address the list is showing beneath them, and the chosen folder\'s messages fill the pane beside them. Each row is the time, the other party and the subject, with a trash at its right end. Pick a folder to change the list; pick an address under Contacts to read that account.',
+			'Click a message and it slides in over the list as a reading pane - its Device, From, To, Time, Subject, attachments and body, with Edit on a draft or an outbox message. Compose, in the toolbar, opens that same pane as a blank message: To, Subject, Body and Add for attachments.',
+			'Sending files the mail onto the recipient\'s app and seals its attachments, so a document you emailed is still findable from the thing it belongs to. The gear opens the server settings and the saved templates.'
 		],
 		steps => [
-			'Open Email from the start menu.',
-			'Choose a folder and the address to read.',
-			'New file composes; sending files the mail and seals its attachments.',
-			'The gear configures the server and its templates.'
+			'Open Email from the start menu: the folders are down the left, the inbox listed beside them.',
+			'Pick a folder - contacts, inbox, drafts, outbox or sent - or an address under Contacts.',
+			'Click a message to read it in the pane that slides in over the list.',
+			'Press Compose to write a new one; sending files it and seals its attachments.',
+			'The gear sets up the server and the templates.'
 		],
 		related => [ 'mailbox', 'sealing_files' ]
 	},

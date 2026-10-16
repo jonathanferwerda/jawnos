@@ -42,11 +42,16 @@ function mailAppScope() {
 	return '';
 }
 
-function mailMaker(incomingData) {
+function mailMaker(incomingData, app) {
 	if (!incomingData) { incomingData = {}; }
 	var jData = JSON.stringify(incomingData);
 	console.log(jData);
+	// The caller passes its app; with none, the umbrella answers. (It cannot be
+	// inferred from mailAppScope(): with both an Email and a Mailbox window open
+	// that returns "email" whichever one is being refreshed.)
+	app = app || '';
 	var url = '/manager/mailbox';
+	if (app == 'email' || app == 'chat' || app == 'pen') { url = '/manager/' + app; }
 	var timestamp = Date.now();
 	var firstMsg = $($('.mailbox_message')[0]);
 	if(incomingData['scroll'] == 1) {
@@ -65,7 +70,7 @@ function mailMaker(incomingData) {
 		success: function(response) {
 			if (incomingData['scroll'] != 1) {
 				windowMaker(response);
-				windowDrawerCloser('mailbox');
+				windowDrawerCloser(app || 'mailbox');
 				mailWebSocketStart();
 				mailScrollBottom('load');
 				mailDotClear();
@@ -1243,7 +1248,7 @@ $(document).on('click', '.mail_subsection', function() {
 	}
 	var sidebar = 0;
 	if (section == 'pen') { sidebar = 1; }
-	mailMaker({ 'sidebar': sidebar, settings: [{ 'setting': 'subsection', 'value': section }] });
+	mailMaker({ 'sidebar': sidebar, settings: [{ 'setting': 'subsection', 'value': section }] }, $(this).closest('.wind').attr('app'));
 
 });
 
