@@ -25803,6 +25803,13 @@ sub embedded_grabber($c,$timestamp) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
 	my $view = $c->param('view') || ($edt eq 'microcontroller' ? 'pins' : 'gpio');
+	# 'pins' is a bare board's own pinout. A watch or teletype is a finished
+	# device with no pin table, so the view can only ever answer "I don't know this
+	# chip" - and because the client remembers the last view it was given
+	# (localStorage 'embedded_view'), picking Pins once on a board left every other
+	# device on that dead page, with its buttons one dropdown away. Never honour it
+	# for anything that is not a board.
+	$view = 'gpio' if $view eq 'pins' && $edt ne 'microcontroller';
 	# The panel opens with the device picker blank, and the response then remembers
 	# the chip it drew. So a blank has to resolve to a device here, or the panel
 	# draws none and its buttons never appear. The neighbour-table branch of
