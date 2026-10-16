@@ -2277,7 +2277,6 @@ void loop() {
   if (millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && !screenAsleep) {
     tempBrightness = lastBrightness;
     configSave();
-    writeFile(FFat, "/bootreport.txt", "success");
 
     for (int i = brightnessLevel; i >= 0; --i) {
       setBrightness(i);
@@ -5152,9 +5151,29 @@ void setMasterVolume(int level) {
 
 }
 
-void configSave() {
-  writeFile(FFat, "/bootreport.txt", "success");
+// configSave() runs on every screen sleep, but the picture usually has not
+// changed: flashing the whole config each time wore the flash and stalled the UI
+// (the config write blocks on the FFat that shares the display's SPI bus). The
+// watch got this guard and its wake sped up a lot; the deck had none.
+static String config_saved_sig;
 
+// The clean-boot marker, read without readFile() (which appends to the shared
+// `returner`). A read costs no flash wear, so only a dirty marker is rewritten.
+static bool bootreport_is_clean() {
+  File f = FFat.open("/bootreport.txt");
+  if (!f || f.isDirectory()) {
+    return false;
+  }
+  String r;
+  while (f.available()) {
+    r += (char)f.read();
+  }
+  f.close();
+  r.trim();
+  return r == "success";
+}
+
+void configSave() {
   JSONVar conf;
   if (wifi_ap_enabled == true) {
     conf["wifi_ap_enabled"] = "on";
@@ -5227,7 +5246,13 @@ void configSave() {
   String wigi_wah = JSON.stringify(wigi);
   conf["wigi"] = wigi_wah;
   String returner = JSON.stringify(conf);
-  deckLog("[config] saving %u bytes", (unsigned)returner.length());
+  // keep the clean-boot marker honest even when the picture is unchanged: setup()
+  // wrote "saving" as it restored, and a failed fetch writes "failure", and a
+  // boot that reads either would restore from the backup. A tiny read, and a
+  // write only when the marker is not already clean.
+  if (!bootreport_is_clean()) {
+    writeFile(FFat, "/bootreport.txt", "success");
+  }
   // a deck that has nothing configured must not write the empty picture over
   // its own flash: a blank save cements a wipe for good
   if (homebaseIP.length() == 0 && authorization.length() == 0 &&
@@ -5235,6 +5260,12 @@ void configSave() {
     deckLog("[config] nothing configured yet; not saving");
     return;
   }
+  // an unchanged picture is not written at all: the screen-sleep save used to
+  // flash the whole config every time
+  if (returner == config_saved_sig) {
+    return;
+  }
+  deckLog("[config] saving %u bytes", (unsigned)returner.length());
   // LittleFS truncates in place, so a reset mid-save leaves a clobbered
   // config.json; stage in a temp file, drop the old one, then rename over it
   writeFile(FFat, "/config.tmp", returner.c_str());
@@ -5244,6 +5275,7 @@ void configSave() {
   if (!FFat.rename("/config.tmp", "/config.json")) {
     writeFile(FFat, "/config.json", returner.c_str());
   }
+  config_saved_sig = returner;
 }
 
 // the picture a never-configured deck comes up with: a boot with nothing
