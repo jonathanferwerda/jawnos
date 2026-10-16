@@ -2030,6 +2030,13 @@ sub market_here {
 	my $row = &subs::db_query("select latitude, longitude from continent where latitude is not null and latitude != '' order by cast(timestamp as integer) desc limit 1")->hashes->[0];
 	return ($row && $row->{'latitude'} && $row->{'longitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0 } : undef;
 }
+# A vendor's own home plate, if it has one.
+sub market_vendor_place {
+	my ($vendor) = @_;
+	return undef unless $vendor;
+	my $hp = eval { return decode_json &subs::setting_grabber({ app => $vendor, setting => 'home_plate' }) } || {};
+	return ($hp->{'latitude'} && $hp->{'longitude'}) ? { latitude => $hp->{'latitude'} + 0, longitude => $hp->{'longitude'} + 0 } : undef;
+}
 # The lists that apply where the house is now: a list whose vendors include one
 # within the radius. At a supermarket that is the grocery list; at a big-box store
 # several lists can be in range at once.
@@ -2041,9 +2048,9 @@ sub market_nearby_lists {
 	foreach my $key ( sort keys %{$lists} ) {
 		my $vendors = $lists->{$key}->{'vendors'} || {};
 		foreach my $v ( sort keys %{$vendors} ) {
-			my $hp = eval { return decode_json &subs::setting_grabber({ app => $v, setting => 'home_plate' }) } || {};
-			next unless $hp->{'latitude'} && $hp->{'longitude'};
-			my $km = &help_distance_km($here->{'latitude'}, $here->{'longitude'}, $hp->{'latitude'} + 0, $hp->{'longitude'} + 0);
+			my $place = &market_vendor_place($v);
+			next unless $place;
+			my $km = &help_distance_km($here->{'latitude'}, $here->{'longitude'}, $place->{'latitude'}, $place->{'longitude'});
 			next unless defined $km && $km <= 0.3;
 			push @near, { key => $key, name => ($lists->{$key}->{'name'} || $key), vendor => $v, distance_km => sprintf('%.3f', $km) };
 			last;
@@ -11291,6 +11298,38 @@ post '/manager/configure/packaging/save' => sub($c) {
 	);
 	$c->render(json => { packaging => $packaging, html => $html });
 
+};
+
+# The Guide fills the packaging in: given an item it names how the thing is sold
+# (a six-pack, a case of 24), so nobody types every pack by hand. The set packs
+# are merged, not replaced, so anything already entered stays.
+post '/manager/configure/packaging/suggest' => sub($c) {
+	my $app = $c->param('app');
+	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'packaging' }) } || {};
+	my $settings = &subs::settings_grabber({ app => $app });
+	my $unit = $settings->{'unit'} || '';
+	my ($text) = &subs::ai_chat_role('chatbot_model', [
+		{ role => 'system', content => 'You know how shop goods are packaged in Canada. Answer with strict JSON only.' },
+		{ role => 'user', content => 'The item is "' . &subs::format_name($app) . '"' . ($unit ? ' sold in ' . $unit : '') . '.'
+			. ' List the ways it is normally bought as packages, most common first, up to 3.'
+			. ' Return ONLY JSON: {"packages":[{"name":"6-pack","quantity":6},{"name":"case of 24","quantity":24}]}.'
+			. ' quantity is how many of the item one package holds; if it is sold only singly, return {"name":"single","quantity":1}.' },
+	]);
+	my ($json) = ($text || '') =~ /(\{.*\})/s;
+	my $out = eval { return decode_json $json } || {};
+	my $added = 0;
+	foreach my $p ( @{ $out->{'packages'} || [] } ) {
+		next unless ref $p eq 'HASH' && ($p->{'name'} || '') ne '';
+		my $uuid = &subs::random_string_creator(20);
+		$packaging->{$uuid} = { uuid => $uuid, name => $p->{'name'}, quantity => ($p->{'quantity'} || 1) };
+		$added++;
+	}
+	&subs::setting_setter({ app => $app, setting => 'packaging', value => encode_json($packaging) }) if $added;
+	my $html = $c->render_to_string(
+		template => 'configure/packaging',
+		settings => { app_packaging => $packaging }
+	);
+	$c->render(json => { html => $html, added => $added });
 };
 
 post '/manager/configure/packaging/delete' => sub($c) {
@@ -22188,6 +22227,17 @@ post '/manager/coding/forget' => sub($c) {
 	coding_conversation_save($conversation, []);
 	&agent_registry_note('coding', $conversation, []);
 	$c->render(json => { ok => 1, conversation => $conversation });
+};
+
+# ---- the records watch (the database's self-heal) --------------------------
+# The fixed audit of the appointments table for the fault classes that corrupt
+# the person's numbers. This route is the dry run: it returns the findings and
+# the prompt the Coding agent would be given, and writes nothing. Staging,
+# approval and Apply follow the error watch's shape (staged_records).
+get '/manager/records/audit' => sub($c) {
+	my $hours = ($c->param('hours') && $c->param('hours') =~ /^[0-9]+$/) ? $c->param('hours') : 48;
+	my $report = &subs::records_audit($hours * 3600000);
+	$c->render(json => { report => $report, prompt => &subs::records_audit_prompt() });
 };
 
 # ---- the error watch's staging area ---------------------------------------

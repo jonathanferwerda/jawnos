@@ -16360,6 +16360,123 @@ sub staged_fix_note {
 	return { uuid => $uuid, signature => $sig, status => 'new' };
 }
 
+# ---- the records watch ------------------------------------------------------
+# The database's half of the self-heal, and the mirror of the error watch: a
+# fixed, deterministic audit of the appointments table for the fault classes
+# that corrupt the person's numbers. A stop press closes ONE session, but two
+# bugs left rows ended by a press that was not their own (one stop applied to
+# several open sessions) or wrote the same event once per machine. The judgement
+# - which row to keep, what to repair - is the Coding agent's, staged and
+# approved the way a code fix is (staged_records). Nothing here writes.
+sub records_audit_prompt {
+	return join "\n",
+		'You are the Records Watch for JawnOS. You audit the appointments table for a fault class that has been corrupting the person\'s numbers, and you reconcile what you find. Nothing is written until a person approves it.',
+		'',
+		'A stop press closes ONE session. Two faults planted wrong rows: (1) one stop was applied to several open sessions, so an old session took its end from a press that was not its own; (2) the same event was written once per machine and the mesh kept every copy.',
+		'',
+		'You are handed a fixed report. For each entry:',
+		'- SWEEP (rows share app + stop_timestamp): at most one row is the session that press closed. If the app sets a duration, the real row is the one whose |duration| is nearest it; otherwise the one whose start is nearest the press. Every other row was ended by a press that was not its own: repair each to its own end when the app sets a duration (start + duration), else tombstone it.',
+		'- DUPES (identical app/type/timestamp/stop_timestamp): keep one, tombstone the rest.',
+		'- ORPHAN (start/record, stop_seen null): do NOT stop it - it may be real and still running. Leave it unless the app sets a duration and it has run far past that, in which case repair it to start + duration.',
+		'- IMPOSSIBLE (a stop before its own start): repair to a sane end or tombstone.',
+		'',
+		'Rules that must not be broken:',
+		'- Do NOT judge by duration length alone: home is legitimately a full day, a walk an hour. Compare against the app\'s own history and its configured duration, never a fixed threshold.',
+		'- Do NOT trust one machine over another. The correct end is whichever press actually stopped that session; where machines disagree, prefer the value that matches the app\'s configured duration.',
+		'- Leave alone anything started in the last ten minutes, anything a person corrected by hand (a note, an edited time), and any row that is still running.',
+		'- Writes ride the app\'s own routes: delete_app tombstones a duplicate so the whole mesh agrees, and the appointment\'s own stop path repairs an end.',
+		'',
+		'Answer with a JSON list of proposed actions, one per row: {"action":"keep"|"tombstone"|"repair","app":..,"uuid":..,"stop_timestamp":..,"duration":..,"why":".."}. Say which row you keep per group and why, and list what you leave alone and why. Write nothing else.';
+}
+
+sub records_audit {
+	my ($window_ms) = @_;
+	$window_ms = 172800000 unless defined $window_ms && $window_ms =~ /^[0-9]+$/ && $window_ms > 0;
+	my $now = &rightNow();
+	my $since = $now - $window_ms;
+	my $report = {
+		generated_at => $now, window_ms => $window_ms, since => $since,
+		sweep => [], dupes => [], orphans => [], impossible => [],
+		apps_with_duration => {}, summary => {},
+	};
+
+	# the app's configured session length: the yardstick the audit measures against
+	my %app_duration;
+	foreach my $s ( @{ &db_query('select app, value from settings where setting = ?', 'duration')->hashes } ) {
+		next unless defined $s->{'value'} && $s->{'value'} =~ /[0-9]/;
+		my $d = abs &time_abbrev_translator($s->{'value'});
+		$app_duration{ $s->{'app'} } = $d if $d;
+	}
+	$report->{'apps_with_duration'} = { %app_duration };
+
+	# SWEEP - a stop press that closed more than one session
+	my $groups = &db_query('select app, stop_timestamp, count(*) c from appointments where stop_timestamp is not null and stop_timestamp != ? and server_time > ? group by app, stop_timestamp having c > 1 order by stop_timestamp desc', '', $since)->hashes;
+	foreach my $g ( @{$groups} ) {
+		my $rows = &db_query('select rowid, uuid, type, timestamp, stop_timestamp, duration, server_time from appointments where app = ? and stop_timestamp = ? order by timestamp asc', $g->{'app'}, $g->{'stop_timestamp'})->hashes;
+		# rows that share a start as well are the same event written twice, not a
+		# sweep: the DUPES pass owns those, so a repair here can never fight it
+		my %starts;
+		$starts{ $_->{'timestamp'} }++ for @{$rows};
+		next if scalar(keys %starts) < 2;
+		my $d = $app_duration{ $g->{'app'} };
+		# the session this press belongs to: nearest the app duration, else nearest the press
+		my $keep = 0;
+		for (my $i = 0; $i < scalar @{$rows}; $i++) {
+			my $dur = abs(0 + ($rows->[$i]->{'duration'} || 0));
+			my $score = defined $d ? abs($dur - $d) : abs(0 + $rows->[$i]->{'timestamp'} - 0 + $g->{'stop_timestamp'});
+			my $best = defined $d ? abs(abs(0 + ($rows->[$keep]->{'duration'} || 0)) - $d) : abs(0 + $rows->[$keep]->{'timestamp'} - 0 + $g->{'stop_timestamp'});
+			$keep = $i if $score < $best;
+		}
+		my @out;
+		for (my $i = 0; $i < scalar @{$rows}; $i++) {
+			my $r = $rows->[$i];
+			my %o = ( rowid => $r->{'rowid'}, uuid => $r->{'uuid'}, type => $r->{'type'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'stop_timestamp'}, duration => $r->{'duration'} );
+			if ($i == $keep) { $o{'suggested'} = 'keep'; $o{'why'} = defined $d ? 'ends nearest the app duration' : 'start nearest the press'; }
+			elsif (defined $d) { $o{'suggested'} = 'repair'; $o{'why'} = 'a session of this app runs ' . $d . ' ms'; $o{'repair_stop_timestamp'} = (0 + $r->{'timestamp'}) + $d; }
+			else { $o{'suggested'} = 'remove'; $o{'why'} = 'ended by a press that was not its own'; }
+			push @out, \%o;
+		}
+		push @{$report->{'sweep'}}, { app => $g->{'app'}, stop_timestamp => $g->{'stop_timestamp'}, expected_ms => $d, rows => \@out };
+	}
+
+	# DUPES - the same event written more than once
+	my $dupes = &db_query('select app, type, timestamp, stop_timestamp, count(*) c, group_concat(rowid) rowids from appointments where server_time > ? group by app, type, timestamp, stop_timestamp having c > 1 order by timestamp desc', $since)->hashes;
+	foreach my $g ( @{$dupes} ) {
+		my @ids = sort { $a <=> $b } split /,/, ($g->{'rowids'} || '');
+		my $kept = shift @ids;
+		push @{$report->{'dupes'}}, { app => $g->{'app'}, type => $g->{'type'}, timestamp => $g->{'timestamp'}, stop_timestamp => $g->{'stop_timestamp'}, keep_rowid => $kept, remove_rowids => \@ids };
+	}
+
+	# ORPHANS - an open session, flagged only when it has run far past the app's duration
+	my $orphans = &db_query('select rowid, uuid, app, type, timestamp, server_time from appointments where type in (?,?) and stop_seen is null and timestamp <= ? order by timestamp asc', 'start', 'record', $now - 7200000)->hashes;
+	foreach my $r ( @{$orphans} ) {
+		my $age = $now - (0 + $r->{'timestamp'});
+		my $d = $app_duration{ $r->{'app'} };
+		my %o = ( %{$r}, age_ms => $age );
+		if (defined $d && $age > $d * 2) { $o{'suggested'} = 'repair'; $o{'why'} = 'open far longer than the app duration'; $o{'repair_stop_timestamp'} = (0 + $r->{'timestamp'}) + $d; }
+		else { $o{'suggested'} = 'left-alone'; $o{'why'} = 'still running'; }
+		push @{$report->{'orphans'}}, \%o;
+	}
+
+	# IMPOSSIBLE - a stop before its own start
+	my $imp = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, duration from appointments where stop_timestamp is not null and cast(stop_timestamp as integer) < cast(timestamp as integer) and server_time > ?', $since)->hashes;
+	$report->{'impossible'} = $imp;
+
+	my $extra = 0;
+	foreach my $g ( @{$report->{'sweep'}} ) { $extra += scalar(grep { $_->{'suggested'} ne 'keep' } @{$g->{'rows'}}); }
+	my $dupe_extra = 0;
+	foreach my $g ( @{$report->{'dupes'}} ) { $dupe_extra += scalar @{$g->{'remove_rowids'}}; }
+	$report->{'summary'} = {
+		sweep_groups => scalar @{$report->{'sweep'}},
+		sweep_spare_rows => $extra,
+		dupe_groups => scalar @{$report->{'dupes'}},
+		dupe_spare_rows => $dupe_extra,
+		orphans => scalar @{$report->{'orphans'}},
+		impossible => scalar @{$report->{'impossible'}},
+	};
+	return $report;
+}
+
 # One pass: catch what is new, record it, and hand the oldest waiting error to
 # the Coding agent to propose a fix for. Called from President's schedule.
 sub error_watch_tick {

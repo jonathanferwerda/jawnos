@@ -1,0 +1,59 @@
+#!/usr/bin/env perl
+# records_audit.pl - the records watch's dry run, from the command line.
+#
+#   perl scripts/records_audit.pl [--hours N] [--json]
+#
+# Runs the fixed audit (subs::records_audit) against this machine's database and
+# prints the findings and the suggested action per row. Writes nothing: it is the
+# dry run the Coding agent's reconcile would be proposed from.
+use strict;
+use warnings;
+use FindBin;
+require Mojo::JSON;
+chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
+require './subroutines.pl';
+
+my ($hours, $json) = (48, 0);
+for (my $i = 0; $i < @ARGV; $i++) {
+	$hours = $ARGV[$i + 1] if $ARGV[$i] eq '--hours' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^[0-9]+$/;
+	$json = 1 if $ARGV[$i] eq '--json';
+}
+
+my $report = subs::records_audit($hours * 3600000);
+
+if ($json) {
+	print Mojo::JSON::encode_json($report), "\n";
+	exit 0;
+}
+
+my $s = $report->{'summary'};
+printf "records audit - window %sh, generated %s\n", $hours, $report->{'generated_at'};
+printf "sweep: %d group(s) / %d spare row(s) | dupes: %d group(s) / %d spare | orphans: %d | impossible: %d\n\n",
+	$s->{'sweep_groups'}, $s->{'sweep_spare_rows'}, $s->{'dupe_groups'}, $s->{'dupe_spare_rows'}, $s->{'orphans'}, $s->{'impossible'};
+
+print "== SWEEP (one press, more than one session)\n";
+foreach my $g ( @{ $report->{'sweep'} } ) {
+	printf "%s  stopped %s  expected %s\n", $g->{'app'}, $g->{'stop_timestamp'}, (defined $g->{'expected_ms'} ? $g->{'expected_ms'} . 'ms' : '-');
+	foreach my $r ( @{ $g->{'rows'} } ) {
+		printf "   row %-8s %-9s start %s dur %-12s %s%s\n",
+			$r->{'rowid'}, $r->{'suggested'}, $r->{'timestamp'}, ($r->{'duration'} // '-'), $r->{'why'},
+			(defined $r->{'repair_stop_timestamp'} ? " stop=>$r->{'repair_stop_timestamp'}" : '');
+	}
+}
+
+print "\n== DUPES (same row written more than once)\n";
+foreach my $g ( @{ $report->{'dupes'} } ) {
+	printf "%s %s start %s stop %s  keep row %s, drop %s\n",
+		$g->{'app'}, $g->{'type'}, $g->{'timestamp'}, ($g->{'stop_timestamp'} // '-'), $g->{'keep_rowid'}, join(',', @{ $g->{'remove_rowids'} });
+}
+
+print "\n== ORPHANS (open sessions)\n";
+foreach my $r ( @{ $report->{'orphans'} } ) {
+	printf "%s row %s start %s age %.1fh -> %s (%s)\n", $r->{'app'}, $r->{'rowid'}, $r->{'timestamp'}, $r->{'age_ms'} / 3600000, $r->{'suggested'}, $r->{'why'};
+}
+
+print "\n== IMPOSSIBLE (stop before start)\n";
+foreach my $r ( @{ $report->{'impossible'} } ) {
+	printf "%s row %s start %s stop %s\n", $r->{'app'}, $r->{'rowid'}, $r->{'timestamp'}, $r->{'stop_timestamp'};
+}
+print "\ndone - nothing written.\n";
