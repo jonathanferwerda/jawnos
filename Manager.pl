@@ -6243,6 +6243,9 @@ post '/manager/configure/remote_machine/tunnel/confirm' => sub($c) {
 		&subs::setting_setter({ app => '__president', setting => 'tunnel_duties', value => $jtd });
 	}
 	&Websocket::send('server', { console => 'tunnelLister()' });
+	# and the Dev panel: a tunnel coming up adds the peer to this hub's addresses,
+	# so refresh it live rather than wait for a manual Scan
+	&Websocket::send('server', { console => 'deviceLister()' });
 	$c->render(json => $returner);
 };
 
@@ -6251,6 +6254,8 @@ post '/manager/configure/remote_machine/tunnel/close' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $status = $c->param('status');
 	&subs::db_update('tunnels', { server_time => &subs::rightNow(), status => 'closed' }, { uuid => $tunnel->{'uuid'}, signatorial => $tunnel->{'signatorial'} });
+	&Websocket::send('server', { console => 'tunnelLister()' });
+	&Websocket::send('server', { console => 'deviceLister()' });
 
 	$c->render(json => { tunnel => $tunnel, signatorial => $signatorial, status => $status });
 

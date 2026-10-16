@@ -563,29 +563,7 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 					b.attr('status', 'active');
 				}
 				b.text(text);
-				$('.remote_restore_list').each(function(i,v) {
-					var r = $(v);
-					if (r.html() != '' && r.html() != undefined) {
-						if (eval(JSON.parse(r.html() || '[]'))) {
-							var neighbour = JSON.parse(r.html() || '[]');
-							$(v).html('');
-							$.each(neighbour, function(i,val) {
-								if (val['archive'] != 'archive') {
-									// show the file's own name, not its long path; the button still
-									// carries the full filename for the action
-									var label = val['name'] || (val['filename'] || '').replace(/^.*\//, '');
-									if (neighbour['verified'] == true) {
-										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connected ' + label + '</button>');
-										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connect</button>');
-									}
-									else {
-										$(v).append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">' + label + '</button>');
-									}
-								}
-							});
-						}
-					}
-				});
+				deviceListerRestoreButtons($('#device_list'));
 			}
 		}).fail(function(e) {
 			b.text(text);
@@ -593,6 +571,51 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 		});
 	}
 });
+
+// Turn each restore-list blob the Dev panel received (a JSON list of a peer's
+// backups) into file buttons, labelled by the file's own name.
+function deviceListerRestoreButtons(scope) {
+	$(scope || document).find('.remote_restore_list').each(function(i,v) {
+		var r = $(v);
+		if (r.html() == '' || r.html() == undefined) { return; }
+		var neighbour;
+		try { neighbour = JSON.parse(r.html() || '[]'); } catch(e) { return; }
+		if (!neighbour) { return; }
+		r.html('');
+		$.each(neighbour, function(i,val) {
+			if (val['archive'] == 'archive') { return; }
+			// show the file's own name, not its long path; the button still carries
+			// the full filename for the action
+			var label = val['name'] || (val['filename'] || '').replace(/^.*\//, '');
+			if (neighbour['verified'] == true) {
+				r.append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connected ' + label + '</button>');
+				r.append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">Connect</button>');
+			}
+			else {
+				r.append('<button class="neighbour_filepicker" filename="' + val['filename'] + '">' + label + '</button>');
+			}
+		});
+	});
+}
+
+// Re-fetch the Dev listing in place. The server pushes this as the console command
+// deviceLister() when a tunnel comes up or goes down (and when a peer is
+// enrolled), so the Dev panel shows a machine dialling in without a manual Scan.
+// It acts only while the Dev panel is open.
+function deviceLister() {
+	var c = $('#device_list');
+	if (!c.length || !c.is(':visible')) { return; }
+	$.ajax({
+		url: '/manager/configure/device_lister',
+		type: 'GET',
+		data: { timestamp: Date.now(), load_type: 'list' },
+		success: function(response) {
+			c.html(response);
+			printerInkLoad(c);
+			deviceListerRestoreButtons(c);
+		}
+	});
+}
 
 // A printer's ink and toner, asked over IPP once its row is in the Dev panel. The
 // table is already on screen when this runs, so a printer that is off cannot hold

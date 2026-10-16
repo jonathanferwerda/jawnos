@@ -11397,6 +11397,7 @@ sub tunnel_peer_enrol {
 	my $need_connect = !($row && ($row->{'connection'} || '') eq 'active');
 	return unless $need_list || $need_connect;
 	my $filename;
+	my $changed = 0;
 	if ($need_list) {
 		my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 		my $ua = Mojo::UserAgent->new();
@@ -11410,6 +11411,7 @@ sub tunnel_peer_enrol {
 			$entry->{'signatorial'} = $body->{'signatorial'};
 			$entry->{'restore_list'} = encode_json $body->{'restore_list'} if $body->{'restore_list'};
 			&subs::db_update('devices', { address => encode_json $address }, { uuid => $me->{'uuid'} });
+			$changed = 1;
 		}
 		# the backup path the peer's /sesh_check must be handed to open (prefer the
 		# current snapshot) - the same file the Dev panel's Connect button sends
@@ -11420,8 +11422,12 @@ sub tunnel_peer_enrol {
 			$filename ||= $body->{'restore_list'}->[0]->{'filename'};
 		}
 	}
-	return &subs::tunnel_peer_connect($signatorial, $filename) if $need_connect;
-	return undef;
+	my $enrollee;
+	$enrollee = &subs::tunnel_peer_connect($signatorial, $filename) if $need_connect;
+	$changed = 1 if $enrollee;
+	# let the Dev panel show the peer appear (or its row fill in) live
+	&Websocket::send('server', { console => 'deviceLister()' }) if $changed;
+	return $enrollee;
 }
 
 sub system_monitor() {
