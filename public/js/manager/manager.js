@@ -1096,6 +1096,65 @@ function jawnCameraUpload(result) {
 }
 // the app calls this from the native side with the file it captured
 window.__jawnCameraResult = function(result) { jawnCameraUpload(result); };
+
+// ---- the app's launch extras (window.__jawnLaunchExtras) --------------
+// The system's sms send and dial intents open the app with jawn_sms_number /
+// jawn_sms_body / jawn_dial_number extras; the native side hands them here once
+// the page is up. A share-to-sms opens that number's conversation with the body
+// prefilled; a dial intent opens the Phone app with the number on the pad.
+window.__jawnLaunchExtras = function(extras) {
+	extras = extras || {};
+	var run = function() {
+		if (extras.sms_number) { jawnLaunchSms(extras.sms_number, extras.sms_body || ''); }
+		else if (extras.dial_number) { jawnLaunchDial(extras.dial_number); }
+	};
+	var tries = 0;
+	var ready = function() { return typeof windowMaker === 'function' && window.jQuery; };
+	if (ready()) { run(); return; }
+	var t = setInterval(function() {
+		tries++;
+		if (ready() || tries > 120) { clearInterval(t); if (tries <= 120) { run(); } }
+	}, 500);
+};
+function jawnLaunchSms(number, body) {
+	localStorage.setItem('mail_contact', '');
+	localStorage.setItem('mail_phone', number);
+	$.ajax({
+		url: '/manager/chat',
+		type: 'GET',
+		data: {
+			timestamp: Date.now(),
+			window_maker: 'yes',
+			phone: number,
+			incoming_data: JSON.stringify({ settings: [{ setting: 'subsection', value: 'sms' }] })
+		},
+		success: function(response) {
+			windowMaker(response);
+			var w = $('.wind[app="chat"]');
+			if (body) { w.find('#message').val(body); }
+			w.find('#mail_transport').val('sms');
+			if (typeof chatTransportOptions === 'function') { chatTransportOptions(); }
+			if (typeof mailWebSocketStart === 'function') { mailWebSocketStart(); }
+			if (typeof mailScrollBottom === 'function') { mailScrollBottom('load'); }
+		}
+	});
+}
+function jawnLaunchDial(number) {
+	$.ajax({
+		url: '/manager/phone',
+		type: 'GET',
+		data: { timestamp: Date.now(), window_maker: 'yes' },
+		success: function(response) {
+			windowMaker(response);
+			setTimeout(function() {
+				var w = $('.wind[app="phone"]');
+				if (typeof jawnPhoneApp !== 'undefined' && jawnPhoneApp) { jawnPhoneApp.number = number; }
+				w.find('#phone_app_display').text(number);
+				w.find('.phone_app_tab[pane="dial"]').trigger('click');
+			}, 500);
+		}
+	});
+}
 $(document).on('click', '.native_capture, .native_video', function() {
 	if (!jawnCameraAvailable()) { return; }
 	var b = $(this);

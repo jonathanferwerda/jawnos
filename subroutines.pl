@@ -1789,6 +1789,12 @@ sub watch_reply_stream() {
 	});
 	return 0 unless $bt;
 	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
+	# How much audio there will be, near enough: ~14 characters a second of
+	# speech, 8 kHz mono s16 is 16000 bytes a second. The watch uses it to decide
+	# how much to hold back before speaking (half of it, clamped), so playback
+	# starts with a cushion against the link's jitter without a short answer
+	# waiting for a cushion longer than itself.
+	my $est_total = int((length($text) / 14) * 16000);
 	# Resample to 8 kHz when ffmpeg is here (the whisper path uses it, so it is on
 	# every machine that can already hear). Otherwise piper's own rate rides along
 	# in the messages and the watch opens the codec at it.
@@ -1810,14 +1816,14 @@ sub watch_reply_stream() {
 			my $n = read($pout, $chunk, 16384);
 			last unless defined $n && $n > 0;
 			my $b64 = MIME::Base64::encode_base64($chunk, '');
-			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, audio => $b64 } }) . "\n";
+			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } }) . "\n";
 			$seq++;
 			$sent += $n;
 		}
 		close $pout;
 		waitpid($pid, 0);
 		if ($sent) {
-			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, audio => '' } }) . "\n";
+			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, total => $est_total, audio => '' } }) . "\n";
 			$done = 1;
 			last;
 		}
@@ -3345,6 +3351,43 @@ sub voice_note_store() {
 	return $clean;
 }
 
+sub voice_clip_fresh() {
+	# One clip, one transcription. The watch streams a clip while it is being spoken
+	# and still keeps the file as a fallback, so the same clip can legitimately
+	# arrive twice (an ack lost, a link that died mid-stream); a second pass would
+	# run the person's command twice. Keyed by the watch's own clip stamp.
+	my ($chip_id, $ts) = @_;
+	return 1 unless $chip_id && $ts;
+	my $key = $chip_id . '|' . $ts;
+	my $now = time();
+	delete $gb::voice_seen->{$_} for grep { $now - $gb::voice_seen->{$_} > 300 } keys %{ $gb::voice_seen || {} };
+	if ($gb::voice_seen->{$key}) {
+		$log->info('voice: clip ' . $key . ' already handled; ignoring the duplicate');
+		return 0;
+	}
+	$gb::voice_seen->{$key} = $now;
+	return 1;
+}
+
+sub adpcm_wav_wrap() {
+	# The 60-byte header the watch's voice_compress_clip writes around these same
+	# blocks, rebuilt here because a streamed clip arrives without it: IMA ADPCM,
+	# 8 kHz mono, 1024-byte blocks of 2041 samples. ffmpeg reads it natively, so
+	# the streamed and whole-clip paths meet at the very same file.
+	my ($data) = @_;
+	my ($block, $spb, $rate) = (1024, 2041, 8000);
+	my $blocks = int(length($data) / $block);
+	my $samples = $blocks * $spb;
+	my $abps = int($rate * $block / $spb);
+	my $head = 'RIFF' . pack('V', 52 + length($data)) . 'WAVE'
+		. 'fmt ' . pack('V', 20) . pack('v', 0x11) . pack('v', 1)
+		. pack('V', $rate) . pack('V', $abps) . pack('v', $block) . pack('v', 4)
+		. pack('v', 2) . pack('v', $spb)
+		. 'fact' . pack('V', 4) . pack('V', $samples)
+		. 'data' . pack('V', length($data));
+	return $head . $data;
+}
+
 sub voice_clip_ack() {
 	# The clip was transcribed and filed, so the watch no longer needs its local
 	# copy: tell it over the bridge to drop the file (/voice.wav). Keyed by the
@@ -3648,7 +3691,7 @@ sub ble_message_processor() {
 		# wire. The same ingest the WiFi route runs, so both transports agree.
 		my $b64 = $msg->{'data'};
 		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
-		if ($raw) {
+		if ($raw && &subs::voice_clip_fresh($msg->{'chip_id'}, $msg->{'ts'})) {
 			# Tell the watch the clip arrived whole, at once: the watch holds the file
 			# and retries it until this lands, so the ack must come off the reassembly
 			# and not wait on whisper (seconds). voice_done follows after the file is
@@ -3667,6 +3710,51 @@ sub ble_message_processor() {
 			&subs::subprocessor(sub {
 				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'} });
 			}, { name => 'voice ingest' });
+		}
+		return;
+	}
+	if ($type && $type eq 'voice_stream') {
+		# A clip arriving while it is still being spoken: the watch encodes IMA
+		# ADPCM as it records and sends it in parts (seq, last). Reassembled here
+		# and wrapped in the same 60-byte WAV header the whole-clip path's file
+		# carries, so the ingest does not know the difference. Nothing happens
+		# until the last part: a half-clip must never be transcribed as if it were
+		# the whole command.
+		my $chip_id = $msg->{'chip_id'} || '?';
+		my $ts = 0 + ($msg->{'ts'} || 0);
+		my $seq = 0 + ($msg->{'seq'} || 0);
+		my $key = $chip_id . '|' . $ts;
+		my $now = time();
+		# a clip nobody finished (the link went away) must not linger
+		foreach my $k ( keys %{ $gb::voice_rx || {} } ) {
+			delete $gb::voice_rx->{$k} if $now - ($gb::voice_rx->{$k}->{'at'} || 0) > 60;
+		}
+		if ($seq == 0) {
+			$gb::voice_rx->{$key} = { data => '', at => $now, edt => $msg->{'edt'} || 'watch', chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'} };
+		}
+		my $rec = $gb::voice_rx->{$key};
+		if ($rec) {
+			$rec->{'at'} = $now;
+			my $raw = $msg->{'audio'} ? eval { decode_base64 $msg->{'audio'} } : '';
+			$rec->{'data'} .= ($raw // '');
+			if ($msg->{'last'}) {
+				my $data = $rec->{'data'};
+				delete $gb::voice_rx->{$key};
+				if (length($data) > 100 && &subs::voice_clip_fresh($chip_id, $ts)) {
+					my $wav = &subs::adpcm_wav_wrap($data);
+					$log->info('BLE streamed clip for ' . $chip_id . ': ' . length($data) . ' encoded bytes');
+					&subs::bluetooth_sender({
+						intent => 'com.jawn.president.bt.connect',
+						chip_id => $chip_id,
+						edt => $rec->{'edt'},
+						message => { type => 'voice_recv', ts => $ts }
+					});
+					my ($edt, $voice) = ($rec->{'edt'}, $rec->{'voice'});
+					&subs::subprocessor(sub {
+						&subs::voice_ingest($wav, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice });
+					}, { name => 'voice ingest' });
+				}
+			}
 		}
 		return;
 	}
@@ -4219,51 +4307,54 @@ my $returner = '';
 			my $phone = $l->{'number'};
 			$phone =~ s/\D+//gi;
 			$phone =~ s/^1//;
+			next unless $phone;
 			$returner .= "Phone is " . $phone . "\n";
-			my $res = &subs::db_query('select app from settings where setting = ? and value like ? and device = ?', 'phone', '%' . $phone, &subs::device_setter())->hashes;
-			foreach my $r ( @{$res} ) {
-				my $chats = &subs::db_select('mailbox', undef, { phone => $phone, timestamp => $time })->hashes;
-				if ( scalar @{$chats} == 0) {
-					$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
-					my $message = &subs::note_encrypter($suds,$l->{'body'});
-					my $sender = &subs::format_name($r->{'app'});
-					my $suuid = &subs::random_string_creator(44);
-					&subs::db_insert('mailbox', {
-						uuid => $suuid,
-						timestamp => $time,
-						server_time => &subs::rightNow(),
-						body => $l->{'body'}, #$message,
-						manager_file => $sender,
-						status => 'public', #$l->{'type'},
-						phone => $phone,
-					});
-					# the telephone accepted a message: the browsers hear about it
-					&subs::mail_arrival({
-						c => $c,
-						uuid => $suuid,
-						phone => $phone,
-						manager_file => $sender,
-						body => $l->{'body'},
-						status => 'public'
-					});
-				}
+			# the person the number belongs to; a stranger's number becomes an app
+			# of its own, so their texts land somewhere and naming the app later
+			# turns the stranger into a person
+			my $app = &subs::phone_number_app($phone);
+			next unless $app;
+			my $chats = &subs::db_select('mailbox', undef, { phone => $phone, timestamp => $time })->hashes;
+			if ( scalar @{$chats} == 0) {
+				$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
+				my $message = &subs::note_encrypter($suds,$l->{'body'});
+				my $sender = &subs::format_name($app);
+				my $suuid = &subs::random_string_creator(44);
+				&subs::db_insert('mailbox', {
+					uuid => $suuid,
+					timestamp => $time,
+					server_time => &subs::rightNow(),
+					body => $l->{'body'}, #$message,
+					manager_file => $sender,
+					status => 'public', #$l->{'type'},
+					phone => $phone,
+				});
+				# the telephone accepted a message: the browsers hear about it
+				&subs::mail_arrival({
+					c => $c,
+					uuid => $suuid,
+					phone => $phone,
+					manager_file => $sender,
+					body => $l->{'body'},
+					status => 'public'
+				});
+			}
 
-				my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $r->{'app'},'sms',$time);
-				my $qu = $q->hashes;
-				if ( scalar @{$qu} == 0 ) {
-					$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
-					$returner .= "Phone: " . $phone . " - " . $r->{'app'} . "\n";
-					&Manager::appointment_writer($c,{
-						app => &subs::unformat_name($r->{'app'}),
-						timestamp => $time || $timestamp,
-						type => 'sms',
-						notes => &subs::note_encrypter($suds,&subs::format_name($l->{'type'}) . ": " . $l->{'body'}),
-						duration => 5000
-					});
-				}
-				else {
-					$returner .= "Seen " . $phone . " at " . $l->{'received'} . " from " . $r->{'app'} . " already\n";
-				}
+			my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $app,'sms',$time);
+			my $qu = $q->hashes;
+			if ( scalar @{$qu} == 0 ) {
+				$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
+				$returner .= "Phone: " . $phone . " - " . $app . "\n";
+				&Manager::appointment_writer($c,{
+					app => &subs::unformat_name($app),
+					timestamp => $time || $timestamp,
+					type => 'sms',
+					notes => &subs::note_encrypter($suds,&subs::format_name($l->{'type'}) . ": " . $l->{'body'}),
+					duration => 5000
+				});
+			}
+			else {
+				$returner .= "Seen " . $phone . " at " . $l->{'received'} . " from " . $app . " already\n";
 			}
 		}
 	}
@@ -8804,6 +8895,30 @@ sub telephone_contacts_check() {
 	}
 }
 
+# The app a number belongs to: the person who saved it, or - when the house
+# does not know the number - the number itself, filed as an app of its own so
+# a stranger's calls and texts still land somewhere, and naming that app later
+# turns the stranger into a person. The phone row is made at the same time, so
+# the next call or text from the same number resolves the same way. Matching is
+# on the last ten digits of both sides, the way the call-log check learned to.
+sub phone_number_app {
+	my $number = shift;
+	$number =~ s/\D+//g;
+	$number =~ s/^1//;
+	return '' unless $number;
+	my $tail = substr $number, -10;
+	my $contacts = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
+	my ($phone) = grep {
+		my $v = $_->{'value'};
+		$v =~ s/\D+//g;
+		$v && (length($v) >= 10 ? substr($v, -10) : $v) eq $tail;
+	} @{$contacts};
+	return $phone->{'app'} if $phone && $phone->{'app'};
+	# unknown: the number becomes the app, and the row makes it known
+	&subs::setting_setter({ app => $number, setting => 'phone', value => $number });
+	return $number;
+}
+
 sub telephone_call_log_check() {
 
 	return unless $device eq 'mobile';
@@ -8839,16 +8954,10 @@ sub telephone_call_log_check() {
 		# Match on the last ten digits of both: a raw substring test meant a
 		# contact stored without the country code (or with dashes) never met its
 		# own call - which is why a working termux-call-log still filed nothing.
-		my $tail = substr $number, -10;
-		my $contacts = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
-		my ($phone) = grep {
-			my $v = $_->{'value'};
-			$v =~ s/\D+//g;
-			$v && (length($v) >= 10 ? substr($v, -10) : $v) eq $tail;
-		} @{$contacts};
-		# an unknown caller is still a call: file it on the fallback app, the one
-		# the live path already uses, rather than dropping it on the floor
-		my $app = ($phone && $phone->{'app'}) ? $phone->{'app'} : 'phone';
+		# (the matching itself lives in phone_number_app)
+		# an unknown caller is still a call: file it on the number's own app
+		# (the number becomes the app), rather than dropping it on the floor
+		my $app = &subs::phone_number_app($number) || 'phone';
 
 		# the live phone app may already have written this call as it happened
 		# (window.JawnPhoneEvent): skip it so a live call and its call-log trail
