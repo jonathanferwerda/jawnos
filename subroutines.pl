@@ -16181,6 +16181,26 @@ sub backfills() {
 			&subs::say_it("backfill guide_message_warranty: stamped $n guide message(s)");
 			return 1;
 		},
+		'settings_dedupe' => sub {
+			# A settings row is keyed by (app, setting, device, subsetting), but the
+			# setter's delete on an undef subsetting matched nothing - SQL
+			# 'subsetting = NULL' is never true - so every write left its predecessor
+			# behind. That is invisible (mostly same-value cost/mobile rows) but it grew
+			# the table and every sync, which is the 'Now merging N settings' that looked
+			# stuck. The setter is fixed; this collapses what is already there. Keep the
+			# row the reader returns - settings_grabber assigns in row order, so the last
+			# write (highest rowid) is the visible value - and drop the rest. A peer that
+			# still carries a duplicate cannot bring it back: a merge skips a row it
+			# already holds at >= server_time.
+			my $sth = eval { &subs::db_query(
+				q{delete from settings
+				   where rowid not in (
+				     select max(rowid) from settings
+				     group by app, setting, device, coalesce(subsetting,''))}) };
+			return 0 unless $sth;   # a locked database: retry on the next pass
+			&subs::say_it('backfill settings_dedupe: collapsed ' . $sth->rows . ' duplicate settings row(s)');
+			return 1;
+		},
 	};
 }
 
