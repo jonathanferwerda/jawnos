@@ -380,6 +380,12 @@ String authorization;
 String homebase;
 String homebaseIP;
 String thomebaseIP;
+// A homebase that is unreachable - or a link that is not up yet, which is exactly
+// what a now_me push arrives into right after the deck joins - turns every
+// request into a TLS connect, and hammering it asserts inside lwip's thread/mbox
+// setup and reboots the deck (jw.ino documents the same). Back off after a
+// failure so a press falls back instead of retrying at once.
+static uint32_t homebase_down_until = 0;
 String twshomebaseIP;
 String homebaseIPArray[10];
 String before_me = "";
@@ -2886,6 +2892,12 @@ long rightNow() {
 }
 
 void https_download(fs::FS &fs, String url, String filename) {
+  // The same link guard as https_request: a download reaches a LAN homebase, so
+  // there is nothing to try without a link (the TLS connect is what reboots).
+  if (WiFi.status() != WL_CONNECTED || (int32_t)(millis() - homebase_down_until) < 0) {
+    Serial.println("[https] no link; download skipped");
+    return;
+  }
   url = url_maker(url);
   Serial.println("In the https download");
   Serial.println("writing to " + filename);
@@ -2942,6 +2954,20 @@ String url_maker(String url) {
 
 
 String https_request(String url) {
+  // A TLS connect needs a live link: with the deck off WiFi - or the link still
+  // flapping from a join the now_me push just triggered - the connect itself is
+  // what asserts inside lwip's thread/mbox setup and reboots the deck. Every
+  // request here is to a LAN homebase, so with no link there is nothing to reach:
+  // return before the TLS stack.
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    return "failure";
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return "failure";
+  }
+  if ((int32_t)(millis() - homebase_down_until) < 0) {
+    return "failure";
+  }
   url = url_maker(url);
   Serial.println("In the https request");
   Serial.println(url);
@@ -2960,10 +2986,12 @@ String https_request(String url) {
   String answer = "failure";
   if (httpCode == HTTP_CODE_OK) {
     answer = https.getString();
+    homebase_down_until = 0;
   }
   else {
     Serial.printf("HTTPS FAILED error: %s\n", https.errorToString(httpCode).c_str());
     writeFile(FFat, "/bootreport.txt", "failure");
+    homebase_down_until = millis() + 20000;
   }
   https.end();
   return answer;
