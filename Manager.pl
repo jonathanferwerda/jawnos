@@ -2085,6 +2085,57 @@ post '/manager/market/item_delete' => sub($c) {
 	$c->render(json => { uuid => $uuid });
 };
 
+# Tick an item off (pick) or drop it in the cart. Checkout turns the cart into
+# purchases - each on the item's own app, so a house item app is born here - and
+# Cancel just empties the cart back onto the list.
+post '/manager/market/item_flag' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $is_cart = ($c->param('flag') || '') eq 'cart' ? 1 : 0;
+	my $on = $c->param('on') ? 1 : 0;
+	my $key = $is_cart ? 'cart' : 'picked';
+	my $list = &market_list();
+	my $found;
+	foreach my $it ( @{$list} ) {
+		next unless ($it->{'uuid'} || '') eq $uuid;
+		if ($on) { $it->{$key} = 1; } else { delete $it->{$key}; }
+		$found = 1;
+	}
+	&market_save_list($list) if $found;
+	$c->render(json => { uuid => $uuid, flag => $key, on => $on });
+};
+
+post '/manager/market/cancel' => sub($c) {
+	my $list = &market_list();
+	foreach my $it ( @{$list} ) { delete $it->{'cart'}; }
+	&market_save_list($list);
+	$c->render(json => { ok => 1 });
+};
+
+post '/manager/market/checkout' => sub($c) {
+	my $vendor_default = &subs::unformat_name($c->param('vendor')) || '';
+	my $now = &subs::rightNow();
+	my $list = &market_list();
+	my (@kept, $written);
+	foreach my $it ( @{$list} ) {
+		unless ($it->{'cart'}) { push @kept, $it; next; }
+		my $write = {
+			app => &subs::unformat_name($it->{'text'}),
+			type => 'purchase',
+			timestamp => $now,
+			quantity => ($it->{'quantity'} || 1),
+			movement => 'expense',
+		};
+		my $vendor = $it->{'vendor'} || $vendor_default;
+		$write->{'vendor'} = $vendor if $vendor;
+		$write->{'unit'} = $it->{'unit'} if $it->{'unit'};
+		$write->{'total'} = $it->{'price'} if ($it->{'price'} || '') =~ /[0-9]/;
+		&appointment_writer($c, $write);
+		$written++;
+	}
+	&market_save_list(\@kept);
+	$c->render(json => { written => $written });
+};
+
 # The warehouse (or anything that knows what needs buying) names an item; Market
 # upgrades a matching row to a need.
 post '/manager/market/need' => sub($c) {

@@ -418,6 +418,7 @@ our %topic = (
 		body => [
 			'Market is where what you need to buy gathers. A Lists dropdown groups what to buy by kind, prepopulated with the house\'s categories (Clothes, Food, Household, Tech, and the rest) and remembering any list already in use; a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
+			'While you shop, tick an item off and drop it in the cart; Checkout turns the cart into purchases (each written on the item\'s own app, so a house item app is born there) and retires them from the list, while Cancel just empties the cart back onto it.',
 			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
 		steps => [
@@ -603,13 +604,14 @@ our %topic = (
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
 			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
-			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
+			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended, its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
 			'Use Scan to re-discover devices, or Query on a row to ask one board what it is.',
 			'Push a room to send a screen of buttons to a watch or deck.',
-			'On a watch row, set the Voice select to choose what it listens for, then press Now Me to push the change.'
+			'On a watch row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
+			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],
 		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge', 'voice' ]
 	},
@@ -624,16 +626,18 @@ our %topic = (
 			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
 			'How the watch listens is the Voice setting on the watch row in the Embedded panel. There are four choices: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn or Voice: Jawn Do - which waits for that phrase and records what follows.',
 			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" and "Jawn Do" are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all.',
+			'How quiet the room has to go before the watch decides you have finished speaking is the Noise floor select on the watch row. Auto is the default and reads the room the watch is standing in - the watch hears a steady tone of its own, so the floor rides just above whatever it is hearing and lets go when you stop. The numbers 1200 to 3400 pin it by hand, for when a noisy room cuts a command short or a quiet one will not let go.',
 			'When the guide associate answers a spoken request, the reply lands on the watch itself: the words appear on its screen, and the spoken answer plays over its speaker. The Audio replies button on the watch row in the Embedded panel turns the speech off, leaving the words on screen.'
 		],
 		steps => [
 			'Open Embedded and find the watch in the device list.',
 			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn or Voice: Jawn Do.',
+			'Leave Noise floor on its row on Auto unless a noisy room keeps cutting your command short.',
 			'The choice is pushed to the watch as a fresh Now Me, and the watch starts listening in that mode.',
 			'Speak: a command runs, and anything else is saved as a note. Answers to requests the guide associate handles are shown and spoken on the watch.'
 		],
 		related => [ 'watch', 'embedded', 'notes', 'ble_bridge' ],
-		prompt => 'Describe the Voice select on the watch row in the Embedded panel and its four choices exactly: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, Voice: Jawn Do. Only those two phrases are trained - do not name any other wake word.'
+		prompt => 'Describe the Voice select on the watch row in the Embedded panel and its four choices exactly: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, Voice: Jawn Do. Only those two phrases are trained - do not name any other wake word. Also mention the Noise floor select on the same row: Auto (the default, which reads the room) or one of 1200, 1600, 2000, 2600, 3400 to pin it.'
 	},
 	'windows' => {
 		title => 'Windows', category => 'features',

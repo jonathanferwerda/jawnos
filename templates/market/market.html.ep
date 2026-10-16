@@ -17,9 +17,11 @@
 		my $kind = ($it->{'kind'} || '') eq 'need' ? 'need' : 'want';
 		my $uuid = $it->{'uuid'} || '';
 		my $v = $it->{'vendor'} || '';
-		my $o = '<div class="market_row" uuid="' . $uuid . '" data-kind="' . $kind . '" data-vendor="' . $v . '" data-list="' . ($it->{'list'} || '') . '" style="border-bottom:1px solid var(--line);padding:5px;font-size:18px;">';
+		my $o = '<div class="market_row" uuid="' . $uuid . '" data-kind="' . $kind . '" data-vendor="' . $v . '" data-list="' . ($it->{'list'} || '') . '" data-cart="' . ($it->{'cart'} ? 1 : 0) . '" data-picked="' . ($it->{'picked'} ? 1 : 0) . '" style="border-bottom:1px solid var(--line);padding:5px;font-size:18px;">';
 		if ($editable) {
-			$o .= '<select class="market_kind" uuid="' . $uuid . '" style="font-size:15px;">';
+			$o .= '<button class="market_pick" uuid="' . $uuid . '" style="min-width:34px;" title="Picked">' . ($it->{'picked'} ? '&#10003;' : '&#9675;') . '</button>';
+			$o .= '<button class="market_cart" uuid="' . $uuid . '" style="margin-left:4px;font-size:14px;" title="In cart">' . ($it->{'cart'} ? 'in cart' : 'cart') . '</button>';
+			$o .= '<select class="market_kind" uuid="' . $uuid . '" style="font-size:15px;margin-left:4px;">';
 			$o .= '<option value="want"' . ($kind eq 'want' ? ' selected' : '') . '>Want</option>';
 			$o .= '<option value="need"' . ($kind eq 'need' ? ' selected' : '') . '>Need</option>';
 			$o .= '</select>';
@@ -56,6 +58,8 @@
 			<% } %>
 		</select>
 		<span style="flex:1 1 auto;"></span>
+		<button id="market_checkout" style="font-size:15px;">Checkout (<span id="market_cart_count">0</span>)</button>
+		<button id="market_cancel" style="font-size:15px;">Cancel</button>
 		<button class="market_tab" tab="list">Shopping List</button>
 		<button class="market_tab" tab="shopping">Shopping</button>
 	</div>

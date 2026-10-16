@@ -64,6 +64,7 @@ function marketApply() {
 		}
 		r.toggle(vendor_ok && list_ok && kind_ok);
 	});
+	body.find('#market_cart_count').text(body.find('#market_list_rows .market_row[data-cart="1"]').length);
 }
 
 // Enter always adds an item (no shift-for-newline here), like Notes.
@@ -93,6 +94,26 @@ $(document).on('change', '.market_kind', function() {
 
 $(document).on('click', '.market_delete', function() {
 	$.post('/manager/market/item_delete', { uuid: $(this).attr('uuid'), timestamp: Date.now() });
+});
+
+// The tick and the cart, and the two ways out: Checkout turns the cart into
+// purchases, Cancel empties it back onto the list.
+$(document).on('click', '.market_pick', function() {
+	var r = $(this).closest('.market_row');
+	$.post('/manager/market/item_flag', { uuid: $(this).attr('uuid'), flag: 'pick', on: (r.attr('data-picked') === '1' ? 0 : 1), timestamp: Date.now() });
+});
+
+$(document).on('click', '.market_cart', function() {
+	var r = $(this).closest('.market_row');
+	$.post('/manager/market/item_flag', { uuid: $(this).attr('uuid'), flag: 'cart', on: (r.attr('data-cart') === '1' ? 0 : 1), timestamp: Date.now() });
+});
+
+$(document).on('click', '#market_cancel', function() {
+	$.post('/manager/market/cancel', { timestamp: Date.now() });
+});
+
+$(document).on('click', '#market_checkout', function() {
+	$.post('/manager/market/checkout', { vendor: marketVendor, timestamp: Date.now() });
 });
 
 $(document).on('click', '.market_tab', function() {
