@@ -62,6 +62,24 @@
 							<option value="<%= $vm %>" <% if (($operator_door->{'__specs'}->{'voice_trigger'} || 'off') eq $vm) { %>selected<% } %>><%= $voice_modes{$vm} %></option>
 						<% } %>
 					</select>
+					<%# the frame level a wake capture holds above once the voice stops. A watch
+					    carries a steady tone of its own that the room never drops below, so a
+					    fixed floor either ends the clip mid-sentence or never ends it at all.
+					    'Auto' learns the room the watch is in and sits just over it; a number
+					    pins the floor by hand when auto mishears. Pushed on change. %>
+					<% my %voice_floors = (
+						auto => 'Noise floor: Auto',
+						1200 => 'Noise floor: 1200',
+						1600 => 'Noise floor: 1600',
+						2000 => 'Noise floor: 2000',
+						2600 => 'Noise floor: 2600',
+						3400 => 'Noise floor: 3400',
+					); %>
+					<select class="embedded_setting" setting="voice_floor" push="now_me" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+						<% foreach my $vf ( qw/auto 1200 1600 2000 2600 3400/ ) { %>
+							<option value="<%= $vf %>" <% if (($operator_door->{'__specs'}->{'voice_floor'} || 'auto') eq $vf) { %>selected<% } %>><%= $voice_floors{$vf} %></option>
+						<% } %>
+					</select>
 				<% } %>
 				<br>
 				<%# whether the guide associate's answer is spoken on the device as well

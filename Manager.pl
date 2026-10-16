@@ -25279,6 +25279,9 @@ sub now_me($data) {
 		# how the watch should start a voice capture: off / vad / a wake word. The
 		# watch defaults to off when it is absent.
 		voice_trigger  => $op_d->{'__specs'}->{'voice_trigger'},
+		# the frame RMS a wake capture holds above once the voice has stopped: 'auto'
+		# follows the watch's own room reading, a number pins it. Absent means auto.
+		voice_floor    => $op_d->{'__specs'}->{'voice_floor'},
 		# whether the guide associate's answers are spoken on the device as well as
 		# shown (the Embedded panel's Audio replies toggle); absent means on
 		audio_replies  => $op_d->{'__specs'}->{'audio_replies'},
