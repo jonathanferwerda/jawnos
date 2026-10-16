@@ -20,6 +20,7 @@ using fs::FS;
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>
 #include <mbedtls/platform.h>
+#include <esp_mac.h>
 // the ESP32 ROM's miniz: inflate a compressed bridge payload (see ble_inflate_if_zlib)
 #include "miniz.h"
 #include <driver/i2s_tdm.h>
@@ -731,6 +732,31 @@ static void mbedtls_psram_free(void *p) {
   heap_caps_free(p);
 }
 
+// The radio addresses the server needs to bridge this deck: bluetooth_sender
+// connects the bridge daemon to mac_addresses->bluetooth. Mirrors jw.ino's.
+JSONVar printAllMacAddresses() {
+  uint8_t mac[6];
+  char buf[18];
+  JSONVar addresses;
+  if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+    sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    addresses["base"] = String(buf);
+  }
+  if (esp_read_mac(mac, (esp_mac_type_t)0) == ESP_OK) {
+    sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    addresses["wifi_sta"] = String(buf);
+  }
+  if (esp_read_mac(mac, (esp_mac_type_t)1) == ESP_OK) {
+    sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    addresses["wifi_ap"] = String(buf);
+  }
+  if (esp_read_mac(mac, (esp_mac_type_t)2) == ESP_OK) {
+    sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    addresses["bluetooth"] = String(buf);
+  }
+  return addresses;
+}
+
 void setup() {
   Serial.begin(115200);
   // mbedTLS allocates its ~16 KB handshake buffers from internal RAM only,
@@ -1048,6 +1074,12 @@ void setup() {
     g["chip_id"] = chip_id;
     g["purpose"] = "teletype";
     g["name"] = name;
+    // the radio addresses (and the NUS uuids) so the server can bridge this deck:
+    // bluetooth_sender connects the daemon to mac_addresses->bluetooth
+    g["mac_addresses"] = printAllMacAddresses();
+    g["SERVICE_UUID"] = SERVICE_UUID;
+    g["CHARACTERISTIC_UUID_RX"] = CHARACTERISTIC_UUID_RX;
+    g["CHARACTERISTIC_UUID_TX"] = CHARACTERISTIC_UUID_TX;
     g["uptime"] = millis();
     g["wigi"] = wigi;
     JSONVar jonfig = g;
@@ -1202,6 +1234,16 @@ void setup() {
   // defaults the missing pieces and always draws a usable screen
   configRestore();
   deckLog("[deck] config restore done");
+  // Join the network when the config carries credentials. Without it the server
+  // never sees the deck - no /device_query for its macs, no mDNS to name it - and
+  // its Bluetooth link can never be bridged, so a recorded clip has nowhere to
+  // go. wifi_server() starts mDNS itself once the link is up.
+  if (WiFi.status() != WL_CONNECTED && ssid.length() && password.length()) {
+    deckLog("[deck] joining wifi %s", ssid.c_str());
+    wifi_enabled = true;
+    wifi_server();
+    deckLog("[deck] wifi %s", WiFi.status() == WL_CONNECTED ? "up" : "NOT up");
+  }
   wsclient.onMessage(wsMessageCallback);
   // set output power to 10 dBm (accepted range is -17 - 22 dBm)
   // The radio is a bonus like the GPS: each of these used to park in a silent
@@ -1615,6 +1657,14 @@ static void jawnos_mdns_start() {
   MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Deck");
   MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
   MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
+  // the Bluetooth address, so the server can bridge this deck without waiting on
+  // a /device_query (bluetooth_sender connects the daemon to it)
+  uint8_t bmac[6];
+  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
+    char mstr[18];
+    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
+    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
+  }
   jawnos_mdns_up = true;
   deckLog("[mdns] jawnos._tcp up as %s", host.c_str());
 }

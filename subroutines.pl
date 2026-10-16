@@ -2266,6 +2266,14 @@ sub mdns_merge_address() {
 				$n->{'mac'} = $src->{'mac'}; $changed = 1;
 			}
 			if ($d && $d->{'port'} && !$n->{'PORT_DOCK'}) { $n->{'PORT_DOCK'} = $d->{'port'}; $changed = 1; }
+			# a device that named its radio in the TXT: keep the Bluetooth address
+			# where the bridge looks for it (bluetooth_sender reads this field)
+			if ($d && $d->{'mac'}) {
+				my $ma = $n->{'mac_addresses'};
+				$ma = eval { decode_json $ma } if $ma && !ref $ma;
+				$ma = {} unless ref $ma eq 'HASH';
+				if (!$ma->{'bluetooth'}) { $ma->{'bluetooth'} = uc $d->{'mac'}; $n->{'mac_addresses'} = $ma; $changed = 1; }
+			}
 		}
 		foreach my $d (values %{$devices->{'by_ip'}}) {
 			next if $self_ip{$d->{'ip'}};
@@ -2276,6 +2284,7 @@ sub mdns_merge_address() {
 				uuid => &subs::random_string_creator(25), purpose => $d->{'purpose'},
 				name => $d->{'name'}, model => $d->{'model'}, chip_id => $d->{'chip_id'},
 				capabilities => $d->{'capabilities'}, PORT_DOCK => $d->{'port'},
+				mac_addresses => ($d->{'mac'} ? { bluetooth => uc $d->{'mac'} } : undef),
 			};
 			$changed = 1;
 		}

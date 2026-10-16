@@ -167,10 +167,18 @@ Still to do:
   the deck: 128000 -> 16444 bytes, verified) and sent as one base64 `voice`
   message over the BLE bridge, which `subs::voice_ingest` funnels into the same
   transcription a tap reaches (`deck_voice_compress`/`deck_voice_ble_send`).
-  What is missing is the **link**: nothing bridges the deck's BLE yet. The desktop
-  daemon connects by MAC (`{"cmd":"connect","mac":..}`), so the server must
-  learn the deck's BLE address first - `mac=` in the `_jawnos._tcp` TXT is the
-  obvious hook - before it can ask the bridge to connect as it does for the watch.
+  What was missing was the **link**, and the pieces for it are now in: the deck
+  and the watch put `mac=<bluetooth>` in their `_jawnos._tcp` TXT, and the server
+  keeps it in the device's `mac_addresses->{bluetooth}` (`mdns_merge_address`),
+  which is the field `bluetooth_sender` connects the daemon with. The catch that
+  remains: **nothing is on WiFi**, so nothing advertises mDNS - the deck's
+  `/config.json` was wiped when its corrupt FFat was reformatted, so it has no
+  credentials and `setup()` (which now joins WiFi when configured) never does.
+  Onboard the deck (its AP form at `http://192.168.4.1:3000/`, or the phone app
+  pushing WiFi over BLE the way the watch was onboarded) and the server will see
+  it and can bridge it. The other route, needing no WiFi: have the bridge daemon
+  **scan** for the NUS service and let the server adopt a fresh deck by radio -
+  the natural "plug it in and it is known" flow, and the one to build next.
 - Wake words (`hey jawn` / `jawn do`) still need the TFLM stack copied over
   (`voice_models.h` -> `jawn_micro_features` + the model headers). `jawn_do` is
   not trained yet either. The VAD/manual clip is the first target.

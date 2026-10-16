@@ -2471,6 +2471,14 @@ static void jawnos_mdns_start() {
   MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Watch S3");
   MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
   MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
+  // the Bluetooth address, so the server can bridge this watch without waiting on
+  // a /device_query (bluetooth_sender connects the daemon to it)
+  uint8_t bmac[6];
+  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
+    char mstr[18];
+    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
+    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
+  }
   jawnos_mdns_up = true;
   Serial.println("[mdns] jawnos._tcp up as " + host);
 }
