@@ -1150,7 +1150,8 @@ sub rock_and_roll($c) {
 				my $filename = $file;
 				$filename =~ s/\.enc$//gi;
 				foreach my $es ( @encryption_standards ) {
-					my $data =	`openssl enc -d -k "$secret" -$encryption_standard -pbkdf2 -in $file -nopad`;
+					my $data = &subs::open_file($file, $secret, $encryption_standard, 1);
+					next unless defined $data && length $data;
 					my $ft = File::Type->new();
 					my $fd = $ft->checktype_contents($data);
 
@@ -1179,8 +1180,8 @@ sub rock_and_roll($c) {
 								unless (-e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100) {
 									my $filename = $tdir . '/' .&subs::random_string_creator(20) . '.' . $ext;
 									if ($file =~ /webm/) { $fd = 'video/webm'; }
-									my $command = 'openssl enc -d -k "' . $secret . '" -' . $encryption_standard . ' -pbkdf2 -in ' . $file .' -out ' . $filename . ' -nopad';
-									`$command`;
+									my $thumb_bytes = &subs::open_file($file, $secret, $encryption_standard, 1);
+									write_file($filename, $thumb_bytes) if defined $thumb_bytes && length $thumb_bytes;
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm/ ) {
 										my $command2 = 'ffmpeg -ss 00:00:00.010 -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
@@ -1215,7 +1216,7 @@ sub rock_and_roll($c) {
 										$file_data->{'server_time'} = &subs::rightNow();
 										$file_data = &subs::file_media_information($file_data,$filename);
 										write_file($filename, $data);
-										my $encrypt =	`openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $filename -out $path`;
+										&subs::seal_file($filename, $path, $secret, $encryption_standard);
 										my $appt = &subs::db_select('appointments', undef, { uuid => $appter->[0]->{'uuid'}, app => $appter->[0]->{'app'} })->hashes->[0];
 										$atf = eval { return decode_json $appt->{'file'} } || [];
 										my @natf = grep { $_->{'uuid'} eq $file_data->{'uuid'} } @{$atf};
@@ -5257,6 +5258,47 @@ get '/manager/backup_serve' => sub($c) {
 	}
 	$c->res->headers->content_type('application/octet-stream');
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+	$c->rendered(200);
+};
+
+# A teletype (the deck) pulls the house's running database, sealed, onto its own
+# SD card. The Dev panel's Backup button hands the deck the snapshot's names and
+# the deck fetches the bytes here, so this serves the rolling
+# database/backups/jawnos.enc - the house as it stands. If that snapshot is older
+# than the utility controller's own backup interval it is taken fresh first, so the
+# deck gets a current copy without waiting for the hourly job. A device has no
+# session, so this route rides the gate-exempt rail and identifies its caller
+# itself: the chip_id must be a device this machine holds, the same identification
+# every other embedded request carries (hardened in a later pass).
+get '/embedded/teletype/backup' => sub($c) {
+	my $chip_id = $c->param('chip_id');
+	my $known;
+	if ($chip_id) {
+		foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+			next unless $d->{'chip_ids'};
+			foreach my $ch ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+				if ($ch->{'id'} && $ch->{'id'} eq $chip_id) { $known = 1; last; }
+			}
+			last if $known;
+		}
+	}
+	unless ($known) { $c->rendered(403); return; }
+	my $enc = &subs::backups_dir() . '/jawnos.enc';
+	my $interval = 3600;   # the utility controller's backups job, by default hourly
+	my $uc = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	foreach my $job ( values %{$uc} ) {
+		next unless ref $job eq 'HASH' && ref $job->{'backups'} eq 'HASH';
+		$interval = 0 + $job->{'backups'}->{'interval'} if $job->{'backups'}->{'interval'};
+	}
+	my $age = -f $enc ? (time() - (stat $enc)[9]) : 1e9;
+	if ($age > $interval) {
+		my $cc = &subs::controller_builder();
+		$cc->param('reason' => 'teletype_backup');
+		eval { &subs::backup_now($cc); };
+	}
+	unless (-f $enc) { $c->rendered(404); return; }
+	$c->res->headers->content_type('application/octet-stream');
+	$c->res->content->asset(Mojo::Asset::File->new(path => $enc));
 	$c->rendered(200);
 };
 

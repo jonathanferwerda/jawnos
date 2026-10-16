@@ -5047,7 +5047,7 @@ sub note_kdf {
 }
 
 sub note_ctr_mode { require Crypt::Mode::CTR; return Crypt::Mode::CTR->new('AES', 1, 16); }
-sub note_cbc_mode { require Crypt::Mode::CBC; return Crypt::Mode::CBC->new('AES', 1); }
+sub note_cbc_mode { my ($nopad) = @_; require Crypt::Mode::CBC; return Crypt::Mode::CBC->new('AES', $nopad ? 0 : 1); }
 
 sub note_random_salt {
 	return Crypt::PRNG::random_bytes(8) if eval { require Crypt::PRNG; 1 };
@@ -5102,8 +5102,10 @@ sub note_encrypter() {
 
 
 # Open an openssl container with the inner cipher; undef when it will not open.
+# $nopad leaves the PKCS#7 padding on (the file path sniffs the plaintext by its
+# own nose, so it asks for the bytes untouched).
 sub note_open_container {
-	my ($container, $secret, $standard) = @_;
+	my ($container, $secret, $standard, $nopad) = @_;
 	my $spec = &note_cipher_spec($standard);
 	if ($spec) {
 		# The AES family runs in-process and there is deliberately no openssl
@@ -5118,20 +5120,21 @@ sub note_open_container {
 		my ($key, $iv) = (substr($kiv, 0, $spec->{'keylen'}), substr($kiv, $spec->{'keylen'}, 16));
 		return eval {
 			$spec->{'family'} eq 'ctr' ? &note_ctr_mode()->decrypt($ct, $key, $iv)
-			                           : &note_cbc_mode()->decrypt($ct, $key, $iv)
+			                           : &note_cbc_mode($nopad)->decrypt($ct, $key, $iv)
 		};
 	}
 	# a cipher we cannot run in-process: openssl, and a second try through the
 	# legacy provider for the older ciphers
-	my $plain = &note_openssl_open($container, $secret, $standard);
+	my $plain = &note_openssl_open($container, $secret, $standard, 0, $nopad);
 	return $plain if defined $plain && length $plain;
-	return &note_openssl_open($container, $secret, $standard, 1);
+	return &note_openssl_open($container, $secret, $standard, 1, $nopad);
 }
 
 sub note_openssl_open {
-	my ($container, $secret, $standard, $legacy) = @_;
+	my ($container, $secret, $standard, $legacy, $nopad) = @_;
 	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2', '-a', '-A');
 	push @args, '-provider', 'default', '-provider', 'legacy' if $legacy;
+	push @args, '-nopad' if $nopad;
 	my ($out, $in);
 	my $pid = open2($out, $in, @args);
 	return undef unless $pid;
@@ -5140,6 +5143,27 @@ sub note_openssl_open {
 	my $plain = do { local $/; <$out> }; close $out; waitpid($pid, 0);
 	return undef if $?;
 	return $plain;
+}
+
+# The file sealing is the very same container, read from and written to a path.
+sub note_seal_bytes { my ($plain, $secret, $standard) = @_; return &note_seal_container($plain, $secret, $standard); }
+sub note_open_bytes { my ($container, $secret, $standard, $nopad) = @_; return &note_open_container($container, $secret, $standard, $nopad); }
+
+sub seal_file {
+	my ($in_path, $out_path, $secret, $standard) = @_;
+	my $plain = eval { &read_file($in_path) };
+	return 0 unless defined $plain && length $plain;
+	my $container = &note_seal_bytes($plain, $secret, $standard);
+	return 0 unless defined $container && length $container;
+	eval { &write_file($out_path, $container) };
+	return(-e $out_path ? 1 : 0);
+}
+
+sub open_file {
+	my ($in_path, $secret, $standard, $nopad) = @_;
+	my $container = eval { &read_file($in_path) };
+	return undef unless defined $container && length $container;
+	return &note_open_bytes($container, $secret, $standard, $nopad);
 }
 
 # The security credentials a note of a given moment could have been sealed under,
@@ -6056,7 +6080,7 @@ sub file_encrypter() {
 					my $secret = $suds;
 					# first, store the encryption standard.
 
-					my $encrypt =	`openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $path -out $enc_path`;
+					&seal_file($path, $enc_path, $secret, $encryption_standard);
 					`shred -u $path`;
 					$f = $enc_path;
 					$fi->{$file_type} = $f;
@@ -6130,14 +6154,14 @@ sub file_decrypter() {
 					foreach my $p ( @{$pwords} ) {
 						my $secret = &subs::decrypter($suds, $p->{'credential'});
 
-						my $data = `openssl enc -d -k "$secret" -$encryption_standard -pbkdf2 -in $enc_path`;
+						my $data = &open_file($enc_path, $secret, $encryption_standard);
+						next unless defined $data && length $data;
 						my $ft = File::Type->new();
 						my $type_from_data = $ft->mime_type($data);
-						my $head = `echo "$data" | head`;
 
 						if ($type_from_data ne 'application/octet-stream' || ($data =~ /webm/)) {
 
-							my $o = `openssl enc -d -k "$secret" -$encryption_standard -pbkdf2 -in $enc_path -out $path`;
+							&write_file($path, $data);
 							$f = $path;
 							`shred -u $enc_path`;
 							$success = 1;
