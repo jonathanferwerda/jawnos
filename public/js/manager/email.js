@@ -525,6 +525,19 @@ $(document).on('click', '.wind[app="email"] .email_deleter', function (e) {
 	emailTrash(uuid, inReader);
 });
 
+// An attachment from a sender the house does not know is a button, not a link:
+// the download only happens when it is pressed.
+$(document).on('click', '.wind[app="email"] .mail_att_download', function () {
+	var href = $(this).attr('data-href');
+	if (!href) { return; }
+	var a = document.createElement('a');
+	a.href = href;
+	a.download = $(this).attr('data-name') || '';
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+});
+
 // ---- the toast --------------------------------------------------------------
 function emailToast(text, actionLabel, onAction) {
 	$('#email_toast').remove();

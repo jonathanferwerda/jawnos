@@ -55,6 +55,9 @@
 					<% } %>
 					<tr><td>Date</td><td class="time" timestamp="<%= $m->{'timestamp'} %>"></td></tr>
 					<% if (scalar @{$attachments} > 0) { %>
+						<%# a letter from someone the house does not know does not hand over its
+						    files on its own: each is a button the person presses to download. %>
+						<% my $new_sender = (($m->{'status'} || '') eq 'inbox' && $from && !&subs::db_query('select app from settings where setting = ? and value = ?', 'email', $from)->hashes->[0]) ? 1 : 0; %>
 						<tr><td>Attachments</td><td>
 							<% foreach my $a ( @{$attachments} ) {
 								my $afile = $a->{'f'} || ($a->{'file'} ? $a->{'file'}->{'f'} : '');
@@ -62,7 +65,9 @@
 								my $aname = $a->{'of'} || $a->{'name'} || ($a->{'file'} ? $a->{'file'}->{'of'} : '') || ($afile =~ m{([^/]+)$} ? $1 : 'attachment');
 								my $ahref = $asrc ? $asrc : ($afile ? '/file_open?file=' . $afile . ($a->{'uuid'} ? '&uuid=' . $a->{'uuid'} : '') : '');
 							%>
-								<% if ($ahref) { %>
+								<% if ($ahref && $new_sender) { %>
+									<button class="mail_reader_att mail_att_download" data-href="<%= $ahref %>" data-name="<%= $aname %>" hint="This sender is new - press to download">Download <%= $aname %></button>
+								<% } elsif ($ahref) { %>
 									<a class="mail_reader_att" href="<%= $ahref %>" download="<%= $aname %>" target="_blank" title="Download <%= $aname %>"><%= $aname %></a>
 								<% } else { %>
 									<span class="mail_reader_att"><%= $aname %></span>

@@ -1777,6 +1777,13 @@ body.dark_theme #ide {
 }
 .email_toast .email_toast_action:hover { filter: brightness(1.12); }
 
+/* an attachment from an unknown sender is a download button, not a link */
+.wind[app="email"] .mail_att_download {
+	background-color: var(--panel); color: var(--ink);
+	font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.wind[app="email"] .mail_att_download:hover { background-color: var(--panel-2); }
+
 /* the sort controls in the toolbar */
 .wind[app="email"] #email_sort_by {
 	height: 30px; min-height: 0; font-size: 14px;
