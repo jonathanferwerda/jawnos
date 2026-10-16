@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.525** (2026-10-16). Done work is marked so it is
+The remaining plan, as of **v0.1.528** (2026-10-16). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -124,6 +124,45 @@ Still to do:
   `scripts/records_recover.pl`, `subs::records_*`). In review; keep the "leave this
   app alone" silences honest.
 
+## Shopping / Market / warehouse
+
+Done: `quantity` as a first-class budget — a stream **rate** from the appointment
+`quantity` over the window, and a fixed form (`6quantity`) that reads the
+warehouse on hand; `budget_autocalc` fixed to a rate (no more window-averaging);
+the **Market** app (vendor + list dropdowns, a need/want dial per row, Enter adds,
+a `Here:` list from the position and the vendor's home plate); named lists
+prepopulated from the house categories; cart → **Checkout** writes a `purchase`
+per line on the item's own app; a **barcode scan** resolves a code once (house
+item, then a catalogue, then the model's naming) and makes a house item app; the
+native **JawnScan** bridge; **packaging autofill** via the model; the
+forgot-to-check-out reminder; and reading a whole **receipt** — the scanner (ADF
+feeds a long one in one pass) or a photo → the vision model reads the lines → a
+confirm panel names each in our terms and links it into the list in the cart.
+
+Still to do:
+- **A real receipt through the ADF** — the paths are built and the model read a
+  synthetic one; load a real receipt, press Receipt → Scan (ADF), and check a long
+  one arrives as its pages in order.
+- **A receipts view** — the kept receipts live in the Market app's own `receipts`
+  setting (vendor, date, total, the lines, the page paths); nothing shows them
+  yet. Give Market a small receipts pane that opens the pages and offers "add
+  these lines to the list" again.
+- **Low-confidence lines** — the confirm panel trusts the names; mark a line the
+  batch naming was unsure of, or one whose prices do not sum to the printed total,
+  so it is the one a person checks.
+- **Vendor ↔ list "shops at"** — currently learned only by adding an item with
+  both set; make it an explicit, editable section.
+- **Add a due item that is not on the list** — a warehouse-short item is only
+  upgraded to a need when it is already there (`market_upgrade_need`); add it on
+  open instead of waiting for a person to type it.
+- **Cadence** — the warehouse check runs on Market open (`/manager/market/refresh`);
+  make it a timer too, so a due item surfaces without the app being opened (the
+  "always keep 6 beers" notify/shopping-list side).
+- **`market_cart_watcher`** — the forgot-to-check-out reminder (`Alarm.pl`) is
+  written but never time-tested.
+- **Native receipt capture** — the JawnScan bridge sends a barcode today; give it
+  a photo path so a receipt can be captured on the phone as well as loaded.
+
 ## Cross-cutting
 
 - **Help** — update each app's topic in the same commit as its UI, then
@@ -153,3 +192,24 @@ Still to do:
 - App release: `scripts/app_build.pl`, `scripts/app_release.pl`, `scripts/app_publish.pl`;
   repo `~/jawnos-app/termux-app` (`jawnos` branch, `fork` remote).
 - Probes/scratch: `.shots/` (gitignored), ticket in `.shots/ticket.txt`.
+
+### Quick file map for the shopping / market / receipt work
+
+- Routes: `Manager.pl` — `/manager/market`, `/manager/market/item_add`,
+  `/item_kind`, `/item_delete`, `/item_flag`, `/cancel`, `/checkout`, `/scan`,
+  `/receipt`, `/receipt/apply`, `/need`, `/refresh`.
+- Shared helpers: `Manager.pl` — `market_list`, `market_lists_*`, `market_item_due`,
+  `market_upgrade_need`, `market_sweep_needs`, `market_barcode_*`,
+  `market_receipt_*` (read/name-batch/lines/scan/store/file), `scanner_scan_command`;
+  `subroutines.pl` — `warehouse_on_hand`, `warehouse_restock_for`,
+  `warehouse_money_mirror`.
+- Templates/JS: `templates/market/market.html.ep`, `public/js/manager/market.js`;
+  the budget picker `templates/configure/budget_goals.html.ep`.
+- The scanner is an OfficeJet 3830 (`hpaio:/net/officejet_3830_series`), feeds
+  `ADF` + `Flatbed`, in `config.json`.
+- The live receipt test used `.shots/receipt_probe.pl` (read) and the cleanup
+  `.shots/receipt_cleanup.pl` / `market_restore.pl`.
+- Snapshot recovery for a bad write: `subs::records_backup_decrypt` unseals
+  `database/backups/jawnos_<ms>.enc`; **beware `subs::vacuum($app)`** —
+  `delete_app` runs it and it wipes *all* of an app's settings when the app has no
+  appointments and is not `permanent`.
