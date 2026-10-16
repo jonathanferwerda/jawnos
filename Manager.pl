@@ -22288,6 +22288,25 @@ post '/manager/records/fixes_retry' => sub($c) {
 	$c->render(json => { retried => $c->param('uuid') });
 };
 
+# Talk a finding through with the Coding agent before applying it: a real
+# appointment can be surprisingly long, so the audit finds and the agent reads.
+post '/manager/records/fixes_ask' => sub($c) {
+	my $answer = &subs::records_ask($c->param('uuid'), $c->param('question'), $c->param('history'));
+	$c->render(json => { answer => $answer });
+};
+
+# "Leave this app alone": a class of appointment the person knows is real (a home
+# stay, a long ailment). The audit never reports that app again until the setting
+# is cleared by hand.
+post '/manager/records/fixes_exempt' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $row = eval { &subs::db_select('staged_records', undef, { uuid => $uuid })->hash };
+	my $app = $c->param('app') || ($row && $row->{'app'});
+	&subs::records_exempt_add($app) if $app;
+	&subs::db_update('staged_records', { status => 'discarded', note => 'left alone by the person' }, { uuid => $uuid }) if $uuid;
+	$c->render(json => { exempt => $app });
+};
+
 post '/manager/records/fixes_clear' => sub($c) {
 	&subs::db_query('delete from staged_records');
 	$c->render(json => { ok => 1 });

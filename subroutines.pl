@@ -16437,6 +16437,28 @@ sub records_audit_prompt {
 		'Answer with a JSON list of proposed actions, one per row: {"action":"keep"|"tombstone"|"repair","app":..,"uuid":..,"stop_timestamp":..,"duration":..,"why":".."}. Say which row you keep per group and why, and list what you leave alone and why. Write nothing else.';
 }
 
+# An app the person has said is genuinely, surprisingly long-lived (a home stay, an
+# eight-month ailment). Length alone can never tell a real session from a swept one,
+# so the audit must be able to be told to leave an app alone entirely. Stored per
+# machine as a JSON list of app names (mail/records_exempt).
+sub records_exempt {
+	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'records_exempt' }) // '';
+	my $saved = length($raw) ? eval { decode_json $raw } : undef;
+	$saved = [] unless ref $saved eq 'ARRAY';
+	my %apps;
+	foreach my $a ( @{$saved} ) { $apps{$a} = 1 if defined $a && length $a; }
+	return \%apps;
+}
+
+sub records_exempt_add {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	my $exempt = &records_exempt();
+	$exempt->{$app} = 1;
+	&subs::setting_setter({ app => 'mail', setting => 'records_exempt', value => encode_json([ sort keys %{$exempt} ]) });
+	return 1;
+}
+
 sub records_audit {
 	my ($window_ms) = @_;
 	# 0 means all time: the sweep predates the fix by weeks, so the default window is
@@ -16444,6 +16466,8 @@ sub records_audit {
 	$window_ms = 172800000 unless defined $window_ms && $window_ms =~ /^[0-9]+$/;
 	my $now = &rightNow();
 	my $since = $window_ms > 0 ? $now - $window_ms : 0;
+	# apps the person has marked as legitimately long: never reported
+	my $exempt = &records_exempt();
 	my $report = {
 		generated_at => $now, window_ms => $window_ms, since => $since,
 		sweep => [], dupes => [], orphans => [], impossible => [],
@@ -16462,6 +16486,7 @@ sub records_audit {
 	# SWEEP - a stop press that closed more than one session
 	my $groups = &db_query('select app, stop_timestamp, count(*) c from appointments where stop_timestamp is not null and stop_timestamp != ? and server_time > ? group by app, stop_timestamp having c > 1 order by stop_timestamp desc', '', $since)->hashes;
 	foreach my $g ( @{$groups} ) {
+		next if $exempt->{ $g->{'app'} };
 		my $rows = &db_query('select rowid, uuid, type, timestamp, stop_timestamp, duration, server_time from appointments where app = ? and stop_timestamp = ? order by timestamp asc', $g->{'app'}, $g->{'stop_timestamp'})->hashes;
 		# rows that share a start as well are the same event written twice, not a
 		# sweep: the DUPES pass owns those, so a repair here can never fight it
@@ -16492,6 +16517,7 @@ sub records_audit {
 	# DUPES - the same event written more than once
 	my $dupes = &db_query('select app, type, timestamp, stop_timestamp, count(*) c, group_concat(rowid) rowids from appointments where server_time > ? group by app, type, timestamp, stop_timestamp having c > 1 order by timestamp desc', $since)->hashes;
 	foreach my $g ( @{$dupes} ) {
+		next if $exempt->{ $g->{'app'} };
 		my @ids = sort { $a <=> $b } split /,/, ($g->{'rowids'} || '');
 		my $kept = shift @ids;
 		push @{$report->{'dupes'}}, { app => $g->{'app'}, type => $g->{'type'}, timestamp => $g->{'timestamp'}, stop_timestamp => $g->{'stop_timestamp'}, keep_rowid => $kept, remove_rowids => \@ids };
@@ -16500,6 +16526,7 @@ sub records_audit {
 	# ORPHANS - an open session, flagged only when it has run far past the app's duration
 	my $orphans = &db_query('select rowid, uuid, app, type, timestamp, server_time from appointments where type in (?,?) and stop_seen is null and timestamp <= ? order by timestamp asc', 'start', 'record', $now - 7200000)->hashes;
 	foreach my $r ( @{$orphans} ) {
+		next if $exempt->{ $r->{'app'} };
 		my $age = $now - (0 + $r->{'timestamp'});
 		my $d = $app_duration{ $r->{'app'} };
 		my %o = ( %{$r}, age_ms => $age );
@@ -16510,7 +16537,7 @@ sub records_audit {
 
 	# IMPOSSIBLE - a stop before its own start
 	my $imp = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, duration from appointments where stop_timestamp is not null and cast(stop_timestamp as integer) < cast(timestamp as integer) and server_time > ?', $since)->hashes;
-	$report->{'impossible'} = $imp;
+	$report->{'impossible'} = [ grep { !$exempt->{ $_->{'app'} } } @{$imp} ];
 
 	my $extra = 0;
 	foreach my $g ( @{$report->{'sweep'}} ) { $extra += scalar(grep { $_->{'suggested'} ne 'keep' } @{$g->{'rows'}}); }
@@ -16655,11 +16682,12 @@ sub records_stage_scan {
 			}
 		}
 		next unless scalar @acts;
+		my @ctx = map { { uuid => $_->{'uuid'}, type => $_->{'type'}, timestamp => $_->{'timestamp'}, stop_timestamp => $_->{'stop_timestamp'}, duration => $_->{'duration'}, suggested => $_->{'suggested'} } } @{$g->{'rows'}};
 		&records_stage({
 			kind => 'sweep', app => $g->{'app'},
 			signature => 'sweep:' . $g->{'app'} . ':' . $g->{'stop_timestamp'},
 			sample => 'one press closed ' . scalar(@{$g->{'rows'}}) . ' sessions' . (defined $g->{'expected_ms'} ? ' (this app runs ' . $g->{'expected_ms'} . ' ms)' : ''),
-			proposed => { app => $g->{'app'}, actions => \@acts },
+			proposed => { app => $g->{'app'}, actions => \@acts, stop_timestamp => $g->{'stop_timestamp'}, expected_ms => $g->{'expected_ms'}, context => \@ctx },
 		}); $staged++;
 	}
 	foreach my $g ( @{$report->{'dupes'}} ) {
@@ -16683,7 +16711,7 @@ sub records_stage_scan {
 			kind => 'orphan', app => $r->{'app'},
 			signature => 'orphan:' . $r->{'app'} . ':' . $r->{'timestamp'},
 			sample => 'open ' . int($r->{'age_ms'} / 3600000) . 'h, far past the app length',
-			proposed => { app => $r->{'app'}, actions => [ { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} } ] },
+			proposed => { app => $r->{'app'}, actions => [ { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} } ], context => [ { uuid => $r->{'uuid'}, type => $r->{'type'}, timestamp => $r->{'timestamp'}, duration => undef, age_ms => $r->{'age_ms'} } ] },
 		}); $staged++;
 	}
 	return { staged => $staged, summary => $report->{'summary'} };
@@ -16707,8 +16735,60 @@ sub records_fix_apply {
 	return { applied => $uuid, rows => $done };
 }
 
+# Put one staged finding to the Coding agent. The audit finds; the agent reads;
+# the person decides. A real appointment can be surprisingly long (a home stay, an
+# eight-month ailment) and a fixed rule can never know that, so the person can talk
+# a finding through before pressing Apply - and the agent is free to answer "leave
+# it alone". Nothing here writes.
+sub records_ask {
+	my ($uuid, $question, $history) = @_;
+	my $row = &db_select('staged_records', undef, { uuid => $uuid })->hash;
+	return 'I could not find that finding.' unless $row;
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
+		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return 'Set a Coding model in Configure and I can read this finding with you.' unless $model;
+	my $p = eval { decode_json($row->{'proposed'} // '') } || {};
+	my $fmt = sub {
+		my ($ms) = @_;
+		return '(none)' unless defined $ms && $ms =~ /^[0-9-]+$/;
+		my $t = localtime(($ms + 0) / 1000);
+		return ref $t ? $t->strftime('%Y-%m-%d %H:%M') : $ms;
+	};
+	my @lines = (
+		'Staged finding (' . ($row->{'kind'} // '?') . ') for the app "' . ($row->{'app'} // '?') . '"',
+		'What the audit saw: ' . ($row->{'sample'} // ''),
+	);
+	if (defined $p->{'expected_ms'} && $p->{'expected_ms'} =~ /^[0-9.]+$/) {
+		push @lines, 'This app\'s configured session length: ' . sprintf('%.1f', $p->{'expected_ms'} / 60000) . ' min';
+	} else {
+		push @lines, 'This app sets no session length of its own.';
+	}
+	my $context = $p->{'context'} || [];
+	if (scalar @{$context}) {
+		push @lines, 'The rows in question:';
+		foreach my $c ( @{$context} ) {
+			push @lines, '  - ' . substr($c->{'uuid'} // '?', 0, 8) . ' ' . ($c->{'type'} // '?')
+				. ', start ' . $fmt->($c->{'timestamp'})
+				. ', stop ' . $fmt->($c->{'stop_timestamp'})
+				. (defined $c->{'duration'} && $c->{'duration'} =~ /^[0-9.-]+$/ ? ', ran ' . sprintf('%.1f', abs($c->{'duration'}) / 60000) . ' min' : '')
+				. ' (audit: ' . ($c->{'suggested'} // '?') . ')';
+		}
+	}
+	push @lines, 'The actions the audit proposes: ' . encode_json($p->{'actions'} || []);
+	my $system = &records_audit_prompt()
+		. "\n\n"
+		. 'You are now looking at ONE staged finding and talking it through with the person who keeps the records. Answer as a careful colleague: what most likely happened, whether the proposed action is safe, and what you would do. Say plainly when the honest answer is "leave it alone - that one was real", and when long is normal for this app. Do not write anything; the person presses Apply.';
+	my $user = join("\n", @lines);
+	$user .= "\n\n" . $history if defined $history && length $history;
+	$user .= "\nPERSON: " . (defined $question && length $question ? $question : 'What do you make of this?');
+	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, $user, &subs::ai_role_thinking('coding_assistant'));
+	return $err && !$text ? ('I could not reach the model: ' . $err) : ($text || 'The model returned nothing readable.');
+}
+
 # One pass of the watch: stage what the audit finds, and - when Apply automatically
-# is ticked - write the oldest proposal. Off until Configure -> Plat ticks Records.
+# is ticked - write the oldest exact-duplicate finding. A sweep or an orphan waits
+# for a person (a genuinely long appointment must never be repaired on its own).
+# Off until Configure -> Plat ticks Records.
 sub records_watch_tick {
 	%setting_memo = ();
 	return unless ((&subs::setting_grabber({ app => 'mail', setting => 'records_watch' }) // '') eq 'on');
@@ -16718,7 +16798,11 @@ sub records_watch_tick {
 	$log->info('records watch: staged pass, ' . ($scan->{'staged'} // 0) . ' finding(s)') if defined $log && !$scan->{'error'};
 	my $auto = ((&subs::setting_grabber({ app => 'mail', setting => 'records_watch_auto' }) // '') eq 'on');
 	return unless $auto && &watch_auto_allowed();
-	my $pending = &subs::db_query('select * from staged_records where status = ? order by ost asc limit 1', 'proposed')->hashes->[0];
+	# Automatic apply is for the provably-safe class only: two rows that are the
+	# same event written twice. A sweep or an orphan is a judgement call - a real
+	# appointment can be surprisingly long - so those always wait for a person,
+	# who can put the finding to the Coding agent first (records_ask).
+	my $pending = &subs::db_query('select * from staged_records where status = ? and kind = ? order by ost asc limit 1', 'proposed', 'dupe')->hashes->[0];
 	if ($pending) {
 		my $applied = eval { &records_fix_apply($pending->{'uuid'}) } || { error => ($@ || 'no result') };
 		&watch_auto_count();

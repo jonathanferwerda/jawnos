@@ -2335,10 +2335,20 @@ function recordsRender() {
 			var line = $('<div style="padding:6px 0;border-top:1px solid var(--line);"></div>');
 			line.append($('<div></div>').text((f.kind || '') + ' · ' + (f.app || '') + ' — ' + (f.sample || '')));
 			line.append($('<div style="opacity:.7;"></div>').text(acts.length + ' action(s): ' + $.map(acts, function(a){ return a.action + ' ' + String(a.uuid || '').slice(0, 10); }).join(', ')));
-			var bar = $('<div style="margin-top:4px;display:flex;gap:8px;"></div>');
+			var bar = $('<div style="margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;"></div>');
 			$('<button type="button"></button>').addClass('records_apply').attr('uuid', f.uuid).text('Apply').appendTo(bar);
 			$('<button type="button"></button>').addClass('records_discard').attr('uuid', f.uuid).text('Discard').appendTo(bar);
+			$('<button type="button"></button>').addClass('records_leave_app').attr('uuid', f.uuid).attr('app', f.app || '').text('Leave this app alone').appendTo(bar);
 			line.append(bar);
+			// the findings a rule cannot judge - a genuinely long appointment - can be put
+			// to the Coding agent and talked through before anything is applied
+			var area = $('<div class="records_ask_area" style="margin-top:6px;"></div>');
+			var ans = $('<div class="records_answer" style="white-space:pre-wrap;opacity:.85;"></div>');
+			var askrow = $('<div style="display:flex;gap:6px;margin-top:4px;"></div>');
+			$('<input type="text" class="records_ask_q" placeholder="Ask the Coding agent about this finding…"></input>').css({ flex: '1', minWidth: '0' }).appendTo(askrow);
+			$('<button type="button"></button>').addClass('records_ask').attr('uuid', f.uuid).text('Ask').appendTo(askrow);
+			area.append(ans, askrow);
+			line.append(area);
 			list.append(line);
 		});
 	}).fail(function() { list.html('<div style="opacity:.6;">Could not load the findings.</div>'); });
@@ -2354,6 +2364,36 @@ $(document).on('click', '.records_apply', function() {
 $(document).on('click', '.records_discard', function() {
 	var b = $(this); b.prop('disabled', true).text('…');
 	$.post('/manager/records/fixes_discard', { uuid: b.attr('uuid') }, function() { recordsRender(); });
+});
+// put one finding to the Coding agent and keep the exchange on screen; each turn
+// sends the transcript so far, so a follow-up question has the context
+$(document).on('click', '.records_ask', function() {
+	var b = $(this), area = b.closest('.records_ask_area');
+	var qi = area.find('.records_ask_q'), ans = area.find('.records_answer');
+	var question = qi.val() || '';
+	var history = ans.attr('convo') || '';
+	qi.val('');
+	b.prop('disabled', true).text('…');
+	ans.text((history ? history + '\n' : '') + 'You: ' + question + '\nAgent: thinking…');
+	$.post('/manager/records/fixes_ask', { uuid: b.attr('uuid'), question: question, history: history }, function(res) {
+		var answer = (res && res.answer) ? res.answer : '(no answer)';
+		var convo = (history ? history + '\n' : '') + 'You: ' + question + '\nAgent: ' + answer;
+		ans.attr('convo', convo).text(convo);
+		b.prop('disabled', false).text('Ask');
+	}).fail(function() {
+		ans.text(history);
+		b.prop('disabled', false).text('Ask');
+	});
+});
+$(document).on('keydown', '.records_ask_q', function(e) {
+	if (e.which === 13) { $(this).closest('.records_ask_area').find('.records_ask').trigger('click'); }
+});
+// a class the person knows is really long: silence the audit for that app
+$(document).on('click', '.records_leave_app', function() {
+	var b = $(this), app = b.attr('app');
+	if (app && !confirm('Leave "' + app + '" alone? The records audit will stop reporting it.')) { return; }
+	b.prop('disabled', true).text('…');
+	$.post('/manager/records/fixes_exempt', { uuid: b.attr('uuid'), app: app }, function() { recordsRender(); });
 });
 $(document).on('click', '#records_scan_now', function() {
 	var s = $(this); s.text('scanning…');
