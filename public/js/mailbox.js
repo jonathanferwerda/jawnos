@@ -288,6 +288,14 @@ $(document).on('click','.email_config_folder_view_toggle', function() {
 	}
 });
 
+// Attachment-scanning options. They live under app 'mail', so they sync to the
+// machine that receives the mail (where clamd answers) along with everything else.
+$(document).on('change', '.email_scan_setting', function() {
+	var t = $(this);
+	var value = (t.attr('type') === 'checkbox') ? (t.prop('checked') ? 'on' : 'off') : t.val();
+	settingSetter({ app: 'mail', setting: t.attr('setting'), value: value });
+});
+
 $(document).on('change', '.email_server_setting', function() {
 	var set = $(this);
 	var setting = set.attr('setting');

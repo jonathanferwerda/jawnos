@@ -208,5 +208,38 @@
 			</span>
 		<% } %>
 		<button class="email_config_server_add hover little_thumb" style="text-align:center;">Add Server</button>
+		<%# Attachment scanning. These are settings under 'mail', so they sync across the
+		    mesh and reach the machine that actually receives (the one whose purpose is
+		    server, where clamd answers). The receiver consults them; nothing here scans
+		    on its own. %>
+		<span class="email_scan_config" style="display:block;margin-top:14px;">
+			<table style="width:100%;max-width:100%;border:solid;border-width:3px;" class="email_scan_settings">
+				<thead><th colspan="2">Attachment scanning</th></thead>
+				<tbody>
+					<tr>
+						<td>Scan incoming attachments</td>
+						<td><input type="checkbox" class="email_scan_setting" setting="email_scan" <% if ((&subs::setting_grabber({ app => 'mail', setting => 'email_scan' }) || 'on') eq 'on') { %>checked="checked"<% } %>></td>
+					</tr>
+					<tr>
+						<td>Largest file to scan (MB)</td>
+						<td><input type="number" min="0" class="email_scan_setting" setting="email_scan_max_mb" value="<%= &subs::setting_grabber({ app => 'mail', setting => 'email_scan_max_mb' }) || 25 %>"></td>
+					</tr>
+					<tr>
+						<td>Scan timeout (seconds)</td>
+						<td><input type="number" min="5" class="email_scan_setting" setting="email_scan_timeout" value="<%= &subs::setting_grabber({ app => 'mail', setting => 'email_scan_timeout' }) || 60 %>"></td>
+					</tr>
+					<tr>
+						<td>When infected</td>
+						<td>
+							<select class="email_scan_setting" setting="email_scan_action">
+								<option value="quarantine" <% if ((&subs::setting_grabber({ app => 'mail', setting => 'email_scan_action' }) || 'quarantine') eq 'quarantine') { %>selected<% } %>>Quarantine it</option>
+								<option value="refuse" <% if ((&subs::setting_grabber({ app => 'mail', setting => 'email_scan_action' }) || '') eq 'refuse') { %>selected<% } %>>Refuse it</option>
+							</select>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<span class="cfg-note" style="font-size:12px;opacity:.75;">Scanned on the server that receives the mail, with clamd called on demand. Google and Microsoft sign-in and the IMAP settings move here too.</span>
+		</span>
 	<% } %>
 </div>
