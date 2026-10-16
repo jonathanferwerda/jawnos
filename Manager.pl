@@ -10980,6 +10980,7 @@ sub inventory_window_value($appts, $display, $settings) {
 			$value += $d;
 		}
 		elsif ($display eq 'total') { $value += abs($a->{'total'} || 0); }
+		elsif ($display eq 'quantity') { $value += abs($a->{'quantity'} || 0); }
 		else {
 			my $measures = eval { decode_json $a->{'measures'} } || [];
 			foreach my $m ( @{$measures} ) {
@@ -13228,6 +13229,12 @@ post '/manager/budget/edit' => sub($c) {
 		}
 
 	}
+	# A letter-bearing budget (a measure like "8681.139steps/d", or a quantity like
+	# "3.4quantity/week") is claimed by more than one mode as they are all re-read -
+	# the duration pass takes any letters - so the same string can be appended twice;
+	# keep it once.
+	my %seen_budget;
+	$existing_budgets = join ',', grep { !$seen_budget{$_}++ } split ',', ($existing_budgets // '');
 	&subs::setting_setter({ app => $app, setting => 'budget', value => $existing_budgets });
 	$c->render(json => { existing_budgets => $existing_budgets, new_budget => $value });
 };
@@ -13621,6 +13628,12 @@ sub budget_calculator($data) {
 				elsif ($circumstance eq 'total') {
 					$value += (abs $appt->{'total'} || 0) if $value;
 				}
+				elsif ($circumstance eq 'quantity') {
+					# the stream the app's movement filter names - beer's poured amount,
+					# not its purchases - read as a magnitude, the way a total budget
+					# reads the money
+					$value += abs( $appt->{'quantity'} || 0 );
+				}
 				else {
 					# a measure: sum, or average, it across the window's appointments -
 					# the measure decides (steps summed, weight averaged), so its
@@ -13682,6 +13695,19 @@ sub budget_calculator($data) {
 				$returner->{'budgets'}->{$circumstance} = $b;
 				$returner->{'circumstance'} = $circumstance;
 
+				$returner->{'budgeted'} =~ s/[^0-9.]//gi;
+				$returner->{'formatted_value'} = sprintf("%.3f", $value) . $circumstance;
+				last;
+			}
+			elsif ($circumstance eq 'quantity') {
+				# a quantity budget names itself the way a measure does
+				# ("3.400quantity/week"), so a bare number stays an occurences budget
+				my $quantity_name = $bud[0];
+				$quantity_name =~ s/[^a-zA-Z]//gi;
+				next unless $quantity_name eq 'quantity';
+				$returner->{'budgets'}->{'quantity'} = $b;
+				$returner->{'circumstance'} = 'quantity';
+				$returner->{'budgeted'} = $bud[0];
 				$returner->{'budgeted'} =~ s/[^0-9.]//gi;
 				$returner->{'formatted_value'} = sprintf("%.3f", $value) . $circumstance;
 				last;
@@ -13880,22 +13906,32 @@ sub budget_autocalc($data) {
 	# The six windows this reads, named once so 'data' (added below) is never
 	# mistaken for one of them.
 	my @windows = keys %{$returner};
-	# A measure reads with its own calc (steps summed, weight averaged); every other
-	# circumstance is a budget mode and reads the plain way.
-	my $is_measure = !( $circumstance eq 'occurences' || $circumstance eq 'duration' || $circumstance eq 'total' );
+	# A measure is any circumstance the base modes do not name (the same test
+	# budget_calculator uses), so 'quantity' reads as the base mode it is; a measure
+	# reads with its own calc (steps summed, weight averaged).
+	my $is_measure = ( scalar grep { $_ eq $circumstance } keys %{$gb::budget_modes} ) == 0;
 	my $mcalc = $is_measure ? &measure_calc_for($app, $circumstance, $settings->{'s_calc'}) : undef;
 	# The whole history, not the last thousand: a window can reach a year back, and
 	# the cap left the long scopes reading only the recent stretch. Read by
 	# timestamp (app,timestamp is indexed) and only the columns the sum needs.
-	my $cols = 'timestamp';
+	my $cols = 'timestamp,type';
 	$cols .= ',duration' if $circumstance eq 'duration';
 	$cols .= ',total' if $circumstance eq 'total';
+	$cols .= ',quantity' if $circumstance eq 'quantity';
 	$cols .= ',measures' if $is_measure;
 	my $appts = $data->{'appts'} || &subs::db_query("select $cols from appointments where app = ? order by timestamp ASC", $app)->hashes;
 	if ($scope && $timestamp) {
 		my $duration = &subs::time_abbrev_translator(1 . $scope, $server_time);
 		my $beginning = $server_time - ( $duration * ($settings->{'s_scope_count'} || 1) );
 		@{$appts} = grep { $_->{'timestamp'} > $beginning } @{$appts};
+	}
+	# The app's own movement filter names the stream a budget reads (beer's poured
+	# amount, not its purchases), so the recommendation reads that same stream -
+	# 'all', or no filter at all, keeps every appointment.
+	my $movement = $settings->{'s_movement'} ? ( eval { return decode_json $settings->{'s_movement'} } || [] ) : [];
+	if (scalar @{$movement} && !grep { $_ eq 'all' } @{$movement}) {
+		my %wanted = map { $_ => 1 } @{$movement};
+		@{$appts} = grep { $wanted{ $_->{'type'} || '' } } @{$appts};
 	}
 
 	# Sum the value each appointment offers the reading, and note the span it was
@@ -13915,6 +13951,9 @@ sub budget_autocalc($data) {
 		}
 		elsif ($circumstance eq 'total') {
 			$value = $appt->{'total'} + 0;
+		}
+		elsif ($circumstance eq 'quantity') {
+			$value = abs( $appt->{'quantity'} || 0 );
 		}
 		elsif ($is_measure) {
 			next unless $appt->{'measures'};
