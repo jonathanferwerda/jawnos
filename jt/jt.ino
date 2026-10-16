@@ -1898,6 +1898,15 @@ void loop() {
             before_me = JSON.stringify(bm);
           }
         }
+        else if (mtype == "hello") {
+          // the bridge names itself (this machine's name): what the net room's
+          // BT line shows in place of the address, which rotates underneath it
+          const char *who = (const char *)btMsg["name"];
+          if (who != nullptr) {
+            snprintf(ble_peer_name, sizeof(ble_peer_name), "%s", who);
+          }
+          deckLog("[bt] hello: %s", ble_peer_name);
+        }
         else if (mtype == "now_me") {
           // the phone pushes the whole picture over BLE: the homebase, the
           // authorization (freshly rotated), the clock offset and the room
