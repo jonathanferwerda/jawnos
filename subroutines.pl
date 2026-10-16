@@ -16191,12 +16191,15 @@ sub backfills() {
 			# row the reader returns - settings_grabber assigns in row order, so the last
 			# write (highest rowid) is the visible value - and drop the rest. A peer that
 			# still carries a duplicate cannot bring it back: a merge skips a row it
-			# already holds at >= server_time.
+			# already holds at >= server_time. Group by the column itself, not
+			# coalesce(subsetting,''): SQLite groups NULLs together but apart from '', and
+			# those are two keys, so a non-null subsetting row is never mistaken for a
+			# duplicate of a null one.
 			my $sth = eval { &subs::db_query(
 				q{delete from settings
 				   where rowid not in (
 				     select max(rowid) from settings
-				     group by app, setting, device, coalesce(subsetting,''))}) };
+				     group by app, setting, device, subsetting)}) };
 			return 0 unless $sth;   # a locked database: retry on the next pass
 			&subs::say_it('backfill settings_dedupe: collapsed ' . $sth->rows . ' duplicate settings row(s)');
 			return 1;
