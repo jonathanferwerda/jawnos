@@ -240,10 +240,11 @@ our %topic = (
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
 		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'Dial', 'Call', 'Caller ID', 'Block', 'Unblock' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
+			'A person can keep more than one line (a home number, a work number, a second mobile - set under Configure, in the app\'s Phones tile). They are listed together on one row, the plain phone number first and the rest with their type; tapping any one fills the dial pad with that number, and a call or text from any of them still reaches the person.',
 			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, so it still shows in Recent.',
 			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
@@ -253,7 +254,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Phone from the start menu, or pin it to the taskbar.',
-			'Known: tap a number to fill the dial pad.',
+			'Known: tap a number to fill the dial pad - a person with several lines lists them all, and each one taps on its own.',
 			'Recent: tap a call to open the caller\'s appointment thread.',
 			'Recent: press Block twice on a call to bar that number from ringing again.',
 			'Blocked: press Unblock twice to let a number through again.',
@@ -445,11 +446,12 @@ our %topic = (
 	},
 	'chat' => {
 		title => 'Chat', category => 'apps', app => 'chat',
-		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/chat.js' ],
-		verified => '2026-10-15',
+		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/chat.js' ],
+		verified => '2026-10-16',
 		summary => 'The house\'s conversations: sms, the dial, ticket threads and lora.',
 		body => [
 			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the six groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
+			'Friends is one row per person the house knows, carrying every road they can be reached on: their name joins to a ticket when one is open for them, and their number is the thread until then. A person who keeps more than one line (a home number, a work number - set under Configure, in the app\'s Phones tile) shows them under their name, all reaching the same friend.',
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down - except on the guest\'s own ticket thread, the one conversation the house opened for them.',
 			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
 			'Advertise opens the tuned set to guests, who may then tune the same channel from the public page. Room bubbles that are not kept are dashed to say so.',
@@ -458,6 +460,7 @@ our %topic = (
 		steps => [
 			'Open Chat from the start menu.',
 			'Pick a section from the sidebar - sms, dial, list, tickets or lora.',
+			'Friends: tap a person to open their one conversation, and the transport dropdown picks how the next message travels.',
 			'Sms: tap a number, then write in the box below the conversation.',
 			'Dial: pick a set, then press Advertise to open it to guests.',
 			'List: add and configure the sets the dial picks from.',

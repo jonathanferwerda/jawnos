@@ -25,6 +25,10 @@
 					<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
 						<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
 							<%= &subs::format_name($f->{'contact_name'}) %><% if ($f->{'phone'}) { %><span style="opacity:.65;font-size:12px;"> · sms</span><% } %>
+							<% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %>
+							<% if (scalar @extra) { %>
+								<div style="opacity:.6;font-size:11px;"><%= join(' · ', map { &subs::contact_line_label($_) } @extra) %></div>
+							<% } %>
 						</div>
 					<% } %>
 				</div>

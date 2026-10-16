@@ -9236,6 +9236,59 @@ sub contact_apps {
 	return @apps;
 }
 
+# Every line the house holds of one kind, one app's under it: the plain setting
+# (phone/email) first and marked primary, then the typed list (phones/emails) with
+# its type and label. A person with a home and a work line is one entry with all
+# of them, not one per number - which is what the Phone app's directory and
+# Chat's friends both want. Pass $only_app to read just one person's lines.
+sub contact_lines {
+	my ($kind, $only_app) = @_;
+	my $mine = (defined $only_app && length $only_app) ? $only_app : undef;
+	my %lines;
+	my $plain = &subs::db_query('select app, value, server_time from settings where setting=? and value != ? order by server_time desc', $kind, '')->hashes;
+	foreach my $r ( @{$plain} ) {
+		my $app = $r->{'app'};
+		next if $mine && $app ne $mine;
+		next if exists $lines{$app};
+		my $v = $r->{'value'};
+		next unless defined $v && length $v;
+		$lines{$app} = [ { value => $v, type => '', label => '', primary => 1 } ];
+	}
+	my $lists = &subs::db_query('select app, value from settings where setting=? and value != ?', $kind . 's', '')->hashes;
+	foreach my $r ( @{$lists} ) {
+		my $app = $r->{'app'};
+		next if $mine && $app ne $mine;
+		my $list = eval { return decode_json $r->{'value'} } || [];
+		$list = [ $list ] if ref $list eq 'HASH';
+		next unless ref $list eq 'ARRAY';
+		$lines{$app} ||= [];
+		my %seen = map { &subs::contact_normalizer($kind, $_->{'value'}) => 1 } @{ $lines{$app} };
+		foreach my $c ( @{$list} ) {
+			next unless ref $c eq 'HASH';
+			my $v = $c->{'value'};
+			next unless defined $v && length $v;
+			my $key = &subs::contact_normalizer($kind, $v);
+			next if $key && $seen{$key}++;
+			push @{ $lines{$app} }, { value => $v, type => ($c->{'type'} || ''), label => ($c->{'label'} || ''), primary => 0 };
+		}
+	}
+	return \%lines;
+}
+
+# How one line reads in a list: the number or address, and - for a line beyond
+# the first - its type in front of it (a custom entry wears its own label). A
+# blocked line says so.
+sub contact_line_label {
+	my $l = shift;
+	my $text = $l->{'value'};
+	my $type = $l->{'type'} || '';
+	my $label = $l->{'label'} || '';
+	my $name = ($type eq 'custom' && length $label) ? $label : $type;
+	$text = $name . ' ' . $text if length $name && !$l->{'primary'};
+	$text .= ' (blocked)' if $l->{'blocked'};
+	return $text;
+}
+
 # The app a number belongs to: the person who saved it, or - when the house
 # does not know the number - the number itself, filed as an app of its own so
 # a stranger's calls and texts still land somewhere, and naming that app later

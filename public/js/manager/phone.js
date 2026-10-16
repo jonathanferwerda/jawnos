@@ -234,6 +234,17 @@ $(document).on('click', '#phone_app .phone_app_row', function () {
 	}
 });
 
+// a person may keep more than one line: each is its own tap, dialing that one,
+// while the row around them still dials the first
+$(document).on('click', '#phone_app .phone_app_line', function (e) {
+	e.stopPropagation();
+	var n = $(this).attr('dial');
+	if (!n) { return; }
+	jawnPhoneApp.number = n;
+	$('#phone_app #phone_app_display').text(n);
+	$('#phone_app .phone_app_tab[pane="dial"]').trigger('click');
+});
+
 // ---- native (window.JawnContacts) ----------------------------------------
 function jawnPhoneAppArm() {
 	if (!window.JawnContacts || typeof window.JawnContacts.available !== 'function') { return; }

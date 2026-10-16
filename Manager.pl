@@ -6947,14 +6947,18 @@ sub phone_names() {
 # Every number the house holds, split the way the Phone app's panes want it: the
 # people it knows, and the numbers that are only numbers (a stranger's call makes
 # its number an app of its own, so those rows are the ones still to be named).
-# One row per app - the newest wins, the same way the phone's own rows are read.
+# One row per app, carrying every line the person keeps - the plain phone row
+# first, then the typed list - so a person with a home and a work number is listed
+# once, not once per number.
 sub phone_directory() {
-	my $rows = &subs::db_query('select app, value from settings where setting=? and value != ? order by server_time desc', 'phone', '')->hashes;
-	my (%seen, @known, @numbers);
-	foreach my $r ( @{$rows} ) {
-		next if $seen{ $r->{'app'} }++;
-		if ( $r->{'app'} =~ /^\d+$/ ) { push @numbers, $r; }
-		else { push @known, $r; }
+	my $lines = &subs::contact_lines('phone');
+	my (@known, @numbers);
+	foreach my $app ( keys %{$lines} ) {
+		my @l = @{ $lines->{$app} };
+		next unless scalar @l;
+		my $row = { app => $app, value => $l[0]->{'value'}, numbers => \@l };
+		if ( $app =~ /^\d+$/ ) { push @numbers, $row; }
+		else { push @known, $row; }
 	}
 	@known = sort { lc $a->{'app'} cmp lc $b->{'app'} } @known;
 	@numbers = sort { $a->{'app'} cmp $b->{'app'} } @numbers;
@@ -14702,10 +14706,17 @@ get '/manager/phone' => sub($c) {
 	my $directory = &phone_directory();
 	my $blocked = &phone_blocked();
 	my %blocked_number = map { $_->{'number'} => 1 } @{$blocked};
-	# a row says so itself when its number is on the desk's list, so the panes need
-	# no lookup of their own
+	# a row says so itself when any of its lines is on the desk's list, and each
+	# line carries its own reading (the number, its type, whether it is blocked) so
+	# the template joins them without walking the tuples itself
 	foreach my $r ( @{ $directory->{'known'} }, @{ $directory->{'numbers'} } ) {
-		$r->{'blocked'} = $blocked_number{ &ticket_contact_clean('phone', $r->{'value'}) } ? 1 : 0;
+		my $any = 0;
+		foreach my $l ( @{ $r->{'numbers'} } ) {
+			$l->{'blocked'} = $blocked_number{ &ticket_contact_clean('phone', $l->{'value'}) } ? 1 : 0;
+			$l->{'display'} = &subs::contact_line_label($l);
+			$any = 1 if $l->{'blocked'};
+		}
+		$r->{'blocked'} = $any;
 	}
 	my $content = $c->render_to_string(
 		template => 'apps/phone',
@@ -19421,21 +19432,25 @@ sub mail_checker($c) {
 		$settings->{'subsection'} = $scope_sections[0] if @scope_sections;
 	}
 
-	# Chat's friends: the people the house knows (the settings phone rows - each is
-	# a named person with a number), joined to a ticket when one is open in their
-	# name, so one row per friend carries every road they can be reached on. The
-	# number is the thread until they hold a ticket; then the ticket is.
+	# Chat's friends: the people the house knows (each a named person with at least
+	# one line), joined to a ticket when one is open in their name, so one row per
+	# friend carries every road they can be reached on. The number is the thread
+	# until they hold a ticket; then the ticket is. Every line the person keeps -
+	# the plain phone row and the typed list beside it - rides the one row.
 	my $friends = [];
 	if ($scope && $scope eq 'chat' && $privilege eq 'citizen') {
-		my $phone_rows = &subs::db_query("select app, value from settings where setting=? and value != ''", 'phone')->hashes;
 		my %ticket_by_app;
 		foreach my $t ( @{$contacts} ) { $ticket_by_app{lc($t->{'app'} || $t->{'name'} || '')} ||= $t->{'uuid'}; }
-		foreach my $p ( @{$phone_rows} ) {
+		my $lines = &subs::contact_lines('phone');
+		foreach my $app ( keys %{$lines} ) {
+			my @l = @{ $lines->{$app} };
+			next unless scalar @l;
 			push @{$friends}, {
-				app => $p->{'app'},
-				contact_name => $p->{'app'},
-				phone => $p->{'value'},
-				uuid => ($ticket_by_app{lc($p->{'app'} || '')} || '')
+				app => $app,
+				contact_name => $app,
+				phone => $l[0]->{'value'},
+				numbers => \@l,
+				uuid => ($ticket_by_app{lc($app)} || '')
 			};
 		}
 	}
@@ -19493,15 +19508,18 @@ sub mail_checker($c) {
 	elsif ($contact) {
 		my @cont = grep { $_->{'uuid'} eq $contact } @{$contacts};
 		$main_title = &subs::format_name($cont[0]->{'name'});
-		# history that was once filed under the phone number joins the person's
-		# one thread, so a conversation started over sms continues in chat and
-		# back without splitting (rows the live path files already carry both)
-		my $c_phone = &subs::db_query('select value from settings where setting=? and app=? and value != ? limit 1', 'phone', ($cont[0]->{'app'} || $cont[0]->{'contact_name'} || ''), '')->hashes->[0];
-		if ($c_phone && $c_phone->{'value'}) {
-			my $pn = $c_phone->{'value'};
+		# history that was once filed under any of the person's lines joins their
+		# one thread, so a conversation started over sms - on the plain number or an
+		# extra one - continues in chat and back without splitting (rows the live
+		# path files already carry both)
+		my $c_app = $cont[0]->{'app'} || $cont[0]->{'contact_name'} || '';
+		my $clines = &subs::contact_lines('phone', $c_app);
+		foreach my $l ( @{ $clines->{$c_app} || [] } ) {
+			my $pn = $l->{'value'};
 			$pn =~ s/\D+//g;
 			$pn =~ s/^1//;
-			&subs::db_query('update mailbox set contact = ? where contact is null and phone = ?', $contact, $pn) if $pn;
+			next unless $pn;
+			&subs::db_query('update mailbox set contact = ? where contact is null and phone = ?', $contact, $pn);
 		}
 		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
 	}

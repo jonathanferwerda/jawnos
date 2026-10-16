@@ -25,6 +25,8 @@
 	.phone_app_avatar img { width:100%; height:100%; object-fit:cover; }
 	.phone_app_name { flex:1 1 auto; font-size:15px; }
 	.phone_app_sub { font-size:12px; color:var(--muted,#8e8e8e); }
+	.phone_app_line { text-decoration:underline dotted; text-underline-offset:2px; cursor:pointer; }
+	.phone_app_line:hover { color:var(--accent,#4a90d9); }
 	.phone_app_missed .phone_app_name { color:#e0444e; }
 	.phone_app_block { flex:0 0 auto; opacity:0.55; cursor:pointer; }
 	.phone_app_block:hover { opacity:1; }
@@ -62,10 +64,11 @@
 		<% if (@{$known}) { %>
 			<div class="phone_app_list">
 			<% foreach my $contact (@{$known}) { %>
+				<% my @lines = grep { $_->{'value'} } @{ $contact->{'numbers'} || [] }; %>
 				<div class="phone_app_row" number="<%= $contact->{'value'} %>" app="<%= $contact->{'app'} %>">
 					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
 					<span class="phone_app_name"><%= &subs::format_name($contact->{'app'}) %></span>
-					<span class="phone_app_sub"><%= $contact->{'value'} %><% if ($contact->{'blocked'}) { %> · blocked<% } %></span>
+					<span class="phone_app_sub"><% my $sep = ''; foreach my $l (@lines) { %><%== $sep %><span class="phone_app_line" dial="<%= $l->{'value'} %>"><%= $l->{'display'} || $l->{'value'} %></span><% $sep = ' · '; } %></span>
 				</div>
 			<% } %>
 			</div>
@@ -117,10 +120,11 @@
 	<div class="phone_app_pane" pane="all">
 		<div class="phone_app_list">
 		<% foreach my $contact (@{$known}) { %>
+			<% my @lines = grep { $_->{'value'} } @{ $contact->{'numbers'} || [] }; %>
 			<div class="phone_app_row" number="<%= $contact->{'value'} %>" app="<%= $contact->{'app'} %>">
 				<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
 				<span class="phone_app_name"><%= &subs::format_name($contact->{'app'}) %></span>
-				<span class="phone_app_sub"><%= $contact->{'value'} %></span>
+				<span class="phone_app_sub"><% my $sep = ''; foreach my $l (@lines) { %><%== $sep %><span class="phone_app_line" dial="<%= $l->{'value'} %>"><%= $l->{'display'} || $l->{'value'} %></span><% $sep = ' · '; } %></span>
 			</div>
 		<% } %>
 		<% foreach my $stranger (@{$numbers}) { %>
