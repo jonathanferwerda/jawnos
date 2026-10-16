@@ -231,6 +231,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
     deviceConnected = true;
     ble_notify_ready = false;   // until the central subscribes to the TX characteristic
     ble_connected_at = millis();
+    deckLog("[bt] central attached");
   };
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
@@ -765,6 +766,24 @@ void setup() {
   }
   else {
     deckLog("[deck] ffat ok");
+    // A FAT that mounts but cannot be written is a half-erased filesystem: reads
+    // answer from stale data, every write fails (0 files listed, yet only part
+    // of the partition free), and the voice recordings never land. Probe once
+    // and heal it. Nothing that matters survives a filesystem in this state.
+    bool writable = false;
+    File probe = FFat.open("/.wtest", FILE_WRITE);
+    if (probe) {
+      writable = probe.write((const uint8_t *)"x", 1) == 1;
+      probe.close();
+      FFat.remove("/.wtest");
+    }
+    if (!writable) {
+      deckLog("[deck] ffat mounts but writes fail; reformatting");
+      FFat.end();
+      FFat.format();
+      FFat.begin();
+      deckLog("[deck] ffat reformatted, %u bytes free", (unsigned)FFat.freeBytes());
+    }
   }
 
   // BLE writes are queued from the stack's own task and handled in loop()
@@ -5547,6 +5566,10 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
 // first of them) becomes the mono track.
 String WAV_FILE_PATH = "/rec.wav";
 static volatile bool isRecording = false;
+// the voice path: the clip's own epoch (seconds) and the file it was written to,
+// so the shipping task knows what to send
+static volatile long deck_voice_ts = 0;
+static String deck_voice_wav;
 // a timed recording (0 = until the button is tapped again)
 static uint32_t record_end_ms = 0;
 
@@ -5657,6 +5680,164 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint16_t 
   audio_file.seek(40);
   audio_file.write((uint8_t *)&raw_pcm_bytes, 4);
   audio_file.close();
+}
+
+// ---- voice clips over the BLE bridge (the watch's voice path, deck edition) --
+// The deck records a clip to /recordings/<epoch>.wav (16 kHz mono). To reach the
+// server the way the watch does, the clip is folded to 8 kHz and compressed to
+// IMA ADPCM (~4:1), then sent as one base64 "voice" message over the BLE bridge -
+// the server funnels it into the same voice_ingest a tap's url reaches, so the
+// deck gets the same transcription and the same reply. BLE only for now (the
+// watch also POSTs over WiFi when it can; that can follow).
+#define DECK_ADPCM_BLOCK 1024
+#define DECK_ADPCM_SPB ((DECK_ADPCM_BLOCK - 4) * 2 + 1)   // 2041 samples/block
+#define DECK_VOICE_RATE 8000
+
+static const int32_t deck_adpcm_step[89] = {
+  7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,
+  50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,
+  337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,
+  2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,
+  12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767 };
+static const int8_t deck_adpcm_index[16] = { -1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8 };
+
+static void deck_wr16(uint8_t *p, uint16_t v) { p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; }
+static void deck_wr32(uint8_t *p, uint32_t v) { p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; p[2] = (v >> 16) & 0xff; p[3] = (v >> 24) & 0xff; }
+
+// Fold the 16 kHz mono clip to 8 kHz and IMA-encode it under the same 60-byte
+// header the watch writes, so the server's whisper reads an identical file.
+static bool deck_voice_compress(const String &in_path, const String &out_path) {
+  File in = FFat.open(in_path.c_str(), FILE_READ);
+  if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
+  uint32_t pcm_bytes = in.size() - 44;
+  uint32_t in_samples = pcm_bytes / 2;
+  uint32_t out_samples = in_samples / 2;      // 16k mono -> 8k
+  uint32_t blocks = (out_samples + DECK_ADPCM_SPB - 1) / DECK_ADPCM_SPB;
+  uint32_t data_bytes = blocks * DECK_ADPCM_BLOCK;
+  uint32_t total = 60 + data_bytes;
+  uint8_t *buf = (uint8_t *)ps_malloc(total);
+  if (!buf) { buf = (uint8_t *)malloc(total); }
+  if (!buf) { in.close(); return false; }
+  uint32_t abps = (uint32_t)((uint64_t)DECK_VOICE_RATE * DECK_ADPCM_BLOCK / DECK_ADPCM_SPB);
+  memcpy(buf, "RIFF", 4); deck_wr32(buf + 4, total - 8); memcpy(buf + 8, "WAVE", 4);
+  memcpy(buf + 12, "fmt ", 4); deck_wr32(buf + 16, 20);
+  deck_wr16(buf + 20, 0x11); deck_wr16(buf + 22, 1);
+  deck_wr32(buf + 24, DECK_VOICE_RATE); deck_wr32(buf + 28, abps);
+  deck_wr16(buf + 32, DECK_ADPCM_BLOCK); deck_wr16(buf + 34, 4);
+  deck_wr16(buf + 36, 2); deck_wr16(buf + 38, DECK_ADPCM_SPB);
+  memcpy(buf + 40, "fact", 4); deck_wr32(buf + 44, 4); deck_wr32(buf + 48, out_samples);
+  memcpy(buf + 52, "data", 4); deck_wr32(buf + 56, data_bytes);
+  in.seek(44);
+  static int16_t blk[DECK_ADPCM_SPB];
+  int16_t pair[2];
+  uint32_t o = 60;
+  while (true) {
+    int count = 0;
+    while (count < DECK_ADPCM_SPB) {
+      int got = in.read((uint8_t *)pair, 4);       // two 16k samples -> one 8k
+      if (got < 4) { break; }
+      blk[count++] = (int16_t)(((int32_t)pair[0] + (int32_t)pair[1]) >> 1);
+    }
+    if (count < 2) { break; }
+    uint32_t block_start = o;
+    int32_t pred = blk[0];
+    int index = 0;
+    deck_wr16(buf + o, (uint16_t)pred); o += 2; buf[o++] = (uint8_t)index; buf[o++] = 0;
+    int nib_have = 0; uint8_t pending = 0;
+    for (int i = 1; i < count; i++) {
+      int32_t step = deck_adpcm_step[index];
+      int32_t diff = (int32_t)blk[i] - pred;
+      uint8_t nib = 0;
+      if (diff < 0) { nib = 8; diff = -diff; }
+      if (diff >= step) { nib |= 4; diff -= step; }
+      if (diff >= (step >> 1)) { nib |= 2; diff -= (step >> 1); }
+      if (diff >= (step >> 2)) { nib |= 1; }
+      int32_t diffq = step >> 3;
+      if (nib & 4) { diffq += step; }
+      if (nib & 2) { diffq += step >> 1; }
+      if (nib & 1) { diffq += step >> 2; }
+      pred = (nib & 8) ? pred - diffq : pred + diffq;
+      if (pred > 32767) { pred = 32767; } else if (pred < -32768) { pred = -32768; }
+      index += deck_adpcm_index[nib];
+      if (index < 0) { index = 0; } else if (index > 88) { index = 88; }
+      if (!nib_have) { pending = nib; nib_have = 1; }
+      else { buf[o++] = pending | (nib << 4); nib_have = 0; }
+    }
+    if (nib_have) { buf[o++] = pending; }
+    while (o - block_start < DECK_ADPCM_BLOCK) { buf[o++] = 0; }   // pad the block
+    if (count < DECK_ADPCM_SPB) { break; }
+  }
+  in.close();
+  File out = FFat.open(out_path.c_str(), FILE_WRITE);
+  if (!out) { free(buf); return false; }
+  size_t wrote = out.write(buf, o);
+  out.close();
+  free(buf);
+  deckLog("[voice] compressed %u -> %u bytes", (unsigned)pcm_bytes, (unsigned)wrote);
+  return wrote == o;
+}
+
+static void deck_b64_append(String &out, const uint8_t *p, unsigned len) {
+  static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (unsigned i = 0; i < len; i += 3) {
+    unsigned rem = len - i;
+    uint8_t b0 = p[i];
+    out += tbl[(b0 >> 2) & 0x3f];
+    if (rem == 1) {
+      out += tbl[((b0 & 0x03) << 4) & 0x3f];
+      out += "==";
+    }
+    else {
+      uint8_t b1 = p[i + 1];
+      out += tbl[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)];
+      if (rem == 2) {
+        out += tbl[((b1 & 0x0f) << 2) & 0x3f];
+        out += '=';
+      }
+      else {
+        uint8_t b2 = p[i + 2];
+        out += tbl[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)];
+        out += tbl[b2 & 0x3f];
+      }
+    }
+  }
+}
+
+// One "voice" message: the clip base64'd whole, sent through the transport framer
+// (which cuts it to the link's MTU, whatever that is).
+static bool deck_voice_ble_send(const String &path, long ts, const char *mode) {
+  if (!ble_link_ready()) { return false; }
+  File f = FFat.open(path.c_str(), FILE_READ);
+  if (!f) { return false; }
+  size_t size = f.size();
+  if (size == 0) { f.close(); return false; }
+  String msg = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker()
+    + "\",\"edt\":\"teletype\",\"ts\":" + String(ts)
+    + ",\"voice\":\"" + mode + "\",\"data\":\"";
+  msg.reserve(size * 4 / 3 + 128);
+  uint8_t b[3];
+  while (true) {
+    int got = f.read(b, 3);
+    if (got <= 0) { break; }
+    deck_b64_append(msg, b, got);
+    if (got != 3) { break; }
+  }
+  msg += "\"}";
+  f.close();
+  ble_notify_payload(msg, 20);
+  return true;
+}
+
+// The shipping task: compress the clip and hand it to the bridge, then release
+// the microphone to the next recording.
+static void deckVoiceShipTask(void *pv) {
+  (void)pv;
+  long ts = deck_voice_ts;
+  String cls = deck_voice_wav;
+  if (deck_voice_compress(deck_voice_wav, "/voice.adpcm")) { cls = "/voice.adpcm"; }
+  bool ok = deck_voice_ble_send(cls, ts, "vad");
+  deckLog("[voice] clip ts=%ld %s over BLE", ts, ok ? "shipped" : "NOT shipped");
+  vTaskDelete(NULL);
 }
 
 static void micCaptureTask(void *pvParameters) {
@@ -5879,6 +6060,13 @@ static void micCaptureTask(void *pvParameters) {
           (unsigned)written, (unsigned)spent,
           spent ? (unsigned)((uint64_t)written * 1000 / spent) : 0, (unsigned)file_size,
           (unsigned)cliffs, (int)biggest, (unsigned)gap_min, (unsigned)gap_max);
+  // hand the clip to the bridge the way the watch does, off this task so the
+  // microphone is released at once. Compress it either way; the task sends only
+  // if the bridge is up (and logs the clip so it can be shipped later)
+  if (written > 44 && mic_channels != MIC_TDM_SLOTS) {
+    deck_voice_wav = WAV_FILE_PATH;
+    xTaskCreatePinnedToCore(deckVoiceShipTask, "VoiceShip", 8192, NULL, 1, NULL, 0);
+  }
   vTaskDelete(NULL);
 }
 
@@ -5902,7 +6090,8 @@ static void micRecordToggle(lv_event_t *e) {
   // filesystem turns every recording into an empty header
   pruneRecordings(12);
   deckLog("[mic] flash free %u bytes before recording", (unsigned)FFat.freeBytes());
-  WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
+  deck_voice_ts = rightNow();
+  WAV_FILE_PATH = "/recordings/" + String(deck_voice_ts) + ".wav";
   deckLog("[mic] recording %s", WAV_FILE_PATH.c_str());
   record_end_ms = 0;
   isRecording = true;
@@ -5928,7 +6117,8 @@ static void serialRecordStart(uint32_t seconds) {
     createDir(FFat, "/recordings");
   }
   pruneRecordings(12);
-  WAV_FILE_PATH = "/recordings/" + String(rightNow()) + ".wav";
+  deck_voice_ts = rightNow();
+  WAV_FILE_PATH = "/recordings/" + String(deck_voice_ts) + ".wav";
   record_end_ms = millis() + seconds * 1000;
   isRecording = true;
   xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 6144, NULL, 4, NULL, 1);

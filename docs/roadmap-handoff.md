@@ -162,11 +162,21 @@ inflated (`ble_inflate_if_zlib`), and a button tap goes over BLE first
 tap envelope is ~450 bytes and is no longer truncated to 20.
 
 Still to do:
-- **Voice activation** on the deck: the watch's wake-word/VAD listener and its
-  capture -> IMA ADPCM -> BLE ship path (`voiceListenTask` and its helpers in
-  `jw.ino`, plus `jw/voice_models.h` and the model headers). Needs the deck's
-  ES7210 mic and its speaker wired to that loop instead of the watch's LilyGoLib
-  audio, so it is best done with the deck on serial.
+- **Voice clips on the deck (route A) are in.** A recording (`/recordings/
+  <epoch>.wav`, 16 kHz mono) is folded to 8 kHz, compressed to IMA ADPCM (~8:1 on
+  the deck: 128000 -> 16444 bytes, verified) and sent as one base64 `voice`
+  message over the BLE bridge, which `subs::voice_ingest` funnels into the same
+  transcription a tap reaches (`deck_voice_compress`/`deck_voice_ble_send`).
+  What is missing is the **link**: nothing bridges the deck's BLE yet. The desktop
+  daemon connects by MAC (`{"cmd":"connect","mac":..}`), so the server must
+  learn the deck's BLE address first - `mac=` in the `_jawnos._tcp` TXT is the
+  obvious hook - before it can ask the bridge to connect as it does for the watch.
+- Wake words (`hey jawn` / `jawn do`) still need the TFLM stack copied over
+  (`voice_models.h` -> `jawn_micro_features` + the model headers). `jawn_do` is
+  not trained yet either. The VAD/manual clip is the first target.
+- The deck's **FFat was corrupt** (it mounted, listed no files, yet reported only
+  part free, and every write failed); it now heals that at boot with a write
+  probe and a reformat, which is what let recordings land again.
 - The deck's blank screen was **the wrong firmware**: `pio run -t upload` with
   two boards on USB auto-picked the watch's port, so the deck was running `jw` and
   resetting in a loop on the LilyGoWatch S3 board assert. Flash with the port
