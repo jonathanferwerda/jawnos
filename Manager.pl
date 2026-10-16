@@ -6086,6 +6086,48 @@ post '/manager/configure/nfc/delete' => sub($c) {
 	$c->render(json => { app => $app, uuid => $uuid });
 };
 
+# A typed contact list (phones/emails): the editor the nfc list wears, one row
+# per number or address with a type - mobile, home, work, or a custom label. The
+# uuid names the row so a field change and a delete both find the same one, and
+# a uuid nobody holds yet starts a new row.
+sub contact_list_row_finder {
+	my ($app, $list) = @_;
+	my $rows = eval { return decode_json &subs::setting_grabber({ app => $app, setting => $list }) } || [];
+	$rows = [ $rows ] if ref $rows eq 'HASH';
+	$rows = [] unless ref $rows eq 'ARRAY';
+	return $rows;
+}
+post '/manager/configure/contact/setting' => sub($c) {
+	my $app = $c->param('app');
+	my $list = ($c->param('list') || '') eq 'emails' ? 'emails' : 'phones';
+	my $field = $c->param('field') || '';
+	my $value = $c->param('value');
+	$value = '' unless defined $value;
+	my $uuid = $c->param('uuid') || '';
+	return $c->render(json => { error => 'bad field' }) unless grep { $field eq $_ } qw/type label value/;
+
+	my $rows = &contact_list_row_finder($app, $list);
+	my ($row) = grep { ($_->{'uuid'} || '') eq $uuid } @{$rows};
+	unless ($row) {
+		$row = { uuid => $uuid, type => 'mobile', label => '', value => '' };
+		push @{$rows}, $row;
+	}
+	$row->{$field} = $value;
+	&subs::setting_setter({ app => $app, setting => $list, value => encode_json $rows });
+	$c->render(json => $row);
+};
+
+post '/manager/configure/contact/delete' => sub($c) {
+	my $app = $c->param('app');
+	my $list = ($c->param('list') || '') eq 'emails' ? 'emails' : 'phones';
+	my $uuid = $c->param('uuid') || '';
+	my $rows = &contact_list_row_finder($app, $list);
+	my $before = scalar @{$rows};
+	@{$rows} = grep { ($_->{'uuid'} || '') ne $uuid } @{$rows};
+	&subs::setting_setter({ app => $app, setting => $list, value => encode_json $rows }) if scalar @{$rows} != $before;
+	$c->render(json => { app => $app, uuid => $uuid });
+};
+
 post '/manager/nfc/read' => sub($c) {
 	my $jmessage = $c->param('message');
 	my $serial = $c->param('serial');
@@ -6989,19 +7031,14 @@ sub ticket_blacklist_match($info) {
 }
 
 # Is this requester already known to the house? The same rows the mailbox uses
-# to name a thread: an email or a phone number kept on an app.
+# to name a thread: an email or a phone number kept on an app - the plain setting
+# or a typed entry beside it (their work line, a second mailbox).
 sub ticket_request_known($info) {
 	my @known;
 	my $email = &ticket_contact_clean('email', $info->{'email'});
-	if ($email) {
-		my $rows = &subs::db_query('select app from settings where setting=? and lower(value)=?', 'email', $email)->hashes;
-		push @known, map { $_->{'app'} } @{$rows};
-	}
+	push @known, &subs::contact_apps('email', $email) if $email;
 	my $phone = &ticket_contact_clean('phone', $info->{'phone'});
-	if ($phone) {
-		my $rows = &subs::db_query('select app from settings where setting=? and value=?', 'phone', $phone)->hashes;
-		push @known, map { $_->{'app'} } @{$rows};
-	}
+	push @known, &subs::contact_apps('phone', $phone) if $phone;
 	@known = grep { defined $_ && length $_ } @known;
 	my %seen;
 	@known = grep { !$seen{$_}++ } @known;

@@ -4876,42 +4876,78 @@ sub intelligent_automation_toggle() {
 # A rename into a name the house already knows is a merge, and the settings the
 # two apps share meet on one row each: this lists those rows so the panel can
 # pick which value keeps the name per setting - and which ones merge naturally
-# (nfc tags concatenate, measures union their keys).
+# (nfc tags concatenate, measures union their keys, contact lists join).
 sub name_change_pairs {
 	my ($app, $new_app) = @_;
 	my @pairs;
 	my %seen;
-	my %natural = map { $_ => 1 } qw/nfc app_measures/;
+	my %natural = map { $_ => 1 } qw/nfc app_measures phones emails/;
+	# window and view state, not a choice: the uuid names the app, scrollTop and
+	# jopen are where its window was left, dimensions is how big it was - nobody
+	# merging two records wants to choose between two scroll positions.
+	my %transient = map { $_ => 1 } qw/uuid scrollTop jopen dimensions/;
+	# who a person is, rather than how their app is set up: a contact either side
+	# holds joins the record, so it is always on the panel - a number filed under
+	# the number itself, renamed to a real person, must not quietly vanish.
+	my %identity = map { $_ => 1 } qw/phone email phones emails/;
 	my $olds = &subs::db_query('select setting, value from settings where app = ?', $app)->hashes;
 	my $news = &subs::db_query('select setting, value from settings where app = ?', $new_app)->hashes;
-	my %new_by;
+	my (%new_by, %old_by);
 	$new_by{$_->{'setting'}} ||= $_->{'value'} for @{$news};
-	foreach my $o ( @{$olds} ) {
-		next unless exists $new_by{$o->{'setting'}};
-		next if $seen{$o->{'setting'}}++;
-		my $setting = $o->{'setting'};
-		my $old_value = $o->{'value'};
+	$old_by{$_->{'setting'}} ||= $_->{'value'} for @{$olds};
+	my %settings = map { $_ => 1 } (keys %new_by, keys %old_by);
+	foreach my $setting ( sort keys %settings ) {
+		next if $seen{$setting}++;
+		next if $transient{$setting};
+		my $old_present = exists $old_by{$setting} ? 1 : 0;
+		my $new_present = exists $new_by{$setting} ? 1 : 0;
+		next unless $old_present || $new_present;
+		# a setting only one side holds is carried over silently by the rename,
+		# so it is only worth a row when it says who the person is
+		next unless ($old_present && $new_present) || $identity{$setting};
+		my $old_value = $old_by{$setting};
 		my $new_value = $new_by{$setting};
 		# nothing to choose when both sides already say the same thing: a row per
 		# shared setting buried the handful that actually differ
-		next if (defined $old_value && defined $new_value && $old_value eq $new_value);
+		next if ($old_present && $new_present && defined $old_value && defined $new_value && $old_value eq $new_value);
+		my $only = '';
+		$only = 'old' if $old_present && !$new_present;
+		$only = 'new' if $new_present && !$old_present;
 		# A value that is still what a brand-new app would be born with is nothing
 		# anybody chose, so between it and a value somebody set, the set one is the
 		# one to keep: the panel pre-selects it rather than making every row be
 		# decided by hand.
-		my $old_default = &subs::setting_is_default($setting, $app, $old_value) ? 1 : 0;
-		my $new_default = &subs::setting_is_default($setting, $new_app, $new_value) ? 1 : 0;
+		my $old_default = $old_present ? (&subs::setting_is_default($setting, $app, $old_value) ? 1 : 0) : 0;
+		my $new_default = $new_present ? (&subs::setting_is_default($setting, $new_app, $new_value) ? 1 : 0) : 0;
+		# a list either side holds is a merge the moment both sides have one; a
+		# one-sided row is just keep-or-drop, so it wears no merge option
+		my $natural = ($natural{$setting} && !$only) ? 'merge' : '';
 		my $prefer = '';
-		$prefer = 'old' if $old_default && !$new_default;
-		$prefer = 'new' if $new_default && !$old_default;
+		if ($only eq 'old') {
+			# the renaming app alone holds it: keeping it is the default, dropping
+			# it the deliberate escape
+			$prefer = 'new';
+		}
+		elsif ($only eq 'new') {
+			# the record being renamed into alone holds it: it survives unless
+			# somebody says to drop it
+			$prefer = 'old';
+		}
+		else {
+			$prefer = 'old' if $old_default && !$new_default;
+			$prefer = 'new' if $new_default && !$old_default;
+		}
 		push @pairs, {
 			setting => $setting,
 			old_value => $old_value,
 			new_value => $new_value,
+			old_present => $old_present,
+			new_present => $new_present,
 			old_default => $old_default,
 			new_default => $new_default,
+			only => $only,
 			prefer => $prefer,
-			natural => ($natural{$setting} ? 'merge' : '')
+			natural => $natural
 		};
 	}
 	return \@pairs;
@@ -4947,10 +4983,16 @@ sub setting_is_default {
 	return 0;
 }
 
-# How two values of a setting join: nfc and measures are lists at heart, so a
-# natural merge keeps both sides; anything else keeps the renaming app's value.
+# How two values of a setting join: nfc, measures and the typed contact lists are
+# lists at heart, so a natural merge keeps both sides; anything else keeps the
+# renaming app's value. Merging with an empty side simply keeps the side that has
+# a value - which is what a one-sided contact row does.
 sub merge_setting_values {
 	my ($setting, $old, $new) = @_;
+	my $old_has = (defined $old && length $old) ? 1 : 0;
+	my $new_has = (defined $new && length $new) ? 1 : 0;
+	return $new if !$old_has;
+	return $old if !$new_has;
 	if ($setting eq 'nfc') {
 		my $a = eval { return decode_json $old } || [];
 		my $b = eval { return decode_json $new } || [];
@@ -4965,6 +5007,23 @@ sub merge_setting_values {
 		my $b = eval { return decode_json $new } || {};
 		my %merged = (%{$a}, %{$b});
 		return encode_json \%merged;
+	}
+	if ($setting eq 'phones' || $setting eq 'emails') {
+		# the typed contact lists join the same way: both sides' entries stay, and
+		# an entry the same number or address already covers is not written twice
+		my $kind = ($setting eq 'phones') ? 'phone' : 'email';
+		my $a = eval { return decode_json $old } || [];
+		my $b = eval { return decode_json $new } || [];
+		$a = [ $a ] if ref $a eq 'HASH';
+		$b = [ $b ] if ref $b eq 'HASH';
+		my %seen;
+		my @merged = grep {
+			next unless ref $_ eq 'HASH';
+			my $key = &subs::contact_normalizer($kind, $_->{'value'});
+			$key ||= $_->{'uuid'};
+			!$seen{$key}++;
+		} (@{$b}, @{$a});
+		return encode_json \@merged;
 	}
 	return $new;
 }
@@ -4984,12 +5043,17 @@ sub name_change_apply {
 			&subs::db_query('delete from settings where app = ? and setting = ?', $app, $setting);
 		}
 		elsif ($pick eq 'merge') {
-			my $oldv = &subs::db_query('select value from settings where app = ? and setting = ?', $app, $setting)->hashes->[0]->{'value'};
-			my $newv = &subs::db_query('select value from settings where app = ? and setting = ?', $new_app, $setting)->hashes->[0]->{'value'};
+			# either side may be absent (a one-sided contact row), so read the row
+			# rather than dereferencing a missing one
+			my $old_row = &subs::db_query('select value from settings where app = ? and setting = ?', $app, $setting)->hashes->[0];
+			my $new_row = &subs::db_query('select value from settings where app = ? and setting = ?', $new_app, $setting)->hashes->[0];
+			my $oldv = ref $old_row ? $old_row->{'value'} : '';
+			my $newv = ref $new_row ? $new_row->{'value'} : '';
 			my $merged = &subs::merge_setting_values($setting, $oldv, $newv);
 			&subs::db_query('delete from settings where app = ? and setting = ?', $app, $setting);
 			&subs::db_query('delete from settings where app = ? and setting = ?', $new_app, $setting);
-			&subs::setting_setter({ app => $new_app, setting => $setting, value => $merged });
+			&subs::setting_setter({ app => $new_app, setting => $setting, value => $merged })
+				if defined $merged && length $merged;
 		}
 	}
 }
@@ -9085,15 +9149,91 @@ sub telephone_contacts_check() {
 		my $number = $contact->{'number'};
 		$number =~ s/\D+//gi;
 
-		my $phones = &subs::settings_grabber({ app => $name, settings => ['phone', 'uuid' ] });
+		next unless $number;
 
-		if ($phones->{'uuid'} && $phones->{'phone'} ne $number) {
-			my $settings = &subs::setting_initializer($name,&subs::rightNow());
-			my $data = { app => $settings->{'app'}, setting => 'phone', value => $number };
+		my $phones = &subs::settings_grabber({ app => $name, settings => ['phone', 'phones', 'uuid' ] });
 
-			&subs::setting_setter($data);
+		# only a person the house already knows: a contact never mints an app
+		next unless $phones->{'uuid'};
+		next if &subs::contact_matches('phone', $phones->{'phone'}, $number);
+
+		# another number for somebody whose line is already set is another line on
+		# them, not a replacement: the phone row keeps what call and text route on,
+		# and the typed list holds the rest (mobile, home, work, a custom label).
+		if (!$phones->{'phone'}) {
+			&subs::setting_setter({ app => $name, setting => 'phone', value => $number });
+			next;
+		}
+		my $list = eval { return decode_json $phones->{'phones'} } || [];
+		$list = [ $list ] if ref $list eq 'HASH';
+		$list = [] unless ref $list eq 'ARRAY';
+		next if grep { ref $_ eq 'HASH' && &subs::contact_matches('phone', $_->{'value'}, $number) } @{$list};
+		push @{$list}, {
+			uuid => &subs::random_string_creator(20),
+			type => 'mobile',
+			label => '',
+			value => $number
+		};
+		&subs::setting_setter({ app => $name, setting => 'phones', value => encode_json $list });
+	}
+}
+
+# The contacts of one kind a person keeps: the plain setting (phone/email) and
+# the typed list beside it (phones/emails, rows of {type,label,value}). Comparison
+# tidies the way the rest of the code does - a phone to its digits (a leading 1
+# dropped) so a country code or spacing never hides a match, an email lowered.
+sub contact_normalizer {
+	my ($kind, $value) = @_;
+	return '' unless defined $value && length $value;
+	if ($kind eq 'phone') {
+		my $n = $value;
+		$n =~ s/\D+//g;
+		$n =~ s/^1//;
+		return $n;
+	}
+	my $e = lc $value;
+	$e =~ s/^\s+//;
+	$e =~ s/\s+$//;
+	return $e;
+}
+
+sub contact_matches {
+	my ($kind, $a, $b) = @_;
+	my $x = &subs::contact_normalizer($kind, $a);
+	my $y = &subs::contact_normalizer($kind, $b);
+	return 0 unless length $x && length $y;
+	if ($kind eq 'phone') {
+		$x = substr $x, -10 if length $x >= 10;
+		$y = substr $y, -10 if length $y >= 10;
+	}
+	return $x eq $y ? 1 : 0;
+}
+
+# Every app whose records hold this phone or email: the plain setting first
+# (phone/email), then the typed list (phones/emails). A match is the address, so
+# the two are scanned the same way - a number kept as somebody's work line names
+# them as surely as the one on the app.
+sub contact_apps {
+	my ($kind, $value) = @_;
+	return () unless defined $value && length $value;
+	my (%seen, @apps);
+	my $plain = &subs::db_query('select app, value from settings where setting=? and value != ?', $kind, '')->hashes;
+	foreach my $r ( @{$plain} ) {
+		next unless &subs::contact_matches($kind, $r->{'value'}, $value);
+		push @apps, $r->{'app'} unless $seen{ $r->{'app'} }++;
+	}
+	my $rows = &subs::db_query('select app, value from settings where setting=? and value != ?', $kind . 's', '')->hashes;
+	foreach my $r ( @{$rows} ) {
+		my $list = eval { return decode_json $r->{'value'} } || [];
+		$list = [ $list ] if ref $list eq 'HASH';
+		next unless ref $list eq 'ARRAY';
+		foreach my $c ( @{$list} ) {
+			next unless ref $c eq 'HASH';
+			next unless &subs::contact_matches($kind, $c->{'value'}, $value);
+			push @apps, $r->{'app'} unless $seen{ $r->{'app'} }++;
 		}
 	}
+	return @apps;
 }
 
 # The app a number belongs to: the person who saved it, or - when the house
@@ -9101,20 +9241,15 @@ sub telephone_contacts_check() {
 # a stranger's calls and texts still land somewhere, and naming that app later
 # turns the stranger into a person. The phone row is made at the same time, so
 # the next call or text from the same number resolves the same way. Matching is
-# on the last ten digits of both sides, the way the call-log check learned to.
+# on the last ten digits of both sides, the way the call-log check learned to,
+# and covers the typed list as well as the plain phone row.
 sub phone_number_app {
 	my $number = shift;
 	$number =~ s/\D+//g;
 	$number =~ s/^1//;
 	return '' unless $number;
-	my $tail = substr $number, -10;
-	my $contacts = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
-	my ($phone) = grep {
-		my $v = $_->{'value'};
-		$v =~ s/\D+//g;
-		$v && (length($v) >= 10 ? substr($v, -10) : $v) eq $tail;
-	} @{$contacts};
-	return $phone->{'app'} if $phone && $phone->{'app'};
+	my @known = &subs::contact_apps('phone', $number);
+	return $known[0] if scalar @known;
 	# unknown: the number becomes the app, and the row makes it known
 	&subs::setting_setter({ app => $number, setting => 'phone', value => $number });
 	return $number;
@@ -11143,6 +11278,16 @@ sub email_receiver() {
 					$to = $1;
 					my $subject = $sum->subject;
 					my $checked_addresses = &subs::db_query('select * from settings where setting=? and (value=? or value=? and value != ?) and device=?', 'email', $from, $to, $es->{'email'}, $device)->hashes;
+					# an address a person keeps in the typed list (their work mailbox, say)
+					# names them too: fold those apps in before the loop, once each
+					my %known_recipient = map { $_->{'app'} => 1 } @{$checked_addresses};
+					foreach my $address ( $from, $to ) {
+						next unless $address;
+						foreach my $ca_app ( &subs::contact_apps('email', $address) ) {
+							next if $known_recipient{$ca_app}++;
+							push @{$checked_addresses}, { app => $ca_app };
+						}
+					}
 					foreach my $ca ( @{$checked_addresses} ) {
 						# check for appointments
 						my $timestamp = &subs::ago_calc($sum->date,&subs::rightNow());

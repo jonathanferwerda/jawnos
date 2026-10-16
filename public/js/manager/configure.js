@@ -2221,6 +2221,74 @@ $(document).on('click', '.nfc_deleter', function() {
 	}
 });
 
+// A typed contact list (phones/emails): a number or address per row, each with a
+// type - mobile, home, work, or a custom label. A new row mints its own uuid and
+// is written to the setting on its first field change; every later change finds
+// the same row by that uuid.
+function contactRowMint() {
+	return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+$(document).on('click', '.contact_add', function() {
+	var b = $(this);
+	var container = b.closest('.contact_list');
+	var kind = b.attr('kind') || 'phone';
+	var uuid = contactRowMint();
+	var row = $('<div class="contact_row"></div>').attr('uuid', uuid);
+	var select = $('<select class="contact_field" field="type"></select>');
+	$.each(['mobile', 'home', 'work', 'custom'], function (i, t) {
+		select.append($('<option></option>').val(t).text(t.charAt(0).toUpperCase() + t.slice(1)));
+	});
+	row.append(select);
+	row.append($('<input class="contact_field contact_label" field="label" placeholder="label" style="display:none;">'));
+	row.append($('<input class="contact_field contact_value" field="value">').attr('placeholder', kind));
+	row.append('<img src="/icons/trash.png" hint="Delete" class="little_thumb contact_delete hover">');
+	container.find('.contact_rows').append(row);
+	row.find('.contact_value').focus();
+});
+
+$(document).on('change', '.contact_field', function() {
+	var f = $(this);
+	var row = f.closest('.contact_row');
+	var container = f.closest('.contact_list');
+	var field = f.attr('field');
+	var value = f.val();
+	// only a custom entry carries a label of its own; a named type says it all
+	if (field === 'type') {
+		row.find('.contact_label').toggle(value === 'custom');
+	}
+	$.ajax({
+		url: '/manager/configure/contact/setting',
+		type: 'POST',
+		data: { app: container.attr('app'), list: container.attr('list'), uuid: row.attr('uuid'), field: field, value: value },
+		success: function (response) {
+			if (response && response.uuid) { row.attr('uuid', response.uuid); }
+		}
+	});
+});
+
+$(document).on('click', '.contact_delete', function() {
+	var a = $(this);
+	if (a.attr('armed') == 'yes') {
+		var row = a.closest('.contact_row');
+		var container = a.closest('.contact_list');
+		$.ajax({
+			url: '/manager/configure/contact/delete',
+			type: 'POST',
+			data: { app: container.attr('app'), list: container.attr('list'), uuid: row.attr('uuid') },
+			success: function () { row.remove(); }
+		});
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({'background-color': 'red' });
+		setTimeout(function() {
+			a.css({'background-color': bgcolor });
+			a.attr('armed', 'no');
+		},2000);
+	}
+});
+
 
 
 
@@ -2258,17 +2326,29 @@ function nameConflictPanel(response) {
 	$('#name_conflict_panel').remove();
 	var panel = $('<div id="name_conflict_panel" style="position:fixed;left:15%;top:10%;width:70%;max-height:78%;overflow:auto;z-index:994200;background:var(--panel);border:3px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 6px 30px rgba(0,0,0,.5);">');
 	panel.append('<h3 style="margin-top:0;">Rename into ' + response.new + '</h3>');
-	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name. A value marked <i>(house default)</i> is one nobody ever chose, so the other side is picked for you.</p>');
+	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name. A value marked <i>(house default)</i> is one nobody ever chose, so the other side is picked for you. A contact either side holds - a phone number, an email, a typed entry - is carried over unless you drop it.</p>');
 	var pairs = response.pairs || [];
 	if (!pairs.length) { panel.append('<p>No shared settings - the records will simply join.</p>'); }
 	$.each(pairs, function (i, p) {
 		var prefer = p.prefer || (p.natural ? 'merge' : 'new');
 		var row = $('<div style="border-top:1px solid var(--line);padding:8px 0;">');
-		row.append('<b>' + p.setting + '</b><br>');
-		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span>' + (p.old_default ? ' <i>(house default)</i>' : '') + '</label>');
-		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span>' + (p.new_default ? ' <i>(house default)</i>' : '') + '</label>');
-		if (p.natural) {
-			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"' + (prefer === 'merge' ? ' checked' : '') + '> merge (keep both)</label>');
+		row.append('<b>' + settingLabel(p.setting) + '</b><br>');
+		if (p.only === 'old') {
+			// only the app being renamed holds it: keep it, or drop it
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> keep this app\'s: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span></label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> drop it</label>');
+		}
+		else if (p.only === 'new') {
+			// only the existing record holds it: it stays unless dropped
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> keep ' + response.new + '\'s: <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span></label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> drop it</label>');
+		}
+		else {
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span>' + (p.old_default ? ' <i>(house default)</i>' : '') + '</label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span>' + (p.new_default ? ' <i>(house default)</i>' : '') + '</label>');
+			if (p.natural) {
+				row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"' + (prefer === 'merge' ? ' checked' : '') + '> merge (keep both)</label>');
+			}
 		}
 		panel.append(row);
 	});
@@ -2293,6 +2373,10 @@ function nameConflictPanel(response) {
 		});
 	});
 	$('#name_conflict_cancel').on('click', function () { panel.remove(); });
+}
+
+function settingLabel(s) {
+	return String(s == null ? '' : s).replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }
 
 function shortSettingValue(v) {
