@@ -248,6 +248,11 @@ hook before_dispatch => sub {
 		# so a tunnelled peer whose session lapsed must still reach it. The route
 		# peer_verifies the sig against the roster itself (see Manager.pl).
 		$path eq '/manager/tunnel/alive' ||
+		# a headless server's health read: monitoring and the server itself poll it
+		# with no manager UI and no login. The route authorizes a loopback caller,
+		# a session, or a peer signature itself (see Manager.pl).
+		$path eq '/manager/health' ||
+		$path eq '/manager/health/page' ||
 		# the sync rail: a peer asks this machine for a backup (backup_now), pulls
 		# its archive (backup_serve) and confirms it (backup/confirm) over the same
 		# bare signed rail. The session cookie these once relied on lapses, and a

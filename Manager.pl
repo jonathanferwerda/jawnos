@@ -26701,6 +26701,181 @@ get '/manager/version' => sub ($c) {
 	$c->render(json => &subs::code_revision());
 };
 
+# ---------------------------------------------------------------------------
+# A headless health read: what a supervisor or `jawnosctl status` needs to tell
+# "the tree is up and current" from "it is wedged" - the running version and
+# commit, how long it has been up, the database and its write-ahead log, and
+# each peer's last reported version and link state. No setting value crosses
+# here. A server has no session and no login, so the route rides the gate-exempt
+# rail (hooks.pl) and gates itself: a loopback caller (the machine's own CLI or
+# monitor), an approved browser session, or a signed peer (peer_verify against
+# the roster) - everyone else is refused.
+# ---------------------------------------------------------------------------
+sub health_html_escape {
+	my $s = defined $_[0] ? $_[0] : '';
+	$s =~ s/&/&amp;/g;
+	$s =~ s/</&lt;/g;
+	$s =~ s/>/&gt;/g;
+	$s =~ s/"/&quot;/g;
+	return $s;
+}
+
+sub health_process_count {
+	# The jawnos processes this tree is running, found the way the master finds
+	# its own: the process's command line names a jawnos script and its working
+	# directory is this tree (so a second tree on the machine is not counted).
+	# Read from /proc, the same source the process monitor uses; entries we cannot
+	# read (another user) are skipped.
+	require Cwd;
+	my $root = Cwd::getcwd();
+	my $count = 0;
+	for my $d ( glob('/proc/[0-9]*') ) {
+		my $cwd = readlink("$d/cwd");
+		next unless defined $cwd && $cwd eq $root;
+		open(my $cf, '<', "$d/cmdline") or next;
+		local $/;
+		my $cmd = <$cf>;
+		close $cf;
+		next unless defined $cmd;
+		$cmd =~ s/\0/ /g;
+		$count++ if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl|pen\.pl/;
+	}
+	return $count;
+}
+
+sub health_report {
+	my $hostname = `hostname`; chomp $hostname;
+	my ($db, $database, $sql) = &subs::database_grabber();
+
+	# The database and its write-ahead log. A WAL grown to the size of the
+	# database is a reader holding a snapshot open - the one number here worth
+	# watching.
+	my $db_bytes  = ($database && -e $database) ? (-s $database) : 0;
+	my $wal_bytes = ($database && -e $database . '-wal') ? (-s $database . '-wal') : 0;
+
+	# The revision is frozen at boot (President.pl), so this is what the running
+	# tree actually answers, not what the tree on disk holds now.
+	my $revision = &subs::code_revision();
+
+	# Each peer by name, with the version it last reported and its link state.
+	my @peers;
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes || [] } ) {
+		next unless $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'};
+		push @peers, {
+			hostname    => $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} || '',
+			device      => $rm->{'device'} || '',
+			connection  => $rm->{'connection'} || 'unknown',
+			version     => $rm->{'version'} || '',
+			server_time => $rm->{'server_time'} || ''
+		};
+	}
+
+	# uptime, for "how long has this been up". Android denies /proc/uptime.
+	my $uptime;
+	if (open(my $uf, '<', '/proc/uptime')) {
+		my $ul = <$uf>;
+		close $uf;
+		$uptime = $1 + 0 if $ul && $ul =~ /^([\d.]+)/;
+	}
+
+	return {
+		ok             => 1,
+		version        => &subs::jawn_version(),
+		commit         => $revision->{'commit'},
+		branch         => $revision->{'branch'},
+		dirty          => $revision->{'dirty'} ? 1 : 0,
+		fingerprint    => $revision->{'fingerprint'},
+		hostname       => $hostname,
+		device         => &subs::device_setter(),
+		environment    => $config->{'environment'},
+		port           => $config->{'port'},
+		working_port   => $config->{'working_port'},
+		server_time    => &subs::rightNow(),
+		uptime         => $uptime,
+		schema_version => &subs::setting_grabber({ app => '__president', setting => 'schema_version' }),
+		processes      => &health_process_count(),
+		database       => { bytes => $db_bytes, wal_bytes => $wal_bytes },
+		peers          => \@peers
+	};
+}
+
+sub health_allowed {
+	my ($c) = @_;
+	my $remote = $c->tx->remote_address // '';
+	my $local  = $c->tx->local_address // '';
+	# a loopback caller: the machine's own CLI and monitor, with no login
+	return 1 if $remote eq $local || $remote eq '127.0.0.1' || $remote eq '::1' || $remote =~ /^::ffff:127\.0\.0\.1$/;
+	# an approved browser session
+	my $auth = $c->session('authentication') // '';
+	return 1 if $auth eq 'approved';
+	# a signed peer on the roster
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	return 1 if $rm && &subs::peer_verify($c, $rm);
+	return 0;
+}
+
+sub health_human_bytes {
+	my $n = shift || 0;
+	my @u = qw(B KB MB GB TB PB);
+	while ($n >= 1024 && @u > 1) { $n /= 1024; shift @u; }
+	return sprintf('%.1f %s', $n, $u[0]);
+}
+
+sub health_human_uptime {
+	my $s = shift;
+	return 'unknown' unless defined $s;
+	$s = int $s;
+	my $d = int($s / 86400); $s -= $d * 86400;
+	my $h = int($s / 3600);  $s -= $h * 3600;
+	my $m = int($s / 60);
+	return ($d ? "${d}d " : '') . sprintf('%02d:%02d', $h, $m);
+}
+
+get '/manager/health' => sub ($c) {
+	unless (&health_allowed($c)) { $c->rendered(403); return; }
+	$c->render(json => &health_report());
+};
+
+get '/manager/health/page' => sub ($c) {
+	unless (&health_allowed($c)) { $c->rendered(403); return; }
+	my $h = &health_report();
+	my $e = sub { &health_html_escape($_[0]) };
+	my $db = $h->{'database'};
+	my $peers = '';
+	foreach my $p ( @{ $h->{'peers'} } ) {
+		$peers .= '<tr><td>' . $e->($p->{'hostname'}) . '</td><td>' . $e->($p->{'device'}) . '</td>'
+			. '<td>' . $e->($p->{'connection'}) . '</td><td>' . $e->($p->{'version'}) . '</td></tr>';
+	}
+	$peers = '<tr><td colspan="4" class="dim">no peers linked</td></tr>' unless $peers;
+	my $commit = $h->{'commit'} || '-';
+	$commit .= ' (dirty)' if $h->{'dirty'};
+	my $html = '<!doctype html><html><head><meta charset="utf-8">'
+		. '<title>' . $e->($h->{'hostname'}) . ' - jawn health</title>'
+		. '<meta http-equiv="refresh" content="5">'
+		. '<style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;color:#222;background:#f7f7f8}'
+		. 'h1{font-size:1.15rem}table{border-collapse:collapse;margin:.4rem 0 1.4rem}'
+		. 'td,th{border:1px solid #ccc;padding:.2rem .6rem;text-align:left}th{background:#eee}'
+		. '.dim{color:#888}.ok{color:#1a7f37;font-weight:600}code{background:#eee;padding:0 .3rem}</style></head><body>'
+		. '<h1>' . $e->($h->{'hostname'}) . ' <span class="ok">up</span></h1>'
+		. '<table>'
+		. '<tr><th>version</th><td>' . $e->($h->{'version'}) . '</td></tr>'
+		. '<tr><th>commit</th><td><code>' . $e->($commit) . '</code></td></tr>'
+		. '<tr><th>device</th><td>' . $e->($h->{'device'}) . '</td></tr>'
+		. '<tr><th>environment</th><td>' . $e->($h->{'environment'}) . '</td></tr>'
+		. '<tr><th>schema</th><td>' . $e->($h->{'schema_version'}) . '</td></tr>'
+		. '<tr><th>uptime</th><td>' . &health_human_uptime($h->{'uptime'}) . '</td></tr>'
+		. '<tr><th>processes</th><td>' . $e->($h->{'processes'}) . '</td></tr>'
+		. '<tr><th>database</th><td>' . &health_human_bytes($db->{'bytes'})
+			. ' <span class="dim">(wal ' . &health_human_bytes($db->{'wal_bytes'}) . ')</span></td></tr>'
+		. '</table>'
+		. '<h1>peers</h1><table><tr><th>host</th><th>device</th><th>link</th><th>version</th></tr>' . $peers . '</table>'
+		. '<p class="dim">refreshes every 5s</p>'
+		. '</body></html>';
+	$c->res->headers->content_type('text/html');
+	$c->render(data => $html);
+};
+
 
 # A lot of the migration list below predates the schema, so on a database built from
 # database/schema.sql the column or index it wants to add is already there and

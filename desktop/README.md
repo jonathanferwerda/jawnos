@@ -120,10 +120,15 @@ same file the desktop `--user` unit writes, so the error watch still tails it).
 Control it with the same CLI:
 
 ```sh
-jawnosctl status          # is jawn up?
+jawnosctl status          # is jawn up? what version, and for how long?
 jawnosctl log -n 200 -f   # tail the app's log
 sudo systemctl restart jawnos
 ```
+
+`status` reads the app's own `/manager/health` over loopback (no login needed
+from the machine itself), so it reports the running version, uptime and peer
+count, not merely that a port is open. The same data is a JSON read at
+`/manager/health` and a plain page at `/manager/health/page`.
 
 No GUI packages are needed — no PyGObject, WebKitGTK or GStreamer; `python3`
 alone runs the CLI. The unit itself needs no Python at all.

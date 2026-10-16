@@ -25,9 +25,11 @@ import re
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
+import urllib.request
 import webbrowser
 
 from . import DESKTOP_DIR
@@ -310,6 +312,25 @@ def port_open(port, host="127.0.0.1", timeout=0.4):
 def jawn_up(jawn_dir):
     """jawn answers on its working port and always on the dock port (3000)."""
     return port_open(jawn_working_port(jawn_dir)) or port_open(DOCK_PORT)
+
+
+def jawn_health(jawn_dir, timeout=2.5):
+    """Ask the app's own /manager/health over loopback. Returns a dict or None.
+
+    The route trusts a loopback caller (no session needed), so status can report
+    what the running tree itself says - version, uptime, peers - and not merely
+    that a port is open. The cert is self-signed, so it is not verified.
+    """
+    port = jawn_working_port(jawn_dir)
+    request = urllib.request.Request(
+        "https://127.0.0.1:%d/manager/health" % port,
+        headers={"X-Requested-With": "jawnosctl"})
+    context = ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
 
 
 def ble_up():
@@ -691,10 +712,12 @@ def tail_log(path, lines=200):
 def status(settings=None):
     settings = settings or load_settings()
     jawn_dir = settings["jawn_dir"]
+    up = jawn_up(jawn_dir)
     return {
         "jawn_dir": jawn_dir,
-        "jawn_up": jawn_up(jawn_dir),
+        "jawn_up": up,
         "jawn_port": jawn_working_port(jawn_dir),
+        "health": jawn_health(jawn_dir) if up else None,
         "ble_up": ble_up(),
         "autostart": autostart_enabled(),
         "ble_with_jawn": bool(settings.get("ble_with_jawn", True)),

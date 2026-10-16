@@ -23,6 +23,21 @@ def _tick(value):
     return "running" if value else "stopped"
 
 
+def _human_uptime(seconds):
+    try:
+        total = int(seconds)
+    except (TypeError, ValueError):
+        return "unknown"
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days:
+        return "%dd %dh" % (days, hours)
+    if hours:
+        return "%dh %dm" % (hours, minutes)
+    return "%dm" % minutes
+
+
 def cmd_status(args):
     settings = core.load_settings()
     info = core.status(settings)
@@ -31,6 +46,15 @@ def cmd_status(args):
         return 0
     print("jawn:       %s   (%s)" % (_tick(info["jawn_up"]), info["jawn_dir"]))
     print("  ui port:  %d" % info["jawn_port"])
+    health = info.get("health")
+    if health:
+        peers = health.get("peers") or []
+        print("  version:  %s   (up %s, %d peer%s)" % (
+            health.get("version", "?"),
+            _human_uptime(health.get("uptime")),
+            len(peers), "" if len(peers) == 1 else "s"))
+    elif info["jawn_up"]:
+        print("  version:  (health did not answer)")
     print("BLE bridge: %s   (127.0.0.1:%d)" % (_tick(info["ble_up"]), core.BRIDGE_PORT))
     print("autostart:  %s" % ("enabled" if info["autostart"] else "disabled"))
     return 0

@@ -5515,7 +5515,12 @@ sub setting_setter() {
 		}
 	}
 
-	my $old_set = eval { return &db_delete('settings', { app => $app, setting => $setting, device => $dev, subsetting => $subsetting }) };
+	# A row is keyed by (app, setting, device, subsetting), but a delete on an undef
+	# subsetting matched nothing - SQL 'subsetting = NULL' is never true - so every
+	# write left the old row behind and cost/… accumulated duplicate rows (342
+	# groups of same-value cost/mobile rows). 'is' is NULL-safe: two NULLs compare
+	# equal, anything else as '='.
+	my $old_set = eval { &db_query('delete from settings where app = ? and setting = ? and device is ? and subsetting is ?', $app, $setting, $dev, $subsetting) };
 	&db_insert('settings', {
 		app => $app,
 		timestamp => $timestamp,
