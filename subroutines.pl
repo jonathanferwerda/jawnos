@@ -11953,6 +11953,42 @@ sub c_maker() {
 # The access token rides XOAUTH2 for both IMAP and SMTP. A plain-password account
 # is untouched: every branch below only fires when auth is exactly 'oauth2'.
 
+# The OAuth2 clients the house can sign in with: one entry per app registration
+# (a name, a provider, a client id and secret, a tenant and scopes), kept as a
+# setting so it syncs and so several accounts can share the one registration. The
+# secret is sealed like a mail password.
+sub oauth_clients {
+	my $raw = &setting_grabber({ app => 'mail', setting => 'oauth_clients' });
+	my $list = eval { &decode_json($raw) } || [];
+	return [ grep { ref $_ eq 'HASH' } @{$list} ];
+}
+sub oauth_clients_store {
+	my ($list) = @_;
+	&setting_setter({ app => 'mail', setting => 'oauth_clients', value => encode_json($list) });
+}
+sub oauth_client {
+	my ($uuid) = @_;
+	return {} unless length($uuid || '');
+	my ($cli) = grep { ($_->{'uuid'} || '') eq $uuid } @{ &oauth_clients() };
+	return $cli || {};
+}
+
+# An account may name a registered client instead of carrying its own id/secret/
+# tenant; this lays the client's fields over the account's, so every caller goes
+# on reading the same keys.
+sub email_oauth_overlay {
+	my ($es) = @_;
+	my $cli = &oauth_client($es->{'oauth_client'});
+	return $es unless %{$cli};
+	my %x = %{$es};
+	$x{'oauth_provider'} = $cli->{'provider'} if length($cli->{'provider'} || '');
+	$x{'oauth_client_id'} = $cli->{'client_id'} if length($cli->{'client_id'} || '');
+	$x{'oauth_client_secret'} = $cli->{'client_secret'} if length($cli->{'client_secret'} || '');
+	$x{'oauth_tenant'} = $cli->{'tenant'} if length($cli->{'tenant'} || '');
+	$x{'oauth_scope'} = $cli->{'scope'} if length($cli->{'scope'} || '');
+	return \%x;
+}
+
 sub email_oauth_endpoints {
 	my ($es) = @_;
 	my $provider = $es->{'oauth_provider'} || 'microsoft';
@@ -12017,6 +12053,7 @@ sub email_oauth_store {
 # fresh one minted from the refresh token.
 sub email_oauth_token {
 	my ($es, $suds) = @_;
+	$es = &email_oauth_overlay($es);
 	$suds = &suds_grabber() unless $suds;
 	my $end = &email_oauth_endpoints($es);
 	my $access = &note_decrypter($suds, $es->{'oauth_access_token'} || '');

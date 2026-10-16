@@ -1,0 +1,54 @@
+<%# The OAuth2 clients the house can sign in with, one card per app registration.
+    Rendered inside the Plat page's OAuth2 tab, and refetched on its own
+    (/manager/configure/oauth_panel) after a client is added or removed. Expects
+    nothing but the controller. %>
+<% no warnings 'uninitialized'; %>
+<% my $clients = &subs::oauth_clients(); %>
+<p class="cfg-note">An app registration lets JawnOS sign in to a provider for you &mdash; Outlook, Gmail, and anything else with an OAuth2 endpoint. One registration can serve several mail accounts. For Microsoft, create an app registration in Entra ID, add a <b>Mobile and desktop application</b> platform, and turn on <b>Allow public client flows</b> (no secret is needed); for Google, create an OAuth client of type <b>TVs and Limited Input devices</b> (it needs the secret). Paste the application (client) ID here, then pick this client when you set an account to OAuth2 in the mail settings.</p>
+<div id="oauth_client_list">
+	<% if (!scalar @{$clients}) { %>
+		<p class="cfg-note">No clients yet. Press <b>Add client</b>.</p>
+	<% } %>
+	<% foreach my $oc ( @{$clients} ) { %>
+		<div class="cfg-card oauth_client" uuid="<%= $oc->{'uuid'} %>">
+			<div class="cfg-row">
+				<label>Name</label>
+				<input type="text" class="oauth_client_field" field="name" uuid="<%= $oc->{'uuid'} %>" value="<%= $oc->{'name'} %>" placeholder="Outlook (work)">
+			</div>
+			<div class="cfg-row">
+				<label>Provider</label>
+				<select class="oauth_client_field" field="provider" uuid="<%= $oc->{'uuid'} %>" value="<%= $oc->{'provider'} %>">
+					<option value="microsoft" <% if (($oc->{'provider'} || 'microsoft') eq 'microsoft') { %>selected<% } %>>Microsoft</option>
+					<option value="google" <% if (($oc->{'provider'} || '') eq 'google') { %>selected<% } %>>Google</option>
+					<option value="custom" <% if (($oc->{'provider'} || '') eq 'custom') { %>selected<% } %>>Custom</option>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label>Client ID</label>
+				<input type="text" class="oauth_client_field" field="client_id" uuid="<%= $oc->{'uuid'} %>" value="<%= $oc->{'client_id'} %>" placeholder="the application (client) ID">
+			</div>
+			<div class="cfg-row">
+				<label>Client Secret</label>
+				<span class="cfg-inline">
+					<input type="password" class="oauth_client_field" field="client_secret" uuid="<%= $oc->{'uuid'} %>" value="" placeholder="<%= length($oc->{'client_secret'} || '') ? '••• set — type to replace' : 'only Google needs one' %>">
+					<% if (length($oc->{'client_secret'} || '')) { %><span class="cfg-note" style="margin:0;white-space:nowrap;">✔ set</span><% } %>
+				</span>
+			</div>
+			<div class="cfg-row">
+				<label>Tenant / issuer</label>
+				<input type="text" class="oauth_client_field" field="tenant" uuid="<%= $oc->{'uuid'} %>" value="<%= $oc->{'tenant'} %>" placeholder="common (or consumers)">
+			</div>
+			<div class="cfg-row">
+				<label>Scopes</label>
+				<input type="text" class="oauth_client_field" field="scope" uuid="<%= $oc->{'uuid'} %>" value="<%= $oc->{'scope'} %>" placeholder="(the provider's default)">
+			</div>
+			<div class="cfg-row" style="justify-content:flex-end;">
+				<button class="button oauth_client_remove" uuid="<%= $oc->{'uuid'} %>" style="border-color:#e5484d;">Remove</button>
+			</div>
+		</div>
+	<% } %>
+</div>
+<div class="cfg-row">
+	<button id="oauth_client_add" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">+ Add client</button>
+	<span id="oauth_client_status" class="cfg-note" style="margin:0;"></span>
+</div>

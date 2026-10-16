@@ -8,6 +8,9 @@
 	#configure .cfg-tabs { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; padding:2px 8px 10px; }
 	#configure .configure_toggle { font:inherit; padding:5px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; }
 	#configure .configure_toggle[status="active"] { background:var(--line); font-weight:bold; }
+	/* the Plat page's own sub-tabs (AI / OAuth2) */
+	#configure .cfg_tab_toggle { font:inherit; padding:4px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2, var(--panel)); color:var(--ink); cursor:pointer; }
+	#configure .cfg_tab_toggle.active { background:var(--line); font-weight:bold; }
 	.cfg { max-width:920px; margin:0 auto; padding:12px 14px 56px; box-sizing:border-box; text-align:left; width:100%; }
 	.cfg h2 { font-size:22px; margin:2px 0 10px; }
 	.cfg h3 { font-size:17px; margin:16px 0 8px; }

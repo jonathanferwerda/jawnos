@@ -52,6 +52,11 @@
 %>
 <div class="cfg">
 	<h2>Platform</h2>
+	<div class="cfg-tabs">
+		<button class="cfg_tab_toggle active" tab="plat_ai">AI</button>
+		<button class="cfg_tab_toggle" tab="plat_oauth">OAuth2</button>
+	</div>
+	<div id="plat_ai" class="cfg_tab_panel">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
 	<h3>Agent models</h3>
@@ -265,5 +270,9 @@
 	<div class="cfg-row">
 		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Save commands</button>
 		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
+	</div>
+	</div>
+	<div id="plat_oauth" class="cfg_tab_panel" style="display:none;">
+		<%= include 'configure/oauth_clients' %>
 	</div>
 </div>

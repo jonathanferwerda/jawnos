@@ -2551,3 +2551,36 @@ $(document).on('click', '#records_fixed_open', function() {
 		});
 	}).fail(function() { list.html('<div style="opacity:.6;">Could not load the list.</div>'); });
 });
+
+// ---- the Plat page's sub-tabs (AI / OAuth2) and the OAuth2 client registry ---
+$(document).on('click', '#plat_setting_list .cfg_tab_toggle', function() {
+	var tab = $(this).attr('tab');
+	$('#plat_setting_list .cfg_tab_toggle').removeClass('active');
+	$(this).addClass('active');
+	$('#plat_setting_list .cfg_tab_panel').hide();
+	$('#' + tab).show();
+});
+
+function oauthPanelRefresh() {
+	$.get('/manager/configure/oauth_panel', function(r) { $('#plat_oauth').html(r); });
+}
+$(document).on('click', '#oauth_client_add', function() {
+	$.post('/manager/configure/oauth_client/add', {}, function() {
+		$('#plat_oauth').show();
+		$('#plat_setting_list .cfg_tab_toggle').removeClass('active');
+		$('#plat_setting_list .cfg_tab_toggle[tab="plat_oauth"]').addClass('active');
+		$('#plat_ai').hide();
+		oauthPanelRefresh();
+	});
+});
+$(document).on('click', '.oauth_client_remove', function() {
+	$.post('/manager/configure/oauth_client/remove', { uuid: $(this).attr('uuid') }, function() { oauthPanelRefresh(); });
+});
+$(document).on('change', '.oauth_client_field', function() {
+	var t = $(this);
+	var field = t.attr('field');
+	if (field === 'client_secret' && !t.val()) { return; }
+	$.post('/manager/configure/oauth_client/save', { uuid: t.attr('uuid'), field: field, value: t.val() }, function() {
+		if (field === 'client_secret') { oauthPanelRefresh(); }
+	});
+});

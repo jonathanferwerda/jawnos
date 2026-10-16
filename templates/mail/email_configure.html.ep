@@ -104,6 +104,17 @@
 						</tr>
 						<% if (($es->{'auth'} || '') eq 'oauth2') { %>
 							<tr>
+								<td>Client</td>
+								<td colspan="2">
+									<select class="email_server_setting" setting="oauth_client" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_client'} %>">
+										<option value="">(the fields below)</option>
+										<% foreach my $oc ( @{ &subs::oauth_clients() } ) { %>
+											<option value="<%= $oc->{'uuid'} %>" <% if (($es->{'oauth_client'} || '') eq $oc->{'uuid'}) { %>selected<% } %>><%= $oc->{'name'} || $oc->{'provider'} %></option>
+										<% } %>
+									</select>
+								</td>
+							</tr>
+							<tr>
 								<td>Provider</td>
 								<td>
 									<select class="email_server_setting" setting="oauth_provider" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_provider'} %>">

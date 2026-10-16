@@ -4892,6 +4892,39 @@ get '/manager/configure/plat_setting_list' => sub($c) {
 	$c->render(template => 'configure/plat_setting_list');
 };
 
+# ---- OAuth2 clients (Configure -> Plat -> OAuth2) ---------------------------
+# One entry per app registration; several mail accounts can share one.
+get '/manager/configure/oauth_panel' => sub($c) {
+	$c->render(text => $c->render_to_string('configure/oauth_clients'));
+};
+post '/manager/configure/oauth_client/add' => sub($c) {
+	my $clients = &subs::oauth_clients();
+	push @{$clients}, { uuid => &subs::random_string_creator(15), name => 'New client', provider => 'microsoft' };
+	&subs::oauth_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+post '/manager/configure/oauth_client/save' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $field = $c->param('field') || '';
+	my $value = $c->param('value');
+	$value = '' unless defined $value;
+	my $clients = &subs::oauth_clients();
+	my ($client) = grep { ($_->{'uuid'} || '') eq $uuid } @{$clients};
+	return $c->render(json => { result => 'no client' }) unless $client;
+	return $c->render(json => { result => 'bad field' }) unless $field =~ /^(name|provider|client_id|client_secret|tenant|scope)$/;
+	$value = &subs::note_encrypter(&subs::session_suds($c), $value) if $field eq 'client_secret';
+	$client->{$field} = $value;
+	&subs::oauth_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+post '/manager/configure/oauth_client/remove' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $clients = &subs::oauth_clients();
+	@{$clients} = grep { ($_->{'uuid'} || '') ne $uuid } @{$clients};
+	&subs::oauth_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+
 post '/manager/configure/me_setting' => sub($c) {
 	my $value = $c->param('value');
 	if ($value =~ /\%$/gi) {
@@ -19337,6 +19370,7 @@ post '/manager/mail/email/oauth/start' => sub($c) {
 	my $servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
 	my ($es) = grep { ($_->{'uuid'} || '') eq $uuid } @{$servers};
 	return $c->render(json => { result => 'error', message => 'save the account first' }) unless $es;
+	$es = &subs::email_oauth_overlay($es);
 	my $suds = &subs::session_suds($c);
 	my $end = &subs::email_oauth_endpoints($es);
 	my %form = ( client_id => ($es->{'oauth_client_id'} || ''), scope => $end->{'scope'} );
@@ -19360,6 +19394,7 @@ post '/manager/mail/email/oauth/poll' => sub($c) {
 	my $servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
 	my ($es) = grep { ($_->{'uuid'} || '') eq $uuid } @{$servers};
 	return $c->render(json => { result => 'error', message => 'no account' }) unless $es;
+	$es = &subs::email_oauth_overlay($es);
 	my $code = $es->{'oauth_device_code'} || '';
 	return $c->render(json => { result => 'error', message => 'press Connect first' }) unless length $code;
 	my $end = &subs::email_oauth_endpoints($es);
