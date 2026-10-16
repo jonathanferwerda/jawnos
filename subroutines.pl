@@ -528,6 +528,17 @@ sub next_appointment_time() {
 	return { next_run => $next_run, next_time => $next_time, uuid => $uuid, list => $next_appointments };
 }
 
+# The session a stop should close: the newest open start/record for the app. The
+# appointment header carries this so a stop names its own session, and every
+# machine in the mesh closes that same row instead of each resolving "the open
+# session" against its own, possibly lagging, copy of the database.
+sub open_session_uuid {
+	my $app = shift;
+	return '' unless $app;
+	my $row = &db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp desc limit 1', $app, 'start', 'record', &rightNow())->hashes->[0];
+	return ($row && $row->{'uuid'}) ? $row->{'uuid'} : '';
+}
+
 sub appt_header_printer() {
 	my $data = shift;
 	my $app = $data->{'app'};
@@ -537,7 +548,7 @@ sub appt_header_printer() {
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $c = &subs::controller_builder();
-	my $header = $c->render_to_string(template => 'apps/appointment_header', timestamp => $server_time, appts => $appts, appointments => [ $app ], a => $app );
+	my $header = $c->render_to_string(template => 'apps/appointment_header', timestamp => $server_time, appts => $appts, appointments => [ $app ], a => $app, running_uuid => &open_session_uuid($app) );
 
 	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
 	&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
@@ -9542,7 +9553,11 @@ sub task_writer() {
 					$duration = abs &subs::time_abbrev_translator(&subs::setting_grabber({ 'app' => 'me', setting => 'duration'}) || '5m');
 				}
 
-				my $md5_uuid = md5_sum $running_appt->{'uuid'} . '-' . $running_appt->{'timestamp'} . '-' . $timestamp . '-' . $task->{'task'} . $data->{'project'} . $data->{'account'} . $data->{'movement'};
+				# keyed on the request alone (the timestamp is already in the uuid's prefix),
+				# never on $running_appt: that is the earliest open session on THIS machine, so
+				# hashing it in gave the same completion a different uuid on every machine and
+				# the mesh kept each machine's copy as its own row
+				my $md5_uuid = md5_sum $papp . '-' . $timestamp . '-' . $task->{'task'} . $data->{'project'} . $data->{'account'} . $data->{'movement'};
 				my $data = {
 					app => $task->{'task'},
 					timestamp => $timestamp,

@@ -1440,6 +1440,9 @@ sub appointment_writer($c,$app) {
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	$app->{'device'} = $device;
+	# a stop that names its session (managerReset sends the open session's uuid) is
+	# remembered before the uuid is minted, so the stop closes exactly that row
+	my $stop_target = $app->{'uuid'};
 	$app->{'uuid'} = $app->{'uuid'} || &subs::random_string_creator(90);
 	if ($app->{'timestamp'} <= $app->{'server_time'} + 1000) {
 		$app->{'seen'} = 'yes';
@@ -1516,13 +1519,27 @@ sub appointment_writer($c,$app) {
 		# the catch-up sweep below can close several of them at once). Those replays
 		# are dropped: the session simply stays open for a live stop, which is the
 		# harmless failure.
+		# A stop that names its session is safe to apply however late it arrives: it
+		# closes that one row and nothing else. The replay guard stays for a stop that
+		# names none, where a late copy could still sweep up sessions it should not.
 		my $ages_ms = &subs::rightNow() - (0 + ($app->{'timestamp'} || 0));
-		if ($app->{'timestamp'} && $ages_ms > &subs::stale_action_ms()) {
+		if (!$stop_target && $app->{'timestamp'} && $ages_ms > &subs::stale_action_ms()) {
 			$log->info('stale stop ignored for ' . $app->{'app'} . ': pressed ' . int($ages_ms / 60000) . ' minutes ago (a replayed action)')
 				if $log;
 				return {};
 		}
-		my $appts = &subs::db_query('select * from appointments where app=? and (type=? or type = ? ) and timestamp < ? order by timestamp asc', $app->{'app'},'start','record',$app->{'timestamp'})->hashes;
+		# Close the session the stop names and only it; a stop that names none - or one
+		# this machine has not synced - closes the newest open session. Closing every
+		# open session was what turned one stop into two appointments (the live session
+		# and a stale one swept up with it).
+		my $appts = [];
+		if ($stop_target) {
+			my $row = &subs::db_query('select * from appointments where app=? and uuid=? and (type=? or type = ?) limit 1', $app->{'app'}, $stop_target, 'start', 'record')->hashes->[0];
+			$appts = [ $row ] if $row && $row->{'uuid'};
+		}
+		unless (scalar @{$appts}) {
+			$appts = &subs::db_query('select * from appointments where app=? and (type=? or type = ? ) and timestamp < ? and stop_seen is null order by timestamp desc limit 1', $app->{'app'},'start','record',$app->{'timestamp'})->hashes;
+		}
 		return {} unless scalar @{$appts} > 0;
 		foreach my $appt ( @{$appts} ) {
 			$app->{'type'} = 'stop';
@@ -9527,6 +9544,12 @@ sub manager_reset($c) {
 	my $init = &subs::setting_initializer($app,$timestamp);
 	$app = $init->{'app'};
 	$c->param('app' => $app);
+	# A stop names the session it closes: managerReset sends the open session's uuid
+	# (read off the appointment header), so the same stop closes that same row on
+	# every machine instead of each resolving "the open session" against its own -
+	# possibly different - copy of the database. A start still mints its own uuid
+	# and carries it through the relay below.
+	my $target_uuid = $c->param('uuid') || '';
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(40);
 	$c->param('uuid' => $uuid);
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
@@ -9578,7 +9601,11 @@ sub manager_reset($c) {
 	$appointments = $results->hashes;
 	$results = &subs::db_query("select min(timestamp) as file,timestamp,notes,app,duration,type,status,amount,unit,account from appointments where app=? and timestamp >=? and type != 'note' order by timestamp", $app,$time_definition);
 	push @{$appointments}, @{$results->hashes};
-	if (scalar @{$appointments} == 0) { $type = "add" };
+	# An app with nothing logged yet is created by whatever the person logged, but a
+	# stop/cancel/resume/pause/delay has no session to act on and must not mint one -
+	# on a peer that had not yet synced this app, coercing a stop to "add" wrote a
+	# spurious appointment that then rode the mesh back as a duplicate.
+	if (scalar @{$appointments} == 0 && $type !~ /^(?:stop|cancel|resume|pause|delay)$/) { $type = "add" };
 	my $pos = &subs::setting_grabber({ app => $app, setting => 'pos' } ) || 'idea';
 	$notes = &subs::note_encrypter(&subs::session_suds($c),$notes) if $notes;
 
@@ -9693,9 +9720,21 @@ sub manager_reset($c) {
 	}
 	elsif ($type eq 'stop') {
 		my $recording_type = &subs::setting_grabber({ app => $app, setting => 'record' });
-		my $began = &subs::db_query('select * from appointments where app=? and (type=? or type=? or type = ? or type = ? or type = ?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
-			$app,'record','start','video', 'audio', 'screen', $timestamp);
-		my $old_appts = $began->hashes;
+		# The session named by the client (a stop carries its uuid) is closed and only
+		# it; a stop that names none - or one this machine has not synced - closes the
+		# newest open session. Closing the whole backlog at once is what turned one
+		# stop into two appointments (the live session and a stale one swept up with
+		# it), so at most one session is ever closed here.
+		my $stop_row;
+		if ($target_uuid) {
+			$stop_row = &subs::db_query('select * from appointments where app=? and uuid=? and (type=? or type=? or type = ? or type = ? or type = ?) and stop_seen is null limit 1',
+				$app, $target_uuid, 'record','start','video', 'audio', 'screen')->hashes->[0];
+		}
+		unless ($stop_row && $stop_row->{'uuid'}) {
+			$stop_row = &subs::db_query('select * from appointments where app=? and (type=? or type=? or type = ? or type = ? or type = ?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1',
+				$app,'record','start','video', 'audio', 'screen', $timestamp)->hashes->[0];
+		}
+		my $old_appts = ($stop_row && $stop_row->{'uuid'}) ? [ $stop_row ] : [];
 
 		foreach my $o ( @{$old_appts} ) {
 		#	next;

@@ -3689,6 +3689,14 @@ function managerReset(caller,e) {
 	var notes = container.find('.text_editor').html();
 	var now = Date.now();
 	var type = details.attr('type');
+	// a stop names the session it closes: the appointment header carries the open
+	// session's uuid, so the server stops that row on every machine and not
+	// whichever open session each machine happens to hold (which left a stale one
+	// behind to be swept up by the next stop)
+	var running_uuid = '';
+	if (type == 'stop') {
+		running_uuid = container.find('.appointment_header_background').attr('running_uuid') || '';
+	}
 	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine');
 	var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
 	var warranty = container.find('.warranty').val();
@@ -3705,6 +3713,7 @@ function managerReset(caller,e) {
 	var data = { 
 		app: app, 
 		timestamp: now, 
+		uuid: running_uuid,
 		type: type, 
 		ago: ago,
 		duration: duration,

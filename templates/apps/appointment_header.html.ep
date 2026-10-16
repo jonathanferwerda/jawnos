@@ -1,7 +1,7 @@
 <% my $pseudonyms = &Manager::pseudonym_maker('viewer',$a); %>
 <% my $now = &subs::rightNow(); %>
 <% no warnings 'uninitialized'; %>
-<div class="appointment_header_background" last_update="<%= $timestamp %>" style="">
+<div class="appointment_header_background" last_update="<%= $timestamp %>" running_uuid="<%= $running_uuid %>" style="">
 	<% if ( ref $appts->{$a}->{'list'} ) { %>
 		<% foreach my $n (@{$appts->{$a}->{'list'}}) { %>
 			<%
