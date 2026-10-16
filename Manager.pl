@@ -12442,14 +12442,18 @@ post '/manager/configure' => sub ($c) {
 	}
 	# a rename into a name the house already knows is a merge: the two apps'
 	# settings meet on one row each, so the panel picks which value wins per
-	# setting (and which merge naturally) before the rename runs
+	# setting (and which merge naturally) before the rename runs. A conflict is
+	# only something to choose, though: two apps that share no setting simply join,
+	# and reporting a conflict over an empty list left the panel's own button
+	# re-asking forever - a rename that visibly did nothing at all.
 	if ($setting eq 'name_change') {
 		my $new_app = &subs::unformat_name($value);
 		my $choices = eval { return decode_json $c->param('choices') } || {};
 		my $target = &subs::db_query('select 1 from settings where app = ? limit 1', $new_app)->hashes->[0];
 		my $target_appts = &subs::db_query('select 1 from appointments where app = ? limit 1', $new_app)->hashes->[0];
-		if (($target || $target_appts) && !scalar keys %{$choices}) {
-			$c->render(json => { conflict => 1, app => $app, new => $new_app, pairs => &subs::name_change_pairs($app, $new_app) });
+		my $pairs = &subs::name_change_pairs($app, $new_app);
+		if (($target || $target_appts) && !scalar keys %{$choices} && scalar @{$pairs}) {
+			$c->render(json => { conflict => 1, app => $app, new => $new_app, pairs => $pairs });
 			return;
 		}
 		&subs::name_change_apply($app, $new_app, $choices) if scalar keys %{$choices};

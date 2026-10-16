@@ -2267,7 +2267,10 @@ function nameConflictPanel(response) {
 		panel.append(row);
 	});
 	panel.append('<br><button id="name_conflict_go" style="margin-right:8px;">Rename &amp; merge</button><button id="name_conflict_cancel">Cancel</button>');
-	$('#configuration_container').append(panel);
+	// on the body, not inside the Configure panel: mounted in the app list it could
+	// land inside a scrolled or hidden ancestor and never be seen - which is what
+	// "nothing happened" looked like when a rename met a name the house knows
+	$('body').append(panel);
 	$('#name_conflict_go').on('click', function () {
 		var choices = {};
 		panel.find('input[type=radio]:checked').each(function () {
