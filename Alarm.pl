@@ -396,6 +396,44 @@ sub budget_watcher() {
 	return 0;
 }
 
+# A cart held too long: if Market has a cart and the house is no longer at any of
+# its vendors (or there is no fix at all), remind it to check out. At most once
+# every six hours, cleared the moment the cart is emptied.
+sub market_cart_watcher() {
+	my $gate = &subs::setting_grabber({ app => 'market', setting => 'cart_reminder', device => 'all' });
+	return 0 if defined $gate && $gate eq 'off';
+	my $cart = [ grep { $_->{'cart'} } @{ &Manager::market_list() } ];
+	my $seen = &subs::setting_grabber({ app => 'market', setting => 'cart_reminder_at', device => 'all' });
+	unless (scalar @{$cart}) {
+		&subs::setting_deleter({ app => 'market', setting => 'cart_reminder_at', device => 'all' }) if $seen;
+		return 0;
+	}
+	# still at one of the cart's vendors? then nothing has been forgotten yet
+	my $here = &Manager::market_here();
+	if ($here) {
+		foreach my $it ( @{$cart} ) {
+			next unless $it->{'vendor'};
+			my $place = &Manager::market_vendor_place($it->{'vendor'});
+			next unless $place;
+			my $km = &Manager::help_distance_km($here->{'latitude'}, $here->{'longitude'}, $place->{'latitude'}, $place->{'longitude'});
+			return 0 if defined $km && $km <= 0.3;
+		}
+	}
+	my $now = &subs::rightNow();
+	return 0 if $seen && ($now - $seen) < 6 * 60 * 60 * 1000;
+	&subs::setting_setter({ app => 'market', setting => 'cart_reminder_at', value => $now, device => 'all' });
+	&Manager::notification_sender({
+		app => 'market',
+		role => 'all',
+		type => 'budget',
+		title => 'Market',
+		synth => 'play -v .2 "| sox -n -p synth .4 pluck 392"',
+		message => 'Still holding a cart of ' . scalar(@{$cart}) . ' - check out?',
+		image => $gb::known_appts->{'market'}->{'icon'},
+	});
+	return 1;
+}
+
 sub housekeeping() {
 
 	my ($db,$database,$sql) = &subs::database_grabber();
@@ -510,7 +548,13 @@ if ($ENV{PURPOSE} eq "alarm") {
 			$alarm_id = &alarm_timer();
 		}
 	});
-	
+	# a cart left behind is remembered: every five minutes, remind if a cart stands
+	# and the house has left its vendors
+	Mojo::IOLoop->recurring(300 => sub {
+		eval { &market_cart_watcher(); };
+		$log->error('market cart watcher: ' . $@) if $@;
+	});
+
 	app->start;
 
 }

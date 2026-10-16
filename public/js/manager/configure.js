@@ -2291,3 +2291,20 @@ function shortSettingValue(v) {
 	if (v.length > 60) { v = v.slice(0, 60) + '…'; }
 	return v.replace(/</g, '&lt;');
 }
+
+// Let the Guide suggest how an item is sold (a six-pack, a case) and fill the
+// packaging in, so every pack is not typed by hand.
+$(document).on('click', '.autofill_packaging', function() {
+	var app = $(this).attr('app');
+	$.ajax({
+		url: '/manager/configure/packaging/suggest',
+		type: 'POST',
+		data: { app: app, timestamp: Date.now() },
+		success: function(response) {
+			if (response && response.html) {
+				$('.app_packaging_configurator[app="' + app + '"]').html(response.html);
+				configurationGrabber({ app: app, setting: ['packaging'] });
+			}
+		}
+	});
+});

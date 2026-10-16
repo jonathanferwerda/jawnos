@@ -19,6 +19,8 @@
 .packaging_config_container .delete_packaging { align-self:center; }
 </style>
 
+<img class="little_thumb hover autofill_packaging" app="<%= $a %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Let the Guide suggest this item's packaging" style="vertical-align:bottom;">
+
 <% foreach my $p ( keys %{$packages} ) { %>
 	<% my $packaging = $packages->{$p}; %>
 	<div class="packaging_config_container" uuid="<%= $packaging->{'uuid'} || $p %>">
