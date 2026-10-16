@@ -464,7 +464,8 @@ $(document).on('keyup, change', '.email_compose_input', function() {
 			subject: '',
 			body: '',
 			timestamp: '',
-			sender: ''
+			sender: '',
+			in_reply_to_uuid: ''
 		};
 		$.each(message, function(i,v) {
 			var input = form.find('.email_compose_' + i);
@@ -605,7 +606,8 @@ $(document).on('click', '.email_send', function() {
 			subject: '',
 			body: '',
 			timestamp: Date.now(),
-			sender: ''
+			sender: '',
+			in_reply_to_uuid: ''
 		};
 		$.each(message, function(i,v) {
 			var input = form.find('.email_compose_' + i);

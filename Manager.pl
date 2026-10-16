@@ -19423,6 +19423,7 @@ get '/manager/mail/email/compose' => sub($c) {
 				subject => $subject,
 				body => $quote,
 				attachments => [],
+				in_reply_to_uuid => $in_reply_to,
 				timestamp => &subs::rightNow()
 			};
 			$email = $to;
@@ -19537,12 +19538,17 @@ post '/manager/mail/email/flag' => sub($c) {
 	$c->render(json => { result => 'ok', flag => $flag, value => $value });
 };
 
-# move a letter between folders: Archive tucks it away (and Inbox puts it back)
+# move a letter between folders (a status change); Trash is the delete
 post '/manager/mail/email/move' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $to = $c->param('to') || '';
-	my %ok = map { $_ => 1 } qw/inbox archive/;
-	return $c->render(json => { result => 'bad folder' }) unless $uuid && $ok{$to};
+	return $c->render(json => { result => 'no uuid' }) unless $uuid;
+	if ($to eq 'trash') {
+		&subs::db_delete('mailbox', { uuid => $uuid });
+		return $c->render(json => { result => 'deleted' });
+	}
+	my %ok = map { $_ => 1 } qw/inbox archive drafts sent outbox/;
+	return $c->render(json => { result => 'bad folder' }) unless $ok{$to};
 	&subs::db_update('mailbox', { status => $to, server_time => &subs::rightNow() }, { uuid => $uuid });
 	$c->render(json => { result => 'ok', folder => $to });
 };
@@ -19670,6 +19676,22 @@ post '/manager/mail/email/send' => sub($c) {
 	my $enc_subject = &subs::note_encrypter(&subs::session_suds($c), $subject);
 	my $enc_body = &subs::note_encrypter(&subs::session_suds($c), $body);
 
+	# the thread this letter belongs to: its own Message-ID names it, and a reply
+	# inherits the chain it answers (In-Reply-To / References) rather than a guess
+	my $message_id = '<' . $uuid . '@jawnos>';
+	my $in_reply_to = '';
+	my $references = '';
+	my $thread = &subs::email_thread_key($subject, $email);
+	my $reply_uuid = $c->param('in_reply_to_uuid');
+	if ($reply_uuid) {
+		my $orig = &subs::db_select('mailbox', undef, { uuid => $reply_uuid })->hashes->[0];
+		if ($orig) {
+			$in_reply_to = $orig->{'message_id'} || '';
+			$references = join(' ', grep { length } ($orig->{'thread_refs'} || '', $orig->{'message_id'} || ''));
+			$thread = $orig->{'thread'} || $orig->{'message_id'} || $thread;
+		}
+	}
+
 	&subs::db_insert('mailbox', {
 		uuid => $uuid,
 		email => $email,
@@ -19681,7 +19703,10 @@ post '/manager/mail/email/send' => sub($c) {
 		body => $enc_body,
 		attachments => $jattachments,
 		status => 'sending',
-		thread => &subs::email_thread_key($subject, $email),
+		thread => $thread,
+		message_id => $message_id,
+		in_reply_to => $in_reply_to,
+		thread_refs => $references,
 		timestamp => $timestamp
 	});
 
@@ -19700,6 +19725,9 @@ post '/manager/mail/email/send' => sub($c) {
 		body => $enc_body,
 		attachments => $jattachments,
 		uuid => $uuid,
+		message_id => $message_id,
+		in_reply_to => $in_reply_to,
+		references => $references,
 	});
 	$result = ref $result eq 'HASH' ? $result->{'result'} : $result;
 	if ($result ne 'success') {
@@ -27057,6 +27085,12 @@ sub update_database($data) {
 		# so a thread shows as one row and opens as the whole exchange.
 		'alter table mailbox add column starred VARCHAR(10)',
 		'alter table mailbox add column thread VARCHAR(255)',
+		# the message headers a proper thread is built from: a letter's own Message-ID,
+		# what it answers (In-Reply-To) and the chain it belongs to (References). The
+		# thread column then holds the chain's root id rather than a subject guess.
+		'alter table mailbox add column message_id VARCHAR(255)',
+		'alter table mailbox add column in_reply_to VARCHAR(255)',
+		'alter table mailbox add column thread_refs LONGTEXT',
 		'drop table firewall',
 		# ssh credentials are gone: transports, deploy and backup are all
 		# password-less http/websocket now.

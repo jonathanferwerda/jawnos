@@ -135,10 +135,35 @@ $(document).on('click', '.wind[app="email"] .mail_action', function () {
 		$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'seen', value: 'no' }, function () { emailReaderClose(); });
 		return;
 	}
-	if (action == 'archive') {
-		$.post('/manager/mail/email/move', { uuid: uuid, to: 'archive' }, function () { emailReaderClose(); });
+	if (action == 'move') {
+		emailMoveMenu(uuid, $(this));
 		return;
 	}
+});
+
+// The move-to-folder menu: the folders a letter can be filed into (Trash is the
+// delete). It floats under the button and closes on the next click elsewhere.
+function emailMoveMenu(uuid, $btn) {
+	$('#email_move_menu').remove();
+	var items = [ ['inbox', 'Inbox'], ['archive', 'Archive'], ['drafts', 'Drafts'], ['trash', 'Trash'] ];
+	var m = $('<div id="email_move_menu" class="email_move_menu"></div>');
+	$.each(items, function (i, it) {
+		m.append($('<button class="email_move_item"></button>').attr('uuid', uuid).attr('to', it[0]).text(it[1]));
+	});
+	var r = $btn[0].getBoundingClientRect();
+	m.css({ position: 'fixed', left: Math.round(r.left) + 'px', top: Math.round(r.bottom + 4) + 'px' });
+	$('body').append(m);
+}
+
+$(document).on('click', '#email_move_menu .email_move_item', function () {
+	var uuid = $(this).attr('uuid');
+	var to = $(this).attr('to');
+	$('#email_move_menu').remove();
+	$.post('/manager/mail/email/move', { uuid: uuid, to: to }, function () { emailReaderClose(); });
+});
+
+$(document).on('click', function (e) {
+	if (!$(e.target).closest('#email_move_menu').length && !$(e.target).closest('.mail_action').length) { $('#email_move_menu').remove(); }
 });
 
 // The star in a list row: flip the flag and reload the list, without opening the

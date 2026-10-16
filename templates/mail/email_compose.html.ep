@@ -66,6 +66,7 @@
 			</div>
 		</div>
 		<input type="hidden" value="<%= $draft->{'uuid'} %>" id="email_compose_uuid" class="email_compose_input email_compose_uuid">
+		<input type="hidden" value="<%= $draft->{'in_reply_to_uuid'} %>" id="email_compose_in_reply_to_uuid" class="email_compose_input email_compose_in_reply_to_uuid">
 		<input type="hidden" timestamp="<%= $timestamp %>" id="email_compose_timestamp" class="email_compose_input email_compose_timestamp time">
 		<textarea id="email_compose_body" class="email_compose_input email_compose_body" placeholder="Write your message" upgradeable="yes" magic_vars="<%= $magic_vars %>"><%= $draft->{'body'} %></textarea>
 		<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>

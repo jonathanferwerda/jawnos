@@ -35,7 +35,7 @@
 					<button class="mail_action" mail_action="edit" uuid="<%= $m->{'uuid'} %>" hint="Edit this draft">Edit</button>
 				<% } %>
 				<span class="mail_reader_actions_right">
-					<button class="mail_action" mail_action="archive" uuid="<%= $m->{'uuid'} %>" hint="Move to Archive">Archive</button>
+					<button class="mail_action" mail_action="move" uuid="<%= $m->{'uuid'} %>" hint="Move to a folder">Move</button>
 					<img class="little_thumb email_deleter hover" hint="Delete" uuid="<%= $m->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>">
 				</span>
 			</div>
@@ -50,8 +50,17 @@
 					<tr><td>Date</td><td class="time" timestamp="<%= $m->{'timestamp'} %>"></td></tr>
 					<% if (scalar @{$attachments} > 0) { %>
 						<tr><td>Attachments</td><td>
-							<% foreach my $a ( @{$attachments} ) { %>
-								<span class="mail_reader_att"><%= $a->{'of'} || $a->{'name'} || 'file' %></span>
+							<% foreach my $a ( @{$attachments} ) {
+								my $afile = $a->{'f'} || ($a->{'file'} ? $a->{'file'}->{'f'} : '');
+								my $asrc = $a->{'src'} || '';
+								my $aname = $a->{'of'} || $a->{'name'} || ($a->{'file'} ? $a->{'file'}->{'of'} : '') || ($afile =~ m{([^/]+)$} ? $1 : 'attachment');
+								my $ahref = $asrc ? $asrc : ($afile ? '/file_open?file=' . $afile . ($a->{'uuid'} ? '&uuid=' . $a->{'uuid'} : '') : '');
+							%>
+								<% if ($ahref) { %>
+									<a class="mail_reader_att" href="<%= $ahref %>" target="_blank" title="Open <%= $aname %>"><%= $aname %></a>
+								<% } else { %>
+									<span class="mail_reader_att"><%= $aname %></span>
+								<% } %>
 							<% } %>
 						</td></tr>
 					<% } %>

@@ -690,6 +690,18 @@ function appWindowOpener(i,timestamp,v) {
 		else if (i == 'mailbox') {
 			mailMaker(null, 'mailbox');
 		}
+		// the split mail apps restore through their own window too (their routes
+		// wrap the panel with their own app name); without a branch they fall to the
+		// generic else below, which answers with the panel as a centre view
+		else if (i == 'email') {
+			mailMaker(null, 'email');
+		}
+		else if (i == 'chat') {
+			mailMaker(null, 'chat');
+		}
+		else if (i == 'pen') {
+			mailMaker(null, 'pen');
+		}
 		else if (i == 'box_office') {
 			// box office runs its own opener: the ticket key and the chosen view
 			// come with it, so the pinned icon opens exactly what the start menu's

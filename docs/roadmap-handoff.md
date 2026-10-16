@@ -61,7 +61,13 @@ that goes out at once over the account's own SMTP rather than through the
 grouped into one **thread** row (a `thread` key of subject + party) and open as
 the whole exchange; a message can be **starred**, marked **unread** or
 **archived** (Starred and Archive folders in the rail), and incoming **Cc** is
-parsed now, so a carbon copy someone else sent is shown too.
+parsed now, so a carbon copy someone else sent is shown too. A thread follows
+the **message headers** (`Message-ID`/`In-Reply-To`/`References`) where they
+exist, so a reply stays in its thread even if its subject changes. The reading
+pane's **Move** is a folder menu (Inbox, Archive, Drafts, Trash), **attachments
+open** as links, and the split mail windows now **restore on a page refresh**
+(`appWindowOpener` grew email/chat/pen branches instead of falling to the
+appointment path).
 onto their ticket thread.
 
 Still to do:

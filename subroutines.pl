@@ -11906,6 +11906,18 @@ sub email_receiver() {
 						$parser->output_dir($gb::tmp_dir);
 						my $entity = $parser->parse_data($msg_string);
 						my $bodyfile = $entity->bodyhandle;
+						# the message headers a real thread is built from
+						my $hdr = sub { my $v = $entity->head->get($_[0]); $v = '' unless defined $v; $v =~ s/^\s+|\s+$//g; return $v; };
+						my $h_message_id = $hdr->('Message-ID');
+						my $h_in_reply_to = $hdr->('In-Reply-To');
+						my $h_references = $hdr->('References');
+						# the chain's root id names the thread: the first id it references, else
+						# what it answers, else its own id
+						my $h_thread = '';
+						my @chain = ($h_references =~ /(<[^>]+>)/g);
+						$h_thread = $chain[0] if @chain;
+						$h_thread = $h_in_reply_to unless length $h_thread;
+						$h_thread = $h_message_id unless length $h_thread;
 
 						my ($plain_text,$html_text) = ("","");
 						foreach my $part ($entity->parts_DFS) {
@@ -11988,7 +12000,10 @@ sub email_receiver() {
 							status => $status,
 							email => $email,
 							cc => $cc,
-							thread => &subs::email_thread_key($subject, $from),
+							thread => ($h_thread || &subs::email_thread_key($subject, $from)),
+							message_id => $h_message_id,
+							in_reply_to => $h_in_reply_to,
+							thread_refs => $h_references,
 							email_server => $es->{'uuid'},
 							attachments => $jfile
 						};
@@ -12210,6 +12225,11 @@ sub email_send() {
 	# (Email::Stuffer keeps it out of the headers). Both are plain addresses.
 	$stuffer->cc($data->{'cc'}) if $data->{'cc'};
 	$stuffer->bcc($data->{'bcc'}) if $data->{'bcc'};
+	# the thread headers: our own Message-ID (the mailbox row's uuid, so every letter
+	# can be named and matched) and, for a reply, what it answers and the chain so far
+	$stuffer->header('Message-ID' => $data->{'message_id'}) if $data->{'message_id'};
+	$stuffer->header('In-Reply-To' => $data->{'in_reply_to'}) if $data->{'in_reply_to'};
+	$stuffer->header('References' => $data->{'references'}) if $data->{'references'};
 
 	my $dom = Mojo::DOM->new(&subs::note_decrypter($suds, $data->{'body'}));
 
