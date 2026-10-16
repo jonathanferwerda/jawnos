@@ -5,7 +5,11 @@
 ## Support
 
 JawnOS is free and open-source software, released under the [BSD 2-Clause licence](#license). It
-is a **multi-device system** — the Linux desktop app, the headless server daemon, and the Android
+turns a single Perl web server into a browser-based command centre — a desktop-like environment
+that gathers the things one person actually does with a computer: files and media, appointments
+and tasks, budgets and invoices, inventory and mail, notes and location history, maps, AI
+assistance and a spoken interface, and a small fleet of handheld and wearable devices. It is a
+**multi-device system** — the Linux desktop app, the headless server daemon, and the Android
 build that runs under Termux — all driven from one shared Perl codebase, and it is built using
 **high-velocity agent workflows**: parallel, AI-assisted development loops that draft, review and
 test changes across the whole tree at once.
