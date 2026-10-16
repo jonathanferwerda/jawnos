@@ -147,6 +147,19 @@ sub source_kind {
 	return '';
 }
 
+# A file that will not compile only because a CPAN module is not installed on
+# THIS machine is an environment gap, not a broken file. perl -c stops at the
+# missing use, so the rest of the file is never seen; treating that as a failure
+# is what wedged a machine on old code while its checkout was current - the
+# restart guard in ./jawn runs `verify_change.pl --all`, saw pen.pl fail for a
+# missing WebService::Ollama, refused every restart, and the tree kept serving
+# the version it booted hours earlier (2026-10-16). In --all mode (the whole-tree
+# check the guard runs, where any machine's env gaps are expected) such a file is
+# reported as a skip, the way the JavaScript parse is skipped when node is absent.
+# A named or --range check judges a change, so it stays strict.
+my @dep_skips;
+sub missing_module { my $t = shift; return (defined $t && $t =~ /Can't locate \S+\.pm in \@INC/) ? 1 : 0; }
+
 sub check {
 	my ($rel, $src, $path) = @_;
 	my @probs;
@@ -160,7 +173,14 @@ sub check {
 			# brings in, so retry with them before calling it broken
 			my $again = `cd "$root" && "$^X" -Mfeature=signatures -MMojolicious::Lite -MMojo::JSON=decode_json,encode_json -c "$path" 2>&1`;
 			$again = '' unless defined $again;
-			push @probs, 'perl -c: ' . &first_line($out) unless $again =~ /syntax OK/;
+			unless ($again =~ /syntax OK/) {
+				if ($all && &missing_module($out) && $out !~ /syntax error/i) {
+					push @dep_skips, $rel;
+				}
+				else {
+					push @probs, 'perl -c: ' . &first_line($out);
+				}
+			}
 		}
 	}
 	elsif ($kind eq 'js') {
@@ -230,7 +250,8 @@ sub collect_files {
 my %seen;
 my @files = sort grep { length && !$seen{$_}++ } map { rel_of($_) } &collect_files();
 
-my (@passed, @failed, @skipped, $checked);
+my (@passed, @failed, @skipped);
+my $checked = 0;
 foreach my $rel (@files) {
 	my ($src, $path, $temp);
 	if ($range_mode) {
@@ -245,16 +266,18 @@ foreach my $rel (@files) {
 		$src = &read_text($abs);
 		$path = $abs;
 	}
-	$checked++;
+	my $deps_before = scalar @dep_skips;
 	my @probs = &check($rel, $src, $path);
 	unlink $temp if defined $temp;
-	if (@probs) { push @failed, [ $rel, \@probs ] }
-	else { push @passed, $rel }
+	if (@probs) { $checked++; push @failed, [ $rel, \@probs ] }
+	elsif (scalar @dep_skips > $deps_before) { }   # an env gap, reported from @dep_skips
+	else { $checked++; push @passed, $rel }
 }
 
 if (!$quiet) {
 	print "ok    $_\n" foreach @passed;
 	print "skip  $_ (not present)\n" foreach @skipped;
+	print "skip  $_ (a CPAN module is not installed here)\n" foreach @dep_skips;
 	print "skip  JavaScript parse skipped - node is not installed\n"
 		if !$node && grep { /\.(?:js|mjs|cjs)$/ } @files;
 }
