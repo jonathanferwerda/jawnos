@@ -4154,10 +4154,14 @@ static void voiceListenTask(void *pv) {
   if (!voice_models_init(voice_trigger)) { Serial.println("[voice] no voice model loaded"); }
   if (voiceDbg) {
     // the display's SPI flush bounces through the DMA-capable pool, so watch it
-    // around the microphone: the I2S driver's buffers come from the same pool
-    Serial.printf("[voice] armed: int=%u dma=%u\n",
+    // around the microphone: the I2S driver's buffers come from the same pool.
+    // The three flags ride along because any one of them stops the listener the
+    // moment it starts (see the loop below), and which one it was is the whole
+    // question when a capture never reaches a frame.
+    Serial.printf("[voice] armed: int=%u dma=%u rec=%d play=%d doze=%d\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                  (int)isRecording, (int)isPlaying, (int)dozing);
   }
   // the microphone stays open across utterances: each pass captures one spoken
   // run, ships it, and - while the setting is on - goes straight back to
@@ -4533,7 +4537,15 @@ static void say_stream_play() {
   if (!say_stream) { return; }
   say_stream_dead = false;
   isPlaying = true;
-  xTaskCreatePinnedToCore(say_playback_task, "SayTask", 4096, NULL, 2, NULL, 1);
+  // If the playback task cannot be created, isPlaying would stay set with nothing
+  // left to clear it - and the listener steps aside for any playback, so voice
+  // would go quietly deaf until the next reboot. Clear it here instead.
+  if (xTaskCreatePinnedToCore(say_playback_task, "SayTask", 4096, NULL, 2, NULL, 1) != pdPASS) {
+    Serial.println("[say] playback task could not start");
+    isPlaying = false;
+    say_stream_dead = true;
+    if (say_stream) { xStreamBufferReset(say_stream); }
+  }
 }
 
 
