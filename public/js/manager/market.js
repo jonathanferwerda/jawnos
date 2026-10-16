@@ -5,6 +5,7 @@
 var marketTab = 'list';
 var marketFilter = 'all';
 var marketVendor = '';
+var marketList = '';
 
 $(document).on('click', '.market_toggle', function() {
 	marketOpener();
@@ -14,6 +15,7 @@ function marketOpener() {
 	marketTab = 'list';
 	marketFilter = 'all';
 	marketVendor = '';
+	marketList = '';
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/market/refresh',
@@ -21,6 +23,9 @@ function marketOpener() {
 		data: { timestamp: timestamp },
 		success: function(response) {
 			windowMaker(response.window);
+			// at a shop the applicable list (or the only one) opens ready
+			var nearby = $('#market_nearby .market_nearby_list');
+			if (nearby.length === 1) { marketList = nearby.attr('list'); }
 			marketApply();
 		}
 	});
@@ -48,14 +53,16 @@ function marketApply() {
 	body.find('#market_shopping').toggle(marketTab === 'shopping');
 	body.find('#market_vendor').val(marketVendor);
 	body.find('#market_filter').val(marketFilter);
+	body.find('#market_list').val(marketList);
 	body.find('.market_row').each(function() {
 		var r = $(this);
 		var vendor_ok = (marketVendor === '') || (r.attr('data-vendor') === marketVendor);
+		var list_ok = (marketList === '') || (r.attr('data-list') === marketList);
 		var kind_ok = true;
 		if (r.closest('#market_shopping_rows').length) {
 			kind_ok = (marketFilter === 'all') || (r.attr('data-kind') === marketFilter);
 		}
-		r.toggle(vendor_ok && kind_ok);
+		r.toggle(vendor_ok && list_ok && kind_ok);
 	});
 }
 
@@ -75,7 +82,7 @@ function marketAdd() {
 	var input = $('#market_item_input');
 	var text = input.val();
 	if (text === undefined || text.replace(/\s/g, '') === '') { return; }
-	$.post('/manager/market/item_add', { text: text, vendor: marketVendor, timestamp: Date.now() }, function() {
+	$.post('/manager/market/item_add', { text: text, vendor: marketVendor, list: marketList, timestamp: Date.now() }, function() {
 		input.val('');
 	});
 }
@@ -95,6 +102,16 @@ $(document).on('click', '.market_tab', function() {
 
 $(document).on('change', '#market_vendor', function() {
 	marketVendor = $(this).val();
+	marketApply();
+});
+
+$(document).on('change', '#market_list', function() {
+	marketList = $(this).val();
+	marketApply();
+});
+
+$(document).on('click', '.market_nearby_list', function() {
+	marketList = $(this).attr('list');
 	marketApply();
 });
 

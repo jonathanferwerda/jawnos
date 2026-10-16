@@ -1904,6 +1904,58 @@ sub market_vendors {
 	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'vendor')->hashes;
 	return [ map { $_->{'app'} } @{$rows} ];
 }
+# The registry of named lists (Grocery, Hardware, Clothing, ...) with the vendors
+# each is shopped at, so a vendor's location can name the lists that apply there.
+# Names come from the house's categories, so a list lines up with the budget's
+# category rather than inventing a parallel scheme.
+sub market_lists {
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'market_lists' });
+	my $lists = eval { return decode_json $raw } || {};
+	return ref $lists eq 'HASH' ? $lists : {};
+}
+sub market_list_key {
+	my ($name) = @_;
+	return '' unless defined $name && $name ne '';
+	return &subs::unformat_name($name);
+}
+# Remember that a list is shopped at a vendor, so a vendor's location names it.
+sub market_lists_touch_vendor {
+	my ($key, $name, $vendor) = @_;
+	return unless $key && $vendor;
+	my $lists = &market_lists();
+	$lists->{$key} ||= { name => ($name || $key), vendors => {} };
+	$lists->{$key}->{'name'} = $name if $name;
+	$lists->{$key}->{'vendors'} ||= {};
+	$lists->{$key}->{'vendors'}->{$vendor} = 1;
+	&subs::setting_setter({ app => 'market', setting => 'market_lists', value => encode_json($lists) });
+}
+# The newest GPS fix the house holds (the phone writes continent rows), or nothing.
+sub market_here {
+	my $row = &subs::db_query("select latitude, longitude from continent where latitude is not null and latitude != '' order by cast(timestamp as integer) desc limit 1")->hashes->[0];
+	return ($row && $row->{'latitude'} && $row->{'longitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0 } : undef;
+}
+# The lists that apply where the house is now: a list whose vendors include one
+# within the radius. At a supermarket that is the grocery list; at a big-box store
+# several lists can be in range at once.
+sub market_nearby_lists {
+	my $here = &market_here();
+	return [] unless $here;
+	my $lists = &market_lists();
+	my @near;
+	foreach my $key ( sort keys %{$lists} ) {
+		my $vendors = $lists->{$key}->{'vendors'} || {};
+		foreach my $v ( sort keys %{$vendors} ) {
+			my $hp = eval { return decode_json &subs::setting_grabber({ app => $v, setting => 'home_plate' }) } || {};
+			next unless $hp->{'latitude'} && $hp->{'longitude'};
+			my $km = &help_distance_km($here->{'latitude'}, $here->{'longitude'}, $hp->{'latitude'} + 0, $hp->{'longitude'} + 0);
+			next unless defined $km && $km <= 0.3;
+			push @near, { key => $key, name => ($lists->{$key}->{'name'} || $key), vendor => $v, distance_km => sprintf('%.3f', $km) };
+			last;
+		}
+	}
+	return \@near;
+}
+
 sub market_list {
 	my $raw = &subs::setting_grabber({ app => 'market', setting => 'shopping_list' });
 	my $list = eval { return decode_json $raw } || [];
@@ -1960,11 +2012,14 @@ sub market_maker {
 	foreach my $it ( @{$list} ) {
 		$it->{'due'} = &market_item_due($it->{'text'});
 	}
+	my $nearby = &market_nearby_lists();
 	return $c->render_to_string(
 		template => 'market/market',
 		list => $list,
 		vendors => &market_vendors(),
-		vendor => $vendor
+		vendor => $vendor,
+		lists => &market_lists(),
+		nearby => $nearby
 	);
 }
 
@@ -1979,6 +2034,8 @@ post '/manager/market/item_add' => sub($c) {
 	my $text = $c->param('text') || '';
 	$text =~ s/^\s+|\s+$//g;
 	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	my $list_name = $c->param('list') || '';
+	my $list_key = &market_list_key($list_name);
 	return $c->render(json => { error => 'empty' }) unless $text ne '';
 	my $list = &market_list();
 	my $item = {
@@ -1986,10 +2043,12 @@ post '/manager/market/item_add' => sub($c) {
 		text => $text,
 		kind => &market_item_due($text) ? 'need' : 'want',
 		vendor => $vendor,
+		list => $list_key,
 		timestamp => &subs::rightNow(),
 	};
 	unshift @{$list}, $item;
 	&market_save_list($list);
+	&market_lists_touch_vendor($list_key, $list_name, $vendor) if $list_key && $vendor;
 	$c->render(json => { item => $item });
 };
 

@@ -414,14 +414,16 @@ our %topic = (
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
-			'Market is where what you need to buy gathers. A vendor dropdown scopes the list; the Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item. The Shopping tab reads the same list through a Needs, Wants or All filter.',
-			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.'
+			'Market is where what you need to buy gathers. A Lists dropdown groups the list by kind - Grocery, Hardware, Clothing, a name of your own (they are drawn from the house\'s categories) - and a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',
+			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
+			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
 		steps => [
 			'Open Market from the start menu.',
-			'Pick a vendor to scope both lists to that vendor.',
+			'Pick a list and a vendor to scope both tabs; both are kept on what you add.',
 			'Type an item and press Enter to add it; set its dial to need or want.',
-			'Switch to the Shopping tab and filter the run to needs, wants or all.'
+			'Switch to the Shopping tab and filter the run to needs, wants or all.',
+			'At a shop, tap a Here: list to open on it.'
 		],
 		related => [ 'warehouse', 'store' ]
 	},
