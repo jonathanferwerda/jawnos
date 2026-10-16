@@ -28,11 +28,15 @@ body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .hu
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
 	background-color: var(--panel-2);
 }
-select { text-align:center; height: 36px; font-size: 20px; border-width 1px; border: solid; border-color: var(--line); border-radius: 5px; }
+/* A control grows to fit its own text instead of a fixed height clipping it the
+   moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
+   left an input's content box 12px for an 18px line, so the text's lower half was
+   cut off. box-sizing keeps that padding inside the min-height. */
+select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
 button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }
 button.active { background-color: green; }
-input { text-align:left; height: 28px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }	
-textarea { text-align:left; height: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }
+input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
+textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
 .text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {

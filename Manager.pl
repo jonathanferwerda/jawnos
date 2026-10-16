@@ -2199,6 +2199,19 @@ get '/manager/warehouse/journal' => sub($c) {
 	$c->render(json => { html => $html, item => $item, count => scalar @{$rows} });
 };
 
+# What an item has on hand right now - what the warehouse Levels view shows, but
+# readable by a page or an agent that is reasoning about buying more. Its
+# packaging rides along, so a low figure can name the package that would cover
+# it (a six-pack when two are left and the shop comes once a week).
+get '/manager/warehouse/on_hand' => sub($c) {
+	my $item = &subs::unformat_name($c->param('item'));
+	my $stock = &subs::warehouse_stock_for($item);
+	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'app_packaging' }) }
+		|| eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) }
+		|| {};
+	$c->render(json => { item => $item, on_hand => $stock, packaging => $packaging });
+};
+
 get '/store' => sub ($c) {
 	&store_maker($c);
 };

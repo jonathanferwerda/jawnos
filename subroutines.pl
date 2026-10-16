@@ -8831,6 +8831,25 @@ sub current_place() {
 	return $inventory || $fallback || '';
 }
 
+# What an item has on hand right now: its signed stock rows summed per unit, the
+# same figure the warehouse Levels view shows. A money row (it names an account)
+# and a balance anchor (kind inventory) are not stock and are left out, the way
+# warehouse_grabber reads them.
+sub warehouse_stock_for {
+	my ($item) = @_;
+	return {} unless $item && $item ne '';
+	my $rows = &db_query('select quantity, unit, kind, type, account from warehouse where item = ?', $item);
+	my %stock;
+	foreach my $r ( @{ $rows ? $rows->hashes : [] } ) {
+		my $kind = $r->{'kind'};
+		$kind = ($r->{'type'} eq 'inventory' ? 'inventory' : (($r->{'account'} && $r->{'account'} ne '') ? 'money' : 'stock')) if !defined $kind || $kind eq '';
+		next unless $kind eq 'stock';
+		my $unit = $r->{'unit'} || 'each';
+		$stock{$unit} += &numeric_formatter($r->{'quantity'}) + 0;
+	}
+	return \%stock;
+}
+
 # The shelf life (e.g. '3w') declared on an item's packaging, if any.
 sub warehouse_item_expires {
 	my $item = shift;

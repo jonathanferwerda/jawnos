@@ -29,10 +29,11 @@
 		$measure = '' unless defined $measure;
 		$scount = '' unless defined $scount;
 		$sunit = '' unless defined $sunit;
-		# keep every measure the appointment carries, plus money, in the list; a
-		# measure the picker does not know (a time amount in a duration budget)
-		# still gets an option of its own so a round trip never drops it
-		my @known = ('', '$', @measure_names);
+		# keep every measure the appointment carries, plus money and the plain
+		# quantity it holds (a stream of amounts), in the list; a measure the picker
+		# does not know (a time amount in a duration budget) still gets an option of
+		# its own so a round trip never drops it
+		my @known = ('', '$', 'quantity', @measure_names);
 		my @extra = (length($measure) && !grep { $_ eq $measure } @known) ? ($measure) : ();
 		my $o = '<div class="budget_goals_row">';
 		$o .= '<select class="budget_goals_direction">';
@@ -43,7 +44,10 @@
 		$o .= '<select class="budget_goals_measure">';
 		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>(count)</option>';
 		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>money</option>';
-		foreach my $m ( @measure_names ) {
+		$o .= '<option value="quantity"' . ($measure eq 'quantity' ? ' selected' : '') . '>quantity</option>';
+		# a base mode's name may also be an app's own measure (beer carries a
+		# 'quantity' measure), so the mode is offered once here and skipped below
+		foreach my $m ( grep { $_ ne 'quantity' } @measure_names ) {
 			$o .= '<option value="' . $m . '"' . ($measure eq $m ? ' selected' : '') . '>' . &subs::format_name($m) . '</option>';
 		}
 		foreach my $m ( @extra ) {
