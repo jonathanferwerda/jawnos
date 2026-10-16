@@ -189,3 +189,119 @@ $(document).on('change', '#market_filter', function() {
 	marketFilter = $(this).val();
 	marketApply();
 });
+
+// Read a receipt. The scanner (the ADF takes the whole receipt in one pass) or a
+// photo yields one or more pages; the server reads them with the vision model and
+// hands back the lines, shown for a confirm before any of it is written. Adding
+// to cart links the lines into the list in the cart, so Checkout still writes the
+// purchases - the same two steps as a shopping run.
+$(document).on('click', '#market_receipt', function() { marketReceiptChooser(); });
+
+$(document).on('click', '.market_receipt_go', function() {
+	var feed = $(this).attr('feed');
+	if (!feed) { $('#market_receipt_file').trigger('click'); return; }
+	marketReceiptPanel('<div style="padding:12px;font-size:17px;">Reading the receipt...</div>');
+	$.post('/manager/market/receipt', { feed: feed, vendor: marketVendor, list: marketList, timestamp: Date.now() }, function(response) {
+		marketReceiptShow(response);
+	}, 'json').fail(function() { marketReceiptShow({ error: 'the scan could not be read' }); });
+});
+
+$(document).on('change', '#market_receipt_file', function() {
+	var files = this.files;
+	if (!files || !files.length) { return; }
+	var fd = new FormData();
+	fd.append('image', files[0]);
+	fd.append('vendor', marketVendor);
+	fd.append('list', marketList);
+	fd.append('timestamp', Date.now());
+	marketReceiptPanel('<div style="padding:12px;font-size:17px;">Reading the receipt...</div>');
+	$.ajax({
+		url: '/manager/market/receipt', type: 'POST', data: fd, processData: false, contentType: false, dataType: 'json',
+		success: function(response) { marketReceiptShow(response); },
+		error: function() { marketReceiptShow({ error: 'the photo could not be read' }); }
+	});
+	this.value = '';
+});
+
+$(document).on('click', '#market_receipt_close', function() { marketReceiptPanel(); });
+
+$(document).on('click', '#market_receipt_apply', function() {
+	var lines = [];
+	$('#market_receipt_panel .market_receipt_line').each(function() {
+		var r = $(this);
+		if (!r.find('.market_receipt_include').prop('checked')) { return; }
+		lines.push({
+			include: 1,
+			item: r.find('.market_receipt_item').val(),
+			description: r.attr('data-description'),
+			code: r.attr('data-code'),
+			qty: r.find('.market_receipt_qty').val(),
+			price: r.find('.market_receipt_price').val()
+		});
+	});
+	if (!lines.length) { marketReceiptPanel(); return; }
+	var panel = $('#market_receipt_panel');
+	$.post('/manager/market/receipt/apply', {
+		lines: JSON.stringify(lines),
+		vendor: marketVendor, list: marketList,
+		total: panel.attr('data-total') || '',
+		date: panel.attr('data-date') || '',
+		files: panel.attr('data-files') || '[]',
+		timestamp: Date.now()
+	}, function() { marketReceiptPanel(); });
+});
+
+// undefined hides the panel; a string fills and shows it.
+function marketReceiptPanel(html) {
+	var panel = $('#market_receipt_panel');
+	if (html === undefined) { panel.hide().empty(); return; }
+	panel.html(html).show();
+}
+
+function marketReceiptChooser() {
+	var h = '<div style="padding:10px;">'
+		+ '<b style="font-size:18px;">Read a receipt</b>'
+		+ '<div style="margin-top:8px;">'
+		+ '<button class="market_receipt_go" feed="adf">Scan (ADF)</button> '
+		+ '<button class="market_receipt_go" feed="flatbed">Scan (flatbed)</button> '
+		+ '<button class="market_receipt_go" feed="">Photo / file</button> '
+		+ '<button id="market_receipt_close">Cancel</button>'
+		+ '</div>'
+		+ '<div style="margin-top:8px;font-size:14px;opacity:.7;">The ADF takes the whole receipt in one pass; a long receipt is two flatbed pages.</div>'
+		+ '</div>';
+	marketReceiptPanel(h);
+}
+
+function marketReceiptShow(response) {
+	if (!response || response.error) {
+		marketReceiptPanel('<div style="padding:10px;font-size:17px;">' + marketEsc((response && response.error) || 'nothing to read') + ' <button id="market_receipt_close">Close</button></div>');
+		return;
+	}
+	var lines = response.lines || [];
+	var h = '<div style="padding:8px;font-size:17px;">';
+	h += '<b>' + marketEsc(response.vendor ? response.vendor : 'Receipt') + '</b>';
+	if (response.date) { h += ' <span style="opacity:.6;font-size:14px;">' + marketEsc(response.date) + '</span>'; }
+	if (response.total) { h += ' <span style="opacity:.6;font-size:14px;">total ' + marketEsc(response.total) + '</span>'; }
+	h += '<span style="float:right;"><button id="market_receipt_apply">Add to cart</button> <button id="market_receipt_close">Cancel</button></span>';
+	h += '</div>';
+	if (!lines.length) { h += '<div style="padding:10px;font-size:16px;opacity:.7;">No lines were read.</div>'; }
+	lines.forEach(function(l) {
+		h += '<div class="market_receipt_line" data-description="' + marketEsc(l.description) + '" data-code="' + marketEsc(l.code || '') + '" style="border-bottom:1px solid var(--line);padding:5px;font-size:16px;">';
+		h += '<input class="market_receipt_include" type="checkbox" checked style="vertical-align:middle;"> ';
+		h += '<input class="market_receipt_item" type="text" value="' + marketEsc(l.item) + '" style="width:34%;"> ';
+		h += 'x<input class="market_receipt_qty" type="text" value="' + marketEsc(l.qty) + '" style="width:8%;"> ';
+		h += '@<input class="market_receipt_price" type="text" value="' + marketEsc(l.price === null || l.price === undefined ? '' : l.price) + '" style="width:12%;"> ';
+		if (l.on_list) { h += '<span style="font-size:13px;opacity:.7;">on list</span> '; }
+		else if (l.matched_by) { h += '<span style="font-size:13px;opacity:.7;">' + marketEsc(l.matched_by) + '</span> '; }
+		if (l.description && l.description.toLowerCase() !== String(l.item || '').toLowerCase()) {
+			h += '<span style="font-size:13px;opacity:.55;">' + marketEsc(l.description) + '</span>';
+		}
+		h += '</div>';
+	});
+	marketReceiptPanel(h);
+	$('#market_receipt_panel').attr('data-total', response.total || '').attr('data-date', response.date || '').attr('data-files', JSON.stringify(response.files || []));
+}
+
+function marketEsc(s) {
+	return $('<div></div>').text(s === null || s === undefined ? '' : String(s)).html();
+}

@@ -416,7 +416,7 @@ our %topic = (
 	},
 	'market' => {
 		title => 'Market', category => 'apps', app => 'market',
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
@@ -424,6 +424,7 @@ our %topic = (
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
 			'While you shop, tick an item off and drop it in the cart; Checkout turns the cart into purchases (each written on the item\'s own app, so a house item app is born there) and retires them from the list, while Cancel just empties the cart back onto it.',
 			'Scan reads a barcode - the app\'s own bridge on a phone, else the camera, else a typed code. A code never seen before is looked up once and named in our terms by the model (a house item name, a category we keep, a unit), then remembered, so the same product is instant next time.',
+			'Receipt reads a whole shopping run at once, for the shop you did not scan at the till. The Receipt button offers the scanner (the ADF feeds the long receipt in one pass) or a photo; the vision model reads the pages into lines and Market shows them for a confirm, each named in our terms and marked when it is already on the list. Add to cart links them into the list in the cart, so Checkout still writes the purchases, and the receipt itself is kept with the Market app.',
 			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
 		steps => [
@@ -431,7 +432,8 @@ our %topic = (
 			'Pick a list and a vendor to scope both tabs; both are kept on what you add.',
 			'Type an item and press Enter to add it; set its dial to need or want.',
 			'Switch to the Shopping tab and filter the run to needs, wants or all.',
-			'At a shop, tap a Here: list to open on it.'
+			'At a shop, tap a Here: list to open on it.',
+			'After a shop, press Receipt and scan the whole receipt in the ADF, then Add to cart and Checkout.'
 		],
 		related => [ 'warehouse', 'store' ]
 	},

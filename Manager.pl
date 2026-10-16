@@ -846,6 +846,28 @@ post '/manager/scan_document' => sub($c) {
 };
 
 
+# The scanimage invocation for a feed, shared by the document scanner and the
+# Market receipt reader so the two never drift. $feed is 'adf' or 'flatbed'
+# (case-insensitive) and must be one the scanner declares; $file is the output
+# base (an ADF pages itself with --batch and a %d suffix). Undef for a feed the
+# scanner does not offer, which callers read as "this scanner cannot do that".
+sub scanner_scan_command($feed, $file) {
+	my $scanner = $config->{'scanners'}->[0];
+	return undef unless $scanner && $file;
+	my $printer = &subs::device_lister(&subs::rightNow(),'printer');
+	my $address = ("hpaio:/net/officejet_3830_series?ip=" . $printer->{'ip'}) || $scanner->{'address'};
+	my $resolution = $scanner->{'resolution'};
+	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
+	$feed = lc($feed || '');
+	if ($feed eq 'flatbed' && grep { $_ eq 'flatbed' } @feeds) {
+		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution;";
+	}
+	if ($feed eq 'adf' && grep { $_ eq 'adf' } @feeds) {
+		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution;";
+	}
+	return undef;
+}
+
 sub scan($c,$scandata) {
 	my $timestamp = $scandata->{'timestamp'};
 	my $feed = $scandata->{'feed'};
@@ -869,20 +891,10 @@ sub scan($c,$scandata) {
 	my $thumb = $thumb_folder . '/' . $app . '_' . $timestamp . '.jpg';
 	my $file = $filename . '/' . $app . '_' . $timestamp;
 	my $image_file = $file . '.jpg';
-	my $printer = &subs::device_lister($timestamp,'printer');
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
-		my $command;
 		($db,$database,$sql) = &subs::database_grabber();
-		my $scanner = $config->{'scanners'}->[0];
-		my $address = ("hpaio:/net/officejet_3830_series?ip=" . $printer->{'ip'}) || $scanner-{'address'};
-		my $resolution = $scanner->{'resolution'};
-		if ($feed eq 'flatbed' && grep { lc $_ eq 'flatbed' } @{$scanner->{'feeds'}}) {
-			$command = "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution;";
-		}
-		elsif ($feed eq 'adf' && grep { lc $_ eq 'adf' } @{$scanner->{'feeds'}}) {
-			$command = "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution;";
-		}
+		my $command = &scanner_scan_command($feed, $file);
 		my $caseworker = `$command`;
 		my $scans = `ls -tr $file*.tiff`;
 		sleep 1;
@@ -2270,6 +2282,318 @@ post '/manager/market/refresh' => sub($c) {
 	my $contents = &market_maker($c);
 	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'market', contents => $contents }, $timestamp);
 	$c->render(json => { window => $window, html => $contents });
+};
+
+# --- receipts: read a shop receipt into the cart ---
+# A receipt is long, so it is scanned - the ADF feeds it in one pass - or
+# photographed, and the vision model reads the pages into strict JSON. Each line
+# is then matched to a house item: a printed code through the barcode cache, else
+# the description folded into our terms by the same model that names a scan. The
+# list is only touched once a person confirms, and confirming links each line to
+# the list in the cart, so the familiar Checkout is still what writes purchases.
+
+# Whether the house already has an app by this name (a scanned or typed item).
+sub market_app_exists {
+	my ($item) = @_;
+	return 0 unless defined $item && $item ne '';
+	my $row = &subs::db_query('select app from settings where app = ? limit 1', $item)->hashes->[0];
+	return $row ? 1 : 0;
+}
+
+# The list row an item names, if the list already holds one (by our name or by
+# what it was typed as).
+sub market_list_row {
+	my ($item) = @_;
+	return undef unless defined $item && $item ne '';
+	my $want = &subs::unformat_name($item);
+	foreach my $it ( @{ &market_list() } ) {
+		return $it if lc($it->{'text'} || '') eq lc($item) || &subs::unformat_name($it->{'text'} || '') eq $want;
+	}
+	return undef;
+}
+
+# Fold a receipt's unknown descriptions into our terms in ONE model call: a
+# receipt has many lines, and one call each would be slow and wasteful. Returns
+# a hash of description => house name, its misses left absent.
+sub market_receipt_name_batch {
+	my ($raws) = @_;
+	my %out;
+	return \%out unless $raws && scalar @{$raws};
+	my $listed = join "\n", map { ($_ + 1) . ". " . $raws->[$_] } (0 .. $#{$raws});
+	my ($text) = &subs::ai_chat_role('chatbot_model', [
+		{ role => 'system', content => 'You name shop products for JawnOS. Give each one a short house name: the thing itself in one or two words (a milk carton is milk, a bar of soap is soap), never a category or a brand. Answer with strict JSON only.' },
+		{ role => 'user', content => "Products:\n$listed\nReturn ONLY JSON: {\"names\":[{\"n\":the product number above,\"item\":\"a short house name, one or two words\"}]}." },
+	]);
+	my ($json) = ($text || '') =~ /(\{.*\})/s;
+	my $o = eval { return decode_json $json } || {};
+	foreach my $e ( @{ $o->{'names'} || [] } ) {
+		next unless ref $e eq 'HASH';
+		my $i = ($e->{'n'} || 0) - 1;
+		next unless $i >= 0 && $i < scalar @{$raws};
+		next unless ($e->{'item'} || '') =~ /\S/;
+		$out{ $raws->[$i] } = &subs::unformat_name($e->{'item'});
+	}
+	return \%out;
+}
+
+# The pages of one receipt -> its lines as JSON. All pages go in one call so a
+# total printed on the last page is read with the lines above it.
+sub market_receipt_read {
+	my ($pages) = @_;
+	return (undef, 'no receipt image to read') unless $pages && scalar @{$pages};
+	my $system = 'You read shop receipts for JawnOS and answer with strict JSON only, no prose.';
+	my $ask = 'These images are the pages of ONE shop receipt, page one first. Return ONLY JSON: '
+		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","total":the printed total as a number or null,'
+		. '"lines":[{"description":"the item text as printed, trimmed","code":"a barcode, UPC or ISBN printed on that line, digits only, else empty",'
+		. '"qty":the quantity as a number (1 when not shown),"price":the line total as a number,"unit_price":the price per unit as a number or null}]}. '
+		. 'Prices as plain numbers without symbols. Include only purchased lines; skip subtotal, tax, change, tender, loyalty, savings and other summary rows.';
+	my ($text, $err) = &subs::ai_chat_role('visual_assistant', [
+		{ role => 'system', content => $system },
+		{ role => 'user', content => $ask, images => $pages },
+	], &subs::ai_role_thinking('visual_assistant'));
+	return (undef, $err || 'the vision model returned nothing') unless $text;
+	my ($json) = $text =~ /(\{.*\})/s;
+	my $out = eval { return decode_json $json } || {};
+	return (undef, 'the vision model did not return a JSON receipt') unless ref $out eq 'HASH';
+	return ($out, undef);
+}
+
+# Read a receipt's lines into rows a person can confirm. A printed code resolves
+# through the barcode cache; a description the house already keeps is taken as
+# is; only the genuinely new descriptions are handed to the batch fold. Every row
+# carries what it matched by, so the confirm panel can say why.
+sub market_receipt_lines {
+	my ($out) = @_;
+	my @raw = grep { ref $_ eq 'HASH' } @{ $out->{'lines'} || [] };
+	my (@rows, @need);
+	foreach my $l ( @raw ) {
+		next unless ($l->{'description'} || '') =~ /\S/ || ($l->{'code'} || '') =~ /\S/;
+		my $desc = &subs::unformat_name($l->{'description'} || '');
+		my $code = $l->{'code'} || '';
+		$code =~ s/[^0-9]//g;
+		my ($item, $raw, $how) = ('', $desc, '');
+		if (length $code >= 8) {
+			my $map = &market_barcode_resolve($code);
+			if ($map && $map->{'item'}) { $item = $map->{'item'}; $raw = $map->{'raw'} || $desc; $how = 'barcode'; }
+		}
+		if (!$item && $desc ne '' && (&market_app_exists($desc) || &market_list_row($desc))) { $item = $desc; $how = 'known'; }
+		push @need, $desc if !$item && $desc ne '';
+		push @rows, { line => $l, desc => $desc, code => $code, raw => $raw, item => $item, how => $how };
+	}
+	my %named = %{ &market_receipt_name_batch(\@need) } if scalar @need;
+	foreach my $r ( @rows ) {
+		if (!$r->{'item'}) {
+			my $n = $named{ $r->{'desc'} };
+			if (!$n && $r->{'desc'} ne '') {
+				my $map = &market_barcode_consolidate($r->{'desc'});
+				$n = $map->{'item'} if $map && $map->{'item'};
+			}
+			$r->{'item'} = $n || $r->{'desc'} || $r->{'code'};
+			$r->{'how'} ||= 'name';
+		}
+	}
+	my @lines;
+	foreach my $r ( @rows ) {
+		next unless $r->{'item'} =~ /\S/;
+		my $l = $r->{'line'};
+		push @lines, {
+			description => ($l->{'description'} || ''),
+			raw => $r->{'raw'},
+			item => $r->{'item'},
+			code => $r->{'code'},
+			qty => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
+			price => (defined $l->{'price'} && $l->{'price'} =~ /[0-9]/) ? 0 + $l->{'price'} : undef,
+			unit_price => (defined $l->{'unit_price'} && $l->{'unit_price'} =~ /[0-9]/) ? 0 + $l->{'unit_price'} : undef,
+			matched_by => $r->{'how'},
+			on_list => (&market_list_row($r->{'item'}) ? 1 : 0),
+		};
+	}
+	return \@lines;
+}
+
+# Run the scanner for a receipt, into the market app's own scan folder so the
+# pages can be filed as a document afterwards. Synchronous, because the person is
+# at the printer waiting, and bounded so a jam cannot wedge the request.
+# Returns (error, [jpg paths]).
+sub market_receipt_scan {
+	my ($feed) = @_;
+	my $filename = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
+	`mkdir -p $filename` unless -e $filename;
+	my $base = $filename . '/receipt_' . &subs::rightNow();
+	my $command = &scanner_scan_command($feed, $base);
+	return ('the scanner does not offer that feed', []) unless $command;
+	`timeout 120 $command`;
+	my $scans = `ls -tr $base*.tiff 2>/dev/null`;
+	my @tiffs = grep { length } split "\n", $scans;
+	return ('the scanner produced no pages', []) unless scalar @tiffs;
+	my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device }) || 'Raw';
+	my @jpgs;
+	foreach my $t ( @tiffs ) {
+		my $jpg = $t;
+		$jpg =~ s/\.tiff$/.jpg/;
+		if ($photo_size ne 'Raw') { `magick convert $t -resize $photo_size $jpg`; }
+		else { `magick convert $t $jpg`; }
+		`shred -u $t`;
+		push @jpgs, $jpg if -e $jpg;
+	}
+	return ('the scanned pages could not be read', []) unless scalar @jpgs;
+	return (undef, \@jpgs);
+}
+
+# Save a bridged or uploaded receipt page into the market app's scan folder, so
+# the paper can be filed like a scanned one. Returns the jpg path, or undef when
+# it could not be converted.
+sub market_receipt_store {
+	my ($bytes) = @_;
+	return undef unless $bytes && length $bytes;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
+	`mkdir -p $folder` unless -e $folder;
+	my $jpg = $folder . '/receipt_' . &subs::rightNow() . '.jpg';
+	my $tmp = $jpg . '.in';
+	write_file($tmp, $bytes);
+	`magick convert $tmp $jpg 2>/dev/null`;
+	unlink $tmp;
+	return (-e $jpg && -s $jpg) ? $jpg : undef;
+}
+
+# Keep the receipt: its pages stay where the scanner put them (the market app's
+# own folder) and a record of what it was - vendor, total, date, the lines read -
+# is kept under the market app's own settings, beside the shopping list and the
+# barcode cache rather than as an appointment, so nothing else about the app is
+# touched by a receipt.
+sub market_receipt_file {
+	my ($data) = @_;
+	my @files = grep { defined $_ && -e $_ } @{ $data->{'files'} || [] };
+	return unless scalar @files;
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' });
+	my $receipts = eval { return decode_json $raw } || [];
+	$receipts = [ grep { ref $_ eq 'HASH' } @{$receipts} ];
+	my @lines;
+	foreach my $l ( @{ $data->{'lines'} || [] } ) {
+		next unless ref $l eq 'HASH';
+		push @lines, {
+			item => ($l->{'item'} || ''),
+			qty => ($l->{'qty'} || 1),
+			price => $l->{'price'},
+		};
+	}
+	unshift @{$receipts}, {
+		uuid => &subs::random_string_creator(20),
+		at => &subs::rightNow(),
+		date => ($data->{'date'} || ''),
+		vendor => ($data->{'vendor'} || ''),
+		total => (defined $data->{'total'} && $data->{'total'} =~ /[0-9]/) ? 0 + $data->{'total'} : undef,
+		files => \@files,
+		lines => \@lines,
+	};
+	pop @{$receipts} while scalar @{$receipts} > 50;
+	&subs::setting_setter({ app => 'market', setting => 'receipts', value => encode_json($receipts) });
+}
+
+# Capture the receipt, then read it. The ADF feeds a long receipt in one pass,
+# the flatbed takes a page at a time; without a feed, an uploaded or bridged
+# image is read. Nothing is written here.
+post '/manager/market/receipt' => sub($c) {
+	my $feed = lc($c->param('feed') || '');
+	my @pages;
+	if ($feed eq 'adf' || $feed eq 'flatbed') {
+		my ($err, $paths) = &market_receipt_scan($feed);
+		return $c->render(json => { error => $err }) if $err;
+		foreach my $p ( @{$paths} ) { push @pages, { base64 => encode_base64(read_file($p), ''), path => $p }; }
+	}
+	else {
+		my @blobs;
+		my $b64 = $c->param('image');
+		# a bridged camera sends base64; an upload arrives as a file part, which
+		# param() hands back as a Mojo::Upload, not a string
+		if (defined $b64 && !ref $b64 && $b64 =~ /\S/) {
+			$b64 =~ s/^data:[^,]*,//;
+			my $bytes = b64_decode($b64);
+			push @blobs, $bytes if $bytes && length $bytes;
+		}
+		foreach my $u ( @{ $c->req->uploads } ) {
+			next unless ($u->headers->content_type || '') =~ m{^image/};
+			my $b = $u->slurp;
+			push @blobs, $b if $b && length $b;
+		}
+		foreach my $b ( @blobs ) { push @pages, { base64 => encode_base64($b, ''), bytes => $b }; }
+	}
+	return $c->render(json => { error => 'no receipt image was given' }) unless scalar @pages;
+	# file the paper, so the receipt is kept beside the item apps it names
+	my @files;
+	foreach my $p ( @pages ) {
+		if ($p->{'path'}) { push @files, $p->{'path'}; next; }
+		my $saved = &market_receipt_store($p->{'bytes'});
+		push @files, $saved if $saved;
+	}
+	my ($out, $err) = &market_receipt_read([ map { $_->{'base64'} } @pages ]);
+	return $c->render(json => { error => $err }) if $err;
+	$c->render(json => {
+		vendor => &subs::unformat_name($out->{'vendor'} || ''),
+		date => $out->{'date'} || '',
+		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
+		lines => &market_receipt_lines($out),
+		files => \@files,
+	});
+};
+
+# Confirm the read: link every line into the list and file the receipt. A row
+# already on the list is ticked (what a shop does) and given the receipt's
+# quantity and price; a row that is not is added in the cart. A printed code
+# becomes the item's own product code, so the next scan of it is instant.
+post '/manager/market/receipt/apply' => sub($c) {
+	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	my $list_name = $c->param('list') || '';
+	my $lines = eval { return decode_json $c->param('lines') } || [];
+	return $c->render(json => { error => 'nothing to add' }) unless ref $lines eq 'ARRAY' && scalar @{$lines};
+	my $now = &subs::rightNow();
+	my $list_key = &market_list_key($list_name);
+	my $list = &market_list();
+	my (@added, $linked);
+	foreach my $l ( @{$lines} ) {
+		next unless ref $l eq 'HASH';
+		next if defined $l->{'include'} && !$l->{'include'};
+		my $item = &subs::unformat_name($l->{'item'} || $l->{'description'} || '');
+		next unless $item ne '';
+		my $init = &subs::setting_initializer($item, $now);
+		$item = $init->{'app'} if $init->{'app'};
+		my $code = $l->{'code'} || '';
+		$code =~ s/[^0-9]//g;
+		if (length $code >= 8 && !&market_barcode_house($code)) {
+			&subs::setting_setter({ app => $item, setting => 'product_code', value => $code });
+			&market_barcode_remember($code, { item => $item, category => '', unit => '', raw => $item });
+		}
+		my $found;
+		foreach my $it ( @{$list} ) {
+			next unless lc($it->{'text'} || '') eq lc($item) || &subs::unformat_name($it->{'text'} || '') eq $item;
+			$it->{'picked'} = 1;
+			$it->{'quantity'} = 0 + $l->{'qty'} if defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/;
+			$it->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
+			$found = 1;
+			$linked++;
+			last;
+		}
+		next if $found;
+		my $row = {
+			uuid => &subs::random_string_creator(21),
+			text => $item,
+			kind => &market_item_due($item) ? 'need' : 'want',
+			vendor => $vendor,
+			list => $list_key,
+			timestamp => &subs::rightNow(),
+			cart => 1,
+			quantity => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
+		};
+		$row->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
+		$row->{'barcode'} = $code if length $code >= 8;
+		unshift @{$list}, $row;
+		push @added, $item;
+	}
+	&market_save_list($list);
+	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
+	my $files = eval { return decode_json $c->param('files') } || [];
+	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total') }) if scalar @{$files};
+	$c->render(json => { added => scalar @added, linked => $linked });
 };
 
 # A process viewer for the machine (the Monitor app): CPU/memory graphs plus the
