@@ -4410,6 +4410,22 @@ my @manager_bundle_files = qw(
 );
 my $manager_bundle_cache;
 
+# Where the built bundle is memoised. The in-process cache below only ever helps
+# the worker that built it: production runs several prefork workers and recycles
+# each after `accepts`, so a per-process memo meant every fresh worker shelled
+# out to terser again -- several seconds on the ~1.3MB concatenation -- and a
+# page load stalled whenever it landed on a cold one. Sharing the built bytes on
+# disk (keyed by the source signature) means terser runs once per code change for
+# the whole machine, and every other worker just reads the file.
+sub manager_bundle_paths {
+	my $dir = &subs::home('~/.president');
+	unless (-d $dir) {
+		eval { require File::Path; File::Path::make_path($dir); };
+	}
+	$dir = '/tmp' unless -d $dir;
+	return ($dir . '/manager_bundle.js', $dir . '/manager_bundle.sig');
+}
+
 # Minify the concatenation on the way out, so the readable files under public/js
 # stay the source of truth for a person (or an agent) while the browser gets one
 # small script. terser -c only: it strips whitespace and comments and folds
@@ -4477,12 +4493,33 @@ get '/js/manager/bundle.js' => sub ($c) {
 		return $c->rendered(304);
 	}
 	unless ($manager_bundle_cache && $manager_bundle_cache->[0] eq $sig) {
-		my $raw = '';
-		foreach my $rel (@manager_bundle_files) {
-			my $src = eval { read_file($dir . $rel) } // '';
-			$raw .= "\n;/* $rel */\n" . $src . "\n;\n";
+		my ($path, $sigpath) = manager_bundle_paths();
+		my $stored = '';
+		if (-s $path && -s $sigpath) {
+			my $stamp = eval { read_file($sigpath) } // '';
+			$stamp =~ s/\s+\z//;
+			$stored = eval { read_file($path) } // '' if $stamp eq $sig;
 		}
-		$manager_bundle_cache = [$sig, js_minify($raw)];
+		if (length $stored) {
+			$manager_bundle_cache = [$sig, $stored];
+		}
+		else {
+			my $raw = '';
+			foreach my $rel (@manager_bundle_files) {
+				my $src = eval { read_file($dir . $rel) } // '';
+				$raw .= "\n;/* $rel */\n" . $src . "\n;\n";
+			}
+			my $built = js_minify($raw);
+			# Payload first, signature last, so a reader that matches the signature
+			# is guaranteed the matching payload. A lost race just rebuilds.
+			eval {
+				my $tmp = "$path.$$" . '.tmp';
+				write_file($tmp, $built);
+				rename($tmp, $path) or die "rename $tmp: $!";
+				write_file($sigpath, $sig . "\n");
+			};
+			$manager_bundle_cache = [$sig, $built];
+		}
 	}
 	$c->res->body($manager_bundle_cache->[1]);
 	return $c->rendered(200);
