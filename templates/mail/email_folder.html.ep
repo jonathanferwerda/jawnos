@@ -1,22 +1,37 @@
 <%# The message list for the folder the settings name: the account picker under
-    Contacts, otherwise the folder's threads. Only the first page (50) is
-    rendered; the sentinel below the table carries the folder, the offset and
-    whether more wait, and the app appends the next page as the list is scrolled.
-    Expects `$settings->{'email_folder_selection'}` and `$mail_email`. %>
+    Contacts, otherwise the folder's threads, in the chosen order and starting at
+    the end the direction asks for. Only the first page (50) is rendered; the
+    sentinel below the table carries the folder, the sort, the direction, the
+    offset and which way more wait, and the app appends (ascending) or prepends
+    (descending) the next page as the list is scrolled. Expects
+    $settings->{'email_folder_selection'}. %>
 <%
 	use Mojo::JSON qw/decode_json encode_json/;
 	my $sel = $settings->{'email_folder_selection'};
 	my $limit = 50;
+	my $stored = &Manager::email_sort();
+	my $sort_by = ($c->param('sort') || '') =~ /^(date|sender|subject)$/ ? $c->param('sort') : $stored->{'by'};
+	my $dir = ($c->param('dir') || '') eq 'asc' ? 'asc' : ($c->param('dir') || '') eq 'desc' ? 'desc' : $stored->{'dir'};
 	my $threads = [];
-	my $more = 0;
-	my $sql = ($sel && $sel ne 'contacts') ? &Manager::email_folder_sql($sel) : undef;
-	if ($sql) {
-		my $all = &Manager::email_threads(&subs::db_query($sql)->hashes);
-		$more = scalar @{$all} > $limit ? 1 : 0;
-		my @first = @{$all}[0 .. ($limit - 1)];
-		@first = grep { defined } @first;
-		&Manager::email_thread_annotate(\@first, &subs::suds_grabber());
-		$threads = \@first;
+	my $more_up = 0;
+	my $more_down = 0;
+	if ($sel && $sel ne 'contacts') {
+		my $all = &Manager::email_sort_threads(&Manager::email_threads(&Manager::email_folder_rows($sel)), &subs::suds_grabber(), { by => $sort_by });
+		my $total = scalar @{$all};
+		if ($dir eq 'desc') {
+			my $hi = $total - 1;
+			my $lo = $hi - $limit + 1;
+			$lo = 0 if $lo < 0;
+			@{ $threads } = ($hi >= 0) ? @{$all}[$lo .. $hi] : ();
+			$more_up = $limit < $total ? 1 : 0;
+		}
+		else {
+			my $last = $limit - 1;
+			$last = $total - 1 if $last > $total - 1;
+			@{ $threads } = ($last >= 0) ? @{$all}[0 .. $last] : ();
+			$more_down = $limit < $total ? 1 : 0;
+		}
+		&Manager::email_thread_annotate($threads, &subs::suds_grabber());
 	}
 	$settings->{'email_server'} = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
 %>
@@ -34,11 +49,12 @@
 <% } else { %>
 	<table class="email_message_table" style="width:100%;">
 		<thead>
+			<th class="email_check_head"><input type="checkbox" id="email_select_all" hint="Select every letter shown"></th>
 			<th>Time</th><th><%= ($sel eq 'inbox') ? 'From' : 'To' %></th><th>Subject</th><th></th>
 		</thead>
 		<tbody id="email_list_body">
 			<%= include 'mail/email_rows', threads => $threads %>
 		</tbody>
 	</table>
-	<div id="email_list_more" class="email_list_more" data-folder="<%= $sel %>" data-offset="<%= scalar @{$threads} %>" data-more="<%= $more %>"><% if ($more) { %>Loading more&hellip;<% } %></div>
+	<div id="email_list_more" class="email_list_more" data-folder="<%= $sel %>" data-sort="<%= $sort_by %>" data-dir="<%= $dir %>" data-offset="<%= scalar @{$threads} %>" data-more-up="<%= $more_up %>" data-more-down="<%= $more_down %>"></div>
 <% } %>

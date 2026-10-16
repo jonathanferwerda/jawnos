@@ -1,13 +1,14 @@
 <%# One row per conversation. Rendered inside the folder template for the first
-    page, appended a page at a time as the list is scrolled (see
-    /manager/mail/email/list), and used for the results of a search. Only rows,
-    no table wrapper, so the caller owns the table. Expects `threads`, the list
-    from Manager::email_threads. %>
+    page, appended or prepended a page at a time as the list is scrolled (see
+    /manager/mail/email/list), and used for the results of a search. Only rows, no
+    table wrapper, so the caller owns the table. Expects `threads`, the list from
+    Manager::email_threads annotated by Manager::email_thread_annotate. %>
 <% no warnings 'uninitialized'; %>
 <% foreach my $t ( @{$threads} ) {
 	my $last = $t->{'last'};
 %>
-	<tr class="email_message" uuid="<%= $last->{'uuid'} %>" folder="<%= $last->{'status'} %>" seen="<%= $t->{'unread'} ? 'no' : 'yes' %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>">
+	<tr class="email_message" uuid="<%= $last->{'uuid'} %>" folder="<%= $last->{'status'} %>" seen="<%= $t->{'unread'} ? 'no' : 'yes' %>" starred="<%= $t->{'starred'} ? 'yes' : 'no' %>" draggable="true">
+		<td class="email_check_cell"><input type="checkbox" class="email_check" uuid="<%= $last->{'uuid'} %>" hint="Select"></td>
 		<td class="time" timestamp="<%= $last->{'timestamp'} %>"></td>
 		<td class="email_party"><%= $t->{'party'} %><% if ($t->{'count'} > 1) { %> <span class="email_thread_count"><%= $t->{'count'} %></span><% } %></td>
 		<td class="email_subject">

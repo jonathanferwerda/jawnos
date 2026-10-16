@@ -19583,6 +19583,7 @@ post '/manager/mail/email/move' => sub($c) {
 	my $to = $c->param('to') || '';
 	return $c->render(json => { result => 'no uuid' }) unless $uuid;
 	my %ok = map { $_ => 1 } qw/inbox archive drafts sent outbox trash/;
+	$ok{$to} = 1 if grep { $_ eq $to } @{ &email_extra_folders() };
 	return $c->render(json => { result => 'bad folder' }) unless $ok{$to};
 	&subs::db_update('mailbox', { status => $to, server_time => &subs::rightNow() }, { uuid => $uuid });
 	$c->render(json => { result => 'ok', folder => $to });
@@ -19613,10 +19614,8 @@ post '/manager/mail/email/restore' => sub($c) {
 # mark every letter in a folder read (Inbox's Mark all read)
 post '/manager/mail/email/mark_read' => sub($c) {
 	my $folder = $c->param('folder') || 'inbox';
-	my $sql = &email_folder_sql($folder);
-	return $c->render(json => { result => 'bad folder' }) unless $sql;
 	my $count = 0;
-	foreach my $row ( @{ &subs::db_query($sql)->hashes } ) {
+	foreach my $row ( @{ &email_folder_rows($folder) } ) {
 		next if ($row->{'seen'} || '') eq 'yes';
 		&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $row->{'uuid'} });
 		$count++;
@@ -19624,24 +19623,113 @@ post '/manager/mail/email/mark_read' => sub($c) {
 	$c->render(json => { result => 'ok', count => $count });
 };
 
-# The list pane, a page at a time: a folder's threads from an offset on, so a
-# folder of thousands loads as it is scrolled rather than all in one go.
+# one action over a selection of letters (the checkboxes): move them to a folder
+# (a built-in or one the person made), delete them to Trash, throw them away, or
+# flip their read or star flag. The uuids arrive comma-separated.
+post '/manager/mail/email/bulk' => sub($c) {
+	my $action = $c->param('action') || '';
+	my @uuids = grep { length } split /\s*,\s*/, ($c->param('uuids') || '');
+	return $c->render(json => { result => 'no uuid' }) unless @uuids;
+	my $folder = $c->param('folder') || '';
+	if ($action eq 'move') {
+		my %ok = map { $_ => 1 } qw/inbox archive drafts sent outbox trash/;
+		$ok{$folder} = 1 if grep { $_ eq $folder } @{ &email_extra_folders() };
+		return $c->render(json => { result => 'bad folder' }) unless $ok{$folder};
+	}
+	my %plan = (
+		move => { status => $folder }, delete => { status => 'trash' },
+		read => { seen => 'yes' }, unread => { seen => 'no' },
+		star => { starred => 'yes' }, unstar => { starred => 'no' },
+	);
+	my $n = 0;
+	foreach my $uuid ( @uuids ) {
+		if ($action eq 'delete_forever') { &subs::db_delete('mailbox', { uuid => $uuid }); $n++; next; }
+		my $set = $plan{$action} or return $c->render(json => { result => 'bad action' });
+		$set = { %{$set}, server_time => &subs::rightNow() };
+		&subs::db_update('mailbox', $set, { uuid => $uuid });
+		$n++;
+	}
+	$c->render(json => { result => 'ok', count => $n, action => $action });
+};
+
+# make a new folder. Its name is stored in one setting and used as the letters'
+# status, so nothing else has to know about it.
+post '/manager/mail/email/folder/add' => sub($c) {
+	my $name = $c->param('name') || '';
+	$name =~ s/\s+/ /g;
+	$name =~ s/^\s+|\s+$//g;
+	$name = substr($name, 0, 40);
+	return $c->render(json => { result => 'bad name' }) unless length $name;
+	return $c->render(json => { result => 'reserved' }) if &email_folder_is_builtin($name) || lc($name) eq 'contacts';
+	my $folders = &email_extra_folders();
+	return $c->render(json => { result => 'exists', folders => $folders }) if grep { lc($_) eq lc($name) } @{$folders};
+	push @{$folders}, $name;
+	&subs::setting_setter({ app => 'mail', setting => 'email_folders', value => encode_json($folders) });
+	$c->render(json => { result => 'ok', folders => $folders });
+};
+
+# remove a folder the person made; its letters go back to the inbox (a folder is
+# a status, so deleting it cannot drop the mail with it)
+post '/manager/mail/email/folder/remove' => sub($c) {
+	my $name = $c->param('name') || '';
+	my $folders = &email_extra_folders();
+	return $c->render(json => { result => 'no folder' }) unless grep { $_ eq $name } @{$folders};
+	&subs::db_update('mailbox', { status => 'inbox', server_time => &subs::rightNow() }, { status => $name });
+	@{$folders} = grep { $_ ne $name } @{$folders};
+	&subs::setting_setter({ app => 'mail', setting => 'email_folders', value => encode_json($folders) });
+	$c->render(json => { result => 'ok', folders => $folders });
+};
+
+# the folder rail, refetched after a folder is made or removed
+get '/manager/mail/email/rail' => sub($c) {
+	my $settings = &subs::settings_grabber({ app => 'mail' });
+	$c->render(json => { html => $c->render_to_string(
+		template => 'mail/email_rail',
+		settings => $settings,
+		email_counts => &email_folder_counts(),
+		extra_folders => &email_extra_folders(),
+		mail_email => $c->param('email') || '',
+	) });
+};
+
+# The list pane, a page at a time: a folder's threads from an offset on, in the
+# chosen order, so a folder of thousands loads as it is scrolled rather than all
+# in one go. The rows always come back ascending; the direction only says which
+# end the first page is taken from (a descending list starts at its newest, its
+# foot) and whether more wait above or below.
 get '/manager/mail/email/list' => sub($c) {
 	my $folder = $c->param('folder') || 'inbox';
 	my $offset = $c->param('offset') || 0;
 	my $limit  = $c->param('limit')  || 50;
-	my $sql = &email_folder_sql($folder);
-	return $c->render(json => { html => '', more => 0, offset => $offset }) unless $sql;
-	my $threads = &email_threads(&subs::db_query($sql)->hashes);
-	my $last = $offset + $limit - 1;
-	$last = $#{$threads} if $last > $#{$threads};
-	my @slice = ($offset <= $last) ? @{$threads}[$offset .. $last] : ();
-	my $more = scalar(@{$threads}) > $offset + $limit ? 1 : 0;
-	&email_thread_annotate(\@slice, &subs::suds_grabber());
+	my $stored = &email_sort();
+	my $by  = ($c->param('sort') || '') =~ /^(date|sender|subject)$/ ? $c->param('sort') : $stored->{'by'};
+	my $dir = ($c->param('dir')  || '') eq 'asc' ? 'asc' : 'desc';
+	my $suds = &subs::suds_grabber();
+	my $all = &email_sort_threads(&email_threads(&email_folder_rows($folder)), $suds, { by => $by });
+	my $total = scalar @{$all};
+	my (@slice, $more_up, $more_down);
+	if ($dir eq 'asc') {
+		my $last = $offset + $limit - 1;
+		$last = $total - 1 if $last > $total - 1;
+		@slice = ($offset <= $last) ? @{$all}[$offset .. $last] : ();
+		$more_down = ($offset + $limit) < $total ? 1 : 0;
+	}
+	else {
+		my $hi = $total - 1 - $offset;
+		my $lo = $hi - $limit + 1;
+		$lo = 0 if $lo < 0;
+		@slice = ($hi >= 0) ? @{$all}[$lo .. $hi] : ();
+		$more_up = ($offset + $limit) < $total ? 1 : 0;
+	}
+	&email_thread_annotate(\@slice, $suds);
 	$c->render(json => {
 		html => $c->render_to_string(template => 'mail/email_rows', threads => \@slice),
-		more => $more,
-		offset => $offset + scalar @slice
+		offset => $offset + scalar @slice,
+		more_up => $more_up || 0,
+		more_down => $more_down || 0,
+		total => $total,
+		sort => $by,
+		dir => $dir
 	});
 };
 
@@ -19652,12 +19740,22 @@ get '/manager/mail/email/search' => sub($c) {
 	my $q = $c->param('q') || '';
 	my $folder = $c->param('folder') || '';
 	$q =~ s/^\s+|\s+$//g;
-	return $c->render(json => { html => '', more => 0, count => 0 }) unless length $q;
+	return $c->render(json => { html => '', more_up => 0, more_down => 0, count => 0 }) unless length $q;
 	my $suds = &subs::suds_grabber();
-	my $sql = &email_folder_sql($folder) || "select * from mailbox where status != 'trash' order by timestamp desc";
+	my $stored = &email_sort();
+	my $by = ($c->param('sort') || '') =~ /^(date|sender|subject)$/ ? $c->param('sort') : $stored->{'by'};
+	my $dir = ($c->param('dir') || '') eq 'asc' ? 'asc' : 'desc';
 	my $needle = lc $q;
+	my @rows;
+	if (length $folder && ($folder =~ /^[A-Za-z0-9 _\-]+$/)) {
+		@rows = @{ &email_folder_rows($folder) };
+	}
+	else {
+		# no folder named: search everything that is not thrown away
+		@rows = @{ &subs::db_query("select * from mailbox where status != 'trash'")->hashes };
+	}
 	my @matched;
-	foreach my $m ( @{ &subs::db_query($sql)->hashes } ) {
+	foreach my $m ( @rows ) {
 		my $hay = lc join ' ',
 			&subs::note_decrypter($suds, $m->{'subject'} || ''),
 			&subs::note_decrypter($suds, $m->{'body'} || ''),
@@ -19665,32 +19763,83 @@ get '/manager/mail/email/search' => sub($c) {
 			($m->{'from_email'} || '');
 		push @matched, $m if index($hay, $needle) >= 0;
 	}
-	my $threads = &email_threads(\@matched);
+	my $threads = &email_sort_threads(&email_threads(\@matched), $suds, { by => $by });
 	my $count = scalar @{$threads};
 	my $cap = 200;
 	my @slice = ($count > $cap) ? @{$threads}[0 .. $cap - 1] : @{$threads};
+	@slice = reverse @slice if $dir eq 'desc';
 	&email_thread_annotate(\@slice, $suds);
 	$c->render(json => {
 		html => $c->render_to_string(template => 'mail/email_rows', threads => \@slice),
-		more => 0,
-		count => $count
+		more_up => 0,
+		more_down => 0,
+		count => $count,
+		sort => $by,
+		dir => $dir
 	});
 };
 
-# The mailbox rows a folder holds. Email folders are statuses; Starred is the
-# flagged subset of everything not thrown away; Trash is the soft delete.
-sub email_folder_sql {
+# The mailbox rows a folder holds. The built-in folders are statuses; Starred is
+# the flagged subset of everything not thrown away; Trash is the soft delete. A
+# folder the person made is simply a status of its own, so it needs no schema.
+sub email_folder_is_builtin {
 	my ($folder) = @_;
+	return $folder =~ /^(inbox|starred|drafts|sent|outbox|archive|trash|contacts)$/ ? 1 : 0;
+}
+
+sub email_folder_rows {
+	my ($folder) = @_;
+	return [] unless defined $folder && length $folder;
 	my %sql = (
-		outbox  => "select * from mailbox where status = 'outbox' order by timestamp desc",
-		drafts  => "select * from mailbox where status = 'draft' order by timestamp desc",
-		inbox   => "select * from mailbox where status = 'inbox' and email is not null order by timestamp desc",
-		sent    => "select * from mailbox where status = 'sent' and email is not null order by timestamp desc",
-		archive => "select * from mailbox where status = 'archive' order by timestamp desc",
-		trash   => "select * from mailbox where status = 'trash' order by timestamp desc",
-		starred => "select * from mailbox where starred = 'yes' and status != 'trash' order by timestamp desc",
+		outbox  => "select * from mailbox where status = 'outbox'",
+		drafts  => "select * from mailbox where status = 'draft'",
+		inbox   => "select * from mailbox where status = 'inbox' and email is not null",
+		sent    => "select * from mailbox where status = 'sent' and email is not null",
+		archive => "select * from mailbox where status = 'archive'",
+		trash   => "select * from mailbox where status = 'trash'",
+		starred => "select * from mailbox where starred = 'yes' and status != 'trash'",
 	);
-	return $sql{$folder};
+	return &subs::db_query($sql{$folder})->hashes if $sql{$folder};
+	return &subs::db_query('select * from mailbox where status = ?', $folder)->hashes;
+}
+
+# The folders the person made: their names live in one setting and ride the mesh
+# like everything else. Reserved names are ignored so a stored list can never
+# shadow a built-in.
+sub email_extra_folders {
+	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'email_folders' });
+	my $list = eval { &decode_json($raw) } || [];
+	return [ grep { defined $_ && length $_ && !&email_folder_is_builtin($_) } @{$list} ];
+}
+
+# How the list is ordered: date, sender or subject, ascending or descending. The
+# choice is a setting, so it is remembered and follows the person's machines.
+sub email_sort {
+	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'email_sort' });
+	my $s = eval { &decode_json($raw) } || {};
+	my %by = map { $_ => 1 } qw/date sender subject/;
+	my $choice = { by => ($by{$s->{'by'} || ''} ? $s->{'by'} : 'date'), dir => (($s->{'dir'} || '') eq 'asc' ? 'asc' : 'desc') };
+	return $choice;
+}
+
+# Order a folder's threads. Date and sender sort on columns (no decryption);
+# subject needs the subjects read, so they are opened once here when asked for.
+# Always ascending - the caller slices from whichever end the direction wants.
+sub email_sort_threads {
+	my ($threads, $suds, $sort) = @_;
+	my $by = $sort->{'by'} || 'date';
+	if ($by eq 'subject') {
+		foreach my $t ( @{$threads} ) {
+			$t->{'subject'} = &subs::note_decrypter($suds, $t->{'last'}->{'subject'} || '') unless defined $t->{'subject'};
+		}
+	}
+	if ($by eq 'sender') {
+		return [ sort { lc($a->{'last'}->{'email'} || '') cmp lc($b->{'last'}->{'email'} || '') || ($a->{'last'}->{'timestamp'} || 0) <=> ($b->{'last'}->{'timestamp'} || 0) } @{$threads} ];
+	}
+	if ($by eq 'subject') {
+		return [ sort { lc($a->{'subject'} || '') cmp lc($b->{'subject'} || '') || ($a->{'last'}->{'timestamp'} || 0) <=> ($b->{'last'}->{'timestamp'} || 0) } @{$threads} ];
+	}
+	return [ sort { ($a->{'last'}->{'timestamp'} || 0) <=> ($b->{'last'}->{'timestamp'} || 0) } @{$threads} ];
 }
 
 # A short plain-text preview of a letter's body, for the list's second line.
@@ -19761,6 +19910,10 @@ sub email_folder_counts {
 		drafts  => scalar @{ &subs::db_query("select uuid from mailbox where status = 'draft'")->hashes },
 		trash   => scalar @{ &subs::db_query("select uuid from mailbox where status = 'trash'")->hashes },
 	);
+	# a folder the person made wears its unread count, like the inbox
+	foreach my $f ( @{ &email_extra_folders() } ) {
+		$counts{$f} = scalar @{ &subs::db_query('select uuid from mailbox where status = ? and (seen is null or seen != ?)', $f, 'yes')->hashes };
+	}
 	return \%counts;
 }
 
@@ -20316,6 +20469,8 @@ sub mail_checker($c) {
 		scope => $scope,
 		scope_sections => [@scope_sections],
 		email_counts => (($scope && $scope eq 'email') ? &email_folder_counts() : {}),
+		email_extra_folders => (($scope && $scope eq 'email') ? &email_extra_folders() : []),
+		email_sort => (($scope && $scope eq 'email') ? &email_sort() : {}),
 		list => $list,
 		me => $me,
 		incoming_data => $incoming_data,

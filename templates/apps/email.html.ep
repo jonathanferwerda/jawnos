@@ -4,14 +4,14 @@
     #send_it) so the shared renderer and socket go on working; what changes here
     is the shape - a mail client.
 
-    Layout: a toolbar (folders, title, search, Compose, settings), then a body
+    Layout: a toolbar (folders, title, refresh, mark read, sort, search, Compose,
+    settings), then a bulk bar that appears when letters are ticked, then a body
     split into a folder rail on the left and, on the right, the message list. A
     letter opens in the same place, over the list, with a Back button back to it
-    (not the window drawer). Reply / Reply all / Forward are in the reading pane.
-    Styling lives in public/css/manager.css, scoped to .wind[app="email"], so
-    nothing here reaches Mailbox or Chat. The shared conversation partial is kept
-    in the DOM (so the socket and the composer still work) but is never shown:
-    this window is email only. %>
+    (not the window drawer). Styling lives in public/css/manager.css, scoped to
+    .wind[app="email"], so nothing here reaches Mailbox or Chat. The shared
+    conversation partial is kept in the DOM (so the socket and the composer still
+    work) but is never shown: this window is email only. %>
 <% no warnings 'uninitialized'; %>
 <style>
 	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
@@ -22,22 +22,34 @@
 		<span class="email_title">Email</span>
 		<img src="<%= &subs::icon_for('/images/decipherable/now.png') %>" hint="Refresh" class="little_thumb email_tool hover" id="email_refresh">
 		<img src="<%= &subs::icon_for('/images/decipherable/checkmark.png') %>" hint="Mark this folder read" class="little_thumb email_tool hover" id="email_mark_read">
+		<select id="email_sort_by" class="email_sort_by" hint="Sort the list by">
+			<% foreach my $s ( qw/date sender subject/ ) { %>
+				<option value="<%= $s %>" <% if (($email_sort->{'by'} || 'date') eq $s) { %>selected<% } %>><%= &subs::format_name($s) %></option>
+			<% } %>
+		</select>
+		<button id="email_sort_dir" class="email_sort_dir" dir="<%= $email_sort->{'dir'} || 'desc' %>" hint="Sort direction"><%= ($email_sort->{'dir'} || 'desc') eq 'asc' ? '&uarr;' : '&darr;' %></button>
 		<input type="search" id="email_search" class="email_search" placeholder="Search mail" hint="Search the subject, body, sender and copies">
 		<button id="email_compose" class="email_compose_button" hint="Write a new email">Compose</button>
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Server settings" class="little_thumb email_config_toggle hover">
+	</div>
+	<div id="email_bulk_bar" class="email_bulk_bar" style="display:none;">
+		<span id="email_bulk_count" class="email_bulk_count"></span>
+		<select id="email_bulk_folder" class="email_bulk_folder" hint="Move the ticked letters here">
+			<option value="">Move to&hellip;</option>
+			<% foreach my $b ( qw/inbox archive drafts sent trash/, @{$email_extra_folders} ) { %>
+				<option value="<%= $b %>"><%= &subs::format_name($b) %></option>
+			<% } %>
+		</select>
+		<button id="email_bulk_read" class="email_bulk_action" hint="Mark the ticked letters read">Mark read</button>
+		<button id="email_bulk_unread" class="email_bulk_action" hint="Mark the ticked letters unread">Mark unread</button>
+		<button id="email_bulk_delete" class="email_bulk_action" hint="Move the ticked letters to Trash">Delete</button>
+		<button id="email_bulk_clear" class="email_bulk_action" hint="Clear the ticks">Clear</button>
 	</div>
 	<div id="mail_body">
 		<% my $privilege = $c->session('privilege'); %>
 		<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 			<div id="mail_sidebar" class="email_rail">
-				<div class="email_rail_title">Folders</div>
-				<div id="email_main_buttons">
-					<% foreach my $b ( qw/inbox starred drafts sent outbox archive trash contacts/ ) { %>
-						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"><span class="email_folder_name"><%= &subs::format_name($b) %></span><% if ($email_counts->{$b}) { %> <span class="email_folder_count"><%= $email_counts->{$b} %></span><% } %></button>
-					<% } %>
-				</div>
-				<div class="email_rail_account"><%= $mail_email || 'No address selected' %></div>
-				<button id="email_empty_trash" class="email_empty_trash" hint="Delete every letter in Trash for good">Empty Trash</button>
+				<%= include 'mail/email_rail', settings => $settings, email_counts => $email_counts, extra_folders => $email_extra_folders, mail_email => $mail_email %>
 			</div>
 			<div id="mail_main">
 				<div id="mail_list">

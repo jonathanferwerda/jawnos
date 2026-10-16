@@ -1,0 +1,17 @@
+<%# The Email window's folder rail, as a partial so it can be refetched on its own
+    after a folder is made or removed (/manager/mail/email/rail). Real folders take
+    a drop (a drag from the list files the letter or the selection there); Contacts
+    is the address picker, not a folder, so it takes none. Expects $settings,
+    $email_counts, $extra_folders and $mail_email. %>
+<% no warnings 'uninitialized'; %>
+<% my $sel = $settings->{'email_folder_selection'}; %>
+<div class="email_rail_title">Folders</div>
+<div id="email_main_buttons">
+	<% foreach my $b ( qw/inbox starred drafts sent outbox archive trash/, @{$extra_folders} ) { %>
+		<button class="email_folder_button <% if ($sel eq $b) { %>selected<% } %>" button="<%= $b %>" data-folder="<%= $b %>"><span class="email_folder_name"><%= &subs::format_name($b) %></span><% if ($email_counts->{$b}) { %> <span class="email_folder_count"><%= $email_counts->{$b} %></span><% } %><% if (grep { $_ eq $b } @{$extra_folders}) { %> <span class="email_folder_remove" folder="<%= $b %>" hint="Remove this folder">&times;</span><% } %></button>
+	<% } %>
+	<button class="email_folder_button email_folder_contacts <% if ($sel eq 'contacts') { %>selected<% } %>" button="contacts" data-folder="contacts" data-nodrop="1"><span class="email_folder_name">Contacts</span></button>
+</div>
+<button id="email_new_folder" class="email_new_folder" hint="Make a new folder">+ New folder</button>
+<div class="email_rail_account"><%= $mail_email || 'No address selected' %></div>
+<button id="email_empty_trash" class="email_empty_trash" hint="Delete every letter in Trash for good">Empty Trash</button>

@@ -1533,12 +1533,15 @@ body.dark_theme #ide {
 	padding: 11px 16px; font-size: 15px; vertical-align: top;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(1) { width: 104px; }
-.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(2) { width: 34%; }
-.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(4) { width: 44px; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(1) { width: 34px; padding-right: 0; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(2) { width: 104px; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(3) { width: 34%; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(5) { width: 44px; }
 .wind[app="email"] #mail_list tbody tr.email_message:hover { background-color: var(--panel-2); }
-.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(3) { font-weight: 600; }
-.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(4) { width: 40px; text-align: right; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(4) { font-weight: 600; }
+.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(5) { width: 40px; text-align: right; }
+.wind[app="email"] #mail_list tbody tr.email_message .email_check { width: 16px; height: 16px; min-width: 0; margin: 0; vertical-align: middle; }
+.wind[app="email"] #mail_list tbody tr.email_message.email_dragging { opacity: .45; }
 .wind[app="email"] #mail_list tbody tr.email_message .email_deleter {
 	width: 22px; opacity: .35;
 }
@@ -1725,7 +1728,7 @@ body.dark_theme #ide {
 	.wind[app="email"] .email_folder_button { height: 32px; padding: 0 10px; font-size: 15px; }
 	.wind[app="email"] #mail_list thead th { padding: 8px 12px; }
 	.wind[app="email"] #mail_list tbody tr.email_message td { padding: 9px 12px; font-size: 14px; }
-	.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(1) { width: 78px; }
+	.wind[app="email"] #mail_list tbody tr.email_message td:nth-child(2) { width: 78px; }
 }
 
 /* the rail's folder rows: the name on the left, an unread/total badge on the right */
@@ -1773,3 +1776,50 @@ body.dark_theme #ide {
 	border: none; border-radius: 13px; background-color: #7542ff; color: #ffffff;
 }
 .email_toast .email_toast_action:hover { filter: brightness(1.12); }
+
+/* the sort controls in the toolbar */
+.wind[app="email"] #email_sort_by {
+	height: 30px; min-height: 0; font-size: 14px;
+	border: 1px solid var(--line); border-radius: 8px; background-color: var(--panel); color: var(--ink);
+}
+.wind[app="email"] #email_sort_dir {
+	height: 30px; min-width: 30px; padding: 0 8px; font-size: 15px;
+	border: 1px solid var(--line); border-radius: 8px; background-color: var(--panel); color: var(--ink);
+}
+.wind[app="email"] #email_sort_dir:hover { background-color: var(--panel-2); }
+
+/* the bulk bar: shown when letters are ticked */
+.wind[app="email"] #email_bulk_bar {
+	flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+	background-color: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] .email_bulk_count { font-size: 14px; font-weight: 600; }
+.wind[app="email"] .email_bulk_action {
+	height: 28px; min-width: 0; padding: 0 12px; font-size: 13px;
+	border: 1px solid var(--line); border-radius: 14px; background-color: var(--panel); color: var(--ink);
+}
+.wind[app="email"] .email_bulk_action:hover { background-color: var(--panel-2); }
+.wind[app="email"] #email_bulk_folder {
+	height: 28px; min-height: 0; font-size: 13px; border-radius: 14px;
+	border: 1px solid var(--line); background-color: var(--panel); color: var(--ink);
+}
+
+/* a new folder, and the way to drop one the person made */
+.wind[app="email"] .email_new_folder {
+	display: block; width: 100%; height: 28px; margin-top: 6px; min-width: 0;
+	font-size: 13px; text-align: left; padding: 0 12px;
+	border: 1px dashed var(--line); border-radius: 8px; background-color: transparent; color: var(--ink-muted);
+}
+.wind[app="email"] .email_new_folder:hover { color: var(--ink); background-color: var(--panel); }
+.wind[app="email"] .email_folder_remove {
+	flex: 0 0 auto; margin-left: 4px; padding: 0 4px; font-size: 14px; line-height: 1;
+	color: var(--ink-muted); opacity: 0;
+}
+.wind[app="email"] .email_folder_button:hover .email_folder_remove { opacity: .7; }
+.wind[app="email"] .email_folder_remove:hover { opacity: 1; color: #e5484d; }
+
+/* a folder under a drag */
+.wind[app="email"] .email_folder_button.email_drop_hover {
+	background-color: #7542ff; color: #ffffff; outline: 2px solid #7542ff;
+}
+.wind[app="email"] .email_folder_button.email_drop_hover .email_folder_count { background-color: #ffffff; color: #7542ff; }
