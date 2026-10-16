@@ -108,6 +108,10 @@ static bool wifi_enabled = false;
 // set by the {type:'wifi'} BLE message: the panel hands a device that has never
 // joined a network its credentials, and loop() joins (wifi_server blocks)
 static volatile bool wifi_join_requested = false;
+// set by the /now_me web route: applying Now Me fetches over HTTPS and drives
+// LVGL, which must not run inside the web handler (it nests the TLS client in the
+// HTTP server's stack and reboots the deck). loop() does the work instead.
+static volatile bool now_me_requested = false;
 // Bluetooth (Nordic UART Service), ported from the watch. A saved config that
 // says "on" only sets btStartPending: bringing the stack up inside setup()
 // panicked the watch, and loop() starts it once the boot has settled.
@@ -1197,19 +1201,13 @@ void setup() {
 
     pmuIrq = false;
     buttoned_before = false;
-    //    button_writer();
-    // Serial.println("now me in room " + room);
-    b1_toggle, b2_toggle, b3_toggle, b4_toggle, b5_toggle, b6_toggle, b7_toggle, b8_toggle = 0;
-    // Serial.println(authorization);
-    //call_the_president();
-    remote_room();
-    buttonMillis = millis();
-    lastMillis = millis();
-    authorization_pusher(before_me);
-
-    // Serial.println("Called President at " + homebaseIP);
+    b1_toggle = b2_toggle = b3_toggle = b4_toggle = b5_toggle = b6_toggle = b7_toggle = b8_toggle = 0;
+    // Do not draw from here: remote_room() fetches over HTTPS (call_the_president)
+    // and drives LVGL, and running that inside the web handler nests the TLS
+    // client in the HTTP server's stack and reboots the deck. Hand it to loop(),
+    // which is where the BLE now_me already draws.
+    now_me_requested = true;
     server.send(200, "text/plain", "homebase ip is now " + homebaseIP);
-    lv_task_handler();
   });
   deckLog("[deck] mic i2s init");
   setupMicrophoneI2S(MIC_I2S_PORT);
@@ -1970,6 +1968,17 @@ void loop() {
     wifi_join_requested = false;
     deckLog("[wifi] joining from BLE credentials");
     wifi_server();
+  }
+
+  // Now Me arrived on the /now_me web route: draw it here, not in the web
+  // handler (remote_room() fetches over HTTPS and drives LVGL - nesting that in
+  // the HTTP server's stack reboots the deck)
+  if (now_me_requested) {
+    now_me_requested = false;
+    remote_room();
+    buttonMillis = millis();
+    lastMillis = millis();
+    authorization_pusher(before_me);
   }
 
   // the bridge just came up: ask for anything that changed while it was down,
