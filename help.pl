@@ -89,8 +89,9 @@ our %topic = (
 	},
 	'studio' => {
 		title => 'Studio', category => 'apps', app => 'studio',
+		templates => [ 'templates/studio/studio.html.ep', 'public/js/manager/studio.js' ],
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.',
@@ -107,7 +108,7 @@ our %topic = (
 	'synth' => {
 		title => 'Synth', category => 'apps', app => 'synth',
 		summary => 'A polyphonic synthesiser with 88 keys, MIDI, and a computer-keyboard mode.',
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		body => [
 			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys (a full 88-key range, A0 to C8, that scrolls sideways), a connected USB MIDI keyboard, or your computer keyboard. It shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
 			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. The sound library is twelve instruments - Acoustic Piano, Electric Piano, Organ, Strings, Brass, Woodwind, Guitar & Plucked, Bells & Mallets, Bass, Lead, Pad and Synth Poly - each with twenty sounds, the most popular first.',
@@ -128,10 +129,10 @@ our %topic = (
 		title => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'public/js/music.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization' ],
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
-			'Music is the player and library: artists, albums, folders and playlists, with a mute, a lock and a configuration drawer.',
+			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
 			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
 			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines) and the time — with the list running right down to the player, so the time is always in reach.'
@@ -175,12 +176,12 @@ our %topic = (
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
-			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
 			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply. Every fix that ships is recorded: Fixed so far in Configure → Plat → Self-healing keeps the list, and review shows it.',
-			'Only the top of the tree loads at first; a folder brings its own contents in when you unfold it, so a big project opens quickly. The tree reopens with the folders you had unfolded still open, and the file list and each open file keep their place, so you come back to where you were.'
+			'Only the top of the tree loads at first; a folder brings its own contents in when you unfold it, so a big project opens quickly. The tree reopens with the folders you had unfolded still open, the window returns to whichever pane — the list or the editor — you left it on, and the file list and each open file keep their place, so you come back to where you were.'
 		],
 		steps => [
 			'Open the IDE and choose a file from the project tree; unfold a folder to see what is in it.',
@@ -221,18 +222,18 @@ our %topic = (
 		title => 'Camera', category => 'apps', app => 'camera',
 		templates => [ 'templates/apps/camera.html.ep' ],
 		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
 			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
 			'A capture is filed under the Camera app. In the app the same pair of buttons also rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.',
-			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then type an appointment name and File selected, or drop them onto the drop zone.'
+			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then search for an appointment name and press Approved, or drop them onto the drop zone.'
 		],
 		steps => [
 			'Open Camera from the start menu, or pin it to the taskbar.',
 			'Tap Take a photo or Record a video; the OS camera opens.',
 			'The capture is saved when you accept it in the camera.',
-			'To file unclaimed media onto an appointment, tick items, type the appointment name, and choose File selected.'
+			'To file unclaimed media onto an appointment, tick items, search for the appointment name, and press Approved.'
 		],
 		related => [ 'gallery' ]
 	},
@@ -283,6 +284,7 @@ our %topic = (
 	'tasks' => {
 		title => 'Tasks', category => 'apps', app => 'tasks',
 		summary => 'Nested checklists with colour, priority, renewal and budget.',
+		verified => '2026-10-16',
 		body => [
 			'Tasks is a nested checklist. Each item carries a colour, a priority, a renewal interval and a budget, so a task can repeat on its own and keep its own tally.',
 			'Ticking an item off can record the matching appointment, so doing the thing and logging the thing are one action.'
@@ -312,7 +314,7 @@ our %topic = (
 		title => 'Travel', category => 'apps', app => 'travel',
 		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
 		controls => [ 'Configure', 'Now', 'Delete', 'Guess the gaps' ],
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
@@ -320,7 +322,7 @@ our %topic = (
 			'The configuration row is pinned to the top of the window: scroll the view down and the Home Plate and Update buttons, the map picker and the Start/End times stay in reach. The gear tucks the row away.',
 			'Above the measured maps you can lay a tile basemap from the Map picker: OpenStreetMap, OpenTopoMap, Carto, Esri imagery, a county GIS such as Lambton, or a Custom URL. Leave it on None and nothing is fetched — the measured maps are all it needs, so it works offline.',
 			'The first four services are built in and need no key — just pick one. For a county or city service (Lambton GIS, and the like) or anything else, paste the service\'s tile URL into the box next to the picker. A service that speaks {z}/{x}/{y} works; an ArcGIS service is usually …/MapServer/tile/{z}/{y}/{x} (note y before x). Where to find it: the publisher lists its map services under a REST directory (for a county, look for an "ArcGIS REST Services" or "GIS Data" page); open the layer, and the Tile link or the URL under the map is the template to copy. Google Maps and Apple Maps have no keyless tile URL — they need their own SDK — so use another service, or paste a keyed URL you already hold.',
-			'Drag to move the map; a flick glides on and eases out, a mouse wheel or a pinch zooms, and a double-tap zooms in; a trackpad\'s two-finger scroll pans it. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows — tap one to open that app\'s appointment window, and where several share a spot the dot wears their count and a tap unfolds the list.',
+			'Drag to move the map; a flick glides on and eases out, a mouse wheel or a pinch zooms (a trackpad\'s two-finger scroll zooms too), and a double-tap zooms in. The red marker is the machine\'s current position (the same point navigation keeps fresh); the smaller labelled dots are the places the continent knows — tap one to open that app\'s appointment window, and where several share a spot the dot wears their count and a tap unfolds the list.',
 			'To set a map up: upload the picture, set its function to map on the appointment, and the measuring tools appear under it — Scale (click the two ends of the scale bar, with its legend typed in) and Location (the home plate). Read legend lifts the scale number off the picture with OCR; Ask vision sends the picture to your Vision model (Configure → Plat) and comes back with the scale bar placed, the legend read (turned into metres), and a tilt. The Tilt box turns the picture straight — with a live preview — if its screenshot was taken rotated, so it lands level on the map.',
 			'The empty ground between measured maps can be guessed: switch the hat (Guess the gaps) on and, as you pan, the blank ground on screen is filled by the Plat Image-generation model (Configure → Plat → Image generation). It takes the largest blank in view and stretches it 40% into the empty ground around it, stopping wherever a map begins — so the guess fills the space the maps leave and never lies under ground you already have, and ground once guessed stays guessed (the same gap is never generated twice). The Vision model reads the parts of every neighbouring map that fall around the blank first, and the picture is prompted to continue them conservatively: no invented bends, junctions or landmarks. The picture is kept sealed under the photo location\'s me folder — where the mugshot lives — and drawn dashed, under every measured map; it is not one of the picker\'s maps. Switch the hat off and the blanks stay blank; the status line beside the hat names the last guess, and a tap on it twice (as the trash buttons work) deletes it, leaving that gap blank for a fresh guess.',
 			'The continent desktop background draws the same map, with the current timeframe\'s appointments and every home plate on it; the header and the clothesline rail ride over it. Home plates sharing a spot collapse into one marker wearing their count — tap it and the list unfolds, and a tap on a name opens that app\'s appointment window; a tap on an appointment\'s dot opens its window too. Its now button (or a double-click on the background) centres it back on you.'
@@ -439,7 +441,7 @@ our %topic = (
 	},
 	'inventory' => {
 		title => 'Inventory', category => 'apps', app => 'inventory',
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
 			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics and the Evaluation reports.'
@@ -473,7 +475,7 @@ our %topic = (
 	'pen' => {
 		title => 'Pen', category => 'apps', app => 'pen',
 		templates => [ 'templates/apps/pen.html.ep', 'templates/mail/pen_sections.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/pen.js' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'The assistant conversations, each with its own model and voice.',
 		body => [
 			'Pen is the house\'s assistant, split out of the mailbox as an app of its own: a row of conversations, each a picked model with its own name and system message, and one thread of letters per conversation.',
@@ -489,13 +491,13 @@ our %topic = (
 	},
 	'email' => {
 		title => 'Email', category => 'apps', app => 'email',
-		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'public/js/manager/email.js' ],
-		verified => '2026-10-15',
+		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
+		verified => '2026-10-16',
 		summary => 'IMAP and SMTP mail, straight on the desktop.',
 		body => [
 			'Email is the mailbox\'s mail half, split out as an app of its own. It speaks IMAP and SMTP directly, so mail arrives on the desktop rather than in a separate client, and a new message raises the dot in the start menu.',
 			'Pick a folder - contacts, inbox, drafts, outbox or sent - and then the address to read. New file composes a message; when you send it the attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to.',
-			'The gear opens the server settings and the saved templates for the address you are on.'
+			'The gear opens the server settings and the saved templates.'
 		],
 		steps => [
 			'Open Email from the start menu.',
@@ -507,17 +509,18 @@ our %topic = (
 	},
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
-		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
-		verified => '2026-10-14',
-		summary => 'Email over IMAP and SMTP, straight on the desktop.',
+		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
+		verified => '2026-10-16',
+		summary => 'The whole mailbox in one window — email, sms, lora, the dial, the list, ticket threads and the pen.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
-			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant.',
+			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant — each of those sections also opens as an app of its own now, while the umbrella still carries them all.',
 			'The dial is the house\'s radio: a set of appointments picked across the six groups names one thread, and a tab only hears messages addressed to the set it is tuned to. Advertise opens the tuned set to guests, who may then tune the same channel from the mailbox on the public page.',
+			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down — except on the guest\'s own ticket thread, the one conversation the house opened for them. Room bubbles that are not kept are dashed to say so.'
 		],
 		steps => [
-			'Open Mailbox and choose a section from the sidebar — sms, email, list, dial, pen or tickets.',
+			'Open Mailbox and choose a section from the sidebar — sms, email, lora, list, dial, pen or tickets.',
 			'For email, pick a folder (contacts, inbox, drafts, outbox, sent) and an address.',
 			'Compose with the new-file button; attachments are filed and sealed when you send.',
 			'On the dial, pick a set and press Advertise to open it to guests; press Advertised to close it again.',
@@ -583,7 +586,7 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
 			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
@@ -615,17 +618,17 @@ our %topic = (
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'The device fleet, from the desktop.',
 		body => [
-			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, push a room to a watch, deck or board, and set how a device behaves.',
+			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
 			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
-			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended, its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
+			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
-			'Use Scan to re-discover devices, or Query on a row to ask one board what it is.',
-			'Push a room to send a screen of buttons to a watch or deck.',
+			'Choose a device from the chip list, then press Query to ask a board what it is.',
+			'Set the room\'s buttons, then press Now Me to send that room to a watch or deck.',
 			'On a watch row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
 			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],
@@ -636,7 +639,7 @@ our %topic = (
 	'voice' => {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-10-15',
+		verified => '2026-10-16',
 		summary => 'Speak to the watch; it listens for a phrase and files the rest.',
 		body => [
 			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
@@ -779,15 +782,15 @@ our %topic = (
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
 		controls => [ 'Run this job', 'How often', 'Good', 'Bad' ],
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
 			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot.',
 			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
-			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine that can take AI work, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
-			'Below it is the API balances table: what is left on each provider account, where the provider reports it. OpenRouter and DeepSeek do; the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq, Cloudflare) have no balance endpoint and read “—”. The read happens in the background every ten minutes, so the page never waits.'
+			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
+			'Below it is the API balances table: what is left on each provider account, where the provider reports it. OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. The read happens in the background every ten minutes, so the page never waits.'
 		],
 		steps => [
 			'Open Configure and press Sys; the Utility controller is in that panel.',
@@ -796,18 +799,18 @@ our %topic = (
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
 			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each account.'
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, where only OpenRouter and DeepSeek report a balance and the rest read em-dash. Do not invent job names beyond the ones listed.',
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, where only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
 		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
 	},
 	'navigation' => {
 		title => 'Navigation (location logging)', category => 'features',
 		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'public/js/manager/travel.js' ],
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'JawnOS records where a device is on a schedule, screen on or off.',
 		body => [
 			'Navigation is the autonomous location log. On a handheld the backend asks for a fresh GPS fix once per navigation interval — whether or not the app is open and whether or not the screen is on, since the phone holds a wake lock for it — and writes that one point down as the machine\'s current position.',
 			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval — never faster than the navigation interval itself (the utility\'s own pace in the Utility controller), which is the real ceiling.',
-			'Those filed fixes are the Distance list on the appointment: open its details and the Distance section lists each point with its distance from home, the metres since the last one, and the speed between them.',
+			'Those filed fixes are the Distance list on the appointment: open its details and the Distance section lists each point with its distance from home, the kilometres since the last one, and the speed between them.',
 			'Navigation also drives the home plate: when the device crosses a home plate\'s radius, that plate\'s duty can start or stop the matching appointment on its own.'
 		],
 		steps => [
@@ -816,7 +819,7 @@ our %topic = (
 			'Open the appointment and read its Distance list for the points, the distance and the speed.',
 			'Set a home plate and a duty on it to let crossing that radius start or stop the appointment by itself.'
 		],
-		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; and filed fixes appear in the appointment\'s Distance list (distance from home, metres since the last, speed). The utility interval is the ceiling — a 1m per-app setting still only gets a point about as often as the utility runs. Do not describe it as a live map, and never guess a person\'s actual location.',
+		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). The utility interval is the ceiling — a 1m per-app setting still only gets a point about as often as the utility runs. Do not describe it as a live map, and never guess a person\'s actual location.',
 		related => [ 'travel', 'appointments', 'devices_and_mesh' ]
 	},
 
@@ -921,10 +924,10 @@ our %topic = (
 	'agents' => {
 		title => 'Agents (associates and coding)', category => 'functions',
 		templates => [ 'public/js/manager/agents.js' ],
-		verified => '2026-10-14',
+		verified => '2026-10-16',
 		summary => 'Every Guide associate and Coding agent conversation, named and kept.',
 		body => [
-			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed.',
+			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below — or wherever you last left it, if you have dragged it. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed.',
 			'Every conversation names itself the way a chat thread does: shortly after the first thing is said, the assistant\'s model gives it a title of two to five words (a plain cut of the words when no model is set), and that name follows it in the list and on the panel\'s bar.',
 			'Conversations live in the app\'s settings, so they sync like the rest and a thread begun on one machine is in the list on another. The list\'s + guide and + coding make fresh conversations; the + in an open panel\'s own bar does the same. The chat panels themselves stand larger on a desk, with bigger text; on a small screen they keep the compact size.',
 			'A work claim says which machine is on which job, so two agents do not take the same one: a job (the ghost appointments, say) is claimed by name, and the claim rides the \'claims\' app - not one of the protected apps - so the mesh carries it to every machine, the same way appointments stay in step. The walkman\'s Configure shows who holds the ghosts claim, with take and release.',
@@ -951,7 +954,7 @@ our %topic = (
 			'Image, Audio and Video generation are their own agents, each holding the model that produces that kind of file; a prompt Pen (or a Guide associate) describes is filed by the matching one, with a “Generating … with …” note while it runs. Transcription (speech in) is its own agent too: it tries the chosen cloud model first and falls back to the local whisper.cpp when that fails.',
 			'Every agent also carries a Fallback choice beside its model — the same list minus the primary. When the primary errors (an outage), the call steps down to the fallback instead of failing; the transcription agent adds whisper.cpp after that.',
 			'Secret keys are stored encrypted and are never shown back: a key that is set reads “••• set”, and typing a new value replaces it.',
-			'Beside each provider that is set up sits the money left on its account, where the provider reports one: OpenRouter and DeepSeek publish a figure, and the rest read —. The reading is kept fresh in the background (off the page), so opening Plat never waits on a provider.',
+			'Beside each provider that is set up sits the money left on its account, where the provider reports one: OpenRouter and DeepSeek publish a figure, and the rest read “no balance API”. The reading is kept fresh in the background (off the page), so opening Plat never waits on a provider.',
 			'Guide commands (runtime) is where you teach the Guide new verbs without a code change. Each is a JSON entry naming a primitive — say, open_app, set_setting, run_command, toggle, stage, find or play_music — and its parameters. The list is a setting, so it syncs to every machine and they all learn the verb.',
 			'Self-healing is the error watch: tick Watch errors and, with a Coding model set, every new error is caught and listed in the IDE\'s coding panel with a fix the Coding agent has proposed — the tree\'s own log (the pty stream the master tees to ~/pty.log, plus manager.log) and the browser: every page reports its fatal JavaScript errors (an uncaught exception, an unhandled promise rejection, a script or stylesheet that would not load), which is what JS means on a row\'s line. The fix waits there: Apply writes it, checks it compiles, bumps the version, commits and pushes, and the panel\'s restart link puts it live. Nothing is written until Apply — unless Apply automatically is ticked, when each proposal is written, checked (perl -c, rolled back if it fails) and shipped at once, like the Guide associate\'s Confirm tick; a file that has uncommitted work stands down and waits for you, and Tokens/day caps what the day may spend. Tick Watch the Guide and the Guide\'s own conversations are read the same way: a turn that went nowhere — a thing not found, a command that could not run, a closing line that says so — is staged for the Coding agent to adjust the Guide\'s training itself, its rules and its verbs. Fixed so far, under the tick, is the record of what has shipped: press review to read each fixed error, with the model that fixed it and the version it went out as. A tab follows a shipped fix on its own: a stylesheet or template change lands in place (the open windows re-render), while a change to the manager\'s scripts or its shell asks once — a small press-to-update note in the corner, or a silent reload when the tab is hidden; a conversation left in a coding agent survives it. The watch is one per house, not one per machine: a stable hash over the machines that have a model configured ranks them and the first takes each error, and only that machine pays to propose the fix, so two machines never repair the same thing; a fix already proposed is left alone while a person decides, and if that machine goes quiet the job hands on to the next rather than waiting. The day\'s token budget is one pot for the whole house, each machine\'s spend summed, so Tokens/day is the house\'s ceiling rather than one per machine. A machine named by hand wins over the ledger.',
 			'Watch records is the same watch pointed at the database. Tick it and every two hours the appointments table is audited for the fault that corrupts the numbers: a session one stop press closed along with others, the same row written twice, and an open session run far past the app\'s length. Each finding is staged under Self-healing with the rows it would tombstone or repair. Nothing is written until Apply; the window sets how far back it looks (0 is all time). Apply records automatically writes only exact duplicates — the same event written twice on the mesh, which is provably one event — while a sweep or a long-open session always waits for you, because a real appointment can be surprisingly long (a home stay, a months-long ailment) and a fixed rule can never know that. Any finding carries an Ask box: put it to the Coding agent and it reads the rows and says what it makes of them, whether the repair is safe, and whether the honest answer is to leave it alone; Leave this app alone silences the audit for an app you know runs long.',
