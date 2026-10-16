@@ -469,7 +469,7 @@ def restart_jawn(jawn_dir):
         if jawn_up(jawn_dir):
             return True, "jawn restarted"
         time.sleep(0.5)
-    return False, "jawn did not come back up (see %s)" % jawn_log_path()
+    return False, "jawn did not come back up (see %s)" % jawn_log_path(jawn_dir)
 
 
 # --------------------------------------------------------------------------

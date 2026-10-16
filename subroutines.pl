@@ -8095,7 +8095,12 @@ sub database_grabber() {
 		eval { $db->query('PRAGMA cache_size=' . ($mobile ? -2000 : -8000) . ';'); };
 		eval { $db->query('PRAGMA temp_store=MEMORY;'); };
 		eval { $db->query('PRAGMA mmap_size=' . ($mobile ? 33554432 : 134217728) . ';'); };
-		eval { $db->query('PRAGMA journal_size_limit=33554432;'); };
+		# Keep the write-ahead log small. A checkpoint that resets the WAL truncates
+		# the file to this many bytes, so the cap IS the steady-state size - at 32MB
+		# every machine carried a 32MB -wal beside its database (the health read
+		# reports it now). 4MB matches the ~1000-page autocheckpoint, so the file is
+		# reclaimed often without being truncated to nothing on every write.
+		eval { $db->query('PRAGMA journal_size_limit=4194304;'); };
 		return ($db,$database,$sql);
 	}
 	$gb::database_holder = {};
