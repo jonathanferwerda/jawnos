@@ -2205,3 +2205,51 @@ $(document).on('click', '.ai_avail_clear', function() {
 		}
 	});
 });
+
+// ---- the rename-merge panel -------------------------------------------
+// A rename into a name the house already knows is a merge: the two apps share
+// settings, so the panel picks which value keeps the name per setting - the
+// renaming app's, the existing app's, or a natural merge for the settings that
+// join (nfc tags, measures).
+function nameConflictPanel(response) {
+	$('#name_conflict_panel').remove();
+	var panel = $('<div id="name_conflict_panel" style="position:fixed;left:15%;top:10%;width:70%;max-height:78%;overflow:auto;z-index:994200;background:var(--panel);border:3px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 6px 30px rgba(0,0,0,.5);">');
+	panel.append('<h3 style="margin-top:0;">Rename into ' + response.new + '</h3>');
+	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name.</p>');
+	var pairs = response.pairs || [];
+	if (!pairs.length) { panel.append('<p>No shared settings - the records will simply join.</p>'); }
+	$.each(pairs, function (i, p) {
+		var row = $('<div style="border-top:1px solid var(--line);padding:8px 0;">');
+		row.append('<b>' + p.setting + '</b><br>');
+		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new" checked> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span></label>');
+		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span></label>');
+		if (p.natural) {
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"> merge (keep both)</label>');
+		}
+		panel.append(row);
+	});
+	panel.append('<br><button id="name_conflict_go" style="margin-right:8px;">Rename &amp; merge</button><button id="name_conflict_cancel">Cancel</button>');
+	$('#configuration_container').append(panel);
+	$('#name_conflict_go').on('click', function () {
+		var choices = {};
+		panel.find('input[type=radio]:checked').each(function () {
+			choices[$(this).attr('name').replace('nc_', '')] = $(this).val();
+		});
+		$.ajax({
+			url: '/manager/configure',
+			type: 'POST',
+			data: { app: response.app, setting: 'name_change', value: response.new, choices: JSON.stringify(choices), timestamp: Date.now() },
+			success: function () {
+				panel.remove();
+				if (typeof appointment_chron === 'function') { appointment_chron(); }
+			}
+		});
+	});
+	$('#name_conflict_cancel').on('click', function () { panel.remove(); });
+}
+
+function shortSettingValue(v) {
+	v = String(v == null ? '' : v);
+	if (v.length > 60) { v = v.slice(0, 60) + '…'; }
+	return v.replace(/</g, '&lt;');
+}

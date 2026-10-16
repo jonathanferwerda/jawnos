@@ -2417,6 +2417,12 @@ $(document).on('keyup', '.timed_input', function(e) {
 				type: type,
 				data: data,
 				success: function(response) {
+					if (response && response.conflict) {
+						// the new name is a name the house already knows: the panel
+						// picks which value keeps the name, setting by setting
+						nameConflictPanel(response);
+						return;
+					}
 					if (i.hasClass('add_something') || url == '/manager/configure') {
 						$('#start_menu').hide();
 						i.removeClass('active');

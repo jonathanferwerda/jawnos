@@ -4802,6 +4802,79 @@ sub intelligent_automation_toggle() {
 
 }
 
+# A rename into a name the house already knows is a merge, and the settings the
+# two apps share meet on one row each: this lists those rows so the panel can
+# pick which value keeps the name per setting - and which ones merge naturally
+# (nfc tags concatenate, measures union their keys).
+sub name_change_pairs {
+	my ($app, $new_app) = @_;
+	my @pairs;
+	my %seen;
+	my %natural = map { $_ => 1 } qw/nfc app_measures/;
+	my $olds = &subs::db_query('select setting, value from settings where app = ?', $app)->hashes;
+	my $news = &subs::db_query('select setting, value from settings where app = ?', $new_app)->hashes;
+	my %new_by;
+	$new_by{$_->{'setting'}} ||= $_->{'value'} for @{$news};
+	foreach my $o ( @{$olds} ) {
+		next unless exists $new_by{$o->{'setting'}};
+		next if $seen{$o->{'setting'}}++;
+		push @pairs, {
+			setting => $o->{'setting'},
+			old_value => $o->{'value'},
+			new_value => $new_by{$o->{'setting'}},
+			natural => ($natural{$o->{'setting'}} ? 'merge' : '')
+		};
+	}
+	return \@pairs;
+}
+
+# How two values of a setting join: nfc and measures are lists at heart, so a
+# natural merge keeps both sides; anything else keeps the renaming app's value.
+sub merge_setting_values {
+	my ($setting, $old, $new) = @_;
+	if ($setting eq 'nfc') {
+		my $a = eval { return decode_json $old } || [];
+		my $b = eval { return decode_json $new } || [];
+		$a = [ $a ] if ref $a eq 'HASH';
+		$b = [ $b ] if ref $b eq 'HASH';
+		my %seen;
+		my @merged = grep { !$seen{$_->{'uuid'} || $_}++ } (@{$b}, @{$a});
+		return encode_json \@merged;
+	}
+	if ($setting eq 'app_measures') {
+		my $a = eval { return decode_json $old } || {};
+		my $b = eval { return decode_json $new } || {};
+		my %merged = (%{$a}, %{$b});
+		return encode_json \%merged;
+	}
+	return $new;
+}
+
+# Applies the panel's choices and leaves only the rows the rename will carry:
+# 'new' drops the target's row (the renaming app's value takes the name), 'old'
+# drops the renaming app's row (the existing value stays), and 'merge' writes
+# the joined value under the target name and drops both.
+sub name_change_apply {
+	my ($app, $new_app, $choices) = @_;
+	foreach my $setting ( keys %{$choices} ) {
+		my $pick = $choices->{$setting} || '';
+		if ($pick eq 'new') {
+			&subs::db_query('delete from settings where app = ? and setting = ?', $new_app, $setting);
+		}
+		elsif ($pick eq 'old') {
+			&subs::db_query('delete from settings where app = ? and setting = ?', $app, $setting);
+		}
+		elsif ($pick eq 'merge') {
+			my $oldv = &subs::db_query('select value from settings where app = ? and setting = ?', $app, $setting)->hashes->[0]->{'value'};
+			my $newv = &subs::db_query('select value from settings where app = ? and setting = ?', $new_app, $setting)->hashes->[0]->{'value'};
+			my $merged = &subs::merge_setting_values($setting, $oldv, $newv);
+			&subs::db_query('delete from settings where app = ? and setting = ?', $app, $setting);
+			&subs::db_query('delete from settings where app = ? and setting = ?', $new_app, $setting);
+			&subs::setting_setter({ app => $new_app, setting => $setting, value => $merged });
+		}
+	}
+}
+
 sub setting_setter() {
 	%setting_memo = ();
 	my $settings = shift;

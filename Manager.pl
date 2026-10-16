@@ -12031,6 +12031,20 @@ post '/manager/configure' => sub ($c) {
 		$value = &subs::note_encrypter(&subs::suds_grabber(), $value);
 		$log->info($value);
 	}
+	# a rename into a name the house already knows is a merge: the two apps'
+	# settings meet on one row each, so the panel picks which value wins per
+	# setting (and which merge naturally) before the rename runs
+	if ($setting eq 'name_change') {
+		my $new_app = &subs::unformat_name($value);
+		my $choices = eval { return decode_json $c->param('choices') } || {};
+		my $target = &subs::db_query('select 1 from settings where app = ? limit 1', $new_app)->hashes->[0];
+		my $target_appts = &subs::db_query('select 1 from appointments where app = ? limit 1', $new_app)->hashes->[0];
+		if (($target || $target_appts) && !scalar keys %{$choices}) {
+			$c->render(json => { conflict => 1, app => $app, new => $new_app, pairs => &subs::name_change_pairs($app, $new_app) });
+			return;
+		}
+		&subs::name_change_apply($app, $new_app, $choices) if scalar keys %{$choices};
+	}
 	my $setting_data = { app => $app, setting => $setting, value => $value, timestamp => $timestamp, source => 'panel' };
 	&subs::setting_setter($setting_data);
 	undef @appointments;
