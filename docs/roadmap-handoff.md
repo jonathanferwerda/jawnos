@@ -167,7 +167,11 @@ Still to do:
   `jw.ino`, plus `jw/voice_models.h` and the model headers). Needs the deck's
   ES7210 mic and its speaker wired to that loop instead of the watch's LilyGoLib
   audio, so it is best done with the deck on serial.
-- The deck has **no display** at the moment - find out why before the UI work.
+- The deck's blank screen was **the wrong firmware**: `pio run -t upload` with
+  two boards on USB auto-picked the watch's port, so the deck was running `jw` and
+  resetting in a loop on the LilyGoWatch S3 board assert. Flash with the port
+  named - deck `--upload-port /dev/ttyACM0` (SER 98:A3:...), watch
+  `/dev/ttyACM1` (64:E8:...) - and it boots the deck UI.
 
 ## Shopping / Market / warehouse
 
