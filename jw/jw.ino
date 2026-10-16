@@ -476,8 +476,10 @@ static inline bool ble_link_ready() {
 // task (producer) and the playback task (consumer), and the playback task writes
 // what it pulls straight to the codec.
 #define SAY_TEXT_MS 8000          // how long the answer stays on screen
-#define SAY_STREAM_BYTES 24576    // ~1.5 s of 8 kHz mono audio of slack
+#define SAY_STREAM_BYTES 32768    // ~2 s of 8 kHz mono audio of slack
 #define SAY_STREAM_STALL_MS 4000  // silence this long ends the stream
+#define SAY_PRELOAD_MIN 8000      // never wait for less than half a second
+#define SAY_PRELOAD_MAX 24576     // never wait for more than a second and a half
 static String say_text;
 static volatile bool say_text_pending = false;
 static uint32_t say_shown_at = 0;
@@ -485,8 +487,11 @@ static lv_obj_t *say_label = nullptr;   // the on-screen answer (top layer)
 static StreamBufferHandle_t say_stream = nullptr;
 static volatile bool say_stream_last = false;    // the final part has arrived
 static volatile bool say_stream_start = false;   // loop() should open the codec
+static volatile bool say_stream_dead = false;    // nothing will play: stop buffering
 static volatile uint32_t say_stream_rate = 8000; // the part's sample rate (Hz)
 static volatile uint32_t say_stream_at = 0;      // when the last part landed
+static volatile uint32_t say_stream_total = 0;   // the sender's estimate of the whole clip (bytes)
+static volatile uint32_t say_stream_preload = SAY_PRELOAD_MIN;
 
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -555,7 +560,7 @@ static void queue_ble_message(String &message) {
 // split it into "<i>/<n>:" parts the bridge reassembles (the same shape
 // ble_frame_ingest and the server's ble_message_processor expect). With a big
 // MTU (the desktop's 512) a small message stays a single part.
-static void ble_notify_payload(const String &payload) {
+static void ble_notify_payload(const String &payload, uint16_t pace_ms = 8) {
     if (!ble_link_ready()) {
         return;
     }
@@ -586,7 +591,7 @@ static void ble_notify_payload(const String &payload) {
         part += payload.substring(from, to);
         pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
         pTxCharacteristic->notify();
-        delay(8);                  // pace the parts; a flat burst outruns the link
+        delay(pace_ms);            // pace the parts; a flat burst outruns the link
     }
 }
 
@@ -2168,11 +2173,23 @@ void loop2(void * pvParameters) {
                 if (say_stream) {
                   xStreamBufferReset(say_stream);
                   say_stream_last = false;
+                  say_stream_dead = false;
                   say_stream_rate = (rate > 4000 && rate < 96000) ? (uint32_t)rate : 8000;
+                  // The sender's estimate of the whole clip decides how much to
+                  // hold back before speaking: half of it, so playback starts
+                  // with a cushion against the link's jitter and never has to
+                  // pause, but a short answer is not made to wait for a routine
+                  // that is longer than the answer itself.
+                  uint32_t total = (uint32_t)json_int(btMsg["data"]["total"]);
+                  uint32_t pre = total ? total / 2 : SAY_PRELOAD_MIN;
+                  if (pre < SAY_PRELOAD_MIN) { pre = SAY_PRELOAD_MIN; }
+                  if (pre > SAY_PRELOAD_MAX) { pre = SAY_PRELOAD_MAX; }
+                  say_stream_total = total;
+                  say_stream_preload = pre;
                   say_stream_start = true;
                 }
               }
-              if (say_stream && a.length()) {
+              if (say_stream && !say_stream_dead && a.length()) {
                 size_t cap = (a.length() * 3) / 4 + 8;
                 uint8_t *buf = (uint8_t *)ps_malloc(cap);
                 if (!buf) { buf = (uint8_t *)malloc(cap); }
@@ -2180,15 +2197,19 @@ void loop2(void * pvParameters) {
                   size_t olen = 0;
                   int rc = mbedtls_base64_decode(buf, cap, &olen, (const unsigned char *)a.c_str(), a.length());
                   if (rc == 0 && olen) {
+                    // Wait for room rather than drop: the synthesizer runs faster
+                    // than the audio plays, so the buffer fills by design, and a
+                    // dropped part is an audible hole. The playback task drains
+                    // it, and marks the stream dead if it cannot play at all (a
+                    // recording in progress), which stops this from waiting on
+                    // nobody.
                     size_t sent = 0;
-                    while (sent < olen) {
-                      size_t n = xStreamBufferSend(say_stream, buf + sent, olen - sent, pdMS_TO_TICKS(800));
-                      if (!n) {
-                        Serial.println("[say] audio part stalled");
-                        break;
-                      }
+                    while (sent < olen && !say_stream_dead) {
+                      size_t n = xStreamBufferSend(say_stream, buf + sent, olen - sent, pdMS_TO_TICKS(500));
+                      if (!n) { continue; }
                       sent += n;
                     }
+                    if (sent < olen) { Serial.println("[say] audio part abandoned"); }
                     say_stream_at = millis();
                   }
                   else {
@@ -3504,7 +3525,7 @@ void micCaptureTask(void *pvParameters) {
 #define VOICE_FRAME_SAMPLES ((int)(MIC_I2S_SAMPLE_RATE / 1000 * VOICE_FRAME_MS))
 #define VOICE_RMS_FLOOR 900          // above room tone, below a spoken word
 #define VOICE_ONSET_FRAMES 4         // held-energy frames before a capture commits (a lone loud frame is the room, not a word)
-#define VOICE_SILENCE_MS 900         // trailing quiet that ends a command
+#define VOICE_SILENCE_MS 450         // trailing quiet that ends a command
 #define VOICE_MAX_MS 6000            // a command, not a lecture
 #define VOICE_MIN_MS 300             // shorter than a word is a cough
 #define VOICE_WAKE_RMS_FLOOR 400     // frame RMS held to keep a wake capture going: the room sits well below, a spoken word above
@@ -3669,6 +3690,193 @@ static const int8_t voice_adpcm_index[16] = { -1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,
 
 static void voice_wr16(uint8_t *p, uint16_t v) { p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; }
 static void voice_wr32(uint8_t *p, uint32_t v) { p[0]=v&0xff; p[1]=(v>>8)&0xff; p[2]=(v>>16)&0xff; p[3]=(v>>24)&0xff; }
+
+// ---- streaming the clip up while it is still being recorded ---------------
+// The same IMA ADPCM the whole-clip path ships, encoded as the samples arrive
+// instead of after the fact: the parts are on their way while the person is
+// still speaking, so the server holds the clip the moment they stop rather than
+// a second or two later. The server reassembles the parts and wraps them in the
+// 60-byte WAV header (the very file the whole-clip path sends), so the ingest is
+// unchanged. Encoding happens in the capture task; sending does not - a part is
+// a burst of paced notifies, and pacing them from the capture task would stall
+// the microphone and drop audio.
+#define VOICE_STREAM_PART 4096        // encoded bytes per part (base64 ~5.5 KB)
+#define VOICE_STREAM_SLACK 8192       // encoder-to-sender slack (~2 s of speech)
+#define VOICE_STREAM_PACE_MS 25       // per notify inside a part
+static StreamBufferHandle_t voice_stream = nullptr;
+static volatile bool voice_stream_run = false;    // the sender task is alive
+static volatile bool voice_stream_stop = false;   // capture over: flush and finish
+static volatile bool voice_stream_dead = false;   // aborted: send nothing more
+static unsigned voice_stream_seq = 0;
+static int16_t voice_sblk[VOICE_ADPCM_SPB];       // samples of the block being built
+static int voice_sblk_have = 0;
+static uint8_t voice_spart[VOICE_STREAM_PART + VOICE_ADPCM_BLOCK];
+static unsigned voice_spart_len = 0;
+
+// base64, appended (the same table voice_ble_send uses)
+static void voice_b64_append(String &out, const uint8_t *p, unsigned len) {
+  static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (unsigned i = 0; i < len; i += 3) {
+    unsigned rem = len - i;
+    uint8_t b0 = p[i];
+    out += tbl[(b0 >> 2) & 0x3f];
+    if (rem == 1) {
+      out += tbl[((b0 & 0x03) << 4) & 0x3f];
+      out += '=';
+      out += '=';
+    }
+    else {
+      uint8_t b1 = p[i + 1];
+      out += tbl[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)];
+      if (rem == 2) {
+        out += tbl[((b1 & 0x0f) << 2) & 0x3f];
+        out += '=';
+      }
+      else {
+        uint8_t b2 = p[i + 2];
+        out += tbl[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)];
+        out += tbl[b2 & 0x3f];
+      }
+    }
+  }
+}
+
+// One part out: the encoded bytes gathered so far, with the clip's identity and a
+// last flag on the final one. Paced (Bluedroid gives no backpressure, and an
+// unpaced burst is what leaves parts missing). Runs on the sender task only - the
+// capture task never waits on the radio.
+static void voice_stream_send(bool last) {
+  String msg = "{\"type\":\"voice_stream\",\"chip_id\":\"" + chip_id_maker()
+    + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts)
+    + ",\"voice\":\"" + voice_mode_name + "\",\"seq\":" + String(voice_stream_seq)
+    + ",\"last\":" + (last ? "1" : "0") + ",\"audio\":\"";
+  voice_b64_append(msg, voice_spart, voice_spart_len);
+  msg += "\"}";
+  voice_stream_seq++;
+  voice_spart_len = 0;
+  if (!ble_link_ready()) {
+    return;   // nothing to send on; the whole-clip fallback covers this clip
+  }
+  ble_notify_payload(msg, VOICE_STREAM_PACE_MS);
+}
+
+// Hand encoded bytes to the sender task. If the link has fallen behind the
+// speaking there is nowhere for them to go: abandon the stream outright (no
+// last flag, so the server never assembles a truncated clip) and let the
+// whole-clip path send it after the capture, as it always did.
+static void voice_stream_push(const uint8_t *p, unsigned len) {
+  if (!voice_stream || voice_stream_dead) { return; }
+  size_t sent = 0;
+  while (sent < len) {
+    size_t n = xStreamBufferSend(voice_stream, p + sent, len - sent, pdMS_TO_TICKS(20));
+    if (!n) {
+      Serial.println("[voice] stream fell behind the speech; leaving the clip to the file path");
+      voice_stream_dead = true;
+      return;
+    }
+    sent += n;
+  }
+}
+
+// Encode the samples held for one block and hand the block over. Each block
+// carries its own predictor and step index (the IMA layout ffmpeg reads), so a
+// block boundary is a safe place to split for the wire.
+static void voice_stream_encode_block() {
+  int count = voice_sblk_have;
+  voice_sblk_have = 0;
+  if (count < 2) { return; }
+  uint8_t blk[VOICE_ADPCM_BLOCK];
+  int32_t pred = voice_sblk[0];
+  int index = 0;
+  int at = 0;
+  blk[at++] = (uint8_t)(pred & 0xff);
+  blk[at++] = (uint8_t)((pred >> 8) & 0xff);
+  blk[at++] = 0;
+  blk[at++] = 0;
+  int nib_have = 0;
+  uint8_t pending = 0;
+  for (int i = 1; i < count; i++) {
+    int32_t step = voice_adpcm_step[index];
+    int32_t diff = (int32_t)voice_sblk[i] - pred;
+    uint8_t nib = 0;
+    if (diff < 0) { nib = 8; diff = -diff; }
+    if (diff >= step) { nib |= 4; diff -= step; }
+    if (diff >= (step >> 1)) { nib |= 2; diff -= (step >> 1); }
+    if (diff >= (step >> 2)) { nib |= 1; }
+    int32_t diffq = step >> 3;
+    if (nib & 4) { diffq += step; }
+    if (nib & 2) { diffq += step >> 1; }
+    if (nib & 1) { diffq += step >> 2; }
+    pred = (nib & 8) ? pred - diffq : pred + diffq;
+    if (pred > 32767) { pred = 32767; } else if (pred < -32768) { pred = -32768; }
+    index += voice_adpcm_index[nib];
+    if (index < 0) { index = 0; } else if (index > 88) { index = 88; }
+    if (!nib_have) { pending = nib; nib_have = 1; }
+    else { blk[at++] = pending | (nib << 4); nib_have = 0; }
+  }
+  if (nib_have) { blk[at++] = pending; }
+  while (at < VOICE_ADPCM_BLOCK) { blk[at++] = 0; }   // pad, as the file path does
+  voice_stream_push(blk, at);
+}
+
+// The capture's 8 kHz samples in, with whatever complete blocks that makes on
+// their way to the sender task. Never blocks on the radio.
+static void voice_stream_feed(const int16_t *samples, int n) {
+  if (!voice_stream_run || voice_stream_dead) { return; }
+  for (int i = 0; i < n; i++) {
+    voice_sblk[voice_sblk_have++] = samples[i];
+    if (voice_sblk_have >= VOICE_ADPCM_SPB) { voice_stream_encode_block(); }
+  }
+}
+
+static void voice_stream_task(void *pv) {
+  while (true) {
+    size_t n = 0;
+    if (voice_stream && !voice_stream_dead) {
+      n = xStreamBufferReceive(voice_stream, voice_spart + voice_spart_len,
+                               sizeof(voice_spart) - voice_spart_len, pdMS_TO_TICKS(100));
+    }
+    voice_spart_len += n;
+    bool drained = !voice_stream || xStreamBufferIsEmpty(voice_stream);
+    if (voice_stream_dead) { break; }
+    if (voice_spart_len >= VOICE_STREAM_PART || (voice_stream_stop && n == 0 && drained)) {
+      voice_stream_send(voice_stream_stop && drained);
+      if (voice_stream_stop && drained) { break; }
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  if (voice_stream) { xStreamBufferReset(voice_stream); }
+  voice_stream_run = false;
+  vTaskDelete(NULL);
+}
+
+// Begin streaming for the capture that is starting. Best effort: with no link, or
+// no room for the buffers, the capture carries on and the whole-clip path ships
+// it afterwards exactly as before.
+static void voice_stream_begin() {
+  if (voice_stream_run) { return; }
+  if (!bt_enabled) { return; }
+  if (!voice_stream) {
+    voice_stream = xStreamBufferCreate(VOICE_STREAM_SLACK, 64);
+    if (!voice_stream) { return; }
+  }
+  xStreamBufferReset(voice_stream);
+  voice_stream_seq = 0;
+  voice_sblk_have = 0;
+  voice_spart_len = 0;
+  voice_stream_stop = false;
+  voice_stream_dead = false;
+  voice_stream_run = true;
+  xTaskCreatePinnedToCore(voice_stream_task, "VoiceStream", 4096, NULL, 2, NULL, 1);
+}
+
+// Capture over: encode the tail and let the sender finish (its last part is the
+// only thing that tells the server the clip is whole).
+static void voice_stream_end() {
+  if (!voice_stream_run) { return; }
+  voice_stream_encode_block();   // the partial final block
+  voice_stream_stop = true;
+}
 
 static bool voice_compress_clip() {
   File in = FFat.open(VOICE_WAV_PATH.c_str(), FILE_READ);
@@ -3921,6 +4129,9 @@ static void voiceListenTask(void *pv) {
         silence_ms = 0;
         voiceRecording = true;
         voice_clip_ts = have_onset ? (long)onset_ts : timestamp_maker();
+        // send the clip up while it is being spoken (see voice_stream_begin):
+        // the server has it the moment the person stops
+        voice_stream_begin();
         Serial.println("[voice] speech detected, recording");
       }
       // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
@@ -3936,6 +4147,7 @@ static void voiceListenTask(void *pv) {
           folded[m++] = (int16_t)(((int32_t)in16[i] + (int32_t)in16[i + 1]) >> 1);
         }
         pcm_bytes += f.write((uint8_t *)folded, m * 2);
+        voice_stream_feed(folded, m);   // and up the link, as it is spoken
       }
       // A wake-word model speaks only for its phrase: its output cannot be the
       // silence detector once the capture has started, or every command ends
@@ -3960,6 +4172,7 @@ static void voiceListenTask(void *pv) {
     if (recording && !isRecording && !isPlaying) {
       f.close();
       voiceRecording = false;
+      voice_stream_end();   // encode the tail and let the last part go out
       if (pcm_bytes > 0) {
         finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
         Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
@@ -4100,11 +4313,21 @@ void say_playback_task(void *pvParameters) {
   uint32_t rate = say_stream_rate;
   if (!codec || !codec->open(16, 1, rate)) {
     Serial.println("[say] codec open failed");
+    if (say_stream) { xStreamBufferReset(say_stream); }
+    say_stream_dead = true;
     isPlaying = false;
     vTaskDelete(NULL);
   }
   codec->setVolume(volumeLevel);
   Serial.printf("[say] playing at %u Hz\n", (unsigned)rate);
+  // Hold back until the cushion the first part named is in hand (or the sender
+  // has sent everything): speaking too early is what made the playback stutter.
+  uint32_t waited = millis();
+  while (!say_stream_last && say_stream && xStreamBufferBytesAvailable(say_stream) < say_stream_preload
+         && millis() - waited < 4000 && !say_stream_dead) {
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+  Serial.printf("[say] preload %u/%u bytes\n", say_stream ? (unsigned)xStreamBufferBytesAvailable(say_stream) : 0, (unsigned)say_stream_preload);
   uint8_t buf[512];
   uint32_t started = millis();
   uint32_t bytes = 0;
@@ -4125,6 +4348,10 @@ void say_playback_task(void *pvParameters) {
   codec->close();
   uint32_t spent = millis() - started;
   Serial.printf("[say] played %u bytes in %u ms%s\n", (unsigned)bytes, (unsigned)spent, starved ? " (starved)" : "");
+  // Nothing is listening any more: let any part still being pushed give up
+  // instead of waiting on a buffer nobody drains, and clear what is left.
+  say_stream_dead = true;
+  if (say_stream) { xStreamBufferReset(say_stream); }
   isPlaying = false;
   vTaskDelete(NULL);
 }
@@ -4132,8 +4359,15 @@ void say_playback_task(void *pvParameters) {
 // Start the spoken answer. Called from loop() (core 1) when the first part has
 // landed, so the codec and the task live where the other audio does.
 static void say_stream_play() {
-  if (isPlaying || isRecording) { return; }
+  if (isPlaying || isRecording) {
+    // Cannot speak now (the person is recording, or audio is already playing):
+    // let the parts go instead of buffering sound nobody will hear.
+    say_stream_dead = true;
+    if (say_stream) { xStreamBufferReset(say_stream); }
+    return;
+  }
   if (!say_stream) { return; }
+  say_stream_dead = false;
   isPlaying = true;
   xTaskCreatePinnedToCore(say_playback_task, "SayTask", 4096, NULL, 2, NULL, 1);
 }
