@@ -21,9 +21,13 @@
 	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: pointer; }
 	#embedded .embedded_jobs, #embedded .embedded_job { text-align: left; }
 	#embedded .embedded_job + .embedded_job { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }
-	#embedded #watch_buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-	#embedded .watch_button_container, #embedded .embedded_container { display: inline-block; }
-	#embedded .watch_button, #embedded .watch_component { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 4px 8px; min-width: 84px; }
+	/* the buttons are laid out by the template's <br> breaks (two rows, matched to
+	   the device); a flex container ignores those breaks and pulls every button
+	   into one wrapping row, so this stays a plain block and the buttons are
+	   inline-block */
+	#embedded #watch_buttons { text-align: center; }
+	#embedded .watch_button_container, #embedded .embedded_container { display: inline-block; vertical-align: top; }
+	#embedded .watch_button, #embedded .watch_component { display: inline-block; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 4px 8px; min-width: 84px; }
 	#embedded .component_name { font-weight: 700; }
 	#embedded .component_type { opacity: .7; font-size: 85%; }
 	#embedded #embedded_diagrams table { margin: 0 auto; }
