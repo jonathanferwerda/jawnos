@@ -208,7 +208,16 @@ Still to do:
   device again; `ble_rehome_check` then rewrites the record to the current id. The
   deck re-homed itself to `Jonathan Ferwerda@jawnos.Laptop`. The anti-thrash in
   `ble_enforce_hosts` keeps a single link on the device it already holds, since the
-  daemon bridges one radio at a time.
+  daemon bridges one radio at a time, and `ble_yield` now releases the link only
+  when the device being yielded is the one actually linked (yielding the watch
+  used to drop the deck, which then reconnected and cycled).
+- **The deck's partition table is our own** (`jt/partitions.csv`, wired with
+  `board_build.partitions`): two 6 MB OTA app slots and a 3.875 MB FFat, instead
+  of the stock two 3 MB slots + 9.9 MB FFat. The sketch sat at 95% of 3 MB with
+  the BLE transport, voice clips and UI already in, so there was no room for the
+  wake-word stack still to come; it now sits at ~48% of 6 MB, with FFat still
+  holding ~30 clips. Flashing the new table erased the FFat (config restored to
+  defaults; the deck's BLE identity is the server's record, so it stayed known).
 - Wake words (`hey jawn` / `jawn do`) still need the TFLM stack copied over
   (`voice_models.h` -> `jawn_micro_features` + the model headers). `jawn_do` is
   not trained yet either. The VAD/manual clip is the first target.

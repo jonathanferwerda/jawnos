@@ -1,0 +1,16 @@
+# JawnOS T-Deck (LilyGo T-Deck, 16 MB) partition table.
+#
+# The stock LilyGo scheme (app3M_fat9M_16MB.csv) gives each OTA slot only 3 MB,
+# and the deck's sketch had grown to 95% of it with the watch's BLE transport,
+# voice clips and the UI already in - no room for the wake-word stack still to
+# come. The deck has 16 MB, so trade the oversized recordings partition for code
+# space: two 6 MB OTA slots (a double of the old 3 MB, OTA kept) and a 3.875 MB
+# FFat, which still holds ~30 clips at 128 KB and is pruned on its own.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x600000,
+app1,     app,  ota_1,   0x610000, 0x600000,
+ffat,     data, fat,     0xC10000, 0x3E0000,
+coredump, data, coredump,0xFF0000, 0x10000,
