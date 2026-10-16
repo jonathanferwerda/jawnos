@@ -528,15 +528,35 @@ sub next_appointment_time() {
 	return { next_run => $next_run, next_time => $next_time, uuid => $uuid, list => $next_appointments };
 }
 
-# The session a stop should close: the newest open start/record for the app. The
+# The session a stop should close: the OLDEST open start/record for the app. The
 # appointment header carries this so a stop names its own session, and every
 # machine in the mesh closes that same row instead of each resolving "the open
 # session" against its own, possibly lagging, copy of the database.
 sub open_session_uuid {
 	my $app = shift;
 	return '' unless $app;
-	my $row = &db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp desc limit 1', $app, 'start', 'record', &rightNow())->hashes->[0];
+	my $row = &db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp asc limit 1', $app, 'start', 'record', &rightNow())->hashes->[0];
 	return ($row && $row->{'uuid'}) ? $row->{'uuid'} : '';
+}
+
+# The row a stop closes, resolved the same way wherever the stop runs (manager_reset
+# and appointment_writer both call this): the session the client named, carried
+# through the relay so every machine closes the same one, else the OLDEST open
+# start/record for the app at or before the press. One row, never the backlog.
+sub stop_target_row {
+	my ($app, $target_uuid, $timestamp) = @_;
+	return undef unless $app;
+	$timestamp ||= &rightNow();
+	my $row;
+	if ($target_uuid) {
+		$row = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
+			$app, $target_uuid, 'start', 'record')->hashes->[0];
+	}
+	unless ($row && $row->{'uuid'}) {
+		$row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
+			$app, 'start', 'record', $timestamp)->hashes->[0];
+	}
+	return ($row && $row->{'uuid'}) ? $row : undef;
 }
 
 sub appt_header_printer() {

@@ -1529,18 +1529,12 @@ sub appointment_writer($c,$app) {
 				return {};
 		}
 		# Close the session the stop names and only it; a stop that names none - or one
-		# this machine has not synced - closes the newest open session. Closing every
-		# open session was what turned one stop into two appointments (the live session
-		# and a stale one swept up with it).
-		my $appts = [];
-		if ($stop_target) {
-			my $row = &subs::db_query('select * from appointments where app=? and uuid=? and (type=? or type = ?) limit 1', $app->{'app'}, $stop_target, 'start', 'record')->hashes->[0];
-			$appts = [ $row ] if $row && $row->{'uuid'};
-		}
-		unless (scalar @{$appts}) {
-			$appts = &subs::db_query('select * from appointments where app=? and (type=? or type = ? ) and timestamp < ? and stop_seen is null order by timestamp desc limit 1', $app->{'app'},'start','record',$app->{'timestamp'})->hashes;
-		}
-		return {} unless scalar @{$appts} > 0;
+		# this machine has not synced - closes the oldest open session. Resolved by the
+		# same helper manager_reset uses, so both writers stop one and the same row
+		# instead of each sweeping up every open session for the app.
+		my $stop_row = &subs::stop_target_row($app->{'app'}, $stop_target, $app->{'timestamp'});
+		return {} unless $stop_row;
+		my $appts = [ $stop_row ];
 		foreach my $appt ( @{$appts} ) {
 			$app->{'type'} = 'stop';
 			$app->{'duration'} = $appt->{'timestamp'} - $app->{'timestamp'};
@@ -9722,19 +9716,10 @@ sub manager_reset($c) {
 		my $recording_type = &subs::setting_grabber({ app => $app, setting => 'record' });
 		# The session named by the client (a stop carries its uuid) is closed and only
 		# it; a stop that names none - or one this machine has not synced - closes the
-		# newest open session. Closing the whole backlog at once is what turned one
-		# stop into two appointments (the live session and a stale one swept up with
-		# it), so at most one session is ever closed here.
-		my $stop_row;
-		if ($target_uuid) {
-			$stop_row = &subs::db_query('select * from appointments where app=? and uuid=? and (type=? or type=? or type = ? or type = ? or type = ?) and stop_seen is null limit 1',
-				$app, $target_uuid, 'record','start','video', 'audio', 'screen')->hashes->[0];
-		}
-		unless ($stop_row && $stop_row->{'uuid'}) {
-			$stop_row = &subs::db_query('select * from appointments where app=? and (type=? or type=? or type = ? or type = ? or type = ?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1',
-				$app,'record','start','video', 'audio', 'screen', $timestamp)->hashes->[0];
-		}
-		my $old_appts = ($stop_row && $stop_row->{'uuid'}) ? [ $stop_row ] : [];
+		# oldest open session. Both manager_reset and appointment_writer resolve this
+		# through subs::stop_target_row, so a stop lands on one and the same row.
+		my $stop_row = &subs::stop_target_row($app, $target_uuid, $timestamp);
+		my $old_appts = $stop_row ? [ $stop_row ] : [];
 
 		foreach my $o ( @{$old_appts} ) {
 		#	next;
