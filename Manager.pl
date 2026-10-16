@@ -24851,6 +24851,16 @@ sub authentication_passer($c) {
 				@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
 			}
 		}
+		# An XHR that meets the gate is answered JSON, not the Gate page: a stale
+		# session cookie - the cookieless request a webview sends as it wakes - that
+		# came back as HTML was parsed as data and froze the viewer (appts became
+		# undefined, so the poll threw and the pan threw). A 401 lets the caller see it.
+		if (($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i) {
+			$c->res->code(401);
+			$c->render(json => { error => 'session lapsed', authentication => 'revoked' });
+			$c->rendered;
+			return;
+		}
 		if ($c->param('neighbour')) {
 			$c->render(json => { name => $name, purpose => $device, 'restore_list' => $restore_list, signatorial => &subs::signatorial_designer() });
 		}

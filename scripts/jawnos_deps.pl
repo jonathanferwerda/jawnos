@@ -86,6 +86,7 @@ my @tools = (
 	{ cmd => 'tmux',      apt => 'tmux',             pacman => 'tmux',           termux => 'tmux',             label => 'tmux' },
 	{ cmd => 'cpanm',     apt => 'cpanminus',        pacman => 'cpanminus',      termux => 'perl',             label => 'cpanminus', cpanm => 'App::cpanminus' },
 	{ cmd => 'git',       apt => 'git',              pacman => 'git',            termux => 'git',              label => 'git' },
+	{ cmd => 'node',      apt => 'nodejs',           pacman => 'nodejs',         termux => 'nodejs',           label => 'Node.js', alt => 'nodejs' },
 );
 
 # --- required perl modules ---------------------------------------------------
