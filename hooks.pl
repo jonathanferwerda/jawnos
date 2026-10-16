@@ -217,6 +217,9 @@ hook before_dispatch => sub {
 		$path eq '/css/store.css' ||
 		$path eq '/js/homepage.js' ||
 		$path eq '/teletype/information' ||
+		# a teletype pulls the house's running database onto its SD card; a device
+		# has no session, so the route identifies its caller itself (see Manager.pl)
+		$path eq '/embedded/teletype/backup' ||
 		$path =~ '^/box_office' ||
 		$path eq '/denial' ||
 		$path eq '/js/jquery.ui.touch-punch.min.js' ||
