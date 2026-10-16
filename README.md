@@ -309,7 +309,7 @@ the screen.
 | `gb.pl` | Global state shared across the app |
 | `subroutines.pl` | Shared helper library |
 | `Websocket.pl` | WebSocket server and live updates |
-| `Alarm.pl`, `Music.pl`, `pen.pl`, `teletype.pl`, `watch.pl`, `tunnel.pl`, `hooks.pl` | Feature modules (alarms, music, notes, terminals, smartwatch, the peer tunnel, device hooks) |
+| `Alarm.pl`, `Music.pl`, `teletype.pl`, `watch.pl`, `tunnel.pl`, `hooks.pl` | Feature modules (alarms, music, notes, terminals, smartwatch, the peer tunnel, device hooks) |
 | `help.pl` | The built-in guide's topic registry, served by the Help app |
 | `templates/` | Embedded-Perl page templates |
 | `public/` | Front-end JavaScript, CSS and images (including the icon sets in `public/icons/sets/`) |

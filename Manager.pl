@@ -4745,11 +4745,13 @@ get '/manager/configure/device_lister' => sub($c) {
 	my $ip = $c->param('host');
 	my $ping_scan = $c->param('ping_scan');
 	my $devices = &subs::device_lister($timestamp,$load_type,$ip);
+	my $networks = &subs::network_groups($devices);
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
 
 	$c->render(
 		template => 'configure/device_lister',
 		devices => $devices,
+		networks => $networks,
 		ping => $ping,
 		ping_scan => $ping_scan,
 		ip => $ip,
@@ -13543,9 +13545,15 @@ sub merge_database($c,$configuration) {
 									#next if $protected == 1;
 									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || $protected == 1) {
 										push @cache_bucket_updateables, $r->{'app'} unless grep { $_ eq $r->{'app'} } @cache_bucket_updateables;
-										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and server_time > ?',
+										# A row we already hold at the peer's own server_time counts as present:
+										# the write below copies the peer's server_time verbatim, so with a strict
+										# '>' the test was false again on the very next sync and every one of
+										# the ~29k settings rows was deleted and reinserted, every sync, forever
+										# (the 'Now merging N settings' that looked stuck). '>=' skips the row we
+										# already hold, and still lets a genuinely newer peer value land.
+										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and server_time >= ?',
 												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'})->hashes :
-											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time > ?',
+											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?',
 												$r->{'app'}, $r->{'setting'}, $r->{'server_time'})->hashes;
 										if (scalar @{$time_check} == 0) {
 											eval {

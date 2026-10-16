@@ -121,7 +121,6 @@ my @modules = qw(
 	MIME::Parser
 	Email::Stuffer
 	Authen::SASL
-	WebService::Ollama
 );
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------

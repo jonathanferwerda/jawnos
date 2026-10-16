@@ -3024,6 +3024,7 @@ function deloreanBringer() {
 		now: now
 	};
 }
+var jawnPollMisses = 0;
 function calculator() {
 	var now = Date.now();
 
@@ -3047,6 +3048,18 @@ function calculator() {
 			type:'GET',
 			data: data,
 			success: function(respons){
+				// A lapsed session - a stale cookie, or the cookieless first request a
+				// webview sends as it wakes - is answered with the Gate page at HTTP 200,
+				// not JSON (the same fault backup_now's route documents for the sync rail).
+				// This handler used to trust it: appts became undefined and response a
+				// string, so the poll threw and the pan (timelineScroller) threw, freezing
+				// the timeline while the last-drawn hits still took taps. Ignore anything
+				// that is not the payload, and ask for re-auth only if it persists.
+				if (!respons || typeof respons !== 'object' || !respons.appts || !respons.appts['__specs']) {
+					if (++jawnPollMisses >= 5 && !window.__jawnos_reauth) { window.__jawnos_reauth = 1; location.reload(); }
+					return;
+				}
+				jawnPollMisses = 0;
 				if (respons.updateable != 'no') {
 					if (clothesLineAtRest()) {
 						appts = respons.appts;
@@ -3304,6 +3317,9 @@ var clockInterval;
 function graphicalize(respons) {
 	var ts = Date.now();
 	
+	// never let a non-payload (the Gate page a lapsed session returns) become the
+	// global the poll and the pan read from - see the guard in calculator()
+	if (respons && (typeof respons !== 'object' || !respons.appts)) { return; }
 	if (!respons) {
 		respons = response;
 	}
