@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.528** (2026-10-16). Done work is marked so it is
+The remaining plan, as of **v0.1.532** (2026-10-16). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -123,6 +123,21 @@ Still to do:
   from the sealed snapshot and restores only the named apps (co-agent area,
   `scripts/records_recover.pl`, `subs::records_*`). In review; keep the "leave this
   app alone" silences honest.
+
+## Devices & networks
+
+Done: a scan sweeps each local subnet as well as reading the neighbour table, so
+an appliance the machine has never talked to - the printer at 192.168.2.6 - now
+appears where the ARP cache alone never listed it (`subs::subnet_sweep`, nmap
+with a ping-sweep fallback; only resolved rows are kept, so a half-resolved ARP
+entry is not mistaken for a device). The **Dev** panel is grouped by network:
+one section per subnet (its address, the machines and interfaces that reach it)
+over the device tables, with the machines named once above.
+
+Still to do:
+- A device's **purpose** is still set by hand - guess a printer (9100/631) so it
+  is ready for the Market scanner without a tap.
+- A scan **cadence**, so a new device surfaces without pressing Scan.
 
 ## Shopping / Market / warehouse
 

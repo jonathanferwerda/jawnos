@@ -2138,6 +2138,73 @@ sub same_net_test() {
 	return $same_net;
 }
 
+# An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->
+# 192.168.2.0/24. Returns undef for anything that is not a plain IPv4 address,
+# and reads a hex netmask (0xffffff00) the way some ifconfig builds print it.
+sub subnet_cidr() {
+	my ($ip, $netmask) = @_;
+	return undef unless defined $ip && $ip =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $mask = $netmask;
+	if (!defined $mask || $mask !~ /^\d{1,3}(\.\d{1,3}){3}$/) {
+		if (defined $mask && $mask =~ /^0x([0-9a-fA-F]{1,8})$/) {
+			my $h = ('0' x (8 - length $1)) . $1;
+			$mask = join '.', map { hex } ($h =~ /(..)(..)(..)(..)/);
+		}
+		else {
+			$mask = '255.255.255.0';
+		}
+	}
+	my @i = map { $_ + 0 } split /\./, $ip;
+	my @m = map { $_ + 0 } split /\./, $mask;
+	my (@net, $bits);
+	$bits = 0;
+	for my $k (0..3) {
+		push @net, $i[$k] & $m[$k];
+		my $o = $m[$k];
+		while ($o) { $bits += ($o & 1); $o >>= 1; }
+	}
+	return join('.', @net) . '/' . $bits;
+}
+
+# `ip neigh` is only the ARP cache: a device this machine has never spoken to -
+# a printer, a fresh appliance - is simply absent from it until something pings
+# the network once. On an explicit scan, sweep the NIC's own subnet so those
+# hosts answer and land in the cache the neighbour read then relies on. The
+# sweep keeps its own bound so a slow or filtered network cannot stall a scan.
+sub subnet_sweep() {
+	my ($nic, $ip, $netmask) = @_;
+	return if !$ip || $ip !~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	return if $ip =~ /^127\./;
+	my $cidr = &subnet_cidr($ip, $netmask);
+	return unless $cidr;
+	my $nmap = `command -v nmap 2>/dev/null`;
+	chomp $nmap;
+	# the manager's PATH is not the login shell's, so try the usual homes too
+	for my $p (qw(/usr/bin/nmap /usr/local/bin/nmap /bin/nmap /usr/sbin/nmap)) {
+		$nmap ||= $p if -x $p;
+	}
+	if ($nmap) {
+		# -sn: host discovery only (ARP on-link), no port scan.
+		`timeout 30 $nmap -sn -n -T4 --max-retries 1 $cidr 2>/dev/null`;
+		return;
+	}
+	# No nmap: ping the network (a /24 at most) in parallel so the ARP cache
+	# fills. A wider subnet is left to the neighbour table alone.
+	my ($prefix) = $cidr =~ m{/(\d+)\z};
+	return unless $prefix && $prefix >= 24;
+	my ($net) = split m{/}, $cidr;
+	my @o = split /\./, $net;
+	my @hosts;
+	for my $h (1 .. 254) {
+		my @hh = @o;
+		$hh[3] = $h;
+		push @hosts, join('.', @hh);
+	}
+	open(my $ping, '|-', 'timeout 20 xargs -P 48 -n 1 ping -c 1 -W 1 >/dev/null 2>&1') or return;
+	print $ping join("\n", @hosts), "\n";
+	close $ping;
+}
+
 sub device_scan() {
 	my ($timestamp, $load_type, $ip_range) = @_;
 	my (undef, $database) = &subs::database_grabber();
@@ -2204,6 +2271,11 @@ sub device_scan() {
 				$address->{$nic}->{'netmask'} = $inet[3];
 				$address->{$nic}->{'broadcast'} = $inet[5];
 
+				# A device nobody here has talked to is missing from the ARP cache
+				# the read below depends on, so on an explicit scan sweep this
+				# network first and let the answers fill it in.
+				&subnet_sweep($nic, $address->{$nic}->{'ip'}, $address->{$nic}->{'netmask'}) if $load_type eq 'scan';
+
 				my @neighbours;
 				my $neighbour_check = `ip neigh show dev $nic`;
 				my @neighbourinos;
@@ -2258,8 +2330,16 @@ sub device_scan() {
 					push @neighbourinos, '127.0.0.1 ' . &subs::random_string_creator(5);
 				}
 				foreach my $m ( @neighbourinos ) {
-					next if $m =~ /FAILED/;
+					# `ip neigh show dev X` prints only `IP [lladdr MAC] STATE`, and a host
+					# the sweep half-resolved reads INCOMPLETE (or FAILED/PROBE): it never
+					# answered, so it is no device. Keep the resolved rows and the typed
+					# host and self row, which carry no state word at all.
+					next if $m =~ /\b(?:FAILED|INCOMPLETE|PROBE)\b/;
 					my @l = (split " ", $m);
+					# the sweep reports this machine among its own neighbours; the
+					# loopback row below is the exception, it marks this machine on
+					# purpose (and carries the tunnels)
+					next if $l[0] && $l[0] ne '127.0.0.1' && $l[0] eq ($address->{$nic}->{'ip'} || '');
 					my $n = {
 						ip => $l[0],
 						mac => $l[2] || &subs::random_string_creator(10),
@@ -2303,7 +2383,13 @@ sub device_scan() {
 					foreach my $n ( @{$ip_addresses} ) {
 						if ( $n->{'ip'} && ($n->{'tunnel'} eq 'yes' || $alive =~ /ttl/gi )) { #&& $n->{'ip'} ne $address->{$nic}->{'ip'}) {
 							my $ua = Mojo::UserAgent->new();
-							$ua->inactivity_timeout(15);
+							# A neighbour that is not JawnOS (a printer, an appliance the sweep
+							# found) must not hold the scan for the full timeout: a LAN answer
+							# is milliseconds, so a couple of seconds to connect and a short
+							# inactivity window keep a sweep over a busy subnet quick, while a
+							# real but busy peer still has room to answer.
+							$ua->connect_timeout(2);
+							$ua->inactivity_timeout(5);
 							my $manager = $n->{'tunnel'} eq 'yes' ? 'https://127.0.0.1:' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager'
 								: 'https://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager';
 							my $res = eval { $ua->insecure(1)->get($manager . '/gate?restore_list=' . $config->{'start_dir'} . '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . $signatorial => {user_agent => $user_agent})->result };
@@ -2351,7 +2437,10 @@ sub device_scan() {
 									$n->{'fqdn'} = $g->{'fqdn'};
 									$n->{'mac'} = $g->{'mac'} || $n->{'mac'};
 									$n->{'ip_address'} = $g->{'ip_address'};
-									if ($g->{'purpose'} && !$n->{'purpose'}){# && $last_d == $last_n) {
+									# a device that does not answer the query is marked
+									# 'hmmm'; a purpose a person set earlier beats that
+									# placeholder, so a printer stays the printer
+									if ($g->{'purpose'} && (!$n->{'purpose'} || $n->{'purpose'} eq 'hmmm')) {
 										$n->{'purpose'} = $g->{'purpose'};
 									}
 									if ($g->{'locked'} eq 'yes') {
@@ -2630,7 +2719,48 @@ sub device_lister() {
 	return $devices;
 }
 
-
+# The device rows as the lister shows them, grouped by the network each
+# neighbour sits on: one group per subnet, its members (the interfaces that
+# reach it, each on a machine), and the devices found there. device_lister has
+# already left each address once, so a device is listed under a single network.
+sub network_groups() {
+	my ($devices) = @_;
+	return [] unless ref $devices;
+	# device_lister hands back a Mojo::Collection (a blessed array), not a plain
+	# one, so dereference it rather than testing for 'ARRAY'.
+	my @rows = eval { @{$devices} };
+	return [] unless @rows;
+	my (%groups, @order);
+	foreach my $d (@rows) {
+		next unless ref $d eq 'HASH';
+		$d->{'address'} = eval { return decode_json $d->{'address'} } if $d->{'address'} && !ref $d->{'address'};
+		foreach my $nic (keys %{$d->{'address'} || {}}) {
+			my $a = $d->{'address'}->{$nic};
+			next unless ref $a eq 'HASH';
+			my $cidr = &subnet_cidr($a->{'ip'}, $a->{'netmask'}) || ($a->{'ip'} ? $a->{'ip'} : 'unknown');
+			unless ($groups{$cidr}) {
+				$groups{$cidr} = { cidr => $cidr, members => [] };
+				push @order, $cidr;
+			}
+			push @{$groups{$cidr}->{'members'}}, {
+				%{$a},
+				uuid => $d->{'uuid'},
+				hostname => $d->{'hostname'},
+				domain => $d->{'domain'},
+				machine_timestamp => $d->{'timestamp'},
+				formatted_time => $d->{'formatted_time'},
+			};
+		}
+	}
+	# the real networks first, the loopback (this machine, and its tunnels) last
+	my @sorted = sort {
+		my $al = index($a, '127.') == 0 ? 1 : 0;
+		my $bl = index($b, '127.') == 0 ? 1 : 0;
+		$al <=> $bl
+			|| join('.', map { sprintf '%03d', $_ } split /[.\/]/, $a) cmp join('.', map { sprintf '%03d', $_ } split /[.\/]/, $b);
+	} @order;
+	return [ map { $groups{$_} } @sorted ];
+}
 
 # --- JawnOS BLE bridge (replaces the am broadcast + Tasker + BLE plugin chain) ---
 

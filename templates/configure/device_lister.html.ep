@@ -1,16 +1,18 @@
 <% no warnings 'uninitialized'; %>
 <% my $signatorial = &subs::signatorial_designer(); %>
-<%# the lister as cards: a toolbar over a stack of devices, each device a card
-    with its networks, each network a section over a neighbour table. Styled
-    from the house's own theme tokens so it wears the light or the dark set. %>
+<%# the lister as networks: a toolbar, the machines (each named and removable
+    once), then one section per network the house is on - the subnet, the
+    interfaces that reach it, and a neighbour table of the devices found there.
+    Styled from the house's own theme tokens so it wears the light or dark set. %>
 <style>
 #device_listings { display:flex; flex-direction:column; gap:10px; }
 #device_listings .device_card { border:1px solid var(--line); border-radius:8px; background:var(--panel-2); }
 #device_listings .device_head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--line); }
-#device_listings .device_head .device_domain { flex:1 1 220px; min-width:150px; margin:0; }
+#device_listings .network_cidr { font-family:var(--mono-font, monospace); font-weight:700; font-size:15px; }
+#device_listings .network_who { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 #device_listings .device_when { opacity:.6; font-size:85%; white-space:nowrap; }
 #device_listings .device_nic { padding:8px 10px; }
-#device_listings .device_nic + .device_nic { border-top:1px solid var(--line); }
+#device_listings .network_card .device + .device { border-top:1px solid var(--line); }
 #device_listings .nic_head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-weight:700; margin-bottom:6px; }
 #device_listings .remote_ip { font-family:var(--mono-font, monospace); font-weight:400; }
 #device_listings table { width:100%; border-collapse:collapse; }
@@ -21,6 +23,10 @@
 #device_listings .device_actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 #device_listings button { font:inherit; font-size:90%; padding:2px 10px; margin:2px 0; }
 #device_listings .pill { display:inline-block; padding:1px 8px; border-radius:10px; border:1px solid var(--line); background:var(--panel); font-size:85%; }
+#device_listings .device_machines { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:4px 10px; }
+#device_listings .machine_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:5px 0; }
+#device_listings .machine_row + .machine_row { border-top:1px solid var(--line); }
+#device_listings .machine_row .device_domain { flex:1 1 200px; min-width:140px; margin:0; }
 /* On a phone the neighbour table becomes a stack of cards, so the purpose
    controls (lock, mirror, scan, delete) are never off the right edge. */
 @media (max-width:640px) {
@@ -33,6 +39,7 @@
 	#device_listings .device_nic td, #device_listings .remote_machine td:first-child { text-align:center; }
 	#device_listings .device_actions { justify-content:center; }
 	#device_listings .device_actions .device_purpose { flex:1 1 100%; }
+	#device_listings .machine_row { justify-content:center; text-align:center; }
 }
 </style>
 <div class="cfg" style="width:100%;height:100%;">
@@ -43,83 +50,100 @@
 		<span id="ping_results" style="opacity:.85;"></span>
 	</div>
 	<div id="device_listings">
-		<% foreach my $d ( reverse @{$devices} ) { %>
-			<div class="device device_card" uuid="<%= $d->{'uuid'} %>" timestamp="<%= $d->{'timestamp'} %>" address="<%= $d->{'address'} %>" device="<%= $d->{'hostname'} %>" value="<%= $d->{'domain'} %>">
+		<% if (scalar @{$devices || []}) { %>
+			<%# the machines: one row each, so a machine's name and its removal are asked once, not once per network it appears on %>
+			<div class="device_machines">
+				<% foreach my $d ( reverse @{$devices} ) { %>
+					<div class="machine_row" uuid="<%= $d->{'uuid'} %>">
+						<input type="text" name="device_domain" uuid="<%= $d->{'uuid'} %>" device="<%= $d->{'hostname'} %>" value="<%= $d->{'domain'} %>" class="device_domain" timestamp="<%= $d->{'timestamp'} %>">
+						<span class="device_when"><%= $d->{'hostname'} %> · <%= $d->{'formatted_time'} %></span>
+						<button type="button" class="delete_device" timestamp="<%= $d->{'timestamp'} %>" device="<%= $d->{'hostname'} %>" uuid="<%= $d->{'uuid'} %>">✕ Remove</button>
+					</div>
+				<% } %>
+			</div>
+		<% } %>
+		<% foreach my $g ( @{$networks || []} ) { %>
+			<div class="device_card network_card" cidr="<%= $g->{'cidr'} %>">
 				<div class="device_head">
-					<input type="text" name="device_domain" uuid="<%= $d->{'uuid'} %>" value="<%= $d->{'domain'} %>" class="device_domain" timestamp="<%= $d->{'timestamp'} %>">
-					<span class="device_when"><%= $d->{'formatted_time'} %></span>
-					<button type="button" class="delete_device" timestamp="<%= $d->{'timestamp'} %>" device="<%= $d->{'hostname'} %>" uuid="<%= $d->{'uuid'} %>">✕ Remove</button>
-				</div>
-				<% foreach my $ad ( keys %{$d->{'address'}} ) { %>
-					<% my $a = $d->{'address'}->{$ad}; %>
-					<div remote_address="<%= $a->{'ip'} %>" nic="<%= $a->{'nic'} %>" class="network_interface device_nic">
-						<div class="nic_head">
-							<span class="device_control" ip="<%= $a->{'ip'} %>" mac="<%= $a->{'mac'} %>"><%= $a->{'nic'} %>: <span class="clip remote_ip"><%= $a->{'ip'} %></span> <%= $a->{'mac'} %></span>
-						</div>
-						<% if (scalar keys @{$d->{'address'}->{$ad}->{'neigh'}} > 0) { %>
-							<div class="cfg-scroll">
-							<table>
-								<thead>
-									<tr><th>net</th><th>manager</th><th>purpose</th></tr>
-								</thead>
-								<tbody>
-								<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$d->{'address'}->{$ad}->{'neigh'}} ) { %>
-									<% my $rm = &subs::db_query('select uuid,buttons from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
-									<% if ($n->{'mac'}) { %>
-										<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
-											<td>
-												<% if ($n->{'name'}) { %><b><%= $n->{'name'} %></b><br><% } %>
-												<% if ($n->{'fqdn'}) { %><span style="opacity:.7;"><%= $n->{'fqdn'} %></span><br><% } %>
-												<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
-												<% if ($n->{'chip_id'}) { %><br><span style="opacity:.6;font-size:88%;"><%= $n->{'chip_id'} %></span><% } %>
-												<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
-												<% if ($n->{'tunnel'}) { %><br><span class="pill">Tunnel</span><% } %>
-											</td>
-											<td class="remote_manager" id="<%= $a->{'nic'} %>_<%= $d->{'timestamp'} %>">
-												<% if ( $n->{'restore_list'} ) { %>
-													<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $a->{'nic'} %>_<%= $d->{'timestamp'} %>"><%= $n->{'restore_list'} %></span>
-													<br>
-													<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
-												<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
-													<span style="opacity:.7;">Lost</span>
-												<% } %>
-												<% if ($n->{'purpose'} eq 'teletype') { %>
-													<button class="teletype_backup" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>">Backup</button>
-												<% } %>
-												<% if ($n->{'purpose'} eq 'printer') { %>
-													<select id="printer_brand_select">
-														<% foreach my $pr ( keys %{$gb::printer_brands}) { %>
-															<option value="<%= $pr %>"><%= &subs::format_name($pr) %></option>
-														<% } %>
-													</select>
-												<% } %>
-											</td>
-											<td>
-												<div class="device_actions">
-													<select class="device_purpose">
-														<% foreach my $o (@gb::all_device_types) { %>
-															<option <% if ($n->{'purpose'} eq $o) { %>selected<% } %> value="<%= $o %>"><%= &subs::format_name($o) %></option>
-														<% } %>
-													</select>
-													<% if ($n->{'locked'} eq 'yes') { %>
-														<img src="/images/jbuttons/padlock lock.png" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
-													<% } else { %>
-														<img src="/images/jbuttons/padlock unlock.png" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $a->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $d->{'uuid'} %>">
-													<% } %>
-													<% if ($n->{'purpose'} eq 'server') { %>
-														<img src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $a->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $d->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
-													<% } %>
-													<button class="delete_neighbour_device" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
-													<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>
-												</div>
-											</td>
-										</tr>
-									<% } %>
-								<% } %>
-								</tbody>
-							</table>
-							</div>
+					<span class="network_cidr"><%= $g->{'cidr'} %></span>
+					<span class="network_who">
+						<% foreach my $m ( @{$g->{'members'}} ) { %>
+							<span class="pill"><%= $m->{'hostname'} %><% if ($m->{'domain'}) { %> · <%= $m->{'domain'} %><% } %> · <%= $m->{'nic'} %></span>
 						<% } %>
+					</span>
+				</div>
+				<% foreach my $m ( @{$g->{'members'}} ) { %>
+					<div class="device" uuid="<%= $m->{'uuid'} %>">
+						<div remote_address="<%= $m->{'ip'} %>" nic="<%= $m->{'nic'} %>" class="network_interface device_nic">
+							<div class="nic_head">
+								<span class="device_control" ip="<%= $m->{'ip'} %>" mac="<%= $m->{'mac'} %>"><%= $m->{'nic'} %>: <span class="clip remote_ip"><%= $m->{'ip'} %></span> <%= $m->{'mac'} %></span>
+								<% if ($m->{'gw'}) { %><span class="device_when">via <%= $m->{'gw'} %></span><% } %>
+							</div>
+							<% if (scalar @{$m->{'neigh'} || []} > 0) { %>
+								<div class="cfg-scroll">
+								<table>
+									<thead>
+										<tr><th>devices</th><th>manager</th><th>purpose</th></tr>
+									</thead>
+									<tbody>
+									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
+										<% my $rm = &subs::db_query('select uuid,buttons from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<% if ($n->{'mac'}) { %>
+											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+												<td>
+													<% if ($n->{'name'}) { %><b><%= $n->{'name'} %></b><br><% } %>
+													<% if ($n->{'fqdn'}) { %><span style="opacity:.7;"><%= $n->{'fqdn'} %></span><br><% } %>
+													<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
+													<% if ($n->{'chip_id'}) { %><br><span style="opacity:.6;font-size:88%;"><%= $n->{'chip_id'} %></span><% } %>
+													<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
+													<% if ($n->{'tunnel'}) { %><br><span class="pill">Tunnel</span><% } %>
+												</td>
+												<td class="remote_manager" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>">
+													<% if ( $n->{'restore_list'} ) { %>
+														<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>"><%= $n->{'restore_list'} %></span>
+														<br>
+														<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+													<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
+														<span style="opacity:.7;">Lost</span>
+													<% } %>
+													<% if ($n->{'purpose'} eq 'teletype') { %>
+														<button class="teletype_backup" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>">Backup</button>
+													<% } %>
+													<% if ($n->{'purpose'} eq 'printer') { %>
+														<select id="printer_brand_select">
+															<% foreach my $pr ( keys %{$gb::printer_brands}) { %>
+																<option value="<%= $pr %>"><%= &subs::format_name($pr) %></option>
+															<% } %>
+														</select>
+													<% } %>
+												</td>
+												<td>
+													<div class="device_actions">
+														<select class="device_purpose">
+															<% foreach my $o (@gb::all_device_types) { %>
+																<option <% if ($n->{'purpose'} eq $o) { %>selected<% } %> value="<%= $o %>"><%= &subs::format_name($o) %></option>
+															<% } %>
+														</select>
+														<% if ($n->{'locked'} eq 'yes') { %>
+															<img src="/images/jbuttons/padlock lock.png" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $m->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $m->{'uuid'} %>">
+														<% } else { %>
+															<img src="/images/jbuttons/padlock unlock.png" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $m->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $m->{'uuid'} %>">
+														<% } %>
+														<% if ($n->{'purpose'} eq 'server') { %>
+															<img src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $m->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $m->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
+														<% } %>
+														<button class="delete_neighbour_device" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
+														<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>
+													</div>
+												</td>
+											</tr>
+										<% } %>
+									<% } %>
+									</tbody>
+								</table>
+								</div>
+							<% } %>
+						</div>
 					</div>
 				<% } %>
 			</div>
