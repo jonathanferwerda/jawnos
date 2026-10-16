@@ -3052,11 +3052,13 @@ function calculator() {
 				// not JSON. This handler used to trust it: appts became undefined and
 				// response a string, so the poll threw and the pan (timelineScroller)
 				// threw, freezing the timeline while the last-drawn hits still took taps.
-				// Accept only a real reply: the full payload (which carries appts) or the
-				// 'nothing new' short-circuit - { updateable: 'no', __specs: ... }, which
-				// has no appts at all - so __specs is the one key both share. Never reload
-				// from here; the server answers a gated XHR with JSON 401 instead.
-				if (!respons || typeof respons !== 'object' || !respons['__specs']) {
+				// Accept only a real reply. The full payload nests its specs as
+				// respons.appts.__specs; the 'nothing new' short-circuit
+				// ({ updateable: 'no', __specs: ... }) puts them at the top and carries no
+				// appts. Either shape is real; the Gate page (a string) is not. Never
+				// reload from here; the server answers a gated XHR with JSON 401 instead.
+				if (!respons || typeof respons !== 'object'
+					|| !(respons['__specs'] || (respons.appts && respons.appts['__specs']))) {
 					return;
 				}
 				if (respons.updateable != 'no') {
