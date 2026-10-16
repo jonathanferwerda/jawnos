@@ -118,6 +118,9 @@ def load_settings():
         "jawn_dir": default_jawn_dir(),
         "autostart": False,
         "ble_with_jawn": True,
+        # Whether the window was left fullscreen, so the next launch (and the
+        # post-update restart) comes back the same way.
+        "fullscreen": False,
     }
     try:
         with open(settings_path(), "r", encoding="utf-8") as fh:

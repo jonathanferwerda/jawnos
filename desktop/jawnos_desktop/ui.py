@@ -70,6 +70,27 @@ def _apply_css():
         Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
+def _initial_size():
+    """Two-thirds of the work area of the primary monitor.
+
+    Scaling both dimensions by two-thirds keeps the window in the screen's
+    orientation: a wide monitor gets a wide window, a tall one a tall window.
+    The work area (not the raw geometry) is used so panels are not covered."""
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return 640, 860
+    monitor = screen.get_primary_monitor()
+    if monitor is None or monitor < 0:
+        monitor = 0
+    try:
+        geom = screen.get_monitor_workarea(monitor)
+    except Exception:
+        geom = screen.get_monitor_geometry(monitor)
+    width = max(480, int(geom.width * 2 / 3))
+    height = max(480, int(geom.height * 2 / 3))
+    return width, height
+
+
 class Dashboard(Gtk.Window):
     def __init__(self, settings, start_requested=False, show_web=False, tray=True):
         super().__init__(title="JawnOS")
@@ -77,7 +98,8 @@ class Dashboard(Gtk.Window):
         self.start_requested_at = 0.0
         self._web_panel = None
         self._web_failed = False
-        self.set_default_size(640, 860)
+        self._quitting = False
+        self.set_default_size(*_initial_size())
         _apply_css()
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -194,6 +216,8 @@ class Dashboard(Gtk.Window):
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self._on_key)
+        # Track fullscreen so it is remembered across launches.
+        self.connect("window-state-event", self._on_window_state)
         # The tray icon keeps the app alive when its window is closed -- closing
         # is how it was being lost. With no tray available, closing quits.
         self._tray = _make_tray(self) if tray else None
@@ -348,6 +372,35 @@ class Dashboard(Gtk.Window):
     def action_show_log(self):
         LogWindow(core.jawn_log_path(self.settings["jawn_dir"]))
 
+    # ---- quit (takes jawn down with it) ----
+
+    def action_quit(self):
+        """Quit the app, taking jawn down first.
+
+        Exiting from the tray must not leave a master, a worker, or the BLE
+        bridge behind, so run the full stop (the same path as the Stop button)
+        before the main loop ends. Stopping can take a few seconds, so it runs
+        off the UI thread and the loop ends when it is done."""
+        if self._quitting:
+            return
+        self._quitting = True
+        self._say("stopping jawn...")
+
+        def runner():
+            try:
+                _ok, message = core.stop_all(
+                    self.settings["jawn_dir"], self.settings.get("ble_with_jawn", True))
+            except Exception as exc:  # never let a thread die silently
+                message = "stop failed: %s" % exc
+            GLib.idle_add(self._finish_quit, message)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _finish_quit(self, message):
+        self._say(message)
+        Gtk.main_quit()
+        return False
+
     # ---- update the app itself ----
 
     def action_update(self):
@@ -421,10 +474,21 @@ class Dashboard(Gtk.Window):
 
     def _on_delete(self, *_args):
         # Close to the tray, not to death: hide the window and keep the tray
-        # (and the supervisor's status timer) running.
+        # (and the supervisor's status timer) running. With no tray there is
+        # nothing to return to, so closing exits -- and now takes jawn down.
         if self._tray is not None:
             self.hide()
             return True
+        self.action_quit()
+        return True
+
+    def _on_window_state(self, _widget, event):
+        # Remember fullscreen (whether F11 or the compositor put us there) so the
+        # next launch restores it instead of dropping to the default box.
+        fullscreen = bool(event.new_window_state & Gdk.WindowState.FULLSCREEN)
+        if fullscreen != bool(self.settings.get("fullscreen")):
+            self.settings["fullscreen"] = fullscreen
+            core.save_settings(self.settings)
         return False
 
     def _on_key(self, _widget, event):
@@ -597,27 +661,89 @@ def _tray_menu(window):
         ("Start jawn", lambda _i: window.action_start()),
         ("Stop jawn", lambda _i: window.action_stop()),
         ("Restart jawn", lambda _i: window.action_restart()),
-        ("Quit", lambda _i: Gtk.main_quit()),
+        # Quitting stops jawn too, so the label says so.
+        ("Quit and stop jawn", lambda _i: window.action_quit()),
     ):
         item = Gtk.MenuItem(label=label)
         item.connect("activate", callback)
         menu.append(item)
     menu.show_all()
+    # AppIndicator's secondary (middle) activation can only reach a menu item, so
+    # point it at Show Dashboard -- the only "open the window" it can offer.
+    window._tray_show_item = menu.get_children()[0]
     return menu
 
 
 def _make_tray(window):
     """A status-tray icon, on any desktop.
 
-    Prefers the StatusNotifier/AppIndicator protocol (KDE, GNOME with an
-    extension, Xfce 4.16+, Cinnamon); falls back to the legacy system tray
-    (Gtk.StatusIcon), which Xfce's notification area still shows. Returns None if
-    neither is available, in which case closing the window quits as before."""
+    Prefers the legacy system tray (Gtk.StatusIcon), because it is the only
+    backend that tells a left click from a right click -- left opens the window,
+    right shows the menu. Where there is no legacy tray (GNOME, Cinnamon, a bare
+    compositor) it falls back to the StatusNotifier/AppIndicator protocol, whose
+    own left click shows the menu (a middle click opens the window there).
+    Returns None if neither is available, in which case closing the window
+    quits."""
     menu = _tray_menu(window)
     # AppIndicator and Gtk.StatusIcon do not hold a reference to the menu, so if
     # nothing else does PyGObject collects it and every tray command goes
-    # silently dead. Keep the menu (and the indicator/status icon) on the window.
+    # silently dead. Keep the menu (and the icon/indicator) on the window.
     window._tray_menu = menu
+    # The backend is only settled once the loop is running, because a status icon
+    # has to be given a beat to dock. Until then, hold the last colour asked for
+    # and paint it once a backend is chosen.
+    window._tray_rgb = DIM_RGB
+    window._tray_paint = None
+
+    def apply(rgb):
+        window._tray_rgb = rgb
+        if window._tray_paint is not None:
+            window._tray_paint(rgb)
+    window._tray_apply = apply
+
+    try:
+        icon = Gtk.StatusIcon.new_from_icon_name("jawnos")
+        icon.set_tooltip_text("JawnOS")
+        icon.set_visible(True)
+        # Left click opens the window (hidden by close-to-tray); right click pops
+        # the menu.
+        icon.connect("activate", lambda _i: window.present_dashboard())
+        icon.connect("popup-menu",
+                     lambda i, button, activate_time: menu.popup(
+                         None, None, None, None, button, activate_time))
+        window._tray_statusicon = icon
+    except Exception:
+        # No status icon at all: use the indicator (if it is available).
+        _start_indicator(window, menu)
+        _safe_tray_apply(window, DIM_RGB)
+        return window._tray_indicator
+
+    tries = [0]
+
+    def choose():
+        if icon.is_embedded():
+            # A systray docked us: keep it -- it has the left/right click split.
+            window._tray_paint = lambda rgb: icon.set_from_pixbuf(_tray_pixbuf(rgb))
+        elif tries[0] < 3:
+            tries[0] += 1
+            return True  # give the panel another beat to dock us
+        else:
+            # No legacy tray here, so fall back to the status-notifier indicator.
+            icon.set_visible(False)
+            window._tray_statusicon = None
+            _start_indicator(window, menu)
+            window._tray = window._tray_indicator
+        if window._tray_paint is not None:
+            window._tray_paint(window._tray_rgb)
+        return False
+
+    GLib.timeout_add(400, choose)
+    return icon
+
+
+def _start_indicator(window, menu):
+    """The StatusNotifier/AppIndicator backend, for desktops with no legacy
+    system tray."""
     try:
         gi.require_version("AppIndicator3", "0.1")
         from gi.repository import AppIndicator3
@@ -626,25 +752,18 @@ def _make_tray(window):
         indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         indicator.set_menu(menu)
         window._tray_indicator = indicator
+        # Its own left and right clicks both show the menu; the closest it offers
+        # to "click to open" is a middle click, which activates this menu item.
+        try:
+            indicator.set_secondary_activate_target(window._tray_show_item)
+        except Exception:
+            pass
         # The indicator sets its icon by name or path, so hand it the badged PNG.
-        window._tray_apply = lambda rgb: indicator.set_icon_full(_tray_icon_path(rgb), "JawnOS")
-        _safe_tray_apply(window, DIM_RGB)
+        window._tray_paint = lambda rgb: indicator.set_icon_full(_tray_icon_path(rgb), "JawnOS")
         return indicator
     except Exception:
-        pass
-    try:
-        icon = Gtk.StatusIcon.new_from_icon_name("jawnos")
-        icon.set_tooltip_text("JawnOS")
-        icon.set_visible(True)
-        icon.connect("activate", lambda _i: window.present_dashboard())
-        icon.connect("popup-menu",
-                     lambda i, button, activate_time: menu.popup(
-                         None, None, None, None, button, activate_time))
-        window._tray_statusicon = icon
-        window._tray_apply = lambda rgb: icon.set_from_pixbuf(_tray_pixbuf(rgb))
-        _safe_tray_apply(window, DIM_RGB)
-        return icon
-    except Exception:
+        window._tray_indicator = None
+        window._tray_paint = None
         return None
 
 
@@ -652,6 +771,9 @@ def run_dashboard(settings=None, tray=True, show_web=False):
     settings = settings or core.load_settings()
     window = Dashboard(settings, show_web=show_web, tray=tray)
     window.show_all()
+    # A remembered fullscreen is applied once the window is on screen.
+    if settings.get("fullscreen"):
+        window.fullscreen()
     Gtk.main()
     return window
 

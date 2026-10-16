@@ -147,9 +147,16 @@ jawnosctl autostart enable    # start the BLE bridge at login
 ```
 
 `jawnos-desktop` is the same thing as a window, with a live status line, the
-folder setting, and the autostart / "BLE bridge with jawn" checkboxes. Add
-`--tray` for a status-tray icon: it carries jawn's state as a coloured dot in
-the corner of the icon — green running, amber starting/restarting, red stopped.
+folder setting, and the autostart / "BLE bridge with jawn" checkboxes. The
+window opens at two-thirds of the screen, in the screen's own orientation (a
+wide monitor gets a wide window); if you leave it fullscreen, it reopens
+fullscreen next time.
+
+Add `--tray` for a status-tray icon: it carries jawn's state as a coloured dot
+in the corner of the icon — green running, amber starting/restarting, red
+stopped. Left-click opens the window, right-click shows the menu, and **Quit and
+stop jawn** takes the jawn tree (and the bridge) down before the app exits, so
+quitting from the tray leaves no process behind.
 
 The jawn directory is found automatically (the checkout this lives in, else
 `~/jawnos`); override it with `jawnosctl dir`, the `JAWNOS_DIR` environment
