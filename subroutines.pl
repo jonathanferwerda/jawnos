@@ -4889,14 +4889,52 @@ sub name_change_pairs {
 	foreach my $o ( @{$olds} ) {
 		next unless exists $new_by{$o->{'setting'}};
 		next if $seen{$o->{'setting'}}++;
+		my $setting = $o->{'setting'};
+		# A value that is still the house's default is nothing anybody chose, so
+		# between it and a value somebody set, the set one is the one to keep: the
+		# panel pre-selects it rather than making every row be decided by hand.
+		my $default = &subs::default_setting_value($setting);
+		my $old_default = (defined $default && $o->{'value'} eq $default) ? 1 : 0;
+		my $new_default = (defined $default && $new_by{$setting} eq $default) ? 1 : 0;
+		my $prefer = '';
+		$prefer = 'old' if $old_default && !$new_default;
+		$prefer = 'new' if $new_default && !$old_default;
 		push @pairs, {
-			setting => $o->{'setting'},
+			setting => $setting,
 			old_value => $o->{'value'},
-			new_value => $new_by{$o->{'setting'}},
-			natural => ($natural{$o->{'setting'}} ? 'merge' : '')
+			new_value => $new_by{$setting},
+			old_default => $old_default,
+			new_default => $new_default,
+			prefer => $prefer,
+			natural => ($natural{$setting} ? 'merge' : '')
 		};
 	}
 	return \@pairs;
+}
+
+# What a brand-new app is born with (setting_initializer): the me app's worth,
+# duration, currency, unit and warranty, and a handful of fixed ones. A value
+# equal to one of these is the house's default rather than a choice somebody
+# made; undef when a setting has no such comparable default (colour, notes, a
+# phone number, an address - those are always somebody's).
+my %setting_defaults_memo;
+sub default_setting_value {
+	my ($setting) = @_;
+	my %fixed = (
+		visible => 'checked', permanent => 'checked', cost => '0', enc => 'on',
+		public => 'off', schedule => 'once', navigation => 'none',
+	);
+	return $fixed{$setting} if exists $fixed{$setting};
+	return undef unless grep { $_ eq $setting } qw/worth duration currency unit warranty/;
+	unless (scalar keys %setting_defaults_memo) {
+		my $me = &subs::settings_grabber({ app => 'me' }) || {};
+		foreach my $k ( qw/worth duration currency unit warranty/ ) {
+			$setting_defaults_memo{$k} = $me->{$k};
+		}
+	}
+	my $value = $setting_defaults_memo{$setting};
+	return undef unless defined $value && length $value;
+	return $value;
 }
 
 # How two values of a setting join: nfc and measures are lists at heart, so a
@@ -16493,11 +16531,7 @@ sub records_reconcile {
 	my $remove = sub {
 		my ($app, $uuid, $why) = @_;
 		push @actions, { action => 'tombstone', app => $app, uuid => $uuid, why => $why };
-		return unless $apply;
-		&tombstone_writer({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single' });
-		&db_delete('continent', { app => $app, uuid => $uuid });
-		&db_query('delete from continent where app = ? and uuid like ?', $app, $uuid . '%');
-		&db_delete('appointments', { uuid => $uuid, app => $app });
+		&records_tombstone($app, $uuid) if $apply;
 	};
 
 	# DUPLICATES - keep one of each, tombstone the rest
@@ -16518,8 +16552,7 @@ sub records_reconcile {
 				my $stop = 0 + $r->{'repair_stop_timestamp'};
 				my $dur = (0 + $r->{'timestamp'}) - $stop;
 				push @actions, { action => 'repair', app => $g->{'app'}, uuid => $r->{'uuid'}, stop_timestamp => $stop, duration => $dur };
-				next unless $apply;
-				&db_update('appointments', { stop_timestamp => $stop, duration => $dur, stop_seen => 'yes', type => 'stop', seen => 'yes', server_time => $now }, { uuid => $r->{'uuid'}, app => $g->{'app'} });
+				&records_repair($g->{'app'}, $r->{'uuid'}, $r->{'timestamp'}, $stop) if $apply;
 			}
 			else {
 				$remove->($g->{'app'}, $r->{'uuid'}, 'spare swept session');
@@ -16528,6 +16561,159 @@ sub records_reconcile {
 	}
 
 	return { applied => $apply, actions => scalar @actions, summary => $report->{'summary'}, list => \@actions };
+}
+
+# ---- the records watch: staging and apply --------------------------------
+# The mirror of the error watch. A finding the fixed audit produces is staged as
+# a row; a person reviews it and Applies, and the actions it carries are written
+# through the same quiet paths the bulk pass uses. Machine-local (staged_records),
+# so each machine repairs its own rows and the tombstones converge the mesh.
+
+# drop one appointment row and tell the mesh (a tombstone, so no peer re-adds it).
+# Quiet on purpose: Manager::delete_app also pushes to every open window, which a
+# batch of hundreds must not do.
+sub records_tombstone {
+	my ($app, $uuid) = @_;
+	return unless $app && $uuid;
+	&tombstone_writer({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single' });
+	&db_delete('continent', { app => $app, uuid => $uuid });
+	&db_query('delete from continent where app = ? and uuid like ?', $app, $uuid . '%');
+	&db_delete('appointments', { uuid => $uuid, app => $app });
+}
+
+# set a session's real end (its own start + the app's length). A fresh server_time
+# is what makes the repair win the peer merge.
+sub records_repair {
+	my ($app, $uuid, $start, $stop) = @_;
+	return unless $app && $uuid && defined $stop;
+	my $dur = (0 + $start) - (0 + $stop);
+	&db_update('appointments', { stop_timestamp => $stop, duration => $dur, stop_seen => 'yes', type => 'stop', seen => 'yes', server_time => &rightNow() }, { uuid => $uuid, app => $app });
+	return $dur;
+}
+
+# the table, created here too so the watch works from the first boot after an update
+sub records_table_ready {
+	my $table = &db_query('select name from pragma_table_info(?) where name = ?', 'staged_records', 'uuid')->hashes->[0];
+	return 1 if $table;
+	&db_query('create table if not exists staged_records (
+		uuid VARCHAR(255) unique, server_time VARCHAR(255), ost VARCHAR(25), kind VARCHAR(25),
+		app VARCHAR(500), signature VARCHAR(500), sample LONGTEXT, proposed LONGTEXT,
+		status VARCHAR(25), model VARCHAR(255), note LONGTEXT, last_seen VARCHAR(255))');
+	&db_query('create index if not exists idx1_staged_records on staged_records (signature)');
+	&db_query('create index if not exists idx2_staged_records on staged_records (status)');
+	return 1;
+}
+
+# stage one finding: an existing signature just bumps last_seen; a new one is inserted
+sub records_stage {
+	my ($f) = @_;
+	return unless $f && $f->{'signature'};
+	my $existing = &db_select('staged_records', ['uuid'], { signature => $f->{'signature'} })->hashes->[0];
+	if ($existing) {
+		&db_update('staged_records', { last_seen => &rightNow() }, { uuid => $existing->{'uuid'} });
+		return $existing->{'uuid'};
+	}
+	my $uuid = &random_string_creator(40);
+	&db_insert('staged_records', {
+		uuid => $uuid,
+		kind => $f->{'kind'},
+		app => $f->{'app'},
+		signature => $f->{'signature'},
+		sample => $f->{'sample'},
+		proposed => encode_json($f->{'proposed'}),
+		status => 'proposed',
+		last_seen => &rightNow(),
+	});
+	return $uuid;
+}
+
+# turn an audit report into staged findings
+sub records_stage_scan {
+	my ($window_ms) = @_;
+	&records_table_ready();
+	my $report = &records_audit($window_ms);
+	my $staged = 0;
+	foreach my $g ( @{$report->{'sweep'}} ) {
+		my @acts;
+		foreach my $r ( @{$g->{'rows'}} ) {
+			next if $r->{'suggested'} eq 'keep';
+			if (($r->{'suggested'} // '') eq 'repair' && defined $r->{'repair_stop_timestamp'}) {
+				push @acts, { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} };
+			}
+			else {
+				push @acts, { action => 'tombstone', uuid => $r->{'uuid'}, why => $r->{'why'} };
+			}
+		}
+		next unless scalar @acts;
+		&records_stage({
+			kind => 'sweep', app => $g->{'app'},
+			signature => 'sweep:' . $g->{'app'} . ':' . $g->{'stop_timestamp'},
+			sample => 'one press closed ' . scalar(@{$g->{'rows'}}) . ' sessions' . (defined $g->{'expected_ms'} ? ' (this app runs ' . $g->{'expected_ms'} . ' ms)' : ''),
+			proposed => { app => $g->{'app'}, actions => \@acts },
+		}); $staged++;
+	}
+	foreach my $g ( @{$report->{'dupes'}} ) {
+		my @acts;
+		foreach my $rowid ( @{$g->{'remove_rowids'}} ) {
+			my $r = &db_query('select uuid from appointments where rowid = ?', $rowid)->hashes->[0];
+			next unless $r && $r->{'uuid'};
+			push @acts, { action => 'tombstone', uuid => $r->{'uuid'}, why => 'duplicate of row ' . $g->{'keep_rowid'} };
+		}
+		next unless scalar @acts;
+		&records_stage({
+			kind => 'dupe', app => $g->{'app'},
+			signature => 'dupe:' . $g->{'app'} . ':' . $g->{'type'} . ':' . $g->{'timestamp'},
+			sample => scalar(@acts) . ' duplicate row(s) of ' . $g->{'app'} . ' ' . $g->{'type'},
+			proposed => { app => $g->{'app'}, actions => \@acts },
+		}); $staged++;
+	}
+	foreach my $r ( @{$report->{'orphans'}} ) {
+		next unless ($r->{'suggested'} // '') eq 'repair';
+		&records_stage({
+			kind => 'orphan', app => $r->{'app'},
+			signature => 'orphan:' . $r->{'app'} . ':' . $r->{'timestamp'},
+			sample => 'open ' . int($r->{'age_ms'} / 3600000) . 'h, far past the app length',
+			proposed => { app => $r->{'app'}, actions => [ { action => 'repair', uuid => $r->{'uuid'}, timestamp => $r->{'timestamp'}, stop_timestamp => $r->{'repair_stop_timestamp'}, why => $r->{'why'} } ] },
+		}); $staged++;
+	}
+	return { staged => $staged, summary => $report->{'summary'} };
+}
+
+# Apply one staged row: carry out every action it holds, then mark it applied
+sub records_fix_apply {
+	my ($uuid) = @_;
+	my $row = &db_select('staged_records', undef, { uuid => $uuid })->hash;
+	return { error => 'no such finding' } unless $row;
+	my $p = eval { decode_json $row->{'proposed'} } || {};
+	my $app = $p->{'app'} || $row->{'app'};
+	my @acts = @{ $p->{'actions'} || [] };
+	return { error => 'that finding proposes nothing' } unless scalar @acts;
+	my $done = 0;
+	foreach my $a ( @acts ) {
+		if (($a->{'action'} // '') eq 'tombstone' && $a->{'uuid'}) { &records_tombstone($app, $a->{'uuid'}); $done++; }
+		elsif (($a->{'action'} // '') eq 'repair' && $a->{'uuid'} && defined $a->{'stop_timestamp'}) { &records_repair($app, $a->{'uuid'}, $a->{'timestamp'}, $a->{'stop_timestamp'}); $done++; }
+	}
+	&db_update('staged_records', { status => 'applied', note => 'applied ' . &rightNow() . ' (' . $done . ' row(s))' }, { uuid => $uuid });
+	return { applied => $uuid, rows => $done };
+}
+
+# One pass of the watch: stage what the audit finds, and - when Apply automatically
+# is ticked - write the oldest proposal. Off until Configure -> Plat ticks Records.
+sub records_watch_tick {
+	%setting_memo = ();
+	return unless ((&subs::setting_grabber({ app => 'mail', setting => 'records_watch' }) // '') eq 'on');
+	my $hours = &subs::setting_grabber({ app => 'mail', setting => 'records_watch_window' });
+	my $window_ms = (defined $hours && $hours =~ /^[0-9]+$/) ? $hours * 3600000 : 172800000;
+	my $scan = eval { &records_stage_scan($window_ms) } || { error => ($@ || 'scan failed') };
+	$log->info('records watch: staged pass, ' . ($scan->{'staged'} // 0) . ' finding(s)') if defined $log && !$scan->{'error'};
+	my $auto = ((&subs::setting_grabber({ app => 'mail', setting => 'records_watch_auto' }) // '') eq 'on');
+	return unless $auto && &watch_auto_allowed();
+	my $pending = &subs::db_query('select * from staged_records where status = ? order by ost asc limit 1', 'proposed')->hashes->[0];
+	if ($pending) {
+		my $applied = eval { &records_fix_apply($pending->{'uuid'}) } || { error => ($@ || 'no result') };
+		&watch_auto_count();
+		$log->info('records watch: auto-applied "' . substr($pending->{'signature'} || '?', 0, 60) . '": ' . ($applied->{'error'} // ($applied->{'rows'} . ' row(s)'))) if defined $log;
+	}
 }
 
 # One pass: catch what is new, record it, and hand the oldest waiting error to

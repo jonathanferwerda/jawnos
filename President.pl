@@ -279,6 +279,19 @@ sub manager_starter() {
 		}
 	}, { name => 'guide watch' });
 
+	# The records watch audits the appointments table for the fault class that
+	# corrupts the person's numbers (one stop press closes one session) and stages
+	# each finding for review, the same shape as the error watch. It runs on a slow
+	# cadence - the sweep predates the fix by weeks, so a two-hourly pass is plenty.
+	# Off until Configure -> Plat ticks Records.
+	&subs::subprocessor(sub {
+		sleep 120;
+		while (1) {
+			eval { &subs::records_watch_tick(); };
+			sleep 7200;
+		}
+	}, { name => 'records watch' });
+
 	# The voice models ride the same mesh as the APKs, but they change rarely, so
 	# this is a single pass after boot rather than a loop: a device that lacks a
 	# voice pulls it in and can then serve it. Opening Configure -> Misc refreshes

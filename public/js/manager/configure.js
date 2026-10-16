@@ -272,6 +272,11 @@ $(document).on('change', '.configure_input', function(e) {
 		type: 'POST',
 		data: { app: app, timestamp: timestamp, setting: setting, value: value },
 		success: function(response) {
+			// a rename into a name the house already knows answers with a conflict,
+			// not with a display: the panel asks which value keeps the name. This is
+			// also the only path a phone takes - its keyboard has no Enter, just a
+			// Next that blurs the field, so the change event is what fires there
+			if (response && response.conflict) { nameConflictPanel(response); return; }
 			display.html(response);
 			localStorage.removeItem('manager_search_cache');
 			button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
@@ -2253,16 +2258,17 @@ function nameConflictPanel(response) {
 	$('#name_conflict_panel').remove();
 	var panel = $('<div id="name_conflict_panel" style="position:fixed;left:15%;top:10%;width:70%;max-height:78%;overflow:auto;z-index:994200;background:var(--panel);border:3px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 6px 30px rgba(0,0,0,.5);">');
 	panel.append('<h3 style="margin-top:0;">Rename into ' + response.new + '</h3>');
-	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name.</p>');
+	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name. A value marked <i>(house default)</i> is one nobody ever chose, so the other side is picked for you.</p>');
 	var pairs = response.pairs || [];
 	if (!pairs.length) { panel.append('<p>No shared settings - the records will simply join.</p>'); }
 	$.each(pairs, function (i, p) {
+		var prefer = p.prefer || (p.natural ? 'merge' : 'new');
 		var row = $('<div style="border-top:1px solid var(--line);padding:8px 0;">');
 		row.append('<b>' + p.setting + '</b><br>');
-		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new" checked> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span></label>');
-		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span></label>');
+		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span>' + (p.old_default ? ' <i>(house default)</i>' : '') + '</label>');
+		row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span>' + (p.new_default ? ' <i>(house default)</i>' : '') + '</label>');
 		if (p.natural) {
-			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"> merge (keep both)</label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"' + (prefer === 'merge' ? ' checked' : '') + '> merge (keep both)</label>');
 		}
 		panel.append(row);
 	});
@@ -2310,4 +2316,62 @@ $(document).on('click', '.autofill_packaging', function() {
 			}
 		}
 	});
+});
+
+// ---- the records watch's staging area ---------------------------------------
+// The mirror of the error watch's fixes: findings the fixed audit staged, each
+// with the rows it proposes to tombstone or repair. Nothing is written until
+// Apply. The list re-fetches after each action, and scan now runs the audit.
+function recordsRender() {
+	var list = $('#records_list');
+	list.show().html('Loading…');
+	$.get('/manager/records/fixes', function(res) {
+		var rows = (res && res.findings) || [];
+		$('#records_waiting_n').text(rows.length ? (rows.length + ' waiting') : 'nothing waiting');
+		if (!rows.length) { list.html('<div style="opacity:.6;">Nothing waiting.</div>'); return; }
+		list.html('');
+		$.each(rows, function(i, f) {
+			var acts = (f.proposed && f.proposed.actions) || [];
+			var line = $('<div style="padding:6px 0;border-top:1px solid var(--line);"></div>');
+			line.append($('<div></div>').text((f.kind || '') + ' · ' + (f.app || '') + ' — ' + (f.sample || '')));
+			line.append($('<div style="opacity:.7;"></div>').text(acts.length + ' action(s): ' + $.map(acts, function(a){ return a.action + ' ' + String(a.uuid || '').slice(0, 10); }).join(', ')));
+			var bar = $('<div style="margin-top:4px;display:flex;gap:8px;"></div>');
+			$('<button type="button"></button>').addClass('records_apply').attr('uuid', f.uuid).text('Apply').appendTo(bar);
+			$('<button type="button"></button>').addClass('records_discard').attr('uuid', f.uuid).text('Discard').appendTo(bar);
+			line.append(bar);
+			list.append(line);
+		});
+	}).fail(function() { list.html('<div style="opacity:.6;">Could not load the findings.</div>'); });
+}
+$(document).on('click', '#records_open', function() {
+	if ($('#records_list').is(':visible')) { $('#records_list').hide(); return; }
+	recordsRender();
+});
+$(document).on('click', '.records_apply', function() {
+	var b = $(this); b.prop('disabled', true).text('…');
+	$.post('/manager/records/fixes_apply', { uuid: b.attr('uuid') }, function() { recordsRender(); $('#records_fixed_list').hide(); });
+});
+$(document).on('click', '.records_discard', function() {
+	var b = $(this); b.prop('disabled', true).text('…');
+	$.post('/manager/records/fixes_discard', { uuid: b.attr('uuid') }, function() { recordsRender(); });
+});
+$(document).on('click', '#records_scan_now', function() {
+	var s = $(this); s.text('scanning…');
+	$.post('/manager/records/scan', {}, function() {
+		s.text('scan now');
+		recordsRender();
+	});
+});
+$(document).on('click', '#records_fixed_open', function() {
+	var list = $('#records_fixed_list');
+	if (list.is(':visible')) { list.hide(); return; }
+	list.show().html('Loading…');
+	$.get('/manager/records/fixes_fixed', function(res) {
+		var rows = (res && res.fixed) || [];
+		if (!rows.length) { list.html('<div style="opacity:.6;">Nothing fixed yet.</div>'); return; }
+		list.html('');
+		$.each(rows, function(i, f) {
+			list.append($('<div style="padding:4px 0;border-top:1px solid var(--line);"></div>').text((f.kind || '') + ' · ' + (f.app || '') + ' — ' + (f.sample || '') + ' — ' + (f.note || '')));
+		});
+	}).fail(function() { list.html('<div style="opacity:.6;">Could not load the list.</div>'); });
 });

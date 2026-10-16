@@ -59,7 +59,7 @@ our $last_updater = sub() {
 	return $last_update ||= &subs::jawn_version();
 };
 our $forbidden = {
-	tables => ['cache', 'magazine', 'devices', 'remote_machines', 'neighbour_link', 'websocket_messages', 'websockets', 'security', 'tickets', 'tunnels', 'backfills', 'sync_cursors', 'sync_log', 'staged_fixes' ]
+	tables => ['cache', 'magazine', 'devices', 'remote_machines', 'neighbour_link', 'websocket_messages', 'websockets', 'security', 'tickets', 'tunnels', 'backfills', 'sync_cursors', 'sync_log', 'staged_fixes', 'staged_records' ]
 };
 
 our $capabilities = {

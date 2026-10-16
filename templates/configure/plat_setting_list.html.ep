@@ -148,7 +148,7 @@
 	<% } %>
 
 	<h3>Self-healing</h3>
-	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Tick Watch the Guide and the Guide's own saved conversations are read the same way: a turn that went nowhere - a thing not found, a command that could not run, a closing line that says so - is staged for the Coding agent to adjust the Guide's training itself (its rules and verbs). Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped.</p>
+	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Tick Watch the Guide and the Guide's own saved conversations are read the same way: a turn that went nowhere - a thing not found, a command that could not run, a closing line that says so - is staged for the Coding agent to adjust the Guide's training itself (its rules and verbs). Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped. Tick Watch records and the appointments table is audited on the same principle: the fixed audit finds a session that one stop press closed along with others, a row written twice, and an open session run far past its app's length, and stages each finding here for review - nothing is written until you Apply. The window is how far back it looks (0 is all time).</p>
 	<div class="cfg-card">
 		<div class="cfg-row">
 			<label>Watch errors</label>
@@ -185,6 +185,45 @@
 			<% my $watch_budget = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' }) // ''); %>
 			<input type="text" class="configure_input" app="mail" setting="error_watch_budget" value="<%= $watch_budget %>" placeholder="1000000 — 0 for no cap">
 		</div>
+		<div class="cfg-row">
+			<label>Watch records</label>
+			<% my $rec_watching = (&subs::setting_grabber({ app => 'mail', setting => 'records_watch' }) // ''); %>
+			<input type="checkbox" class="configure_input" app="mail" setting="records_watch" <% if ($rec_watching eq 'on') { %>checked<% } %>>
+		</div>
+		<div class="cfg-row">
+			<label>Records window</label>
+			<% my $rec_window = (&subs::setting_grabber({ app => 'mail', setting => 'records_watch_window' }) // '48'); %>
+			<input type="text" class="configure_input" app="mail" setting="records_watch_window" value="<%= $rec_window %>" placeholder="hours back — 0 for all time">
+		</div>
+		<div class="cfg-row">
+			<label>Apply records automatically</label>
+			<% my $rec_auto = (&subs::setting_grabber({ app => 'mail', setting => 'records_watch_auto' }) // ''); %>
+			<input type="checkbox" class="configure_input" app="mail" setting="records_watch_auto" <% if ($rec_auto eq 'on') { %>checked<% } %>>
+		</div>
+		<div class="cfg-row">
+			<label>Findings waiting</label>
+			<%
+				my ($rec_pending, $rec_fixed) = (0, 0);
+				eval {
+					$rec_pending = (&subs::db_query('select count(*) as n from staged_records where status = ?', 'proposed')->hashes->[0]->{'n'}) + 0;
+					$rec_fixed = (&subs::db_query('select count(*) as n from staged_records where status = ?', 'applied')->hashes->[0]->{'n'}) + 0;
+				};
+			%>
+			<span class="cfg-inline">
+				<span id="records_open" class="hover" hint="Review what the records audit has found, and Apply" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span id="records_scan_now" class="hover" hint="Run the audit now" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">scan now</span>
+				<span id="records_waiting_n" class="cfg-note" style="margin:0;"><%= $rec_pending ? "$rec_pending waiting" : 'nothing waiting' %></span>
+			</span>
+		</div>
+		<div id="records_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:360px;overflow:auto;font-size:12px;line-height:1.35;"></div>
+		<div class="cfg-row">
+			<label>Records fixed so far</label>
+			<span class="cfg-inline">
+				<span id="records_fixed_open" class="hover" hint="Review the findings the records watch has fixed" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span class="cfg-note" style="margin:0;"><%= $rec_fixed ? "$rec_fixed fixed" : 'nothing yet' %></span>
+			</span>
+		</div>
+		<div id="records_fixed_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:320px;overflow:auto;font-size:12px;line-height:1.35;"></div>
 	</div>
 
 	<h3>Provider access</h3>

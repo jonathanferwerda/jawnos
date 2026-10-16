@@ -22246,6 +22246,53 @@ get '/manager/records/audit' => sub($c) {
 	$c->render(json => { report => $report, prompt => &subs::records_audit_prompt() });
 };
 
+# The records watch's staging area: the findings the audit staged, each with the
+# actions it proposes. Review, apply, discard - the same shape as the error
+# watch's fixes, and the same rule: nothing is written until Apply.
+post '/manager/records/scan' => sub($c) {
+	my $hours = $c->param('hours');
+	my $window = (defined $hours && $hours =~ /^[0-9]+$/) ? $hours * 3600000 : 172800000;
+	$c->render(json => &subs::records_stage_scan($window));
+};
+
+get '/manager/records/fixes' => sub($c) {
+	my $rows = eval { &subs::db_query('select * from staged_records where status in (?, ?, ?) order by ost desc limit 100', 'new', 'proposed', 'failed')->hashes } || [];
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		push @out, {
+			uuid => $r->{'uuid'}, kind => $r->{'kind'}, app => $r->{'app'},
+			signature => $r->{'signature'}, sample => $r->{'sample'},
+			proposed => (eval { decode_json $r->{'proposed'} } || {}),
+			status => $r->{'status'}, note => $r->{'note'}, last_seen => $r->{'last_seen'},
+		};
+	}
+	$c->render(json => { findings => \@out });
+};
+
+get '/manager/records/fixes_fixed' => sub($c) {
+	my $rows = eval { &subs::db_query('select * from staged_records where status = ? order by ost desc limit 200', 'applied')->hashes } || [];
+	$c->render(json => { fixed => [ map { { uuid => $_->{'uuid'}, kind => $_->{'kind'}, app => $_->{'app'}, sample => $_->{'sample'}, note => $_->{'note'}, last_seen => $_->{'last_seen'} } } @{$rows} ] });
+};
+
+post '/manager/records/fixes_apply' => sub($c) {
+	$c->render(json => &subs::records_fix_apply($c->param('uuid')));
+};
+
+post '/manager/records/fixes_discard' => sub($c) {
+	&subs::db_update('staged_records', { status => 'discarded' }, { uuid => $c->param('uuid') });
+	$c->render(json => { discarded => $c->param('uuid') });
+};
+
+post '/manager/records/fixes_retry' => sub($c) {
+	&subs::db_update('staged_records', { status => 'proposed', note => '' }, { uuid => $c->param('uuid') });
+	$c->render(json => { retried => $c->param('uuid') });
+};
+
+post '/manager/records/fixes_clear' => sub($c) {
+	&subs::db_query('delete from staged_records');
+	$c->render(json => { ok => 1 });
+};
+
 # ---- the error watch's staging area ---------------------------------------
 # The watcher (President) records every new error in staged_fixes; with a Coding
 # model set, the agent stages a proposed fix on the row. These routes list what
@@ -26284,6 +26331,27 @@ sub update_database($data) {
 		# the peer's cached Ollama model list, so Plat can offer models by the machine
 		# they live on without waiting on the network (filled by ollama_models_sync)
 		'alter table remote_machines add column ollama_models LONGTEXT',
+		# the records watch's staging area: a finding the fixed appointment audit
+		# produced (a sweep, a duplicate, an orphan, an impossible row) and the actions
+		# proposed for it, waiting for a person to Apply. Machine-local - the rowids and
+		# uuids name this machine's own rows - so the table sits in gb's forbidden
+		# list and never rides the peer sync, exactly like staged_fixes.
+		'create table if not exists staged_records (
+			uuid VARCHAR(255) unique,
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
+			kind VARCHAR(25),
+			app VARCHAR(500),
+			signature VARCHAR(500),
+			sample LONGTEXT,
+			proposed LONGTEXT,
+			status VARCHAR(25),
+			model VARCHAR(255),
+			note LONGTEXT,
+			last_seen VARCHAR(255)
+		)',
+		'create index if not exists idx1_staged_records on staged_records (signature)',
+		'create index if not exists idx2_staged_records on staged_records (status)',
 		# the Guide writes here, not into appointments: a staged row is a proposal a
 		# person can look over and promote (or drop) before it becomes real
 		'create table if not exists staged_appointments (
