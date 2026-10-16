@@ -457,13 +457,21 @@ class Dashboard(Gtk.Window):
         self.notebook.set_current_page(0)
 
     def present_dashboard(self):
-        # Closing to the tray hides the window. On Xfce a bare present() could
-        # leave it hidden or iconified, which made the tray's "Show Dashboard"
-        # look dead, so show, deiconify, return to the Dashboard tab, and only
-        # then present (which raises and focuses).
+        # The tray menu's "Show Dashboard". Closing to the tray hides the window;
+        # on Xfce a bare present() could leave it hidden or iconified, so show,
+        # deiconify, return to the Dashboard tab, and only then present (which
+        # raises and focuses).
         self.show_all()
         self.deiconify()
         self._show_dashboard()
+        self.present()
+
+    def present_window(self):
+        # A left click on the tray returns to whatever was last showing (the
+        # dashboard or the JawnOS view), so raise the window without touching the
+        # tab -- the same show/deiconify/present dance as present_dashboard.
+        self.show_all()
+        self.deiconify()
         self.present()
 
     def _on_logo_clicked(self, _widget, event):
@@ -705,9 +713,9 @@ def _make_tray(window):
         icon = Gtk.StatusIcon.new_from_icon_name("jawnos")
         icon.set_tooltip_text("JawnOS")
         icon.set_visible(True)
-        # Left click opens the window (hidden by close-to-tray); right click pops
-        # the menu.
-        icon.connect("activate", lambda _i: window.present_dashboard())
+        # Left click brings the window back as it was; right click pops the menu
+        # (which offers "Show Dashboard" when the control panel is wanted).
+        icon.connect("activate", lambda _i: window.present_window())
         icon.connect("popup-menu",
                      lambda i, button, activate_time: menu.popup(
                          None, None, None, None, button, activate_time))
