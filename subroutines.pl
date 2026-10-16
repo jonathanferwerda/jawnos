@@ -12169,6 +12169,10 @@ sub email_send() {
 		->to($data->{'email'})
 		->subject(&subs::note_decrypter($suds, $data->{'subject'}))
 		->transport($transport);
+	# carbon copies: cc is visible to everyone, bcc only reaches the smtp envelope
+	# (Email::Stuffer keeps it out of the headers). Both are plain addresses.
+	$stuffer->cc($data->{'cc'}) if $data->{'cc'};
+	$stuffer->bcc($data->{'bcc'}) if $data->{'bcc'};
 
 	my $dom = Mojo::DOM->new(&subs::note_decrypter($suds, $data->{'body'}));
 

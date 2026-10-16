@@ -52,6 +52,12 @@ a message or a draft in a reading pane - with its styling scoped to
 Mailbox and Chat are untouched. Switching a folder or an address refreshes just
 the list in place: the shared `mailMaker()` used to send the split apps to
 `/manager/mailbox`, which answered `app="mailbox"` and made a *second* window.
+The Email window reads and writes in a pane of its own with a **Back** button
+(not the window drawer) and carries the ordinary client kit: **Reply / Reply all
+/ Forward** with the original quoted and `Re:`/`Fwd:` on the subject, **Cc** and
+**Bcc** (new `mailbox` columns), a list **search**, unread bolding, and a **Send**
+that goes out at once over the account's own SMTP rather than through the
+`email_sender` utility (kept for lists).
 onto their ticket thread.
 
 Still to do:

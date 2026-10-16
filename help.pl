@@ -493,18 +493,18 @@ our %topic = (
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
 		verified => '2026-10-16',
-		summary => 'A mail client: folders down the left, the list beside them, the message or the draft in the pane.',
+		summary => 'A mail client: folders, a searchable list, and the letter or the draft in the pane.',
 		body => [
 			'Email is the mailbox\'s mail half as an app of its own: it speaks IMAP and SMTP directly, so mail arrives on the desktop, and a new message raises the dot in the start menu.',
-			'The window is laid out like a mail client. The folders - contacts, inbox, drafts, outbox and sent - sit down the left, with the address the list is showing beneath them, and the chosen folder\'s messages fill the pane beside them. Each row is the time, the other party and the subject, with a trash at its right end. Pick a folder to change the list; pick an address under Contacts to read that account.',
-			'Click a message and it slides in over the list as a reading pane - its Device, From, To, Time, Subject, attachments and body, with Edit on a draft or an outbox message. Compose, in the toolbar, opens that same pane as a blank message: To, Subject, Body and Add for attachments.',
-			'Sending files the mail onto the recipient\'s app and seals its attachments, so a document you emailed is still findable from the thing it belongs to. The gear opens the server settings and the saved templates.'
+			'The window is laid out like a mail client. The folders - contacts, inbox, drafts, outbox and sent - sit down the left, under the address the list is showing, and the chosen folder\'s messages fill the pane beside them. Each row is the time, the other party and the subject; an unread inbox row is bold, and the Search box in the toolbar filters the list by sender or subject as you type.',
+			'Click a letter and it opens in the pane over the list - its Device, From, To, Cc, Date, attachments and body - with Reply, Reply all, Forward and Delete, and Back to the list. A reply fills in the other party and a forward leaves the To empty; both wear Re: or Fwd: on the subject and quote the letter they answer, and Reply all carries the original Cc.',
+			'Compose, in the toolbar, opens the same pane as a blank message: From, To, Cc, Bcc, Subject, an Add for attachments, and the body. Send sends the letter at once over the account\'s own SMTP server - it is not queued; the background email sender utility is kept for lists. A send that fails leaves the letter in Drafts to retry by hand. Sending files the mail onto the recipient\'s app and seals its attachments, so a document you emailed is still findable from the thing it belongs to. The gear opens the server settings and the saved templates.'
 		],
 		steps => [
-			'Open Email from the start menu: the folders are down the left, the inbox listed beside them.',
-			'Pick a folder - contacts, inbox, drafts, outbox or sent - or an address under Contacts.',
-			'Click a message to read it in the pane that slides in over the list.',
-			'Press Compose to write a new one; sending files it and seals its attachments.',
+			'Open Email from the start menu: the folders are down the left, the inbox beside them.',
+			'Type in the Search box to filter the list, and pick a folder - or, under Contacts, an address.',
+			'Click a letter to read it; Reply, Reply all or Forward opens a draft in the same pane, and Back returns to the list.',
+			'Press Compose to write a new one, adding Cc or Bcc and attachments with Add, then press Send.',
 			'The gear sets up the server and the templates.'
 		],
 		related => [ 'mailbox', 'sealing_files' ]

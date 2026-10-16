@@ -19332,6 +19332,8 @@ get '/manager/mail/email/compose' => sub($c) {
 	my $email = $c->param('email');
 	my $app = $c->param('app');
 	my $draft_selection = $c->param('draft_selection');
+	my $mode = $c->param('mode');
+	my $in_reply_to = $c->param('in_reply_to');
 
 	if ($app) {
 		my $setting_email = &subs::setting_grabber({ app => $app, setting => 'email' });
@@ -19374,6 +19376,59 @@ get '/manager/mail/email/compose' => sub($c) {
 		}
 		$draft->{'attachments'} = eval { return decode_json $draft->{'attachments'} } || [];
 	}
+
+	# A reply, a reply-all or a forward starts from the letter it answers: the other
+	# party becomes the To (empty for a forward), the subject wears Re:/Fwd: unless
+	# it already does, and the original is quoted into the body. Reply-all carries
+	# the original's Cc too. The address it goes from is the one the letter arrived
+	# on. mode is reply | reply_all | forward; in_reply_to is that letter's uuid.
+	if ($mode && $in_reply_to) {
+		my $orig = &subs::db_select('mailbox', undef, { uuid => $in_reply_to })->hashes->[0];
+		if ($orig) {
+			my $suds = &subs::session_suds($c);
+			my $o_subject = &subs::note_decrypter($suds, $orig->{'subject'} || '');
+			my $o_body = &subs::note_decrypter($suds, $orig->{'body'} || '');
+			my $servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+			# which of our addresses received (inbox) or sent (sent/outbox) it
+			my $our_uuid = $orig->{'email_server'} || $orig->{'from_email'};
+			my ($our_es) = grep { $_->{'uuid'} eq $our_uuid } @{$servers};
+			my $our_addr = $our_es ? $our_es->{'email'} : '';
+			my $other = $orig->{'email'} || '';
+			my $prefix = $mode eq 'forward' ? 'Fwd: ' : 'Re: ';
+			# a forward always wears Fwd: (even of a letter that already wears Re:);
+			# a reply only adds Re: when it is not already there
+			my $subject = $o_subject;
+			if ($mode eq 'forward') {
+				$subject = $prefix . $subject unless $subject =~ /^\s*fwd:/i;
+			}
+			else {
+				$subject = $prefix . $subject unless $subject =~ /^\s*re:/i;
+			}
+			my $quote = '<br><br>On ' . &subs::iso_local($orig->{'timestamp'}) . ', ' . ($other || 'they') . ' wrote:'
+				. '<blockquote style="border-left:2px solid var(--line);margin:8px 0;padding-left:12px;">' . $o_body . '</blockquote>';
+			my $to = $mode eq 'forward' ? '' : $other;
+			my $cc = '';
+			if ($mode eq 'reply_all') {
+				my %seen;
+				my @cc = grep { length && $_ ne $to && $_ ne $our_addr && !$seen{$_}++ } split /\s*[,;]\s*/, ($orig->{'cc'} || '');
+				$cc = join(', ', @cc);
+			}
+			$draft = {
+				uuid => '',
+				email => $to,
+				cc => $cc,
+				bcc => '',
+				from_email => $our_addr,
+				sender => &subs::device_setter(),
+				subject => $subject,
+				body => $quote,
+				attachments => [],
+				timestamp => &subs::rightNow()
+			};
+			$email = $to;
+		}
+	}
+
 	my $content = $c->render_to_string(
 		template => 'mail/email_compose',
 		email => $email,
@@ -19406,6 +19461,8 @@ post '/manager/mail/email/draft' => sub($c) {
 		if ($message->{'uuid'}) {
 			&subs::db_update('mailbox', {
 				email => $message->{'to'},
+				cc => $message->{'cc'},
+				bcc => $message->{'bcc'},
 				subject => $message->{'subject'},
 				body => $message->{'body'},
 				status => 'draft',
@@ -19422,6 +19479,8 @@ post '/manager/mail/email/draft' => sub($c) {
 			$message->{'uuid'} = &subs::random_string_creator(23);
 			&subs::db_insert('mailbox', {
 				email => $message->{'to'},
+				cc => $message->{'cc'},
+				bcc => $message->{'bcc'},
 				subject => $message->{'subject'},
 				body => $message->{'body'},
 				uuid => $message->{'uuid'},
@@ -19440,6 +19499,13 @@ post '/manager/mail/email/draft' => sub($c) {
 get '/manager/mail/email/read' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $m = &subs::db_select('mailbox', undef, { uuid => $uuid })->hashes->[0];
+
+	# opening a letter marks it read, so the list can bold what is still unread.
+	# server_time rides along so the flag reaches every machine.
+	if ($m && $m->{'status'} eq 'inbox' && ($m->{'seen'} || '') ne 'yes') {
+		&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $uuid });
+		$m->{'seen'} = 'yes';
+	}
 
 	my $html = $c->render_to_string(
 		template => 'mail/email',
@@ -19550,6 +19616,8 @@ get '/manager/mail/email/template' => sub($c) {
 post '/manager/mail/email/send' => sub($c) {
 	my $from = $c->param('from');
 	my $email = $c->param('to');
+	my $cc = $c->param('cc');
+	my $bcc = $c->param('bcc');
 	my $subject = $c->param('subject');
 	my $body = $c->param('body');
 	my $uuid = $c->param('uuid');
@@ -19569,23 +19637,43 @@ post '/manager/mail/email/send' => sub($c) {
 
 	&subs::db_delete('mailbox', { status => 'draft', uuid => $uuid });
 
-	my $result = &subs::db_insert('mailbox', {
+	my $enc_subject = &subs::note_encrypter(&subs::session_suds($c), $subject);
+	my $enc_body = &subs::note_encrypter(&subs::session_suds($c), $body);
+
+	&subs::db_insert('mailbox', {
 		uuid => $uuid,
 		email => $email,
+		cc => $cc,
+		bcc => $bcc,
 		from_email => $from,
 		sender => $sender,
-		subject => &subs::note_encrypter(&subs::session_suds($c), $subject),
-		body => &subs::note_encrypter(&subs::session_suds($c), $body),
+		subject => $enc_subject,
+		body => $enc_body,
 		attachments => $jattachments,
-		status => 'outbox',
+		status => 'sending',
 		timestamp => $timestamp
 	});
 
-	# the letter goes out now rather than on the next tick of the timer: the row
-	# above is the record, not a queue. The session goes with it so the words
-	# just written are the words that decrypt, and a letter that fails waits in
-	# the outbox for the sweep to try again.
-	$result = &subs::email_sender($uuid, $c);
+	# A composed letter is sent now, inside this request - it is not a queue. The
+	# periodic email_sender utility is left for email lists (a batch of sends); the
+	# row is deliberately never left in 'outbox', so the utility cannot sweep up a
+	# letter a person pressed Send on. A send that fails leaves the letter as a
+	# draft, so it stays visible and can be reopened and retried by hand.
+	my $result = &subs::email_send({
+		c => $c,
+		from => $from,
+		email => $email,
+		cc => $cc,
+		bcc => $bcc,
+		subject => $enc_subject,
+		body => $enc_body,
+		attachments => $jattachments,
+		uuid => $uuid,
+	});
+	$result = ref $result eq 'HASH' ? $result->{'result'} : $result;
+	if ($result ne 'success') {
+		&subs::db_update('mailbox', { status => 'draft', server_time => &subs::rightNow() }, { uuid => $uuid });
+	}
 
 	$c->render(json => $result);
 };
@@ -26927,6 +27015,12 @@ sub update_database($data) {
 		'alter table appointments add column subtype VARCHAR(255)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
+		# a composed letter can carry carbon copies now: cc is shown and answered
+		# (reply-all), bcc travels to the smtp transport only and is never sent to
+		# anyone who can see the headers. seen is the read/unread flag the list uses.
+		'alter table mailbox add column cc VARCHAR(1000)',
+		'alter table mailbox add column bcc VARCHAR(1000)',
+		'alter table mailbox add column seen VARCHAR(10)',
 		'drop table firewall',
 		# ssh credentials are gone: transports, deploy and backup are all
 		# password-less http/websocket now.

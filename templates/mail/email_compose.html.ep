@@ -5,81 +5,69 @@
 	<% my $email_servers = eval { return decode_json $settings->{'email_config'} } || []; %>
 	<% @{$email_servers} = grep { $_->{'active'} eq 'on' } @{$email_servers}; %>
 	<% if (scalar @{$email_servers} > 0) { %>
-
-
-		<img src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Mail" class="email_send medium_thumb hover" style="float:right;">
-		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="email_discard medium_thumb hover" style="float:right;">
-		<% if (scalar @{$drafts} > 1) { %>
-			<img src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>" hint="Next" class="email_draft_change medium_thumb hover" direction="next" style="float:right;">
-			<img src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" hint="Previous" class="email_draft_change medium_thumb hover" direction="prev" style="float:right;">
-		<% } %>
-		<br>
-		<table style="width:100%;">
-			<tr>
-				<td>Sender: </td>
-				<td>
-					<select class="email_compose_input email_compose_sender" value="<%= $draft->{'sender'} %>" id="email_compose_sender" style="width:80%;vertical-align:bottom;">
-						<% foreach my $s ( qw/mobile computer server/ ) { %>
-							<option value="<%= $s %>" <% if ($s eq $draft->{'sender'} || ($s eq &subs::device_setter() && !$draft->{'sender'})) { %>selected<% } %>><%= &subs::format_name($s) %></option>
-						<% } %>
-					</select>
-				</td>
-			</tr>
-			<tr>
-				<td><b>From: </b></td>
-				<td>
-					<select class="email_compose_input email_compose_from" value="<%= $draft->{'from_email'} %>" id="email_compose_from" style="width:80%;vertical-align:bottom;">
-						<% foreach my $es ( @{$email_servers} ) { %>
-							<option value="<%= $es->{'uuid'} %>" <% if ($es->{'email'} eq $draft->{'from_email'}) { %>selected<% } %>><%= $es->{'email'} %></option>
-						<% } %>
-					</select>
-				</td>
-				<td>
-
-				</td>
-			</tr>
-			<tr>
-				<% my $email_templates = eval { return decode_json $settings->{'email_templates'} } || []; %>
-				<% if (scalar @{$email_templates} > 0) { %>
+		<div class="email_compose_bar">
+			<button class="email_discard" hint="Close without sending">Cancel</button>
+			<% if (scalar @{$drafts} > 1) { %>
+				<button class="email_draft_change" direction="prev" hint="Previous draft">&lsaquo;</button>
+				<button class="email_draft_change" direction="next" hint="Next draft">&rsaquo;</button>
+			<% } %>
+			<button class="email_send" hint="Send this message now">Send</button>
+		</div>
+		<div class="email_compose_fields">
+			<div class="email_compose_row">
+				<span class="email_compose_label">From</span>
+				<select class="email_compose_input email_compose_from" id="email_compose_from" value="<%= $draft->{'from_email'} %>">
+					<% foreach my $es ( @{$email_servers} ) { %>
+						<option value="<%= $es->{'uuid'} %>" <% if ($es->{'email'} eq $draft->{'from_email'}) { %>selected<% } %>><%= $es->{'email'} %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="email_compose_row">
+				<span class="email_compose_label">To</span>
+				<input type="email" id="email_compose_to" class="email_compose_input email_compose_to" value="<%= $email %>" placeholder="name@example.com">
+			</div>
+			<div class="email_compose_row">
+				<span class="email_compose_label">Cc</span>
+				<input type="text" id="email_compose_cc" class="email_compose_input email_compose_cc" value="<%= $draft->{'cc'} %>" placeholder="name@example.com">
+			</div>
+			<div class="email_compose_row">
+				<span class="email_compose_label">Bcc</span>
+				<input type="text" id="email_compose_bcc" class="email_compose_input email_compose_bcc" value="<%= $draft->{'bcc'} %>" placeholder="name@example.com">
+			</div>
+			<div class="email_compose_row">
+				<span class="email_compose_label">Subject</span>
+				<input type="text" id="email_compose_subject" class="email_compose_input email_compose_subject" value="<%= $draft->{'subject'} %>" magic_vars="<%= $magic_vars %>">
+				<%= include 'text_editor_legend', variables => $subject_variables, source_id => '', target => 'email_compose_subject' %>
+			</div>
+			<% my $email_templates = eval { return decode_json $settings->{'email_templates'} } || []; %>
+			<% if (scalar @{$email_templates} > 0) { %>
+				<div class="email_compose_row">
+					<span class="email_compose_label">Template</span>
 					<select class="email_template_select">
 						<option value=""></option>
 						<% foreach my $et ( @{$email_templates} ) { %>
 							<option value="<%= $et->{'uuid'} %>"><%= &subs::format_name($et->{'name'}) %></option>
 						<% } %>
 					</select>
-				<% } %>
-			</tr>
-			<tr>
-				<td><b>Timestamp: </b></td>
-				<td><input timestamp="<%= $timestamp %>" id="email_compose_timestamp" style="width:80%;" class="email_compose_input email_compose_timestamp time"></td>
-			</tr>
-			<tr>
-				<td><b>To: </b></td><td><input type="email" value="<%= $email %>" id="email_compose_to" style="width:80%;" class="email_compose_input email_compose_to"></td>
-				<input type="hidden" value="<%= $draft->{'uuid'} %>" id="email_compose_uuid" class="email_compose_input email_compose_uuid">
-			</tr>
-			<tr>
-				<td><b>Subject: </b></td><td>
-					<input type="text" id="email_compose_subject" style="width:80%;" class="email_compose_input email_compose_subject" value="<%= $draft->{'subject'} %>" magic_vars="<%= $magic_vars %>">
-					<%= include 'text_editor_legend', variables => $subject_variables, source_id => '', target => 'email_compose_subject' %>
-				</td>
-			</tr>
-			<tr>
-				<td><b>Attachments: </b></td>
-				<td>
-					<table class="email_attachments"><tbody><tr>
+				</div>
+			<% } %>
+			<div class="email_compose_row">
+				<span class="email_compose_label">Attach</span>
+				<table class="email_attachments"><tbody><tr>
 					<% my @seen; %>
 					<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>
 						<% next if grep { $att->{'uuid'} eq $_ } @seen; %>
 						<% push @seen, $att->{'uuid'}; %>
 						<%= include 'mail/email_attachment_preparer', att => $att %>
 					<% } %>
-					<button class="email_attachment_toggle">Add</button>
+					<button class="email_attachment_toggle" hint="Attach a file">Add</button>
 					<div style="display:none;width:100%;max-width:100%;overflow-x:scroll;" class="email_attachment_dialog"></div>
-					</tr></tbody></table>
-				</td>
-			</tr>
-		</table>
-		<textarea id="email_compose_body" style="height:80%;width:100%;" placeholder="Body" class="email_compose_input email_compose_body" upgradeable="yes" magic_vars="<%= $magic_vars %>"><%= $draft->{'body'} %></textarea>
+				</tr></tbody></table>
+			</div>
+		</div>
+		<input type="hidden" value="<%= $draft->{'uuid'} %>" id="email_compose_uuid" class="email_compose_input email_compose_uuid">
+		<input type="hidden" timestamp="<%= $timestamp %>" id="email_compose_timestamp" class="email_compose_input email_compose_timestamp time">
+		<textarea id="email_compose_body" class="email_compose_input email_compose_body" placeholder="Write your message" upgradeable="yes" magic_vars="<%= $magic_vars %>"><%= $draft->{'body'} %></textarea>
 		<% foreach my $att ( @{$attachments}, @{$draft->{'attachments'}} ) { %>
 			<% if ($att->{'html'}) { %>
 				<div class="email_attachment_embed" uuid="<%= $att->{'uuid'} %>">
@@ -89,5 +77,7 @@
 				</div>
 			<% } %>
 		<% } %>
-	<% } else { %>no servers<% } %>
+	<% } else { %>
+		<p class="email_compose_noserver">No mail server is set up yet. Open the gear and add one.</p>
+	<% } %>
 </div>

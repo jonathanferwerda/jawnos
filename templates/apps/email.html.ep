@@ -1,24 +1,26 @@
 <%# The Email app's panel: Mailbox's email section, moved out of the umbrella and
     into an app of its own. It keeps the wrapper id and the inner ids the shared
     public/js/mailbox.js drives (#mail, #mail_sidebar, #mailbox, #message,
-    #send_it) so the conversation, the pickers and the socket go on working; what
-    changes here is the shape - a mail client rather than the umbrella's panel.
+    #send_it) so the shared renderer and socket go on working; what changes here
+    is the shape - a mail client.
 
-    Layout: a toolbar (Folders / title / Compose / settings), then a body split
-    into a folder rail on the left and the message list on the right. The shared
-    conversation partial is kept in the DOM (so the socket and composer still
-    work) but is hidden until the rail is toggled, when it overlays the list.
+    Layout: a toolbar (folders, title, search, Compose, settings), then a body
+    split into a folder rail on the left and, on the right, the message list. A
+    letter opens in the same place, over the list, with a Back button back to it
+    (not the window drawer). Reply / Reply all / Forward are in the reading pane.
     Styling lives in public/css/manager.css, scoped to .wind[app="email"], so
-    nothing here reaches Mailbox or Chat. %>
+    nothing here reaches Mailbox or Chat. The shared conversation partial is kept
+    in the DOM (so the socket and the composer still work) but is never shown:
+    this window is email only. %>
 <% no warnings 'uninitialized'; %>
 <style>
 	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
 </style>
 <div id="mail" class="email_app">
 	<div id="mail_toolbar">
-		<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Folders" class="little_thumb hover" id="mail_hamburger">
+		<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Folders" class="little_thumb hover" id="email_rail_toggle">
 		<span class="email_title">Email</span>
-		<span class="email_toolbar_spacer"></span>
+		<input type="search" id="email_search" class="email_search" placeholder="Search mail" hint="Filter the list by sender or subject">
 		<button id="email_compose" class="email_compose_button" hint="Write a new email">Compose</button>
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Server settings" class="little_thumb email_config_toggle hover">
 	</div>
@@ -50,6 +52,12 @@
 					<% } else { %>
 						<%= include 'mail/email_folder', settings => $settings %>
 					<% } %>
+				</div>
+				<div id="mail_reader" style="display:none;">
+					<div id="mail_reader_bar">
+						<button id="mail_reader_back" hint="Back to the list">&lsaquo; Back</button>
+					</div>
+					<div id="mail_reader_content"></div>
 				</div>
 				<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
 			</div>

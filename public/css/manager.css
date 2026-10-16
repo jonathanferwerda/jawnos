@@ -1559,7 +1559,7 @@ body.dark_theme #ide {
 
 /* the thread pane: hidden until the rail is toggled, then it covers the list */
 .wind[app="email"] #conversation {
-	display: none; position: absolute; inset: 0; z-index: 6; box-sizing: border-box;
+	display: none !important; position: absolute; inset: 0; z-index: 6; box-sizing: border-box;
 	padding: 10px 12px; margin: 0 !important;
 	width: auto !important; height: auto !important; bottom: 0 !important;
 	background-color: var(--panel); border: none !important; border-radius: 0 !important;
@@ -1623,6 +1623,72 @@ body.dark_theme #ide {
 	height: 320px !important; width: 100% !important; box-sizing: border-box;
 	font-family: inherit; font-size: 16px; padding: 12px; border-radius: 12px;
 }
+
+/* the Help "?" opens the Guide associate - a chat panel - and this window is
+	 email only, so it is not offered here */
+.wind[app="email"] .email_help_button { display: none !important; }
+
+/* the search box sits at the right, before Compose */
+.wind[app="email"] #email_search {
+	margin-left: auto; flex: 0 1 260px; height: 32px; min-height: 0;
+	font-size: 15px; padding: 4px 14px; border-radius: 16px;
+	border: 1px solid var(--line); background-color: var(--panel); color: var(--ink);
+}
+
+/* an unread inbox row is bold; a read one is not */
+.wind[app="email"] #mail_list tbody tr.email_message[folder="inbox"][seen="no"] .email_party,
+.wind[app="email"] #mail_list tbody tr.email_message[folder="inbox"][seen="no"] .email_subject { font-weight: 700; }
+.wind[app="email"] #mail_list tbody tr.email_message .email_row_tools { text-align: right; }
+
+/* the reading pane: the letter over the list, with a Back bar */
+.wind[app="email"] #mail_reader { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.wind[app="email"] #mail_reader_bar {
+	flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+	padding: 10px 14px; background-color: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.wind[app="email"] #mail_reader_back {
+	height: 32px; padding: 0 16px; font-size: 15px;
+	border: 1px solid var(--line); border-radius: 16px; background-color: var(--panel); color: var(--ink);
+}
+.wind[app="email"] #mail_reader_back:hover { background-color: var(--panel-2); }
+.wind[app="email"] #mail_reader_content { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.wind[app="email"] .mail_reader_actions { display: flex; align-items: center; gap: 8px; padding: 12px 16px 4px; }
+.wind[app="email"] .mail_reader_actions .mail_action {
+	height: 32px; padding: 0 14px; font-size: 15px;
+	border: 1px solid var(--line); border-radius: 8px; background-color: var(--panel); color: var(--ink);
+}
+.wind[app="email"] .mail_reader_actions .mail_action:hover { background-color: var(--panel-2); }
+.wind[app="email"] .mail_reader_subject { margin: 8px 16px 6px; font-size: 20px; }
+.wind[app="email"] .mail_reader_meta { width: auto; margin: 0 16px 12px; border-collapse: collapse; }
+.wind[app="email"] .mail_reader_meta td { padding: 2px 14px 2px 0; font-size: 14px; vertical-align: top; }
+.wind[app="email"] .mail_reader_meta td:first-child { color: var(--ink-muted); white-space: nowrap; }
+.wind[app="email"] .mail_reader_body { padding: 0 16px 24px; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.wind[app="email"] .mail_reader_att {
+	display: inline-block; margin: 0 6px 4px 0; padding: 2px 10px;
+	border: 1px solid var(--line); border-radius: 12px; font-size: 13px;
+}
+
+/* the compose form in the pane: Cancel and Send on a bar, then labelled fields
+	 and the body filling what is left */
+.wind[app="email"] .email_compose_form { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
+.wind[app="email"] .email_compose_bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background-color: var(--panel-2); }
+.wind[app="email"] .email_compose_bar .email_discard { height: 32px; padding: 0 16px; font-size: 15px; border: 1px solid var(--line); border-radius: 16px; background-color: var(--panel); }
+.wind[app="email"] .email_compose_bar .email_draft_change { width: 32px; height: 32px; font-size: 16px; }
+.wind[app="email"] .email_compose_bar .email_send {
+	margin-left: auto; height: 34px; padding: 0 22px; font-size: 15px; font-weight: 600;
+	background-color: #7542ff; color: #ffffff; border: none; border-radius: 17px;
+}
+.wind[app="email"] .email_compose_bar .email_send:hover { filter: brightness(1.12); }
+.wind[app="email"] .email_compose_fields { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 4px; }
+.wind[app="email"] .email_compose_row { display: flex; align-items: center; gap: 10px; }
+.wind[app="email"] .email_compose_label { flex: 0 0 76px; text-align: right; color: var(--ink-muted); font-size: 14px; }
+.wind[app="email"] .email_compose_row input,
+.wind[app="email"] .email_compose_row select { flex: 1 1 auto; min-width: 0; width: auto; }
+.wind[app="email"] .email_compose_fields .email_attachments { flex: 1 1 auto; margin: 0; }
+.wind[app="email"] .email_compose_noserver { padding: 20px; color: var(--ink-muted); }
+
+/* the reading pane scrolls as a whole */
+.wind[app="email"] #mail_reader_content > .email_compose_form { flex: 1 1 auto; }
 
 /* on a narrow window the rail shrinks and the list keeps a single readable column */
 @media (max-width: 700px) {

@@ -42,6 +42,18 @@ function mailAppScope() {
 	return '';
 }
 
+// Where a letter is read: the Email app owns a pane of its own (#mail_reader,
+// opened over the list with a Back button); every other mail window keeps the
+// window drawer. One dispatcher so the handlers below stay app-agnostic.
+function mailReaderOpen(app, html) {
+	if (app == 'email' && typeof emailReaderOpen == 'function' && $('#mail_reader').length) { emailReaderOpen(html); return; }
+	windowDrawerOpener(app, html);
+}
+function mailReaderClose(app) {
+	if (app == 'email' && typeof emailReaderClose == 'function' && $('#mail_reader').length) { emailReaderClose(); return; }
+	windowDrawerCloser(app);
+}
+
 function mailMaker(incomingData, app) {
 	if (!incomingData) { incomingData = {}; }
 	var jData = JSON.stringify(incomingData);
@@ -372,7 +384,7 @@ $(document).on('click', '.email_message', function(e) {
 			type: 'GET',
 			data: { uuid: uuid },
 			success: function(response) {
-				windowDrawerOpener(app, response.html);
+				mailReaderOpen(app, response.html);
 			}
 		});
 	}
@@ -413,7 +425,7 @@ function emailCompose(app,draft_selection) {
 		type: 'GET',
 		data: { email: email, app: app, draft_selection: draft_selection },
 		success: function(response) {
-			windowDrawerOpener(app, response.html);
+			mailReaderOpen(app, response.html);
 		}
 	});
 }
@@ -424,7 +436,7 @@ $(document).on('click', '.email_discard', function() {
 	if (uuid) {
 		mailDeleteMessage(uuid);
 	}
-	windowDrawerCloser('mailbox');
+	mailReaderClose($(this).closest('.wind').attr('app'));
 });
 
 function mailDeleteMessage(uuid) {
@@ -447,6 +459,8 @@ $(document).on('keyup, change', '.email_compose_input', function() {
 		var message = {
 			from: '',
 			to: '',
+			cc: '',
+			bcc: '',
 			subject: '',
 			body: '',
 			timestamp: '',
@@ -586,6 +600,8 @@ $(document).on('click', '.email_send', function() {
 		var message = {
 			from: '',
 			to: '',
+			cc: '',
+			bcc: '',
 			subject: '',
 			body: '',
 			timestamp: Date.now(),
@@ -625,7 +641,7 @@ $(document).on('click', '.email_send', function() {
 					'filter': 'grayscale(0)'
 				});
 				if (response == 'success') {
-					windowDrawerCloser(app);
+					mailReaderClose(app);
 				}
 			}
 		});
