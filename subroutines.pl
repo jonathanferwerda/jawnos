@@ -4890,19 +4890,24 @@ sub name_change_pairs {
 		next unless exists $new_by{$o->{'setting'}};
 		next if $seen{$o->{'setting'}}++;
 		my $setting = $o->{'setting'};
-		# A value that is still the house's default is nothing anybody chose, so
-		# between it and a value somebody set, the set one is the one to keep: the
-		# panel pre-selects it rather than making every row be decided by hand.
-		my $default = &subs::default_setting_value($setting);
-		my $old_default = (defined $default && $o->{'value'} eq $default) ? 1 : 0;
-		my $new_default = (defined $default && $new_by{$setting} eq $default) ? 1 : 0;
+		my $old_value = $o->{'value'};
+		my $new_value = $new_by{$setting};
+		# nothing to choose when both sides already say the same thing: a row per
+		# shared setting buried the handful that actually differ
+		next if (defined $old_value && defined $new_value && $old_value eq $new_value);
+		# A value that is still what a brand-new app would be born with is nothing
+		# anybody chose, so between it and a value somebody set, the set one is the
+		# one to keep: the panel pre-selects it rather than making every row be
+		# decided by hand.
+		my $old_default = &subs::setting_is_default($setting, $app, $old_value) ? 1 : 0;
+		my $new_default = &subs::setting_is_default($setting, $new_app, $new_value) ? 1 : 0;
 		my $prefer = '';
 		$prefer = 'old' if $old_default && !$new_default;
 		$prefer = 'new' if $new_default && !$old_default;
 		push @pairs, {
 			setting => $setting,
-			old_value => $o->{'value'},
-			new_value => $new_by{$setting},
+			old_value => $old_value,
+			new_value => $new_value,
 			old_default => $old_default,
 			new_default => $new_default,
 			prefer => $prefer,
@@ -4912,29 +4917,34 @@ sub name_change_pairs {
 	return \@pairs;
 }
 
-# What a brand-new app is born with (setting_initializer): the me app's worth,
-# duration, currency, unit and warranty, and a handful of fixed ones. A value
-# equal to one of these is the house's default rather than a choice somebody
-# made; undef when a setting has no such comparable default (colour, notes, a
-# phone number, an address - those are always somebody's).
+# Is this value just what a brand-new app would be born with (setting_initializer)?
+# True for the fixed ones (visible, permanent, cost, enc, public, schedule,
+# navigation), for the me app's worth, duration, currency, unit and warranty - on
+# any device, since a default made on the phone is still the default here, and the
+# me rows are per device - and for the app's own name as its notification line.
+# Anything else is a value somebody chose for this app.
 my %setting_defaults_memo;
-sub default_setting_value {
-	my ($setting) = @_;
+sub setting_is_default {
+	my ($setting, $app, $value) = @_;
+	return 0 unless defined $value && length $value;
 	my %fixed = (
 		visible => 'checked', permanent => 'checked', cost => '0', enc => 'on',
 		public => 'off', schedule => 'once', navigation => 'none',
 	);
-	return $fixed{$setting} if exists $fixed{$setting};
-	return undef unless grep { $_ eq $setting } qw/worth duration currency unit warranty/;
+	return 1 if exists $fixed{$setting} && $value eq $fixed{$setting};
+	return 1 if $setting eq 'notification_text' && $value eq &subs::format_name($app || '');
+	return 0 unless grep { $_ eq $setting } qw/worth duration currency unit warranty/;
 	unless (scalar keys %setting_defaults_memo) {
-		my $me = &subs::settings_grabber({ app => 'me' }) || {};
 		foreach my $k ( qw/worth duration currency unit warranty/ ) {
-			$setting_defaults_memo{$k} = $me->{$k};
+			my $rows = &subs::db_query('select value from settings where app = ? and setting = ?', 'me', $k)->hashes;
+			foreach my $r ( @{$rows} ) {
+				next unless defined $r->{'value'} && length $r->{'value'};
+				$setting_defaults_memo{$k}->{ $r->{'value'} } = 1;
+			}
 		}
 	}
-	my $value = $setting_defaults_memo{$setting};
-	return undef unless defined $value && length $value;
-	return $value;
+	return 1 if $setting_defaults_memo{$setting} && $setting_defaults_memo{$setting}->{$value};
+	return 0;
 }
 
 # How two values of a setting join: nfc and measures are lists at heart, so a
