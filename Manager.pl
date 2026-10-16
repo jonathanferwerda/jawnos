@@ -6291,8 +6291,8 @@ websocket '/manager/tunnel/ws' => sub ($c) {
 	# so the blocking sesh_check never stalls the websocket loop.
 	&subs::subprocessor(sub {
 		sleep 1;  # let the peer's peer_session settle before we dial it
-		&subs::tunnel_peer_connect($signatorial);
-	}, { name => 'tunnel peer connect ' . substr($signatorial, 0, 8) });
+		&subs::tunnel_peer_enrol($signatorial);
+	}, { name => 'tunnel peer enrol ' . substr($signatorial, 0, 8) });
 };
 
 post '/manager/tunnel/alive' => sub($c) {

@@ -11325,7 +11325,8 @@ sub tunnel_port_mapper() {
 }
 
 sub tunnel_peer_connect() {
-	my $signatorial = shift || return;
+	my ($signatorial, $filename) = @_;
+	return unless $signatorial;
 	# The hub reaches a tunnelled peer through the hub-side port the tunnel
 	# reserved (remote_device_connect rewrites the manager to that 127.0.0.1
 	# port); the peer's own address still rides in the tunnel's host, so the
@@ -11333,11 +11334,24 @@ sub tunnel_peer_connect() {
 	# step: the data plane is up by the time this is called, so the peer answers
 	# and remote_device_connect files (or refreshes) the roster row - the buttons,
 	# the tunnel flag and the hub-side manager that remote_upgrade targets.
+	#
+	# The peer's /sesh_check only authenticates when it is handed a database to
+	# open (a backup path, exactly what the Dev panel's Connect button sends), so
+	# a filename is required - the caller gets one from the peer's own /gate
+	# restore list. Without it the handshake answers unapproved and no row is filed.
 	my $tuns = &subs::tunnel_port_mapper({ signatorial => $signatorial });
 	my $ip = $tuns->{'host'} || '127.0.0.1';
+	unless ($filename) {
+		my $row = &subs::remote_machine_lister({ signatorial => $signatorial, limit => 1 });
+		my $data = ref $row->{'data'} eq 'HASH' ? $row->{'data'} : (eval { decode_json($row->{'data'} || '{}') } || {});
+		$filename = $data->{'database'};
+	}
 	my $enrollee = eval { &Manager::remote_device_connect({
 		manager => 'https://127.0.0.1:' . ($tuns->{'PORT_AHOY'} || $ENV{PORT_AHOY}) . '/manager',
+		filename => $filename,
 		ip => $ip,
+		port => $tuns->{'PORT_AHOY'},
+		port_dock => $tuns->{'PORT_DOCK'},
 		password => &subs::suds_grabber(),
 		name => &subs::setting_grabber({ app => 'me', setting => 'my_name' }),
 		timestamp => &subs::rightNow(),
@@ -11393,7 +11407,16 @@ sub tunnel_peer_enrol {
 			&subs::db_update('devices', { address => encode_json $address }, { uuid => $me->{'uuid'} }) if $changed;
 		}
 	}
-	return &subs::tunnel_peer_connect($signatorial);
+	# the backup path the peer's /sesh_check must be handed to open (prefer the
+	# current snapshot) - the same file the Dev panel's Connect button would send
+	my $filename;
+	if ($body && ref $body->{'restore_list'} eq 'ARRAY') {
+		foreach my $b ( @{ $body->{'restore_list'} } ) {
+			if (($b->{'archive'} || '') eq 'current') { $filename = $b->{'filename'}; last; }
+		}
+		$filename ||= $body->{'restore_list'}->[0]->{'filename'};
+	}
+	return &subs::tunnel_peer_connect($signatorial, $filename);
 }
 
 sub system_monitor() {
