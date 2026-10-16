@@ -331,7 +331,12 @@ static void ble_frame_ingest(const String &rawInput) {
 
 class MyCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
-    String rawInput = String(pCharacteristic->getValue().c_str());
+    // A chunk can be binary: a compressed payload arrives as zlib bytes, and
+    // c_str() stops at the first NUL - which truncated every compressed part and
+    // made the inflate fail on a mangled stream (jw.ino's note; the deck kept the
+    // old one-arg form, so the room/now_me push never inflated). Copy the length.
+    auto value = pCharacteristic->getValue();
+    String rawInput(value.c_str(), (unsigned int)value.length());
     ble_frame_ingest(rawInput);
   }
 };

@@ -26363,6 +26363,9 @@ sub now_me($data) {
 				message => { type => 'room', data => { room => 1, payload => $room_payload } }
 			});
 		}
+		# say so, rather than fall through to the empty {} the caller then
+		# rendered as HASH(0x...) and read as a button that did nothing
+		return 'pushed over bluetooth';
 	}
 	elsif ($link && $link eq 'http') {
 		my $res = $ua->insecure(1)->get($watch_home)->result;
