@@ -243,6 +243,18 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# mDNS is how a device names itself the moment it joins: fold what the local
+	# network advertises (_jawnos._tcp, plus a printer on _ipp._tcp) into this
+	# machine's device row on a short tick, so a plugged-in watch, deck or pico
+	# appears with its purpose and abilities without anyone pressing Scan.
+	&subs::subprocessor(sub {
+		sleep 12;
+		while (1) {
+			eval { &subs::device_mdns_sync(); };
+			sleep 15;
+		}
+	}, { name => 'device mdns sync' });
+
 	# A peer's Ollama model list is cached on a slower tick, so Plat can offer
 	# models by the machine they run on without waiting on the network.
 	&subs::subprocessor(sub {

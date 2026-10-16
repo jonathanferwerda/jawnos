@@ -2167,8 +2167,12 @@ sub mdns_browse() {
 		my @f = split /;/, $line, 10;
 		my (undef, undef, undef, $name, $stype, undef, $host, $addr, $port, $txt) = @f;
 		next unless $addr && $addr =~ /^\d{1,3}(\.\d{1,3}){3}$/;
-		my $mac;
-		$mac = lc $1 if $txt && $txt =~ /\bmac=([0-9a-fA-F:]{17})/;
+		my %fields;
+		foreach my $kv ($txt ? $txt =~ /"([^"]*)"/g : ()) {
+			my ($k, $v) = split /=/, $kv, 2;
+			$fields{$k} = $v if defined $v;
+		}
+		my $mac = ($fields{'mac'} && $fields{'mac'} =~ /^[0-9a-fA-F:]{17}$/) ? lc $fields{'mac'} : undef;
 		my ($ty) = $txt ? $txt =~ /\bty=([^"]+?)\s*"/ : ();
 		my ($pr) = $txt ? $txt =~ /\bproduct=\(([^)]+)\)/ : ();
 		push @records, {
@@ -2177,8 +2181,10 @@ sub mdns_browse() {
 			ip => $addr,
 			port => $port,
 			mac => $mac,
-			name => $ty || $pr || $name,
-			model => $pr || $ty,
+			name => $fields{'name'} || $ty || $pr || $name,
+			model => $fields{'model'} || $pr || $ty,
+			txt => $txt,
+			fields => \%fields,
 		};
 	}
 	return \@records;
@@ -2197,6 +2203,110 @@ sub mdns_printers() {
 		$by_mac{$r->{'mac'}} ||= $r if $r->{'mac'};
 	}
 	return { by_ip => \%by_ip, by_mac => \%by_mac };
+}
+
+# The JawnOS devices the local network advertises on _jawnos._tcp, keyed by
+# address, MAC and chip_id so a scanned device is recognised however it is known.
+# The firmware puts purpose/model/caps in the TXT records (see jw/jt/alarmclock).
+sub mdns_devices() {
+	my $records = &mdns_browse('_jawnos._tcp');
+	my (%by_ip, %by_mac, %by_chip);
+	foreach my $r (@{$records}) {
+		my $f = $r->{'fields'} || {};
+		my $dev = {
+			ip => $r->{'ip'},
+			port => $f->{'port'} || $r->{'port'},
+			chip_id => $f->{'chip_id'},
+			name => $f->{'name'} || $r->{'name'},
+			purpose => $f->{'purpose'},
+			model => $f->{'model'} || $r->{'model'},
+			mac => ($f->{'mac'} && $f->{'mac'} =~ /^[0-9a-fA-F:]{17}$/) ? lc $f->{'mac'} : $r->{'mac'},
+			capabilities => $f->{'caps'},
+			hostname => $r->{'hostname'},
+		};
+		$by_ip{$dev->{'ip'}} ||= $dev;
+		$by_mac{$dev->{'mac'}} ||= $dev if $dev->{'mac'};
+		$by_chip{$dev->{'chip_id'}} ||= $dev if $dev->{'chip_id'};
+	}
+	return { by_ip => \%by_ip, by_mac => \%by_mac, by_chip => \%by_chip };
+}
+
+# Fold what mDNS knows into an address map in place: name the JawnOS devices and
+# the printers on each network, and add any the neighbour read missed, so a
+# device answers what it is the moment it appears. Returns 1 if anything changed.
+sub mdns_merge_address() {
+	my ($address) = @_;
+	return 0 unless ref $address eq 'HASH';
+	my $devices = &mdns_devices();
+	my $printers = &mdns_printers();
+	# never list this machine among the devices it found
+	my %self_ip = map { $_->{'ip'} => 1 } grep { $_->{'ip'} } values %{$address};
+	my $changed = 0;
+	foreach my $nic (keys %{$address}) {
+		my $nic_ip = $address->{$nic}->{'ip'};
+		next unless $nic_ip && $nic_ip !~ /^127\./;
+		$address->{$nic}->{'neigh'} ||= [];
+		my $neigh = $address->{$nic}->{'neigh'};
+		foreach my $n (@{$neigh}) {
+			my $d = $devices->{'by_ip'}->{$n->{'ip'}}
+				|| ($n->{'mac'} ? $devices->{'by_mac'}->{$n->{'mac'}} : undef)
+				|| ($n->{'chip_id'} ? $devices->{'by_chip'}->{$n->{'chip_id'}} : undef);
+			my $p = $d ? undef : ($printers->{'by_ip'}->{$n->{'ip'}} || ($n->{'mac'} ? $printers->{'by_mac'}->{$n->{'mac'}} : undef));
+			my $src = $d || $p;
+			next unless $src;
+			if (!$n->{'purpose'} || $n->{'purpose'} eq 'hmmm') {
+				my $want = $d ? $src->{'purpose'} : 'printer';
+				if ($want) { $n->{'purpose'} = $want; $changed = 1; }
+			}
+			foreach my $f (qw/name model chip_id capabilities/) {
+				next unless $src->{$f} && !$n->{$f};
+				$n->{$f} = $src->{$f}; $changed = 1;
+			}
+			if ($src->{'mac'} && (!$n->{'mac'} || $n->{'mac'} !~ /^[0-9a-f:]{17}$/i)) {
+				$n->{'mac'} = $src->{'mac'}; $changed = 1;
+			}
+			if ($d && $d->{'port'} && !$n->{'PORT_DOCK'}) { $n->{'PORT_DOCK'} = $d->{'port'}; $changed = 1; }
+		}
+		foreach my $d (values %{$devices->{'by_ip'}}) {
+			next if $self_ip{$d->{'ip'}};
+			next unless &same_net_test($d->{'ip'}, $nic_ip) eq 'yes';
+			next if grep { $_->{'ip'} eq $d->{'ip'} } @{$neigh};
+			push @{$neigh}, {
+				ip => $d->{'ip'}, mac => $d->{'mac'} || &subs::random_string_creator(10),
+				uuid => &subs::random_string_creator(25), purpose => $d->{'purpose'},
+				name => $d->{'name'}, model => $d->{'model'}, chip_id => $d->{'chip_id'},
+				capabilities => $d->{'capabilities'}, PORT_DOCK => $d->{'port'},
+			};
+			$changed = 1;
+		}
+		foreach my $p (values %{$printers->{'by_ip'}}) {
+			next if $self_ip{$p->{'ip'}};
+			next unless &same_net_test($p->{'ip'}, $nic_ip) eq 'yes';
+			next if grep { $_->{'ip'} eq $p->{'ip'} } @{$neigh};
+			push @{$neigh}, {
+				ip => $p->{'ip'}, mac => $p->{'mac'} || &subs::random_string_creator(10),
+				uuid => &subs::random_string_creator(25), purpose => 'printer',
+				name => $p->{'name'}, model => $p->{'model'},
+			};
+			$changed = 1;
+		}
+	}
+	return $changed;
+}
+
+# The light half of a scan, on a timer: fold what mDNS knows into this machine's
+# own device row, so a device plugged in is named within seconds without running
+# the whole interface scan. Writes only when something changed.
+sub device_mdns_sync() {
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my $row = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+	return unless $row && $row->{'address'};
+	my $address = eval { decode_json $row->{'address'} } || {};
+	return unless ref $address eq 'HASH' && %{$address};
+	return unless &mdns_merge_address($address);
+	my $now = &rightNow();
+	&subs::db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, { hostname => $hostname });
 }
 
 # An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->
@@ -2596,36 +2706,10 @@ sub device_scan() {
 		}
 	}
 
-	# mDNS tells us what a device is even when nothing answers its HTTP gate: a
-	# printer advertises _ipp._tcp, so read the printers off the local network,
-	# mark the matching device (or add it when the sweep missed it entirely).
-	if ($load_type eq 'scan') {
-		my $printers = &mdns_printers();
-		foreach my $nic (keys %{$address}) {
-			my $nic_ip = $address->{$nic}->{'ip'};
-			next unless $nic_ip && $nic_ip !~ /^127\./;
-			foreach my $n (@{$address->{$nic}->{'neigh'} || []}) {
-				my $p = $printers->{'by_ip'}->{$n->{'ip'}} || ($n->{'mac'} ? $printers->{'by_mac'}->{$n->{'mac'}} : undef);
-				next unless $p;
-				$n->{'purpose'} = 'printer' unless $n->{'purpose'} && $n->{'purpose'} ne 'hmmm';
-				$n->{'name'} ||= $p->{'name'};
-				$n->{'model'} ||= $p->{'model'};
-			}
-			foreach my $ip (keys %{$printers->{'by_ip'}}) {
-				next unless &same_net_test($ip, $nic_ip) eq 'yes';
-				next if grep { $_->{'ip'} eq $ip } @{$address->{$nic}->{'neigh'} || []};
-				my $p = $printers->{'by_ip'}->{$ip};
-				push @{$address->{$nic}->{'neigh'}}, {
-					ip => $ip,
-					mac => $p->{'mac'} || &subs::random_string_creator(10),
-					uuid => &subs::random_string_creator(25),
-					purpose => 'printer',
-					name => $p->{'name'},
-					model => $p->{'model'},
-				};
-			}
-		}
-	}
+	# mDNS names what the neighbour read cannot: a JawnOS device on _jawnos._tcp
+	# says its purpose, model and abilities, and a printer says it is a printer,
+	# so the devices answer for themselves the moment they join the network.
+	&mdns_merge_address($address) if $load_type eq 'scan';
 
 	my $json_address = encode_json $address;
 

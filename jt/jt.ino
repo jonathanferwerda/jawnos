@@ -5,6 +5,9 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <WiFiAP.h>
+// ESPmDNS: advertise this deck on _jawnos._tcp so a scan names it at once (see
+// the server's subs::mdns_devices).
+#include <ESPmDNS.h>
 // WebServer.h wants FS (and <functional>) declared before it sees them
 #include "FS.h"
 #include "FFat.h"
@@ -1487,6 +1490,29 @@ void notification_display(String title, String notification) {
   }
 }
 
+// What this device is, advertised over mDNS: purpose, model and abilities.
+#define JAWNOS_CAPS "screen,touch,keyboard,trackball,mic,speaker,gps,lora,ble,wifi,sd"
+
+static bool jawnos_mdns_up = false;
+static void jawnos_mdns_start() {
+  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
+  String chip_id = chip_id_maker();
+  String host = "jawn-" + chip_id;
+  if (!MDNS.begin(host.c_str())) {
+    deckLog("%s", "[mdns] begin failed");
+    return;
+  }
+  MDNS.addService("jawnos", "tcp", 3000);
+  MDNS.addServiceTxt("jawnos", "tcp", "chip_id", chip_id.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "name", name.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "purpose", "teletype");
+  MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Deck");
+  MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
+  MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
+  jawnos_mdns_up = true;
+  deckLog("[mdns] jawnos._tcp up as %s", host.c_str());
+}
+
 void wifi_server() {
   if (ssid == "" && password == "") {
     wifi_enabled = false;
@@ -1526,6 +1552,7 @@ void wifi_server() {
           server.begin();
           webserver_enabled = true;
           wifi_enabled = true;
+          jawnos_mdns_start();
           return;
           break;
         default:

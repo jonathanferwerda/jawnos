@@ -133,20 +133,24 @@ with a ping-sweep fallback, private ranges only; only resolved rows are kept, so
 a half-resolved ARP entry is not mistaken for a device). The **Dev** panel is
 grouped by network: one section per subnet (its address, the machines and
 interfaces that reach it) over the device tables, with the machines named once
-above. A printer is recognised by itself from mDNS (`subs::mdns_printers`,
-`_ipp._tcp`), so it is marked `printer` with its own name, and the Market
-scanner finds it with no tap. A scan no longer prunes a device it has a reason
-to keep - one the person locked, a machine in the mesh (a `remote_machine`, or
-anything that named itself), or one carrying a real purpose - so an away machine
-(or an away printer) stays listed.
+above. A scan no longer prunes a device it has a reason to keep - one the person
+locked, a machine in the mesh, or one carrying a real purpose - so an away
+machine (or an away printer) stays listed.
+
+**A device names itself as it joins.** jw, jt and the alarmclock advertise
+`_jawnos._tcp` over mDNS (the built-in `ESPmDNS` on the ESP32s, `SimpleMDNS` on
+the Pico 2 W) carrying chip_id, name, purpose, model and its abilities; a printer
+is recognised the same way from `_ipp._tcp`. `subs::mdns_merge_address` folds
+those records into the device row - naming the device, or adding one the
+neighbour read missed - and `subs::device_mdns_sync` runs that on a 15-second tick
+(`President.pl`), so a plugged-in watch, deck or pico is listed with its purpose
+and abilities within seconds and without a Scan.
 
 Still to do:
-- **mDNS on the devices themselves** - advertise a `_jawnos._tcp` service from
-  jw and jt (ESP32, the built-in `ESPmDNS`) and the alarmclock (Pico 2 W, an
-  lwIP/ArduinoMDNS responder) carrying the chip_id and purpose, so the server
-  names each device without waiting on the HTTP probe (the server side is
-  `subs::mdns_browse`, ready for any service type).
-- A scan **cadence**, so a new device surfaces without pressing Scan.
+- A full scan **cadence** (the mDNS tick covers the devices; the nmap sweep still
+  runs only on Scan).
+- A device's abilities are shown but not yet acted on (the `App`/Embedded panels
+  do not yet read `capabilities` to offer only what a device can do).
 
 ## Shopping / Market / warehouse
 

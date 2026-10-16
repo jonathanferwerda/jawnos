@@ -96,6 +96,7 @@
 													<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
 													<% if ($n->{'chip_id'}) { %><br><span style="opacity:.6;font-size:88%;"><%= $n->{'chip_id'} %></span><% } %>
 													<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
+													<% if ($n->{'capabilities'}) { %><br><span class="pill" hint="abilities"><%= $n->{'capabilities'} %></span><% } %>
 													<% if ($n->{'tunnel'}) { %><br><span class="pill">Tunnel</span><% } %>
 												</td>
 												<td class="remote_manager" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>">
