@@ -105,6 +105,9 @@ long offset;
 static bool webserver_enabled;// = true;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
+// set by the {type:'wifi'} BLE message: the panel hands a device that has never
+// joined a network its credentials, and loop() joins (wifi_server blocks)
+static volatile bool wifi_join_requested = false;
 // Bluetooth (Nordic UART Service), ported from the watch. A saved config that
 // says "on" only sets btStartPending: bringing the stack up inside setup()
 // panicked the watch, and loop() starts it once the boot has settled.
@@ -1933,8 +1936,29 @@ void loop() {
           }
           deckLog("[bt] toggles applied");
         }
+        else if (mtype == "wifi") {
+          // the panel sent our network credentials over BLE (a deck that has
+          // never joined a network cannot fetch them). Store them and let loop()
+          // join; wifi_server() blocks, and this dispatch is the main loop.
+          JSONVar w = btMsg["data"];
+          if (w.hasOwnProperty("ssid")) { ssid = (const char *)w["ssid"]; }
+          if (w.hasOwnProperty("password")) { password = (const char *)w["password"]; }
+          if (w.hasOwnProperty("ap_ssid")) { ap_ssid = (const char *)w["ap_ssid"]; }
+          if (w.hasOwnProperty("ap_password")) { ap_password = (const char *)w["ap_password"]; }
+          wifi_enabled = true;
+          wifi_join_requested = true;
+          deckLog("[bt] wifi credentials received");
+        }
       }
     }
+  }
+
+  // the panel handed us network credentials over BLE: join now (the same
+  // blocking join the deck's Net-room WiFi button runs)
+  if (wifi_join_requested) {
+    wifi_join_requested = false;
+    deckLog("[wifi] joining from BLE credentials");
+    wifi_server();
   }
 
   // the bridge just came up: ask for anything that changed while it was down,
