@@ -135,6 +135,10 @@ bool deviceConnected = false;
 QueueHandle_t bleIncomingQueue = NULL;
 // when the bridge last showed up; loop() uses it to ask for missed state
 volatile uint32_t ble_connected_at = 0;
+// the central the bridge attached: its address, and its name once the daemon says
+// hello. The net room's BT line (ip_writer) shows one or the other.
+static char ble_peer_addr[18] = "";
+static char ble_peer_name[32] = "";
 
 // The bridge daemon frames a payload that does not fit one write as
 // "<i>/<n>:" + chunk (i is 0-based). A write with no such prefix is a whole
@@ -234,17 +238,40 @@ static void ble_send(JSONVar message) {
   ble_notify_payload(JSON.stringify(message));
 }
 
+static void ble_peer_grab(uint8_t *b) {
+  snprintf(ble_peer_addr, sizeof(ble_peer_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           b[0], b[1], b[2], b[3], b[4], b[5]);
+  ble_peer_name[0] = '\0';     // until the daemon says hello
+}
+
 class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     deviceConnected = true;
     ble_notify_ready = false;   // until the central subscribes to the TX characteristic
     ble_connected_at = millis();
-    deckLog("[bt] central attached");
+    // the address comes straight from the host: this callback always runs, where
+    // the address-carrying overload of the pair sits behind a config macro the
+    // sketch's compile unit does not reliably see
+    struct ble_gap_conn_desc conn_desc;
+    if (ble_gap_conn_find((uint16_t)pServer->getConnId(), &conn_desc) == 0) {
+      uint8_t *b = conn_desc.peer_id_addr.val;
+      bool zero = true;
+      for (int i = 0; i < 6; i++) {
+        if (b[i] != 0) { zero = false; break; }
+      }
+      if (zero) {
+        b = conn_desc.peer_ota_addr.val;   // no identity without bonding
+      }
+      ble_peer_grab(b);
+    }
+    deckLog("[bt] central attached: %s", ble_peer_addr);
   };
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
     ble_notify_ready = false;
     ble_connected_at = 0;
+    ble_peer_addr[0] = '\0';
+    ble_peer_name[0] = '\0';
     // Bluedroid stops advertising when a central attaches and never resumes
     // it on its own: without this the phone cannot come back after a drop
     // until the deck is rebooted or the radio toggled
@@ -5045,6 +5072,32 @@ void ip_writer() {
   }
   else {
     tft.drawString(homebaseIP, 200, 130);
+  }
+
+  // the BT line, like the watch's: the bridge's own name when it sent one, else
+  // the address the connect carried, else the state of the radio
+  {
+    char bt_line[40];
+    uint16_t bt_colour = TFT_WHITE;
+    if (!bt_enabled) {
+      snprintf(bt_line, sizeof(bt_line), "BT: off");
+      bt_colour = TFT_LIGHTGREY;
+    }
+    else if (deviceConnected) {
+      const char *who = ble_peer_name[0] ? ble_peer_name : (ble_peer_addr[0] ? ble_peer_addr : "?");
+      snprintf(bt_line, sizeof(bt_line), "BT: %s", who);
+      bt_colour = TFT_GREEN;
+    }
+    else if (ble_radio_up) {
+      snprintf(bt_line, sizeof(bt_line), "BT: waiting");
+      bt_colour = TFT_YELLOW;
+    }
+    else {
+      snprintf(bt_line, sizeof(bt_line), "BT: starting");
+      bt_colour = TFT_WHITE;
+    }
+    tft.setTextColor(bt_colour, TFT_BLACK);
+    tft.drawString(bt_line, 10, 150);
   }
 }
 
