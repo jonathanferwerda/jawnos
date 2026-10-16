@@ -1,8 +1,78 @@
-<div id="market" style="width:100%;height:100%;background-color:var(--panel);">
-
-
-
-
-
-
+<% no warnings 'uninitialized'; %>
+<%# Market: the shopping side of the warehouse. A vendors dropdown scopes the
+    list; the Shopping List tab holds what to buy, each row carrying a need/want
+    dial; the Shopping tab reads the same list through a needs/wants/all filter.
+    An item the warehouse says is due arrives already marked a need. Enter adds
+    an item (like Notes); Shift+Enter is not a newline here - Enter always adds. %>
+<%
+	my $list = $list || [];
+	my @vendors = @{ $vendors || [] };
+	my $vendor = $vendor || '';
+	# one renderer for a row, so the list tab and the shopping tab never drift;
+	# the list tab carries the need/want dial, the shopping tab a plain badge.
+	my $row = sub {
+		my ($it, $editable) = @_;
+		my $kind = ($it->{'kind'} || '') eq 'need' ? 'need' : 'want';
+		my $uuid = $it->{'uuid'} || '';
+		my $v = $it->{'vendor'} || '';
+		my $o = '<div class="market_row" uuid="' . $uuid . '" data-kind="' . $kind . '" data-vendor="' . $v . '" style="border-bottom:1px solid var(--line);padding:5px;font-size:18px;">';
+		if ($editable) {
+			$o .= '<select class="market_kind" uuid="' . $uuid . '" style="font-size:15px;">';
+			$o .= '<option value="want"' . ($kind eq 'want' ? ' selected' : '') . '>Want</option>';
+			$o .= '<option value="need"' . ($kind eq 'need' ? ' selected' : '') . '>Need</option>';
+			$o .= '</select>';
+		}
+		else {
+			my $col = $kind eq 'need' ? '#b8860b' : 'var(--line)';
+			$o .= '<span style="font-size:14px;font-weight:700;color:' . $col . ';">' . &subs::format_name($kind) . '</span>';
+		}
+		$o .= '<span class="market_text" style="margin-left:8px;">' . $it->{'text'} . '</span>';
+		if ($it->{'vendor'}) {
+			$o .= '<span style="opacity:.55;font-size:13px;margin-left:8px;">' . &subs::format_name($it->{'vendor'}) . '</span>';
+		}
+		if ($it->{'due'}) {
+			$o .= '<span style="margin-left:8px;font-size:13px;opacity:.8;">- due</span>';
+		}
+		$o .= '<button class="market_delete" uuid="' . $uuid . '" style="float:right;" title="Delete">X</button>';
+		$o .= '</div>';
+		return $o;
+	};
+%>
+<div id="market_body" style="width:100%;height:100%;background-color:var(--panel);padding:6px;box-sizing:border-box;display:flex;flex-direction:column;">
+	<div style="flex:0 0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+		<b style="font-size:20px;">Market</b>
+		<select id="market_vendor" style="flex:0 1 auto;">
+			<option value="">All vendors</option>
+			<% foreach my $v ( @vendors ) { %>
+				<option value="<%= $v %>" <% if ($vendor eq $v) { %>selected<% } %>><%= &subs::format_name($v) %></option>
+			<% } %>
+		</select>
+		<span style="flex:1 1 auto;"></span>
+		<button class="market_tab" tab="list">Shopping List</button>
+		<button class="market_tab" tab="shopping">Shopping</button>
+	</div>
+	<div id="market_list" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">
+		<div style="flex:0 0 auto;padding-bottom:4px;">
+			<input id="market_item_input" type="text" placeholder="Add an item... (Enter adds)" style="width:78%;">
+			<button id="market_item_add" style="width:18%;">Add</button>
+		</div>
+		<div id="market_list_rows" style="flex:1 1 auto;overflow:auto;">
+			<% if (!scalar @{$list}) { %>
+				<span style="font-size:16px;opacity:.7;">Nothing on the list yet. Type an item and press Enter.</span>
+			<% } %>
+			<% foreach my $it ( @{$list} ) { %><%== $row->($it, 1) %><% } %>
+		</div>
+	</div>
+	<div id="market_shopping" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:none;flex-direction:column;">
+		<div style="flex:0 0 auto;padding-bottom:4px;">
+			<select id="market_filter">
+				<option value="all">All</option>
+				<option value="need">Needs</option>
+				<option value="want">Wants</option>
+			</select>
+		</div>
+		<div id="market_shopping_rows" style="flex:1 1 auto;overflow:auto;">
+			<% foreach my $it ( @{$list} ) { %><%== $row->($it, 0) %><% } %>
+		</div>
+	</div>
 </div>

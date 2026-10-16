@@ -410,9 +410,18 @@ our %topic = (
 	},
 	'market' => {
 		title => 'Market', category => 'apps', app => 'market',
-		summary => 'Trade in the things you stock and sell.',
+		verified => '2026-10-15',
+		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
+		summary => 'The shopping list and the shopping run.',
 		body => [
-			'Market is the trading side of the warehouse and store: vendors, buyers and the deals between them, drawing on the same items and prices.'
+			'Market is where what you need to buy gathers. A vendor dropdown scopes the list; the Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item. The Shopping tab reads the same list through a Needs, Wants or All filter.',
+			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.'
+		],
+		steps => [
+			'Open Market from the start menu.',
+			'Pick a vendor to scope both lists to that vendor.',
+			'Type an item and press Enter to add it; set its dial to need or want.',
+			'Switch to the Shopping tab and filter the run to needs, wants or all.'
 		],
 		related => [ 'warehouse', 'store' ]
 	},

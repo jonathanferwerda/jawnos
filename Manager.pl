@@ -1884,17 +1884,138 @@ post '/manager/measures/delete' => sub($c) {
 
 };
 
+# --- Market: the shopping side of the warehouse ---
+# A vendor is an app whose part of speech (or second reading) is 'vendor', the way
+# packaging reads the places. The shopping list is one JSON setting on the market
+# app: rows of { uuid, text, kind (need|want), vendor, timestamp }.
+sub market_vendors {
+	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'vendor')->hashes;
+	return [ map { $_->{'app'} } @{$rows} ];
+}
+sub market_list {
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'shopping_list' });
+	my $list = eval { return decode_json $raw } || [];
+	return [ grep { ref $_ eq 'HASH' && ($_->{'text'} || '') ne '' } @{$list} ];
+}
+sub market_save_list {
+	my ($list) = @_;
+	&subs::setting_setter({ app => 'market', setting => 'shopping_list', value => encode_json($list) });
+	&Websocket::send('tab', { console => 'marketReload();' });
+}
+# Upgrade a matching list row to a need: what the warehouse asks, and what the
+# sweep does on open.
+sub market_upgrade_need {
+	my ($text) = @_;
+	return 0 unless defined $text && $text ne '';
+	my $want = &subs::unformat_name($text);
+	my $key = lc $text;
+	my $list = &market_list();
+	my $upgraded = 0;
+	foreach my $it ( @{$list} ) {
+		next unless lc($it->{'text'} || '') eq $key || &subs::unformat_name($it->{'text'} || '') eq $want;
+		if (($it->{'kind'} || '') ne 'need') { $it->{'kind'} = 'need'; $upgraded++; }
+	}
+	&market_save_list($list) if $upgraded;
+	return $upgraded;
+}
+# An item on the list the warehouse says is due: its own app's fixed-level quantity
+# budget (6quantity) names the target, and on-hand below it is due.
+sub market_item_due {
+	my ($text) = @_;
+	return 0 unless defined $text && $text ne '';
+	my $item = &subs::unformat_name($text);
+	my $b = eval { &Manager::budget_calculator({ app => $item, circumstance => 'quantity' }) };
+	return 0 unless $b && $b->{'fixed'} && ($b->{'circumstance'} || '') eq 'quantity' && defined $b->{'budgeted'} && $b->{'budgeted'} ne '';
+	return (($b->{'value'} || 0) < ($b->{'budgeted'} || 0)) ? 1 : 0;
+}
+# Every due row becomes a need: the list keeps its own books in step with the
+# shelf without the warehouse reaching in.
+sub market_sweep_needs {
+	my $list = &market_list();
+	my $upgraded = 0;
+	foreach my $it ( @{$list} ) {
+		next unless &market_item_due($it->{'text'});
+		if (($it->{'kind'} || '') ne 'need') { $it->{'kind'} = 'need'; $upgraded++; }
+	}
+	&market_save_list($list) if $upgraded;
+	return $upgraded;
+}
+
+sub market_maker {
+	my ($c) = @_;
+	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	my $list = &market_list();
+	foreach my $it ( @{$list} ) {
+		$it->{'due'} = &market_item_due($it->{'text'});
+	}
+	return $c->render_to_string(
+		template => 'market/market',
+		list => $list,
+		vendors => &market_vendors(),
+		vendor => $vendor
+	);
+}
+
 get '/manager/market' => sub($c) {
 	my $timestamp = $c->param('timestamp');
-	my $settings = &subs::settings_grabber({ app => 'market' });
-	my $contents = $c->render_to_string(
-		template => 'market/market',
-		timestamp => $timestamp,
-		settings => $settings
-	);
+	my $contents = &market_maker($c);
 	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'market', contents => $contents }, $timestamp);
+	$c->render(json => { window => $window, html => $contents });
+};
 
-	$c->render(json => { window => $window });
+post '/manager/market/item_add' => sub($c) {
+	my $text = $c->param('text') || '';
+	$text =~ s/^\s+|\s+$//g;
+	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	return $c->render(json => { error => 'empty' }) unless $text ne '';
+	my $list = &market_list();
+	my $item = {
+		uuid => &subs::random_string_creator(21),
+		text => $text,
+		kind => &market_item_due($text) ? 'need' : 'want',
+		vendor => $vendor,
+		timestamp => &subs::rightNow(),
+	};
+	unshift @{$list}, $item;
+	&market_save_list($list);
+	$c->render(json => { item => $item });
+};
+
+post '/manager/market/item_kind' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $kind = ($c->param('kind') || '') eq 'need' ? 'need' : 'want';
+	my $list = &market_list();
+	my $found;
+	foreach my $it ( @{$list} ) {
+		if (($it->{'uuid'} || '') eq $uuid) { $it->{'kind'} = $kind; $found = 1; }
+	}
+	&market_save_list($list) if $found;
+	$c->render(json => { uuid => $uuid, kind => $kind });
+};
+
+post '/manager/market/item_delete' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $list = &market_list();
+	my @kept = grep { ($_->{'uuid'} || '') ne $uuid } @{$list};
+	&market_save_list(\@kept);
+	$c->render(json => { uuid => $uuid });
+};
+
+# The warehouse (or anything that knows what needs buying) names an item; Market
+# upgrades a matching row to a need.
+post '/manager/market/need' => sub($c) {
+	my $text = $c->param('item') || $c->param('text') || '';
+	$c->render(json => { item => $text, upgraded => &market_upgrade_need($text) });
+};
+
+# Opening the Market reconciles the list with the warehouse: an item the shelf
+# says is short is upgraded to a need. A POST, so a read never writes.
+post '/manager/market/refresh' => sub($c) {
+	&market_sweep_needs();
+	my $timestamp = $c->param('timestamp');
+	my $contents = &market_maker($c);
+	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'market', contents => $contents }, $timestamp);
+	$c->render(json => { window => $window, html => $contents });
 };
 
 # A process viewer for the machine (the Monitor app): CPU/memory graphs plus the
