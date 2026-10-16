@@ -20337,6 +20337,33 @@ sub mail_checker($c) {
 		&subs::setting_setter({ app => 'mail', setting => $ps->{'setting'}, value => $ps->{'value'} });
 	}
 
+	# The Email app owns exactly one section and never shows the umbrella's
+	# conversation, its dials, its friends list or the tickets. Building all of that
+	# - the ticket scan, the social-construct walk and, above all, the conversation
+	# rows (which decrypt thirty bodies and re-send each over the socket) - is waste
+	# on every open, and it is what made the window take seconds to appear. Scope
+	# email takes a short path that builds only what apps/email.html.ep reads.
+	my $scope = $c->stash('mail_scope') || $c->param('scope');
+	if ($scope && $scope eq 'email') {
+		my $settings = &subs::settings_grabber({ app => 'mail' });
+		$settings->{'subsection'} = 'email';
+		my $contents = $c->render_to_string(
+			template => 'apps/email',
+			mail => [],
+			sms_lines => [],
+			window_maker => $c->param('window_maker'),
+			settings => $settings,
+			scope => 'email',
+			scope_sections => [ 'email' ],
+			mail_email => $c->param('email'),
+			email_counts => &email_folder_counts(),
+			email_extra_folders => &email_extra_folders(),
+			email_sort => &email_sort(),
+			incoming_data => $incoming_data,
+		);
+		return { contents => $contents, mail => [] };
+	}
+
 
 
 	my $bgc = &subs::setting_grabber({ app => 'misc', setting => 'mail_sidebar_container_background_colour', device => $device });
@@ -20407,7 +20434,6 @@ sub mail_checker($c) {
 	# pen) opens on its own section and hides the umbrella's switcher. The scope is
 	# per request, so the shared 'mail' subsection setting is left alone and the
 	# umbrella keeps working while the sections move out one at a time.
-	my $scope = $c->stash('mail_scope') || $c->param('scope');
 	my @scope_sections = ($scope && $privilege ne 'guest') ? &mail_scope_sections($scope) : ();
 	unless (grep { $_ eq $settings->{'subsection'} } @scope_sections) {
 		$settings->{'subsection'} = $scope_sections[0] if @scope_sections;
