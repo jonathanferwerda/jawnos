@@ -1942,6 +1942,78 @@ sub market_lists_touch_vendor {
 	$lists->{$key}->{'vendors'}->{$vendor} = 1;
 	&subs::setting_setter({ app => 'market', setting => 'market_lists', value => encode_json($lists) });
 }
+# --- barcodes: look a code up once, then name it in our terms ---
+# The cache is one setting: { code => { raw, item, category, unit, at } }, so a
+# code is looked up and consolidated the first time and is instant after.
+sub market_barcodes {
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'barcodes' });
+	my $c = eval { return decode_json $raw } || {};
+	return ref $c eq 'HASH' ? $c : {};
+}
+sub market_barcode_remember {
+	my ($code, $map) = @_;
+	return unless $code && ref $map eq 'HASH';
+	my $c = &market_barcodes();
+	$map->{'at'} = &subs::rightNow();
+	$c->{$code} = $map;
+	&subs::setting_setter({ app => 'market', setting => 'barcodes', value => encode_json($c) });
+}
+# A code the house already knows: an item app carrying it as its product code.
+sub market_barcode_house {
+	my ($code) = @_;
+	my $row = &subs::db_query("select app from settings where setting in ('barcode','product_code') and value = ? limit 1", $code)->hashes->[0];
+	return $row ? $row->{'app'} : undef;
+}
+# Ask a public catalogue what a code is. Best-effort and only for a code never
+# seen before: an ISBN goes to Open Library, a retail code to UPCitemdb, and a
+# failure never stops the scan (the code itself is kept until it is named).
+sub market_barcode_lookup {
+	my ($code) = @_;
+	return undef unless $code =~ /^[0-9]{8,14}$/;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 8);
+	my $url = ($code =~ /^97[89][0-9]{10}$/) ? 'https://openlibrary.org/isbn/' . $code . '.json'
+		: 'https://api.upcitemdb.com/prod/trial/lookup?upc=' . $code;
+	my $res = eval { $ua->get($url)->result };
+	return undef unless $res && $res->is_success;
+	my $d = eval { return decode_json $res->body } || {};
+	return ($code =~ /^97[89]/) ? $d->{'title'} : $d->{'items'}->[0]->{'title'};
+}
+# Fold a raw retail name into our terms: a house item name, a category the house
+# keeps and a unit. The model does the naming; the categories and units are ours.
+sub market_barcode_consolidate {
+	my ($raw) = @_;
+	return { item => &subs::unformat_name($raw || ''), category => '', unit => '' } unless defined $raw && $raw ne '';
+	my $cats = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ?", 'category')->hashes;
+	my @cats = map { $_->{'app'} } @{$cats};
+	my ($text) = &subs::ai_chat_role('chatbot_model', [
+		{ role => 'system', content => 'You fold a shop product into JawnOS\'s own naming. Answer with strict JSON only.' },
+		{ role => 'user', content => 'Product: "' . $raw . '"\nCategories we keep: ' . join(', ', @cats)
+			. '\nReturn ONLY JSON: {"item":"a short house name, one or two words","category":"one of the categories above, or empty","unit":"the unit it is sold in: each, kg, g, L, mL, m, or empty"}.' },
+	]);
+	my ($json) = ($text || '') =~ /(\{.*\})/s;
+	my $out = eval { return decode_json $json } || {};
+	my $name = &subs::unformat_name($out->{'item'} || $raw);
+	return { item => $name, category => ($out->{'category'} || ''), unit => ($out->{'unit'} || '') };
+}
+sub market_barcode_resolve {
+	my ($code) = @_;
+	return undef unless defined $code && $code =~ /\S/;
+	my $cache = &market_barcodes();
+	return $cache->{$code} if $cache->{$code} && $cache->{$code}->{'item'};
+	my $house = &market_barcode_house($code);
+	my $map;
+	if ($house) {
+		$map = { item => $house, category => '', unit => '', raw => $house };
+	}
+	else {
+		my $raw = &market_barcode_lookup($code);
+		$map = &market_barcode_consolidate($raw);
+		$map->{'raw'} = $raw if defined $raw && $raw ne '';
+	}
+	&market_barcode_remember($code, $map);
+	return $map;
+}
+
 # The newest GPS fix the house holds (the phone writes continent rows), or nothing.
 sub market_here {
 	my $row = &subs::db_query("select latitude, longitude from continent where latitude is not null and latitude != '' order by cast(timestamp as integer) desc limit 1")->hashes->[0];
@@ -2134,6 +2206,35 @@ post '/manager/market/checkout' => sub($c) {
 	}
 	&market_save_list(\@kept);
 	$c->render(json => { written => $written });
+};
+
+# A scanned barcode: resolve it (house first, then a public catalogue, then our own
+# naming), make sure the house item app exists, and put it on the list.
+post '/manager/market/scan' => sub($c) {
+	my $code = $c->param('barcode') || $c->param('code') || '';
+	$code =~ s/\s+//g;
+	return $c->render(json => { error => 'no code' }) unless $code =~ /\S/;
+	my $map = &market_barcode_resolve($code);
+	my $name = $map->{'item'} || $code;
+	my $init = &subs::setting_initializer($name, &subs::rightNow());
+	$name = $init->{'app'} if $init->{'app'};
+	my $list_key = $c->param('list') || '';
+	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	my $list = &market_list();
+	my $row = {
+		uuid => &subs::random_string_creator(21),
+		text => $name,
+		barcode => $code,
+		kind => &market_item_due($name) ? 'need' : 'want',
+		vendor => $vendor,
+		list => &market_list_key($list_key),
+		timestamp => &subs::rightNow(),
+	};
+	$row->{'unit'} = $map->{'unit'} if $map->{'unit'};
+	unshift @{$list}, $row;
+	&market_save_list($list);
+	&market_lists_touch_vendor($row->{'list'}, &subs::format_name($list_key), $vendor) if $row->{'list'} && $vendor;
+	$c->render(json => { item => $row, raw => $map->{'raw'}, category => $map->{'category'} });
 };
 
 # The warehouse (or anything that knows what needs buying) names an item; Market

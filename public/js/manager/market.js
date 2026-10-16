@@ -116,6 +116,52 @@ $(document).on('click', '#market_checkout', function() {
 	$.post('/manager/market/checkout', { vendor: marketVendor, timestamp: Date.now() });
 });
 
+// Scan a barcode. The app's own bridge (window.JawnScan) is the fast path on a
+// phone; a browser uses the BarcodeDetector over the camera; failing both, a code
+// is typed. The server resolves it and names it in our terms.
+$(document).on('click', '#market_scan', function() { marketScan(); });
+
+function marketScan() {
+	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
+		window.JawnScan.scan(function(code) { if (code) { marketBarcode(code); } });
+		return;
+	}
+	if ('BarcodeDetector' in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+		marketScanCamera();
+		return;
+	}
+	var typed = prompt('Barcode / product code:');
+	if (typed) { marketBarcode(typed); }
+}
+
+function marketScanCamera() {
+	navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(stream) {
+		var video = document.createElement('video');
+		video.setAttribute('playsinline', 'playsinline');
+		video.setAttribute('muted', 'muted');
+		video.srcObject = stream;
+		var done = false;
+		var stop = function() { if (!done) { done = true; clearInterval(iv); stream.getTracks().forEach(function(t) { t.stop(); }); } };
+		var detector;
+		try { detector = new window.BarcodeDetector(); } catch (e) { detector = null; }
+		if (!detector) { stop(); return; }
+		video.play();
+		var iv = setInterval(function() {
+			detector.detect(video).then(function(codes) {
+				if (codes && codes.length && codes[0].rawValue) { var code = codes[0].rawValue; stop(); marketBarcode(code); }
+			}).catch(function() {});
+		}, 400);
+		setTimeout(stop, 30000);
+	}).catch(function() {
+		var typed = prompt('Barcode / product code:');
+		if (typed) { marketBarcode(typed); }
+	});
+}
+
+function marketBarcode(code) {
+	$.post('/manager/market/scan', { barcode: code, list: marketList, vendor: marketVendor, timestamp: Date.now() });
+}
+
 $(document).on('click', '.market_tab', function() {
 	marketTab = $(this).attr('tab');
 	marketApply();

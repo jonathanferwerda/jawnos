@@ -58,6 +58,7 @@
 			<% } %>
 		</select>
 		<span style="flex:1 1 auto;"></span>
+		<button id="market_scan" style="font-size:15px;">Scan</button>
 		<button id="market_checkout" style="font-size:15px;">Checkout (<span id="market_cart_count">0</span>)</button>
 		<button id="market_cancel" style="font-size:15px;">Cancel</button>
 		<button class="market_tab" tab="list">Shopping List</button>

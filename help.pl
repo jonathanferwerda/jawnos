@@ -419,6 +419,7 @@ our %topic = (
 			'Market is where what you need to buy gathers. A Lists dropdown groups what to buy by kind, prepopulated with the house\'s categories (Clothes, Food, Household, Tech, and the rest) and remembering any list already in use; a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
 			'While you shop, tick an item off and drop it in the cart; Checkout turns the cart into purchases (each written on the item\'s own app, so a house item app is born there) and retires them from the list, while Cancel just empties the cart back onto it.',
+			'Scan reads a barcode - the app\'s own bridge on a phone, else the camera, else a typed code. A code never seen before is looked up once and named in our terms by the model (a house item name, a category we keep, a unit), then remembered, so the same product is instant next time.',
 			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
 		steps => [
