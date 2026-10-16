@@ -151,7 +151,10 @@ is recognised the same way from `_ipp._tcp`. `subs::mdns_merge_address` folds
 those records into the device row - naming the device, or adding one the
 neighbour read missed - and `subs::device_mdns_sync` runs that on a 15-second tick
 (`President.pl`), so a plugged-in watch, deck or pico is listed with its purpose
-and abilities within seconds and without a Scan.
+and abilities within seconds and without a Scan. A device with **no WiFi** at all
+(a fresh deck) is met by radio instead: `subs::ble_adopt_scan` scans for a board
+advertising the Nordic UART service and the server adopts it the moment it names
+itself over the link (see T-Deck parity).
 
 Still to do:
 - A full scan **cadence** (the mDNS tick covers the devices; the nmap sweep still
@@ -174,18 +177,28 @@ Still to do:
   the deck: 128000 -> 16444 bytes, verified) and sent as one base64 `voice`
   message over the BLE bridge, which `subs::voice_ingest` funnels into the same
   transcription a tap reaches (`deck_voice_compress`/`deck_voice_ble_send`).
-  What was missing was the **link**, and the pieces for it are now in: the deck
-  and the watch put `mac=<bluetooth>` in their `_jawnos._tcp` TXT, and the server
-  keeps it in the device's `mac_addresses->{bluetooth}` (`mdns_merge_address`),
-  which is the field `bluetooth_sender` connects the daemon with. The catch that
-  remains: **nothing is on WiFi**, so nothing advertises mDNS - the deck's
-  `/config.json` was wiped when its corrupt FFat was reformatted, so it has no
-  credentials and `setup()` (which now joins WiFi when configured) never does.
-  Onboard the deck (its AP form at `http://192.168.4.1:3000/`, or the phone app
-  pushing WiFi over BLE the way the watch was onboarded) and the server will see
-  it and can bridge it. The other route, needing no WiFi: have the bridge daemon
-  **scan** for the NUS service and let the server adopt a fresh deck by radio -
-  the natural "plug it in and it is known" flow, and the one to build next.
+  **The link is in too, and needs no WiFi.** `subs::ble_adopt_scan` (a 30 s tick
+  in `President.pl`) asks the bridge daemon to scan; the daemon now reports each
+  device's advertised service uuids (`desktop/jawnos_desktop/ble.py`), and a
+  scanned device whose advertisement carries the Nordic UART service, and whose
+  address the tree does not already hold, is one of ours. The server connects to
+  it, the board's own `state_request` (chip_id + purpose) is what records it
+  (`ble_message_processor` -> `ble_device_record`), and the ordinary host rule
+  bridges it - "plug it in and it is known", with no access point at all. A device
+  that speaks NUS but is not ours is tried once and left alone for ten minutes.
+  Verified end to end on 2026-10-16: the deck (`98:A3:16:CD:EC:8D`, chip
+  `13495436`) was adopted by radio and linked.
+- **A stale machine id no longer strands a device.** `manager_file_maker` builds
+  an id as `<who>@<database>.<computer>`, so renaming the database (initial ->
+  jawnos) retired every stored id: a device's record then named a machine no row
+  held, `ble_homebase_alive` treated that phantom as alive forever, and the real
+  homebase yielded its own device every 60 s - which is why this box never bridged
+  the watch or the deck. `ble_machine_match` compares the parts that survive a
+  rename (the person and the computer name), so the homebase recognizes its own
+  device again; `ble_rehome_check` then rewrites the record to the current id. The
+  deck re-homed itself to `Jonathan Ferwerda@jawnos.Laptop`. The anti-thrash in
+  `ble_enforce_hosts` keeps a single link on the device it already holds, since the
+  daemon bridges one radio at a time.
 - Wake words (`hey jawn` / `jawn do`) still need the TFLM stack copied over
   (`voice_models.h` -> `jawn_micro_features` + the model headers). `jawn_do` is
   not trained yet either. The VAD/manual clip is the first target.

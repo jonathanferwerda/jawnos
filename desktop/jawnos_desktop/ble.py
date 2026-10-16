@@ -176,7 +176,9 @@ class Bridge(object):
         self._error_suppressed = 0
 
         self.scanning = False
-        self.scan_seen = set()
+        # address -> (name, uuids): the record last emitted, so a scan reports a
+        # device once and then only when its name or service uuids grow.
+        self.scan_seen = {}
 
         self.bus = None
         self.loop = None
@@ -330,15 +332,26 @@ class Bridge(object):
 
     def _emit_scan(self, props):
         address = str(props.get("Address", "")).upper()
-        if not address or address in self.scan_seen:
+        if not address:
             return
-        self.scan_seen.add(address)
         name = props.get("Alias") or props.get("Name")
+        # The service uuids a device advertises: a JawnOS board puts the Nordic
+        # UART service in its advertising packet, so this is how the tree tells
+        # one of its own from the rest of the room, without connecting.
+        uuids = sorted(str(u).lower() for u in (props.get("UUIDs") or []))
+        record = (str(name) if name else None, tuple(uuids))
+        # Report on first sight, and again only if the name or uuids grow: a device
+        # seen from its advertising packet alone may carry neither yet, and BlueZ
+        # fills them in from the scan response a moment later.
+        if self.scan_seen.get(address) == record:
+            return
+        self.scan_seen[address] = record
         self.emit({
             "event": "scan",
             "mac": address,
             "name": str(name) if name else None,
             "rssi": int(props.get("RSSI", 0) or 0),
+            "uuids": list(uuids),
         })
 
     def _start_scan(self, seconds):
@@ -347,7 +360,7 @@ class Bridge(object):
         if self._bluetooth_ready() is None:
             return
         self.scanning = True
-        self.scan_seen = set()
+        self.scan_seen = {}
         # Devices BlueZ already knows count too: discovery reports only new ones.
         for _path, ifaces in self._managed().items():
             if DEVICE_IFACE in ifaces:

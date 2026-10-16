@@ -3135,6 +3135,26 @@ sub ble_manager_file() {
 	return $mf;
 }
 
+sub ble_machine_match() {
+	# A machine's durable id is '<who>@<mesh>.<computer>' (manager_file_maker).
+	# The <mesh> segment is the database's base name, so renaming the database
+	# (initial -> jawnos) silently retires every stored id: a device's record then
+	# names a machine no row holds, ble_owns stops recognizing its own homebase, and
+	# ble_homebase_alive treats the phantom as alive forever - so the real homebase
+	# yields the device and nobody ever bridges it. Match on the parts that survive
+	# a rename (the person and the computer name), so a rename does not strand a
+	# device on a machine that is sitting right next to it.
+	my ($a, $b) = @_;
+	return 0 unless defined $a && defined $b && length $a && length $b;
+	return 1 if $a eq $b;
+	my ($aw, $amesh) = split /\@/, $a, 2;
+	my ($bw, $bmesh) = split /\@/, $b, 2;
+	return 0 unless defined $amesh && defined $bmesh;
+	$amesh =~ s/^.*\.//;
+	$bmesh =~ s/^.*\.//;
+	return ($aw eq $bw && $amesh eq $bmesh) ? 1 : 0;
+}
+
 sub ble_owns() {
 	# Is this machine the device's homebase - the machine the person paired it
 	# to? A watch is a one-link peripheral, so only the homebase should hold its
@@ -3146,7 +3166,10 @@ sub ble_owns() {
 	my $who = $specs->{'computer'};
 	if ($who) {
 		my $mine = &ble_manager_file();
-		return ($mine && $who eq $mine) ? 1 : 0;
+		return 0 unless $mine;
+		# compare past a database rename, or a stale id makes the device look
+		# like it belongs to a machine that no longer exists
+		return &ble_machine_match($who, $mine) ? 1 : 0;
 	}
 	my $home = $specs->{'homebase'};
 	return 1 unless $home;
@@ -3196,7 +3219,7 @@ sub ble_homebase_sighting() {
 	my $key = $who . '|' . ($edt || 'watch') . '|' . $chip_id;
 	my ($seen, $active);
 	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
-		next unless $rm->{'manager_file'} && $rm->{'manager_file'} eq $who;
+		next unless &ble_machine_match($rm->{'manager_file'}, $who);
 		my $t = ($rm->{'server_time'} || 0) + 0;
 		next unless $t;
 		if (!defined $seen || $t > $seen) {
@@ -3280,6 +3303,14 @@ sub ble_enforce_hosts() {
 	#   may not    -> release whatever it holds and stop chasing
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
 	my $client = &ble_bridge_client() || return;
+	# The desktop bridge holds a single link, so a pass must settle on one device
+	# rather than issue a connect for each: with two devices in the list the last
+	# one would win every pass and flap the rest (a deck and a watch cannot both
+	# be linked at once). Keep the device the bridge already holds when this machine
+	# may serve it, and connect only when the link is free or held by a device we
+	# may not serve.
+	my $held = $gb::ble_link_mac ? &ble_chip_by_mac($gb::ble_link_mac) : undef;
+	my $held_id = ($held && $held->{'id'} && &ble_may_serve($held->{'purpose'} || 'watch', $held->{'id'})) ? $held->{'id'} : undef;
 	# One pass per chip: the same watch sits in every machine's synced `devices`
 	# row, so the raw walk ran the connect/yield decision over and over for a
 	# single radio.
@@ -3290,6 +3321,8 @@ sub ble_enforce_hosts() {
 			next unless $c->{'id'} && $c->{'bluetooth'};
 			next if $done{ $c->{'id'} }++;
 			if (&ble_may_serve($c->{'purpose'} || 'watch', $c->{'id'})) {
+				# another device already holds the one link we have
+				next if $held_id && $c->{'id'} ne $held_id;
 				my $mac = $c->{'bluetooth'};
 				my $u = &ble_nus_uuids();
 				# Always name the service and characteristics. A bare connect
@@ -3325,6 +3358,57 @@ sub ble_enforce_hosts() {
 			});
 		}
 	}
+}
+
+sub ble_adopt_scan() {
+	# A device that has never been on WiFi cannot be named by mDNS and the tree
+	# holds no address for it, so nothing ever connects and it can never introduce
+	# itself - a fresh deck is invisible however long it sits on the desk. Find it
+	# by radio instead: every JawnOS board puts the Nordic UART service in its
+	# advertising packet, so a device in the room whose advertisement carries that
+	# uuid, and whose address we do not already hold, is one of ours waiting to be
+	# met. Connect to it and its own state_request (chip_id + purpose) records it
+	# (ble_message_processor -> ble_device_record), after which the ordinary host
+	# rule bridges it - the "plug it in and it is known" path, with no wifi at all.
+	return unless &ble_bridge_capable() && &ble_bridge_enabled();
+	my $client = &ble_bridge_client() or return;
+	my $nus = lc &ble_nus_uuids()->{'service_uuid'};
+	# every Bluetooth address we already hold, so only the unknown is chased
+	my %known;
+	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+		next unless $d->{'chip_ids'};
+		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+			$known{ uc $c->{'bluetooth'} } = 1 if $c->{'bluetooth'};
+		}
+	}
+	my $out = `timeout 25 $client scan 8 2>/dev/null`;
+	my $found;
+	foreach my $line (split "\n", $out) {
+		my $e = eval { decode_json $line };
+		next unless $e && ref $e eq 'HASH' && ($e->{'event'} || '') eq 'scan';
+		my $mac = uc($e->{'mac'} || '');
+		next unless $mac =~ /^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$/;
+		next if $known{$mac};
+		next unless grep { lc($_) eq $nus } @{ $e->{'uuids'} || [] };
+		$found = $mac;
+		last;
+	}
+	return unless $found;
+	# already on this radio, or we tried it recently and it stayed silent (a
+	# device that speaks NUS but is not ours): leave the link alone
+	return if $gb::ble_link_mac && uc($gb::ble_link_mac) eq $found;
+	my $now = time();
+	return if $gb::ble_adopt_tried->{$found} && $now - $gb::ble_adopt_tried->{$found} < 600;
+	$gb::ble_adopt_tried->{$found} = $now;
+	my $u = &ble_nus_uuids();
+	$log->info('BLE adopt: a JawnOS device at ' . $found . ' is not yet known; connecting so it can name itself');
+	&subs::subprocessor(sub {
+		system($client, 'connect', $found,
+			'--service', $u->{'service_uuid'},
+			'--rx', $u->{'characteristic_uuid_rx'},
+			'--tx', $u->{'characteristic_uuid_tx'},
+			'--mtu', '512');
+	}, { name => 'ble adopt connect' });
 }
 
 sub ble_nus_uuids() {

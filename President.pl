@@ -255,6 +255,20 @@ sub manager_starter() {
 		}
 	}, { name => 'device mdns sync' });
 
+	# A device that has never been on WiFi cannot be named by mDNS, and the tree
+	# holds no address for it, so nothing ever connects and it stays invisible while
+	# it sits on the desk. Every JawnOS board advertises the Nordic UART service, so
+	# scan the radio for one whose address is unknown and connect, letting it name
+	# itself over the link - the "plug it in and it is known" path, with no wifi at
+	# all. Slower than the mDNS tick, since it holds the radio for a few seconds.
+	&subs::subprocessor(sub {
+		sleep 40;
+		while (1) {
+			eval { &subs::ble_adopt_scan(); };
+			sleep 30;
+		}
+	}, { name => 'ble adopt scan' });
+
 	# A peer's Ollama model list is cached on a slower tick, so Plat can offer
 	# models by the machine they run on without waiting on the network.
 	&subs::subprocessor(sub {
