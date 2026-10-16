@@ -3289,6 +3289,14 @@ sub ble_yield() {
 	$gb::ble_yield_at->{$chip_id} = $now;
 	my $client = &ble_bridge_client();
 	return unless $client;
+	# The bridge holds one link, so a yield must name the device that is actually
+	# linked: disconnecting for a device we are not on - a watch that calls another
+	# machine home while our own deck is linked - would drop the deck instead, and
+	# then the deck reconnects and the watch yields again, cycling the link.
+	if ($gb::ble_link_mac) {
+		my $linked = &ble_chip_by_mac($gb::ble_link_mac);
+		return if $linked && $linked->{'id'} && $linked->{'id'} ne $chip_id;
+	}
 	$log->info('BLE yield ' . $chip_id . ': not its homebase, releasing the link');
 	&subs::subprocessor(sub { system($client, 'disconnect'); }, { name => 'ble yield' });
 }
@@ -11860,6 +11868,16 @@ sub email_receiver() {
 					$to = $ea[-1];
 					$to =~ /<([^>]+)>/;
 					$to = $1;
+					# carbon copies, so a letter that was copied to others can show it
+					my @cc;
+					if ($sum->can('cc')) {
+						foreach my $c ( @{ $sum->cc || [] } ) {
+							my $addr = $c;
+							$addr = $1 if $addr =~ /<([^>]+)>/;
+							push @cc, $addr if $addr;
+						}
+					}
+					my $cc = join(', ', @cc);
 					my $subject = $sum->subject;
 					my $checked_addresses = &subs::db_query('select * from settings where setting=? and (value=? or value=? and value != ?) and device=?', 'email', $from, $to, $es->{'email'}, $device)->hashes;
 					# an address a person keeps in the typed list (their work mailbox, say)
@@ -11969,6 +11987,8 @@ sub email_receiver() {
 							subject => &subs::note_encrypter(&subs::suds_grabber(), $subject),
 							status => $status,
 							email => $email,
+							cc => $cc,
+							thread => &subs::email_thread_key($subject, $from),
 							email_server => $es->{'uuid'},
 							attachments => $jfile
 						};
@@ -12140,6 +12160,23 @@ sub sent_mail_filer {
 	});
 	&file_encrypter({ app => $app, timestamp => $appt->{'timestamp'}, suds => &subs::suds_grabber() }) if $appt && $appt->{'uuid'};
 	return $appt;
+}
+
+# A conversation key for an email: the subject with any leading Re:/Fwd: stripped
+# and lowercased, plus the other party's address. Two letters about the same thing
+# with the same person land on one key, so the list can show one row per thread
+# and the reading pane can open the whole exchange. Used when a letter is written
+# or received, and rebuilt from the subject for rows that predate the column.
+sub email_thread_key {
+	my ($subject, $other) = @_;
+	$subject = '' unless defined $subject;
+	my $s = $subject;
+	$s =~ s/^\s*((re|fwd|fw)\s*:\s*)+//ig;
+	$s =~ s/^\s+|\s+$//g;
+	$s = lc $s;
+	$other = defined $other ? lc $other : '';
+	$other =~ s/\s+//g;
+	return substr($s . '::' . $other, 0, 240);
 }
 
 sub email_send() {

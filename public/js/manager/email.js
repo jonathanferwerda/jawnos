@@ -56,6 +56,9 @@ function emailReaderOpen(html) {
 	$('#mail_list').hide();
 	$('#mail_reader').show();
 	$('#mail_reader').scrollTop(0);
+	// a compose body is a rich editor (textarea[upgradeable]) - the upgrader runs
+	// on render, so tell it the pane changed or the quoted letter shows as raw html
+	if (typeof textareaUpgrader == 'function') { textareaUpgrader(); }
 }
 function emailReaderClose() {
 	emailShowList();
@@ -97,18 +100,53 @@ function emailSearchApply() {
 }
 $(document).on('input', '#email_search', function () { emailSearchApply(); });
 
-// Reply, Reply all, Forward (the server builds the draft from the letter it
-// answers) and Edit (reopen a draft). Compose and Cancel ride the shared code.
+// Open one message (its whole thread) in the pane from the list or a flag change.
+function emailOpenMessage(uuid) {
+	$.ajax({
+		url: '/manager/mail/email/read',
+		type: 'GET',
+		data: { uuid: uuid },
+		success: function (response) { emailReaderOpen(response.html); }
+	});
+}
+
+// The reading pane's actions: Reply / Reply all / Forward (the server builds the
+// draft from the letter it answers), Edit a draft, Star, mark Unread, and
+// Archive. Compose and Cancel ride the shared code.
 $(document).on('click', '.wind[app="email"] .mail_action', function () {
 	var action = $(this).attr('mail_action');
 	var uuid = $(this).attr('uuid');
 	if (action == 'edit') { emailCompose('email', uuid); return; }
-	$.ajax({
-		url: '/manager/mail/email/compose',
-		type: 'GET',
-		data: { app: 'email', mode: action, in_reply_to: uuid, email: localStorage.getItem('mail_email') },
-		success: function (response) { emailReaderOpen(response.html); }
-	});
+	if (action == 'reply' || action == 'reply_all' || action == 'forward') {
+		$.ajax({
+			url: '/manager/mail/email/compose',
+			type: 'GET',
+			data: { app: 'email', mode: action, in_reply_to: uuid, email: localStorage.getItem('mail_email') },
+			success: function (response) { emailReaderOpen(response.html); }
+		});
+		return;
+	}
+	if (action == 'star') {
+		var next = $(this).attr('starred') == 'yes' ? 'no' : 'yes';
+		$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'starred', value: next }, function () { emailOpenMessage(uuid); });
+		return;
+	}
+	if (action == 'unread') {
+		$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'seen', value: 'no' }, function () { emailReaderClose(); });
+		return;
+	}
+	if (action == 'archive') {
+		$.post('/manager/mail/email/move', { uuid: uuid, to: 'archive' }, function () { emailReaderClose(); });
+		return;
+	}
+});
+
+// The star in a list row: flip the flag and reload the list, without opening the
+// thread (the shared row handler skips clicks on .email_star).
+$(document).on('click', '.wind[app="email"] .email_star', function () {
+	var uuid = $(this).attr('uuid');
+	var next = $(this).attr('starred') == 'yes' ? 'no' : 'yes';
+	$.post('/manager/mail/email/flag', { uuid: uuid, flag: 'starred', value: next }, function () { emailListRefresh(); });
 });
 
 // Deleting from the reading pane should return to the list once the second press

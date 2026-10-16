@@ -30,7 +30,7 @@
 			<div id="mail_sidebar" class="email_rail">
 				<div class="email_rail_title">Folders</div>
 				<div id="email_main_buttons">
-					<% foreach my $b ( qw/contacts inbox drafts outbox sent/ ) { %>
+					<% foreach my $b ( qw/contacts inbox starred drafts outbox sent archive/ ) { %>
 						<button class="email_folder_button <% if ($settings->{'email_folder_selection'} eq $b) { %>selected<% } %>" button="<%= $b %>"><%= &subs::format_name($b) %></button>
 					<% } %>
 				</div>

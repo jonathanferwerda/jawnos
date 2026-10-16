@@ -376,7 +376,7 @@ $(document).on('change', '.email_template_select', function() {
 });
 
 $(document).on('click', '.email_message', function(e) {
-	if (!$(e.target).hasClass('email_deleter')) {
+	if (!$(e.target).hasClass('email_deleter') && !$(e.target).hasClass('email_star')) {
 		var uuid = $(this).attr('uuid');
 		var app = $(this).closest('.wind').attr('app');
 		$.ajax({

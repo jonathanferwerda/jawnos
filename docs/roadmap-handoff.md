@@ -57,7 +57,11 @@ The Email window reads and writes in a pane of its own with a **Back** button
 / Forward** with the original quoted and `Re:`/`Fwd:` on the subject, **Cc** and
 **Bcc** (new `mailbox` columns), a list **search**, unread bolding, and a **Send**
 that goes out at once over the account's own SMTP rather than through the
-`email_sender` utility (kept for lists).
+`email_sender` utility (kept for lists). Letters that answer one another are
+grouped into one **thread** row (a `thread` key of subject + party) and open as
+the whole exchange; a message can be **starred**, marked **unread** or
+**archived** (Starred and Archive folders in the rail), and incoming **Cc** is
+parsed now, so a carbon copy someone else sent is shown too.
 onto their ticket thread.
 
 Still to do:

@@ -1,53 +1,63 @@
 <% 
 	use Mojo::JSON qw/decode_json encode_json/;
-	my $attachments = eval { return decode_json $m->{'attachments'} } || $m->{'attachments'} || [];
-	$m->{'body'} = &subs::note_decrypter(&subs::suds_grabber(), $m->{'body'});
-	$m->{'subject'} = &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'});
 	my $es = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
-	my ($email_server) = grep { $_->{'uuid'} eq $m->{'from_email'} } @{$es};
-	# who it is from and to: an inbox row carries the sender in `email` and names
-	# the server that received it in `email_server`; a sent or outbox row carries
-	# the recipient in `email` and our own server in `from_email`.
-	my ($to, $from) = ($email_server->{'email'}, $m->{'email'});
-	if ($m->{'status'} eq 'outbox' || $m->{'status'} eq 'sent') {
-		my $tf = $from; $from = $to; $to = $tf;
-	} elsif ($m->{'status'} eq 'inbox') {
-		($email_server) = grep { $_->{'uuid'} eq $m->{'email_server'} } @{$es};
-		$to = $email_server->{'email'};
-	}
-	my $cc = $m->{'cc'} || '';
-	my $editable = ($m->{'status'} eq 'outbox' || $m->{'status'} eq 'draft');
+	my $suds = &subs::suds_grabber();
+	my @messages = @{ $messages || [] };
 %>
-<div class="mail_reader_actions">
-	<button class="mail_action" mail_action="reply" uuid="<%= $m->{'uuid'} %>" hint="Reply">Reply</button>
-	<button class="mail_action" mail_action="reply_all" uuid="<%= $m->{'uuid'} %>" hint="Reply to the sender and everyone copied">Reply all</button>
-	<button class="mail_action" mail_action="forward" uuid="<%= $m->{'uuid'} %>" hint="Forward">Forward</button>
-	<% if ($editable) { %>
-		<button class="mail_action" mail_action="edit" uuid="<%= $m->{'uuid'} %>" hint="Edit this draft">Edit</button>
-	<% } %>
-	<span style="float:right;">
-		<img class="little_thumb email_deleter hover" hint="Delete" uuid="<%= $m->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>">
-	</span>
-</div>
-<h2 class="mail_reader_subject"><%= $m->{'subject'} %></h2>
-<table class="mail_reader_meta">
-	<tbody>
-		<% if ($m->{'sender'}) { %>
-			<tr><td>Device</td><td><%= &subs::format_name($m->{'sender'} || $m->{'device'}) %></td></tr>
-		<% } %>
-		<tr><td>From</td><td><%= $from %></td></tr>
-		<tr><td>To</td><td><%= $to %></td></tr>
-		<% if ($cc) { %>
-			<tr><td>Cc</td><td><%= $cc %></td></tr>
-		<% } %>
-		<tr><td>Date</td><td class="time" timestamp="<%= $m->{'timestamp'} %>"></td></tr>
-		<% if (scalar @{$attachments} > 0) { %>
-			<tr><td>Attachments</td><td>
-				<% foreach my $a ( @{$attachments} ) { %>
-					<span class="mail_reader_att"><%= $a->{'of'} || $a->{'name'} || 'file' %></span>
+<div class="mail_thread">
+	<% foreach my $m ( @messages ) {
+		my $attachments = eval { return decode_json $m->{'attachments'} } || [];
+		my $subject = &subs::note_decrypter($suds, $m->{'subject'} || '');
+		my $body = &subs::note_decrypter($suds, $m->{'body'} || '');
+		# who it is from and to: an inbox row carries the sender in `email` and names
+		# the server that received it in `email_server`; a sent or outbox row carries
+		# the recipient in `email` and our own server in `from_email`.
+		my ($email_server) = grep { $_->{'uuid'} eq $m->{'from_email'} } @{$es};
+		my ($to, $from) = ($email_server->{'email'}, $m->{'email'});
+		if ($m->{'status'} eq 'outbox' || $m->{'status'} eq 'sent') {
+			my $tf = $from; $from = $to; $to = $tf;
+		} elsif ($m->{'status'} eq 'inbox') {
+			($email_server) = grep { $_->{'uuid'} eq $m->{'email_server'} } @{$es};
+			$to = $email_server->{'email'};
+		}
+		my $cc = $m->{'cc'} || '';
+		my $editable = ($m->{'status'} eq 'outbox' || $m->{'status'} eq 'draft');
+		my $starred = ($m->{'starred'} || '') eq 'yes';
+	%>
+		<div class="mail_reader_message" uuid="<%= $m->{'uuid'} %>">
+			<div class="mail_reader_actions">
+				<button class="mail_action" mail_action="reply" uuid="<%= $m->{'uuid'} %>" hint="Reply">Reply</button>
+				<button class="mail_action" mail_action="reply_all" uuid="<%= $m->{'uuid'} %>" hint="Reply to the sender and everyone copied">Reply all</button>
+				<button class="mail_action" mail_action="forward" uuid="<%= $m->{'uuid'} %>" hint="Forward">Forward</button>
+				<button class="mail_action" mail_action="star" uuid="<%= $m->{'uuid'} %>" starred="<%= $starred ? 'yes' : 'no' %>" hint="Star this message"><%= $starred ? "\x{2605}" : "\x{2606}" %></button>
+				<button class="mail_action" mail_action="unread" uuid="<%= $m->{'uuid'} %>" hint="Mark unread">Unread</button>
+				<% if ($editable) { %>
+					<button class="mail_action" mail_action="edit" uuid="<%= $m->{'uuid'} %>" hint="Edit this draft">Edit</button>
 				<% } %>
-			</td></tr>
-		<% } %>
-	</tbody>
-</table>
-<div class="mail_reader_body"><%== $m->{'body'} %></div>
+				<span class="mail_reader_actions_right">
+					<button class="mail_action" mail_action="archive" uuid="<%= $m->{'uuid'} %>" hint="Move to Archive">Archive</button>
+					<img class="little_thumb email_deleter hover" hint="Delete" uuid="<%= $m->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>">
+				</span>
+			</div>
+			<h2 class="mail_reader_subject"><%= $subject %></h2>
+			<table class="mail_reader_meta">
+				<tbody>
+					<tr><td>From</td><td><%= $from %></td></tr>
+					<tr><td>To</td><td><%= $to %></td></tr>
+					<% if ($cc) { %>
+						<tr><td>Cc</td><td><%= $cc %></td></tr>
+					<% } %>
+					<tr><td>Date</td><td class="time" timestamp="<%= $m->{'timestamp'} %>"></td></tr>
+					<% if (scalar @{$attachments} > 0) { %>
+						<tr><td>Attachments</td><td>
+							<% foreach my $a ( @{$attachments} ) { %>
+								<span class="mail_reader_att"><%= $a->{'of'} || $a->{'name'} || 'file' %></span>
+							<% } %>
+						</td></tr>
+					<% } %>
+				</tbody>
+			</table>
+			<div class="mail_reader_body"><%== $body %></div>
+		</div>
+	<% } %>
+</div>

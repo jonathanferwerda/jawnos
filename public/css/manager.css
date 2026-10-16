@@ -1616,8 +1616,6 @@ body.dark_theme #ide {
 .wind[app="email"] .email_compose_form > table td { font-size: 15px; vertical-align: middle; }
 .wind[app="email"] .email_compose_form input,
 .wind[app="email"] .email_compose_form select { width: 100% !important; box-sizing: border-box; }
-.wind[app="email"] .email_compose_form .email_send,
-.wind[app="email"] .email_compose_form .email_discard,
 .wind[app="email"] .email_compose_form .email_draft_change { width: 30px; height: 30px; }
 .wind[app="email"] #email_compose_body {
 	height: 320px !important; width: 100% !important; box-sizing: border-box;
@@ -1689,6 +1687,25 @@ body.dark_theme #ide {
 
 /* the reading pane scrolls as a whole */
 .wind[app="email"] #mail_reader_content > .email_compose_form { flex: 1 1 auto; }
+
+/* the star toggle in a list row (a glyph, so it needs no icon set), and the
+	 thread count beside a party */
+.wind[app="email"] .email_star {
+	height: 22px; width: 22px; min-width: 0; padding: 0;
+	font-size: 16px; line-height: 1; border: none; background: transparent; color: var(--ink-muted);
+}
+.wind[app="email"] .email_star[starred="yes"] { color: #f0a500; }
+.wind[app="email"] .email_row_tools { white-space: nowrap; }
+.wind[app="email"] .email_thread_count {
+	display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px;
+	font-size: 12px; border-radius: 9px; background-color: var(--line); color: var(--ink);
+}
+
+/* the reading pane as a thread: one block per letter */
+.wind[app="email"] .mail_thread { display: flex; flex-direction: column; }
+.wind[app="email"] .mail_reader_message { border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 10px; }
+.wind[app="email"] .mail_reader_message:last-child { border-bottom: none; }
+.wind[app="email"] .mail_reader_actions_right { float: right; display: inline-flex; align-items: center; gap: 8px; }
 
 /* on a narrow window the rail shrinks and the list keeps a single readable column */
 @media (max-width: 700px) {

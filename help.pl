@@ -496,14 +496,15 @@ our %topic = (
 		summary => 'A mail client: folders, a searchable list, and the letter or the draft in the pane.',
 		body => [
 			'Email is the mailbox\'s mail half as an app of its own: it speaks IMAP and SMTP directly, so mail arrives on the desktop, and a new message raises the dot in the start menu.',
-			'The window is laid out like a mail client. The folders - contacts, inbox, drafts, outbox and sent - sit down the left, under the address the list is showing, and the chosen folder\'s messages fill the pane beside them. Each row is the time, the other party and the subject; an unread inbox row is bold, and the Search box in the toolbar filters the list by sender or subject as you type.',
-			'Click a letter and it opens in the pane over the list - its Device, From, To, Cc, Date, attachments and body - with Reply, Reply all, Forward and Delete, and Back to the list. A reply fills in the other party and a forward leaves the To empty; both wear Re: or Fwd: on the subject and quote the letter they answer, and Reply all carries the original Cc.',
+			'The window is laid out like a mail client. The folders - contacts, inbox, starred, drafts, outbox, sent and archive - sit down the left, under the address the list is showing, and the chosen folder\'s messages fill the pane beside them. Letters that answer one another are one thread: the list shows the thread once, newest first, with a count of how many letters it holds. Each row is the time, the other party and the subject; an unread inbox row is bold, a star marks a flagged one, and the Search box in the toolbar filters the list by sender or subject as you type.',
+			'Click a thread and it opens in the pane over the list: every letter in the exchange, each with its Device, From, To, Cc, Date, attachments and body, and its own Reply, Reply all, Forward, Star, Unread and Archive, with Delete. A reply fills in the other party and a forward leaves the To empty; both wear Re: or Fwd: on the subject and quote the letter they answer, and Reply all carries the original Cc. Back returns to the list.',
 			'Compose, in the toolbar, opens the same pane as a blank message: From, To, Cc, Bcc, Subject, an Add for attachments, and the body. Send sends the letter at once over the account\'s own SMTP server - it is not queued; the background email sender utility is kept for lists. A send that fails leaves the letter in Drafts to retry by hand. Sending files the mail onto the recipient\'s app and seals its attachments, so a document you emailed is still findable from the thing it belongs to. The gear opens the server settings and the saved templates.'
 		],
 		steps => [
 			'Open Email from the start menu: the folders are down the left, the inbox beside them.',
 			'Type in the Search box to filter the list, and pick a folder - or, under Contacts, an address.',
-			'Click a letter to read it; Reply, Reply all or Forward opens a draft in the same pane, and Back returns to the list.',
+			'Click a thread to read it; Reply, Reply all or Forward opens a draft in the same pane, and Star, Unread or Archive flags it - Back returns to the list.',
+			'Star a letter from its row, or mark it Unread, and find either under Starred or Archive in the rail.',
 			'Press Compose to write a new one, adding Cc or Bcc and attachments with Add, then press Send.',
 			'The gear sets up the server and the templates.'
 		],

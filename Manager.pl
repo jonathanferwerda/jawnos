@@ -19499,22 +19499,52 @@ post '/manager/mail/email/draft' => sub($c) {
 get '/manager/mail/email/read' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $m = &subs::db_select('mailbox', undef, { uuid => $uuid })->hashes->[0];
+	return $c->render(json => { html => '' }) unless $m;
 
 	# opening a letter marks it read, so the list can bold what is still unread.
 	# server_time rides along so the flag reaches every machine.
-	if ($m && $m->{'status'} eq 'inbox' && ($m->{'seen'} || '') ne 'yes') {
+	if ($m->{'status'} eq 'inbox' && ($m->{'seen'} || '') ne 'yes') {
 		&subs::db_update('mailbox', { seen => 'yes', server_time => &subs::rightNow() }, { uuid => $uuid });
 		$m->{'seen'} = 'yes';
 	}
 
+	# the whole conversation: every letter sharing the thread key, oldest first. A
+	# row from before the thread column has no key, so it stands alone.
+	my $key = $m->{'thread'};
+	unless (defined $key && length $key) {
+		my $subject = &subs::note_decrypter(&subs::suds_grabber(), $m->{'subject'} || '');
+		$key = length $subject ? &subs::email_thread_key($subject, $m->{'email'}) : '';
+	}
+	my $messages = $key ? &subs::db_select('mailbox', undef, { thread => $key })->hashes : [];
+	@{$messages} = ($m) unless scalar @{$messages};
+	@{$messages} = sort { ($a->{'timestamp'} || 0) <=> ($b->{'timestamp'} || 0) } @{$messages};
+
 	my $html = $c->render_to_string(
 		template => 'mail/email',
-		'm' => $m
+		messages => $messages
 	);
 	$c->render(json => { html => $html });
+};
 
+# star a letter, or flag it unread again: the one place the list and the reading
+# pane both write the flag
+post '/manager/mail/email/flag' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $flag = $c->param('flag') || '';
+	return $c->render(json => { result => 'bad flag' }) unless $uuid && ($flag eq 'starred' || $flag eq 'seen');
+	my $value = ($c->param('value') || '') =~ /^(yes|1|on)$/ ? 'yes' : 'no';
+	&subs::db_update('mailbox', { $flag => $value, server_time => &subs::rightNow() }, { uuid => $uuid });
+	$c->render(json => { result => 'ok', flag => $flag, value => $value });
+};
 
-
+# move a letter between folders: Archive tucks it away (and Inbox puts it back)
+post '/manager/mail/email/move' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $to = $c->param('to') || '';
+	my %ok = map { $_ => 1 } qw/inbox archive/;
+	return $c->render(json => { result => 'bad folder' }) unless $uuid && $ok{$to};
+	&subs::db_update('mailbox', { status => $to, server_time => &subs::rightNow() }, { uuid => $uuid });
+	$c->render(json => { result => 'ok', folder => $to });
 };
 
 
@@ -19651,6 +19681,7 @@ post '/manager/mail/email/send' => sub($c) {
 		body => $enc_body,
 		attachments => $jattachments,
 		status => 'sending',
+		thread => &subs::email_thread_key($subject, $email),
 		timestamp => $timestamp
 	});
 
@@ -27021,6 +27052,11 @@ sub update_database($data) {
 		'alter table mailbox add column cc VARCHAR(1000)',
 		'alter table mailbox add column bcc VARCHAR(1000)',
 		'alter table mailbox add column seen VARCHAR(10)',
+		# starred is the flag the list and a Starred view read; thread is a
+		# conversation key (the subject without its Re:/Fwd: plus the other party),
+		# so a thread shows as one row and opens as the whole exchange.
+		'alter table mailbox add column starred VARCHAR(10)',
+		'alter table mailbox add column thread VARCHAR(255)',
 		'drop table firewall',
 		# ssh credentials are gone: transports, deploy and backup are all
 		# password-less http/websocket now.
