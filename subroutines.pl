@@ -528,34 +528,38 @@ sub next_appointment_time() {
 	return { next_run => $next_run, next_time => $next_time, uuid => $uuid, list => $next_appointments };
 }
 
-# The session a stop should close: the OLDEST open start/record for the app. The
-# appointment header carries this so a stop names its own session, and every
-# machine in the mesh closes that same row instead of each resolving "the open
-# session" against its own, possibly lagging, copy of the database.
+# The session a stop should close: the NEWEST open start/record for the app - the one
+# the person is running now. The appointment header carries this so a stop names its
+# own session, and every machine in the mesh closes that same row instead of each
+# resolving "the open session" against its own, possibly lagging, copy of the
+# database. The newest, not the oldest: a session left open by a stop that never
+# landed is the oldest, and naming it would make every fresh stop close the stale one.
 sub open_session_uuid {
 	my $app = shift;
 	return '' unless $app;
-	my $row = &db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp asc limit 1', $app, 'start', 'record', &rightNow())->hashes->[0];
+	my $row = &db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp desc limit 1', $app, 'start', 'record', &rightNow())->hashes->[0];
 	return ($row && $row->{'uuid'}) ? $row->{'uuid'} : '';
 }
 
 # The row a stop closes, resolved the same way wherever the stop runs (manager_reset
 # and appointment_writer both call this): the session the client named, carried
-# through the relay so every machine closes the same one, else the OLDEST open
-# start/record for the app at or before the press. One row, never the backlog.
+# through the relay so every machine closes the same one. A stop that names a session
+# closes that row and only it - a session already closed (a stop delivered twice, or
+# one this machine has not synced) matches nothing and the stop does nothing, so a
+# duplicate can never reach another session. Only a stop that names none falls back to
+# the NEWEST open start/record for the app at or before the press. One row, never the
+# backlog, and never a stale open session swept up by a nameless or repeated stop.
 sub stop_target_row {
 	my ($app, $target_uuid, $timestamp) = @_;
 	return undef unless $app;
 	$timestamp ||= &rightNow();
-	my $row;
 	if ($target_uuid) {
-		$row = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
+		my $named = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
 			$app, $target_uuid, 'start', 'record')->hashes->[0];
+		return ($named && $named->{'uuid'}) ? $named : undef;
 	}
-	unless ($row && $row->{'uuid'}) {
-		$row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
-			$app, 'start', 'record', $timestamp)->hashes->[0];
-	}
+	my $row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1',
+		$app, 'start', 'record', $timestamp)->hashes->[0];
 	return ($row && $row->{'uuid'}) ? $row : undef;
 }
 

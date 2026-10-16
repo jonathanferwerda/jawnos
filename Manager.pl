@@ -22513,11 +22513,12 @@ sub guide_stage_update($c, $params) {
 }
 
 # The app's running appointment: a start (or a recording) that has begun and has not
-# been stopped. This is what "stop it" means.
+# been stopped. This is what "stop it" means - the newest such row, so a stale session
+# left open by a stop that never landed is not the one "stop it" reaches.
 sub guide_open_target($app) {
 	$app = &subs::unformat_name($app || '');
 	return undef unless length $app;
-	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1', $app, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
+	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1', $app, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
 	return $rows->[0];
 }
 
@@ -22553,7 +22554,9 @@ sub guide_stop_appointment($c, $params) {
 		type => $target->{'type'}, stop_timestamp => $target->{'stop_timestamp'},
 	});
 	if ($ts <= &subs::rightNow() + 1000) {
-		&Manager::appointment_writer($c, { app => $target->{'app'}, type => 'stop', timestamp => &subs::rightNow(), server_time => &subs::rightNow() });
+		# name the session so the writer closes exactly it - the same hard match the
+		# stop button uses - and not whichever session a stale copy might fall back to
+		&Manager::appointment_writer($c, { app => $target->{'app'}, uuid => $target->{'uuid'}, type => 'stop', timestamp => &subs::rightNow(), server_time => &subs::rightNow() });
 	}
 	else {
 		&subs::db_update('appointments', { stop_timestamp => $ts, stop_seen => undef, server_time => &subs::rightNow() }, { uuid => $target->{'uuid'}, app => $target->{'app'} });
