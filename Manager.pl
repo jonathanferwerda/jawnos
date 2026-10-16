@@ -19330,6 +19330,51 @@ get '/manager/mail/email/configure' => sub($c) {
 	$c->render(json => $returner);
 };
 
+# Begin an OAuth 2.0 device-authorization grant for an account: the provider
+# answers with a short code and a web address the person approves it at.
+post '/manager/mail/email/oauth/start' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+	my ($es) = grep { ($_->{'uuid'} || '') eq $uuid } @{$servers};
+	return $c->render(json => { result => 'error', message => 'save the account first' }) unless $es;
+	my $suds = &subs::session_suds($c);
+	my $end = &subs::email_oauth_endpoints($es);
+	my %form = ( client_id => ($es->{'oauth_client_id'} || ''), scope => $end->{'scope'} );
+	my $secret = &subs::email_oauth_plain($es, 'oauth_client_secret', $suds);
+	$form{'client_secret'} = $secret if $end->{'secret'} && length $secret;
+	my $r = &subs::email_oauth_http($end->{'device'}, \%form);
+	return $c->render(json => { result => 'error', message => ($r->{'error_description'} || $r->{'error'} || 'no device code') }) unless length($r->{'device_code'} || '');
+	&subs::email_server_update($uuid, { oauth_device_code => $r->{'device_code'} });
+	$c->render(json => {
+		result => 'ok',
+		user_code => $r->{'user_code'}, verification_uri => ($r->{'verification_uri'} || $r->{'verification_url'}),
+		message => $r->{'message'}, interval => ($r->{'interval'} || 5), expires_in => $r->{'expires_in'},
+	});
+};
+
+# Poll for the grant: pending until the person approves, then the tokens are
+# stored (sealed) on the account.
+post '/manager/mail/email/oauth/poll' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $suds = &subs::session_suds($c);
+	my $servers = eval { return decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+	my ($es) = grep { ($_->{'uuid'} || '') eq $uuid } @{$servers};
+	return $c->render(json => { result => 'error', message => 'no account' }) unless $es;
+	my $code = $es->{'oauth_device_code'} || '';
+	return $c->render(json => { result => 'error', message => 'press Connect first' }) unless length $code;
+	my $end = &subs::email_oauth_endpoints($es);
+	my %form = ( grant_type => 'urn:ietf:params:oauth:grant-type:device_code', device_code => $code, client_id => ($es->{'oauth_client_id'} || '') );
+	my $secret = &subs::email_oauth_plain($es, 'oauth_client_secret', $suds);
+	$form{'client_secret'} = $secret if $end->{'secret'} && length $secret;
+	my $r = &subs::email_oauth_http($end->{'token'}, \%form);
+	my $err = $r->{'error'} || '';
+	return $c->render(json => { result => 'pending' }) if $err eq 'authorization_pending' || $err eq 'slow_down';
+	return $c->render(json => { result => 'error', message => ($r->{'error_description'} || $err || 'authorisation failed') }) unless length($r->{'access_token'} || '');
+	&subs::email_oauth_store($es, $r, $suds);
+	&subs::email_server_update($uuid, { oauth_device_code => '' });
+	$c->render(json => { result => 'ok' });
+};
+
 get '/manager/mail/email/receive' => sub($c) {
 	my $s_and_r = &subs::email_receiver();
 	$c->render(json => $s_and_r);
@@ -19350,7 +19395,7 @@ post '/manager/mail/email/configure' => sub($c) {
 	if ($setting eq 'folder') {
 		$es->{'folders'}->{$folder}->{$subsetting} = $value;
 	}
-	elsif ($setting eq 'password') {
+	elsif ($setting eq 'password' || $setting eq 'oauth_client_secret') {
 		$value = &subs::note_encrypter(&subs::session_suds($c), $value);
 		$es->{$setting} = $value;
 	}

@@ -207,6 +207,24 @@ $(document).on('click', '.email_config_server_add', function() {
 	});
 });
 
+// An oauth2 account: ask for a device code, show it, and poll until the person
+// has approved the account at the provider.
+$(document).on('click', '.email_oauth_connect', function() {
+	var uuid = $(this).attr('uuid');
+	var status = $('.email_oauth_status[uuid="' + uuid + '"]');
+	status.text('asking the provider…');
+	$.post('/manager/mail/email/oauth/start', { uuid: uuid }, function(r) {
+		if (r.result != 'ok') { status.text(r.message || 'could not start'); return; }
+		status.html('Go to <b>' + r.verification_uri + '</b> and enter the code <b>' + r.user_code + '</b>');
+		var poll = setInterval(function() {
+			$.post('/manager/mail/email/oauth/poll', { uuid: uuid }, function(p) {
+				if (p.result == 'ok') { clearInterval(poll); status.text('Connected'); }
+				else if (p.result != 'pending') { clearInterval(poll); status.text(p.message || 'authorisation failed'); }
+			});
+		}, (r.interval || 5) * 1000);
+	});
+});
+
 $(document).on('click', '.email_config_server_delete', function() {
 	var a = $(this);
 	var uuid = a.attr('uuid');

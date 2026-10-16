@@ -94,6 +94,45 @@
 							</td>
 						</tr>
 						<tr>
+							<td>Auth</td>
+							<td>
+								<select class="email_server_setting" setting="auth" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'auth'} %>">
+									<option value="" <% if (!$es->{'auth'} || $es->{'auth'} eq 'password') { %>selected<% } %>>Password</option>
+									<option value="oauth2" <% if ($es->{'auth'} eq 'oauth2') { %>selected<% } %>>OAuth2 (Outlook / Gmail)</option>
+								</select>
+							</td>
+						</tr>
+						<% if (($es->{'auth'} || '') eq 'oauth2') { %>
+							<tr>
+								<td>Provider</td>
+								<td>
+									<select class="email_server_setting" setting="oauth_provider" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_provider'} %>">
+										<option value="microsoft" <% if (!$es->{'oauth_provider'} || $es->{'oauth_provider'} eq 'microsoft') { %>selected<% } %>>Microsoft</option>
+										<option value="google" <% if ($es->{'oauth_provider'} eq 'google') { %>selected<% } %>>Google</option>
+									</select>
+									<input type="text" class="email_server_setting" setting="oauth_tenant" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_tenant'} %>" placeholder="tenant (common)" style="width:40%;">
+								</td>
+							</tr>
+							<tr>
+								<td>Client ID</td>
+								<td>
+									<input type="text" class="email_server_setting" setting="oauth_client_id" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_client_id'} %>" placeholder="the app registration's Application (client) ID">
+								</td>
+							</tr>
+							<tr>
+								<td>Client Secret</td>
+								<td>
+									<input type="password" class="email_server_setting" setting="oauth_client_secret" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'oauth_client_secret'} %>" placeholder="only Google needs one">
+								</td>
+							</tr>
+							<tr>
+								<td colspan="3">
+									<button class="email_oauth_connect" uuid="<%= $es->{'uuid'} %>" hint="Get a code to approve this account at the provider">Connect</button>
+									<span class="email_oauth_status" uuid="<%= $es->{'uuid'} %>"><%= length($es->{'oauth_refresh_token'} || '') ? 'Connected' : '' %></span>
+								</td>
+							</tr>
+						<% } %>
+						<tr>
 							<td>IMAP Server</td>
 							<td>
 								<input type="text" class="email_server_setting" setting="imap_server" uuid="<%= $es->{'uuid'} %>" value="<%= $es->{'imap_server'} %>">

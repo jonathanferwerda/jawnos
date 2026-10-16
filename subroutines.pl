@@ -11945,6 +11945,106 @@ sub c_maker() {
 	return $c;
 }
 
+# ---- OAuth2 for mail accounts ------------------------------------------------
+# Outlook and Gmail no longer accept a plain password over IMAP or SMTP. An
+# account can be marked auth=oauth2 instead: the house runs the OAuth 2.0 device
+# authorization grant - it shows a short code, the person approves it at the
+# provider, and the refresh token is kept (sealed) to mint access tokens after.
+# The access token rides XOAUTH2 for both IMAP and SMTP. A plain-password account
+# is untouched: every branch below only fires when auth is exactly 'oauth2'.
+
+sub email_oauth_endpoints {
+	my ($es) = @_;
+	my $provider = $es->{'oauth_provider'} || 'microsoft';
+	my $tenant = $es->{'oauth_tenant'} || 'common';
+	if ($provider eq 'google') {
+		return {
+			device => 'https://oauth2.googleapis.com/device/code',
+			token  => 'https://oauth2.googleapis.com/token',
+			scope  => ($es->{'oauth_scope'} || 'https://mail.google.com/'),
+			secret => 1,
+		};
+	}
+	return {
+		device => "https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode",
+		token  => "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token",
+		scope  => ($es->{'oauth_scope'} || 'offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send'),
+		secret => 0,
+	};
+}
+
+sub email_oauth_plain {
+	my ($es, $key, $suds) = @_;
+	return '' unless length($es->{$key} || '');
+	return &note_decrypter($suds || &suds_grabber(), $es->{$key});
+}
+
+sub email_oauth_http {
+	my ($url, $form) = @_;
+	require HTTP::Tiny;
+	my $ua = HTTP::Tiny->new(timeout => 30);
+	my $res = eval { $ua->post_form($url, $form) };
+	return { error => 'http', error_description => 'request failed: ' . ($@ || '') } unless $res;
+	my $json = eval { decode_json $res->{'content'} };
+	return $json if ref $json eq 'HASH';
+	return { error => 'http', error_description => ($res->{'status'} || '') . ' ' . ($res->{'reason'} || '') };
+}
+
+# Write fields back onto one account in the email_config setting.
+sub email_server_update {
+	my ($uuid, $fields) = @_;
+	my $servers = eval { &decode_json(&setting_grabber({ app => 'mailbox', setting => 'email_config' })) } || [];
+	foreach my $es ( @{$servers} ) {
+		next unless ($es->{'uuid'} || '') eq $uuid;
+		$es->{$_} = $fields->{$_} for keys %{$fields};
+	}
+	&setting_setter({ app => 'mailbox', setting => 'email_config', value => encode_json($servers) });
+	return $servers;
+}
+
+sub email_oauth_store {
+	my ($es, $r, $suds) = @_;
+	return unless $es->{'uuid'};
+	my %up = ( oauth_expires => time() + (($r->{'expires_in'} || 3600) - 30) );
+	$up{'oauth_access_token'} = &note_encrypter($suds, $r->{'access_token'}) if length($r->{'access_token'} || '');
+	$up{'oauth_refresh_token'} = &note_encrypter($suds, $r->{'refresh_token'}) if length($r->{'refresh_token'} || '');
+	&email_server_update($es->{'uuid'}, \%up);
+	$es->{$_} = $up{$_} for keys %up;
+	return 1;
+}
+
+# A live access token for the account: the one held if it is still good, else a
+# fresh one minted from the refresh token.
+sub email_oauth_token {
+	my ($es, $suds) = @_;
+	$suds = &suds_grabber() unless $suds;
+	my $end = &email_oauth_endpoints($es);
+	my $access = &note_decrypter($suds, $es->{'oauth_access_token'} || '');
+	return $access if length $access && ($es->{'oauth_expires'} || 0) > time() + 60;
+	my $refresh = &note_decrypter($suds, $es->{'oauth_refresh_token'} || '');
+	return '' unless length $refresh;
+	my %form = ( grant_type => 'refresh_token', refresh_token => $refresh, client_id => ($es->{'oauth_client_id'} || '') );
+	my $secret = &email_oauth_plain($es, 'oauth_client_secret', $suds);
+	$form{'client_secret'} = $secret if length $secret;
+	my $r = &email_oauth_http($end->{'token'}, \%form);
+	return '' unless length($r->{'access_token'} || '');
+	&email_oauth_store($es, $r, $suds);
+	return $r->{'access_token'};
+}
+
+# Log an IMAP connection in, by XOAUTH2 for an oauth2 account or by password
+# otherwise. The SASL initial response rides as an IMAP literal, which is what the
+# continuation the server answers is for.
+sub email_imap_login {
+	my ($imap, $es, $token) = @_;
+	if (($es->{'auth'} || '') eq 'oauth2') {
+		my $ir = 'user=' . $es->{'email'} . "\x01auth=Bearer $token\x01\x01";
+		my ($ok) = $imap->_tell_imap('AUTHENTICATE', [ 'XOAUTH2 ', \$ir ]);
+		return $ok ? 1 : 0;
+	}
+	return $imap->login;
+}
+
 sub email_receiver() {
 	my $receive_type = shift;
 	if ($receive_type eq 'auto') {
@@ -11965,7 +12065,8 @@ sub email_receiver() {
 
 	foreach my $es ( @{$email_servers} ) {
 
-		my $password = &subs::note_decrypter(&subs::suds_grabber(), $es->{'password'});
+		my $oauth2 = (($es->{'auth'} || '') eq 'oauth2') ? 1 : 0;
+		my $password = $oauth2 ? '' : &subs::note_decrypter(&subs::suds_grabber(), $es->{'password'});
 		$es->{'status'} = 'failed';
 		my $imap = Net::IMAP::Client->new(
 			server => $es->{'imap_server'},
@@ -11978,7 +12079,14 @@ sub email_receiver() {
 			ssl_ca_path => '/etc/ssl/certs/',         # (CA path used for SSL)
 			port   => $es->{'imap_port'}                             # (but defaults are sane)
 		) or next;
-		$imap->login or next;
+		if ($oauth2) {
+			my $token = &subs::email_oauth_token($es);
+			next unless length $token;
+			&subs::email_imap_login($imap, $es, $token) or next;
+		}
+		else {
+			$imap->login or next;
+		}
 
 		$es->{'status'} = 'success';
 		$es->{'last_login'} = &subs::rightNow();
@@ -12348,9 +12456,18 @@ sub email_send() {
 		host          => $es->{'smtp_server'},
 		port          => $es->{'smtp_port'},
 		ssl           => $es->{'smtp_encryption'} eq 'SSL' ? 1 : 0,
-		sasl_username => $es->{'email'},
-		sasl_password => &subs::note_decrypter($suds, $es->{'password'}),
 	};
+	# an oauth2 account authenticates with a bearer token (XOAUTH2); a plain one
+	# with its password, exactly as before
+	if (($es->{'auth'} || '') eq 'oauth2') {
+		my $token = &subs::email_oauth_token($es, $suds);
+		return { result => 'no oauth token' } unless length $token;
+		$smtp_data->{'sasl_authenticator'} = Authen::SASL->new(mechanism => 'XOAUTH2', callback => { user => $es->{'email'}, pass => $token });
+	}
+	else {
+		$smtp_data->{'sasl_username'} = $es->{'email'};
+		$smtp_data->{'sasl_password'} = &subs::note_decrypter($suds, $es->{'password'});
+	}
 	my $transport = Email::Sender::Transport::SMTP->new($smtp_data);
 	my $stuffer = Email::Stuffer
 		->from(&subs::format_name($es->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'my_name' })) . ' <' . $es->{'email'} . '>')
