@@ -14718,6 +14718,43 @@ post '/manager/phone/call' => sub($c) {
 		return;
 	}
 
+	if ($event eq 'log') {
+		# A whole call, filed from the app's own record of it. The dialer role's
+		# service sees every call whatever else is running, so this is what makes a
+		# call taken with no page up leave an appointment behind (it used to be
+		# written only by the page, and a call with the app in the background left
+		# nothing). The appointment opens at the ring and closes at the hangup, or
+		# cancels when nobody ever answered - a call that went out and was not
+		# picked up counts the same way.
+		my $started = $c->param('started') || $timestamp;
+		my $ended = $c->param('ended') || $started;
+		my $answered = ($c->param('answered') || '') eq 'yes';
+		my $direction = $c->param('direction') || 'incoming';
+		my $wrote = &appointment_writer($c, {
+			app => $app,
+			type => 'start',
+			subtype => 'phone',
+			timestamp => $started,
+			account => $number,
+			data => encode_json({ direction => $direction, number => $number }),
+		});
+		unless ($wrote && $wrote->{'uuid'}) {
+			$c->render(json => { ok => 0, error => 'no appointment' });
+			return;
+		}
+		my %closing = ( stop_seen => 'yes', stop_timestamp => $ended, server_time => &subs::rightNow() );
+		if ($answered) {
+			$closing{'type'} = 'stop';
+			$closing{'duration'} = $ended - $started;
+		}
+		else {
+			$closing{'type'} = 'cancel';
+		}
+		&subs::db_update('appointments', \%closing, { uuid => $wrote->{'uuid'} });
+		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
+		return;
+	}
+
 	if (($event eq 'end' || $event eq 'miss') && $uuid) {
 		my $row = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
 		if ($row && $row->{'app'}) {

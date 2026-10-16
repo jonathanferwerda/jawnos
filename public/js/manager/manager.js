@@ -1200,6 +1200,9 @@ function jawnPhoneSync() {
 			});
 		});
 	}
+	// the app's own record of the calls it saw (jawnPhoneAppFileCalls, phone.js):
+	// a call taken with no page up leaves one, and this is where it is filed
+	if (typeof jawnPhoneAppFileCalls === 'function') { jawnPhoneAppFileCalls(); }
 }
 if (window.JawnPhone) {
 	jawnPhoneSync();

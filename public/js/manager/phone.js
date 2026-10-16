@@ -34,17 +34,16 @@ function jawnPhoneAppRender() {
 }
 
 // ---- live calls -----------------------------------------------------------
-// While the app is up, a ring starts a call appointment (on the caller's own
-// app when the number is known - the Call screening role supplies it at ring -
-// else the fallback 'phone' app), a hangup stops it and a miss cancels it. In a
-// browser the bridge is absent, so nothing fires here and the house's own
-// call-log poll backfills instead.
+// The appointment itself is written from the app's own record of the call (see
+// jawnPhoneAppFileCalls below): a call arrives whether or not a page is up, and
+// the native side is the only half that sees every one of them. That is what
+// this listener used to get wrong - it wrote the appointment itself, so a call
+// taken with the app in the background was written nowhere. All it does now is
+// say what is happening on screen.
 // 'prev' holds the bridge's own vocabulary (IDLE/RINGING/OFFHOOK): the native
 // side spells the states in capitals, so comparing against a lowercase 'idle'
-// never matched - and registering the listener delivers the current state
-// (IDLE) immediately, which is the event that precedes every ring or dial. That
-// left the outgoing start unreachable; keep this in step with the bridge.
-var jawnPhoneAppCall = { prev: 'IDLE', uuid: '' };
+// never matched.
+var jawnPhoneAppCall = { prev: 'IDLE' };
 
 function jawnPhoneAppNumber() {
 	try {
@@ -55,39 +54,48 @@ function jawnPhoneAppNumber() {
 	return '';
 }
 
-function jawnPhoneAppCallStart(direction) {
-	if (jawnPhoneAppCall.uuid) return;
-	$.ajax({
-		url: '/manager/phone/call',
-		type: 'POST',
-		data: { event: 'ring', number: jawnPhoneAppNumber(), direction: direction, timestamp: Date.now() },
-		success: function (res) { if (res && res.ok) { jawnPhoneAppCall.uuid = res.uuid || ''; } }
+function jawnPhoneAppOnState(state) {
+	state = (state || '').toUpperCase();
+	if (state === 'RINGING') { jawnPhoneAppStatus('Incoming call…'); }
+	else if (state === 'OFFHOOK') { jawnPhoneAppStatus('On a call'); }
+	else { jawnPhoneAppStatus('Idle'); }
+	jawnPhoneAppCall.prev = state;
+}
+
+// The calls the app recorded (window.JawnPhone.takeCalls) become appointments,
+// one each. Run at page load, on every jawnPhoneSync, and the moment the native
+// side says a call has finished - so a call that happened while the app was in
+// the background lands as soon as there is a page to file it.
+function jawnPhoneAppFileCalls(reload) {
+	if (!window.JawnPhone || typeof window.JawnPhone.takeCalls !== 'function') { return; }
+	var calls = [];
+	try { calls = JSON.parse(window.JawnPhone.takeCalls()) || []; } catch (e) { calls = []; }
+	if (!calls.length) { return; }
+	var filed = 0;
+	$.each(calls, function (i, c) {
+		if (!c) { return; }
+		$.ajax({
+			url: '/manager/phone/call',
+			type: 'POST',
+			data: {
+				timestamp: c.ended || Date.now(),
+				event: 'log',
+				number: c.number || '',
+				direction: c.direction || 'incoming',
+				started: c.started || 0,
+				ended: c.ended || 0,
+				answered: c.answered ? 'yes' : 'no'
+			},
+			success: function (res) {
+				filed++;
+				if (filed === calls.length && reload && $('#phone_app').length) { jawnPhoneAppReload('recent'); }
+			}
+		});
 	});
 }
 
-function jawnPhoneAppCallFinish(event) {
-	var uuid = jawnPhoneAppCall.uuid;
-	jawnPhoneAppCall.uuid = '';
-	if (!uuid) return;
-	$.ajax({ url: '/manager/phone/call', type: 'POST', data: { event: event, uuid: uuid, timestamp: Date.now() } });
-}
-
-function jawnPhoneAppOnState(state) {
-	state = (state || '').toUpperCase();
-	var prev = jawnPhoneAppCall.prev;
-	if (state === 'RINGING') {
-		jawnPhoneAppStatus('Incoming call…');
-		if (prev !== 'RINGING') jawnPhoneAppCallStart('incoming');
-	} else if (state === 'OFFHOOK') {
-		jawnPhoneAppStatus('On a call');
-		if (prev === 'IDLE') jawnPhoneAppCallStart('outgoing');
-	} else {
-		jawnPhoneAppStatus('Idle');
-		if (prev === 'RINGING') jawnPhoneAppCallFinish('miss');
-		else if (prev === 'OFFHOOK') jawnPhoneAppCallFinish('end');
-	}
-	jawnPhoneAppCall.prev = state;
-}
+// the native side nudges us here when a call ends (JawnInCallService)
+window.__jawnPhoneCalls = function () { jawnPhoneAppFileCalls(true); };
 
 // The native bridge pushes call state here (window.JawnContacts -> the app).
 window.__jawnPhoneEvent = function (type, payload) {
@@ -277,4 +285,6 @@ function jawnPhoneAppNativeContacts() {
 
 $(document).ready(function () {
 	if ($('#phone_app').length) { jawnPhoneAppRender(); jawnPhoneAppArm(); }
+	// a call that ended while the app was away is still waiting to be filed
+	jawnPhoneAppFileCalls();
 });
