@@ -11172,8 +11172,6 @@ sub tunnel_checker() {
 		foreach my $tun ( @{$tunnels} ) {
 			next unless $tun->{'signatorial'} && $tun->{'name'} && $tun->{'name'} eq 'PORT_AHOY';
 			next if $enrolled{ $tun->{'signatorial'} }++;
-			my $row = &subs::db_select('remote_machines', undef, { signatorial => $tun->{'signatorial'} })->hashes->[0];
-			next if $row && ($row->{'connection'} || '') eq 'active';
 			&subs::tunnel_peer_enrol($tun->{'signatorial'});
 		}
 		foreach my $td ( @{$tunnel_duties} ) {
@@ -11383,40 +11381,47 @@ sub tunnel_peer_enrol {
 	return unless $dock;
 	my $hostname = `hostname`;
 	chomp $hostname;
-	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
-	my $ua = Mojo::UserAgent->new();
-	my $url = 'https://127.0.0.1:' . $dock . '/manager/gate?restore_list=' . ($config->{'start_dir'} || '')
-		. '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . &subs::signatorial_designer();
-	my $res = eval { $ua->insecure(1)->get($url)->result };
-	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
-	if ($body && $body->{'signatorial'}) {
-		my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
-		if ($me) {
-			my $address = eval { decode_json $me->{'address'} } || {};
-			my $changed = 0;
-			foreach my $nic ( keys %{$address} ) {
-				foreach my $n ( @{$address->{$nic}->{'neigh'} || []} ) {
-					next unless ($n->{'signatorial'} || '') eq $signatorial;
-					$n->{'name'} = $body->{'name'} if $body->{'name'};
-					$n->{'purpose'} = $body->{'purpose'} if $body->{'purpose'};
-					$n->{'signatorial'} = $body->{'signatorial'};
-					$n->{'restore_list'} = encode_json $body->{'restore_list'} if $body->{'restore_list'};
-					$changed = 1;
-				}
-			}
-			&subs::db_update('devices', { address => encode_json $address }, { uuid => $me->{'uuid'} }) if $changed;
+	my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+	return unless $me;
+	# the neighbour row for this peer, if the naming pass has made one yet
+	my $address = eval { decode_json $me->{'address'} } || {};
+	my $entry;
+	foreach my $nic ( keys %{$address} ) {
+		foreach my $n ( @{$address->{$nic}->{'neigh'} || []} ) {
+			if (($n->{'signatorial'} || '') eq $signatorial) { $entry = $n; last; }
 		}
+		last if $entry;
 	}
-	# the backup path the peer's /sesh_check must be handed to open (prefer the
-	# current snapshot) - the same file the Dev panel's Connect button would send
+	my $row = &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0];
+	my $need_list = !($entry && $entry->{'restore_list'});
+	my $need_connect = !($row && ($row->{'connection'} || '') eq 'active');
+	return unless $need_list || $need_connect;
 	my $filename;
-	if ($body && ref $body->{'restore_list'} eq 'ARRAY') {
-		foreach my $b ( @{ $body->{'restore_list'} } ) {
-			if (($b->{'archive'} || '') eq 'current') { $filename = $b->{'filename'}; last; }
+	if ($need_list) {
+		my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
+		my $ua = Mojo::UserAgent->new();
+		my $url = 'https://127.0.0.1:' . $dock . '/manager/gate?restore_list=' . ($config->{'start_dir'} || '')
+			. '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . &subs::signatorial_designer();
+		my $res = eval { $ua->insecure(1)->get($url)->result };
+		my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
+		if ($body && $body->{'signatorial'} && $entry) {
+			$entry->{'name'} = $body->{'name'} if $body->{'name'};
+			$entry->{'purpose'} = $body->{'purpose'} if $body->{'purpose'};
+			$entry->{'signatorial'} = $body->{'signatorial'};
+			$entry->{'restore_list'} = encode_json $body->{'restore_list'} if $body->{'restore_list'};
+			&subs::db_update('devices', { address => encode_json $address }, { uuid => $me->{'uuid'} });
 		}
-		$filename ||= $body->{'restore_list'}->[0]->{'filename'};
+		# the backup path the peer's /sesh_check must be handed to open (prefer the
+		# current snapshot) - the same file the Dev panel's Connect button sends
+		if ($body && ref $body->{'restore_list'} eq 'ARRAY') {
+			foreach my $b ( @{ $body->{'restore_list'} } ) {
+				if (($b->{'archive'} || '') eq 'current') { $filename = $b->{'filename'}; last; }
+			}
+			$filename ||= $body->{'restore_list'}->[0]->{'filename'};
+		}
 	}
-	return &subs::tunnel_peer_connect($signatorial, $filename);
+	return &subs::tunnel_peer_connect($signatorial, $filename) if $need_connect;
+	return undef;
 }
 
 sub system_monitor() {
