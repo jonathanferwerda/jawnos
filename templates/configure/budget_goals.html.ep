@@ -42,8 +42,8 @@
 		$o .= '</select>';
 		$o .= '<input class="budget_goals_value" type="text" placeholder="amount" value="' . $value . '">';
 		$o .= '<select class="budget_goals_measure">';
-		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>(count)</option>';
-		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>money</option>';
+		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>occurrences (count)</option>';
+		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>total (money)</option>';
 		$o .= '<option value="quantity"' . ($measure eq 'quantity' ? ' selected' : '') . '>quantity</option>';
 		# a base mode's name may also be an app's own measure (beer carries a
 		# 'quantity' measure), so the mode is offered once here and skipped below

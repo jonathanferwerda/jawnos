@@ -65,6 +65,9 @@ our $setting_memo_on = 0;
 sub format_name() {
 	my $name = shift || "";
 	my $fname = lc $name;
+	# the one misspelling the code has carried since the start: the stored key is
+	# 'occurences', the name a person reads is spelled right
+	$fname = 'occurrences' if $fname eq 'occurences';
 	$fname =~ s/_/ /gi;
 	my @fname = split ' ',$fname;
 	foreach my $f (@fname) {
@@ -8925,6 +8928,53 @@ sub warehouse_stock_for {
 		$stock{$unit} += &numeric_formatter($r->{'quantity'}) + 0;
 	}
 	return \%stock;
+}
+
+# What an item has on hand, in the unit its own app names (its `unit` setting),
+# else its sole unit - what a fixed-level quantity budget reads. Zero when nothing
+# of it is stocked.
+sub warehouse_on_hand {
+	my ($item, $settings) = @_;
+	my $stock = &warehouse_stock_for($item);
+	my $unit = $settings && $settings->{'unit'};
+	return $stock->{$unit} + 0 if $unit && defined $stock->{$unit};
+	my @units = grep { defined $stock->{$_} } keys %{$stock};
+	return 0 unless scalar @units == 1;
+	return $stock->{$units[0]} + 0;
+}
+
+# How to reach a stock target from what is on hand now, in whole packages where
+# the item names them: a shortfall of four covered by a six-pack reads "buy one
+# six-pack". The smallest pack that covers the shortfall is bought once; when no
+# pack covers it the biggest is repeated; with no packaging at all the bare
+# shortfall is the answer.
+sub warehouse_restock_for {
+	my ($item, $target) = @_;
+	my $settings = &settings_grabber({ app => $item });
+	my $on_hand = &warehouse_on_hand($item, $settings);
+	my $short = ($target || 0) - $on_hand;
+	my $plan = { item => $item, on_hand => $on_hand, target => ($target || 0), short => ($short > 0 ? $short : 0), buy => undef };
+	return $plan unless $short > 0;
+	my $packaging = eval { return decode_json &setting_grabber({ app => $item, setting => 'app_packaging' }) }
+		|| eval { return decode_json &setting_grabber({ app => $item, setting => 'packaging' }) }
+		|| {};
+	my @packs = sort { $a->{'quantity'} <=> $b->{'quantity'} }
+		map { { name => $packaging->{$_}->{'name'}, quantity => ($packaging->{$_}->{'quantity'} + 0) } }
+		grep { ref $packaging->{$_} eq 'HASH' && ($packaging->{$_}->{'quantity'} || '') =~ /[0-9]/ }
+		keys %{$packaging};
+	my ($covers) = grep { $_->{'quantity'} >= $short } @packs;
+	if ($covers) {
+		$plan->{'buy'} = { %{$covers}, count => 1, units => $covers->{'quantity'} };
+	}
+	elsif (scalar @packs) {
+		my $pack = $packs[-1];
+		my $count = int(( $short + $pack->{'quantity'} - 1 ) / $pack->{'quantity'});
+		$plan->{'buy'} = { %{$pack}, count => $count, units => $count * $pack->{'quantity'} };
+	}
+	else {
+		$plan->{'buy'} = { name => 'each', quantity => 1, count => $short, units => $short };
+	}
+	return $plan;
 }
 
 # The shelf life (e.g. '3w') declared on an item's packaging, if any.

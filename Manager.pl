@@ -2209,7 +2209,10 @@ get '/manager/warehouse/on_hand' => sub($c) {
 	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'app_packaging' }) }
 		|| eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) }
 		|| {};
-	$c->render(json => { item => $item, on_hand => $stock, packaging => $packaging });
+	# a target turns the reading into a restock plan (how much of which pack to buy)
+	my $target = $c->param('target');
+	my $restock = (defined $target && $target =~ /[0-9]/) ? &subs::warehouse_restock_for($item, $target + 0) : undef;
+	$c->render(json => { item => $item, on_hand => $stock, packaging => $packaging, restock => $restock });
 };
 
 get '/store' => sub ($c) {
@@ -13594,7 +13597,17 @@ sub budget_calculator($data) {
 				$returner->{'duration'} = $returner->{'scope'} unless $value;
 			}
 		}
-		unless ($value) {
+		# A fixed quantity budget is a level to keep on hand, not a rate of the
+		# appointment stream (the scoped form reads that stream): read the warehouse's
+		# signed stock for the item, so its light says whether the shelf holds what it
+		# should.
+		my $handled;
+		if ($circumstance eq 'quantity' && $fixed) {
+			$value = &subs::warehouse_on_hand($app, $settings);
+			$returner->{'value'} = $value;
+			$handled = 1;
+		}
+		unless ($value || $handled) {
 			my ($db) = &subs::database_grabber();
 			my $appts = $data->{'appts'};
 			unless ($data->{'appts'}) {
