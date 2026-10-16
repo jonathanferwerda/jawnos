@@ -4,6 +4,8 @@
 #   ./desktop/install.sh                 # app + CLI + dashboard into ~/.local
 #   ./desktop/install.sh --autostart     # also start the BLE bridge at login
 #   ./desktop/install.sh --systemd       # also install systemd --user units
+#   ./desktop/install.sh --headless      # a server: CLI only, plus a SYSTEM
+#                                        # service (installing it needs root)
 #
 # Everything lands under ~/.local, so removing it is just deleting the
 # directories this prints at the end.
@@ -21,12 +23,14 @@ JAWN_DIR=${JAWNOS_DIR:-$REPO_ROOT}
 
 WITH_AUTOSTART=0
 WITH_SYSTEMD=0
+WITH_HEADLESS=0
 for arg in "$@"; do
 	case "$arg" in
 		--autostart) WITH_AUTOSTART=1 ;;
 		--systemd) WITH_SYSTEMD=1 ;;
+		--headless|--server) WITH_HEADLESS=1 ;;
 		-h|--help)
-			sed -n '2,9p' "$0"
+			sed -n '2,11p' "$0"
 			exit 0
 			;;
 		*) echo "install.sh: unknown option $arg" >&2; exit 2 ;;
@@ -41,6 +45,7 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # --- dependency sanity (warn, do not fail: distro package names differ) -----
+if [ "$WITH_HEADLESS" -eq 0 ]; then
 missing=""
 "$PYTHON" -c 'import gi' 2>/dev/null || missing="$missing python3-gi"
 "$PYTHON" -c 'import dbus' 2>/dev/null || missing="$missing python3-dbus"
@@ -52,11 +57,13 @@ fi
 if ! command -v bluetoothctl >/dev/null 2>&1; then
 	echo "install.sh: warning - bluez not found; the BLE bridge needs it"
 fi
+fi
 
 # The embedded view (WebKitGTK 4.1) and smooth video (the GStreamer plugin set,
 # with a VA-API plugin for GPU decode) are distro packages. Warn with the exact
 # command; never fail -- the dashboard works without the view, and video merely
 # decodes in software.
+if [ "$WITH_HEADLESS" -eq 0 ]; then
 with_view=1
 "$PYTHON" -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || with_view=0
 with_va=0
@@ -98,6 +105,7 @@ if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
 			;;
 	esac
 fi
+fi
 
 # --- copy the tree ----------------------------------------------------------
 echo "Installing to $DEST"
@@ -111,16 +119,23 @@ chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon"
 
 # --- entry points -----------------------------------------------------------
 mkdir -p "$BIN"
-for tool in jawnosctl jawnos-desktop jawnos-bt-daemon; do
-	ln -sf "$DEST/$tool" "$BIN/$tool"
-done
-echo "Linked jawnosctl, jawnos-desktop, jawnos-bt-daemon into $BIN"
+if [ "$WITH_HEADLESS" -eq 1 ]; then
+	ln -sf "$DEST/jawnosctl" "$BIN/jawnosctl"
+	echo "Linked jawnosctl into $BIN"
+else
+	for tool in jawnosctl jawnos-desktop jawnos-bt-daemon; do
+		ln -sf "$DEST/$tool" "$BIN/$tool"
+	done
+	echo "Linked jawnosctl, jawnos-desktop, jawnos-bt-daemon into $BIN"
+fi
 
 # --- icon and desktop entry -------------------------------------------------
+if [ "$WITH_HEADLESS" -eq 0 ]; then
 mkdir -p "$ICON_DIR" "$APPS"
 cp "$DESKTOP_SRC/icons/jawnos.png" "$ICON_DIR/jawnos.png"
 sed "s|@DESKTOP@|$DEST|g" "$DESKTOP_SRC/jawnos.desktop.in" > "$APPS/jawnos.desktop"
 echo "Installed desktop entry and icon"
+fi
 
 # --- remember the jawn directory -------------------------------------------
 # The installed copy lives under ~/.local, not in the checkout, so store where
@@ -132,7 +147,7 @@ echo "Installed desktop entry and icon"
 # the embedded view opens the manager without ever asking for a login. Skipped
 # when a ticket is already stored (a routine code update must never rotate it)
 # and when there is no house here to mint from; JAWNOS_NO_TICKET=1 turns it off.
-if [ -z "${JAWNOS_NO_TICKET:-}" ] && [ -f "$REPO_ROOT/scripts/app_ticket.pl" ] \
+if [ "$WITH_HEADLESS" -eq 0 ] && [ -z "${JAWNOS_NO_TICKET:-}" ] && [ -f "$REPO_ROOT/scripts/app_ticket.pl" ] \
 	&& ! "$DEST/jawnosctl" ticket show >/dev/null 2>&1; then
 	app_ticket=$(cd "$REPO_ROOT" && "$PERL" scripts/app_ticket.pl desktop 2>/dev/null | head -n 1 || true)
 	case "$app_ticket" in
@@ -141,8 +156,8 @@ if [ -z "${JAWNOS_NO_TICKET:-}" ] && [ -f "$REPO_ROOT/scripts/app_ticket.pl" ] \
 	esac
 fi
 
-# --- systemd --user units ---------------------------------------------------
-if [ "$WITH_SYSTEMD" -eq 1 ]; then
+# --- systemd --user units (a desktop, not a server) -------------------------
+if [ "$WITH_SYSTEMD" -eq 1 ] && [ "$WITH_HEADLESS" -eq 0 ]; then
 	mkdir -p "$UNITS"
 	for unit in jawnos-bt jawnos; do
 		sed -e "s|@PYTHON@|$PYTHON|g" \
@@ -161,6 +176,34 @@ if [ "$WITH_SYSTEMD" -eq 1 ]; then
 	fi
 fi
 
+# --- systemd system unit (the headless server) ------------------------------
+# A server has no login session, so it takes a plain system service that starts
+# at boot: the same jawn, run like a daemon rather than in a tmux pane.
+if [ "$WITH_HEADLESS" -eq 1 ]; then
+	JAWN_USER=${SUDO_USER:-$(id -un)}
+	JAWN_GROUP=$(id -gn "$JAWN_USER" 2>/dev/null || echo "$JAWN_USER")
+	JAWN_HOME=$(getent passwd "$JAWN_USER" 2>/dev/null | cut -d: -f6)
+	[ -n "$JAWN_HOME" ] || JAWN_HOME=$HOME
+	mkdir -p "$JAWN_HOME/.local/state/jawnos" 2>/dev/null || true
+	UNIT_OUT="${TMPDIR:-/tmp}/jawnos-server.service"
+	sed -e "s|@PERL@|${PERL:-/usr/bin/perl}|g" \
+		-e "s|@JAWN_DIR@|$JAWN_DIR|g" \
+		-e "s|@JAWN_USER@|$JAWN_USER|g" \
+		-e "s|@JAWN_GROUP@|$JAWN_GROUP|g" \
+		-e "s|@JAWN_HOME@|$JAWN_HOME|g" \
+		"$DESKTOP_SRC/systemd/jawnos-server.service.in" > "$UNIT_OUT"
+	echo "Wrote the server unit to $UNIT_OUT"
+	if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+		install -m 0644 "$UNIT_OUT" /etc/systemd/system/jawnos.service
+		systemctl daemon-reload
+		systemctl enable --now jawnos.service && echo "Enabled jawnos.service (starts at boot)"
+	else
+		echo "Install it as root (and, if jawn is already up in tmux, stop that first):"
+		echo "  sudo install -m 0644 $UNIT_OUT /etc/systemd/system/jawnos.service"
+		echo "  sudo systemctl daemon-reload && sudo systemctl enable --now jawnos.service"
+	fi
+fi
+
 # --- XDG autostart ----------------------------------------------------------
 if [ "$WITH_AUTOSTART" -eq 1 ]; then
 	"$DEST/jawnosctl" autostart enable
@@ -173,5 +216,10 @@ case ":$PATH:" in
 	*) echo "Note: $BIN is not on your PATH; add it to use jawnosctl by name." ;;
 esac
 echo "Try:  jawnosctl status     (report jawn and the BLE bridge)"
-echo "      jawnos-desktop       (open the dashboard)"
-echo "      jawnosctl ble scan   (list nearby Bluetooth LE devices)"
+if [ "$WITH_HEADLESS" -eq 1 ]; then
+	echo "      jawnosctl log -n 200 (tail the app's log)"
+	echo "      systemctl status jawnos"
+else
+	echo "      jawnos-desktop       (open the dashboard)"
+	echo "      jawnosctl ble scan   (list nearby Bluetooth LE devices)"
+fi

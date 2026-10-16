@@ -1,0 +1,34 @@
+[Unit]
+Description=JawnOS server (jawn)
+Documentation=https://github.com/jonathanferwerda/jawnos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The headless twin of the desktop app's supervisor: a plain system service that
+# starts jawn at boot and brings it back if the master dies, with no GUI, no BLE
+# bridge and no login session. Run a server like a server.
+User=@JAWN_USER@
+Group=@JAWN_GROUP@
+WorkingDirectory=@JAWN_DIR@
+ExecStart=@PERL@ ./jawn
+
+# jawn supervises its own President.pl tree; restart=always only re-execs the
+# master when the master itself exits (a code self-heal, a crash). RestartSec
+# keeps a wedge from spinning the box.
+Restart=always
+RestartSec=5
+
+# jawn writes its own ~/manager.log; keep the service's own stdout beside it, so
+# the pty the error watch tails survives a boot with no terminal.
+StandardOutput=append:@JAWN_HOME@/.local/state/jawnos/jawn-stdout.log
+StandardError=append:@JAWN_HOME@/.local/state/jawnos/jawn-stdout.log
+
+# mixed: SIGTERM the master, then the tree it forked, so a stop leaves nothing on
+# the ports (matches jawnosctl stop / manager_killer.pl master).
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

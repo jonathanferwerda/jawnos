@@ -98,6 +98,36 @@ On a phone or tablet the same script with `--save` writes the URL to
 it (and the fallback this view reads too): `perl scripts/app_ticket.pl phone
 --save`.
 
+## Headless server
+
+A server wants the same supervisor with no screen. `install.sh --headless`
+installs the `jawnosctl` CLI and a **system** systemd unit — no dashboard, no BLE
+bridge, no menu entry, no login ticket:
+
+```sh
+./desktop/install.sh --headless
+sudo install -m 0644 /tmp/jawnos-server.service /etc/systemd/system/jawnos.service
+sudo systemctl daemon-reload && sudo systemctl enable --now jawnos.service
+```
+
+(Run the installer as root and it does those two lines itself.) Stop any jawn
+already running by hand first — a `tmux` pane, say — so two masters do not fight
+for the ports.
+
+The unit runs `perl ./jawn` as the tree's owner, brings the master back if it
+exits, and keeps the pty output in `~/.local/state/jawnos/jawn-stdout.log` (the
+same file the desktop `--user` unit writes, so the error watch still tails it).
+Control it with the same CLI:
+
+```sh
+jawnosctl status          # is jawn up?
+jawnosctl log -n 200 -f   # tail the app's log
+sudo systemctl restart jawnos
+```
+
+No GUI packages are needed — no PyGObject, WebKitGTK or GStreamer; `python3`
+alone runs the CLI. The unit itself needs no Python at all.
+
 ## Using it
 
 ```sh
