@@ -341,7 +341,7 @@
 										<% my $kind = $b eq 'phones' ? 'phone' : 'email'; %>
 										<% my $primary = $appts->{$a}->{'setting'}->{$kind}; %>
 										<div class="contact_list" list="<%= $b %>" kind="<%= $kind %>" app="<%= $a %>">
-											<p class="contact_hint">The app's own <b><%= $kind %></b> row is the line calls and mail route on<% if ($primary) { %> (<%= $primary %>)<% } %>. Any other number or address goes here, with a type.</p>
+											<p class="contact_hint"><% if ($kind eq 'phone') { %>The app's own <b>phone</b> row is the line calls and texts route on<% } else { %>The app's own <b>email</b> row is the address mail routes on<% } %><% if ($primary) { %> (<%= $primary %>)<% } %>. Any other number or address goes here, with a type.</p>
 											<div class="contact_rows">
 												<% my $list = eval { decode_json $appts->{$a}->{'setting'}->{$b} } || []; %>
 												<% $list = [ $list ] if ref $list eq 'HASH'; %>

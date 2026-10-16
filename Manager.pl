@@ -6927,6 +6927,20 @@ sub phone_names() {
 		next unless $number;
 		$names{$number} = $r->{'app'};
 	}
+	# every extra line a person keeps - their home, their work - names a call too,
+	# so the in-call screen shows the person rather than a bare number
+	my $lists = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phones', '')->hashes;
+	foreach my $r ( @{$lists} ) {
+		my $list = eval { return decode_json $r->{'value'} } || [];
+		$list = [ $list ] if ref $list eq 'HASH';
+		next unless ref $list eq 'ARRAY';
+		foreach my $c ( @{$list} ) {
+			next unless ref $c eq 'HASH';
+			my $number = &ticket_contact_clean('phone', $c->{'value'});
+			next unless $number;
+			$names{$number} ||= $r->{'app'};
+		}
+	}
 	return \%names;
 }
 
