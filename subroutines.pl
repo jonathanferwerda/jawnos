@@ -16930,6 +16930,232 @@ sub records_ask {
 	return $err && !$text ? ('I could not reach the model: ' . $err) : ($text || 'The model returned nothing readable.');
 }
 
+# ---- the records recovery: putting back what a repair shortened --------------
+# A repair overwrites an end in place, so a genuinely long appointment that a
+# sweep swept up can vanish from the live table with nothing left to compare to.
+# The machine keeps hourly sealed snapshots, and the one taken before the repair
+# still holds the old ends. These routines compare a snapshot to now and list the
+# rows the repair shortened (or dropped), so a person - or the Coding agent - can
+# put them back. Nothing is written by the scan; apply stamps a current
+# server_time, so the recovered rows win the peer merge and reach every machine.
+
+# the newest sealed snapshot, by the timestamp in its name
+sub records_latest_backup {
+	my $dir = &database_dir() . '/backups';
+	my @files = grep { /jawnos_\d+\.enc$/ } glob("$dir/jawnos_*.enc");
+	return undef unless scalar @files;
+	@files = sort {
+		my ($b1) = $b =~ /jawnos_(\d+)\.enc$/;
+		my ($a1) = $a =~ /jawnos_(\d+)\.enc$/;
+		($b1 || 0) <=> ($a1 || 0);
+	} @files;
+	return $files[0];
+}
+
+# take one now, with the app's own idiom (sqlite .backup, then openssl, then the
+# splitter-and-standard appendage). Kept outside backups/ only as the plaintext,
+# which is shredded; the sealed file is named jawnos_<ms>.enc so the tidy keeps it.
+sub records_backup_now {
+	require File::Temp;
+	require File::Spec;
+	my $dir = &database_dir() . '/backups';
+	mkdir $dir unless -d $dir;
+	my ($fh, $tmp) = File::Temp::tempfile('jawnos_recover_XXXXXX', SUFFIX => '.db', DIR => File::Spec->tmpdir, UNLINK => 0);
+	return undef unless $fh && $tmp;
+	close $fh;
+	my $database = &database_path();
+	my $secret = &suds_grabber();
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my $out = "$dir/jawnos_" . &rightNow() . '.enc';
+	`sqlite3 "$database" ".backup '$tmp'"`;
+	`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$tmp" -out "$out"`;
+	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
+	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
+	unlink $tmp;
+	return undef unless -e $out && -s $out > 5000;
+	return $out;
+}
+
+# the newest snapshot is younger than the window, or one is taken to make it so.
+# The guard the person asked for: nothing is applied without a recent backup.
+sub records_backup_ensure_fresh {
+	my ($max_age_ms) = @_;
+	$max_age_ms = 600000 unless defined $max_age_ms && $max_age_ms =~ /^[0-9]+$/;
+	my $now = &rightNow();
+	my $newest = &records_latest_backup();
+	if ($newest) {
+		my ($ms) = $newest =~ /jawnos_(\d+)\.enc$/;
+		return { fresh => 1, path => $newest, age_ms => $now - $ms, made => 0 } if $ms && ($now - $ms) < $max_age_ms;
+	}
+	my $made = &records_backup_now();
+	return { fresh => ($made ? 1 : 0), path => ($made || $newest), age_ms => 0, made => ($made ? 1 : 0) };
+}
+
+# unseal a snapshot to a scratch database outside backups/ (the tidy shreds
+# anything there that is not jawnos*.enc). Returns the path, or undef.
+sub records_backup_decrypt {
+	my ($path) = @_;
+	return undef unless $path && -e $path;
+	require File::Temp;
+	require File::Spec;
+	my $tail = `tail -c 600 "$path"`;
+	my @parts = split /\Q$gb::universal_splitter\E/, ($tail // '');
+	return undef unless scalar @parts > 1;
+	my $appendage = $parts[-1];
+	$appendage =~ s/\s+\z//;
+	my $secret = &suds_grabber();
+	my $standard = &decrypter($secret, $appendage);
+	$standard = 'aes-256-ctr' unless $standard && $standard =~ /^[a-z0-9-]+$/i;
+	my ($fh, $tmp) = File::Temp::tempfile('jawnos_old_XXXXXX', SUFFIX => '.db', DIR => File::Spec->tmpdir, UNLINK => 0);
+	return undef unless $fh && $tmp;
+	close $fh;
+	`openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$path" -out "$tmp" -nopad 2>/dev/null`;
+	return undef unless -e $tmp && -s $tmp > 5000;
+	return $tmp;
+}
+
+# how long a row ran: its own stop when it has one, else as far as the reference
+# time (the snapshot's moment for an old row, now for a live one)
+sub records_span_ms {
+	my ($row, $ref) = @_;
+	my $start = 0 + ($row->{'timestamp'} || 0);
+	return undef unless $start;
+	my $stop = $row->{'stop_timestamp'};
+	my $end = (defined $stop && $stop =~ /^[0-9]+$/ && $stop) ? (0 + $stop) : (0 + $ref);
+	return abs($end - $start);
+}
+
+# Compare a snapshot to the live table and list the rows the live table made
+# shorter (or dropped). A row is a candidate when its app is one the person named
+# or when it ran longer than older_than_ms in the snapshot - the two signals a
+# fixed rule cannot supply on its own.
+sub records_recover_scan {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $min_ms = (defined $opts->{'older_than_ms'} && $opts->{'older_than_ms'} =~ /^[0-9]+$/) ? $opts->{'older_than_ms'} : 86400000;
+	my @apps = @{ $opts->{'apps'} || [ 'home', 'alone', 'urbaniak', 'eczema', 'snowing', 'winter', 'autumn' ] };
+	my $backup = $opts->{'backup'} || &records_latest_backup();
+	my $result = { backup => $backup, older_than_ms => $min_ms, apps => [ @apps ], candidates => [], summary => {}, error => '' };
+	unless ($backup && -e $backup) { $result->{'error'} = 'there is no snapshot to compare against'; return $result; }
+	my ($snap_ms) = $backup =~ /jawnos_(\d+)\.enc$/;
+	$snap_ms = (stat($backup))[9] * 1000 unless $snap_ms;
+	$result->{'snapshot_time'} = $snap_ms;
+	my $old_db = &records_backup_decrypt($backup);
+	unless ($old_db) { $result->{'error'} = 'could not unseal the snapshot (key or format)'; return $result; }
+	my $rows = eval { Mojo::SQLite->new('sqlite:' . $old_db)->db->query('select * from appointments')->hashes } || [];
+	$result->{'summary'}{'old_rows'} = scalar @{$rows};
+	# the app's own session length: the yardstick that says whether a shorter live
+	# value is a repair (live ~ duration) or a loss
+	my %dur;
+	foreach my $s ( @{ &db_query('select app, value from settings where setting = ?', 'duration')->hashes } ) {
+		next unless defined $s->{'value'} && $s->{'value'} =~ /[0-9]/;
+		my $d = abs &time_abbrev_translator($s->{'value'});
+		$dur{ $s->{'app'} } = $d if $d;
+	}
+	my $matches = sub {
+		my ($app) = @_;
+		return 0 unless defined $app && length $app;
+		foreach my $want ( @apps ) {
+			my $w = $want; $w =~ s/\*//g;
+			return 1 if length $w && index(lc($app), lc($w)) >= 0;
+		}
+		return 0;
+	};
+	my $now = &rightNow();
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'uuid'};
+		my $old_ended = (defined $r->{'stop_timestamp'} && $r->{'stop_timestamp'} =~ /^[0-9]+$/ && $r->{'stop_timestamp'} > 0) ? 1 : 0;
+		my $old_span = &records_span_ms($r, $snap_ms);
+		next unless defined $old_span;
+		my $named = $matches->($r->{'app'});
+		next unless $named || $old_span > $min_ms;
+		my $live = &subs::db_select('appointments', undef, { uuid => $r->{'uuid'} })->hash;
+		# only an end that was written can be lost. An open row's span is just the
+		# clock, so a pair where neither side is ended is never a candidate - without
+		# this, every far-future row reads as "shortened" as the clock advances
+		if (!$live) {
+			next unless $old_ended;
+			push @{$result->{'candidates'}}, {
+				uuid => $r->{'uuid'}, app => $r->{'app'}, type => $r->{'type'},
+				start => $r->{'timestamp'}, old_stop => $r->{'stop_timestamp'}, old_duration => $r->{'duration'},
+				old_span_ms => $old_span, live_stop => undef, live_span_ms => undef,
+				app_duration => $dur{ $r->{'app'} },
+				status => 'missing', named => $named, action => 'reinstate', old_row => $r,
+			};
+			next;
+		}
+		my $live_ended = (defined $live->{'stop_timestamp'} && $live->{'stop_timestamp'} =~ /^[0-9]+$/ && $live->{'stop_timestamp'} > 0) ? 1 : 0;
+		next unless $old_ended || $live_ended;
+		my $live_span = &records_span_ms($live, $now);
+		next unless !defined $live_span || $live_span < $old_span;
+		push @{$result->{'candidates'}}, {
+			uuid => $r->{'uuid'}, app => $r->{'app'}, type => $r->{'type'},
+			start => $r->{'timestamp'}, old_stop => $r->{'stop_timestamp'}, old_duration => $r->{'duration'},
+			old_span_ms => $old_span, live_stop => $live->{'stop_timestamp'},
+			live_span_ms => $live_span, app_duration => $dur{ $r->{'app'} },
+			status => 'shortened', named => $named, action => 'restore',
+			old_row => $r,
+		};
+	}
+	@{$result->{'candidates'}} = sort { ($b->{'old_span_ms'} || 0) <=> ($a->{'old_span_ms'} || 0) } @{$result->{'candidates'}};
+	$result->{'summary'}{'candidates'} = scalar @{$result->{'candidates'}};
+	$result->{'summary'}{'shortened'} = scalar grep { $_->{'status'} eq 'shortened' } @{$result->{'candidates'}};
+	$result->{'summary'}{'missing'} = scalar grep { $_->{'status'} eq 'missing' } @{$result->{'candidates'}};
+	unlink $old_db;
+	return $result;
+}
+
+# Write the scan's candidates back: the old row's ended-ness onto the live row, or
+# the whole old row when it was dropped. server_time is now, so every machine takes
+# the recovered version on its next sync. The recovered apps are then left alone by
+# the audit (they are, by definition, the ones that legitimately run long), so a
+# sweep does not sweep them up a second time.
+sub records_recover_apply {
+	my ($scan, $opts) = @_;
+	$scan ||= {};
+	$opts ||= {};
+	# A shorter live value is usually the correct repair (an app that runs three
+	# minutes was ended at three minutes), so only the apps the person named are put
+	# back unless "any" is asked for. A blanket restore would undo good fixes.
+	my $any = $opts->{'any'} ? 1 : 0;
+	my @cands = @{ $scan->{'candidates'} || [] };
+	my $now = &rightNow();
+	my ($restored, $reinstated, $failed, $skipped) = (0, 0, 0, 0);
+	my @apps;
+	foreach my $c ( @cands ) {
+		if (!$any && !$c->{'named'}) { $skipped++; next; }
+		my $old = $c->{'old_row'};
+		if (!$old || !$old->{'uuid'}) { $skipped++; next; }
+		my $ok = eval {
+			my $live = &subs::db_select('appointments', undef, { uuid => $old->{'uuid'} })->hash;
+			if ($live) {
+				&db_update('appointments', {
+					stop_timestamp => $old->{'stop_timestamp'},
+					stop_seen => $old->{'stop_seen'},
+					duration => $old->{'duration'},
+					type => $old->{'type'},
+					seen => $old->{'seen'},
+					server_time => $now,
+				}, { uuid => $old->{'uuid'} });
+			}
+			else {
+				my %copy = %{$old};
+				delete $copy{$_} for qw(rowid id);
+				$copy{'server_time'} = $now;
+				&db_insert('appointments', \%copy);
+			}
+			1;
+		};
+		if ($ok) {
+			if ($c->{'status'} eq 'missing') { $reinstated++; } else { $restored++; }
+			push @apps, $c->{'app'} if $c->{'app'};
+		}
+		else { $failed++; }
+	}
+	foreach my $a ( @apps ) { &records_exempt_add($a); }
+	return { restored => $restored, reinstated => $reinstated, failed => $failed, skipped => $skipped, exempted => [ sort keys %{ &records_exempt() } ] };
+}
+
 # One pass of the watch: stage what the audit finds, and - when Apply automatically
 # is ticked - write the oldest exact-duplicate finding. A sweep or an orphan waits
 # for a person (a genuinely long appointment must never be repaired on its own).

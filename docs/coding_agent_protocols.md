@@ -42,6 +42,17 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
   `cat VERSION` before `git push`. Existing pushes that skipped this were the oversight this rule fixes.
 - **Commit as you go**, staging only your own hunks (`git add -p`).
+- **Appointments that do not match what the person remembers - or a long appointment that looks cut
+  short - are checked before anything is edited.** `perl scripts/records_recover.pl` (dry run) compares
+  an older sealed snapshot against the live appointments table and lists every session a repair
+  shortened or dropped: `--backup <path>` names the snapshot (default the newest), `--apps a,b` the app
+  names that legitimately run long, `--older-than 1d` the length above which any app is listed. A
+  *shorter* live value is usually the **correct** repair (an app that runs three minutes was ended at
+  three minutes), so nothing is put back unless it is named: `perl scripts/records_recover.pl --backup
+  <path> --apps home,eczema --apply` restores only those, stamps each with a current `server_time` so
+  every machine takes it, and leaves the recovered apps alone by the audit. It refuses to write without
+  a snapshot younger than ten minutes and takes one if needed; a repair is otherwise permanent, and a
+  bulk restore of everything shorter would undo the good fixes.
 - **Finishing routine — ALWAYS run it: bump → commit → push → restart.** This is not optional and not
   "the norm": every piece of work ends this way, without being asked. Run `perl scripts/version_bump.pl`,
   stage only your own hunks (never someone else's WIP), commit as `v<version> - <summary>`, `git push`,
