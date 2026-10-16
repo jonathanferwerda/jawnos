@@ -152,6 +152,23 @@ Still to do:
 - A device's abilities are shown but not yet acted on (the `App`/Embedded panels
   do not yet read `capabilities` to offer only what a device can do).
 
+## T-Deck parity (from the watch)
+
+The deck (`jt.ino`) now carries the watch's BLE transport: outbound notifies are
+cut to the link's MTU (`ble_notify_payload`) and gated on the central's
+subscription (`ble_link_ready` / `MyTxCallbacks`), a compressed bridge payload is
+inflated (`ble_inflate_if_zlib`), and a button tap goes over BLE first
+(`tap_over_ble`, wired into mb1..mb8) with queued taps flushed the same way - the
+tap envelope is ~450 bytes and is no longer truncated to 20.
+
+Still to do:
+- **Voice activation** on the deck: the watch's wake-word/VAD listener and its
+  capture -> IMA ADPCM -> BLE ship path (`voiceListenTask` and its helpers in
+  `jw.ino`, plus `jw/voice_models.h` and the model headers). Needs the deck's
+  ES7210 mic and its speaker wired to that loop instead of the watch's LilyGoLib
+  audio, so it is best done with the deck on serial.
+- The deck has **no display** at the moment - find out why before the UI work.
+
 ## Shopping / Market / warehouse
 
 Done: `quantity` as a first-class budget — a stream **rate** from the appointment

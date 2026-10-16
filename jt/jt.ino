@@ -20,6 +20,8 @@ using fs::FS;
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>
 #include <mbedtls/platform.h>
+// the ESP32 ROM's miniz: inflate a compressed bridge payload (see ble_inflate_if_zlib)
+#include "miniz.h"
 #include <driver/i2s_tdm.h>
 #include "es7210.h"
 #include <Audio.h>
@@ -173,23 +175,66 @@ static void queue_ble_message(String &message) {
   }
 }
 
-// small outbound message over the Nordic UART TX characteristic
-static void ble_send(JSONVar message) {
-  if (!deviceConnected || pTxCharacteristic == nullptr) {
+// A send needs the radio up AND the central subscribed to the TX characteristic:
+// notify() into an unsubscribed link lands nowhere, and a board that talks before
+// the phone is listening reads as dead. The descriptor write sets it (MyTxCallbacks).
+static volatile bool ble_notify_ready = false;
+static inline bool ble_link_ready() {
+  return ble_radio_up && deviceConnected && ble_notify_ready && pTxCharacteristic != nullptr;
+}
+
+// Send a payload over the Nordic UART TX characteristic as one or more framed
+// notifies. A central that negotiates a small MTU (Android leaves it at the BLE
+// floor, 23) carries only MTU-3 = 20 bytes per notification, and a longer value
+// set on the characteristic is silently truncated there -- which is exactly what
+// lost a tap (a ~450 byte envelope) at the first hop. Split it into "<i>/<n>:"
+// parts the bridge reassembles. With a big MTU (the desktop's 512) a small
+// message stays a single part.
+static void ble_notify_payload(const String &payload, uint16_t pace_ms = 8) {
+  if (!ble_link_ready()) {
     return;
   }
-  String payload = JSON.stringify(message);
-  pTxCharacteristic->setValue(payload.c_str());
-  pTxCharacteristic->notify();
+  uint16_t mtu = 23;
+  if (pServer) {
+    uint16_t m = pServer->getPeerMTU(pServer->getConnId());
+    if (m >= 23) { mtu = m; }
+  }
+  int frame = (int)mtu - 3;      // the notify payload limit
+  int budget = frame - 8;        // room for the "<i>/<n>:" prefix
+  if (budget < 1) { budget = 1; }
+  int len = (int)payload.length();
+  int total = (len + budget - 1) / budget;
+  if (total < 1) { total = 1; }
+  for (int i = 0; i < total; i++) {
+    int from = i * budget;
+    int to = from + budget;
+    if (to > len) { to = len; }
+    String part = String(i) + "/" + String(total) + ":";
+    part += payload.substring(from, to);
+    pTxCharacteristic->setValue((uint8_t *)part.c_str(), part.length());
+    pTxCharacteristic->notify();
+    delay(pace_ms);            // pace the parts; a flat burst outruns the link
+  }
+}
+
+// small outbound message over the Nordic UART TX characteristic; used for the
+// bridge requests (state_request / room_request) from either core
+static void ble_send(JSONVar message) {
+  if (!ble_link_ready()) {
+    return;
+  }
+  ble_notify_payload(JSON.stringify(message));
 }
 
 class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     deviceConnected = true;
+    ble_notify_ready = false;   // until the central subscribes to the TX characteristic
     ble_connected_at = millis();
   };
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
+    ble_notify_ready = false;
     ble_connected_at = 0;
     // Bluedroid stops advertising when a central attaches and never resumes
     // it on its own: without this the phone cannot come back after a drop
@@ -197,6 +242,48 @@ class MyServerCallbacks: public BLEServerCallbacks {
     pServer->startAdvertising();
   }
 };
+static MyServerCallbacks ble_server_callbacks;
+
+// The phone subscribes by writing the notification descriptor; until it does,
+// notify() has nowhere to land. Bluedroid reports that write here.
+class MyTxCallbacks: public BLECharacteristicCallbacks {
+  void onSubscribe(BLECharacteristic *pCharacteristic, ble_gap_conn_desc *desc, uint16_t subValue) {
+    ble_notify_ready = (subValue != 0);
+    deckLog("[bt] notify %s", subValue ? "on" : "off");
+  }
+};
+static MyTxCallbacks ble_tx_callbacks;
+
+// A large bridge payload (the ~25 KB room push) arrives zlib-compressed: a 0x1e
+// byte marks it, then the zlib stream. Inflate it back to the JSON the rest of
+// the path expects; the inflater is the ESP32 ROM's miniz, nothing vendored.
+#define BLE_ZLIB_MARK 0x1e
+static String ble_inflate_if_zlib(const String &in) {
+  if (in.length() < 2 || (uint8_t)in[0] != BLE_ZLIB_MARK) { return in; }
+  static const size_t cap = 48 * 1024;   // a room push inflates to ~25 KB
+  uint8_t *out = (uint8_t *)ps_malloc(cap);   // PSRAM: keep the 48 KB scratch out of internal RAM
+  if (!out) { out = (uint8_t *)malloc(cap); }
+  if (!out) { deckLog("[bt] inflate: no room"); return in; }
+  // tinfl's state is ~11 KB; keep it in PSRAM so the inflate costs no stack
+  tinfl_decompressor *dec = (tinfl_decompressor *)ps_malloc(sizeof(tinfl_decompressor));
+  if (!dec) { free(out); deckLog("[bt] inflate: no state"); return in; }
+  tinfl_init(dec);
+  size_t in_bytes = in.length() - 1;
+  size_t out_bytes = cap;
+  tinfl_status st = tinfl_decompress(dec, (const mz_uint8 *)in.c_str() + 1, &in_bytes,
+                                     out, out, &out_bytes,
+                                     TINFL_FLAG_PARSE_ZLIB_HEADER |
+                                     TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  free(dec);
+  if (st != TINFL_STATUS_DONE) {
+    deckLog("[bt] inflate failed (%d)", (int)st);
+    free(out);
+    return in;   // hand the raw bytes on; the parse fails loudly, not a crash
+  }
+  String s((const char *)out, (unsigned int)out_bytes);
+  free(out);
+  return s;
+}
 
 // One BLE write as it arrives: a whole message, or one chunk of a framed one.
 // Runs on the BLE stack's own task, whose stack is small -- nothing here may
@@ -1679,6 +1766,7 @@ void loop() {
       String btmsg;
       btmsg = std::move(*incomingMsgPtr);   // steal the buffer: the push can be 25 KB
       delete incomingMsgPtr;
+      btmsg = ble_inflate_if_zlib(btmsg);   // the bridge deflates a large push
       // a length, not the map: the message can be 25 KB of JSON
       deckLog("[bt] rx %u bytes", (unsigned)btmsg.length());
       JSONVar btMsg = JSON.parse(btmsg);
@@ -3393,20 +3481,36 @@ void when_i_get_in(JSONVar wigi_item, String url) {
     presidents_buttons();
   }
 
-  if (deviceConnected) {
-    // a local envelope: the bridge relays it, no network needed on this side
+  if (ble_link_ready()) {
+    // a local envelope: the bridge relays it, no network needed on this side.
+    // Chunked to the link's MTU: a tap is ~450 bytes and a 20-byte notify drops it.
     JSONVar envelope = JSON.parse("{}");
     envelope["type"] = "button";
     envelope["payload"] = wigi_item;
     url = url_maker(url);
     envelope["url"] = url;
     String payload = JSON.stringify(envelope);
-    pTxCharacteristic->setValue(payload.c_str());
-    pTxCharacteristic->notify();
     deckLog("[bt] tap sent (%u bytes)", payload.length());
+    ble_notify_payload(payload);
   } else {
     wigi[l] = wigi_item;
   }
+}
+
+// Hand a button tap to the phone bridge when it is up: the homebase fetches the
+// same url the tap would have, but the deck does not block the UI on a 1-2 s TLS
+// round trip, so a press lands at once. Returns true when it went over BLE, so
+// the caller skips https_request().
+static bool tap_over_ble(int which, int toggle, const String &url) {
+  if (!ble_link_ready()) {
+    return false;
+  }
+  JSONVar updater;
+  updater["room"] = room;
+  updater["button"] = which;
+  updater["toggle"] = toggle;
+  when_i_get_in(updater, url);
+  return true;
 }
 
 // Taps made while no central was attached sit in wigi until the webapp's WIGI
@@ -3416,6 +3520,10 @@ void when_i_get_in(JSONVar wigi_item, String url) {
 void ble_flush_wigi() {
   int l = wigi.length();
   if (l <= 0) {
+    return;
+  }
+  // the link must be up AND subscribed, or these notifies are dropped too
+  if (!ble_link_ready()) {
     return;
   }
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
@@ -3447,8 +3555,7 @@ void ble_flush_wigi() {
     envelope["payload"] = item;
     envelope["url"] = url_maker(url);
     String payload = JSON.stringify(envelope);
-    pTxCharacteristic->setValue(payload.c_str());
-    pTxCharacteristic->notify();
+    ble_notify_payload(payload);
     deckLog("[bt] flushed a queued tap");
     delay(50);
   }
@@ -3464,6 +3571,9 @@ void mb1(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=1&toggle=" + b1_toggle;
+  if (tap_over_ble(1, b1_toggle, r)) {
+    return;   // the bridge carries the tap; no blocking TLS round trip
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3504,6 +3614,9 @@ void mb2(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=2&toggle=" + b2_toggle;
+  if (tap_over_ble(2, b2_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3541,6 +3654,9 @@ void mb3(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=3&toggle=" + b3_toggle;
+  if (tap_over_ble(3, b3_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3580,6 +3696,9 @@ void mb4(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=4&toggle=" + b4_toggle;
+  if (tap_over_ble(4, b4_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3618,6 +3737,9 @@ void mb5(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=5&toggle=" + b5_toggle;
+  if (tap_over_ble(5, b5_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3654,6 +3776,9 @@ void mb6(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=6&toggle=" + b6_toggle;
+  if (tap_over_ble(6, b6_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3691,6 +3816,9 @@ void mb7(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=7&toggle=" + b7_toggle;
+  if (tap_over_ble(7, b7_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -3728,6 +3856,9 @@ void mb8(lv_event_t *e) {
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
     "&button=8&toggle=" + b8_toggle;
+  if (tap_over_ble(8, b8_toggle, r)) {
+    return;
+  }
   String https = https_request(r);
   if (https == "failure") {
     JSONVar updater;
@@ -4584,7 +4715,7 @@ void start_ble_transfer() {
   BLEDevice::setMTU(512);
 
   pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  pServer->setCallbacks(&ble_server_callbacks);
 
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
@@ -4594,6 +4725,8 @@ void start_ble_transfer() {
                         BLECharacteristic::PROPERTY_NOTIFY
                       );
   pTxCharacteristic->addDescriptor(new BLE2902());
+  // the phone's descriptor write lands here, and until it does notify() goes nowhere
+  pTxCharacteristic->setCallbacks(&ble_tx_callbacks);
 
   // RX: the phone writing to this board
   BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
