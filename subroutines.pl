@@ -2138,6 +2138,67 @@ sub same_net_test() {
 	return $same_net;
 }
 
+# Only a private or link-local network is ours to probe: a public address is not.
+sub ip_is_private() {
+	my $ip = shift || '';
+	return 1 if $ip =~ /^10\./;
+	return 1 if $ip =~ /^192\.168\./;
+	return 1 if $ip =~ /^169\.254\./;
+	return 1 if $ip =~ /^172\.(?:1[6-9]|2\d|3[01])\./;
+	return 1 if $ip =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;  # carrier-grade NAT
+	return 0;
+}
+
+# Resolve mDNS/DNS-SD services of one type on the local network, as a list of
+# records (avahi is the responder this house already has). Parsable output, one
+# `=` line per resolved instance:
+#   =;iface;proto;name;type;domain;host;address;port;txt
+sub mdns_browse() {
+	my ($type) = @_;
+	return [] unless $type;
+	my $avahi = `command -v avahi-browse 2>/dev/null`;
+	chomp $avahi;
+	$avahi ||= '/usr/bin/avahi-browse' if -x '/usr/bin/avahi-browse';
+	return [] unless $avahi;
+	my $out = `timeout 8 $avahi -rtp $type 2>/dev/null`;
+	my @records;
+	foreach my $line (split "\n", $out) {
+		next unless $line =~ /^=;/;
+		my @f = split /;/, $line, 10;
+		my (undef, undef, undef, $name, $stype, undef, $host, $addr, $port, $txt) = @f;
+		next unless $addr && $addr =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		my $mac;
+		$mac = lc $1 if $txt && $txt =~ /\bmac=([0-9a-fA-F:]{17})/;
+		my ($ty) = $txt ? $txt =~ /\bty=([^"]+?)\s*"/ : ();
+		my ($pr) = $txt ? $txt =~ /\bproduct=\(([^)]+)\)/ : ();
+		push @records, {
+			service => $stype,
+			hostname => $host,
+			ip => $addr,
+			port => $port,
+			mac => $mac,
+			name => $ty || $pr || $name,
+			model => $pr || $ty,
+		};
+	}
+	return \@records;
+}
+
+# The printers the local network advertises, keyed by address and by MAC so a
+# scanned device can be recognised either way. _ipp._tcp is the Internet
+# Printing service every modern printer answers; _pdl-datastream (port 9100) is
+# the fallback for one that only speaks raw.
+sub mdns_printers() {
+	my $records = &mdns_browse('_ipp._tcp');
+	$records = &mdns_browse('_pdl-datastream._tcp') unless @{$records};
+	my (%by_ip, %by_mac);
+	foreach my $r (@{$records}) {
+		$by_ip{$r->{'ip'}} ||= $r;
+		$by_mac{$r->{'mac'}} ||= $r if $r->{'mac'};
+	}
+	return { by_ip => \%by_ip, by_mac => \%by_mac };
+}
+
 # An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->
 # 192.168.2.0/24. Returns undef for anything that is not a plain IPv4 address,
 # and reads a hex netmask (0xffffff00) the way some ifconfig builds print it.
@@ -2175,6 +2236,7 @@ sub subnet_sweep() {
 	my ($nic, $ip, $netmask) = @_;
 	return if !$ip || $ip !~ /^\d{1,3}(\.\d{1,3}){3}$/;
 	return if $ip =~ /^127\./;
+	return unless &ip_is_private($ip);
 	my $cidr = &subnet_cidr($ip, $netmask);
 	return unless $cidr;
 	my $nmap = `command -v nmap 2>/dev/null`;
@@ -2216,6 +2278,18 @@ sub device_scan() {
 	my $chip_ids = [];
 	$dev = &subs::db_select('devices');
 	$devices = $dev->hashes;
+	# A machine in the mesh is a device we know even when it is away right now,
+	# so a scan keeps its last sighting rather than pruning it with the rest. The
+	# address may be its own name, or any LAN address it last reported.
+	my %known_machine_ip;
+	foreach my $rm (@{ &subs::db_select('remote_machines')->hashes }) {
+		$known_machine_ip{$rm->{'ip'}} = 1 if $rm->{'ip'};
+		my $net = eval { decode_json $rm->{'network'} } || {};
+		foreach my $rnic (keys %{$net}) {
+			my $rip = $net->{$rnic}->{'ip'};
+			$known_machine_ip{$rip} = 1 if $rip && $rip !~ /^127\./;
+		}
+	}
 	my $ug    = Data::UUID->new;
 	my $uuid = $ug->create_str();
 	foreach my $d (@{$devices}) {
@@ -2496,13 +2570,59 @@ sub device_scan() {
 			foreach my $a (keys %{$d->{'address'}} ) {
 				if ($d->{'address'}->{$nic}->{'neigh'} && $a eq $nic) {
 					foreach my $rd ( @{$d->{'address'}->{$nic}->{'neigh'}} ) {
-						if ($rd->{'locked'} eq 'yes') {
+						# A device we have a reason to keep stays on the list even when this
+						# scan did not see it: one the person locked, a machine in the mesh
+						# (a remote_machine, or anything that named itself with a signatorial),
+						# or one the person gave a real purpose. Everything else is a passing
+						# sighting and is pruned.
+						my $known = (($rd->{'locked'} || '') eq 'yes')
+							|| $rd->{'signatorial'}
+							|| $known_machine_ip{$rd->{'ip'}}
+							|| ((($rd->{'purpose'} || '') ne '') && $rd->{'purpose'} ne 'hmmm');
+						next unless $known;
+						if (($rd->{'locked'} || '') eq 'yes') {
+							# a locked device: its stored row wins outright
 							@{$address->{$nic}->{'neigh'}} = grep { $_->{'ip'} ne $rd->{'ip'} } @{$address->{$nic}->{'neigh'}};
 							push @{$address->{$nic}->{'neigh'}}, $rd;
-							push @{$chip_ids}, { id => $rd->{'chip_id'}, name => $rd->{'name'}, purpose => $rd->{'purpose'}, server_time => &subs::rightNow() } if $rd->{'chip_id'};
 						}
+						elsif (!grep { $_->{'ip'} eq $rd->{'ip'} } @{$address->{$nic}->{'neigh'}}) {
+							# a known device that is away just now: keep its last sighting
+							push @{$address->{$nic}->{'neigh'}}, $rd;
+						}
+						push @{$chip_ids}, { id => $rd->{'chip_id'}, name => $rd->{'name'}, purpose => $rd->{'purpose'}, server_time => &subs::rightNow() } if $rd->{'chip_id'};
 					}
 				}
+			}
+		}
+	}
+
+	# mDNS tells us what a device is even when nothing answers its HTTP gate: a
+	# printer advertises _ipp._tcp, so read the printers off the local network,
+	# mark the matching device (or add it when the sweep missed it entirely).
+	if ($load_type eq 'scan') {
+		my $printers = &mdns_printers();
+		foreach my $nic (keys %{$address}) {
+			my $nic_ip = $address->{$nic}->{'ip'};
+			next unless $nic_ip && $nic_ip !~ /^127\./;
+			foreach my $n (@{$address->{$nic}->{'neigh'} || []}) {
+				my $p = $printers->{'by_ip'}->{$n->{'ip'}} || ($n->{'mac'} ? $printers->{'by_mac'}->{$n->{'mac'}} : undef);
+				next unless $p;
+				$n->{'purpose'} = 'printer' unless $n->{'purpose'} && $n->{'purpose'} ne 'hmmm';
+				$n->{'name'} ||= $p->{'name'};
+				$n->{'model'} ||= $p->{'model'};
+			}
+			foreach my $ip (keys %{$printers->{'by_ip'}}) {
+				next unless &same_net_test($ip, $nic_ip) eq 'yes';
+				next if grep { $_->{'ip'} eq $ip } @{$address->{$nic}->{'neigh'} || []};
+				my $p = $printers->{'by_ip'}->{$ip};
+				push @{$address->{$nic}->{'neigh'}}, {
+					ip => $ip,
+					mac => $p->{'mac'} || &subs::random_string_creator(10),
+					uuid => &subs::random_string_creator(25),
+					purpose => 'printer',
+					name => $p->{'name'},
+					model => $p->{'model'},
+				};
 			}
 		}
 	}
