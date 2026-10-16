@@ -735,7 +735,11 @@ function sendIt() {
 	if (transport) {
 		mail_contact = localStorage.getItem('mail_contact') || '';
 		picked = {};
-		if (transport == 'sms') { phone = localStorage.getItem('mail_phone') || ''; }
+		if (transport == 'sms') {
+			// a person may keep more than one line: the dropdown offers sms once per
+			// number, and the chosen option names the number this text goes to
+			phone = $('#mail_transport option[value="sms"]:selected').attr('data-line') || localStorage.getItem('mail_phone') || '';
+		}
 	}
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
 	var m = JSON.stringify({ 

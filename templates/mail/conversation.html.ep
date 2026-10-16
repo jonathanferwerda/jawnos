@@ -3,7 +3,10 @@
     for Mailbox and for the apps that own one section (email now, chat and pen
     as they move out), so it lives here once. Expects:
       $mail          - the rows to render, oldest first
-      $incoming_data - the panel's data (sidebar, scroll) as sent by the client %>
+      $incoming_data - the panel's data (sidebar, scroll) as sent by the client
+      $sms_lines     - (Chat only) the person's phone lines, so the sms road can
+                       be offered once per number; absent means a single sms %>
+<% no warnings 'uninitialized'; %>
 <div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
 	<div id="mailbox_realtime_controls" style="display:none;">
 		<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
@@ -26,10 +29,19 @@
 		<% if ($c->stash('chat_ui')) { %>
 			<%# how the next message travels: the conversation is the person's, the
 			    transport is just the road (chat rides the ticket thread, sms the
-			    phone, lora the radio - webrtc joins them later) %>
+			    phone, lora the radio - webrtc joins them later). A person may keep
+			    more than one line, so sms is offered once per number and the chosen
+			    one is the number the next text goes to. %>
+			<% my @lines = @{ $sms_lines || [] }; %>
 			<select id="mail_transport" hint="How this message travels">
 				<option value="chat">chat</option>
-				<option value="sms">sms</option>
+				<% if (scalar @lines > 1) { %>
+					<% foreach my $l ( @lines ) { %>
+						<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
+					<% } %>
+				<% } else { %>
+					<option value="sms">sms</option>
+				<% } %>
 				<option value="lora">lora</option>
 			</select>
 		<% } %>

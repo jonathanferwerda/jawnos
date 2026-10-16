@@ -19572,10 +19572,34 @@ sub mail_checker($c) {
 	foreach my $ch ( @{&mail_public_channels()} ) {
 		push @{$channel_list}, { %{$ch}, label => &mail_channel_label($ch), key => &mail_channel_key($ch), picker => encode_json $ch };
 	}
+	# The person's lines, for the sms road in Chat: the conversation is theirs, so
+	# the transport dropdown offers sms once per number they keep (their work line
+	# as well as their mobile) and the next text goes to the chosen one. The ticket
+	# names the person when the thread is a ticket; otherwise the number does.
+	my @sms_lines;
+	if ($scope && $scope eq 'chat') {
+		my $person_app = '';
+		if ($contact) {
+			my ($cc) = grep { $_->{'uuid'} eq $contact } @{$contacts};
+			$person_app = $cc ? ($cc->{'app'} || $cc->{'contact_name'} || '') : '';
+		}
+		elsif ($phone) {
+			my @apps = &subs::contact_apps('phone', $phone);
+			# a number both a stranger's own app and a named person hold is the person's:
+			# the number-app is only the fallback for a number nobody has named
+			my ($named) = grep { $_ !~ /^\d+$/ } @apps;
+			$person_app = $named || $apps[0] || '';
+		}
+		if ($person_app) {
+			my $clines = &subs::contact_lines('phone', $person_app);
+			@sms_lines = map { { value => $_->{'value'}, display => &subs::contact_line_label($_) } } @{ $clines->{$person_app} || [] };
+		}
+	}
 	my $combined_data = {
 		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : ($scope && $scope eq 'pen') ? 'apps/pen' : 'mail/mailbox',
 		mail => $mails,
 		friends => $friends,
+		sms_lines => \@sms_lines,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,
 		contacts => $contacts,

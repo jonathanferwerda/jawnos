@@ -25,13 +25,20 @@ function chatBackRestore() {
 
 // The dropdown rides the person's thread only: the rooms (dial, list, lora)
 // are channels of their own, so there is no transport to choose there, and the
-// sms option needs the friend's number.
+// sms option needs the friend's number. A person may keep more than one line, so
+// the server renders sms once per number; the first is their primary number and
+// is the road until another is picked.
 function chatTransportOptions() {
+	var sel = $('#mail_transport');
 	var onPerson = $('.mail_subsection.active').attr('section') == 'tickets' || $('.mail_subsection.active').attr('section') == 'sms';
 	var hasPhone = (localStorage.getItem('mail_phone') || '') != '';
-	$('#mail_transport').toggle(!!onPerson);
-	$('#mail_transport option[value="sms"]').prop('disabled', !hasPhone);
-	if (!hasPhone && $('#mail_transport').val() == 'sms') { $('#mail_transport').val('chat'); }
+	sel.toggle(!!onPerson);
+	if (sel.val() == 'sms') {
+		var first = sel.find('option[value="sms"]').first();
+		if (first.length) { sel.find('option').prop('selected', false); first.prop('selected', true); }
+	}
+	sel.find('option[value="sms"]').prop('disabled', !hasPhone);
+	if (!hasPhone && sel.val() == 'sms') { sel.val('chat'); }
 }
 $(document).on('click', '.mail_subsection', function () { setTimeout(chatTransportOptions, 50); });
 
