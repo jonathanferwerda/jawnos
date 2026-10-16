@@ -117,13 +117,16 @@ $(document).on('click', '#market_checkout', function() {
 });
 
 // Scan a barcode. The app's own bridge (window.JawnScan) is the fast path on a
-// phone; a browser uses the BarcodeDetector over the camera; failing both, a code
-// is typed. The server resolves it and names it in our terms.
+// phone - it calls back through window.jawnScanResult(code), the way the other
+// bridges report; a browser uses the BarcodeDetector over the camera; failing
+// both, a code is typed. The server resolves it and names it in our terms.
 $(document).on('click', '#market_scan', function() { marketScan(); });
+
+window.jawnScanResult = function(code) { if (code) { marketBarcode(code); } };
 
 function marketScan() {
 	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
-		window.JawnScan.scan(function(code) { if (code) { marketBarcode(code); } });
+		window.JawnScan.scan();
 		return;
 	}
 	if ('BarcodeDetector' in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
