@@ -12640,7 +12640,13 @@ sub appt_measure_writer($c,$data) {
 			}
 		}
 		if ($appt_measure->{$measure}->{'type'} eq 'range' || $appt_measure->{$measure}->{'type'} eq 'number') {
-			$value =~ s/[^0-9.]//gi;
+			# Preserve the sign and read a comma decimal / thousands separator.
+			# The old strip-everything-but-digits-and-dots turned -0.5 into 0.5.
+			my $normalized = &subs::web_measure_number($value, {
+				unit => $appt_measure->{$measure}->{'unit'},
+				decimals => $appt_measure->{$measure}->{'decimals'},
+			});
+			$value = $normalized if defined $normalized;
 		}
 		$app_measure = { $measure => $value, ts => $timestamp };
 
@@ -17833,39 +17839,29 @@ post '/manager/web/measure/set' => sub($c) {
 	my $uuid = $c->param('uuid');
 	my $selector = $c->param('selector');
 	my $text = $c->param('text');
+	my $index = $c->param('index') // 0;
 	my $measure = $c->param('measure');
 	my $website = &subs::db_select('websites', undef, { app => $app, uuid => $uuid })->hashes->[0];
 	my $dom = Mojo::DOM->new($website->{'content'});
-	my $s = $dom->find($selector);
 
-	my $possibilities = [];
-	my $count = 0;
-	$s->each(sub {
-		if ($text eq $_->text || $text == $_->text) {
-
-			my $data = {
-				count => $count,
-				text => $_->text,
-				formatted => &subs::format_name($_->text),
-				type => 'exact',
-				selector => $selector
-			};
-			#$data->{'formatted'} =~  s/[^\x00-\x7F]+//gi;
-			if ($s->[$count - 1]) {
-				$data->{'prev'} = { text => $s->[$count - 1]->text, formatted => &subs::format_name($s->[$count - 1]->text) };
-			}
-			if ($s->[$count + 1]) {
-				$data->{'next'} = { text => $s->[$count + 1]->text, formatted => &subs::format_name($s->[$count + 1]->text) };
-			}
-			push @{$possibilities}, $data;
-
+	# The prettyfier shows JSON as HTML, so the clicked span's id has to be
+	# mapped back to a real path. Fetch the live document for that mapping; the
+	# click is a one-off action and the page is already fetched on a schedule.
+	my $json;
+	if ((&subs::setting_value_for($app, 'web_format') || 'html') eq 'json') {
+		my $url = &subs::setting_value_for($app, 'web');
+		if (defined $url && length $url) {
+			my $ua = Mojo::UserAgent->new(insecure => 1, inactivity_timeout => 8, connect_timeout => 4);
+			my $res = eval { $ua->get($url => { user_agent => $gb::user_agent })->result };
+			$json = eval { decode_json $res->body } if $res && $res->is_success;
 		}
-		$count++;
-	});
+	}
+
+	my $candidates = &subs::web_measure_candidates($dom, $json, $selector, $index);
 
 	my $confirmation = $c->render_to_string(
 		template => 'web/web_measure_confirm',
-		possibilities => $possibilities,
+		candidates => $candidates,
 		app => $app,
 		measure => $measure,
 		selector => $selector
@@ -17875,7 +17871,8 @@ post '/manager/web/measure/set' => sub($c) {
 		app => $app,
 		uuid => $uuid,
 		selector => $selector,
-		possibilities => $possibilities,
+		index => $index,
+		candidates => $candidates,
 		confirmation => $confirmation
 	});
 
@@ -17884,23 +17881,25 @@ post '/manager/web/measure/set' => sub($c) {
 post '/manager/web/measure/submit' => sub($c) {
 	my $app = $c->param('app');
 	my $measure = $c->param('measure');
-	my $count = $c->param('count');
-	my $prev = $c->param('prev');
-	my $next = $c->param('next');
-	my $selector = $c->param('selector');
+	my $spec_json = $c->param('spec');
 
+	my $data;
+	if (defined $spec_json && length $spec_json) {
+		my $chosen = eval { decode_json $spec_json };
+		$data = ref $chosen eq 'HASH' ? $chosen : undef;
+	}
+	unless ($data) {
+		# the old form: count/prev/next/selector
+		$data = {
+			count => $c->param('count'),
+			prev => $c->param('prev'),
+			next => $c->param('next'),
+			selector => $c->param('selector')
+		};
+	}
+	$data->{'measure'} = $measure;
 
-	my $data = {
-		count => $count,
-		prev => $prev,
-		next => $next,
-		measure => $measure,
-		selector => $selector
-	};
-
-	my $web_measure_data = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'web_measure_data', subsetting => $measure }) } || {};
-	my $jdata = encode_json $data;
-	&subs::setting_setter({ app => $app, setting => 'web_measure_data', subsetting => $measure, value => $jdata });
+	&subs::setting_setter({ app => $app, setting => 'web_measure_data', subsetting => $measure, value => encode_json $data });
 
 	$c->render(json => $data);
 };
@@ -17945,7 +17944,11 @@ sub website_grabber($data) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $app = &subs::unformat_name($data->{'app'});
 	my $settings = &subs::settings_grabber({ app => $app });
-	my $website = $data->{'website'} || $settings->{'web'};
+	# The URL and format are app facts, so read them from any device's row (local
+	# first). Otherwise a phone acting as the headless browser would see no web
+	# settings at all and fetch nothing.
+	my $format = &subs::setting_value_for($app, 'web_format') || $settings->{'web_format'} || 'html';
+	my $website = $data->{'website'} || &subs::setting_value_for($app, 'web') || $settings->{'web'};
 	my $server_time = &subs::rightNow();
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
@@ -17969,20 +17972,24 @@ sub website_grabber($data) {
 		my $ua = Mojo::UserAgent->new;
 		my $res = eval { $ua->get($website => {user_agent => $user_agent})->result } ;
 		$internal_url = $website || $saved_website->{'internal_url'} || "No Page";
+		my ($raw_body, $json);
 
 		if (eval { $res->is_success } ) {
-			$raw_html = $res->body;
-			if ($settings->{'web_format'} eq 'json') {
-				my $json = eval { return decode_json $raw_html };
-				if ($json) {
+			$raw_body = $res->body;
+			if ($format eq 'json') { $json = eval { decode_json $raw_body }; }
+			$raw_html = $raw_body;
+			if ($json) {
+				# Decode a second copy: the prettyfier mutates the data it is given
+				# (arrays become 1arr, 2arr), and the measure extractor needs the
+				# original shape for a path.
+				my $pretty_json = eval { decode_json $raw_body };
+				if ($pretty_json) {
 					my $c = &subs::controller_builder();
 					$raw_html = $c->render_to_string(
 						template => 'web/json_prettyfy',
-						jdata => $json
+						jdata => $pretty_json
 					);
 				}
-
-
 			}
 			my $hs = HTML::Strip->new(
 				striptags   => [ 'iframe','script' ],
@@ -18022,28 +18029,35 @@ sub website_grabber($data) {
 				});
 			}
 			&web_history_deleter($app);
-			my $wmd = &subs::db_query('select * from settings where app = ? and setting = ? and (device=? or device=?)', $app, 'web_measure_data', &subs::device_setter(), $signatorial)->hashes;
+			my $wmd = &subs::setting_rows_for($app, 'web_measure_data', 'subsetting');
 			if (scalar @{$wmd}) {
 				my $uuid;
-				my $dom = Mojo::DOM->new($raw_html);
 				my $c = &subs::controller_builder();
+				my $am = eval { decode_json &subs::setting_value_for($app, 'app_measures') } || {};
+				my $ctx = {
+					format => $format,
+					json => $json,
+					dom => Mojo::DOM->new($format eq 'json' ? $raw_html : $raw_body),
+					raw => $raw_body,
+				};
 				foreach my $wm ( @{$wmd} ) {
-					my $data = eval { return decode_json $wm->{'value'} } || next;
-					my $s = $dom->find($data->{'selector'});
-
-					my $possibilities = [];
-					my $count = 0;
-					if (eval { $s->[$data->{'count'}]->text } ) {
-						my $measure = $s->[$data->{'count'}]->text;
-
-						if (1 || $s->[$data->{'count'} - 1] eq $data->{'prev'} && $s->[$data->{'count'} + 1] eq $data->{'next'}) {
-
-							$measure =~  s/[^\x00-\x7F]+//gi;
-							$uuid = &appt_measure_writer($c,{ app => $app, measure => $wm->{'subsetting'}, value => $measure, timestamp => &subs::rightNow(), uuid => $uuid });
-							&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $wm->{'subsetting'} . '"]\').val(\'' . $measure . '\');' });
-							&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure_display[measure="' . $wm->{'subsetting'} . '"]\').text(\'' . $measure . '\');' });
-						}
+					my $spec = eval { decode_json $wm->{'value'} } || {};
+					$spec->{'measure'} ||= $wm->{'subsetting'};
+					my $type = $am->{$wm->{'subsetting'}}->{'type'} || '';
+					$spec->{'number'} = 1 if !exists $spec->{'number'} && ($type eq 'number' || $type eq 'range');
+					$spec->{'unit'} ||= $am->{$wm->{'subsetting'}}->{'unit'};
+					my $extracted = &subs::web_measure_extract($spec, $ctx);
+					unless ($extracted->{'ok'}) {
+						$log->info('web measure ' . $app . '/' . $wm->{'subsetting'} . ': ' . $extracted->{'error'});
+						next;
 					}
+					my $measure = $extracted->{'value'};
+					$uuid = &appt_measure_writer($c,{ app => $app, measure => $wm->{'subsetting'}, value => $measure, timestamp => &subs::rightNow(), uuid => $uuid });
+					my $esc = defined $measure ? $measure : '';
+					$esc =~ s/\\/\\\\/g;
+					$esc =~ s/'/\\'/g;
+					&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $wm->{'subsetting'} . '"]\').val(\'' . $esc . '\');' });
+					&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure_display[measure="' . $wm->{'subsetting'} . '"]\').text(\'' . $esc . '\');' });
 				}
 			}
 		}

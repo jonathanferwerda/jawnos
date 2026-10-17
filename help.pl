@@ -195,10 +195,12 @@ our %topic = (
 	},
 	'web' => {
 		title => 'Web', category => 'apps', app => 'web',
-		templates => [ 'templates/web/web.html.ep' ],
-		summary => 'A browser in a window.',
+		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
+		summary => 'A browser in a window, with measures.',
 		body => [
-			'Web is a browser window, useful for pulling a page up beside your work without leaving the desktop.'
+			'Web is a browser window, useful for pulling a page up beside your work without leaving the desktop.',
+			'To watch a number on a page, open the page in Web and click the Measures icon in its toolbar. Pick the measure from the list, then click the value on the page. Web tests the click and offers the shapes it can read: a JSON path for a feed, the table row and cell that hold the value, a label with the value beside it, or the plain element. Pick the shape whose Value column shows the number you want, then press Save.',
+			'The shape is stored, not a page position, so a table that gains a row keeps reading the right cell; a JSON feed keeps the exact key. A measure reads from the workspace as a whole, so the phone can fetch the page while the selectors stay on the computer.'
 		],
 		related => [ 'terminal' ]
 	},

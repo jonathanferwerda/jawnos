@@ -1,19 +1,22 @@
 <img class="little_thumb hover" id="alert_cancel" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close">
 <div id="web_measure_confirm" style="background-color:var(--panel);">
 	<h2><%= &subs::format_name($app) %> - <%= &subs::format_name($measure) %></h2>
-	<b id="web_measure_confirm_selector"><%= $selector %></b><br>
+	<div style="opacity:.7;margin-bottom:6px;">Pick the shape that should be watched. Each one is tested against this page.</div>
 	<table style="width:100%;">
 		<thead>
-			<th>#</th><th>Prev</th><th>Text</th><th>Next</th>
+			<th></th><th>How</th><th>Value</th><th>Spec</th>
 		</thead>
 		<tbody style="overflow:scroll;height:60%;">
-			<% foreach my $p ( @{$possibilities} ) { %>
-				<tr class="web_measure_confirm_row" count="<%= $p->{'count'} %>" measure="<%= $measure %>" app="<%= $app %>">
-					<td><%= $p->{'count'} %></td>
-					<td class="web_measure_confirm_item hover" type="prev" count="<%= $p->{'count'} %>" text="<%= $p->{'prev'}->{'text'} %>"><%= $p->{'prev'}->{'formatted'} %></td>
-					<td class="web_measure_confirm_item hover" type="exact" count="<%= $p->{'count'} %>" text="<%= $p->{'text'} %>"><%= $p->{'formatted'} %></td>
-					<td class="web_measure_confirm_item hover" type="next" count="<%= $p->{'count'} %>" text="<%= $p->{'next'}->{'text'} %>"><%= $p->{'next'}->{'formatted'} %></td>
+			<% foreach my $p ( @{$candidates} ) { %>
+				<tr class="web_measure_candidate hover" app="<%= $app %>" measure="<%= $measure %>" spec="<%= &subs::json_chars($p->{'spec'}) %>">
+					<td class="web_measure_candidate_mark">&#9675;</td>
+					<td><%= $p->{'kind'} %></td>
+					<td><%= $p->{'value'} %></td>
+					<td style="font-family:monospace;font-size:.75em;word-break:break-all;"><%= &subs::json_chars($p->{'spec'}) %></td>
 				</tr>
+			<% } %>
+			<% if (!scalar @{$candidates}) { %>
+				<tr><td colspan="4">Nothing on this page read as a value. Try clicking the number itself.</td></tr>
 			<% } %>
 		</tbody>
 	</table>

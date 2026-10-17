@@ -3155,13 +3155,18 @@ $(document).on('click', '.web', function() {
 				$(this).contents().find('body').on('click', function(event) {
 					if ($('#browser_' + ts).hasClass('measure_selector_enabled')) {
 						var selector = selectorMaker(event.target);
+						if (!selector) {
+							selector = $(event.target).prop('tagName').toLowerCase();
+						}
 						var text = $(event.target).text();
+						// the selector can match many nodes; this says which one was clicked
+						var index = $(this).find(selector).index(event.target);
 
 						var measure = $('#web_measure_selector').val();
 						$.ajax({ 
 							url: '/manager/web/measure/set',
 							type: 'post',
-							data: { app: app, uuid: uuid, selector: selector, measure: measure, text: text },
+							data: { app: app, uuid: uuid, selector: selector, index: index, measure: measure, text: text },
 							success: function(response) {
 								$('#alert').html(response.confirmation).show();
 							}
@@ -3194,39 +3199,26 @@ $(document).on('click', '.web', function() {
 	});
 });
 
-$(document).on('click', '.web_measure_confirm_item', function() {
-	var b = $(this);
-	var selected = b.hasClass('selected');
-	var type = $(this).attr('type');
-	$('.web_measure_confirm_item[type="' + type + '"]').removeClass('selected');
-	if (selected) {
-		b.removeClass('selected');
-	}
-	else {
-		b.addClass('selected');
-	}
+$(document).on('click', '.web_measure_candidate', function() {
+	$('.web_measure_candidate').removeClass('selected');
+	$(this).addClass('selected');
+	$(this).find('.web_measure_candidate_mark').html('&#9679;');
+	$('.web_measure_candidate').not(this).find('.web_measure_candidate_mark').html('&#9675;');
 });
 
 $(document).on('click', '#web_measure_confirm_save', function() {
 
-	var exact = $('.web_measure_confirm_item.selected[type="exact');
-	var count = exact.attr('count');
-	var row = exact.closest('.web_measure_confirm_row');
-	var app = row.attr('app');
-	var measure = row.attr('measure');
-	var prev = $('.web_measure_confirm_item.selected[type="prev').attr('text');
-	var next = $('.web_measure_confirm_item.selected[type="next').attr('text');
-	var selector = $('#web_measure_confirm_selector').text();
+	var chosen = $('.web_measure_candidate.selected').first();
+	if (!chosen.length) {
+		return;
+	}
 	$.ajax({
 		url: '/manager/web/measure/submit',
 		type: 'POST',
 		data: {
-			app: app,
-			measure: measure,
-			count: count,
-			prev: prev,
-			next: next,
-			selector: selector
+			app: chosen.attr('app'),
+			measure: chosen.attr('measure'),
+			spec: chosen.attr('spec')
 		},
 		success: function(response) {
 			$('#alert').hide();
