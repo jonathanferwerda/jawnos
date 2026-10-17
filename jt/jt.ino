@@ -23,6 +23,10 @@ using fs::FS;
 #include <esp_mac.h>
 // the ESP32 ROM's miniz: inflate a compressed bridge payload (see ble_inflate_if_zlib)
 #include "miniz.h"
+// On-device voice models (the watch's stack): the microfrontend front-end is
+// deck-libs/micro_features, the TFLM runtime is the platform's
+// espressif__esp-tflite-micro. See voice_models.h.
+#include "voice_models.h"
 #include <driver/i2s_tdm.h>
 #include "es7210.h"
 #include <Audio.h>
