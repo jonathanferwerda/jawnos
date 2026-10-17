@@ -12644,7 +12644,11 @@ sub relay_headless {
 	$req->method(uc($data->{'method'} || 'POST'));
 	my $params = { %{ $data->{'params'} || {} } };
 	$params->{'remote_uuid'} = $data->{'remote_uuid'} if $data->{'remote_uuid'};
-	$req->body_params(Mojo::Parameters->new(%{$params}));
+	# Mojo::Message::body_params is a getter here: passing a Mojo::Parameters to
+	# it does nothing, so every headless relay POST carried an empty body. Encode
+	# the form into the request body so remote_relay_request parses it.
+	$req->headers->content_type('application/x-www-form-urlencoded');
+	$req->body(Mojo::Parameters->new(%{$params})->to_string);
 	return &Manager::remote_relay_request($c, $data->{'extra'} || {});
 }
 
