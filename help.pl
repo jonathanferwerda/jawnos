@@ -562,12 +562,12 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
-		verified => '2026-10-16',
+		verified => '2026-10-17',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
 			'The Dev panel lists the devices by the network they are on: a section per network, named by its subnet, with the machines and interfaces that reach it and a table of the devices found there. Scan sweeps the local network first, so a device nobody has talked to yet - a printer, a fresh appliance - still appears and can be given its purpose.',
-			'A device that is off its network but bridged over Bluetooth is listed too, in a Bluetooth card below the machines: its name, purpose, radio address and when the bridge last heard it, so the fleet\'s radios are visible even when they are on no network of yours. A machine with no screen of its own - a headless server - lists the devices it can see the same way, with no browser involved.',
+			'A device that is off its network but bridged over Bluetooth is listed too, in a Bluetooth card below the machines: its name, purpose, radio address and when the bridge last heard it, so the fleet\'s radios are visible even when they are on no network of yours. The card\'s Scan now button asks the bridge to look for a JawnOS radio immediately; adoption otherwise happens on its own every 30 seconds. A machine with no screen of its own - a headless server - lists the devices it can see the same way, with no browser involved.',
 			'A machine reached over a tunnel is enrolled on its own: the hub asks the peer its name and its backups, so the row shows the peer and its saved jawnos.enc (shown by its file name, not the whole path) and carries its buttons, with no Scan or Connect press. That is what lets a headless hub upgrade or relay to a tunnelled peer without a browser.',
 			'A device names itself as it joins. A watch, deck or pico advertises what it is - its purpose, model and abilities (screen, keyboard, mic, gps, pins and the like) - over mDNS, and a printer is recognised the same way, so a new device appears in the list with its purpose and its abilities within seconds, without pressing Scan. A device with no network of its own - a fresh deck that has never joined one - is met over Bluetooth instead: the house scans for it and connects the moment it names itself, so it appears without an access point at all.',
 			'A printer in the list reads out its own ink and toner: a bar per cartridge (a tri-colour cartridge draws as one band), with the printer\'s state under it - idle, or what it is asking for, such as paper. The reading comes from the printer itself over IPP; click it to ask again after changing a cartridge.',
@@ -640,11 +640,12 @@ our %topic = (
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-16',
+		verified => '2026-10-17',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
-			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
+			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge. The bridge holds up to four radios at once, so a watch, a deck and a board can stay linked together.',
+			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi and role into the board\'s config file, the board acknowledges and reboots, and it comes back with its switches and relays already set. A board on the Bluetooth bridge gets the same role as a compact board config, so it can resume before it has any network at all.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
 		steps => [
@@ -652,6 +653,7 @@ our %topic = (
 			'Choose a device from the chip list, then press Query to ask a board what it is.',
 			'Set the room\'s buttons, then press Now Me to send that room to a watch or deck.',
 			'On a watch or t-deck row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
+			'On a board row, plug the board in over USB and press Restore over USB to rewrite its stored WiFi and role, then let it reboot.',
 			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],
 		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge', 'voice' ]
@@ -1066,6 +1068,7 @@ our %topic = (
 			'The devices speak Bluetooth Low Energy, but JawnOS itself is reached over the network, so a small bridge sits in between: a Bluetooth central (on a phone, or on a desktop) that links to a device and relays messages to and from JawnOS over a local socket.',
 			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.',
 			'A T-Watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine. If the homebase drops off the mesh - a phone that switches off - another machine takes the watch over after a while, and hands it back the moment the homebase is seen again. A homebase that merely leaves the network keeps it - only one gone long enough to stop waiting hands over. A button you press on the watch is applied by the machine holding the link, so it lands whatever machine you were looking at; a command button runs on every machine unless it names one.',
+			'The bridge itself is not limited to one radio: it can hold up to four links at once, each named by its address, so a watch, a deck and a board can stay linked together. Sends and releases name the radio they mean, which is what keeps one device\'s message from being applied to another.',
 		],
 		related => [ 'watch', 'tdeck', 'pico' ]
 	},

@@ -14,6 +14,16 @@
 #include <Servo.h>
 #include <PicoOTA.h>
 #include <uri/UriRegex.h>
+// Bluetooth: the board is also reachable as a Nordic UART peripheral, so a
+// crashed Pico in its provisioning AP can be met by the house bridge and its
+// role restored without WiFi. Requires -DPIO_FRAMEWORK_ARDUINO_ENABLE_BLUETOOTH
+// (see platformio.ini).
+#include <btstack.h>
+#include <ble/att_db_util.h>
+#include <ble/gatt-service/nordic_spp_service_server.h>
+#include <BluetoothLock.h>
+#include <LocklessQueue.h>
+#include <map>
 
 // Civil-date struct for the 64-bit clock display. Declared before any function
 // so the Arduino-generated prototypes can see the return type.
@@ -41,6 +51,7 @@ String homebaseIP;
 String browser_tab_id;
 unsigned long homebaseOnline = millis();
 unsigned long lastPing = millis();
+unsigned long lastPresidentTry = 0;
 unsigned long lastWifiCheck = 0;
 unsigned long lastTimeSync = 0;
 int wifiDownTicks = 0;
@@ -89,6 +100,489 @@ JSONVar coreJobs;
 File rawFile;
 int rebooting = 0;
 
+// ---- Bluetooth (Nordic UART Service) --------------------------------------
+// The board advertises the same NUS the watch and deck use, so the house's BLE
+// bridge can meet it even when it has no WiFi (a crash, a fresh board, or the
+// provisioning AP). Incoming writes are delimited per notification; outbound
+// messages are framed "<i>/<n>:" exactly like the watch, so the manager's
+// reassembler reads them unchanged. The stack runs on the CYW43 async context,
+// so there is no run loop to service here.
+struct jawn_time;
+String led_toggle(int pin, String state);
+String relay_toggle(int pin, String state);
+String servo_toggle(int pin, String state);
+void config_writer();
+void config_init();
+void wifi_start();
+void call_the_president();
+
+static const uint8_t ble_nus_service[16] = { 0x6E,0x40,0x00,0x01,0xB5,0xA3,0xF3,0x93,0xE0,0xA9,0xE5,0x0E,0x24,0xDC,0xCA,0x9E };
+static const uint8_t ble_nus_rx[16]      = { 0x6E,0x40,0x00,0x02,0xB5,0xA3,0xF3,0x93,0xE0,0xA9,0xE5,0x0E,0x24,0xDC,0xCA,0x9E };
+static const uint8_t ble_nus_tx[16]      = { 0x6E,0x40,0x00,0x03,0xB5,0xA3,0xF3,0x93,0xE0,0xA9,0xE5,0x0E,0x24,0xDC,0xCA,0x9E };
+static const uint8_t ble_adv[] = {
+  0x02, 0x01, 0x06,
+  0x11, 0x07, 0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+                0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
+  0x09, 0x09, 'J','a','w','n','P','i','c','o'
+};
+static_assert(sizeof(ble_adv) <= 31, "BLE advertising data is limited to 31 bytes");
+
+static hci_con_handle_t ble_con_handle = HCI_CON_HANDLE_INVALID;
+static bool ble_notify_enabled = false;
+static bool ble_up = false;
+static bool ble_started = false;
+static unsigned long ble_connected_at = 0;
+static bool ble_state_requested = false;
+static LocklessQueue<uint8_t> ble_rx_queue(16384);
+static LocklessQueue<uint8_t> ble_tx_queue(8192);
+static btstack_context_callback_registration_t ble_send_request;
+static btstack_packet_callback_registration_t ble_hci_reg;
+static volatile bool ble_send_pending = false;
+static uint8_t ble_tx_chunk[512];
+static String ble_rx_frame;
+static std::map<int, String> ble_rx_parts;
+static int ble_rx_total = 0;
+static unsigned long ble_rx_at = 0;
+static String usb_config_line;
+static bool usb_reboot_pending = false;
+static unsigned long usb_reboot_at = 0;
+static bool president_loaded = false;
+
+static String jstr(JSONVar v) {
+  if (JSON.typeof(v) == "undefined" || JSON.typeof(v) == "null") { return String(""); }
+  return String((const char *)v);
+}
+
+static int64_t jint(JSONVar v) {
+  if (JSON.typeof(v) == "undefined" || JSON.typeof(v) == "null") { return 0; }
+  return (int64_t)(double)v;
+}
+
+static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
+
+static void ble_request_send();
+
+static void ble_can_send(void *ctx) {
+  (void)ctx;
+  ble_send_pending = false;
+  if (ble_con_handle == HCI_CON_HANDLE_INVALID || !ble_notify_enabled) { return; }
+  uint16_t mtu = att_server_get_mtu(ble_con_handle);
+  size_t max = (mtu > 3) ? (size_t)(mtu - 3) : 20;
+  if (max > sizeof(ble_tx_chunk)) { max = sizeof(ble_tx_chunk); }
+  size_t n = 0;
+  while (n < max) {
+    uint8_t b;
+    if (!ble_tx_queue.read(&b)) { break; }
+    ble_tx_chunk[n++] = b;
+  }
+  if (n) { nordic_spp_service_server_send(ble_con_handle, ble_tx_chunk, (uint16_t)n); }
+  if (!ble_tx_queue.empty()) { ble_request_send(); }
+}
+
+static void ble_request_send() {
+  if (ble_con_handle == HCI_CON_HANDLE_INVALID || !ble_notify_enabled || ble_tx_queue.empty() || ble_send_pending) { return; }
+  ble_send_pending = true;
+  ble_send_request.callback = &ble_can_send;
+  ble_send_request.context = nullptr;
+  nordic_spp_service_server_request_can_send_now(&ble_send_request, ble_con_handle);
+}
+
+static void ble_send_json(const String &json) {
+  if (!ble_up || !ble_notify_enabled || ble_con_handle == HCI_CON_HANDLE_INVALID) { return; }
+  uint16_t mtu = att_server_get_mtu(ble_con_handle);
+  size_t max_payload = (mtu > 3) ? (size_t)(mtu - 3) : 20;
+  size_t prefix = 12;  // room for "<i>/<n>:", even at a large part count
+  size_t body_max = (max_payload > prefix + 1) ? (max_payload - prefix) : 8;
+  size_t total = json.length();
+  size_t parts = (total + body_max - 1) / body_max;
+  if (parts == 0) { parts = 1; }
+  if (parts > 999) { return; }
+  for (size_t i = 0; i < parts; i++) {
+    String head = String((unsigned long)i) + "/" + String((unsigned long)parts) + ":";
+    size_t off = i * body_max;
+    size_t len = (total > off) ? (total - off) : 0;
+    if (len > body_max) { len = body_max; }
+    String part = head + json.substring(off, off + len);
+    for (size_t j = 0; j < part.length(); j++) {
+      if (!ble_tx_queue.write((uint8_t)part[j])) { break; }
+    }
+  }
+  BluetoothLock lock;
+  ble_request_send();
+}
+
+static void ble_apply_now_me(JSONVar data) {
+  String name = jstr(data["name"]);
+  if (name != "") { config["name"] = name; }
+  String hb = jstr(data["homebase"]);
+  if (hb != "") { homebaseIP = hb; config["homebaseIP"] = hb; }
+  String ip = jstr(data["ip"]);
+  if (ip != "") { homebase = ip; config["homebase"] = ip; }
+  String auth = jstr(data["authorization"]);
+  if (auth != "") { authorization = auth; config["authorization"] = auth; }
+  int64_t ts = jint(data["timestamp"]);
+  int64_t off = jint(data["offset"]);
+  if (ts > 0) {
+    offset = off;
+    config["timestamp"] = String((double)ts, 0);
+    config["offset"] = String((double)off, 0);
+    set_epoch_seconds(ts + off);
+  }
+  config_writer();
+  lcd.clear();
+  lcd.print(config["name"]);
+}
+
+static void ble_apply_app_state(String app, String state) {
+  if (app == "") { return; }
+  JSONVar keys = config["outputs"].keys();
+  for (int i = 0; i < keys.length(); i++) {
+    JSONVar o = config["outputs"][keys[i]];
+    if (jstr(o["app"]) != app) { continue; }
+    String comp = jstr(o["component"]);
+    int pin = (int)jint(o["pin"]);
+    String phys = state;
+    if (jstr(o["inverted"]) == "1") { phys = (phys == "on") ? "off" : "on"; }
+    if (comp == "relay") { relay_toggle(pin, phys); }
+    else if (comp == "led") { led_toggle(pin, phys); }
+  }
+}
+
+static void ble_apply_board_config(JSONVar ctp) {
+  if (JSON.typeof(ctp) != "object") { return; }
+  JSONVar keys = ctp.keys();
+  Serial.println("[cfg] applying " + String(keys.length()) + " keys");
+  config["button"] = undefined;
+  config["pot"] = undefined;
+  config["led"] = undefined;
+  config["servo"] = undefined;
+  config["relay"] = undefined;
+  config["switch"] = undefined;
+  config["outputs"] = undefined;
+  config["internal_jobs"] = undefined;
+  for (int i = 0; i < keys.length(); i++) {
+    String name = String(keys[i]);
+    if (name == "__specs" || name == "__shutup") { continue; }
+    JSONVar e = ctp[keys[i]];
+    String component = jstr(e["component"]);
+    String numero = jstr(e["numero"]);
+    if (numero == "") { numero = String((long)jint(e["numero"])); }
+    int pin = numero.toInt();
+    if (!pin_ok(pin)) { continue; }
+    String inverted = jstr(e["inverted"]);
+    String app = jstr(e["app"]);
+    if (component == "button") {
+      config["button"][numero]["lastPress"] = String(millis());
+      config["button"][numero]["toggle"] = String((long)jint(e["toggle"]));
+      config["button"][numero]["name"] = name;
+      pinMode(pin, INPUT);
+    }
+    else if (component == "pot") {
+      config["pot"][numero]["lastMove"] = String(millis());
+      config["pot"][numero]["lastSend"] = String(millis());
+      config["pot"][numero]["name"] = name;
+    }
+    else if (component == "switch") {
+      config["switch"][numero]["lastChange"] = String(millis());
+      config["switch"][numero]["lastSend"] = String(millis());
+      config["switch"][numero]["name"] = name;
+      pinMode(pin, INPUT);
+    }
+    else if (component == "relay" || component == "led" || component == "servo") {
+      String state = ((long)jint(e["toggle"]) == 1) ? "on" : "off";
+      if (component == "servo") { state = String((long)jint(e["toggle"])); }
+      if (inverted == "1" && component != "servo") { state = (state == "on") ? "off" : "on"; }
+      if (component == "relay") { config["relay"][numero] = state; }
+      else if (component == "led") { config["led"][numero] = state; }
+      else { config["servo"][numero] = state; }
+      JSONVar o;
+      o["component"] = component;
+      o["pin"] = pin;
+      o["app"] = app;
+      o["inverted"] = inverted;
+      config["outputs"][component + numero] = o;
+      if (component != "servo") { pinMode(pin, OUTPUT); }
+    }
+  }
+  if (JSON.typeof(ctp["__specs"]["internal_jobs"]) != "undefined") {
+    config["internal_jobs"] = JSON.stringify(ctp["__specs"]["internal_jobs"]);
+  }
+  String auth = jstr(ctp["__specs"]["authorization"]);
+  if (auth != "") { authorization = auth; config["authorization"] = auth; }
+  String hb = jstr(ctp["__specs"]["homebase"]);
+  if (hb != "" && homebaseIP == "") { homebaseIP = hb; config["homebaseIP"] = hb; }
+  String nm = jstr(ctp["__specs"]["name"]);
+  if (nm != "") { config["name"] = nm; }
+  config_writer();
+  config_init();
+  president_loaded = true;
+  lcd.clear();
+  lcd.print(config["name"]);
+}
+
+static void ble_apply_set(JSONVar data) {
+  String comp = jstr(data["component"]);
+  int pin = (int)jint(data["pin"]);
+  String state = jstr(data["state"]);
+  if (comp == "relay") { state = relay_toggle(pin, state); }
+  else if (comp == "led") { state = led_toggle(pin, state); }
+  else if (comp == "servo") { state = servo_toggle(pin, state); }
+  JSONVar ack;
+  ack["type"] = "state";
+  ack["chip_id"] = String(rp2040.getChipID());
+  ack["edt"] = "microcontroller";
+  JSONVar d;
+  d["component"] = comp;
+  d["pin"] = String(pin);
+  d["state"] = state;
+  ack["data"] = d;
+  ble_send_json(JSON.stringify(ack));
+}
+
+static void ble_apply_wifi(JSONVar data) {
+  String s = jstr(data["ssid"]);
+  String p = jstr(data["password"]);
+  String as = jstr(data["ap_ssid"]);
+  String ap = jstr(data["ap_password"]);
+  if (as != "") { ap_ssid = as; config["ap_ssid"] = as; }
+  if (ap != "") { ap_password = ap; config["ap_password"] = ap; }
+  if (s != "" && p != "") {
+    ssid = s; password = p;
+    config["ssid"] = s; config["password"] = p;
+  }
+  config_writer();
+  if (s != "") {
+    WiFi.disconnect();
+    delay(100);
+    wifi_start();
+  }
+}
+
+static void ble_handle_json(String json) {
+  JSONVar msg = JSON.parse(json);
+  if (JSON.typeof(msg) != "object") { return; }
+  String type = jstr(msg["type"]);
+  if (type == "now_me") { ble_apply_now_me(msg["data"]); }
+  else if (type == "board_config") { ble_apply_board_config(msg["data"]); }
+  else if (type == "room") { ble_apply_board_config(msg["data"]["payload"]); }
+  else if (type == "toggles") {
+    JSONVar d = msg["data"];
+    JSONVar k = d.keys();
+    for (int i = 0; i < k.length(); i++) { ble_apply_app_state(String(k[i]), jstr(d[k[i]])); }
+  }
+  else if (type == "toggle") {
+    ble_apply_app_state(jstr(msg["data"]["app"]), jstr(msg["data"]["state"]));
+  }
+  else if (type == "set") { ble_apply_set(msg["data"]); }
+  else if (type == "wifi") { ble_apply_wifi(msg["data"]); }
+  else if (type == "button") {
+    JSONVar d = msg["data"];
+    String numero = jstr(d["numero"]);
+    if (numero != "") {
+      config["button"][numero]["toggle"] = String((long)jint(d["toggle"]));
+      config_writer();
+    }
+  }
+  // hello, voice_* and anything else the watch/deck uses is simply not ours.
+}
+
+static void ble_process_frame(String frame) {
+  int slash = frame.indexOf('/');
+  int colon = frame.indexOf(':');
+  if (slash > 0 && colon > slash && slash < 6) {
+    int idx = frame.substring(0, slash).toInt();
+    int total = frame.substring(slash + 1, colon).toInt();
+    if (total > 0 && total <= 512 && idx >= 0 && idx < total) {
+      if (idx == 0 || ble_rx_total != total || (millis() - ble_rx_at) > 5000) {
+        ble_rx_parts.clear();
+        ble_rx_total = total;
+      }
+      ble_rx_parts[idx] = frame.substring(colon + 1);
+      ble_rx_at = millis();
+      if ((int)ble_rx_parts.size() == total) {
+        String msg;
+        for (int i = 0; i < total; i++) { msg += ble_rx_parts[i]; }
+        ble_rx_parts.clear();
+        ble_rx_total = 0;
+        ble_handle_json(msg);
+      }
+      return;
+    }
+  }
+  ble_handle_json(frame);
+}
+
+static void ble_loop() {
+  uint8_t b;
+  while (ble_rx_queue.read(&b)) {
+    if (b == 0x1E) {
+      if (ble_rx_frame.length()) {
+        ble_process_frame(ble_rx_frame);
+        ble_rx_frame = "";
+      }
+    }
+    else if (ble_rx_frame.length() < 8192) {
+      ble_rx_frame += (char)b;
+    }
+  }
+  if (ble_up && ble_notify_enabled && !ble_state_requested && ble_connected_at && (millis() - ble_connected_at) > 3000) {
+    ble_state_requested = true;
+    String chip = String(rp2040.getChipID());
+    JSONVar req;
+    req["type"] = "state_request";
+    req["chip_id"] = chip;
+    req["edt"] = "microcontroller";
+    // Omit an empty homebase: this JSONVar build serializes an empty String as
+    // an empty token, which made the whole message unparseable at the manager.
+    if (homebaseIP != "") { req["homebase"] = homebaseIP; }
+    ble_send_json(JSON.stringify(req));
+    JSONVar board;
+    board["type"] = "room_request";
+    board["chip_id"] = chip;
+    board["edt"] = "microcontroller";
+    board["room"] = 1;
+    ble_send_json(JSON.stringify(board));
+    Serial.println("[ble] state requested");
+  }
+}
+
+static void usb_config_loop() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    // Do not echo serial input: a JAWNCFG line carries WiFi credentials and the
+    // device authorization, and the manager reads this port back. The boot log
+    // is still printed by Serial.println as before.
+    if (c == '\n') {
+      String line = usb_config_line;
+      usb_config_line = "";
+      line.trim();
+      if (line == "JAWNCFG?") {
+        // A field diagnostic: what the board actually reads back from its own
+        // config file, with the secrets redacted. It answers on USB, so a board
+        // that is off the network can still be inspected.
+        JSONVar out = config;
+        out["password"] = "***";
+        out["ap_password"] = "***";
+        out["authorization"] = "***";
+        if (out["__specs"]) { out["__specs"]["authorization"] = "***"; }
+        Serial.println("JAWNCFG STATE " + JSON.stringify(out));
+        File cf = LittleFS.open("config.txt", "r");
+        String raw = cf.readString();
+        cf.close();
+        Serial.println("JAWNCFG RAW " + String(raw.length()) + " bytes");
+        JSONVar rawj = JSON.parse(raw);
+        JSONVar rk = rawj.keys();
+        String types;
+        for (int i = 0; i < rk.length(); i++) {
+          String k = String(rk[i]);
+          if (k == "password" || k == "ap_password" || k == "authorization") { types += k + ":redacted "; }
+          else { types += k + ":" + JSON.typeof(rawj[rk[i]]) + " "; }
+        }
+        Serial.println("JAWNCFG TYPES " + types);
+        Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " homebaseIP=" + homebaseIP);
+      }
+      else if (line == "JAWNREBOOT") {
+        Serial.println("JAWNCFG REBOOT");
+        usb_reboot_pending = true;
+        usb_reboot_at = millis() + 300;
+      }
+      else if (line.startsWith("JAWNCFG ")) {
+        String json = line.substring(8);
+        JSONVar incoming = JSON.parse(json);
+        if (JSON.typeof(incoming) == "object") {
+          config = incoming;
+          // The file is the source of truth now: set the live identity from it.
+          // The role is not written here; it comes back over BLE (board_config)
+          // or from /watch once the network is up. This keeps the USB line small
+          // enough that the CDC receive ring cannot truncate it.
+          homebaseIP = jstr(config["homebaseIP"]);
+          homebase = jstr(config["homebase"]);
+          authorization = jstr(config["authorization"]);
+          offset = jint(config["offset"]);
+          int64_t ts = jint(config["timestamp"]);
+          config_writer();
+          config_init();
+          if (ts > 0) { set_epoch_seconds(ts + offset); }
+          Serial.println("JAWNCFG OK");
+          usb_reboot_pending = true;
+          usb_reboot_at = millis() + 700;
+        }
+        else {
+          Serial.println("JAWNCFG ERR bad json");
+        }
+      }
+    }
+    else if (c != '\r') {
+      if (usb_config_line.length() < 16384) { usb_config_line += c; }
+    }
+  }
+  if (usb_reboot_pending && (long)(millis() - usb_reboot_at) >= 0) {
+    rp2040.reboot();
+  }
+}
+
+static void ble_nus_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+  (void)channel;
+  if (packet_type == RFCOMM_DATA_PACKET) {
+    for (uint16_t i = 0; i < size; i++) { ble_rx_queue.write(packet[i]); }
+    ble_rx_queue.write(0x1E);  // one notification = one framed part
+    return;
+  }
+  if (packet_type != HCI_EVENT_PACKET) { return; }
+  if (hci_event_packet_get_type(packet) != HCI_EVENT_GATTSERVICE_META) { return; }
+  switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+    case GATTSERVICE_SUBEVENT_SPP_SERVICE_CONNECTED:
+      ble_con_handle = gattservice_subevent_spp_service_connected_get_con_handle(packet);
+      ble_notify_enabled = true;
+      ble_up = true;
+      ble_connected_at = millis();
+      ble_state_requested = false;
+      ble_rx_queue.reset();
+      ble_tx_queue.reset();
+      ble_rx_parts.clear();
+      ble_rx_total = 0;
+      Serial.println("[ble] connected");
+      break;
+    case GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED:
+      ble_notify_enabled = false;
+      ble_up = false;
+      ble_con_handle = HCI_CON_HANDLE_INVALID;
+      ble_state_requested = false;
+      ble_rx_queue.reset();
+      ble_tx_queue.reset();
+      ble_rx_parts.clear();
+      ble_rx_total = 0;
+      Serial.println("[ble] disconnected");
+      break;
+    default:
+      break;
+  }
+}
+
+static void ble_start() {
+  if (ble_started) { return; }
+  ble_started = true;
+  BluetoothLock lock;
+  l2cap_init();
+  sm_init();
+  att_db_util_init();
+  att_db_util_add_service_uuid128(ble_nus_service);
+  att_db_util_add_characteristic_uuid128(ble_nus_rx,
+    ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE | ATT_PROPERTY_DYNAMIC,
+    ATT_SECURITY_NONE, ATT_SECURITY_NONE, nullptr, 0);
+  att_db_util_add_characteristic_uuid128(ble_nus_tx,
+    ATT_PROPERTY_NOTIFY | ATT_PROPERTY_DYNAMIC,
+    ATT_SECURITY_NONE, ATT_SECURITY_NONE, nullptr, 0);
+  att_server_init(att_db_util_get_address(), nullptr, nullptr);
+  nordic_spp_service_server_init(&ble_nus_handler);
+  bd_addr_t null_addr = {0};
+  gap_advertisements_set_params(0x30, 0x30, 0, 0, null_addr, 0x07, 0x00);
+  gap_advertisements_set_data(sizeof(ble_adv), (uint8_t *)ble_adv);
+  gap_advertisements_enable(1);
+  hci_power_control(HCI_POWER_ON);
+  Serial.println("[ble] advertising as JawnPico");
+}
+
 void setup1() {
   Serial.begin(115200);
   Serial.println("Core 1 started");
@@ -107,7 +601,10 @@ void setup() {
 
   File f = LittleFS.open("config.txt", "r");
   String jconfig = f.readString();
-  Serial.println(jconfig);
+  f.close();
+  // Never print the file itself: it carries the WiFi password and the device
+  // token. The length is enough to see whether a restore actually persisted.
+  Serial.println("[cfg] boot read " + String(jconfig.length()) + " bytes");
   config = JSON.parse(jconfig);
   config_init();
   Serial.println();
@@ -116,6 +613,7 @@ void setup() {
   Serial.println(ssid);
 
   wifi_start();
+  ble_start();
 
 
   server.on("/", []() {
@@ -432,6 +930,14 @@ void wifi_start() {
     Serial.println("ok");
     wifiState = "connected";
     Serial.println(wifiState);
+    // A board that rebooted after a crash (or a USB restore) should resume its
+    // role without waiting for someone to press Now Me: fetch the room once the
+    // network is up. The flag is cleared again on the next reconnect.
+    president_loaded = false;
+    // https_request refuses to run while homebaseOnline is 0, and it starts at
+    // 0 on boot. Let the first role fetch through; a real failure sets it back
+    // to 0, and homebasePing re-arms it for the next try.
+    homebaseOnline = 1;
     coreJobs["connect"]["type"] = "led";
     coreJobs["connect"]["interval"] = "100";
     coreJobs["connect"]["duration"] = "500";
@@ -552,10 +1058,10 @@ void loop() {
   server.handleClient();
   read_time();
   input_scanner();
-  if (Serial.available()) {
-    int inByte = Serial.read();
-    Serial.write(inByte);
-  }
+  // USB serial: echo (as before) and accept a "JAWNCFG <json>" line from the
+  // manager, which writes the stored WiFi and role and then reboots us.
+  usb_config_loop();
+  ble_loop();
 
   if (BOOTSEL) {
     File f = LittleFS.open("config.txt", "w");
@@ -583,13 +1089,20 @@ void loop1() {
   if (rebooting == 1) {
     rp2040.reboot();
   }
+  // Once the network is up, pull the role (components and internal_jobs) from
+  // the house. Retry every ten seconds until it lands; a single early attempt
+  // used to fail before the first ping and leave the board with no relay map.
+  if (!president_loaded && wifiState == "connected" && homebaseIP != "" && (millis() - lastPresidentTry > 10000)) {
+    lastPresidentTry = millis();
+    call_the_president();
+  }
   handle_jobs();
 //  delay(10);
 }
 
 void homebasePing() {
   if (wifiState == "connected") {
-    homebaseOnline = 1;
+    homebaseOnline = 1;  // this IS the probe: allow it to run after a failure
     String https = https_request(
       "https://" + homebaseIP +
       "/watch/alive?millis=" + millis()
@@ -636,6 +1149,7 @@ void wifi_join_done() {
   WiFi.mode(WIFI_STA);
   wifiState = "connected";
   wifiDownTicks = 0;
+  president_loaded = false;
   jawnos_mdns_up = false;
   jawnos_mdns_start();
   server.begin();
@@ -685,6 +1199,7 @@ void input_scanner() {
   for (int i = 0; i < buttonKeys.length(); i++) {
     String spin = buttonKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     int buttonState = digitalRead(pin);
     String lastPress = config["button"][buttonKeys[i]]["lastPress"];
     String pressed = config["button"][buttonKeys[i]]["pressed"];
@@ -744,14 +1259,29 @@ void input_scanner() {
       }
       config_writer();
 
-      String jobTime = String(millis());
-      coreJobs[jobTime]["type"] = "https";
-      coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-        "/watch/button?room=1&button=" + spin + "&toggle=" + toggle;
-      coreJobs[jobTime]["response"] = "button";
-
-      //JSONVar returner = JSON.parse(https);
-      //config["button"][buttonKeys[i]]["toggle"] = returner["toggle"];
+      // Prefer the bridge when it is up: a board off its access point still
+      // reports its taps, and the machine holding the link applies them. Fall
+      // back to the HTTPS job (the LAN path) when there is no bridge.
+      if (ble_up && ble_notify_enabled) {
+        JSONVar bm;
+        bm["type"] = "button";
+        bm["chip_id"] = String(rp2040.getChipID());
+        bm["edt"] = "microcontroller";
+        JSONVar bp;
+        bp["room"] = "1";
+        bp["button"] = String(spin.toInt());
+        bp["toggle"] = String(toggle.toInt());
+        bp["timestamp"] = String((double)(now_ms() / 1000), 0);
+        bm["payload"] = bp;
+        ble_send_json(JSON.stringify(bm));
+      }
+      else {
+        String jobTime = String(millis());
+        coreJobs[jobTime]["type"] = "https";
+        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
+          "/watch/button?room=1&button=" + spin + "&toggle=" + toggle;
+        coreJobs[jobTime]["response"] = "button";
+      }
       config_writer();
     }
   }
@@ -759,6 +1289,7 @@ void input_scanner() {
   for (int i = 0; i < switchKeys.length(); i++) {
     String spin = switchKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     int switchState = digitalRead(pin);
     String state;
     if (switchState == 1) {
@@ -801,11 +1332,26 @@ void input_scanner() {
         }
       }
 
-      String jobTime = String(millis());
-      coreJobs[jobTime]["type"] = "https";
-      coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-        "/watch/switch?room=1&switch=" + spin + "&state=" + state;
-      coreJobs[jobTime]["response"] = "switch";
+      if (ble_up && ble_notify_enabled) {
+        JSONVar sm;
+        sm["type"] = "switch";
+        sm["chip_id"] = String(rp2040.getChipID());
+        sm["edt"] = "microcontroller";
+        JSONVar sd;
+        sd["room"] = "1";
+        sd["switch"] = String(spin.toInt());
+        sd["state"] = state;
+        sd["timestamp"] = String((double)(now_ms() / 1000), 0);
+        sm["data"] = sd;
+        ble_send_json(JSON.stringify(sm));
+      }
+      else {
+        String jobTime = String(millis());
+        coreJobs[jobTime]["type"] = "https";
+        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
+          "/watch/switch?room=1&switch=" + spin + "&state=" + state;
+        coreJobs[jobTime]["response"] = "switch";
+      }
       config["switch"][switchKeys[i]]["lastSend"] = String(millis());
     //  config["button"][buttonKeys[i]]["state"] = returner["toggle"];
       config_writer();
@@ -815,6 +1361,7 @@ void input_scanner() {
   for (int i = 0; i < potKeys.length(); i++) {
     String spin = potKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     int potState = analogRead(pin);
    // Serial.println(potState);
     String bs = String(potState);
@@ -900,12 +1447,30 @@ void input_scanner() {
         config["pot"][spin]["changed"] = "no";
         
         config_writer();
-        String jobTime = String(millis());
-        coreJobs[jobTime]["type"] = "https";
-        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-          "/watch/measure?room=1&button=" + spin + "&measure=" + bs +
-          "&component=pot&min=0&max=1024";
-        coreJobs[jobTime]["response"] = "pot";
+        if (ble_up && ble_notify_enabled) {
+          JSONVar mm;
+          mm["type"] = "measure";
+          mm["chip_id"] = String(rp2040.getChipID());
+          mm["edt"] = "microcontroller";
+          JSONVar md;
+          md["room"] = "1";
+          md["component"] = "pot";
+          md["button"] = String(spin.toInt());
+          md["measure"] = bs;
+          md["min"] = "0";
+          md["max"] = "1024";
+          md["timestamp"] = String((double)(now_ms() / 1000), 0);
+          mm["data"] = md;
+          ble_send_json(JSON.stringify(mm));
+        }
+        else {
+          String jobTime = String(millis());
+          coreJobs[jobTime]["type"] = "https";
+          coreJobs[jobTime]["url"] = "https://" + homebaseIP +
+            "/watch/measure?room=1&button=" + spin + "&measure=" + bs +
+            "&component=pot&min=0&max=1024";
+          coreJobs[jobTime]["response"] = "pot";
+        }
 
       }
     }
@@ -1099,10 +1664,21 @@ void read_time() {
 }
 
 void config_writer() {
-  config["uptime"] = millis();
+  // Do not persist uptime: assigning millis() through this JSONVar build
+  // serialized as an empty value, which made the whole file invalid and sent a
+  // rebooted board back to its provisioning AP. uptime is a diagnostic; the
+  // /device_query route adds it to the reply without saving it.
   String jconfig = JSON.stringify(config);
+  // Replace, do not overwrite in place: LittleFS's "w" was leaving the old
+  // tail behind, so a short (cleared) config still read back as the previous
+  // long file and JSON.parse saw the stale object.
+  LittleFS.remove("config.txt");
   File f = LittleFS.open("config.txt", "w");
-  f.print(jconfig);
+  if (f) {
+    f.truncate(0);
+    f.print(jconfig);
+    f.close();
+  }
 //  Serial.println(jconfig);
 }
 
@@ -1115,6 +1691,7 @@ void config_init() {
     String state = config["relay"][relayKeys[i]];
     String spin = relayKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     pinMode(pin, OUTPUT);
 
     if (state == "on") {  
@@ -1131,6 +1708,7 @@ void config_init() {
     String state = config["led"][ledKeys[i]];
     String spin = ledKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     pinMode(pin, OUTPUT);    
     if (state == "on") {
       digitalWrite(pin, HIGH);
@@ -1147,6 +1725,7 @@ void config_init() {
     config["button"][buttonKeys[i]]["lastPress"] = String(millis());
     String spin = buttonKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     pinMode(pin, INPUT);    
   }
   JSONVar switchKeys = config["switch"].keys();
@@ -1156,6 +1735,7 @@ void config_init() {
     config["switch"][switchKeys[i]]["lastSend"] = String(millis());
     String spin = switchKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
 
     pinMode(pin, INPUT);
   }
@@ -1166,6 +1746,7 @@ void config_init() {
 
     String spin = potKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
   //  pinMode(pin, INPUT);
   }
 
@@ -1177,17 +1758,23 @@ void config_init() {
     String state = config["servo"][servoKeys[i]];
     String spin = servoKeys[i];
     int pin = spin.toInt();
+    if (!pin_ok(pin)) { continue; }
     
     myservo.attach(pin);
   }
   authorization = (const char * )config["authorization"];
   homebase = String(config["homebase"]);
   homebaseIP = String(config["homebaseIP"]);
-  if (config["ssid"] && config["password"]) {
+  // JSONVar::operator bool() is true only for a JSON boolean, not for a
+  // non-empty string. The old `if (config["ssid"] && config["password"])` was
+  // therefore always false, so a board that rebooted read its saved WiFi (and
+  // its saved AP credentials) but never used them and came up in the default
+  // provisioning AP. Compare against the empty string instead.
+  if (config["ssid"] != "" && config["password"] != "") {
     ssid = String((const char *)config["ssid"]);
     password = String((const char *)config["password"]);
   }
-  if (config["ap_ssid"] && config["ap_password"]) {
+  if (config["ap_ssid"] != "" && config["ap_password"] != "") {
     ap_ssid = String((const char *)config["ap_ssid"]);
     ap_password = String((const char *)config["ap_password"]);
   }
@@ -1277,14 +1864,16 @@ void call_the_president() {
         config["servo"] = undefined;
         config["relay"] = undefined;
         config["switch"] = undefined;
+        config["outputs"] = undefined;
         config["internal_jobs"] = undefined;
         for (int i = 0; i < ctpKeys.length(); i++) {
-          String numero = ctp[ctpKeys[i]]["numero"];  
-          String component = ctp[ctpKeys[i]]["component"];
+          String numero = String((long)jint(ctp[ctpKeys[i]]["numero"]));
+          String component = jstr(ctp[ctpKeys[i]]["component"]);
           String name = String(ctpKeys[i]);
           int pin = numero.toInt();
+          if (!pin_ok(pin)) { continue; }
           if (component == "button") {
-            String toggle = ctp[ctpKeys[i]]["toggle"];
+            String toggle = String((long)jint(ctp[ctpKeys[i]]["toggle"]));
             config["button"][numero]["lastPress"] = String(millis());
             config["button"][numero]["toggle"] = toggle;
             config["button"][numero]["name"] = name;
@@ -1303,6 +1892,23 @@ void call_the_president() {
             config["switch"][numero]["name"] = name;
             pinMode(pin, INPUT);
           }
+          else if (component == "relay" || component == "led" || component == "servo") {
+            String toggle = String((long)jint(ctp[ctpKeys[i]]["toggle"]));
+            String inverted = jstr(ctp[ctpKeys[i]]["inverted"]);
+            String state = (toggle == "1") ? "on" : "off";
+            if (component == "servo") { state = toggle; }
+            else if (inverted == "1") { state = (state == "on") ? "off" : "on"; }
+            if (component == "relay") { config["relay"][numero] = state; }
+            else if (component == "led") { config["led"][numero] = state; }
+            else { config["servo"][numero] = state; }
+            JSONVar o;
+            o["component"] = component;
+            o["pin"] = pin;
+            o["app"] = jstr(ctp[ctpKeys[i]]["app"]);
+            o["inverted"] = inverted;
+            config["outputs"][component + numero] = o;
+            pinMode(pin, OUTPUT);
+          }
           else if (name == "__specs") {
             String ij = JSON.stringify(ctp[ctpKeys[i]]["internal_jobs"]);
             Serial.println(ij);
@@ -1311,6 +1917,7 @@ void call_the_president() {
           }
           Serial.println(name);
         }
+        president_loaded = true;
       }
       config_writer();
       config_init();

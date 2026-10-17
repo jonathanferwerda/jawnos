@@ -76,6 +76,7 @@
 				<div class="device_head">
 					<span class="network_cidr">Bluetooth</span>
 					<span class="device_when">radios the bridge has seen</span>
+					<button type="button" class="ble_adopt_scan">Scan now</button>
 				</div>
 				<div class="device_nic">
 					<div class="cfg-scroll">

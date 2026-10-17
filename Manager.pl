@@ -27759,6 +27759,7 @@ get '/manager/embedded/usb_upload_status' => sub($c) {
 # (and for a Pico 2 W, which has no Bluetooth stack to fall back on).
 post '/manager/embedded/usb_provision' => sub($c) {
 	require IO::Select;
+	require IO::Handle;
 	my $chip_id = $c->param('chip_id');
 	my $edt = $c->param('edt') || 'microcontroller';
 	my $port = $c->param('port');
@@ -27769,7 +27770,19 @@ post '/manager/embedded/usb_provision' => sub($c) {
 		my @acm = grep { $_->{'acm'} } @{$ports};
 		if (scalar @acm == 1) { $port = $acm[0]->{'path'}; }
 		else {
-			return $c->render(json => { ok => 0, error => (scalar @acm ? 'choose a port' : 'no USB serial port is present'), ports => $ports });
+			# More than one board can be plugged in. The USB descriptor carries
+			# the Pico's chip id (the serial number), so pick the one that names
+			# this chip rather than asking which cable is which.
+			my $key = $chip_id;
+			$key =~ s/[^0-9A-F]//gi;
+			my @match = grep {
+				my $label = $_->{'label'} || '';
+				$label =~ /\Q$chip_id\E/i || ($key && $label =~ /\Q$key\E/i)
+			} @acm;
+			if (scalar @match == 1) { $port = $match[0]->{'path'}; }
+			else {
+				return $c->render(json => { ok => 0, error => 'choose a port', ports => $ports });
+			}
 		}
 	}
 	return $c->render(json => { ok => 0, error => 'that port does not look right' }) unless $port =~ m{^/dev/tty(?:ACM|USB)\d+$};
@@ -27777,33 +27790,30 @@ post '/manager/embedded/usb_provision' => sub($c) {
 	my $wifi = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) } || {};
 	return $c->render(json => { ok => 0, error => 'this chip has no stored WiFi' }) unless $wifi->{'ssid'} && $wifi->{'password'};
 	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
-	my $board = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id }) || {};
 
 	# The homebase a board calls is this machine, at the port /watch listens on.
 	my $address = &subs::network_interface_reporter();
 	my ($my_ip) = map { $address->{$_}->{'ip'} }
 		grep { $address->{$_}->{'ip'} && $address->{$_}->{'ip'} !~ /^127\./ } keys %{$address};
 	$my_ip ||= '127.0.0.1';
-	my @t = localtime(time);
-	my $offset = timegm(@t) - timelocal(@t);
 
+	# Small on purpose: WiFi, identity and the token are all the board needs to
+	# rejoin. Its role (components and internal jobs) is the manager's copy and
+	# comes back over BLE, or from /watch once the network is up. A 2.5 KB role
+	# blob on this CDC link was where the JSON got truncated.
+	# No timestamp/offset here: the board takes the clock from /watch/time (and
+	# from now_me over BLE). An offset that serialized as an empty token made
+	# the whole file unparseable, which is what put the board back in its AP.
 	my $payload = {
 		ssid => $wifi->{'ssid'},
 		password => $wifi->{'password'},
 		ap_ssid => $wifi->{'ap_ssid'},
 		ap_password => $wifi->{'ap_password'},
-		name => $op->{'__specs'}->{'name'} || $board->{'__specs'}->{'name'} || '',
-		authorization => $op->{'__specs'}->{'authorization'} || $board->{'__specs'}->{'authorization'} || '',
+		name => $op->{'__specs'}->{'name'} || '',
+		authorization => $op->{'__specs'}->{'authorization'} || '',
 		homebase => '',
-		homebaseIP => $my_ip . ($ENV{'PORT_ARM'} ? ':' . $ENV{'PORT_ARM'} : ''),
-		timestamp => &subs::rightNow(),
-		offset => $offset,
-		%{$board}
+		homebaseIP => $my_ip . ($ENV{'PORT_ARM'} ? ':' . $ENV{'PORT_ARM'} : '')
 	};
-	$payload->{'__specs'} ||= {};
-	$payload->{'__specs'}->{'authorization'} ||= $payload->{'authorization'};
-	$payload->{'__specs'}->{'name'} ||= $payload->{'name'};
-	$payload->{'__specs'}->{'homebase'} = $payload->{'homebaseIP'};
 	my $json = encode_json $payload;
 
 	system('stty', '-F', $port, 'raw', '115200', '-echo') == 0
@@ -27811,7 +27821,15 @@ post '/manager/embedded/usb_provision' => sub($c) {
 	open(my $fh, '+<', $port)
 		or return $c->render(json => { ok => 0, error => 'could not open ' . $port . ': ' . $! });
 	$fh->autoflush(1);
-	print {$fh} "JAWNCFG " . $json . "\n";
+	# The Pico's USB CDC receive ring is small; a 2.5 KB line written in one go
+	# overflows it and the JSON arrives truncated (the board still answers OK,
+	# because the partial object parses). Feed it in small pieces, paced so the
+	# sketch's loop drains each one before the next.
+	my $line = "JAWNCFG " . $json . "\n";
+	for (my $off = 0; $off < length($line); $off += 64) {
+		print {$fh} substr($line, $off, 64);
+		select(undef, undef, undef, 0.004);
+	}
 
 	my $sel = IO::Select->new($fh);
 	my ($buf, $err, $ok) = ('', '', 0);
@@ -27827,11 +27845,15 @@ post '/manager/embedded/usb_provision' => sub($c) {
 		if ($buf =~ /JAWNCFG ERR\s*([^\r\n]*)/) { $err = $1; last; }
 	}
 	close $fh;
+	# Never hand the echoed command back: it carries the WiFi password and the
+	# device authorization. An older firmware echoes it; strip that line.
+	my $reply = $buf;
+	$reply =~ s/JAWNCFG \{[^\n]*\n?//g;
 	$c->render(json => {
 		ok => $ok,
 		port => $port,
 		bytes => length($json),
-		reply => $buf,
+		reply => $reply,
 		error => $ok ? undef : ($err || 'no reply from the board')
 	});
 };

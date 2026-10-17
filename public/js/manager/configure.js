@@ -594,6 +594,24 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 	}
 });
 
+// A manual nudge for the bridge's adopt scan. Adoption already runs every 30 s;
+// this lets a device that was just powered on be met (and listed) at once. The
+// server starts the scan off-request, so refresh the panel while it works.
+$(document).on('click', '.ble_adopt_scan', function() {
+	var b = $(this);
+	var text = b.text();
+	b.prop('disabled', true).text('Scanning...');
+	$.post('/manager/configure/ble_scan', {}, function() {
+		setTimeout(function() { deviceLister(); }, 5000);
+		setTimeout(function() {
+			b.prop('disabled', false).text(text);
+			deviceLister();
+		}, 12000);
+	}).fail(function() {
+		b.prop('disabled', false).text(text);
+	});
+});
+
 // Turn each restore-list blob the Dev panel received (a JSON list of a peer's
 // backups) into file buttons, labelled by the file's own name.
 function deviceListerRestoreButtons(scope) {

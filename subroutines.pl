@@ -3169,6 +3169,85 @@ sub ble_bridge_client() {
 	return undef;
 }
 
+# ---- multi-link bridge state (protocol v2) --------------------------------
+# A desktop or phone bridge can hold several radios at once. Every link event
+# names its MAC; keep the same map here so a send, a yield and a sighting can
+# name the right radio instead of guessing at "the" link. A v1 daemon still
+# works: its status has no links[], so the top-level fields become the one link.
+sub ble_link_key {
+	my ($mac) = @_;
+	return '' unless defined $mac && length $mac;
+	$mac = uc $mac;
+	$mac =~ s/[^0-9A-F]//g;
+	return $mac;
+}
+
+sub ble_links() {
+	$gb::ble_links ||= {};
+	return $gb::ble_links;
+}
+
+sub ble_link_apply_event {
+	my ($event) = @_;
+	return unless $event && ref $event eq 'HASH';
+	my $name = $event->{'event'} || '';
+	my $links = &ble_links();
+	if ($name eq 'status') {
+		my %next;
+		foreach my $l ( @{ $event->{'links'} || [] } ) {
+			next unless ref $l eq 'HASH';
+			my $mac = &ble_link_key($l->{'mac'});
+			next unless $mac;
+			$next{$mac} = { %{$l}, mac => $mac };
+		}
+		if (!@{ $event->{'links'} || [] }) {
+			my $mac = &ble_link_key($event->{'mac'});
+			if ($mac && $event->{'connected'}) {
+				$next{$mac} = { mac => $mac, connected => 1, mtu => $event->{'mtu'}, state => 'connected' };
+			}
+		}
+		$gb::ble_links = \%next;
+		my $p = &ble_link_key($event->{'mac'});
+		$gb::ble_primary_mac = ($p && $next{$p} && $next{$p}->{'connected'}) ? $p : undef;
+	}
+	elsif ($name eq 'connected') {
+		my $mac = &ble_link_key($event->{'mac'}) or return;
+		$links->{$mac} = { %{ $links->{$mac} || {} }, %{$event}, mac => $mac, connected => 1, state => 'connected' };
+		$links->{$mac}->{'since'} ||= time();
+		$gb::ble_primary_mac = $mac;
+	}
+	elsif ($name eq 'disconnected') {
+		my $mac = &ble_link_key($event->{'mac'}) or return;
+		if ($links->{$mac}) {
+			$links->{$mac}->{'connected'} = 0;
+			$links->{$mac}->{'state'} = $event->{'next_retry_ms'} ? 'reconnecting' : 'idle';
+		}
+	}
+	my $primary = $gb::ble_primary_mac;
+	unless ($primary && $links->{$primary} && $links->{$primary}->{'connected'}) {
+		my @up = sort { ($b->{'since'} || 0) <=> ($a->{'since'} || 0) }
+			grep { $_->{'connected'} } values %{$links};
+		$gb::ble_primary_mac = @up ? $up[0]->{'mac'} : undef;
+	}
+	# The old scalar still means "the primary link" for the few callers that
+	# have not been taught to name a MAC (and for a v1 daemon).
+	$gb::ble_link_mac = $gb::ble_primary_mac;
+	return $gb::ble_primary_mac;
+}
+
+sub ble_mac_for_chip {
+	my ($chip_id) = @_;
+	return undef unless $chip_id;
+	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+		next unless $d->{'chip_ids'};
+		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+			next unless $c->{'id'} && $c->{'id'} eq $chip_id && $c->{'bluetooth'};
+			return $c->{'bluetooth'};
+		}
+	}
+	return undef;
+}
+
 	# How long a Bluetooth sighting keeps an embedded device listed in the Embedded
 	# app after its last bridge message. A watch's radio sleeps and re-links on the
 	# next advert, and even awake it only talks when something changes, so this must
@@ -3340,100 +3419,106 @@ sub ble_chip_by_mac() {
 	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
 		next unless $d->{'chip_ids'};
 		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
-			return $c if $c->{'bluetooth'} && uc($c->{'bluetooth'}) eq uc($mac);
+			return $c if $c->{'bluetooth'} && &ble_link_key($c->{'bluetooth'}) eq &ble_link_key($mac);
 		}
 	}
 	return undef;
 }
 
 sub ble_yield() {
-	# Hand a device that calls another machine home back to it: drop this
-	# machine's link so the homebase's bridge can take it. Rate-limited, and run
-	# off the read loop, so a flapping bridge cannot disconnect in a loop or stall
-	# the listener.
-	my ($chip_id) = @_;
+	# Hand a device that calls another machine home back to it: drop that
+	# device's link so the homebase's bridge can take it. With several links in
+	# one bridge the yield must name the radio - disconnecting the whole bridge
+	# would drop a deck or board this machine is allowed to serve. Rate-limited
+	# per chip, and run off the read loop so a flapping bridge cannot stall the
+	# listener.
+	my ($chip_id, $mac) = @_;
 	return unless $chip_id;
+	$mac ||= &ble_mac_for_chip($chip_id);
 	my $now = &subs::rightNow();
 	return if $gb::ble_yield_at->{$chip_id} && $now - $gb::ble_yield_at->{$chip_id} < 30000;
 	$gb::ble_yield_at->{$chip_id} = $now;
 	my $client = &ble_bridge_client();
 	return unless $client;
-	# The bridge holds one link, so a yield must name the device that is actually
-	# linked: disconnecting for a device we are not on - a watch that calls another
-	# machine home while our own deck is linked - would drop the deck instead, and
-	# then the deck reconnects and the watch yields again, cycling the link.
-	if ($gb::ble_link_mac) {
-		my $linked = &ble_chip_by_mac($gb::ble_link_mac);
+	# If a MAC is named, make sure it really is this chip's radio before
+	# releasing it; an unknown address must not take another link down.
+	if ($mac) {
+		my $linked = &ble_chip_by_mac($mac);
 		return if $linked && $linked->{'id'} && $linked->{'id'} ne $chip_id;
 	}
-	$log->info('BLE yield ' . $chip_id . ': not its homebase, releasing the link');
-	&subs::subprocessor(sub { system($client, 'disconnect'); }, { name => 'ble yield' });
+	$log->info('BLE yield ' . $chip_id . ($mac ? ' (' . $mac . ')' : '') . ': not its homebase, releasing that link');
+	&subs::subprocessor(sub {
+		if ($mac) { system($client, 'disconnect', $mac); }
+		else { system($client, 'disconnect', '--all'); }
+	}, { name => 'ble yield' });
 }
 
 sub ble_enforce_hosts() {
-	# Keep every machine on the right side of the link. The desktop bridge
-	# auto-connects from its saved target on every start, so a machine the watch
-	# merely passed by would otherwise keep trying to wedge in - and a machine
-	# that has to take over (its homebase went quiet) would never connect at all,
-	# because it was told to stop.
-	#   may serve  -> make sure this bridge is linked (connect; a no-op if it is)
-	#   may not    -> release whatever it holds and stop chasing
+	# Keep every machine on the right side of every link. The bridge daemons now
+	# hold several radios at once (v2), so this pass is per device: connect the
+	# ones this machine may serve, release the ones it may not, and leave a link
+	# the daemon is already chasing alone. A v1 daemon still works - it accepts
+	# the first connect and ignores the rest; its status reports one link.
+	#   may serve  -> make sure that radio's link is up (connect; a no-op if it is)
+	#   may not    -> release that radio and stop chasing it
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
 	my $client = &ble_bridge_client() || return;
-	# The desktop bridge holds a single link, so a pass must settle on one device
-	# rather than issue a connect for each: with two devices in the list the last
-	# one would win every pass and flap the rest (a deck and a watch cannot both
-	# be linked at once). Keep the device the bridge already holds when this machine
-	# may serve it, and connect only when the link is free or held by a device we
-	# may not serve.
-	my $held = $gb::ble_link_mac ? &ble_chip_by_mac($gb::ble_link_mac) : undef;
-	my $held_id = ($held && $held->{'id'} && &ble_may_serve($held->{'purpose'} || 'watch', $held->{'id'})) ? $held->{'id'} : undef;
-	# One pass per chip: the same watch sits in every machine's synced `devices`
-	# row, so the raw walk ran the connect/yield decision over and over for a
-	# single radio.
+	my $links = &ble_links();
 	my %done;
 	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
 		next unless $d->{'chip_ids'};
 		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
 			next unless $c->{'id'} && $c->{'bluetooth'};
 			next if $done{ $c->{'id'} }++;
-			if (&ble_may_serve($c->{'purpose'} || 'watch', $c->{'id'})) {
-				# another device already holds the one link we have
-				next if $held_id && $c->{'id'} ne $held_id;
-				my $mac = $c->{'bluetooth'};
+			my $mac = &ble_link_key($c->{'bluetooth'});
+			my $edt = $c->{'purpose'} || 'watch';
+			my $link = $links->{$mac};
+			if (&ble_may_serve($edt, $c->{'id'})) {
+				next if $link && $link->{'connected'};
+				# the daemon is already reconnecting this radio; do not issue a
+				# second connect every minute and reset its backoff
+				next if $link && ($link->{'state'} || '') =~ /^(?:connecting|reconnecting)$/;
+				my $now = time();
+				next if $gb::ble_connect_at->{$mac} && $now - $gb::ble_connect_at->{$mac} < 60;
+				$gb::ble_connect_at->{$mac} = $now;
 				my $u = &ble_nus_uuids();
 				# Always name the service and characteristics. A bare connect
 				# overwrites the daemon's stored target, and the Android bridge keeps
 				# only mac+mtu from it: with no uuids saved it can no longer find the
 				# watch's characteristics and the link fails forever (this is what
 				# made the phone bounce). So never connect without them.
+				# A board's role payload is plain JSON; only the watch/deck get the
+				# compressed room pushes.
+				my $compress = ($edt eq 'microcontroller') ? '0' : '1';
 				&subs::subprocessor(sub {
 					system($client, 'connect', $mac,
 						'--service', $u->{'service_uuid'},
 						'--rx', $u->{'characteristic_uuid_rx'},
 						'--tx', $u->{'characteristic_uuid_tx'},
-						'--mtu', '512');
+						'--mtu', '512',
+						'--compress', $compress);
 				}, { name => 'ble host connect' });
 			}
-			else {
-				&ble_yield($c->{'id'});
+			elsif ($link && $link->{'connected'}) {
+				&ble_yield($c->{'id'}, $mac);
 			}
 		}
 	}
-	# A watch linked right now is present, whatever its last payload said: it
-	# speaks only on connect and on steps, so its own messages can be hours apart
-	# and its sighting would age out of the Embedded list while it sits connected.
-	# Refresh it every pass.
-	if ($gb::ble_link_mac) {
-		my $linked = &ble_chip_by_mac($gb::ble_link_mac);
-		if ($linked && $linked->{'id'} && &ble_may_serve($linked->{'purpose'} || 'watch', $linked->{'id'})) {
-			&ble_device_record({
-				chip_id => $linked->{'id'},
-				edt => $linked->{'purpose'} || 'watch',
-				name => $linked->{'name'},
-				mac => $gb::ble_link_mac
-			});
-		}
+	# A radio linked right now is present, whatever its last payload said: a
+	# watch speaks only on connect and on steps, so its own messages can be hours
+	# apart and its sighting would age out of the Embedded list while it sits
+	# connected. Refresh every link this machine may serve.
+	foreach my $mac ( keys %{$links} ) {
+		next unless $links->{$mac} && $links->{$mac}->{'connected'};
+		my $linked = &ble_chip_by_mac($mac);
+		next unless $linked && $linked->{'id'};
+		next unless &ble_may_serve($linked->{'purpose'} || 'watch', $linked->{'id'});
+		&ble_device_record({
+			chip_id => $linked->{'id'},
+			edt => $linked->{'purpose'} || 'watch',
+			name => $linked->{'name'},
+			mac => $mac
+		});
 	}
 }
 
@@ -3447,6 +3532,8 @@ sub ble_adopt_scan() {
 	# met. Connect to it and its own state_request (chip_id + purpose) records it
 	# (ble_message_processor -> ble_device_record), after which the ordinary host
 	# rule bridges it - the "plug it in and it is known" path, with no wifi at all.
+	# With the multi-link bridge, every unknown NUS device in the room is met, not
+	# just the first; the daemon's four-link cap is the limit.
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
 	my $client = &ble_bridge_client() or return;
 	my $nus = lc &ble_nus_uuids()->{'service_uuid'};
@@ -3455,37 +3542,39 @@ sub ble_adopt_scan() {
 	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
 		next unless $d->{'chip_ids'};
 		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
-			$known{ uc $c->{'bluetooth'} } = 1 if $c->{'bluetooth'};
+			$known{ &ble_link_key($c->{'bluetooth'}) } = 1 if $c->{'bluetooth'};
 		}
 	}
 	my $out = `timeout 25 $client scan 8 2>/dev/null`;
-	my $found;
+	my @found;
+	my %seen;
 	foreach my $line (split "\n", $out) {
 		my $e = eval { decode_json $line };
 		next unless $e && ref $e eq 'HASH' && ($e->{'event'} || '') eq 'scan';
-		my $mac = uc($e->{'mac'} || '');
-		next unless $mac =~ /^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$/;
-		next if $known{$mac};
+		my $mac = &ble_link_key($e->{'mac'});
+		next unless $mac =~ /^(?:[0-9A-F]{2}){6}$/;
+		next if $known{$mac} || $seen{$mac}++;
 		next unless grep { lc($_) eq $nus } @{ $e->{'uuids'} || [] };
-		$found = $mac;
-		last;
+		push @found, $mac;
 	}
-	return unless $found;
-	# already on this radio, or we tried it recently and it stayed silent (a
-	# device that speaks NUS but is not ours): leave the link alone
-	return if $gb::ble_link_mac && uc($gb::ble_link_mac) eq $found;
+	return unless @found;
 	my $now = time();
-	return if $gb::ble_adopt_tried->{$found} && $now - $gb::ble_adopt_tried->{$found} < 600;
-	$gb::ble_adopt_tried->{$found} = $now;
 	my $u = &ble_nus_uuids();
-	$log->info('BLE adopt: a JawnOS device at ' . $found . ' is not yet known; connecting so it can name itself');
-	&subs::subprocessor(sub {
-		system($client, 'connect', $found,
-			'--service', $u->{'service_uuid'},
-			'--rx', $u->{'characteristic_uuid_rx'},
-			'--tx', $u->{'characteristic_uuid_tx'},
-			'--mtu', '512');
-	}, { name => 'ble adopt connect' });
+	foreach my $mac ( @found ) {
+		# already linked, or we tried it recently and it stayed silent (a device
+		# that speaks NUS but is not ours): leave that radio alone
+		next if $gb::ble_links->{$mac} && $gb::ble_links->{$mac}->{'connected'};
+		next if $gb::ble_adopt_tried->{$mac} && $now - $gb::ble_adopt_tried->{$mac} < 600;
+		$gb::ble_adopt_tried->{$mac} = $now;
+		$log->info('BLE adopt: a JawnOS device at ' . $mac . ' is not yet known; connecting so it can name itself');
+		&subs::subprocessor(sub {
+			system($client, 'connect', $mac,
+				'--service', $u->{'service_uuid'},
+				'--rx', $u->{'characteristic_uuid_rx'},
+				'--tx', $u->{'characteristic_uuid_tx'},
+				'--mtu', '512');
+		}, { name => 'ble adopt connect' });
+	}
 }
 
 sub ble_nus_uuids() {
@@ -3646,20 +3735,20 @@ sub bluetooth_sender() {
 		my $json = encode_json $message;
 		my $client = &ble_bridge_client();
 		if (&ble_bridge_enabled() && $client) {
-			# Connect only when needed; the daemon keeps the link alive with
-			# auto-reconnect after that.
-			# The daemon's status is JSON with spaces (`"connected": true`), so match
-			# loosely: a strict `"connected":true` never matched, and every message
-			# re-issued the connect instead of reusing the link.
-			my $status = `$client status 2>/dev/null`;
-			unless ($status && $status =~ /"connected"\s*:\s*true/ && $status =~ /\Q$bt_mac\E/i) {
-				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512');
+			# Ask for this MAC's link, not "the" link. The daemons hold several now;
+			# the connect is a no-op when that radio is already up and only that
+			# radio is retargeted otherwise. A board's role payload is plain JSON
+			# (compress 0); the watch and deck keep the compressed room pushes.
+			my $link = $gb::ble_links->{ &ble_link_key($bt_mac) };
+			my $compress = (($data->{'edt'} || '') eq 'microcontroller') ? '0' : '1';
+			unless ($link && $link->{'connected'}) {
+				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512', '--compress', $compress);
 			}
 			# The client hands the JSON to the daemon as-is and the daemon writes
-			# it to the watch. Base64 is only for the old broadcast path; the
-			# client used to receive the encoded copy and the watch got a base64
-			# blob it could not parse.
-			open(my $bt_fh, '|-', $client, 'send') or return;
+			# it to the selected radio. Base64 is only for the old broadcast path;
+			# the client used to receive the encoded copy and the watch got a
+			# base64 blob it could not parse.
+			open(my $bt_fh, '|-', $client, 'send', '--mac', $bt_mac) or return;
 			print {$bt_fh} $json;
 			return close $bt_fh;
 		}
@@ -3688,15 +3777,26 @@ sub bluetooth_stream_open() {
 	my $tx = $embedded->{'characteristic_uuid_tx'} || $ble_uuids->{'characteristic_uuid_tx'};
 	my $client = &ble_bridge_client() or return undef;
 	return undef unless &ble_bridge_enabled() && $client;
-	# The daemon's status is JSON with spaces (`"connected": true`), so match
-	# loosely; the strict form never matched and every stream re-connected.
-	my $status = `$client status 2>/dev/null`;
-	unless ($status && $status =~ /"connected"\s*:\s*true/ && $status =~ /\Q$bt_mac\E/i) {
-		system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512');
+	my $link = $gb::ble_links->{ &ble_link_key($bt_mac) };
+	unless ($link && $link->{'connected'}) {
+		system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512', '--compress', '1');
 	}
 	my $fh;
-	open($fh, '|-', $client, 'sendloop') or return undef;
+	open($fh, '|-', $client, 'sendloop', '--mac', $bt_mac) or return undef;
 	return $fh;
+}
+
+sub board_config_payload() {
+	# The compact role payload a board needs over Bluetooth or USB. It is the
+	# room payload without the parts only a watch/deck uses (the chat lists and
+	# the pairing patience), so it stays small enough to send uncompressed and
+	# carries everything call_the_president() rebuilds: the component map and
+	# __specs.internal_jobs. Top-level keys for a microcontroller are the full
+	# component names (led0, relay28, switch15, ...).
+	my $payload = &watch_room_payload(shift) or return undef;
+	delete $payload->{'__shutup'};
+	delete $payload->{'__specs'}->{'chat'};
+	return $payload;
 }
 
 sub watch_room_payload() {
@@ -3726,26 +3826,33 @@ sub watch_toggle_pusher() {
 	return unless &subs::ble_bridge_enabled();
 	my $app = $data->{'app'} || return;
 	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';
-	my $watches = &subs::device_lister(&subs::rightNow(), 'watch', undef, 'all');
-	return unless ref $watches eq 'ARRAY' && scalar @{$watches};
+	# A toggle change reaches every embedded device that draws an app button: the
+	# watch/deck light their button, and a board applies the app's new state to
+	# the relays/LEDs wired to it. The bridge can carry several links now, so
+	# this used to stop at the first device; keep one target per (edt, chip).
 	my @targets;
 	my %seen;
-	foreach my $w ( @{$watches} ) {
-		next unless ref $w eq 'HASH' && $w->{'chip_id'};
-		push @targets, $w->{'chip_id'} unless $seen{ $w->{'chip_id'} }++;
+	foreach my $edt ( qw/watch teletype microcontroller/ ) {
+		my $devices = &subs::device_lister(&subs::rightNow(), $edt, undef, 'all');
+		next unless ref $devices eq 'ARRAY';
+		foreach my $w ( @{$devices} ) {
+			next unless ref $w eq 'HASH' && $w->{'chip_id'};
+			next if $seen{ $edt . '|' . $w->{'chip_id'} }++;
+			push @targets, { chip_id => $w->{'chip_id'}, edt => $edt };
+		}
 	}
 	return unless scalar @targets;
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
-		foreach my $chip ( @targets ) {
+		foreach my $t ( @targets ) {
 			&subs::bluetooth_sender({
 				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip,
-				edt => 'watch',
+				chip_id => $t->{'chip_id'},
+				edt => $t->{'edt'},
 				message => { type => 'toggle', data => { app => $app, state => $state } }
 			});
 		}
-	}, { name => 'watch toggle push' });
+	}, { name => 'embedded toggle push' });
 }
 
 sub ble_rehome_check() {
@@ -4333,34 +4440,38 @@ sub voice_ingest() {
 }
 
 sub ble_message_processor() {
-	my $data = shift;
-	# The watch frames a payload too big for one notification as "<i>/<n>:" +
-	# part. The desktop bridge reassembles that before handing it over; the Android
-	# bridge does not, so put the parts back together here too - then a voice clip
-	# works whichever bridge carries it. A message with no frame prefix (every
-	# small message, and anything the desktop daemon already reassembled) passes
-	# straight through.
+	my ($data, $mac) = @_;
+	$mac = &ble_link_key($mac);
+	# Frames from several radios can interleave now, so the reassembly buffer is
+	# per link. Keying it by MAC (and falling back to a single bucket when a v1
+	# daemon sends no MAC) keeps a watch's half-message from being joined to a
+	# board's half-message. The desktop daemon reassembles before emitting; the
+	# Android daemon may not, so this stays here too.
+	my $rxkey = length($mac) ? $mac : '?';
 	if ($data =~ /^(\d+)\/(\d+):(.*)\z/s) {
 		my ($index, $total, $body) = (int($1), int($2), $3);
 		if ($total > 0 && $total <= 5000 && $index >= 0 && $index < $total) {
 			my $now = time();
+			my $parts = $gb::ble_rx_parts->{$rxkey};
+			my $ptotal = $gb::ble_rx_total->{$rxkey} || 0;
+			my $pat = $gb::ble_rx_at->{$rxkey} || 0;
 			# fill by index: parts can arrive out of order or twice, and one lost
 			# part must not wipe the parts already in hand
-			if ($index == 0 || !$gb::ble_rx_parts || ($gb::ble_rx_total || 0) != $total
-			    || $now - ($gb::ble_rx_at || 0) > 5) {
-				if ($gb::ble_rx_parts && grep { !defined } @{$gb::ble_rx_parts}) {
-					my $missing = scalar grep { !defined } @{$gb::ble_rx_parts};
-					$log->info("$missing part(s) of a framed BLE message never arrived; dropped");
+			if ($index == 0 || !$parts || $ptotal != $total || $now - $pat > 5) {
+				if ($parts && grep { !defined } @{$parts}) {
+					my $missing = scalar grep { !defined } @{$parts};
+					$log->info("$missing part(s) of a framed BLE message from " . ($rxkey eq '?' ? 'an unnamed link' : $rxkey) . " never arrived; dropped");
 				}
-				$gb::ble_rx_parts = [ (undef) x $total ];
-				$gb::ble_rx_total = $total;
+				$parts = [ (undef) x $total ];
+				$gb::ble_rx_parts->{$rxkey} = $parts;
+				$gb::ble_rx_total->{$rxkey} = $total;
 			}
-			$gb::ble_rx_parts->[$index] = $body;
-			$gb::ble_rx_at = $now;
-			return if grep { !defined } @{$gb::ble_rx_parts};
-			$data = join('', @{$gb::ble_rx_parts});
-			$gb::ble_rx_parts = undef;
-			$gb::ble_rx_total = 0;
+			$parts->[$index] = $body;
+			$gb::ble_rx_at->{$rxkey} = $now;
+			return if grep { !defined } @{$parts};
+			$data = join('', @{$parts});
+			delete $gb::ble_rx_parts->{$rxkey};
+			$gb::ble_rx_total->{$rxkey} = 0;
 		}
 	}
 	# A BLE notification as JSON text from the watch/board. The payload carries
@@ -4391,7 +4502,7 @@ sub ble_message_processor() {
 			chip_id => $seen_chip,
 			edt => $seen_edt || 'watch',
 			name => $msg->{'name'},
-			mac => $gb::ble_link_mac
+			mac => $mac || $gb::ble_primary_mac
 		});
 	}
 	# the newer bridge messages are dispatches, not url fetches
@@ -4406,6 +4517,18 @@ sub ble_message_processor() {
 			next unless $row->{'app'};
 			$toggles->{$row->{'app'}} = $row->{'value'} eq 'on' ? 'on' : 'off';
 		}
+		if ($edt eq 'microcontroller') {
+			# A board only needs the apps its own components name; the house can
+			# carry a thousand toggles, and sending them all would overflow a
+			# board's small receive queue for no benefit.
+			my $od = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+			my %wanted;
+			foreach my $k ( keys %{$od} ) {
+				next if $k =~ /^__/;
+				$wanted{ $od->{$k}->{'app'} } = 1 if $od->{$k}->{'app'};
+			}
+			$toggles = { map { $_ => $toggles->{$_} } grep { $wanted{$_} } keys %{$toggles} };
+		}
 		$log->info('BLE state_request for ' . $chip_id . ': ' . scalar(keys %{$toggles}) . ' toggles');
 		&subs::bluetooth_sender({
 			intent => 'com.jawn.president.bt.connect',
@@ -4419,15 +4542,31 @@ sub ble_message_processor() {
 		my $chip_id = $msg->{'chip_id'};
 		my $edt = $msg->{'edt'} || 'watch';
 		my $room = $msg->{'room'} || 1;
-		my $payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
-		if ($payload) {
-			$log->info('BLE room_request for ' . $chip_id . ', room ' . $room);
-			&subs::bluetooth_sender({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip_id,
-				edt => $edt,
-				message => { type => 'room', data => { room => $room, payload => $payload } }
-			});
+		if ($edt eq 'microcontroller') {
+			# A board cannot inflate a compressed room push and has no use for the
+			# chat lists, so it gets the compact role payload instead.
+			my $board = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id });
+			if ($board) {
+				$log->info('BLE board_request for ' . $chip_id);
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'board_config', data => $board }
+				});
+			}
+		}
+		else {
+			my $payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
+			if ($payload) {
+				$log->info('BLE room_request for ' . $chip_id . ', room ' . $room);
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'room', data => { room => $room, payload => $payload } }
+				});
+			}
 		}
 		return;
 	}
@@ -4561,6 +4700,93 @@ sub ble_message_processor() {
 		}
 		return;
 	}
+	if ($type && $type eq 'switch') {
+		# A board's physical switch changed. Apply the same work /watch/switch
+		# does, on the machine holding the bridge: flip the app toggle and let
+		# edt_button_presser run the movement. A switch has no display ack of its
+		# own, so there is nothing to push back.
+		my $payload = $msg->{'data'} || $msg->{'payload'} || {};
+		my $edt = $msg->{'edt'} || 'microcontroller';
+		my $chip_id = $msg->{'chip_id'};
+		my $button = $payload->{'switch'} || $payload->{'button'};
+		my $state = $payload->{'state'} || '';
+		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		if (!$ws->{'__specs'} || !defined $button) {
+			$log->info('BLE switch for ' . ($chip_id || '?') . ': no placed settings, dropped');
+			return;
+		}
+		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
+		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
+		my $toggle = ($state eq 'on') ? 'off' : 'on';
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle }) if $b->{'app'};
+		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle);
+		eval {
+			&subs::edt_button_presser({
+				timestamp => (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+				room => $payload->{'room'},
+				watch_settings => $ws,
+				button => $button,
+				component => 'switch',
+				edt => $edt,
+				chip_id => $chip_id,
+				remote_address => 'bluetooth'
+			});
+		};
+		$log->error('BLE switch press failed: ' . $@) if $@;
+		return;
+	}
+	if ($type && $type eq 'measure') {
+		# A pot on a board, over the bridge. Mirror /watch/measure: scale the raw
+		# reading through the app's app_measures and hand it to the same worker.
+		my $payload = $msg->{'data'} || $msg->{'payload'} || {};
+		my $edt = $msg->{'edt'} || 'microcontroller';
+		my $chip_id = $msg->{'chip_id'};
+		my $component = $payload->{'component'} || 'pot';
+		my $button = $payload->{'button'} || $payload->{'pin'};
+		my $measure = $payload->{'measure'};
+		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		if (!$ws->{'__specs'} || !defined $button) {
+			$log->info('BLE measure for ' . ($chip_id || '?') . ': no placed settings, dropped');
+			return;
+		}
+		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
+		my $b = $ws->{ &subs::shorthand_name($component, $syl_count) . $button } || {};
+		my $emin = $payload->{'min'} || 0;
+		my $emax = $payload->{'max'} || 1024;
+		my $settings = &subs::settings_grabber({ app => $b->{'app'}, settings => ['app_measures'] });
+		my $app_measures = eval { decode_json $settings->{'app_measures'} } || {};
+		if (exists $app_measures->{$b->{'measure'}}->{'max'} && exists $app_measures->{$b->{'measure'}}->{'min'}) {
+			my $etotal = $emax - $emin;
+			my $estate = $measure - $emin;
+			my $eratio = $etotal ? ($estate / $etotal) : 0;
+			my $total = $app_measures->{$b->{'measure'}}->{'max'} - $app_measures->{$b->{'measure'}}->{'min'};
+			my $state_total = $eratio * $total;
+			$measure = sprintf("%.3f", $state_total + $app_measures->{$b->{'measure'}}->{'min'});
+		}
+		eval {
+			&subs::edt_button_presser({
+				timestamp => &subs::rightNow(),
+				room => $payload->{'room'},
+				watch_settings => $ws,
+				button => $button,
+				edt => $edt,
+				chip_id => $chip_id,
+				measure => $measure,
+				component => $component,
+				remote_address => 'bluetooth'
+			});
+		};
+		$log->error('BLE measure failed: ' . $@) if $@;
+		return;
+	}
+	if ($type && $type eq 'state') {
+		# A board confirming what it applied. The manager already stored the
+		# intent; log it so a board that clamps a servo is visible, and leave the
+		# record alone.
+		my $payload = $msg->{'data'} || {};
+		$log->info('BLE state ack from ' . ($msg->{'chip_id'} || '?') . ': ' . ($payload->{'component'} || '?') . ' ' . ($payload->{'pin'} || '?') . ' -> ' . ($payload->{'state'} || '?'));
+		return;
+	}
 	my $url = $msg->{'url'};
 	if (!$url) {
 		$log->info('BLE message without url: ' . $data);
@@ -4616,30 +4842,34 @@ sub ble_listener_start() {
 			my $event = eval { decode_json $1 };
 			next unless $event && ref $event eq 'HASH';
 			my $name = $event->{'event'} || '';
-			# Track which radio the bridge is linked to: a watch's payload names
-			# its chip, not its address, so the sighting recorded against that chip
-			# needs the address from these link events.
-			if ($name eq 'connected') {
-				$gb::ble_link_mac = $event->{'mac'};
-				# Linked to a device this machine may not serve? Release it at once,
-				# before it even speaks, so the homebase keeps the link.
-				my $chip = &ble_chip_by_mac($event->{'mac'});
-				&ble_yield($chip->{'id'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
+			# Keep the per-MAC link map current. Every link-scoped event names its
+			# radio now, so a sighting, a send and a yield can all name the right
+			# one instead of "the" link.
+			if ($name eq 'connected' || $name eq 'disconnected' || $name eq 'status') {
+				&ble_link_apply_event($event);
 			}
-			elsif ($name eq 'disconnected') {
-				$gb::ble_link_mac = undef;
+			if ($name eq 'connected') {
+				# Linked to a device this machine may not serve? Release that
+				# radio at once, before it even speaks, so the homebase keeps it.
+				my $chip = &ble_chip_by_mac($event->{'mac'});
+				&ble_yield($chip->{'id'}, $event->{'mac'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
 			}
 			elsif ($name eq 'status') {
-				$gb::ble_link_mac = $event->{'connected'} ? $event->{'mac'} : undef;
-				# The link can already be up when the listener attaches: release it
-				# here too when it is not ours to hold.
-				if ($event->{'connected'}) {
+				# The links can already be up when the listener attaches: release
+				# any of them that is not ours to hold.
+				foreach my $l ( @{ $event->{'links'} || [] } ) {
+					next unless ref $l eq 'HASH' && $l->{'connected'};
+					my $chip = &ble_chip_by_mac($l->{'mac'});
+					&ble_yield($chip->{'id'}, $l->{'mac'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
+				}
+				# A v1 daemon has no links[]; keep the top-level fallback.
+				if (!@{ $event->{'links'} || [] } && $event->{'connected'}) {
 					my $chip = &ble_chip_by_mac($event->{'mac'});
-					&ble_yield($chip->{'id'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
+					&ble_yield($chip->{'id'}, $event->{'mac'}) if $chip && !&ble_may_serve($chip->{'purpose'} || 'watch', $chip->{'id'});
 				}
 			}
 			elsif ($name eq 'message') {
-				&ble_message_processor($event->{'data'});
+				&ble_message_processor($event->{'data'}, $event->{'mac'});
 			}
 		}
 	});

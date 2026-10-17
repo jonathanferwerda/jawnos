@@ -2,14 +2,15 @@
 # jawn-bt: client for the JawnOS BLE bridge (JawnBleService in the JawnOS API app).
 #
 #   jawn-bt scan [seconds]                     list BLE devices
-#   jawn-bt connect <mac> [--service U] [--rx U] [--tx U]
-#   jawn-bt send <text>                        (or pipe text on stdin)
-#   jawn-bt sendloop                           one connection, each stdin line a message
+#   jawn-bt connect <mac> [--service U] [--rx U] [--tx U] [--mtu N] [--compress 0|1]
+#   jawn-bt send <text> [--mac AA:..]          no --mac = the primary link
+#   jawn-bt sendloop [--mac AA:..]             one link, each stdin line a message
 #   jawn-bt listen                             stream events as JSON lines
 #   jawn-bt status
-#   jawn-bt disconnect
+#   jawn-bt disconnect [mac]                   no mac = every link
 #
 # Events are printed as raw JSON, one per line, so callers can parse them.
+# Up to four links may be live at once; every link-scoped event carries "mac".
 use strict;
 use warnings;
 use IO::Socket::INET;
@@ -23,13 +24,14 @@ my $port = 45999;
 
 my $cmd = shift @ARGV;
 unless (defined $cmd) {
-	die "usage: jawn-bt scan [seconds] | connect <mac> [--service U --rx U --tx U] | send <text> | listen | status | disconnect\n";
+	die "usage: jawn-bt scan [seconds] | connect <mac> [--service U --rx U --tx U --mtu N --compress 0|1] | send <text> [--mac AA:..] | sendloop [--mac AA:..] | listen | status | disconnect [mac]\n";
 }
 
 my %opt;
 my @args;
 while (defined(my $a = shift @ARGV)) {
-	if ($a =~ /^--(service|rx|tx|mtu)$/) { $opt{$1} = shift @ARGV; }
+	if ($a =~ /^--(service|rx|tx|mtu|compress|mac|id)$/) { $opt{$1} = shift @ARGV; }
+	elsif ($a eq '--all') { $opt{all} = 1; }
 	else { push @args, $a; }
 }
 
@@ -58,6 +60,22 @@ my $buf = '';
 sub send_cmd {
 	my $h = shift;
 	print {$sock} JSON::PP->new->encode($h), "\n";
+}
+
+# Does a status event show $want connected? With no $want, asks about the
+# primary link (the v1 top-level fields); with a MAC, looks in the v2 list.
+sub status_shows_connected {
+	my ($o, $want) = @_;
+	unless (defined $want) {
+		return $o->{'connected'} ? 1 : 0;
+	}
+	if (ref $o->{'links'} eq 'ARRAY') {
+		for my $row (@{ $o->{'links'} }) {
+			return 1 if uc($row->{'mac'} || '') eq $want && $row->{'connected'};
+		}
+		return 0;
+	}
+	return (uc($o->{'mac'} || '') eq $want && $o->{'connected'}) ? 1 : 0;
 }
 
 # Read whatever arrived within $timeout seconds; print each line as JSON.
@@ -92,16 +110,52 @@ if ($cmd eq 'scan') {
 }
 elsif ($cmd eq 'connect') {
 	my $mac = $args[0] or die "jawn-bt connect: mac required\n";
-	send_cmd({ cmd => 'connect', mac => $mac, map { $_ => $opt{$_} } grep { $opt{$_} } qw/service rx tx mtu/ });
-	$last = wait_for(sub { $_[0]->{'event'} =~ /^(connected|disconnected|error)$/ }, 30);
+	my %h = (cmd => 'connect', mac => $mac);
+	for my $k (qw/service rx tx/) {
+		$h{$k} = $opt{$k} if defined $opt{$k};
+	}
+	$h{'mtu'} = $opt{'mtu'} + 0 if defined $opt{'mtu'};
+	# --compress is per-link and defaults true on the daemon side; only pass it
+	# when the caller named it, as a real JSON boolean.
+	if (defined $opt{'compress'}) {
+		$h{'compress'} = $opt{'compress'} =~ /^(0|false|no|off)$/i
+			? JSON::PP::false : JSON::PP::true;
+	}
+	send_cmd(\%h);
+	my $want = uc $mac;
+	$last = wait_for(sub {
+		my $o = shift;
+		return 0 unless $o->{'event'} =~ /^(connected|disconnected|error)$/
+			|| $o->{'event'} eq 'status';
+		if ($o->{'event'} eq 'status') {
+			# The daemon answers an idempotent connect with a snapshot; the
+			# initial snapshot on socket accept must not end the wait.
+			return status_shows_connected($o, $want) ? 1 : 0;
+		}
+		# An error without a mac is adapter-wide; a link event for another
+		# MAC is not this command's answer.
+		return 1 unless defined $o->{'mac'};
+		return uc($o->{'mac'}) eq $want;
+	}, 30);
 }
 elsif ($cmd eq 'send') {
 	my $text = $args[0];
 	unless (defined $text) { local $/; $text = <STDIN>; }
 	$text =~ s/\s+$// if defined $text;
 	die "jawn-bt send: empty message\n" unless defined $text && length $text;
-	send_cmd({ cmd => 'send', message => $text });
-	$last = wait_for(sub { $_[0]->{'event'} =~ /^(sent|error)$/ }, 30);
+	my %h = (cmd => 'send', message => $text);
+	$h{'mac'} = $opt{'mac'} if defined $opt{'mac'};
+	$h{'id'} = $opt{'id'} + 0 if defined $opt{'id'};
+	send_cmd(\%h);
+	my $want = defined $opt{'mac'} ? uc $opt{'mac'} : undef;
+	$last = wait_for(sub {
+		my $o = shift;
+		return 0 unless $o->{'event'} =~ /^(sent|error)$/;
+		return 1 unless defined $want;
+		return 1 if defined $o->{'mac'} && uc($o->{'mac'}) eq $want;
+		return 1 if $o->{'event'} eq 'error' && !defined $o->{'mac'};
+		return 0;
+	}, 30);
 }
 elsif ($cmd eq 'sendloop') {
 	# One connection, many messages: each stdin line is forwarded to the daemon as
@@ -114,10 +168,14 @@ elsif ($cmd eq 'sendloop') {
 	# silently loses a line when it cannot go out at once, which is exactly how a
 	# stream would arrive with parts missing.
 	$sock->blocking(1);
+	my %base = (cmd => 'send');
+	$base{'mac'} = $opt{'mac'} if defined $opt{'mac'};
 	while (defined(my $line = <STDIN>)) {
 		chomp $line;
 		next unless length $line;
-		print {$sock} JSON::PP->new->encode({ cmd => 'send', message => $line }), "\n";
+		my %h = %base;
+		$h{'message'} = $line;
+		print {$sock} JSON::PP->new->encode(\%h), "\n";
 	}
 	close $sock;
 }
@@ -125,13 +183,30 @@ elsif ($cmd eq 'status') {
 	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, 10);
 }
 elsif ($cmd eq 'disconnect') {
-	send_cmd({ cmd => 'disconnect' });
-	$last = wait_for(sub { $_[0]->{'event'} =~ /^(disconnected|status|error)$/ }, 10);
+	my %h = (cmd => 'disconnect');
+	if (defined $args[0]) { $h{'mac'} = $args[0]; }
+	elsif ($opt{'all'}) { $h{'all'} = JSON::PP::true; }
+	# No mac and no --all is "disconnect everything", the daemon's default.
+	send_cmd(\%h);
+	my $want = defined $args[0] ? uc $args[0] : undef;
+	$last = wait_for(sub {
+		my $o = shift;
+		return 0 unless $o->{'event'} =~ /^(disconnected|status|error)$/;
+		return 1 unless defined $want;
+		if ($o->{'event'} eq 'status') {
+			# Only stop when the target no longer shows connected (the
+			# daemon sends an initial snapshot on connect).
+			return status_shows_connected($o, $want) ? 0 : 1;
+		}
+		return 1 if defined $o->{'mac'} && uc($o->{'mac'}) eq $want;
+		return 1 if $o->{'event'} eq 'error' && !defined $o->{'mac'};
+		return 0;
+	}, 10);
 }
 elsif ($cmd eq 'listen') {
 	# Ask for the current link up front: the daemon auto-connects to its stored
-	# target, so a listener that attaches after that connect would otherwise
-	# never see a 'connected' event and not know which radio is linked.
+	# targets, so a listener that attaches after that connect would otherwise
+	# never see a 'connected' event and not know which radios are linked.
 	send_cmd({ cmd => 'status' });
 	$last = wait_for(sub { 0 }, 86400 * 365);
 	exit 0;

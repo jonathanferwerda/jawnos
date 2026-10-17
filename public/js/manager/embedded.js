@@ -249,6 +249,33 @@ $(document).on('click', '.watch_proxy_save', function() {
 	});
 });
 
+$(document).on('click', '.embedded_usb_provision', function() {
+	// A board that is on the desk in its provisioning AP cannot be reached over
+	// the LAN. Its USB CDC link can: the manager writes the stored WiFi and role
+	// into config.txt, and the board reboots onto the house with its pins set.
+	var t = $(this);
+	var chip_id = t.attr('chip_id');
+	var edt = t.attr('edt') || 'microcontroller';
+	var out = $('#embedded_usb_provision_result');
+	out.text('Writing the stored WiFi and role over USB...').show();
+	$.ajax({
+		url: '/manager/embedded/usb_provision',
+		type: 'POST',
+		data: { chip_id: chip_id, edt: edt },
+		success: function(response) {
+			if (response && response.ok) {
+				out.text('Written to ' + response.port + ' (' + response.bytes + ' bytes); the board is rebooting.').show();
+			}
+			else {
+				out.text('USB restore failed: ' + ((response && response.error) || 'unknown')).show();
+			}
+		},
+		error: function(xhr) {
+			out.text('USB restore failed: HTTP ' + xhr.status).show();
+		}
+	});
+});
+
 $(document).on('click', '.embedded_jobs', function() {
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
 	var chip_id = localStorage.getItem('embedded_chip_id') || '';
