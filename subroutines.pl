@@ -9200,23 +9200,73 @@ sub signatorial_establisher {
 	}
 }
 
+sub signatorial_identity_file() {
+	return &home('~/.jawnos_signatorial_id');
+}
+
+sub signatorial_identity_write {
+	my $id = shift;
+	my $file = &signatorial_identity_file();
+	if (open my $fh, '>', $file) {
+		chmod 0600, $file;
+		print $fh $id, "\n";
+		close $fh;
+	}
+	return $id;
+}
+
 sub signatorial_designer() {
 	my $designation = shift;
 	if (!$designation && $gb::signatorial) {
 		return $gb::signatorial;
 	}
+
+	# A persisted identity is the point: it must not change when a picture is
+	# added or removed, and every container or clone must have its own. The
+	# file is written once - by setup for a new install, or by the legacy
+	# migration below for a machine that predates it - and is never recomputed.
+	my $file = &signatorial_identity_file();
+	if (-e $file) {
+		my $id = `cat $file`;
+		chomp $id;
+		if ($id =~ /^[0-9a-f]{16,64}$/i) {
+			$gb::signatorial = lc $id;
+			return $gb::signatorial;
+		}
+	}
+
+	# A machine that predates the identity file: its current signatorial is
+	# already the key on its settings, continent and sync rows. Take the most
+	# used long device value that is not a peer's signatorial, and pin that -
+	# never recompute it, since the picture folder may have drifted since.
+	my $stored = eval {
+		my $row = &db_query(
+			"select device from settings"
+			. " where device is not null and length(device) >= 16"
+			. " and device not in (select signatorial from remote_machines where signatorial is not null)"
+			. " group by device order by count(*) desc limit 1"
+		)->hash;
+		( $row && $row->{'device'} && $row->{'device'} =~ /^[0-9a-f]{16,64}$/i ) ? lc $row->{'device'} : undef;
+	};
+	if ($stored) {
+		&signatorial_identity_write($stored);
+		$gb::signatorial = $stored;
+		return $gb::signatorial;
+	}
+
+	# Legacy migration: compute exactly what this machine announced before the
+	# identity was persisted, then pin it. Every remote_machines.signatorial,
+	# settings.device and JSON reference keeps pointing at the same value.
 	my $folder = './public/images/jonathans';
 	my $jonathans = `ls $folder`;
 	my @jonathans = split /\n/, $jonathans;
 	my $checksum = $database;
-	if ($designation eq 'neighbour_link') {
-
-	}
 	foreach my $j ( @jonathans ) {
 		$j = &terminal_name($folder . '/' . $j);
 		$checksum .= encode_base64 `cat $j`;
 	}
 	my $md5 = md5_sum &signatorial_establisher('designer') . $checksum;
+	&signatorial_identity_write($md5);
 	$gb::signatorial = $md5;
 
 	return $gb::signatorial;

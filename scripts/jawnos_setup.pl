@@ -33,6 +33,7 @@ use Mojo::SQLite;
 use File::Slurp qw(read_file write_file);
 use File::Path qw(make_path);
 use Crypt::Simple;
+use Digest::MD5 qw(md5_hex);
 use Getopt::Long qw(GetOptions);
 use Cwd ();
 
@@ -123,6 +124,20 @@ sub ensure_signatorial {
 	$dir =~ s{/[^/]+$}{};
 	eval { make_path($dir) } if $dir ne '' && !-d $dir;
 	write_file( $file, randstr(64) . "\n" );
+	return $file;
+}
+
+# a fresh machine's identity: generated once and persisted, never derived from
+# the picture folder (so it is stable, and every container gets its own).
+sub ensure_signatorial_id {
+	my $file = jawn_home('~/.jawnos_signatorial_id');
+	return $file if -e $file && -s $file;
+	my $id = md5_hex( randstr(64) . time() . $$ );
+	if (open my $fh, '>', $file) {
+		chmod 0600, $file;
+		print $fh $id, "\n";
+		close $fh;
+	}
 	return $file;
 }
 
@@ -308,6 +323,7 @@ sub build_config {
 sub run_setup {
 	my $in = shift || {};
 	my $existing = read_config() || {};
+	&ensure_signatorial_id();
 	my ( $cfg, $sig ) = build_config( $in, $existing );
 
 	write_config($cfg);
