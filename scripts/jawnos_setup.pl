@@ -3,6 +3,16 @@
 # JawnOS first-run setup wizard.
 #
 #   perl scripts/jawnos_setup.pl [--port 3210] [--no-browser]
+#   perl scripts/jawnos_setup.pl --seed [--name NAME] [--email EMAIL]
+#         [--domain DOMAIN] [--archive-dir PATH] [--device computer|server|mobile]
+#         [--code NNNN]
+#
+# --seed does the same work with no browser and no prompts: it writes config.json
+# and builds the database from the factory seed, printing the unlock code. That is
+# what a container or an appliance calls on first boot. Answers come from the
+# options above or from JAWNOS_NAME, JAWNOS_EMAIL, JAWNOS_DOMAIN,
+# JAWNOS_ARCHIVE_DIR, JAWNOS_DEVICE and JAWNOS_UNLOCK_CODE; anything left out
+# takes the same default the wizard would.
 #
 # A small web app that walks a new user through:
 #   1. dependency status
@@ -36,7 +46,19 @@ no warnings 'once';
 my $splitter   = $gb::universal_splitter || "--simple--split--and--whatnot--";
 use warnings 'once';
 
-GetOptions( 'port=i' => \$port, 'no-browser' => \$no_browser ) or die "bad options\n";
+my $seed = 0;
+my %seed_opt;
+GetOptions(
+	'port=i'        => \$port,
+	'no-browser'    => \$no_browser,
+	'seed'          => \$seed,
+	'name=s'        => \$seed_opt{'name'},
+	'email=s'       => \$seed_opt{'email'},
+	'domain=s'      => \$seed_opt{'domain'},
+	'archive-dir=s' => \$seed_opt{'archive_dir'},
+	'device=s'      => \$seed_opt{'device'},
+	'code=s'        => \$seed_opt{'code'},
+) or die "bad options\n";
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -238,6 +260,75 @@ sub make_database {
 	`rm -f $working-wal $working-shm $temp_backup`;
 
 	return { ok => 1, enc_file => $enc_file, database => $live_db, code => $code, seeded => $seeded };
+}
+
+# ---------------------------------------------------------------------------
+# the one config + database step, shared by the wizard and --seed
+# ---------------------------------------------------------------------------
+sub build_config {
+	my ( $in, $existing ) = @_;
+	$in       ||= {};
+	$existing ||= {};
+
+	my $sig = ensure_signatorial( $in->{'signatorial'} );
+
+	my $cfg = {
+		%$existing,
+		name           => $in->{'name'} || 'Laptop',
+		birthday       => $in->{'birthday'} || 'Jan. 1 2000 12pm',
+		device         => $in->{'device'} || 'computer',
+		domain         => $in->{'domain'} || '127.0.0.1',
+		email          => $in->{'email'} || 'me@email.com',
+		environment    => $in->{'environment'} || 'production',
+		logfile        => $existing->{'logfile'} || '~/manager.log',
+		port           => $in->{'port'} || '3000',
+		working_port   => $existing->{'working_port'} || '45545',
+		ws_port        => $existing->{'ws_port'} || '3001',
+		ssh_port       => $existing->{'ssh_port'} || '8022',
+		open_browser   => $existing->{'open_browser'} || 'yes',
+		signatorial    => $sig,
+		folders        => $in->{'folders'} || [ '~/Music', '~/Downloads', '~/Videos', '~/Pictures', '~/Documents' ],
+		scanners       => $existing->{'scanners'} || [],
+		search_engines => $existing->{'search_engines'} || default_search_engines(),
+	};
+
+	# start_dir is gone from the database's life: the one database lives in the
+	# install's database/ dir, so the key is never written and a stale one from an
+	# older config.json is dropped.
+	delete $cfg->{'start_dir'};
+
+	# archive_dir is a misc setting the panel owns, but a fresh seed wants it too:
+	# on an appliance the second drive is mounted and named here once.
+	$cfg->{'archive_dir'} = '' unless defined $cfg->{'archive_dir'};
+	$cfg->{'archive_dir'} = $in->{'archive_dir'} if defined $in->{'archive_dir'};
+
+	return ( $cfg, $sig );
+}
+
+sub run_setup {
+	my $in = shift || {};
+	my $existing = read_config() || {};
+	my ( $cfg, $sig ) = build_config( $in, $existing );
+
+	write_config($cfg);
+
+	# zero touch: build the machine's one database now, from the factory seed, so
+	# the first boot only asks for the code below. An install that already has its
+	# database is left alone (re-running --setup only re-writes config.json).
+	my $code;
+	my $created = 0;
+	unless ( -e "$root/database/jawnos.db" ) {
+		$code = ( defined $in->{'code'} && $in->{'code'} =~ /^[0-9]{4,12}$/ )
+			? $in->{'code'}
+			: sprintf( '%08d', int( rand(100000000) ) );
+		my $made = make_database( $cfg, { code => $code } );
+		unless ( $made->{'ok'} ) {
+			return { ok => 0, error => $made->{'error'} || 'could not build the database' };
+		}
+		$created = 1;
+	}
+
+	return { ok => 1, config => $cfg, signatorial => $sig, code => $code, created => $created };
 }
 
 # ---------------------------------------------------------------------------
@@ -453,50 +544,11 @@ get '/api/deps' => sub {
 post '/api/config' => sub {
 	my $c = shift;
 	my $in = eval { decode_json $c->param('data') } || {};
-	my $existing = read_config() || {};
-
-	my $sig = ensure_signatorial( $in->{'signatorial'} );
-
-	my $cfg = {
-		%$existing,
-		name           => $in->{'name'} || 'Laptop',
-		birthday       => $in->{'birthday'} || 'Jan. 1 2000 12pm',
-		device         => $in->{'device'} || 'computer',
-		domain         => $in->{'domain'} || '127.0.0.1',
-		email          => $in->{'email'} || 'me@email.com',
-		environment    => $in->{'environment'} || 'production',
-		logfile        => $existing->{'logfile'} || '~/manager.log',
-		port           => $in->{'port'} || '3000',
-		working_port   => $existing->{'working_port'} || '45545',
-		ws_port        => $existing->{'ws_port'} || '3001',
-		ssh_port       => $existing->{'ssh_port'} || '8022',
-		open_browser   => $existing->{'open_browser'} || 'yes',
-		signatorial    => $sig,
-		folders        => $in->{'folders'} || [ '~/Music', '~/Downloads', '~/Videos', '~/Pictures', '~/Documents' ],
-		scanners       => $existing->{'scanners'} || [],
-		search_engines => $existing->{'search_engines'} || default_search_engines(),
-	};
-
-	# start_dir is gone from the database's life: the one database lives in the
-	# install's database/ dir, so the key is never written and a stale one from an
-	# older config.json is dropped.
-	delete $cfg->{'start_dir'};
-
-	write_config($cfg);
-
-	# zero touch: build the machine's one database now, from the factory seed, so
-	# the first boot only asks for the code below. The wizard never asks where a
-	# database goes or what to call it. An install that already has its database
-	# is left alone (re-running --setup only re-writes config.json).
-	my $code;
-	unless ( -e "$root/database/jawnos.db" ) {
-		$code = sprintf('%08d', int(rand(100000000)));
-		my $made = make_database( $cfg, { code => $code } );
-		unless ( $made->{'ok'} ) {
-			return $c->render( json => { ok => 0, error => $made->{'error'} || 'could not build the database' } );
-		}
+	my $res = run_setup($in);
+	unless ( $res->{'ok'} ) {
+		return $c->render( json => { ok => 0, error => $res->{'error'} || 'could not build the database' } );
 	}
-	$c->render( json => { ok => 1, config => $cfg, signatorial => $sig, code => $code } );
+	$c->render( json => { ok => 1, config => $res->{'config'}, signatorial => $res->{'signatorial'}, code => $res->{'code'} } );
 };
 
 post '/api/database' => sub {
@@ -513,6 +565,45 @@ post '/api/finish' => sub {
 	$c->render( json => { ok => 1 } );
 	Mojo::IOLoop->timer( 0.5 => sub { exit 0 } );
 };
+
+# ---------------------------------------------------------------------------
+# non-interactive seed (containers, appliances, unattended installs)
+# ---------------------------------------------------------------------------
+if ($seed) {
+	my $in = {
+		name        => $seed_opt{'name'}        || $ENV{'JAWNOS_NAME'},
+		email       => $seed_opt{'email'}       || $ENV{'JAWNOS_EMAIL'},
+		domain      => $seed_opt{'domain'}      || $ENV{'JAWNOS_DOMAIN'},
+		archive_dir => $seed_opt{'archive_dir'} || $ENV{'JAWNOS_ARCHIVE_DIR'},
+		device      => $seed_opt{'device'}      || $ENV{'JAWNOS_DEVICE'},
+		code        => $seed_opt{'code'}        || $ENV{'JAWNOS_UNLOCK_CODE'},
+	};
+
+	my $res = run_setup($in);
+	if ( !$res->{'ok'} ) {
+		print STDERR "jawnos_setup: $res->{'error'}\n";
+		exit 1;
+	}
+
+	print "\n";
+	print "JawnOS seeded non-interactively.\n\n";
+	print "  config        $root/config.json\n";
+	print "  database      $root/database/jawnos.db\n";
+	print "  signatorial   " . ( $res->{'config'}->{'signatorial'} || '' ) . "\n";
+	if ( $res->{'created'} ) {
+		print "  unlock code   $res->{'code'}\n";
+		print "\n  The unlock code is the only key to the database. It is not\n";
+		print "  stored anywhere else - save it now.\n";
+	}
+	else {
+		print "  database      already present, left untouched\n";
+	}
+	print "\n";
+	print "JAWNOS_CONFIG=$root/config.json\n";
+	print "JAWNOS_DATABASE=$root/database/jawnos.db\n";
+	print "JAWNOS_UNLOCK_CODE=$res->{'code'}\n" if $res->{'created'};
+	exit 0;
+}
 
 # ---------------------------------------------------------------------------
 # start
