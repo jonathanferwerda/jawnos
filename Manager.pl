@@ -855,7 +855,7 @@ sub scanner_scan_command($feed, $file) {
 	my $scanner = $config->{'scanners'}->[0];
 	return undef unless $scanner && $file;
 	my $printer = &subs::device_lister(&subs::rightNow(),'printer');
-	my $address = ("hpaio:/net/officejet_3830_series?ip=" . $printer->{'ip'}) || $scanner->{'address'};
+	my $address = ($printer && $printer->{'ip'}) ? "hpaio:/net/officejet_3830_series?ip=" . $printer->{'ip'} : $scanner->{'address'};
 	my $resolution = $scanner->{'resolution'};
 	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
 	$feed = lc($feed || '');
@@ -868,6 +868,19 @@ sub scanner_scan_command($feed, $file) {
 	return undef;
 }
 
+# The page files one scanner run produced, in page order. An ADF run writes
+# $base_1.tiff, $base_2.tiff, ... (the %d suffix); a flatbed run a single
+# $base.tiff. mtime is not a trustworthy order for a fast feed, so a numbered
+# page sorts by that number and an unnumbered page (the flatbed one) by name.
+sub scanner_page_list($base) {
+	my @files = grep { length } glob("$base*.tiff");
+	return sort {
+		my ($an) = $a =~ /_([0-9]+)\.tiff$/;
+		my ($bn) = $b =~ /_([0-9]+)\.tiff$/;
+		(defined $an && defined $bn) ? ($an <=> $bn) : ($a cmp $b);
+	} @files;
+}
+
 sub scan($c,$scandata) {
 	my $timestamp = $scandata->{'timestamp'};
 	my $feed = $scandata->{'feed'};
@@ -875,7 +888,7 @@ sub scan($c,$scandata) {
 	my $suds = &subs::session_suds($c);
 	my $source = $scandata->{'source'};
 	my $app = $scandata->{'app'} || $c->param('app');
-	if (!grep { $_ eq $scandata->{'feed'} } @{$gb::capabilities->{&subs::device_setter()}->{'scan'}}) {
+	if (!grep { $_ eq $scandata->{'feed'} } @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] }) {
 		&remote_relay_request($c);
 		return 'denial';
 	}
@@ -896,9 +909,8 @@ sub scan($c,$scandata) {
 		($db,$database,$sql) = &subs::database_grabber();
 		my $command = &scanner_scan_command($feed, $file);
 		my $caseworker = `$command`;
-		my $scans = `ls -tr $file*.tiff`;
 		sleep 1;
-		my @scans = split "\n",$scans;
+		my @scans = &scanner_page_list($file);
 		my @filenames;
 		my $count = 1;
 		my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device } ) || '1920x1080';
@@ -2135,7 +2147,9 @@ sub market_maker {
 		vendors => &market_vendors(),
 		vendor => $vendor,
 		lists => &market_lists_for_menu(),
-		nearby => $nearby
+		nearby => $nearby,
+		receipts => &market_receipts_prepared(),
+		scan_feeds => &market_scan_feeds()
 	);
 }
 
@@ -2424,8 +2438,7 @@ sub market_receipt_scan {
 	my $command = &scanner_scan_command($feed, $base);
 	return ('the scanner does not offer that feed', []) unless $command;
 	`timeout 120 $command`;
-	my $scans = `ls -tr $base*.tiff 2>/dev/null`;
-	my @tiffs = grep { length } split "\n", $scans;
+	my @tiffs = &scanner_page_list($base);
 	return ('the scanner produced no pages', []) unless scalar @tiffs;
 	my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device }) || 'Raw';
 	my @jpgs;
@@ -2491,6 +2504,44 @@ sub market_receipt_file {
 	&subs::setting_setter({ app => 'market', setting => 'receipts', value => encode_json($receipts) });
 }
 
+# The scan feeds THIS machine can run: the capability table's answer for the host
+# device. A computer has the ADF and the flatbed, a server neither, so the Market
+# offers the scanner buttons only when this is non-empty (a phone reaching the
+# house still scans on the computer that holds the scanner - the scan runs here).
+sub market_scan_feeds {
+	return [ @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] } ];
+}
+
+# The kept receipts, newest first (the raw `receipts` setting on the market app).
+sub market_receipts {
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' });
+	my $receipts = eval { return decode_json $raw } || [];
+	return [ grep { ref $_ eq 'HASH' } @{$receipts} ];
+}
+
+# The kept receipts prepared for the Market pane: the pages that are still on
+# disk as /file_open links, and each receipt's lines ready to re-apply (so the
+# pane can put the whole shop back on the list in one press).
+sub market_receipts_prepared {
+	my @out;
+	foreach my $r ( @{ &market_receipts() } ) {
+		my @files = grep { defined $_ && -e $_ } @{ $r->{'files'} || [] };
+		my @pages = map { { url => '/file_open?file=' . uri_encode($_) . '&timestamp=' . ($r->{'at'} || 0), path => $_ } } @files;
+		my @lines;
+		foreach my $l ( @{ $r->{'lines'} || [] } ) {
+			next unless ref $l eq 'HASH' && ($l->{'item'} || '') =~ /\S/;
+			push @lines, { include => 1, item => $l->{'item'}, qty => (defined $l->{'qty'} ? $l->{'qty'} : 1), price => $l->{'price'} };
+		}
+		push @out, {
+			%{$r},
+			pages => \@pages,
+			apply_json => encode_json(\@lines),
+			files_json => encode_json(\@files),
+		};
+	}
+	return \@out;
+}
+
 # Capture the receipt, then read it. The ADF feeds a long receipt in one pass,
 # the flatbed takes a page at a time; without a feed, an uploaded or bridged
 # image is read. Nothing is written here.
@@ -2498,6 +2549,8 @@ post '/manager/market/receipt' => sub($c) {
 	my $feed = lc($c->param('feed') || '');
 	my @pages;
 	if ($feed eq 'adf' || $feed eq 'flatbed') {
+		return $c->render(json => { error => 'this machine cannot scan' })
+			unless grep { $_ eq $feed } @{ &market_scan_feeds() };
 		my ($err, $paths) = &market_receipt_scan($feed);
 		return $c->render(json => { error => $err }) if $err;
 		foreach my $p ( @{$paths} ) { push @pages, { base64 => encode_base64(read_file($p), ''), path => $p }; }

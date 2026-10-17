@@ -10,6 +10,8 @@
 	my $vendor = $vendor || '';
 	my $lists = $lists || {};
 	my @nearby = @{ $nearby || [] };
+	my @scan_feeds = @{ $scan_feeds || [] };
+	my @receipts = @{ $receipts || [] };
 	# one renderer for a row, so the list tab and the shopping tab never drift;
 	# the list tab carries the need/want dial, the shopping tab a plain badge.
 	my $row = sub {
@@ -42,7 +44,7 @@
 		return $o;
 	};
 %>
-<div id="market_body" style="width:100%;height:100%;background-color:var(--panel);padding:6px;box-sizing:border-box;display:flex;flex-direction:column;position:relative;">
+<div id="market_body" data-scan="<%= join(',', @scan_feeds) %>" style="width:100%;height:100%;background-color:var(--panel);padding:6px;box-sizing:border-box;display:flex;flex-direction:column;position:relative;">
 	<div style="flex:0 0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 		<b style="font-size:20px;">Market</b>
 		<select id="market_list" style="flex:0 1 auto;">
@@ -60,6 +62,7 @@
 		<span style="flex:1 1 auto;"></span>
 		<button id="market_scan" style="font-size:15px;">Scan</button>
 		<button id="market_receipt" style="font-size:15px;">Receipt</button>
+		<% if (scalar @receipts) { %><button id="market_receipts_open" style="font-size:15px;">Receipts</button><% } %>
 		<button id="market_checkout" style="font-size:15px;">Checkout (<span id="market_cart_count">0</span>)</button>
 		<button id="market_cancel" style="font-size:15px;">Cancel</button>
 		<button class="market_tab" tab="list">Shopping List</button>
@@ -93,6 +96,34 @@
 		<div id="market_shopping_rows" style="flex:1 1 auto;overflow:auto;">
 			<% foreach my $it ( @{$list} ) { %><%== $row->($it, 0) %><% } %>
 		</div>
+	</div>
+	<%# the kept receipts: each read receipt's pages, with a way to put its lines
+	    back on the list. Rendered here so a reload (which replaces the body) keeps
+	    it in step. The pages are opened through /file_open like any other picture. %>
+	<div id="market_receipts" style="display:none;position:absolute;left:0;top:0;width:100%;height:100%;background-color:var(--panel);z-index:20;overflow:auto;padding:6px;box-sizing:border-box;">
+		<div style="display:flex;align-items:center;gap:8px;">
+			<b style="font-size:18px;">Kept receipts</b>
+			<span style="flex:1 1 auto;"></span>
+			<button id="market_receipts_close">Close</button>
+		</div>
+		<% if (!scalar @receipts) { %>
+			<div style="padding:10px;font-size:16px;opacity:.7;">No receipts kept yet. Read one with the Receipt button.</div>
+		<% } %>
+		<% foreach my $r ( @receipts ) { %>
+			<div class="market_receipt_row" data-apply="<%= $r->{'apply_json'} %>" data-files="<%= $r->{'files_json'} %>" data-total="<%= defined $r->{'total'} ? $r->{'total'} : '' %>" data-date="<%= $r->{'date'} %>" data-vendor="<%= $r->{'vendor'} %>" style="border-bottom:1px solid var(--line);padding:6px;">
+				<div style="font-size:17px;">
+					<b><%= &subs::format_name($r->{'vendor'} || 'Receipt') %></b>
+					<% if ($r->{'date'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;"><%= $r->{'date'} %></span><% } %>
+					<% if (defined $r->{'total'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;">total <%= $r->{'total'} %></span><% } %>
+					<span style="opacity:.6;font-size:14px;margin-left:6px;"><%= scalar @{ $r->{'lines'} || [] } %> lines</span>
+					<button class="market_receipt_readd" style="float:right;font-size:15px;">Add to list</button>
+				</div>
+				<div style="margin-top:4px;">
+					<% foreach my $p ( @{ $r->{'pages'} || [] } ) { %><a href="<%= $p->{'url'} %>" target="_blank"><img src="<%= $p->{'url'} %>" style="height:70px;margin-right:6px;border:1px solid var(--line);"></a><% } %>
+					<% if (!scalar @{ $r->{'pages'} || [] }) { %><span style="font-size:13px;opacity:.55;">the pages are no longer on disk</span><% } %>
+				</div>
+			</div>
+		<% } %>
 	</div>
 	<%# a receipt read covers the body until it is confirmed or closed; the pages
 	    are chosen with a photo picker (or the scanner), read server-side %>

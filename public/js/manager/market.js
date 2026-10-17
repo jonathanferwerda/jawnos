@@ -259,18 +259,48 @@ function marketReceiptPanel(html) {
 }
 
 function marketReceiptChooser() {
+	var feeds = marketScanFeeds();
 	var h = '<div style="padding:10px;">'
 		+ '<b style="font-size:18px;">Read a receipt</b>'
-		+ '<div style="margin-top:8px;">'
-		+ '<button class="market_receipt_go" feed="adf">Scan (ADF)</button> '
-		+ '<button class="market_receipt_go" feed="flatbed">Scan (flatbed)</button> '
-		+ '<button class="market_receipt_go" feed="">Photo / file</button> '
+		+ '<div style="margin-top:8px;">';
+	if (feeds.indexOf('adf') !== -1) { h += '<button class="market_receipt_go" feed="adf">Scan (ADF)</button> '; }
+	if (feeds.indexOf('flatbed') !== -1) { h += '<button class="market_receipt_go" feed="flatbed">Scan (flatbed)</button> '; }
+	h += '<button class="market_receipt_go" feed="">Photo / file</button> '
 		+ '<button id="market_receipt_close">Cancel</button>'
 		+ '</div>'
-		+ '<div style="margin-top:8px;font-size:14px;opacity:.7;">The ADF takes the whole receipt in one pass; a long receipt is two flatbed pages.</div>'
+		+ '<div style="margin-top:8px;font-size:14px;opacity:.7;">'
+		+ (feeds.length ? 'The ADF takes the whole receipt in one pass; a long receipt is two flatbed pages.' : 'No scanner on this machine - load a photo or file of the receipt.')
+		+ '</div>'
 		+ '</div>';
 	marketReceiptPanel(h);
 }
+
+// The scan feeds this machine offers, written on the body by the server from the
+// capability table (a computer has the ADF and the flatbed, a server neither), so
+// a machine with no scanner does not offer a scan that would only fail.
+function marketScanFeeds() {
+	var s = $('#market_body').attr('data-scan') || '';
+	return s ? s.split(',') : [];
+}
+
+// The kept receipts pane: open and close, and put a whole kept receipt back on
+// the list (the same apply the confirm panel uses, so Checkout still writes it).
+$(document).on('click', '#market_receipts_open', function() { $('#market_receipts').show(); });
+
+$(document).on('click', '#market_receipts_close', function() { $('#market_receipts').hide(); });
+
+$(document).on('click', '.market_receipt_readd', function() {
+	var row = $(this).closest('.market_receipt_row');
+	$.post('/manager/market/receipt/apply', {
+		lines: row.attr('data-apply'),
+		files: row.attr('data-files'),
+		total: row.attr('data-total') || '',
+		date: row.attr('data-date') || '',
+		vendor: marketVendor || row.attr('data-vendor') || '',
+		list: marketList,
+		timestamp: Date.now()
+	}, function() { $('#market_receipts').hide(); });
+});
 
 function marketReceiptShow(response) {
 	if (!response || response.error) {

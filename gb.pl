@@ -71,7 +71,7 @@ our $capabilities = {
 		scan => [ 'adf', 'flatbed' ]
 	},
 	server => {
-		scan => [ 'adf', 'flatbed' ]
+		scan => []
 	}
 };
 
