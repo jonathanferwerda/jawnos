@@ -24736,6 +24736,34 @@ get '/manager/records/audit' => sub($c) {
 	$c->render(json => { report => $report, prompt => &subs::records_audit_prompt() });
 };
 
+# A peer that holds a session's real end (the phone's accurate copy) closes it
+# here over the signed rail: no browser session, no view to fan out, and only a
+# row this machine already has. This is the quiet repair the records watch
+# applies locally, which is what a peer needs when its own open row has a newer
+# server_time than the stopped copy and the merge skips it.
+post '/manager/records/repair' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $app = &subs::unformat_name($c->param('app'));
+	my $uuid = $c->param('uuid');
+	my $stop = $c->param('stop_timestamp');
+	my $start = $c->param('timestamp');
+	unless ($app && $uuid && defined $stop && $stop =~ /^\d+$/) {
+		$c->render(json => { ok => 0, error => 'app, uuid and stop_timestamp are required' });
+		return;
+	}
+	my $row = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hash;
+	unless ($row) { $c->render(json => { ok => 0, error => 'no such session' }); return; }
+	$start = $row->{'timestamp'} unless (defined $start && $start =~ /^\d+$/);
+	unless (defined $start && $start =~ /^\d+$/ && $stop >= $start) {
+		$c->render(json => { ok => 0, error => 'stop_timestamp must not precede the start' });
+		return;
+	}
+	my $dur = &subs::records_repair($app, $uuid, $start, $stop);
+	$c->render(json => { ok => 1, app => $app, uuid => $uuid, timestamp => $start, stop_timestamp => $stop, duration => $dur });
+};
+
 # The records watch's staging area: the findings the audit staged, each with the
 # actions it proposes. Review, apply, discard - the same shape as the error
 # watch's fixes, and the same rule: nothing is written until Apply.

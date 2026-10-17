@@ -269,6 +269,10 @@ hook before_dispatch => sub {
 		$path eq '/manager/configure/backup_now' ||
 		$path eq '/manager/backup_serve' ||
 		$path eq '/manager/backup/confirm' ||
+		# a peer holding the accurate copy of a session closes this machine's
+		# stale open row over the same bare signed rail; the route peer_verifies
+		# the caller against the roster and only repairs a row that is here
+		$path eq '/manager/records/repair' ||
 		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
 		# receives one. Both require a pinned peer key (peer_verify, no
 		# trust-on-first-contact) and only accept the jawnos folder with the
