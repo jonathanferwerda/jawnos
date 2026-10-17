@@ -3317,6 +3317,9 @@ function graphicalize(respons) {
 		respons = response;
 	}
 	else {
+		// a full payload replaces the one in hand; what it actually covers is
+		// what a drag reads to know whether the window it reached was fetched
+		if (respons !== response && typeof timelineFetchedSet == 'function') { timelineFetchedSet(respons.appts); }
 		response = respons;
 	}
 	// the rail's band is the configured height, unless the desk wears no rail at
