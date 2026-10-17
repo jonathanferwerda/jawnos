@@ -7307,6 +7307,27 @@ post '/manager/configure/remote_machine_input' => sub($c) {
 	$c->render(text => 'ok');
 };
 
+# A peer's signing key can outlive the row it was pinned to: a replaced row, a
+# re-imaged machine, or a duplicate discovery leaves the old key on file and
+# every signed request from the real machine comes back 403 (which reads as
+# "not a known peer", not "wrong key"). A person logged in here can re-pin the
+# key the machine actually holds. Session-gated (not in the peer allowlist), and
+# it only accepts a PEM public key.
+post '/manager/configure/remote_machine_key_reset' => sub($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $pubkey = $c->param('pubkey') || '';
+	return $c->render(json => { ok => 0, error => 'no machine named' }) unless $signatorial =~ /^[0-9a-fA-F]{16,64}$/;
+	$pubkey =~ s/\r//g;
+	$pubkey =~ s/\s+$//;
+	unless ($pubkey eq '' || index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0) {
+		return $c->render(json => { ok => 0, error => 'that is not a public key' });
+	}
+	my $known = &subs::db_select('remote_machines', ['signatorial'], { signatorial => $signatorial })->hashes->[0];
+	return $c->render(json => { ok => 0, error => 'no such machine' }) unless $known;
+	&subs::db_update('remote_machines', { pubkey => $pubkey }, { signatorial => $signatorial });
+	$c->render(json => { ok => 1, cleared => ($pubkey eq '' ? 1 : 0) });
+};
+
 post '/manager/configure/remote_machine/tunnel/toggle' => sub($c) {
 	my $ssh_port = $c->param('ssh_port');
 	my $ip = $c->param('ip');
