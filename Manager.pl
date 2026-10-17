@@ -2542,7 +2542,7 @@ sub scanner_log_tail {
 	seek($fh, $size > $bytes ? $size - $bytes : 0, 0);
 	my $tail = do { local $/; <$fh> };
 	close $fh;
-	return grep { /\S/ } split /\n/, ($tail || '');
+	return grep { /\S/ } split /[\r\n]+/, ($tail || '');
 }
 
 # The scanner's own last word on why a run produced nothing, in plain terms. The
@@ -2792,13 +2792,28 @@ get '/manager/market/receipt/progress' => sub($c) {
 	return $c->render(json => { pages => [], log => [] }) unless length $id;
 	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
 	my $base = $folder . '/receipt_' . $id;
-	my (@pages, $n);
-	$n = 0;
+	my (@pages, %seen);
+	my $n = 0;
 	foreach my $t ( &scanner_page_list($base) ) {
 		my $jpg = $base . '.preview_' . $n . '.jpg';
 		`magick convert $t $jpg 2>/dev/null` unless -e $jpg;
-		push @pages, { page => $n, url => '/manager/market/receipt/preview?scan_id=' . $id . '&page=' . $n } if -e $jpg;
+		if (-e $jpg) {
+			push @pages, { page => $n, url => '/manager/market/receipt/preview?scan_id=' . $id . '&page=' . $n };
+			$seen{$n} = 1;
+		}
 		$n++;
+	}
+	# a finished page's own jpg is written before the vision read, so the paper
+	# shows while the model is still working; scanimage's own page number is the
+	# `_N` suffix (a flatbed page is the bare base name)
+	foreach my $f ( grep { !/\.preview_/ } glob("$base*.jpg") ) {
+		my $p = 0;
+		$p = $1 - 1 if $f ne $base . '.jpg' && $f =~ /_([0-9]+)\.jpg$/;
+		next if $seen{$p};
+		my $name = $f;
+		$name =~ s{.*/}{};
+		push @pages, { page => $p, url => '/manager/market/receipt/image?file=' . $name };
+		$seen{$p} = 1;
 	}
 	my @log = &scanner_log_tail($base . '.log');
 	@log = @log[-6 .. -1] if scalar @log > 6;
