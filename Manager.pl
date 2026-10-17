@@ -14819,8 +14819,11 @@ sub merge_database($c,$configuration) {
 					else {
 						$query = $tdb->query('select * from ' . $q);
 					}
-					my $results = $query->hashes;
-					my $results_size = scalar @{$results};
+					# Count first, then stream the snapshot's rows. A full convergence
+					# carries a whole table (110k appointments); ->hashes would hold all
+					# of it in memory on top of the merge, which is what killed the
+					# worker and made the pull restart forever.
+					my $results_size = ($tdb->query('select count(*) as c from ' . $q)->hash->{'c'} || 0) + 0;
 					if ($results_size > 0) {
 						$count++;
 						&subs::sync_job_update($sync_job, { current => $count }) if $sync_job;
@@ -14833,7 +14836,7 @@ sub merge_database($c,$configuration) {
 						}
 						#&subs::say_it('Now merging ' . $results . ' ' .$q);
 						my $progress = $count / scalar @u * 100;
-						my $html = '<h3>Now merging ' . scalar @{$results} . ' ' . $q . '</h3><br>';
+						my $html = '<h3>Now merging ' . $results_size . ' ' . $q . '</h3><br>';
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour,
 							progress => int($count / ((scalar @u) || 1) * 100), state => 'running' });
 						my $percentage = 0;
@@ -14841,8 +14844,9 @@ sub merge_database($c,$configuration) {
 						my $last_alert = &subs::rightNow();
 						my $job_alert = $last_alert;
 						my $start_time = $last_alert;
-						for (my $n = 0; $n <= $results_size; $n++ ) {
-							my $r = $results->[$n];
+						for (my $n = 0; $n < $results_size; $n++ ) {
+							my $r = $query->hash;
+							last unless $r;
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							$percentage = sprintf("%.2f", $n / $results_size * 100);
@@ -14854,7 +14858,7 @@ sub merge_database($c,$configuration) {
 								if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
 									my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
 									my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
-									my $html = '<b style="font-size:20px">' . $n . ' / ' . scalar @{$results} . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
+									my $html = '<b style="font-size:20px">' . $n . ' / ' . $results_size . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
 										'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
 									$last_percent = $percentage;
 									$last_alert = &subs::rightNow();
@@ -15024,7 +15028,7 @@ sub merge_database($c,$configuration) {
 											if ($percentage >= $last_percent && $results_size > 0 && &subs::rightNow() >= ($last_alert + 250)) {
 												my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
 												my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
-												my $html = '<b style="font-size:20px">' . sprintf("%.2f", ($n + ($file_count / scalar @{$files}))) . ' / ' . scalar @{$results} . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining .'</b><br>' .
+												my $html = '<b style="font-size:20px">' . sprintf("%.2f", ($n + ($file_count / scalar @{$files}))) . ' / ' . $results_size . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining .'</b><br>' .
 													'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
 												$last_percent = $percentage;
 												$last_alert = &subs::rightNow();
@@ -15080,6 +15084,7 @@ sub merge_database($c,$configuration) {
 									}
 								}
 							}
+							$query->finish if $query && $query->can('finish');
 							if ($sync_job) {
 								&subs::sync_job_step($sync_job, 'merge:' . $q, { state => 'done', current => $results_size, total => $results_size });
 							}

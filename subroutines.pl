@@ -5104,30 +5104,36 @@ sub backup_now() {
 			my $has_cut = exists $cuts->{$d};
 			my $cut = $has_cut ? $cuts->{$d} : $ld_server_time;
 			my $op = $has_cut ? '>' : '>=';
-			my $new_data = &subs::db_query('select * from ' . $d . ' where server_time ' . $op . ' ?', $cut)->hashes;
+			# Count cheaply, then stream the rows: a full pull of appointments or
+			# continent used to materialise the whole table with ->hashes, and the
+			# worker died under that allocation (the export then restarted every
+			# tick and never finished). One row at a time keeps the memory flat.
+			my $row_total = (&subs::db_query('select count(*) as c from ' . $d . ' where server_time ' . $op . ' ?', $cut)->hashes->[0]->{'c'} || 0) + 0;
 			if ($job) {
 				&subs::sync_job_step($job, 'export:' . $d, {
-					label => 'export ' . $d, state => 'running', current => 0, total => scalar @{$new_data},
-					note => scalar(@{$new_data}) . ' row' . (scalar(@{$new_data}) == 1 ? '' : 's')
+					label => 'export ' . $d, state => 'running', current => 0, total => $row_total,
+					note => $row_total . ' row' . ($row_total == 1 ? '' : 's')
 				});
 			}
-			if (scalar @{$new_data} > 0) {
+			if ($row_total > 0) {
 	#			$tdb->query('delete from ' . $d . ' where server_time < ?', $ld_server_time);
+				my $cursor = &subs::db_query('select * from ' . $d . ' where server_time ' . $op . ' ?', $cut);
 				my $copied = 0;
-				foreach my $nd ( @{$new_data} ) {
+				while (my $nd = $cursor->hash) {
 					$tdb->insert($d, $nd);
 					$copied++;
 					# Refresh the job's `updated` during a big table's copy: it is the
 					# liveness stamp the panel uses to call a dead worker interrupted.
 					if ($job && ($copied % 2000) == 0) {
-						&subs::sync_job_step($job, 'export:' . $d, { current => $copied, total => scalar @{$new_data} });
+						&subs::sync_job_step($job, 'export:' . $d, { current => $copied, total => $row_total });
 					}
 				}
+				$cursor->finish if $cursor && $cursor->can('finish');
 			} else {
 				$tdb->query('DROP TABLE ' . $d);
 			}
 			&subs::sync_job_step($job, 'export:' . $d, {
-				state => 'done', current => scalar @{$new_data}, total => scalar @{$new_data}
+				state => 'done', current => $row_total, total => $row_total
 			}) if $job;
 			&Websocket::send('tab', {
 				yellow => '<h2>Being synced by ' . ($rm->{'ip'} || $c->tx->remote_address) . '</h2>',
