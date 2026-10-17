@@ -2503,6 +2503,7 @@ post '/manager/market/scan/remote' => sub($c) {
 	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
 	my %pass = (
 		session => ($c->param('session') || ''),
+		device_id => ($c->param('device_id') || ''),
 		origin_machine => ($c->param('origin_machine') || ''),
 		list => ($c->param('list') || ''),
 		vendor => ($c->param('vendor') || ''),
@@ -2530,6 +2531,7 @@ post '/manager/market/scan/remote' => sub($c) {
 	}
 	my $opts = {
 		session => $pass{'session'},
+		device_id => $pass{'device_id'},
 		origin_machine => $pass{'origin_machine'},
 		list => $pass{'list'},
 		vendor => $pass{'vendor'},
@@ -2565,6 +2567,23 @@ sub market_scan_session {
 sub market_scan_session_save {
 	my ($s) = @_;
 	&subs::setting_setter({ app => 'market', setting => 'scan_session', value => encode_json($s) });
+}
+
+# A run can have several inputs at once (the computer's webcam and two phones,
+# say). Each has a stable id so the page can add, replace or stop one without
+# disturbing the others.
+sub market_scan_device_id {
+	my ($d) = @_;
+	return '' unless ref $d eq 'HASH';
+	return 'local' unless ($d->{'kind'} || '') eq 'remote';
+	return ($d->{'machine'} || '') . '|' . ($d->{'browser_tab_id'} || '');
+}
+
+sub market_scan_session_devices {
+	my ($s) = @_;
+	my @d = grep { ref $_ eq 'HASH' && &market_scan_device_id($_) ne '' } @{ $s->{'devices'} || [] };
+	@d = ($s->{'device'}) if !scalar @d && ref $s->{'device'} eq 'HASH' && &market_scan_device_id($s->{'device'}) ne '';
+	return @d;
 }
 
 # One resolved code into a session. The phone's relay and this machine's own
@@ -2733,10 +2752,21 @@ sub market_scan_session_view {
 			raw_formatted => &subs::format_name($it->{'raw'} || ''),
 		};
 	}
+	my @devices;
+	foreach my $d ( &market_scan_session_devices($s) ) {
+		push @devices, {
+			id => &market_scan_device_id($d),
+			kind => ($d->{'kind'} || 'local'),
+			label => ($d->{'label'} || (($d->{'kind'} || '') eq 'remote' ? 'Device' : 'this machine')),
+			machine => ($d->{'machine'} || ''),
+			browser_tab_id => ($d->{'browser_tab_id'} || ''),
+		};
+	}
 	return {
 		uuid => ($s->{'uuid'} || ''),
 		status => ($s->{'status'} || ''),
 		device => ($s->{'device'} || {}),
+		devices => \@devices,
 		camera => ($s->{'camera'} ? 1 : 0),
 		items => \@items,
 		count => scalar @items,
@@ -2751,6 +2781,7 @@ sub market_scan_device_send {
 	my $machine = $device->{'machine'} || '';
 	my %opts = (
 		session => $s->{'uuid'},
+		device_id => &market_scan_device_id($device),
 		origin_machine => &subs::signatorial_designer(),
 		list => ($s->{'list'} || ''),
 		vendor => ($s->{'vendor'} || ''),
@@ -2788,6 +2819,7 @@ post '/manager/market/scan/session/start' => sub($c) {
 		at => &subs::rightNow(),
 		status => 'scanning',
 		device => $device,
+		devices => [ $device ],
 		list => (&market_list_key($c->param('list') || '') || ''),
 		vendor => (&subs::unformat_name($c->param('vendor')) || ''),
 		items => [],
@@ -2810,6 +2842,57 @@ post '/manager/market/scan/session/start' => sub($c) {
 	$c->render(json => { session => &market_scan_session_view($s) });
 };
 
+# Add another input to a running run. Each device keeps its own scanner and the
+# reads all land in the same session, so the webcam and two phones can scan at
+# once; adding one already on the run restarts its scanner instead of doubling it.
+post '/manager/market/scan/session/device/add' => sub($c) {
+	my $device = eval { decode_json($c->param('device')) } || {};
+	return $c->render(json => { error => 'no device' }) unless ref $device eq 'HASH' && (($device->{'kind'} || '') eq 'local' || ($device->{'kind'} || '') eq 'remote');
+	my $s = &market_scan_session();
+	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '' && ($s->{'status'} || '') eq 'scanning';
+	my $id = &market_scan_device_id($device);
+	my @devices = grep { &market_scan_device_id($_) ne $id } &market_scan_session_devices($s);
+	push @devices, $device;
+	$s->{'devices'} = \@devices;
+	$s->{'device'} = $devices[0];
+	if (($device->{'kind'} || '') eq 'local') {
+		if (&market_camera_available() && !($s->{'camera'} || 0)) {
+			my $pid = &market_camera_start();
+			if ($pid) {
+				select(undef, undef, undef, 0.4);
+				if (&market_camera_alive()) { $s->{'camera'} = 1; $s->{'camera_offset'} = 0; }
+				else { &market_camera_stop(); }
+			}
+		}
+	}
+	else { &market_scan_device_send($c, $device, $s, 0); }
+	&market_scan_session_save($s);
+	$c->render(json => { session => &market_scan_session_view($s) });
+};
+
+# Stop one input and leave the rest of the run scanning.
+post '/manager/market/scan/session/device/remove' => sub($c) {
+	my $id = $c->param('id') || '';
+	my $s = &market_scan_session();
+	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '';
+	my @kept;
+	my $removed;
+	foreach my $d ( &market_scan_session_devices($s) ) {
+		if (&market_scan_device_id($d) eq $id) { $removed = $d; next; }
+		push @kept, $d;
+	}
+	return $c->render(json => { error => 'no such device' }) unless $removed;
+	&market_scan_device_send($c, $removed, $s, 1) if (($removed->{'kind'} || '') eq 'remote');
+	unless (grep { ($_->{'kind'} || '') eq 'local' } @kept) {
+		&market_camera_stop() if ($s->{'camera'} || 0);
+		delete $s->{'camera'};
+	}
+	$s->{'devices'} = \@kept;
+	$s->{'device'} = $kept[0];
+	&market_scan_session_save($s);
+	$c->render(json => { session => &market_scan_session_view($s) });
+};
+
 post '/manager/market/scan/collect' => sub($c) {
 	my $session = $c->param('session') || '';
 	my $origin = $c->param('origin_machine') || '';
@@ -2829,6 +2912,7 @@ post '/manager/market/scan/collect' => sub($c) {
 				session => $session,
 				barcode => ($c->param('barcode') || ''),
 				stop => ($c->param('stop') ? 1 : 0),
+				device_id => ($c->param('device_id') || ''),
 				timestamp => &subs::rightNow()
 			})->result };
 			my $body = $res ? (eval { decode_json $res->body } || {}) : {};
@@ -2845,6 +2929,20 @@ post '/manager/market/scan/collect' => sub($c) {
 		return $c->render(json => { error => 'no such session' });
 	}
 	if ($c->param('stop')) {
+		my $did = $c->param('device_id') || '';
+		if ($did ne '') {
+			my @kept = grep { &market_scan_device_id($_) ne $did } &market_scan_session_devices($s);
+			if (scalar @kept) {
+				$s->{'devices'} = \@kept;
+				$s->{'device'} = $kept[0];
+				unless (grep { ($_->{'kind'} || '') eq 'local' } @kept) {
+					&market_camera_stop() if ($s->{'camera'} || 0);
+					delete $s->{'camera'};
+				}
+				&market_scan_session_save($s);
+				return $c->render(json => { ok => 1, stopped => $did, count => scalar @{ $s->{'items'} || [] } });
+			}
+		}
 		&market_camera_stop() if ($s->{'camera'} || 0);
 		delete $s->{'camera'};
 		$s->{'status'} = 'cancelled';
@@ -2901,7 +2999,9 @@ post '/manager/market/scan/session/done' => sub($c) {
 	&market_save_list($list);
 	&market_lists_touch_vendor($s->{'list'}, &subs::format_name($s->{'list'}), $s->{'vendor'}) if ($s->{'list'} || '') ne '' && ($s->{'vendor'} || '') ne '';
 	my $d = $s->{'device'} || {};
-	&market_scan_device_send($c, $d, $s, 1) if ref $d eq 'HASH' && ((($d->{'kind'} || '') eq 'remote') || ($d->{'browser_tab_id'} || '') ne '');
+	foreach my $d ( &market_scan_session_devices($s) ) {
+		&market_scan_device_send($c, $d, $s, 1) if (($d->{'kind'} || '') eq 'remote' || ($d->{'browser_tab_id'} || '') ne '');
+	}
 	&market_camera_stop() if ($s->{'camera'} || 0);
 	delete $s->{'camera'};
 	$s->{'status'} = 'done';
@@ -2913,8 +3013,9 @@ post '/manager/market/scan/session/done' => sub($c) {
 post '/manager/market/scan/session/cancel' => sub($c) {
 	my $s = &market_scan_session();
 	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '';
-	my $d = $s->{'device'} || {};
-	&market_scan_device_send($c, $d, $s, 1) if ref $d eq 'HASH' && ((($d->{'kind'} || '') eq 'remote') || ($d->{'browser_tab_id'} || '') ne '');
+	foreach my $d ( &market_scan_session_devices($s) ) {
+		&market_scan_device_send($c, $d, $s, 1) if (($d->{'kind'} || '') eq 'remote' || ($d->{'browser_tab_id'} || '') ne '');
+	}
 	&market_camera_stop() if ($s->{'camera'} || 0);
 	delete $s->{'camera'};
 	$s->{'status'} = 'cancelled';

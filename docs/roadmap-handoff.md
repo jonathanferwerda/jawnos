@@ -271,8 +271,9 @@ it and remembers the device it used last (a phone chosen once is the default),
 the phone re-opens its scanner for each read (rapid fire), and the reads collect
 on a scanning page - Done puts them on the list, Cancel (or the phone's Back)
 throws them away, and either ends the phone's sheet (a native stop broadcast,
-since the WebView is paused behind it). A computer with a webcam reads with zbar
-on the server instead, real time. Displayed app names are run through
+since the WebView is paused behind it). The picker stays on the scanning page, so
+a second input can join the same run and each can be stopped on its own. A
+computer with a webcam reads with zbar on the server instead, real time. Displayed app names are run through
 `format_name`; the unformatted name is only ever the key. Market also reopens the
 list it was last on. Checkout fills an expense transaction from the cart without
 writing anything yet; Save is what records the purchases and stock, after the

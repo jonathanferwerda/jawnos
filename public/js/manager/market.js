@@ -159,6 +159,7 @@ function marketCheckoutOpen(t) {
 var marketScanSession = null;      // the session this machine owns
 var marketScanPollTimer = null;
 var marketScanRapid = false;       // re-open the local scanner after each read
+var marketScanHouseDevices = [];   // the camera tabs the house offered last time
 
 $(document).on('click', '#market_scan', function() { marketScan(); });
 
@@ -190,12 +191,12 @@ function marketBarcode(code) {
 function marketPhoneResult(code) {
 	if (!window.marketPhoneSession) { return; }
 	if (!code) {
-		$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, stop: 1, timestamp: Date.now() });
+		$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, device_id: window.marketPhoneDeviceId || '', stop: 1, timestamp: Date.now() });
 		window.marketPhoneSession = '';
 		window.marketPhoneRapid = false;
 		return;
 	}
-	$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, barcode: code, timestamp: Date.now() }, function() {
+	$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, device_id: window.marketPhoneDeviceId || '', barcode: code, timestamp: Date.now() }, function() {
 		if (window.marketPhoneRapid) {
 			setTimeout(function() {
 				if (!window.marketPhoneRapid) { return; }
@@ -221,6 +222,7 @@ function marketScan() {
 		browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
 	}, function(response) {
 		var devices = (response && response.devices) || [];
+		marketScanHouseDevices = devices;
 		var remembered = null;
 		try { remembered = JSON.parse(localStorage.getItem('marketScanDevice') || 'null'); } catch (e) { remembered = null; }
 		if (remembered && remembered.kind === 'local') { marketScanBegin({ kind: 'local', label: 'this machine' }); return; }
@@ -326,23 +328,108 @@ function marketScanBegin(device) {
 }
 
 function marketScanSessionShow(s) {
-	var label = (s.device && s.device.label) || 'this machine';
 	var h = '<div style="padding:10px;font-size:18px;">';
 	h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-		+ '<b>Scanning on ' + marketEsc(label) + '</b>'
+		+ '<b id="market_scan_session_heading"></b>'
 		+ '<span id="market_scan_session_count" style="opacity:.6;font-size:14px;">' + (s.count || 0) + '</span>'
 		+ '<span style="flex:1 1 auto;"></span>'
 		+ '<button id="market_scan_session_done">Done</button>'
 		+ '<button id="market_scan_session_cancel">Cancel</button>'
 		+ '</div>';
-	h += '<div style="font-size:14px;opacity:.65;margin-top:4px;">'
-		+ (s.camera ? 'The webcam is reading as you go; ' : '')
-		+ 'Scan as many as you like; Done puts them on the list, Cancel throws them away.</div>';
+	h += '<div id="market_scan_session_devices" style="margin-top:4px;font-size:14px;"></div>';
+	// the picker stays here even after a device is chosen, so a second input can
+	// join the run (a phone beside the webcam) or the machine can be switched
+	h += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;">'
+		+ '<select id="market_scan_session_device" style="font-size:15px;flex:1 1 200px;">' + marketScanDeviceOptions() + '</select>'
+		+ '<button id="market_scan_session_device_add" style="font-size:15px;">Add input</button>'
+		+ '</div>';
+	h += '<div id="market_scan_session_note" style="font-size:14px;opacity:.65;margin-top:4px;"></div>';
 	h += '<div id="market_scan_session_items" style="margin-top:8px;">';
 	(s.items || []).forEach(function(it) { h += marketScanItemRow(it); });
 	h += '</div></div>';
 	marketReceiptPanel(h);
+	marketScanSessionDevicesShow(s);
+	marketScanDevicesLoad(function() {
+		var sel = $('#market_scan_session_device');
+		if (!sel.length) { return; }
+		var current = sel.val();
+		sel.html(marketScanDeviceOptions());
+		if (current && sel.find('option[value="' + current + '"]').length) { sel.val(current); }
+	});
 }
+
+function marketScanDeviceOptions() {
+	var h = '<option value="">Add another input...</option>';
+	h += '<option value="local">This machine</option>';
+	(marketScanHouseDevices || []).forEach(function(d) {
+		h += '<option value="' + marketEsc(d.browser_tab_id) + '" data-machine="' + marketEsc(d.machine || '') + '">' + marketEsc(d.label) + '</option>';
+	});
+	return h;
+}
+
+// The house camera list, for a session page opened without it (a reload, or a
+// remembered device that started straight away).
+function marketScanDevicesLoad(done) {
+	if ((marketScanHouseDevices || []).length) { if (done) { done(); } return; }
+	$.get('/manager/market/cameras', {
+		timestamp: Date.now(),
+		browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
+	}, function(response) {
+		marketScanHouseDevices = (response && response.devices) || [];
+		if (done) { done(); }
+	}, 'json').fail(function() { if (done) { done(); } });
+}
+
+// The inputs on this run: one chip each, with a way to stop just that one.
+function marketScanSessionDevicesShow(s) {
+	var devs = (s && s.devices) || [];
+	var box = $('#market_scan_session_devices');
+	if (!box.length) { return; }
+	if (!devs.length) {
+		box.html('<span style="opacity:.6;">No input is scanning - add one below.</span>');
+	}
+	else {
+		var h = '<span style="opacity:.65;">Scanning:</span> ';
+		devs.forEach(function(d) {
+			h += '<span style="display:inline-block;border:1px solid var(--line);border-radius:10px;padding:1px 6px;margin:2px 4px 2px 0;">'
+				+ marketEsc(d.label || 'Device')
+				+ ' <button class="market_scan_device_remove" data-id="' + marketEsc(d.id || '') + '" style="font-size:12px;padding:0 4px;" title="Stop this input">x</button></span>';
+		});
+		box.html(h);
+	}
+	var heading = 'Scanning';
+	if (devs.length === 1) { heading = 'Scanning on ' + (devs[0].label || 'this machine'); }
+	else if (devs.length > 1) { heading = 'Scanning on ' + devs.length + ' inputs'; }
+	$('#market_scan_session_heading').text(heading);
+	$('#market_scan_session_note').text((s && s.camera ? 'The webcam is reading as you go; ' : '')
+		+ 'Scan as many as you like; Done puts them on the list, Cancel throws them away.');
+}
+
+$(document).on('click', '#market_scan_session_device_add', function() {
+	var selected = $('#market_scan_session_device option:selected');
+	var value = selected.val();
+	if (!value) { return; }
+	var device;
+	if (value === 'local') { device = { kind: 'local', label: 'this machine' }; }
+	else { device = { kind: 'remote', machine: selected.attr('data-machine') || '', browser_tab_id: value, label: selected.text() }; }
+	$.post('/manager/market/scan/session/device/add', { device: JSON.stringify(device), timestamp: Date.now() }, function(response) {
+		if (!response || !response.session) { return; }
+		marketScanSession = response.session;
+		marketScanSessionDevicesShow(response.session);
+		$('#market_scan_session_device').val('');
+		if (value === 'local' && !response.session.camera) { marketScanHere(); }
+	}, 'json');
+});
+
+$(document).on('click', '.market_scan_device_remove', function() {
+	var id = $(this).attr('data-id') || '';
+	if (!id) { return; }
+	$.post('/manager/market/scan/session/device/remove', { id: id, timestamp: Date.now() }, function(response) {
+		if (!response || !response.session) { return; }
+		marketScanSession = response.session;
+		marketScanSessionDevicesShow(response.session);
+	}, 'json');
+});
 
 function marketScanItemRow(it) {
 	var name = it.formatted || it.item || it.code;
@@ -372,6 +459,7 @@ function marketScanSessionRefresh() {
 		box.empty();
 		(s.items || []).forEach(function(it) { box.append(marketScanItemRow(it)); });
 		$('#market_scan_session_count').text(s.count || 0);
+		marketScanSessionDevicesShow(s);
 	}, 'json');
 }
 
@@ -406,6 +494,7 @@ window.marketPhoneCamera = function(opts) {
 	opts = opts || {};
 	window.marketPhoneSession = opts.session || '';
 	window.marketPhoneOrigin = opts.origin_machine || '';
+	window.marketPhoneDeviceId = opts.device_id || '';
 	window.marketPhoneRapid = !!opts.rapid;
 	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
 		window.JawnScan.scan();
@@ -464,6 +553,7 @@ window.marketPhoneCamera = function(opts) {
 window.marketPhoneScanStop = function() {
 	window.marketPhoneRapid = false;
 	window.marketPhoneSession = '';
+	window.marketPhoneDeviceId = '';
 	// put the app's own scanner sheet away when the page is still running
 	if (window.JawnScan && typeof window.JawnScan.close === 'function') {
 		try { window.JawnScan.close(); } catch (e) {}
