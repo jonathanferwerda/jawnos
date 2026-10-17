@@ -13021,7 +13021,12 @@ post '/manager/configure' => sub ($c) {
 
 
 
-get '/manager/configure/system_list' => sub($c) {
+# The Sys panel is loaded with the whole browser localStorage in the request. As a
+# GET that rode the query string, which the manager caps at MOJO_MAX_LINE_SIZE
+# (64k) - once localStorage grew past it the request was answered by the Gate page
+# and injected into the panel, so Sys "would not load". Accept POST too so the
+# panel can send that payload in the body.
+any '/manager/configure/system_list' => sub($c) {
 	my $local_storage = eval { return decode_json $c->param('local_storage') } || {};
 	my $settings = { };
 	my ($db,$database,$sql) = &subs::database_grabber();

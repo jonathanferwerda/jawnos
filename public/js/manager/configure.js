@@ -1344,6 +1344,12 @@ $(document).on('change', '.utility_controller', function() {
 		data: { control: control, device: device, value: value, setting: setting },
 		success: function(response) {
 			$('#utility_controls_container').html(response.html);
+		},
+		error: function(e) {
+			// a failed save must not leave the switch reading the value we tried to set
+			// (the 5s reloader would then look like the toggle unchecked itself) -
+			// repaint from the server; the error dot names the failure
+			utilityControllerReloader();
 		}
 	});
 });
@@ -1576,7 +1582,9 @@ $(document).on('click', '#system_setting_lister', function() {
 	else {
 		$.ajax({
 			url: '/manager/configure/system_list',
-			type: 'GET',
+			// POST: localStorage can be large, and in a GET query it would blow the
+			// manager's 64k request-line cap and the panel would come back as the Gate
+			type: 'POST',
 			data: { local_storage: local_storage },
 			success: function(response) {
 				c.html(response);
@@ -1584,6 +1592,10 @@ $(document).on('click', '#system_setting_lister', function() {
 					b.text(text);
 					b.attr('status', 'active');
 				}
+			},
+			error: function(e) {
+				b.text(jawnosConfigureLabel(b));
+				c.html('<div class="cfg-note">the Sys panel did not load (' + e.status + '); press Sys to try again</div>').show();
 			}
 		});
 	}

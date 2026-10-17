@@ -9564,9 +9564,16 @@ sub navigation_automation() {
 								if (scalar @{$lappts} > 0) {
 									foreach my $lapp ( @{$lappts} ) {
 										$hpdata->{'uuid'} = $lapp->{'uuid'};
+										# reopen the session it closed when the plate was left. stop_seen
+										# must be cleared too: the stop resolvers (stop_target_row /
+										# open_session_uuid) define the open session as one with stop_seen
+										# null, so leaving it set left the row open but invisible - the
+										# plate's own next leave and return then had nothing to close or
+										# reopen (a "returning home" that never logged).
 										&subs::db_update('appointments', {
 											type => $hp->{'action'},
 											stop_timestamp => undef,
+											stop_seen => undef,
 											server_time => &subs::rightNow(),
 											duration => undef
 										}, { app => $app, uuid => $lapp->{'uuid'} });
@@ -11170,13 +11177,31 @@ sub tunnel_checker() {
 		}
 		# Enrol each tunnelled peer with no browser behind it: the peer's own /gate
 		# gives its name and its jawnos.enc backups, and remote_device_connect files
-		# the roster row with its buttons - exactly what pressing Connect does. A peer
-		# whose row already reads active is left alone, so this is quiet when healthy.
+		# the roster row with its buttons - exactly what pressing Connect does.
+		# tunnel_peer_enrol is idempotent: it skips the probe once the row shows its
+		# backup and the connect once the roster reads active, so this is quiet when
+		# healthy.
 		my %enrolled;
 		foreach my $tun ( @{$tunnels} ) {
 			next unless $tun->{'signatorial'} && $tun->{'name'} && $tun->{'name'} eq 'PORT_AHOY';
 			next if $enrolled{ $tun->{'signatorial'} }++;
 			&subs::tunnel_peer_enrol($tun->{'signatorial'});
+		}
+		# A peer whose tunnels are gone is disconnected: mark its roster row so
+		# nothing keeps dialling a dead hub-side port (remote_upgrade and the relay
+		# target that manager). Only rows reached through 127.0.0.1 are the hub's
+		# tunnels; a row with a real host manager may still answer directly, so it is
+		# left to the reconnector to judge. The Dev list drops the neighbour on its
+		# own (the naming pass above prunes it); this keeps the roster honest too and
+		# refreshes the panel live.
+		my %has_tunnel;
+		$has_tunnel{ $_->{'signatorial'} } = 1 for grep { $_->{'signatorial'} } @{$tunnels};
+		foreach my $rm ( @{ &subs::db_select('remote_machines', undef, { tunnel => 'yes' })->hashes } ) {
+			next unless $rm->{'signatorial'} && ($rm->{'manager'} || '') =~ m{127\.0\.0\.1};
+			next if $has_tunnel{ $rm->{'signatorial'} };
+			next unless ($rm->{'connection'} || '') eq 'active';
+			&subs::db_update('remote_machines', { connection => 'inactive', server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
+			&Websocket::send('server', { console => 'deviceLister()' });
 		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
