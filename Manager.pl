@@ -13138,6 +13138,10 @@ post '/manager/configure/utility_controller/save' => sub($c) {
 		$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
 	}
 	my $jcontrols = encode_json $controls;
+	# Name every utility save in the log, with the row key it came from - a job
+	# being read off with nobody touching it has to be traceable to the page (or
+	# machine) that posted the value.
+	&subs::log_writer('utility save: sig=' . substr($signatorial, 0, 8) . ' device=' . $device . ' real=' . $real_device . ' ' . $control . '.' . $setting . '=' . (defined $value ? $value : 'undef'));
 
 	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
 	my $html = $c->render_to_string(
@@ -13670,6 +13674,13 @@ sub merge_database($c,$configuration) {
 										my $jmerged = encode_json $merged;
 										my $jcur = encode_json $local;
 										if ($jmerged ne $jcur) {
+											# name any navigation toggle this merge is about to change, per row -
+											# a third machine's stale copy must not read a job off unnoticed
+											foreach my $k ( keys %{$merged} ) {
+												my $was = $local->{$k}->{'navigation'}->{'toggle'} // '-';
+												my $now = $merged->{$k}->{'navigation'}->{'toggle'} // '-';
+												&subs::log_writer('utility merge: ' . substr($k, 0, 8) . ' navigation ' . $was . '->' . $now . ' from ' . substr($r->{'signatorial'} // '?', 0, 8)) if $was ne $now;
+											}
 											&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jmerged, server_time => &subs::rightNow() });
 										}
 										next;

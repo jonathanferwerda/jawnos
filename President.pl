@@ -763,6 +763,10 @@ sub utility_functions() {
 	# the guard never matched and the blob was rewritten, and every tab pinged,
 	# every five seconds.
 	our $utility_controls_json;
+	# The last navigation toggle the worker stored, so it can name the change in
+	# the log (see the store below) - the other half of tracing a job that reads
+	# off with nobody touching it.
+	our %utility_nav_seen;
 
 	sub utility_controller() {
 		my $data = shift;
@@ -910,6 +914,11 @@ sub utility_functions() {
 					# last-run time a peer's card shows tracks us.
 					$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
 					$jcontrols = encode_json $controls;
+					my $navnow = $controls->{$signatorial}->{'navigation'}->{'toggle'} // '-';
+					if (($utility_nav_seen{$signatorial} // '') ne $navnow) {
+						&subs::log_writer('utility worker store: navigation=' . $navnow . ' for ' . substr($signatorial, 0, 8));
+						$utility_nav_seen{$signatorial} = $navnow;
+					}
 					$utility_controls_json = $jcontrols;
 					&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
 					&Websocket::send('tab', { utility_controller => 'yes' });
