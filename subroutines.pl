@@ -759,7 +759,13 @@ sub subprocessor() {
 		# If the core subroutine crashed, re-throw its error now so Mojolicious knows it failed
 		die $sub_error if $sub_error;
 	};
-	if ($gb::subprocessed > 1) {
+	# A job that may outlive the prefork heartbeat (a remote export or merge
+	# over a large table) must always be a real child. Running it inline still
+	# looks like a quiet worker to the prefork manager, which restarts it after
+	# 200 seconds and leaves the sync's lock behind - the "crashing while
+	# working on settings" loop. Callers that cannot tolerate that pass
+	# fork => 1.
+	if ($gb::subprocessed > 1 && !$params->{'fork'}) {
 		$wrapped_subroutine->();
 	} else {
 		Mojo::IOLoop->subprocess->run_p($wrapped_subroutine)
@@ -5484,6 +5490,12 @@ sub backup_now() {
 
 		my $table_total = scalar @tables;
 		my $table_n = 0;
+		# One transaction for the whole snapshot. Each row used to commit on its
+		# own, so a table the size of settings cost tens of thousands of fsyncs;
+		# on a phone that ran past the prefork heartbeat and the worker was
+		# restarted in the middle of settings, leaving the export and its lock
+		# behind. One commit makes the same copy a fraction of the time.
+		my $export_tx = $tdb->begin;
 		foreach my $d ( @tables ) {
 			next if grep { $_ eq $d } @{$gb::forbidden->{'tables'}};
 			$table_n++;
@@ -5540,6 +5552,7 @@ sub backup_now() {
 				state => 'running'
 			}) if $job;
 		}
+		$export_tx->commit if $export_tx;
 		$tdb->query('VACUUM');
 
 	}
@@ -12588,16 +12601,21 @@ sub remote_machine_negotiator() {
 	# A sync that dies mid-run leaves "running" behind. The old clear keyed off a
 	# different timer (remote_connect_timer) and waited a blind seven minutes -
 	# on a machine whose servers restart every few minutes that is most of the
-	# time, so the sync rarely got to run. Bound the lock by its own age instead.
-	if ($remote_upgrade eq 'running') {
-		my $lock = &subs::db_query('select server_time from settings where app = ? and setting = ?', '__president', 'remote_upgrade')->hashes->[0];
+	# time, so the sync rarely got to run. Bound the lock by its own age instead,
+	# and read the pid the marker carries: a bare 'running' from an older build
+	# still trusts the age, but a dead owner is cleared at once.
+	my ($up_flag, $up_pid) = split /:/, ($remote_upgrade || ''), 2;
+	$up_flag ||= '';
+	if ($up_flag eq 'running') {
+		my $lock = &subs::db_query('select server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0];
+		my $owner_dead = ($up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && !kill(0, $up_pid)) ? 1 : 0;
 		my $bound = (($gb::timeouts->{'remote_machine_sync'}->{'interval'} || 120) * 1000) * 2;
-		if (!$lock->{'server_time'} || $lock->{'server_time'} + $bound < &subs::rightNow()) {
+		if ($owner_dead || !$lock->{'server_time'} || $lock->{'server_time'} + $bound < &subs::rightNow()) {
 			&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 			$remote_upgrade = '';
 		}
 	}
-	if ($remote_upgrade ne 'running' && $remote_connect_timer + 10000 < &subs::rightNow()) {
+	if (($remote_upgrade || '') ne 'running' && $remote_connect_timer + 10000 < &subs::rightNow()) {
 		&Manager::remote_machine_reconnector($c);
 	}
 	#&system_monitor({

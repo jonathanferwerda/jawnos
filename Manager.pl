@@ -6567,7 +6567,14 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 };
 
 post '/manager/configure/remote_upgrade' => sub($c) {
-	if ( &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' }) eq 'running' ) {
+	# The marker carries the owner's pid (see remote_upgrade); compare the flag,
+	# not the whole value, or a live 'running:<pid>' never matched. A live owner
+	# only blocks inside the same ten-minute bound the pull itself honours.
+	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
+	$up_flag ||= '';
+	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
+	if ($up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
 		$c->render('text' => 'already running');
 		$c->rendered;
 		return;
@@ -6594,7 +6601,7 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		&remote_upgrade($c,$params);
-	}, { name => 'remote upgrade' });
+	}, { name => 'remote upgrade', fork => 1 });
 	$c->render('text' => 'ok');
 };
 
@@ -6816,6 +6823,25 @@ get '/manager/voice_download' => sub($c) {
 };
 
 
+# Released by the guard in remote_upgrade on every exit, including a die, so a
+# pull that crashes part-way no longer leaves a live-looking 'running' marker
+# behind. The age/pid check still covers a worker the kernel killed.
+{
+	package Jawn::RemoteUpgradeLock;
+	sub new { my ($class, $val) = @_; return bless { val => $val }, $class; }
+	sub release {
+		my $self = shift;
+		return unless $self->{'val'};
+		my $val = $self->{'val'};
+		$self->{'val'} = undef;
+		eval {
+			my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0];
+			&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' }) if (($row->{'value'} || '') eq $val);
+		};
+	}
+	sub DESTROY { shift->release }
+}
+
 sub remote_upgrade($c,$params) {
 	# The marker carries the worker's pid. A restart or a crash is the common case
 	# here, and a bare 'running' left behind by a dead worker used to block every
@@ -6828,7 +6854,14 @@ sub remote_upgrade($c,$params) {
 	if ($up_live && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
 		return;
 	}
-	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:' . $$ });
+	my $up_value = 'running:' . $$;
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => $up_value });
+	# Two forked pulls can pass the check above in the same instant; the last
+	# writer keeps the marker and the loser walks away instead of running a
+	# second export against the same peer.
+	my $up_confirm = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	return 'busy' if (($up_confirm->{'value'} || '') ne $up_value);
+	my $up_guard = Jawn::RemoteUpgradeLock->new($up_value);
 	# One job row drives the yellow dot: its ring is the overall percent and its
 	# steps are the bars across the top of the panel. The guard below still stops
 	# two pulls at once; the job is what makes the wait legible.
@@ -6885,7 +6918,7 @@ sub remote_upgrade($c,$params) {
 		}
 		my $ua = $remote_machine->{'ua'};
 
-		my $res = eval { return $ua->insecure(1)->get($url)->result };
+		my $res = eval { return $ua->insecure(1)->inactivity_timeout(180)->request_timeout(300)->get($url)->result };
 
 		if ($res) {
 
@@ -6945,7 +6978,7 @@ sub remote_upgrade($c,$params) {
 						# password. The peer serves it through the same tunnel and
 						# session as every other manager-to-manager request.
 						my $turl = $remote_machine->{'manager'} . '/manager/backup_serve?signatorial=' . $signatorial . '&file=' . Mojo::Util::url_escape($body->{'archive_path'});
-						my $tres = eval { $remote_machine->{'ua'}->inactivity_timeout(300)->get($turl)->result };
+						my $tres = eval { $remote_machine->{'ua'}->inactivity_timeout(300)->request_timeout(600)->get($turl)->result };
 						if ($tres && $tres->is_success && length $tres->body) {
 							write_file($temporary_file, $tres->body);
 						}
@@ -30669,17 +30702,21 @@ sub remote_machine_reconnector($c) {
 								gimme => $gimme
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
-							#	&subs::subprocessor(sub {
-								my $status = &remote_upgrade($c,$params);
-								if (($status || '') eq 'done') {
-									# This exact peer picture is now in hand: do not full-read it
-									# again until its rows change.
-									&subs::sync_seen_set($rj->{'signatorial'}, $rj->{'digest'});
-								}
-								elsif (($status || '') eq 'busy') {
-									&subs::sync_backoff_set($rj->{'signatorial'}, 120);
-								}
-							#	});
+								# A pull/merge over a big table can outlive the prefork
+								# heartbeat. Fork it, as the on-demand route does, so this
+								# worker keeps answering (and syncing appointments) while
+								# the child does the work.
+								&subs::subprocessor(sub {
+									my $status = &remote_upgrade($c,$params);
+									if (($status || '') eq 'done') {
+										# This exact peer picture is now in hand: do not full-read it
+										# again until its rows change.
+										&subs::sync_seen_set($rj->{'signatorial'}, $rj->{'digest'});
+									}
+									elsif (($status || '') eq 'busy') {
+										&subs::sync_backoff_set($rj->{'signatorial'}, 120);
+									}
+								}, { name => 'remote upgrade', fork => 1 });
 							}
 						}
 						else {
