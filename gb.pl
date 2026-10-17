@@ -613,6 +613,7 @@ our $abilities = {
 	packaging => {},
 	record => { config => 'select', options => ['system', 'security', 'audio', 'video', 'screen'], formatted => 'yes' },
 	currency => { config => 'select', options => [ grep { grep { $_ eq 'currency' }  @{$gb::measures->{$_}->{'types'}} } keys %{$measures} ]},
+	payment_type => { config => 'select', options => [ '', 'cash', 'debit', 'credit', 'visa', 'mastercard', 'amex', 'interac', 'crypto', 'cheque', 'gift', 'other' ], formatted => 'yes' },
 	unit => { config => 'select', options => [ sort keys %{$measures} ]},
 	manufacturer => { config => 'select', options => [ ], formatted => 'yes' },
 	inventory_method => { config => 'select', options => [ 'none', 'fifo', 'lifo', 'depreciate' ], formatted => 'yes' },

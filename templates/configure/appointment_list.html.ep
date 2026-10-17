@@ -176,6 +176,8 @@
 					<div class="app_abilities">
 						<h4 class="app_abilities_title">Abilities</h4>
 						<% foreach my $b (sort keys %{$abilities}) { %>
+							<%# the tender type only means something on an account %>
+							<% next if $b eq 'payment_type' && !(($appts->{$a}->{'setting'}->{'pos'} || '') eq 'account' || ($appts->{$a}->{'setting'}->{'mab'} || '') eq 'account'); %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
 								<button app="<%= $a %>" formatted_setting="<%= &subs::format_name($b) %>" setting="<%= $b %>" class="app_configure_toggle"><img class="ability_icon" alt="" hint="<%= &subs::format_name($b) %>" src="<%= &subs::icon_path($ability_icon{$b} || $b, $b eq 'birthday' ? '/images/decipherable/cake.png' : '/images/decipherable/gear.png') %>"><span class="ability_label">
 									<% if ($b eq 'evaluation') { %>

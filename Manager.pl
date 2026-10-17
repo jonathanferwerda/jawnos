@@ -2250,8 +2250,79 @@ post '/manager/market/checkout' => sub($c) {
 		$written++;
 	}
 	&market_save_list(\@kept);
-	$c->render(json => { written => $written });
+	# The money side: one expense transaction on the list's category, handed to
+	# the person to check and save. The purchases above are the stock record; this
+	# is the account move, and it is not written here.
+	my $category = &market_list_key($c->param('list') || '');
+	my (@lines, $total, $account, $vendor);
+	foreach my $it ( @{$list} ) {
+		next unless $it->{'cart'};
+		$category = $it->{'list'} if $category eq '' && ($it->{'list'} || '') ne '';
+		$account = $it->{'account'} if !$account && ($it->{'account'} || '') ne '';
+		$vendor = $it->{'vendor'} if !$vendor && ($it->{'vendor'} || '') ne '';
+		my $qty = ($it->{'quantity'} || 1) + 0;
+		my $price = ($it->{'price'} || 0) + 0;
+		$total += $price;
+		push @lines, {
+			uuid => &subs::random_string_creator(12),
+			item => $it->{'text'},
+			quantity => $qty,
+			amount => $price,
+			tax => 0,
+			aux => 0,
+			total => $price,
+			unit => ($it->{'unit'} || $it->{'text'}),
+		};
+	}
+	$vendor ||= $vendor_default;
+	$category ||= &subs::unformat_name($lines[0]->{'item'}) if scalar @lines;
+	$account ||= 'cash';
+	my $storage;
+	if (scalar @lines) {
+		my %mov;
+		foreach my $l ( @lines ) {
+			$mov{ $l->{'uuid'} } = {
+				item => $l->{'item'}, quantity => $l->{'quantity'},
+				amount => $l->{'amount'}, tax => $l->{'tax'},
+				aux => $l->{'aux'}, total => $l->{'total'},
+				unit => $l->{'unit'}, state => ''
+			};
+		}
+		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total, tax => 0, aux => 0, total => $total };
+		$storage = { expense => \%mov };
+	}
+	$c->render(json => {
+		written => $written,
+		transaction => { app => $category, account => $account, vendor => $vendor, total => $total, storage => $storage },
+	});
 };
+
+# The account apps: an app whose pos or mab is 'account' (the same discovery the
+# transaction form and the budget use).
+sub market_accounts {
+	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'account')->hashes;
+	return [ map { { app => $_->{'app'}, name => &subs::format_name($_->{'app'}) } } @{$rows} ];
+}
+
+# Guess which account a printed tender names. Each account carries a payment_type
+# setting (visa, mastercard, debit, cash, crypto...); the longest type the tender
+# mentions wins, so "visa debit" still prefers a visa account over a debit one.
+sub market_payment_account {
+	my ($method) = @_;
+	my $want = lc($method || '');
+	$want =~ s/[^a-z0-9 ]//g;
+	$want =~ s/^\s+|\s+$//g;
+	return '' unless $want ne '';
+	my $rows = &subs::db_query("select app, value from settings where setting = 'payment_type' and value is not null and value != ''")->hashes;
+	my ($best, $best_len) = ('', 0);
+	foreach my $r ( @{$rows} ) {
+		my $t = lc($r->{'value'} || '');
+		next unless $t ne '';
+		next unless $want eq $t || $want =~ /\b\Q$t\E\b/ || $t =~ /\b\Q$want\E\b/;
+		if (length($t) > $best_len) { $best = $r->{'app'}; $best_len = length($t); }
+	}
+	return $best;
+}
 
 # The tabs in the house that can take a photo, so a computer can hand a barcode
 # scan to a phone. A tab is a live `server` websocket row; its device type comes
@@ -2289,7 +2360,15 @@ sub market_client_type {
 post '/manager/market/scan/remote' => sub($c) {
 	my $bti = $c->param('browser_tab_id') || '';
 	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
-	my $opts = { list => $c->param('list') || '', vendor => $c->param('vendor') || '' };
+	my $opts = {
+		list => $c->param('list') || '',
+		vendor => $c->param('vendor') || '',
+		origin_tab => ($c->param('origin_tab') || ''),
+	};
+	if ($opts->{'origin_tab'} ne '') {
+		my $row = &subs::db_select('websockets', undef, { browser_tab_id => $opts->{'origin_tab'}, app => 'server' })->hashes->[0];
+		$opts->{'origin_name'} = $row ? ($row->{'room'} || '') : '';
+	}
 	&Websocket::send('server', {
 		console => 'marketPhoneCamera(' . encode_json($opts) . ');',
 		destination => $bti,
@@ -2324,6 +2403,15 @@ post '/manager/market/scan' => sub($c) {
 	unshift @{$list}, $row;
 	&market_save_list($list);
 	&market_lists_touch_vendor($row->{'list'}, &subs::format_name($list_key), $vendor) if $row->{'list'} && $vendor;
+	# a scan handed over from another device tells the tab that asked that it landed
+	my $origin = $c->param('origin_tab') || '';
+	if ($origin ne '') {
+		&Websocket::send('server', {
+			destination => $origin,
+			console => 'marketScanArrived();',
+			timestamp => &subs::rightNow()
+		});
+	}
 	$c->render(json => { item => $row, raw => $map->{'raw'}, category => $map->{'category'} });
 };
 
@@ -2609,6 +2697,7 @@ sub market_receipt_file {
 		total => (defined $data->{'total'} && $data->{'total'} =~ /[0-9]/) ? 0 + $data->{'total'} : undef,
 		payment_method => ($data->{'payment_method'} || ''),
 		payment_ref => ($data->{'payment_ref'} || ''),
+		account => ($data->{'account'} || ''),
 		files => \@files,
 		lines => \@lines,
 	};
@@ -2716,6 +2805,8 @@ post '/manager/market/receipt' => sub($c) {
 		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
 		payment_method => ($out->{'payment_method'} || ''),
 		payment_ref => ($out->{'payment_ref'} || ''),
+		account => &market_payment_account($out->{'payment_method'}),
+		accounts => &market_accounts(),
 		lines => &market_receipt_lines($out),
 		files => \@files,
 		images => \@images,
@@ -2729,6 +2820,7 @@ post '/manager/market/receipt' => sub($c) {
 post '/manager/market/receipt/apply' => sub($c) {
 	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
 	my $list_name = $c->param('list') || '';
+	my $account = &subs::unformat_name($c->param('account')) || '';
 	my $lines = eval { return decode_json $c->param('lines') } || [];
 	return $c->render(json => { error => 'nothing to add' }) unless ref $lines eq 'ARRAY' && scalar @{$lines};
 	my $now = &subs::rightNow();
@@ -2752,6 +2844,7 @@ post '/manager/market/receipt/apply' => sub($c) {
 		foreach my $it ( @{$list} ) {
 			next unless lc($it->{'text'} || '') eq lc($item) || &subs::unformat_name($it->{'text'} || '') eq $item;
 			$it->{'picked'} = 1;
+			$it->{'account'} = $account if $account;
 			$it->{'quantity'} = 0 + $l->{'qty'} if defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/;
 			$it->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
 			$found = 1;
@@ -2770,6 +2863,7 @@ post '/manager/market/receipt/apply' => sub($c) {
 			quantity => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
 		};
 		$row->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
+		$row->{'account'} = $account if $account;
 		$row->{'barcode'} = $code if length $code >= 8;
 		unshift @{$list}, $row;
 		push @added, $item;
@@ -2777,7 +2871,7 @@ post '/manager/market/receipt/apply' => sub($c) {
 	&market_save_list($list);
 	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
 	my $files = eval { return decode_json $c->param('files') } || [];
-	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref') }) if scalar @{$files};
+	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref'), account => $account }) if scalar @{$files};
 	$c->render(json => { added => scalar @added, linked => $linked });
 };
 

@@ -113,12 +113,56 @@ $(document).on('click', '#market_cancel', function() {
 });
 
 $(document).on('click', '#market_checkout', function() {
-	$.post('/manager/market/checkout', { vendor: marketVendor, timestamp: Date.now() });
+	$.post('/manager/market/checkout', { vendor: marketVendor, list: marketList, timestamp: Date.now() }, function(response) {
+		if (response && response.transaction) { marketCheckoutOpen(response.transaction); }
+	}, 'json');
 });
+
+// Checkout leaves the money side to a person: open the list's category with its
+// expense transaction filled from the cart, so the amounts can be checked and
+// saved by hand.
+function marketCheckoutOpen(t) {
+	if (!t || !t.app) { return; }
+	var app = t.app;
+	if (t.storage) { localStorage.setItem('transactionSaver_' + app, JSON.stringify(t.storage)); }
+	appointmentGrabber(app, Date.now());
+	var tries = 0;
+	var iv = setInterval(function() {
+		var w = $('.appointment[app="' + app + '"]');
+		if (!w.length) { if (++tries > 20) { clearInterval(iv); } return; }
+		clearInterval(iv);
+		w.find('.app_act.reset[app="' + app + '"]').first().trigger('click');
+		setTimeout(function() {
+			var m = w.find('.app_details .movement');
+			if (m.length) { m.val('expense').trigger('change'); }
+			setTimeout(function() {
+				if (t.account) { w.find('.app_details .account').val(t.account); }
+				if (typeof transactionStorageRetriever === 'function') { transactionStorageRetriever(app); }
+			}, 800);
+		}, 500);
+	}, 300);
+}
 
 $(document).on('click', '#market_scan', function() { marketScan(); });
 
-window.jawnScanResult = function(code) { if (code) { marketBarcode(code); } };
+window.jawnScanResult = function(code) {
+	if (!code) { return; }
+	marketBarcode(code, window.marketPhoneScanOrigin || '');
+	window.marketPhoneScanOrigin = '';
+};
+
+// The code is resolved by the house; origin_tab names the tab that asked another
+// device for the scan, so its Market can be told the item arrived.
+function marketBarcode(code, origin_tab) {
+	$.post('/manager/market/scan', { barcode: code, list: marketList, vendor: marketVendor, origin_tab: origin_tab || '', timestamp: Date.now() });
+}
+
+window.marketScanArrived = function() {
+	var b = $('#market_scan');
+	if (!b.length) { return; }
+	b.css('background-color', 'green');
+	setTimeout(function() { b.css('background-color', ''); }, 1200);
+};
 
 // Scan a barcode. If another tab in the house has a camera, offer to scan from
 // it (pointing a phone at a shelf beats a laptop); otherwise scan here.
@@ -142,22 +186,47 @@ function marketScanHere() {
 		marketScanCamera();
 		return;
 	}
-	var typed = prompt('Barcode / product code:');
-	if (typed) { marketBarcode(typed); }
+	marketBarcodePrompt();
 }
 
+// A code typed by hand, in the app rather than the browser's own prompt (which
+// wears the page URL and looks nothing like the rest of the house).
+function marketBarcodePrompt() {
+	marketReceiptPanel('<div style="padding:18px;max-width:560px;margin:0 auto;">'
+		+ '<div style="font-size:22px;font-weight:700;">A code</div>'
+		+ '<div style="margin-top:12px;display:flex;gap:8px;">'
+		+ '<input id="market_barcode_typed" type="text" placeholder="Barcode / product code" style="flex:1 1 auto;font-size:18px;padding:6px;">'
+		+ '<button id="market_barcode_typed_go" style="font-size:17px;padding:8px 14px;">Add</button>'
+		+ '</div>'
+		+ '<div style="margin-top:12px;"><button id="market_scan_chooser_close" style="font-size:15px;">Cancel</button></div>'
+		+ '</div>');
+	$('#market_barcode_typed').focus();
+}
+
+$(document).on('keydown', '#market_barcode_typed', function(e) {
+	if (e.key === 'Enter') { e.preventDefault(); $('#market_barcode_typed_go').trigger('click'); }
+});
+
+$(document).on('click', '#market_barcode_typed_go', function() {
+	var code = $('#market_barcode_typed').val();
+	if (code) { marketBarcode(code); }
+	marketReceiptPanel();
+});
+
 function marketScanChooser(devices) {
-	var h = '<div style="padding:10px;">'
-		+ '<b style="font-size:18px;">Scan a barcode</b>'
-		+ '<div style="margin-top:8px;">'
-		+ '<button id="market_scan_here">Scan here</button> '
-		+ '<select id="market_scan_device"><option value="">A device in the house...</option>';
+	var h = '<div style="padding:18px;max-width:560px;margin:0 auto;">'
+		+ '<div style="font-size:22px;font-weight:700;margin-bottom:12px;">Scan a barcode</div>'
+		+ '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+		+ '<button id="market_scan_here" style="font-size:17px;padding:8px 14px;">Scan here</button>'
+		+ '<select id="market_scan_device" style="font-size:17px;padding:6px;flex:1 1 180px;"><option value="">A device in the house...</option>';
 	devices.forEach(function(d) {
 		h += '<option value="' + marketEsc(d.browser_tab_id) + '">' + marketEsc(d.label) + '</option>';
 	});
-	h += '</select> <button id="market_scan_remote_go">Scan from device</button> '
-		+ '<button id="market_scan_chooser_close">Cancel</button>'
-		+ '</div></div>';
+	h += '</select> <button id="market_scan_remote_go" style="font-size:17px;padding:8px 14px;">Scan from device</button>'
+		+ '</div>'
+		+ '<div style="margin-top:14px;"><button id="market_scan_chooser_close" style="font-size:15px;">Cancel</button></div>'
+		+ '<div style="margin-top:10px;font-size:14px;opacity:.65;">The device opens its own camera and sends the code back here.</div>'
+		+ '</div>';
 	marketReceiptPanel(h);
 }
 
@@ -169,7 +238,9 @@ $(document).on('click', '#market_scan_remote_go', function() {
 	var bti = $('#market_scan_device').val();
 	if (!bti) { return; }
 	$.post('/manager/market/scan/remote', {
-		browser_tab_id: bti, list: marketList, vendor: marketVendor, timestamp: Date.now()
+		browser_tab_id: bti,
+		origin_tab: sessionStorage.getItem('browser_tab_id') || '',
+		list: marketList, vendor: marketVendor, timestamp: Date.now()
 	}, function() {
 		marketReceiptPanel('<div style="padding:10px;font-size:17px;">Scanning on the device... <button id="market_scan_chooser_close">Close</button></div>');
 	});
@@ -180,6 +251,14 @@ $(document).on('click', '#market_scan_remote_go', function() {
 // code. The lookup and the list are the house's, so the computer's Market refreshes.
 window.marketPhoneCamera = function(opts) {
 	opts = opts || {};
+	window.marketPhoneScanOrigin = opts.origin_tab || '';
+	// the phone's own scanner (the Google code scanner behind JawnScan) is the
+	// scanner, opened as if the phone had pressed Scan itself; it covers the
+	// screen and hands the code back through jawnScanResult
+	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
+		window.JawnScan.scan();
+		return;
+	}
 	if (document.getElementById('market_phone_camera')) { return; }
 	var everything = $('#everything');
 	everything.hide();
@@ -199,7 +278,7 @@ window.marketPhoneCamera = function(opts) {
 		$('#market_phone_camera').remove();
 		everything.show();
 		if (code) {
-			$.post('/manager/market/scan', { barcode: code, list: opts.list || '', vendor: opts.vendor || '', timestamp: Date.now() });
+			marketBarcode(code, opts.origin_tab || '');
 		}
 	};
 	$('#market_phone_cancel').on('click', function() { finish(); });
@@ -242,7 +321,7 @@ function marketScanCamera() {
 		var stop = function() { if (!done) { done = true; clearInterval(iv); stream.getTracks().forEach(function(t) { t.stop(); }); } };
 		var detector;
 		try { detector = new window.BarcodeDetector(); } catch (e) { detector = null; }
-		if (!detector) { stop(); return; }
+		if (!detector) { stop(); marketBarcodePrompt(); return; }
 		video.play();
 		var iv = setInterval(function() {
 			detector.detect(video).then(function(codes) {
@@ -251,8 +330,7 @@ function marketScanCamera() {
 		}, 400);
 		setTimeout(stop, 30000);
 	}).catch(function() {
-		var typed = prompt('Barcode / product code:');
-		if (typed) { marketBarcode(typed); }
+		marketBarcodePrompt();
 	});
 }
 
@@ -299,9 +377,9 @@ $(document).on('click', '.market_receipt_go', function() {
 	if (!feed) { $('#market_receipt_file').trigger('click'); return; }
 	var scan_id = String(Date.now()) + String(Math.floor(Math.random() * 1000000));
 	marketScanCancelling = '';
-	marketReceiptPanel('<div style="padding:10px;font-size:17px;">Scanning... '
+	marketReceiptPanel('<div style="padding:10px;font-size:20px;">Scanning... '
 		+ '<button id="market_scan_cancel" scan_id="' + scan_id + '">Cancel</button>'
-		+ '<div id="market_scan_log" style="font-size:14px;opacity:.7;margin-top:6px;min-height:1.4em;"></div>'
+		+ '<div id="market_scan_log" style="font-size:19px;opacity:.85;margin-top:8px;min-height:1.4em;"></div>'
 		+ '<div id="market_scan_pages" style="margin-top:8px;"></div></div>');
 	marketScanPoll(scan_id);
 	$.post('/manager/market/receipt', { feed: feed, scan_id: scan_id, vendor: marketVendor, list: marketList, timestamp: Date.now() }, function(response) {
@@ -328,7 +406,7 @@ function marketScanPoll(scan_id) {
 	var poll = setInterval(function() {
 		$.get('/manager/market/receipt/progress', { scan_id: scan_id }, function(p) {
 			if (!$('#market_scan_pages').length) { clearInterval(poll); return; }
-			$('#market_scan_log').text((p.log || []).join(' · '));
+			$('#market_scan_log').text((p.log || []).slice(-1)[0] || '');
 			(p.pages || []).forEach(function(pg) {
 				if ($('#market_scan_pages img[data-page="' + pg.page + '"]').length) { return; }
 				$('#market_scan_pages').append('<a href="' + pg.url + '" target="_blank"><img data-page="' + pg.page + '" src="' + pg.url + '" style="height:180px;margin-right:6px;border:1px solid var(--line);"></a>');
@@ -379,6 +457,7 @@ $(document).on('click', '#market_receipt_apply', function() {
 		date: $('#market_receipt_date').val() || '',
 		payment_method: $('#market_receipt_payment').val() || '',
 		payment_ref: $('#market_receipt_payment_ref').val() || '',
+		account: $('#market_receipt_account').val() || '',
 		files: panel.attr('data-files') || '[]',
 		timestamp: Date.now()
 	}, function() { marketReceiptPanel(); });
@@ -431,6 +510,7 @@ $(document).on('click', '.market_receipt_readd', function() {
 		date: row.attr('data-date') || '',
 		payment_method: row.attr('data-payment') || '',
 		payment_ref: row.attr('data-payment-ref') || '',
+		account: row.attr('data-account') || '',
 		vendor: marketVendor || row.attr('data-vendor') || '',
 		list: marketList,
 		timestamp: Date.now()
@@ -461,10 +541,14 @@ function marketReceiptShow(response) {
 		+ '<label style="font-size:14px;">date <input id="market_receipt_date" type="text" value="' + marketEsc(response.date || '') + '" style="width:110px;"></label>'
 		+ '<label style="font-size:14px;">total <input id="market_receipt_total" type="text" value="' + marketEsc(response.total === null || response.total === undefined ? '' : response.total) + '" style="width:80px;"></label>'
 		+ '</div>';
-	h += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">'
-		+ '<label style="font-size:14px;">paid by <input id="market_receipt_payment" type="text" value="' + marketEsc(response.payment_method || '') + '" style="width:130px;"></label>'
-		+ '<label style="font-size:14px;">ref <input id="market_receipt_payment_ref" type="text" value="' + marketEsc(response.payment_ref || '') + '" style="width:80px;"></label>'
-		+ '</div>';
+	h += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap;">'
+		+ '<label style="font-size:14px;">paid by <input id="market_receipt_payment" type="text" value="' + marketEsc(response.payment_method || '') + '" style="width:110px;"></label>'
+		+ '<label style="font-size:14px;">ref <input id="market_receipt_payment_ref" type="text" value="' + marketEsc(response.payment_ref || '') + '" style="width:70px;"></label>'
+		+ '<label style="font-size:14px;">account <select id="market_receipt_account"><option value="">(choose)</option>';
+	(response.accounts || []).forEach(function(a) {
+		h += '<option value="' + marketEsc(a.app) + '"' + (a.app === response.account ? ' selected' : '') + '>' + marketEsc(a.name) + '</option>';
+	});
+	h += '</select></label></div>';
 	h += '<div style="margin-top:8px;"><button id="market_receipt_apply">Add to cart</button> <button id="market_receipt_close">Cancel</button> <span style="font-size:13px;opacity:.6;">tick the lines to keep</span></div>';
 	h += '<div style="margin-top:6px;">';
 	if (!lines.length) { h += '<div style="padding:8px;font-size:15px;opacity:.7;">No lines were read.</div>'; }

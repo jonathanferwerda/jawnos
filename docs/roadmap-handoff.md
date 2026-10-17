@@ -260,9 +260,14 @@ Cancel stops it mid-feed, and a run that produces nothing says why (no paper,
 device busy). The confirm shows the page full size beside the lines, with the
 date, total, paid-by and tender reference editable so they can be checked against
 the paper; and a barcode scan can be
-handed to another tab in the house (its screen becomes a live camera, reads the
-code, restores its page and posts it), selected from the abilities list
-(camera, scan, printer) the capability table now carries.
+handed to another tab in the house (that tab opens its own Google scanner as if
+it had pressed Scan, and the code comes back to the tab that asked; a browser
+without one gets a live camera view), selected from the abilities list
+(camera, scan, printer) the capability table now carries. An account app carries a
+`payment_type` in its Configure panel (cash, debit, credit, visa, mastercard,
+amex, interac, crypto, ...), and a receipt's printed tender is matched to it;
+Checkout writes the purchases, then opens the list's category with an expense
+transaction prefilled from the cart for a person to check and save.
 
 Still to do:
 - **A real receipt through the ADF** — the paths are built, the live view and the
