@@ -134,6 +134,15 @@ static volatile bool voiceTaskAlive = false;
 // spoken statement changes the panel and writes the config, and both stall the
 // microphone - and draws the orange ring the watch shows while it is listening.
 static volatile bool voiceRecording = false;
+// True from the first frame the model reads (the wake phrase, in wake mode) until
+// the utterance closes. It is what lights the panel and draws the ring: the
+// capture itself commits a few frames later, and a person who just said the wake
+// word should see an answer at once - especially with the screen asleep.
+static volatile bool voiceHeard = false;
+// When the listener's own acknowledgment beep is playing (a millis deadline). The
+// listener reads the microphone through it: the beep is on the speaker bus, so it
+// is not the manual-record/playback case that guard exists for.
+static volatile uint32_t voiceAckUntil = 0;
 // True from a shipped clip until the Guide's answer arrives: loop() holds the
 // screen awake on it - a prompt is not answered in a few seconds, and the person
 // is waiting on the words - then restarts the idle timer. A reply that never
@@ -2170,6 +2179,7 @@ void loop() {
   }
   else if (audioWasRunning) {
     audioWasRunning = false;
+    voiceAckUntil = 0;   // the acknowledgment beep (or a reply) has finished
     deckLog("[mic] playback finished (or gave up)");
     // the Guide's answer has been said: the screen may time out again from now
     if (voiceAwaitingReply) {
@@ -2449,8 +2459,10 @@ void loop() {
   // A spoken command needs the panel to itself: hold the idle timeout off while a
   // clip is being captured and sent, since a doze writes the config and changes
   // the panel, and both stall the microphone. Show the same orange ring the watch
-  // does while the listener has a clip, so it is clear it heard you.
-  if (voiceRecording) { buttonMillis = millis(); }
+  // does while the listener has a clip, so it is clear it heard you. voiceHeard is
+  // set on the first frame the model reads, so the panel lights the moment the
+  // wake phrase lands - not after the capture commits.
+  if (voiceHeard || voiceRecording) { buttonMillis = millis(); }
   if (voiceAwaitingReply) {
     buttonMillis = millis();
     // a reply that never comes must not hold the panel on for ever; while it is
@@ -2462,9 +2474,10 @@ void loop() {
   }
   {
     static bool voice_border_on = false;
-    if (voiceRecording != voice_border_on) {
-      voice_border_on = voiceRecording;
-      voice_border_show(voice_border_on);
+    bool ring = voiceHeard || voiceRecording;
+    if (ring != voice_border_on) {
+      voice_border_on = ring;
+      voice_border_show(ring);
     }
   }
   // the Guide's answer is a few seconds' notice, not a screen of its own
@@ -6289,6 +6302,67 @@ static void voice_dc_block(int16_t *s, int n) {
   }
 }
 
+// A short beep the listener gives when it commits a capture. The panel can be
+// asleep or turned away, and the orange ring is only visible up close. The file
+// is written once and reused, the way speakerSelfTest's tone is.
+#define VOICE_ACK_PATH "/beep.wav"
+#define VOICE_ACK_MS 70
+#define VOICE_ACK_HZ 1046
+
+static bool voice_ack_file() {
+  File check = FFat.open(VOICE_ACK_PATH);
+  if (check) {
+    uint32_t have = check.size();
+    check.close();
+    if (have >= 44 + 1000) { return true; }
+    FFat.remove(VOICE_ACK_PATH);   // a dud from a full filesystem
+  }
+  if (!create_wav_header_on_flash(VOICE_ACK_PATH, MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
+    return false;
+  }
+  File f = FFat.open(VOICE_ACK_PATH, FILE_APPEND);
+  if (!f) { return false; }
+  const uint32_t frames = MIC_I2S_SAMPLE_RATE * VOICE_ACK_MS / 1000;
+  const uint32_t edge = MIC_I2S_SAMPLE_RATE / 200;   // 5 ms fade, so it does not click
+  int16_t chunk[256];
+  uint32_t written = 0;
+  for (uint32_t done = 0; done < frames;) {
+    uint32_t n = frames - done;
+    if (n > 256) { n = 256; }
+    for (uint32_t i = 0; i < n; i++) {
+      uint32_t at = done + i;
+      float env = 1.0f;
+      if (at < edge) { env = (float)at / (float)edge; }
+      else if (frames - at < edge) { env = (float)(frames - at) / (float)edge; }
+      chunk[i] = (int16_t)(7000.0f * env
+                 * sinf(2.0f * 3.14159265f * VOICE_ACK_HZ * (float)at / MIC_I2S_SAMPLE_RATE));
+    }
+    f.write((uint8_t *)chunk, n * 2);
+    written += n * 2;
+    done += n;
+  }
+  f.close();
+  finalize_wav_sizes(VOICE_ACK_PATH, written, 1);
+  return written > 0;
+}
+
+// True while the listener's own beep is playing. The deadline is generous (the
+// file is 70 ms) and loop() clears it as soon as playback ends; it only has to
+// cover the gap between connecttoFS and audio.isRunning() turning true.
+static inline bool voice_ack_playing() {
+  return voiceAckUntil && (int32_t)(millis() - voiceAckUntil) < 0;
+}
+
+static void voice_ack() {
+  if (audio.isRunning()) { return; }   // something else owns the speaker
+  if (!voice_ack_file()) { return; }
+  voiceAckUntil = millis() + 2000;
+  audio.setVolume(volumeLevel);
+  audio.connecttoFS(FFat, VOICE_ACK_PATH);
+  audio.setVolume(volumeLevel);
+  deckLog("%s", "[voice] ack beep");
+}
+
 // The orange ring the watch draws while a capture is in flight: the answer that
 // the listener heard you, since the deck's own screen may be on another room.
 // Built on lv_layer_top() so a room rebuild never sweeps it away, and only ever
@@ -6512,9 +6586,11 @@ static void deckVoiceListenTask(void *pv) {
 
   static int16_t mono[MIC_TDM_FRAMES];
   while (voiceListening) {
-    if (isRecording || audio.isRunning()) {
+    if (isRecording || (audio.isRunning() && !voice_ack_playing())) {
       // a manual record or playback owns the microphone: hold without reading,
-      // so the two never slice the same DMA buffer
+      // so the two never slice the same DMA buffer. The listener's own beep is
+      // the exception: it is on the speaker bus, and the wake word has already
+      // been read, so the capture reads through it.
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -6531,7 +6607,7 @@ static void deckVoiceListenTask(void *pv) {
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
 
     while (voiceListening) {
-      if (isRecording || audio.isRunning()) { aborted = true; break; }
+      if (isRecording || (audio.isRunning() && !voice_ack_playing())) { aborted = true; break; }
       size_t got = 0;
       if (i2s_channel_read(mic_rx_handle, buf, MIC_TDM_BUFFER_BYTES, &got, 100) != ESP_OK
           || got < MIC_TDM_SLOTS * 2) {
@@ -6579,10 +6655,10 @@ static void deckVoiceListenTask(void *pv) {
       if (!recording) {
         // a single loud frame is not a word: hold the speech for a short run
         // before committing, so the listener answers speech, not the room
-        if (!speech) { speech_run = 0; continue; }
+        if (!speech) { speech_run = 0; voiceHeard = false; continue; }
         // the clip's timestamp is when the utterance STARTED - the wake word,
         // not the command after a pause - so stamp the first speech frame and keep it
-        if (!have_onset) { have_onset = true; onset_ts = (uint32_t)rightNow(); }
+        if (!have_onset) { have_onset = true; onset_ts = (uint32_t)rightNow(); voiceHeard = true; }
         if (++speech_run < VOICE_ONSET_FRAMES) { continue; }
         if (!create_wav_header_on_flash(VOICE_CAPTURE_PATH, MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) { break; }
         recording = true;
@@ -6593,6 +6669,9 @@ static void deckVoiceListenTask(void *pv) {
         end_floor = voice_end_floor();
         voiceRecording = true;   // loop() holds the screen awake and rings the border
         deckLog("[voice] speech (%s), recording", voice_mode_name);
+        // the wake phrase is the one thing the person needs an immediate answer
+        // for: on the watch that is the ring, here it is the ring and a beep
+        if (wake_mode) { voice_ack(); }
       }
       // keep the frame (16 kHz mono); the compressor folds it to 8 kHz when it ships
       uint32_t room = max_samples - pcm_bytes / 2;
@@ -6666,11 +6745,14 @@ static void deckVoiceListenTask(void *pv) {
     }
     // the clip is written and away (or dropped): the screen may time out again
     voiceRecording = false;
+    voiceHeard = false;
     if (!voiceCaptureEnabled) { break; }
     vTaskDelay(1);
   }
   free(stage);
   free(buf);
+  voiceRecording = false;
+  voiceHeard = false;
   voiceTaskAlive = false;
   deckLog("%s", "[voice] listener end");
   vTaskDelete(NULL);
