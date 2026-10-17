@@ -863,20 +863,6 @@ function usb_flash_poll(count) {
 		}
 	});
 }
-$(document).on('change', '#teletype_authorization', function() {
-	var tauthorization = $(this).val();
-	// the field shows only whether a secret is set, never the secret itself:
-	// an empty value means "leave it", not "clear it"
-	if (!tauthorization) { return; }
-	var timestamp = Date.now();
-	$.ajax({
-		url: '/manager/embedded/tauthorization',
-		type: 'POST',
-		data: { timestamp: timestamp, tauthorization: tauthorization, edt: edt },
-		success: function(response) {
-		}
-	});
-});
 // the watch/deck toggle for spoken replies: one click flips it, the save route
 // writes it into the device's operator door, and the device gets a fresh Now Me
 $(document).on('click', '.audio_replies_toggle', function() {

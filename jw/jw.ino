@@ -1745,7 +1745,8 @@ void loop() {
   // awake: the task captures one utterance, ships it, and stays listening. It
   // steps aside (and is not restarted) while a manual record or playback holds
   // the microphone, and only listens while the screen is on (dozing = off).
-  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing) {
+  if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing
+      && !voiceAwaitingReply) {
     // start the listener the moment the screen is up: a command spoken in the
     // first seconds of a wake must be heard, so this no longer waits for the
     // radio (a wrist glance skipped the bring-up entirely and voice detection
@@ -5965,6 +5966,17 @@ static bool wristPollStep(float x, float y, float z, uint32_t now) {
 // instead of sitting on a fixed timer.
 static void wrist_look_monitor() {
   if (!wrist_look_watch) {
+    return;
+  }
+  // A spoken command owns the screen. Hearing the wake phrase starts a capture,
+  // and the answer is still to come - the 5 s glance (or the arm dropping) must
+  // not put the watch to sleep mid-command or before the Guide has spoken. Hand
+  // the glance back to the normal timeout, whose deadline loop() keeps rebasing
+  // while voiceRecording/voiceAwaitingReply are set; after the answer the full
+  // configured timeout starts again.
+  if (voiceRecording || voiceShipping || voiceAwaitingReply) {
+    wrist_look_watch = false;
+    buttonMillis = millis();
     return;
   }
   if (millis() - wrist_look_since > WRIST_LOOK_EXTEND_MS) {

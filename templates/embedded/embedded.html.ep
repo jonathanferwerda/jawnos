@@ -60,9 +60,9 @@
 		<% } %>
 		<div id="teletype_homebase" class="teletype_card">
 			<% if ($device_type eq 'teletype') { %>
-				<%# the stored secret is never shown: like Plat config, say it is set and
-				    take a new value only if one is typed %>
-				<input type="password" id="teletype_authorization" value="" data-set="<%= length($tauthorization || '') ? 1 : 0 %>" placeholder="<%= length($tauthorization || '') ? '••• set — type to replace' : 'not set' %>"><br>
+				<%# input authority is the Now Me pair, not a separate password: the
+				    deck's wss connection validates the same authorization token the
+				    watch's rooms use. %>
 				<button id="tty_enabled" status="<%= $tty_enabled %>"><% unless ($tty_enabled == 1) { %>Enable <% } else { %>Disable<% } %></button>
 			<% } %>
 			Name:<input id="embedded_device_name" value="<%= $embedded->{'name'} %>"><br>
@@ -124,8 +124,7 @@
 				<%# whether the guide associate's answer is spoken on the device as well
 				    as shown on it. Saved into the operator door like the voice mode, so
 				    the machine holding the bridge reads it when it answers. On by
-				    default; the t-deck gets the same switch for when it grows the
-				    feature. %>
+				    default for both the watch and the t-deck. %>
 				<% my $audio_replies = $operator_door->{'__specs'}->{'audio_replies'} || 'on'; %>
 				<button class="hover audio_replies_toggle" setting="audio_replies" chip_id="<%= $chip_id %>" edt="<%= $edt %>" status="<%= $audio_replies %>">Audio replies: <%= ($audio_replies eq 'on') ? 'On' : 'Off' %></button>
 			<% } else { %>
@@ -138,6 +137,11 @@
 			<div class="embedded_device_info" style="width:100%;display:none;" chip_id="<%= $chip_id %>"></div>
 			<% if ($edt eq 'microcontroller') { %>
 				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_jobs">Jobs</button>
+				<%# A crashed board in its provisioning AP cannot be reached over the LAN.
+				    Its USB CDC link can still take the stored WiFi and role: the manager
+				    writes config.txt, the board acknowledges and reboots onto the house. %>
+				<button chip_id="<%= $chip_id %>" edt="<%= $edt %>" class="embedded_usb_provision hover">Restore over USB</button>
+				<div id="embedded_usb_provision_result" style="display:none;width:100%;text-align:left;"></div>
 				<div id="embedded_jobs_results" style="display:none;width:100%;"></div>
 			<% } %>
 		</div>

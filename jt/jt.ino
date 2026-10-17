@@ -446,7 +446,6 @@ String base_ap_ssid = ap_ssid;
 String ap_password = password;
 String base_ap_password = ap_password;
 int tauth_watch = 0;
-String tauthorization;
 int tauth_count = 0;
 int b1_toggle, b2_toggle, b3_toggle, b4_toggle, b5_toggle, b6_toggle, b7_toggle, b8_toggle = 0;
 int last_x, last_y = 0;
@@ -534,8 +533,8 @@ using namespace websockets;
 // The deck dials the manager by LAN IP, but the manager's certificate names its
 // DNS wildcard, so normal verification can never succeed. The library's
 // setInsecure() only clears optional CA pointers on ESP32 and never reaches the
-// WiFiClientSecure; this client does. The tauthorization token is still the
-// secret - TLS protects it (and the injected keystrokes) in flight.
+// WiFiClientSecure; this client does. The Now Me authorization token is still
+// the secret - TLS protects it (and the injected keystrokes) in flight.
 class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient {
  public:
   InsecureDeckTcpClient() { client.setInsecure(); }
@@ -2014,6 +2013,10 @@ void loop() {
           buttoned_before = false;   // ask the bridge for fresh buttons
           deckLog("[bt] now_me applied");
           remote_room();
+          // Now Me is the whole authorization: remote input follows it with no
+          // password step.
+          tauth_remote_enabled = "on";
+          tauth_connect();
         }
         else if (mtype == "room") {
           // a room payload pushed by the bridge: the same picture the http
@@ -2117,13 +2120,18 @@ void loop() {
     buttonMillis = millis();
     lastMillis = millis();
     authorization_pusher(before_me);
+    // Now Me is the whole authorization: the wss control socket opens on the
+    // pair it just delivered, with no password to type.
+    tauth_remote_enabled = "on";
+    tauth_connect();
     voice_trigger_apply();
   }
 
   // the panel's voice setting: keep a listener armed for a model we have, and
   // hold while a manual record or playback owns the microphone (the listener
   // task also stands aside itself; this is what re-arms it afterwards)
-  if (voiceCaptureEnabled && !voiceTaskAlive && !isRecording && !audio.isRunning()) {
+  if (voiceCaptureEnabled && !voiceTaskAlive && !isRecording && !audio.isRunning()
+      && !voiceAwaitingReply) {
     deckVoiceListenStart();
   }
 
@@ -2847,21 +2855,10 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
       else if (keyValue == (char)0x0D) {
         if (authorization != "") {
           // Serial.println("Enter pressed");
-          String life = "";
-          bool first_check = false;
-          if (tauthorization == "") {
-            // first_check is its own parameter; it used to be smuggled into the
-            // tauthorization value with an '&', which broke as soon as the token
-            // (or this text) contained one.
-            tauthorization = textarea_content;
-            first_check = true;
-          }
-          else {
-            life = urlEncode(textarea_content);
-          }
-          // Serial.println(homebase);
-          String information = https_request("https://" + thomebaseIP + "/teletype/information?life=" + life
-                                             + (first_check ? "&first_check=true" : ""));
+          String life = urlEncode(textarea_content);
+          // The deck is already authorized by the Now Me pair (url_maker sends
+          // it); there is no password step here any more.
+          String information = https_request("https://" + thomebaseIP + "/teletype/information?life=" + life);
            Serial.println(information);
 
           textarea_content = "";
@@ -2872,13 +2869,7 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
           String result = info["result"];
           String returner = info["returner"];
           if (result == "denial") {
-            tauthorization = "";
-            //    Serial.println("Clearing Auth");
-          }
-          else {
-            String auth = info["tauthorization"];
-            tauthorization_pusher(auth);
-            //    Serial.println("Setting Auth");
+            // the Now Me pair rotated, or this deck has not had a Now Me yet
           }
           tauth_connect();
           tft.drawString("P: " + returner, 0, y);
@@ -3203,7 +3194,7 @@ String url_maker(String url) {
   String chip_id = chip_id_maker();
   // Both are base64 (and may carry '+', '/' or '='), so they must be escaped
   // or the request decoder turns '+' into a space and the token stops matching.
-  url = url + "&edt=teletype&chip_id=" + chip_id + "&tauthorization=" + urlEncode(tauthorization) + "&authorization=" + urlEncode(authorization) + "&timestamp=" + timestamp;
+  url = url + "&edt=teletype&chip_id=" + chip_id + "&authorization=" + urlEncode(authorization) + "&timestamp=" + timestamp;
   return url;
 }
 
@@ -4621,7 +4612,6 @@ void remote_writer() {
 static void authorization_deleter(lv_event_t *e) {
   tauth_cancel();
   authorization_json[auth_watch] = undefined;
-  tauthorization = "";
   if (auth_watch >= 1) {
     for (int n = 1; n <= auth_count; n++) {
       if (authorization_json[auth_watch] == undefined) {
@@ -4641,7 +4631,6 @@ static void authorization_deleter(lv_event_t *e) {
       //  room_max = bm["__specs"]["room_max"];
       room_count = bm["__specs"]["room_count"];
       computer_name = (const char *)bm["__specs"]["computer"];
-      tauthorization = (const char *)bm["__specs"]["tauthorization"];
     }
 
     room = 1;
@@ -4701,7 +4690,11 @@ void authorization_changer(String mov) {
   //  room_max = bm["__specs"]["room_max"];
   room_count = bm["__specs"]["room_count"];
   computer_name = (const char *)bm["__specs"]["computer"];
-  tauthorization = (const char *)bm["__specs"]["tauthorization"];
+  {
+    // a saved profile carries the Now Me pair it was captured with
+    String auth = (const char *)bm["__specs"]["authorization"];
+    if (auth.length()) { authorization = auth; }
+  }
   mouse_move_relative = (const char * )bm["__specs"]["mouse_move_relative"];
   tauth_remote_enabled = (const char * )bm["__specs"]["tauth_remote_enabled"];
 
@@ -4793,16 +4786,6 @@ static void authorization_dedupe() {
 }
 
 
-void tauthorization_pusher(String tauth) {
-  tauthorization = tauth;
-  String b = (const char * )authorization_json[auth_watch];
-  JSONVar bm = JSON.parse(b);
-  tauth_remote_enabled = "on";
-  bm["__specs"]["tauthorization"] = tauth;
-  authorization_json[auth_watch] = JSON.stringify(bm);
-  before_me = (const char *)authorization_json[auth_watch];
-  tauth_watch++;
-}
 
 static void tauthToggleButton(lv_event_t *e) {
   lv_obj_t * remb = lv_event_get_target_obj(e);
@@ -4828,10 +4811,8 @@ void tauth_cancel() {
   wsclient.close();
   ws_connected = 0;
   tauth_remote_enabled = false;
-  tauthorization = "";
   String b = (const char *)authorization_json[auth_watch];
   JSONVar bm = JSON.parse(b);
-  bm["__specs"]["tauthorization"] = "";
   authorization_json[auth_watch] = JSON.stringify(bm);
   before_me = (const char *)authorization_json[auth_watch];
 }
@@ -4839,9 +4820,10 @@ void tauth_cancel() {
 
 
 void tauth_connect() {
-  if (ws_connected == 0 && tauthorization != "") {
+  if (ws_connected == 0 && authorization != "") {
     // twshomebaseIP is "host:port" (now_me's twshomebase). The socket is wss:
-    // wsclient was built over InsecureDeckTcpClient above.
+    // wsclient was built over InsecureDeckTcpClient above. The Now Me pair is
+    // the credential the server checks, so there is no password to type.
     String ws_host = twshomebaseIP;
     int ws_port = 443;
     int split = ws_host.lastIndexOf(':');
@@ -4853,7 +4835,8 @@ void tauth_connect() {
       ws_connected = 0;
     }
     else {
-      String ws_path = "/teletype/ws?tauthorization=" + urlEncode(tauthorization);
+      String ws_path = "/teletype/ws?authorization=" + urlEncode(authorization)
+                     + "&edt=teletype&chip_id=" + urlEncode(chip_id_maker());
       ws_connected = wsclient.connect(ws_host, ws_port, ws_path);
       if (ws_connected) {
         wsclient.send("Hey Server");
@@ -5516,7 +5499,6 @@ void configSave() {
   conf["password"] = password;
   conf["ap_ssid"] = ap_ssid;
   conf["ap_password"] = ap_password;
-  conf["tauthorization"] = tauthorization;
   String aj = JSON.stringify(authorization_json);
   conf["aj"] = aj;
   conf["auth_count"] = auth_count;
@@ -5598,7 +5580,6 @@ void configDefaults() {
   fontSelect = "";
   password = "";
   ap_ssid = base_ap_ssid;
-  tauthorization = "";
   ap_password = base_ap_password;
   authorization_json = JSON.parse("[]");
   wigi = JSON.parse("[]");
@@ -5684,7 +5665,6 @@ void configRestore() {
     setBrightness(brightnessLevel);
     password = (const char *)conf["password"];
     ap_ssid = (const char *)conf["ap_ssid"];
-    tauthorization = (const char *)conf["tauthorization"];
     ap_password = (const char *)conf["ap_password"];
     String aj = (const char *)conf["aj"];
     authorization_json = JSON.parse(aj);
@@ -6561,6 +6541,10 @@ static void say_audio_add(JSONVar d) {
               (unsigned)say_pcm_len, (unsigned)say_pcm_rate, (int)ok);
     }
   }
+  else if (say_pcm && say_pcm_len > 8) {
+    deckLog("[voice] answer audio skipped (recording=%d playing=%d)",
+            (int)isRecording, (int)audio.isRunning());
+  }
   if (say_pcm) { free(say_pcm); }
   say_pcm = nullptr;
   say_pcm_len = 0;
@@ -6642,6 +6626,14 @@ static void deckVoiceListenTask(void *pv) {
 
   static int16_t mono[MIC_TDM_FRAMES];
   while (voiceListening) {
+    // The Guide's answer is about to be spoken: do not listen for it, or the
+    // deck records its own speaker (setting isRecording) and say_audio_add
+    // then refuses to play the reply. The hold ends in loop() when playback
+    // finishes (or the reply times out).
+    if (voiceAwaitingReply) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
     if (isRecording || (audio.isRunning() && !voice_ack_playing())) {
       // a manual record or playback owns the microphone: hold without reading,
       // so the two never slice the same DMA buffer. The listener's own beep is

@@ -10,7 +10,6 @@ use SQL::Abstract;
 use Mojo::SQLite;
 use Data::Dumper;
 use URI::Encode qw(uri_encode uri_decode);
-use Mojo::Util qw(secure_compare);
 use Time::Local;
 plugin 'RenderFile';
 no warnings 'uninitialized';
@@ -32,47 +31,21 @@ our $log = Mojo::Log->new(path => $logfile);
 
 
 sub auth_check($c) {
-	my $lock = &subs::setting_grabber({ app => 'teletype', setting => 'tauthorization' });
-	my $patience = &subs::setting_grabber({ app => 'teletype', setting => 'patience' });
-	# No stored pair means nobody is authorized. An absent secret used to decode
-	# to the empty string, which compared equal to an absent presented secret -
-	# so a machine that had never set a teletype password accepted any socket.
-	return { result => 'denial' }
-		unless defined $lock && length $lock && defined $patience && length $patience;
-	my $authorship = `echo $lock | base64 --decode`;
-	my $auth = &subs::note_decrypter($patience,$authorship);
-	chomp $auth;
-	return { result => 'denial' } unless defined $auth && length $auth;
 	my @t = localtime(time);
 	my $offset = timegm(@t) - timelocal(@t);
 	my $server_time = time();
-	if ($c->param('first_check') eq 'true') {
-		my $tauthorization = $c->param('tauthorization');
-		chomp $tauthorization;
-		my $tty_port = $ENV{PORT_BESTOW};
-		if ($tauthorization && secure_compare $auth, $tauthorization) {
-			my $info = {
-				tty_port => $tty_port,
-				tauthorization => $lock,
-				result => "approved",
-				server_time => $server_time,
-				offset => $offset,
-				returner => "You're so in!"
-			};
-
-			return $info;
-		}
-		return { result => "denial" };
-	}
-	my $saved_auth = $c->param('tauthorization');
-	return { result => 'denial' } unless defined $saved_auth && length $saved_auth;
-	my $authors = `echo $saved_auth | base64 --decode`;
-	my $au = &subs::note_decrypter($patience, $authors);
-	chomp $au;
-	if (defined $au && length $au && secure_compare $au, $auth) {
-		my $result = "You said " . $c->param('life');
-
-		return { result => "approved" , returner => $result, tauthorization => $saved_auth, server_time => $server_time, offset => $offset};
+	# The deck is authenticated the same way its rooms are: the rotated Now Me
+	# pair in the device's operator_door. There is no separate teletype password,
+	# so a deck that has just run Now Me can open the control socket at once -
+	# the same `authorization` token rides in the query string (URL-encoded).
+	my $authorized = eval { &watch::embeddedAuthorizer($c) };
+	if ($authorized) {
+		return {
+			result => 'approved',
+			server_time => $server_time,
+			offset => $offset,
+			returner => "You're so in!"
+		};
 	}
 	return { result => 'denial' };
 };

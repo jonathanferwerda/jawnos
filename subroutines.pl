@@ -1822,7 +1822,28 @@ sub watch_reply_stream() {
 		chip_id => $meta->{'chip_id'},
 		edt => $meta->{'edt'} || 'watch'
 	});
-	return 0 unless $bt;
+	# A bridge that can carry the words does not always expose the streaming
+	# client (the Android bridge falls back to a broadcast send and has no
+	# jawn-bt script). Do not throw the sound away there: send the same parts
+	# through bluetooth_sender, one message at a time, which is the path the
+	# text already takes. Slower, but the deck buffers to the last part anyway.
+	unless ($bt) {
+		$log->info('voice: no stream client; sending reply audio part by part');
+	}
+	my $send = sub {
+		my ($data) = @_;
+		if ($bt) {
+			print {$bt} encode_json($data) . "\n";
+		}
+		else {
+			&subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $meta->{'chip_id'},
+				edt => $meta->{'edt'} || 'watch',
+				message => $data
+			});
+		}
+	};
 	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
 	# How much audio there will be, near enough: ~14 characters a second of
 	# speech, 8 kHz mono s16 is 16000 bytes a second. The watch uses it to decide
@@ -1854,20 +1875,20 @@ sub watch_reply_stream() {
 			my $n = read($pout, $chunk, 4096);
 			last unless defined $n && $n > 0;
 			my $b64 = MIME::Base64::encode_base64($chunk, '');
-			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } }) . "\n";
+			$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } });
 			$seq++;
 			$sent += $n;
 		}
 		close $pout;
 		waitpid($pid, 0);
 		if ($sent) {
-			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, total => $est_total, audio => '' } }) . "\n";
+			$send->({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, total => $est_total, audio => '' } });
 			$done = 1;
 			last;
 		}
 		# nothing came out (ffmpeg missing, say): try piper alone at its own rate
 	}
-	close $bt;
+	close $bt if $bt;
 	$log->info('voice: no reply audio rendered for the watch (text only)') unless $done;
 	return $done;
 }
