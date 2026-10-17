@@ -17216,6 +17216,55 @@ sub version_newer {
 	return &subs::version_cmp($candidate, $mine) > 0 ? 1 : 0;
 }
 
+# The tree the working files would commit as, without touching the worktree or
+# the index. A code sync writes a peer's files over a checkout, so this is what
+# a commit would carry - and what can be compared with the commits origin knows.
+sub git_worktree_tree {
+	my ($repo) = @_;
+	my $git = &subs::git_binary();
+	my $stash = `cd "$repo" && "$git" -c user.name=jawnos -c user.email=jawnos\@localhost stash create 2>/dev/null`;
+	chomp $stash;
+	return undef unless $stash =~ /^[0-9a-f]{7,40}$/;
+	my $tree = `cd "$repo" && "$git" rev-parse "$stash^{tree}" 2>/dev/null`;
+	chomp $tree;
+	return ($tree =~ /^[0-9a-f]{40}$/) ? $tree : undef;
+}
+
+# Whether origin/main's history already carries this exact tree.
+sub git_origin_has_tree {
+	my ($repo, $tree) = @_;
+	my $git = &subs::git_binary();
+	my $trees = `cd "$repo" && "$git" log --format=%T origin/main 2>/dev/null`;
+	return scalar grep { $_ eq $tree } split /\n/, $trees;
+}
+
+# A code sync writes a peer's tree over a checkout (the pack excludes .git), so
+# every synced file reads as modified against a stale HEAD. Put the checkout back
+# in a state git can move: if the synced tree is a shipped commit, reset to
+# origin/main; otherwise preserve it as a local commit, so the work is not lost
+# and the tree is clean for the next pull. No git, nothing to do.
+sub git_checkout_normalize {
+	my ($opts) = @_;
+	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
+	my $label = $opts->{'label'} || 'sync';
+	my $git   = &subs::git_binary();
+	return ('no-repo', '') unless -d "$repo/.git";
+	my $dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>/dev/null`;
+	return ('clean', '') unless $dirty =~ /\S/;
+	# best effort: with no route the synced tree is still worth preserving
+	`cd "$repo" && "$git" fetch origin --quiet 2>/dev/null`;
+	my $fetched = ($? == 0);
+	my $tree = &subs::git_worktree_tree($repo);
+	if ($fetched && $tree && &subs::git_origin_has_tree($repo, $tree)) {
+		my $out = `cd "$repo" && "$git" reset --hard origin/main 2>&1`;
+		return ('reset', $out);
+	}
+	my $version = &subs::jawn_version();
+	my $out = `cd "$repo" && "$git" add -A 2>&1`;
+	$out .= `cd "$repo" && "$git" -c user.name=JawnOS -c user.email=jawnos\@localhost commit --no-verify -m "code sync: $label ($version)" 2>&1`;
+	return (($? == 0) ? 'committed' : 'dirty', $out);
+}
+
 sub git_repo_update {
 	my ($opts) = @_;
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -17223,10 +17272,11 @@ sub git_repo_update {
 	my $git   = &subs::git_binary();
 	return ('no-repo', '') unless -d "$repo/.git";
 	my $run = sub { my $cmd = shift; return `cd "$repo" && $cmd 2>&1`; };
+	my $dirty = '';
 	unless ($force) {
-		# never touch a tree with local modifications to tracked files
-		my $dirty = $run->("\"$git\" status --porcelain --untracked-files=no");
-		return ('dirty', $dirty) if $dirty =~ /\S/;
+		# never touch a tree with local modifications to tracked files, but see
+		# below: a tree whose content is already a shipped commit is not work
+		$dirty = $run->("\"$git\" status --porcelain --untracked-files=no");
 	}
 	my $out = $run->("\"$git\" fetch origin --quiet");
 	# a failed fetch must never be acted on: the remote-tracking ref may be
@@ -17234,6 +17284,19 @@ sub git_repo_update {
 	# force could reset to the stale ref). error sends the watcher to its peer
 	# fallback instead.
 	my $fetch_ok = $? ? 0 : 1;
+	if (!$force && $dirty =~ /\S/) {
+		# A code sync leaves a checkout dirty with files that are part of a
+		# commit origin already has (the pack excludes .git). That is not local
+		# work to protect: reset to the authority instead of sitting behind.
+		if ($fetch_ok) {
+			my $tree = &subs::git_worktree_tree($repo);
+			if ($tree && &subs::git_origin_has_tree($repo, $tree)) {
+				my $reset = $run->("\"$git\" reset --hard origin/main");
+				return ('reset', $dirty . $reset);
+			}
+		}
+		return ('dirty', $dirty);
+	}
 	my $head   = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
 	my $origin = `cd "$repo" && "$git" rev-parse origin/main 2>/dev/null`; chomp $origin;
 	return ('error', $out) unless $fetch_ok && $head && $origin;
