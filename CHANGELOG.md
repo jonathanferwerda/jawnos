@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.646 - watch and t-deck: voice clips prefer a single WiFi POST to /watch/voice; when WiFi is down (or the homebase is marked down) the BLE bridge is used at once, and the log names which road was taken. The t-deck gains the WiFi upload it did not have, and both devices use a shorter upload timeout so an unreachable homebase does not delay the fallback.
 - v0.1.638 - watch and t-deck: the wake acknowledgment chime now plays when the capture ends, not when the wake word lands, and its two notes are reversed to E6 then A5 (high, then low).
 - v0.1.637 - t-deck: the wss control socket logs each dial and retries every 5 s while remote input is on, so a handshake that loses a race with the radio or a TLS buffer no longer waits for the next key press.
 - v0.1.636 - teletype: a deck authorized by Now Me opens the wss control socket with that same rotated `authorization` pair - the separate teletype password is gone from the Embedded panel and its route; the panel still holds the Enable/Disable switch. The watch keeps its screen awake through a wake-word capture and the Guide's reply instead of letting the tilt glance expire after a few seconds, and does not re-arm the listener over its own spoken answer. The t-deck's spoken reply is no longer discarded when the serving bridge has no streaming client: the parts go through the same send path as the text, and the listener stands aside while the answer is expected so the speaker is not recorded as a new command.

@@ -3700,10 +3700,12 @@ static bool voice_post_clip(const String &path) {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient https;
-  https.setTimeout(8000);
+  // Short enough that an unreachable homebase costs a moment, not the reply
+  // window: the clip is compressed and the link is local, so this is ample.
+  https.setTimeout(4000);
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
-    + "&authorization=" + authorization
+    + "&authorization=" + urlEncode(authorization)
     + "&voice=" + voice_mode_name
     + "&timestamp=" + String((long)voice_clip_ts);
   bool ok = false;
@@ -4113,10 +4115,23 @@ static bool voice_ship_clip(const String &path) {
   // word. WiFi POSTs the whole file in one request. The BLE bridge is the
   // fallback for when there is no WiFi (or the homebase is unreachable); taps and
   // steps, which are tiny, still ride BLE as before.
-  if (WiFi.status() == WL_CONNECTED && homebaseIP.length() > 0
-      && (int32_t)(millis() - homebase_down_until) >= 0 && voice_post_clip(path)) {
-    Serial.println("[voice] clip shipped over WiFi");
-    return true;
+  if (WiFi.status() == WL_CONNECTED) {
+    if (homebaseIP.length() == 0) {
+      Serial.println("[voice] no homebase; BLE now");
+    }
+    else if ((int32_t)(millis() - homebase_down_until) < 0) {
+      Serial.println("[voice] homebase marked down; BLE now");
+    }
+    else if (voice_post_clip(path)) {
+      Serial.println("[voice] clip shipped over WiFi");
+      return true;
+    }
+    else {
+      Serial.println("[voice] WiFi POST failed; BLE now");
+    }
+  }
+  else {
+    Serial.println("[voice] WiFi not connected; BLE now");
   }
   if (deviceConnected && voice_ble_send(path)) {
     Serial.println("[voice] clip shipped over BLE");

@@ -6256,15 +6256,78 @@ static bool deck_voice_ble_send(const String &path, long ts, const char *mode) {
   return true;
 }
 
-// The shipping task: compress the clip and hand it to the bridge, then release
-// the microphone to the next recording.
+// POST the finished clip to the homebase over WiFi. Streamed from flash, the
+// way the watch does it: the clip is tens of KB, which the TLS stack should not
+// hold in RAM. A missing WiFi link or a homebase already marked down returns at
+// once so the caller can go straight to BLE.
+static bool deck_voice_post_clip(const String &path, long ts, const char *mode) {
+  if (homebaseIP.length() == 0 || authorization.length() == 0) {
+    deckLog("%s", "[voice] no homebase/auth; BLE now");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    deckLog("%s", "[voice] WiFi not connected; BLE now");
+    return false;
+  }
+  if ((int32_t)(millis() - homebase_down_until) < 0) {
+    deckLog("%s", "[voice] homebase marked down; BLE now");
+    return false;
+  }
+  File f = FFat.open(path.c_str(), FILE_READ);
+  if (!f) { return false; }
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient https;
+  // Short enough that an unreachable homebase costs a moment, not the reply
+  // window: the clip is compressed and the link is local, so this is ample.
+  https.setTimeout(4000);
+  String url = "https://" + homebaseIP + "/watch/voice?edt=teletype"
+    + "&chip_id=" + chip_id_maker()
+    + "&authorization=" + urlEncode(authorization)
+    + "&voice=" + String(mode)
+    + "&timestamp=" + String(ts);
+  bool ok = false;
+  if (https.begin(client, url)) {
+    https.addHeader("Content-Type", "application/octet-stream");
+    int code = https.sendRequest("POST", &f, (size_t)f.size());
+    f.close();
+    deckLog("[voice] WiFi POST %d", code);
+    ok = (code > 0 && code < 400);
+    https.end();
+  }
+  else {
+    f.close();
+    deckLog("%s", "[voice] WiFi begin failed; BLE now");
+  }
+  homebase_down_until = ok ? 0 : millis() + 20000;
+  return ok;
+}
+
+// WiFi first, BLE when there is no link (or the POST failed): a WiFi POST
+// carries the whole clip in one request, while BLE has to send hundreds of
+// notifications and can lose parts. The log names the chosen road.
+static bool deck_voice_ship(const String &path, long ts, const char *mode) {
+  if (deck_voice_post_clip(path, ts, mode)) {
+    deckLog("[voice] clip shipped over WiFi");
+    return true;
+  }
+  if (deck_voice_ble_send(path, ts, mode)) {
+    deckLog("[voice] clip shipped over BLE");
+    return true;
+  }
+  deckLog("%s", "[voice] no radio to ship the clip on");
+  return false;
+}
+
+// The shipping task: compress the clip and hand it off, then release the
+// microphone to the next recording.
 static void deckVoiceShipTask(void *pv) {
   (void)pv;
   long ts = deck_voice_ts;
   String cls = deck_voice_wav;
   if (deck_voice_compress(deck_voice_wav, "/voice.adpcm")) { cls = "/voice.adpcm"; }
-  bool ok = deck_voice_ble_send(cls, ts, "vad");
-  deckLog("[voice] clip ts=%ld %s over BLE", ts, ok ? "shipped" : "NOT shipped");
+  bool ok = deck_voice_ship(cls, ts, "vad");
+  deckLog("[voice] clip ts=%ld %s", ts, ok ? "shipped" : "NOT shipped");
   vTaskDelete(NULL);
 }
 
@@ -6790,8 +6853,8 @@ static void deckVoiceListenTask(void *pv) {
         // carries a quarter of the bytes and the server reads an identical file.
         String ship_path = VOICE_CAPTURE_PATH;
         if (deck_voice_compress(VOICE_CAPTURE_PATH, "/voice.adpcm")) { ship_path = "/voice.adpcm"; }
-        if (!deck_voice_ble_send(ship_path, deck_voice_ts, voice_mode_name)) {
-          deckLog("%s", "[voice] clip NOT shipped (no bridge?)");
+        if (!deck_voice_ship(ship_path, deck_voice_ts, voice_mode_name)) {
+          deckLog("%s", "[voice] clip NOT shipped (no radio?)");
         }
         else {
           // hold the screen on until the Guide answers
