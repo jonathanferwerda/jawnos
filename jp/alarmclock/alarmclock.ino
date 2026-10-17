@@ -15,17 +15,25 @@
 #include <PicoOTA.h>
 #include <uri/UriRegex.h>
 
+// Civil-date struct for the 64-bit clock display. Declared before any function
+// so the Arduino-generated prototypes can see the return type.
+struct jawn_time {
+  int year, month, day, hour, min, sec;
+};
+
 LiquidCrystal_I2C lcd(0x27,20,4); 
 
 int led = LED_BUILTIN;
 
-const char* ssid;
-const char* password;
+// Owned strings. The form used to hand c_str() pointers into request-local
+// Strings, which dangled as soon as the handler returned.
+String ssid;
+String password;
 
 const char* host = "192.168.1.3";
 const uint16_t port = 3000;
-const char* ap_ssid = "Pico 2W";
-const char* ap_password = "president";
+String ap_ssid = "Pico 2W";
+String ap_password = "president";
 WiFiMulti multi;
 WebServer server(3000);
 String homebase;
@@ -38,10 +46,40 @@ int wifiDownTicks = 0;
 String wifiState;
 String authorization;
 String before_me;
-int time_defined = 0;
+bool time_defined = false;
 int64_t offset;
 int input_working = 0;
 JSONVar config;
+
+// ---- clock ---------------------------------------------------------------
+// The epoch is kept as 64-bit milliseconds plus the millis() value it was taken
+// at, so scheduling and the LCD never depend on time_t's width. When the core
+// has a 64-bit time_t the system clock is set as well; otherwise it is left
+// alone rather than truncated.
+int64_t epoch_ms = 0;
+uint32_t epoch_ref = 0;
+#if defined(__SIZEOF_TIME_T__)
+static const bool TIME_T_IS_64 = (__SIZEOF_TIME_T__ >= 8);
+#else
+static const bool TIME_T_IS_64 = (sizeof(time_t) >= 8);
+#endif
+
+int64_t now_ms() {
+  if (!time_defined) { return 0; }
+  return epoch_ms + (uint32_t)(millis() - epoch_ref);
+}
+
+void set_epoch_seconds(int64_t seconds) {
+  epoch_ms = seconds * 1000LL;
+  epoch_ref = millis();
+  time_defined = true;
+  if (TIME_T_IS_64) {
+    struct timeval tv;
+    tv.tv_sec = (time_t)seconds;
+    tv.tv_usec = 0;
+    settimeofday(&tv, nullptr);
+  }
+}
 
 Servo myservo;
 WiFiClientSecure *connexion = new WiFiClientSecure;
@@ -123,14 +161,19 @@ void setup() {
     String t_ap_ssid = server.arg("ap_ssid");
     String t_ap_password = server.arg("ap_password");
     if (t_ap_password != "" && t_ap_ssid != "") {
-      ap_password = t_ap_password.c_str();
-      ap_ssid = t_ap_ssid.c_str();
+      // owned copies, persisted: the old c_str() assignments pointed at locals
+      // that died with the request and were never written to config
+      ap_password = t_ap_password;
+      ap_ssid = t_ap_ssid;
+      config["ap_password"] = ap_password;
+      config["ap_ssid"] = ap_ssid;
+      config_writer();
     }
     if (t_ssid != "" && t_password != "") {
       Serial.println("Saving SSID and Password");
 
-      ssid = t_ssid.c_str();
-      password = t_password.c_str();
+      ssid = t_ssid;
+      password = t_password;
       Serial.println(ssid);
       Serial.println(password);      
       config["ssid"] = ssid;
@@ -195,10 +238,7 @@ void setup() {
     config["homebaseIP"] = server.arg("homebase");
     Serial.println("Homebase: " + homebase);
     Serial.println("homebase ip:" + homebaseIP);
-    struct timeval tv;
-    tv.tv_sec = (time_t)(timestamp + offset);
-    settimeofday(&tv,nullptr);
-    time_defined = 1;
+    set_epoch_seconds(timestamp + offset);
     // Serial.println("Called President at " + homebaseIP);
     server.send(200, "text/plain", "homebase ip is now " + homebaseIP);
     config_writer();
@@ -300,13 +340,15 @@ void setup() {
   });
   server.on("/wifi_update", []() {
     homebaseChecked();
-    String req = "https://" + homebaseIP + "/teletype/wifi_update?";
+    String req = "https://" + homebaseIP + "/manager/teletype/wifi_update?";
     String wifi_update = https_request(req);
     
     JSONVar info = JSON.parse(wifi_update);
-    if (ssid != (const char *)info["ssid"] || password != (const char* )info["password"]) {
-      ssid = (const char *)info["ssid"];
-      password = (const char * )info["password"];
+    String next_ssid = String((const char *)info["ssid"]);
+    String next_password = String((const char *)info["password"]);
+    if (ssid != next_ssid || password != next_password) {
+      ssid = next_ssid;
+      password = next_password;
       config["ssid"] = ssid;
       config["password"] = password;
       multi.clearAPList();
@@ -314,7 +356,7 @@ void setup() {
       server.close();
       delay(400);
       
-      multi.addAP(ssid, password);
+      multi.addAP(ssid.c_str(), password.c_str());
       if (multi.run() != WL_CONNECTED) {
         Serial.println("Unable to connect to network, rebooting in 10 seconds...");
         delay(10000);
@@ -373,11 +415,11 @@ void wifi_start() {
   WiFi.mode(WIFI_STA);
   if (config["ssid"] != "" && config["password"] != "") {
     Serial.println("Got the goods");
-    ssid = config["ssid"];
-    password = config["password"];
+    ssid = String((const char *)config["ssid"]);
+    password = String((const char *)config["password"]);
     Serial.println(ssid);
     Serial.println(password);
-    multi.addAP(ssid, password);
+    multi.addAP(ssid.c_str(), password.c_str());
   }
   if (multi.run() == WL_CONNECTED && config["ssid"] != "" && config["password"] != "") {
     server.begin();
@@ -406,7 +448,7 @@ void wifi_start() {
     Serial.println("no wifi connected");
     WiFi.mode(WIFI_AP);
     delay(100);
-    if (WiFi.softAP(ap_ssid, ap_password)) {
+    if (WiFi.softAP(ap_ssid.c_str(), ap_password.c_str())) {
 
       Serial.print("Access Point successfully started. SSID: ");
       Serial.println(ap_ssid);
@@ -618,7 +660,7 @@ void wifi_supervise() {
   if (wifiDownTicks == 3) {
     WiFi.mode(WIFI_AP_STA);
     if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
-      WiFi.softAP(ap_ssid, ap_password);
+      WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
       Serial.println("[wifi] router away; AP up while retrying");
     }
   }
@@ -640,12 +682,12 @@ void input_scanner() {
     String lastPress = config["button"][buttonKeys[i]]["lastPress"];
     String pressed = config["button"][buttonKeys[i]]["pressed"];
 
-    long lp = lastPress.toInt();
+    uint32_t lp = (uint32_t)strtoul(lastPress.c_str(), nullptr, 10);
     if (buttonState == 0 && pressed == "yes") {
       config["button"][buttonKeys[i]]["pressed"] = "no";
       config_writer();
     }
-    if (buttonState == 1 && (millis() > lp + 10 && pressed != "yes")) {
+    if (buttonState == 1 && ((uint32_t)(millis() - lp) > 10) && pressed != "yes") {
       config["button"][buttonKeys[i]]["lastPress"] = String(millis());
       config["button"][buttonKeys[i]]["pressed"] = "yes";
       String toggle = buttonKeys[buttonKeys[i]]["toggle"];
@@ -720,7 +762,6 @@ void input_scanner() {
     }
     String lastChange = config["switch"][switchKeys[i]]["lastChange"];
     String lastState = String(config["switch"][switchKeys[i]]["state"]);
-    long lc = lastChange.toInt();
     if (state != lastState) {
       config["switch"][switchKeys[i]]["state"] = state;
       config["switch"][switchKeys[i]]["lastChange"] = String(millis());
@@ -773,12 +814,12 @@ void input_scanner() {
     int lbs = String(config["pot"][spin]["lastValue"]).toInt();
     String changed = String(config["pot"][spin]["changed"]);
     String ls = (const char *)config["pot"][spin]["lastSend"];
-    int lastSend = ls.toInt();
+    uint32_t lastSend = (uint32_t)strtoul(ls.c_str(), nullptr, 10);
     if (potState != lbs || changed == "yes") {
       int min = lbs - 12;
       int max = lbs + 12;
       String lm = (const char *)config["pot"][spin]["lastMove"];
-      int lastMove = lm.toInt();
+      uint32_t lastMove = (uint32_t)strtoul(lm.c_str(), nullptr, 10);
       lastMove = lastMove + 300;
 
       if (potState < min || potState > max) {
@@ -832,12 +873,17 @@ void input_scanner() {
       }
 
 
-      if (millis() < lastSend) {
-        config["pot"][spin]["lastSend"] = String(millis());
+      // wrap-safe: a negative delta means the stored millis is "ahead" (the
+      // counter wrapped), so re-base it; otherwise require 500 ms since the last
+      // send and the 300 ms move debounce to have passed.
+      if ((int32_t)(millis() - lastSend) < 0) {
+        lastSend = millis();
+        config["pot"][spin]["lastSend"] = String(lastSend);
       }
-      lastSend = lastSend + 500;
       changed = String(config["pot"][spin]["changed"]);
-      if (lastSend < millis() && lastMove < millis() && changed == "yes") {
+      bool send_due = (int32_t)(millis() - lastSend) >= 500;
+      bool move_due = (int32_t)(millis() - lastMove) >= 0;
+      if (send_due && move_due && changed == "yes") {
         config["pot"][spin]["lastSend"] = String(millis());
           
         potState = analogRead(pin);
@@ -923,12 +969,9 @@ void push_job(String component,int pin, String state, String timestamp, String u
 }
 
 void handle_jobs() {
-  if (time_defined == 1 && config["jobs"].keys().length() > 0) {
-    struct timeval tv;
-    time_t now;
-    time(&now);
-    gettimeofday(&tv,NULL);
-    int64_t timestamp = ((int64_t)tv.tv_sec * 1000LL + (int64_t)tv.tv_usec / 1000LL) - (offset * 1000);
+  if (time_defined && config["jobs"].keys().length() > 0) {
+    // local epoch -> the UTC milliseconds the appointments carry
+    int64_t timestamp = now_ms() - (offset * 1000);
 
     JSONVar jobKeys = config["jobs"].keys();
     for (int i = 0; i < jobKeys.length(); i++) {
@@ -985,12 +1028,8 @@ void handle_jobs() {
         JSONVar timers = JSON.parse(response);
 
         int64_t timestamp = (int64_t)(double)timers["timestamp"];
-        timestamp = timestamp - (60 * 9) + 4;
         int64_t offset_s = (int64_t)(double)timers["offset"];
-        struct timeval tv;
-        tv.tv_sec = (time_t)(timestamp + offset_s);
-        settimeofday(&tv,nullptr);
-        time_defined = 1;  
+        set_epoch_seconds(timestamp + offset_s);  
       }
 
     }
@@ -1000,20 +1039,49 @@ void handle_jobs() {
 
 uint32_t lastMillis;
 
+// Days-from-epoch to a civil date, so the display works past 2038 without
+// localtime_r()/32-bit time_t. The epoch we hold is already local seconds.
+jawn_time break_epoch(int64_t seconds) {
+  int64_t days = seconds / 86400;
+  int64_t rem = seconds % 86400;
+  if (rem < 0) { rem += 86400; days -= 1; }
+  int64_t z = days + 719468;
+  int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+  unsigned doe = (unsigned)(z - era * 146097);
+  unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int64_t y = (int64_t)yoe + era * 400;
+  unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  unsigned mp = (5 * doy + 2) / 153;
+  unsigned d = doy - (153 * mp + 2) / 5 + 1;
+  unsigned m = mp + (mp < 10 ? 3 : -9);
+  y += (m <= 2);
+  jawn_time t;
+  t.year = (int)y;
+  t.month = (int)m;
+  t.day = (int)d;
+  t.hour = (int)(rem / 3600);
+  t.min = (int)((rem % 3600) / 60);
+  t.sec = (int)(rem % 60);
+  return t;
+}
+
 void read_time() {
-  if (millis() >= (lastMillis + 1000)) { 
+  if ((uint32_t)(millis() - lastMillis) >= 1000) {
     lastMillis = millis();
-    time_t now;
+    if (!time_defined) { return; }
+    int64_t secs = now_ms() / 1000;
+    jawn_time t = break_epoch(secs);
+    static const char *mon[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    static const char *dow[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    int64_t days = secs / 86400;
+    if (secs < 0 && secs % 86400) { days -= 1; }
+    int wd = (int)((days + 4) % 7);   // 1970-01-01 was a Thursday
+    if (wd < 0) { wd += 7; }
     char buffdate[80];
     char bufftime[80];
-
-    time(&now);
-    struct tm tmstruct;
-    localtime_r(&now,&tmstruct);
-    
-    strftime(buffdate, 64, "%a %b %d %Y", &tmstruct);
-    strftime(bufftime, 64, "%H:%M:%S", &tmstruct);
-    
+    snprintf(buffdate, sizeof(buffdate), "%s %s %02d %d", dow[wd], mon[t.month - 1], t.day, t.year);
+    snprintf(bufftime, sizeof(bufftime), "%02d:%02d:%02d", t.hour, t.min, t.sec);
     String timing = (const char *)buffdate;
     lcd.setCursor(0,0);
     lcd.print(timing);
@@ -1086,8 +1154,8 @@ void config_init() {
   }
   JSONVar potKeys = config["pot"].keys();
   for (int i = 0; i < potKeys.length(); i++) {
-    config["pot"][potKeys[i]["lastMove"]] = String(millis());
-    config["pot"][potKeys[i]["lastSend"]] = String(millis());
+    config["pot"][potKeys[i]]["lastMove"] = String(millis());
+    config["pot"][potKeys[i]]["lastSend"] = String(millis());
 
     String spin = potKeys[i];
     int pin = spin.toInt();
@@ -1109,8 +1177,12 @@ void config_init() {
   homebase = String(config["homebase"]);
   homebaseIP = String(config["homebaseIP"]);
   if (config["ssid"] && config["password"]) {
-    ssid = config["ssid"];
-    password = config["password"];
+    ssid = String((const char *)config["ssid"]);
+    password = String((const char *)config["password"]);
+  }
+  if (config["ap_ssid"] && config["ap_password"]) {
+    ap_ssid = String((const char *)config["ap_ssid"]);
+    ap_password = String((const char *)config["ap_password"]);
   }
 
 /*    
