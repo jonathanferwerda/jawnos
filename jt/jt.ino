@@ -5,9 +5,6 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <WiFiAP.h>
-// ESPmDNS: advertise this deck on _jawnos._tcp so a scan names it at once (see
-// the server's subs::mdns_devices).
-#include <ESPmDNS.h>
 // WebServer.h wants FS (and <functional>) declared before it sees them
 #include "FS.h"
 #include "FFat.h"
@@ -134,6 +131,12 @@ static volatile bool voiceTaskAlive = false;
 // spoken statement changes the panel and writes the config, and both stall the
 // microphone - and draws the orange ring the watch shows while it is listening.
 static volatile bool voiceRecording = false;
+// True from a shipped clip until the Guide's answer arrives: loop() holds the
+// screen awake on it - a prompt is not answered in a few seconds, and the person
+// is waiting on the words - then restarts the idle timer. A reply that never
+// comes gives up after a long wait (see loop()).
+static volatile bool voiceAwaitingReply = false;
+static volatile uint32_t voiceAwaitingSince = 0;
 // The Guide's answer, shown on the deck's own screen: the words arrive as a
 // {type:'say'} message, are drawn on the top layer, and are faded by loop() after
 // SAY_TEXT_MS. Declared up here because loop() reads them; the label is built in
@@ -841,15 +844,6 @@ void setup() {
   // allocations keep to internal RAM.
   mbedtls_platform_set_calloc_free(mbedtls_psram_calloc, mbedtls_psram_free);
   heap_caps_malloc_extmem_enable(1024);
-  // The mDNS component warns about odd packets it receives, from lwip's tcpip
-  // thread. That thread's first console write allocates a newlib lock, and with
-  // the voice stack resident the internal heap can be too tight for it: the malloc
-  // fails, lock_init_generic aborts, and the deck panics - a look at the backtrace
-  // blames mdns receive(), but the fault is memory pressure. Nothing here reads the
-  // mDNS log, so turn it off; the pressure itself is what the [voice] listening
-  // line's int= figure is for.
-  esp_log_level_set("mdns", ESP_LOG_NONE);
-  esp_log_level_set("mdns_networking", ESP_LOG_NONE);
   deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
@@ -1719,36 +1713,11 @@ void notification_display(String title, String notification) {
   }
 }
 
-// What this device is, advertised over mDNS: purpose, model and abilities.
-#define JAWNOS_CAPS "screen,touch,keyboard,trackball,mic,speaker,gps,lora,ble,wifi,sd"
-
-static bool jawnos_mdns_up = false;
-static void jawnos_mdns_start() {
-  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
-  String chip_id = chip_id_maker();
-  String host = "jawn-" + chip_id;
-  if (!MDNS.begin(host.c_str())) {
-    deckLog("%s", "[mdns] begin failed");
-    return;
-  }
-  MDNS.addService("jawnos", "tcp", 3000);
-  MDNS.addServiceTxt("jawnos", "tcp", "chip_id", chip_id.c_str());
-  MDNS.addServiceTxt("jawnos", "tcp", "name", name.c_str());
-  MDNS.addServiceTxt("jawnos", "tcp", "purpose", "teletype");
-  MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Deck");
-  MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
-  MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
-  // the Bluetooth address, so the server can bridge this deck without waiting on
-  // a /device_query (bluetooth_sender connects the daemon to it)
-  uint8_t bmac[6];
-  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
-    char mstr[18];
-    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
-    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
-  }
-  jawnos_mdns_up = true;
-  deckLog("[mdns] jawnos._tcp up as %s", host.c_str());
-}
+// The mDNS responder used to advertise this deck on _jawnos._tcp. It is gone: the
+// ESP-IDF mDNS stack runs in lwip's tcpip thread, and its log path was where the
+// deck panicked (a console lock it could not allocate under memory pressure). The
+// server still names printers over mDNS (avahi-browse, a subprocess); a deck is
+// identified by the Dev panel's scan and its own /device_query instead.
 
 void wifi_server() {
   if (ssid == "" && password == "") {
@@ -1789,7 +1758,6 @@ void wifi_server() {
           server.begin();
           webserver_enabled = true;
           wifi_enabled = true;
-          jawnos_mdns_start();
           return;
           break;
         default:
@@ -2013,6 +1981,9 @@ void loop() {
           const char *words = (const char *)btMsg["data"]["text"];
           deckLog("[voice] guide says: %s", words ? words : "");
           if (words) { say_label_show(String(words)); }
+          // the answer is in: the screen may time out again from now
+          voiceAwaitingReply = false;
+          buttonMillis = millis();
         }
         else if (mtype == "toggle" || mtype == "toggles") {
           // a toggle flipped somewhere else (a phone press, an alarm, an
@@ -2426,6 +2397,14 @@ void loop() {
   // the panel, and both stall the microphone. Show the same orange ring the watch
   // does while the listener has a clip, so it is clear it heard you.
   if (voiceRecording) { buttonMillis = millis(); }
+  if (voiceAwaitingReply) {
+    buttonMillis = millis();
+    // a reply that never comes must not hold the panel on for ever
+    if (millis() - voiceAwaitingSince > 30000) {
+      voiceAwaitingReply = false;
+      buttonMillis = millis();
+    }
+  }
   {
     static bool voice_border_on = false;
     if (voiceRecording != voice_border_on) {
@@ -6528,6 +6507,11 @@ static void deckVoiceListenTask(void *pv) {
         if (deck_voice_compress(VOICE_CAPTURE_PATH, "/voice.adpcm")) { ship_path = "/voice.adpcm"; }
         if (!deck_voice_ble_send(ship_path, deck_voice_ts, voice_mode_name)) {
           deckLog("%s", "[voice] clip NOT shipped (no bridge?)");
+        }
+        else {
+          // hold the screen on until the Guide answers
+          voiceAwaitingSince = millis();
+          voiceAwaitingReply = true;
         }
       }
     }

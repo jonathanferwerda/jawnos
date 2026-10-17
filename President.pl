@@ -243,10 +243,11 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
-	# mDNS is how a device names itself the moment it joins: fold what the local
-	# network advertises (_jawnos._tcp, plus a printer on _ipp._tcp) into this
-	# machine's device row on a short tick, so a plugged-in watch, deck or pico
-	# appears with its purpose and abilities without anyone pressing Scan.
+	# The printer names itself on _ipp._tcp; fold what the local network advertises
+	# into this machine's device row on a short tick. (The fleet used to advertise
+	# _jawnos._tcp as well, but the ESP-IDF responder is gone from the firmware - see
+	# subs::mdns_devices - so devices are named by the scan and their own
+	# /device_query.)
 	&subs::subprocessor(sub {
 		sleep 12;
 		while (1) {

@@ -15,7 +15,6 @@
 #include <WiFiAP.h>
 #include <Update.h>
 #include <uri/UriRegex.h>
-#include <ESPmDNS.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <BLEDevice.h>
@@ -143,6 +142,12 @@ static volatile bool voiceRecording = false;
 // command went missing while a glance's worth of frames came through. loop() holds
 // the screen awake while either flag is set.
 static volatile bool voiceShipping = false;
+// True from the end of a capture until the Guide's answer has been spoken. loop()
+// holds the screen on through the wait and the answer - a prompt is not answered
+// in a few seconds - and then restarts the idle timer. A reply that never comes
+// gives up after a long wait (see loop()).
+static volatile bool voiceAwaitingReply = false;
+static volatile uint32_t voiceAwaitingSince = 0;
 // True while the panel has been darkened because a send is holding the chip
 // awake: the screen is off, but the loop keeps running so a touch brings it back
 // and the payload finishes in the background.
@@ -1765,6 +1770,17 @@ void loop() {
   if (voiceRecording) {
     buttonMillis = millis();
   }
+  // A spoken request is answered in a few seconds, not instantly: hold the screen
+  // on through the wait and the answer, then let the idle timer start again. While
+  // the answer is actually being spoken (isPlaying) the hold simply continues; the
+  // timeout is for a reply that never comes.
+  if (voiceAwaitingReply) {
+    buttonMillis = millis();
+    if (!isPlaying && millis() - voiceAwaitingSince > 30000) {
+      voiceAwaitingReply = false;
+      buttonMillis = millis();
+    }
+  }
   // the orange ring: shown for exactly as long as a command is being heard
   {
     static bool voice_border_on = false;
@@ -2451,37 +2467,10 @@ void readRadio() {
     }
   }
 }
-// What this device is, advertised over mDNS so a scan names it at once (see the
-// server's subs::mdns_devices): purpose, model and abilities, on _jawnos._tcp.
-#define JAWNOS_CAPS "screen,touch,button,crown,mic,speaker,imu,steps,vibe,ble,wifi,lora"
-
-static bool jawnos_mdns_up = false;
-static void jawnos_mdns_start() {
-  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
-  String chip_id = chip_id_maker();
-  String host = "jawn-" + chip_id;
-  if (!MDNS.begin(host.c_str())) {
-    Serial.println("[mdns] begin failed");
-    return;
-  }
-  MDNS.addService("jawnos", "tcp", 3000);
-  MDNS.addServiceTxt("jawnos", "tcp", "chip_id", chip_id.c_str());
-  MDNS.addServiceTxt("jawnos", "tcp", "name", name.c_str());
-  MDNS.addServiceTxt("jawnos", "tcp", "purpose", "watch");
-  MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Watch S3");
-  MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
-  MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
-  // the Bluetooth address, so the server can bridge this watch without waiting on
-  // a /device_query (bluetooth_sender connects the daemon to it)
-  uint8_t bmac[6];
-  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
-    char mstr[18];
-    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
-    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
-  }
-  jawnos_mdns_up = true;
-  Serial.println("[mdns] jawnos._tcp up as " + host);
-}
+// The mDNS responder used to advertise this watch on _jawnos._tcp. It is gone: the
+// ESP-IDF mDNS stack runs in lwip's tcpip thread and cost heap on a device that has
+// little to spare; the Dev panel's scan and the watch's own /device_query identify
+// it instead. The server still names printers over mDNS (avahi-browse).
 
 void wifi_server() {
   if (ssid == "" && password == "") {
@@ -2520,7 +2509,6 @@ void wifi_server() {
           server.begin();
           webserver_enabled = true;
           wifi_enabled = true;
-          jawnos_mdns_start();
           return;
           break;
         default:
@@ -4375,6 +4363,9 @@ static void voiceListenTask(void *pv) {
       voiceRecording = false;
       voice_stream_end();   // encode the tail and let the last part go out
       if (pcm_bytes > 0) {
+        // hold the screen on until the Guide answers
+        voiceAwaitingSince = millis();
+        voiceAwaitingReply = true;
         finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
         Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
         // Compact it first: ffmpeg on the server reads IMA ADPCM WAV natively, so
@@ -4517,6 +4508,7 @@ void say_playback_task(void *pvParameters) {
     if (say_stream) { xStreamBufferReset(say_stream); }
     say_stream_dead = true;
     isPlaying = false;
+    if (voiceAwaitingReply) { voiceAwaitingReply = false; buttonMillis = millis(); }
     vTaskDelete(NULL);
   }
   codec->setVolume(volumeLevel);
@@ -4554,6 +4546,8 @@ void say_playback_task(void *pvParameters) {
   say_stream_dead = true;
   if (say_stream) { xStreamBufferReset(say_stream); }
   isPlaying = false;
+  // the answer has been said: the screen may time out again from now
+  if (voiceAwaitingReply) { voiceAwaitingReply = false; buttonMillis = millis(); }
   vTaskDelete(NULL);
 }
 

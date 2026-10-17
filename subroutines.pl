@@ -2306,7 +2306,12 @@ IPP
 # address, MAC and chip_id so a scanned device is recognised however it is known.
 # The firmware puts purpose/model/caps in the TXT records (see jw/jt/alarmclock).
 sub mdns_devices() {
-	my $records = &mdns_browse('_jawnos._tcp');
+	# The watch, deck and pico no longer advertise themselves over mDNS: the ESP-IDF
+	# responder ran in lwip's tcpip thread, and its log path is where the deck
+	# panicked (a console lock it could not allocate under memory pressure), so it is
+	# gone from the firmware. The fleet is named by the Dev panel's scan and each
+	# device's own /device_query; there is nothing to read here.
+	my $records = [];
 	my (%by_ip, %by_mac, %by_chip);
 	foreach my $r (@{$records}) {
 		my $f = $r->{'fields'} || {};

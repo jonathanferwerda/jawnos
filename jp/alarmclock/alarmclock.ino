@@ -1,9 +1,6 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
-// SimpleMDNS ships with the arduino-pico core and exposes the same global MDNS
-// as the ESP32; advertise this pico on _jawnos._tcp so a scan names it at once.
-#include <SimpleMDNS.h>
 #include <WebServer.h>
 #include <time.h>
 #include <sys/time.h>
@@ -335,31 +332,9 @@ void setup() {
 
 }
 
-// What this device is, advertised over mDNS: purpose, model and abilities.
-#define JAWNOS_CAPS "lcd,led,relay,servo,button,switch,pot,pins,wifi"
-
-static bool jawnos_mdns_up = false;
-static void jawnos_mdns_start() {
-  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
-  String chip_id = String(rp2040.getChipID());
-  String host = "jawn-" + chip_id;
-  String dev_name = (const char *)config["name"];
-  if (dev_name == "null" || dev_name == "") { dev_name = "Pico"; }
-  if (!MDNS.begin(host.c_str())) {
-    Serial.println("[mdns] begin failed");
-    return;
-  }
-  hMDNSService svc = MDNS.addService("jawnos", "tcp", 3000);
-  MDNS.addServiceTxt(svc, "chip_id", chip_id.c_str());
-  MDNS.addServiceTxt(svc, "name", dev_name.c_str());
-  MDNS.addServiceTxt(svc, "purpose", "microcontroller");
-  MDNS.addServiceTxt(svc, "model", "Raspberry Pi Pico 2W");
-  MDNS.addServiceTxt(svc, "caps", JAWNOS_CAPS);
-  MDNS.addServiceTxt(svc, "port", "3000");
-  jawnos_mdns_up = true;
-  Serial.println("[mdns] jawnos._tcp up as " + host);
-}
-
+// The mDNS responder used to advertise this pico on _jawnos._tcp. It is gone with
+// the watch's and deck's; the Dev panel's scan and the pico's own /device_query
+// identify it now. The server still names printers over mDNS (avahi-browse).
 void wifi_start() {
   Serial.println("Attempting connection");
   WiFi.disconnect();
@@ -376,7 +351,6 @@ void wifi_start() {
   }
   if (multi.run() == WL_CONNECTED && config["ssid"] != "" && config["password"] != "") {
     server.begin();
-    jawnos_mdns_start();
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());    
