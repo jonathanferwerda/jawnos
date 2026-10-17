@@ -15,6 +15,7 @@
 #include <WiFiAP.h>
 #include <Update.h>
 #include <uri/UriRegex.h>
+#include <ESPmDNS.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <BLEDevice.h>
@@ -1011,6 +1012,14 @@ void setup() {
   // switch or a press froze for seconds; a zero timeout drops the output
   // instead (best-effort logging).
   Serial.setTxTimeoutMs(0);
+  // The mDNS stack logs from lwip's tcpip thread, and that thread's first console
+  // write allocates the console's stdio lock; a failed malloc there aborts the
+  // board (the deck hit exactly that). Prime the lock now, while the heap is
+  // large, and leave the mDNS log off - nothing here reads it.
+  esp_log_level_set("mdns", ESP_LOG_NONE);
+  esp_log_level_set("mdns_networking", ESP_LOG_NONE);
+  fprintf(stdout, "\n");
+  fflush(stdout);
 
   watch.begin();
   watch.initMicrophone();
@@ -2467,10 +2476,39 @@ void readRadio() {
     }
   }
 }
-// The mDNS responder used to advertise this watch on _jawnos._tcp. It is gone: the
-// ESP-IDF mDNS stack runs in lwip's tcpip thread and cost heap on a device that has
-// little to spare; the Dev panel's scan and the watch's own /device_query identify
-// it instead. The server still names printers over mDNS (avahi-browse).
+// What this device is, advertised over mDNS so the Dev panel names it the moment
+// it joins (see the server's subs::mdns_devices): purpose, model and abilities, on
+// _jawnos._tcp. setup() silences the responder's log and primes the console lock
+// its log path needs, which is what made it safe to keep.
+#define JAWNOS_CAPS "screen,touch,button,crown,mic,speaker,imu,steps,vibe,ble,wifi,lora"
+
+static bool jawnos_mdns_up = false;
+static void jawnos_mdns_start() {
+  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
+  String chip_id = chip_id_maker();
+  String host = "jawn-" + chip_id;
+  if (!MDNS.begin(host.c_str())) {
+    Serial.println("[mdns] begin failed");
+    return;
+  }
+  MDNS.addService("jawnos", "tcp", 3000);
+  MDNS.addServiceTxt("jawnos", "tcp", "chip_id", chip_id.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "name", name.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "purpose", "watch");
+  MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Watch S3");
+  MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
+  MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
+  // the Bluetooth address, so the server can bridge this watch without waiting on
+  // a /device_query (bluetooth_sender connects the daemon to it)
+  uint8_t bmac[6];
+  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
+    char mstr[18];
+    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
+    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
+  }
+  jawnos_mdns_up = true;
+  Serial.println("[mdns] jawnos._tcp up as " + host);
+}
 
 void wifi_server() {
   if (ssid == "" && password == "") {
@@ -2509,6 +2547,7 @@ void wifi_server() {
           server.begin();
           webserver_enabled = true;
           wifi_enabled = true;
+          jawnos_mdns_start();
           return;
           break;
         default:

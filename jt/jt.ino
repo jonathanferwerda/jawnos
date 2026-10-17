@@ -5,6 +5,9 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <WiFiAP.h>
+// ESPmDNS: advertise this deck on _jawnos._tcp so the Dev panel names it at once
+// (see the server's subs::mdns_devices).
+#include <ESPmDNS.h>
 // WebServer.h wants FS (and <functional>) declared before it sees them
 #include "FS.h"
 #include "FFat.h"
@@ -844,6 +847,16 @@ void setup() {
   // allocations keep to internal RAM.
   mbedtls_platform_set_calloc_free(mbedtls_psram_calloc, mbedtls_psram_free);
   heap_caps_malloc_extmem_enable(1024);
+  // The mDNS stack logs from lwip's tcpip thread, and that thread's first console
+  // write allocates the console's stdio lock. On 2026-10-16 that malloc failed
+  // under memory pressure and lock_init_generic aborted the deck - a panic whose
+  // backtrace read as an mDNS fault. Two cheap pieces of insurance: the mDNS log
+  // is of no interest here, and the console lock is created now, at boot, while
+  // the heap is large, so a later write never has to allocate it.
+  esp_log_level_set("mdns", ESP_LOG_NONE);
+  esp_log_level_set("mdns_networking", ESP_LOG_NONE);
+  fprintf(stdout, "\n");
+  fflush(stdout);
   deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
@@ -1713,11 +1726,39 @@ void notification_display(String title, String notification) {
   }
 }
 
-// The mDNS responder used to advertise this deck on _jawnos._tcp. It is gone: the
-// ESP-IDF mDNS stack runs in lwip's tcpip thread, and its log path was where the
-// deck panicked (a console lock it could not allocate under memory pressure). The
-// server still names printers over mDNS (avahi-browse, a subprocess); a deck is
-// identified by the Dev panel's scan and its own /device_query instead.
+// What this device is, advertised over mDNS so the Dev panel names it the moment
+// it joins: purpose, model and abilities. The responder lives in lwip's tcpip
+// thread; setup() silences its log and primes the console lock the log path needs
+// (see the note there), which is what made it safe to keep.
+#define JAWNOS_CAPS "screen,touch,keyboard,trackball,mic,speaker,gps,lora,ble,wifi,sd"
+
+static bool jawnos_mdns_up = false;
+static void jawnos_mdns_start() {
+  if (jawnos_mdns_up || WiFi.status() != WL_CONNECTED) { return; }
+  String chip_id = chip_id_maker();
+  String host = "jawn-" + chip_id;
+  if (!MDNS.begin(host.c_str())) {
+    deckLog("%s", "[mdns] begin failed");
+    return;
+  }
+  MDNS.addService("jawnos", "tcp", 3000);
+  MDNS.addServiceTxt("jawnos", "tcp", "chip_id", chip_id.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "name", name.c_str());
+  MDNS.addServiceTxt("jawnos", "tcp", "purpose", "teletype");
+  MDNS.addServiceTxt("jawnos", "tcp", "model", "T-Deck");
+  MDNS.addServiceTxt("jawnos", "tcp", "caps", JAWNOS_CAPS);
+  MDNS.addServiceTxt("jawnos", "tcp", "port", "3000");
+  // the Bluetooth address, so the server can bridge this deck without waiting on
+  // a /device_query (bluetooth_sender connects the daemon to it)
+  uint8_t bmac[6];
+  if (esp_read_mac(bmac, (esp_mac_type_t)2) == ESP_OK) {
+    char mstr[18];
+    sprintf(mstr, "%02X:%02X:%02X:%02X:%02X:%02X", bmac[0], bmac[1], bmac[2], bmac[3], bmac[4], bmac[5]);
+    MDNS.addServiceTxt("jawnos", "tcp", "mac", (const char *)mstr);
+  }
+  jawnos_mdns_up = true;
+  deckLog("[mdns] jawnos._tcp up as %s", host.c_str());
+}
 
 void wifi_server() {
   if (ssid == "" && password == "") {
@@ -1758,6 +1799,7 @@ void wifi_server() {
           server.begin();
           webserver_enabled = true;
           wifi_enabled = true;
+          jawnos_mdns_start();
           return;
           break;
         default:
