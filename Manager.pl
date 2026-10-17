@@ -4782,6 +4782,11 @@ get '/manager/configure/device_lister' => sub($c) {
 	my $load_type = $c->param('load_type');
 	my $ip = $c->param('host');
 	my $ping_scan = $c->param('ping_scan');
+	# The host box beside Ping and Scan is one field with two buttons: only Ping
+	# used to record it, so clearing the box and pressing Scan redrew it from the
+	# value still on record and the clear looked like it never saved. Record the
+	# box here too, before the panel is drawn, so what is drawn is what was typed.
+	&subs::setting_setter({ app => 'misc', setting => 'ping', value => $ip }) if (($load_type // '') eq 'scan' && defined $ip);
 	my $devices = &subs::device_lister($timestamp,$load_type,$ip);
 	my $networks = &subs::network_groups($devices);
 	my $ble_devices = &subs::ble_device_listing();
@@ -5173,6 +5178,12 @@ get '/manager/configure/ping' => sub($c) {
 	my $timeout = .2;
 	my $returner = {};
 	&subs::setting_setter({ app => 'misc', setting => 'ping', value => $ip });
+	# The box can record what is typed without pinging anything: clearing it and
+	# reloading must stick, so the box saves itself on change and asks for no run.
+	if ($c->param('save_only')) {
+		$c->render(json => { saved => 1, host => $ip // '' });
+		return;
+	}
 	if ($ip) {
 
 		my @ip = split '\.', $ip;

@@ -533,6 +533,17 @@ $(document).on('click', '.delete_packaging', function() {
 	});
 });
 
+// The host box beside Ping remembers what is typed in it, including a clear: save
+// on change, so a value is never lost just because Ping was not the button pressed.
+$(document).on('change', '.ping_host', function() {
+	var host = $(this).val();
+	$.ajax({
+		url: '/manager/configure/ping',
+		type: 'GET',
+		data: { host: host, save_only: 'yes', timestamp: Date.now() }
+	});
+});
+
 $(document).on('click', '#device_lister, .device_scan', function() {
 	var b = $(this);
 	var load_type = b.attr('load_type');
