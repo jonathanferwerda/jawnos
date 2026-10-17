@@ -156,7 +156,8 @@ Add `--tray` for a status-tray icon: it carries jawn's state as a coloured dot
 in the corner of the icon — green running, amber starting/restarting, red
 stopped. Left-click opens the window, right-click shows the menu, and **Quit and
 stop jawn** takes the jawn tree (and the bridge) down before the app exits, so
-quitting from the tray leaves no process behind.
+quitting from the tray leaves no process behind. The plain **Quit** item closes
+only this dashboard process and leaves jawn (and the bridge) running.
 
 The jawn directory is found automatically (the checkout this lives in, else
 `~/jawnos`); override it with `jawnosctl dir`, the `JAWNOS_DIR` environment
@@ -248,6 +249,42 @@ exists.)
 If video is still not right, the renderer can be tuned without touching code:
 write `KEY=VALUE` lines to `~/.config/jawnos/webkit.env` (WebKit reads them at
 startup — the real environment wins over the file).
+
+### Screen distortion on X11
+
+The view asks WebKit for acceleration **on demand**, but WebKitGTK 2.52 marks
+that policy deprecated and ignores it: the view is always GPU-composited. On an
+**X11 session with an Intel Skylake GPU** — the table's HD 530 — the accelerated
+backing store corrupts the window as soon as another program forces a redraw,
+and the corruption remains until the app is restarted. Running the studio (its
+meters and track canvases repaint continuously) triggers the same thing.
+
+Before the first WebView is made, the app now detects that combination and sets
+the software path:
+
+```sh
+WEBKIT_DISABLE_COMPOSITING_MODE=1
+WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+```
+
+Video still decodes through GStreamer; only compositing/repaint is software. To
+keep GPU rendering on such a machine anyway, put this in
+`~/.config/jawnos/webkit.env`:
+
+```sh
+JAWNOS_GPU=1
+```
+
+The same file remains the escape hatch for other drivers. Force the software
+path on any machine with:
+
+```sh
+mkdir -p ~/.config/jawnos
+echo 'WEBKIT_DISABLE_COMPOSITING_MODE=1' > ~/.config/jawnos/webkit.env
+```
+
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` is the other knob worth trying on a driver
+that mishandles the DMA-BUF renderer.
 
 ## Windows
 

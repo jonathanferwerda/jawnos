@@ -28,21 +28,25 @@ LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 # The panel's look: a near-black ground, rounded cards above it, the jawn yellow
 # as the accent - the same language as the Android dashboard's cards.
 _CSS = """
-window, notebook, scrolledwindow, viewport { background-color: #000000; }
-label { color: #ededed; }
-label.title { font-size: 24px; font-weight: bold; }
-label.dim { color: #8e8e8e; font-size: 12px; }
-label.h { color: #8e8e8e; font-size: 11px; font-weight: bold; }
-label.state { font-size: 16px; }
-box.card { background-color: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 18px; padding: 14px; }
-button { background-image: none; background-color: #262626; color: #ededed;
+.jawnos, .jawnos notebook, .jawnos scrolledwindow, .jawnos viewport { background-color: #000000; }
+/* Scope this to the app's own windows (a `window label` selector still caught
+   the tray menu: GTK hosts a popup menu in an internal GtkWindow). A bare
+   `label` rule painted the menu's items near-white on the desktop theme's light
+   menu, so the menu was unreadable. */
+.jawnos label { color: #ededed; }
+.jawnos label.title { font-size: 24px; font-weight: bold; }
+.jawnos label.dim { color: #8e8e8e; font-size: 12px; }
+.jawnos label.h { color: #8e8e8e; font-size: 11px; font-weight: bold; }
+.jawnos label.state { font-size: 16px; }
+.jawnos box.card { background-color: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 18px; padding: 14px; }
+.jawnos button { background-image: none; background-color: #262626; color: #ededed;
          border: 1px solid #2c2c2c; border-radius: 13px; padding: 12px 14px; box-shadow: none; }
-button:hover { background-color: #303030; }
-button.primary { background-color: #ffcc00; color: #0a0a0a; border: 1px solid #ffcc00; font-weight: bold; }
-button.primary:hover { background-color: #e6b800; }
-entry { background-color: #262626; color: #ededed; border: 1px solid #2c2c2c;
+.jawnos button:hover { background-color: #303030; }
+.jawnos button.primary { background-color: #ffcc00; color: #0a0a0a; border: 1px solid #ffcc00; font-weight: bold; }
+.jawnos button.primary:hover { background-color: #e6b800; }
+.jawnos entry { background-color: #262626; color: #ededed; border: 1px solid #2c2c2c;
         border-radius: 10px; padding: 9px; }
-checkbutton { color: #ededed; }
+.jawnos checkbutton { color: #ededed; }
 """
 
 # The live status dots, the same greens/ambers/reds the manager and the Android
@@ -100,6 +104,9 @@ class Dashboard(Gtk.Window):
         self._web_failed = False
         self._quitting = False
         self.set_default_size(*_initial_size())
+        # The CSS is scoped to this class so it cannot leak into GTK's popup
+        # menus (which live in their own internal toplevel window).
+        self.get_style_context().add_class("jawnos")
         _apply_css()
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -348,6 +355,7 @@ class Dashboard(Gtk.Window):
 
     def action_import_ticket(self):
         dialog = Gtk.Dialog(title="Import login ticket", transient_for=self)
+        dialog.get_style_context().add_class("jawnos")
         dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
         entry = Gtk.Entry()
         entry.set_placeholder_text("https://host:3000/box_office/<uuid>?s=<token>")
@@ -400,6 +408,18 @@ class Dashboard(Gtk.Window):
         self._say(message)
         Gtk.main_quit()
         return False
+
+    def action_quit_only(self):
+        """Quit the desktop app, leaving jawn (and the BLE bridge) running.
+
+        The tray's other quit item is "Quit and stop jawn"; this is the plain
+        "Quit" -- closing the window/dashboard process only. The supervisor is
+        a separate process tree (or a systemd unit), so ending this process does
+        not touch it."""
+        if self._quitting:
+            return
+        self._quitting = True
+        Gtk.main_quit()
 
     # ---- update the app itself ----
 
@@ -586,6 +606,7 @@ class LogWindow(Gtk.Window):
 
     def __init__(self, path):
         super().__init__(title="jawn log - %s" % path)
+        self.get_style_context().add_class("jawnos")
         self.path = path
         self.set_default_size(760, 520)
         view = Gtk.TextView(editable=False, monospace=True)
@@ -671,6 +692,8 @@ def _tray_menu(window):
         ("Restart jawn", lambda _i: window.action_restart()),
         # Quitting stops jawn too, so the label says so.
         ("Quit and stop jawn", lambda _i: window.action_quit()),
+        # Plain Quit leaves the jawn tree alone -- the app is only the window.
+        ("Quit", lambda _i: window.action_quit_only()),
     ):
         item = Gtk.MenuItem(label=label)
         item.connect("activate", callback)

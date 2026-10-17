@@ -22,6 +22,7 @@ with the ISP's coarse position, which the house disregards, so it is denied.
 If a site asks for something we do not recognise, we deny it by default.
 """
 
+import glob
 import os
 from urllib.parse import urlparse
 
@@ -38,27 +39,87 @@ from . import DESKTOP_DIR, core, keepawake  # noqa: E402
 # One shared context so the session cookie survives window closes and reloads.
 _context = None
 
+# Intel Gen9 (Skylake) display IDs. WebKitGTK 2.52 marks
+# hardware-acceleration-policy deprecated and ignores it, so the view is always
+# GPU-composited. On these GPUs under X11/Xfwm the accelerated backing store
+# corrupts the window as soon as another program forces a redraw (the table's
+# HD 530 does it), and the corruption stays until the app is restarted. Default
+# those machines to the software path; JAWNOS_GPU=1 (environment or
+# webkit.env) opts back in.
+_SKYLAKE_IDS = frozenset({
+    "0x1902", "0x1906", "0x190b", "0x190e",
+    "0x1912", "0x1916", "0x191b", "0x191d", "0x191e",
+    "0x1921", "0x1923", "0x1926", "0x1927", "0x192a", "0x192b",
+    "0x1932", "0x193a", "0x193b", "0x193d",
+})
+
+
+def _is_skylake_x11():
+    """True on an X11 session whose display is an Intel Skylake GPU.
+
+    Wayland is excluded: its compositor path does not share the X11 backing
+    store that corrupts, and the machines that work today use newer Intel GPUs
+    or Wayland."""
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return False
+    session = (os.environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    if session and session != "x11":
+        return False
+    if not os.environ.get("DISPLAY"):
+        return False
+    for path in glob.glob("/sys/class/drm/card*/device"):
+        name = os.path.basename(os.path.dirname(path))
+        if not name.startswith("card") or not name[4:].isdigit():
+            continue
+        try:
+            with open(os.path.join(path, "vendor"), "r", encoding="ascii") as fh:
+                vendor = fh.read().strip().lower()
+            if vendor != "0x8086":
+                continue
+            with open(os.path.join(path, "device"), "r", encoding="ascii") as fh:
+                device = fh.read().strip().lower()
+        except OSError:
+            continue
+        if device in _SKYLAKE_IDS:
+            return True
+    return False
+
 
 def _apply_webkit_env():
-    """Apply optional WebKit environment overrides from webkit.env.
+    """Apply WebKit environment overrides from webkit.env and safe defaults.
 
     WebKit reads these at initialisation, so they have to be in the environment
     before the first WebView is made. The file (one KEY=VALUE per line, '#'
     comments) is an escape hatch for rendering and video tuning without editing
-    code -- e.g. WEBKIT_DISABLE_DMABUF_RENDERER=1 on a driver that mishandles
-    the DMABUF renderer. Existing environment variables always win."""
+    code -- e.g. WEBKIT_DISABLE_COMPOSITING_MODE=1 on an X11/Intel driver that
+    corrupts the window when another program forces a redraw, or
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 on a driver that mishandles the DMABUF
+    renderer. Existing environment variables always win over the file.
+
+    The file also wins over the automatic Skylake/X11 fallback below (including
+    JAWNOS_GPU=1 to keep the GPU path on such a machine)."""
+    values = {}
     path = os.path.join(core.config_dir(), "webkit.env")
     try:
         with open(path, "r", encoding="utf-8") as fh:
             lines = fh.readlines()
     except OSError:
-        return
+        lines = []
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
+        values[key.strip()] = value.strip()
+    real = set(os.environ)
+    for key, value in values.items():
+        if key not in real:
+            os.environ[key] = value
+    opt_out = (os.environ.get("JAWNOS_GPU") or "").strip().lower()
+    if not opt_out or opt_out in ("0", "false", "no", "off"):
+        if _is_skylake_x11():
+            os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+            os.environ.setdefault("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")
 
 
 _apply_webkit_env()
@@ -278,14 +339,15 @@ class WebViewPanel(Gtk.Box):
 
     def _configure(self, view):
         s = view.get_settings()
-        # Ask for the GPU path explicitly. Video and canvas get an accelerated
-        # compositing layer either way, but ALWAYS keeps the whole view on it.
-        # (Video *decode* is GStreamer's job: without a VA-API plugin such as
-        # gst-plugin-va, WebKit falls back to software decode and HD video is
-        # choppy however this is set.)
+        # Keep the documented default for older WebKitGTK releases. 2.52 marks
+        # this property deprecated and ignores it (the view is always GPU
+        # composited); _apply_webkit_env's Skylake/X11 fallback is what handles
+        # the corruption there. Video and canvas still get an accelerated layer
+        # where the policy is honoured, but the whole view is not forced onto
+        # the GPU.
         try:
             s.set_property("hardware-acceleration-policy",
-                           WebKit2.HardwareAccelerationPolicy.ALWAYS)
+                           WebKit2.HardwareAccelerationPolicy.ON_DEMAND)
         except Exception:
             pass
         for prop, value in (
@@ -304,6 +366,9 @@ class WebViewPanel(Gtk.Box):
             # rather than navigating, so there is little to gain and a live DOM
             # to lose. A back press that has to reload is cheap against a
             # permanent copy of the heaviest page.
+            #
+            # Accelerated 2D canvas stays on: the Skylake/X11 fallback above
+            # disables the GPU path there, and other machines benefit from it.
             ("enable-smooth-scrolling", True),
             ("enable-accelerated-2d-canvas", True),
             ("enable-dns-prefetching", True),
