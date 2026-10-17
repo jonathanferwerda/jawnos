@@ -11,6 +11,7 @@ build/
 *.rp2040.*.bin
 
 # --- Secrets & personal configuration ---
+.secrets/
 config.json
 signatorials/
 server/privkey.pem
