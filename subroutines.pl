@@ -9303,6 +9303,7 @@ sub headless_navigation() {
 	my $signatorial = &subs::signatorial_designer();
 	my $now = &subs::rightNow();
 	my $navigation_due = [];
+	my $note;
 	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', $now)->hashes;
 	foreach my $appt ( @{$running_appts} ) {
 		my $navigation = &subs::setting_grabber({ app => $appt->{'app'}, setting => 'navigation' });
@@ -9364,9 +9365,11 @@ sub headless_navigation() {
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
 				&subs::db_insert('continent', $treturner);
 				$written = 1;
+				$note = 'fix ' . ($loc->{'provider'} || 'gps') . ' ' . ($returner->{'accuracy'} || '?') . 'm';
 			}
 			else {
 				$log->info('navigation: termux-location gave no usable fix (' . ($loc->{'latitude'} ? 'elapsed ' . ($loc->{'elapsedMs'} || '?') . 'ms accuracy ' . ($loc->{'accuracy'} || '?') . 'm' : ($jloc || 'empty output')) . ')');
+				$note = 'no usable fix';
 			}
 		}
 		else {
@@ -9377,6 +9380,7 @@ sub headless_navigation() {
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
 				&subs::db_insert('continent', $treturner);
 				$written = 1;
+				$note = 'fix ' . ($returner->{'accuracy'} || '?') . 'm';
 			}
 		}
 		if ($returner->{'latitude'} && $written == 1) {
@@ -9393,6 +9397,7 @@ sub headless_navigation() {
 
 		}
 	}
+	return $note;
 }
 
 sub navigation_information() {
@@ -9911,8 +9916,9 @@ sub headless_browser() {
 
 sub telephone_contacts_check() {
 
-	return unless $device eq 'mobile';
+	return 0 unless $device eq 'mobile';
 
+	my $n = 0;
 	my $jcontacts = `termux-contact-list`;
 	my $contacts = eval { return decode_json $jcontacts } || [];
 	foreach my $contact ( @{$contacts} ) {
@@ -9933,6 +9939,7 @@ sub telephone_contacts_check() {
 		# and the typed list holds the rest (mobile, home, work, a custom label).
 		if (!$phones->{'phone'}) {
 			&subs::setting_setter({ app => $name, setting => 'phone', value => $number });
+			$n++;
 			next;
 		}
 		my $list = eval { return decode_json $phones->{'phones'} } || [];
@@ -9946,7 +9953,9 @@ sub telephone_contacts_check() {
 			value => $number
 		};
 		&subs::setting_setter({ app => $name, setting => 'phones', value => encode_json $list });
+		$n++;
 	}
+	return $n;
 }
 
 # The contacts of one kind a person keeps: the plain setting (phone/email) and
@@ -10081,8 +10090,9 @@ sub phone_number_app {
 
 sub telephone_call_log_check() {
 
-	return unless $device eq 'mobile';
+	return 0 unless $device eq 'mobile';
 
+	my $n = 0;
 	my $call_logs = `termux-call-log -l 30`;
 	my $calls = eval { return decode_json $call_logs } || [];
 
@@ -10139,8 +10149,10 @@ sub telephone_call_log_check() {
 
 			my $c = &subs::controller_builder();
 			&Manager::appointment_writer($c,$data);
+			$n++;
 		}
 	}
+	return $n;
 }
 
 sub appt_toggle_checker() {

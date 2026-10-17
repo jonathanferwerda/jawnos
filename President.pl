@@ -709,9 +709,10 @@ sub utility_runner() {
 		$u->{'last_attempt'} = $now;
 		local $SIG{ALRM} = sub { die "TIMEOUT_EXCEEDED\n" };
 		my $success = 0;
+		my $effect;
 		eval {
 			alarm($u->{'timeout'} || 90);
-			$u->{'subroutine'}->();
+			$effect = $u->{'subroutine'}->();
 			$success = 1;
 			alarm(0);
 		};
@@ -725,6 +726,15 @@ sub utility_runner() {
 		}
 		if ($success == 1) {
 			$u->{'last_run'} = &subs::rightNow();
+			# A job may return a short line saying what it did (or that it found
+			# nothing new) - the difference a running dot cannot show. Record it, so
+			# the panel can show it, and log the line.
+			if (defined $effect && !ref $effect && length $effect) {
+				$effect =~ s/\s+/ /g;
+				$effect = substr($effect, 0, 200);
+				$u->{'last_effect'} = $effect;
+				$log->info("utility $t: $effect");
+			}
 		}
 	}
 }
@@ -867,6 +877,9 @@ sub utility_functions() {
 			my $now = &subs::rightNow();
 			my $writable = $dirty ? 1 : 0;
 			foreach my $t ( keys %{$controls->{$signatorial}} ) {
+				# a utility added to gb.pl since this row was written is carried in the
+				# row before the runtime has adopted it, so $gb::timeouts may lack it yet
+				next unless $gb::timeouts->{$t};
 				if ($gb::timeouts->{$t}->{'toggle'} eq 'on') {
 					if ($now - $gb::timeouts->{$t}->{'last_run'} > $gb::timeouts->{$t}->{'interval'} * 5 * 1000) {
 						$controls->{$signatorial}->{$t}->{'status'} = 'bad';
@@ -878,6 +891,7 @@ sub utility_functions() {
 					}
 					$controls->{$signatorial}->{$t}->{'last_run'} = $gb::timeouts->{$t}->{'last_run'};
 					$controls->{$signatorial}->{$t}->{'last_attempt'} = $gb::timeouts->{$t}->{'last_attempt'};
+					$controls->{$signatorial}->{$t}->{'last_effect'} = $gb::timeouts->{$t}->{'last_effect'};
 				}
 				else {
 					$controls->{$signatorial}->{$t}->{'last_run'} = undef;
@@ -942,9 +956,11 @@ sub utility_functions() {
 		};
 
 		$gb::timeouts->{'sms'}->{'subroutine'} = sub {
-			if ($device eq 'mobile') {
-				eval { my $returner = &subs::sms_list_check(); };
-			}
+			return 'sms: not a mobile' unless $device eq 'mobile';
+			my $r = eval { &subs::sms_list_check() };
+			my $n = 0;
+			$n++ while (defined $r && $r =~ /Phone: /g);
+			return $n ? "sms: filed $n new message(s)" : 'sms: ran, no new messages';
 		};
 		$gb::timeouts->{'backups'}->{'subroutine'} = sub {
 			eval {
@@ -984,12 +1000,13 @@ sub utility_functions() {
 		};
 
 		$gb::timeouts->{'telephone_check'}->{'subroutine'} = sub {
-			if ($device eq 'mobile') {
-				eval {
-					&subs::telephone_contacts_check();
-					&subs::telephone_call_log_check();
-				}
-			}
+			return 'telephone: not a mobile' unless $device eq 'mobile';
+			my ($contacts, $calls) = (0, 0);
+			eval {
+				$contacts = &subs::telephone_contacts_check() || 0;
+				$calls = &subs::telephone_call_log_check() || 0;
+			};
+			return "telephone: $contacts contact change(s), $calls call(s)";
 		};
 
 		$gb::timeouts->{'email_sender'}->{'subroutine'} = sub {
@@ -1154,9 +1171,10 @@ sub utility_functions() {
 			};
 		};
 		$gb::timeouts->{'navigation'}->{'subroutine'} = sub {
-			eval {
+			my $r = eval {
 				&subs::headless_navigation();
 			};
+			return defined $r && !ref $r && length $r ? $r : undef;
 		};
 
 		$gb::timeouts->{'manager'}->{'subroutine'} = sub {

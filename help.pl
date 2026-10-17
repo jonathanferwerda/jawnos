@@ -636,13 +636,13 @@ our %topic = (
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
 			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge.',
-			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch row also carries the Voice select, which chooses how the watch listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
+			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
 			'Choose a device from the chip list, then press Query to ask a board what it is.',
 			'Set the room\'s buttons, then press Now Me to send that room to a watch or deck.',
-			'On a watch row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
+			'On a watch or t-deck row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
 			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],
 		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge', 'voice' ]
@@ -653,24 +653,24 @@ our %topic = (
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
 		verified => '2026-10-16',
-		summary => 'Speak to the watch; it listens for a phrase and files the rest.',
+		summary => 'Speak to the watch or t-deck; it listens for a phrase and files the rest.',
 		body => [
-			'The watch can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
-			'How the watch listens is the Voice setting on the watch row in the Embedded panel. There are four choices: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn or Voice: Jawn Do - which waits for that phrase and records what follows.',
-			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" and "Jawn Do" are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all.',
-			'How quiet the room has to go before the watch decides you have finished speaking is the Noise floor select on the watch row. Auto is the default and reads the room the watch is standing in - the watch hears a steady tone of its own, so the floor rides just above whatever it is hearing and lets go when you stop. The numbers 1200 to 3400 pin it by hand, for when a noisy room cuts a command short or a quiet one will not let go.',
-			'A pause between the phrase and the command is fine - "Hey Jawn" ... "start email test" is one request - and a phrase with nothing after it is ignored rather than acted on: the watch waits a couple of seconds for the command to start, then drops the clip, so a stray wake-up does not become a note or an answer.',
-			'When the guide associate answers a spoken request, the reply lands on the watch itself: the words appear on its screen, and the spoken answer plays over its speaker. The Audio replies button on the watch row in the Embedded panel turns the speech off, leaving the words on screen.'
+			'A watch or a t-deck can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
+			'How the device listens is the Voice setting on its row in the Embedded panel. The watch offers four choices and the t-deck three: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn, and on the watch also Voice: Jawn Do - which waits for that phrase and records what follows.',
+			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" (and, on the watch, "Jawn Do") are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all. The t-deck does not carry Jawn Do.',
+			'How quiet the room has to go before the device decides you have finished speaking is the Noise floor select on its row. Auto is the default and reads the room the device is standing in - a device hears a steady tone of its own, so the floor rides just above whatever it is hearing and lets go when you stop. The numbers 1200 to 3400 pin it by hand, for when a noisy room cuts a command short or a quiet one will not let go.',
+			'A pause between the phrase and the command is fine - "Hey Jawn" ... "start email test" is one request - and a phrase with nothing after it is ignored rather than acted on: the device waits a couple of seconds for the command to start, then drops the clip, so a stray wake-up does not become a note or an answer.',
+			'When the guide associate answers a spoken request, the reply lands on the device itself: the words appear on its screen, and the spoken answer plays over its speaker. The Audio replies button on the row in the Embedded panel turns the speech off, leaving the words on screen.'
 		],
 		steps => [
-			'Open Embedded and find the watch in the device list.',
-			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn or Voice: Jawn Do.',
+			'Open Embedded and find the watch or t-deck in the device list.',
+			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), or a wake word - Voice: Hey Jawn, and on the watch Voice: Jawn Do.',
 			'Leave Noise floor on its row on Auto unless a noisy room keeps cutting your command short.',
-			'The choice is pushed to the watch as a fresh Now Me, and the watch starts listening in that mode.',
-			'Speak: a command runs, and anything else is saved as a note. Answers to requests the guide associate handles are shown and spoken on the watch.'
+			'The choice is pushed to the device as a fresh Now Me, and it starts listening in that mode.',
+			'Speak: a command runs, and anything else is saved as a note. Answers to requests the guide associate handles are shown and spoken on the device.'
 		],
-		related => [ 'watch', 'embedded', 'notes', 'ble_bridge' ],
-		prompt => 'Describe the Voice select on the watch row in the Embedded panel and its four choices exactly: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, Voice: Jawn Do. Only those two phrases are trained - do not name any other wake word. Also mention the Noise floor select on the same row: Auto (the default, which reads the room) or one of 1200, 1600, 2000, 2600, 3400 to pin it.'
+		related => [ 'watch', 'tdeck', 'embedded', 'notes', 'ble_bridge' ],
+		prompt => 'Describe the Voice select on the watch or t-deck row in the Embedded panel. The watch offers four choices and the t-deck three: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, and on the watch only Voice: Jawn Do. Those two phrases are the only wake words trained - do not name any other. Also mention the Noise floor select on the same row: Auto (the default, which reads the room) or one of 1200, 1600, 2000, 2600, 3400 to pin it.'
 	},
 	'windows' => {
 		title => 'Windows', category => 'features',
@@ -800,6 +800,7 @@ our %topic = (
 		body => [
 			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot.',
 			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
+			'Under each job a line says what its last run did - a count when it worked on something new, or that it found nothing - so a job that ran and found nothing does not read as one that never ran.',
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
 			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
@@ -1030,9 +1031,10 @@ our %topic = (
 		title => 'The T-Deck', category => 'devices',
 		summary => 'A handheld terminal with a keyboard and GPS.',
 		body => [
-			'The T-Deck is the handheld: a keyboard, a touch screen and GPS in a device small enough to carry. It acts as a handheld terminal — a "teletype" — for the machine it is talking to, and it can report where it is.'
+			'The T-Deck is the handheld: a keyboard, a touch screen and GPS in a device small enough to carry. It acts as a handheld terminal — a "teletype" — for the machine it is talking to, and it can report where it is.',
+			'It can also listen for a voice command: its Voice setting on the Embedded row - Voice: Off, Voice: Any speech (VAD), or Voice: Hey Jawn - starts a clip when it hears speech and sends it to JawnOS to transcribe. See Voice and wake words.'
 		],
-		related => [ 'watch', 'pico', 'ble_bridge' ]
+		related => [ 'watch', 'pico', 'ble_bridge', 'voice' ]
 	},
 	'pico' => {
 		title => 'The Pico', category => 'devices',

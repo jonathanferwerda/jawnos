@@ -13119,18 +13119,23 @@ post '/manager/configure/utility_controller/save' => sub($c) {
 	}
 
 	# Write the row that was edited and stamp its own last_change. The runtime
-	# reads only the signatorial key, and the old code always bumped the
-	# signatorial's last_change even when a device-type row was what changed.
-	$controls->{$device}->{$control}->{$setting} = $value;
+	# reads only the signatorial key, so a device-type post (a stale page, or the
+	# old device tab) must not create or change a device row: fold it onto our
+	# signatorial when it is this machine's own device type, and ignore it
+	# otherwise. This is what stopped a device-type row from reading a job off
+	# while the signatorial row - the one that runs - stayed untouched.
 	my $now = &subs::rightNow();
-	$controls->{$device}->{'__settings'}->{'last_change'} = $now;
-	$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
-	# a stale page may still post a device-type row; on the machine that owns that
-	# type, fold it onto the signatorial key the runtime reads
-	if ($device ne $signatorial && $device eq $real_device) {
-		$controls->{$signatorial}->{$control}->{$setting} = $value;
-		$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
-		$controls->{$signatorial}->{'__settings'}->{$setting}->{'last_change'} = $now;
+	if (grep { $_ eq $device } @gb::device_types) {
+		if ($device eq $real_device) {
+			$controls->{$signatorial}->{$control}->{$setting} = $value;
+			$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
+			$controls->{$signatorial}->{'__settings'}->{$setting}->{'last_change'} = $now;
+		}
+	}
+	else {
+		$controls->{$device}->{$control}->{$setting} = $value;
+		$controls->{$device}->{'__settings'}->{'last_change'} = $now;
+		$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
 	}
 	my $jcontrols = encode_json $controls;
 
@@ -13652,8 +13657,12 @@ sub merge_database($c,$configuration) {
 										my $merged = {};
 										foreach my $k ( keys %{$local} ) { $merged->{$k} = $local->{$k}; }
 										foreach my $k ( keys %{$theirs} ) {
-											if (!$merged->{$k}) { $merged->{$k} = $theirs->{$k}; next; }
+											# our own row and the vestigial device-type rows are never taken from
+											# a peer: our row is authoritative (the runtime reads only it, keyed
+											# by our signatorial), and a device-type row must not be resurrected
+											# once pruned. Only other machines' rows merge by last_change.
 											next if $k eq $sig || $device_key{$k};
+											if (!$merged->{$k}) { $merged->{$k} = $theirs->{$k}; next; }
 											my $la = $merged->{$k}->{'__settings'}->{'last_change'} || 0;
 											my $lb = $theirs->{$k}->{'__settings'}->{'last_change'} || 0;
 											$merged->{$k} = $theirs->{$k} if $lb > $la;

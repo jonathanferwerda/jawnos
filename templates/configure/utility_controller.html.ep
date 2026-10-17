@@ -24,6 +24,7 @@
 #utility_machines .utility_job_controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #utility_machines .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
+#utility_machines .utility_job_effect { flex:1 1 100%; opacity:.7; font-size:82%; font-style:italic; }
 @media (max-width:560px) {
 	#utility_machines .utility_job_name { flex:1 1 100%; }
 }
@@ -56,6 +57,9 @@
 							<% } %>
 							<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
 								<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
+							<% } %>
+							<% if ($controls->{$dt}->{$t}->{'last_effect'}) { %>
+								<span class="utility_job_effect" hint="what the last run did"><%= $controls->{$dt}->{$t}->{'last_effect'} %></span>
 							<% } %>
 						</div>
 					</div>
