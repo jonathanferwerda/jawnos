@@ -417,8 +417,8 @@ our %topic = (
 		related => [ 'inventory', 'market', 'moves_ledger' ]
 	},
 	'market' => {
-		title => 'Market', category => 'apps', app => 'market',
-		verified => '2026-10-16',
+		'Market', category => 'apps', app => 'market',
+		'verified' => '2026-10-17',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
@@ -426,7 +426,7 @@ our %topic = (
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
 			'While you shop, tick an item off and drop it in the cart; Checkout writes the purchases (each on the item\'s own app, so a house item app is born there), retires them from the list and opens the list\'s category with an expense transaction filled from the cart for you to check and save - the money side is yours to edit. Cancel just empties the cart back onto the list.',
 			'Scan reads a barcode - the app\'s own bridge on a phone, else the camera, else a typed code. A code never seen before is looked up once and named in our terms by the model (a house item name, a category we keep, a unit), then remembered, so the same product is instant next time.',
-			'If another tab in the house has a camera, Scan offers to hand the read to it: pick the device and that tab opens its own scanner (the phone\'s Google code scanner) as if the phone had pressed Scan itself, then hands the code back to the tab that asked, so the item lands on the computer\'s list. A browser without that scanner gets a live camera view instead, and a machine with no camera can type the code in the app.',
+			'Scan remembers the device it last used and starts there, so a phone chosen once is the default next time. That device opens its own scanner (the phone\'s Google code scanner) as if it had pressed Scan; each read comes back to the machine that started the run, and the scanner re-opens for the next one. The reads collect on the scanning page: Done puts them on the list, Cancel throws them away. The phone\'s Back button cancels too, and Cancel here stops the phone. A browser without that scanner gets a live camera view instead, and a machine with no camera can type the code in the app.',
 			'An account is an app whose part of speech is account (a Visa, a debit card, Cash). Its Configure panel carries a Payment type (cash, debit, credit, visa, mastercard, amex, interac, crypto, cheque, gift, other); a receipt whose tender says mastercard is matched to the account with that type, and the confirm lets you correct the pick. When no account names the word exactly, its family decides if that family has only one account: a receipt saying credit finds the only credit card (a mastercard, say), and debit or interac finds the only debit one.',
 			'Receipt reads a whole shopping run at once, for the shop you did not scan at the till. The Receipt button offers the scanner (the ADF feeds the long receipt in one pass) or a photo - the scanner buttons appear only on a machine that has one; while the feeder runs the panel shows the scanner\'s own line and each page as it arrives, Cancel stops it, and a run that produces nothing says why (no paper, device busy). The vision model reads the pages into lines, and the confirm shows the receipt page full size beside them with the date, total, paid-by, reference and account editable, so they can be checked against the paper; each line is named in our terms and marked when it is already on the list. Add to cart links them into the list in the cart, so Checkout still writes the purchases, and the receipt itself - with its date, total and tender - is kept with the Market app.',
 			'Receipts reopens what was kept. Once a receipt has been read, the Receipts button lists them newest first, each with its date, total and page thumbnails (press a page to open it); Add to list puts that receipt\'s lines back on the list in one press, the same way a fresh read does.',
@@ -438,7 +438,7 @@ our %topic = (
 			'Type an item and press Enter to add it; set its dial to need or want.',
 			'Switch to the Shopping tab and filter the run to needs, wants or all.',
 			'At a shop, tap a Here: list to open on it.',
-			'On a computer, press Scan and pick a phone from the device list to read a barcode with the phone\'s own scanner.',
+		'On a computer, press Scan and pick a phone (or This machine); each read comes back here, and Done puts the run on the list while Cancel (or the phone\'s Back) throws it away.',
 			'Set an account\'s Payment type once in its Configure panel, so a receipt\'s tender finds that account.',
 			'After a shop, press Receipt and scan the whole receipt in the ADF, then Add to cart and Checkout.',
 			'In the confirm, check the date, paid-by and account against the page (fix them if the read is off), tick the lines, then Add to cart.',

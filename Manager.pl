@@ -2458,6 +2458,16 @@ post '/manager/market/scan/remote' => sub($c) {
 	}
 	my $bti = $c->param('browser_tab_id') || '';
 	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
+	my %pass = (
+		session => ($c->param('session') || ''),
+		origin_machine => ($c->param('origin_machine') || ''),
+		list => ($c->param('list') || ''),
+		vendor => ($c->param('vendor') || ''),
+		rapid => ($c->param('rapid') || ''),
+		origin_tab => ($c->param('origin_tab') || ''),
+		origin_name => ($c->param('origin_name') || ''),
+		stop => ($c->param('stop') || ''),
+	);
 	# a person picked a tab on a peer: hand the job to that peer's own manager
 	my $machine = $c->param('machine') || '';
 	if (!$from_peer && $machine ne '') {
@@ -2472,31 +2482,232 @@ post '/manager/market/scan/remote' => sub($c) {
 		}
 		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
 		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/remote?peer=yes&signatorial=' . &subs::signatorial_designer();
-		my $res = eval { $ua->post($url => form => {
-			browser_tab_id => $bti,
-			origin_tab => ($c->param('origin_tab') || ''),
-			origin_name => ($c->param('origin_name') || ''),
-			list => ($c->param('list') || ''),
-			vendor => ($c->param('vendor') || ''),
-			timestamp => &subs::rightNow()
-		})->result };
+		my $res = eval { $ua->post($url => form => { %pass, browser_tab_id => $bti, timestamp => &subs::rightNow() })->result };
 		return $c->render(json => $res && $res->is_success ? { ok => 1, machine => $machine } : { ok => 0, error => ($res ? ('the peer answered ' . $res->code) : 'the peer did not answer') });
 	}
 	my $opts = {
-		list => $c->param('list') || '',
-		vendor => $c->param('vendor') || '',
-		origin_tab => ($c->param('origin_tab') || ''),
+		session => $pass{'session'},
+		origin_machine => $pass{'origin_machine'},
+		list => $pass{'list'},
+		vendor => $pass{'vendor'},
+		rapid => 1,
+		origin_tab => $pass{'origin_tab'},
 	};
 	if ($opts->{'origin_tab'} ne '') {
 		my $row = &subs::db_select('websockets', undef, { browser_tab_id => $opts->{'origin_tab'}, app => 'server' })->hashes->[0];
 		$opts->{'origin_name'} = $row ? ($row->{'room'} || '') : '';
 	}
 	&Websocket::send('server', {
-		console => 'marketPhoneCamera(' . encode_json($opts) . ');',
+		console => ($pass{'stop'} ? 'marketPhoneScanStop();' : 'marketPhoneCamera(' . encode_json($opts) . ');'),
 		destination => $bti,
 		timestamp => $c->param('timestamp') || &subs::rightNow()
 	});
 	$c->render(json => { ok => 1, device => $bti });
+};
+
+# --- a scan session: a rapid-fire run of codes a person confirms at the end ---
+# The machine that pressed Scan owns the list and the session. A phone on its own
+# jawn forwards each code to it over the peer rail; Done puts the collected items
+# on the list, Cancel throws them away and stops the phone's scanner.
+
+sub market_scan_session {
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'scan_session' });
+	my $s = eval { return decode_json $raw } || {};
+	return ref $s eq 'HASH' ? $s : {};
+}
+
+sub market_scan_session_save {
+	my ($s) = @_;
+	&subs::setting_setter({ app => 'market', setting => 'scan_session', value => encode_json($s) });
+}
+
+# What the session page shows: the raw names stay in the record, the printed ones
+# are formatted here so no caller has to remember to unformat an app name.
+sub market_scan_session_view {
+	my ($s) = @_;
+	my @items;
+	foreach my $it ( @{ $s->{'items'} || [] } ) {
+		next unless ref $it eq 'HASH';
+		push @items, {
+			%$it,
+			formatted => &subs::format_name($it->{'item'} || ''),
+			raw_formatted => &subs::format_name($it->{'raw'} || ''),
+		};
+	}
+	return {
+		uuid => ($s->{'uuid'} || ''),
+		status => ($s->{'status'} || ''),
+		device => ($s->{'device'} || {}),
+		items => \@items,
+		count => scalar @items,
+	};
+}
+
+# Tell a device/tab to start (or stop) its scanner. A peer is reached over the
+# signed rail; a tab on this machine gets the console command directly.
+sub market_scan_device_send {
+	my ($c, $device, $s, $stop) = @_;
+	my $bti = $device->{'browser_tab_id'} || '';
+	my $machine = $device->{'machine'} || '';
+	my %opts = (
+		session => $s->{'uuid'},
+		origin_machine => &subs::signatorial_designer(),
+		list => ($s->{'list'} || ''),
+		vendor => ($s->{'vendor'} || ''),
+		rapid => 1,
+	);
+	if (($device->{'kind'} || '') eq 'remote' && $machine ne '') {
+		my $rm = &subs::db_select('remote_machines', undef, { ip => $machine })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { hostname => $machine })->hashes->[0];
+		return 0 unless $rm;
+		my $peer = &remote_useragent_maker({ rm => $rm });
+		my $ua = $peer->{'ua'};
+		unless ($ua) {
+			$ua = Mojo::UserAgent->new();
+			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+		}
+		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/remote?peer=yes&signatorial=' . &subs::signatorial_designer();
+		my $res = eval { $ua->post($url => form => { %opts, browser_tab_id => $bti, stop => ($stop ? 1 : 0), timestamp => &subs::rightNow() })->result };
+		return ($res && $res->is_success) ? 1 : 0;
+	}
+	return 0 unless $bti ne '';
+	&Websocket::send('server', {
+		destination => $bti,
+		console => ($stop ? 'marketPhoneScanStop();' : 'marketPhoneCamera(' . encode_json(\%opts) . ');'),
+		timestamp => &subs::rightNow()
+	});
+	return 1;
+}
+
+post '/manager/market/scan/session/start' => sub($c) {
+	my $device = eval { decode_json($c->param('device')) } || {};
+	$device = { kind => 'local', label => 'this machine' } unless ref $device eq 'HASH' && (($device->{'kind'} || '') eq 'local' || ($device->{'kind'} || '') eq 'remote');
+	my $s = {
+		uuid => &subs::random_string_creator(20),
+		at => &subs::rightNow(),
+		status => 'scanning',
+		device => $device,
+		list => (&market_list_key($c->param('list') || '') || ''),
+		vendor => (&subs::unformat_name($c->param('vendor')) || ''),
+		items => [],
+	};
+	&market_scan_session_save($s);
+	&market_scan_device_send($c, $device, $s, 0) if ($device->{'kind'} || '') eq 'remote';
+	$c->render(json => { session => &market_scan_session_view($s) });
+};
+
+post '/manager/market/scan/collect' => sub($c) {
+	my $session = $c->param('session') || '';
+	my $origin = $c->param('origin_machine') || '';
+	# the phone: hand the code to the peer that started the session
+	if ($origin ne '' && ($c->param('peer') || '') ne 'yes') {
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $origin })->hashes->[0];
+		if ($rm) {
+			my $peer = &remote_useragent_maker({ rm => $rm });
+			my $ua = $peer->{'ua'};
+			unless ($ua) {
+				$ua = Mojo::UserAgent->new();
+				$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+			}
+			$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+			my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/collect?peer=yes&signatorial=' . &subs::signatorial_designer();
+			my $res = eval { $ua->post($url => form => {
+				session => $session,
+				barcode => ($c->param('barcode') || ''),
+				stop => ($c->param('stop') ? 1 : 0),
+				timestamp => &subs::rightNow()
+			})->result };
+			my $body = $res ? (eval { decode_json $res->body } || {}) : {};
+			return $c->render(json => $body);
+		}
+	}
+	if (($c->param('peer') || '') eq 'yes') {
+		my $peer_sig = $c->param('signatorial') || '';
+		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
+		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+	}
+	my $s = &market_scan_session();
+	unless (($s->{'uuid'} || '') ne '' && $s->{'uuid'} eq $session) {
+		return $c->render(json => { error => 'no such session' });
+	}
+	if ($c->param('stop')) {
+		$s->{'status'} = 'cancelled';
+		$s->{'items'} = [];
+		&market_scan_session_save($s);
+		return $c->render(json => { ok => 1, cancelled => 1 });
+	}
+	my $code = $c->param('barcode') || '';
+	$code =~ s/\s+//g;
+	return $c->render(json => { error => 'no code' }) unless $code =~ /\S/;
+	my $map = &market_barcode_resolve($code);
+	my $item = $map->{'item'} || $code;
+	my $it = {
+		code => $code,
+		item => $item,
+		raw => ($map->{'raw'} || ''),
+		category => ($map->{'category'} || ''),
+		unit => ($map->{'unit'} || ''),
+		at => &subs::rightNow(),
+	};
+	push @{ $s->{'items'} }, $it;
+	&market_scan_session_save($s);
+	$c->render(json => { ok => 1, item => { %$it, formatted => &subs::format_name($item) }, count => scalar @{ $s->{'items'} } });
+};
+
+get '/manager/market/scan/session' => sub($c) {
+	$c->render(json => &market_scan_session_view(&market_scan_session()));
+};
+
+post '/manager/market/scan/session/done' => sub($c) {
+	my $s = &market_scan_session();
+	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '';
+	my $list = &market_list();
+	my ($added, $linked) = (0, 0);
+	foreach my $it ( @{ $s->{'items'} || [] } ) {
+		next unless ref $it eq 'HASH';
+		my $name = &subs::unformat_name($it->{'item'} || '');
+		next unless $name ne '';
+		my $init = &subs::setting_initializer($name, &subs::rightNow());
+		$name = $init->{'app'} if $init->{'app'};
+		my $found;
+		foreach my $row ( @{$list} ) {
+			next unless lc($row->{'text'} || '') eq lc($name) || &subs::unformat_name($row->{'text'} || '') eq $name;
+			$row->{'kind'} = 'need' if &market_item_due($name);
+			$found = 1;
+			$linked++;
+			last;
+		}
+		next if $found;
+		unshift @{$list}, {
+			uuid => &subs::random_string_creator(21),
+			text => $name,
+			barcode => ($it->{'code'} || ''),
+			kind => &market_item_due($name) ? 'need' : 'want',
+			vendor => ($s->{'vendor'} || ''),
+			list => ($s->{'list'} || ''),
+			unit => ($it->{'unit'} || ''),
+			timestamp => &subs::rightNow(),
+		};
+		$added++;
+	}
+	&market_save_list($list);
+	&market_lists_touch_vendor($s->{'list'}, &subs::format_name($s->{'list'}), $s->{'vendor'}) if ($s->{'list'} || '') ne '' && ($s->{'vendor'} || '') ne '';
+	$s->{'status'} = 'done';
+	$s->{'items'} = [];
+	&market_scan_session_save($s);
+	$c->render(json => { added => $added, linked => $linked });
+};
+
+post '/manager/market/scan/session/cancel' => sub($c) {
+	my $s = &market_scan_session();
+	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '';
+	my $d = $s->{'device'} || {};
+	&market_scan_device_send($c, $d, $s, 1) if ref $d eq 'HASH' && ((($d->{'kind'} || '') eq 'remote') || ($d->{'browser_tab_id'} || '') ne '');
+	$s->{'status'} = 'cancelled';
+	$s->{'items'} = [];
+	&market_scan_session_save($s);
+	$c->render(json => { cancelled => 1 });
 };
 
 # A scanned barcode: resolve it (house first, then a public catalogue, then our own
@@ -2672,6 +2883,7 @@ sub market_receipt_lines {
 			description => ($l->{'description'} || ''),
 			raw => $r->{'raw'},
 			item => $r->{'item'},
+			item_formatted => &subs::format_name($r->{'item'}),
 			code => $r->{'code'},
 			qty => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
 			price => (defined $l->{'price'} && $l->{'price'} =~ /[0-9]/) ? 0 + $l->{'price'} : undef,
@@ -2923,6 +3135,7 @@ post '/manager/market/receipt' => sub($c) {
 	}
 	$c->render(json => {
 		vendor => &subs::unformat_name($out->{'vendor'} || ''),
+		vendor_formatted => &subs::format_name($out->{'vendor'} || ''),
 		date => $out->{'date'} || '',
 		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
 		payment_method => ($out->{'payment_method'} || ''),

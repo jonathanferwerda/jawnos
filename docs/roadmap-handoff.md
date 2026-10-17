@@ -266,7 +266,12 @@ without one gets a live camera view), selected from the abilities list
 (camera, scan, printer) the capability table now carries. A phone browsing its
 own jawn is reached through the peer rail: the camera tabs of every enrolled
 peer are gathered in parallel, and the chosen peer's own manager relays the scan
-command to its tab. An account app carries a
+command to its tab. A scan run is a session: the machine that pressed Scan owns
+it and remembers the device it used last (a phone chosen once is the default),
+the phone re-opens its scanner for each read (rapid fire), and the reads collect
+on a scanning page - Done puts them on the list, Cancel (or the phone's Back)
+throws them away. Displayed app names are run through `format_name`; the
+unformatted name is only ever the key. An account app carries a
 `payment_type` in its Configure panel (cash, debit, credit, visa, mastercard,
 amex, interac, crypto, ...), and a receipt's printed tender is matched to it —
 an exact word first, then its family when that family has a single account

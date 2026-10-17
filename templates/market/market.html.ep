@@ -32,7 +32,7 @@
 			my $col = $kind eq 'need' ? '#b8860b' : 'var(--line)';
 			$o .= '<span style="font-size:14px;font-weight:700;color:' . $col . ';">' . &subs::format_name($kind) . '</span>';
 		}
-		$o .= '<span class="market_text" style="margin-left:8px;">' . $it->{'text'} . '</span>';
+		$o .= '<span class="market_text" style="margin-left:8px;">' . &subs::format_name($it->{'text'}) . '</span>';
 		if ($it->{'vendor'}) {
 			$o .= '<span style="opacity:.55;font-size:13px;margin-left:8px;">' . &subs::format_name($it->{'vendor'}) . '</span>';
 		}
@@ -50,7 +50,7 @@
 		<select id="market_list" style="flex:0 1 auto;">
 			<option value="">All lists</option>
 			<% foreach my $k ( sort { lc($lists->{$a}->{'name'} || $a) cmp lc($lists->{$b}->{'name'} || $b) } keys %{$lists} ) { %>
-				<option value="<%= $k %>"><%= $lists->{$k}->{'name'} || $k %></option>
+				<option value="<%= $k %>"><%= &subs::format_name($lists->{$k}->{'name'} || $k) %></option>
 			<% } %>
 		</select>
 		<select id="market_vendor" style="flex:0 1 auto;">
@@ -70,7 +70,7 @@
 	</div>
 	<% if (scalar @nearby) { %>
 		<div id="market_nearby" style="flex:0 0 auto;padding:3px 0;font-size:15px;opacity:.85;">Here:
-			<% foreach my $n ( @nearby ) { %><span class="market_nearby_list" list="<%= $n->{'key'} %>" style="cursor:pointer;text-decoration:underline;margin-left:6px;"><%= $n->{'name'} %></span><% } %>
+			<% foreach my $n ( @nearby ) { %><span class="market_nearby_list" list="<%= $n->{'key'} %>" style="cursor:pointer;text-decoration:underline;margin-left:6px;"><%= &subs::format_name($n->{'name'}) %></span><% } %>
 		</div>
 	<% } %>
 	<div id="market_list" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">

@@ -143,18 +143,54 @@ function marketCheckoutOpen(t) {
 	}, 300);
 }
 
+var marketScanSession = null;      // the session this machine owns
+var marketScanPollTimer = null;
+var marketScanRapid = false;       // re-open the local scanner after each read
+
 $(document).on('click', '#market_scan', function() { marketScan(); });
 
+// The phone (or the local bridge) hands a code here. A session on this machine
+// collects it; a phone's session forwards it to the machine that started it.
 window.jawnScanResult = function(code) {
+	if (window.marketPhoneSession) { marketPhoneResult(code); return; }
 	if (!code) { return; }
-	marketBarcode(code, window.marketPhoneScanOrigin || '');
-	window.marketPhoneScanOrigin = '';
+	marketBarcode(code);
+	if (marketScanRapid && window.JawnScan && typeof window.JawnScan.scan === 'function') {
+		setTimeout(function() { if (marketScanRapid) { window.JawnScan.scan(); } }, 450);
+	}
 };
 
-// The code is resolved by the house; origin_tab names the tab that asked another
-// device for the scan, so its Market can be told the item arrived.
-function marketBarcode(code, origin_tab) {
-	$.post('/manager/market/scan', { barcode: code, list: marketList, vendor: marketVendor, origin_tab: origin_tab || '', timestamp: Date.now() });
+// Record one code in the active session; the server resolves it and keeps it for
+// the Done press. With no session, the old one-shot add still works.
+function marketBarcode(code) {
+	if (marketScanSession && marketScanSession.uuid) {
+		$.post('/manager/market/scan/collect', { session: marketScanSession.uuid, barcode: code, timestamp: Date.now() }, function(response) {
+			if (response && response.item) { marketScanSessionRefresh(); }
+		}, 'json');
+		return;
+	}
+	$.post('/manager/market/scan', { barcode: code, list: marketList, vendor: marketVendor, timestamp: Date.now() });
+}
+
+// The phone side of a session: post the code to our own server (which forwards
+// it to the peer that owns the session), then re-open the scanner for the next.
+function marketPhoneResult(code) {
+	if (!window.marketPhoneSession) { return; }
+	if (!code) {
+		$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, stop: 1, timestamp: Date.now() });
+		window.marketPhoneSession = '';
+		window.marketPhoneRapid = false;
+		return;
+	}
+	$.post('/manager/market/scan/collect', { session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, barcode: code, timestamp: Date.now() }, function() {
+		if (window.marketPhoneRapid) {
+			setTimeout(function() {
+				if (!window.marketPhoneRapid) { return; }
+				if (window.JawnScan && typeof window.JawnScan.scan === 'function') { window.JawnScan.scan(); }
+				else { window.marketPhoneCamera({ session: window.marketPhoneSession, origin_machine: window.marketPhoneOrigin, rapid: true }); }
+			}, 450);
+		}
+	});
 }
 
 window.marketScanArrived = function() {
@@ -164,25 +200,34 @@ window.marketScanArrived = function() {
 	setTimeout(function() { b.css('background-color', ''); }, 1200);
 };
 
-// Scan a barcode. If another tab in the house has a camera, offer to scan from
-// it (pointing a phone at a shelf beats a laptop); otherwise scan here.
+// Scan a barcode. The machine remembers the device it used last (a phone, say)
+// and starts there at once; with no memory it offers this machine and the house.
 function marketScan() {
 	$.get('/manager/market/cameras', {
 		timestamp: Date.now(),
 		browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
 	}, function(response) {
 		var devices = (response && response.devices) || [];
-		if (devices.length) { marketScanChooser(devices); return; }
-		marketScanHere();
-	}, 'json').fail(function() { marketScanHere(); });
+		var remembered = null;
+		try { remembered = JSON.parse(localStorage.getItem('marketScanDevice') || 'null'); } catch (e) { remembered = null; }
+		if (remembered && remembered.kind === 'local') { marketScanBegin({ kind: 'local', label: 'this machine' }); return; }
+		if (remembered && remembered.kind === 'remote') {
+			var pick = null;
+			devices.forEach(function(d) { if (d.machine === remembered.machine) { pick = d; } });
+			if (pick) { marketScanBegin({ kind: 'remote', machine: pick.machine, browser_tab_id: pick.browser_tab_id, label: pick.label }); return; }
+		}
+		marketScanChooser(devices);
+	}, 'json').fail(function() { marketScanChooser([]); });
 }
 
 function marketScanHere() {
 	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
+		marketScanRapid = true;
 		window.JawnScan.scan();
 		return;
 	}
 	if ('BarcodeDetector' in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+		marketScanRapid = true;
 		marketScanCamera();
 		return;
 	}
@@ -210,52 +255,141 @@ $(document).on('keydown', '#market_barcode_typed', function(e) {
 $(document).on('click', '#market_barcode_typed_go', function() {
 	var code = $('#market_barcode_typed').val();
 	if (code) { marketBarcode(code); }
-	marketReceiptPanel();
+	if (marketScanSession) { marketScanSessionShow(marketScanSession); }
+	else { marketReceiptPanel(); }
 });
 
 function marketScanChooser(devices) {
 	var h = '<div style="padding:18px;max-width:560px;margin:0 auto;">'
 		+ '<div style="font-size:22px;font-weight:700;margin-bottom:12px;">Scan a barcode</div>'
 		+ '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-		+ '<button id="market_scan_here" style="font-size:17px;padding:8px 14px;">Scan here</button>'
-		+ '<select id="market_scan_device" style="font-size:17px;padding:6px;flex:1 1 180px;"><option value="">A device in the house...</option>';
+		+ '<select id="market_scan_device" style="font-size:17px;padding:6px;flex:1 1 220px;"><option value="local">This machine</option>';
 	devices.forEach(function(d) {
 		h += '<option value="' + marketEsc(d.browser_tab_id) + '" data-machine="' + marketEsc(d.machine || '') + '">' + marketEsc(d.label) + '</option>';
 	});
-	h += '</select> <button id="market_scan_remote_go" style="font-size:17px;padding:8px 14px;">Scan from device</button>'
+	h += '</select> <button id="market_scan_remote_go" style="font-size:17px;padding:8px 14px;">Start scanning</button>'
 		+ '</div>'
 		+ '<div style="margin-top:14px;"><button id="market_scan_chooser_close" style="font-size:15px;">Cancel</button></div>'
-		+ '<div style="margin-top:10px;font-size:14px;opacity:.65;">The device opens its own camera and sends the code back here.</div>'
+		+ '<div style="margin-top:10px;font-size:14px;opacity:.65;">The chosen device opens its own scanner and the reads collect here; Done puts them on the list.</div>'
 		+ '</div>';
 	marketReceiptPanel(h);
 }
 
-$(document).on('click', '#market_scan_here', function() { marketReceiptPanel(); marketScanHere(); });
-
-$(document).on('click', '#market_scan_chooser_close', function() { marketReceiptPanel(); });
+$(document).on('click', '#market_scan_chooser_close', function() {
+	if (marketScanSession) { marketScanSessionShow(marketScanSession); }
+	else { marketReceiptPanel(); }
+});
 
 $(document).on('click', '#market_scan_remote_go', function() {
-	var bti = $('#market_scan_device').val();
-	if (!bti) { return; }
-	$.post('/manager/market/scan/remote', {
-		browser_tab_id: bti,
-		machine: $('#market_scan_device option:selected').attr('data-machine') || '',
-		origin_tab: sessionStorage.getItem('browser_tab_id') || '',
-		list: marketList, vendor: marketVendor, timestamp: Date.now()
-	}, function() {
-		marketReceiptPanel('<div style="padding:10px;font-size:17px;">Scanning on the device... <button id="market_scan_chooser_close">Close</button></div>');
+	var selected = $('#market_scan_device option:selected');
+	var value = selected.val();
+	var device;
+	if (value === 'local') { device = { kind: 'local', label: 'this machine' }; }
+	else { device = { kind: 'remote', machine: selected.attr('data-machine') || '', browser_tab_id: value, label: selected.text() }; }
+	marketReceiptPanel();
+	marketScanBegin(device);
+});
+
+// Start a session: the server tells a remote device to begin, and a local one is
+// opened here; either way the session page lists what was read.
+function marketScanBegin(device) {
+	marketScanSession = null;
+	localStorage.setItem('marketScanDevice', JSON.stringify(device));
+	marketReceiptPanel('<div style="padding:18px;font-size:18px;">Starting the scanner...</div>');
+	$.post('/manager/market/scan/session/start', {
+		device: JSON.stringify(device), list: marketList, vendor: marketVendor, timestamp: Date.now()
+	}, function(response) {
+		if (!response || !response.session) {
+			marketReceiptPanel('<div style="padding:18px;">The scan could not start. <button id="market_receipt_close">Close</button></div>');
+			return;
+		}
+		marketScanSession = response.session;
+		marketScanSessionShow(response.session);
+		marketScanSessionPoll(response.session.uuid);
+		if (device.kind === 'local') { marketScanHere(); }
+	}, 'json');
+}
+
+function marketScanSessionShow(s) {
+	var label = (s.device && s.device.label) || 'this machine';
+	var h = '<div style="padding:10px;font-size:18px;">';
+	h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+		+ '<b>Scanning on ' + marketEsc(label) + '</b>'
+		+ '<span id="market_scan_session_count" style="opacity:.6;font-size:14px;">' + (s.count || 0) + '</span>'
+		+ '<span style="flex:1 1 auto;"></span>'
+		+ '<button id="market_scan_session_done">Done</button>'
+		+ '<button id="market_scan_session_cancel">Cancel</button>'
+		+ '</div>';
+	h += '<div style="font-size:14px;opacity:.65;margin-top:4px;">Scan as many as you like; Done puts them on the list, Cancel throws them away.</div>';
+	h += '<div id="market_scan_session_items" style="margin-top:8px;">';
+	(s.items || []).forEach(function(it) { h += marketScanItemRow(it); });
+	h += '</div></div>';
+	marketReceiptPanel(h);
+}
+
+function marketScanItemRow(it) {
+	var name = it.formatted || it.item || it.code;
+	var h = '<div class="market_scan_item" data-code="' + marketEsc(it.code) + '" style="border-bottom:1px solid var(--line);padding:5px;font-size:17px;">'
+		+ '<b>' + marketEsc(name) + '</b>';
+	if (it.raw_formatted && it.raw_formatted.toLowerCase() !== String(name).toLowerCase()) {
+		h += ' <span style="font-size:13px;opacity:.55;">' + marketEsc(it.raw_formatted) + '</span>';
+	}
+	h += ' <span style="font-size:13px;opacity:.5;float:right;">' + marketEsc(it.code) + '</span></div>';
+	return h;
+}
+
+function marketScanSessionRefresh() {
+	if (!marketScanSession || !marketScanSession.uuid) { return; }
+	$.get('/manager/market/scan/session', { timestamp: Date.now() }, function(s) {
+		if (!s || s.uuid !== marketScanSession.uuid) { return; }
+		marketScanSession = s;
+		var box = $('#market_scan_session_items');
+		if (!box.length) { clearInterval(marketScanPollTimer); return; }
+		if (s.status === 'cancelled') {
+			clearInterval(marketScanPollTimer);
+			marketScanRapid = false;
+			marketReceiptPanel('<div style="padding:18px;font-size:18px;">Scan stopped. <button id="market_receipt_close">Close</button></div>');
+			return;
+		}
+		if (s.status === 'done') { clearInterval(marketScanPollTimer); marketReceiptPanel(); return; }
+		box.empty();
+		(s.items || []).forEach(function(it) { box.append(marketScanItemRow(it)); });
+		$('#market_scan_session_count').text(s.count || 0);
+	}, 'json');
+}
+
+function marketScanSessionPoll(uuid) {
+	if (marketScanPollTimer) { clearInterval(marketScanPollTimer); }
+	marketScanPollTimer = setInterval(marketScanSessionRefresh, 1000);
+}
+
+$(document).on('click', '#market_scan_session_done', function() {
+	clearInterval(marketScanPollTimer);
+	marketScanRapid = false;
+	$.post('/manager/market/scan/session/done', { timestamp: Date.now() }, function() {
+		marketScanSession = null;
+		marketReceiptPanel();
 	});
 });
 
-// The other tab opens its camera over the whole screen (replacing #everything),
-// reads the first barcode or QR code it sees, restores the page, and posts the
-// code. The lookup and the list are the house's, so the computer's Market refreshes.
+$(document).on('click', '#market_scan_session_cancel', function() {
+	clearInterval(marketScanPollTimer);
+	marketScanRapid = false;
+	$.post('/manager/market/scan/session/cancel', { timestamp: Date.now() }, function() {
+		marketScanSession = null;
+		marketReceiptPanel();
+	});
+});
+
+// The phone side of a scan session: the Google scanner (via JawnScan) opens as
+// if the phone had pressed Scan, each read goes back to the machine that started
+// the session, and the scanner re-opens for the next one until the person backs
+// out or the computer cancels.
 window.marketPhoneCamera = function(opts) {
 	opts = opts || {};
-	window.marketPhoneScanOrigin = opts.origin_tab || '';
-	// the phone's own scanner (the Google code scanner behind JawnScan) is the
-	// scanner, opened as if the phone had pressed Scan itself; it covers the
-	// screen and hands the code back through jawnScanResult
+	window.marketPhoneSession = opts.session || '';
+	window.marketPhoneOrigin = opts.origin_machine || '';
+	window.marketPhoneRapid = !!opts.rapid;
 	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
 		window.JawnScan.scan();
 		return;
@@ -278,11 +412,9 @@ window.marketPhoneCamera = function(opts) {
 		if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); }
 		$('#market_phone_camera').remove();
 		everything.show();
-		if (code) {
-			marketBarcode(code, opts.origin_tab || '');
-		}
+		marketPhoneResult(code || '');
 	};
-	$('#market_phone_cancel').on('click', function() { finish(); });
+	$('#market_phone_cancel').on('click', function() { finish(''); });
 	if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
 		$('#market_phone_hint').text('This browser cannot open the camera.');
 		return;
@@ -296,7 +428,7 @@ window.marketPhoneCamera = function(opts) {
 		try { detector = ('BarcodeDetector' in window) ? new BarcodeDetector() : null; } catch (e) { detector = null; }
 		if (!detector) {
 			// no in-browser reader: hand it to the app's own scanner
-			finish();
+			finish('');
 			if (window.JawnScan && typeof window.JawnScan.scan === 'function') { window.JawnScan.scan(); }
 			else { window.alert('This browser cannot read barcodes.'); }
 			return;
@@ -306,10 +438,15 @@ window.marketPhoneCamera = function(opts) {
 				if (codes && codes.length && codes[0].rawValue) { finish(codes[0].rawValue); }
 			}).catch(function() {});
 		}, 400);
-		setTimeout(function() { if (!done) { finish(); } }, 30000);
+		setTimeout(function() { if (!done) { finish(''); } }, 30000);
 	}).catch(function() {
 		$('#market_phone_hint').text('The camera could not be opened.');
 	});
+};
+
+window.marketPhoneScanStop = function() {
+	window.marketPhoneRapid = false;
+	window.marketPhoneSession = '';
 };
 
 function marketScanCamera() {
@@ -326,7 +463,12 @@ function marketScanCamera() {
 		video.play();
 		var iv = setInterval(function() {
 			detector.detect(video).then(function(codes) {
-				if (codes && codes.length && codes[0].rawValue) { var code = codes[0].rawValue; stop(); marketBarcode(code); }
+				if (codes && codes.length && codes[0].rawValue) {
+					var code = codes[0].rawValue;
+					stop();
+					marketBarcode(code);
+					if (marketScanRapid) { setTimeout(marketScanCamera, 400); }
+				}
 			}).catch(function() {});
 		}, 400);
 		setTimeout(stop, 30000);
@@ -335,9 +477,6 @@ function marketScanCamera() {
 	});
 }
 
-function marketBarcode(code) {
-	$.post('/manager/market/scan', { barcode: code, list: marketList, vendor: marketVendor, timestamp: Date.now() });
-}
 
 $(document).on('click', '.market_tab', function() {
 	marketTab = $(this).attr('tab');
@@ -538,7 +677,7 @@ function marketReceiptShow(response) {
 	// what was read, editable, so the date and the tender can be checked against the paper
 	h += '<div style="flex:1 1 380px;min-width:300px;">';
 	h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-		+ '<b>' + marketEsc(response.vendor || 'Receipt') + '</b>'
+		+ '<b>' + marketEsc(response.vendor_formatted || response.vendor || 'Receipt') + '</b>'
 		+ '<label style="font-size:14px;">date <input id="market_receipt_date" type="text" value="' + marketEsc(response.date || '') + '" style="width:110px;"></label>'
 		+ '<label style="font-size:14px;">total <input id="market_receipt_total" type="text" value="' + marketEsc(response.total === null || response.total === undefined ? '' : response.total) + '" style="width:80px;"></label>'
 		+ '</div>';
@@ -556,7 +695,7 @@ function marketReceiptShow(response) {
 	lines.forEach(function(l) {
 		h += '<div class="market_receipt_line" data-description="' + marketEsc(l.description) + '" data-code="' + marketEsc(l.code || '') + '" style="border-bottom:1px solid var(--line);padding:4px;font-size:16px;">';
 		h += '<input class="market_receipt_include" type="checkbox" checked style="vertical-align:middle;"> ';
-		h += '<input class="market_receipt_item" type="text" value="' + marketEsc(l.item) + '" style="width:40%;"> ';
+		h += '<input class="market_receipt_item" type="text" value="' + marketEsc(l.item_formatted || l.item) + '" style="width:40%;"> ';
 		h += 'x<input class="market_receipt_qty" type="text" value="' + marketEsc(l.qty) + '" style="width:9%;"> ';
 		h += '@<input class="market_receipt_price" type="text" value="' + marketEsc(l.price === null || l.price === undefined ? '' : l.price) + '" style="width:14%;"> ';
 		if (l.on_list) { h += '<span style="font-size:13px;opacity:.7;">on list</span> '; }

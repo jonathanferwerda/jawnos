@@ -27,7 +27,7 @@
 		<% foreach my $contact ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$contacts} ) { %>
 			<div class="<% if ($mail_contact eq $contact->{'uuid'}) {%>active <% } %>mail_contact hover" uuid="<%= $contact->{'uuid'} %>"
 				name="<%= &subs::unformat_name($contact->{'name'}) %>"
-				contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><%= $contact->{'contact_name'} %></div>
+				contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><%= &subs::format_name($contact->{'contact_name'}) %></div>
 		<% } %>
 
 	</div>
