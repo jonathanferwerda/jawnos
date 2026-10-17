@@ -157,6 +157,25 @@ html, body {
    the window's own width (a viewport media query cannot: the window is a small
    panel on a large screen) */
 .wind[app="music"] { container-type: inline-size; }
+
+/* fullscreen: the player itself fills the screen (musicPlayerFullscreen). The
+   library has no place there - the picture and the two bars do - so it is put
+   away while the player is in the top layer, and comes back on exit. The bars
+   are shown and hidden by the video include's mousemove handler, the same one
+   that serves the theatre. */
+#music:fullscreen,
+#music:-webkit-full-screen {
+	width: 100%;
+	height: 100%;
+	max-height: none;
+	/* the template writes the configured colour inline; fullscreen is a black
+	   house, so the picture's letterboxing does not show a bright band */
+	background-color: #000 !important;
+}
+#music:fullscreen #music_library,
+#music:-webkit-full-screen #music_library {
+	display: none;
+}
 body.dark_theme #music {
 	--music-line: rgba(255, 255, 255, 0.22);
 	--music-line-soft: rgba(255, 255, 255, 0.10);

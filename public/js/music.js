@@ -1435,23 +1435,25 @@ function musicVisualState() {
 	return musicVisual.st;
 }
 
-// Fullscreen for the player, the way the picture needs it: a video track is the
-// video element as ever; anything else takes the whole player, so the sound's
-// picture (the visualiser's video) and the controls - the dropdown that chooses
-// it lives there - come along.
+// Fullscreen for the player, the way the picture needs it: the whole player
+// goes fullscreen, not the <video> element. A fullscreened <video> is the
+// browser's own media element, so moving the mouse over it brings the browser's
+// controls and never the player's: those are siblings of the element and so
+// outside the fullscreen element. Taking the player instead puts #interface and
+// the transport (with the dropdown that chooses the visualisation) inside it,
+// and the video include's own mousemove handler brings them in and out as it
+// does in the theatre. The sound's picture, the visualiser's video, rides along
+// the same way.
 function musicPlayerFullscreen() {
 	var v = document.getElementById('video');
 	if (!v) { return; }
-	var target = v;
 	if (v.getAttribute('type') == 'video') {
 		$(v).show();
 	}
 	else {
 		$(v).hide();
-		var miss = v.getAttribute('miss');
-		var container = miss ? document.getElementById(miss + '_container') : null;
-		if (container) { target = container; }
 	}
+	var target = document.getElementById('music') || v;
 	var p = target.requestFullscreen ? target.requestFullscreen()
 		: (target.webkitRequestFullscreen ? target.webkitRequestFullscreen() : null);
 	if (p && p.catch) { p.catch(function () {}); }

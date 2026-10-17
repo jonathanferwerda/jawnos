@@ -129,7 +129,7 @@ our %topic = (
 		title => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'public/js/music.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization' ],
-		verified => '2026-10-16',
+		verified => '2026-10-17',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
@@ -141,7 +141,7 @@ our %topic = (
 			'Open Music; the library lists artists and albums from your media folders.',
 			'Click a track to play it; the transport along the top controls playback.',
 			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
-			'Fullscreen (the player button, or F) fills the screen with the picture.',
+			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.'
 		],
 		related => [ 'studio', 'synth' ]
