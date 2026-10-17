@@ -5475,6 +5475,17 @@ sub backup_now() {
 			$last_update = $last_updated->{'server_time'};
 			$ld_server_time = $last_update;
 		}
+		else {
+			# A peer with no watermark is cold. Exporting every table in full is
+			# what let one slow tablet hold this machine's single export lock for
+			# minutes at a time (appointments and continent are ~110k rows each),
+			# while every other peer was told "already exporting". Bound the first
+			# pull to the last day: the nightly three-day reconciliation and a
+			# manual gimme are how older rows are reached. Every machine already
+			# holds the older history; the rows it is missing are recent.
+			$last_update = &subs::rightNow() - (24 * 60 * 60 * 1000);
+			$ld_server_time = $last_update;
+		}
 		$ld_server_time = $ld_server_time - 20000;
 		my $tables = `sqlite3 $database .tables`;
 		my @tables = sort split ' ', $tables;
