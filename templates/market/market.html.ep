@@ -110,11 +110,12 @@
 			<div style="padding:10px;font-size:16px;opacity:.7;">No receipts kept yet. Read one with the Receipt button.</div>
 		<% } %>
 		<% foreach my $r ( @receipts ) { %>
-			<div class="market_receipt_row" data-apply="<%= $r->{'apply_json'} %>" data-files="<%= $r->{'files_json'} %>" data-total="<%= defined $r->{'total'} ? $r->{'total'} : '' %>" data-date="<%= $r->{'date'} %>" data-vendor="<%= $r->{'vendor'} %>" style="border-bottom:1px solid var(--line);padding:6px;">
+			<div class="market_receipt_row" data-apply="<%= $r->{'apply_json'} %>" data-files="<%= $r->{'files_json'} %>" data-total="<%= defined $r->{'total'} ? $r->{'total'} : '' %>" data-date="<%= $r->{'date'} %>" data-vendor="<%= $r->{'vendor'} %>" data-payment="<%= $r->{'payment_method'} %>" data-payment-ref="<%= $r->{'payment_ref'} %>" style="border-bottom:1px solid var(--line);padding:6px;">
 				<div style="font-size:17px;">
 					<b><%= &subs::format_name($r->{'vendor'} || 'Receipt') %></b>
 					<% if ($r->{'date'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;"><%= $r->{'date'} %></span><% } %>
 					<% if (defined $r->{'total'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;">total <%= $r->{'total'} %></span><% } %>
+					<% if ($r->{'payment_method'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;">paid by <%= $r->{'payment_method'} %><% if ($r->{'payment_ref'}) { %> <%= $r->{'payment_ref'} %><% } %></span><% } %>
 					<span style="opacity:.6;font-size:14px;margin-left:6px;"><%= scalar @{ $r->{'lines'} || [] } %> lines</span>
 					<button class="market_receipt_readd" style="float:right;font-size:15px;">Add to list</button>
 				</div>

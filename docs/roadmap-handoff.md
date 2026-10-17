@@ -254,8 +254,12 @@ A **Receipts** pane reopens what was kept — its page thumbnails open inline an
 **Add to list** puts its lines back on the list in the cart; the scanner buttons
 follow the host's feeds (a computer, not a server), and an ADF batch is read in
 page order rather than modification-time order. A scan also shows its work live —
-the scanner's own line and each page as it comes off the feeder — and a run that
-produces nothing says why (no paper, device busy); and a barcode scan can be
+the scanner's own line (with `--progress`) and each page as it comes off the feeder
+(scanimage writes a page only when it is complete, so the image pops in then) —
+Cancel stops it mid-feed, and a run that produces nothing says why (no paper,
+device busy). The confirm shows the page full size beside the lines, with the
+date, total, paid-by and tender reference editable so they can be checked against
+the paper; and a barcode scan can be
 handed to another tab in the house (its screen becomes a live camera, reads the
 code, restores its page and posts it), selected from the abilities list
 (camera, scan, printer) the capability table now carries.

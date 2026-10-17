@@ -860,10 +860,10 @@ sub scanner_scan_command($feed, $file) {
 	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
 	$feed = lc($feed || '');
 	if ($feed eq 'flatbed' && grep { $_ eq 'flatbed' } @feeds) {
-		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution";
+		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution --progress";
 	}
 	if ($feed eq 'adf' && grep { $_ eq 'adf' } @feeds) {
-		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution";
+		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution --progress";
 	}
 	return undef;
 }
@@ -2404,9 +2404,11 @@ sub market_receipt_read {
 	my $system = 'You read shop receipts for JawnOS and answer with strict JSON only, no prose.';
 	my $ask = 'These images are the pages of ONE shop receipt, page one first. Return ONLY JSON: '
 		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","total":the printed total as a number or null,'
+		. '"payment_method":"the tender as printed (cash, debit, credit, visa, mastercard, amex, mobile, gift, other) or empty",'
+		. '"payment_ref":"the card number\'s last 4 digits, or an approval/auth code printed with the tender, digits only, else empty",'
 		. '"lines":[{"description":"the item text as printed, trimmed","code":"a barcode, UPC or ISBN printed on that line, digits only, else empty",'
 		. '"qty":the quantity as a number (1 when not shown),"price":the line total as a number,"unit_price":the price per unit as a number or null}]}. '
-		. 'Prices as plain numbers without symbols. Include only purchased lines; skip subtotal, tax, change, tender, loyalty, savings and other summary rows.';
+		. 'Prices as plain numbers without symbols. Read the tender/payment rows only into payment_method and payment_ref, never as a line. Include only purchased lines; skip subtotal, tax, change, loyalty, savings and other summary rows.';
 	my ($text, $err) = &subs::ai_chat_role('visual_assistant', [
 		{ role => 'system', content => $system },
 		{ role => 'user', content => $ask, images => $pages },
@@ -2490,11 +2492,27 @@ sub market_receipt_scan {
 	# keep the scanner's own words: the progress view shows them live, and a run
 	# that produced nothing says why instead of the old bare "no pages"
 	my $log = $base . '.log';
-	`timeout 120 $command 2> $log`;
+	my $pidfile = $base . '.pid';
+	my $cancelfile = $base . '.cancel';
+	unlink $cancelfile if -e $cancelfile;
+	# run it in the background so its pid is on disk - Cancel can then stop the
+	# feed - and wait for it as before, so the request still answers when done
+	`timeout 120 $command 2> $log & echo \$! > $pidfile; wait`;
+	unlink $pidfile;
 	my @tiffs = &scanner_page_list($base);
+	my $discard = sub {
+		unlink glob("$base*.tiff");
+		unlink glob("$base.preview_*.jpg");
+		unlink $log;
+	};
+	if (-e $cancelfile) {
+		unlink $cancelfile;
+		$discard->();
+		return ('the scan was cancelled', []);
+	}
 	unless (scalar @tiffs) {
 		my $why = &scanner_log_reason($log);
-		unlink $log;
+		$discard->();
 		return ('the scanner produced no pages' . ($why ne '' ? ': ' . $why : ''), []);
 	}
 	my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device }) || 'Raw';
@@ -2513,13 +2531,26 @@ sub market_receipt_scan {
 	return (undef, \@jpgs);
 }
 
+# The last lines of a log, read from its tail so a chatty scanner (--progress
+# writes a lot) does not make every poll slurp the whole file.
+sub scanner_log_tail {
+	my ($log, $bytes) = @_;
+	$bytes ||= 4096;
+	return () unless $log && -e $log;
+	open(my $fh, '<', $log) or return ();
+	my $size = -s $log;
+	seek($fh, $size > $bytes ? $size - $bytes : 0, 0);
+	my $tail = do { local $/; <$fh> };
+	close $fh;
+	return grep { /\S/ } split /\n/, ($tail || '');
+}
+
 # The scanner's own last word on why a run produced nothing, in plain terms. The
 # useful line is scanimage's error ("Document feeder out of documents", "Error
 # during device I/O"), not the batch summary printed after it.
 sub scanner_log_reason {
 	my ($log) = @_;
-	return '' unless $log && -e $log;
-	my @lines = grep { /\S/ } split /\n/, read_file($log);
+	my @lines = &scanner_log_tail($log);
 	my $why = '';
 	foreach my $l ( @lines ) {
 		$why = $l if $l =~ /scanimage:/;
@@ -2576,6 +2607,8 @@ sub market_receipt_file {
 		date => ($data->{'date'} || ''),
 		vendor => ($data->{'vendor'} || ''),
 		total => (defined $data->{'total'} && $data->{'total'} =~ /[0-9]/) ? 0 + $data->{'total'} : undef,
+		payment_method => ($data->{'payment_method'} || ''),
+		payment_ref => ($data->{'payment_ref'} || ''),
 		files => \@files,
 		lines => \@lines,
 	};
@@ -2668,12 +2701,24 @@ post '/manager/market/receipt' => sub($c) {
 	}
 	my ($out, $err) = &market_receipt_read([ map { $_->{'base64'} } @pages ]);
 	return $c->render(json => { error => $err }) if $err;
+	my @images;
+	my $page = 0;
+	foreach my $f ( @files ) {
+		next unless defined $f && -e $f;
+		my $name = $f;
+		$name =~ s{.*/}{};
+		push @images, { page => $page, url => '/manager/market/receipt/image?file=' . $name };
+		$page++;
+	}
 	$c->render(json => {
 		vendor => &subs::unformat_name($out->{'vendor'} || ''),
 		date => $out->{'date'} || '',
 		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
+		payment_method => ($out->{'payment_method'} || ''),
+		payment_ref => ($out->{'payment_ref'} || ''),
 		lines => &market_receipt_lines($out),
 		files => \@files,
+		images => \@images,
 	});
 };
 
@@ -2732,14 +2777,10 @@ post '/manager/market/receipt/apply' => sub($c) {
 	&market_save_list($list);
 	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
 	my $files = eval { return decode_json $c->param('files') } || [];
-	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total') }) if scalar @{$files};
+	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref') }) if scalar @{$files};
 	$c->render(json => { added => scalar @added, linked => $linked });
 };
 
-# A kept receipt's page for the receipts pane. /file_open hands a file back as a
-# download (Content-Disposition: attachment), which an <img> will not show, so a
-# receipt's own page is served inline here - and only a page that receipt
-# recorded, never an arbitrary path.
 # A running scan's pages and the scanner's own log, for the confirm panel's live
 # view. The scan POST blocks on the scanner, so this is answered by another
 # worker while it runs; pages are converted to a preview jpg the moment their
@@ -2759,12 +2800,8 @@ get '/manager/market/receipt/progress' => sub($c) {
 		push @pages, { page => $n, url => '/manager/market/receipt/preview?scan_id=' . $id . '&page=' . $n } if -e $jpg;
 		$n++;
 	}
-	my @log;
-	my $log = $base . '.log';
-	if (-e $log) {
-		@log = grep { /\S/ } split /\n/, read_file($log);
-		@log = @log[-4 .. -1] if scalar @log > 4;
-	}
+	my @log = &scanner_log_tail($base . '.log');
+	@log = @log[-6 .. -1] if scalar @log > 6;
 	$c->render(json => { pages => \@pages, log => \@log });
 };
 
@@ -2783,6 +2820,39 @@ get '/manager/market/receipt/preview' => sub($c) {
 	$c->render(data => $data);
 };
 
+# A scanned or uploaded receipt page for the review panel, inline. /file_open
+# hands a file back as a download, which an <img> will not show; only a
+# receipt-named file in the market scan folder is served, never a path.
+get '/manager/market/receipt/image' => sub($c) {
+	my $name = $c->param('file') || '';
+	unless ($name =~ /^receipt_[A-Za-z0-9_.-]+\.(?:jpg|jpeg|png)$/i && $name !~ /\.\./) { $c->rendered(404); return; }
+	my $path = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market/' . $name);
+	unless (-f $path) { $c->rendered(404); return; }
+	my $data = read_file($path);
+	unless (defined $data && length $data) { $c->rendered(404); return; }
+	$c->res->headers->content_type($data =~ /^\x89PNG/ ? 'image/png' : 'image/jpeg');
+	$c->res->headers->cache_control('private, max-age=60');
+	$c->render(data => $data);
+};
+
+# Stop a running scan. The worker running scanimage is blocked in its own shell,
+# so the cancel is a marker plus a kill of that exact batch name; the scan then
+# discards its pages and answers "cancelled" to the waiting request.
+post '/manager/market/receipt/cancel' => sub($c) {
+	my $id = $c->param('scan_id') || '';
+	$id =~ s/[^A-Za-z0-9]//g;
+	return $c->render(json => { cancelled => 0 }) unless length $id;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
+	my $base = $folder . '/receipt_' . $id;
+	write_file($base . '.cancel', 1);
+	`pkill -f "receipt_$id" 2>/dev/null`;
+	$c->render(json => { cancelled => 1 });
+};
+
+# A kept receipt's page for the receipts pane. /file_open hands a file back as a
+# download (Content-Disposition: attachment), which an <img> will not show, so a
+# receipt's own page is served inline here - and only a page that receipt
+# recorded, never an arbitrary path.
 get '/manager/market/receipt_page' => sub($c) {
 	my $uuid = $c->param('uuid') || '';
 	my $page = $c->param('page') || 0;
