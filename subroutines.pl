@@ -5537,10 +5537,12 @@ sub backup_now() {
 				while (my $nd = $cursor->hash) {
 					$tdb->insert($d, $nd);
 					$copied++;
-					# Refresh the job's `updated` during a big table's copy: it is the
-					# liveness stamp the panel uses to call a dead worker interrupted.
+					# Keep the job's liveness stamp fresh, but do not go back through
+					# database_grabber: its abandoned-statement sweep visits every open
+					# handle and finishes THIS still-reading cursor, which ended the copy
+					# at exactly 2000 rows no matter how many were left.
 					if ($job && ($copied % 2000) == 0) {
-						&subs::sync_job_step($job, 'export:' . $d, { current => $copied, total => $row_total });
+						eval { $db->query('update sync_jobs set updated = ? where uuid = ?', &subs::rightNow(), $job) };
 					}
 				}
 				$cursor->finish if $cursor && $cursor->can('finish');
