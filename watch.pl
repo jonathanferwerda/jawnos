@@ -76,7 +76,8 @@ get '/watch/reply_audio' => sub($c) {
 		$c->res->headers->content_type('audio/wav');
 		$c->res->headers->header('Cache-Control' => 'no-store');
 		$c->on(finish => sub { unlink $path });
-		$c->render(file => $path);
+		$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+		$c->rendered(200);
 	}
 	else {
 		$c->rendered(403);

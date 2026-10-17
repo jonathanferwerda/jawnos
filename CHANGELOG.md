@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.651 - watch: the WiFi reply route serves its one-shot WAV as a Mojo asset file (the RenderFile plugin does not answer render(file => ...)), so the device's pull is a normal 200 stream.
 - v0.1.650 - audio replies prefer WiFi too: the server renders the spoken answer once as a WAV and sends a small say_audio_ready over BLE; a WiFi-connected watch or t-deck pulls it from the serving House machine (so a fallback machine works, not just the stored homebase), plays it, and deletes the one-shot file. An off-WiFi device gets the existing streamed BLE PCM parts immediately. The t-deck's voice upload also gains the WiFi-first path, falling back to BLE at once when WiFi is down.
 - v0.1.646 - watch and t-deck: voice clips prefer a single WiFi POST to /watch/voice; when WiFi is down (or the homebase is marked down) the BLE bridge is used at once, and the log names which road was taken. The t-deck gains the WiFi upload it did not have, and both devices use a shorter upload timeout so an unreachable homebase does not delay the fallback.
 - v0.1.638 - watch and t-deck: the wake acknowledgment chime now plays when the capture ends, not when the wake word lands, and its two notes are reversed to E6 then A5 (high, then low).
