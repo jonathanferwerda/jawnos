@@ -12634,6 +12634,43 @@ sub remote_machine_negotiator() {
 #   params      => { ... }                    (request params)
 #   remote_uuid => a single target, else a flood to every reachable peer
 #   extra       => extra_params for remote_relay_request (e.g. dissemination)
+sub operator_door_push {
+	# Hand a device's rotated Now Me row to the other House machines on this LAN.
+	# A device that falls back probes them with this pair, so they must hold it
+	# now; the durable digest is only a backstop for a machine that was away.
+	# Each peer verifies the signed request (`/manager/operator_door`), so no
+	# session cookie is needed. Bounded and synchronous: two LAN peers cost a
+	# couple of seconds, and Now Me is a deliberate action.
+	my ($edt, $chip_id, $value, $server_time, $device) = @_;
+	return 0 unless $edt && $chip_id && defined $value && length $value;
+	$server_time ||= &subs::rightNow();
+	$device ||= &subs::device_setter();
+	require Mojo::UserAgent;
+	my $n = 0;
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		next unless (($rm->{'connection'} // '') eq 'active');
+		next unless $rm->{'pubkey'};
+		# only a machine sharing this network can be a LAN fallback
+		my $lan = &subs::peer_lan_address($rm, 1);
+		next unless $lan && $lan->{'manager'};
+		my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+		$ua = $ua->insecure(1);
+		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+		my $res = eval {
+			$ua->post($lan->{'manager'} . '/manager/operator_door' => form => {
+				signatorial => &subs::signatorial_designer(),
+				edt => $edt,
+				chip_id => $chip_id,
+				device => $device,
+				server_time => $server_time,
+				value => $value,
+			})->result;
+		};
+		$n++ if $res && $res->is_success;
+	}
+	return $n;
+}
+
 sub relay_headless {
 	my ($data) = @_;
 	$data ||= {};

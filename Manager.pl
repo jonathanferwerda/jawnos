@@ -28429,26 +28429,11 @@ sub now_me($data) {
 	my $row_time = &subs::rightNow();
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id, server_time => $row_time });
 	# The device probes a fallback House machine with this pair, so every peer
-	# must hold this rotation now, not on a later sync tick. The signed peer rail
-	# writes it through the setting route every machine already exposes; the
-	# durable digest remains the backstop for a peer that was away.
-	&subs::subprocessor(sub {
-		Mojo::IOLoop->reset;
-		eval {
-			&subs::relay_headless({
-				path => '/manager/operator_door',
-				method => 'POST',
-				params => {
-					signatorial => &subs::signatorial_designer(),
-					edt => $edt,
-					chip_id => $chip_id,
-					device => &subs::device_setter(),
-					server_time => $row_time,
-					value => $json_op,
-				}
-			});
-		};
-	}, { name => 'operator door relay' });
+	# on this LAN must hold this rotation now, not on a later sync tick. Done
+	# inside the request (a couple of seconds) rather than in a forked relay:
+	# the prefork worker's subprocess did not reliably reach the peers.
+	my $door_peers = eval { &subs::operator_door_push($edt, $chip_id, $json_op, $row_time, &subs::device_setter()) } || 0;
+	$log->info('operator door push: ' . $door_peers . ' peer(s) for ' . $chip_id) if $log;
 	# Which link actually carries this Now Me? An explicit 'bluetooth' asks for the
 	# bridge; otherwise the watch's own LAN is tried, and a watch that answers is
 	# fetched over HTTP. A watch bridged over BLE and off its access point cannot
