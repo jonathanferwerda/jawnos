@@ -6505,6 +6505,36 @@ post '/manager/key_push' => sub($c) {
 	$c->render(json => { ok => $result->{'ok'} ? 1 : 0, error => $result->{'error'}, summary => { settings => $result->{'settings'}, security => $result->{'security'}, links => $result->{'links'} } });
 };
 
+post '/manager/operator_door' => sub($c) {
+	# A Now Me rotation is pushed over the signed rail to every linked machine.
+	# The device probes a fallback House with this pair, so a peer that has not
+	# run a settings sync yet (or whose session cookie lapsed) must still be able
+	# to store it. peer_verify is the gate; the value is the row Now Me wrote.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $edt = $c->param('edt');
+	my $chip_id = $c->param('chip_id');
+	my $value = $c->param('value');
+	unless ($edt && $chip_id && defined $value && length $value) {
+		$c->render(json => { ok => 0, error => 'missing device or value' });
+		return;
+	}
+	# Store the writer's server_time, so every machine holds the same revision
+	# of the row and a later sync does not flip between copies.
+	my $server_time = $c->param('server_time') || &subs::rightNow();
+	&subs::setting_setter({
+		app => $edt,
+		setting => 'operator_door',
+		subsetting => $chip_id,
+		device => ($c->param('device') || &subs::device_setter()),
+		value => $value,
+		server_time => $server_time,
+		timestamp => $server_time,
+	});
+	$c->render(json => { ok => 1 });
+};
+
 post '/manager/configure/remote_rsync' => sub ($c) {
 	my $timestamp = $c->param('timestamp');
 	my $direction = $c->param('direction');
@@ -28402,13 +28432,14 @@ sub now_me($data) {
 		Mojo::IOLoop->reset;
 		eval {
 			&subs::relay_headless({
-				path => '/manager/setting_setter',
+				path => '/manager/operator_door',
 				method => 'POST',
 				params => {
-					app => $edt,
-					setting => 'operator_door',
-					subsetting => $chip_id,
+					signatorial => &subs::signatorial_designer(),
+					edt => $edt,
+					chip_id => $chip_id,
 					device => &subs::device_setter(),
+					server_time => $server_time,
 					value => $json_op,
 				}
 			});

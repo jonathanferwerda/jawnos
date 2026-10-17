@@ -242,6 +242,10 @@ hook before_dispatch => sub {
 		# the gate on both routes, exactly as it is on vault_share
 		$path eq '/manager/key_push' ||
 		$path eq '/manager/legacy_reseal' ||
+		# a Now Me rotation pushes the device's operator_door row to every linked
+		# machine over the signed rail, so a device that falls back to another
+		# House machine can authenticate at once; the route peer_verifies
+		$path eq '/manager/operator_door' ||
 		# the handshake at the head of the peer rail: it authenticates by signature
 		# against the roster (peer_verify), so a peer whose session cookie has
 		# lapsed can still handshake and reconnect
