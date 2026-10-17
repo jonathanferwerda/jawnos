@@ -5518,7 +5518,12 @@ sub backup_now() {
 			# continent used to materialise the whole table with ->hashes, and the
 			# worker died under that allocation (the export then restarted every
 			# tick and never finished). One row at a time keeps the memory flat.
-			my $row_total = (&subs::db_query('select count(*) as c from ' . $d . ' where server_time ' . $op . ' ?', $cut)->hashes->[0]->{'c'} || 0) + 0;
+			# Window/tab state belongs to the machine that drew it. Carrying it in a
+			# snapshot made one machine's Libro Chequing window open on every other
+			# machine; the digest already ignores these settings, and the export must
+			# too. Everything durable still rides along.
+			my $window_state = ($d eq 'settings') ? " and (setting is null or setting not in ('open_tabs','scrollTop','jopen','dimensions'))" : '';
+			my $row_total = (&subs::db_query('select count(*) as c from ' . $d . ' where server_time ' . $op . ' ?' . $window_state, $cut)->hashes->[0]->{'c'} || 0) + 0;
 			if ($job) {
 				&subs::sync_job_step($job, 'export:' . $d, {
 					label => 'export ' . $d, state => 'running', current => 0, total => $row_total,
@@ -5527,7 +5532,7 @@ sub backup_now() {
 			}
 			if ($row_total > 0) {
 	#			$tdb->query('delete from ' . $d . ' where server_time < ?', $ld_server_time);
-				my $cursor = &subs::db_query('select * from ' . $d . ' where server_time ' . $op . ' ?', $cut);
+				my $cursor = &subs::db_query('select * from ' . $d . ' where server_time ' . $op . ' ?' . $window_state, $cut);
 				my $copied = 0;
 				while (my $nd = $cursor->hash) {
 					$tdb->insert($d, $nd);

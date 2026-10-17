@@ -6609,6 +6609,15 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		$c->rendered;
 		return;
 	}
+	# The UI uses its session; a peer calling this as the signed pull-now lever
+	# (the target names the machine it should pull from) verifies against the
+	# roster instead, so a lapsed cookie cannot wedge the sync again.
+	my $requester = $c->param('signatorial');
+	my $requester_rm = ($requester && &subs::db_select('remote_machines', undef, { signatorial => $requester })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($requester_rm && &subs::peer_verify($c, $requester_rm))) {
+		$c->rendered(403);
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $ip = $c->param('ip');
 	my $ssh_port = $c->param('ssh_port');
@@ -14950,6 +14959,9 @@ sub merge_database($c,$configuration) {
 									}
 								}
 								if ($q eq 'settings') {
+									# Window/tab state is the machine's own view, not a setting: a
+									# peer's snapshot must never open or move a window here.
+									if (($r->{'setting'} || '') =~ /^(?:open_tabs|scrollTop|jopen|dimensions)$/) { next; }
 									# The utility controller keeps every machine's jobs in one blob keyed
 									# by that machine's signatorial. The generic whole-row replace below
 									# would let whichever peer synced last win outright, wiping the other

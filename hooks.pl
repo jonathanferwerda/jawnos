@@ -273,6 +273,9 @@ hook before_dispatch => sub {
 		# stale open row over the same bare signed rail; the route peer_verifies
 		# the caller against the roster and only repairs a row that is here
 		$path eq '/manager/records/repair' ||
+		# the signed pull-now lever: a peer with a lapsed cookie asks this
+		# machine to pull from it, and the route peer_verifies the caller
+		$path eq '/manager/configure/remote_upgrade' ||
 		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
 		# receives one. Both require a pinned peer key (peer_verify, no
 		# trust-on-first-contact) and only accept the jawnos folder with the
