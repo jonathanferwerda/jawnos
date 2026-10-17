@@ -265,6 +265,13 @@ hook before_dispatch => sub {
 		$path eq '/manager/configure/backup_now' ||
 		$path eq '/manager/backup_serve' ||
 		$path eq '/manager/backup/confirm' ||
+		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
+		# receives one. Both require a pinned peer key (peer_verify, no
+		# trust-on-first-contact) and only accept the jawnos folder with the
+		# secret/large paths excluded (see Manager.pl), so a sessionless peer
+		# can sync without the gate's cookie.
+		$path eq '/manager/rsync_pack' ||
+		$path eq '/manager/rsync_unpack' ||
 		# the ticket desk rides the same bare signed rail: a linked machine reads
 		# the desk from, or answers a request held on, a neighbour's database, so
 		# its routes take a session OR a peer signature. Each checks the roster and

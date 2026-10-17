@@ -6187,18 +6187,66 @@ get '/manager/configure/ping' => sub($c) {
 	$c->render(text => $html);
 };
 
-# HTTP rail for the sync buttons: a peer serves its tree and receives one, so
-# remote_rsync never needs ssh or a stored system password. The caller
-# authorizes as a known remote_machine (signatorial) and rides the session
-# cookie remote_useragent_maker already holds for it.
+# Code sync is a peer-key route, not a session route: a peer's cookie lapses,
+# and a gated reply silently stalls a sync. Both routes require a pinned key
+# (no trust-on-first-contact for a tree that can carry secrets) and are
+# restricted to the jawnos folder. The exclusion list is the gitignored/secret
+# side of the tree: .shots (the ticket and DB copies), the database, voices,
+# releases, personal pictures, generated build caches and the agent notes.
+sub code_sync_excludes {
+	return join ' ', map { "--exclude='$_'" } (
+		'jawnos/.git',
+		'jawnos/config.json',
+		'jawnos/database',
+		'jawnos/public/images/jonathans',
+		'jawnos/.shots',
+		'jawnos/AGENTS.md',
+		'jawnos/docs/AGENTS-notes.md',
+		'jawnos/releases',
+		'jawnos/voices',
+		'jawnos/signatorials',
+		'jawnos/.pio',
+		'jawnos/jp/alarmclock/.pio',
+		'jawnos/jt/.pio',
+		'jawnos/jw/.pio',
+		'jawnos/jt/build',
+		'jawnos/jw/build',
+		'*.pem',
+		'*.key',
+		'*.log',
+	);
+}
+
+sub code_sync_tar {
+	my $home = shift;
+	my $excludes = &code_sync_excludes();
+	return `tar czf - -C "$home" $excludes jawnos 2>/dev/null`;
+}
+
+# Extract only a tarball whose every member is under jawnos/; this keeps a
+# compromised or mistaken peer from writing .ssh, .president or anything else
+# in the home directory.
+sub code_sync_unpack {
+	my ($tmp, $home) = @_;
+	my @members = `tar tzf "$tmp" 2>/dev/null`;
+	return 0 unless @members;
+	foreach my $m (@members) {
+		chomp $m;
+		next if $m eq '' || $m eq '.' || $m eq './';
+		$m =~ s{^\./}{};
+		return 0 unless $m =~ m{^jawnos/} && $m !~ m{(^|/)\.\.(/|$)} && $m !~ m{^/};
+	}
+	my $rc = system('tar', 'xzf', $tmp, '-C', $home, '--no-same-owner', '--no-same-permissions');
+	return $rc == 0 ? 1 : 0;
+}
+
+# A pinned key is required: a known signatorial is not secret, so a stranger
+# could otherwise claim it and receive or replace the tree on first contact.
 get '/manager/rsync_pack' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
-	my $folder = $c->param('folder') || 'jawnos';
-	$folder =~ s{.*/}{};
-	my $home = &subs::home('~/');
-	my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" --exclude="$folder/database" "$folder" 2>/dev/null`;
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $tar = &code_sync_tar(&subs::home('~/'));
 	$c->res->headers->content_type('application/x-gtar');
 	$c->render(data => $tar);
 };
@@ -6206,16 +6254,20 @@ get '/manager/rsync_pack' => sub($c) {
 post '/manager/rsync_unpack' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
-	my $folder = $c->param('folder') || 'jawnos';
-	$folder =~ s{.*/}{};
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $body = $c->req->body;
 	$body = $body->slurp if ref $body;
+	my $limit = 256 * 1024 * 1024;
+	unless (defined $body && length($body) && length($body) <= $limit) {
+		$c->rendered(length($body // '') > $limit ? 413 : 400);
+		return;
+	}
 	my $home = &subs::home('~/');
 	my $tmp = &subs::home('~/.president/rsync_recv_' . &subs::random_string_creator(8) . '.tgz');
 	write_file($tmp, $body);
-	`tar xzf "$tmp" -C "$home" 2>/dev/null`;
+	my $ok = &code_sync_unpack($tmp, $home);
 	unlink $tmp;
+	unless ($ok) { $c->rendered(400); return; }
 	$c->render(text => 'unpacked ' . length($body));
 };
 
@@ -6366,17 +6418,20 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 			if ($res && $res->is_success && length $res->body) {
 				my $tmp = &subs::home('~/.president/rsync_pull_' . &subs::random_string_creator(8) . '.tgz');
 				write_file($tmp, $res->body);
-				`tar xzf "$tmp" -C "$home" 2>/dev/null`;
+				my $ok = &code_sync_unpack($tmp, $home);
 				unlink $tmp;
-				$summary = 'Pulled ' . &subs::data_size(length $res->body);
-				write_file(&subs::home('~/.president/status'), 'restart');
-				push @result, 'Triggered Local Restart';
+				if ($ok) {
+					$summary = 'Pulled ' . &subs::data_size(length $res->body);
+					write_file(&subs::home('~/.president/status'), 'restart');
+					push @result, 'Triggered Local Restart';
+				}
+				else { $summary = 'Pull refused (unsafe archive)'; }
 			}
 			else { $summary = 'Pull failed'; }
 		}
 		elsif ($direction eq 'to') {
 			# pack our tree and push it to the peer, then ask it to restart
-			my $tar = `tar czf - -C "$home" --exclude="$folder/.git" --exclude="$folder/config.json" --exclude="$folder/public/images/jonathans" --exclude="$folder/database" "$folder" 2>/dev/null`;
+			my $tar = &code_sync_tar($home);
 			my $url = $rm->{'manager'} . '/manager/rsync_unpack?signatorial=' . $me . '&folder=' . $folder;
 			my $res = eval { $rm->{'ua'}->post($url => { 'Content-Type' => 'application/x-gtar' } => $tar)->result };
 			if ($res && $res->is_success) {
