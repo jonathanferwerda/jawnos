@@ -3099,25 +3099,25 @@ void https_download(fs::FS &fs, String url, String filename) {
 
             int len = https.getSize();
             Serial.println(len);
-            uint8_t buff[1048] = { 0 };
-
+            uint8_t buff[1024];
+            File out = fs.open(filename.c_str(), FILE_APPEND);
             WiFiClient * stream = https.getStreamPtr();
-            while (https.connected() &&  (len > 0 || len == -1)) {
-              // read up to 128 byte
+            uint32_t dl_started = millis();
+            // A reply fetch must never wedge the network stack: a peer that
+            // stops mid-body is cut off after 15 s instead of spinning forever.
+            while (https.connected() && (len > 0 || len == -1) && millis() - dl_started < 15000) {
+              // read in chunks and write exactly the bytes read: appendFile's
+              // file.print() treats the buffer as a C string, so binary data
+              // (a WAV's NUL bytes) was truncated to a few bytes
               size_t size = stream->available();
-              Serial.println(size);
-              if (size) {
-                Serial.println("Got a size");
-                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-
-                // write it to Serial
-                //  Serial.write(buff, c);
-                appendFile(FFat, filename.c_str(), (char *) buff);
-                if (len > 0) {
-                  len -= c;
-                }
+              if (!size) { delay(1); continue; }
+              int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+              if (c > 0 && out) { out.write(buff, c); }
+              if (len > 0) {
+                len -= c;
               }
             }
+            if (out) { out.close(); }
           }
         }
       }

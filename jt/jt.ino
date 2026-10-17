@@ -161,6 +161,12 @@ static uint32_t say_shown_at = 0;
 static volatile bool sayFetchPending = false;
 static volatile bool sayFetchRunning = false;
 static String* sayFetchReq = nullptr;
+// One persistent worker owns the HTTPS fetch: the deck's fragmented internal
+// heap cannot reliably start a fresh 12 KB task per reply, so the worker is
+// created once at boot and waits for a URL here.
+static QueueHandle_t sayFetchQueue = nullptr;
+static bool sayFetchWorkerOk = false;
+static void sayFetchWorker(void *pv);
 static volatile bool sayWifiReady = false;
 static volatile bool sayWifiPlaying = false;
 // a manual recording is in flight (declared here because loop() reads it; the
@@ -1473,6 +1479,13 @@ void setup() {
 //  audio.connecttoFS(SD, "ding.mp3");
   speakerSelfTest();
   deckLog("[deck] setup complete");
+  sayFetchQueue = xQueueCreate(2, sizeof(String *));
+  if (sayFetchQueue) {
+    sayFetchWorkerOk = xTaskCreatePinnedToCore(sayFetchWorker, "SayFetch", 8192, NULL, 1, NULL, 0) == pdPASS;
+    if (!sayFetchWorkerOk) {
+      deckLog("%s", "[voice] WiFi fetch worker could not start");
+    }
+  }
 }
 
 bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
@@ -2347,18 +2360,14 @@ void loop() {
     sayFetchReq = nullptr;
     if (req) {
       sayFetchRunning = true;
-      // Fetch on this task, not a new one: the deck's internal heap is too
-      // fragmented to guarantee a 12 KB task stack (the fetch task failed to
-      // start, which is what left every spoken answer as text only), and a
-      // PSRAM stack panics in the TLS path. The download is one short LAN GET.
-      String url = *req;
-      delete req;
-      https_download(FFat, url, "/reply.wav");
-      File f = FFat.open("/reply.wav");
-      if (f && f.size() > 44) { sayWifiReady = true; }
-      if (f) { f.close(); }
-      deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
-      sayFetchRunning = false;
+      if (sayFetchWorkerOk && sayFetchQueue && xQueueSend(sayFetchQueue, &req, 0) == pdPASS) {
+        // the worker owns req now and clears sayFetchRunning when it lands
+      }
+      else {
+        delete req;
+        sayFetchRunning = false;
+        deckLog("%s", "[voice] WiFi fetch queue unavailable");
+      }
     }
   }
   if (sayWifiReady && !isRecording && !audio.isRunning()) {
@@ -3341,22 +3350,25 @@ void https_download(fs::FS &fs, String url, String filename) {
 
             int len = https.getSize();
             Serial.println(len);
-            uint8_t buff[128] = { 0 };
+            uint8_t buff[1024];
+            File out = fs.open(filename.c_str(), FILE_APPEND);
             WiFiClient * stream = https.getStreamPtr();
-            while (https.connected() &&  (len > 0 || len == -1)) {
-              // read up to 128 byte
+            uint32_t dl_started = millis();
+            // A reply fetch must never wedge the network stack: a peer that
+            // stops mid-body is cut off after 15 s instead of spinning forever.
+            while (https.connected() && (len > 0 || len == -1) && millis() - dl_started < 15000) {
+              // read in chunks and write exactly the bytes read: appendFile's
+              // file.print() treats the buffer as a C string, so binary data
+              // (a WAV's NUL bytes) was truncated to a few bytes
               size_t size = stream->available();
-              if (size) {
-                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-              //  Serial.println(size);
-                // write it to Serial
-                //  Serial.write(buff, c);
-                appendFile(fs, filename.c_str(), (char *) buff);
-                if (len > 0) {
-                  len -= c;
-                }
+              if (!size) { delay(1); continue; }
+              int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+              if (c > 0 && out) { out.write(buff, c); }
+              if (len > 0) {
+                len -= c;
               }
             }
+            if (out) { out.close(); }
             
           }
         }
@@ -7017,8 +7029,26 @@ static void say_audio_add(JSONVar d) {
 }
 
 // Fetch a WiFi reply WAV the server announced. The URL was handed over from
-// loop() (the BLE message task) through sayFetchReq; the download runs inline in
-// loop() (see the sayFetchPending block) and the file is played when it lands.
+// loop() (the BLE message task) through sayFetchReq and is queued to the
+// persistent worker below; loop() plays the file when it lands.
+static void sayFetchWorker(void *pv) {
+  (void)pv;
+  for (;;) {
+    String* req = nullptr;
+    if (xQueueReceive(sayFetchQueue, &req, portMAX_DELAY) != pdTRUE || !req) { continue; }
+    String url = *req;
+    delete req;
+    if (url.length()) {
+      sayWifiReady = false;
+      https_download(FFat, url, "/reply.wav");
+      File f = FFat.open("/reply.wav");
+      if (f && f.size() > 44) { sayWifiReady = true; }
+      if (f) { f.close(); }
+      deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
+    }
+    sayFetchRunning = false;
+  }
+}
 
 // The panel's voice_trigger names the model to run; anything we have no model for
 // ('off', or a phrase still to be trained) leaves the listener disarmed. A
