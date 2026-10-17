@@ -36,20 +36,32 @@ sub embeddedAuthorizer($c) {
 	my $chip_id = $c->param('chip_id');
 	my $wat_set = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });;
 	my $watch_settings = eval { return decode_json $wat_set } || {};
-	my $auth = $watch_settings->{'__specs'}->{'authorization'};
-	my $author = `echo $auth | base64 --decode`;
-	my $authorization = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $author);
 	my $rauth = $c->param('authorization');
-	my $rauthorization = `echo $rauth | base64 --decode`;
-	my $remote_auth = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $rauthorization);
-
-	if ($remote_auth && $edt && secure_compare $remote_auth, $authorization) {
-		$watch_settings->{'__shutup'} = undef;
-		return $watch_settings;
+	return undef unless $edt && $rauth;
+	# The device holds whichever pair the last Now Me actually reached it with, and
+	# a push that was missed must not lock it out of every route: rotating the
+	# credentials on each Now Me invalidates the pair the device still carries, so
+	# a watch whose push went astray got the Gate on /watch and an empty room.
+	# Accept the pair this rotation replaced for a grace window (now_me parks it in
+	# __shutup.previous) as well as the current one.
+	my @pairs = ( [ $watch_settings->{'__shutup'}->{'patience'}, $watch_settings->{'__specs'}->{'authorization'} ] );
+	my $prev = $watch_settings->{'__shutup'}->{'previous'};
+	if (ref $prev eq 'HASH' && $prev->{'patience'} && $prev->{'authorization'} && (time() - ($prev->{'at'} || 0)) <= 3600) {
+		push @pairs, [ $prev->{'patience'}, $prev->{'authorization'} ];
 	}
-	else {
-		return undef;
+	foreach my $pair ( @pairs ) {
+		my ($patience, $auth) = @{$pair};
+		next unless $patience && $auth;
+		my $author = `echo $auth | base64 --decode`;
+		my $authorization = &subs::note_decrypter($patience, $author);
+		my $rauthorization = `echo $rauth | base64 --decode`;
+		my $remote_auth = &subs::note_decrypter($patience, $rauthorization);
+		if ($remote_auth && $authorization && secure_compare $remote_auth, $authorization) {
+			$watch_settings->{'__shutup'} = undef;
+			return $watch_settings;
+		}
 	}
+	return undef;
 }
 
 get '/watch/time' => sub($c) {

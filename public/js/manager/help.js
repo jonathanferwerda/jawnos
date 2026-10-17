@@ -476,6 +476,20 @@ function helpPlayMusic(query, cb, shuffle) {
 	}).fail(function () { cb('I could not reach the music library.'); });
 }
 
+// A message set to the Guide from outside this window: a clip the house heard
+// and transcribed - from the watch, the t-deck, a board - or anything else
+// addressed to the guide. It is put in the composer and asked exactly as if it
+// had been typed here, so the Guide answers it in this conversation. The spoken
+// half of the answer still goes back to the device (the server sends it), this
+// is the Guide's own copy of the exchange.
+function helpChatIngest(text) {
+	var q = $.trim(text == null ? '' : String(text));
+	if (!q) { return; }
+	if (!$('.wind[app="help"] #help_question').length) { return; }	// no Guide window open
+	$('#help_question').val(q);
+	helpAsk();
+}
+
 function helpAsk() {
 	var model = $('#help_model').val();
 	var q = $.trim($('#help_question').val() || '');

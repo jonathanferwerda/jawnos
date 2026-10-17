@@ -663,6 +663,7 @@ our %topic = (
 			'How quiet the room has to go before the device decides you have finished speaking is the Noise floor select on its row. Auto is the default and reads the room the device is standing in - a device hears a steady tone of its own, so the floor rides just above whatever it is hearing and lets go when you stop. The numbers 1200 to 3400 pin it by hand, for when a noisy room cuts a command short or a quiet one will not let go.',
 			'A pause between the phrase and the command is fine - "Hey Jawn" ... "start email test" is one request - and a phrase with nothing after it is ignored rather than acted on: the device waits a couple of seconds for the command to start, then drops the clip, so a stray wake-up does not become a note or an answer.',
 			'While a device is taking a clip it rings its screen with an orange border - the same mark the watch makes - and holds its screen awake, so a spoken command is not cut short by the screen dozing part-way through it.',
+			'What was said is also set to the Guide: when the Guide window is open, the message appears in its conversation and the Guide answers it there, as though it had been typed - the same answer comes back to the device.',
 			'When the guide associate answers a spoken request, the reply lands on the device itself: the words appear on its screen, and the spoken answer plays over its speaker. The Audio replies button on the row in the Embedded panel turns the speech off, leaving the words on screen.'
 		],
 		steps => [

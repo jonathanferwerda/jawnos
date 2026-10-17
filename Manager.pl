@@ -26962,6 +26962,20 @@ sub now_me($data) {
 	# the authorization rotates on every Now Me, bluetooth included now that the
 	# bridge can deliver it; reusing the stored one left the phone and the watch
 	# disagreeing whenever the panel ran anywhere else
+	#
+	# A rotation invalidates the pair the device is still holding, and the push that
+	# would hand it the new one can be missed - a link that is down, a bridge that
+	# is away, an endpoint that times out. Park the pair being replaced, with its
+	# time, so embeddedAuthorizer can keep accepting it for a grace window and a
+	# missed push costs a moment instead of locking the device out of /watch (the
+	# Gate, and with it an empty room).
+	if ($op_d->{'__specs'}->{'authorization'} && $op_d->{'__shutup'}->{'patience'}) {
+		$op_d->{'__shutup'}->{'previous'} = {
+			patience      => $op_d->{'__shutup'}->{'patience'},
+			authorization => $op_d->{'__specs'}->{'authorization'},
+			at            => time(),
+		};
+	}
 	my $patience = &subs::random_string_creator(36);
 	my $au = &subs::random_string_creator(27);
 	my $auth = &subs::note_encrypter($patience, $au );

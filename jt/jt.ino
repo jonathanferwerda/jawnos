@@ -134,6 +134,13 @@ static volatile bool voiceTaskAlive = false;
 // spoken statement changes the panel and writes the config, and both stall the
 // microphone - and draws the orange ring the watch shows while it is listening.
 static volatile bool voiceRecording = false;
+// The Guide's answer, shown on the deck's own screen: the words arrive as a
+// {type:'say'} message, are drawn on the top layer, and are faded by loop() after
+// SAY_TEXT_MS. Declared up here because loop() reads them; the label is built in
+// say_label_show with the rest of the voice code.
+#define SAY_TEXT_MS 12000
+static lv_obj_t *say_label;
+static uint32_t say_shown_at = 0;
 // a manual recording is in flight (declared here because loop() reads it; the
 // recording code at the bottom owns it)
 static volatile bool isRecording = false;
@@ -539,6 +546,7 @@ static void recordingPlay(lv_event_t *e);
 static void voice_trigger_apply();
 static void deckVoiceListenStart();
 static void voice_border_show(bool on);
+static void say_label_show(const String &t);
 bool es7210Begin();
 static void speakerSelfTest();
 static void pruneRecordings(int keep);
@@ -1998,6 +2006,14 @@ void loop() {
             deckLog("[bt] room pushed");
           }
         }
+        else if (mtype == "say") {
+          // The Guide's answer to a spoken request: the words, drawn on the top
+          // layer for a while. (The sound half arrives as say_audio parts, which
+          // the deck does not play yet.)
+          const char *words = (const char *)btMsg["data"]["text"];
+          deckLog("[voice] guide says: %s", words ? words : "");
+          if (words) { say_label_show(String(words)); }
+        }
         else if (mtype == "toggle" || mtype == "toggles") {
           // a toggle flipped somewhere else (a phone press, an alarm, an
           // appointment): light up every button that has that app
@@ -2068,15 +2084,33 @@ void loop() {
     deckVoiceListenStart();
   }
 
-  // The room can go blank: a Now Me clears buttoned_before, and the room push it
-  // then asks for can be missed, which leaves the screen with no buttons until
-  // something else draws. While they are still missing and the bridge is up, ask
-  // again (the bridge path is a message, not a blocking fetch).
-  if (jw_room == "room" && !buttoned_before && deviceConnected) {
+  // The room can go blank: a Now Me clears buttoned_before, and the room push the
+  // bridge is then asked for can be missed - which leaves the screen with no
+  // buttons until something else draws. Ask over the bridge again, and if that
+  // still says nothing, fetch it over the network the deck already has (the same
+  // route the bridge would have called). The clip is a message either way.
+  if (jw_room == "room" && !buttoned_before) {
     static uint32_t last_room_ask = 0;
+    static int room_ask_tries = 0;
     if (millis() - last_room_ask > 4000) {
       last_room_ask = millis();
-      call_the_president();
+      room_ask_tries++;
+      if (deviceConnected && room_ask_tries < 3) {
+        call_the_president();          // over the bridge: a message, no wait
+      }
+      else if (homebaseIP.length() && WiFi.status() == WL_CONNECTED) {
+        room_ask_tries = 0;
+        String watchRequest = https_request("https://" + homebaseIP + "/watch?room=" + room);
+        if (watchRequest != "failure" && watchRequest.length() > 2) {
+          before_me = watchRequest;
+          buttoned_before = true;
+          deckLog("[room] fetched over wifi (%u bytes)", (unsigned)watchRequest.length());
+          remote_room();
+        }
+        else {
+          deckLog("%s", "[room] wifi fetch failed; will try again");
+        }
+      }
     }
   }
 
@@ -2398,6 +2432,11 @@ void loop() {
       voice_border_on = voiceRecording;
       voice_border_show(voice_border_on);
     }
+  }
+  // the Guide's answer is a few seconds' notice, not a screen of its own
+  if (say_shown_at && millis() - say_shown_at > SAY_TEXT_MS) {
+    say_shown_at = 0;
+    if (say_label) { lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN); }
   }
   // The panel sleeps after the idle timeout and any input (anything that
   // refreshes buttonMillis) brings it back. The flag makes each transition
@@ -6245,6 +6284,34 @@ static void voice_border_show(bool on) {
   }
   else {
     lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+// The Guide's answer, on the deck's own screen. The server sends the words as a
+// {type:'say'} message (the sound follows as say_audio parts, not played here), so
+// a request spoken to the deck is readable on it. Drawn on lv_layer_top() and
+// hidden by loop() after SAY_TEXT_MS, the way the watch does it.
+static void say_label_show(const String &t) {
+  if (!say_label) {
+    say_label = lv_label_create(lv_layer_top());
+    lv_obj_set_width(say_label, LV_PCT(92));
+    lv_label_set_long_mode(say_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_bg_opa(say_label, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(say_label, lv_color_hex(0x101428), LV_PART_MAIN);
+    lv_obj_set_style_text_color(say_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_radius(say_label, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(say_label, 8, LV_PART_MAIN);
+    lv_obj_align(say_label, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (t.length()) {
+    lv_label_set_text(say_label, t.c_str());
+    lv_obj_remove_flag(say_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(say_label);
+    say_shown_at = millis();
+  }
+  else {
+    lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN);
   }
 }
 

@@ -4074,6 +4074,22 @@ sub voice_clip_ack() {
 	});
 }
 
+sub guide_set_message() {
+	# Set a message to the Guide: a transcript the house heard addressed to it (a
+	# wake-word capture, or a clip that opened with the phrase) is put into the
+	# Guide's chat, so the spoken message is there to read and the Guide answers it
+	# in the conversation - alongside the spoken answer voice_brain sends back to
+	# the device. The Guide's window may not be open; the push is a no-op then.
+	# A plain command ('start email test') never comes through here: that is a
+	# movement, not a message for the Guide.
+	my ($text, $meta) = @_;
+	return unless defined $text && length $text;
+	&Websocket::send('tab', {
+		console => 'if (window.helpChatIngest) { helpChatIngest(' . encode_json($text) . '); }',
+	});
+	return 1;
+}
+
 sub voice_brain() {
 	# The voice assistant's brain: an utterance addressed to us that is not a
 	# plain start/stop command goes to the guide's action vocabulary, so a spoken
@@ -4207,6 +4223,9 @@ sub voice_ingest() {
 		# addressed, but not a plain command: hand it to the voice brain before
 		# settling for a note (see voice_brain). If no brain claims it, fall through
 		if ($addressed) {
+			# the message is set to the Guide as well as answered: it lands in the
+			# Guide's chat (if one is open) so a spoken message is visible there
+			&subs::guide_set_message($text, $meta);
 			my $brain = eval { &subs::voice_brain($text, $meta) };
 			if ($brain && ref $brain eq 'HASH' && $brain->{'handled'}) {
 				$log->info('voice: brain handled "' . $text . '"');
