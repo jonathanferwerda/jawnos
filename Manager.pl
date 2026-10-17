@@ -24747,14 +24747,26 @@ post '/manager/records/repair' => sub($c) {
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $app = &subs::unformat_name($c->param('app'));
 	my $uuid = $c->param('uuid');
+	my $action = $c->param('action') || 'repair';
 	my $stop = $c->param('stop_timestamp');
 	my $start = $c->param('timestamp');
-	unless ($app && $uuid && defined $stop && $stop =~ /^\d+$/) {
-		$c->render(json => { ok => 0, error => 'app, uuid and stop_timestamp are required' });
+	unless ($app && $uuid) {
+		$c->render(json => { ok => 0, error => 'app and uuid are required' });
 		return;
 	}
 	my $row = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hash;
 	unless ($row) { $c->render(json => { ok => 0, error => 'no such session' }); return; }
+	# An orphan the accurate copy does not hold at all is removed, not closed:
+	# the tombstone is what stops a peer re-adding it on the next merge.
+	if ($action eq 'delete') {
+		&subs::records_tombstone($app, $uuid);
+		$c->render(json => { ok => 1, deleted => $uuid, app => $app });
+		return;
+	}
+	unless (defined $stop && $stop =~ /^\d+$/) {
+		$c->render(json => { ok => 0, error => 'stop_timestamp is required to repair' });
+		return;
+	}
 	$start = $row->{'timestamp'} unless (defined $start && $start =~ /^\d+$/);
 	unless (defined $start && $start =~ /^\d+$/ && $stop >= $start) {
 		$c->render(json => { ok => 0, error => 'stop_timestamp must not precede the start' });
