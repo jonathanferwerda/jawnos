@@ -7141,6 +7141,11 @@ static void deckVoiceListenTask(void *pv) {
   if (!voice_models_init(voice_trigger)) { deckLog("%s", "[voice] no voice model loaded"); }
   deckLog("[voice] listening: %s (slot %d) int=%u", voice_mode_name, mono_slot,
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  // Build both chime files now, before any capture: a flash write while the
+  // microphone is recording overruns the i2s DMA (see micCaptureTask), and the
+  // first wake would otherwise write the opening chime mid-capture.
+  voice_ack_file(false);
+  voice_ack_file(true);
 
   static int16_t mono[MIC_TDM_FRAMES];
   while (voiceListening) {
