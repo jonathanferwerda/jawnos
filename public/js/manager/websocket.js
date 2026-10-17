@@ -484,11 +484,13 @@ function wsMessageHandler(event) {
 		else if ( data['red'] ) {
 			clearTimeout(dotTimeout['red']);
 			$('#red_dot').show();
-			$('#red_dot').find('.dot_info').html(data['red']);
-			if (data['close'] == 'yes') { 
+			var rinfo = $('#red_dot').find('.dot_info');
+			rinfo.html(data['red']);
+			if (data['close'] == 'yes') {
 				$('#red_dot').hide();
+				rinfo.hide();
 			}
-			dotTimeout['red'] = setTimeout(function() { $('#red_dot').hide(); }, 10000);
+			dotTimeout['red'] = setTimeout(function() { $('#red_dot').hide(); rinfo.hide(); }, 10000);
 		}
 		else if ( data['yellow'] ) {
 			clearTimeout(dotTimeout['yellow']);
@@ -501,19 +503,22 @@ function wsMessageHandler(event) {
 				info.css({'background-color': 'white' });
 			}
 			info.html(data['yellow']);
-			if (data['close'] == 'yes') { 
+			if (data['close'] == 'yes') {
 				$('#yellow_dot').hide();
+				info.hide();
 			}
-			dotTimeout['yellow'] = setTimeout(function() { $('#yellow_dot').hide(); }, 20000);
+			dotTimeout['yellow'] = setTimeout(function() { $('#yellow_dot').hide(); info.hide(); }, 20000);
 		}
 		else if ( data['green'] ) {
 			clearTimeout(dotTimeout['green']);
 			$('#green_dot').show();
-			$('#green_dot').find('.dot_info').html(data['green']);
-			if (data['close'] == 'yes') { 
+			var ginfo = $('#green_dot').find('.dot_info');
+			ginfo.html(data['green']);
+			if (data['close'] == 'yes') {
 				$('#green_dot').hide();
+				ginfo.hide();
 			}
-			dotTimeout['green'] = setTimeout(function() { $('#green_dot').hide(); }, 10000);
+			dotTimeout['green'] = setTimeout(function() { $('#green_dot').hide(); ginfo.hide(); }, 10000);
 		}
 		else if ( data['key'] ) {
 			typing(data['key'],data['toggle']);
