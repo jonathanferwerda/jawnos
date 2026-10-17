@@ -250,15 +250,17 @@ native **JawnScan** bridge; **packaging autofill** via the model; the
 forgot-to-check-out reminder; and reading a whole **receipt** — the scanner (ADF
 feeds a long one in one pass) or a photo → the vision model reads the lines → a
 confirm panel names each in our terms and links it into the list in the cart.
+A **Receipts** pane reopens what was kept — its page thumbnails open inline and
+**Add to list** puts its lines back on the list in the cart; the scanner buttons
+follow the host's feeds (a computer, not a server), and an ADF batch is read in
+page order rather than modification-time order.
 
 Still to do:
 - **A real receipt through the ADF** — the paths are built and the model read a
   synthetic one; load a real receipt, press Receipt → Scan (ADF), and check a long
-  one arrives as its pages in order.
-- **A receipts view** — the kept receipts live in the Market app's own `receipts`
-  setting (vendor, date, total, the lines, the page paths); nothing shows them
-  yet. Give Market a small receipts pane that opens the pages and offers "add
-  these lines to the list" again.
+  one arrives as its pages in order (the page listing is now numeric, but only
+  paper proves the feed).
+
 - **Low-confidence lines** — the confirm panel trusts the names; mark a line the
   batch naming was unsure of, or one whose prices do not sum to the printed total,
   so it is the one a person checks.
