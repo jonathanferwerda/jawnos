@@ -6302,12 +6302,16 @@ static void voice_dc_block(int16_t *s, int n) {
   }
 }
 
-// A short beep the listener gives when it commits a capture. The panel can be
-// asleep or turned away, and the orange ring is only visible up close. The file
-// is written once and reused, the way speakerSelfTest's tone is.
-#define VOICE_ACK_PATH "/beep.wav"
-#define VOICE_ACK_MS 70
-#define VOICE_ACK_HZ 1046
+// A short two-note chime the listener gives when it commits a capture. The panel
+// can be asleep or turned away, and the orange ring is only visible up close. The
+// file is written once and reused, the way speakerSelfTest's tone is.
+#define VOICE_ACK_PATH "/chime.wav"
+#define VOICE_ACK_FREQ1 880       // A5
+#define VOICE_ACK_FREQ2 1319      // E6, a quick rising pair
+#define VOICE_ACK_TONE1_MS 65
+#define VOICE_ACK_TONE2_MS 95
+#define VOICE_ACK_GAP_MS 12
+#define VOICE_ACK_AMP 7000
 
 static bool voice_ack_file() {
   File check = FFat.open(VOICE_ACK_PATH);
@@ -6322,7 +6326,10 @@ static bool voice_ack_file() {
   }
   File f = FFat.open(VOICE_ACK_PATH, FILE_APPEND);
   if (!f) { return false; }
-  const uint32_t frames = MIC_I2S_SAMPLE_RATE * VOICE_ACK_MS / 1000;
+  const uint32_t seg1 = MIC_I2S_SAMPLE_RATE * VOICE_ACK_TONE1_MS / 1000;
+  const uint32_t gap = MIC_I2S_SAMPLE_RATE * VOICE_ACK_GAP_MS / 1000;
+  const uint32_t seg2 = MIC_I2S_SAMPLE_RATE * VOICE_ACK_TONE2_MS / 1000;
+  const uint32_t frames = seg1 + gap + seg2;
   const uint32_t edge = MIC_I2S_SAMPLE_RATE / 200;   // 5 ms fade, so it does not click
   int16_t chunk[256];
   uint32_t written = 0;
@@ -6331,11 +6338,18 @@ static bool voice_ack_file() {
     if (n > 256) { n = 256; }
     for (uint32_t i = 0; i < n; i++) {
       uint32_t at = done + i;
-      float env = 1.0f;
-      if (at < edge) { env = (float)at / (float)edge; }
-      else if (frames - at < edge) { env = (float)(frames - at) / (float)edge; }
-      chunk[i] = (int16_t)(7000.0f * env
-                 * sinf(2.0f * 3.14159265f * VOICE_ACK_HZ * (float)at / MIC_I2S_SAMPLE_RATE));
+      float v = 0.0f;
+      uint32_t local = 0, len = 0;
+      float freq = 0.0f;
+      if (at < seg1) { local = at; len = seg1; freq = VOICE_ACK_FREQ1; }
+      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = VOICE_ACK_FREQ2; }
+      if (len) {
+        float env = 1.0f;
+        if (local < edge) { env = (float)local / (float)edge; }
+        else if (len - local < edge) { env = (float)(len - local) / (float)edge; }
+        v = env * sinf(2.0f * 3.14159265f * freq * (float)local / MIC_I2S_SAMPLE_RATE);
+      }
+      chunk[i] = (int16_t)(VOICE_ACK_AMP * v);
     }
     f.write((uint8_t *)chunk, n * 2);
     written += n * 2;
@@ -6360,7 +6374,7 @@ static void voice_ack() {
   audio.setVolume(volumeLevel);
   audio.connecttoFS(FFat, VOICE_ACK_PATH);
   audio.setVolume(volumeLevel);
-  deckLog("%s", "[voice] ack beep");
+  deckLog("%s", "[voice] ack chime");
 }
 
 // The orange ring the watch draws while a capture is in flight: the answer that

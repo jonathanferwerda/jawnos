@@ -4184,6 +4184,71 @@ static void say_label_show(const String &t) {
   }
 }
 
+// ---- the acknowledgment chime -------------------------------------------
+// The same quick two-note figure the t-deck plays (A5 then E6) when its wake
+// phrase is read. The watch's speaker is its own I2S device, so this plays while
+// the PDM microphone keeps reading. It deliberately does not raise isPlaying:
+// that would stop the listener mid-capture and cut the command short.
+#define VOICE_ACK_FREQ1 880
+#define VOICE_ACK_FREQ2 1319
+#define VOICE_ACK_TONE1_MS 65
+#define VOICE_ACK_TONE2_MS 95
+#define VOICE_ACK_GAP_MS 12
+#define VOICE_ACK_AMP 7000
+#define VOICE_ACK_RATE 16000
+
+static volatile bool voiceAckPlaying = false;
+
+static void voice_ack_task(void *pv) {
+  AudioOutputIf *codec = watch.getAudioOutput();
+  if (!codec || !codec->open(16, 1, VOICE_ACK_RATE)) {
+    voiceAckPlaying = false;
+    vTaskDelete(NULL);
+    return;
+  }
+  codec->setVolume(volumeLevel);
+  const uint32_t seg1 = VOICE_ACK_RATE * VOICE_ACK_TONE1_MS / 1000;
+  const uint32_t gap = VOICE_ACK_RATE * VOICE_ACK_GAP_MS / 1000;
+  const uint32_t seg2 = VOICE_ACK_RATE * VOICE_ACK_TONE2_MS / 1000;
+  const uint32_t frames = seg1 + gap + seg2;
+  const uint32_t edge = VOICE_ACK_RATE / 200;   // 5 ms fade, so it does not click
+  int16_t chunk[256];
+  for (uint32_t done = 0; done < frames;) {
+    uint32_t n = frames - done;
+    if (n > 256) { n = 256; }
+    for (uint32_t i = 0; i < n; i++) {
+      uint32_t at = done + i;
+      float v = 0.0f;
+      uint32_t local = 0, len = 0;
+      float freq = 0.0f;
+      if (at < seg1) { local = at; len = seg1; freq = VOICE_ACK_FREQ1; }
+      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = VOICE_ACK_FREQ2; }
+      if (len) {
+        float env = 1.0f;
+        if (local < edge) { env = (float)local / (float)edge; }
+        else if (len - local < edge) { env = (float)(len - local) / (float)edge; }
+        v = env * sinf(2.0f * 3.14159265f * freq * (float)local / VOICE_ACK_RATE);
+      }
+      chunk[i] = (int16_t)(VOICE_ACK_AMP * v);
+    }
+    codec->write((const uint8_t *)chunk, n * 2);
+    done += n;
+  }
+  codec->close();
+  voiceAckPlaying = false;
+  vTaskDelete(NULL);
+}
+
+static void voice_ack() {
+  if (isPlaying || isRecording || voiceAckPlaying) { return; }
+  voiceAckPlaying = true;
+  if (xTaskCreatePinnedToCore(voice_ack_task, "AckTask", 3072, NULL, 2, NULL, 1) != pdPASS) {
+    voiceAckPlaying = false;
+    return;
+  }
+  Serial.println("[voice] ack chime");
+}
+
 static void voiceListenTask(void *pv) {
   if (voiceDbg) { Serial.printf("[voice] task int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   AudioInputIf *mic = watch.getAudioInput();
@@ -4331,6 +4396,9 @@ static void voiceListenTask(void *pv) {
         // the server has it the moment the person stops
         voice_stream_begin();
         Serial.println("[voice] speech detected, recording");
+        // the wake word is the one thing the person needs an immediate answer
+        // for, and the screen may be in a room they are not looking at
+        if (wake_mode) { voice_ack(); }
       }
       // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
       // transfer (the only radio when the watch is off WiFi) carries half the
