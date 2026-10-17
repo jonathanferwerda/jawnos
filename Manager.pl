@@ -26779,20 +26779,6 @@ post '/manager/configure/password_update' => sub($c) {
 
 
 
-post '/manager/embedded/tauthorization' => sub ($c) {
-	my $edt = $c->param('edt');
-	my $timestamp = $c->param('timestamp');
-	my $tauthorization = $c->param('tauthorization');
-	my $chip_id = $c->param('chip_id');
-	my $patience = &subs::random_string_creator(25);
-	&subs::setting_setter({ app => $edt, setting => 'patience', value => $patience, timestamp => $timestamp });
-
-	my $auth = &subs::note_encrypter($patience,$tauthorization);
-	$tauthorization = `(echo $auth) | base64 -w 0`;
-	my $set = &subs::setting_setter({ app => $edt, setting => 'tauthorization', value => $tauthorization });
-	$c->render(json => { settings => $set });
-};
-
 post '/manager/teletype/enable_tty' => sub($c) {
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
@@ -27050,8 +27036,6 @@ sub embedded_grabber($c,$timestamp) {
 			mov => $m
 		};
 	}
-	my $tauthorization = &subs::setting_grabber({ app => $edt, setting => 'tauthorization' });
-
 	my $chip_ids = [];
 	my %chip_seen;
 	foreach my $chip ( @{&subs::db_select('devices')->hashes}) {
@@ -27076,7 +27060,6 @@ sub embedded_grabber($c,$timestamp) {
 		room_count => $room_count,
 		room_max => $room_max,
 		embedded_scope => $embedded_scope,
-		tauthorization => $tauthorization,
 		tty_enabled => $tty_enabled,
 		pseudonyms => $pseudonyms,
 		wifi => $wifi,
@@ -27429,6 +27412,34 @@ sub embedded_toggle($data) {
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle' }) if $data->{'counted'} == 0 || !$data->{'counted'};
 	}
 
+	# A board on the bridge - or one with no LAN address at all - takes the
+	# output command as a BLE `set` message. The state above is already the
+	# physical one (the inversion was folded in), so the board applies it
+	# directly and answers with a `state` ack. This is what lets a crashed board
+	# resume its relays before it has rejoined WiFi.
+	if ($chip_id && ($component eq 'led' || $component eq 'relay' || $component eq 'servo')) {
+		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+		if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
+			my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
+			my $sent = &subs::bluetooth_sender({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'set', data => {
+					component => $component, pin => $pin, state => $state,
+					when => $when, uuid => $uuid, appt_uuid => $appt_uuid,
+					timestamp => $timestamp, measure => $measure, app => $app
+				} }
+			});
+			if ($sent) {
+				return { state => $number_state, formatted_state => $state };
+			}
+			# No link and no address: the command cannot be delivered. Say so
+			# with the state we stored rather than fetching http://:/...
+			return { state => $number_state, formatted_state => $state, pushed => 0 } unless $watch->{'ip'};
+		}
+	}
+
   &subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		eval {
@@ -27623,6 +27634,99 @@ get '/manager/embedded/usb_upload_status' => sub($c) {
 		percent => (@percent ? $percent[-1] : ''),
 		tail => (@lines ? $lines[-1] : '')
 	});
+};
+
+# Provision a board over its USB serial link: the manager writes the stored WiFi
+# and role into config.txt, the board acknowledges and reboots, and it comes up
+# on the house network with its pins already restored. This is the out-of-band
+# path for a crashed board that is sitting on the desk in its provisioning AP
+# (and for a Pico 2 W, which has no Bluetooth stack to fall back on).
+post '/manager/embedded/usb_provision' => sub($c) {
+	require IO::Select;
+	my $chip_id = $c->param('chip_id');
+	my $edt = $c->param('edt') || 'microcontroller';
+	my $port = $c->param('port');
+	return $c->render(json => { ok => 0, error => 'need a chip_id' }) unless $chip_id;
+
+	unless ($port) {
+		my $ports = &usb_ports_grabber();
+		my @acm = grep { $_->{'acm'} } @{$ports};
+		if (scalar @acm == 1) { $port = $acm[0]->{'path'}; }
+		else {
+			return $c->render(json => { ok => 0, error => (scalar @acm ? 'choose a port' : 'no USB serial port is present'), ports => $ports });
+		}
+	}
+	return $c->render(json => { ok => 0, error => 'that port does not look right' }) unless $port =~ m{^/dev/tty(?:ACM|USB)\d+$};
+
+	my $wifi = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) } || {};
+	return $c->render(json => { ok => 0, error => 'this chip has no stored WiFi' }) unless $wifi->{'ssid'} && $wifi->{'password'};
+	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+	my $board = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id }) || {};
+
+	# The homebase a board calls is this machine, at the port /watch listens on.
+	my $address = &subs::network_interface_reporter();
+	my ($my_ip) = map { $address->{$_}->{'ip'} }
+		grep { $address->{$_}->{'ip'} && $address->{$_}->{'ip'} !~ /^127\./ } keys %{$address};
+	$my_ip ||= '127.0.0.1';
+	my @t = localtime(time);
+	my $offset = timegm(@t) - timelocal(@t);
+
+	my $payload = {
+		ssid => $wifi->{'ssid'},
+		password => $wifi->{'password'},
+		ap_ssid => $wifi->{'ap_ssid'},
+		ap_password => $wifi->{'ap_password'},
+		name => $op->{'__specs'}->{'name'} || $board->{'__specs'}->{'name'} || '',
+		authorization => $op->{'__specs'}->{'authorization'} || $board->{'__specs'}->{'authorization'} || '',
+		homebase => '',
+		homebaseIP => $my_ip . ($ENV{'PORT_ARM'} ? ':' . $ENV{'PORT_ARM'} : ''),
+		timestamp => &subs::rightNow(),
+		offset => $offset,
+		%{$board}
+	};
+	$payload->{'__specs'} ||= {};
+	$payload->{'__specs'}->{'authorization'} ||= $payload->{'authorization'};
+	$payload->{'__specs'}->{'name'} ||= $payload->{'name'};
+	$payload->{'__specs'}->{'homebase'} = $payload->{'homebaseIP'};
+	my $json = encode_json $payload;
+
+	system('stty', '-F', $port, 'raw', '115200', '-echo') == 0
+		or return $c->render(json => { ok => 0, error => 'could not prepare ' . $port });
+	open(my $fh, '+<', $port)
+		or return $c->render(json => { ok => 0, error => 'could not open ' . $port . ': ' . $! });
+	$fh->autoflush(1);
+	print {$fh} "JAWNCFG " . $json . "\n";
+
+	my $sel = IO::Select->new($fh);
+	my ($buf, $err, $ok) = ('', '', 0);
+	my $deadline = time() + 8;
+	while (time() < $deadline) {
+		my @ready = $sel->can_read(0.25);
+		next unless @ready;
+		my $chunk = '';
+		my $n = sysread($fh, $chunk, 4096);
+		last unless defined $n && $n > 0;
+		$buf .= $chunk;
+		if ($buf =~ /JAWNCFG OK/) { $ok = 1; last; }
+		if ($buf =~ /JAWNCFG ERR\s*([^\r\n]*)/) { $err = $1; last; }
+	}
+	close $fh;
+	$c->render(json => {
+		ok => $ok,
+		port => $port,
+		bytes => length($json),
+		reply => $buf,
+		error => $ok ? undef : ($err || 'no reply from the board')
+	});
+};
+
+# A manual nudge for the bridge's adopt scan. The scan already runs every 30 s;
+# this button exists so a device that was just powered on can be met at once.
+# It runs off the request (the scan takes several seconds) and the Dev panel
+# refreshes after it.
+post '/manager/configure/ble_scan' => sub($c) {
+	&subs::subprocessor(sub { &subs::ble_adopt_scan(); }, { name => 'manual ble adopt scan' });
+	$c->render(json => { ok => 1, scanning => 1 });
 };
 
 get '/manager/embedded/teletype_backup' => sub($c) {
@@ -28092,15 +28196,31 @@ sub now_me($data) {
 			edt => $edt,
 			message => { type => 'now_me', data => $params }
 		});
-		# the buttons follow the params, so the watch draws without any network
-		my $room_payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
-		if ($room_payload) {
-			&subs::bluetooth_sender({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip_id,
-				edt => $edt,
-				message => { type => 'room', data => { room => 1, payload => $room_payload } }
-			});
+		# The role follows the params. A watch/deck draws its buttons from the room
+		# payload; a board gets the compact form (no chat lists, no pairing
+		# patience) so it can be carried as plain JSON and applied without a zlib
+		# inflater on the microcontroller.
+		if ($edt eq 'microcontroller') {
+			my $board_payload = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id });
+			if ($board_payload) {
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'board_config', data => $board_payload }
+				});
+			}
+		}
+		else {
+			my $room_payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
+			if ($room_payload) {
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'room', data => { room => 1, payload => $room_payload } }
+				});
+			}
 		}
 		# say so, rather than fall through to the empty {} the caller then
 		# rendered as HASH(0x...) and read as a button that did nothing
@@ -29980,6 +30100,54 @@ get '/manager/remote_auth_test' => sub($c) {
 	} else {
 		$c->render(json => {});
 	}
+};
+
+# The yellow dot's expanded panel: the active sync plus the last few completed
+# remote pulls, from this machine's point of view. The active peer name rides in
+# the yellow message itself; this route supplies the history. Only confirmed
+# pulls (remote_upgraded) are listed - remote_update is the in-flight row.
+get '/manager/sync_history' => sub($c) {
+	my $me = &subs::signatorial_designer();
+	my $limit = 8;
+	my $rows = &subs::db_query(
+		'select recipient, signatorial, server_time, size from backups where reason = ? and (recipient = ? or signatorial = ?) order by cast(server_time as integer) desc limit ?',
+		'remote_upgraded', $me, $me, $limit * 3
+	)->hashes || [];
+	my %label;
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes || [] } ) {
+		my $name = $rm->{'ip'} || $rm->{'hostname'} || $rm->{'fqdn'} || '';
+		$label{$rm->{'signatorial'}} = $name if $name ne '';
+	}
+	$label{$me} = 'this machine';
+	my @recent;
+	my %seen;
+	foreach my $r ( @{$rows} ) {
+		my $recipient = $r->{'recipient'} || '';
+		my $signatorial = $r->{'signatorial'} || '';
+		my ($direction, $peer);
+		if ($recipient eq $me) { $direction = 'out'; $peer = $signatorial; }
+		elsif ($signatorial eq $me) { $direction = 'in'; $peer = $recipient; }
+		else { next; }
+		my $second = int(($r->{'server_time'} || 0) / 1000);
+		next if $seen{$peer . ':' . $second}++;
+		push @recent, {
+			time => int($r->{'server_time'} || 0),
+			direction => $direction,
+			peer => $label{$peer} || $peer,
+			size => int($r->{'size'} || 0),
+		};
+		last if scalar @recent >= $limit;
+	}
+	my $lock = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0] || {};
+	my $upgrade = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	my $now = &subs::rightNow();
+	$c->render(json => {
+		current => {
+			serving => (($lock->{'value'} || '') ne '' && int($lock->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
+			pulling => (($upgrade->{'value'} || '') eq 'running' && int($upgrade->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
+		},
+		recent => \@recent,
+	});
 };
 
 

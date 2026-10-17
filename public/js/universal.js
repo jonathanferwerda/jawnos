@@ -418,7 +418,9 @@ function settingDeleter(setter) {
 	});
 }
 
-$(document).on('click', '.dot', function() {
+$(document).on('click', '.dot', function(e) {
+	// A click inside the expanded info is reading it, not dismissing it.
+	if ($(e.target).closest('.dot_info').length) { return; }
 	var di = $(this).find('.dot_info');
 	if (di.is(':visible')) {
 		di.hide();

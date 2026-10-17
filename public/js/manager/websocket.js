@@ -16,6 +16,11 @@ var windowVisible = 1;
 var resumeRebuildAfter = 2000;
 var pageHiddenAt = 0;
 var dotTimeout = {};
+var yellowCurrent = '';
+var yellowDone = true;
+var yellowPinned = false;
+var yellowHistoryHtml = '';
+var yellowHistoryLoading = false;
 var seenWsMessages = [];
 $(document).ready(function() {
 	websocketStart();
@@ -296,6 +301,85 @@ function heartbeatSend(app) {
 	}
 }
 
+function syncEscape(value) {
+	return $('<div>').text(value == null ? '' : String(value)).html();
+}
+
+function syncBytes(bytes) {
+	bytes = Number(bytes) || 0;
+	if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+	if (bytes >= 1048576) return Math.round(bytes / 1048576) + ' MB';
+	if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+	return bytes + ' B';
+}
+
+function syncHistoryHtml(data) {
+	var rows = (data && data.recent) || [];
+	if (!rows.length) return '<div class="sync_empty">No completed syncs yet</div>';
+	var out = '';
+	for (var i = 0; i < rows.length; i++) {
+		var row = rows[i] || {};
+		var when = new Date(Number(row.time) || 0);
+		var clock = ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2);
+		var peer = syncEscape(row.peer || '');
+		var what = row.direction === 'in' ? peer + ' pulled from me' : 'pulled from ' + peer;
+		out += '<div class="sync_row"><span class="sync_time">' + clock + '</span>'
+			+ '<span class="sync_peer">' + what + '</span>'
+			+ '<span class="sync_size" title="database snapshot">' + syncBytes(row.size) + '</span></div>';
+	}
+	return out;
+}
+
+function renderYellowPanel(load) {
+	var info = $('#yellow_dot').find('.dot_info');
+	info.addClass('sync_expanded');
+	var label = yellowDone ? 'Last' : 'Now';
+	var now = yellowCurrent
+		? '<div class="sync_now"><span class="sync_label">' + label + '</span><div class="sync_now_text">' + yellowCurrent + '</div></div>'
+		: '<div class="sync_now"><span class="sync_label">' + label + '</span><div class="sync_now_text dim">no sync running</div></div>';
+	var recent = '<div class="sync_recent"><div class="sync_recent_title">Recent syncs</div>'
+		+ (yellowHistoryHtml || '<div class="sync_empty">loading…</div>') + '</div>';
+	info.html(now + recent);
+	if (load && !yellowHistoryLoading) {
+		yellowHistoryLoading = true;
+		$.getJSON('/manager/sync_history', function(data) {
+			yellowHistoryLoading = false;
+			yellowHistoryHtml = syncHistoryHtml(data);
+			if (yellowPinned) renderYellowPanel(false);
+		}).fail(function() {
+			yellowHistoryLoading = false;
+			yellowHistoryHtml = '<div class="sync_empty">history unavailable</div>';
+			if (yellowPinned) renderYellowPanel(false);
+		});
+	}
+}
+
+// Clicking inside the expanded panel must not toggle it shut (the universal
+// .dot handler toggles on any click in the dot); the dot itself still does.
+$(document).on('click', '.dot_info', function(e) {
+	e.stopImmediatePropagation();
+});
+
+$(document).on('click', '#yellow_dot', function() {
+	var info = $(this).find('.dot_info');
+	// universal.js has already toggled the panel at this point.
+	if (info.is(':visible')) {
+		yellowPinned = true;
+		clearTimeout(dotTimeout['yellow']);
+		renderYellowPanel(true);
+	}
+	else {
+		yellowPinned = false;
+		info.removeClass('sync_expanded');
+		if (yellowDone) {
+			$('#yellow_dot').hide();
+		}
+		else {
+			dotTimeout['yellow'] = setTimeout(function() { $('#yellow_dot').hide(); info.hide(); }, 20000);
+		}
+	}
+});
+
 function wsMessageHandler(event) {
 	if (isJson(event.data)) {
 		var data = JSON.parse(event.data);
@@ -494,7 +578,6 @@ function wsMessageHandler(event) {
 		}
 		else if ( data['yellow'] ) {
 			clearTimeout(dotTimeout['yellow']);
-			$('#yellow_dot').show();
 			var info = $('#yellow_dot').find('.dot_info');
 			if (data['colour']) {
 				info.css({'background-color': data['colour'] });
@@ -502,12 +585,24 @@ function wsMessageHandler(event) {
 			else {
 				info.css({'background-color': 'white' });
 			}
-			info.html(data['yellow']);
-			if (data['close'] == 'yes') {
-				$('#yellow_dot').hide();
-				info.hide();
+			// 'close' ends a sync; keep the last real message instead of
+			// painting the word "close" into the panel.
+			if (data['yellow'] !== 'close') {
+				yellowCurrent = data['yellow'];
 			}
-			dotTimeout['yellow'] = setTimeout(function() { $('#yellow_dot').hide(); info.hide(); }, 20000);
+			yellowDone = (data['close'] == 'yes');
+			$('#yellow_dot').show();
+			if (yellowPinned) {
+				// The person opened the panel: it stays until they click the dot.
+				renderYellowPanel(yellowDone);
+			}
+			else {
+				info.removeClass('sync_expanded');
+				info.html(yellowCurrent);
+				// The normal yellow lifetime: 20 s, even for the final 'close', so
+				// there is time to open it and read the last result.
+				dotTimeout['yellow'] = setTimeout(function() { $('#yellow_dot').hide(); info.hide(); }, 20000);
+			}
 		}
 		else if ( data['green'] ) {
 			clearTimeout(dotTimeout['green']);
