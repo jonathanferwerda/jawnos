@@ -5504,6 +5504,13 @@ sub backup_now() {
 			@tables = grep { $_ ne $t } @tables;
 			$tdb->query('DROP TABLE ' . $t);
 		}
+		# The snapshot is read once, in bounded rowid batches. Its indexes are
+		# pure weight: leaving them on made a few hundred changed rows download
+		# as megabytes of B-tree pages.
+		my $snapshot_indexes = eval { $tdb->query("select name from sqlite_master where type='index' and name not like 'sqlite_autoindex%'")->hashes } || [];
+		foreach my $si ( @{$snapshot_indexes} ) {
+			eval { $tdb->query('DROP INDEX ' . $si->{'name'}) };
+		}
 
 		my $table_total = scalar @tables;
 		my $table_n = 0;
