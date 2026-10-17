@@ -5380,8 +5380,9 @@ sub sync_table_above {
 # what makes the House one picture. The merge dedupes and the peer catches up on
 # its own next tick.
 sub sync_plan {
-	my ($mine, $theirs, $above) = @_;
+	my ($mine, $theirs, $above, $seen) = @_;
 	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
+	$seen ||= {};
 	my %plan;
 	foreach my $t ( keys %{$theirs} ) {
 		my $a = $mine->{$t} || {};
@@ -5406,6 +5407,16 @@ sub sync_plan {
 			$since = $am;
 		}
 		else {
+			# A full table is the only safe way to find a row an offline peer
+			# made and nobody else saw. Do it once per distinct peer picture:
+			# `seen` is the digest recorded after the last successful pull, so
+			# an unchanged peer (often simply behind us) is not re-read every
+			# tick. When its rows change, the full read happens again.
+			my $s = $seen->{$t};
+			next if ref $s eq 'HASH'
+				&& ($s->{'count'} || 0) == $bc
+				&& ($s->{'sum'} || 0) == $bs
+				&& ($s->{'max'} || 0) == $bm;
 			$since = 0;
 		}
 		my $key = ($t eq 'settings_durable') ? 'settings' : $t;
@@ -5538,6 +5549,24 @@ sub sync_job_active {
 	sub new { my ($class, $uuid) = @_; return bless { uuid => $uuid, done => 0 }, $class; }
 	sub done { my ($self, $state, $note) = @_; $state ||= 'done'; $self->{'state'} = $state; &subs::sync_job_finish($self->{'uuid'}, $state, $note); $self->{'done'} = 1; }
 	sub DESTROY { my $self = shift; &subs::sync_job_finish($self->{'uuid'}, 'failed', 'sync ended without a result') unless $self->{'done'}; }
+}
+
+# The peer picture we have already reconciled, per table. Storing it after a
+# successful pull turns "this table diverges" into "this exact picture has
+# already been read", so a peer that is merely behind us is not full-read every
+# tick while a peer that changed (the offline row) is read once more.
+sub sync_seen_get {
+	my ($peer) = @_;
+	return {} unless $peer;
+	my $row = &db_query('select data from cache where context = ? and subcontext = ? order by cast(server_time as integer) desc limit 1', 'sync_seen', $peer)->hashes->[0];
+	return {} unless $row && $row->{'data'};
+	my $d = eval { decode_sereal($row->{'data'}) };
+	return (ref $d eq 'HASH') ? $d : {};
+}
+sub sync_seen_set {
+	my ($peer, $digest) = @_;
+	return unless $peer && ref $digest eq 'HASH';
+	&cache_set({ app => '__president', context => 'sync_seen', subcontext => $peer }, $digest);
 }
 
 # A peer that told us it was busy gets a short rest instead of being asked again

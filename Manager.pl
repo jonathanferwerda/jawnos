@@ -30611,7 +30611,8 @@ sub remote_machine_reconnector($c) {
 						# moves the newest appointment.
 						my $plan;
 						if (ref $rj->{'digest'} eq 'HASH') {
-							$plan = &subs::sync_plan($my_digest, $rj->{'digest'}, ($rj->{'above'} || {}));
+							my $seen = &subs::sync_seen_get($rj->{'signatorial'});
+							$plan = &subs::sync_plan($my_digest, $rj->{'digest'}, ($rj->{'above'} || {}), $seen);
 							$has_new = 1 if (ref $plan eq 'HASH' && scalar keys %{$plan});
 						}
 						# A peer that told us its export was busy gets a short rest; asking
@@ -30636,7 +30637,14 @@ sub remote_machine_reconnector($c) {
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
 							#	&subs::subprocessor(sub {
 								my $status = &remote_upgrade($c,$params);
-								&subs::sync_backoff_set($rj->{'signatorial'}, 120) if ($status || '') eq 'busy';
+								if (($status || '') eq 'done') {
+									# This exact peer picture is now in hand: do not full-read it
+									# again until its rows change.
+									&subs::sync_seen_set($rj->{'signatorial'}, $rj->{'digest'});
+								}
+								elsif (($status || '') eq 'busy') {
+									&subs::sync_backoff_set($rj->{'signatorial'}, 120);
+								}
 							#	});
 							}
 						}
