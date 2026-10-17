@@ -2131,7 +2131,11 @@ void loop() {
   if (digitalRead(BOARD_TOUCH_INT)) {
     bool res =  touch->read();
     if (res) {
-      //    buttonMillis = millis();
+      // A touch has to reset the idle timer like a key or the roller does: with
+      // this commented out, tapping a dozing deck did nothing at all - only a key
+      // press or a roll of the ball brought the panel back (the getTouch() indev
+      // path sets it, but only when LVGL is the one that reads the panel).
+      buttonMillis = millis();
 
       TP_Point  p = touch->getPoint(0);
       static uint32_t lastTouchLog = 0;
