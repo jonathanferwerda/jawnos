@@ -64,14 +64,17 @@ our $forbidden = {
 
 our $capabilities = {
 	mobile => {
-		camera => [ 0, 1 ]
+		camera => [ 0, 1 ],
+		printer => [ 'house' ]
 	},
 	computer => {
 		camera => [ 'webcam' ],
-		scan => [ 'adf', 'flatbed' ]
+		scan => [ 'adf', 'flatbed' ],
+		printer => [ 'house' ]
 	},
 	server => {
-		scan => []
+		scan => [],
+		printer => [ 'house' ]
 	}
 };
 

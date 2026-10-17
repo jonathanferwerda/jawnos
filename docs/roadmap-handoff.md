@@ -253,13 +253,18 @@ confirm panel names each in our terms and links it into the list in the cart.
 A **Receipts** pane reopens what was kept — its page thumbnails open inline and
 **Add to list** puts its lines back on the list in the cart; the scanner buttons
 follow the host's feeds (a computer, not a server), and an ADF batch is read in
-page order rather than modification-time order.
+page order rather than modification-time order. A scan also shows its work live —
+the scanner's own line and each page as it comes off the feeder — and a run that
+produces nothing says why (no paper, device busy); and a barcode scan can be
+handed to another tab in the house (its screen becomes a live camera, reads the
+code, restores its page and posts it), selected from the abilities list
+(camera, scan, printer) the capability table now carries.
 
 Still to do:
-- **A real receipt through the ADF** — the paths are built and the model read a
-  synthetic one; load a real receipt, press Receipt → Scan (ADF), and check a long
-  one arrives as its pages in order (the page listing is now numeric, but only
-  paper proves the feed).
+- **A real receipt through the ADF** — the paths are built, the live view and the
+  page order are proven, but the feeder is currently answering `Device busy` (a
+  failed pull leaves it needing a clear/reset); load a real receipt, press
+  Receipt → Scan (ADF), and confirm a long one arrives as its pages in order.
 
 - **Low-confidence lines** — the confirm panel trusts the names; mark a line the
   batch naming was unsure of, or one whose prices do not sum to the printed total,

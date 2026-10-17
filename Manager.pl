@@ -860,10 +860,10 @@ sub scanner_scan_command($feed, $file) {
 	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
 	$feed = lc($feed || '');
 	if ($feed eq 'flatbed' && grep { $_ eq 'flatbed' } @feeds) {
-		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution;";
+		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution";
 	}
 	if ($feed eq 'adf' && grep { $_ eq 'adf' } @feeds) {
-		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution;";
+		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution";
 	}
 	return undef;
 }
@@ -2253,6 +2253,51 @@ post '/manager/market/checkout' => sub($c) {
 	$c->render(json => { written => $written });
 };
 
+# The tabs in the house that can take a photo, so a computer can hand a barcode
+# scan to a phone. A tab is a live `server` websocket row; its device type comes
+# from the browser's user agent and the capability table says whether that type
+# has a camera. The caller's own tab is left out (it is the one asking).
+get '/manager/market/cameras' => sub($c) {
+	my $me = $c->param('browser_tab_id') || '';
+	my $since = &subs::rightNow() - 5000;
+	my $rows = &subs::db_query("select browser_tab_id, user_agent, room, server_time from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time desc", 'server', 'server@%', 'stayingAlive', $since)->hashes;
+	my (%seen, @devices);
+	foreach my $r ( @{$rows} ) {
+		my $bti = $r->{'browser_tab_id'} || '';
+		next unless $bti ne '' && $bti ne $me;
+		next if $seen{$bti}++;
+		my $type = &market_client_type($r->{'user_agent'});
+		next unless scalar @{ $gb::capabilities->{$type}->{'camera'} || [] };
+		my $label = ($r->{'room'} && $r->{'room'} ne '') ? &subs::format_name($r->{'room'}) : ($type eq 'mobile' ? 'Phone' : 'Computer');
+		push @devices, { browser_tab_id => $bti, label => $label, type => $type, room => ($r->{'room'} || '') };
+	}
+	$c->render(json => { devices => \@devices });
+};
+
+# The device type a browser's user agent names. Only the types the capability
+# table knows are returned; anything else is a computer (the house's default).
+sub market_client_type {
+	my ($ua) = @_;
+	my $t = lc($ua || '');
+	return 'mobile' if $t =~ /android|iphone|ipad|ipod|mobile/;
+	return 'computer';
+}
+
+# Hand a barcode scan to another tab: it opens its camera over the whole screen,
+# reads the first code it sees, restores the page and posts it, so the lookup is
+# the same one a scan on this machine would do.
+post '/manager/market/scan/remote' => sub($c) {
+	my $bti = $c->param('browser_tab_id') || '';
+	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
+	my $opts = { list => $c->param('list') || '', vendor => $c->param('vendor') || '' };
+	&Websocket::send('server', {
+		console => 'marketPhoneCamera(' . encode_json($opts) . ');',
+		destination => $bti,
+		timestamp => $c->param('timestamp') || &subs::rightNow()
+	});
+	$c->render(json => { ok => 1, device => $bti });
+};
+
 # A scanned barcode: resolve it (house first, then a public catalogue, then our own
 # naming), make sure the house item app exists, and put it on the list.
 post '/manager/market/scan' => sub($c) {
@@ -2428,18 +2473,30 @@ sub market_receipt_lines {
 
 # Run the scanner for a receipt, into the market app's own scan folder so the
 # pages can be filed as a document afterwards. Synchronous, because the person is
-# at the printer waiting, and bounded so a jam cannot wedge the request.
+# at the printer waiting, and bounded so a jam cannot wedge the request. A run is
+# named by the caller's scan_id so a second request can watch its pages arrive.
 # Returns (error, [jpg paths]).
 sub market_receipt_scan {
-	my ($feed) = @_;
+	my ($feed, $scan_id) = @_;
+	$scan_id = '' unless defined $scan_id;
+	$scan_id =~ s/[^A-Za-z0-9]//g;
+	$scan_id = &subs::rightNow() unless length $scan_id;
 	my $filename = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
 	`mkdir -p $filename` unless -e $filename;
-	my $base = $filename . '/receipt_' . &subs::rightNow();
+	my $base = $filename . '/receipt_' . $scan_id;
 	my $command = &scanner_scan_command($feed, $base);
 	return ('the scanner does not offer that feed', []) unless $command;
-	`timeout 120 $command`;
+	$command =~ s/;\s*$//;
+	# keep the scanner's own words: the progress view shows them live, and a run
+	# that produced nothing says why instead of the old bare "no pages"
+	my $log = $base . '.log';
+	`timeout 120 $command 2> $log`;
 	my @tiffs = &scanner_page_list($base);
-	return ('the scanner produced no pages', []) unless scalar @tiffs;
+	unless (scalar @tiffs) {
+		my $why = &scanner_log_reason($log);
+		unlink $log;
+		return ('the scanner produced no pages' . ($why ne '' ? ': ' . $why : ''), []);
+	}
 	my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device }) || 'Raw';
 	my @jpgs;
 	foreach my $t ( @tiffs ) {
@@ -2450,8 +2507,30 @@ sub market_receipt_scan {
 		`shred -u $t`;
 		push @jpgs, $jpg if -e $jpg;
 	}
+	unlink glob("$base.preview_*.jpg");
+	unlink $log;
 	return ('the scanned pages could not be read', []) unless scalar @jpgs;
 	return (undef, \@jpgs);
+}
+
+# The scanner's own last word on why a run produced nothing, in plain terms. The
+# useful line is scanimage's error ("Document feeder out of documents", "Error
+# during device I/O"), not the batch summary printed after it.
+sub scanner_log_reason {
+	my ($log) = @_;
+	return '' unless $log && -e $log;
+	my @lines = grep { /\S/ } split /\n/, read_file($log);
+	my $why = '';
+	foreach my $l ( @lines ) {
+		$why = $l if $l =~ /scanimage:/;
+	}
+	return '' unless $why ne '';
+	$why =~ s/^\s+|\s+$//g;
+	$why =~ s/^scanimage:\s*//;
+	$why =~ s/^sane_start:\s*//i;
+	return 'the feeder has no paper' if $why =~ /out of documents|no documents/i;
+	return 'the feeder could not pull the page (device I/O) - check it sits square in the tray, or use the flatbed' if $why =~ /device I\/O/i;
+	return lcfirst $why;
 }
 
 # Save a bridged or uploaded receipt page into the market app's scan folder, so
@@ -2558,7 +2637,7 @@ post '/manager/market/receipt' => sub($c) {
 	if ($feed eq 'adf' || $feed eq 'flatbed') {
 		return $c->render(json => { error => 'this machine cannot scan' })
 			unless grep { $_ eq $feed } @{ &market_scan_feeds() };
-		my ($err, $paths) = &market_receipt_scan($feed);
+		my ($err, $paths) = &market_receipt_scan($feed, $c->param('scan_id'));
 		return $c->render(json => { error => $err }) if $err;
 		foreach my $p ( @{$paths} ) { push @pages, { base64 => encode_base64(read_file($p), ''), path => $p }; }
 	}
@@ -2661,6 +2740,49 @@ post '/manager/market/receipt/apply' => sub($c) {
 # download (Content-Disposition: attachment), which an <img> will not show, so a
 # receipt's own page is served inline here - and only a page that receipt
 # recorded, never an arbitrary path.
+# A running scan's pages and the scanner's own log, for the confirm panel's live
+# view. The scan POST blocks on the scanner, so this is answered by another
+# worker while it runs; pages are converted to a preview jpg the moment their
+# tiff appears, and the page number is kept stable so a lagging conversion does
+# not shuffle what is already shown.
+get '/manager/market/receipt/progress' => sub($c) {
+	my $id = $c->param('scan_id') || '';
+	$id =~ s/[^A-Za-z0-9]//g;
+	return $c->render(json => { pages => [], log => [] }) unless length $id;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
+	my $base = $folder . '/receipt_' . $id;
+	my (@pages, $n);
+	$n = 0;
+	foreach my $t ( &scanner_page_list($base) ) {
+		my $jpg = $base . '.preview_' . $n . '.jpg';
+		`magick convert $t $jpg 2>/dev/null` unless -e $jpg;
+		push @pages, { page => $n, url => '/manager/market/receipt/preview?scan_id=' . $id . '&page=' . $n } if -e $jpg;
+		$n++;
+	}
+	my @log;
+	my $log = $base . '.log';
+	if (-e $log) {
+		@log = grep { /\S/ } split /\n/, read_file($log);
+		@log = @log[-4 .. -1] if scalar @log > 4;
+	}
+	$c->render(json => { pages => \@pages, log => \@log });
+};
+
+# One page of a running scan, inline (the preview jpg the progress route made).
+get '/manager/market/receipt/preview' => sub($c) {
+	my $id = $c->param('scan_id') || '';
+	$id =~ s/[^A-Za-z0-9]//g;
+	my $page = $c->param('page') || 0;
+	$page = 0 unless $page =~ /^[0-9]+$/;
+	my $jpg = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market/receipt_' . $id . '.preview_' . $page . '.jpg');
+	unless (length $id && -f $jpg) { $c->rendered(404); return; }
+	my $data = read_file($jpg);
+	unless (defined $data && length $data) { $c->rendered(404); return; }
+	$c->res->headers->content_type('image/jpeg');
+	$c->res->headers->cache_control('no-store');
+	$c->render(data => $data);
+};
+
 get '/manager/market/receipt_page' => sub($c) {
 	my $uuid = $c->param('uuid') || '';
 	my $page = $c->param('page') || 0;

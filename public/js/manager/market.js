@@ -116,15 +116,24 @@ $(document).on('click', '#market_checkout', function() {
 	$.post('/manager/market/checkout', { vendor: marketVendor, timestamp: Date.now() });
 });
 
-// Scan a barcode. The app's own bridge (window.JawnScan) is the fast path on a
-// phone - it calls back through window.jawnScanResult(code), the way the other
-// bridges report; a browser uses the BarcodeDetector over the camera; failing
-// both, a code is typed. The server resolves it and names it in our terms.
 $(document).on('click', '#market_scan', function() { marketScan(); });
 
 window.jawnScanResult = function(code) { if (code) { marketBarcode(code); } };
 
+// Scan a barcode. If another tab in the house has a camera, offer to scan from
+// it (pointing a phone at a shelf beats a laptop); otherwise scan here.
 function marketScan() {
+	$.get('/manager/market/cameras', {
+		timestamp: Date.now(),
+		browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
+	}, function(response) {
+		var devices = (response && response.devices) || [];
+		if (devices.length) { marketScanChooser(devices); return; }
+		marketScanHere();
+	}, 'json').fail(function() { marketScanHere(); });
+}
+
+function marketScanHere() {
 	if (window.JawnScan && typeof window.JawnScan.scan === 'function') {
 		window.JawnScan.scan();
 		return;
@@ -136,6 +145,92 @@ function marketScan() {
 	var typed = prompt('Barcode / product code:');
 	if (typed) { marketBarcode(typed); }
 }
+
+function marketScanChooser(devices) {
+	var h = '<div style="padding:10px;">'
+		+ '<b style="font-size:18px;">Scan a barcode</b>'
+		+ '<div style="margin-top:8px;">'
+		+ '<button id="market_scan_here">Scan here</button> '
+		+ '<select id="market_scan_device"><option value="">A device in the house...</option>';
+	devices.forEach(function(d) {
+		h += '<option value="' + marketEsc(d.browser_tab_id) + '">' + marketEsc(d.label) + '</option>';
+	});
+	h += '</select> <button id="market_scan_remote_go">Scan from device</button> '
+		+ '<button id="market_scan_chooser_close">Cancel</button>'
+		+ '</div></div>';
+	marketReceiptPanel(h);
+}
+
+$(document).on('click', '#market_scan_here', function() { marketReceiptPanel(); marketScanHere(); });
+
+$(document).on('click', '#market_scan_chooser_close', function() { marketReceiptPanel(); });
+
+$(document).on('click', '#market_scan_remote_go', function() {
+	var bti = $('#market_scan_device').val();
+	if (!bti) { return; }
+	$.post('/manager/market/scan/remote', {
+		browser_tab_id: bti, list: marketList, vendor: marketVendor, timestamp: Date.now()
+	}, function() {
+		marketReceiptPanel('<div style="padding:10px;font-size:17px;">Scanning on the device... <button id="market_scan_chooser_close">Close</button></div>');
+	});
+});
+
+// The other tab opens its camera over the whole screen (replacing #everything),
+// reads the first barcode or QR code it sees, restores the page, and posts the
+// code. The lookup and the list are the house's, so the computer's Market refreshes.
+window.marketPhoneCamera = function(opts) {
+	opts = opts || {};
+	if (document.getElementById('market_phone_camera')) { return; }
+	var everything = $('#everything');
+	everything.hide();
+	$('<div id="market_phone_camera" style="position:fixed;left:0;top:0;width:100%;height:100%;z-index:99999;background:#000;">'
+		+ '<video id="market_phone_video" playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>'
+		+ '<button id="market_phone_cancel" style="position:absolute;top:12px;right:12px;font-size:18px;">Cancel</button>'
+		+ '<div id="market_phone_hint" style="position:absolute;bottom:24px;left:0;width:100%;text-align:center;color:#fff;font-size:18px;">Point at the barcode</div>'
+		+ '</div>').appendTo('body');
+	var done = false;
+	var stream = null;
+	var iv = null;
+	var finish = function(code) {
+		if (done) { return; }
+		done = true;
+		if (iv) { clearInterval(iv); }
+		if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); }
+		$('#market_phone_camera').remove();
+		everything.show();
+		if (code) {
+			$.post('/manager/market/scan', { barcode: code, list: opts.list || '', vendor: opts.vendor || '', timestamp: Date.now() });
+		}
+	};
+	$('#market_phone_cancel').on('click', function() { finish(); });
+	if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+		$('#market_phone_hint').text('This browser cannot open the camera.');
+		return;
+	}
+	navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(s) {
+		stream = s;
+		var v = document.getElementById('market_phone_video');
+		v.srcObject = s;
+		v.play();
+		var detector = null;
+		try { detector = ('BarcodeDetector' in window) ? new BarcodeDetector() : null; } catch (e) { detector = null; }
+		if (!detector) {
+			// no in-browser reader: hand it to the app's own scanner
+			finish();
+			if (window.JawnScan && typeof window.JawnScan.scan === 'function') { window.JawnScan.scan(); }
+			else { window.alert('This browser cannot read barcodes.'); }
+			return;
+		}
+		iv = setInterval(function() {
+			detector.detect(v).then(function(codes) {
+				if (codes && codes.length && codes[0].rawValue) { finish(codes[0].rawValue); }
+			}).catch(function() {});
+		}, 400);
+		setTimeout(function() { if (!done) { finish(); } }, 30000);
+	}).catch(function() {
+		$('#market_phone_hint').text('The camera could not be opened.');
+	});
+};
 
 function marketScanCamera() {
 	navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(stream) {
@@ -200,11 +295,31 @@ $(document).on('click', '#market_receipt', function() { marketReceiptChooser(); 
 $(document).on('click', '.market_receipt_go', function() {
 	var feed = $(this).attr('feed');
 	if (!feed) { $('#market_receipt_file').trigger('click'); return; }
-	marketReceiptPanel('<div style="padding:12px;font-size:17px;">Reading the receipt...</div>');
-	$.post('/manager/market/receipt', { feed: feed, vendor: marketVendor, list: marketList, timestamp: Date.now() }, function(response) {
+	var scan_id = String(Date.now()) + String(Math.floor(Math.random() * 1000000));
+	marketReceiptPanel('<div style="padding:10px;font-size:17px;">Scanning...'
+		+ '<div id="market_scan_log" style="font-size:14px;opacity:.7;margin-top:6px;"></div>'
+		+ '<div id="market_scan_pages" style="margin-top:8px;"></div></div>');
+	marketScanPoll(scan_id);
+	$.post('/manager/market/receipt', { feed: feed, scan_id: scan_id, vendor: marketVendor, list: marketList, timestamp: Date.now() }, function(response) {
 		marketReceiptShow(response);
 	}, 'json').fail(function() { marketReceiptShow({ error: 'the scan could not be read' }); });
 });
+
+// While a scanner run is in progress, show the scanner's own line and each page
+// as it comes off the feeder. The scan request itself blocks on the scanner, so
+// this asks a separate route (another worker answers) until the request returns.
+function marketScanPoll(scan_id) {
+	var poll = setInterval(function() {
+		$.get('/manager/market/receipt/progress', { scan_id: scan_id }, function(p) {
+			if (!$('#market_scan_pages').length) { clearInterval(poll); return; }
+			$('#market_scan_log').text((p.log || []).join(' | '));
+			(p.pages || []).forEach(function(pg) {
+				if ($('#market_scan_pages img[data-page="' + pg.page + '"]').length) { return; }
+				$('#market_scan_pages').append('<img data-page="' + pg.page + '" src="' + pg.url + '" style="height:96px;margin-right:6px;border:1px solid var(--line);">');
+			});
+		}, 'json');
+	}, 1000);
+}
 
 $(document).on('change', '#market_receipt_file', function() {
 	var files = this.files;

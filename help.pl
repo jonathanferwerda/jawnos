@@ -426,7 +426,8 @@ our %topic = (
 			'An item the warehouse says is due - one whose own quantity budget (keep 6 on hand) sits below its target - is upgraded to a need on its own, so the shopping run already knows what is short.',
 			'While you shop, tick an item off and drop it in the cart; Checkout turns the cart into purchases (each written on the item\'s own app, so a house item app is born there) and retires them from the list, while Cancel just empties the cart back onto it.',
 			'Scan reads a barcode - the app\'s own bridge on a phone, else the camera, else a typed code. A code never seen before is looked up once and named in our terms by the model (a house item name, a category we keep, a unit), then remembered, so the same product is instant next time.',
-			'Receipt reads a whole shopping run at once, for the shop you did not scan at the till. The Receipt button offers the scanner (the ADF feeds the long receipt in one pass) or a photo - the scanner buttons appear only on a machine that has one; the vision model reads the pages into lines and Market shows them for a confirm, each named in our terms and marked when it is already on the list. Add to cart links them into the list in the cart, so Checkout still writes the purchases, and the receipt itself is kept with the Market app.',
+			'If another tab in the house has a camera, Scan offers to hand the read to it: pick the device and that screen becomes a live camera, reads the first barcode or QR code it sees, restores its page and posts the code, so the item lands on the computer\'s list. What a machine offers follows the house\'s abilities list (camera, scanner, printer).',
+			'Receipt reads a whole shopping run at once, for the shop you did not scan at the till. The Receipt button offers the scanner (the ADF feeds the long receipt in one pass) or a photo - the scanner buttons appear only on a machine that has one; while the feeder runs the panel shows the scanner\'s own line and each page as it arrives, and a run that produces nothing says why (no paper, device busy). The vision model reads the pages into lines and Market shows them for a confirm, each named in our terms and marked when it is already on the list. Add to cart links them into the list in the cart, so Checkout still writes the purchases, and the receipt itself is kept with the Market app.',
 			'Receipts reopens what was kept. Once a receipt has been read, the Receipts button lists them newest first, each with its date, total and page thumbnails (press a page to open it); Add to list puts that receipt\'s lines back on the list in one press, the same way a fresh read does.',
 			'Where you are decides which lists apply. A list remembers the vendors it is shopped at, and a vendor has a home plate; when Market opens at a place, the applicable lists appear as Here: - a supermarket shows the grocery list, a big-box store several at once.'
 		],
@@ -436,6 +437,7 @@ our %topic = (
 			'Type an item and press Enter to add it; set its dial to need or want.',
 			'Switch to the Shopping tab and filter the run to needs, wants or all.',
 			'At a shop, tap a Here: list to open on it.',
+			'On a computer, press Scan and pick a phone from the device list to read a barcode with the phone\'s camera.',
 			'After a shop, press Receipt and scan the whole receipt in the ADF, then Add to cart and Checkout.',
 			'Press Receipts to reopen a kept receipt: its pages open, and Add to list puts its lines back on the list.'
 		],
