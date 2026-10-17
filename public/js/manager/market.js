@@ -220,7 +220,7 @@ function marketScanChooser(devices) {
 		+ '<button id="market_scan_here" style="font-size:17px;padding:8px 14px;">Scan here</button>'
 		+ '<select id="market_scan_device" style="font-size:17px;padding:6px;flex:1 1 180px;"><option value="">A device in the house...</option>';
 	devices.forEach(function(d) {
-		h += '<option value="' + marketEsc(d.browser_tab_id) + '">' + marketEsc(d.label) + '</option>';
+		h += '<option value="' + marketEsc(d.browser_tab_id) + '" data-machine="' + marketEsc(d.machine || '') + '">' + marketEsc(d.label) + '</option>';
 	});
 	h += '</select> <button id="market_scan_remote_go" style="font-size:17px;padding:8px 14px;">Scan from device</button>'
 		+ '</div>'
@@ -239,6 +239,7 @@ $(document).on('click', '#market_scan_remote_go', function() {
 	if (!bti) { return; }
 	$.post('/manager/market/scan/remote', {
 		browser_tab_id: bti,
+		machine: $('#market_scan_device option:selected').attr('data-machine') || '',
 		origin_tab: sessionStorage.getItem('browser_tab_id') || '',
 		list: marketList, vendor: marketVendor, timestamp: Date.now()
 	}, function() {

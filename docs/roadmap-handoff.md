@@ -263,9 +263,14 @@ the paper; and a barcode scan can be
 handed to another tab in the house (that tab opens its own Google scanner as if
 it had pressed Scan, and the code comes back to the tab that asked; a browser
 without one gets a live camera view), selected from the abilities list
-(camera, scan, printer) the capability table now carries. An account app carries a
+(camera, scan, printer) the capability table now carries. A phone browsing its
+own jawn is reached through the peer rail: the camera tabs of every enrolled
+peer are gathered in parallel, and the chosen peer's own manager relays the scan
+command to its tab. An account app carries a
 `payment_type` in its Configure panel (cash, debit, credit, visa, mastercard,
-amex, interac, crypto, ...), and a receipt's printed tender is matched to it;
+amex, interac, crypto, ...), and a receipt's printed tender is matched to it —
+an exact word first, then its family when that family has a single account
+(credit -> the only mastercard/visa, debit or interac -> the only debit card);
 Checkout writes the purchases, then opens the list's category with an expense
 transaction prefilled from the cart for a person to check and save.
 

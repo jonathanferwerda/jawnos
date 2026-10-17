@@ -2304,9 +2304,22 @@ sub market_accounts {
 	return [ map { { app => $_->{'app'}, name => &subs::format_name($_->{'app'}) } } @{$rows} ];
 }
 
-# Guess which account a printed tender names. Each account carries a payment_type
-# setting (visa, mastercard, debit, cash, crypto...); the longest type the tender
-# mentions wins, so "visa debit" still prefers a visa account over a debit one.
+# The families a printed tender may name. A receipt that says "credit" can name a
+# mastercard account, and "interac" a debit one, so a family with ONE account in
+# it is enough to pick that account; an ambiguous family is left for the person.
+my %market_payment_family = (
+	cash => [ qw(cash) ],
+	debit => [ qw(debit interac maestro) ],
+	credit => [ qw(credit visa mastercard amex discover) ],
+	crypto => [ qw(crypto bitcoin ethereum btc eth) ],
+	cheque => [ qw(cheque check) ],
+	gift => [ qw(gift) ],
+);
+
+# Guess which account a printed tender names. An exact word always wins (a
+# mastercard account for a mastercard receipt); with no exact word, a family with
+# a single account takes it (a receipt saying "credit" selects the only credit
+# account, which may be a mastercard; "debit" selects the only interac one).
 sub market_payment_account {
 	my ($method) = @_;
 	my $want = lc($method || '');
@@ -2315,13 +2328,33 @@ sub market_payment_account {
 	return '' unless $want ne '';
 	my $rows = &subs::db_query("select app, value from settings where setting = 'payment_type' and value is not null and value != ''")->hashes;
 	my ($best, $best_len) = ('', 0);
+	my %family_of;
 	foreach my $r ( @{$rows} ) {
 		my $t = lc($r->{'value'} || '');
+		$t =~ s/[^a-z0-9 ]//g;
+		$t =~ s/^\s+|\s+$//g;
 		next unless $t ne '';
-		next unless $want eq $t || $want =~ /\b\Q$t\E\b/ || $t =~ /\b\Q$want\E\b/;
-		if (length($t) > $best_len) { $best = $r->{'app'}; $best_len = length($t); }
+		my $fam = '';
+		foreach my $f ( keys %market_payment_family ) {
+			if (grep { $_ eq $t } @{ $market_payment_family{$f} }) { $fam = $f; last; }
+		}
+		$fam = $t unless $fam ne '';
+		push @{ $family_of{$fam} }, { app => $r->{'app'}, type => $t };
+		if (length($t) >= 3 && ($want eq $t || $want =~ /\b\Q$t\E\b/)) {
+			if (length($t) > $best_len) { $best = $r->{'app'}; $best_len = length($t); }
+		}
 	}
-	return $best;
+	return $best if $best ne '';
+	foreach my $fam ( sort keys %family_of ) {
+		my @acc = @{ $family_of{$fam} };
+		next unless scalar @acc == 1;
+		my @words = @{ $market_payment_family{$fam} || [ $fam ] };
+		foreach my $w ( @words ) {
+			return $acc[0]->{'app'} if $want eq $w || $want =~ /\b\Q$w\E\b/;
+		}
+		return $acc[0]->{'app'} if $want =~ /\b\Q$fam\E\b/;
+	}
+	return '';
 }
 
 # The tabs in the house that can take a photo, so a computer can hand a barcode
@@ -2329,6 +2362,16 @@ sub market_payment_account {
 # from the browser's user agent and the capability table says whether that type
 # has a camera. The caller's own tab is left out (it is the one asking).
 get '/manager/market/cameras' => sub($c) {
+# a peer asks for this machine's own tabs; a person also gets the peers' tabs.
+	# The local AJAX helper appends this machine's own signatorial to every request,
+	# so the peer flag is what marks a real peer call (a bare signatorial was being
+	# mistaken for one and answered 403).
+	my $from_peer = ($c->param('peer') || '') eq 'yes';
+	if ($from_peer) {
+		my $peer_sig = $c->param('signatorial') || '';
+		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
+		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+	}
 	my $me = $c->param('browser_tab_id') || '';
 	my $since = &subs::rightNow() - 5000;
 	my $rows = &subs::db_query("select browser_tab_id, user_agent, room, server_time from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time desc", 'server', 'server@%', 'stayingAlive', $since)->hashes;
@@ -2342,7 +2385,54 @@ get '/manager/market/cameras' => sub($c) {
 		my $label = ($r->{'room'} && $r->{'room'} ne '') ? &subs::format_name($r->{'room'}) : ($type eq 'mobile' ? 'Phone' : 'Computer');
 		push @devices, { browser_tab_id => $bti, label => $label, type => $type, room => ($r->{'room'} || '') };
 	}
-	$c->render(json => { devices => \@devices });
+	$c->render(json => { devices => \@devices }) if $from_peer;
+	return if $from_peer;
+	# A phone browsing its own jawn is a peer, not a local tab: ask each peer in
+	# PARALLEL for the camera tabs it holds, with a short leash so a sleeping peer
+	# cannot hold the chooser (sequential calls took long enough that Scan fell
+	# back to the typed prompt).
+	my @peers = grep { $_->{'manager'} } @{ &subs::db_select('remote_machines')->hashes };
+	unless (scalar @peers) { $c->render(json => { devices => \@devices }); return; }
+	my @promises;
+	my @merged;
+	my @peer_notes;
+	my @uas;
+	foreach my $rm ( @peers ) {
+		my $peer = &remote_useragent_maker({ rm => $rm });
+		my $ua = $peer->{'ua'};
+		unless ($ua) {
+			$ua = Mojo::UserAgent->new();
+			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+		}
+		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		push @uas, $ua;
+		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/cameras?peer=yes&signatorial=' . &subs::signatorial_designer();
+		my $m = $rm->{'ip'} || $rm->{'hostname'} || 'peer';
+		(my $short = $m) =~ s/\.jonathanferwerda\.com$//;
+		push @promises, $ua->get_p($url)->then(sub {
+			my ($tx) = @_;
+			my $keep_agent = $ua;  # the agent must outlive this promise
+			my $res = $tx->result;
+			unless ($res && $res->is_success) {
+				push @peer_notes, { machine => $short, status => ($res ? $res->code : 'none'), error => ($tx->error ? ($tx->error->{'message'} || '') : '') };
+				return;
+			}
+			my $data = eval { decode_json $res->body } || {};
+			push @peer_notes, { machine => $short, status => $res->code, devices => scalar @{ $data->{'devices'} || [] } };
+			foreach my $d ( @{ $data->{'devices'} || [] } ) {
+				next unless ref $d eq 'HASH' && ($d->{'browser_tab_id'} || '') ne '';
+				push @merged, { %$d, label => ($d->{'label'} || 'Device') . ' (' . $short . ')', machine => $m };
+			}
+		})->catch(sub { undef });
+	}
+	Mojo::Promise->all(@promises)->then(sub {
+		push @devices, @merged;
+		$c->render(json => { devices => \@devices, peers => \@peer_notes });
+	})->catch(sub {
+		push @devices, @merged;
+		$c->render(json => { devices => \@devices, peers => \@peer_notes });
+	});
+	$c->render_later;
 };
 
 # The device type a browser's user agent names. Only the types the capability
@@ -2358,8 +2448,40 @@ sub market_client_type {
 # reads the first code it sees, restores the page and posts it, so the lookup is
 # the same one a scan on this machine would do.
 post '/manager/market/scan/remote' => sub($c) {
+	# a peer may relay a scan to one of this machine's tabs (see the cameras route
+	# for why the peer flag, not the signatorial alone, marks it)
+	my $from_peer = ($c->param('peer') || '') eq 'yes';
+	if ($from_peer) {
+		my $peer_sig = $c->param('signatorial') || '';
+		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
+		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+	}
 	my $bti = $c->param('browser_tab_id') || '';
 	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
+	# a person picked a tab on a peer: hand the job to that peer's own manager
+	my $machine = $c->param('machine') || '';
+	if (!$from_peer && $machine ne '') {
+		my $rm = &subs::db_select('remote_machines', undef, { ip => $machine })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { hostname => $machine })->hashes->[0];
+		return $c->render(json => { error => 'no such machine' }) unless $rm;
+		my $peer = &remote_useragent_maker({ rm => $rm });
+		my $ua = $peer->{'ua'};
+		unless ($ua) {
+			$ua = Mojo::UserAgent->new();
+			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+		}
+		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/remote?peer=yes&signatorial=' . &subs::signatorial_designer();
+		my $res = eval { $ua->post($url => form => {
+			browser_tab_id => $bti,
+			origin_tab => ($c->param('origin_tab') || ''),
+			origin_name => ($c->param('origin_name') || ''),
+			list => ($c->param('list') || ''),
+			vendor => ($c->param('vendor') || ''),
+			timestamp => &subs::rightNow()
+		})->result };
+		return $c->render(json => $res && $res->is_success ? { ok => 1, machine => $machine } : { ok => 0, error => ($res ? ('the peer answered ' . $res->code) : 'the peer did not answer') });
+	}
 	my $opts = {
 		list => $c->param('list') || '',
 		vendor => $c->param('vendor') || '',
