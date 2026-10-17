@@ -3,6 +3,10 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-17
+
+- v0.1.633 - teletype: the deck's control channel is wss (the TTYws listener serves TLS, and the deck dials it with a secure client that accepts the manager's DNS certificate over a LAN IP); the Wayland input map uses dotool's real actions (mouseto fractions, named buttons, relative mousemove) and gains ydotool pointer support, with auto-detection falling back per action; an unset teletype authorization is a denial instead of an empty-string match; the deck sends first_check as its own parameter and URL-encodes its tokens
+
 ## 2026-10-13
 
 - v0.1.236 - voice: a wake-word capture no longer ends 900 ms after the phrase - it used the wake model as its own silence detector, so every spoken command reached the server as the wake word and nothing else (the reason commands "were not picked up"); voice_brain is implemented, so an addressed utterance now goes to the guide's model and acts or answers aloud (measure/where/play/create, the last staged or saved per the Confirmation Requirement); Jawn Do is shown to be a byte copy of Hey Jawn with a ready Colab notebook for the real model; watch console gains awake/heapfast and a DMA-aware heap report; the SPI flush stages PSRAM buffers through a preallocated internal-DMA bounce, ending the setup_dma_priv_buffer failures that dropped bands of the frame; the Guide's associate gets a configure button whose menu holds the Confirmation Requirement tick

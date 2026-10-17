@@ -479,15 +479,19 @@ sub manager_starter() {
 		}, { name => 'TTY Server' });
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };
-			$ENV{MOJO_LISTEN} = 'http://*:' . $ws_tty_port ;
+			# The deck's control channel carries keystrokes, pointer movement and
+			# button presses, so it is TLS like every other listener. This is the
+			# wss port handed to a device as PORT_COMS / now_me's twshomebase.
+			$ENV{PURPOSE} = "teletype";
+			$ENV{MOJO_LISTEN} = 'https://*:' . $ws_tty_port . $certs;
 			if ($config->{'environment'} eq 'development') {
-				print "Starting Development TTYws Server on $ws_tty_port\n";
+				print "Starting Development TTYwss Server on $ws_tty_port\n";
 				my $morbo = Mojo::Server::Morbo->new;
 				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
 				$morbo->run('./teletype.pl');
 			}
 			elsif ($config->{'environment'} eq 'production') {
-				print "Starting Pro TTYws Server on port " . $ws_tty_port . "\n";
+				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
 				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 				$prefork->heartbeat_timeout(200);
 				$prefork->load_app('./teletype.pl');

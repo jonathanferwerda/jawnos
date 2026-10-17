@@ -531,13 +531,30 @@ TouchLib *touch = NULL;
 TFT_eSPI tft;
 ESP32Time rtc;
 using namespace websockets;
-WebsocketsClient wsclient;
+// The deck dials the manager by LAN IP, but the manager's certificate names its
+// DNS wildcard, so normal verification can never succeed. The library's
+// setInsecure() only clears optional CA pointers on ESP32 and never reaches the
+// WiFiClientSecure; this client does. The tauthorization token is still the
+// secret - TLS protects it (and the injected keystrokes) in flight.
+class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient {
+ public:
+  InsecureDeckTcpClient() { client.setInsecure(); }
+};
+WebsocketsClient wsclient(std::make_shared<InsecureDeckTcpClient>());
 WiFiClientSecure *connexion = new WiFiClientSecure;
 HTTPClient https;
 bool ws_connected = 0;
 void wsMessageCallback(WebsocketsMessage message) {
   //    Serial.print("Got Message: ");
   //    Serial.println(message.data());
+}
+void wsEventCallback(WebsocketsEvent event, String data) {
+  if (event == WebsocketsEvent::ConnectionOpened) {
+    ws_connected = 1;
+  }
+  else if (event == WebsocketsEvent::ConnectionClosed) {
+    ws_connected = 0;
+  }
 }
 void wsClose(WebsocketsMessage closer) {
   //    tauth_cancel();
@@ -1342,6 +1359,7 @@ void setup() {
     deckLog("[deck] wifi %s", WiFi.status() == WL_CONNECTED ? "up" : "NOT up");
   }
   wsclient.onMessage(wsMessageCallback);
+  wsclient.onEvent(wsEventCallback);
   // set output power to 10 dBm (accepted range is -17 - 22 dBm)
   // The radio is a bonus like the GPS: each of these used to park in a silent
   // `while (true);` on failure, which froze the deck with nothing in the log.
@@ -2830,14 +2848,20 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
         if (authorization != "") {
           // Serial.println("Enter pressed");
           String life = "";
+          bool first_check = false;
           if (tauthorization == "") {
-            tauthorization = textarea_content + "&first_check=true";
+            // first_check is its own parameter; it used to be smuggled into the
+            // tauthorization value with an '&', which broke as soon as the token
+            // (or this text) contained one.
+            tauthorization = textarea_content;
+            first_check = true;
           }
           else {
             life = urlEncode(textarea_content);
           }
           // Serial.println(homebase);
-          String information = https_request("https://" + thomebaseIP + "/teletype/information?life=" + life);
+          String information = https_request("https://" + thomebaseIP + "/teletype/information?life=" + life
+                                             + (first_check ? "&first_check=true" : ""));
            Serial.println(information);
 
           textarea_content = "";
@@ -3177,7 +3201,9 @@ void https_download(fs::FS &fs, String url, String filename) {
 String url_maker(String url) {
   long timestamp = rtc.getLocalEpoch() - rtc.offset;
   String chip_id = chip_id_maker();
-  url = url + "&edt=teletype&chip_id=" + chip_id + "&tauthorization=" + tauthorization + "&authorization=" + authorization + "&timestamp=" + timestamp;
+  // Both are base64 (and may carry '+', '/' or '='), so they must be escaped
+  // or the request decoder turns '+' into a space and the token stops matching.
+  url = url + "&edt=teletype&chip_id=" + chip_id + "&tauthorization=" + urlEncode(tauthorization) + "&authorization=" + urlEncode(authorization) + "&timestamp=" + timestamp;
   return url;
 }
 
@@ -4814,10 +4840,26 @@ void tauth_cancel() {
 
 void tauth_connect() {
   if (ws_connected == 0 && tauthorization != "") {
-    //    Serial.println(ws_connected);
-    ws_connected = wsclient.connect("ws://" + twshomebaseIP + "/teletype/ws?tauthorization=" + tauthorization);
-    wsclient.send("Hey Server");
-    wsclient.ping();
+    // twshomebaseIP is "host:port" (now_me's twshomebase). The socket is wss:
+    // wsclient was built over InsecureDeckTcpClient above.
+    String ws_host = twshomebaseIP;
+    int ws_port = 443;
+    int split = ws_host.lastIndexOf(':');
+    if (split > 0) {
+      ws_port = ws_host.substring(split + 1).toInt();
+      ws_host = ws_host.substring(0, split);
+    }
+    if (ws_host.length() == 0 || ws_port <= 0) {
+      ws_connected = 0;
+    }
+    else {
+      String ws_path = "/teletype/ws?tauthorization=" + urlEncode(tauthorization);
+      ws_connected = wsclient.connect(ws_host, ws_port, ws_path);
+      if (ws_connected) {
+        wsclient.send("Hey Server");
+        wsclient.ping();
+      }
+    }
   }
   tauth_remote_enabled = "on";
 

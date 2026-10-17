@@ -152,9 +152,13 @@ Caveats specific to JawnOS:
    relays it to JawnOS over a websocket, so the HTML taskbar can render Zed and
    activate it. This is the piece that turns "JawnOS + a window manager" into
    "JawnOS as the desktop environment".
-3. **Input injection** (the teletype): on Wayland, `xdotool` is out — see the
-   "teletype input injection and Wayland" notes; install `dotool` (AUR) or
-   `wtype` on this box.
+3. **Input injection** (the teletype): the deck's control channel is wss; on
+   Wayland install `dotool` (AUR) for the full pointer + keyboard path, or
+   `ydotool` (with `ydotoold`) for pointer + typing, or `wtype` for typing and
+   keys only. The manager logs the chosen backend and screen size at startup;
+   force one with the `teletype: input_backend` setting or
+   `JAWNOS_INPUT_BACKEND`, and set `teletype: screen_size` ("1920x1080") when no
+   compositor query answers.
 
 Two protocols to remember: `wlr-layer-shell` and `zwlr-foreign-toplevel-management`
 are **wlroots** extensions — Sway, Hyprland and labwc expose them; **GNOME and
