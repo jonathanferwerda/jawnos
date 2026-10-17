@@ -30782,16 +30782,6 @@ sub remote_machine_reconnector($c) {
 						# while plainly holding newer appointments, so its zero must not
 						# suppress the pull the timestamp comparison already wants.
 						$has_new = 1 if (defined $rj->{'pending'} && ($rj->{'pending'}->{'count'} || 0) > 0);
-						# The per-table plan names exactly which tables differ and how far
-						# back each one must be read. It is the signal that a changed
-						# setting, an offline row or a title edit produces, none of which
-						# moves the newest appointment.
-						my $plan;
-						if (ref $rj->{'digest'} eq 'HASH') {
-							my $seen = &subs::sync_seen_get($rj->{'signatorial'});
-							$plan = &subs::sync_plan($my_digest, $rj->{'digest'}, ($rj->{'above'} || {}), $seen);
-							$has_new = 1 if (ref $plan eq 'HASH' && scalar keys %{$plan});
-						}
 						# A peer that told us its export was busy gets a short rest; asking
 						# every tick only makes both machines spend the export over and over.
 						if (($has_new || $deep) && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
@@ -30808,7 +30798,6 @@ sub remote_machine_reconnector($c) {
 								remote_signatorial => $rj->{'signatorial'},
 								remote_device => $rm->{'data'}->{'device'},
 								peer => ($rm->{'ip'} || $rm->{'hostname'} || $rj->{'fqdn'} || ''),
-								plan => $plan,
 								gimme => $gimme
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
@@ -30818,12 +30807,7 @@ sub remote_machine_reconnector($c) {
 								# the child does the work.
 								&subs::subprocessor(sub {
 									my $status = &remote_upgrade($c,$params);
-									if (($status || '') eq 'done') {
-										# This exact peer picture is now in hand: do not full-read it
-										# again until its rows change.
-										&subs::sync_seen_set($rj->{'signatorial'}, $rj->{'digest'});
-									}
-									elsif (($status || '') eq 'busy') {
+									if (($status || '') eq 'busy') {
 										&subs::sync_backoff_set($rj->{'signatorial'}, 120);
 									}
 								}, { name => 'remote upgrade', fork => 1 });
