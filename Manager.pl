@@ -26869,10 +26869,24 @@ post '/manager/embedded/ota_uploader' => sub($c) {
 
 	if ($edt eq 'microcontroller') {
 		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+		# The manager serves firmware from a hardwired path, not .pio/build.
+		# scripts/stage_firmware.pl copies the newest build here; a stale file
+		# here means the OTA ships the previous firmware.
 		my $file = './jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin';
 		my $total_size = -s $file;
+		unless ($total_size) {
+			return $c->render(json => { success => 0, result => 'firmware not staged - run perl scripts/stage_firmware.pl' });
+		}
+		# The device's own Now Me token: handleCreateProcess refuses an upload
+		# without it, and this route used to omit it entirely.
+		my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
+		my $op_d = eval { decode_json $od } || {};
+		my $auth = $op_d->{'__specs'}->{'authorization'} || '';
+		unless ($auth) {
+			return $c->render(json => { success => 0, result => 'no authorization on record - run Now Me first' });
+		}
 
-		my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/upload/alarmclock.bin?total_size=' . $total_size;
+		my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/upload/alarmclock.bin?total_size=' . $total_size . '&authorization=' . url_escape($auth);
 		my $ua = Mojo::UserAgent->new();
     $ua->transactor->add_generator(stream => sub ($transactor, $tx, $path) {
       $tx->req->content->asset(Mojo::Asset::File->new(path => $file));

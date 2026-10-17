@@ -42,6 +42,7 @@ String browser_tab_id;
 unsigned long homebaseOnline = millis();
 unsigned long lastPing = millis();
 unsigned long lastWifiCheck = 0;
+unsigned long lastTimeSync = 0;
 int wifiDownTicks = 0;
 String wifiState;
 String authorization;
@@ -574,6 +575,11 @@ void loop1() {
     lastWifiCheck = millis();
     wifi_supervise();
   }
+  // the crystal drifts; re-anchor the epoch from the (NTP-synced) house every
+  // six hours, so a long uptime never accumulates the old 9-minute offset
+  if ((unsigned long)(millis() - lastTimeSync) > 21600000UL && wifiState == "connected" && homebaseIP != "") {
+    request_time();
+  }
   if (rebooting == 1) {
     rp2040.reboot();
   }
@@ -620,6 +626,7 @@ void request_time() {
   coreJobs[jobTime]["type"] = "https";
   coreJobs[jobTime]["url"] = req;
   coreJobs[jobTime]["response"] = "time";
+  lastTimeSync = millis();
 }
 
 // A successful join: drop the provisioning AP, go back to station-only, and
