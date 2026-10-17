@@ -5442,7 +5442,7 @@ sub backup_now() {
 
 	my $secret = &subs::decrypter($suds,&subs::db_select('security', ['credential'], { level => 1 })->hash->{credential});
 
-	my $ld_server_time = &subs::rightNow();
+	my $ld_server_time = 0;
 	my ($rm,$colour);
 
 	if ($reason eq 'remote_update') {
