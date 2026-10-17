@@ -31,13 +31,15 @@ WebServer server(3000);
 String homebase;
 String homebaseIP;
 String browser_tab_id;
-int homebaseOnline = millis();
-int lastPing = millis();
+unsigned long homebaseOnline = millis();
+unsigned long lastPing = millis();
+unsigned long lastWifiCheck = 0;
+int wifiDownTicks = 0;
 String wifiState;
 String authorization;
 String before_me;
 int time_defined = 0;
-long offset;
+int64_t offset;
 int input_working = 0;
 JSONVar config;
 
@@ -182,16 +184,19 @@ void setup() {
     browser_tab_id = server.arg("browser_tab_id");
     Serial.println(server.arg("authorization"));
     Serial.println(config["name"]);
-    long timestamp = server.arg("timestamp").toInt();
+    // Read the epoch wide. String::toInt() is a 32-bit long, which wraps in
+    // 2038; parsing as int64_t keeps the value honest even though time_t in
+    // this core is still 32-bit.
+    int64_t timestamp = strtoll(server.arg("timestamp").c_str(), nullptr, 10);
     config["timestamp"] = server.arg("timestamp");
     config["offset"] = server.arg("offset");
-    offset = server.arg("offset").toDouble();
+    offset = strtoll(server.arg("offset").c_str(), nullptr, 10);
     config["homebase"] = server.arg("ip");
     config["homebaseIP"] = server.arg("homebase");
     Serial.println("Homebase: " + homebase);
     Serial.println("homebase ip:" + homebaseIP);
     struct timeval tv;
-    tv.tv_sec = (timestamp + offset);
+    tv.tv_sec = (time_t)(timestamp + offset);
     settimeofday(&tv,nullptr);
     time_defined = 1;
     // Serial.println("Called President at " + homebaseIP);
@@ -417,12 +422,12 @@ void wifi_start() {
 void handleCreate() {
   server.send(200, "text/plain", "");
 }
-int lastOTAMillis = millis();
-int lastOTASendMillis = millis();
+unsigned long lastOTAMillis = millis();
+unsigned long lastOTASendMillis = millis();
 void ledFlasher(int interval, int duration) {
   pinMode(led, OUTPUT);
-  int end_time = (millis() + duration);
-  while (millis() < end_time) {
+  unsigned long end_time = millis() + duration;
+  while ((long)(millis() - end_time) < 0) {
     if (digitalRead(led) == 1) {
       digitalWrite(led, LOW);
     }
@@ -453,7 +458,7 @@ void handleCreateProcess() {
       if (rawFile) {
         rawFile.write(raw.buf, raw.currentSize);
       }
-      if (millis() > (lastOTAMillis + 20)) {
+      if ((unsigned long)(millis() - lastOTAMillis) > 20) {
         lastOTAMillis = millis();
         if (digitalRead(led) == 1) {
           digitalWrite(led, LOW);
@@ -462,7 +467,7 @@ void handleCreateProcess() {
           digitalWrite(led, HIGH);
         }
       }
-      if (millis() > (lastOTASendMillis + 3000)) {
+      if ((unsigned long)(millis() - lastOTASendMillis) > 3000) {
         lastOTASendMillis = millis();
         String current_size = String(raw.totalSize);
         String jobTime = String(millis());
@@ -520,8 +525,12 @@ void loop() {
 }
 
 void loop1() {
-  if (millis() > (lastPing + 60000)) {
+  if ((unsigned long)(millis() - lastPing) > 60000) {
     homebasePing();
+  }
+  if ((unsigned long)(millis() - lastWifiCheck) > 10000) {
+    lastWifiCheck = millis();
+    wifi_supervise();
   }
   if (rebooting == 1) {
     rp2040.reboot();
@@ -551,13 +560,8 @@ void homebasePing() {
     }
   }
   else {
-    if (multi.run() == WL_CONNECTED) {
-      wifiState = "connected";
-      homebasePing();
-    }
-    else {
-      wifiState = "disconnected";
-    }
+    // wifi_supervise() owns reconnecting and the AP, so there is one owner.
+    wifiState = "disconnected";
   }
   lastPing = millis();
 }
@@ -565,6 +569,62 @@ void homebasePing() {
 void homebaseChecked() {
   homebaseOnline = millis();
   lastPing = millis();
+}
+
+void request_time() {
+  if (homebaseIP == "") { return; }
+  String req = "https://" + homebaseIP + "/watch/time?";
+  String jobTime = String(millis());
+  coreJobs[jobTime]["type"] = "https";
+  coreJobs[jobTime]["url"] = req;
+  coreJobs[jobTime]["response"] = "time";
+}
+
+// A successful join: drop the provisioning AP, go back to station-only, and
+// bring mDNS and the clock up on the network we just rejoined.
+void wifi_join_done() {
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  wifiState = "connected";
+  wifiDownTicks = 0;
+  jawnos_mdns_up = false;
+  jawnos_mdns_start();
+  server.begin();
+  request_time();
+  Serial.println("[wifi] reconnected; AP down");
+  homebasePing();
+}
+
+// The saved SSID is not a one-shot. When the router goes away, keep an AP up so
+// the device is still reachable for provisioning, and keep trying the saved
+// network; the moment it comes back, the AP goes down again.
+void wifi_supervise() {
+  bool has_creds = config["ssid"] != "" && config["password"] != "";
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiDownTicks = 0;
+    if (wifiState != "connected") { wifi_join_done(); }
+    return;
+  }
+
+  if (wifiState == "connected") {
+    wifiState = "disconnected";
+    jawnos_mdns_up = false;
+  }
+
+  wifiDownTicks++;
+  if (!has_creds) { return; }
+
+  if (wifiDownTicks == 3) {
+    WiFi.mode(WIFI_AP_STA);
+    if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
+      WiFi.softAP(ap_ssid, ap_password);
+      Serial.println("[wifi] router away; AP up while retrying");
+    }
+  }
+  if (wifiDownTicks >= 3 && (wifiDownTicks % 3 == 0)) {
+    if (multi.run() == WL_CONNECTED) { wifi_join_done(); }
+  }
 }
 
 void input_scanner() {
@@ -924,11 +984,11 @@ void handle_jobs() {
       if (String(coreJobs[coreKeys[i]]["response"]) == "time") {
         JSONVar timers = JSON.parse(response);
 
-        long timestamp = timers["timestamp"];
+        int64_t timestamp = (int64_t)(double)timers["timestamp"];
         timestamp = timestamp - (60 * 9) + 4;
-        long offset = timers["offset"];
+        int64_t offset_s = (int64_t)(double)timers["offset"];
         struct timeval tv;
-        tv.tv_sec = (timestamp + offset);
+        tv.tv_sec = (time_t)(timestamp + offset_s);
         settimeofday(&tv,nullptr);
         time_defined = 1;  
       }
