@@ -550,9 +550,11 @@ void wsMessageCallback(WebsocketsMessage message) {
 void wsEventCallback(WebsocketsEvent event, String data) {
   if (event == WebsocketsEvent::ConnectionOpened) {
     ws_connected = 1;
+    deckLog("%s", "[auth] wss open");
   }
   else if (event == WebsocketsEvent::ConnectionClosed) {
     ws_connected = 0;
+    deckLog("%s", "[auth] wss closed");
   }
 }
 void wsClose(WebsocketsMessage closer) {
@@ -1936,6 +1938,18 @@ void loop() {
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   wsclient.poll();
+
+  // The wss control socket follows Now Me, but a handshake can fail while the
+  // radio or a TLS buffer is still coming up. Retry it while remote input is on
+  // and a Now Me pair is held, instead of waiting for the next key press.
+  {
+    static uint32_t ws_retry_at = 0;
+    if (tauth_remote_enabled == "on" && ws_connected == 0 && authorization != ""
+        && twshomebaseIP.length() && millis() - ws_retry_at > 5000) {
+      ws_retry_at = millis();
+      tauth_connect();
+    }
+  }
 
   // Bluetooth asked for by the saved config comes up here, well away from
   // setup(), where initialising the stack used to panic the board
@@ -4837,7 +4851,9 @@ void tauth_connect() {
     else {
       String ws_path = "/teletype/ws?authorization=" + urlEncode(authorization)
                      + "&edt=teletype&chip_id=" + urlEncode(chip_id_maker());
+      deckLog("[auth] wss dial %s:%d", ws_host.c_str(), ws_port);
       ws_connected = wsclient.connect(ws_host, ws_port, ws_path);
+      deckLog("[auth] wss %s", ws_connected ? "connected" : "failed");
       if (ws_connected) {
         wsclient.send("Hey Server");
         wsclient.ping();

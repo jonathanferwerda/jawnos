@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.637 - t-deck: the wss control socket logs each dial and retries every 5 s while remote input is on, so a handshake that loses a race with the radio or a TLS buffer no longer waits for the next key press.
 - v0.1.636 - teletype: a deck authorized by Now Me opens the wss control socket with that same rotated `authorization` pair - the separate teletype password is gone from the Embedded panel and its route; the panel still holds the Enable/Disable switch. The watch keeps its screen awake through a wake-word capture and the Guide's reply instead of letting the tilt glance expire after a few seconds, and does not re-arm the listener over its own spoken answer. The t-deck's spoken reply is no longer discarded when the serving bridge has no streaming client: the parts go through the same send path as the text, and the listener stands aside while the answer is expected so the speaker is not recorded as a new command.
 - v0.1.633 - teletype: the deck's control channel is wss (the TTYws listener serves TLS, and the deck dials it with a secure client that accepts the manager's DNS certificate over a LAN IP); the Wayland input map uses dotool's real actions (mouseto fractions, named buttons, relative mousemove) and gains ydotool pointer support, with auto-detection falling back per action; an unset teletype authorization is a denial instead of an empty-string match; the deck sends first_check as its own parameter and URL-encodes its tokens
 
