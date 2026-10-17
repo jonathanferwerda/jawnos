@@ -3,6 +3,7 @@
 	my $invoices = &subs::db_query('select * from appointments where type=? and app = ? order by timestamp', 'invoice', $a)->hashes;
 	@{$invoices} = grep { $_->{'status'} ne 'completed' } @{$invoices};
 	my $informations = $invoices;
+	my $units = &Manager::measures_all();
 	foreach my $i ( @{$informations} ) {
 		$i->{'data'} = eval { return decode_json $i->{'data'} } || {};
 	}
@@ -42,8 +43,8 @@
 			value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
 		<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
 			<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
-			<% foreach my $u ( sort keys %{$gb::measures} ) { %>
-				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+			<% foreach my $u ( sort keys %{$units} ) { %>
+				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($units->{$u}->{'name'} || $u) %></option>
 			<% } %>
 		</select>
 
@@ -72,10 +73,11 @@
 			value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
 		<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
 			<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
-			<% foreach my $u ( sort keys %{$gb::measures} ) { %>
-				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$u}->{'name'}) %></option>
+			<% foreach my $u ( sort keys %{$units} ) { %>
+				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($units->{$u}->{'name'} || $u) %></option>
 			<% } %>
 		</select>
+		<button class="add_packaging_measure" app="<%= $a %>" hint="New packaging" style="font-size:12px;vertical-align:bottom;" type="button">+</button>
 	<% } else { %>
 		<%= include 'apps/transaction/models', settings => $appts->{$a}->{'setting'}, models => $appts->{$a}->{'model'}, l => $appts->{$a}->{'list'}->[0], source => 'transaction' %><br>
 	<% } %>

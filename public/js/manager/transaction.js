@@ -584,6 +584,54 @@ $(document).on('click', '.plusminus', function() {
 	transactionStorageSaver(app);
 });
 
+// A packaging named while filling a transaction: create the unit, select it here,
+// and record it on the item so a restock plan knows the pack size.
+$(document).on('click', '.add_packaging_measure', function(e) {
+	e.preventDefault();
+	var btn = $(this);
+	var pd = btn.closest('.purchase_details');
+	var select = btn.closest('.appointment_model_selector_container').find('select[attribute="unit"]');
+	if (!select.length) { return; }
+	$('#app_packaging_prompt').remove();
+	var box = $('<div id="app_packaging_prompt" style="position:fixed;z-index:100000;left:50%;top:35%;transform:translate(-50%,-50%);background:var(--panel);border:2px solid var(--line);border-radius:8px;padding:14px;font-size:17px;min-width:280px;box-shadow:0 8px 30px rgba(0,0,0,.35);">'
+		+ '<div style="font-weight:700;margin-bottom:8px;">New packaging</div>'
+		+ '<input id="app_packaging_name" type="text" placeholder="loaf, bag of 6..." style="width:100%;font-size:17px;padding:4px;">'
+		+ '<div style="margin-top:8px;">holds <input id="app_packaging_each" type="text" value="1" style="width:60px;font-size:17px;"> each</div>'
+		+ '<div style="margin-top:10px;"><button id="app_packaging_ok">Add</button> <button id="app_packaging_cancel">Cancel</button></div>'
+		+ '</div>');
+	box.data('select', select).data('pd', pd);
+	$('body').append(box);
+	$('#app_packaging_name').focus();
+});
+
+$(document).on('click', '#app_packaging_cancel', function() {
+	$('#app_packaging_prompt').remove();
+});
+
+$(document).on('keydown', '#app_packaging_name, #app_packaging_each', function(e) {
+	if (e.key === 'Enter') { e.preventDefault(); $('#app_packaging_ok').trigger('click'); }
+});
+
+$(document).on('click', '#app_packaging_ok', function() {
+	var box = $('#app_packaging_prompt');
+	var name = $('#app_packaging_name').val() || '';
+	if (name.replace(/\s/g, '') === '') { $('#app_packaging_name').focus(); return; }
+	var each = $('#app_packaging_each').val() || '1';
+	var select = box.data('select');
+	var pd = box.data('pd');
+	var app = pd.closest('.appointment').attr('app');
+	var item = pd.find('input[attribute="item"]').val() || '';
+	$.post('/manager/market/packaging_add', { name: name, each: each, item: item, timestamp: Date.now() }, function(response) {
+		box.remove();
+		if (!response || !response.unit) { return; }
+		if (!select.find('option[value="' + response.unit + '"]').length) {
+			select.append($('<option></option>').attr('value', response.unit).text(response.name));
+		}
+		select.val(response.unit).trigger('change');
+		if (typeof transactionStorageSaver === 'function') { transactionStorageSaver(app); }
+	}, 'json');
+});
+
 $(document).on('click', '.purchase_config', function() {
 	var con = $(this);
 

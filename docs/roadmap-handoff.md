@@ -270,8 +270,14 @@ command to its tab. A scan run is a session: the machine that pressed Scan owns
 it and remembers the device it used last (a phone chosen once is the default),
 the phone re-opens its scanner for each read (rapid fire), and the reads collect
 on a scanning page - Done puts them on the list, Cancel (or the phone's Back)
-throws them away. Displayed app names are run through `format_name`; the
-unformatted name is only ever the key. An account app carries a
+throws them away, and either ends the phone's sheet (a native stop broadcast,
+since the WebView is paused behind it). A computer with a webcam reads with zbar
+on the server instead, real time. Displayed app names are run through
+`format_name`; the unformatted name is only ever the key. Market also reopens the
+list it was last on. Checkout fills an expense transaction from the cart without
+writing anything yet; Save is what records the purchases and stock, after the
+person has set each line's quantity and packaging (a + beside Unit names a new
+one on the spot). An account app carries a
 `payment_type` in its Configure panel (cash, debit, credit, visa, mastercard,
 amex, interac, crypto, ...), and a receipt's printed tender is matched to it —
 an exact word first, then its family when that family has a single account

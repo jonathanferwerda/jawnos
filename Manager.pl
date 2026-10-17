@@ -31,6 +31,7 @@ use File::Find;
 use File::Slurp;
 use File::Type;
 use File::Copy;
+use POSIX ();
 use Fcntl qw(:flock);
 use Number::Format qw/:subs/;
 use SQL::Abstract;
@@ -2230,29 +2231,15 @@ post '/manager/market/cancel' => sub($c) {
 
 post '/manager/market/checkout' => sub($c) {
 	my $vendor_default = &subs::unformat_name($c->param('vendor')) || '';
-	my $now = &subs::rightNow();
 	my $list = &market_list();
-	my (@kept, $written);
-	foreach my $it ( @{$list} ) {
-		unless ($it->{'cart'}) { push @kept, $it; next; }
-		my $write = {
-			app => &subs::unformat_name($it->{'text'}),
-			type => 'purchase',
-			timestamp => $now,
-			quantity => ($it->{'quantity'} || 1),
-			movement => 'expense',
-		};
-		my $vendor = $it->{'vendor'} || $vendor_default;
-		$write->{'vendor'} = $vendor if $vendor;
-		$write->{'unit'} = $it->{'unit'} if $it->{'unit'};
-		$write->{'total'} = $it->{'price'} if ($it->{'price'} || '') =~ /[0-9]/;
-		&appointment_writer($c, $write);
-		$written++;
-	}
+	# The cart leaves the list here, but nothing is written to the warehouse: the
+	# transaction form opens filled with these lines and its Save records them,
+	# so the quantity and the packaging are what the person actually bought.
+	my @kept = grep { !$_->{'cart'} } @{$list};
 	&market_save_list(\@kept);
 	# The money side: one expense transaction on the list's category, handed to
-	# the person to check and save. The purchases above are the stock record; this
-	# is the account move, and it is not written here.
+	# the person to check and save. Each line carries record_item, so saving it
+	# writes the purchase (and its stock move) with the edited quantity/unit.
 	my $category = &market_list_key($c->param('list') || '');
 	my (@lines, $total, $account, $vendor);
 	foreach my $it ( @{$list} ) {
@@ -2265,13 +2252,15 @@ post '/manager/market/checkout' => sub($c) {
 		$total += $price;
 		push @lines, {
 			uuid => &subs::random_string_creator(12),
-			item => $it->{'text'},
+			item => &subs::format_name($it->{'text'}),
 			quantity => $qty,
 			amount => $price,
 			tax => 0,
 			aux => 0,
 			total => $price,
-			unit => ($it->{'unit'} || $it->{'text'}),
+			unit => ($it->{'unit'} || 'each'),
+			state => 'delivered',
+			record_item => 'on',
 		};
 	}
 	$vendor ||= $vendor_default;
@@ -2285,14 +2274,15 @@ post '/manager/market/checkout' => sub($c) {
 				item => $l->{'item'}, quantity => $l->{'quantity'},
 				amount => $l->{'amount'}, tax => $l->{'tax'},
 				aux => $l->{'aux'}, total => $l->{'total'},
-				unit => $l->{'unit'}, state => ''
+				unit => $l->{'unit'}, state => $l->{'state'},
+				record_item => 'on'
 			};
 		}
 		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total, tax => 0, aux => 0, total => $total };
 		$storage = { expense => \%mov };
 	}
 	$c->render(json => {
-		written => $written,
+		items => scalar @lines,
 		transaction => { app => $category, account => $account, vendor => $vendor, total => $total, storage => $storage },
 	});
 };
@@ -2303,6 +2293,59 @@ sub market_accounts {
 	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'account')->hashes;
 	return [ map { { app => $_->{'app'}, name => &subs::format_name($_->{'app'}) } } @{$rows} ];
 }
+
+# Every unit a transaction can name: the built-in measures plus the ones the
+# Measures app has saved, so a packaging named on the spot is offered next time.
+sub measures_all {
+	my $stored = eval { return decode_json &subs::setting_grabber({ app => 'measures', setting => 'measures' }) } || {};
+	my %all = (%{$gb::measures}, %{$stored});
+	foreach my $k ( keys %all ) {
+		next unless ref $all{$k} eq 'HASH';
+		$all{$k}->{'name'} = $k unless defined $all{$k}->{'name'} && $all{$k}->{'name'} ne '';
+	}
+	return \%all;
+}
+
+# Add a packaging/unit from the form that needs it. The new measure is saved so
+# the picker offers it next time, and when the item is known the packaging is
+# recorded on the item too (its `each` is what a restock plan counts).
+post '/manager/market/packaging_add' => sub($c) {
+	my $name = $c->param('name') || '';
+	$name =~ s/^\s+|\s+$//g;
+	return $c->render(json => { error => 'name the packaging' }) unless $name =~ /\S/;
+	my $each = ($c->param('each') || '') =~ /[0-9]/ ? 0 + $c->param('each') : 1;
+	my $key = &subs::unformat_name($name);
+	$key =~ s/[^a-z0-9_]//g;
+	$key = 'pack' unless $key ne '';
+	my $measures = &measures_all();
+	my $uuid;
+	my $exists = 0;
+	foreach my $k ( keys %{$measures} ) {
+		next unless lc($k) eq $key || lc($measures->{$k}->{'name'} || '') eq lc($name);
+		$uuid = $measures->{$k}->{'uuid'};
+		$key = $k;
+		$exists = 1;
+		last;
+	}
+	my $stored = eval { return decode_json &subs::setting_grabber({ app => 'measures', setting => 'measures' }) } || {};
+	unless ($exists) {
+		$uuid = &subs::random_string_creator(26);
+		$stored->{$key} = { %{ $gb::measures->{$key} || {} }, %{ $stored->{$key} || {} }, uuid => $uuid, name => $name };
+		&subs::setting_setter({ app => 'measures', setting => 'measures', value => encode_json($stored) });
+	}
+	elsif (!$uuid) {
+		$uuid = &subs::random_string_creator(26);
+		$stored->{$key} = { %{ $gb::measures->{$key} || {} }, %{ $stored->{$key} || {} }, uuid => $uuid };
+		&subs::setting_setter({ app => 'measures', setting => 'measures', value => encode_json($stored) });
+	}
+	my $item = &subs::unformat_name($c->param('item'));
+	if ($item ne '') {
+		my $packaging = eval { return decode_json &subs::setting_grabber({ app => $item, setting => 'packaging' }) } || {};
+		$packaging->{$uuid} = { uuid => $uuid, name => $name, quantity => $each };
+		&subs::setting_setter({ app => $item, setting => 'packaging', value => encode_json($packaging) });
+	}
+	$c->render(json => { unit => $key, name => &subs::format_name($name), uuid => $uuid, each => $each });
+};
 
 # The families a printed tender may name. A receipt that says "credit" can name a
 # mastercard account, and "interac" a debit one, so a family with ONE account in
@@ -2502,6 +2545,9 @@ post '/manager/market/scan/remote' => sub($c) {
 		destination => $bti,
 		timestamp => $c->param('timestamp') || &subs::rightNow()
 	});
+	# the page may be paused behind the phone's scan sheet: reach the bridge
+	# natively so the sheet comes down even when JS cannot run
+	&market_scan_native_stop() if $pass{'stop'};
 	$c->render(json => { ok => 1, device => $bti });
 };
 
@@ -2521,6 +2567,159 @@ sub market_scan_session_save {
 	&subs::setting_setter({ app => 'market', setting => 'scan_session', value => encode_json($s) });
 }
 
+# One resolved code into a session. The phone's relay and this machine's own
+# webcam reader both come through here, so a product is looked up in our terms
+# once and lands in the run the same way.
+sub market_scan_session_add {
+	my ($s, $code) = @_;
+	$code = '' unless defined $code;
+	$code =~ s/\s+//g;
+	return undef unless $code =~ /\S/;
+	my $map = &market_barcode_resolve($code);
+	my $item = $map->{'item'} || $code;
+	my $it = {
+		code => $code,
+		item => $item,
+		raw => ($map->{'raw'} || ''),
+		category => ($map->{'category'} || ''),
+		unit => ($map->{'unit'} || ''),
+		at => &subs::rightNow(),
+	};
+	push @{ $s->{'items'} }, $it;
+	&market_scan_session_save($s);
+	return $it;
+}
+
+# The computer's own webcam, read by zbar. A session on this machine watches the
+# camera in the background; each poll folds the codes the reader printed since the
+# last one into the run. A phone has its own scanner, and a server has neither.
+sub market_camera_dir { return '/tmp/jawn_market_camera'; }
+
+sub market_camera_available {
+	return 0 unless &subs::device_setter() eq 'computer';
+	return 0 unless grep { $_ eq 'webcam' } @{ $gb::capabilities->{'computer'}->{'camera'} || [] };
+	return 0 unless -e '/dev/video0';
+	my $which = `command -v zbarcam 2>/dev/null`;
+	return ($which =~ /\S/) ? 1 : 0;
+}
+
+sub market_camera_stop {
+	my $pidfile = &market_camera_dir() . '/pid';
+	return 0 unless -e $pidfile;
+	open my $pf, '<', $pidfile or return 0;
+	my $pid = <$pf>;
+	close $pf;
+	unlink $pidfile;
+	return 0 unless $pid && $pid =~ /^([0-9]+)/;
+	$pid = $1;
+	return 0 unless &market_camera_is_reader($pid);
+	kill('TERM', $pid);
+	return 1;
+}
+
+# A reused pid must not be taken for our reader.
+sub market_camera_is_reader {
+	my ($pid) = @_;
+	open my $cf, '<', "/proc/$pid/cmdline" or return 0;
+	local $/;
+	my $cmd = <$cf>;
+	close $cf;
+	return ($cmd && $cmd =~ /zbarcam/) ? 1 : 0;
+}
+
+# Is the reader this machine started still running?
+sub market_camera_alive {
+	my $pidfile = &market_camera_dir() . '/pid';
+	return 0 unless -e $pidfile;
+	open my $pf, '<', $pidfile or return 0;
+	my $pid = <$pf>;
+	close $pf;
+	return ($pid && $pid =~ /^([0-9]+)/ && &market_camera_is_reader($1) && kill(0, $1)) ? 1 : 0;
+}
+
+# Start the reader for a fresh run: one zbarcam on the machine, writing each code
+# it reads as a line, detached so the request can return at once.
+sub market_camera_start {
+	&market_camera_stop();
+	my $dir = &market_camera_dir();
+	`mkdir -p $dir` unless -e $dir;
+	return 0 unless -d $dir;
+	open my $codes, '>', $dir . '/codes'; close $codes;
+	open my $log, '>', $dir . '/log'; close $log;
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid == 0) {
+		eval { POSIX::setsid(); };
+		$^F = 2;  # do not leak the manager's sockets into the reader
+		open STDOUT, '>>', $dir . '/codes';
+		open STDERR, '>>', $dir . '/log';
+		exec('zbarcam', '--raw', '--nodisplay', '/dev/video0');
+		exit 0;
+	}
+	open my $pf, '>', $dir . '/pid';
+	print $pf $pid;
+	close $pf;
+	return $pid;
+}
+
+# Fold the lines the reader printed since the last poll into the session. zbar
+# repeats a code while it stays in view, so the same read is ignored for a few
+# seconds; a new item is taken at once.
+sub market_camera_ingest {
+	my ($s) = @_;
+	return 0 unless ($s->{'camera'} || 0);
+	# a run that was closed, or left open far too long, gives the camera back
+	if (($s->{'status'} || '') ne 'scanning' || (($s->{'at'} || 0) + 0 > 0 && time - $s->{'at'} > 1800)) {
+		&market_camera_stop();
+		return 0;
+	}
+	my $file = &market_camera_dir() . '/codes';
+	return 0 unless -e $file;
+	my $offset = ($s->{'camera_offset'} || 0) + 0;
+	my $size = -s $file;
+	$offset = 0 if $size < $offset;
+	open my $fh, '<', $file or return 0;
+	seek($fh, $offset, 0);
+	my @codes;
+	while (my $line = <$fh>) {
+		chomp $line;
+		$line =~ s/^\s+|\s+$//g;
+		next unless $line ne '';
+		push @codes, $line;
+	}
+	my $new_offset = tell($fh);
+	close $fh;
+	$s->{'camera_offset'} = $new_offset;
+	my $now = time;
+	my $added = 0;
+	foreach my $code ( @codes ) {
+		if (($s->{'camera_last_code'} || '') eq $code && ($now - ($s->{'camera_last_at'} || 0)) < 5) { next; }
+		$s->{'camera_last_code'} = $code;
+		$s->{'camera_last_at'} = $now;
+		&market_scan_session_add($s, $code);
+		$added++;
+	}
+	&market_scan_session_save($s) if $new_offset != $offset || $added;
+	return $added;
+}
+
+# Ask the Android app to put its scanner away. The page is paused behind Google's
+# scan sheet, so the JS cannot do it; a broadcast reaches the bridge natively and
+# it clears the sheet off the task.
+sub market_scan_native_stop {
+	return 0 unless &subs::device_setter() eq 'mobile';
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid == 0) {
+		$^F = 2;
+		open STDOUT, '>', '/dev/null';
+		open STDERR, '>', '/dev/null';
+		exec('am', 'broadcast', '-a', 'com.termux.app.SCAN_STOP', '-p', 'com.termux');
+		exit 0;
+	}
+	return 1;
+}
+
 # What the session page shows: the raw names stay in the record, the printed ones
 # are formatted here so no caller has to remember to unformat an app name.
 sub market_scan_session_view {
@@ -2538,6 +2737,7 @@ sub market_scan_session_view {
 		uuid => ($s->{'uuid'} || ''),
 		status => ($s->{'status'} || ''),
 		device => ($s->{'device'} || {}),
+		camera => ($s->{'camera'} ? 1 : 0),
 		items => \@items,
 		count => scalar @items,
 	};
@@ -2592,6 +2792,19 @@ post '/manager/market/scan/session/start' => sub($c) {
 		vendor => (&subs::unformat_name($c->param('vendor')) || ''),
 		items => [],
 	};
+	if (($device->{'kind'} || '') eq 'local' && &market_camera_available()) {
+		my $pid = &market_camera_start();
+		if ($pid) {
+			# zbarcam fails fast when the camera is busy or absent; do not claim a
+			# live view the machine cannot give, so the browser can fall back
+			select(undef, undef, undef, 0.4);
+			if (&market_camera_alive()) {
+				$s->{'camera'} = 1;
+				$s->{'camera_offset'} = 0;
+			}
+			else { &market_camera_stop(); }
+		}
+	}
 	&market_scan_session_save($s);
 	&market_scan_device_send($c, $device, $s, 0) if ($device->{'kind'} || '') eq 'remote';
 	$c->render(json => { session => &market_scan_session_view($s) });
@@ -2632,6 +2845,8 @@ post '/manager/market/scan/collect' => sub($c) {
 		return $c->render(json => { error => 'no such session' });
 	}
 	if ($c->param('stop')) {
+		&market_camera_stop() if ($s->{'camera'} || 0);
+		delete $s->{'camera'};
 		$s->{'status'} = 'cancelled';
 		$s->{'items'} = [];
 		&market_scan_session_save($s);
@@ -2640,23 +2855,15 @@ post '/manager/market/scan/collect' => sub($c) {
 	my $code = $c->param('barcode') || '';
 	$code =~ s/\s+//g;
 	return $c->render(json => { error => 'no code' }) unless $code =~ /\S/;
-	my $map = &market_barcode_resolve($code);
-	my $item = $map->{'item'} || $code;
-	my $it = {
-		code => $code,
-		item => $item,
-		raw => ($map->{'raw'} || ''),
-		category => ($map->{'category'} || ''),
-		unit => ($map->{'unit'} || ''),
-		at => &subs::rightNow(),
-	};
-	push @{ $s->{'items'} }, $it;
-	&market_scan_session_save($s);
-	$c->render(json => { ok => 1, item => { %$it, formatted => &subs::format_name($item) }, count => scalar @{ $s->{'items'} } });
+	my $it = &market_scan_session_add($s, $code);
+	return $c->render(json => { error => 'no code' }) unless $it;
+	$c->render(json => { ok => 1, item => { %$it, formatted => &subs::format_name($it->{'item'}) }, count => scalar @{ $s->{'items'} } });
 };
 
 get '/manager/market/scan/session' => sub($c) {
-	$c->render(json => &market_scan_session_view(&market_scan_session()));
+	my $s = &market_scan_session();
+	&market_camera_ingest($s) if ($s->{'camera'} || 0);
+	$c->render(json => &market_scan_session_view($s));
 };
 
 post '/manager/market/scan/session/done' => sub($c) {
@@ -2693,6 +2900,10 @@ post '/manager/market/scan/session/done' => sub($c) {
 	}
 	&market_save_list($list);
 	&market_lists_touch_vendor($s->{'list'}, &subs::format_name($s->{'list'}), $s->{'vendor'}) if ($s->{'list'} || '') ne '' && ($s->{'vendor'} || '') ne '';
+	my $d = $s->{'device'} || {};
+	&market_scan_device_send($c, $d, $s, 1) if ref $d eq 'HASH' && ((($d->{'kind'} || '') eq 'remote') || ($d->{'browser_tab_id'} || '') ne '');
+	&market_camera_stop() if ($s->{'camera'} || 0);
+	delete $s->{'camera'};
 	$s->{'status'} = 'done';
 	$s->{'items'} = [];
 	&market_scan_session_save($s);
@@ -2704,6 +2915,8 @@ post '/manager/market/scan/session/cancel' => sub($c) {
 	return $c->render(json => { error => 'no session' }) unless ($s->{'uuid'} || '') ne '';
 	my $d = $s->{'device'} || {};
 	&market_scan_device_send($c, $d, $s, 1) if ref $d eq 'HASH' && ((($d->{'kind'} || '') eq 'remote') || ($d->{'browser_tab_id'} || '') ne '');
+	&market_camera_stop() if ($s->{'camera'} || 0);
+	delete $s->{'camera'};
 	$s->{'status'} = 'cancelled';
 	$s->{'items'} = [];
 	&market_scan_session_save($s);

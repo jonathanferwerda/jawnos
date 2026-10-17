@@ -73,7 +73,7 @@
 			<% foreach my $n ( @nearby ) { %><span class="market_nearby_list" list="<%= $n->{'key'} %>" style="cursor:pointer;text-decoration:underline;margin-left:6px;"><%= &subs::format_name($n->{'name'}) %></span><% } %>
 		</div>
 	<% } %>
-	<div id="market_list" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">
+	<div id="market_list_panel" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">
 		<div style="flex:0 0 auto;padding-bottom:4px;">
 			<input id="market_item_input" type="text" placeholder="Add an item... (Enter adds)" style="width:78%;">
 			<button id="market_item_add" style="width:18%;">Add</button>

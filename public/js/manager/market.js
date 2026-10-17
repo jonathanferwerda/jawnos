@@ -15,7 +15,8 @@ function marketOpener() {
 	marketTab = 'list';
 	marketFilter = 'all';
 	marketVendor = '';
-	marketList = '';
+	// the list a person last shopped is the one they come back to
+	try { marketList = localStorage.getItem('marketListChoice') || ''; } catch (e) { marketList = ''; }
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/market/refresh',
@@ -25,7 +26,10 @@ function marketOpener() {
 			windowMaker(response.window);
 			// at a shop the applicable list (or the only one) opens ready
 			var nearby = $('#market_nearby .market_nearby_list');
-			if (nearby.length === 1) { marketList = nearby.attr('list'); }
+			if (nearby.length === 1) {
+				marketList = nearby.attr('list');
+				try { localStorage.setItem('marketListChoice', marketList); } catch (e) {}
+			}
 			marketApply();
 		}
 	});
@@ -49,7 +53,7 @@ function marketReload() {
 function marketApply() {
 	var body = $('#market_body');
 	if (!body.length) { return; }
-	body.find('#market_list').toggle(marketTab === 'list');
+	body.find('#market_list_panel').toggle(marketTab === 'list');
 	body.find('#market_shopping').toggle(marketTab === 'shopping');
 	body.find('#market_vendor').val(marketVendor);
 	body.find('#market_filter').val(marketFilter);
@@ -119,26 +123,35 @@ $(document).on('click', '#market_checkout', function() {
 });
 
 // Checkout leaves the money side to a person: open the list's category with its
-// expense transaction filled from the cart, so the amounts can be checked and
-// saved by hand.
+// expense transaction filled from the cart, so the amounts (and the quantity and
+// packaging) can be checked and saved by hand. The stored run is re-stamped just
+// before the retrieve: opening the movement runs the form's own saver, which
+// would otherwise see an empty form and drop it.
 function marketCheckoutOpen(t) {
 	if (!t || !t.app) { return; }
 	var app = t.app;
-	if (t.storage) { localStorage.setItem('transactionSaver_' + app, JSON.stringify(t.storage)); }
+	var stored = t.storage ? JSON.stringify(t.storage) : '';
+	if (stored) { localStorage.setItem('transactionSaver_' + app, stored); }
 	appointmentGrabber(app, Date.now());
 	var tries = 0;
 	var iv = setInterval(function() {
 		var w = $('.appointment[app="' + app + '"]');
 		if (!w.length) { if (++tries > 20) { clearInterval(iv); } return; }
 		clearInterval(iv);
-		w.find('.app_act.reset[app="' + app + '"]').first().trigger('click');
+		// reset opens the form; a form already open must not be toggled shut
+		if (!w.find('.app_details').first().is(':visible')) {
+			w.find('.app_act.reset[app="' + app + '"]').first().trigger('click');
+		}
 		setTimeout(function() {
 			var m = w.find('.app_details .movement');
 			if (m.length) { m.val('expense').trigger('change'); }
-			setTimeout(function() {
+			var fill = function() {
+				if (stored) { localStorage.setItem('transactionSaver_' + app, stored); }
 				if (t.account) { w.find('.app_details .account').val(t.account); }
 				if (typeof transactionStorageRetriever === 'function') { transactionStorageRetriever(app); }
-			}, 800);
+			};
+			setTimeout(fill, 800);
+			setTimeout(fill, 1600);
 		}, 500);
 	}, 300);
 }
@@ -306,7 +319,9 @@ function marketScanBegin(device) {
 		marketScanSession = response.session;
 		marketScanSessionShow(response.session);
 		marketScanSessionPoll(response.session.uuid);
-		if (device.kind === 'local') { marketScanHere(); }
+		// a computer with a webcam is read by zbar on the server, so the session
+		// page itself is the live view; otherwise open the browser's own scanner
+		if (device.kind === 'local' && !response.session.camera) { marketScanHere(); }
 	}, 'json');
 }
 
@@ -320,7 +335,9 @@ function marketScanSessionShow(s) {
 		+ '<button id="market_scan_session_done">Done</button>'
 		+ '<button id="market_scan_session_cancel">Cancel</button>'
 		+ '</div>';
-	h += '<div style="font-size:14px;opacity:.65;margin-top:4px;">Scan as many as you like; Done puts them on the list, Cancel throws them away.</div>';
+	h += '<div style="font-size:14px;opacity:.65;margin-top:4px;">'
+		+ (s.camera ? 'The webcam is reading as you go; ' : '')
+		+ 'Scan as many as you like; Done puts them on the list, Cancel throws them away.</div>';
 	h += '<div id="market_scan_session_items" style="margin-top:8px;">';
 	(s.items || []).forEach(function(it) { h += marketScanItemRow(it); });
 	h += '</div></div>';
@@ -447,6 +464,10 @@ window.marketPhoneCamera = function(opts) {
 window.marketPhoneScanStop = function() {
 	window.marketPhoneRapid = false;
 	window.marketPhoneSession = '';
+	// put the app's own scanner sheet away when the page is still running
+	if (window.JawnScan && typeof window.JawnScan.close === 'function') {
+		try { window.JawnScan.close(); } catch (e) {}
+	}
 };
 
 function marketScanCamera() {
@@ -490,11 +511,13 @@ $(document).on('change', '#market_vendor', function() {
 
 $(document).on('change', '#market_list', function() {
 	marketList = $(this).val();
+	try { localStorage.setItem('marketListChoice', marketList); } catch (e) {}
 	marketApply();
 });
 
 $(document).on('click', '.market_nearby_list', function() {
 	marketList = $(this).attr('list');
+	try { localStorage.setItem('marketListChoice', marketList); } catch (e) {}
 	marketApply();
 });
 

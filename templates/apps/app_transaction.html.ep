@@ -36,7 +36,7 @@
 				<span><b>State: </b> <%= &subs::format_name($ad->{'state'}) %></span><br>
 				<span><b>Quantity:</b> <%= $ad->{'quantity'} %></span><br>
 				<% if ($ad->{'unit'} ne $ad->{'app'}) { %>
-					<span><b>Unit:</b> <%= $ad->{'unit'} %></span><br>
+					<span><b>Unit:</b> <%= &subs::format_name($ad->{'unit'}) %></span><br>
 				<% } %>
 				<span><b>Tax:</b> <%= &subs::price_formatter($ad->{'tax'} || 0.00) %></span><br>
 				<% if ($ad->{'aux'} && $ad->{'aux'} != 0) { %>

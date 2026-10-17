@@ -7,6 +7,7 @@
 <% } %>
 
 
+<% my $all_measures = &Manager::measures_all(); %>
 <% if (scalar @{$models}) { %>
 	<%# the model picker is a chooser, so its options read alphabetically by the name
 	    that is shown (the store keeps its own price ordering); sorted in
@@ -40,8 +41,8 @@
 		<% foreach my $mo ( @models_by_name ) { %>
 			<option value="<%= $mo->{'name'} %>"><%= &subs::format_name($mo->{'name'}) %></option>
 		<% } %>
-		<% foreach my $meas ( sort keys %{$gb::measures} ) { %>
-			<option value="<%= $meas %>" <% if ($meas eq $l->{'model'}->{'unit'}) { %>selected<% } %>><%= &subs::format_name($gb::measures->{$meas}->{'name'} || $meas) %></option>
+		<% foreach my $meas ( sort keys %{$all_measures} ) { %>
+			<option value="<%= $meas %>" <% if ($meas eq $l->{'model'}->{'unit'}) { %>selected<% } %>><%= &subs::format_name($all_measures->{$meas}->{'name'} || $meas) %></option>
 		<% } %>
 	</select>
 
