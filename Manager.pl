@@ -28423,7 +28423,11 @@ sub now_me($data) {
 	$ip = $watch->{'ip'};
 	my $json_op = encode_json $op_d;
 
-	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id });
+	# One millisecond stamp for the local row and the peer copies: the table
+	# orders by server_time, and a seconds value here (the now_me clock above is
+	# in seconds) sorts below the row it is meant to replace.
+	my $row_time = &subs::rightNow();
+	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id, server_time => $row_time });
 	# The device probes a fallback House machine with this pair, so every peer
 	# must hold this rotation now, not on a later sync tick. The signed peer rail
 	# writes it through the setting route every machine already exposes; the
@@ -28439,7 +28443,7 @@ sub now_me($data) {
 					edt => $edt,
 					chip_id => $chip_id,
 					device => &subs::device_setter(),
-					server_time => $server_time,
+					server_time => $row_time,
 					value => $json_op,
 				}
 			});
