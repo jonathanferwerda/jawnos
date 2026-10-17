@@ -454,6 +454,19 @@ $.ajaxSetup({
 			console.log('request did not reach jawn:', (e && e.jawnos_url) || '?', t);
 			return;
 		}
+		// A lapsed session is not a request fault. The phone wakes with a stale
+		// cookie after a long sleep, the first background request (the phone
+		// facts sync) meets the Gate, and the old code painted a red dot for it
+		// every time. Go back through the Gate instead: the app's page-finished
+		// check hands over a fresh ticket, and a desktop simply lands on the Gate.
+		if (e.status === 401) {
+			console.log('session lapsed:', (e.jawnos_url || 'request'));
+			if (!window.__jawnSessionReloading && !document.getElementById('welcome_logo')) {
+				window.__jawnSessionReloading = true;
+				setTimeout(function() { location.reload(); }, 400);
+			}
+			return;
+		}
 		var url = (e.jawnos_url || 'request').replace(/\?.*$/, '');
 		var body = (e.responseText || '').replace(/\s+/g, ' ').trim();
 		var message = e.status + ': ' + url + (body ? ' — ' + body : '');
@@ -466,6 +479,17 @@ $.ajaxSetup({
 			$('#red_dot').fadeOut();
 		},15000);
 	}
+});
+
+// A phone that has been asleep longer than the session's activity window wakes
+// with a stale cookie. Reload once on resume so the app can hand over a fresh
+// ticket before the first tap, instead of losing that tap to a 401.
+var jawnHiddenAt = 0;
+document.addEventListener('visibilitychange', function() {
+	if (document.hidden) { jawnHiddenAt = Date.now(); return; }
+	var hidden = jawnHiddenAt ? (Date.now() - jawnHiddenAt) : 0;
+	jawnHiddenAt = 0;
+	if (hidden > 80 * 60 * 1000 && window.JawnPhone) { location.reload(); }
 });
 
 
