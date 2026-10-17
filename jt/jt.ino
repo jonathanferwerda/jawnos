@@ -1979,6 +1979,21 @@ void loop() {
       JSONVar btMsg = JSON.parse(btmsg);
       if (JSON.typeof(btMsg) != "undefined") {
         String mtype = btMsg.hasOwnProperty("type") ? String((const char *)btMsg["type"]) : String("");
+        // A relay envelope from the house: unwrap it when it names this deck.
+        // The manager has already routed it, so a copy naming another chip is
+        // stale and must not be applied here.
+        if (mtype == "relay") {
+          String relay_to = btMsg.hasOwnProperty("to") ? String((const char *)btMsg["to"]) : String("");
+          if (relay_to == "" || relay_to == chip_id_maker()) {
+            JSONVar relay_inner = btMsg["message"];
+            if (JSON.typeof(relay_inner) == "object") {
+              btMsg = relay_inner;
+              mtype = btMsg.hasOwnProperty("type") ? String((const char *)btMsg["type"]) : String("");
+            }
+            else { btMsg = JSON.parse("{}"); mtype = ""; }
+          }
+          else { btMsg = JSON.parse("{}"); mtype = ""; }
+        }
         if (mtype == "button") {
           if (before_me == "") {
             before_me = "{}";
@@ -5193,6 +5208,22 @@ void start_ble_transfer() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);  // hint for iPhone connections
   pAdvertising->setMinPreferred(0x12);
+
+  // Name this deck to a JawnOS bridge in the scan response: manufacturer data
+  // (company 0xFFFF) + "JW" + version + flags + purpose + chip id. The bridge
+  // matches the magic, so adoption no longer depends on the Nordic UART uuid
+  // and a device already in the fleet is recognized before a link is opened.
+  String mfg;
+  mfg += (char)0xFF; mfg += (char)0xFF;   // company id 0xFFFF
+  mfg += 'J'; mfg += 'W';
+  mfg += (char)1;                         // version
+  mfg += (char)1;                         // flags: bit0 = relay capable
+  mfg += (char)2;                         // purpose: teletype
+  mfg += chip_id_maker();
+  BLEAdvertisementData scanResponse;
+  scanResponse.setManufacturerData(mfg);
+  pAdvertising->setScanResponseData(scanResponse);
+
   pAdvertising->start();
   deckLog("[bt] advertising as %s", name.length() ? name.c_str() : "T-Deck");
 }

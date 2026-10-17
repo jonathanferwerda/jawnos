@@ -644,7 +644,7 @@ our %topic = (
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
-			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge. The bridge holds up to four radios at once, so a watch, a deck and a board can stay linked together.',
+			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge. The bridge holds four radios by default, and a machine with a capable adapter can be set to hold more (up to 25), so a whole desk of watches, decks and boards can stay linked together.',
 			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi and role into the board\'s config file, the board acknowledges and reboots, and it comes back with its switches and relays already set. A board on the Bluetooth bridge gets the same role as a compact board config, so it can resume before it has any network at all.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
@@ -1063,12 +1063,13 @@ our %topic = (
 	'ble_bridge' => {
 		title => 'The Bluetooth bridge', category => 'devices',
 		summary => 'How the watch and boards reach JawnOS.',
-		verified => '2026-10-15',
+		verified => '2026-10-17',
 		body => [
 			'The devices speak Bluetooth Low Energy, but JawnOS itself is reached over the network, so a small bridge sits in between: a Bluetooth central (on a phone, or on a desktop) that links to a device and relays messages to and from JawnOS over a local socket.',
 			'The bridge is the same piece of software on both platforms, so a watch links to whichever machine is in range and can bring its own apps with it.',
+			'Each device names itself in a Bluetooth scan response: a small JawnOS payload carrying its chip id and purpose (watch, deck or board). The bridge recognizes that payload before it connects, so a crashed board or a fresh one is adopted and restored without touching its network, and a device already in the fleet comes back to its role as soon as it is in radio range.',
 			'A T-Watch is a one-link device, so it stays with the machine it was last paired to from the watch row (its homebase). Another machine that links to it releases it again, so a button press always lands on the right machine. If the homebase drops off the mesh - a phone that switches off - another machine takes the watch over after a while, and hands it back the moment the homebase is seen again. A homebase that merely leaves the network keeps it - only one gone long enough to stop waiting hands over. A button you press on the watch is applied by the machine holding the link, so it lands whatever machine you were looking at; a command button runs on every machine unless it names one.',
-			'The bridge itself is not limited to one radio: it can hold up to four links at once, each named by its address, so a watch, a deck and a board can stay linked together. Sends and releases name the radio they mean, which is what keeps one device\'s message from being applied to another.',
+			'The bridge itself is not limited to one radio: it holds four links by default, and a machine that can carry more may be set up to 25, each named by its address, so a watch, a deck and a board can stay linked together. Sends and releases name the radio they mean, which is what keeps one device\'s message from being applied to another. A message addressed to another chip is relayed to whichever machine holds that device, so devices on different bridges still reach each other, and a phone bridge can carry a watch-to-deck message with no WiFi at all.',
 		],
 		related => [ 'watch', 'tdeck', 'pico' ]
 	},

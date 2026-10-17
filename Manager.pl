@@ -27881,6 +27881,15 @@ post '/manager/configure/ble_scan' => sub($c) {
 	$c->render(json => { ok => 1, scanning => 1 });
 };
 
+# A peer machine hands over one device-to-device relay envelope. The receiving
+# manager sends it only if it may serve the target chip; it never fans it out
+# again (from_mesh), so one relay cannot loop around the mesh.
+post '/manager/ble/relay' => sub($c) {
+	my $relay = eval { decode_json($c->param('payload') || '') };
+	my $ok = ($relay && ref $relay eq 'HASH') ? &subs::ble_relay_route($relay, { from_mesh => 1 }) : 0;
+	$c->render(json => { ok => $ok ? 1 : 0 });
+};
+
 get '/manager/embedded/teletype_backup' => sub($c) {
 	my $ip = $c->param('ip');
 	my $mac = $c->param('mac');

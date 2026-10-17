@@ -127,6 +127,33 @@ static const uint8_t ble_adv[] = {
 };
 static_assert(sizeof(ble_adv) <= 31, "BLE advertising data is limited to 31 bytes");
 
+// The scan response names this board without requiring the Nordic UART service:
+// manufacturer data (company 0xFFFF), "JW", version, flags, purpose and the
+// chip id as ASCII. The house's adopt scan matches the magic, so a board with a
+// custom service - or one the bridge has never met - is still recognized, and a
+// device already in the fleet is re-adopted by the id it reports.
+static uint8_t ble_scan_rsp[31];
+static size_t ble_scan_rsp_len = 0;
+
+static void ble_build_scan_response() {
+  String chip = String(rp2040.getChipID());
+  size_t n = 0;
+  ble_scan_rsp[n++] = 0;       // AD length, filled in below
+  ble_scan_rsp[n++] = 0xFF;    // manufacturer specific data
+  ble_scan_rsp[n++] = 0xFF;    // company id 0xFFFF (little endian)
+  ble_scan_rsp[n++] = 0xFF;
+  ble_scan_rsp[n++] = 'J';
+  ble_scan_rsp[n++] = 'W';
+  ble_scan_rsp[n++] = 1;       // version
+  ble_scan_rsp[n++] = 1;       // flags: bit0 = relay capable
+  ble_scan_rsp[n++] = 3;       // purpose: microcontroller
+  for (size_t i = 0; i < chip.length() && n < sizeof(ble_scan_rsp); i++) {
+    ble_scan_rsp[n++] = (uint8_t)chip[i];
+  }
+  ble_scan_rsp[0] = (uint8_t)(n - 1);
+  ble_scan_rsp_len = n;
+}
+
 static hci_con_handle_t ble_con_handle = HCI_CON_HANDLE_INVALID;
 static bool ble_notify_enabled = false;
 static bool ble_up = false;
@@ -362,6 +389,18 @@ static void ble_handle_json(String json) {
   JSONVar msg = JSON.parse(json);
   if (JSON.typeof(msg) != "object") { return; }
   String type = jstr(msg["type"]);
+  // A relay envelope from the house (or from a peer bridge). Unwrap it only when
+  // it names this chip; the manager has already routed it, so anything else is
+  // a stale copy.
+  if (type == "relay") {
+    String to = jstr(msg["to"]);
+    String mine = String(rp2040.getChipID());
+    if (to != "" && to != mine) { return; }
+    JSONVar inner = msg["message"];
+    if (JSON.typeof(inner) != "object") { return; }
+    msg = inner;
+    type = jstr(msg["type"]);
+  }
   if (type == "now_me") { ble_apply_now_me(msg["data"]); }
   else if (type == "board_config") { ble_apply_board_config(msg["data"]); }
   else if (type == "room") { ble_apply_board_config(msg["data"]["payload"]); }
@@ -575,9 +614,11 @@ static void ble_start() {
     ATT_SECURITY_NONE, ATT_SECURITY_NONE, nullptr, 0);
   att_server_init(att_db_util_get_address(), nullptr, nullptr);
   nordic_spp_service_server_init(&ble_nus_handler);
+  ble_build_scan_response();
   bd_addr_t null_addr = {0};
   gap_advertisements_set_params(0x30, 0x30, 0, 0, null_addr, 0x07, 0x00);
   gap_advertisements_set_data(sizeof(ble_adv), (uint8_t *)ble_adv);
+  gap_scan_response_set_data(ble_scan_rsp_len, ble_scan_rsp);
   gap_advertisements_enable(1);
   hci_power_control(HCI_POWER_ON);
   Serial.println("[ble] advertising as JawnPico");

@@ -3541,6 +3541,94 @@ sub ble_chip_by_mac() {
 	return undef;
 }
 
+sub ble_chip_record() {
+	# A chip id -> its fleet record (purpose, radio address, name), from any
+	# machine's devices row. The relay router needs the purpose to apply the
+	# same homebase rule as an ordinary send.
+	my ($chip_id) = @_;
+	return undef unless $chip_id;
+	foreach my $d ( @{ &subs::db_select('devices')->hashes } ) {
+		next unless $d->{'chip_ids'};
+		foreach my $c ( @{ (eval { decode_json $d->{'chip_ids'} } || []) } ) {
+			next unless $c->{'id'} && $c->{'id'} eq $chip_id;
+			return { %{$c}, hostname => $d->{'hostname'} };
+		}
+	}
+	return undef;
+}
+
+sub ble_relay_route {
+	# Carry one device's message to another device (star-of-stars mesh).
+	#
+	# A watch on a phone's bridge can reach a board on the desktop's bridge: the
+	# machine that heard the relay looks up the target, sends it over its own
+	# bridge when it may serve that chip, and otherwise hands the same envelope to
+	# every active peer. Only the machine allowed to serve the target sends it, so
+	# the broadcast needs no homebase lookup and no reply.
+	#
+	# Envelope: {type:"relay", to:"<chip>", from:"<chip>", id:"<unique>",
+	#            hops:N, message:{...}}
+	# Loop protection is the message id plus a small hop budget.
+	my ($relay, $opts) = @_;
+	$opts ||= {};
+	return 0 unless ref $relay eq 'HASH' && ($relay->{'type'} || '') eq 'relay';
+	my $to = $relay->{'to'};
+	my $inner = $relay->{'message'};
+	return 0 unless $to && ref $inner eq 'HASH';
+	my $hops = 0 + ($relay->{'hops'} || 0);
+	return 0 if $hops > 6;
+	my $id = $relay->{'id'} || &random_string_creator(18);
+	my $now = time();
+	foreach my $seen ( keys %{ $gb::ble_relay_seen || {} } ) {
+		delete $gb::ble_relay_seen->{$seen} if $now - $gb::ble_relay_seen->{$seen} > 300;
+	}
+	return 0 if $gb::ble_relay_seen->{$id};
+	$gb::ble_relay_seen->{$id} = $now;
+	my $from = $relay->{'from'} || '';
+	# addressed back to the sender: a loop, not a delivery
+	return 0 if $from && $to eq $from;
+	my $chip = &ble_chip_record($to);
+	return 0 unless $chip && $chip->{'id'};
+	my $edt = $chip->{'purpose'} || 'watch';
+	my $envelope = {
+		type => 'relay',
+		from => $from,
+		id => $id,
+		hops => $hops + 1,
+		message => $inner
+	};
+	if (&ble_may_serve($edt, $to) && $chip->{'bluetooth'}) {
+		$log->info('BLE relay ' . ($from || '?') . ' -> ' . $to . ' (' . $edt . '), hop ' . ($hops + 1));
+		&bluetooth_sender({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $to,
+			edt => $edt,
+			message => $envelope
+		});
+		return 1;
+	}
+	return 0 if $opts->{'from_mesh'};
+	my $me = &signatorial_designer();
+	my $payload = encode_json({ %{$envelope}, to => $to });
+	my $sent = 0;
+	foreach my $rm ( @{ &remote_machine_lister({ connection => 'active' }) || [] } ) {
+		next unless ref $rm eq 'HASH';
+		my $sig = $rm->{'signatorial'} || '';
+		next if !$sig || $sig eq $me;
+		next unless $rm->{'ip'};
+		my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+		next unless $hop && $hop->{'ua'} && $hop->{'manager'};
+		my $res = eval {
+			$hop->{'ua'}->insecure(1)->inactivity_timeout(10)->post(
+				$hop->{'manager'} . '/manager/ble/relay' => form => { payload => $payload }
+			)->result;
+		};
+		$sent++ if $res && eval { $res->is_success };
+	}
+	$log->info('BLE relay ' . ($from || '?') . ' -> ' . $to . ': offered to ' . $sent . ' peer(s)') if $sent;
+	return $sent ? 1 : 0;
+}
+
 sub ble_yield() {
 	# Hand a device that calls another machine home back to it: drop that
 	# device's link so the homebase's bridge can take it. With several links in
@@ -3642,14 +3730,14 @@ sub ble_adopt_scan() {
 	# A device that has never been on WiFi cannot be named by mDNS and the tree
 	# holds no address for it, so nothing ever connects and it can never introduce
 	# itself - a fresh deck is invisible however long it sits on the desk. Find it
-	# by radio instead: every JawnOS board puts the Nordic UART service in its
-	# advertising packet, so a device in the room whose advertisement carries that
-	# uuid, and whose address we do not already hold, is one of ours waiting to be
-	# met. Connect to it and its own state_request (chip_id + purpose) records it
+	# by radio instead. A JawnOS device carries a "JW" manufacturer-data payload
+	# (company 0xFFFF) with its chip id and purpose, so it is recognized even when
+	# it advertises a custom service; older firmware is still met by its Nordic
+	# UART service uuid. Connect to it and its own state_request records it
 	# (ble_message_processor -> ble_device_record), after which the ordinary host
 	# rule bridges it - the "plug it in and it is known" path, with no wifi at all.
-	# With the multi-link bridge, every unknown NUS device in the room is met, not
-	# just the first; the daemon's four-link cap is the limit.
+	# With the multi-link bridge, every unknown JawnOS device in the room is met,
+	# not just the first; the daemon's MAX_LINKS cap is the limit.
 	return unless &ble_bridge_capable() && &ble_bridge_enabled();
 	my $client = &ble_bridge_client() or return;
 	my $nus = lc &ble_nus_uuids()->{'service_uuid'};
@@ -3669,14 +3757,37 @@ sub ble_adopt_scan() {
 		next unless $e && ref $e eq 'HASH' && ($e->{'event'} || '') eq 'scan';
 		my $mac = &ble_link_key($e->{'mac'});
 		next unless $mac =~ /^(?:[0-9A-F]{2}){6}$/;
+		# The device names itself in the scan response: record the sighting now,
+		# even before a link exists, and note the radio address it currently uses
+		# (a board that was re-flashed may come back on a new address).
+		my ($mf_chip, $mf_purpose) = &ble_manufacturer_identity($e->{'manufacturer_data'});
+		if ($mf_chip) {
+			next if $seen{$mac}++;
+			# Only write the sighting when the radio address is new (a re-flashed
+			# board may come back on a different one). Otherwise this scan would
+			# rewrite every known device's row every 30 seconds and churn the mesh
+			# sync for nothing.
+			my $recorded = &ble_chip_record($mf_chip);
+			my $same_mac = $recorded && $recorded->{'bluetooth'} &&
+				&ble_link_key($recorded->{'bluetooth'}) eq $mac;
+			&ble_device_record({ chip_id => $mf_chip, edt => $mf_purpose, mac => $mac }) unless $same_mac;
+			# Meet it only when this machine may hold its link. A device whose
+			# homebase is another machine is left for that homebase (adopting it
+			# here would steal the link, which is the tug-of-war the homebase rule
+			# exists to prevent).
+			my $edt = $mf_purpose || ($recorded && $recorded->{'purpose'}) || 'watch';
+			push @found, { mac => $mac, chip_id => $mf_chip, purpose => $edt } if &ble_may_serve($edt, $mf_chip);
+			next;
+		}
 		next if $known{$mac} || $seen{$mac}++;
 		next unless grep { lc($_) eq $nus } @{ $e->{'uuids'} || [] };
-		push @found, $mac;
+		push @found, { mac => $mac };
 	}
 	return unless @found;
 	my $now = time();
 	my $u = &ble_nus_uuids();
-	foreach my $mac ( @found ) {
+	foreach my $f ( @found ) {
+		my $mac = ref $f eq 'HASH' ? $f->{'mac'} : $f;
 		# already linked, or we tried it recently and it stayed silent (a device
 		# that speaks NUS but is not ours): leave that radio alone
 		next if $gb::ble_links->{$mac} && $gb::ble_links->{$mac}->{'connected'};
@@ -3691,6 +3802,34 @@ sub ble_adopt_scan() {
 				'--mtu', '512');
 		}, { name => 'ble adopt connect' });
 	}
+}
+
+sub ble_manufacturer_identity {
+	# Read the JawnOS manufacturer-data payload from a scan event.
+	#
+	# Layout (after the 2-byte company id, 0xFFFF):
+	#   "JW"  version  flags  purpose  chip_id-as-ASCII
+	# purpose: 1 watch, 2 teletype, 3 microcontroller, 4 music, 0 unknown.
+	# flags bit0 marks a device that can relay for the mesh.
+	# Returns (chip_id, purpose) or () when this is not one of ours.
+	my ($mfd) = @_;
+	return () unless ref $mfd eq 'HASH';
+	my %purpose = (1 => 'watch', 2 => 'teletype', 3 => 'microcontroller', 4 => 'music');
+	foreach my $company ( keys %{$mfd} ) {
+		my $hex = $mfd->{$company};
+		next unless defined $hex;
+		$hex =~ s/[^0-9a-fA-F]//g;
+		next unless length($hex) >= 12;   # magic+version+flags+purpose + 1 byte chip
+		my $raw = pack('H*', substr($hex, 0, length($hex) - (length($hex) % 2)));
+		next unless substr($raw, 0, 2) eq 'JW';
+		next unless ord(substr($raw, 2, 1)) == 1;
+		my $code = ord(substr($raw, 4, 1));
+		my $chip = substr($raw, 5);
+		$chip =~ s/[^A-Za-z0-9._-]//g;
+		next unless length $chip;
+		return ($chip, $purpose{$code} || 'watch');
+	}
+	return ();
 }
 
 sub ble_nus_uuids() {
@@ -4622,6 +4761,13 @@ sub ble_message_processor() {
 		});
 	}
 	# the newer bridge messages are dispatches, not url fetches
+	if ($type && $type eq 'relay') {
+		# A device addressing another device through the house. Route it by chip
+		# id: locally if this machine holds that link, otherwise through the
+		# active peers (each applies the same homebase rule).
+		&subs::ble_relay_route($msg, {});
+		return;
+	}
 	if ($type && $type eq 'state_request') {
 		my $chip_id = $msg->{'chip_id'};
 		my $edt = $msg->{'edt'} || 'watch';

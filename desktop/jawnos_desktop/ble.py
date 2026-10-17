@@ -7,9 +7,10 @@ and from the rest of jawn.
 
 The wire protocol on the loopback control socket is backward-compatible with
 the Android daemon and the v1 Linux bridge, so ``scripts/jawn-bt`` and jawn's
-own Perl listener (``ble_listener_start``) work unchanged.  Version 2 adds up
-to four concurrent links: every link-scoped event carries ``mac``, ``status``
-carries a ``links`` array, and ``send``/``disconnect`` may target one MAC.
+own Perl listener (``ble_listener_start``) work unchanged.  Version 2 adds
+concurrent links (four by default, ``JAWNOS_BLE_MAX_LINKS`` raises it to 25):
+every link-scoped event carries ``mac``, ``status`` carries a ``links`` array,
+and ``send``/``disconnect`` may target one MAC.
 
     listen on 127.0.0.1:45999
 
@@ -99,7 +100,24 @@ RECONNECT_MAX = 30.0
 # forever and cook the machine that hosts the bridge.
 STABLE_SECONDS = 30.0
 
-MAX_LINKS = 4
+
+def _max_links():
+    """How many radios this bridge may hold at once.
+
+    Four is the safe default: BlueZ, the controller and the host all have to
+    carry every link. A machine with a good controller can raise it (up to 25)
+    with ``JAWNOS_BLE_MAX_LINKS``; beyond 25 a single bridge is not the right
+    shape - add a second bridge and let the manager's relay reach the device
+    through whichever machine holds it.
+    """
+    try:
+        value = int(os.environ.get("JAWNOS_BLE_MAX_LINKS", "4"))
+    except (TypeError, ValueError):
+        value = 4
+    return max(1, min(25, value))
+
+
+MAX_LINKS = _max_links()
 CONNECT_AFTER_DISCOVERY_MS = 400
 # A multi-part write yields to the GLib loop between parts. The old code slept
 # 15 ms inside the write, which blocked every other link for the duration of a
@@ -538,10 +556,24 @@ class Bridge(object):
         # UART service in its advertising packet, so this is how the tree tells
         # one of its own from the rest of the room, without connecting.
         uuids = sorted(str(u).lower() for u in (props.get("UUIDs") or []))
-        record = (str(name) if name else None, tuple(uuids))
-        # Report on first sight, and again only if the name or uuids grow: a device
-        # seen from its advertising packet alone may carry neither yet, and BlueZ
-        # fills them in from the scan response a moment later.
+        # Manufacturer-specific data is how a JawnOS device names itself without
+        # relying on the Nordic UART service: a board with a custom service (or a
+        # future one) still carries a "JW" payload with its chip id and purpose.
+        # BlueZ exposes it as {company_id: bytes}; the manager matches the magic.
+        manufacturer = {}
+        for company, payload in (props.get("ManufacturerData") or {}).items():
+            try:
+                raw = bytes(bytearray(int(b) & 0xFF for b in payload))
+            except (TypeError, ValueError):
+                continue
+            if raw:
+                manufacturer[str(int(company))] = raw.hex()
+        record = (str(name) if name else None, tuple(uuids),
+                  tuple(sorted(manufacturer.items())))
+        # Report on first sight, and again only if the name, uuids or
+        # manufacturer data grow: a device seen from its advertising packet alone
+        # may carry none yet, and BlueZ fills them in from the scan response a
+        # moment later.
         if self.scan_seen.get(address) == record:
             return
         self.scan_seen[address] = record
@@ -551,6 +583,7 @@ class Bridge(object):
             "name": str(name) if name else None,
             "rssi": int(props.get("RSSI", 0) or 0),
             "uuids": list(uuids),
+            "manufacturer_data": manufacturer,
         })
 
     def _start_scan(self, seconds):
@@ -605,7 +638,7 @@ class Bridge(object):
         """Make room for one more link, or say no.
 
         An idle (explicitly disconnected) link is the cheapest thing to forget;
-        a live link is never evicted. Four live links is the cap."""
+        a live link is never evicted. MAX_LINKS live links is the cap."""
         if len(self.links) < MAX_LINKS:
             return True
         idle = [link for link in self.links.values()

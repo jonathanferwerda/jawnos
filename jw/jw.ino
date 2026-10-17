@@ -871,7 +871,22 @@ void start_ble_transfer() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);  // functions as a hint to help iPhone connections
   pAdvertising->setMinPreferred(0x12);
-  
+
+  // Name this watch to a JawnOS bridge in the scan response: manufacturer data
+  // (company 0xFFFF) + "JW" + version + flags + purpose + chip id. The bridge
+  // matches the magic, so adoption no longer depends on the Nordic UART uuid
+  // and a device already in the fleet is recognized before a link is opened.
+  String mfg;
+  mfg += (char)0xFF; mfg += (char)0xFF;   // company id 0xFFFF
+  mfg += 'J'; mfg += 'W';
+  mfg += (char)1;                         // version
+  mfg += (char)1;                         // flags: bit0 = relay capable
+  mfg += (char)1;                         // purpose: watch
+  mfg += chip_id_maker();
+  BLEAdvertisementData scanResponse;
+  scanResponse.setManufacturerData(mfg);
+  pAdvertising->setScanResponseData(scanResponse);
+
   // Start broadcasting over the air!
   pAdvertising->start();
   Serial.println("Nordic UART BLE Advertising has safely started!");
@@ -2058,6 +2073,18 @@ void loop2(void * pvParameters) {
         if (!room_raw) {
         JSONVar btMsg = JSON.parse(btmsg);
         if (JSON.typeof(btMsg) != "undefined") {
+          // A relay envelope from the house: unwrap it when it names this watch.
+          // The manager has already routed it, so a copy naming another chip is
+          // stale and must not be applied here.
+          if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "relay") {
+            String relay_to = btMsg.hasOwnProperty("to") ? String((const char *)btMsg["to"]) : String("");
+            if (relay_to == "" || relay_to == chip_id_maker()) {
+              JSONVar relay_inner = btMsg["message"];
+              if (JSON.typeof(relay_inner) == "object") { btMsg = relay_inner; }
+              else { btMsg = JSON.parse("{}"); }
+            }
+            else { btMsg = JSON.parse("{}"); }
+          }
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "button") {
             
             // Mutex protect because we are modifying global memory map strings
