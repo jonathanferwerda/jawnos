@@ -30120,11 +30120,21 @@ get '/manager/remote_auth_test' => sub($c) {
 	# without a flag day). The session gate steps aside for this route in
 	# hooks.pl, so a peer whose session has lapsed can still handshake - this
 	# check is the whole of the route's access control.
-	my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
-	unless (scalar @{$rm} > 0 && &subs::peer_verify($c, $rm->[-1])) {
+	#
+	# Try every row for the signatorial, not just the last: repeated discovery
+	# can leave a second row behind, and verifying only `[-1]` meant a stale
+	# duplicate key rejected a peer whose real row was fine. Rows with a key are
+	# tried first; a keyless row is the trust-on-first-contact fallback.
+	my $rm_rows = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
+	my $verified;
+	foreach my $cand ( sort { (($b->{'pubkey'} || '') ne '') <=> (($a->{'pubkey'} || '') ne '') } @{$rm_rows} ) {
+		if (&subs::peer_verify($c, $cand)) { $verified = $cand; last; }
+	}
+	unless ($verified) {
 		$c->rendered(403);
 		return;
 	}
+	my $rm = [ $verified ];
 
 	if ($chip_chyea) {
 		&subs::setting_setter({ app => '__president', setting => 'chip_chyea', subsetting => $signatorial, value => $chip_chyea });
