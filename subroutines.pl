@@ -1773,6 +1773,99 @@ sub say_it() {
 	}, { name => 'say it' });
 }
 
+# Is the device on WiFi and reachable? Its own web server on port 80 is the
+# test: an off-LAN or powered-down device fails the connect at once, which is
+# what lets the reply go to Bluetooth without waiting for a timeout. Returns
+# the address the reply route is served from, or undef.
+sub device_wifi_reply() {
+	my ($meta) = @_;
+	return undef unless $meta && $meta->{'chip_id'};
+	my $edt = $meta->{'edt'} || 'watch';
+	my $dev = &subs::device_lister(&subs::rightNow(), $edt, undef, $meta->{'chip_id'});
+	my $dev_ip = $dev->{'ip'};
+	return undef unless $dev_ip && $dev_ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(PeerAddr => $dev_ip, PeerPort => 80, Proto => 'tcp', Timeout => 0.7);
+	return undef unless $sock;
+	close $sock;
+	# the server's own address on the device's subnet: a fallback machine may
+	# differ from the homebase the device still has stored
+	my $addrs = &subs::network_interface_reporter();
+	my $net = $dev_ip;
+	$net =~ s/\.\d+$//;
+	my $server_ip;
+	foreach my $nic ( keys %{$addrs} ) {
+		my $ip = $addrs->{$nic}->{'ip'};
+		next unless $ip;
+		my $n = $ip;
+		$n =~ s/\.\d+$//;
+		if ($n eq $net) { $server_ip = $ip; last; }
+	}
+	if (!$server_ip && %{$addrs}) {
+		my ($first) = values %{$addrs};
+		$server_ip = $first->{'ip'};
+	}
+	return undef unless $server_ip;
+	my $od = eval { decode_json(&subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} })) } || {};
+	my $auth = $od->{'__specs'}->{'authorization'};
+	return undef unless $auth;
+	return {
+		ip => $dev_ip,
+		edt => $edt,
+		auth => $auth,
+		base => 'https://' . $server_ip . ':' . ($ENV{'PORT_ARM'} || ''),
+	};
+}
+
+# Render the answer once as a WAV, so a WiFi device can fetch it in one
+# streamed GET instead of receiving hundreds of BLE notifications. Returns the
+# id (the file is ~/.president/reply_<id>.wav) or undef when piper/ffmpeg
+# cannot produce one; the caller then keeps the BLE stream.
+sub device_reply_wav() {
+	my ($text) = @_;
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	return undef unless $argv && $model;
+	require IPC::Open3;
+	require Symbol;
+	my $dir = &subs::home('~/.president');
+	foreach my $old ( glob("$dir/reply_*.wav") ) {
+		unlink $old if $old && time - (stat($old))[9] > 600;
+	}
+	my $id = &subs::random_string_creator(32);
+	$id =~ s/[^A-Za-z0-9]//g;
+	$id = substr($id, 0, 24);
+	return undef unless length $id >= 16;
+	my $path = "$dir/reply_$id.wav";
+	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
+	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
+		"ffmpeg -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f wav -");
+	my $err = Symbol::gensym();
+	my ($pin, $pout);
+	my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipeline) };
+	return undef unless $pid;
+	print {$pin} $text;
+	close $pin;
+	binmode($pout);
+	open(my $out, '>', $path) or return undef;
+	binmode($out);
+	my $bytes = 0;
+	while (1) {
+		my $buf = '';
+		my $n = read($pout, $buf, 8192);
+		last unless defined $n && $n > 0;
+		print {$out} $buf;
+		$bytes += $n;
+	}
+	close $pout;
+	waitpid($pid, 0);
+	close $out;
+	if ($bytes < 100) {
+		unlink $path;
+		return undef;
+	}
+	return $id;
+}
+
 # A spoken answer to a voice command that came from the watch: push the reply
 # text (the watch shows it on screen) and the spoken answer (a short piper clip
 # the watch plays) over the bridge, so the answer lands on the wrist. No local
@@ -1792,6 +1885,29 @@ sub watch_reply() {
 	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} }) } || {};
 	my $want = $op->{'__specs'}->{'audio_replies'};
 	return if defined $want && $want eq 'off';
+	# A device on WiFi pulls one WAV instead of receiving hundreds of BLE parts;
+	# an off-WiFi device gets the BLE stream immediately. The text above is the
+	# small, immediate half either way.
+	my $wifi = &subs::device_wifi_reply($meta);
+	if ($wifi) {
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			my $id = &subs::device_reply_wav($text);
+			if ($id) {
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $meta->{'chip_id'},
+					edt => $edt,
+					message => { type => 'say_audio_ready', data => { id => $id, base => $wifi->{'base'} } }
+				});
+			}
+			else {
+				# piper/ffmpeg failed: the BLE stream still gets the sound there
+				&subs::watch_reply_stream($meta, $text);
+			}
+		}, { name => 'watch reply wifi' });
+		return;
+	}
 	# Piper synthesizes far faster than the answer is spoken, and the WiFi path
 	# runs voice_ingest inline in the request: do all of this off the request. The
 	# child re-dials the database itself (bluetooth_sender reads it), so forking

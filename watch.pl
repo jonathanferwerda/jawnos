@@ -64,6 +64,25 @@ sub embeddedAuthorizer($c) {
 	return undef;
 }
 
+get '/watch/reply_audio' => sub($c) {
+	# A WiFi device pulls the answer here instead of taking it in BLE parts.
+	# embeddedAuthorizer is the same Now Me pair every /watch route uses; the id
+	# is unguessable and the file is one-shot (deleted once the body is sent).
+	if (my $watch_settings = &embeddedAuthorizer($c)) {
+		my $id = $c->param('id') || '';
+		return $c->rendered(400) unless $id =~ /^[A-Za-z0-9]{16,40}$/;
+		my $path = &subs::home('~/.president/reply_' . $id . '.wav');
+		return $c->rendered(404) unless -s $path;
+		$c->res->headers->content_type('audio/wav');
+		$c->res->headers->header('Cache-Control' => 'no-store');
+		$c->on(finish => sub { unlink $path });
+		$c->render(file => $path);
+	}
+	else {
+		$c->rendered(403);
+	}
+};
+
 get '/watch/time' => sub($c) {
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
 		my $server_time = time();

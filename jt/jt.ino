@@ -156,6 +156,13 @@ static volatile uint32_t voiceAwaitingSince = 0;
 #define SAY_TEXT_MS 30000
 static lv_obj_t *say_label;
 static uint32_t say_shown_at = 0;
+// WiFi audio reply: the server sends {type:'say_audio_ready'} with a one-shot
+// URL; a task downloads it and loop() plays the WAV.
+static volatile bool sayFetchPending = false;
+static volatile bool sayFetchRunning = false;
+static String* sayFetchReq = nullptr;
+static volatile bool sayWifiReady = false;
+static volatile bool sayWifiPlaying = false;
 // a manual recording is in flight (declared here because loop() reads it; the
 // recording code at the bottom owns it)
 static volatile bool isRecording = false;
@@ -2074,6 +2081,22 @@ void loop() {
           // the Guide's spoken answer in PCM parts; the last one plays it
           say_audio_add(btMsg["data"]);
         }
+        else if (mtype == "say_audio_ready") {
+          // the answer is on the server: pull the one WAV over WiFi. The server
+          // only sends this after the deck's web server answered, but WiFi can
+          // have dropped since, so check again before starting a fetch.
+          String id = (const char *)btMsg["data"]["id"];
+          String base = (const char *)btMsg["data"]["base"];
+          if (id.length() && base.length() && WiFi.status() == WL_CONNECTED) {
+            if (sayFetchReq) { delete sayFetchReq; }
+            sayFetchReq = new String(base + "/watch/reply_audio?id=" + id);
+            if (sayFetchReq) { sayFetchPending = true; }
+            deckLog("%s", "[voice] WiFi audio ready; fetching");
+          }
+          else {
+            deckLog("%s", "[voice] WiFi audio ready but no WiFi; waiting for BLE parts");
+          }
+        }
         else if (mtype == "toggle" || mtype == "toggles") {
           // a toggle flipped somewhere else (a phone press, an alarm, an
           // appointment): light up every button that has that app
@@ -2213,6 +2236,31 @@ void loop() {
   // which sounds exactly like a silent file. This is reported below when a
   // stream ends.
   static bool audioWasRunning = false;
+  if (sayFetchPending && !sayFetchRunning) {
+    sayFetchPending = false;
+    String* req = sayFetchReq;
+    sayFetchReq = nullptr;
+    if (req) {
+      sayFetchRunning = true;
+      if (xTaskCreatePinnedToCore(sayWifiFetchTask, "SayFetch", 12288, req, 1, NULL, 0) != pdPASS) {
+        delete req;
+        sayFetchRunning = false;
+        deckLog("%s", "[voice] WiFi fetch task could not start");
+      }
+    }
+  }
+  if (sayWifiReady && !isRecording && !audio.isRunning()) {
+    sayWifiReady = false;
+    sayWifiPlaying = true;
+    audio.setVolume(volumeLevel);
+    bool ok = audio.connecttoFS(FFat, "/reply.wav");
+    audio.setVolume(volumeLevel);
+    deckLog("[voice] answer pulled over WiFi (%d)", (int)ok);
+    if (!ok) {
+      sayWifiPlaying = false;
+      if (voiceAwaitingReply) { voiceAwaitingReply = false; buttonMillis = millis(); }
+    }
+  }
   if (audio.isRunning()) {
     audio.loop();
     audioWasRunning = true;
@@ -2221,6 +2269,10 @@ void loop() {
     audioWasRunning = false;
     voiceAckUntil = 0;   // the acknowledgment beep (or a reply) has finished
     deckLog("[mic] playback finished (or gave up)");
+    if (sayWifiPlaying) {
+      sayWifiPlaying = false;
+      FFat.remove("/reply.wav");
+    }
     // the Guide's answer has been said: the screen may time out again from now
     if (voiceAwaitingReply) {
       voiceAwaitingReply = false;
@@ -6628,6 +6680,24 @@ static void say_audio_add(JSONVar d) {
   say_pcm = nullptr;
   say_pcm_len = 0;
   say_pcm_cap = 0;
+}
+
+// Fetch a WiFi reply WAV the server announced. The URL was handed over from
+// loop() (the BLE message task) through sayFetchReq; the download runs off the
+// UI task, and loop() plays the file when it lands.
+static void sayWifiFetchTask(void *pv) {
+  String* req = (String *)pv;
+  String url = req ? *req : String();
+  delete req;
+  if (url.length()) {
+    https_download(FFat, url, "/reply.wav");
+    File f = FFat.open("/reply.wav");
+    if (f && f.size() > 44) { sayWifiReady = true; }
+    if (f) { f.close(); }
+    deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
+  }
+  sayFetchRunning = false;
+  vTaskDelete(NULL);
 }
 
 // The panel's voice_trigger names the model to run; anything we have no model for

@@ -510,6 +510,13 @@ static volatile uint32_t say_stream_rate = 8000; // the part's sample rate (Hz)
 static volatile uint32_t say_stream_at = 0;      // when the last part landed
 static volatile uint32_t say_stream_total = 0;   // the sender's estimate of the whole clip (bytes)
 static volatile uint32_t say_stream_preload = SAY_PRELOAD_MIN;
+// WiFi audio reply: the server sends {type:'say_audio_ready'} with a one-shot
+// URL; a task downloads it and loop() plays the WAV. No stream buffer, no parts.
+static volatile bool say_fetch_pending = false;
+static volatile bool say_fetch_running = false;
+static String* say_fetch_req = nullptr;   // handed from loop2 to the fetch task
+static volatile bool say_wifi_ready = false;
+static volatile bool say_wifi_playing = false;
 
 // Industry-standard Nordic UART Service UUIDs
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -1821,6 +1828,23 @@ void loop() {
     say_stream_start = false;
     say_stream_play();
   }
+  if (say_fetch_pending && !say_fetch_running) {
+    say_fetch_pending = false;
+    String* req = say_fetch_req;
+    say_fetch_req = nullptr;
+    if (req) {
+      say_fetch_running = true;
+      if (xTaskCreatePinnedToCore(say_fetch_task, "SayFetch", 12288, req, 1, NULL, 0) != pdPASS) {
+        delete req;
+        say_fetch_running = false;
+        Serial.println("[say] WiFi fetch task could not start");
+      }
+    }
+  }
+  if (say_wifi_ready && !isPlaying && !isRecording) {
+    say_wifi_ready = false;
+    say_wifi_play("/reply.wav");
+  }
   if (buttonMillis != 0 && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT) {
     if (voiceShipping) {
       // A payload is still going out, so the radio (and the chip) must stay up.
@@ -2191,6 +2215,26 @@ void loop2(void * pvParameters) {
                 xSemaphoreGive(taskMutex);
               }
               Serial.printf("[say] %s\n", t.c_str());
+            }
+          }
+          else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio_ready") {
+            // the spoken answer is on the server: pull it over WiFi, or leave it
+            // to the BLE parts (the server only sends this when the device's own
+            // web server answered, but WiFi can still have dropped since)
+            if (btMsg.hasOwnProperty("data") && btMsg["data"].hasOwnProperty("id")) {
+              String id = (const char *)btMsg["data"]["id"];
+              String base = (const char *)btMsg["data"]["base"];
+              if (id.length() && base.length() && WiFi.status() == WL_CONNECTED) {
+                if (say_fetch_req) { delete say_fetch_req; }
+                say_fetch_req = new String(base + "/watch/reply_audio?id=" + id);
+                if (say_fetch_req) {
+                  say_fetch_pending = true;
+                  Serial.println("[say] WiFi audio ready; fetching");
+                }
+              }
+              else {
+                Serial.println("[say] WiFi audio ready but no WiFi; waiting for BLE parts");
+              }
             }
           }
           else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio") {
@@ -4608,6 +4652,11 @@ void audio_playback_loop_task(void *pvParameters) {
     if(wav) { delete wav; wav = nullptr; }
     if(file_source) { delete file_source; file_source = nullptr; }
     if(out_hardware) { delete out_hardware; out_hardware = nullptr; }
+    if (say_wifi_playing) {
+      say_wifi_playing = false;
+      FFat.remove("/reply.wav");
+      if (voiceAwaitingReply) { voiceAwaitingReply = false; buttonMillis = millis(); }
+    }
 
     // Safely restore playback button graphics text layer (a reply playback may
     // have used the same task; the button can also be gone after a room rebuild)
@@ -4698,6 +4747,46 @@ static void say_stream_play() {
   }
 }
 
+
+// Fetch a WiFi reply WAV the server announced. The URL is handed over from
+// loop2 (core 0) through say_fetch_req; the download runs off the UI task, and
+// loop() plays the file once it is on flash.
+static void say_fetch_task(void *pv) {
+  String* req = (String *)pv;
+  String url = req ? *req : String();
+  delete req;
+  if (url.length()) {
+    https_download(FFat, url, "/reply.wav");
+    File f = FFat.open("/reply.wav");
+    if (f && f.size() > 44) { say_wifi_ready = true; }
+    if (f) { f.close(); }
+    Serial.printf("[say] WiFi audio %s\n", say_wifi_ready ? "ready" : "fetch failed");
+  }
+  say_fetch_running = false;
+  vTaskDelete(NULL);
+}
+
+// Play the WAV the WiFi reply task downloaded. The existing WAV playback task
+// drives the codec; the flag tells its completion to end the reply hold and
+// delete the one-shot file.
+static void say_wifi_play(const char *path) {
+  if (isPlaying || isRecording) { return; }
+  if (!path || !FFat.exists(path)) { return; }
+  isPlaying = true;
+  say_wifi_playing = true;
+  out_hardware = new LilyGoAudioSink(watch.getAudioOutput());
+  file_source = new AudioFileSourceFATFS(path);
+  wav = new AudioGeneratorWAV();
+  wav->begin(file_source, out_hardware);
+  if (xTaskCreatePinnedToCore(audio_playback_loop_task, "SayWav", 4096, NULL, 2, NULL, 1) != pdPASS) {
+    Serial.println("[say] WiFi playback task could not start");
+    isPlaying = false;
+    say_wifi_playing = false;
+    if (wav) { delete wav; wav = nullptr; }
+    if (file_source) { delete file_source; file_source = nullptr; }
+    if (out_hardware) { delete out_hardware; out_hardware = nullptr; }
+  }
+}
 
 void when_i_get_in(JSONVar wigi_item, String url) {
   
