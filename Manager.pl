@@ -6817,13 +6817,18 @@ get '/manager/voice_download' => sub($c) {
 
 
 sub remote_upgrade($c,$params) {
-	# A worker that died mid-pull leaves the marker behind; the guard must age it
-	# out, or that machine never pulls again (and peers keep seeing it as busy).
+	# The marker carries the worker's pid. A restart or a crash is the common case
+	# here, and a bare 'running' left behind by a dead worker used to block every
+	# pull for the full ten-minute age bound. Only a live owner blocks, and the
+	# age bound remains for a pid that was recycled.
 	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
-	if (($up_state->{'value'} || '') eq 'running' && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
+	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
+	$up_flag ||= '';
+	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
+	if ($up_live && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
 		return;
 	}
-	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running' });
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:' . $$ });
 	# One job row drives the yellow dot: its ring is the overall percent and its
 	# steps are the bars across the top of the panel. The guard below still stops
 	# two pulls at once; the job is what makes the wait legible.
@@ -30204,10 +30209,15 @@ get '/manager/remote_auth_test' => sub($c) {
 				my $ws_auth = &subs::encrypter($pa, $ws_joiner);
 				&subs::setting_setter({ app => '__president', setting => 'ws_pa', value => $pa});
 
-				# Age out a dead worker's marker: a peer told "merging" forever stops
-				# this machine from ever pulling its newer rows.
+				# Age out a dead worker's marker, and check the owner it names: a
+				# peer told "merging" forever stops this machine from ever pulling
+				# its newer rows. An older value is a bare 'running' (no pid), so
+				# trust the age bound for it.
 				my $merge_row = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
-				my $merging = (($merge_row->{'value'} || '') eq 'running' && int($merge_row->{'server_time'} || 0) + 600000 > $now) ? 'running' : '';
+				my ($m_flag, $m_pid) = split /:/, ($merge_row->{'value'} || ''), 2;
+				$m_flag ||= '';
+				my $m_live = ($m_flag eq 'running' && (!$m_pid || ($m_pid =~ /^\d+$/ && $m_pid > 1 && kill(0, $m_pid)))) ? 1 : 0;
+				my $merging = ($m_live && int($merge_row->{'server_time'} || 0) + 600000 > $now) ? 'running' : '';
 
 				my $location = &subs::db_query('select * from continent where signatorial=? and type=? and server_time >= ? order by server_time desc limit 1', $my_signatorial, 'temporary',&subs::rightNow() - (5 * 60 * 1000))->hashes->[0];
 
@@ -30329,6 +30339,9 @@ get '/manager/sync_history' => sub($c) {
 	}
 	my $lock = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0] || {};
 	my $upgrade = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	my ($u_flag, $u_pid) = split /:/, ($upgrade->{'value'} || ''), 2;
+	$u_flag ||= '';
+	my $u_live = ($u_flag eq 'running' && (!$u_pid || ($u_pid =~ /^\d+$/ && $u_pid > 1 && kill(0, $u_pid)))) ? 1 : 0;
 	my $now = &subs::rightNow();
 	# The job table is the live picture: one row per pull/serve, with the steps
 	# (one bar each) that the panel draws across the top.
@@ -30337,7 +30350,7 @@ get '/manager/sync_history' => sub($c) {
 	$c->render(json => {
 		current => {
 			serving => (($lock->{'value'} || '') ne '' && int($lock->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
-			pulling => (($upgrade->{'value'} || '') eq 'running' && int($upgrade->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
+			pulling => ($u_live && int($upgrade->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
 			job => $active,
 		},
 		jobs => $jobs,
