@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.664 - a Now Me that names a different House machine drops the old wss socket first. The t-deck kept its control channel on the previous machine because `tauth_connect` is a no-op while `ws_connected` is 1; every path that applies a new Now Me (HTTP, BLE, saved profile) now closes it and redials the address just delivered.
 - v0.1.663 - Now Me hands the rotated pairing row to the LAN peers inside the request (`operator_door_push`, two seconds for two machines) instead of a forked relay that did not reliably reach them; the peer route verifies the signed request, so no session cookie is involved. A device that falls back now authenticates on its first probe.
 - v0.1.662 - the headless relay builds a real form body. `Mojo::Message::body_params` is a getter in this Mojolicious, so `relay_headless`'s POST always carried an empty body and a peer never received the relayed request (the Now Me pairing push among them). The parameters are now form-encoded into the request body.
 - v0.1.661 - the pairing push stamps the row in milliseconds. now_me's own clock is in seconds, so the relayed copy sorted below the row it replaced and the fallback House kept the previous pair; the local row and every peer copy now share one millisecond server_time.

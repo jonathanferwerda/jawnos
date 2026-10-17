@@ -2135,8 +2135,10 @@ void loop() {
           deckLog("[bt] now_me applied");
           remote_room();
           // Now Me is the whole authorization: remote input follows it with no
-          // password step.
+          // password step, and it may name a different House machine.
           tauth_remote_enabled = "on";
+          wsclient.close();
+          ws_connected = 0;
           tauth_connect();
         }
         else if (mtype == "room") {
@@ -2258,8 +2260,11 @@ void loop() {
     lastMillis = millis();
     authorization_pusher(before_me);
     // Now Me is the whole authorization: the wss control socket opens on the
-    // pair it just delivered, with no password to type.
+    // pair it just delivered, with no password to type. It may also name a
+    // different House machine, so drop the old socket before redialing.
     tauth_remote_enabled = "on";
+    wsclient.close();
+    ws_connected = 0;
     tauth_connect();
     voice_trigger_apply();
   }
@@ -5045,6 +5050,9 @@ void authorization_changer(String mov) {
   tauth_remote_enabled = (const char * )bm["__specs"]["tauth_remote_enabled"];
 
   if (tauth_remote_enabled == "on") {
+    // the saved profile names this House machine: the control socket follows it
+    wsclient.close();
+    ws_connected = 0;
     tauth_connect();
   }
   else {
