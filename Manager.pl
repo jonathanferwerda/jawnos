@@ -2526,7 +2526,14 @@ sub market_receipts_prepared {
 	my @out;
 	foreach my $r ( @{ &market_receipts() } ) {
 		my @files = grep { defined $_ && -e $_ } @{ $r->{'files'} || [] };
-		my @pages = map { { url => '/file_open?file=' . uri_encode($_) . '&timestamp=' . ($r->{'at'} || 0), path => $_ } } @files;
+		my @pages;
+		if ($r->{'uuid'}) {
+			my $i = 0;
+			foreach my $f ( @files ) {
+				push @pages, { url => '/manager/market/receipt_page?uuid=' . $r->{'uuid'} . '&page=' . $i, path => $f };
+				$i++;
+			}
+		}
 		my @lines;
 		foreach my $l ( @{ $r->{'lines'} || [] } ) {
 			next unless ref $l eq 'HASH' && ($l->{'item'} || '') =~ /\S/;
@@ -2648,6 +2655,30 @@ post '/manager/market/receipt/apply' => sub($c) {
 	my $files = eval { return decode_json $c->param('files') } || [];
 	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total') }) if scalar @{$files};
 	$c->render(json => { added => scalar @added, linked => $linked });
+};
+
+# A kept receipt's page for the receipts pane. /file_open hands a file back as a
+# download (Content-Disposition: attachment), which an <img> will not show, so a
+# receipt's own page is served inline here - and only a page that receipt
+# recorded, never an arbitrary path.
+get '/manager/market/receipt_page' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $page = $c->param('page') || 0;
+	$page = 0 unless $page =~ /^[0-9]+$/;
+	my ($receipt) = grep { ($_->{'uuid'} || '') eq $uuid } @{ &market_receipts() };
+	my $files = ($receipt && ref $receipt->{'files'} eq 'ARRAY') ? $receipt->{'files'} : [];
+	my $file = $files->[$page] || '';
+	unless ($file && -f $file) { $c->rendered(404); return; }
+	my $data = read_file($file);
+	unless (defined $data && length $data) { $c->rendered(404); return; }
+	my $type = $data =~ /^\x89PNG/ ? 'image/png'
+		: $data =~ /^\xFF\xD8\xFF/ ? 'image/jpeg'
+		: $data =~ /^GIF8/ ? 'image/gif'
+		: $data =~ /^RIFF....WEBP/s ? 'image/webp'
+		: 'application/octet-stream';
+	$c->res->headers->content_type($type);
+	$c->res->headers->cache_control('private, max-age=60');
+	$c->render(data => $data);
 };
 
 # A process viewer for the machine (the Monitor app): CPU/memory graphs plus the
