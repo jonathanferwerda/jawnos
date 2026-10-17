@@ -28394,6 +28394,26 @@ sub now_me($data) {
 	my $json_op = encode_json $op_d;
 
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id });
+	# The device probes a fallback House machine with this pair, so every peer
+	# must hold this rotation now, not on a later sync tick. The signed peer rail
+	# writes it through the setting route every machine already exposes; the
+	# durable digest remains the backstop for a peer that was away.
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		eval {
+			&subs::relay_headless({
+				path => '/manager/setting_setter',
+				method => 'POST',
+				params => {
+					app => $edt,
+					setting => 'operator_door',
+					subsetting => $chip_id,
+					device => &subs::device_setter(),
+					value => $json_op,
+				}
+			});
+		};
+	}, { name => 'operator door relay' });
 	# Which link actually carries this Now Me? An explicit 'bluetooth' asks for the
 	# bridge; otherwise the watch's own LAN is tried, and a watch that answers is
 	# fetched over HTTP. A watch bridged over BLE and off its access point cannot

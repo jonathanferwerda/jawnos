@@ -261,6 +261,7 @@ static HouseNode house_nodes[HOUSE_MAX];
 static int house_node_count = 0;
 static volatile int house_switch_req = -1;
 static uint32_t house_last_scan = 0;
+static TaskHandle_t house_task_handle = NULL;
 static void house_maintain();
 static void house_task(void *pvParameters);
 static void house_learn_json(const String &js);
@@ -1066,10 +1067,7 @@ void setup() {
   watch.begin();
   watch.initMicrophone();
 
-  	taskMutex = xSemaphoreCreateMutex(); 
-  	// The House failover probe is a TLS round trip plus an mDNS query, so it
-  	// lives on core 0 and never in the UI loop; loop() applies the switch.
-  	xTaskCreatePinnedToCore(house_task, "HouseTask", 12288, NULL, 1, NULL, 0);
+	taskMutex = xSemaphoreCreateMutex(); 
 
   xTaskCreatePinnedToCore(
     // 12 KB: this task parses the whole pushed payload (a room push is 25 KB of
@@ -1645,10 +1643,22 @@ void loop() {
   				homebaseIP = house_nodes[next].host + ":" + String(house_nodes[next].arm);
   				xSemaphoreGive(taskMutex);
   			}
-  			homebase_down_until = 0;
-  			Serial.printf("[house] now using %s:%d\n", house_nodes[next].host.c_str(), house_nodes[next].arm);
-  		}
-  	}
+			homebase_down_until = 0;
+			Serial.printf("[house] now using %s:%d\n", house_nodes[next].host.c_str(), house_nodes[next].arm);
+		}
+	}
+
+	// The failover worker exists only while it has work; its stack belongs to the
+	// UI and the listener when the preferred House machine is answering.
+	{
+		bool down = ((int32_t)(millis() - homebase_down_until) < 0);
+		bool on_preferred = (homebase_preferredIP.length() == 0 || homebaseIP == homebase_preferredIP);
+		if ((down || !on_preferred) && house_task_handle == NULL) {
+			if (xTaskCreatePinnedToCore(house_task, "HouseTask", 8192, NULL, 1, &house_task_handle, 0) != pdPASS) {
+				house_task_handle = NULL;
+			}
+		}
+	}
 
   if (jw_room == "watch") {
     time_writer("loop");
@@ -3258,6 +3268,9 @@ static bool house_probe(const String &host, int arm) {
   // A live House machine answers /watch/time with this watch's own Now Me
   // pair. The address is on the LAN, so a dead one fails fast; the timeout is
   // short because this runs on the House task, not in the UI path.
+  // A TLS handshake plus HTTPClient needs tens of KB; keep that heap for the UI
+  // and the listener when the watch is already tight.
+  if (ESP.getFreeHeap() < 60000) { return false; }
   if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return false; }
   if (host.length() == 0 || arm <= 0) { return false; }
   String url = "https://" + host + ":" + String(arm) + "/watch/time?edt=watch&chip_id="
@@ -3297,6 +3310,7 @@ static int house_active_index() {
 
 static void house_scan_mdns() {
   if (WiFi.status() != WL_CONNECTED) { return; }
+  if (ESP.getFreeHeap() < 45000) { return; }
   int n = MDNS.queryService("jawnos-house", "tcp");
   for (int i = 0; i < n; i++) {
     String purpose = MDNS.txt(i, "purpose");
@@ -3318,6 +3332,8 @@ static void house_scan_mdns() {
 
 static void house_maintain() {
   if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return; }
+  // Wait while the microphone or speaker owns the heap and the radio.
+  if (voiceRecording || isRecording || isPlaying || voiceAwaitingReply) { return; }
   bool down = ((int32_t)(millis() - homebase_down_until) < 0);
   // While the homebase is answering, refresh the list slowly. While it is
   // gone, look every 15 s so the wrist recovers on the next press.
@@ -3356,10 +3372,19 @@ static void house_maintain() {
   }
 
 static void house_task(void *pvParameters) {
+  int quiet = 0;
   for (;;) {
     house_maintain();
+    bool down = ((int32_t)(millis() - homebase_down_until) < 0);
+    bool on_preferred = (homebase_preferredIP.length() == 0 || homebaseIP == homebase_preferredIP);
+    if (!down && on_preferred) {
+      if (++quiet >= 2) { break; }
+    }
+    else { quiet = 0; }
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
+  house_task_handle = NULL;
+  vTaskDelete(NULL);
 }
 
 // The president room's button state lives on the homebase and asking for it is a

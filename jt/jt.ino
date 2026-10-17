@@ -483,6 +483,9 @@ static HouseNode house_nodes[HOUSE_MAX];
 static int house_node_count = 0;
 static volatile int house_switch_req = -1;
 static uint32_t house_last_scan = 0;
+// The worker is created only while it has work: the preferred machine answering
+// normally means its stack is better left to the UI and voice heap.
+static TaskHandle_t house_task_handle = NULL;
 static void house_maintain();
 static void house_task(void *pvParameters);
 static void house_learn_json(const String &js);
@@ -850,7 +853,13 @@ static void radioBusProbe() {
 // in/out records) from PSRAM, small ones internal.
 static void *mbedtls_psram_calloc(size_t n, size_t size) {
   size_t total = n * size;
-  if (total >= 4096) {
+  // The BIGNUM limbs that failed here are small (a few hundred bytes), and the
+  // old >=4 KB rule sent every one of them to internal RAM. Once the wake-word
+  // front-end and the BLE stack are resident, internal RAM is down to a few KB
+  // and the handshake dies as "BIGNUM - Memory allocation failed" (the deck's
+  // wss and its HTTP failover both stopped working). Small crypto allocations
+  // are CPU-only, so they belong in PSRAM too.
+  if (total >= 64) {
     void *p = heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (p) {
       memset(p, 0, total);
@@ -899,7 +908,10 @@ void setup() {
   // PSRAM, so anything of 4 KB or more comes from there; the small, hot crypto
   // allocations keep to internal RAM.
   mbedtls_platform_set_calloc_free(mbedtls_psram_calloc, mbedtls_psram_free);
-  heap_caps_malloc_extmem_enable(1024);
+  // Keep internal RAM for DMA and the radio: any ordinary allocation of 64
+  // bytes or more prefers the 7 MB of PSRAM. The front-end, mbedTLS's BIGNUM
+  // limbs and JSON/String churn are all CPU-only.
+  heap_caps_malloc_extmem_enable(64);
   // The mDNS stack logs from lwip's tcpip thread, and that thread's first console
   // write allocates the console's stdio lock. On 2026-10-16 that malloc failed
   // under memory pressure and lock_init_generic aborted the deck - a panic whose
@@ -998,9 +1010,6 @@ void setup() {
   //Add mutex to allow multitasking access
   xSemaphore = xSemaphoreCreateBinary();
   assert(xSemaphore);
-  // The House failover probe is a TLS round trip plus an mDNS query: core 0,
-  // never the UI loop, which applies the switch.
-  xTaskCreatePinnedToCore(house_task, "HouseTask", 12288, NULL, 1, NULL, 0);
   xSemaphoreGive( xSemaphore );
   // Serial.print("Init display id:");
 
@@ -1998,6 +2007,18 @@ void loop() {
         wsclient.close();
         ws_connected = 0;
         tauth_connect();
+      }
+    }
+  }
+
+  // The failover worker exists only while it has work. A deck whose preferred
+  // House machine is answering keeps its 8 KB stack for the UI and the voice.
+  {
+    bool down = ((int32_t)(millis() - homebase_down_until) < 0);
+    bool on_preferred = (homebase_preferredIP.length() == 0 || homebaseIP == homebase_preferredIP);
+    if ((down || !on_preferred) && house_task_handle == NULL) {
+      if (xTaskCreatePinnedToCore(house_task, "HouseTask", 8192, NULL, 1, &house_task_handle, 0) != pdPASS) {
+        house_task_handle = NULL;
       }
     }
   }
@@ -3449,6 +3470,11 @@ static void house_remember_preferred() {
 }
 
 static bool house_probe(const String &host, int arm) {
+  // A TLS handshake plus HTTPClient needs tens of KB. Under pressure the deck's
+  // own display/voice path needs that heap more than an optional fallback, and
+  // an allocation failure aborts the whole chip (lock_init_generic). Wait for
+  // room rather than risk the device.
+  if (ESP.getFreeHeap() < 60000) { return false; }
   if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return false; }
   if (host.length() == 0 || arm <= 0) { return false; }
   String url = "https://" + host + ":" + String(arm) + "/watch/time?edt=teletype&chip_id="
@@ -3506,6 +3532,9 @@ static void house_scan_mdns() {
 
 static void house_maintain() {
   if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return; }
+  // Never open a TLS client while the microphone or speaker owns the radio and
+  // the heap: a fallback can wait a few seconds, a dropped capture cannot.
+  if (isRecording || audio.isRunning() || voiceAwaitingReply) { return; }
   bool down = ((int32_t)(millis() - homebase_down_until) < 0);
   uint32_t wait = down ? 15000 : 300000;
   if (house_last_scan != 0 && millis() - house_last_scan < wait) { return; }
@@ -3540,10 +3569,21 @@ static void house_maintain() {
 }
 
 static void house_task(void *pvParameters) {
+  int quiet = 0;
   for (;;) {
     house_maintain();
+    bool down = ((int32_t)(millis() - homebase_down_until) < 0);
+    bool on_preferred = (homebase_preferredIP.length() == 0 || homebaseIP == homebase_preferredIP);
+    if (!down && on_preferred) {
+      // Two quiet passes: the preferred machine is serving. Give the stack back
+      // to the UI/voice heap; a fresh failure starts a new worker.
+      if (++quiet >= 2) { break; }
+    }
+    else { quiet = 0; }
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
+  house_task_handle = NULL;
+  vTaskDelete(NULL);
 }
 
 void setBrightness(uint8_t value)
@@ -7011,7 +7051,8 @@ static void deckVoiceListenStart() {
 static void deckVoiceListenTask(void *pv) {
   (void)pv;
   voiceTaskAlive = true;
-  int16_t *buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES);
+  int16_t *buf = (int16_t *)ps_malloc(MIC_TDM_BUFFER_BYTES);
+  if (!buf) { buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES); }
   // the whole utterance is held here and written to flash once, at the end: a
   // flash erase stalls the cpu with the cache off, and the i2s DMA overruns
   // while that happens (see micCaptureTask)
@@ -7228,7 +7269,8 @@ static void deckVoiceListenTask(void *pv) {
 }
 
 static void micCaptureTask(void *pvParameters) {
-  int16_t *buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES);
+  int16_t *buf = (int16_t *)ps_malloc(MIC_TDM_BUFFER_BYTES);
+  if (!buf) { buf = (int16_t *)malloc(MIC_TDM_BUFFER_BYTES); }
   // The whole recording is held in PSRAM and written to the flash in one go at
   // the end. Writing during capture is what broke the audio: a flash erase or
   // program stalls the cpu with the cache off for tens of milliseconds, the i2s
