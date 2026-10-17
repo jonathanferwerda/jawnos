@@ -21,8 +21,14 @@ var yellowDone = true;
 var yellowPinned = false;
 var yellowHistoryHtml = '';
 var yellowHistoryLoading = false;
+var yellowState = 'idle';
+var yellowProgress = -1;
+var yellowJob = null;
+var yellowSteps = [];
+var yellowPoll = null;
 var seenWsMessages = [];
 $(document).ready(function() {
+	ensureYellowRing();
 	websocketStart();
 });
 
@@ -313,43 +319,180 @@ function syncBytes(bytes) {
 	return bytes + ' B';
 }
 
+// The ring around the dot: a full streak of progress while a sync runs, a green
+// check when it finishes, a red cross when it fails. It is added here rather
+// than in every layout so the page keeps the same markup.
+function ensureYellowRing() {
+	var dot = $('#yellow_dot');
+	if (!dot.length || dot.find('.sync_ring').length) return;
+	dot.append('<svg class="sync_ring" viewBox="0 0 36 36" aria-hidden="true">'
+		+ '<circle class="sync_ring_track" cx="18" cy="18" r="16"></circle>'
+		+ '<circle class="sync_ring_value" cx="18" cy="18" r="16"></circle></svg>'
+		+ '<span class="sync_mark"></span>');
+	setYellowProgress(yellowProgress, yellowState);
+}
+
+function setYellowProgress(percent, state) {
+	yellowProgress = (percent === undefined || percent === null) ? -1 : Number(percent);
+	if (state) { yellowState = state; }
+	var dot = $('#yellow_dot');
+	if (!dot.length) return;
+	var ring = dot.find('.sync_ring');
+	var value = ring.find('.sync_ring_value');
+	var mark = dot.find('.sync_mark');
+	var circumference = 100.53;
+	dot.removeClass('sync_ok sync_bad sync_running');
+	ring.removeClass('indeterminate');
+	if (yellowState === 'done' || yellowState === 'failed') {
+		dot.addClass(yellowState === 'done' ? 'sync_ok' : 'sync_bad');
+		value.css({'stroke-dashoffset': 0});
+		mark.text(yellowState === 'done' ? '✓' : '✗');
+	}
+	else if (yellowState === 'running') {
+		dot.addClass('sync_running');
+		mark.text('');
+		if (yellowProgress < 0) {
+			ring.addClass('indeterminate');
+			value.css({'stroke-dashoffset': 0});
+		}
+		else {
+			var pct = Math.max(0, Math.min(100, yellowProgress));
+			value.css({'stroke-dashoffset': circumference * (1 - pct / 100)});
+		}
+	}
+	else {
+		mark.text('');
+		value.css({'stroke-dashoffset': circumference});
+	}
+}
+
+function syncStepHtml(step) {
+	step = step || {};
+	var total = Number(step.total) || 0;
+	var current = Number(step.current) || 0;
+	var pct = total > 0 ? Math.min(100, Math.round(current / total * 100)) : (step.state === 'done' ? 100 : 0);
+	var cls = step.state === 'done' ? 'ok' : (step.state === 'failed' ? 'bad' : '');
+	var ind = (total <= 0 && step.state === 'running') ? ' indeterminate' : '';
+	var state_text = total > 0 ? (current + ' / ' + total) : (step.state === 'running' ? 'working' : (step.state || ''));
+	return '<div class="sync_step ' + cls + '">'
+		+ '<div class="sync_step_head"><span class="sync_step_label">' + syncEscape(step.label || step.key || '') + '</span>'
+		+ '<span class="sync_step_state">' + syncEscape(state_text) + '</span></div>'
+		+ '<div class="sync_step_bar' + ind + '"><span style="width:' + pct + '%"></span></div></div>';
+}
+
 function syncHistoryHtml(data) {
-	var rows = (data && data.recent) || [];
+	var rows = [];
+	var jobs = (data && data.jobs) || [];
+	for (var j = 0; j < jobs.length; j++) {
+		var job = jobs[j] || {};
+		if (job.state === 'running') { continue; }
+		rows.push({
+			time: Number(job.updated) || 0,
+			direction: job.direction === 'pull' ? 'in' : 'out',
+			peer: job.peer || '',
+			size: 0,
+			state: job.state === 'failed' ? 'failed' : 'done',
+			note: job.note || job.phase || ''
+		});
+	}
+	var recent = (data && data.recent) || [];
+	for (var i = 0; i < recent.length; i++) {
+		var row = recent[i] || {};
+		rows.push({ time: Number(row.time) || 0, direction: row.direction, peer: row.peer || '', size: Number(row.size) || 0, state: 'done', note: '' });
+	}
+	rows.sort(function(a, b) { return b.time - a.time; });
 	if (!rows.length) return '<div class="sync_empty">No completed syncs yet</div>';
 	var out = '';
-	for (var i = 0; i < rows.length; i++) {
-		var row = rows[i] || {};
+	var seen = {};
+	var shown = 0;
+	for (var k = 0; k < rows.length && shown < 8; k++) {
+		var row = rows[k] || {};
 		var when = new Date(Number(row.time) || 0);
 		var clock = ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2);
 		var peer = syncEscape(row.peer || '');
+		var key = (row.peer || '') + ':' + Math.floor((Number(row.time) || 0) / 60000);
+		if (seen[key]) { continue; }
+		seen[key] = 1;
+		shown++;
 		var what = row.direction === 'in' ? peer + ' pulled from me' : 'pulled from ' + peer;
+		var mark = row.state === 'failed' ? '<span class="sync_state bad" title="failed">✗</span>' : '<span class="sync_state ok" title="completed">✓</span>';
+		var size = row.size ? '<span class="sync_size" title="encrypted snapshot size">' + syncBytes(row.size) + '</span>' : '';
 		out += '<div class="sync_row"><span class="sync_time">' + clock + '</span>'
-			+ '<span class="sync_peer">' + what + '</span>'
-			+ '<span class="sync_size" title="database snapshot">' + syncBytes(row.size) + '</span></div>';
+			+ '<span class="sync_peer">' + what + '</span>' + mark + size + '</div>';
 	}
 	return out;
+}
+
+function syncHistoryApply(data) {
+	var current = (data && data.current && data.current.job) || null;
+	// Between the final websocket message and the next route poll there is no
+	// running job. Fall back to the newest job row so the panel keeps the bars
+	// and the result that just finished instead of emptying.
+	if (!current && data && data.jobs && data.jobs.length) { current = data.jobs[0]; }
+	yellowJob = current;
+	yellowSteps = (current && current.steps) || [];
+	// A quiet poll (the panel is pinned) keeps the bars moving between the
+	// websocket's coarse percent updates.
+	if (current && current.state === 'running' && current.percent >= 0) {
+		setYellowProgress(current.percent, 'running');
+	}
+	yellowHistoryHtml = syncHistoryHtml(data);
+	if (yellowPinned) { renderYellowPanel(false); }
+}
+
+function stopYellowPoll() {
+	if (yellowPoll) { clearInterval(yellowPoll); yellowPoll = null; }
+}
+
+function startYellowPoll() {
+	stopYellowPoll();
+	yellowPoll = setInterval(function() {
+		if (!yellowPinned) { stopYellowPoll(); return; }
+		if (yellowHistoryLoading) { return; }
+		yellowHistoryLoading = true;
+		$.getJSON('/manager/sync_history', function(data) {
+			yellowHistoryLoading = false;
+			syncHistoryApply(data);
+		}).fail(function() {
+			yellowHistoryLoading = false;
+			yellowHistoryHtml = '<div class="sync_empty">history unavailable</div>';
+			if (yellowPinned) { renderYellowPanel(false); }
+		});
+	}, 1500);
 }
 
 function renderYellowPanel(load) {
 	var info = $('#yellow_dot').find('.dot_info');
 	info.addClass('sync_expanded');
-	var label = yellowDone ? 'Last' : 'Now';
-	var now = yellowCurrent
-		? '<div class="sync_now"><span class="sync_label">' + label + '</span><div class="sync_now_text">' + yellowCurrent + '</div></div>'
+	var running = (yellowJob && yellowJob.state === 'running') || !yellowDone;
+	var label = running ? 'Now' : 'Last';
+	var text = yellowCurrent;
+	if (yellowJob && yellowJob.state === 'running') {
+		var peer = syncEscape(yellowJob.peer || 'peer');
+		text = (yellowJob.direction === 'pull' ? 'pulling from ' : 'serving ') + peer
+			+ ' — ' + syncEscape(yellowJob.phase || 'working');
+	}
+	var now = text
+		? '<div class="sync_now"><span class="sync_label">' + label + '</span><div class="sync_now_text">' + text + '</div></div>'
 		: '<div class="sync_now"><span class="sync_label">' + label + '</span><div class="sync_now_text dim">no sync running</div></div>';
+	var steps = '';
+	if (yellowSteps && yellowSteps.length) {
+		steps = '<div class="sync_steps">';
+		for (var i = 0; i < yellowSteps.length; i++) { steps += syncStepHtml(yellowSteps[i]); }
+		steps += '</div>';
+	}
 	var recent = '<div class="sync_recent"><div class="sync_recent_title">Recent syncs</div>'
 		+ (yellowHistoryHtml || '<div class="sync_empty">loading…</div>') + '</div>';
-	info.html(now + recent);
+	info.html(steps + now + recent);
 	if (load && !yellowHistoryLoading) {
 		yellowHistoryLoading = true;
 		$.getJSON('/manager/sync_history', function(data) {
 			yellowHistoryLoading = false;
-			yellowHistoryHtml = syncHistoryHtml(data);
-			if (yellowPinned) renderYellowPanel(false);
+			syncHistoryApply(data);
 		}).fail(function() {
 			yellowHistoryLoading = false;
 			yellowHistoryHtml = '<div class="sync_empty">history unavailable</div>';
-			if (yellowPinned) renderYellowPanel(false);
+			if (yellowPinned) { renderYellowPanel(false); }
 		});
 	}
 }
@@ -367,9 +510,11 @@ $(document).on('click', '#yellow_dot', function() {
 		yellowPinned = true;
 		clearTimeout(dotTimeout['yellow']);
 		renderYellowPanel(true);
+		startYellowPoll();
 	}
 	else {
 		yellowPinned = false;
+		stopYellowPoll();
 		info.removeClass('sync_expanded');
 		if (yellowDone) {
 			$('#yellow_dot').hide();
@@ -591,10 +736,19 @@ function wsMessageHandler(event) {
 				yellowCurrent = data['yellow'];
 			}
 			yellowDone = (data['close'] == 'yes');
+			var incoming = data['state'] || (yellowDone ? 'done' : 'running');
+			if (incoming === 'running' && (!yellowJob || data['progress'] === 0 || data['progress'] === -1)) {
+				yellowSteps = [];
+				yellowHistoryHtml = '';
+			}
+			setYellowProgress((data['progress'] === undefined ? -1 : data['progress']), incoming);
+			ensureYellowRing();
 			$('#yellow_dot').show();
 			if (yellowPinned) {
 				// The person opened the panel: it stays until they click the dot.
 				renderYellowPanel(yellowDone);
+				if (incoming === 'running') { startYellowPoll(); }
+				else { stopYellowPoll(); }
 			}
 			else {
 				info.removeClass('sync_expanded');

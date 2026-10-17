@@ -4755,6 +4755,23 @@ sub backup_now() {
 		}
 		$backup_lock_guard = Jawn::BackupLock->new($backup_lock);
 	}
+	# The peer's yellow dot watches this export from the other side, but this
+	# machine's own dot should say what it is doing too: a serve job and one step
+	# per table.
+	my ($sync, $job);
+	if ($reason eq 'remote_update') {
+		$job = &subs::sync_job_start({
+			direction => 'serve',
+			peer => $c->tx->remote_address,
+			phase => 'export',
+			note => 'building a snapshot for a peer'
+		});
+		$sync = Jawn::SyncJob->new($job);
+		&subs::sync_job_step($job, 'export', { label => 'export', state => 'running' });
+	}
+	# Per-table cuts: a table the caller already holds up to a point is exported
+	# only above it. No cuts (an older caller) falls back to the legacy window.
+	my $cuts = &subs::sync_map_decode($c->param('cuts'));
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my ($db,$database,$sql) = &subs::database_grabber();
@@ -4803,7 +4820,12 @@ sub backup_now() {
 		$colour = $rm->{'data'}->{'manager_colour'};
 		my $html = '<h2>Being synced by ' . $rm->{'ip'} || $c->tx->remote_address . '</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-		my $last_updated = &subs::db_query('select * from backups where reason=? and recipient = ? and signatorial = ? order by server_time DESC', 'remote_update',$c->param('signatorial'), $signatorial)->hashes->[0];
+		# The completed watermark is `remote_upgraded` (remote_update is the
+		# in-flight row), and `server_time` is a millisecond stamp: order it as a
+		# number. The old string ordering plus the wrong reason left the window at
+		# the 20 s fallback, so a peer that had been away re-pulled a tiny slice
+		# while one that was up to date looked behind.
+		my $last_updated = &subs::db_query('select * from backups where reason=? and recipient = ? and signatorial = ? order by cast(server_time as integer) DESC limit 1', 'remote_upgraded',$c->param('signatorial'), $signatorial)->hashes->[0];
 		my $last_update = 10;
 		if ($c->param('gimme') =~ /[0-9]/gi) {
 			$last_update = $c->param('gimme');
@@ -4832,8 +4854,11 @@ sub backup_now() {
 			$tdb->query('DROP TABLE ' . $t);
 		}
 
+		my $table_total = scalar @tables;
+		my $table_n = 0;
 		foreach my $d ( @tables ) {
 			next if grep { $_ eq $d } @{$gb::forbidden->{'tables'}};
+			$table_n++;
 			# A table without a server_time column cannot be windowed, and the query
 			# below would die -- which killed the export, left its lock held, and
 			# wedged every peer's sync until the ten-minute stale re-claim, over and
@@ -4844,15 +4869,42 @@ sub backup_now() {
 				$tdb->query('DROP TABLE ' . $d);
 				next;
 			}
-			my $new_data = &subs::db_query('select * from ' . $d . ' where server_time >= ?', $ld_server_time)->hashes;
+			# An explicit cut is the caller's own newest row, so `>` is exact; the
+			# legacy window keeps its inclusive 20 s overlap.
+			my $has_cut = exists $cuts->{$d};
+			my $cut = $has_cut ? $cuts->{$d} : $ld_server_time;
+			my $op = $has_cut ? '>' : '>=';
+			my $new_data = &subs::db_query('select * from ' . $d . ' where server_time ' . $op . ' ?', $cut)->hashes;
+			if ($job) {
+				&subs::sync_job_step($job, 'export:' . $d, {
+					label => 'export ' . $d, state => 'running', current => 0, total => scalar @{$new_data},
+					note => scalar(@{$new_data}) . ' row' . (scalar(@{$new_data}) == 1 ? '' : 's')
+				});
+			}
 			if (scalar @{$new_data} > 0) {
 	#			$tdb->query('delete from ' . $d . ' where server_time < ?', $ld_server_time);
+				my $copied = 0;
 				foreach my $nd ( @{$new_data} ) {
 					$tdb->insert($d, $nd);
+					$copied++;
+					# Refresh the job's `updated` during a big table's copy: it is the
+					# liveness stamp the panel uses to call a dead worker interrupted.
+					if ($job && ($copied % 2000) == 0) {
+						&subs::sync_job_step($job, 'export:' . $d, { current => $copied, total => scalar @{$new_data} });
+					}
 				}
 			} else {
 				$tdb->query('DROP TABLE ' . $d);
 			}
+			&subs::sync_job_step($job, 'export:' . $d, {
+				state => 'done', current => scalar @{$new_data}, total => scalar @{$new_data}
+			}) if $job;
+			&Websocket::send('tab', {
+				yellow => '<h2>Being synced by ' . ($rm->{'ip'} || $c->tx->remote_address) . '</h2>',
+				uuid => $auuid, colour => $colour,
+				progress => ($table_total > 0 ? int($table_n / $table_total * 100) : 0),
+				state => 'running'
+			}) if $job;
 		}
 		$tdb->query('VACUUM');
 
@@ -4929,7 +4981,15 @@ sub backup_now() {
 		uuid => $uuid
 	};
 	&subs::db_insert('backups',$backup_data) unless $reason eq 'remote_update';
+	# The number the person sees is the bytes of the snapshot that actually moved,
+	# not this machine's whole database. The row was built before the archive
+	# existed and used to record `-s $database` (~180 MB) for every sync, windowed
+	# or not; write the encrypted archive's size over it once it is known.
 	$size = -s $archive_path . '.enc';
+	$backup_data->{'size'} = $size;
+	unless ($reason eq 'remote_update') {
+		&subs::db_update('backups', { size => $size }, { uuid => $uuid });
+	}
 	my $raw_data;
 	if ($size < 2000000) {
 		$raw_data = read_file($archive_path . ".enc");
@@ -4969,7 +5029,9 @@ sub backup_now() {
 		my $lock_row = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
 		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if ($lock_row->{'value'} || '') eq $backup_lock;
 	}
-	&Websocket::send('tab', { yellow => 'close', 'close' => 'yes', uuid => $auuid, colour => $colour });
+	&subs::sync_job_step($job, 'export', { state => 'done', current => 1, total => 1 }) if $job;
+	$sync->done('done', 'snapshot served') if $sync;
+	&Websocket::send('tab', { yellow => 'close', 'close' => 'yes', uuid => $auuid, colour => $colour, state => 'done', progress => 100 });
 	return $returner;
 }
 
@@ -4994,6 +5056,272 @@ sub appointments_since() {
 	# then skipped the pull and never synced. Include them explicitly.
 	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments where server_time > ? and (status is null or status != ?)', $since, 'deleting')->hashes->[0];
 	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0, since => $since + 0 };
+}
+
+# --- the House digest -------------------------------------------------------
+# `server_time` is the write time of every replicated row, so a per-table
+# {count, sum(server_time), max} is a cheap fingerprint of the whole table. Two
+# machines that hold the same rows have the same fingerprint even when the rows
+# arrived by different paths; a machine that was offline and is missing an old
+# row has a different count (or sum) and is caught. /remote_auth_test exchanges
+# this map, and the caller plans a per-table pull from the difference.
+sub durable_settings_where {
+	# Settings churn constantly (window geometry, open tabs, timers, remote_*
+	# state). Only app configuration may trigger a sync; the export still carries
+	# every settings row when a pull happens.
+	#
+	# `@gb::protected` is the same list merge_database refuses to merge (me, misc,
+	# terminal, config, security, ...). Those rows are deliberately local, so a
+	# digest over them could never match a peer's: every tick would look like a
+	# change and pull the whole settings table forever. Leave them out of the
+	# trigger; they still ride along in a snapshot.
+	my @apps = ('__president', 'cache', 'websocket_messages', 'ai_budget', 'ai_jobs', 'staged_fixes', 'staged_records', 'staged_appointments', 'sync_log', 'backups', 'sync_jobs', @gb::protected);
+	my %seen;
+	@apps = grep { !$seen{$_}++ } @apps;
+	my $app_list = join ',', map { "'$_'" } @apps;
+	return "app not in ($app_list)"
+		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','operator_door','schema_version','toggle','ci','errors','email_config')"
+		. " and setting not like 'remote\\_%' escape '\\'";
+}
+
+our $sync_table_cache;
+sub sync_table_list {
+	return $sync_table_cache if $sync_table_cache;
+	my @tables;
+	my %forbidden = map { $_ => 1 } @{ $gb::forbidden->{'tables'} || [] };
+	foreach my $row ( @{ &db_query('select name from sqlite_master where type = ?', 'table')->hashes || [] } ) {
+		my $t = $row->{'name'} || '';
+		next if $t eq '' || $t =~ /^sqlite_/ || $forbidden{$t} || $t eq 'sync_jobs';
+		my $has = &db_query('select name from pragma_table_info(?) where name = ?', $t, 'server_time')->hashes->[0];
+		push @tables, $t if $has;
+	}
+	$sync_table_cache = \@tables;
+	return $sync_table_cache;
+}
+
+sub sync_table_digest {
+	my ($table, $durable) = @_;
+	my $sql_table = $table eq 'settings_durable' ? 'settings' : $table;
+	my $where = '';
+	if ($sql_table eq 'appointments') { $where = " where (status is null or status != 'deleting')"; }
+	elsif ($table eq 'settings_durable') { $where = ' where ' . &durable_settings_where(); }
+	my $row = &db_query("select count(*) as c, coalesce(sum(cast(server_time as integer)),0) as s, coalesce(max(server_time),0) as m from $sql_table$where")->hashes->[0] || {};
+	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
+}
+
+sub sync_digest_map {
+	# Not every column of every table is a reason to sync. `backups` is the sync's
+	# own bookkeeping (a pull writes a row on both sides, so including it would
+	# trigger the next pull forever), the AI ledger is internal churn, and the
+	# location/notification streams move constantly without being a person's
+	# change. Those still ride along inside any snapshot; they just cannot start
+	# one by themselves. Appointments and durable settings are the triggers.
+	my %skip = map { $_ => 1 } qw(backups ai_budget ai_jobs ai_house continent notifications);
+	my %map;
+	foreach my $t ( @{ &sync_table_list() } ) {
+		next if $t eq 'settings' || $skip{$t};
+		$map{$t} = &sync_table_digest($t);
+	}
+	$map{'settings_durable'} = &sync_table_digest('settings_durable');
+	return \%map;
+}
+
+sub sync_table_above {
+	my ($table, $cut) = @_;
+	return undef unless defined $cut && $cut =~ /^[0-9]+$/;
+	my $sql_table = $table eq 'settings_durable' ? 'settings' : $table;
+	my $where = ' where server_time > ?';
+	if ($sql_table eq 'appointments') { $where .= " and (status is null or status != 'deleting')"; }
+	elsif ($table eq 'settings_durable') { $where .= ' and ' . &durable_settings_where(); }
+	my $row = &db_query("select count(*) as c, coalesce(sum(cast(server_time as integer)),0) as s, coalesce(max(server_time),0) as m from $sql_table$where", $cut)->hashes->[0] || {};
+	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
+}
+
+# The caller's plan: table => since. `0` means a full table (a count or sum
+# divergence that a delta cannot close); a max means pull only what is newer.
+# A peer that holds fewer rows (an offline device) is still pulled when its
+# fingerprint differs, because it may hold a row nobody else has; the union is
+# what makes the House one picture. The merge dedupes and the peer catches up on
+# its own next tick.
+sub sync_plan {
+	my ($mine, $theirs, $above) = @_;
+	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
+	my %plan;
+	foreach my $t ( keys %{$theirs} ) {
+		my $a = $mine->{$t} || {};
+		my $b = $theirs->{$t} || {};
+		my ($ac, $bc) = (($a->{'count'} || 0) + 0, ($b->{'count'} || 0) + 0);
+		my ($as, $bs) = (($a->{'sum'} || 0) + 0, ($b->{'sum'} || 0) + 0);
+		my ($am, $bm) = (($a->{'max'} || 0) + 0, ($b->{'max'} || 0) + 0);
+		next if $ac == $bc && $as == $bs && $am == $bm;
+		my $sel = $above->{$t};
+		my $above_count = (ref $sel eq 'HASH') ? ($sel->{'count'} || 0) : -1;
+		my $above_sum = (ref $sel eq 'HASH') ? ($sel->{'sum'} || 0) : -1;
+		my $since;
+		# A strict forward delta is safe only when the peer's rows above our
+		# newest row account for the *whole* difference between the two tables:
+		# then we are missing exactly those rows and nothing older. Any other
+		# divergence (an offline device with a row nobody else saw, a replaced
+		# row, a count that moved without the sum moving) needs the full table,
+		# because a time window cannot name the row that is missing.
+		if ($bm > $am && $above_count > 0
+			&& ($bc - $ac) == $above_count
+			&& ($bs - $as) == $above_sum) {
+			$since = $am;
+		}
+		else {
+			$since = 0;
+		}
+		my $key = ($t eq 'settings_durable') ? 'settings' : $t;
+		$plan{$key} = $since;
+	}
+	return \%plan;
+}
+
+# Compact table=>integer maps on the peer rail (?cuts=, and the plan handed to
+# backup_now). Table names are SQL identifiers; anything else is dropped rather
+# than interpolated.
+sub sync_map_encode {
+	my ($map) = @_;
+	return '' unless ref $map eq 'HASH';
+	return join ',', map { $_ . ':' . int($map->{$_} || 0) }
+		sort grep { /^[A-Za-z0-9_]+$/ } keys %{$map};
+}
+sub sync_map_decode {
+	my ($text) = @_;
+	my %map;
+	return \%map unless defined $text && length $text;
+	foreach my $pair ( split /,/, $text ) {
+		my ($t, $v) = split /:/, $pair, 2;
+		next unless defined $t && $t =~ /^[A-Za-z0-9_]+$/;
+		next unless defined $v && $v =~ /^[0-9]+$/;
+		$map{$t} = $v + 0;
+	}
+	return \%map;
+}
+
+# --- one sync job, for the yellow dot's progress ---------------------------
+sub sync_job_start {
+	my ($data) = @_;
+	$data ||= {};
+	my $uuid = $data->{'uuid'} || &random_string_creator(24);
+	my $now = &rightNow();
+	&db_query('delete from sync_jobs where cast(updated as integer) < ?', $now - 86400000);
+	&db_query('insert or replace into sync_jobs (uuid,direction,peer,phase,current,total,state,note,steps,started,updated) values (?,?,?,?,?,?,?,?,?,?,?)',
+		$uuid, ($data->{'direction'} || ''), ($data->{'peer'} || ''), ($data->{'phase'} || 'starting'),
+		($data->{'current'} || 0), ($data->{'total'} || 0), ($data->{'state'} || 'running'),
+		($data->{'note'} || ''), '[]', $now, $now);
+	return $uuid;
+}
+
+# The individual bars across the top of the panel: one entry per phase/table, in
+# the order it was first seen. A sync job is short-lived and only its owner writes
+# it, so a read-modify-write of the small JSON array is safe.
+sub sync_job_step {
+	my ($uuid, $key, $data) = @_;
+	return unless $uuid && defined $key && $key ne '';
+	$data ||= {};
+	my $row = &db_query('select steps from sync_jobs where uuid = ?', $uuid)->hashes->[0] || {};
+	my $steps = eval { decode_json($row->{'steps'} || '[]') } || [];
+	my ($step) = grep { ref $_ eq 'HASH' && ($_->{'key'} || '') eq $key } @{$steps};
+	unless ($step) {
+		$step = { key => $key, label => $key, current => 0, total => 0, state => 'running', note => '' };
+		push @{$steps}, $step;
+	}
+	foreach my $k ( qw/label current total state note/ ) {
+		$step->{$k} = $data->{$k} if exists $data->{$k};
+	}
+	&db_query('update sync_jobs set steps = ?, phase = ?, updated = ? where uuid = ?',
+		encode_json($steps), ($data->{'label'} || $step->{'label'} || $key), &rightNow(), $uuid);
+	return $step;
+}
+sub sync_job_update {
+	my ($uuid, $data) = @_;
+	return unless $uuid && ref $data eq 'HASH';
+	my (@sets, @vals);
+	foreach my $k ( qw/phase current total state note peer direction/ ) {
+		next unless exists $data->{$k};
+		push @sets, "$k = ?";
+		push @vals, $data->{$k};
+	}
+	return unless scalar @sets;
+	push @vals, &rightNow(), $uuid;
+	&db_query('update sync_jobs set ' . join(', ', @sets) . ', updated = ? where uuid = ?', @vals);
+}
+sub sync_job_finish {
+	my ($uuid, $state, $note) = @_;
+	return unless $uuid;
+	$state ||= 'done';
+	my $now = &rightNow();
+	# Settle any bar still open, so a failed job does not leave a table reading
+	# "running" in the panel after the dot has already shown a red cross.
+	my $row = &db_query('select steps from sync_jobs where uuid = ?', $uuid)->hashes->[0] || {};
+	my $steps = eval { decode_json($row->{'steps'} || '[]') } || [];
+	foreach my $step ( @{$steps} ) {
+		next unless ref $step eq 'HASH';
+		if (($step->{'state'} || '') eq 'running') {
+			$step->{'state'} = $state;
+			$step->{'current'} = $step->{'total'} if $state eq 'done';
+		}
+	}
+	&db_query('update sync_jobs set state = ?, phase = ?, note = ?, steps = ?, current = total, updated = ? where uuid = ?',
+		$state, $state, ($note || ''), encode_json($steps), $now, $uuid);
+}
+sub sync_job_list {
+	my ($limit) = @_;
+	$limit ||= 10;
+	# A worker that died mid-sync leaves its row 'running'; after ten minutes
+	# nobody is coming back for it, so show it as interrupted rather than a dot
+	# that rings forever.
+	&db_query(q{update sync_jobs set state = 'failed', phase = 'failed', note = 'interrupted' where state = 'running' and cast(updated as integer) < ?}, &rightNow() - 1800000);
+	my $rows = [ @{ &db_query('select * from sync_jobs order by cast(updated as integer) desc limit ?', $limit)->hashes || [] } ];
+	foreach my $r ( @{$rows} ) {
+		$r->{'steps'} = eval { decode_json($r->{'steps'} || '[]') } || [];
+		if (($r->{'total'} || 0) > 0) {
+			$r->{'percent'} = int(($r->{'current'} || 0) / $r->{'total'} * 100);
+		}
+		elsif (scalar @{ $r->{'steps'} }) {
+			# A serve job counts progress in its steps (one per table) rather
+			# than in current/total, which belongs to the pull's table count.
+			my $done = grep { ($_->{'state'} || '') eq 'done' } @{ $r->{'steps'} };
+			$r->{'percent'} = int(($done / scalar(@{ $r->{'steps'} })) * 100);
+		}
+		else {
+			$r->{'percent'} = (($r->{'state'} || '') eq 'done') ? 100 : 0;
+		}
+		$r->{'percent'} = 100 if $r->{'percent'} > 100;
+	}
+	return $rows;
+}
+sub sync_job_active {
+	my ($limit) = @_;
+	return [ grep { ($_->{'state'} || '') eq 'running' } @{ &sync_job_list($limit || 4) } ];
+}
+{
+	package Jawn::SyncJob;
+	sub new { my ($class, $uuid) = @_; return bless { uuid => $uuid, done => 0 }, $class; }
+	sub done { my ($self, $state, $note) = @_; $state ||= 'done'; $self->{'state'} = $state; &subs::sync_job_finish($self->{'uuid'}, $state, $note); $self->{'done'} = 1; }
+	sub DESTROY { my $self = shift; &subs::sync_job_finish($self->{'uuid'}, 'failed', 'sync ended without a result') unless $self->{'done'}; }
+}
+
+# A peer that told us it was busy gets a short rest instead of being asked again
+# on every tick. The cache is machine-local (and forbidden from the export).
+sub sync_backoff_active {
+	my ($peer) = @_;
+	return 0 unless $peer;
+	my $row = &db_query('select server_time from cache where context = ? and uuid = ? order by cast(server_time as integer) desc limit 1', 'sync_backoff', $peer)->hashes->[0];
+	return ($row && $row->{'server_time'} > &rightNow()) ? 1 : 0;
+}
+sub sync_backoff_set {
+	my ($peer, $seconds) = @_;
+	return unless $peer;
+	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
+	&db_query('insert into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $peer, 'sync_backoff', '__president', &rightNow() + ($seconds || 120) * 1000, &rightNow());
+}
+sub sync_backoff_clear {
+	my ($peer) = @_;
+	return unless $peer;
+	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
 }
 
 

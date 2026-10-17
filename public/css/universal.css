@@ -83,6 +83,63 @@ textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-b
 	border-width: 2px;
 	z-index: 90001;
 	cursor: pointer;
+	overflow: visible;
+}
+
+/* The progress ring rides just outside the dot's edge, so the dot keeps its
+   size (a bigger sync marker should not eat the screen). */
+#yellow_dot .sync_ring {
+	position: absolute;
+	left: -5px;
+	top: -5px;
+	width: 40px;
+	height: 40px;
+	pointer-events: none;
+	overflow: visible;
+}
+#yellow_dot .sync_ring_track {
+	fill: none;
+	stroke: rgba(0, 0, 0, .18);
+	stroke-width: 3;
+}
+#yellow_dot .sync_ring_value {
+	fill: none;
+	stroke: #d6a700;
+	stroke-width: 3;
+	stroke-linecap: round;
+	stroke-dasharray: 100.53;
+	stroke-dashoffset: 100.53;
+	transform: rotate(-90deg);
+	transform-origin: 18px 18px;
+	transition: stroke-dashoffset .25s linear;
+}
+#yellow_dot.sync_ok .sync_ring_value { stroke: #1c9b4a; }
+#yellow_dot.sync_bad .sync_ring_value { stroke: #d23b3b; }
+#yellow_dot .sync_ring.indeterminate .sync_ring_value {
+	animation: sync_dash 1.2s ease-in-out infinite;
+}
+#yellow_dot .sync_mark {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	font-size: 18px;
+	font-weight: 700;
+		line-height: 1;
+		color: #1c9b4a;
+		pointer-events: none;
+	}
+	#yellow_dot.sync_ok .sync_mark,
+	#yellow_dot.sync_bad .sync_mark { display: flex; }
+	#yellow_dot.sync_bad .sync_mark { color: #d23b3b; }
+@keyframes sync_dash {
+	0% { stroke-dasharray: 12 88; stroke-dashoffset: 0; }
+	50% { stroke-dasharray: 58 42; stroke-dashoffset: -18; }
+	100% { stroke-dasharray: 12 88; stroke-dashoffset: -100; }
 }
 #green_dot {
 	position: fixed;
@@ -187,6 +244,65 @@ textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-b
 	font-size: 12px;
 	opacity: .6;
 	padding: 3px 0;
+}
+
+/* One bar per step (export, download, then each table as it merges), across
+   the top of the expanded panel. */
+.dot_info .sync_steps {
+	margin: 0 0 8px;
+}
+.dot_info .sync_step {
+	padding: 2px 0 3px;
+}
+.dot_info .sync_step_head {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 11px;
+	line-height: 1.2;
+}
+.dot_info .sync_step_label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.dot_info .sync_step_state {
+	flex: 0 0 auto;
+	opacity: .6;
+	font-variant-numeric: tabular-nums;
+}
+.dot_info .sync_step_bar {
+	height: 4px;
+	margin-top: 2px;
+	border-radius: 3px;
+	background: rgba(127, 127, 127, .22);
+	overflow: hidden;
+}
+.dot_info .sync_step_bar > span {
+	display: block;
+	height: 100%;
+	width: 0;
+	border-radius: 3px;
+	background: #d6a700;
+	transition: width .25s linear;
+}
+.dot_info .sync_step.ok .sync_step_bar > span { background: #1c9b4a; }
+.dot_info .sync_step.bad .sync_step_bar > span { background: #d23b3b; }
+.dot_info .sync_step_bar.indeterminate > span {
+	width: 35% !important;
+	animation: sync_slide 1.2s ease-in-out infinite;
+}
+.dot_info .sync_state {
+	flex: 0 0 auto;
+	font-weight: 700;
+}
+.dot_info .sync_state.ok { color: #1c9b4a; }
+.dot_info .sync_state.bad { color: #d23b3b; }
+@keyframes sync_slide {
+	0% { margin-left: -35%; }
+	100% { margin-left: 100%; }
 }
 
 .hover:hover {

@@ -6817,10 +6817,24 @@ get '/manager/voice_download' => sub($c) {
 
 
 sub remote_upgrade($c,$params) {
-	if ( &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' }) eq 'running' ) {
+	# A worker that died mid-pull leaves the marker behind; the guard must age it
+	# out, or that machine never pulls again (and peers keep seeing it as busy).
+	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	if (($up_state->{'value'} || '') eq 'running' && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
 		return;
 	}
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running' });
+	# One job row drives the yellow dot: its ring is the overall percent and its
+	# steps are the bars across the top of the panel. The guard below still stops
+	# two pulls at once; the job is what makes the wait legible.
+	my $job = &subs::sync_job_start({
+		direction => 'pull',
+		peer => ($params->{'peer'} || $params->{'ip'} || ''),
+		phase => 'export',
+		note => 'waiting for the peer to build a snapshot'
+	});
+	my $sync = Jawn::SyncJob->new($job);
+	&subs::sync_job_step($job, 'export', { label => 'export', state => 'running', note => 'peer is building a snapshot' });
 	my $timestamp = $params->{'timestamp'};
 	my $ip = $params->{'ip'};
 	my $vip = $ip;
@@ -6847,10 +6861,16 @@ sub remote_upgrade($c,$params) {
 	my $auuid = &subs::random_string_creator(10);
 	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
-		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'} });
+		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
 
 
 		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
+		# The per-table plan: each table is exported only above the point the
+		# caller already holds. A table the plan omits still rides the legacy
+		# window, so a peer on this code and one on older code behave alike.
+		if (ref $params->{'plan'} eq 'HASH' && scalar keys %{$params->{'plan'}}) {
+			$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode($params->{'plan'}));
+		}
 		if ($gimme =~ /[A-Za-z0-9]/gi) {
 			$gimme = &subs::ago_calc($gimme, &subs::rightNow());
 			$url .= '&gimme=' . $gimme;
@@ -6866,13 +6886,21 @@ sub remote_upgrade($c,$params) {
 
 			my $body = eval { return decode_json $res->body } || {};
 
+			if (($body->{'status'} || '') eq 'busy') {
+				&subs::sync_job_step($job, 'export', { state => 'failed', note => 'peer was already exporting' });
+				$sync->done('failed', 'peer was already exporting');
+				&Websocket::send('tab', { yellow => '<h2>Skipped ' . ($params->{'peer'} || $ip) . ': busy exporting</h2>', uuid => $auuid, 'close' => 'yes', state => 'failed', progress => 100 });
+				&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+				return 'busy';
+			}
 
 			if ($body->{'path'} && $body->{'signatorial'}) {
+				&subs::sync_job_step($job, 'export', { state => 'done', current => 1, total => 1 });
 
 				if (1) {
 					if ($body->{'remote_update'}) {
 						my $html = '<h2>Updating Database</h2>';
-						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}  });
+						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => 1, state => 'running'  });
 						&update_database({ commands => $body->{'update_commands'} });
 					}
 					`mkdir -p $temp_folder` unless -e "$temp_folder";
@@ -6884,10 +6912,27 @@ sub remote_upgrade($c,$params) {
 					}
 					if ($body->{'raw_data'} && $body->{'size'} < 2000000) {
 						write_file($temporary_file, $body->{'raw_data'});
+						&subs::sync_job_step($job, 'download', { label => 'download', state => 'done', current => 1, total => 1 });
 					}
 					else {
 						my $html = '<h2>Syncing Remote Backup ' . &subs::data_size($body->{'size'}) . '</h2>';
-						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}  });
+						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => 2, state => 'running'  });
+						my $dl_total = $body->{'size'} || 0;
+						&subs::sync_job_step($job, 'download', { label => 'download', state => 'running', current => 0, total => $dl_total });
+						my $progress_tick = 0;
+						$remote_machine->{'ua'}->on(progress => sub {
+							my ($this_ua, $tx) = @_;
+							return unless $tx && $tx->req && $tx->req->url;
+							return unless ($tx->req->url->path || '') eq '/manager/backup_serve';
+							my $now = time();
+							return if $now == $progress_tick;
+							$progress_tick = $now;
+							eval {
+								my $got = $tx->res->content->progress;
+								my $len = $dl_total || $tx->res->headers->content_length || 0;
+								&subs::sync_job_step($job, 'download', { current => $got, total => $len });
+							};
+						});
 
 						# pull the encrypted archive over http - no ssh, no stored
 						# password. The peer serves it through the same tunnel and
@@ -6897,6 +6942,7 @@ sub remote_upgrade($c,$params) {
 						if ($tres && $tres->is_success && length $tres->body) {
 							write_file($temporary_file, $tres->body);
 						}
+						&subs::sync_job_step($job, 'download', { state => 'done', current => ($dl_total || 1), total => ($dl_total || 1) });
 					}
 					if (-e $temporary_file) {
 						my $disposition = &merge_database($c,{
@@ -6905,22 +6951,34 @@ sub remote_upgrade($c,$params) {
 							misc_settings => $body->{'misc_settings'},
 							remote => $remote_machine,
 							gimme => $gimme,
+							sync_job => $job,
 							colour => $remote_machine->{'data'}->{'manager_colour'}
 						});
 						`shred -u $temporary_file`;
 						`rm -R $temp_folder`;
+						if (($disposition->{'status'} || '') ne 'succeed') {
+							# Do not confirm a merge that did not finish: the peer would mark the
+							# snapshot delivered while this machine still lacks it.
+							$sync->done('failed', 'merge did not finish');
+							&Websocket::send('tab', { yellow => '<h2>Merge failed</h2>', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => 'failed', progress => 100 });
+							&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+							return 'failed';
+						}
 					} else {
 
-						&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}  });
+						&subs::sync_job_step($job, 'download', { state => 'failed', note => 'the peer did not send the snapshot' });
+						$sync->done('failed', 'the peer did not send the snapshot');
+						&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => 'failed', progress => 100  });
 						&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 						&subs::say_it('ssh fail');
 						`rm -R $temp_folder`;
-						return;
+						return 'failed';
 					}
 					&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 			#		&subs::db_update('remote_machines', { connection => 'inactive' }, { ip => $ip, signatorial => $remote_machine->{'signatorial'}, uuid => $remote_machine->{'uuid'} });
 
 
+					&subs::sync_job_step($job, 'confirm', { label => 'confirm', state => 'running' });
 					my $defunct_backups = &subs::db_query('select * from backups where ost < ? and recipient = ? and signatorial = ? and reason=?', $body->{'server_time'}, $signatorial, $remote_machine->{'signatorial'}, 'remote_upgraded' )->hashes;
 					foreach my $defb ( @{$defunct_backups} ) {
 						if ($defb->{'enc_file'} && -e $defb->{'enc_file'}) {
@@ -6941,18 +6999,32 @@ sub remote_upgrade($c,$params) {
 							recipient => $signatorial,
 							signatorial => $remote_machine->{'signatorial'},
 						});
+						&subs::sync_job_step($job, 'confirm', { state => 'done', current => 1, total => 1 });
+						$sync->done('done', 'snapshot merged');
+						&subs::sync_backoff_clear($remote_machine->{'signatorial'});
+					}
+					else {
+						&subs::sync_job_step($job, 'confirm', { state => 'failed', note => 'the peer did not confirm the merge' });
+						$sync->done('failed', 'the peer did not confirm the merge');
 					}
 				}
 			}
+			else {
+				$sync->done('failed', 'the peer sent no snapshot');
+			}
 		}
 		else {
-			&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}  });
+			$sync->done('failed', 'the peer did not answer');
 		}
 
 
-		&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}  });
+		&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => ($sync->{'state'} || 'done'), progress => 100  });
+	}
+	else {
+		$sync->done('failed', 'the peer is not reachable');
 	}
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+	return ($sync->{'state'} || 'done');
 };
 
 post '/manager/backup/confirm' => sub($c) {
@@ -7533,6 +7605,10 @@ sub remote_useragent_maker($data) {
 			$url .= '&domain=' . $config->{'domain'};
 			if ($auth_test eq 'yes' && defined $data->{'since'}) {
 				$url .= '&since=' . int($data->{'since'});
+			}
+			if ($auth_test eq 'yes' && ref $data->{'digest'} eq 'HASH') {
+				my %cuts = map { $_ => ($data->{'digest'}->{$_}->{'max'} || 0) } keys %{$data->{'digest'}};
+				$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode(\%cuts));
 			}
 			$url .= '&tombstone_cursor=' . int($data->{'tombstone_cursor'} || 0) if $auth_test eq 'yes';
 			my $res = eval { return $rm->{'ua'}->insecure(1)->get($url => {Accept => '*/*'} => 'Content!')->result };
@@ -14704,6 +14780,8 @@ sub merge_database($c,$configuration) {
 
 				my $count = 0;
 				my $universal_settings = {};
+				my $sync_job = $configuration->{'sync_job'};
+				&subs::sync_job_update($sync_job, { phase => 'merge', current => 0, total => scalar @u }) if $sync_job;
 				foreach my $q ( @u ) {
 					next if grep { $q eq $_ } @{$gb::forbidden->{'tables'}};
 					my $query;
@@ -14716,20 +14794,34 @@ sub merge_database($c,$configuration) {
 					my $results = $query->hashes;
 					my $results_size = scalar @{$results};
 					if ($results_size > 0) {
+						$count++;
+						&subs::sync_job_update($sync_job, { current => $count }) if $sync_job;
 						my @resulters;
+						if ($sync_job) {
+							&subs::sync_job_step($sync_job, 'merge:' . $q, {
+								label => 'merge ' . $q, state => 'running', current => 0, total => $results_size,
+								note => $results_size . ' row' . ($results_size == 1 ? '' : 's')
+							});
+						}
 						#&subs::say_it('Now merging ' . $results . ' ' .$q);
 						my $progress = $count / scalar @u * 100;
 						my $html = '<h3>Now merging ' . scalar @{$results} . ' ' . $q . '</h3><br>';
-						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour,
+							progress => int($count / ((scalar @u) || 1) * 100), state => 'running' });
 						my $percentage = 0;
 						my $last_percent = 0;
 						my $last_alert = &subs::rightNow();
+						my $job_alert = $last_alert;
 						my $start_time = $last_alert;
 						for (my $n = 0; $n <= $results_size; $n++ ) {
 							my $r = $results->[$n];
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							$percentage = sprintf("%.2f", $n / $results_size * 100);
+							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
+								&subs::sync_job_step($sync_job, 'merge:' . $q, { current => $n, total => $results_size });
+								$job_alert = &subs::rightNow();
+							}
 							if ($r->{'timestamp'}) {
 								if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
 									my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
@@ -14959,6 +15051,9 @@ sub merge_database($c,$configuration) {
 										push @updateables, { app => $r->{'app'}, uuid => $r->{'uuid'} } unless grep { $_->{'app'} eq $r->{'app'} } @updateables;
 									}
 								}
+							}
+							if ($sync_job) {
+								&subs::sync_job_step($sync_job, 'merge:' . $q, { state => 'done', current => $results_size, total => $results_size });
 							}
 						}
 					}
@@ -29063,6 +29158,23 @@ sub update_database($data) {
 			signatorial VARCHAR(500) PRIMARY KEY,
 			cursor VARCHAR(50)
 		)',
+		# One row per running or recently finished sync, for the yellow dot. It is
+		# machine-local (it describes this machine's socket work), so the table is
+		# in gb's forbidden list and never rides the peer sync or a backup.
+		'create table if not exists sync_jobs (
+			uuid VARCHAR(255) PRIMARY KEY,
+			direction VARCHAR(25),
+			peer VARCHAR(500),
+			phase VARCHAR(255),
+			current INTEGER,
+			total INTEGER,
+			state VARCHAR(25),
+			note LONGTEXT,
+			steps LONGTEXT,
+			started VARCHAR(25),
+			updated VARCHAR(25)
+		)',
+		'create index if not exists idx1_sync_jobs on sync_jobs (state, updated)',
 		# The error watch's catch: an error seen in the running logs, and the fix
 		# the Coding agent proposed for it, staged until a person applies it.
 		# Machine-local (the rows name this repo's files), so the table sits in
@@ -30037,7 +30149,10 @@ get '/manager/remote_auth_test' => sub($c) {
 				my $ws_auth = &subs::encrypter($pa, $ws_joiner);
 				&subs::setting_setter({ app => '__president', setting => 'ws_pa', value => $pa});
 
-				my $merging =	&subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' });
+				# Age out a dead worker's marker: a peer told "merging" forever stops
+				# this machine from ever pulling its newer rows.
+				my $merge_row = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+				my $merging = (($merge_row->{'value'} || '') eq 'running' && int($merge_row->{'server_time'} || 0) + 600000 > $now) ? 'running' : '';
 
 				my $location = &subs::db_query('select * from continent where signatorial=? and type=? and server_time >= ? order by server_time desc limit 1', $my_signatorial, 'temporary',&subs::rightNow() - (5 * 60 * 1000))->hashes->[0];
 
@@ -30050,6 +30165,22 @@ get '/manager/remote_auth_test' => sub($c) {
 				# caller applies these and reports its new cursor on the next request.
 				my $reader_cursor = $c->param('tombstone_cursor');
 				my $tombstones = &subs::tombstones_since($reader_cursor);
+
+				# The caller's per-table cuts (its newest `server_time` in each
+				# table). Answering with our own count/sum/max above each cut is what
+				# lets it tell a strict forward delta (it is missing only rows newer
+				# than the cut) from a real divergence (an offline device holds a row
+				# nobody else saw), which needs a full table rather than a window.
+				my $cuts = &subs::sync_map_decode($c->param('cuts'));
+				my %above;
+				if (scalar keys %{$cuts}) {
+					my %allowed = map { $_ => 1 } (@{ &subs::sync_table_list() }, 'settings_durable');
+					foreach my $t ( sort keys %{$cuts} ) {
+						next unless $allowed{$t};
+						my $a = &subs::sync_table_above($t, $cuts->{$t});
+						$above{$t} = $a if $a;
+					}
+				}
 
 				my $json = {
 					server_time => $appt->{'server_time'},
@@ -30075,6 +30206,9 @@ get '/manager/remote_auth_test' => sub($c) {
 					tombstones => $tombstones,
 					sync_cursor => &subs::tombstone_max(),
 					pending => $pending,
+					sync_version => 2,
+					digest => &subs::sync_digest_map(),
+					above => \%above,
 				};
 				$c->render(json => $json);
 
@@ -30141,11 +30275,17 @@ get '/manager/sync_history' => sub($c) {
 	my $lock = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0] || {};
 	my $upgrade = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
 	my $now = &subs::rightNow();
+	# The job table is the live picture: one row per pull/serve, with the steps
+	# (one bar each) that the panel draws across the top.
+	my $jobs = &subs::sync_job_list(12);
+	my ($active) = grep { ($_->{'state'} || '') eq 'running' } @{$jobs};
 	$c->render(json => {
 		current => {
 			serving => (($lock->{'value'} || '') ne '' && int($lock->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
 			pulling => (($upgrade->{'value'} || '') eq 'running' && int($upgrade->{'server_time'} || 0) + 600000 > $now) ? 1 : 0,
+			job => $active,
 		},
+		jobs => $jobs,
 		recent => \@recent,
 	});
 };
@@ -30260,9 +30400,12 @@ sub remote_machine_reconnector($c) {
 					$ip = $rm->{'ip'};
 					# Hand the peer the watermark we already hold from it, so its auth
 					# route can say (with a count) whether it has anything newer instead
-					# of our pulling its window on every tick.
+					# of our pulling its window on every tick. The per-table digest is the
+					# real signal: it catches a table that moved without a new appointment
+					# and an offline peer holding a row nobody else saw.
 					my $peer_watermark = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0];
-					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0) });
+					my $my_digest = &subs::sync_digest_map();
+					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0), digest => $my_digest });
 					my $manager = $rm->{'manager'};
 					my $port = $rm->{'port'};
 					my $port_dock = $rm->{'dock_port'};
@@ -30383,7 +30526,18 @@ sub remote_machine_reconnector($c) {
 						# while plainly holding newer appointments, so its zero must not
 						# suppress the pull the timestamp comparison already wants.
 						$has_new = 1 if (defined $rj->{'pending'} && ($rj->{'pending'}->{'count'} || 0) > 0);
-						if (($has_new || $deep) && $rj->{'merging'} ne 'running') {
+						# The per-table plan names exactly which tables differ and how far
+						# back each one must be read. It is the signal that a changed
+						# setting, an offline row or a title edit produces, none of which
+						# moves the newest appointment.
+						my $plan;
+						if (ref $rj->{'digest'} eq 'HASH') {
+							$plan = &subs::sync_plan($my_digest, $rj->{'digest'}, ($rj->{'above'} || {}));
+							$has_new = 1 if (ref $plan eq 'HASH' && scalar keys %{$plan});
+						}
+						# A peer that told us its export was busy gets a short rest; asking
+						# every tick only makes both machines spend the export over and over.
+						if (($has_new || $deep) && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
 							my $whoami = `whoami`;
 							chomp $whoami;
 							my $hostname = `hostname`;
@@ -30396,11 +30550,14 @@ sub remote_machine_reconnector($c) {
 								database => $rm->{'data'}->{'database'},
 								remote_signatorial => $rj->{'signatorial'},
 								remote_device => $rm->{'data'}->{'device'},
+								peer => ($rm->{'ip'} || $rm->{'hostname'} || $rj->{'fqdn'} || ''),
+								plan => $plan,
 								gimme => $gimme
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
 							#	&subs::subprocessor(sub {
-									&remote_upgrade($c,$params);
+								my $status = &remote_upgrade($c,$params);
+								&subs::sync_backoff_set($rj->{'signatorial'}, 120) if ($status || '') eq 'busy';
 							#	});
 							}
 						}
