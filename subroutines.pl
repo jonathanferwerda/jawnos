@@ -1773,7 +1773,7 @@ sub say_it() {
 	}, { name => 'say it' });
 }
 
-# Is the device on WiFi and reachable? Its own web server on port 80 is the
+# Is the device on WiFi and reachable? Its own web server on port 3000 is the
 # test: an off-LAN or powered-down device fails the connect at once, which is
 # what lets the reply go to Bluetooth without waiting for a timeout. Returns
 # the address the reply route is served from, or undef.
@@ -1785,7 +1785,7 @@ sub device_wifi_reply() {
 	my $dev_ip = $dev->{'ip'};
 	return undef unless $dev_ip && $dev_ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
 	require IO::Socket::INET;
-	my $sock = IO::Socket::INET->new(PeerAddr => $dev_ip, PeerPort => 80, Proto => 'tcp', Timeout => 0.7);
+	my $sock = IO::Socket::INET->new(PeerAddr => $dev_ip, PeerPort => 3000, Proto => 'tcp', Timeout => 0.7);
 	return undef unless $sock;
 	close $sock;
 	# the server's own address on the device's subnet: a fallback machine may
