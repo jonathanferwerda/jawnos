@@ -533,15 +533,26 @@ $(document).on('click', '.delete_packaging', function() {
 	});
 });
 
-// The host box beside Ping remembers what is typed in it, including a clear: save
-// on change, so a value is never lost just because Ping was not the button pressed.
-$(document).on('change', '.ping_host', function() {
-	var host = $(this).val();
+// The host box beside Ping keeps the stored value level with the box as it is
+// edited: a moment after typing stops, and at once when the field is left, it
+// saves itself - including a clear - so a value is never lost just because Ping
+// or Scan was not pressed. save_only records it without pinging anything.
+var pingHostSaveTimer = null;
+function pingHostSave(host) {
 	$.ajax({
 		url: '/manager/configure/ping',
 		type: 'GET',
 		data: { host: host, save_only: 'yes', timestamp: Date.now() }
 	});
+}
+$(document).on('input', '.ping_host', function() {
+	var host = $(this).val();
+	clearTimeout(pingHostSaveTimer);
+	pingHostSaveTimer = setTimeout(function() { pingHostSave(host); }, 500);
+});
+$(document).on('change', '.ping_host', function() {
+	clearTimeout(pingHostSaveTimer);
+	pingHostSave($(this).val());
 });
 
 $(document).on('click', '#device_lister, .device_scan', function() {
