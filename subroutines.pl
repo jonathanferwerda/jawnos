@@ -20842,13 +20842,15 @@ sub github_fetch {
 # not the rate-limited API. Returns the manifest plus the asset base url, or
 # undef when there is no release (or no network).
 sub github_release_manifest {
-	my ($repo, $tag) = @_;
+	my ($repo, $tag, $file) = @_;
 	return undef unless $repo && $repo =~ m{^[^/\s]+/[^/\s]+\z};
 	$tag ||= 'releases';
+	$file ||= 'app_release.json';
+	return undef unless $file =~ /^[A-Za-z0-9_.-]+$/;
 	my $base = "https://github.com/$repo/releases/download/$tag";
-	my $body = &github_fetch("$base/app_release.json", 30);
+	my $body = &github_fetch("$base/$file", 30);
 	unless (defined $body && length $body) {
-		&app_release_log('github manifest fetch failed (' . $base . ')');
+		&app_release_log('github manifest fetch failed (' . $base . '/' . $file . ')');
 		return undef;
 	}
 	my $man = eval { decode_json $body };
@@ -20899,31 +20901,32 @@ sub app_release_sync {
 		$local{$product} = $vc if !$local{$product} || $vc > $local{$product};
 	}
 	# GitHub first: a public source that needs no peer, so a device with no
-	# reachable peer (or a stale peer cookie) still updates. The manifest names
-	# the newest app build; the asset is a github.com download. Failing that, the
-	# peer loop below still catches it.
-	my $gh = &github_release_manifest(
-		$config->{'github_repo'} || 'jonathanferwerda/jawnos',
-		$config->{'github_release_tag'} || 'releases');
-	if ($gh && $gh->{'product'} && ($gh->{'versionCode'} || 0) > 0) {
+	# reachable peer (or a stale peer cookie) still updates. Each product has
+	# its own manifest beside its APK; the app manifest keeps its historical
+	# name, the api one is new. Failing that, the peer loop below still catches it.
+	foreach my $manifest_file (qw(app_release.json api_release.json)) {
+		my $gh = &github_release_manifest(
+			$config->{'github_repo'} || 'jonathanferwerda/jawnos',
+			$config->{'github_release_tag'} || 'releases',
+			$manifest_file);
+		next unless $gh && $gh->{'product'} && ($gh->{'versionCode'} || 0) > 0;
 		my $gp = $gh->{'product'};
 		my $gv = $gh->{'versionCode'} + 0;
 		my $gf = $gh->{'filename'};
-		if ((!$local{$gp} || $gv > $local{$gp})
-			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/) {
-			my $blob = &github_fetch($gh->{'base'} . '/' . $gf, 600);
-			unless (defined $blob && length $blob) {
-				&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; falling back to peers');
-			}
-			my $sha = (defined $blob && length $blob) ? eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) } : undef;
-			if (defined $blob && length $blob && (!$gh->{'sha256'} || ($sha && $sha eq $gh->{'sha256'}))) {
-				my $dest = "$dir/$gf";
-				write_file("$dest.tmp", $blob);
-				unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$gp-*.apk");
-				if (rename("$dest.tmp", $dest)) {
-					$local{$gp} = $gv;
-					&app_release_log('pulled ' . $gp . ' v' . $gv . ' (' . length($blob) . ' bytes) from github');
-				}
+		next unless (!$local{$gp} || $gv > $local{$gp})
+			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/;
+		my $blob = &github_fetch($gh->{'base'} . '/' . $gf, 600);
+		unless (defined $blob && length $blob) {
+			&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; falling back to peers');
+		}
+		my $sha = (defined $blob && length $blob) ? eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) } : undef;
+		if (defined $blob && length $blob && (!$gh->{'sha256'} || ($sha && $sha eq $gh->{'sha256'}))) {
+			my $dest = "$dir/$gf";
+			write_file("$dest.tmp", $blob);
+			unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$gp-*.apk");
+			if (rename("$dest.tmp", $dest)) {
+				$local{$gp} = $gv;
+				&app_release_log('pulled ' . $gp . ' v' . $gv . ' (' . length($blob) . ' bytes) from github');
 			}
 		}
 	}

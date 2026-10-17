@@ -1235,7 +1235,7 @@
 #define LV_USE_ANIMIMG 1
 
 /** Arc */
-#define LV_USE_ARC 1
+#define LV_USE_ARC 0
 
 /** Arc label */
 #define LV_USE_ARCLABEL 1
@@ -1256,7 +1256,7 @@
 #define LV_USE_BUTTONMATRIX 1
 
 /** Calendar */
-#define LV_USE_CALENDAR 1
+#define LV_USE_CALENDAR 0
 
 #if LV_USE_CALENDAR
 /** Week starts on Monday */
@@ -1334,10 +1334,10 @@
  *
  *  Enable: LV_USE_IMAGE
  */
-#define LV_USE_CANVAS 1
+#define LV_USE_CANVAS 0
 
 /** Chart */
-#define LV_USE_CHART 1
+#define LV_USE_CHART 0
 
 /** Checkbox */
 #define LV_USE_CHECKBOX 1
@@ -1428,7 +1428,7 @@
 #endif /*LV_USE_IME_PINYIN*/
 
 /** Keyboard */
-#define LV_USE_KEYBOARD 1
+#define LV_USE_KEYBOARD 0
 
 /** Label */
 #define LV_USE_LABEL 1
@@ -1454,7 +1454,7 @@
 #define LV_USE_LINE 1
 
 /** List */
-#define LV_USE_LIST 1
+#define LV_USE_LIST 0
 
 #if LV_USE_THORVG
 /** Plays Lottie JSON animations using the ThorVG Lottie parser.
@@ -1466,7 +1466,7 @@
 #endif /*LV_USE_THORVG*/
 
 /** Menu */
-#define LV_USE_MENU 1
+#define LV_USE_MENU 0
 
 /** Message box
  *
@@ -1487,7 +1487,7 @@
  *
  *  Enable: LV_USE_LABEL
  */
-#define LV_USE_ROLLER 1
+#define LV_USE_ROLLER 0
 
 /** Scale */
 #define LV_USE_SCALE 1
@@ -1499,7 +1499,7 @@
 #define LV_USE_SLIDER 1
 
 /** Span */
-#define LV_USE_SPAN 1
+#define LV_USE_SPAN 0
 
 #if LV_USE_SPAN
 /** Maximum number of span descriptors */
@@ -1508,10 +1508,10 @@
 #endif /*LV_USE_SPAN*/
 
 /** Spinbox */
-#define LV_USE_SPINBOX 1
+#define LV_USE_SPINBOX 0
 
 /** Spinner */
-#define LV_USE_SPINNER 1
+#define LV_USE_SPINNER 0
 
 /** Switch */
 #define LV_USE_SWITCH 1
@@ -1529,16 +1529,16 @@
 #endif /*LV_USE_TEXTAREA*/
 
 /** Table */
-#define LV_USE_TABLE 1
+#define LV_USE_TABLE 0
 
 /** Tabview */
-#define LV_USE_TABVIEW 1
+#define LV_USE_TABVIEW 0
 
 /** Tileview */
-#define LV_USE_TILEVIEW 1
+#define LV_USE_TILEVIEW 0
 
 /** Window */
-#define LV_USE_WIN 1
+#define LV_USE_WIN 0
 
 
 

@@ -4,7 +4,6 @@
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <WiFi.h>
-#include <WiFiAP.h>
 // ESPmDNS: advertise this deck on _jawnos._tcp so the Dev panel names it at once
 // (see the server's subs::mdns_devices).
 #include <ESPmDNS.h>
@@ -34,12 +33,11 @@ using fs::FS;
 #include <ESP32Time.h>
 #include <Arduino_JSON.h>
 #include <UrlEncode.h>
-#include <PNGdec.h>
 #include <RadioLib.h>
 #include <SD.h>
 #include <ArduinoWebsockets.h>
-// PNGdec's zutil.h #defines `local` as `static`, and NimBLE's ble_sm.h has a
-// struct member actually named `local`: undefine it before the BLE headers
+// NimBLE's ble_sm.h has a struct member named `local`; no decoder is included
+// now (PNGdec was unused), but this keeps the name free for future headers.
 #undef local
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -56,7 +54,6 @@ using fs::FS;
 // The font names are arrays references, thus must NOT be in quotes ""
 #define AA_FONT_SMALL NotoSansBold15
 #define AA_FONT_LARGE NotoSansBold36
-PNG png;
 // PlatformIO's prototype generator inserts its block just before the first
 // function definition in the sketch; the BLE helpers below are the first, so
 // the unqualified websockets types must already be visible this early.
@@ -98,7 +95,7 @@ static const uint16_t screenHeight = 240;
 #define MIC_TDM_SLOTS               4
 #define MIC_TDM_FRAMES              512      // frames per read
 #define MIC_TDM_BUFFER_BYTES        (MIC_TDM_FRAMES * MIC_TDM_SLOTS * 2)
-#define LVGL_BUFFER_SIZE            (TFT_WIDTH * TFT_HEIGHT * sizeof(lv_color_t))
+#define LVGL_BUFFER_SIZE            (TFT_HEIGHT * 40 * sizeof(lv_color_t))
 
 
 WebServer server(3000);
@@ -572,7 +569,12 @@ using namespace websockets;
 // the secret - TLS protects it (and the injected keystrokes) in flight.
 class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient {
  public:
-  InsecureDeckTcpClient() { client.setInsecure(); }
+  InsecureDeckTcpClient() {
+    client.setInsecure();
+    // A dead House machine must not hold the UI: the default TLS handshake
+    // timeout is tens of seconds and tauth_connect() runs on the loop.
+    client.setHandshakeTimeout(3);
+  }
 };
 WebsocketsClient wsclient(std::make_shared<InsecureDeckTcpClient>());
 WiFiClientSecure *connexion = new WiFiClientSecure;
@@ -1996,7 +1998,9 @@ void loop() {
   uint32_t loopStart = millis();
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
-  wsclient.poll();
+  // Only poll a live socket: a stopped TLS client can block in its read path
+  // and stall the whole UI.
+  if (ws_connected == 1) { wsclient.poll(); }
 
   // The House task found a live machine: move every address the deck dials onto
   // it (HTTP, teletype, wss) and reopen the control socket. The preferred
@@ -2042,7 +2046,7 @@ void loop() {
   {
     static uint32_t ws_retry_at = 0;
     if (tauth_remote_enabled == "on" && ws_connected == 0 && authorization != ""
-        && twshomebaseIP.length() && millis() - ws_retry_at > 5000) {
+        && twshomebaseIP.length() && millis() - ws_retry_at > 10000) {
       ws_retry_at = millis();
       tauth_connect();
     }
@@ -2656,11 +2660,17 @@ void loop() {
         }
     }
 
-    while (SerialGPS.available()) {
-        int c = SerialGPS.read();
-        // Serial.write(c);
-        if (gps.encode(c)) {
-            displayInfo();
+    {
+        // Keep the GPS off the loop's critical path: a backlog of NMEA at the
+        // wrong baud used to hold this loop for seconds. Parse at most 10 ms
+        // worth per pass; the rest waits for the next pass.
+        uint32_t gps_started = millis();
+        while (SerialGPS.available() && millis() - gps_started < 10) {
+            int c = SerialGPS.read();
+            // Serial.write(c);
+            if (gps.encode(c)) {
+                displayInfo();
+            }
         }
     }
 
@@ -2893,7 +2903,7 @@ void setupLvgl()
   /*Initialize the display*/
   lv_display_t *disp = lv_display_create(TFT_HEIGHT, TFT_WIDTH);
   lv_display_set_flush_cb(disp, disp_flush);
-  lv_display_set_buffers(disp, buf, NULL, LVGL_BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+  lv_display_set_buffers(disp, buf, NULL, LVGL_BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   // The default theme paints its screens white, and the deck wants black. Every
   // room is built on this one screen (they lv_obj_clean() it and add their own
