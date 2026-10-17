@@ -129,6 +129,11 @@ static uint32_t voice_ambient_rms = 0;
 // overlap on the one microphone
 static volatile bool voiceListening = false;
 static volatile bool voiceTaskAlive = false;
+// True from the moment speech commits to a clip until that clip has been shipped
+// (or dropped). loop() holds the screen awake on it - a doze part-way through a
+// spoken statement changes the panel and writes the config, and both stall the
+// microphone - and draws the orange ring the watch shows while it is listening.
+static volatile bool voiceRecording = false;
 // a manual recording is in flight (declared here because loop() reads it; the
 // recording code at the bottom owns it)
 static volatile bool isRecording = false;
@@ -533,6 +538,7 @@ static void recordingPlay(lv_event_t *e);
 // configRestore() and the /now_me route
 static void voice_trigger_apply();
 static void deckVoiceListenStart();
+static void voice_border_show(bool on);
 bool es7210Begin();
 static void speakerSelfTest();
 static void pruneRecordings(int keep);
@@ -827,6 +833,15 @@ void setup() {
   // allocations keep to internal RAM.
   mbedtls_platform_set_calloc_free(mbedtls_psram_calloc, mbedtls_psram_free);
   heap_caps_malloc_extmem_enable(1024);
+  // The mDNS component warns about odd packets it receives, from lwip's tcpip
+  // thread. That thread's first console write allocates a newlib lock, and with
+  // the voice stack resident the internal heap can be too tight for it: the malloc
+  // fails, lock_init_generic aborts, and the deck panics - a look at the backtrace
+  // blames mdns receive(), but the fault is memory pressure. Nothing here reads the
+  // mDNS log, so turn it off; the pressure itself is what the [voice] listening
+  // line's int= figure is for.
+  esp_log_level_set("mdns", ESP_LOG_NONE);
+  esp_log_level_set("mdns_networking", ESP_LOG_NONE);
   deckLog("[deck] boot: peripheral power on (last reset: %s)", resetReasonStr(esp_reset_reason()));
   //! Set CS on all SPI buses to high level during initialization
   pinMode(BOARD_SDCARD_CS, OUTPUT);
@@ -2053,6 +2068,18 @@ void loop() {
     deckVoiceListenStart();
   }
 
+  // The room can go blank: a Now Me clears buttoned_before, and the room push it
+  // then asks for can be missed, which leaves the screen with no buttons until
+  // something else draws. While they are still missing and the bridge is up, ask
+  // again (the bridge path is a message, not a blocking fetch).
+  if (jw_room == "room" && !buttoned_before && deviceConnected) {
+    static uint32_t last_room_ask = 0;
+    if (millis() - last_room_ask > 4000) {
+      last_room_ask = millis();
+      call_the_president();
+    }
+  }
+
   // the bridge just came up: ask for anything that changed while it was down,
   // and hand over the taps that queued in the meantime
   static bool state_requested = false;
@@ -2360,6 +2387,18 @@ void loop() {
         delay(1000);
     }
   uint32_t tAfterGps = millis();
+  // A spoken command needs the panel to itself: hold the idle timeout off while a
+  // clip is being captured and sent, since a doze writes the config and changes
+  // the panel, and both stall the microphone. Show the same orange ring the watch
+  // does while the listener has a clip, so it is clear it heard you.
+  if (voiceRecording) { buttonMillis = millis(); }
+  {
+    static bool voice_border_on = false;
+    if (voiceRecording != voice_border_on) {
+      voice_border_on = voiceRecording;
+      voice_border_show(voice_border_on);
+    }
+  }
   // The panel sleeps after the idle timeout and any input (anything that
   // refreshes buttonMillis) brings it back. The flag makes each transition
   // happen exactly once: the wake branch used to re-run tft.begin() - a
@@ -3428,8 +3467,9 @@ void presidents_buttons() {
     lv_label_set_text(led2, "0");
   }
 
-  Serial.println(before_me);
-  Serial.println(buttoned_before);
+  // one short line, not the whole room document: this runs on every redraw, and
+  // dumping a 4.7 KB payload through the CDC from here was a real stall
+  deckLog("[room] draw room=%d count=%d buttons=%d", room, room_count, (int)buttoned_before);
   if (room > room_count) { room = 1; }  
 
   int sb = ((room - 1) * 8) + 1;
@@ -6176,6 +6216,38 @@ static void voice_dc_block(int16_t *s, int n) {
   }
 }
 
+// The orange ring the watch draws while a capture is in flight: the answer that
+// the listener heard you, since the deck's own screen may be on another room.
+// Built on lv_layer_top() so a room rebuild never sweeps it away, and only ever
+// touched from loop() (LVGL is not thread-safe; the listener sets voiceRecording
+// and loop() draws).
+static lv_obj_t *voice_border = nullptr;
+static void voice_border_maker() {
+  if (voice_border) { return; }
+  voice_border = lv_obj_create(lv_layer_top());
+  lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(voice_border, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_pos(voice_border, 0, 0);
+  lv_obj_set_style_bg_opa(voice_border, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_radius(voice_border, 0, LV_PART_MAIN);
+  lv_obj_set_style_border_color(voice_border, lv_color_hex(0xff8000), LV_PART_MAIN);
+  lv_obj_set_style_border_width(voice_border, 6, LV_PART_MAIN);
+  lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void voice_border_show(bool on) {
+  voice_border_maker();
+  if (!voice_border) { return; }
+  if (on) {
+    lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(voice_border);
+  }
+  else {
+    lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 // The panel's voice_trigger names the model to run; anything we have no model for
 // ('off', or a phrase still to be trained) leaves the listener disarmed. A
 // running listener is stopped so the model reloads on the way back up.
@@ -6246,7 +6318,8 @@ static void deckVoiceListenTask(void *pv) {
   }
   voice_dc_reset();   // the mic has just been flushed: prime the pedestal filter on it
   if (!voice_models_init(voice_trigger)) { deckLog("%s", "[voice] no voice model loaded"); }
-  deckLog("[voice] listening: %s (slot %d)", voice_mode_name, mono_slot);
+  deckLog("[voice] listening: %s (slot %d) int=%u", voice_mode_name, mono_slot,
+          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   static int16_t mono[MIC_TDM_FRAMES];
   while (voiceListening) {
@@ -6329,6 +6402,7 @@ static void deckVoiceListenTask(void *pv) {
         pcm_bytes = 0;
         deck_voice_ts = have_onset ? (long)onset_ts : rightNow();
         end_floor = voice_end_floor();
+        voiceRecording = true;   // loop() holds the screen awake and rings the border
         deckLog("[voice] speech (%s), recording", voice_mode_name);
       }
       // keep the frame (16 kHz mono); the compressor folds it to 8 kHz when it ships
@@ -6396,6 +6470,8 @@ static void deckVoiceListenTask(void *pv) {
       // transcribers turn into a stock phrase, and the guide then answers nobody
       deckLog("[voice] clip dropped (%s)", aborted ? "mic taken" : "no command");
     }
+    // the clip is written and away (or dropped): the screen may time out again
+    voiceRecording = false;
     if (!voiceCaptureEnabled) { break; }
     vTaskDelay(1);
   }
