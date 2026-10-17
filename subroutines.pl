@@ -9342,7 +9342,20 @@ sub headless_navigation() {
 			# seconds old or a little loose. The old 1s / 100m gates threw them
 			# away silently, so the location stopped moving with the person; keep
 			# the good ones and say when a fix was dropped.
-			if ($loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500) {
+			my $usable = $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
+			# With the screen off the phone often cannot get a fresh GPS fix at all,
+			# so termux-location answers with a last-known one minutes old and the
+			# point was dropped - the position stopped moving and the home plate
+			# never fired. When the GPS fix is stale or loose, ask the network
+			# provider (a fresh, coarser fix) rather than throw the point away.
+			unless ($usable) {
+				my $nloc = eval { return decode_json `termux-location -p network` } || {};
+				if ($nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
+					$loc = $nloc;
+					$usable = 1;
+				}
+			}
+			if ($usable) {
 				$returner->{'latitude'} = $loc->{'latitude'};
 				$returner->{'longitude'} = $loc->{'longitude'};
 				$returner->{'accuracy'} = sprintf("%.2F", $loc->{'accuracy'});
