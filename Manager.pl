@@ -7002,7 +7002,9 @@ sub remote_upgrade($c,$params) {
 					my $res = $remote_machine->{'ua'}->post($url => form => $form_data)->result;
 					if ($res->is_success) {
 						&subs::db_query('delete from backups where ost < ? and recipient = ? and signatorial = ? and reason=?', $body->{'server_time'}, $signatorial, $remote_machine->{'signatorial'}, 'remote_upgraded' );
-						&subs::db_update('backups', { server_time => $body->{'server_time'}, reason => 'remote_upgraded' }, {
+						# Record the snapshot that actually moved: this row may predate the
+						# size fix and still carry this machine's whole database (~180 MB).
+						&subs::db_update('backups', { server_time => $body->{'server_time'}, reason => 'remote_upgraded', size => $body->{'size'} }, {
 							recipient => $signatorial,
 							signatorial => $remote_machine->{'signatorial'},
 						});
