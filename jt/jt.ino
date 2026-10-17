@@ -6340,12 +6340,12 @@ static void voice_dc_block(int16_t *s, int n) {
   }
 }
 
-// A short two-note chime the listener gives when it commits a capture. The panel
+// A short two-note chime the listener gives when a capture ends. The panel
 // can be asleep or turned away, and the orange ring is only visible up close. The
 // file is written once and reused, the way speakerSelfTest's tone is.
-#define VOICE_ACK_PATH "/chime.wav"
-#define VOICE_ACK_FREQ1 880       // A5
-#define VOICE_ACK_FREQ2 1319      // E6, a quick rising pair
+#define VOICE_ACK_PATH "/chime_hi_lo.wav"
+#define VOICE_ACK_FREQ1 1319      // E6
+#define VOICE_ACK_FREQ2 880       // A5, a quick high-then-low pair
 #define VOICE_ACK_TONE1_MS 65
 #define VOICE_ACK_TONE2_MS 95
 #define VOICE_ACK_GAP_MS 12
@@ -6733,9 +6733,6 @@ static void deckVoiceListenTask(void *pv) {
         end_floor = voice_end_floor();
         voiceRecording = true;   // loop() holds the screen awake and rings the border
         deckLog("[voice] speech (%s), recording", voice_mode_name);
-        // the wake phrase is the one thing the person needs an immediate answer
-        // for: on the watch that is the ring, here it is the ring and a beep
-        if (wake_mode) { voice_ack(); }
       }
       // keep the frame (16 kHz mono); the compressor folds it to 8 kHz when it ships
       uint32_t room = max_samples - pcm_bytes / 2;
@@ -6786,6 +6783,8 @@ static void deckVoiceListenTask(void *pv) {
         }
         f.close();
         finalize_wav_sizes(VOICE_CAPTURE_PATH, pcm_bytes, 1);
+        // listening has finished: acknowledge with the high-then-low chime
+        if (wake_mode) { voice_ack(); }
         deckLog("[voice] clip %u bytes ts=%ld -> bridge", (unsigned)pcm_bytes, (long)deck_voice_ts);
         // Compact it first: ffmpeg reads IMA ADPCM WAV natively, so the link
         // carries a quarter of the bytes and the server reads an identical file.

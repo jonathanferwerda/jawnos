@@ -4186,12 +4186,13 @@ static void say_label_show(const String &t) {
 }
 
 // ---- the acknowledgment chime -------------------------------------------
-// The same quick two-note figure the t-deck plays (A5 then E6) when its wake
-// phrase is read. The watch's speaker is its own I2S device, so this plays while
-// the PDM microphone keeps reading. It deliberately does not raise isPlaying:
-// that would stop the listener mid-capture and cut the command short.
-#define VOICE_ACK_FREQ1 880
-#define VOICE_ACK_FREQ2 1319
+// A quick two-note figure (E6 then A5, the reverse of the old rising pair),
+// played when the capture ends rather than when the wake phrase is first heard.
+// The watch's speaker is its own I2S device, so this plays while the PDM
+// microphone keeps reading. It deliberately does not raise isPlaying: that
+// would stop the listener and cut the command short.
+#define VOICE_ACK_FREQ1 1319
+#define VOICE_ACK_FREQ2 880
 #define VOICE_ACK_TONE1_MS 65
 #define VOICE_ACK_TONE2_MS 95
 #define VOICE_ACK_GAP_MS 12
@@ -4397,9 +4398,6 @@ static void voiceListenTask(void *pv) {
         // the server has it the moment the person stops
         voice_stream_begin();
         Serial.println("[voice] speech detected, recording");
-        // the wake word is the one thing the person needs an immediate answer
-        // for, and the screen may be in a room they are not looking at
-        if (wake_mode) { voice_ack(); }
       }
       // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
       // transfer (the only radio when the watch is off WiFi) carries half the
@@ -4469,6 +4467,8 @@ static void voiceListenTask(void *pv) {
     else if (recording && !isRecording && !isPlaying) {
       f.close();
       voiceRecording = false;
+      // listening has finished: acknowledge with the high-then-low chime
+      if (wake_mode && pcm_bytes > 0) { voice_ack(); }
       voice_stream_end();   // encode the tail and let the last part go out
       if (pcm_bytes > 0) {
         // hold the screen on until the Guide answers
