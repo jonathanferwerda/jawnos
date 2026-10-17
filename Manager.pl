@@ -7880,6 +7880,11 @@ post '/manager/nfc/read' => sub($c) {
     Mojo::IOLoop->reset;
 		&remote_relay_request($c, { dissemination => 'yes' });
 	}, { name => 'nfc remote relay' });
+	# A relayed copy is a peer's copy of the tap: it may refresh the tag's serials,
+	# but it must never run the start/stop here. The action runs once on the
+	# machine that read the tag; its appointment row reaches the mesh as data.
+	my $relayed = ($c->param('relay_id') || $c->param('remoted') eq 'yes' || $c->param('dissemination') eq 'yes' || $c->param('source_signatorial')) ? 1 : 0;
+	if ($relayed) { $c->render(json => { status => 'relayed' }); return; }
 	my $msg = eval { return decode_json $jmessage } || [];
 
 	foreach my $message ( @{$msg} ) {
@@ -7921,11 +7926,15 @@ post '/manager/nfc/read' => sub($c) {
 					$response->{'status'} = $nfcs->{'app'} . ' ' . $type;
 					if ($benign ne 'on') {
 						$n->{'taps'} += 1;
+						# A stop names the session the header shows (the newest open row),
+						# never the tag/message uuid, which matched no session and made
+						# every machine choose a different row to close.
+						my $target = ($type eq 'stop') ? &subs::open_session_uuid($nfcs->{'app'}) : undef;
 						&appointment_writer($c, {
 							app => $nfcs->{'app'},
 							type => $type,
 							timestamp => $timestamp,
-							uuid => $uuid
+							uuid => $target
 						});
 					}
 				}

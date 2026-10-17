@@ -11911,10 +11911,17 @@ sub appt_toggle_checker() {
 	return unless $app;
 	my $server_time = &subs::rightNow();
 	my $toggle = 'off';
-	# only the existence of an open start/record matters, so stop at the first one
-	my $appts = &subs::db_query('select 1 as found from appointments where app=? and (type=? or type=?) and timestamp <= ? limit 1', $app, 'start','record',$server_time)->hashes;
-
-	$toggle = 'on' if scalar @{$appts} > 0;
+	# The newest open row is the running session, but a row older than twice the
+	# app's configured length is an orphan - not a session still running. Treating
+	# a synced stale row as "on" is what made an NFC start tag toggle into a stop
+	# after another machine left an open office row from hours ago.
+	my $open = &subs::db_query('select timestamp from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp desc limit 1', $app, 'start', 'record', $server_time)->hashes->[0];
+	if ($open) {
+		my $duration = &subs::setting_grabber({ app => $app, setting => 'duration' });
+		my $d = (defined $duration && $duration =~ /[0-9]/) ? abs(&subs::time_abbrev_translator($duration)) : 0;
+		my $age = $server_time - (0 + $open->{'timestamp'});
+		$toggle = 'on' if (!$d || $age <= ($d * 2));
+	}
 	# rewriting an unchanged toggle cost two writes and a websocket message on
 	# every header render
 	my $current = &subs::setting_grabber({ app => $app, setting => 'toggle' });
