@@ -39,7 +39,8 @@
 	% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
 	% }
 	<div id="utility_machines">
-	<% foreach my $dt ( sort @machine_keys ) { %>
+	% my @ordered_keys = sort { ($a eq $signatorial ? 0 : 1) <=> ($b eq $signatorial ? 0 : 1) || $a cmp $b } @machine_keys;
+	<% foreach my $dt ( @ordered_keys ) { %>
 		<div class="cfg-card utility_machine">
 			<h4 class="utility_machine_name"><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></h4>
 			<div class="utility_jobs">

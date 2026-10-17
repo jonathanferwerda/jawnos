@@ -428,15 +428,31 @@ $(document).on('click', '.dot', function() {
 	}
 });
 
+// Every request's own url is stashed on its jqXHR as it starts: the ajaxSetup
+// error callback below is handed no settings, so without this the dot could
+// only ever say "request" where it should name the route that failed.
+$.ajaxPrefilter(function(options, original, jqXHR) {
+	if (options && options.url) { jqXHR.jawnos_url = options.url; }
+});
+
 $.ajaxSetup({
 	cache: false,
 	data: { browser_tab_id: bti, browser_tab: bt, user_agent: navigator.userAgent, signatorial: signatorial },
 	success: function(response) {
 	},
 	
-	error: function(e,t,r,settings) {
+	error: function(e,t,r) {
 	//	errorInfo.push(e);
-		var url = (settings && settings.url) ? settings.url : 'request';
+		// A request that never reached the server is not a fault to shout about: the
+		// tree is restarting (an update is a push then a restart), the link
+		// dropped, or the page is unloading as the tab reloads. Say it in the
+		// console and leave the corner alone, so receiving an update never greets
+		// someone with a red dot they cannot act on.
+		if (t === 'abort' || !e || e.status === 0) {
+			console.log('request did not reach jawn:', (e && e.jawnos_url) || '?', t);
+			return;
+		}
+		var url = (e.jawnos_url || 'request').replace(/\?.*$/, '');
 		var body = (e.responseText || '').replace(/\s+/g, ' ').trim();
 		var message = e.status + ': ' + url + (body ? ' — ' + body : '');
 		if (message.length > 200) {

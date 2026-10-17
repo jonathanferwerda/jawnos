@@ -206,6 +206,9 @@ class WebViewPanel(Gtk.Box):
         self._gps = _has_gps(settings.get("jawn_dir"))
         self._login_pending = bool(login)
         self._gate_retries = 0
+        # A reload that lands while the tree is restarting (an update, or a
+        # restart) hits a closed port; count the retries so it cannot loop.
+        self._load_retries = 0
         self.load(start_url or login or self._manager_url)
 
     # ---- navigation (no toolbar: the start menu's admin icon comes back here,
@@ -323,6 +326,7 @@ class WebViewPanel(Gtk.Box):
         except Exception:
             pass
         view.connect("load-changed", self._on_load_changed)
+        view.connect("load-failed", self._on_load_failed)
         view.connect("load-failed-with-tls-errors", self._on_tls_error)
         view.connect("permission-request", self._on_permission)
         # A page (e.g. a video element) asking for fullscreen drives the window.
@@ -347,6 +351,8 @@ class WebViewPanel(Gtk.Box):
     def _on_load_changed(self, view, event):
         if event != WebKit2.LoadEvent.FINISHED:
             return
+        # a load that reached FINISHED is a good one: let a later drop retry again
+        self._load_retries = 0
         if self._login_pending:
             # WebKit needs a moment to commit the session cookie the ticket set,
             # or the /manager navigation races ahead of it and lands on the
@@ -369,6 +375,34 @@ class WebViewPanel(Gtk.Box):
         if self._login_url:
             self._login_pending = True
         self.load(self._login_url or self._manager_url)
+        return False
+
+    def _on_load_failed(self, view, event, uri, error):
+        # jawn closes its port for a moment on every restart, and a tab that
+        # reloads on an update (or the app's own restart) can land in exactly
+        # that window. Rather than strand the view on a network error page - the
+        # state that forced a trip out to the dashboard and back - wait for the
+        # tree to answer and ask for the manager again, a few times, for our own
+        # host only. Return True so WebKit does not paint its error page over it.
+        #
+        # A load we replaced ourselves (a newer navigation cancelled this one)
+        # reports as cancelled - WebKitNetworkError 402 - and is not a failure to
+        # recover from: retrying it would fight the newer navigation.
+        if getattr(error, "code", None) == 402:
+            return False
+        host = ""
+        try:
+            host = urlparse(uri).hostname or ""
+        except Exception:
+            host = ""
+        if host and host == self._manager_host and self._load_retries < 6:
+            self._load_retries += 1
+            GLib.timeout_add(1500, self._retry_load)
+            return True
+        return False
+
+    def _retry_load(self):
+        self.load(self._manager_url)
         return False
 
     # ---- the page -> app channel ----

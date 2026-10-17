@@ -798,7 +798,7 @@ our %topic = (
 		verified => '2026-10-16',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
-			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot.',
+			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot. Your own machine is the first card, named Me, above every peer; the peer cards follow, named by their hostname.',
 			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
 			'Under each job a line says what its last run did - a count when it worked on something new, or that it found nothing - so a job that ran and found nothing does not read as one that never ran.',
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',

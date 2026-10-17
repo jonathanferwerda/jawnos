@@ -1124,16 +1124,34 @@ function jawnosUpdateNote(text) {
 function jawnosUpdateQuietReload() {
 	var save = function () { if (typeof jawnosCodingChatSave === 'function') { jawnosCodingChatSave(); } };
 	save();
-	if (document.hidden) { location.reload(); return; }
+	if (document.hidden) { jawnosReloadWhenReady(); return; }
 	if ($('#jawnos_update_pill').length) { return; }
 	// a real button, not a text block: on a phone Chrome reads plain text as
 	// something to touch-and-search, and a tap on "update" offered a web search.
 	// A button with no selectable text is only ever a thing to press.
 	var pill = $('<button type="button" id="jawnos_update_pill" hint="A new build has shipped" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:7px 12px;font-family:inherit;font-size:13px;color:inherit;line-height:1.2;-webkit-appearance:none;appearance:none;cursor:pointer;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;box-shadow:0 6px 18px rgba(0,0,0,.35);">A fix has shipped — <b>press to update</b></button>');
-	pill.on('click', function () { save(); location.reload(); });
+	pill.on('click', function () { save(); jawnosReloadWhenReady(); });
 	$('body').append(pill);
 	// the hidden tab does not wait for a press: come back and it is already new
 	$(document).on('visibilitychange.jawnos_update_pill', function () {
-		if (document.hidden && $('#jawnos_update_pill').length) { save(); location.reload(); }
+		if (document.hidden && $('#jawnos_update_pill').length) { save(); jawnosReloadWhenReady(); }
 	});
+}
+
+// Reload, but only once the tree is actually answering. An update is a push
+// followed by a restart: the tab's socket reconnects and hands out the revision
+// while the tree is still coming back, and a bare reload in that window lands on
+// a closed port - the browser's own error page - leaving the app stranded until
+// it is re-entered from the dashboard. Ask the health route (which trusts a
+// local caller, so it needs no session) until it answers, then reload; if it
+// never does, reload anyway, so a tab is never frozen waiting on a dead tree.
+function jawnosReloadWhenReady(attempt) {
+	attempt = attempt || 0;
+	var go = function () { location.reload(); };
+	$.ajax({ url: '/manager/health', type: 'GET', dataType: 'json', cache: false, timeout: 4000 })
+		.done(go)
+		.fail(function () {
+			if (attempt < 40) { setTimeout(function () { jawnosReloadWhenReady(attempt + 1); }, 1000); }
+			else { go(); }
+		});
 }
