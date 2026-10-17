@@ -385,7 +385,7 @@ function syncHistoryHtml(data) {
 	var jobs = (data && data.jobs) || [];
 	for (var j = 0; j < jobs.length; j++) {
 		var job = jobs[j] || {};
-		if (job.state === 'running') { continue; }
+		if (job.state === 'running' || job.state === 'skipped') { continue; }
 		rows.push({
 			time: Number(job.updated) || 0,
 			direction: job.direction === 'pull' ? 'in' : 'out',

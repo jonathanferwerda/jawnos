@@ -6887,9 +6887,11 @@ sub remote_upgrade($c,$params) {
 			my $body = eval { return decode_json $res->body } || {};
 
 			if (($body->{'status'} || '') eq 'busy') {
-				&subs::sync_job_step($job, 'export', { state => 'failed', note => 'peer was already exporting' });
-				$sync->done('failed', 'peer was already exporting');
-				&Websocket::send('tab', { yellow => '<h2>Skipped ' . ($params->{'peer'} || $ip) . ': busy exporting</h2>', uuid => $auuid, 'close' => 'yes', state => 'failed', progress => 100 });
+				# A peer already exporting to someone else is not a failure: it is
+				# normal contention, and the backoff retries shortly. Keep the dot
+				# quiet rather than painting a red cross every two minutes.
+				&subs::sync_job_step($job, 'export', { state => 'skipped', note => 'peer was already exporting' });
+				$sync->done('skipped', 'peer was already exporting');
 				&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 				return 'busy';
 			}
