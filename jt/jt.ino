@@ -144,7 +144,7 @@ static volatile uint32_t voiceAwaitingSince = 0;
 // {type:'say'} message, are drawn on the top layer, and are faded by loop() after
 // SAY_TEXT_MS. Declared up here because loop() reads them; the label is built in
 // say_label_show with the rest of the voice code.
-#define SAY_TEXT_MS 12000
+#define SAY_TEXT_MS 30000
 static lv_obj_t *say_label;
 static uint32_t say_shown_at = 0;
 // a manual recording is in flight (declared here because loop() reads it; the
@@ -2023,9 +2023,12 @@ void loop() {
           const char *words = (const char *)btMsg["data"]["text"];
           deckLog("[voice] guide says: %s", words ? words : "");
           if (words) { say_label_show(String(words)); }
-          // the answer is in: the screen may time out again from now
-          voiceAwaitingReply = false;
-          buttonMillis = millis();
+          // the hold ends when the spoken answer has played (or in loop()'s
+          // timeout), not here: the words arrive before the sound
+        }
+        else if (mtype == "say_audio") {
+          // the Guide's spoken answer in PCM parts; the last one plays it
+          say_audio_add(btMsg["data"]);
         }
         else if (mtype == "toggle" || mtype == "toggles") {
           // a toggle flipped somewhere else (a phone press, an alarm, an
@@ -2168,6 +2171,11 @@ void loop() {
   else if (audioWasRunning) {
     audioWasRunning = false;
     deckLog("[mic] playback finished (or gave up)");
+    // the Guide's answer has been said: the screen may time out again from now
+    if (voiceAwaitingReply) {
+      voiceAwaitingReply = false;
+      buttonMillis = millis();
+    }
   }
 
   if (digitalRead(BOARD_TOUCH_INT)) {
@@ -2445,8 +2453,9 @@ void loop() {
   if (voiceRecording) { buttonMillis = millis(); }
   if (voiceAwaitingReply) {
     buttonMillis = millis();
-    // a reply that never comes must not hold the panel on for ever
-    if (millis() - voiceAwaitingSince > 30000) {
+    // a reply that never comes must not hold the panel on for ever; while it is
+    // actually being spoken the hold continues
+    if (!audio.isRunning() && millis() - voiceAwaitingSince > 30000) {
       voiceAwaitingReply = false;
       buttonMillis = millis();
     }
@@ -6338,6 +6347,94 @@ static void say_label_show(const String &t) {
   else {
     lv_obj_add_flag(say_label, LV_OBJ_FLAG_HIDDEN);
   }
+}
+
+// The Guide's spoken answer. The server streams the reply's PCM as
+// {type:'say_audio', data:{seq,last,rate,total,audio}} parts (8 kHz mono s16 when
+// ffmpeg resampled it, else the synthesizer's own rate). The parts are held in
+// PSRAM and, when the last one lands, written as one WAV and played through the
+// speaker - so the answer is heard as well as read.
+static uint8_t *say_pcm = nullptr;
+static size_t say_pcm_len = 0, say_pcm_cap = 0;
+static uint32_t say_pcm_rate = 8000;
+
+static int say_b64_val(char c) {
+  if (c >= 'A' && c <= 'Z') { return c - 'A'; }
+  if (c >= 'a' && c <= 'z') { return c - 'a' + 26; }
+  if (c >= '0' && c <= '9') { return c - '0' + 52; }
+  if (c == '+') { return 62; }
+  if (c == '/') { return 63; }
+  return -1;
+}
+
+static size_t say_b64_decode(const char *s, size_t n, uint8_t *out, size_t cap) {
+  size_t o = 0;
+  uint32_t acc = 0;
+  int bits = 0;
+  for (size_t i = 0; i < n && o < cap; i++) {
+    int v = say_b64_val(s[i]);
+    if (v < 0) { continue; }        // padding and whitespace
+    acc = (acc << 6) | (uint32_t)v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[o++] = (uint8_t)((acc >> bits) & 0xff);
+    }
+  }
+  return o;
+}
+
+// One WAV with the stream's own rate: finalize_wav_sizes() is fixed at the mic's
+// 16 kHz, which would mistune a spoken answer.
+static bool say_wav_write(const char *path, const uint8_t *pcm, size_t bytes, uint32_t rate) {
+  File f = FFat.open(path, FILE_WRITE);
+  if (!f) { return false; }
+  uint8_t h[44] = { 0 };
+  memcpy(h, "RIFF", 4); deck_wr32(h + 4, (uint32_t)(bytes + 36)); memcpy(h + 8, "WAVE", 4);
+  memcpy(h + 12, "fmt ", 4); deck_wr32(h + 16, 16);
+  deck_wr16(h + 20, 1); deck_wr16(h + 22, 1);
+  deck_wr32(h + 24, rate); deck_wr32(h + 28, rate * 2);
+  deck_wr16(h + 32, 2); deck_wr16(h + 34, 16);
+  memcpy(h + 36, "data", 4); deck_wr32(h + 40, (uint32_t)bytes);
+  f.write(h, 44);
+  f.write(pcm, bytes);
+  f.close();
+  return true;
+}
+
+static void say_audio_add(JSONVar d) {
+  uint32_t rate = (uint32_t)(int)d["rate"];
+  if (rate < 4000 || rate > 96000) { rate = 8000; }
+  uint32_t total = (uint32_t)(int)d["total"];
+  bool last = ((int)d["last"]) != 0;
+  if (!say_pcm) {
+    size_t cap = total ? (size_t)total : (size_t)262144;
+    if (cap < 16384) { cap = 16384; }
+    if (cap > 1048576) { cap = 1048576; }
+    say_pcm = (uint8_t *)ps_malloc(cap);
+    if (!say_pcm) { say_pcm = (uint8_t *)malloc(cap); }
+    say_pcm_len = 0;
+    say_pcm_cap = say_pcm ? cap : 0;
+    say_pcm_rate = rate;
+  }
+  const char *a = (const char *)d["audio"];
+  if (say_pcm && a && say_pcm_len < say_pcm_cap) {
+    say_pcm_len += say_b64_decode(a, strlen(a), say_pcm + say_pcm_len, say_pcm_cap - say_pcm_len);
+  }
+  if (!last) { return; }
+  if (say_pcm && say_pcm_len > 8 && !isRecording && !audio.isRunning()) {
+    if (say_wav_write("/say.wav", say_pcm, say_pcm_len, say_pcm_rate)) {
+      audio.setVolume(volumeLevel);
+      bool ok = audio.connecttoFS(FFat, "/say.wav");
+      audio.setVolume(volumeLevel);
+      deckLog("[voice] answer spoken (%u bytes @ %u Hz): %d",
+              (unsigned)say_pcm_len, (unsigned)say_pcm_rate, (int)ok);
+    }
+  }
+  if (say_pcm) { free(say_pcm); }
+  say_pcm = nullptr;
+  say_pcm_len = 0;
+  say_pcm_cap = 0;
 }
 
 // The panel's voice_trigger names the model to run; anything we have no model for

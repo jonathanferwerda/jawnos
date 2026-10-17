@@ -1848,7 +1848,10 @@ sub watch_reply_stream() {
 		my ($seq, $sent) = (0, 0);
 		while (1) {
 			my $chunk = '';
-			my $n = read($pout, $chunk, 16384);
+			# 4 KB of PCM per part: the base64 JSON is then ~5.5 KB, which the
+			# deck's ~15 KB internal heap can reassemble (16 KB raw parts made a
+			# ~22 KB line and were silently dropped by the BLE reassembler).
+			my $n = read($pout, $chunk, 4096);
 			last unless defined $n && $n > 0;
 			my $b64 = MIME::Base64::encode_base64($chunk, '');
 			print {$bt} encode_json({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } }) . "\n";
@@ -3624,8 +3627,11 @@ sub bluetooth_sender() {
 		if (&ble_bridge_enabled() && $client) {
 			# Connect only when needed; the daemon keeps the link alive with
 			# auto-reconnect after that.
+			# The daemon's status is JSON with spaces (`"connected": true`), so match
+			# loosely: a strict `"connected":true` never matched, and every message
+			# re-issued the connect instead of reusing the link.
 			my $status = `$client status 2>/dev/null`;
-			unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
+			unless ($status && $status =~ /"connected"\s*:\s*true/ && $status =~ /\Q$bt_mac\E/i) {
 				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512');
 			}
 			# The client hands the JSON to the daemon as-is and the daemon writes
@@ -3661,8 +3667,10 @@ sub bluetooth_stream_open() {
 	my $tx = $embedded->{'characteristic_uuid_tx'} || $ble_uuids->{'characteristic_uuid_tx'};
 	my $client = &ble_bridge_client() or return undef;
 	return undef unless &ble_bridge_enabled() && $client;
+	# The daemon's status is JSON with spaces (`"connected": true`), so match
+	# loosely; the strict form never matched and every stream re-connected.
 	my $status = `$client status 2>/dev/null`;
-	unless ($status && $status =~ /"connected":true/ && $status =~ /\Q$bt_mac\E/i) {
+	unless ($status && $status =~ /"connected"\s*:\s*true/ && $status =~ /\Q$bt_mac\E/i) {
 		system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512');
 	}
 	my $fh;
@@ -4094,6 +4102,26 @@ sub guide_set_message() {
 	return 1;
 }
 
+sub json_from_model() {
+	# A model's reply parsed as JSON. A model call hands back Perl characters
+	# (already UTF-8 decoded), but Mojo::JSON::decode_json wants UTF-8 bytes: one
+	# em dash or curly apostrophe makes the decode die, and callers that wrap it
+	# in eval read that as "nothing". Encode to bytes first; fall back to a
+	# braced substring when the model wrapped the object in prose.
+	my ($out) = @_;
+	return undef unless defined $out && length $out;
+	my $decode = sub {
+		my ($s) = @_;
+		return undef unless defined $s && length $s;
+		my $bytes = $s;
+		utf8::encode($bytes) if utf8::is_utf8($bytes);
+		return eval { decode_json $bytes };
+	};
+	my $parsed = $decode->($out);
+	$parsed = $decode->($1) if !$parsed && $out =~ /(\{.*\})/s;
+	return $parsed;
+}
+
 sub voice_brain() {
 	# The voice assistant's brain: an utterance addressed to us that is not a
 	# plain start/stop command goes to the guide's action vocabulary, so a spoken
@@ -4125,19 +4153,32 @@ sub voice_brain() {
 			&subs::say_it($speech);
 		}
 	};
-	# the guide's own model (Configure -> Plat); without one the caller keeps the
-	# note fallback
-	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	# The guide's own model (Configure -> Plat); without one the caller keeps the
+	# note fallback. A voice turn has to answer in seconds, and the guide's chat
+	# model can be a large cloud one (gemma4:cloud measured 147 s for one turn),
+	# so the role's fast fallback is tried first - or a voice_assistant model when
+	# one is set - with the guide's model as that call's own fallback.
+	my ($model, $fallback) = &subs::ai_role_models('help_assistant');
 	return undef unless $model;
+	my $fast = &subs::setting_grabber({ app => 'mail', setting => 'voice_assistant' });
+	$fast = ($fallback && $fallback ne $model) ? $fallback : '' unless defined $fast && length $fast;
 	my %voice_verbs = map { $_ => 1 } qw/say ask done measure where_when create play_music open_app/;
 	my $system = &help::actions_prompt(\%voice_verbs) . "\n\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
-	my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
-	my $action = $out ? eval { decode_json $out } : undef;
-	if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+	my ($out) = $fast
+		? &subs::evaluation_model_call_with_fallback($fast, $model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'))
+		: &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
+	$log->info('voice: brain model ' . ($fast || $model) . ' raw ' . (defined $out ? substr($out, 0, 240) : 'undef'));
+	my $action = &json_from_model($out);
+	if ($action && ref $action eq 'HASH' && $action->{'action'}) {
+		$log->info('voice: brain action ' . $action->{'action'});
+	}
+	else {
+		$log->info('voice: brain found no action in that reply');
+	}
 	return undef unless $action && ref $action eq 'HASH' && $action->{'action'};
 	my $a = $action->{'action'};
 	# A make/create is the Guide's write path: stage a proposal, and the
