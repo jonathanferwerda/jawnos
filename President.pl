@@ -255,6 +255,20 @@ sub manager_starter() {
 		}
 	}, { name => 'device mdns sync' });
 
+	# Advertise this House machine on the LAN. An embedded device browses
+	# _jawnos-house._tcp when the homebase it was handed stops answering, so it
+	# can move to another computer/mobile/server that is actually up instead of
+	# going dark until someone runs Now Me again. The TXT carries the ports it
+	# dials (arm/coms/bestow), not just the main one. Avahi renames the instance
+	# if two machines share a name, which is fine: devices read the TXT.
+	&subs::subprocessor(sub {
+		sleep 5;
+		while (1) {
+			eval { &subs::house_advertise_supervise(); };
+			sleep 30;
+		}
+	}, { name => 'house advertise' });
+
 	# A device that has never been on WiFi cannot be named by mDNS, and the tree
 	# holds no address for it, so nothing ever connects and it stays invisible while
 	# it sits on the desk. Every JawnOS board advertises the Nordic UART service, so

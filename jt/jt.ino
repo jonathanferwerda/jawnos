@@ -469,6 +469,25 @@ String authorization;
 String homebase;
 String homebaseIP;
 String thomebaseIP;
+// The address Now Me handed this deck is the preferred machine; the active
+// addresses below may move to another House machine when it stops answering.
+static String homebase_preferredIP;
+static String thomebase_preferredIP;
+static String twshomebase_preferredIP;
+// House machines this deck can fail over to (Now Me carries the LAN list;
+// mDNS refreshes it). Kept separate from the saved Now Me profiles: the same
+// authorization pair is valid on any machine that has synced the record.
+#define HOUSE_MAX 8
+struct HouseNode { String host; int arm; int coms; int bestow; };
+static HouseNode house_nodes[HOUSE_MAX];
+static int house_node_count = 0;
+static volatile int house_switch_req = -1;
+static uint32_t house_last_scan = 0;
+static void house_maintain();
+static void house_task(void *pvParameters);
+static void house_learn_json(const String &js);
+static void house_add(const String &host, int arm, int coms, int bestow);
+static void house_remember_preferred();
 // A homebase that is unreachable - or a link that is not up yet, which is exactly
 // what a now_me push arrives into right after the deck joins - turns every
 // request into a TLS connect, and hammering it asserts inside lwip's thread/mbox
@@ -979,6 +998,9 @@ void setup() {
   //Add mutex to allow multitasking access
   xSemaphore = xSemaphoreCreateBinary();
   assert(xSemaphore);
+  // The House failover probe is a TLS round trip plus an mDNS query: core 0,
+  // never the UI loop, which applies the switch.
+  xTaskCreatePinnedToCore(house_task, "HouseTask", 12288, NULL, 1, NULL, 0);
   xSemaphoreGive( xSemaphore );
   // Serial.print("Init display id:");
 
@@ -1292,6 +1314,14 @@ void setup() {
     homebaseIP = server.arg("homebase");
     thomebaseIP = server.arg("thomebase");
     twshomebaseIP = server.arg("twshomebase");
+    // The machine the person paired us to. The active addresses may move to a
+    // fallback House machine; only these preferred ones are saved/returned to.
+    homebase_preferredIP = homebaseIP;
+    thomebase_preferredIP = thomebaseIP;
+    twshomebase_preferredIP = twshomebaseIP;
+    house_learn_json(server.arg("houses"));
+    house_remember_preferred();
+    house_last_scan = 0;
     name = server.arg("name");
     authorization = server.arg("authorization");
     long timestamp = server.arg("timestamp").toInt();
@@ -1946,6 +1976,32 @@ void loop() {
   char keyValue = 0;
   wsclient.poll();
 
+  // The House task found a live machine: move every address the deck dials onto
+  // it (HTTP, teletype, wss) and reopen the control socket. The preferred
+  // machine reclaims all of them the same way when it answers again.
+  {
+    int next = house_switch_req;
+    if (next >= 0 && next < house_node_count) {
+      house_switch_req = -1;
+      String host = house_nodes[next].host;
+      int arm = house_nodes[next].arm;
+      int bestow = house_nodes[next].bestow > 0 ? house_nodes[next].bestow : arm + 1;
+      int coms = house_nodes[next].coms > 0 ? house_nodes[next].coms : arm + 2;
+      homebase = host;
+      homebaseIP = host + ":" + String(arm);
+      thomebaseIP = host + ":" + String(bestow);
+      twshomebaseIP = host + ":" + String(coms);
+      homebase_down_until = 0;
+      buttoned_before = false;   // re-fetch the room from the machine now serving
+      deckLog("[house] now using %s:%d", host.c_str(), arm);
+      if (tauth_remote_enabled == "on" && authorization != "") {
+        wsclient.close();
+        ws_connected = 0;
+        tauth_connect();
+      }
+    }
+  }
+
   // The wss control socket follows Now Me, but a handshake can fail while the
   // radio or a TLS buffer is still coming up. Retry it while remote input is on
   // and a Now Me pair is held, instead of waiting for the next key press.
@@ -2031,6 +2087,14 @@ void loop() {
           authorization = (const char *)params["authorization"];
           twshomebaseIP = (const char *)params["twshomebase"];
           thomebaseIP = (const char *)params["thomebase"];
+          homebase_preferredIP = homebaseIP;
+          thomebase_preferredIP = thomebaseIP;
+          twshomebase_preferredIP = twshomebaseIP;
+          if (params.hasOwnProperty("houses")) {
+            house_learn_json(String((const char *)params["houses"]));
+          }
+          house_remember_preferred();
+          house_last_scan = 0;
           offset = params["offset"];
           rtc.offset = offset;
           long timestamp = params["timestamp"];
@@ -3324,6 +3388,157 @@ String https_request(String url) {
   return answer;
 }
 
+
+// ---- House machines -------------------------------------------------------
+// The deck talks to one House machine at a time. When that machine leaves the
+// LAN, this finds another computer/mobile/server that answers with the deck's
+// own Now Me pair, and moves the HTTP and wss addresses together. The stored
+// (preferred) machine always reclaims the deck when it comes back.
+static void house_add(const String &host, int arm, int coms, int bestow) {
+  if (host.length() == 0 || host == "0.0.0.0" || arm <= 0) { return; }
+  for (int i = 0; i < house_node_count; i++) {
+    if (house_nodes[i].host == host && house_nodes[i].arm == arm) {
+      if (coms > 0) { house_nodes[i].coms = coms; }
+      if (bestow > 0) { house_nodes[i].bestow = bestow; }
+      return;
+    }
+  }
+  if (house_node_count >= HOUSE_MAX) { return; }
+  house_nodes[house_node_count].host = host;
+  house_nodes[house_node_count].arm = arm;
+  house_nodes[house_node_count].coms = coms;
+  house_nodes[house_node_count].bestow = bestow;
+  house_node_count++;
+}
+
+static void house_learn_json(const String &js) {
+  // Now Me's `houses` value: [{"ip":"192.168.2.3","arm":45547,...}, ...]
+  if (js.length() < 2) { return; }
+  JSONVar list = JSON.parse(js);
+  if (JSON.typeof(list) != "array") { return; }
+  for (int i = 0; i < (int)list.length(); i++) {
+    JSONVar h = list[i];
+    if (JSON.typeof(h) != "object") { continue; }
+    String ip = (const char *)h["ip"];
+    int arm = (int)h["arm"];
+    int coms = JSON.typeof(h["coms"]) != "undefined" ? (int)h["coms"] : 0;
+    int bestow = JSON.typeof(h["bestow"]) != "undefined" ? (int)h["bestow"] : 0;
+    if (arm <= 0 && ip.length()) { arm = 45547; }
+    house_add(ip, arm, coms, bestow);
+  }
+}
+
+static void house_remember_preferred() {
+  if (homebaseIP.length() == 0) { return; }
+  String host = homebaseIP;
+  int arm = 0;
+  int split = host.lastIndexOf(':');
+  if (split > 0) {
+    arm = host.substring(split + 1).toInt();
+    host = host.substring(0, split);
+  }
+  int coms = 0;
+  int bestow = 0;
+  String ws = twshomebaseIP;
+  int wsp = ws.lastIndexOf(':');
+  if (wsp > 0) { coms = ws.substring(wsp + 1).toInt(); }
+  String bs = thomebaseIP;
+  int bsp = bs.lastIndexOf(':');
+  if (bsp > 0) { bestow = bs.substring(bsp + 1).toInt(); }
+  if (arm > 0) { house_add(host, arm, coms, bestow); }
+}
+
+static bool house_probe(const String &host, int arm) {
+  if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return false; }
+  if (host.length() == 0 || arm <= 0) { return false; }
+  String url = "https://" + host + ":" + String(arm) + "/watch/time?edt=teletype&chip_id="
+             + urlEncode(chip_id_maker()) + "&authorization=" + urlEncode(authorization)
+             + "&timestamp=" + String(rtc.getLocalEpoch() - rtc.offset);
+  WiFiClientSecure conn;
+  conn.setInsecure();
+  HTTPClient https;
+  https.setTimeout(2500);
+  if (!https.begin(conn, url)) { return false; }
+  int code = https.GET();
+  https.end();
+  return code == HTTP_CODE_OK;
+}
+
+static int house_active_index() {
+  String host = homebaseIP;
+  int arm = 0;
+  int split = host.lastIndexOf(':');
+  if (split > 0) {
+    arm = host.substring(split + 1).toInt();
+    host = host.substring(0, split);
+  }
+  if (arm <= 0) { return -1; }
+  for (int i = 0; i < house_node_count; i++) {
+    if (house_nodes[i].host == host && house_nodes[i].arm == arm) { return i; }
+  }
+  return -1;
+}
+
+static void house_scan_mdns() {
+  if (WiFi.status() != WL_CONNECTED) { return; }
+  int n = MDNS.queryService("jawnos-house", "tcp");
+  for (int i = 0; i < n; i++) {
+    String purpose = MDNS.txt(i, "purpose");
+    if (purpose != "computer" && purpose != "mobile" && purpose != "server") { continue; }
+    String host = MDNS.address(i).toString();
+    if (host == "0.0.0.0" || host.length() == 0) { host = MDNS.hostname(i); }
+    int arm = MDNS.txt(i, "arm").toInt();
+    int coms = MDNS.txt(i, "coms").toInt();
+    int bestow = MDNS.txt(i, "bestow").toInt();
+    if (arm <= 0) {
+      int main_port = MDNS.port(i);
+      if (main_port > 0) { arm = main_port + 2; }
+    }
+    house_add(host, arm, coms, bestow);
+  }
+}
+
+static void house_maintain() {
+  if (WiFi.status() != WL_CONNECTED || authorization.length() == 0) { return; }
+  bool down = ((int32_t)(millis() - homebase_down_until) < 0);
+  uint32_t wait = down ? 15000 : 300000;
+  if (house_last_scan != 0 && millis() - house_last_scan < wait) { return; }
+  house_last_scan = millis();
+  house_scan_mdns();
+  house_remember_preferred();
+  if (house_node_count == 0) { return; }
+  int active = house_active_index();
+  int preferred = -1;
+  for (int i = 0; i < house_node_count; i++) {
+    String addr = house_nodes[i].host + ":" + String(house_nodes[i].arm);
+    if (homebase_preferredIP.length() && addr == homebase_preferredIP) { preferred = i; break; }
+  }
+  bool need_preferred = (!down && preferred >= 0 && preferred != active);
+  if (!down && !need_preferred && active >= 0) { return; }
+  int order[HOUSE_MAX];
+  int n = 0;
+  if (preferred >= 0) { order[n++] = preferred; }
+  for (int i = 0; i < house_node_count; i++) {
+    if (i != preferred) { order[n++] = i; }
+  }
+  int tries = 0;
+  for (int k = 0; k < n && tries < 2; k++) {
+    int i = order[k];
+    if (i == active) { continue; }
+    tries++;
+    if (house_probe(house_nodes[i].host, house_nodes[i].arm)) {
+      house_switch_req = i;
+      return;
+    }
+  }
+}
+
+static void house_task(void *pvParameters) {
+  for (;;) {
+    house_maintain();
+    vTaskDelay(pdMS_TO_TICKS(5000));
+  }
+}
 
 void setBrightness(uint8_t value)
 {
@@ -4767,6 +4982,10 @@ void authorization_changer(String mov) {
   homebaseIP = (const char *)bm["__specs"]["homebase"];
   thomebaseIP = (const char *)bm["__specs"]["thomebase"];
   twshomebaseIP = (const char *)bm["__specs"]["twshomebase"];
+  homebase_preferredIP = homebaseIP;
+  thomebase_preferredIP = thomebaseIP;
+  twshomebase_preferredIP = twshomebaseIP;
+  house_last_scan = 0;
 
   //  room_max = bm["__specs"]["room_max"];
   room_count = bm["__specs"]["room_count"];
@@ -5605,6 +5824,12 @@ void configSave() {
   conf["homebase"] = homebase;
   conf["homebaseIP"] = homebaseIP;
   conf["twshomebaseIP"] = twshomebaseIP;
+  conf["thomebaseIP"] = thomebaseIP;
+  // The preferred House machine is what a reboot restores; the active
+  // addresses may name a temporary fallback.
+  conf["homebase_preferredIP"] = homebase_preferredIP.length() ? homebase_preferredIP : homebaseIP;
+  conf["thomebase_preferredIP"] = thomebase_preferredIP.length() ? thomebase_preferredIP : thomebaseIP;
+  conf["twshomebase_preferredIP"] = twshomebase_preferredIP.length() ? twshomebase_preferredIP : twshomebaseIP;
   conf["computer_name"] = computer_name;
   conf["brightness"] = brightnessLevel;
   conf["room_count"] = room_count;
@@ -5667,6 +5892,10 @@ void configDefaults() {
   homebaseIP = "";
   thomebaseIP = "";
   twshomebaseIP = "";
+  homebase_preferredIP = "";
+  thomebase_preferredIP = "";
+  twshomebase_preferredIP = "";
+  house_node_count = 0;
   offset = 0;
   rtc.offset = 0;
   computer_name = "";
@@ -5740,6 +5969,13 @@ void configRestore() {
     homebaseIP = (const char *)conf["homebaseIP"];
     twshomebaseIP = (const char *)conf["twshomebaseIP"];
     thomebaseIP = (const char *)conf["thomebaseIP"];
+    homebase_preferredIP = (const char *)conf["homebase_preferredIP"];
+    thomebase_preferredIP = (const char *)conf["thomebase_preferredIP"];
+    twshomebase_preferredIP = (const char *)conf["twshomebase_preferredIP"];
+    if (homebase_preferredIP.length() == 0) { homebase_preferredIP = homebaseIP; }
+    if (thomebase_preferredIP.length() == 0) { thomebase_preferredIP = thomebaseIP; }
+    if (twshomebase_preferredIP.length() == 0) { twshomebase_preferredIP = twshomebaseIP; }
+    house_remember_preferred();
     computer_name = (const char *)conf["computer_name"];
     authorization = (const char *)conf["authorization"];
     ssid = (const char *)conf["ssid"];

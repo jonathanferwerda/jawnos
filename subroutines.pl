@@ -1806,7 +1806,7 @@ sub device_wifi_reply() {
 		$server_ip = $first->{'ip'};
 	}
 	return undef unless $server_ip;
-	my $od = eval { decode_json(&subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} })) } || {};
+	my $od = eval { decode_json(&subs::embedded_operator_door($edt, $meta->{'chip_id'})) } || {};
 	my $auth = $od->{'__specs'}->{'authorization'};
 	return undef unless $auth;
 	return {
@@ -1882,7 +1882,7 @@ sub watch_reply() {
 	});
 	# The spoken half is optional: the Embedded panel's Audio replies toggle, on
 	# by default, writes audio_replies into the device's operator_door specs.
-	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $meta->{'chip_id'} }) } || {};
+	my $op = eval { decode_json &subs::embedded_operator_door($edt, $meta->{'chip_id'}) } || {};
 	my $want = $op->{'__specs'}->{'audio_replies'};
 	return if defined $want && $want eq 'off';
 	# A device on WiFi pulls one WAV instead of receiving hundreds of BLE parts;
@@ -2208,7 +2208,7 @@ sub edt_button_presser() {
 	# used to store that blanked copy: it destroyed the device's patience with
 	# the first accepted request, so every later request failed auth and fell
 	# into the wigi queue. Put the stored key back before saving the buttons.
-	my $stored = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id }) } || {};
+	my $stored = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 	$watch_settings->{'__shutup'} = $stored->{'__shutup'} if $stored->{'__shutup'};
 	my $od = encode_json $watch_settings;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $od, subsetting => $chip_id });
@@ -2252,6 +2252,13 @@ sub network_interface_reporter() {
 				$address->{$nic}->{'port'} = $ENV{PORT_AHOY};
 				$address->{$nic}->{'ws_port'} = $ENV{PORT_MSG};
 				$address->{$nic}->{'alarm_port'} = $ENV{PORT_BELL};
+				# The ports an embedded device dials. They used to be derived from
+				# `port` (+2, +3, +4), but a peer's row should carry them so a
+				# fallback machine can be named exactly even if the offsets move.
+				$address->{$nic}->{'arm_port'} = $ENV{PORT_ARM};
+				$address->{$nic}->{'bestow_port'} = $ENV{PORT_BESTOW};
+				$address->{$nic}->{'coms_port'} = $ENV{PORT_COMS};
+				$address->{$nic}->{'dock_port'} = $ENV{PORT_DOCK};
 				$address->{$nic}->{'manager'} = 'https://' . $inet[1] . ':' . $ENV{PORT_DOCK} .  '/manager';
 				$address->{$nic}->{'netmask'} = $inet[3];
 				$address->{$nic}->{'broadcast'} = $inet[5];
@@ -2701,6 +2708,10 @@ sub device_scan() {
 				$address->{$nic}->{'port'} = $ENV{PORT_AHOY};
 				$address->{$nic}->{'ws_port'} = $ENV{PORT_MSG};
 				$address->{$nic}->{'alarm_port'} = $ENV{PORT_BELL};
+				$address->{$nic}->{'arm_port'} = $ENV{PORT_ARM};
+				$address->{$nic}->{'bestow_port'} = $ENV{PORT_BESTOW};
+				$address->{$nic}->{'coms_port'} = $ENV{PORT_COMS};
+				$address->{$nic}->{'dock_port'} = $ENV{PORT_DOCK};
 				$address->{$nic}->{'manager'} = 'https://' . $inet[1] . ':' . $ENV{PORT_DOCK} .  '/manager';
 				$address->{$nic}->{'netmask'} = $inet[3];
 				$address->{$nic}->{'broadcast'} = $inet[5];
@@ -3372,6 +3383,22 @@ sub ble_mac_for_chip {
 	# across a spell where its jawn was down; a device genuinely gone still drops.
 	sub ble_presence_window() { return 7200000; }
 
+sub embedded_operator_door() {
+	# The operator_door row that carries a device's current Now Me pair. It is
+	# written by whichever House machine ran Now Me, with that machine's device
+	# class in `device`; a computer and a phone can both serve the same watch, so
+	# never filter this lookup by this machine's class - a fallback of a
+	# different class would otherwise read an empty record and deny the device.
+	# Rows rotate on every Now Me, so the newest is the current pair.
+	my ($edt, $chip_id) = @_;
+	return undef unless $edt && $chip_id;
+	my $row = &subs::db_query(
+		'select value from settings where app = ? and setting = ? and subsetting = ? order by server_time desc limit 1',
+		$edt, 'operator_door', $chip_id
+	)->hashes->[0];
+	return $row ? $row->{'value'} : undef;
+}
+
 sub ble_device_specs() {
 	# A device's __specs from its operator_door (which syncs): the durable id of
 	# the machine it was paired to, and the address that machine last handed it.
@@ -3382,11 +3409,121 @@ sub ble_device_specs() {
 	my $now = time();
 	my $c = $gb::ble_specs->{$key};
 	return $c->[1] if $c && $now - $c->[0] <= 5;
-	my $od = &subs::setting_grabber({ app => $edt || 'watch', setting => 'operator_door', subsetting => $chip_id });
+	my $od = &subs::embedded_operator_door($edt || 'watch', $chip_id);
 	my $op_d = eval { decode_json $od } || {};
 	my $specs = $op_d->{'__specs'} || {};
 	$gb::ble_specs->{$key} = [ $now, $specs ];
 	return $specs;
+}
+
+sub house_nodes_list() {
+	# The House machines an embedded device may fall back to: this machine and
+	# every peer with a LAN address, each with the manager ports a device dials.
+	# It rides in Now Me, so a device holds a usable list even when mDNS does not
+	# answer (and on a board that cannot browse mDNS at all).
+	#
+	# A device only reaches its own LAN, so when a device address is given only
+	# machines on that subnet are offered.
+	my ($device_ip) = @_;
+	my $want_net;
+	if ($device_ip && $device_ip =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/) {
+		$want_net = $1;
+	}
+	my (%seen, @nodes);
+	my $add = sub {
+		my ($ip, $port, $arm, $coms, $bestow, $name, $computer) = @_;
+		return unless $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+		return if $ip =~ /^127\./ || $seen{$ip}++;
+		if ($want_net) {
+			my $net = $ip;
+			$net =~ s/\.\d+$//;
+			return unless $net eq $want_net;
+		}
+		# The offsets are this tree's convention (main +2/+3/+4); they answer
+		# for a peer whose stored network row predates the explicit fields.
+		$arm ||= ($port ? $port + 2 : undef);
+		$bestow ||= ($port ? $port + 3 : undef);
+		$coms ||= ($port ? $port + 4 : undef);
+		return unless $arm && $arm > 0;
+		push @nodes, {
+			ip => $ip,
+			arm => $arm + 0,
+			coms => ($coms || 0) + 0,
+			bestow => ($bestow || 0) + 0,
+			name => $name || '',
+			computer => $computer || '',
+		};
+	};
+	my $config = &subs::config_reader();
+	my $local_name = $config->{'name'} || '';
+	my $addrs = &subs::network_interface_reporter();
+	foreach my $nic ( keys %{$addrs} ) {
+		my $a = $addrs->{$nic} || {};
+		$add->($a->{'ip'}, $a->{'port'}, $a->{'arm_port'}, $a->{'coms_port'}, $a->{'bestow_port'}, $local_name, &ble_manager_file());
+	}
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		my $net = eval { decode_json $rm->{'network'} } || {};
+		foreach my $nic ( keys %{$net} ) {
+			my $a = $net->{$nic} || {};
+			$add->($a->{'ip'}, $a->{'port'}, $a->{'arm_port'}, $a->{'coms_port'}, $a->{'bestow_port'}, $rm->{'manager_file'}, $rm->{'manager_file'});
+		}
+	}
+	return \@nodes;
+}
+
+sub house_advertise_command() {
+	# The argv that publishes this machine on _jawnos-house._tcp. The embedded
+	# devices browse that service when their stored homebase goes quiet; the
+	# service carries the ports they dial, because the offsets are not something
+	# a device should have to guess from the main port.
+	my $avahi = `command -v avahi-publish-service 2>/dev/null`;
+	chomp $avahi;
+	$avahi ||= '/usr/bin/avahi-publish-service' if -x '/usr/bin/avahi-publish-service';
+	return () unless $avahi;
+	my $config = &subs::config_reader();
+	my $name = $config->{'name'} || 'JawnOS';
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my $purpose = &subs::device_setter();
+	my $port = $ENV{PORT_AHOY} || $config->{'working_port'} || 45545;
+	my $mesh = '';
+	my ($db, $database) = &subs::database_grabber();
+	$mesh = $database if $database;
+	$mesh =~ s{.*/}{};
+	$mesh =~ s/\.db$//i;
+	my @txt = (
+		'purpose=' . $purpose,
+		'name=' . $name,
+		'hostname=' . $hostname,
+		'version=1',
+		'mesh=' . $mesh,
+	);
+	push @txt, 'arm=' . $ENV{PORT_ARM} if $ENV{PORT_ARM};
+	push @txt, 'coms=' . $ENV{PORT_COMS} if $ENV{PORT_COMS};
+	push @txt, 'bestow=' . $ENV{PORT_BESTOW} if $ENV{PORT_BESTOW};
+	push @txt, 'dock=' . $ENV{PORT_DOCK} if $ENV{PORT_DOCK};
+	my $computer = eval { &Manager::manager_file_maker() };
+	push @txt, 'computer=' . $computer if $computer;
+	# The instance name is what a person sees in an mDNS browser; Avahi adds a
+	# #2 itself if two machines share a name.
+	return ($avahi, '--no-reverse', '-s', 'JawnOS ' . $name . ' (' . $hostname . ')', '_jawnos-house._tcp', $port, @txt);
+}
+
+sub house_advertise_supervise() {
+	# Keep the publisher up for as long as this tree lives. A nested fork/exec is
+	# used rather than a shell background job so the avahi child dies with the
+	# supervisor (and the supervisor with President).
+	my $ppid = getppid();
+	while ( getppid() == $ppid ) {
+		my @cmd = &house_advertise_command();
+		return unless @cmd;
+		my $pid = fork();
+		if (!defined $pid) { sleep 10; next; }
+		if (!$pid) { exec @cmd; exit 1; }
+		local $SIG{TERM} = sub { kill 'TERM', $pid; exit 0; };
+		waitpid($pid, 0);
+		sleep 15;
+	}
 }
 
 sub ble_manager_file() {
@@ -3878,7 +4015,7 @@ sub ble_device_record() {
 	}
 	my $name = $data->{'name'};
 	if (!$name && !($found && $found->{'name'})) {
-		my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id });
+		my $od = &subs::embedded_operator_door($edt, $chip_id);
 		my $op_d = eval { decode_json $od } || {};
 		$name = $op_d->{'__specs'}->{'name'};
 	}
@@ -4060,8 +4197,7 @@ sub watch_room_payload() {
 	my $data = shift;
 	my $edt = $data->{'edt'} || 'watch';
 	my $chip_id = $data->{'chip_id'};
-	my $device = $data->{'device'} || &subs::device_setter();
-	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
+	my $od = &subs::embedded_operator_door($edt, $chip_id);
 	my $watch_settings = eval { decode_json $od } || {};
 	return undef unless $watch_settings->{'__specs'};
 	foreach my $k ( keys %{$watch_settings} ) {
@@ -4783,7 +4919,7 @@ sub ble_message_processor() {
 			# A board only needs the apps its own components name; the house can
 			# carry a thousand toggles, and sending them all would overflow a
 			# board's small receive queue for no benefit.
-			my $od = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+			my $od = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 			my %wanted;
 			foreach my $k ( keys %{$od} ) {
 				next if $k =~ /^__/;
@@ -4933,7 +5069,7 @@ sub ble_message_processor() {
 		# never lands (or lands with no chip) is invisible in the log. This is the
 		# one line that tells the two apart.
 		$log->info('BLE button for ' . ($chip_id || '?') . ': room ' . ($payload->{'room'} || '?') . ', button ' . ($payload->{'button'} || '?'));
-		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		my $ws = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 		if (!$ws->{'__specs'}) {
 			$log->info('BLE button for ' . ($chip_id || '?') . ': no placed settings, dropped');
 			return;
@@ -4972,7 +5108,7 @@ sub ble_message_processor() {
 		my $chip_id = $msg->{'chip_id'};
 		my $button = $payload->{'switch'} || $payload->{'button'};
 		my $state = $payload->{'state'} || '';
-		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		my $ws = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 		if (!$ws->{'__specs'} || !defined $button) {
 			$log->info('BLE switch for ' . ($chip_id || '?') . ': no placed settings, dropped');
 			return;
@@ -5006,7 +5142,7 @@ sub ble_message_processor() {
 		my $component = $payload->{'component'} || 'pot';
 		my $button = $payload->{'button'} || $payload->{'pin'};
 		my $measure = $payload->{'measure'};
-		my $ws = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
+		my $ws = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 		if (!$ws->{'__specs'} || !defined $button) {
 			$log->info('BLE measure for ' . ($chip_id || '?') . ': no placed settings, dropped');
 			return;
@@ -6347,8 +6483,7 @@ sub embedded_wigi() {
 
 	my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 	if ($watch->{'ip'}) {
-		my $s_data = { app => $edt, setting => 'operator_door', device => &subs::device_setter(), subsetting => $chip_id };
-		my $wat_set = &subs::setting_grabber($s_data);
+		my $wat_set = &subs::embedded_operator_door($edt, $chip_id);
 		my $watch_settings = eval { return decode_json $wat_set } || {};
 		my $auth = $watch_settings->{'__specs'}->{'authorization'};
 		my $author = `echo $auth | base64 --decode`;

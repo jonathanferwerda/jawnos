@@ -48,6 +48,15 @@ WiFiMulti multi;
 WebServer server(3000);
 String homebase;
 String homebaseIP;
+// The address Now Me gave this board is the preferred House machine. The active
+// address may move to another computer/mobile/server when that one stops
+// answering; the preferred one is returned to as soon as it answers again.
+String homebasePreferredIP;
+// House machines the board can fall back to. Now Me carries the LAN list (this
+// board's core has no mDNS browser), so a laptop that slept does not strand it.
+#define HOUSE_MAX 6
+String houseAddr[HOUSE_MAX];
+int houseCount = 0;
 String browser_tab_id;
 unsigned long homebaseOnline = millis();
 unsigned long lastPing = millis();
@@ -242,7 +251,15 @@ static void ble_apply_now_me(JSONVar data) {
   String name = jstr(data["name"]);
   if (name != "") { config["name"] = name; }
   String hb = jstr(data["homebase"]);
-  if (hb != "") { homebaseIP = hb; config["homebaseIP"] = hb; }
+  if (hb != "") {
+    homebaseIP = hb; config["homebaseIP"] = hb;
+    houseRememberPreferred(hb);
+  }
+  String houses = jstr(data["houses"]);
+  if (houses != "") {
+    config["houses"] = houses;
+    houseLearnJson(houses);
+  }
   String ip = jstr(data["ip"]);
   if (ip != "") { homebase = ip; config["homebase"] = ip; }
   String auth = jstr(data["authorization"]);
@@ -337,7 +354,7 @@ static void ble_apply_board_config(JSONVar ctp) {
   String auth = jstr(ctp["__specs"]["authorization"]);
   if (auth != "") { authorization = auth; config["authorization"] = auth; }
   String hb = jstr(ctp["__specs"]["homebase"]);
-  if (hb != "" && homebaseIP == "") { homebaseIP = hb; config["homebaseIP"] = hb; }
+  if (hb != "" && homebaseIP == "") { homebaseIP = hb; config["homebaseIP"] = hb; houseRememberPreferred(hb); }
   String nm = jstr(ctp["__specs"]["name"]);
   if (nm != "") { config["name"] = nm; }
   config_writer();
@@ -760,6 +777,9 @@ void setup() {
     homebaseChecked();
     homebaseIP = server.arg("homebase");
     homebase = server.arg("ip");
+    houseRememberPreferred(homebaseIP);
+    houseLearnJson(server.arg("houses"));
+    if (server.arg("houses") != "") { config["houses"] = server.arg("houses"); }
     config["authorization"] = server.arg("authorization");
     authorization = server.arg("authorization");
     config["name"] = server.arg("name");
@@ -1155,17 +1175,95 @@ void homebasePing() {
     Serial.println(https);
     if (String(alive["status"]) == "alive") {
       homebaseChecked();
+      // The preferred machine wins the moment it answers again, so the phone or
+      // laptop the board was paired to reclaims it from a temporary fallback.
+      if (homebasePreferredIP != "" && homebasePreferredIP != homebaseIP) {
+        houseAdoptIfAlive(homebasePreferredIP);
+      }
+      lastPing = millis();
+      return;
     }
-    else {
-      Serial.println("no ping");
-      homebaseOnline = 0;
+    Serial.println("no ping");
+    if (houseTryFallback()) {
+      lastPing = millis();
+      return;
     }
+    homebaseOnline = 0;
   }
   else {
     // wifi_supervise() owns reconnecting and the AP, so there is one owner.
     wifiState = "disconnected";
   }
   lastPing = millis();
+}
+
+// A house entry is "ip:arm". Add it once.
+void houseAdd(const String &ip, int arm) {
+  if (ip == "" || arm <= 0) { return; }
+  String addr = ip + ":" + String(arm);
+  for (int i = 0; i < houseCount; i++) {
+    if (houseAddr[i] == addr) { return; }
+  }
+  if (houseCount >= HOUSE_MAX) { return; }
+  houseAddr[houseCount++] = addr;
+}
+
+void houseLearnJson(const String &js) {
+  // Now Me's "houses": [{"ip":"192.168.2.3","arm":45547,...}, ...]
+  if (js.length() < 2) { return; }
+  JSONVar list = JSON.parse(js);
+  if (JSON.typeof(list) != "array") { return; }
+  for (int i = 0; i < (int)list.length(); i++) {
+    JSONVar h = list[i];
+    if (JSON.typeof(h) != "object") { continue; }
+    String ip = jstr(h["ip"]);
+    int arm = (int)jint(h["arm"]);
+    if (arm <= 0 && ip != "") { arm = 45547; }
+    houseAdd(ip, arm);
+  }
+}
+
+void houseRememberPreferred(const String &hb) {
+  if (hb == "") { return; }
+  homebasePreferredIP = hb;
+  config["homebasePreferredIP"] = homebasePreferredIP;
+  // the preferred machine is also a candidate, so a reboot with no fresh Now Me
+  // can still return to it
+  String ip = hb;
+  int split = ip.lastIndexOf(':');
+  int arm = 0;
+  if (split > 0) { arm = ip.substring(split + 1).toInt(); ip = ip.substring(0, split); }
+  houseAdd(ip, arm);
+}
+
+// Probe one address quietly, without disturbing the active homebase unless it
+// answers. Returns true and adopts it on success.
+bool houseAdoptIfAlive(const String &addr) {
+  if (addr == "" || addr == "failure") { return false; }
+  String saved = homebaseIP;
+  homebaseOnline = 1;
+  homebaseIP = addr;
+  String r = https_request("https://" + addr + "/watch/time?");
+  if (r == "failure" || r == "no ping" || r.length() < 2) {
+    homebaseIP = saved;
+    homebaseOnline = millis();
+    return false;
+  }
+  int split = addr.lastIndexOf(':');
+  homebase = (split > 0) ? addr.substring(0, split) : addr;
+  config["homebaseIP"] = addr;
+  config["homebase"] = homebase;
+  config_writer();
+  Serial.println("[house] now using " + addr);
+  return true;
+}
+
+bool houseTryFallback() {
+  for (int i = 0; i < houseCount; i++) {
+    if (houseAddr[i] == homebaseIP) { continue; }
+    if (houseAdoptIfAlive(houseAddr[i])) { return true; }
+  }
+  return false;
 }
 
 void homebaseChecked() {
@@ -1806,6 +1904,9 @@ void config_init() {
   authorization = (const char * )config["authorization"];
   homebase = String(config["homebase"]);
   homebaseIP = String(config["homebaseIP"]);
+  homebasePreferredIP = String(config["homebasePreferredIP"]);
+  if (homebasePreferredIP == "") { homebasePreferredIP = homebaseIP; }
+  houseLearnJson(String(config["houses"]));
   // JSONVar::operator bool() is true only for a JSON boolean, not for a
   // non-empty string. The old `if (config["ssid"] && config["password"])` was
   // therefore always false, so a board that rebooted read its saved WiFi (and

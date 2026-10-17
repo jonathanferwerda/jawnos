@@ -34,7 +34,10 @@ our $log = Mojo::Log->new(path => $logfile);
 sub embeddedAuthorizer($c) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
-	my $wat_set = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });;
+	# The row may have been written by a House machine of a different class
+	# (a phone for a watch paired to a laptop), so look it up by device, not by
+	# this machine's class.
+	my $wat_set = &subs::embedded_operator_door($edt, $chip_id);
 	my $watch_settings = eval { return decode_json $wat_set } || {};
 	my $rauth = $c->param('authorization');
 	return undef unless $edt && $rauth;
@@ -415,7 +418,7 @@ get '/watch/chat_grabber' => sub($c) {
 	my $timestamp = $c->param('ts');
 	my $uuid = $c->param('uuid');
 	my $chip_id = $c->param('chip_id');
-	my $wat_set = &subs::setting_grabber({ app => 'watch', setting => 'operator_door', subsetting => $chip_id });;
+	my $wat_set = &subs::embedded_operator_door($c->param('edt') || 'watch', $chip_id);
 	my $op_d = eval { return decode_json $wat_set } || {};
 	my $s = `(echo $secret) | base64 --decode`;
 	if (my $watch_settings = &embeddedAuthorizer($c)) {

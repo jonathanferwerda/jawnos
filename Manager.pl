@@ -28206,7 +28206,10 @@ sub now_me($data) {
 	my $watch_port = $ENV{PORT_ARM};
 
 	my $ws_port = $ENV{PORT_MSG};
-	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
+	# The current record may have been written by a House machine of another
+	# class; Now Me must read it, or a fallback machine would rewrite it blank.
+	my $od = &subs::embedded_operator_door($edt, $chip_id)
+		|| &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
 	my $op_d = eval { decode_json $od } || {};
 	$name = $op_d->{'__specs'}->{'name'} unless $data->{'name'};
 	my $address = &subs::network_interface_reporter();
@@ -28277,6 +28280,12 @@ sub now_me($data) {
 	$op_d->{'__shutup'}->{'patience'} = $patience;
 	$op_d->{'__specs'}->{'authorization'} = $authorization;
 
+	# A device that loses its homebase must still have a House to reach, so Now
+	# Me carries the other machines on its LAN with the ports it dials. mDNS
+	# refreshes this on the device; the list is what makes a board that cannot
+	# browse mDNS (and a device whose last Now Me predates the House) recover.
+	my $house_nodes = &subs::house_nodes_list($watch->{'homebase'} || $watch->{'ip'});
+
 	my $params = {
 		name           => $name,
 		ip             => $watch->{ip},
@@ -28302,6 +28311,8 @@ sub now_me($data) {
 		computer_name  => $computer_name,
 		twshomebase    => "$watch->{homebase}:$ENV{PORT_COMS}",
 		thomebase      => "$watch->{homebase}:$ENV{PORT_BESTOW}",
+		# encoded JSON, so it travels as one query value or one BLE field
+		houses         => encode_json($house_nodes),
 	};
 
 	my $watch_home = Mojo::URL->new("http://$watch->{ip}:$config->{port}/now_me")
