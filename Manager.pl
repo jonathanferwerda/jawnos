@@ -30330,9 +30330,13 @@ get '/manager/sync_history' => sub($c) {
 	foreach my $r ( @{$rows} ) {
 		my $recipient = $r->{'recipient'} || '';
 		my $signatorial = $r->{'signatorial'} || '';
+		# A snapshot's `signatorial` is the machine that served it and its
+		# `recipient` is the caller. A row naming us as the server is an
+		# outbound serve (the peer pulled from us); one naming us as the
+		# recipient is an inbound pull. These were the wrong way round.
 		my ($direction, $peer);
-		if ($recipient eq $me) { $direction = 'out'; $peer = $signatorial; }
-		elsif ($signatorial eq $me) { $direction = 'in'; $peer = $recipient; }
+		if ($recipient eq $me) { $direction = 'in'; $peer = $signatorial; }
+		elsif ($signatorial eq $me) { $direction = 'out'; $peer = $recipient; }
 		else { next; }
 		my $second = int(($r->{'server_time'} || 0) / 1000);
 		next if $seen{$peer . ':' . $second}++;

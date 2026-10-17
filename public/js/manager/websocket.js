@@ -414,7 +414,7 @@ function syncHistoryHtml(data) {
 		if (seen[key]) { continue; }
 		seen[key] = 1;
 		shown++;
-		var what = row.direction === 'in' ? peer + ' pulled from me' : 'pulled from ' + peer;
+		var what = row.direction === 'out' ? peer + ' pulled from me' : 'pulled from ' + peer;
 		var mark = row.state === 'failed' ? '<span class="sync_state bad" title="failed">✗</span>' : '<span class="sync_state ok" title="completed">✓</span>';
 		var size = row.size ? '<span class="sync_size" title="encrypted snapshot size">' + syncBytes(row.size) + '</span>' : '';
 		out += '<div class="sync_row"><span class="sync_time">' + clock + '</span>'
