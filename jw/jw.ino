@@ -3269,8 +3269,14 @@ static bool house_probe(const String &host, int arm) {
   https.setTimeout(2500);
   if (!https.begin(conn, url)) { return false; }
   int code = https.GET();
+  // A denial is a template, and Mojo answers it 200 with a ~130 KB body, so the
+  // status and even the content type are the same as the timestamp answer. The
+  // length is what tells them apart; never read the denial into the heap.
+  int size = https.getSize();
+  if (code != HTTP_CODE_OK || size <= 0 || size > 4096) { https.end(); return false; }
+  String body = https.getString();
   https.end();
-  return code == HTTP_CODE_OK;
+  return body.indexOf("timestamp") >= 0;
 }
 
 static int house_active_index() {

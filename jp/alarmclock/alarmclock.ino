@@ -1244,7 +1244,10 @@ bool houseAdoptIfAlive(const String &addr) {
   homebaseOnline = 1;
   homebaseIP = addr;
   String r = https_request("https://" + addr + "/watch/time?");
-  if (r == "failure" || r == "no ping" || r.length() < 2) {
+  // A denial is a template answered 200 with a ~130 KB body; the timestamp is
+  // the one answer that proves the machine accepted the pair. `https_request`
+  // keeps the short answer only, so a long body is a refusal too.
+  if (r == "failure" || r == "no ping" || r.indexOf("timestamp") < 0 || r.length() > 4096) {
     homebaseIP = saved;
     homebaseOnline = millis();
     return false;
