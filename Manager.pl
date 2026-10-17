@@ -7068,18 +7068,46 @@ sub remote_upgrade($c,$params) {
 					my $url = $remote_machine->{'manager'} . '/manager/backup/confirm';
 					my $form_data = {
 						signatorial => &subs::signatorial_designer(),
+						# A windowed (gimme/deep) pull is not proof that this machine holds
+						# everything before the window, so it must not advance the peer's
+						# watermark past that point.
+						gimme => ($gimme ? 1 : 0),
 						backup_confirm => encode_json $body
 					};
 					#	&subs::tunnel_stopper({ signatorial => $signatorial });
 					my $res = $remote_machine->{'ua'}->post($url => form => $form_data)->result;
-					if ($res->is_success) {
-						&subs::db_query('delete from backups where ost < ? and recipient = ? and signatorial = ? and reason=?', $body->{'server_time'}, $signatorial, $remote_machine->{'signatorial'}, 'remote_upgraded' );
-						# Record the snapshot that actually moved: this row may predate the
-						# size fix and still carry this machine's whole database (~180 MB).
-						&subs::db_update('backups', { server_time => $body->{'server_time'}, reason => 'remote_upgraded', size => $body->{'size'} }, {
-							recipient => $signatorial,
-							signatorial => $remote_machine->{'signatorial'},
-						});
+					if ($res && $res->is_success) {
+						# A gimme/deep pull is a repair window, not a watermark: deleting
+						# the old watermark or moving it to the window's end would claim
+						# this machine holds everything before a point it never read.
+						if (!$gimme) {
+							&subs::db_query('delete from backups where ost < ? and recipient = ? and signatorial = ? and reason=?', $body->{'server_time'}, $signatorial, $remote_machine->{'signatorial'}, 'remote_upgraded' );
+							# Record the snapshot that actually moved: this row may predate the
+							# size fix and still carry this machine's whole database (~180 MB).
+							&subs::db_update('backups', { server_time => $body->{'server_time'}, reason => 'remote_upgraded', size => $body->{'size'} }, {
+								recipient => $signatorial,
+								signatorial => $remote_machine->{'signatorial'},
+							});
+							# The puller's own watermark is what tells the reconnector it has
+							# caught up (and what it hands the peer as `since`). A cold pull
+							# has no row to update yet, so create one; without it the peer
+							# looked new every tick and pulled the whole database again.
+							my $seen = &subs::db_query('select count(*) as c from backups where reason = ? and recipient = ? and signatorial = ?', 'remote_upgraded', $signatorial, $remote_machine->{'signatorial'})->hashes->[0] || {};
+							unless ($seen->{'c'}) {
+								&subs::db_insert('backups', {
+									timestamp => ($body->{'timestamp'} || &subs::rightNow()),
+									server_time => $body->{'server_time'},
+									reason => 'remote_upgraded',
+									recipient => $signatorial,
+									signatorial => $remote_machine->{'signatorial'},
+									destination => $body->{'database'},
+									enc_file => $body->{'archive_path'},
+									size => $body->{'size'},
+									warranty => &subs::ago_calc('-20m', &subs::rightNow()),
+									uuid => &subs::random_string_creator(25)
+								});
+							}
+						}
 						&subs::sync_job_step($job, 'confirm', { state => 'done', current => 1, total => 1 });
 						$sync->done('done', 'snapshot merged');
 						&subs::sync_backoff_clear($remote_machine->{'signatorial'});
@@ -7121,6 +7149,14 @@ post '/manager/backup/confirm' => sub($c) {
 	my $backup_data = $backup_confirm->{'backup_data'};
 	my $returner = $backup_data;
 	if ($backup_data->{'server_time'}) {
+		# This is the *completed* snapshot. It was built with reason
+		# `remote_update` (the in-flight name), and storing it under that name
+		# meant backup_now's watermark query - which looks for `remote_upgraded`
+		# - never found it. Every pull then looked like a cold peer and re-exported
+		# the whole database, holding the single export lock while it did and
+		# telling every other machine "already exporting". Store the confirmation
+		# under the name the watermark actually reads.
+		$backup_data->{'reason'} = 'remote_upgraded' if (!$c->param('gimme') && ($backup_data->{'reason'} || '') eq 'remote_update');
 		my $signatorial = &subs::signatorial_designer();
 		my $defunct_backups = &subs::db_query('select * from backups where recipient = ? and signatorial = ? and ost < ?', $backup_data->{'recipient'}, $signatorial, $backup_confirm->{'ld_server_time'})->hashes;
 		foreach my $defb ( @{$defunct_backups} ) {
@@ -14910,17 +14946,10 @@ sub merge_database($c,$configuration) {
 				&subs::sync_job_update($sync_job, { phase => 'merge', current => 0, total => scalar @u }) if $sync_job;
 				foreach my $q ( @u ) {
 					next if grep { $q eq $_ } @{$gb::forbidden->{'tables'}};
-					my $query;
-					if ($configuration->{'remote'}->{'manager'} ) {
-						$query = $tdb->query('select * from ' . $q );#. ' where server_time >= ?', $last_update_time);
-					}
-					else {
-						$query = $tdb->query('select * from ' . $q);
-					}
-					# Count first, then stream the snapshot's rows. A full convergence
-					# carries a whole table (110k appointments); ->hashes would hold all
-					# of it in memory on top of the merge, which is what killed the
-					# worker and made the pull restart forever.
+					# Count first, then read the snapshot's rows in bounded batches. A
+					# full convergence carries a whole table (110k appointments), so
+					# ->hashes on everything would hold it all in memory on top of the
+					# merge; the batch reader below keeps one page at a time.
 					my $results_size = ($tdb->query('select count(*) as c from ' . $q)->hash->{'c'} || 0) + 0;
 					if ($results_size > 0) {
 						$count++;
@@ -14942,9 +14971,44 @@ sub merge_database($c,$configuration) {
 						my $last_alert = &subs::rightNow();
 						my $job_alert = $last_alert;
 						my $start_time = $last_alert;
+						# Book-keeping for the audit trail: a table can report "N/N done"
+						# while an insert silently failed inside the eval below. Count what
+						# the snapshot held, what the cursor actually yielded, and what
+						# landed, so a short merge names itself in the log instead of
+						# looking complete.
+						my $rows_read = 0;
+						my $rows_inserted = 0;
+						my $rows_updated = 0;
+						my @insert_errors;
+						# Read the snapshot in bounded batches instead of holding one cursor
+						# across the loop. Every row does app-database work (select, insert,
+						# sync_job writes); if any of those finishes the snapshot's statement
+						# - which is what the log showed: every table read exactly one row,
+						# the rest silently lost - a materialised batch is immune. It also
+						# keeps a whole table's rows out of memory.
+						my @merge_batch;
+						my $merge_rowid = 0;
+						my $merge_all;
+						my $next_row = sub {
+							unless (scalar @merge_batch) {
+								return undef if $merge_all;
+								my $rows = eval { $tdb->query('select rowid as __merge_rowid, * from ' . $q . ' where rowid > ? order by rowid limit 500', $merge_rowid)->hashes };
+								if (!$rows) {
+									# a table without a rowid (a view) is read whole, once
+									$merge_all = 1;
+									$rows = $tdb->query('select * from ' . $q)->hashes;
+								}
+								@merge_batch = @{$rows || []};
+								return undef unless scalar @merge_batch;
+							}
+							my $row = shift @merge_batch;
+							$merge_rowid = delete $row->{'__merge_rowid'} if exists $row->{'__merge_rowid'};
+							return $row;
+						};
 						for (my $n = 0; $n < $results_size; $n++ ) {
-							my $r = $query->hash;
+							my $r = $next_row->();
 							last unless $r;
+							$rows_read++;
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							$percentage = sprintf("%.2f", $n / $results_size * 100);
@@ -15016,7 +15080,7 @@ sub merge_database($c,$configuration) {
 												my $now = $merged->{$k}->{'navigation'}->{'toggle'} // '-';
 												&subs::log_writer('utility merge: ' . substr($k, 0, 8) . ' navigation ' . $was . '->' . $now . ' from ' . substr($r->{'signatorial'} // '?', 0, 8)) if $was ne $now;
 											}
-											&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jmerged, server_time => &subs::rightNow() });
+											&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jmerged, server_time => &subs::rightNow(), sync => 1 });
 										}
 										next;
 									}
@@ -15049,11 +15113,15 @@ sub merge_database($c,$configuration) {
 													server_time => $r->{'server_time'},
 													uuid => &subs::random_string_creator(20),
 													device => $device,
-													subsetting => $r->{'subsetting'}
+													subsetting => $r->{'subsetting'},
+													sync => 1
 												});
 											};
 										}
-										$universal_settings->{$r->{'app'}} = &subs::settings_grabber({ app => $r->{'app'}, device => $device });
+										# Do not reload the app's whole settings map for every row: a
+										# pull carries hundreds of changed settings, and each reload
+										# copies every value of that app (some are multi-megabyte
+										# blobs). One load per app is enough to answer `unique`.
 										next;
 									}
 								#	push @cache_bucket_updateables, $r->{'app'} unless grep { $_ eq $r->{'app'} } @cache_bucket_updateables;
@@ -15175,9 +15243,13 @@ sub merge_database($c,$configuration) {
 								}
 								unless ( grep { ($_->{'uuid'} eq $r->{'uuid'} ) && $_->{'table'} eq $q } @{$deletions} ) {
 									if (scalar @resulters == 0) {
-										eval { &subs::db_insert($q,$r)};
+										my $inserted = eval { &subs::db_insert($q,$r)};
+										if ($@) { push @insert_errors, ($r->{'uuid'} || '?') . ': ' . ($@ =~ s/\s+/ /gr); }
+										elsif ($inserted) { $rows_inserted++; }
+										else { push @insert_errors, ($r->{'uuid'} || '?') . ': refused'; }
 									}
 									else {
+										$rows_updated++ if $h->{'server_time'} < $r->{'server_time'};
 										eval { &subs::db_update($q,$r, { uuid => $r->{'uuid'} } ) } unless $h->{'server_time'} >= $r->{'server_time'};
 									}
 									if ($q eq 'appointments' && (!$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
@@ -15185,9 +15257,11 @@ sub merge_database($c,$configuration) {
 									}
 								}
 							}
-							$query->finish if $query && $query->can('finish');
+							my $short = $rows_read < $results_size ? ' SHORT' : '';
+							my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
+							&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
 							if ($sync_job) {
-								&subs::sync_job_step($sync_job, 'merge:' . $q, { state => 'done', current => $results_size, total => $results_size });
+								&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => $results_size, total => $results_size, note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
 							}
 						}
 					}

@@ -757,6 +757,12 @@ sub subprocessor() {
 		if ($@) { warn "Worker $$: Failed to send 'stop' state: $@" }
 
 		# If the core subroutine crashed, re-throw its error now so Mojolicious knows it failed
+		if ($sub_error) {
+			# A sync that dies mid-merge used to leave only a job stuck in
+			# "running" and no reason anywhere. Name the sub and the die.
+			eval { $log->error('subprocessor ' . ($params->{'name'} || '?') . ' pid ' . $$ . ' failed: ' . ($sub_error =~ s/\s+/ /gr)) } if $log;
+			eval { &subs::log_writer('subprocessor ' . ($params->{'name'} || '?') . ' failed: ' . ($sub_error =~ s/\s+/ /gr)) };
+		}
 		die $sub_error if $sub_error;
 	};
 	# A job that may outlive the prefork heartbeat (a remote export or merge
@@ -6910,6 +6916,13 @@ sub setting_setter() {
 	my $timestamp = $settings->{'timestamp'} || &rightNow();
 	my $browser_tab_id = $settings->{'browser_tab_id'};
 	my $dev = $settings->{'device'} || &device_setter();
+	# A row arriving from a peer's snapshot is a mirror of a change that already
+	# happened somewhere else. It must be written, but its side effects - a
+	# websocket reload, a BLE toggle push, a task re-registration, a name-change
+	# broadcast that opens the app window - belong to the machine where the
+	# person made the change. Replaying them here is what opened Libro Chequing
+	# on every machine and flipped jobs off during a merge.
+	my $sync = $settings->{'sync'} ? 1 : 0;
 	my ($db,$database) = &database_grabber();
 	my $server_time = $settings->{'server_time'} || &rightNow();
 	if ($setting eq 'name_change') {
@@ -6936,8 +6949,10 @@ sub setting_setter() {
 
 			}
 		}
-		&Websocket::send('server', { console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
-		&Websocket::send('server', { console => 'appointmentGrabber(\'' . $value . '\',\'' . $timestamp .'\',\'ws\');'});
+		unless ($sync) {
+			&Websocket::send('server', { console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
+			&Websocket::send('server', { console => 'appointmentGrabber(\'' . $value . '\',\'' . $timestamp .'\',\'ws\');'});
+		}
 		$app = $value;
 	}
 	if ($setting eq 'pos') {
@@ -6973,13 +6988,13 @@ sub setting_setter() {
 			&subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y'}, $bub);
 		}
 	}
-	if ($setting eq 'pos' || $setting eq 'mab') {
+	if (($setting eq 'pos' || $setting eq 'mab') && !$sync) {
 		&Websocket::send('tab', { console => 'configurationReloader(\'' . $app . '\');' });
 	}
 	if ($setting eq 'phone') {
 		$value =~ s/\D+//gi;
 	}
-	if ($setting eq 'web') {
+	if ($setting eq 'web' && !$sync) {
 		if ($value =~ /[0-9A-Za-z]/) {
 			&Websocket::send('server', { console => '$(\'.app_act[app="' . $app . '"][type="web"]\').attr(\'web\', \'' . $value . '\').show();' });
 		}
@@ -6995,11 +7010,11 @@ sub setting_setter() {
 		&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y'}, $buc);
 		&subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y'}, $bub);
 	}
-	if ($setting eq 'toggle' && $settings->{'source'} eq 'panel') {
+	if ($setting eq 'toggle' && $settings->{'source'} eq 'panel' && !$sync) {
 		&intelligent_automation_toggle({ app => $app });
 
 	}
-	if ($setting eq 'toggle') {
+	if ($setting eq 'toggle' && !$sync) {
 		# The wrapper draws this enabler through icon_path, so the pushed update has
 		# to as well: the /images/decipherable on/off pictures are only the fallback,
 		# and pushing them here dropped a started or stopped appointment back to the
@@ -7043,7 +7058,7 @@ sub setting_setter() {
 	});
 	if ($setting eq 'colour') {
 		unless ($settings->{'silent'} eq 'yes') {
-			&Websocket::send('server', { console => '$(\'.top_navbar[app="' . $app . '"]\').css({\'background-color\':\'' . $value . '\'});' });
+			&Websocket::send('server', { console => '$(\'.top_navbar[app="' . $app . '"]\').css({\'background-color\':\'' . $value . '\'});' }) unless $sync;
 			# refresh the stored clothesline so the manager view picks up the new colour
 			&hang_to_dry();
 		}
@@ -7055,18 +7070,18 @@ sub setting_setter() {
 		&cache_delete({ app => 'me', context => 'pseudonyms' });
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
-		&Websocket::send('server', { console => 'jawnosReloadIcons();' });
+		&Websocket::send('server', { console => 'jawnosReloadIcons();' }) unless $sync;
 	}
-	elsif ($setting eq 'tasks') {
+	elsif ($setting eq 'tasks' && !$sync) {
 		&subs::task_checker($app);
 	}
 	# these run after the new value is the one on record: the schedule is built
 	# from what the settings say, not from what they said
-	if ($setting eq 'nightly_evaluation_days' || $setting eq 'evaluation_cadence') {
+	if (($setting eq 'nightly_evaluation_days' || $setting eq 'evaluation_cadence') && !$sync) {
 		# the cadence or the days changed under a standing wish: the schedule follows
 		&subs::evaluation_schedule_arrange($app) if $app;
 	}
-	if ($setting eq 'evaluation_machine') {
+	if ($setting eq 'evaluation_machine' && !$sync) {
 		# the machine changed: this queue follows right away, the other machines
 		# when boot or their next settings sync brings them the change
 		&subs::nightly_evaluation_reconcile();
@@ -9642,6 +9657,12 @@ sub db_insert() {
 	# is for a statement that would not run at all, and it stays bounded.
 	until ($success || $count >= 25) {
 		my $results = eval { return $db->insert($table, $data); };
+		if ($@) {
+			# A refused insert used to vanish here: the caller's eval caught the
+			# die, the row simply did not arrive, and a merge reported a table as
+			# complete. Name the table and the reason instead.
+			&log_writer('db_insert ' . $table . ' failed: ' . ($@ =~ s/\s+/ /gr));
+		}
 		if ($results && $results->rows) {
 			$success = $results;
 		}
