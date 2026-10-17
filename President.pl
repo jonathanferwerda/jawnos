@@ -1070,7 +1070,9 @@ sub utility_functions() {
 		# subs::remote_relay_queue_run), so a machine with no browser can still
 		# hand a change on to its peers over the same rail the browser uses.
 		$gb::timeouts->{'remote_relay'}->{'subroutine'} = sub {
-			eval { &subs::remote_relay_queue_run(); };
+			my $n = 0;
+			eval { $n = &subs::remote_relay_queue_run(); };
+			return $n ? "relayed $n" : undef;
 		};
 		# Battery sampling for the start menu's System view. This task used to
 		# clock the utility worker's own CPU time - after a ten-million-iteration
