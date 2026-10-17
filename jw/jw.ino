@@ -149,6 +149,10 @@ static volatile bool voiceShipping = false;
 // gives up after a long wait (see loop()).
 static volatile bool voiceAwaitingReply = false;
 static volatile uint32_t voiceAwaitingSince = 0;
+// Set on the first frame of speech (the wake phrase) and held until that
+// utterance is over: the tilt glance's 5 s must not put the screen back down
+// between hearing "hey jawn" and the capture committing.
+static volatile uint32_t voiceWakeHoldUntil = 0;
 // True while the panel has been darkened because a send is holding the chip
 // awake: the screen is off, but the loop keeps running so a touch brings it back
 // and the payload finishes in the background.
@@ -1855,7 +1859,8 @@ void loop() {
   wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
   // a spoken command keeps the watch awake until it is captured: without this the
   // screen timeout could doze us mid-sentence and the clip would be lost
-  if (voiceRecording) {
+  if (voiceRecording || voiceShipping
+      || (voiceWakeHoldUntil && (int32_t)(millis() - voiceWakeHoldUntil) < 0)) {
     buttonMillis = millis();
   }
   // A spoken request is answered in a few seconds, not instantly: hold the screen
@@ -4706,7 +4711,7 @@ static void voiceListenTask(void *pv) {
         // the clip's timestamp is when the utterance STARTED - the wake word, not
         // the command word after a pause. Stamp the first speech frame and keep
         // it, so a pause between "jawn do" and the command does not move it.
-        if (!have_onset) { have_onset = true; onset_ts = timestamp_maker(); }
+        if (!have_onset) { have_onset = true; onset_ts = timestamp_maker(); voiceWakeHoldUntil = millis() + 15000; }
         if (++speech_run < VOICE_ONSET_FRAMES) { continue; }
         Serial.println("[voice] speech (vad)");
         if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), VOICE_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
@@ -4787,12 +4792,17 @@ static void voiceListenTask(void *pv) {
       // and never ingests them.
       f.close();
       voiceRecording = false;
+      voiceWakeHoldUntil = 0;
+      // listening has finished: acknowledge with the high-then-low chime, even
+      // when there was no command to ship
+      if (wake_mode) { voice_ack(); }
       voice_stream_abort();
       Serial.printf("[voice] no command after %s; clip dropped\n", voice_mode_name ? voice_mode_name : "?");
     }
     else if (recording && !isRecording && !isPlaying) {
       f.close();
       voiceRecording = false;
+      voiceWakeHoldUntil = 0;
       // listening has finished: acknowledge with the high-then-low chime
       if (wake_mode && pcm_bytes > 0) { voice_ack(); }
       voice_stream_end();   // encode the tail and let the last part go out
@@ -4838,6 +4848,7 @@ static void voiceListenTask(void *pv) {
     else if (f) {
       f.close();   // a capture cut short by a manual record is discarded
       voiceRecording = false;
+      voiceWakeHoldUntil = 0;
     }
     if (voiceOneShot) { break; }             // a serial "voice" capture is one utterance
     if (!voiceCaptureEnabled) { break; }     // the setting was turned off
@@ -4846,6 +4857,7 @@ static void voiceListenTask(void *pv) {
   mic->close();
   free(buf);
   voiceRecording = false;
+  voiceWakeHoldUntil = 0;
   voiceListening = false;
   if (voiceDbg) { Serial.printf("[voice] task end int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   vTaskDelete(NULL);
@@ -6345,7 +6357,8 @@ static void wrist_look_monitor() {
   // the glance back to the normal timeout, whose deadline loop() keeps rebasing
   // while voiceRecording/voiceAwaitingReply are set; after the answer the full
   // configured timeout starts again.
-  if (voiceRecording || voiceShipping || voiceAwaitingReply) {
+  if (voiceRecording || voiceShipping || voiceAwaitingReply
+      || (voiceWakeHoldUntil && (int32_t)(millis() - voiceWakeHoldUntil) < 0)) {
     wrist_look_watch = false;
     buttonMillis = millis();
     return;

@@ -2347,11 +2347,18 @@ void loop() {
     sayFetchReq = nullptr;
     if (req) {
       sayFetchRunning = true;
-      if (xTaskCreatePinnedToCore(sayWifiFetchTask, "SayFetch", 12288, req, 1, NULL, 0) != pdPASS) {
-        delete req;
-        sayFetchRunning = false;
-        deckLog("%s", "[voice] WiFi fetch task could not start");
-      }
+      // Fetch on this task, not a new one: the deck's internal heap is too
+      // fragmented to guarantee a 12 KB task stack (the fetch task failed to
+      // start, which is what left every spoken answer as text only), and a
+      // PSRAM stack panics in the TLS path. The download is one short LAN GET.
+      String url = *req;
+      delete req;
+      https_download(FFat, url, "/reply.wav");
+      File f = FFat.open("/reply.wav");
+      if (f && f.size() > 44) { sayWifiReady = true; }
+      if (f) { f.close(); }
+      deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
+      sayFetchRunning = false;
     }
   }
   if (sayWifiReady && !isRecording && !audio.isRunning()) {
@@ -6842,8 +6849,14 @@ static inline bool voice_ack_playing() {
 }
 
 static void voice_ack() {
-  if (audio.isRunning()) { return; }   // something else owns the speaker
-  if (!voice_ack_file()) { return; }
+  if (audio.isRunning()) {
+    deckLog("%s", "[voice] ack skipped (speaker busy)");
+    return;   // something else owns the speaker
+  }
+  if (!voice_ack_file()) {
+    deckLog("%s", "[voice] ack file failed");
+    return;
+  }
   voiceAckUntil = millis() + 2000;
   audio.setVolume(volumeLevel);
   audio.connecttoFS(FFat, VOICE_ACK_PATH);
@@ -7004,22 +7017,8 @@ static void say_audio_add(JSONVar d) {
 }
 
 // Fetch a WiFi reply WAV the server announced. The URL was handed over from
-// loop() (the BLE message task) through sayFetchReq; the download runs off the
-// UI task, and loop() plays the file when it lands.
-static void sayWifiFetchTask(void *pv) {
-  String* req = (String *)pv;
-  String url = req ? *req : String();
-  delete req;
-  if (url.length()) {
-    https_download(FFat, url, "/reply.wav");
-    File f = FFat.open("/reply.wav");
-    if (f && f.size() > 44) { sayWifiReady = true; }
-    if (f) { f.close(); }
-    deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
-  }
-  sayFetchRunning = false;
-  vTaskDelete(NULL);
-}
+// loop() (the BLE message task) through sayFetchReq; the download runs inline in
+// loop() (see the sayFetchPending block) and the file is played when it lands.
 
 // The panel's voice_trigger names the model to run; anything we have no model for
 // ('off', or a phrase still to be trained) leaves the listener disarmed. A
@@ -7259,6 +7258,9 @@ static void deckVoiceListenTask(void *pv) {
       // a clip cut short by a manual record, or a wake phrase with no command
       // behind it, is dropped rather than shipped: a near-silent clip is what the
       // transcribers turn into a stock phrase, and the guide then answers nobody
+      // -- but the listening still finished, so still give the chime (unless the
+      // microphone was taken away mid-capture)
+      if (!aborted && wake_mode) { voice_ack(); }
       deckLog("[voice] clip dropped (%s)", aborted ? "mic taken" : "no command");
     }
     // the clip is written and away (or dropped): the screen may time out again
