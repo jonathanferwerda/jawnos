@@ -3084,6 +3084,10 @@ void https_download(fs::FS &fs, String url, String filename) {
   url = url_maker(url);
   Serial.println("In the https download");
   Serial.println(url);
+  // Start from an empty file: FILE_APPEND is used below so binary bytes are
+  // written with their exact length, but appending a new reply onto an old one
+  // would leave the WAV's data chunk pointing at the previous clip.
+  fs.remove(filename.c_str());
   connexion -> setInsecure();
   if (connexion) {
     {
@@ -3139,7 +3143,10 @@ String chip_id_maker() {
 String url_maker(String url) {
   String chip_id = chip_id_maker();
   long timestamp = timestamp_maker();
-  url = url + "&edt=watch&chip_id=" + chip_id + "&authorization=" + authorization + "&timestamp=" + timestamp;
+  // The token is base64 and may carry '+', '/', or '=', so escape it: the
+  // route decoder turns an unescaped '+' into a space and the token stops
+  // matching (the t-deck has always done this).
+  url = url + "&edt=watch&chip_id=" + chip_id + "&authorization=" + urlEncode(authorization) + "&timestamp=" + timestamp;
   return url;
 }
 
@@ -4516,16 +4523,16 @@ static void say_label_show(const String &t) {
   }
 }
 
-// ---- the acknowledgment chime -------------------------------------------
-// A quick two-note figure (E6 then A5, the reverse of the old rising pair),
-// played when the capture ends rather than when the wake phrase is first heard.
-// The watch's speaker is its own I2S device, so this plays while the PDM
-// microphone keeps reading. It deliberately does not raise isPlaying: that
-// would stop the listener and cut the command short.
-#define VOICE_ACK_FREQ1 1319
-#define VOICE_ACK_FREQ2 880
-#define VOICE_ACK_TONE1_MS 65
-#define VOICE_ACK_TONE2_MS 95
+// ---- the acknowledgment chimes ------------------------------------------
+// The opening chime is the closing pair reversed: A5 then E6 (low, then high).
+// It plays as soon as the wake phrase commits, and the closing chime (E6 then
+// A5) plays when the capture ends. The watch's speaker is its own I2S device,
+// so this plays while the PDM microphone keeps reading. It deliberately does
+// not raise isPlaying: that would stop the listener and cut the command short.
+#define VOICE_ACK_FREQ_HIGH 1319
+#define VOICE_ACK_FREQ_LOW 880
+#define VOICE_ACK_HIGH_MS 65
+#define VOICE_ACK_LOW_MS 95
 #define VOICE_ACK_GAP_MS 12
 #define VOICE_ACK_AMP 7000
 #define VOICE_ACK_RATE 16000
@@ -4533,6 +4540,7 @@ static void say_label_show(const String &t) {
 static volatile bool voiceAckPlaying = false;
 
 static void voice_ack_task(void *pv) {
+  bool wake = (bool)(uintptr_t)pv;
   AudioOutputIf *codec = watch.getAudioOutput();
   if (!codec || !codec->open(16, 1, VOICE_ACK_RATE)) {
     voiceAckPlaying = false;
@@ -4540,9 +4548,12 @@ static void voice_ack_task(void *pv) {
     return;
   }
   codec->setVolume(volumeLevel);
-  const uint32_t seg1 = VOICE_ACK_RATE * VOICE_ACK_TONE1_MS / 1000;
+  // reverse the pair for the wake: A5 (95 ms) then E6 (65 ms)
+  const uint32_t seg1 = VOICE_ACK_RATE * (wake ? VOICE_ACK_LOW_MS : VOICE_ACK_HIGH_MS) / 1000;
   const uint32_t gap = VOICE_ACK_RATE * VOICE_ACK_GAP_MS / 1000;
-  const uint32_t seg2 = VOICE_ACK_RATE * VOICE_ACK_TONE2_MS / 1000;
+  const uint32_t seg2 = VOICE_ACK_RATE * (wake ? VOICE_ACK_HIGH_MS : VOICE_ACK_LOW_MS) / 1000;
+  const float freq1 = wake ? VOICE_ACK_FREQ_LOW : VOICE_ACK_FREQ_HIGH;
+  const float freq2 = wake ? VOICE_ACK_FREQ_HIGH : VOICE_ACK_FREQ_LOW;
   const uint32_t frames = seg1 + gap + seg2;
   const uint32_t edge = VOICE_ACK_RATE / 200;   // 5 ms fade, so it does not click
   int16_t chunk[256];
@@ -4554,8 +4565,8 @@ static void voice_ack_task(void *pv) {
       float v = 0.0f;
       uint32_t local = 0, len = 0;
       float freq = 0.0f;
-      if (at < seg1) { local = at; len = seg1; freq = VOICE_ACK_FREQ1; }
-      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = VOICE_ACK_FREQ2; }
+      if (at < seg1) { local = at; len = seg1; freq = freq1; }
+      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = freq2; }
       if (len) {
         float env = 1.0f;
         if (local < edge) { env = (float)local / (float)edge; }
@@ -4572,14 +4583,14 @@ static void voice_ack_task(void *pv) {
   vTaskDelete(NULL);
 }
 
-static void voice_ack() {
+static void voice_ack(bool wake) {
   if (isPlaying || isRecording || voiceAckPlaying) { return; }
   voiceAckPlaying = true;
-  if (xTaskCreatePinnedToCore(voice_ack_task, "AckTask", 3072, NULL, 2, NULL, 1) != pdPASS) {
+  if (xTaskCreatePinnedToCore(voice_ack_task, "AckTask", 3072, (void *)(wake ? 1 : 0), 2, NULL, 1) != pdPASS) {
     voiceAckPlaying = false;
     return;
   }
-  Serial.println("[voice] ack chime");
+  Serial.println(wake ? "[voice] wake chime" : "[voice] ack chime");
 }
 
 static void voiceListenTask(void *pv) {
@@ -4721,6 +4732,10 @@ static void voiceListenTask(void *pv) {
         rec_ms = 0;
         silence_ms = 0;
         voiceRecording = true;
+        // answer the wake word at once: the opening pair is the closing pair
+        // reversed (A5 then E6), so the person knows the phrase landed before
+        // they speak the command
+        if (wake_mode) { voice_ack(true); }
         voice_clip_ts = have_onset ? (long)onset_ts : timestamp_maker();
         // The floor is fixed for this capture: the room does not change while the
         // person is speaking, and one that moved mid-sentence would cut it short.
@@ -4795,7 +4810,7 @@ static void voiceListenTask(void *pv) {
       voiceWakeHoldUntil = 0;
       // listening has finished: acknowledge with the high-then-low chime, even
       // when there was no command to ship
-      if (wake_mode) { voice_ack(); }
+      if (wake_mode) { voice_ack(false); }
       voice_stream_abort();
       Serial.printf("[voice] no command after %s; clip dropped\n", voice_mode_name ? voice_mode_name : "?");
     }
@@ -4804,7 +4819,7 @@ static void voiceListenTask(void *pv) {
       voiceRecording = false;
       voiceWakeHoldUntil = 0;
       // listening has finished: acknowledge with the high-then-low chime
-      if (wake_mode && pcm_bytes > 0) { voice_ack(); }
+      if (wake_mode && pcm_bytes > 0) { voice_ack(false); }
       voice_stream_end();   // encode the tail and let the last part go out
       if (pcm_bytes > 0) {
         // hold the screen on until the Guide answers

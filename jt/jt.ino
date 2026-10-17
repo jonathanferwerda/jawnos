@@ -6805,33 +6805,41 @@ static void voice_dc_block(int16_t *s, int n) {
   }
 }
 
-// A short two-note chime the listener gives when a capture ends. The panel
-// can be asleep or turned away, and the orange ring is only visible up close. The
-// file is written once and reused, the way speakerSelfTest's tone is.
+// The two acknowledgment chimes. The closing one is a quick high-then-low pair
+// (E6 then A5); the opening one is the same pair reversed (A5 then E6), played
+// as soon as the wake phrase commits. The files are written once and reused, the
+// way speakerSelfTest's tone is.
 #define VOICE_ACK_PATH "/chime_hi_lo.wav"
+#define VOICE_ACK_WAKE_PATH "/chime_lo_hi.wav"
 #define VOICE_ACK_FREQ1 1319      // E6
-#define VOICE_ACK_FREQ2 880       // A5, a quick high-then-low pair
+#define VOICE_ACK_FREQ2 880       // A5
 #define VOICE_ACK_TONE1_MS 65
 #define VOICE_ACK_TONE2_MS 95
 #define VOICE_ACK_GAP_MS 12
 #define VOICE_ACK_AMP 7000
 
-static bool voice_ack_file() {
-  File check = FFat.open(VOICE_ACK_PATH);
+static bool voice_ack_file(bool wake) {
+  const char *path = wake ? VOICE_ACK_WAKE_PATH : VOICE_ACK_PATH;
+  File check = FFat.open(path);
   if (check) {
     uint32_t have = check.size();
     check.close();
     if (have >= 44 + 1000) { return true; }
-    FFat.remove(VOICE_ACK_PATH);   // a dud from a full filesystem
+    FFat.remove(path);   // a dud from a full filesystem
   }
-  if (!create_wav_header_on_flash(VOICE_ACK_PATH, MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
+  if (!create_wav_header_on_flash(path, MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
     return false;
   }
-  File f = FFat.open(VOICE_ACK_PATH, FILE_APPEND);
+  File f = FFat.open(path, FILE_APPEND);
   if (!f) { return false; }
-  const uint32_t seg1 = MIC_I2S_SAMPLE_RATE * VOICE_ACK_TONE1_MS / 1000;
+  // the wake chime swaps the notes but keeps each note's own length
+  const uint32_t tone1_ms = wake ? VOICE_ACK_TONE2_MS : VOICE_ACK_TONE1_MS;
+  const uint32_t tone2_ms = wake ? VOICE_ACK_TONE1_MS : VOICE_ACK_TONE2_MS;
+  const float freq1 = wake ? VOICE_ACK_FREQ2 : VOICE_ACK_FREQ1;
+  const float freq2 = wake ? VOICE_ACK_FREQ1 : VOICE_ACK_FREQ2;
+  const uint32_t seg1 = MIC_I2S_SAMPLE_RATE * tone1_ms / 1000;
   const uint32_t gap = MIC_I2S_SAMPLE_RATE * VOICE_ACK_GAP_MS / 1000;
-  const uint32_t seg2 = MIC_I2S_SAMPLE_RATE * VOICE_ACK_TONE2_MS / 1000;
+  const uint32_t seg2 = MIC_I2S_SAMPLE_RATE * tone2_ms / 1000;
   const uint32_t frames = seg1 + gap + seg2;
   const uint32_t edge = MIC_I2S_SAMPLE_RATE / 200;   // 5 ms fade, so it does not click
   int16_t chunk[256];
@@ -6844,8 +6852,8 @@ static bool voice_ack_file() {
       float v = 0.0f;
       uint32_t local = 0, len = 0;
       float freq = 0.0f;
-      if (at < seg1) { local = at; len = seg1; freq = VOICE_ACK_FREQ1; }
-      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = VOICE_ACK_FREQ2; }
+      if (at < seg1) { local = at; len = seg1; freq = freq1; }
+      else if (at >= seg1 + gap) { local = at - seg1 - gap; len = seg2; freq = freq2; }
       if (len) {
         float env = 1.0f;
         if (local < edge) { env = (float)local / (float)edge; }
@@ -6859,7 +6867,7 @@ static bool voice_ack_file() {
     done += n;
   }
   f.close();
-  finalize_wav_sizes(VOICE_ACK_PATH, written, 1);
+  finalize_wav_sizes(path, written, 1);
   return written > 0;
 }
 
@@ -6870,20 +6878,20 @@ static inline bool voice_ack_playing() {
   return voiceAckUntil && (int32_t)(millis() - voiceAckUntil) < 0;
 }
 
-static void voice_ack() {
+static void voice_ack(bool wake) {
   if (audio.isRunning()) {
     deckLog("%s", "[voice] ack skipped (speaker busy)");
     return;   // something else owns the speaker
   }
-  if (!voice_ack_file()) {
+  if (!voice_ack_file(wake)) {
     deckLog("%s", "[voice] ack file failed");
     return;
   }
   voiceAckUntil = millis() + 2000;
   audio.setVolume(volumeLevel);
-  audio.connecttoFS(FFat, VOICE_ACK_PATH);
+  audio.connecttoFS(FFat, wake ? VOICE_ACK_WAKE_PATH : VOICE_ACK_PATH);
   audio.setVolume(volumeLevel);
-  deckLog("%s", "[voice] ack chime");
+  deckLog("%s", wake ? "[voice] wake chime" : "[voice] ack chime");
 }
 
 // The orange ring the watch draws while a capture is in flight: the answer that
@@ -7226,6 +7234,8 @@ static void deckVoiceListenTask(void *pv) {
         deck_voice_ts = have_onset ? (long)onset_ts : rightNow();
         end_floor = voice_end_floor();
         voiceRecording = true;   // loop() holds the screen awake and rings the border
+        // answer the wake word at once: A5 then E6, the reverse of the closing pair
+        if (wake_mode) { voice_ack(true); }
         deckLog("[voice] speech (%s), recording", voice_mode_name);
       }
       // keep the frame (16 kHz mono); the compressor folds it to 8 kHz when it ships
@@ -7278,7 +7288,7 @@ static void deckVoiceListenTask(void *pv) {
         f.close();
         finalize_wav_sizes(VOICE_CAPTURE_PATH, pcm_bytes, 1);
         // listening has finished: acknowledge with the high-then-low chime
-        if (wake_mode) { voice_ack(); }
+        if (wake_mode) { voice_ack(false); }
         deckLog("[voice] clip %u bytes ts=%ld -> bridge", (unsigned)pcm_bytes, (long)deck_voice_ts);
         // Compact it first: ffmpeg reads IMA ADPCM WAV natively, so the link
         // carries a quarter of the bytes and the server reads an identical file.
@@ -7300,7 +7310,7 @@ static void deckVoiceListenTask(void *pv) {
       // transcribers turn into a stock phrase, and the guide then answers nobody
       // -- but the listening still finished, so still give the chime (unless the
       // microphone was taken away mid-capture)
-      if (!aborted && wake_mode) { voice_ack(); }
+      if (!aborted && wake_mode) { voice_ack(false); }
       deckLog("[voice] clip dropped (%s)", aborted ? "mic taken" : "no command");
     }
     // the clip is written and away (or dropped): the screen may time out again

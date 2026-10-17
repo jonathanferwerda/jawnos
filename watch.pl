@@ -68,23 +68,23 @@ sub embeddedAuthorizer($c) {
 }
 
 get '/watch/reply_audio' => sub($c) {
-	# A WiFi device pulls the answer here instead of taking it in BLE parts.
-	# embeddedAuthorizer is the same Now Me pair every /watch route uses; the id
-	# is unguessable and the file is one-shot (deleted once the body is sent).
-	if (my $watch_settings = &embeddedAuthorizer($c)) {
-		my $id = $c->param('id') || '';
-		return $c->rendered(400) unless $id =~ /^[A-Za-z0-9]{16,40}$/;
-		my $path = &subs::home('~/.president/reply_' . $id . '.wav');
-		return $c->rendered(404) unless -s $path;
-		$c->res->headers->content_type('audio/wav');
-		$c->res->headers->header('Cache-Control' => 'no-store');
-		$c->on(finish => sub { unlink $path });
-		$c->res->content->asset(Mojo::Asset::File->new(path => $path));
-		$c->rendered(200);
-	}
-	else {
-		$c->rendered(403);
-	}
+	# A WiFi device pulls the answer here instead of taking it in BLE parts. The
+	# id is the capability: 32 random characters, handed to the device on its
+	# authenticated BLE link, and the file is one-shot (deleted once the body is
+	# sent). Do not also require the Now Me pair here. Now Me rotates that pair on
+	# every push, and a device that missed a rotation still has a valid old one
+	# for only an hour; the reply fetch then answered 403 and the answer stayed
+	# silent on both the watch and the t-deck. The id is unguessable and this
+	# route serves nothing else, so possession of it is enough.
+	my $id = $c->param('id') || '';
+	return $c->rendered(400) unless $id =~ /^[A-Za-z0-9]{16,40}$/;
+	my $path = &subs::home('~/.president/reply_' . $id . '.wav');
+	return $c->rendered(404) unless -s $path;
+	$c->res->headers->content_type('audio/wav');
+	$c->res->headers->header('Cache-Control' => 'no-store');
+	$c->on(finish => sub { unlink $path });
+	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+	$c->rendered(200);
 };
 
 get '/watch/time' => sub($c) {
