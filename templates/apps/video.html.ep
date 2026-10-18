@@ -679,9 +679,19 @@
 				$('#<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
 			}
 			function <%= $miss %>VolumeTo(level) {
+				level = Math.max(0, Math.min(1, level));
+<% if ($source eq 'music') { %>
+				// the interface owns the level: move its slider through the same handler
+				// a person would, so the thumb, the mute icon and the element agree
+				var slider = $('#music_volume');
+				if (slider.length && typeof musicVolumeApply == 'function') {
+					slider.val(level).trigger('input');
+					return;
+				}
+<% } %>
 				var v = document.getElementById('<%= $id %>');
 				if (!v) { return; }
-				v.volume = Math.max(0, Math.min(1, level));
+				v.volume = level;
 				if (v.volume > 0) { v.muted = false; }
 			}
 			// Seek at most once a frame: a trackpad or a finger sends a stream of
@@ -713,6 +723,11 @@
 				return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
 			}
 			function <%= $miss %>VolumeLevel() {
+<% if ($source eq 'music') { %>
+				if ($('#music_volume').length && typeof master_volume != 'undefined') {
+					return music_muted ? 0 : master_volume;
+				}
+<% } %>
 				var v = document.getElementById('<%= $id %>');
 				if (!v) { return 0; }
 				return v.muted ? 0 : (isNaN(v.volume) ? 1 : v.volume);
@@ -751,7 +766,7 @@
 				<%= $miss %>Touch.x = t[0].clientX;
 				<%= $miss %>Touch.y = t[0].clientY;
 				<%= $miss %>Touch.time = v.currentTime || 0;
-				<%= $miss %>Touch.volume = v.muted ? 0 : (isNaN(v.volume) ? 1 : v.volume);
+				<%= $miss %>Touch.volume = <%= $miss %>VolumeLevel();
 				<%= $miss %>Touch.axis = '';
 				<%= $miss %>Touch.moved = false;
 			});
