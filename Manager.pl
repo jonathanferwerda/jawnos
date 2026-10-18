@@ -6391,6 +6391,10 @@ get '/manager/backup_serve' => sub($c) {
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
+	if ($log) {
+		my $marker_tail = `tail -c 300 "$path" 2>/dev/null`;
+		$log->error('backup serve: ' . $path . ' size=' . ((-s $path) || 0) . ' marker=' . (index($marker_tail, $universal_splitter) >= 0 ? 1 : 0));
+	}
 	# A remote backup's archive is a one-shot temp under ~/.president, made for
 	# this pull; delete it once the body is on the wire rather than leave it for
 	# the next boot's ~/.president wipe. Durable backups live beside the database
