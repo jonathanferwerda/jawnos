@@ -1068,6 +1068,56 @@ sub file_response_cache_headers($c, $file, $cache_control) {
 	return &file_response_headers($c, $file, $cache_control);
 }
 
+# Pump a sealed file to the client a chunk at a time, so a large video starts
+# playing after the 16 KB probe instead of after the whole file is decrypted and
+# copied. Content-Length is known (the ciphertext length, which is exactly what
+# the old path served for nopad), so this is a plain body, not chunked encoding.
+# Only the in-process ciphers reach here; the openssl fallback and PDFs keep the
+# buffered path.
+sub stream_sealed_file($c, $job, $file, $cache_control) {
+	my $spec = $job->{'spec'};
+	my $mode = $spec->{'family'} eq 'ctr' ? &subs::note_ctr_mode($spec) : &subs::note_cbc_mode($spec, 1);
+	my $stream = eval { $mode->start_decrypt($job->{'key'}, $job->{'iv'}) };
+	return 0 unless $stream;
+
+	my $name = $file;
+	$name =~ s{.*/}{};
+	$name =~ s/\.enc$//i;
+	utf8::decode($name) if !utf8::is_utf8($name);
+	$name = &quote($name);
+	$name = Encode::encode('UTF-8', $name) if eval { require Encode; 1 };
+
+	$c->res->code(200);
+	$c->res->headers->content_type('application/x-download');
+	$c->res->headers->content_disposition('attachment;filename=' . $name);
+	$c->res->headers->accept_ranges('bytes');
+	$c->res->headers->content_length($job->{'total'});
+	&file_response_headers($c, $file, $cache_control);
+
+	my $container = $job->{'container'};
+	my ($offset, $end, $step) = (0, length($container) - 16, 1024 * 1024);
+	my $emit;
+	$emit = sub {
+		if ($offset >= $end) { $c->write(''); return }
+		my $take = $offset + $step > $end ? $end - $offset : $step;
+		my $plain = eval { $stream->add(substr($container, 16 + $offset, $take)) };
+		if (!defined $plain) {
+			$c->app->log->error('sealed stream: ' . ($@ // 'decrypt failed'));
+			$c->write('');
+			return;
+		}
+		$offset += $take;
+		if ($offset >= $end) {
+			my $tail = eval { $stream->finish };
+			$plain .= $tail if defined $tail && length $tail;
+			$c->write($plain, sub { $c->write('') });
+		}
+		else { $c->write($plain, $emit) }
+	};
+	$emit->();
+	return 1;
+}
+
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
@@ -1247,7 +1297,17 @@ sub rock_and_roll($c) {
 				my $fd = $ft->checktype_contents($_[0]);
 				return ($fd ne 'application/octet-stream' || ($file =~ /webm/i)) ? $fd : undef;
 			};
-			my $opened = &subs::sealed_file_open($file, \@secrets, \@encryption_standards, 1, $inspect, $range);
+			# A whole-file request for a big sealed file streams: the key is known
+			# after the prefix probe, so the body can start before it is all decrypted.
+			my $want_stream = (!$range && !$c->param('duty') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i && (-s $file || 0) >= 2 * 1024 * 1024) ? 1 : 0;
+			my $opened = &subs::sealed_file_open($file, \@secrets, \@encryption_standards, 1, $inspect, $range, $want_stream);
+			if ($opened && $opened->{'stream'}) {
+				if (&stream_sealed_file($c, $opened, $file, 'private, no-cache')) { return }
+				# the stream could not start: fall back to the buffered body
+				my $data = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
+				$c->render_file(data => $data) if defined $data && length $data;
+				return;
+			}
 			if ($opened && $opened->{'unsatisfiable'}) {
 				$c->res->code(416);
 				$c->res->headers->content_range('bytes */' . $opened->{'total'});

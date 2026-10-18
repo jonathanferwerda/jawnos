@@ -71,6 +71,26 @@ for my $std (@standards) {
 	my $stripped = subs::sealed_file_open($enc, ['selftest-secret'], [$std], 0, $inspect);
 	if (!$stripped || $stripped->{'data'} ne $plain) { $ok = 0; $why ||= 'padding strip' }
 
+	# the streaming path: the same container pumped out in 1 MiB chunks
+	if (subs::note_cipher_spec($std)) {
+		my $job = subs::sealed_file_open($enc, ['selftest-secret'], [$std], 1, $inspect, undef, 1);
+		if (!$job || !$job->{'stream'}) { $ok = 0; $why ||= 'stream open' }
+		else {
+			my $spec = $job->{'spec'};
+			my $mode = $spec->{'family'} eq 'ctr' ? subs::note_ctr_mode($spec) : subs::note_cbc_mode($spec, 1);
+			my $stream = $mode->start_decrypt($job->{'key'}, $job->{'iv'});
+			my $container = $job->{'container'};
+			my ($offset, $end, $step, $out) = (0, length($container) - 16, 1024 * 1024, '');
+			while ($offset < $end) {
+				my $take = $offset + $step > $end ? $end - $offset : $step;
+				$out .= $stream->add(substr($container, 16 + $offset, $take));
+				$offset += $take;
+			}
+			$out .= $stream->finish;
+			if ($out ne $raw) { $ok = 0; $why ||= 'stream body' }
+		}
+	}
+
 	# range decryption against the same byte stream rock_and_roll serves
 	for my $r (@ranges) {
 		my ($start, $len) = @{$r};

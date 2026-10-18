@@ -6679,9 +6679,12 @@ sub note_open_slice {
 # Open a sealed file, remembering the secret/standard that opened it. $range is
 # an optional [ start, length ] (length undef means to the end). Returns a hash:
 # data, secret, standard, verdict, total, start, length; or { unsatisfiable }.
+# With $stream set (and no range, nopad, an in-process cipher and a non-PDF
+# verdict) it returns { stream => 1, ct, spec, key, iv, total, ... } instead of
+# the body, so the caller can pump the plaintext out a chunk at a time.
 our %sealed_file_memo;
 sub sealed_file_open {
-	my ($in_path, $secrets, $standards, $nopad, $inspect, $range) = @_;
+	my ($in_path, $secrets, $standards, $nopad, $inspect, $range, $stream) = @_;
 	my $id = &sealed_file_identity($in_path);
 	my $container = eval { &read_file($in_path) };
 	return undef unless defined $container && length $container;
@@ -6697,6 +6700,23 @@ sub sealed_file_open {
 		$sealed_file_memo{$id} = { secret => $cand->{'secret'}, standard => $cand->{'standard'} };
 	}
 	my $spec = &note_cipher_spec($cand->{'standard'});
+	if ($stream && !$range && $nopad && $spec && ($cand->{'verdict'} // '') !~ /pdf/) {
+		return undef unless substr($container, 0, 8) eq 'Salted__' && length($container) > 16;
+		my $salt = substr($container, 8, 8);
+		my $material = &note_key_material($cand->{'secret'}, $salt, $spec);
+		return undef unless $material;
+		return {
+			stream => 1,
+			container => $container,
+			secret => $cand->{'secret'},
+			standard => $cand->{'standard'},
+			verdict => $cand->{'verdict'},
+			spec => $spec,
+			key => $material->{'key'},
+			iv => $material->{'iv'},
+			total => length($container) - 16,
+		};
+	}
 	my $result = { secret => $cand->{'secret'}, standard => $cand->{'standard'}, verdict => $cand->{'verdict'} };
 	if ($range && $spec && $nopad) {
 		my $total = length($container) - 16;
