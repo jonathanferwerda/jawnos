@@ -7620,6 +7620,10 @@ get '/manager/sync_rows' => sub ($c) {
 		&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => ($status eq 'done' ? 'done' : 'failed'), progress => 100 });
 		return $status;
 	}
+	# The snapshot path is deliberate for a full migration and a windowed deep
+	# pull. Anything else reaching here is a regression and the expensive path:
+	# name the reason, since the job note only says 'waiting for a snapshot'.
+	&subs::log_writer('remote upgrade: snapshot path sync_version=' . ($params->{'sync_version'} || 0) . ' full=' . ($full ? 1 : 0) . ' gimme=' . (defined $gimme && length $gimme ? $gimme : '-') . ' peer=' . ($remote_signatorial || '?'));
 	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
