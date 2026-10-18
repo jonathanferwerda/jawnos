@@ -7912,15 +7912,15 @@ post '/manager/nfc/read' => sub($c) {
 	my $response = { status => 'unknown' };
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(25);
 	$c->param('uuid' => $uuid );
-	&subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-		&remote_relay_request($c, { dissemination => 'yes' });
-	}, { name => 'nfc remote relay' });
-	# A relayed copy is a peer's copy of the tap: it may refresh the tag's serials,
-	# but it must never run the start/stop here. The action runs once on the
-	# machine that read the tag; its appointment row reaches the mesh as data.
-	my $relayed = ($c->param('relay_id') || $c->param('remoted') eq 'yes' || $c->param('dissemination') eq 'yes' || $c->param('source_signatorial')) ? 1 : 0;
-	if ($relayed) { $c->render(json => { status => 'relayed' }); return; }
+	# A relayed copy is a peer's copy of the tap. It carries the reader's action
+	# (nfc_actions, keyed by the message uuid), so it applies the same start or
+	# stop the reading machine chose instead of recomputing one from its own,
+	# possibly unsynced, toggle state. Non-stop actions write under the tap uuid,
+	# so every copy names the same row and the mesh converges on it rather than
+	# collecting duplicates.
+	my $relayed = ($c->param('relay_id') || ($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes' || $c->param('source_signatorial')) ? 1 : 0;
+	my $relayed_actions = ($relayed && $c->param('nfc_actions')) ? (eval { decode_json $c->param('nfc_actions') } || {}) : {};
+	my $actions = {};
 	my $msg = eval { return decode_json $jmessage } || [];
 
 	foreach my $message ( @{$msg} ) {
@@ -7940,52 +7940,64 @@ post '/manager/nfc/read' => sub($c) {
 				$response->{'serials'} = $n->{'serials'};
 			} else {
 				if (1 == 1 || grep { $_ eq $serial } @{$n->{'serials'}}) {
-					my $type = $n->{'control'};
-
-					my $tog = &subs::appt_toggle_checker($app);
-					if ($type eq 'start' || $type eq 'record') {
-						# The house keeps one tag per app, and the same tag is the stop:
-						# a tap while the app's session is open closes it (the stop names
-						# that session below, so it never sweeps another app's rows).
-						# With nothing open the tap starts as usual.
-						if ($tog eq 'on') {
-							$type = 'stop';
-							$tog = 'off';
-						}
-						else {
-							$tog = 'on';
-						}
+					my ($type,$target);
+					if ($relayed) {
+						my $action = $relayed_actions->{$message->{'uuid'}} || {};
+						$type = $action->{'type'};
+						$target = $action->{'target'};
+						# a stop with no named session has nothing to close, and the
+						# unnamed fallback could close a different, stale row here
+						$type = undef if $type && $type eq 'stop' && !$target;
 					}
-					elsif ($type eq 'command') {
-						if ($tog eq 'on') {
-							if ($settings->{'kill'}) {
-								$type = 'kill';
+					else {
+						$type = $n->{'control'};
+						my $tog = &subs::appt_toggle_checker($app);
+						if ($type eq 'start' || $type eq 'record') {
+							# The house keeps one tag per app, and the same tag is the stop:
+							# a tap while the app's session is open closes it (the stop names
+							# that session below, so it never sweeps another app's rows).
+							# With nothing open the tap starts as usual.
+							if ($tog eq 'on') {
+								$type = 'stop';
 								$tog = 'off';
 							}
 							else {
-								$tog = 'off';
-								$type = 'stop';
+								$tog = 'on';
 							}
 						}
-						else {
-							$tog = 'on';
+						elsif ($type eq 'command') {
+							if ($tog eq 'on') {
+								if ($settings->{'kill'}) {
+									$type = 'kill';
+									$tog = 'off';
+								}
+								else {
+									$tog = 'off';
+									$type = 'stop';
+								}
+							}
+							else {
+								$tog = 'on';
+							}
 						}
+						# A stop names the session the header shows (the newest open row),
+						# never the tag/message uuid. Every other action uses the tap uuid,
+						# which travels with the relay so every machine writes one row.
+						$target = ($type eq 'stop') ? &subs::open_session_uuid($nfcs->{'app'}) : $uuid;
 					}
 
-
-					$response->{'status'} = $nfcs->{'app'} . ' ' . $type;
-					if ($benign ne 'on') {
-						$n->{'taps'} += 1;
-						# A stop names the session the header shows (the newest open row),
-						# never the tag/message uuid, which matched no session and made
-						# every machine choose a different row to close.
-						my $target = ($type eq 'stop') ? &subs::open_session_uuid($nfcs->{'app'}) : undef;
-						&appointment_writer($c, {
-							app => $nfcs->{'app'},
-							type => $type,
-							timestamp => $timestamp,
-							uuid => $target
-						});
+					if ($type) {
+						$response->{'status'} = $nfcs->{'app'} . ' ' . $type;
+						if ($benign ne 'on') {
+							$n->{'taps'} += 1;
+							$actions->{$message->{'uuid'}} = { type => $type, target => $target } unless $relayed || ($type eq 'stop' && !$target);
+							&appointment_writer($c, {
+								app => $nfcs->{'app'},
+								type => $type,
+								timestamp => $timestamp,
+								uuid => $target
+							});
+						}
 					}
 				}
 			}
@@ -7993,6 +8005,16 @@ post '/manager/nfc/read' => sub($c) {
 			&subs::setting_setter({ app => $nfcs->{'app'}, setting => 'nfc', value => $jn });
 		}
 	}
+	# the actions are known now, so a peer can apply exactly these; a benign read
+	# relays an empty map and acts nowhere. The map rides the relay explicitly:
+	# $c->param writes a combined copy that remote_relay_request does not read.
+	my $relay_actions = $relayed ? $c->param('nfc_actions') : encode_json $actions;
+	my $relay_extra = { dissemination => 'yes' };
+	$relay_extra->{'nfc_actions'} = $relay_actions if defined $relay_actions;
+	&subs::subprocessor(sub {
+    Mojo::IOLoop->reset;
+		&remote_relay_request($c, $relay_extra);
+	}, { name => 'nfc remote relay' });
 	$c->render(json => $response);
 };
 
