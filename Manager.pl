@@ -7304,6 +7304,9 @@ sub sync_rows_batch {
 	my $batch = eval { decode_sereal($plain) };
 	return (undef, 'the batch would not decode') unless ref $batch eq 'HASH';
 	return (undef, $batch->{'error'} || 'the peer refused the batch') unless $batch->{'ok'};
+	# The sealed response is what crossed the wire; record it so a v3 pull's size is
+	# visible in `backups.size` and the job note, the way a snapshot's size was.
+	$batch->{'wire_bytes'} = length($res->body // '');
 	return ($batch, undef);
 }
 
@@ -7383,6 +7386,7 @@ sub sync_rows_pull {
 	my $table_total = scalar @ordered;
 	my $count = 0;
 	my $watermark = 0;
+	my $wire = 0;
 	my $failed;
 	foreach my $table (@ordered) {
 		my $cut = (exists $plan->{$table} && defined $plan->{$table}) ? $plan->{$table} : $default_cut;
@@ -7400,6 +7404,7 @@ sub sync_rows_pull {
 			last;
 		}
 		$watermark = $first->{'server_time'} || $watermark if !$watermark;
+		$wire += $first->{'wire_bytes'} || 0;
 		my $total = $first->{'total'} || 0;
 		next unless $total;
 		$count++;
@@ -7417,6 +7422,7 @@ sub sync_rows_pull {
 				@queue = @{ $batch->{'rows'} || [] };
 				$cursor = $batch->{'next'} || '';
 				$done = $batch->{'done'} ? 1 : 0;
+				$wire += $batch->{'wire_bytes'} || 0;
 				$fetched += scalar @queue;
 				&subs::sync_job_step($job, 'merge:' . $table, { current => $fetched, total => $total });
 			}
@@ -7441,7 +7447,7 @@ sub sync_rows_pull {
 	# next tick. Written only after every table finished, so a short pull retries.
 	if (!$params->{'gimme'} && $watermark) {
 		&subs::db_query('delete from backups where ost < ? and recipient = ? and signatorial = ? and reason = ?', $watermark, $signatorial, $remote_signatorial, 'remote_upgraded');
-		&subs::db_update('backups', { server_time => $watermark, reason => 'remote_upgraded', size => 0 }, {
+		&subs::db_update('backups', { server_time => $watermark, reason => 'remote_upgraded', size => $wire }, {
 			recipient => $signatorial,
 			signatorial => $remote_signatorial,
 		});
@@ -7474,7 +7480,7 @@ sub sync_rows_pull {
 		&subs::sync_backoff_clear($remote_signatorial);
 	}
 	&subs::sync_job_step($job, 'merge', { state => 'done', current => 1, total => 1 });
-	$sync->done('done', 'rows merged');
+	$sync->done('done', 'rows merged ' . &subs::data_size($wire));
 	return 'done';
 }
 
@@ -16137,6 +16143,9 @@ sub merge_finish {
 	}
 }
 
+# Merge an encrypted snapshot: the full-migration / deep-gimme / v2 path. A normal
+# v3 delta never gets here - `sync_rows_pull` feeds the same merge_table_rows and
+# merge_finish directly from the row batches.
 sub merge_database($c,$configuration) {
 	&update_database($c);
 	my $filename = $configuration->{'file'};

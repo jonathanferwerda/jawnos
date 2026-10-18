@@ -5379,6 +5379,10 @@ sub backup_registry_prune() {
 	sub DESTROY { my $self = shift; $self->release; }
 }
 
+# The encrypted SQLite snapshot is the archive / migration / v2 path now. A normal
+# delta between peers runs the v3 row stream (`Manager::sync_rows_pull` and the
+# `/manager/sync_rows` route), which shares merge_table_rows/merge_finish and never
+# builds this temporary database.
 sub backup_now() {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
