@@ -7622,8 +7622,16 @@ get '/manager/sync_rows' => sub ($c) {
 	}
 	# The snapshot path is deliberate for a full migration and a windowed deep
 	# pull. Anything else reaching here is a regression and the expensive path:
-	# name the reason, since the job note only says 'waiting for a snapshot'.
-	&subs::log_writer('remote upgrade: snapshot path sync_version=' . ($params->{'sync_version'} || 0) . ' full=' . ($full ? 1 : 0) . ' gimme=' . (defined $gimme && length $gimme ? $gimme : '-') . ' peer=' . ($remote_signatorial || '?'));
+	# name the reason, in manager.log (the in-app log is a small, racy ring and a
+	# forked pull can lose its entry there), since the job note only says
+	# 'waiting for a snapshot'.
+	my $why_snapshot = 'sync_version=' . ($params->{'sync_version'} || 0) . ' full=' . ($full ? 1 : 0) . ' gimme=' . (defined $gimme && length $gimme ? $gimme : '-') . ' plan=' . (ref $params->{'plan'} eq 'HASH' ? scalar(keys %{$params->{'plan'}}) : 'none') . ' peer=' . ($remote_signatorial || '?');
+	if ($subs::logfile) {
+		open(my $why_fh, '>>', $subs::logfile);
+		print $why_fh &subs::rightNow() . " remote upgrade: snapshot path $why_snapshot\n";
+		close $why_fh;
+	}
+	&subs::log_writer('remote upgrade: snapshot path ' . $why_snapshot);
 	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
