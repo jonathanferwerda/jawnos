@@ -5928,12 +5928,11 @@ sub sync_table_above {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
-# The caller's plan: table => since. `0` means a full table (a count or sum
-# divergence that a delta cannot close); a max means pull only what is newer.
-# A peer that holds fewer rows (an offline device) is still pulled when its
-# fingerprint differs, because it may hold a row nobody else has; the union is
-# what makes the House one picture. The merge dedupes and the peer catches up on
-# its own next tick.
+# The caller's plan: table => since. `0` means a full table; a timestamp means
+# pull only what is newer. Watermark first: rows above our newest are always a
+# delta, and the full read is for a table we have not reconciled in full yet
+# (`seen->{full}` records that one full read). A peer that is behind and was
+# already read in full is skipped rather than copied again on every write.
 sub sync_plan {
 	my ($mine, $theirs, $above, $seen) = @_;
 	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
@@ -5957,32 +5956,36 @@ sub sync_plan {
 		my $seen_count = (ref $s eq 'HASH') ? ($s->{'count'} || 0) : 0;
 		my $seen_sum = (ref $s eq 'HASH') ? ($s->{'sum'} || 0) : 0;
 		my $seen_max = (ref $s eq 'HASH') ? ($s->{'max'} || 0) : 0;
-		next if ref $s eq 'HASH'
+		my $seen_full = (ref $s eq 'HASH' && $s->{'full'}) ? 1 : 0;
+		next if ref $s eq 'HASH' && $seen_full
 			&& $seen_count == $bc
 			&& $seen_sum == $bs
 			&& $seen_max == $bm;
 		my $sel = $above->{$t};
 		my $above_count = (ref $sel eq 'HASH') ? ($sel->{'count'} || 0) : -1;
-		my $above_sum = (ref $sel eq 'HASH') ? ($sel->{'sum'} || 0) : -1;
 		my $since;
-		# A strict forward delta is safe when the peer's change since the last
-		# picture we reconciled is exactly its rows above our newest row: then
-		# we are missing exactly those rows and nothing older. Any other
-		# divergence (an offline device with a row nobody else saw, a replaced
-		# row, a count that moved without the sum moving) needs the full table,
-		# because a time window cannot name the row that is missing.
-		my $delta_count = $bc - $seen_count;
-		my $delta_sum = $bs - $seen_sum;
-		if ($bm > $am && $above_count > 0
-			&& $delta_count == $above_count
-			&& $delta_sum == $above_sum) {
+		# Watermark first: rows above our newest are always a forward delta.
+		if ($bm > $am && $above_count > 0) {
 			$since = $am;
 		}
+		# A table we have already read in full, on a peer that is behind or level,
+		# has nothing new for us. An update to a row we hold is not a reason to
+		# copy 110k rows again.
+		elsif ($seen_full && $bc <= $ac && $bm <= $am) {
+			next;
+		}
+		# No full reconciliation yet (first contact, or a delta that left old rows
+		# behind): read the table once. The flag then makes the cheap paths above
+		# the rule.
+		elsif (!$seen_full) {
+			$since = 0;
+		}
+		# Its newest is recent: a bounded window covers rows written a few seconds
+		# below our max by a concurrent writer, without the full table.
+		elsif ($bm >= $am - 600000) {
+			$since = $am - 600000;
+		}
 		else {
-			# A full table is the only safe way to find a row an offline peer
-			# made and nobody else saw. It is read once: `seen` is recorded only
-			# after a pull that actually finished, so the next tick measures the
-			# peer's change against this baseline instead of re-reading all of it.
 			$since = 0;
 		}
 		my $key = ($t eq 'settings_durable') ? 'settings' : $t;

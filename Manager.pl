@@ -6782,7 +6782,11 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
 	$up_flag ||= '';
 	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
-	if ($up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
+	# A live owner blocks for longer than any merge: the old ten-minute bound
+	# let a second full pull start while the first was still merging 110k rows.
+	# A bare 'running' (no pid) keeps the short bound.
+	my $up_bound = $up_live ? 1800000 : 600000;
+	if ($up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + $up_bound > &subs::rightNow()) {
 		$c->render('text' => 'already running');
 		$c->rendered;
 		return;
@@ -6815,8 +6819,13 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		gimme => $gimme,
 		full => $full,
 		remote_signatorial => $remote_signatorial,
-		remote_device => $remote_device
+		remote_device => $remote_device,
+		marker => 'running:' . $$
 	};
+	# Claim the marker here, not in the child: the reconnector can walk several
+	# peers in one tick, and a child that has not run yet leaves the next one
+	# free to fork. The child adopts this claim and replaces it with its own pid.
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:' . $$ });
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		&remote_upgrade($c,$params);
@@ -7150,16 +7159,21 @@ get '/manager/voice_download' => sub($c) {
 	sub DESTROY { shift->release }
 }
 
-sub remote_upgrade($c,$params) {
+	sub remote_upgrade($c,$params) {
 	# The marker carries the worker's pid. A restart or a crash is the common case
 	# here, and a bare 'running' left behind by a dead worker used to block every
 	# pull for the full ten-minute age bound. Only a live owner blocks, and the
-	# age bound remains for a pid that was recycled.
+	# age bound remains for a pid that was recycled. The caller that has already
+	# claimed the marker passes it as `marker`; this child adopts that claim and
+	# replaces it with its own pid, so the race window between fork and claim is
+	# closed.
+	my $adopt = $params->{'marker'} ? 1 : 0;
 	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
 	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
 	$up_flag ||= '';
 	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
-	if ($up_live && int($up_state->{'server_time'} || 0) + 600000 > &subs::rightNow()) {
+	my $up_bound = $up_live ? 1800000 : 600000;
+	if (!$adopt && $up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + $up_bound > &subs::rightNow()) {
 		return;
 	}
 	my $up_value = 'running:' . $$;
@@ -7507,10 +7521,23 @@ sub remote_upgrade($c,$params) {
 						$sync->done('done', 'snapshot merged');
 						# The peer's picture is reconciled: remember it, so the planner can
 						# skip this exact picture instead of full-reading a peer that is
-						# merely behind. A windowed gimme/deep pull is not the whole picture,
-						# so it records nothing.
+						# merely behind. `full` records whether this table was read whole:
+						# a delta-only pull leaves it false, so the next tick does the one
+						# full read rather than pretending the old rows are reconciled. A
+						# windowed gimme/deep pull records nothing.
 						if (!$gimme && ref $params->{'remote_digest'} eq 'HASH') {
-							&subs::sync_seen_set($remote_machine->{'signatorial'}, $params->{'remote_digest'});
+							my $prior = &subs::sync_seen_get($remote_machine->{'signatorial'}) || {};
+							my $plan = (ref $params->{'plan'} eq 'HASH') ? $params->{'plan'} : {};
+							my %seen;
+							foreach my $t ( keys %{$params->{'remote_digest'}} ) {
+								my $d = $params->{'remote_digest'}->{$t};
+								next unless ref $d eq 'HASH';
+								my $pk = ($t eq 'settings_durable') ? 'settings' : $t;
+								my $cut = $plan->{$pk};
+								my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
+								$seen{$t} = { %{$d}, full => $full };
+							}
+							&subs::sync_seen_set($remote_machine->{'signatorial'}, \%seen);
 						}
 						&subs::sync_backoff_clear($remote_machine->{'signatorial'});
 					}
@@ -31434,7 +31461,7 @@ sub remote_machine_reconnector($c) {
 						my ($own_flag, $own_pid) = split /:/, ($own_up->{'value'} || ''), 2;
 						$own_flag ||= '';
 						my $own_live = ($own_flag eq 'running' && $own_pid && $own_pid =~ /^\d+$/ && $own_pid > 1 && kill(0, $own_pid)) ? 1 : 0;
-						my $own_busy = ($own_live && int($own_up->{'server_time'} || 0) + 600000 > &subs::rightNow()) ? 1 : 0;
+						my $own_busy = ($own_live && int($own_up->{'server_time'} || 0) + 1800000 > &subs::rightNow()) ? 1 : 0;
 						if (($has_new || $deep) && !$own_busy && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
 							my $whoami = `whoami`;
 							chomp $whoami;
@@ -31456,6 +31483,11 @@ sub remote_machine_reconnector($c) {
 								remote_digest => (ref $rj->{'digest'} eq 'HASH' ? $rj->{'digest'} : undef)
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
+								# Claim the marker before the fork, so the next peer in this
+								# tick sees a live owner even if the child has not run yet.
+								my $up_marker = 'running:' . $$;
+								&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => $up_marker });
+								$params->{'marker'} = $up_marker;
 								# A pull/merge over a big table can outlive the prefork
 								# heartbeat. Fork it, as the on-demand route does, so this
 								# worker keeps answering (and syncing appointments) while
