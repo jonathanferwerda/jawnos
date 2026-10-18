@@ -119,9 +119,44 @@ function monitorPoll() {
 			$('#monitor_mem_pct').text(memPct.toFixed(0) + '% (' + ((d.mem_total - d.mem_avail) / gb).toFixed(1) + '/' + (d.mem_total / gb).toFixed(1) + ' GB)');
 
 			monitorPrev = { at: d.at, map: cur, cpus: d.cpus };
+			monitorRenderHealth(d.health || {});
 			monitorRender();
 		}
 	});
+}
+
+function monitorRenderHealth(h) {
+	h = h || {};
+	var b = h.battery || {};
+	function put(key, value) {
+		$('#monitor_health [data-h="' + key + '"]').text(value);
+	}
+	function number(value, digits, suffix) {
+		if (value === undefined || value === null || value === '' || isNaN(value)) { return '—'; }
+		return Number(value).toFixed(digits) + suffix;
+	}
+	put('processes', (h.processes === undefined || h.processes === null) ? '—' : h.processes + ' procs');
+	put('battery', number(b.percentage, 0, '%'));
+	put('state', b.status || '—');
+	put('temp', number(b.temperature, 1, ' °C'));
+	put('voltage', number(b.voltage, 3, ' V'));
+	put('current', number(b.current, 0, ' mA'));
+	put('health', b.health || '—');
+	put('load', h.load || '—');
+	put('uptime', (h.uptime === undefined || h.uptime === null) ? '—' : monitorFormatAge(h.uptime));
+	put('sync', (h.running_jobs === undefined) ? '—' : h.running_jobs + ' running');
+	put('peers', (h.peers_active === undefined) ? '—' : h.peers_active + ' active');
+	if (h.database) {
+		put('db', number(h.database.bytes / 1048576, 1, ' MB'));
+		put('wal', number(h.database.wal_bytes / 1048576, 1, ' MB'));
+	}
+	else {
+		put('db', '—');
+		put('wal', '—');
+	}
+	put('version', h.version || '—');
+	var last = h.last_job || {};
+	$('#monitor_health').attr('title', last.note ? ('last sync: ' + last.note) : '');
 }
 
 function monitorBuildCores(mode, count) {

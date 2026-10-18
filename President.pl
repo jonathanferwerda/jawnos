@@ -216,6 +216,10 @@ sub manager_starter() {
 	# have left the "running" lock behind (this machine's servers restart every
 	# few minutes under memory pressure), which blocked the next sync for minutes.
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+	# Job rows left 'running' by the tree that just died are not live: no worker
+	# from it can own one now. Age them out so the sync counters read true.
+	my $reaped_jobs = &subs::sync_jobs_reap();
+	$log->info('sync jobs reaped: ' . $reaped_jobs) if $reaped_jobs;
 	# Data backfills run at boot, so a code sync followed by the restart the
 	# sync itself triggers heals the data without waiting for a login. Ones whose
 	# prerequisites are not ready yet are left for the login / merge pass.
@@ -1134,32 +1138,22 @@ sub utility_functions() {
 					if ($db) {
 						my $cache_data = &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }) || {};
 						$cache_data->{'history'} = [] unless $cache_data->{'history'};
-						if ($device eq 'mobile') {
-							my $tbs = `termux-battery-status`;
-							my $battery = eval { return decode_json $tbs } || {};
-							if ($battery->{'percentage'}) {
-								$cpu->{'battery'}->{'percentage'} = $battery->{'percentage'};
-								$cpu->{'battery'}->{'temperature'} = $battery->{'temperature'};
-								$cpu->{'battery'}->{'status'} = &subs::unformat_name($battery->{'status'});
-								$cpu->{'battery'}->{'power'} = $battery->{'current'};
-							}
-						}
-						elsif ( -e '/sys/class/power_supply/BAT0/capacity' ) {
-							my $battery = {
-								percentage => `cat /sys/class/power_supply/BAT0/capacity`,
-								status => &subs::unformat_name(`cat /sys/class/power_supply/BAT0/status`),
-								power => `cat /sys/class/power_supply/BAT0/power_now`
+						my $sample = &subs::battery_sample();
+						if ($sample->{'percentage'}) {
+							# one shape for this view and the Monitor: V and mA, with the
+							# health/plugged fields the phone reports
+							$cpu->{'battery'} = {
+								percentage => $sample->{'percentage'},
+								temperature => $sample->{'temperature'},
+								status => $sample->{'status'},
+								power => $sample->{'current'},
+								voltage => $sample->{'voltage'},
+								health => $sample->{'health'},
+								plugged => $sample->{'plugged'},
 							};
-							foreach my $k ( keys %{$battery} ) {
-								chomp $battery->{$k};
-							}
-							if ($battery->{'percentage'}) {
-								$battery->{'power'} = sprintf("%.2f", $battery->{'power'} / 1000);
-								$cpu->{'battery'} = $battery;
-							}
 						}
 						my (@battery_average,$battery_sum);
-						if ($cpu->{'battery'}->{'status'} eq 'discharging') {
+						if ($cpu->{'battery'} && $cpu->{'battery'}->{'status'} eq 'discharging') {
 							my $last = $cpu;
 							@{$cache_data->{'history'}} = grep { $_->{'battery'}->{'percentage'} >= $cpu->{'battery'}->{'percentage'} } @{$cache_data->{'history'}};
 							foreach my $h (reverse @{$cache_data->{'history'}}) {

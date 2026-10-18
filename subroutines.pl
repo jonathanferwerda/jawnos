@@ -2078,6 +2078,71 @@ sub device_setter() {
 	return $device;
 }
 
+# The machine's battery in one shape for the Monitor and the old System view.
+# termux-battery-status is a spawned API call, so a short shared cache keeps the
+# Monitor's two-second poll from spawning one per tick; Android denies the
+# power_supply sysfs to apps, while a desktop reads BAT0 directly.
+our $battery_sample_memo;
+sub battery_sample {
+	my $now = &rightNow();
+	return $battery_sample_memo
+		if $battery_sample_memo && $now - ($battery_sample_memo->{'sampled'} || 0) < 10000;
+	my $cached = &cache_get({ app => '__president', context => 'battery', subcontext => 'current' });
+	if (ref $cached eq 'HASH' && $cached->{'sampled'} && $now - $cached->{'sampled'} < 10000) {
+		return $battery_sample_memo = $cached;
+	}
+	my $b = { sampled => $now, source => 'none' };
+	my $mobile = &device_setter() eq 'mobile' || -x '/data/data/com.termux/files/usr/bin/termux-battery-status';
+	if ($mobile) {
+		my $raw = `termux-battery-status 2>/dev/null`;
+		my $j = eval { decode_json($raw) } || {};
+		if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
+			$b->{'source'} = 'termux';
+			$b->{'present'} = $j->{'present'} ? 1 : 0;
+			$b->{'percentage'} = $j->{'percentage'} + 0;
+			$b->{'temperature'} = defined $j->{'temperature'} ? $j->{'temperature'} + 0 : undef;
+			# termux reports mV and uA; the Monitor shows V and mA
+			$b->{'voltage'} = defined $j->{'voltage'} ? $j->{'voltage'} / 1000 : undef;
+			$b->{'current'} = defined $j->{'current'} ? $j->{'current'} / 1000 : undef;
+			$b->{'current_average'} = defined $j->{'current_average'} ? $j->{'current_average'} / 1000 : undef;
+			$b->{'status'} = &unformat_name($j->{'status'} || '');
+			$b->{'health'} = &unformat_name($j->{'health'} || '');
+			$b->{'plugged'} = &unformat_name($j->{'plugged'} || '');
+			$b->{'technology'} = $j->{'technology'} || '';
+			$b->{'cycle'} = $j->{'cycle'};
+			$b->{'charge_counter'} = $j->{'charge_counter'};
+			$b->{'scale'} = $j->{'scale'};
+		}
+	}
+	elsif (-e '/sys/class/power_supply/BAT0/capacity') {
+		my $base = '/sys/class/power_supply/BAT0';
+		my $read = sub {
+			my $path = shift;
+			my $value = '';
+			if (open(my $fh, '<', $path)) { $value = <$fh> // ''; close $fh; $value =~ s/\s+$//; }
+			return $value;
+		};
+		$b->{'source'} = 'sysfs';
+		$b->{'present'} = 1;
+		$b->{'percentage'} = $read->("$base/capacity") + 0;
+		$b->{'status'} = &unformat_name($read->("$base/status"));
+		$b->{'health'} = &unformat_name($read->("$base/health"));
+		my $temp = $read->("$base/temp");
+		$b->{'temperature'} = $temp =~ /^-?\d+$/ ? $temp / 10 : undef;
+		my $volt = $read->("$base/voltage_now");
+		$b->{'voltage'} = $volt =~ /^\d+$/ ? $volt / 1_000_000 : undef;
+		my $cur = $read->("$base/current_now");
+		$b->{'current'} = $cur =~ /^-?\d+$/ ? $cur / 1000 : undef;
+		my $pow = $read->("$base/power_now");
+		$b->{'power'} = $pow =~ /^\d+$/ ? $pow / 1_000_000 : undef;
+	}
+	# a machine with no battery has nothing worth caching; the Monitor can stat
+	# it every poll without a write
+	&cache_set({ app => '__president', context => 'battery', subcontext => 'current', warranty => '-1d' }, $b)
+		if $b->{'source'} ne 'none';
+	return $battery_sample_memo = $b;
+}
+
 sub restore_list() {
 	my $returner = [];
 	my @backups;
@@ -6070,18 +6135,36 @@ sub sync_job_step {
 		encode_json($steps), ($data->{'label'} || $step->{'label'} || $key), &rightNow(), $uuid);
 	return $step;
 }
-sub sync_job_update {
-	my ($uuid, $data) = @_;
-	return unless $uuid && ref $data eq 'HASH';
-	my (@sets, @vals);
-	foreach my $k ( qw/phase current total state note peer direction/ ) {
-		next unless exists $data->{$k};
-		push @sets, "$k = ?";
-		push @vals, $data->{$k};
+	sub sync_job_update {
+		my ($uuid, $data) = @_;
+		return unless $uuid && ref $data eq 'HASH';
+		my (@sets, @vals);
+		foreach my $k ( qw/phase current total state note peer direction/ ) {
+			next unless exists $data->{$k};
+			push @sets, "$k = ?";
+			push @vals, $data->{$k};
+		}
+		return unless scalar @sets;
+		push @vals, &rightNow(), $uuid;
+		&db_query('update sync_jobs set ' . join(', ', @sets) . ', updated = ? where uuid = ?', @vals);
 	}
-	return unless scalar @sets;
-	push @vals, &rightNow(), $uuid;
-	&db_query('update sync_jobs set ' . join(', ', @sets) . ', updated = ? where uuid = ?', @vals);
+
+# A tree that dies mid-pull leaves its job row 'running': only a clean
+# Jawn::SyncJob exit writes the final state, and a SIGKILL or a tree restart
+# skips it. At boot no worker from the old tree can still own a job, so age out
+# the plainly abandoned ones. The 30-minute bound matches the remote_upgrade
+# lock, so a genuinely long pull is not cut short if its owner somehow survived.
+sub sync_jobs_reap {
+	my ($age_ms) = @_;
+	$age_ms = 30 * 60 * 1000 unless defined $age_ms && $age_ms =~ /^\d+$/;
+	my $now = &rightNow();
+	my $cut = $now - $age_ms;
+	my $row = &db_query('select count(*) as c from sync_jobs where state = ? and cast(updated as integer) < ?', 'running', $cut)->hashes->[0] || {};
+	my $n = $row->{'c'} || 0;
+	return 0 unless $n;
+	&db_query('update sync_jobs set state = ?, note = ?, updated = ? where state = ? and cast(updated as integer) < ?',
+		'failed', 'interrupted by restart', $now, 'running', $cut);
+	return $n;
 }
 sub sync_job_finish {
 	my ($uuid, $state, $note) = @_;

@@ -1,5 +1,8 @@
 <style>
 #monitor { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; font-size: 20px; }
+#monitor .monitor_health { flex: 0 0 auto; padding: 6px 12px; border-bottom: solid 1px rgba(0,0,0,0.25); font-size: 16px; line-height: 1.6; }
+#monitor .monitor_health .monitor_health_item { display: inline-block; margin-right: 14px; white-space: nowrap; }
+#monitor .monitor_health b { opacity: 0.55; font-weight: normal; margin-right: 4px; }
 #monitor .monitor_gauges { flex: 0 0 auto; padding: 9px 12px 6px; border-bottom: solid 1px rgba(0,0,0,0.25); }
 #monitor .monitor_graph_label { font-size: 15px; opacity: 0.8; margin-bottom: 5px; }
 #monitor .monitor_cores { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -18,6 +21,22 @@
 #monitor tr:nth-child(even) td { background: rgba(0,0,0,0.04); }
 </style>
 <div id="monitor" app="process_monitor">
+	<div class="monitor_health" id="monitor_health">
+		<span class="monitor_health_item"><b>jawn</b><span data-h="processes">&mdash;</span></span>
+		<span class="monitor_health_item"><b>battery</b><span data-h="battery">&mdash;</span></span>
+		<span class="monitor_health_item"><b>state</b><span data-h="state">&mdash;</span></span>
+		<span class="monitor_health_item"><b>temp</b><span data-h="temp">&mdash;</span></span>
+		<span class="monitor_health_item"><b>voltage</b><span data-h="voltage">&mdash;</span></span>
+		<span class="monitor_health_item"><b>current</b><span data-h="current">&mdash;</span></span>
+		<span class="monitor_health_item"><b>health</b><span data-h="health">&mdash;</span></span>
+		<span class="monitor_health_item"><b>load</b><span data-h="load">&mdash;</span></span>
+		<span class="monitor_health_item"><b>uptime</b><span data-h="uptime">&mdash;</span></span>
+		<span class="monitor_health_item"><b>sync</b><span data-h="sync">&mdash;</span></span>
+		<span class="monitor_health_item"><b>peers</b><span data-h="peers">&mdash;</span></span>
+		<span class="monitor_health_item"><b>db</b><span data-h="db">&mdash;</span></span>
+		<span class="monitor_health_item"><b>wal</b><span data-h="wal">&mdash;</span></span>
+		<span class="monitor_health_item"><b>v</b><span data-h="version">&mdash;</span></span>
+	</div>
 	<div class="monitor_gauges">
 		<div class="monitor_graph_label">CPU <span id="monitor_cpu_total">&mdash;</span> &nbsp; MEM <span id="monitor_mem_pct">&mdash;</span></div>
 		<div class="monitor_cores" id="monitor_cores"></div>

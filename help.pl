@@ -554,13 +554,16 @@ our %topic = (
 	'process_monitor' => {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],
-		summary => 'Live CPU and memory, per-core graphs and a process list.',
+		verified => '2026-10-18',
+		summary => 'Live CPU, memory and battery health, per-core graphs and a process list.',
 		body => [
-			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.'
+			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.',
+			'The health strip along the top says how many processes jawn is running (including the master), the machine\'s load average and uptime, how many sync jobs are running and how many peers are linked, and the database and write-ahead-log sizes. On a machine with a battery it also shows charge, charging state, temperature, voltage, current and battery health — a phone or tablet reports these through Termux, a laptop reads them from the battery. Hover the strip to see the last sync job\'s note.'
 		],
 		steps => [
 			'Open Process Monitor.',
-			'Read the headline CPU and memory figures along the top.',
+			'Read the health strip for jawn\'s process count, load, sync and the battery\'s temperature and voltage.',
+			'Read the headline CPU and memory figures under it.',
 			'Sort the process list by CPU or memory to find what is busy.'
 		],
 		related => [ 'configure', 'terminal' ]

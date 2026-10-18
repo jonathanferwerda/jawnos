@@ -3931,7 +3931,37 @@ get '/manager/process_monitor/data' => sub($c) {
 		}
 		push @procs, { p => $pid, pp => $f[1], t => ($f[11] + $f[12]), r => $f[21], a => $age, n => $cmd };
 	}
-	$c->render(json => { at => &subs::rightNow(), clk => $clk, mem_total => $mem_total, mem_avail => $mem_avail, cpus => \@cpus, procs => \@procs });
+	# The Monitor's headline: what this machine is running and how it is doing.
+	# The battery comes through the shared sampler so a two-second poll does not
+	# spawn termux-battery-status each tick; everything else is read here.
+	my ($dbm, $database) = &subs::database_grabber();
+	my $load = '';
+	if (open(my $lf, '<', '/proc/loadavg')) {
+		my $l = <$lf>;
+		close $lf;
+		$load = $1 if $l && $l =~ /^([\d.]+ [\d.]+ [\d.]+)/;
+	}
+	my $running_jobs = &subs::db_query('select count(*) as c from sync_jobs where state = ?', 'running')->hashes->[0]->{'c'} || 0;
+	my $last_job = &subs::db_query('select note, updated from sync_jobs order by cast(updated as integer) desc limit 1')->hashes->[0] || {};
+	my $active_peers = &subs::db_query('select count(*) as c from remote_machines where connection = ?', 'active')->hashes->[0]->{'c'} || 0;
+	# Include the ./jawn master, which health_process_count leaves out: this is the
+	# number a person reads as "how many processes jawn is running".
+	my $jawn_procs = scalar grep { ($_->{'n'} || '') =~ m{(?:^|/)(?:jawn|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|pen\.pl)\b} } @procs;
+	my $health = {
+		version => &subs::jawn_version(),
+		processes => $jawn_procs,
+		load => $load,
+		uptime => $uptime,
+		database => {
+			bytes => ($database && -e $database) ? (-s $database) : 0,
+			wal_bytes => ($database && -e $database . '-wal') ? (-s $database . '-wal') : 0,
+		},
+		running_jobs => $running_jobs + 0,
+		last_job => { note => $last_job->{'note'} || '', updated => $last_job->{'updated'} || '' },
+		peers_active => $active_peers + 0,
+		battery => &subs::battery_sample(),
+	};
+	$c->render(json => { at => &subs::rightNow(), clk => $clk, mem_total => $mem_total, mem_avail => $mem_avail, cpus => \@cpus, procs => \@procs, health => $health });
 };
 
 
