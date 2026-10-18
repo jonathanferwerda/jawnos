@@ -11,7 +11,7 @@ function jawnosAgentsPanel() {
 	var panel = $('#jawnos_agents');
 	if (panel.length) { return panel; }
 	panel = $('<div id="jawnos_agents" style="position:fixed;left:40px;top:60px;width:360px;max-height:72%;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);overflow:hidden;z-index:995000;">'
-		+ '<div class="jawnos_agents_header" hint="Drag here to move the list" style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line);cursor:move;">'
+		+ '<div class="jawnos_agents_header" hint="Drag here to move the list" style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line);">'
 		+ '<span style="flex:1;font-weight:bold;font-size:14px;opacity:.85;">Agents</span>'
 		+ '<span class="jawnos_agents_new_guide hover" hint="A new Guide associate, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ guide</span>'
 		+ '<span class="jawnos_agents_new_coding hover" hint="A new Coding agent, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ coding</span>'

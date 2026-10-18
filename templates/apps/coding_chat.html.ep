@@ -13,7 +13,7 @@
 %>
 <div class="coding_chat" id="coding_chat_<%= $m %>" mount="<%= $m %>" conversation="<%= $m %>"
 	style="position:absolute;right:10px;bottom:48px;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;z-index:4000;">
-	<div class="coding_chat_header" hint="Drag here to move this panel" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);cursor:move;">
+	<div class="coding_chat_header" hint="Drag here to move this panel" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);">
 		<span class="coding_chat_title" style="flex:1;font-weight:bold;opacity:.85;"><%= $l %></span>
 		<span class="coding_chat_new hover" hint="Open another coding agent, with its own thread" style="cursor:pointer;font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
 		<span class="coding_fixes_toggle hover" hint="Errors caught in the tree's log, and fixes staged for your word" style="cursor:pointer;font-size:12px;opacity:.6;">fixes <b class="coding_fixes_count">0</b></span>
