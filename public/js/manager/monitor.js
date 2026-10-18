@@ -125,6 +125,11 @@ function monitorPoll() {
 	});
 }
 
+function monitorHealthLabel(value) {
+	if (!value) { return '—'; }
+	return String(value).replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+}
+
 function monitorRenderHealth(h) {
 	h = h || {};
 	var b = h.battery || {};
@@ -137,11 +142,11 @@ function monitorRenderHealth(h) {
 	}
 	put('processes', (h.processes === undefined || h.processes === null) ? '—' : h.processes + ' procs');
 	put('battery', number(b.percentage, 0, '%'));
-	put('state', b.status || '—');
-	put('temp', number(b.temperature, 1, ' °C'));
+	put('state', monitorHealthLabel(b.status));
+	put('temp', number(b.temperature, 1, b.temperature_source === 'cpu' ? ' °C (cpu)' : ' °C'));
 	put('voltage', number(b.voltage, 3, ' V'));
 	put('current', number(b.current, 0, ' mA'));
-	put('health', b.health || '—');
+	put('health', monitorHealthLabel(b.health));
 	put('load', h.load || '—');
 	put('uptime', (h.uptime === undefined || h.uptime === null) ? '—' : monitorFormatAge(h.uptime));
 	put('sync', (h.running_jobs === undefined) ? '—' : h.running_jobs + ' running');

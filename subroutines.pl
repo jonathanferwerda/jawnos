@@ -2112,6 +2112,7 @@ sub battery_sample {
 			$b->{'cycle'} = $j->{'cycle'};
 			$b->{'charge_counter'} = $j->{'charge_counter'};
 			$b->{'scale'} = $j->{'scale'};
+			$b->{'temperature_source'} = 'battery' if defined $b->{'temperature'};
 		}
 	}
 	elsif (-e '/sys/class/power_supply/BAT0/capacity') {
@@ -2129,6 +2130,23 @@ sub battery_sample {
 		$b->{'health'} = &unformat_name($read->("$base/health"));
 		my $temp = $read->("$base/temp");
 		$b->{'temperature'} = $temp =~ /^-?\d+$/ ? $temp / 10 : undef;
+		# a laptop often exposes no battery temperature; its thermal zones are
+		# the next-best reading, and the strip marks it as the CPU's
+		unless (defined $b->{'temperature'}) {
+			my $best;
+			for my $zone (glob('/sys/class/thermal/thermal_zone*/temp')) {
+				my $value = $read->($zone);
+				next unless $value =~ /^-?\d+$/;
+				my $celsius = $value / 1000;
+				next if $celsius < -50 || $celsius > 150;
+				$best = $celsius if !defined $best || $celsius > $best;
+			}
+			if (defined $best) {
+				$b->{'temperature'} = $best;
+				$b->{'temperature_source'} = 'cpu';
+			}
+		}
+		$b->{'temperature_source'} ||= 'battery' if defined $b->{'temperature'};
 		my $volt = $read->("$base/voltage_now");
 		$b->{'voltage'} = $volt =~ /^\d+$/ ? $volt / 1_000_000 : undef;
 		my $cur = $read->("$base/current_now");
