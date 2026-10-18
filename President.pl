@@ -93,7 +93,11 @@ if ($archive_root->{'enabled'}) {
 }
 
 $SIG{INT} = sub {
-	print "President Died, Ctrl+C! Performing cleanup logic...\n";
+	# Do not print "President Died" here: ./jawn reads that phrase as a crash and
+	# restarts the tree again, so a deliberate restart (which sends SIGINT) became
+	# a restart loop on masters started before the jawn_deliberate guard. The
+	# close handler and the liveness watchdog are what detect a real death.
+	print "President stopping on SIGINT; cleaning up...\n";
 	$log->info('President caught SIGINT') if $log;
 	#`rm -R $dump_dir/*` if -e $dump_dir;
 	exit 0;
