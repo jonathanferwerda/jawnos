@@ -6148,13 +6148,33 @@ sub sync_seen_get {
 	return {} unless $peer;
 	my $row = &db_query('select data from cache where context = ? and subcontext = ? order by cast(server_time as integer) desc limit 1', 'sync_seen', $peer)->hashes->[0];
 	return {} unless $row && $row->{'data'};
-	my $d = eval { decode_sereal($row->{'data'}) };
-	return (ref $d eq 'HASH') ? $d : {};
+	# New rows are JSON: it has no NULs, so an older DBD cannot truncate it at the
+	# first NUL the way it does a Sereal blob. Fall back to Sereal for rows written
+	# before this change (a newer DBD stored those whole).
+	my $d = eval { decode_json($row->{'data'}) };
+	return $d if ref $d eq 'HASH';
+	my $old = eval { decode_sereal($row->{'data'}) };
+	return (ref $old eq 'HASH') ? $old : {};
 }
 sub sync_seen_set {
 	my ($peer, $digest) = @_;
 	return unless $peer && ref $digest eq 'HASH';
-	&cache_set({ app => '__president', context => 'sync_seen', subcontext => $peer }, $digest);
+	my $dev = &device_setter();
+	# JSON, not Sereal: `cache_set` would encode a Sereal blob whose header has a
+	# NUL at byte 5, and the older DBD on this box binds that at the NUL - the map
+	# arrived as a 5-byte header and the planner lost its baseline every tick.
+	&db_query('delete from cache where app = ? and context = ? and subcontext = ? and device = ?', '__president', 'sync_seen', $peer, $dev);
+	&db_insert('cache', {
+		app => '__president',
+		context => 'sync_seen',
+		subcontext => $peer,
+		data => encode_json($digest),
+		timestamp => &rightNow(),
+		server_time => &rightNow(),
+		warranty => &ago_calc('-10d', &rightNow()),
+		device => $dev,
+		uuid => &random_string_creator(25)
+	});
 }
 
 # A peer that told us it was busy gets a short rest instead of being asked again
