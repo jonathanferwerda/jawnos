@@ -165,12 +165,35 @@ html, body {
    that serves the theatre. */
 #music:fullscreen,
 #music:-webkit-full-screen {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
 	width: 100%;
 	height: 100%;
 	max-height: none;
+	margin: 0;
 	/* the template writes the configured colour inline; fullscreen is a black
 	   house, so the picture's letterboxing does not show a bright band */
 	background-color: #000 !important;
+}
+/* the picture's box fills the screen; the bars overlay it, so nothing of the
+   page shows at the sides while the video decodes a scrub */
+#music:fullscreen #music_theatre,
+#music:-webkit-full-screen #music_theatre {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	width: 100%;
+	height: 100%;
+}
+#music:fullscreen #music_theatre > div,
+#music:-webkit-full-screen #music_theatre > div {
+	width: 100%;
+	height: 100%;
 }
 #music:fullscreen #music_library,
 #music:-webkit-full-screen #music_library {

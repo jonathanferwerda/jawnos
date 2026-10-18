@@ -1447,6 +1447,14 @@ function musicVisualState() {
 function musicPlayerFullscreen() {
 	var v = document.getElementById('video');
 	if (!v) { return; }
+	// the button (and F) is a toggle: a second press leaves fullscreen
+	var fs = document.fullscreenElement || document.webkitFullscreenElement;
+	if (fs) {
+		var out = document.exitFullscreen ? document.exitFullscreen()
+			: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
+		if (out && out.catch) { out.catch(function () {}); }
+		return;
+	}
 	if (v.getAttribute('type') == 'video') {
 		$(v).show();
 	}

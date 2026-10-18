@@ -267,7 +267,7 @@
 		#<%= $miss %>_container { height: 100%; }
 		/* the picture owns a finger's sideways and downward travel: the scrub and
 		   volume gestures above, not the page's own panning */
-		#<%= $id %>, #<%= $miss %>_visual_media { touch-action: none; }
+		#<%= $id %>, #<%= $miss %>_visual_media { touch-action: none; background-color: #000; }
 	</style>
 
 	<div id="<%= $miss %>_container" class="<%= $id %>_container" style="width:100%;background-color:black;display:block;">
@@ -684,29 +684,63 @@
 				v.volume = Math.max(0, Math.min(1, level));
 				if (v.volume > 0) { v.muted = false; }
 			}
+			// Seek at most once a frame: a trackpad or a finger sends a stream of
+			// events, and seeking on every one makes the picture strobe while it
+			// decodes each frame. The latest target wins.
+			var <%= $miss %>ScrubValue = null;
+			var <%= $miss %>ScrubRaf = null;
+			function <%= $miss %>ScrubTo(seconds) {
+				<%= $miss %>ScrubValue = seconds;
+				if (<%= $miss %>ScrubRaf) { return; }
+				<%= $miss %>ScrubRaf = requestAnimationFrame(function() {
+					<%= $miss %>ScrubRaf = null;
+					var target = <%= $miss %>ScrubValue;
+					<%= $miss %>ScrubValue = null;
+					if (target != null) { <%= $miss %>SeekTo(target); }
+				});
+			}
+			function <%= $miss %>ScrubBy(seconds) {
+				var v = document.getElementById('<%= $id %>');
+				if (!v) { return; }
+				var base = (<%= $miss %>ScrubValue == null) ? v.currentTime : <%= $miss %>ScrubValue;
+				<%= $miss %>ScrubTo(base + seconds);
+			}
+			function <%= $miss %>WheelKind(deltaX, deltaY, deltaMode) {
+				if (typeof wheelKind == 'function') { return wheelKind(deltaX, deltaY, deltaMode); }
+				if (deltaX !== 0) { return 'trackpad'; }
+				if (deltaMode !== 0) { return 'mouse'; }
+				if (deltaY && !Number.isInteger(deltaY)) { return 'trackpad'; }
+				return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
+			}
+			function <%= $miss %>VolumeLevel() {
+				var v = document.getElementById('<%= $id %>');
+				if (!v) { return 0; }
+				return v.muted ? 0 : (isNaN(v.volume) ? 1 : v.volume);
+			}
 			vidOn(<%= $miss %>WheelEvent, <%= $miss %>GestureRoot, function(e) {
 				if (!<%= $miss %>GestureAllowed(e.target, 'wheel')) { return; }
 				var v = document.getElementById('<%= $id %>');
 				if (!v) { return; }
 				var ev = e.originalEvent || e;
-				// the wheel's own pixels: wheelDelta on the legacy event, deltaY on a
-				// plain wheel (the same ~120 a notch); a trackpad's sideways swipe
-				// scrubs on the axis it actually moved
 				var deltaX = ev.deltaX || 0;
 				var deltaY = ev.deltaY || 0;
-				var mvmt;
-				if (ev.wheelDelta != undefined && ev.wheelDelta != 0) {
-					mvmt = ev.wheelDelta;
-				}
-				else if (Math.abs(deltaX) > Math.abs(deltaY)) {
-					mvmt = deltaX * 1.2;
-				}
-				else {
-					mvmt = -deltaY * 1.2;
-				}
-				if (!mvmt || isNaN(mvmt)) { return; }
 				var speed = numeral($('#<%= $miss %>_speed').val()).value() || 1;
-				<%= $miss %>SeekTo(v.currentTime + (mvmt / 300) * speed);
+				// A trackpad has two axes: sideways scrubs and up/down sets the
+				// volume. A wheel mouse keeps its old vertical scrub.
+				if (<%= $miss %>WheelKind(deltaX, deltaY, ev.deltaMode || 0) == 'trackpad') {
+					if (Math.abs(deltaX) > Math.abs(deltaY)) {
+						if (deltaX) { <%= $miss %>ScrubBy(deltaX * 0.5 * speed); }
+					}
+					else if (deltaY) {
+						<%= $miss %>VolumeTo(<%= $miss %>VolumeLevel() - deltaY * 0.002);
+					}
+					return;
+				}
+				// the wheel's own pixels: wheelDelta on the legacy event, deltaY on a
+				// plain wheel (the same ~120 a notch)
+				var mvmt = (ev.wheelDelta != undefined && ev.wheelDelta != 0) ? ev.wheelDelta : (-deltaY * 1.2);
+				if (!mvmt || isNaN(mvmt)) { return; }
+				<%= $miss %>ScrubBy((mvmt / 300) * speed);
 			});
 			vidOn('touchstart', <%= $miss %>GestureRoot, function(e) {
 				if (!<%= $miss %>GestureAllowed(e.target, 'touch')) { <%= $miss %>Touch.active = false; return; }
@@ -740,7 +774,7 @@
 				if (<%= $miss %>Touch.axis == 'x') {
 					// a finger moves the track at a steady rate: half a second a pixel,
 					// so a small movement is a small nudge, as a notch of the wheel is
-					<%= $miss %>SeekTo(<%= $miss %>Touch.time + dx * 0.5);
+					<%= $miss %>ScrubTo(<%= $miss %>Touch.time + dx * 0.5);
 				}
 				else {
 					var height = root.height() || $(window).height();
@@ -769,9 +803,18 @@
 <% if ($source eq 'music') { %>
 				if (typeof musicPlayerFullscreen == 'function') { musicPlayerFullscreen(); return; }
 <% } %>
+				var fs = document.fullscreenElement || document.webkitFullscreenElement;
+				if (fs) {
+					var out = document.exitFullscreen ? document.exitFullscreen()
+						: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
+					if (out && out.catch) { out.catch(function () {}); }
+					return;
+				}
 				$('#<%= $id %>').show();
-				var v = document.getElementById('<%= $id %>');
-				if (v.requestFullscreen) { v.requestFullscreen(); }
+				// the container carries the transport, so the fullscreen button can
+				// be pressed again to leave
+				var target = document.getElementById('<%= $miss %>_container') || document.getElementById('<%= $id %>');
+				if (target.requestFullscreen) { target.requestFullscreen(); }
 			}
 
 			vidOn('click', '.loop_control', function() {
