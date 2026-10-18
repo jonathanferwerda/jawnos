@@ -7321,6 +7321,10 @@ sub sync_rows_pull {
 	&update_database($c);
 	$subs::sync_table_cache = undef;
 	my $remote = $remote_machine || &remote_useragent_maker({ signatorial => $params->{'remote_signatorial'} });
+	# The yellow panel names the job's phase, and this path has no export to wait
+	# on: it is reading and merging rows. Say so instead of leaving it at the
+	# snapshot phase the job was created with.
+	&subs::db_query("update sync_jobs set phase = 'merge' where uuid = ?", $job);
 	my $remote_signatorial = $params->{'remote_signatorial'} || $remote->{'signatorial'};
 	my $signatorial = &subs::signatorial_designer();
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
@@ -7579,10 +7583,12 @@ get '/manager/sync_rows' => sub ($c) {
 		direction => 'pull',
 		peer => ($params->{'peer'} || $params->{'ip'} || ''),
 		phase => 'export',
-		note => 'waiting for the peer to build a snapshot'
+		# The path is chosen below. A snapshot-flavoured note here made every
+		# v3 pull look like it was waiting on an export until it finished, which
+		# is exactly the wrong thing to read while watching the mesh.
+		note => 'pulling'
 	});
 	my $sync = Jawn::SyncJob->new($job);
-	&subs::sync_job_step($job, 'export', { label => 'export', state => 'running', note => 'peer is building a snapshot' });
 	my $timestamp = $params->{'timestamp'};
 	my $ip = $params->{'ip'};
 	my $vip = $ip;
@@ -7634,6 +7640,7 @@ get '/manager/sync_rows' => sub ($c) {
 	$log->info('remote upgrade: snapshot path ' . $why_snapshot);
 	&subs::log_writer('remote upgrade: snapshot path ' . $why_snapshot);
 	if ($remote_machine->{'signatorial'}) {
+		&subs::sync_job_step($job, 'export', { label => 'export', state => 'running', note => 'peer is building a snapshot' });
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
 
