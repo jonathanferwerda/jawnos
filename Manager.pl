@@ -9850,14 +9850,18 @@ sub log_reader {
 	}
 	elsif ($chosen_app && $data->{'view'} eq 'centre_view') {
 		#centre_view
-		# The column is text, so max()/min() over it and a plain compare are both
-		# lexicographic: before 1970 (a negative timestamp) that picks the wrong row
-		# ("-441..." reads above "-315...", so the earlier appointment would win the
-		# max). Cast the compare and the order, and take the row by limit rather than
-		# max() - the aggregate would still choose lexicographically. The query is
-		# per-app, so the cast rides the app index and costs nothing.
-		$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) <=? order by cast($timestamp_selector as integer) DESC limit 1", $chosen_app,$time_definition);
-		push @{$appointments}, @{&subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) >=? order by cast($timestamp_selector as integer) limit 1", $chosen_app,$time_definition)};
+		# The bound here is "now", which is positive, so a plain text compare keeps
+		# the (app,timestamp) index and reads one row instead of sorting the app's
+		# whole history - the cast in both the compare and the order forced a temp
+		# B-tree over every row of the app, on every header render. Only a pre-1970
+		# stamp needs the numeric cast: "-441..." reads above "-315...", so if the
+		# newest candidate is negative, ask again numerically. The oldest-at-or-after-
+		# now query needs no fallback, since a negative stamp can never qualify.
+		$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC limit 1", $chosen_app,$time_definition);
+		if ($appointments->[0] && ($appointments->[0]->{$timestamp_selector} || '') =~ /^-/) {
+			$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) <=? order by cast($timestamp_selector as integer) DESC limit 1", $chosen_app,$time_definition);
+		}
+		push @{$appointments}, @{&subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector limit 1", $chosen_app,$time_definition)};
 
 
 		@{$appointments} = grep { $_->{'app'} eq $chosen_app } @{$appointments};
