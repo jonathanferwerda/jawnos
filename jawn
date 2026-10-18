@@ -32,6 +32,7 @@ use IO::Socket::UNIX;
 use IO::Select;
 use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use File::Slurp;
+use Cwd qw(abs_path);
 use Mojo::File 'path';
 use Mojo::Log;
 use Mojo::JSON qw/decode_json encode_json/;
@@ -109,6 +110,20 @@ if (-l $0) {
 	$path = join '/', @dir;
 	chdir($path);
 }
+
+# The master loads only this file; President.pl and every worker are separate
+# processes that the tree restart reloads. So an update that changes ./jawn
+# used to leave the old master running until someone logged in and relaunched
+# it (its behaviour stayed stale while the tree moved on). Watch our own file
+# and replace this process with the new code when it changes - the same pid and
+# terminal, so nothing has to supervise us.
+my $master_path = -f $0 ? $0 : './jawn';
+$master_path = abs_path($master_path) || $master_path;
+sub master_stamp {
+	my @s = stat($master_path);
+	return @s ? ($s[9] . ':' . $s[7]) : '';
+}
+my $master_stamp = &master_stamp();
 $| = 1;
 
 # ---- first run: install dependencies, then run the setup wizard -------------
@@ -156,6 +171,30 @@ sub master_time_looper() {
 		return if $master_timer_paused;
 		my $status_file = &home('~/.president/status');
 		my $f_status = -e $status_file ? read_file($status_file) : '';
+		# Our own file changed on disk (a git update): reload the master, not just
+		# the tree. Verify first: a half-written or broken ./jawn must not replace
+		# the master that is still serving. A pending 'restart' is consumed here so
+		# the fresh master does not immediately restart again.
+		my $stamp = &master_stamp();
+		if ($stamp ne '' && $stamp ne $master_stamp) {
+			$master_stamp = $stamp;
+			my $proof = &tree_verify();
+			if ($proof->{'ok'}) {
+				print "master changed on disk; reloading $master_path\n";
+				write_file($status_file, 'good');
+				$master_timer_paused = 1;
+				&shut_down();
+				exec($^X, $master_path, @ARGV) or do {
+					print "re-exec of $master_path failed: $!\n";
+					$master_timer_paused = 0;
+					$status = 'frozen';
+					return;
+				};
+			}
+			else {
+				print "master changed on disk but the tree does not verify; keeping the running master:\n" . ($proof->{'report'} || '') . "\n";
+			}
+		}
 		# Liveness watchdog: 'started' means the tree should be serving. Probe the
 		# port every 30s; two dead probes (~a minute) mean the pty close handler was
 		# missed or the tree died without its terminal noticing - recover it rather
