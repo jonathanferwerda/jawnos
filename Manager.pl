@@ -7356,14 +7356,35 @@ sub sync_rows_pull {
 	# always ride along or a device's travel map stops learning where the others are.
 	my $have_plan = (ref $params->{'plan'} eq 'HASH' && scalar keys %{$params->{'plan'}}) ? 1 : 0;
 	my %carry = map { $_ => 1 } qw(continent ai_budget ai_jobs ai_house notifications);
-	my $table_total = scalar @tables;
+	my %fetch;
+	if (!$have_plan) {
+		$fetch{$_} = 1 for @tables;
+	}
+	else {
+		$fetch{$_} = 1 for grep { exists $plan->{$_} || $carry{$_} } @tables;
+		# An appointment carries no app configuration of its own. If an appointment
+		# is being pulled, carry the settings delta too, or its window opens with an
+		# empty app until a later tick notices the settings on their own.
+		$fetch{'settings'} = 1 if $fetch{'appointments'};
+	}
+	# Settings first: the window that an appointment opens reads its app's settings,
+	# so they must already be merged when the appointment's header is refreshed.
+	my %rank = (settings => 0, appointments => 1);
+	my @ordered = sort { ($rank{$a} // 2) <=> ($rank{$b} // 2) || $a cmp $b } grep { $fetch{$_} } @tables;
+	my $settings_count = -1;
+	my $table_total = scalar @ordered;
 	my $count = 0;
 	my $watermark = 0;
 	my $failed;
-	foreach my $table (@tables) {
-		next if $have_plan && !exists $plan->{$table} && !$carry{$table};
+	foreach my $table (@ordered) {
 		my $cut = (exists $plan->{$table} && defined $plan->{$table}) ? $plan->{$table} : $default_cut;
 		$cut = 0 unless defined $cut && $cut =~ /^[0-9]+$/;
+		if ($table eq 'settings') {
+			# A machine with no settings at all (a fresh install, a restored empty
+			# database) has no watermark to delta against: send the whole table once.
+			$settings_count = &subs::db_query('select count(*) as c from settings')->hashes->[0]->{'c'} || 0 if $settings_count < 0;
+			$cut = 0 unless $settings_count;
+		}
 		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, '');
 		next if $skip;
 		unless ($first) {
