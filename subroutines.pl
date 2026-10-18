@@ -5658,11 +5658,6 @@ sub backup_now() {
 	my $encrypt = `openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $temporary_path -out $archive_path.enc`;
 	my $stat_path = `stat $temporary_path`;
 	`echo "$appendage" >> $archive_path.enc`;
-	if ($reason eq 'remote_update') {
-		my $marker_tail = `tail -c 300 "$archive_path.enc" 2>/dev/null`;
-		my $has_marker = (index($marker_tail, $gb::universal_splitter) >= 0) ? 1 : 0;
-		$log->error('remote export: ' . $archive_path . '.enc size=' . ((-s $archive_path.'.enc') || 0) . ' marker=' . $has_marker) if $log;
-	}
 
 	unless ($reason eq 'remote_update') {
 		my $archive_encrypt = `cp -v $archive_path.enc $enc_file`;

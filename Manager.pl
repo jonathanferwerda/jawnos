@@ -6391,10 +6391,6 @@ get '/manager/backup_serve' => sub($c) {
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
-	if ($log) {
-		my $marker_tail = `tail -c 300 "$path" 2>/dev/null`;
-		$log->error('backup serve: ' . $path . ' size=' . ((-s $path) || 0) . ' marker=' . (index($marker_tail, $universal_splitter) >= 0 ? 1 : 0));
-	}
 	# A remote backup's archive is a one-shot temp under ~/.president, made for
 	# this pull; delete it once the body is on the wire rather than leave it for
 	# the next boot's ~/.president wipe. Durable backups live beside the database
@@ -7046,13 +7042,6 @@ sub remote_upgrade($c,$params) {
 							sync_job => $job,
 							colour => $remote_machine->{'data'}->{'manager_colour'}
 						});
-						# Keep the exact bytes we failed to merge, before the temp file is
-						# shredded, so the container can be inspected on the failing machine.
-						if (($disposition->{'status'} || '') ne 'succeed') {
-							my $keep = &subs::home('~/.president/failed_merge_' . time() . '.enc');
-							`cp $temporary_file "$keep" 2>/dev/null`;
-							$log->error('merge failed; kept ' . $keep . ' (' . ((-s $temporary_file) || 0) . ' bytes)') if $log;
-						}
 						`shred -u $temporary_file`;
 						`rm -R $temp_folder`;
 						if (($disposition->{'status'} || '') ne 'succeed') {
@@ -14977,7 +14966,6 @@ sub merge_database($c,$configuration) {
 	my ($db,$database) = &subs::database_grabber();
 	my $disposition->{'status'} = 'fail';
 	my $path = $filename;
-	$log->error('merge archive: ' . ((-s $path) || 0) . ' bytes') if $log;
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
 	`mkdir -p $temp_folder` unless -e "$temp_folder";

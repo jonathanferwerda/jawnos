@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-18
 
+- v0.1.725 - sync: remove the temporary container diagnostics (the per-export marker/`backup_serve` logs and the `failed_merge_*.enc` copy). The cause they found - a truncated tunnel download - is fixed by v0.1.721/724; the failure paths still log a missing marker or a short download, but a healthy pull leaves nothing behind.
 - v0.1.724 - tunnels: the peer heartbeat waits 300s for a pong, not 40s. A backup keeps the link busy for minutes and the pongs queue behind the payload, so the old bound declared a healthy session dead mid-download; the server then received a short body (no standard marker) and every large pull failed. The hub's 60s silence watchdog and the TCP error still catch a truly dead link.
 - v0.1.723 - sync: the reconnector checks this machine's own `remote_upgrade` marker before forking a pull. Several children could be started before the first had written its marker; they queued on the peer's single export lock, and each pull waited out the others. A live marker now means the next tick has nothing to start.
 - v0.1.722 - budgets: a fixed measure budget (`180weight`) can no longer become a time scope. The fixed branch accepted it as number+letters, `timespan_widener` stripped the digits to `weight`, and `father_time` asked `time_span('weight')`, which dies - killing every pull right after its merge and before its confirm. The window now has to be a real time span, and a malformed `/scope` falls back to a month.
