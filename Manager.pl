@@ -7279,7 +7279,15 @@ sub sync_rows_batch {
 		. '&table=' . Mojo::Util::url_escape($table)
 		. '&cut=' . int($cut) . '&limit=500';
 	$url .= '&after=' . Mojo::Util::url_escape($after) if defined $after && $after ne '';
-	my $res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+	my $res;
+	for my $attempt (1 .. 3) {
+		$res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+		last if $res && $res->is_success;
+		# A 4xx is the peer's answer (auth, an unknown table); retrying it only
+		# delays the fallback. A dropped link or a 5xx is worth another try.
+		last if $res && $res->code < 500;
+		sleep 1 if $attempt < 3;
+	}
 	return (undef, 'the peer did not answer') unless $res;
 	return (undef, 'HTTP ' . $res->code) unless $res->is_success;
 	my $type = $res->headers->content_type || '';
