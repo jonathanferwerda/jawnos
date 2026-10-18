@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.759** (2026-10-18). Done work is marked so it is
+The remaining plan, as of **v0.1.761** (2026-10-18). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -572,6 +572,52 @@ appointments and refreshes the open views; it does not rewrite existing records.
 
 Being usable on Apple devices still does not require beating Apple; it requires
 deciding whether iOS gets a foreground iSH house or a native local-first one.
+
+### Hardware classes (manufacturing)
+
+Four device classes, matching the mesh's existing shapes:
+
+- **Embedded** — ESP32 / Pico 2 W firmware (`jp/`, `jt/`, `jw/`). It is not a
+  house host; it advertises `_jawnos._tcp` / BLE and is driven by a house. This
+  is the easiest to brand: use a pre-certified module, design the carrier board
+  and enclosure, and keep the module's antenna and grant conditions. Say
+  "Powered by ESP32/RP2350" under the vendor's brand rules; you cannot call the
+  chip your own.
+- **Mobile** — the house app on Android. The clean path is AOSP without GMS,
+  your app preinstalled as a system app, and your own OTA; that sits outside the
+  Play/sideload verification path. A GMS-certified phone pulls you into Google's
+  OEM terms. Voice telephony needs carrier certification (PTCRB/GCF, VoLTE,
+  E911); a Wi-Fi/data-only handheld avoids most of it. Designing a phone from
+  scratch is an ODM business, not a first product.
+- **Computer** — a mini-PC/SBC appliance: buy components, integrate, install
+  the house image, brand and warrant it. This is the natural first hardware
+  product and the physical form of "no clients."
+- **Server** — the same appliance with ECC/RAID/rack options and LXC per
+  club/community. Start as a software SKU on the computer, not a separate board.
+
+Order: computer/server appliance -> embedded carrier boards -> mobile via ODM.
+Do not do all four at once.
+
+Compliance is the real gate, not assembly:
+
+- A pre-certified radio module simplifies FCC/ISED/CE-RED, but the final product
+  still needs EMC/safety testing and the module's integration/label conditions;
+  budget a test house per product and region.
+- Branding the final product makes you the manufacturer of record for
+  compliance, warranty and liability, even when a contract manufacturer builds
+  it. Product liability insurance and an RMA/spares plan are part of the
+  product.
+- Android without GMS means no Play/FCM; the house already speaks WebSockets,
+  but background delivery on a phone is an OS problem, not an app one.
+- Batteries add UN38.3/IEC 62133; laptops add thermal/safety work; phones add
+  carrier certification. Start with mains-powered, fanless appliances.
+- Ship review includes GPL/firmware licences and privacy (the house holds
+  personal data), and secure boot / signed OTA for every shipped board.
+
+The software already has the shape: `@device_types` is the three house hosts
+(mobile/computer/server), and embedded is the fourth mesh class (`jw`/`jt`/`jp`),
+which does not run the Perl tree. Add `embedded` to inventory/capability
+reporting, not blindly to the manager's `@device_types` loops.
 
 ### Recommended minimum shape (one club, several houses)
 
