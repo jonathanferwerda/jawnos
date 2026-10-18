@@ -57,7 +57,7 @@ Manjaro is not ideal for an appliance (rolling release).
 
 ```sh
 sudo apt update
-sudo apt install -y git curl ca-certificates avahi-daemon chrony \
+sudo apt install -y git curl ca-certificates python3 avahi-daemon chrony \
     ufw smartmontools lm-sensors unattended-upgrades
 sudo systemctl enable --now avahi-daemon chrony
 sudo timedatectl set-ntp true
@@ -72,8 +72,13 @@ Firewall (adjust the LAN range):
 sudo ufw allow from 192.168.0.0/16 to any port 22 proto tcp
 sudo ufw allow from 192.168.0.0/16 to any port 3000 proto tcp
 sudo ufw allow from 192.168.0.0/16 to any port 3001 proto tcp
+sudo ufw allow from 192.168.0.0/16 to any port 45545 proto tcp
 sudo ufw enable
 ```
+
+The ticket is served on `port` (3000), the websocket on `ws_port` (3001), and
+the manager after login on `working_port` (45545 by default; it is in
+`config.json`). If you change those, change the rules with them.
 
 The app uses a PTY and a set of internal ports (`PORT_AHOY`, `PORT_MSG`,
 `PORT_BELL`, `PORT_ARM`, `PORT_BESTOW`, `PORT_DOCK`, `PORT_COMS`). On a single
