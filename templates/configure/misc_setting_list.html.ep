@@ -165,6 +165,12 @@
 				<label>
 					<b><%= $label %></b>
 					<select id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>">
+						<%# the list is the standards this machine can seal and open; a value
+						    stored elsewhere is shown but not re-offered, so the panel never
+						    silently looks as if it changed it %>
+						<% if ($key eq 'encryption_standard' && length $chosen && !grep { $_ eq $chosen } @{$opts}) { %>
+							<option selected="selected" disabled="disabled"><%= $chosen %> (not supported on this machine)</option>
+						<% } %>
 						<% foreach my $o ( @{$opts} ) { %>
 							<option <% if ($chosen eq $o) { %>selected="selected"<% } %>><%= $o %></option>
 						<% } %>

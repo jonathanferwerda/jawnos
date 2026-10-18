@@ -6330,7 +6330,7 @@ sub note_encryption_standards {
 		'aes-256-cbc', 'aes-192-cbc', 'aes-128-cbc',
 		'camellia-256-ctr', 'camellia-192-ctr', 'camellia-128-ctr',
 		'camellia-256-cbc', 'camellia-192-cbc', 'camellia-128-cbc',
-		'des-ede3-cbc', 'sm4-cbc', 'twofish-cbc',
+		'des-ede3-cbc', 'sm4-cbc',
 		'chacha20', 'aria-256-cbc',
 	);
 	return [ grep { &note_standard_supported($_) } @offered ];
@@ -6363,8 +6363,10 @@ sub note_standard_supported {
 # The in-process cipher for a standard, or undef when only openssl can run it.
 # aes/camellia-NNN-ctr/cbc map onto the named cipher with the key length the
 # number names; CTR keeps a big-endian, full-block counter, which is what
-# openssl's EVP uses. des-ede3-cbc is 3DES (8-byte block); sm4 and twofish are
-# 16-byte-block ciphers. keylen is the key, ivlen is both the IV and the block.
+# openssl's EVP uses. des-ede3-cbc is 3DES (8-byte block); sm4 is a 16-byte-block
+# cipher. keylen is the key, ivlen is both the IV and the block. Everything listed
+# here is also readable through openssl, so a peer that still shells out can open
+# the same file.
 our %note_cipher_specs = (
 	'aes-128-ctr' => [ 'ctr', 'AES', 16, 16 ], 'aes-192-ctr' => [ 'ctr', 'AES', 24, 16 ], 'aes-256-ctr' => [ 'ctr', 'AES', 32, 16 ],
 	'aes-128-cbc' => [ 'cbc', 'AES', 16, 16 ], 'aes-192-cbc' => [ 'cbc', 'AES', 24, 16 ], 'aes-256-cbc' => [ 'cbc', 'AES', 32, 16 ],
@@ -6372,7 +6374,6 @@ our %note_cipher_specs = (
 	'camellia-128-cbc' => [ 'cbc', 'Camellia', 16, 16 ], 'camellia-192-cbc' => [ 'cbc', 'Camellia', 24, 16 ], 'camellia-256-cbc' => [ 'cbc', 'Camellia', 32, 16 ],
 	'des-ede3-cbc' => [ 'cbc', 'DES_EDE', 24, 8 ],
 	'sm4-cbc' => [ 'cbc', 'SM4', 16, 16 ],
-	'twofish-cbc' => [ 'cbc', 'Twofish', 32, 16 ],
 );
 sub note_cipher_spec {
 	my ($standard) = @_;
@@ -6429,6 +6430,33 @@ sub note_random_salt {
 	return $bytes;
 }
 
+# Run openssl over bytes held in memory. The input goes through a temp file, not
+# a pipe pair: with two pipes the parent writes the container into the child's
+# stdin while the child writes the answer back, and once either buffer fills
+# both sides wait forever. (This only bit the openssl fallback; AES and the other
+# in-process ciphers never spawn a process.)
+sub note_openssl_run {
+	my ($args, $input) = @_;
+	require File::Temp;
+	require File::Spec;
+	my ($fh, $path) = eval { File::Temp::tempfile('jawnos-enc-XXXXXX', DIR => File::Spec->tmpdir, UNLINK => 0) };
+	return undef unless $fh && defined $path;
+	binmode $fh;
+	print $fh $input;
+	close $fh;
+	my @cmd = (@{$args}, '-in', $path);
+	my $result;
+	if (open(my $out, '-|', @cmd)) {
+		binmode $out;
+		$result = do { local $/; <$out> };
+		close $out;
+	}
+	my $ok = $? == 0;
+	unlink $path;
+	return undef unless $ok;
+	return $result;
+}
+
 # Seal $content with the inner cipher, returning the openssl container (or undef).
 sub note_seal_container {
 	my ($content, $secret, $standard) = @_;
@@ -6448,16 +6476,11 @@ sub note_seal_container {
 		return undef unless defined $ct;
 		return 'Salted__' . $salt . $ct;
 	}
-	# not a cipher we can run in-process: let openssl do it. The bytes cross the
-	# pipe raw - base64 here only bought a 33% copy on each side.
-	my ($out, $in);
-	my $pid = open2($out, $in, 'openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2');
-	return undef unless $pid;
-	binmode $in; binmode $out;
-	print $in $content; close $in;
-	my $container = do { local $/; <$out> }; close $out; waitpid($pid, 0);
-	return undef if $?;
-	return length $container ? $container : undef;
+	# not a cipher we can run in-process: let openssl do it. The bytes are raw -
+	# base64 here only bought a 33% copy on each side.
+	my $container = &note_openssl_run(['openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2'], $content);
+	return undef unless defined $container && length $container;
+	return $container;
 }
 
 sub note_encrypter() {
@@ -6520,14 +6543,7 @@ sub note_openssl_open {
 	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2');
 	push @args, '-provider', 'default', '-provider', 'legacy' if $legacy;
 	push @args, '-nopad' if $nopad;
-	my ($out, $in);
-	my $pid = open2($out, $in, @args);
-	return undef unless $pid;
-	binmode $in; binmode $out;
-	print $in $container; close $in;
-	my $plain = do { local $/; <$out> }; close $out; waitpid($pid, 0);
-	return undef if $?;
-	return $plain;
+	return &note_openssl_run(\@args, $container);
 }
 
 # The file sealing is the very same container, read from and written to a path.

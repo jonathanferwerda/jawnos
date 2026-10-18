@@ -1049,9 +1049,10 @@ sub file_response_cache_headers($c, $file, $cache_control) {
 	my $tag = &file_cache_tag($file);
 	return 0 unless $tag;
 	my $match = 0;
+	my $etag = $tag->{'etag'};
 	my $inm = $c->req->headers->if_none_match;
 	if (defined $inm && length $inm) {
-		$match = 1 if $inm eq '*' || $inm =~ /\Q$tag->{'etag'}\E/;
+		$match = 1 if $inm eq '*' || $inm =~ /\Q$etag\E/;
 	}
 	else {
 		my $ims = $c->req->headers->if_modified_since;
