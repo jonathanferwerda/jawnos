@@ -1017,6 +1017,36 @@ get '/file_open' => sub($c) {
 };
 
 
+# Answer an unchanged file with a 304 before any bytes are read. The tag is the
+# path, inode, size and mtime, so a reseal (which changes the ciphertext) makes a
+# new tag and a plain re-request makes none of the decryption work. Only called
+# after authentication, so it cannot tell a stranger whether a path exists.
+sub file_response_cache_headers($c, $file, $cache_control) {
+	my @st = stat($file);
+	return 0 unless @st;
+	my $etag = '"' . &subs::md5_sum(join(':', $file, $st[1], $st[7], $st[9])) . '"';
+	$c->res->headers->etag($etag);
+	eval {
+		require Mojo::Date;
+		$c->res->headers->last_modified(Mojo::Date->new($st[9])->to_string);
+	};
+	$c->res->headers->cache_control($cache_control) if defined $cache_control && length $cache_control;
+	my $inm = $c->req->headers->if_none_match;
+	if (defined $inm && length $inm) {
+		return 1 if $inm eq '*' || $inm =~ /\Q$etag\E/;
+		return 0;
+	}
+	my $ims = $c->req->headers->if_modified_since;
+	if (defined $ims && length $ims) {
+		my $since = eval {
+			require Mojo::Date;
+			Mojo::Date->new($ims)->epoch;
+		};
+		return 1 if defined $since && $st[9] <= $since;
+	}
+	return 0;
+}
+
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
@@ -1030,9 +1060,10 @@ sub rock_and_roll($c) {
 	}
 	# A thumbnail is a fixed frame of a file, so it can be cached; letting the
 	# browser hold it keeps a repeat visit to the music library (which asks for a
-	# thumbnail per song) from re-requesting every one. Kept short so a failed
-	# ('none') render heals quickly instead of sticking.
-	$c->res->headers->cache_control('private, max-age=3600') if $c->param('thumb');
+	# thumbnail per song) from re-requesting every one. Captured before an existing
+	# thumbnail swaps the file out and clears the parameter. The header itself is
+	# set only on a successful response, so a rejected or 'none' one is not cached.
+	my $wants_thumb = ($c->param('thumb') ? 1 : 0);
 	my ($db,$database,$sql) = &subs::database_grabber();
 
 	my $mag;
@@ -1118,6 +1149,17 @@ sub rock_and_roll($c) {
 						$c->param('thumb' => undef);
 					}
 				}
+			}
+		}
+		# A conditional request for an unchanged file stops here: no key walk, no
+		# decryption, no body. The duty path is an internal collection (mail, file
+		# information) and always wants the bytes, so it skips the revalidation.
+		if (!$c->param('duty') && $file && -e $file) {
+			my $cc = $wants_thumb ? 'private, max-age=3600' : 'private, no-cache';
+			if (&file_response_cache_headers($c, $file, $cc)) {
+				$c->res->code(304);
+				$c->res->body('');
+				return;
 			}
 		}
 		if ($file =~ /\.enc$/gi) {
@@ -29796,8 +29838,13 @@ sub update_database($data) {
 			error LONGTEXT,
 			timestamp VARCHAR(25),
 			server_time VARCHAR(25),
-			updated VARCHAR(25)
+			updated VARCHAR(25),
+			ost VARCHAR(25)
 		)',
+		# The first build of this table shipped without ost; db_insert always
+		# stamps it, so the row never landed. Add it for machines that already
+		# created the table (the guard skips the alter once the column is there).
+		'alter table sync_snapshots add column ost VARCHAR(25)',
 		'create index if not exists idx1_sync_snapshots on sync_snapshots (state, updated)',
 		# The error watch's catch: an error seen in the running logs, and the fix
 		# the Coding agent proposed for it, staged until a person applies it.

@@ -5407,7 +5407,7 @@ sub backup_now() {
 			timestamp => $now,
 			server_time => $now,
 			updated => $now
-		});
+		}) or return { status => 'failed', error => 'could not record the snapshot' };
 		&subs::subprocessor(sub {
 			$gb::backup_async_child = 1;
 			$gb::backup_async_snapshot = $snapshot;
