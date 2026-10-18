@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.749** (2026-10-18). Done work is marked so it is
+The remaining plan, as of **v0.1.755** (2026-10-18). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -344,10 +344,15 @@ Practical order:
    `shred` with `rm -P`, `timeout` with a Perl alarm or `gtimeout`, `xclip` with
    `pbcopy`; package the Homebrew dependencies. Rough: 1-3 weeks with tests.
 2. **Windows house via WSL2** — days, no code change; document it as the
-   supported Windows house path. A native house is a separate 2-4 month job
+   supported Windows house path. Strawberry Perl is the best native runtime but
+   does not solve `fork`/PTY/AF_UNIX/`/proc`/signals; Cygwin or MSYS2 Perl (a
+   POSIX emulation layer) is the likeliest way to run the tree unmodified, and is
+   worth a spike. A native Strawberry house is a separate 2-4 month job
    (process/session layer, IPC, PTY, path/home handling, service wrapper).
-3. **iOS client** — a Swift WebView shell that opens a ticket to a house on the
-   LAN/cloud. Rough: 2-4 weeks. Do not plan an iOS house.
+3. **iOS client** — a Swift WKWebView shell that opens a ticket to a house on the
+   LAN/cloud. Rough: 2-4 weeks. Do not plan an iOS house. iSH (x86 Linux
+   emulation) can run Perl and is worth a spike, but iOS suspends the app, so it
+   cannot be an always-on house; treat it as a demo, not a distribution path.
 4. **Native shells** — Windows/macOS desktop supervisors are separate from the
    house. `desktop/README.md` already names the Windows work (`core_win`,
    WinRT BLE); macOS would need its own shell (PyGObject/GTK via brew is not a
@@ -388,25 +393,31 @@ What is already in the tree:
 What is missing for the team/community model:
 
 - **A person principal.** No `users` table; every session is the same citizen.
-  Add `person_uuid` to tickets and paired devices, carry it in the session, and
-  read `me` settings per person (or per person+device).
-- **A persisted construct registry.** `master_plan` must become rows
-  (`uuid, kind, name, parent_uuid`) so a team can be renamed, moved, or created
-  without a code change. Backfill from the current hash.
+  A person is already an app whose `pos` or `mab` setting is `person`, so do not
+  add a parallel people table: use the person app as the principal. The app's
+  `uuid` setting is per-device (settings rows are keyed by `device`), so use the
+  app name as the house-wide identity, or add one canonical `person_id` record
+  and keep names/`aka` as aliases across rename-merge. Carry that id on tickets
+  and paired devices, and read `me` settings per person (or person+device).
+- **A persisted construct registry.** Constructs are already apps
+  (`pos`/`mab` = community, team, club, project, account, person); what is
+  missing is the hierarchy and the memberships. Add a small
+  `construct_links`/`construct_members` pair keyed by the app (name, with `aka`
+  aliases), and derive the tree from `$gb::master_plan` at migration time. Do not
+  duplicate the app rows into a second noun table.
 - **Membership and roles.** A `construct_members` table
-  (`construct_uuid, person_uuid, role`) with explicit verbs (owner/manager/
-  member/viewer/guest). This is the `$gb::roles` that does not exist yet.
+  (`construct, person_id, role`) with explicit verbs (owner/manager/member/
+  viewer/guest). This is the `$gb::roles` that does not exist yet.
 - **One authorization gate.** A single `can($principal, $verb, $row)` helper that
   every route calls. The current spread of ad-hoc privilege checks is the main
   correctness risk; adding a scope column without one gate will leak.
 - **Construct scope on data.** Appointments and warehouse need a narrowest-scope
   column (or the missing construct columns), with ancestor resolution for reads.
   Keep the existing columns for the mail picker during migration.
-- **A key decision.** Either the server enforces ACLs while one house key
-  decrypts everything (simple; trusts the server and anyone holding the key), or
-  each construct gets a data key wrapped to its members (more work; survives an
-  untrusted peer or a stolen DB). The second is the only one that matches
-  "teams share data" if houses are not all one person's.
+- **A key decision.** With a thin client (community data stays on the community
+  server) server-side ACLs may be enough. With a thick house (community data
+  replicated to the house) per-construct keys are required. Decide thin/thick
+  first; it sets how much crypto work P3 carries.
 - **Scoped sync.** Full-table replication is correct for one person's devices and
   wrong for shared constructs across houses. Construct-scoped sync is a later,
   separate project.
@@ -421,18 +432,55 @@ Rough readiness: construct vocabulary ~60%; identity, authorization, keying and
 sharing ~15%. This is a design-and-implementation project, not a configuration
 change.
 
-### Recommended minimum shape (one house, several people)
+### Deployment model (from the discussion)
 
-1. **Person = principal.** Merge the `people` construct with login identity; a
-   ticket or paired device names one `person_uuid`.
-2. **Constructs are rows**, not a hash: one table for the hierarchy, one for
-   membership, roles as verbs.
+This is the working model:
+
+- **House** = one person's machines, which is what the mesh already is:
+  `signatorial` + `remote_machines` + the sync group. Give the house one owner
+  person and one house keypair; its machines are peers.
+- **Community** = a tenant: its own server/container, database, `.house.key`,
+  signatorial identity, port block (`PORT_AHOY`..`PORT_COMS`) and
+  `~/.president`. Several communities can live on one host, one container each;
+  the host owns TLS/reverse proxy, backups, monitoring and port allocation.
+- **Team / project** = a construct *inside* a community container, not its own
+  container at first. Scope rows, not processes. A team becomes its own
+  container only if it is a separate trust/legal tenant; otherwise per-team
+  containers force cross-container federation before the ACL exists.
+- **Admission** = the community's governing role issues a signed ticket to a
+  house. The ticket binds house pubkey/signatorial, person id, construct id,
+  role, expiry and issuer; the house presents it, the community verifies it.
+  The substrate is already here: `signatorial`, `remote_machines.pubkey`,
+  `peer_sign_request`/`peer_verify`, `paired_devices` challenge/response, and the
+  `tickets` table. Extend the ticket rather than invent a new PKI.
+- **Data placement** = personal data stays in the house; community/team data
+  lives on the community server and is reached as a thin client. Do not
+  replicate the community DB to every phone. That keeps one house key for
+  personal data and server-side ACLs for shared data; per-construct keys are only
+  needed if the community DB is replicated or the server/backups are untrusted.
+- **Client** = each container is another JawnOS URL with its own ticket. A house
+  can hold tickets to several communities; the v1 client can switch between them
+  rather than federating their data. Cross-community sharing is a later
+  federation protocol, not a same-DB merge.
+
+A shared family/work computer is the same decision at a smaller scale: make it a
+client holding several tickets, or run one container per person. Do not build
+per-appointment visibility for a shared DB; if a household genuinely shares data,
+treat the household as a small community with members and roles.
+
+### Recommended minimum shape (one community, several houses)
+
+1. **Person = principal.** The person app is the principal; a ticket or paired
+   device names it. Keep one canonical id per house, with names/`aka` as aliases.
+2. **Constructs stay apps; hierarchy and membership are rows**: one table for the
+   hierarchy, one for membership, roles as verbs.
 3. **One gate**: every read/write resolves a row's narrowest construct upward and
    asks `can(...)`. No route compares `privilege` directly.
 4. **Scope data by the narrowest construct**; a team view is a query, not a
    separate database.
-5. **Decide keying before sharing leaves one machine.** Server-side ACL first is
-   acceptable only if every house is trusted; per-construct keys if not.
+5. **Decide thin/thick before keying.** Thin (community data stays on the
+   community server): server-side ACLs are enough. Thick (community data
+   replicated to houses): per-construct keys are required.
 6. **Notifications target a construct + role**, not the global `citizen` role
    (`notification_sender` already takes a `role` key).
 
@@ -442,35 +490,39 @@ not processes.
 
 ### Phases (rough, one developer)
 
-- **P0 — identity spine (1-2 weeks).** `person_uuid` on tickets/devices; session
-  carries it; `manager_file_maker` and `me` settings become per person; keep the
-  single key. No visible sharing yet.
-- **P1 — registry + roles (2-3 weeks).** `constructs` + `construct_members`,
-  admin UI, migrate `master_plan`; define owner/manager/member/viewer/guest
-  verbs; write `can()` with tests.
-- **P2 — scoped data + share UX (4-6 weeks).** Appointments and warehouse scope;
-  route-by-route adoption of `can()`; team views; share control; construct
-  notifications; audit entries. This is the bulk of the work and the main risk.
-- **P3 — keys + federation (months).** Per-construct keys and rotation; scoped
-  sync between houses; membership changes that revoke access.
+- **P0 — identity spine (1-2 weeks).** A canonical person id (app-based) on
+  tickets/devices; session carries it; `manager_file_maker` and `me` settings
+  become per person; give each house one owner. No visible sharing yet.
+- **P1 — membership + roles (2-3 weeks).** `construct_links` +
+  `construct_members` keyed by app, migrated from `master_plan`; define
+  owner/manager/member/viewer/guest verbs; write `can()` with tests.
+- **P2 — house admission (2-3 weeks).** Extend `tickets`/`remote_machines` with
+  house and person ids; issue/verify signed tickets at the community edge; fill
+  `ticket_request_mint`/`approve` and the paired-device path.
+- **P3 — scoped shared data (4-6 weeks).** Appointments/warehouse scope on the
+  community server; route-by-route adoption of `can()`; team views; share
+  control; construct notifications; audit entries. The bulk of the work.
+- **P4 — federation, only if needed (months).** Per-team containers,
+  per-construct keys, scoped sync between communities. Do not start here.
 
 ### Decisions needed before code
 
-1. **Topology**: is a community one shared house with teams inside, or many
-   personal houses federating? The current mesh is one person's machines; the
-   team model implies a shared house (or scoped federation).
+1. **Team/project containers**: does a team need its own container now, or is a
+   construct scope inside the community enough? Recommendation: scope first.
 2. **Hierarchy**: `$social_constructs` treats the six as orthogonal tags;
-   `$master_plan` treats team ⊃ club ⊃ community ⊃ project. Pick one. The
-   orderings already disagree (communities first in the picker, outermost in the
-   plan).
-3. **Person vs record**: is a `person` a login principal, or only a contact? If a
-   principal, contacts and accounts need a merge/identity story.
-4. **Trust**: may a peer or a stolen DB read everything? If no, per-construct
-   keys are required from P2, not P3.
-5. **iOS**: client-only (recommended) or a native reimplementation of the apps?
-6. **Windows**: is WSL2 an acceptable house, or must it be native?
-7. **Default visibility**: private to person, shared to the narrowest construct,
-   or community-wide? Teams need a default and a deliberate share gesture.
+   `$master_plan` nests team ⊃ club ⊃ community ⊃ project. Pick one, because
+   membership inheritance depends on it.
+3. **Person id**: app name vs a canonical `person_id` record. Recommendation:
+   canonical record, app name as an alias.
+4. **Thin vs thick**: does a house replicate community data or reach it as a
+   client? Recommendation: thin for community data, thick only for the house's
+   own data.
+5. **Trust**: may a stolen community DB or a peer read everything? If no,
+   per-construct keys are required with the first shared data, not later.
+6. **Shared device**: client with several tickets, or one container per person?
+   Recommendation: client; container only if it must host offline.
+7. **iOS**: client-only (recommended), or an iSH demo?
+8. **Windows**: WSL2 as the supported house, with Cygwin/MSYS2 as an experiment?
 
 ## Cross-cutting
 
