@@ -391,6 +391,9 @@
 				var namespaced = events.split(' ').map(function(e) { return e + jawnos_vid_ns; }).join(' ');
 				$(document).on(namespaced, selector, handler);
 			}
+			// A wheel is a `wheel` event in every engine that has one; `mousewheel`
+			// is only for an engine too old for it (binding both doubles the gesture).
+			var <%= $miss %>WheelEvent = ('onwheel' in document) ? 'wheel' : 'mousewheel';
 
 
 
@@ -616,7 +619,7 @@
 				vidOn('mouseout touchend mouseup', '#<%= $miss %>_jog_wheel,#<%= $id %>', function() {
 					<%= $miss %>_last = 'out';
 				});
-				vidOn('mousewheel', '#<%= $miss %>_jog_wheel', function(e) {
+				vidOn(<%= $miss %>WheelEvent, '#<%= $miss %>_jog_wheel', function(e) {
 					var j = $('#<%= $miss %>_jog_wheel');
 					var mvmt = numeral(e.originalEvent.wheelDelta).value();
 
@@ -680,14 +683,26 @@
 				v.volume = Math.max(0, Math.min(1, level));
 				if (v.volume > 0) { v.muted = false; }
 			}
-			vidOn('mousewheel', <%= $miss %>GestureRoot, function(e) {
+			vidOn(<%= $miss %>WheelEvent, <%= $miss %>GestureRoot, function(e) {
 				if (!<%= $miss %>GestureAllowed(e.target, 'wheel')) { return; }
 				var v = document.getElementById('<%= $id %>');
 				if (!v) { return; }
 				var ev = e.originalEvent || e;
 				// the wheel's own pixels: wheelDelta on the legacy event, deltaY on a
-				// plain wheel (the same ~120 a notch)
-				var mvmt = (ev.wheelDelta != undefined && ev.wheelDelta != 0) ? ev.wheelDelta : (-ev.deltaY * 1.2);
+				// plain wheel (the same ~120 a notch); a trackpad's sideways swipe
+				// scrubs on the axis it actually moved
+				var deltaX = ev.deltaX || 0;
+				var deltaY = ev.deltaY || 0;
+				var mvmt;
+				if (ev.wheelDelta != undefined && ev.wheelDelta != 0) {
+					mvmt = ev.wheelDelta;
+				}
+				else if (Math.abs(deltaX) > Math.abs(deltaY)) {
+					mvmt = deltaX * 1.2;
+				}
+				else {
+					mvmt = -deltaY * 1.2;
+				}
 				if (!mvmt || isNaN(mvmt)) { return; }
 				var speed = numeral($('#<%= $miss %>_speed').val()).value() || 1;
 				<%= $miss %>SeekTo(v.currentTime + (mvmt / 300) * speed);
