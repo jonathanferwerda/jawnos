@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.757** (2026-10-18). Done work is marked so it is
+The remaining plan, as of **v0.1.759** (2026-10-18). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -310,24 +310,20 @@ Still to do:
 
 ## Platforms & multi-user — findings (2026-10-18)
 
-Two different questions are hiding in "ports":
-
-- a **house** runs the Perl tree and SQLite and owns the data;
-- a **client** is a browser or WebView that opens a ticket URL.
-
-A platform can be either. The client half travels almost for free (the UI is
-web); the house half is the port problem. The same distinction decides
-multi-user: a shared house is a roles/ACL problem, not a sync problem.
+The product is the **house**: a bundled app that runs the Perl tree and SQLite
+on the device. The WebView is the house's own UI, not a separate client. "No
+clients" means every supported platform needs a house app; the browser is a
+fallback, not the product. That makes the port matrix a house matrix.
 
 ### Port readiness
 
-| Platform | Client today | House today | Real gaps |
+| Platform | Browser UI today | House today | Real gaps |
 | --- | --- | --- | --- |
-| **Linux** | yes | yes — reference target | none; `desktop/` is the native shell |
+| **Linux** | yes | yes — reference target | none; `desktop/` is the house app |
 | **Android** | yes (WebView) | yes, via the Termux fork | Play Store policy (sideload only); the native replacement of termux APIs is already roadmap work |
 | **macOS** | yes | likely, untested | `/proc` reads, `shred`, `timeout`, `xclip`, `ip`, `systemd`; Homebrew for `ffmpeg`/`magick`/`tesseract`/`qrencode`/`nmap`/`sox`; GTK desktop shell is Linux-only |
 | **Windows** | yes | no | `fork`/PTY, AF_UNIX IPC, POSIX shell, `/proc`, signals. WSL2 sidesteps all of it; native needs a process/IPC layer |
-| **iOS** | yes (WebView/PWA) | **not viable** | no Perl runtime, no long-lived background listener; App Store rules; call/SMS recording is not available to third-party apps |
+| **iOS** | yes (Safari) | **foreground only** | no Perl runtime, no long-lived background listener; iSH runs Perl but iOS suspends it; a true house is a Swift local-first rewrite |
 
 The seams are measurable, not speculative. `jawn` supervises the tree through
 `Mojo::IOLoop::ReadWriteFork` with a `bash -i` PTY (`jawn` 614-701). The core
@@ -349,14 +345,14 @@ Practical order:
    POSIX emulation layer) is the likeliest way to run the tree unmodified, and is
    worth a spike. A native Strawberry house is a separate 2-4 month job
    (process/session layer, IPC, PTY, path/home handling, service wrapper).
-3. **iOS client** — a Swift WKWebView shell that opens a ticket to a house on the
-   LAN/cloud. Rough: 2-4 weeks. Do not plan an iOS house. iSH (x86 Linux
-   emulation) can run Perl and is worth a spike, but iOS suspends the app, so it
-   cannot be an always-on house; treat it as a demo, not a distribution path.
-4. **Native shells** — Windows/macOS desktop supervisors are separate from the
-   house. `desktop/README.md` already names the Windows work (`core_win`,
-   WinRT BLE); macOS would need its own shell (PyGObject/GTK via brew is not a
-   good answer).
+3. **iOS house** — iSH can run Perl and is worth a spike, but iOS suspends the
+   app, so it is a foreground house, not an always-on one. A real iOS house is a
+   Swift local-first rewrite (same schema, native UI, background sync via the
+   OS), not the Perl tree. Choose one; do not call it a client.
+4. **Desktop house apps** — the Windows/macOS supervisors are part of the house
+   app, not separate clients. `desktop/README.md` already names the Windows work
+   (`core_win`, WinRT BLE); macOS needs its own supervisor shell
+   (PyGObject/GTK via brew is not a good answer).
 
 ### Multi-user readiness
 
@@ -414,10 +410,11 @@ What is missing for the team/community model:
 - **Construct scope on data.** Appointments and warehouse need a narrowest-scope
   column (or the missing construct columns), with ancestor resolution for reads.
   Keep the existing columns for the mail picker during migration.
-- **A key decision.** With a thin client (community data stays on the community
-  server) server-side ACLs may be enough. With a thick house (community data
-  replicated to the house) per-construct keys are required. Decide thin/thick
-  first; it sets how much crypto work P3 carries.
+- **A key decision.** "No clients" forces the thick path: shared data is
+  replicated to member houses, so per-construct keys are required and each house
+  enforces `can()` against a signed roster. The only real choice is whether
+  member houses are trusted to enforce it, or the roster arrives as signed deltas
+  so a house cannot grant itself a role.
 - **Scoped sync.** Full-table replication is correct for one person's devices and
   wrong for shared constructs across houses. Construct-scoped sync is a later,
   separate project.
@@ -446,29 +443,28 @@ This is the working model:
   `.house.key`, signatorial identity, port block (`PORT_AHOY`..`PORT_COMS`) and
   `~/.president`. Several clubs can live on one community host, one container
   each; the host owns TLS/reverse proxy, backups, monitoring and port allocation.
-- **Team / project** = a construct *inside* a club container, not its own
-  container at first. Scope rows, not processes. A team becomes its own
-  container only if it is a separate trust/legal tenant; otherwise per-team
-  containers force cross-container federation before the ACL exists.
+- **Team / project** = a construct *inside* the tenant container (the club, or
+  the top-level `team` per `master_plan`), not its own container at first. Scope
+  rows, not processes. A team becomes its own container only if it is a separate
+  trust/legal tenant; otherwise per-team containers force cross-container
+  federation before the ACL exists.
 - **Admission** = the club's governing role issues a signed ticket to a house.
   The ticket binds club/team, house pubkey/signatorial, person id, construct id,
-  role, expiry and issuer; the house presents it, the club verifies it. The
-  community host records the issuance and can revoke it.
-  The substrate is already here: `signatorial`, `remote_machines.pubkey`,
+  role, expiry and issuer; **any house verifies it offline**, and the community
+  host records the issuance and publishes revocations as signed deltas. The
+  substrate is already here: `signatorial`, `remote_machines.pubkey`,
   `peer_sign_request`/`peer_verify`, `paired_devices` challenge/response, and the
   `tickets` table. Extend the ticket rather than invent a new PKI.
+- **No clients** = every device runs a house app; there is no thin browser
+  client. The app bundles the tree, the database and the UI (a WebView to
+  localhost), and the house is a peer of the club/community containers.
 - **Data placement** = personal data stays in the house; shared club/team data
-  lives on the club server and is reached as a thin client. Do not replicate the
-  club DB to every phone. That keeps one house key for personal data and
-  server-side ACLs for shared data; per-construct keys are only needed if the
-  club DB is replicated or the server/backups are untrusted.
-- **Client** = each container is another JawnOS URL with its own ticket. A house
-  can hold tickets to several communities; the v1 client can switch between them
-  rather than federating their data. Cross-community sharing is a later
-  federation protocol, not a same-DB merge.
+  is **replicated to member houses** (thick), because a house must work offline
+  and cannot ask a server to render a view. That makes per-construct keys and
+  scoped sync mandatory, not optional, and every house enforces `can()` locally.
 
-A shared family/work computer is the same decision at a smaller scale: make it a
-client holding several tickets, or run one container per person. Do not build
+A shared family/work computer is the same decision at a smaller scale: run one
+house container per person, or one house with multiple people. Do not build
 per-appointment visibility for a shared DB; if a household genuinely shares data,
 treat the household as a small club/tenant with members and roles.
 
@@ -494,28 +490,41 @@ the same person id.
 - Every write also records `construct`, `actor_person`, `actor_role` and the
   issuing ticket in the audit.
 
-**Static UUIDs for settings.** The current row `uuid` is random per machine
-(`db_insert` 15 chars, `setting_initializer` 20), so two machines that create
-the same row independently produce two rows. A deterministic uuid fixes that,
-but it is a migration, not a formatting change:
+**Stabilize the app identity value, not the row uuid.** There are two uuids:
 
-1. Classify every setting as **house-wide** or **per-device**. A single uuid
-   shared by all machines is right for app config and construct links, and
-   wrong for `me` rows, window geometry, open tabs and timers. `@gb::protected`,
-   `@misc_settings` and `durable_settings_where` are the starting lists.
-2. Canonicalize app identity first: one app uuid per house (it survives rename
-   via `aka`), then row uuid = hash(app_uuid, setting, subsetting[, signatorial]).
-3. Audit every stored reference. `sc_*` settings are JSON arrays of **app
-   uuids** (`setting_setter` rewrites them on a `pos` change), so they must be
-   rewritten in the same transaction; check `aka`, `nfc`, relational buckets and
-   any other JSON list that stores a construct uuid.
-4. Migrate on one machine with sync paused: update uuids, rewrite `sc_*`,
-   tombstone the old uuids with `deletion_registration`, stamp
-   `server_time = now`. Let peers pull, dedupe by the natural key for a
-   transition window, then run the same check on every machine.
-5. Only after the counts agree, add a unique index on the natural key. A
-   pre-flight script should report duplicate natural keys, unresolved `sc_*`
-   references and proposed collisions before anything writes.
+- `settings.setting = 'uuid'`, `value = <uuid>` is the **app identity**; it is
+  what `sc_*` arrays and `settings_grabber({ uuid => ... })` reference. This is
+  the value to make one-per-app across every machine.
+- `settings.uuid` is the **row handle** used by sync/merge. Leave it random; it
+  is a finder key, not an identity.
+
+So the migration is much smaller than rewriting every row:
+
+1. Pick one canonical app identity per app (the oldest/server copy), update the
+   `uuid` setting on every device to that value, and rewrite every reference:
+   `sc_*` JSON arrays, any stored `cx_uuid`/construct value, and derived caches
+   (`relational` buckets/bubbles). `aka` holds names, not uuids; `nfc` holds
+   appointment/file uuids, not app identities, so check them but do not rewrite
+   them blindly.
+2. Stop minting divergent identities. `settings_grabber` currently creates a
+   `uuid` setting when the current device lacks one; it should first look for
+   the app's identity **on any device** and reuse it, minting only when none
+   exists. `setting_initializer` should do the same.
+3. Use the app's `unique` flag (Configure -> appointment list: visible/unique/
+   permanent) as the per-device signal. `unique = checked` means the app's
+   settings are device-local (the restart commands on a phone vs a computer),
+   and `merge_table_rows` already refuses to take them from a peer. Keep those
+   rows per-device; do not force one shared value. `@gb::protected` and the
+   sync-excluded settings (`open_tabs`, `scrollTop`, `jopen`, `dimensions`) are
+   the other device-local cases.
+   **Caveat:** `merge_table_rows` skips **all** settings for a `unique` app,
+   including the `uuid` row. Make the identity row (and `pos`/`mab`/name/`aka`)
+   an exception that always merges; only the app's operational settings stay
+   device-local, or `unique` apps such as "restart" keep divergent identities.
+4. Verify: one app identity per app, every `sc_*` reference resolves, no two
+   devices hold different identities for the same app, and a `unique` app still
+   has its per-device values. Row uuids stay as they are; the merge path changes
+   only to let the identity row through.
 
 **Active context (keyboard and writes).** The keyboard's `#accounts` and
 `#projects` are viewer filters; they are not an authority. Add one explicit
@@ -523,35 +532,46 @@ scope, per browser tab: `Community > Club > Team > Project`, with Account and
 Person as attachments. Show it as a breadcrumb above the keyboard with
 `Home`/`All`; "All" means all within the active scope, never all in the
 database. A write sends the narrowest construct (plus its ancestors) and the
-actor; the server checks membership and role, stamps the record, and rejects a
-scope the person is not in. When no scope is chosen, say **Personal**
-explicitly. Switching a crumb or Home changes the scope for new appointments
-and refreshes the open views; it does not rewrite existing records.
+actor; the house checks membership and role against its signed roster, stamps
+the record, and rejects a scope the person is not in. When no scope is chosen,
+say **Personal** explicitly. Switching a crumb or Home changes the scope for new
+appointments and refreshes the open views; it does not rewrite existing records.
 
 **Club as the tenant.** This is the clean reading of the discussion:
 
-- Community = the umbrella/host; Club = the business/tenant and its container.
-- Team (at least one per member) and Project live inside the club; Accounts and
-  People attach to the club/team.
-- A club membership must name at least one team; roles are per membership and
-  inherit downward (a club manager can act on its teams, a team lead on its
-  projects), never upward.
-- Current `$gb::master_plan` is inverted (team > clubs > communities >
-  projects) and must be re-rooted or replaced; `$gb::social_constructs` order
-  (community, club, team, person, project, account) is closer to the new model.
+- Community = the host/umbrella; Club = the business unit, and the container is
+  set up for its teams/projects/accounts/people. If the top-level `team` in
+  `master_plan` is the actual business, the container boundary follows that
+  level instead; confirm the mapping.
+- If a club is a business, a member is in at least one team below it; roles are
+  per membership and inherit downward, never upward.
+- `$gb::master_plan` is the authority. The earlier "inverted" note is
+  withdrawn: take its nesting as the hierarchy and map the words onto it (the
+  top-level `team` nodes are the governing layer; `clubs`, `communities` and
+  `projects` nest below). `$gb::social_constructs` order is only the picker's
+  display order, not the hierarchy.
 - Per-team/project containers are only for separate trust/legal tenants; the
   normal case is scope rows inside the club container.
 
 ### Hosting strategy
 
-Android/Linux-only houses are practical: the house is an appliance/server, and
-every other platform is a browser/PWA client. This avoids the Windows native
-rewrite and the impossible iOS house. The costs are native iOS integration
-(push, BLE, background sync), App Store 4.2 for a thin WebView, and Android
-Doze/battery if a phone is the always-on house. A community host or a small
-Linux box is the reliable house; a Mac/Windows-only user can use WSL2 or a
-club/community server. Being usable on Apple devices does not require beating
-Apple.
+"No clients" means every platform needs a **house app**, not a browser tab:
+
+- **Linux** = the reference: app + tree + LXC per club/community container.
+- **Android** = already a house app (Termux fork + dashboard); Doze/battery make
+  it a personal house, not an always-on server.
+- **macOS** = keep Perl; the house app is a supervisor + WKWebView; the remaining
+  port is `/proc`, `shred`, `timeout`, `xclip` and the Homebrew tool set.
+- **Windows** = WSL2 (supported) or Cygwin/MSYS2 (spike) until a native
+  process/IPC layer exists; LXC is not native, so containment is the VM/app
+  sandbox.
+- **iOS** = the hard one. iSH can run Perl but iOS suspends the app, so it is a
+  foreground house, not an always-on one. A true iOS house is a Swift local-first
+  rewrite (same schema, native UI, background sync via the OS), not the Perl
+  tree. Containment does not solve the OS lifecycle.
+
+Being usable on Apple devices still does not require beating Apple; it requires
+deciding whether iOS gets a foreground iSH house or a native local-first one.
 
 ### Recommended minimum shape (one club, several houses)
 
@@ -564,9 +584,9 @@ Apple.
    asks `can(...)`. No route compares `privilege` directly.
 4. **Scope data by the narrowest construct**; a team view is a query, not a
    separate database.
-5. **Decide thin/thick before keying.** Thin (shared data stays on the club
-   server): server-side ACLs are enough. Thick (shared data replicated to
-   houses): per-construct keys are required.
+5. **Thick is forced by "no clients."** Shared data is replicated to member
+   houses, so per-construct keys and scoped sync are required; each house
+   enforces `can()` locally against a signed membership graph.
 6. **Notifications target a construct + role**, not the global `citizen` role
    (`notification_sender` already takes a `role` key).
 
@@ -576,44 +596,45 @@ not processes.
 
 ### Phases (rough, one developer)
 
-- **P0 — identity + UUID pre-flight (2-3 weeks).** Mint one canonical person id
-  per person; give each house a `house_uuid`; classify settings as house-wide vs
-  per-device; write the audit for duplicate natural keys and `sc_*` references.
-  No writes yet.
-- **P1 — canonical UUIDs + membership (3-4 weeks).** Migrate app and settings
-  uuids, rewrite `sc_*` and every stored construct reference, dedupe, tombstone
-  the old ids; add `construct_members`; re-root `master_plan`; write `can()` with
-  tests.
+- **P0 — identity + identity pre-flight (2-3 weeks).** Mint one canonical
+  person id per person; give each house a `house_uuid`; audit the app identity
+  values, duplicate app identities and `sc_*` references; use the app `unique`
+  flag to mark device-local settings. No writes yet.
+- **P1 — app identity + membership (3-4 weeks).** Canonicalize the app identity
+  value (not row uuids), rewrite `sc_*`/stored references, fix the mint path;
+  add `construct_members`; take `master_plan` as the hierarchy; write `can()`.
 - **P2 — admission + context (2-3 weeks).** Extend `tickets`/`remote_machines`
-  with house/person/construct/role/issuer/signature; issue and verify signed
-  tickets at the club edge; add the scope bar and server-stamped writes.
-- **P3 — scoped shared data (4-6 weeks).** Appointments/warehouse scope on the
-  club server; route-by-route adoption of `can()`; team views; share control;
-  construct notifications; audit entries. The bulk of the work.
-- **P4 — federation, only if needed (months).** Per-team containers,
-  per-construct keys, scoped sync between clubs/communities. Do not start here.
+  with house/person/construct/role/issuer/signature; make tickets verifiable
+  offline; add the scope bar and house-stamped writes.
+- **P3 — scoped shared data + keys (4-6 weeks).** Appointments/warehouse scope in
+  each house; route-by-route adoption of `can()`; team views; share control;
+  construct notifications; audit entries; per-construct keys and scoped sync so
+  a replicated club DB is readable only by its members. The bulk of the work.
+- **P4 — more containers / cross-club federation (months).** Per-team
+  containers and cross-club sharing. Only if a trust/legal boundary demands it.
 
 ### Decisions needed before code
 
-1. **Tenancy**: Club = the container/tenant, Community = the umbrella/host?
-   Recommendation: yes; a community can run several club containers on one host.
-2. **Hierarchy**: re-root `$gb::master_plan` to Community > Club > Team >
-   Project, with Accounts/People attached. Recommendation: yes; the current
-   plan is inverted.
-3. **Person id**: one id minted once per person, reused across every club/team,
+1. **Tenancy boundary**: is the container the club, or the top-level `team` in
+   `master_plan`? The nesting is authoritative; the container follows the level
+   that owns the business.
+2. **App identity**: one identity per app across every device, even for an app
+   with `unique` checked (`unique` governs settings, not identity)? The
+   recommendation is yes.
+3. **Canonical copy**: when two devices already disagree, which one wins (the
+   oldest row, the server, the one with references)?
+4. **Person id**: one id minted once per person, reused across every club/team,
    with the house bound separately? Recommendation: yes.
-4. **Static uuid key**: approve the classification of house-wide vs per-device
-   settings before the migration. A wrong call here rewrites a lot of rows.
-5. **Thin vs thick**: thin for community/club data, thick only for the house's
-   own data? Recommendation: yes.
-6. **Trust**: may a stolen club DB or a peer read everything, or are
-   per-construct keys required with the first shared data?
-7. **Shared device**: client with several tickets (recommended), or one
-   container per person?
-8. **iOS**: client-only (recommended), with iSH as a demo only?
-9. **Windows**: WSL2 as the supported house, with Cygwin/MSYS2 as a spike?
-10. **Hosting**: accept Android/Linux-only houses, with browser clients
-    everywhere? Recommendation: yes.
+5. **Trust**: since there are no clients, may a member house enforce `can()` on
+   its own copy, or must membership rosters arrive as signed deltas (with
+   per-construct keys) so a house cannot grant itself a role?
+6. **Shared device**: with no clients, a family/work computer runs several house
+   containers (one per person) or one house with multiple people?
+   Recommendation: containers.
+7. **iOS**: foreground iSH house, or a native Swift local-first house that uses
+   the same schema but not the Perl tree?
+8. **Windows**: WSL2, Cygwin/MSYS2, or the native process/IPC layer? And in what
+   order do those platforms ship relative to Linux/Android?
 
 ## Cross-cutting
 
