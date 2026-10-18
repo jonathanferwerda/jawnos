@@ -6180,8 +6180,10 @@ sub sync_jobs_reap {
 	my $row = &db_query('select count(*) as c from sync_jobs where state = ? and cast(updated as integer) < ?', 'running', $cut)->hashes->[0] || {};
 	my $n = $row->{'c'} || 0;
 	return 0 unless $n;
-	&db_query('update sync_jobs set state = ?, note = ?, updated = ? where state = ? and cast(updated as integer) < ?',
-		'failed', 'interrupted by restart', $now, 'running', $cut);
+	# Leave `updated` alone: it is when the job last actually ran, and moving it to
+	# now made a reaped job look like the newest activity in the panel.
+	&db_query('update sync_jobs set state = ?, note = ? where state = ? and cast(updated as integer) < ?',
+		'failed', 'interrupted by restart', 'running', $cut);
 	return $n;
 }
 sub sync_job_finish {
