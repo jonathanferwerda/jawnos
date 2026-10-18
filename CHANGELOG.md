@@ -5,6 +5,8 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-18
 
+- v0.1.723 - sync: the reconnector checks this machine's own `remote_upgrade` marker before forking a pull. Several children could be started before the first had written its marker; they queued on the peer's single export lock, and each pull waited out the others. A live marker now means the next tick has nothing to start.
+- v0.1.722 - budgets: a fixed measure budget (`180weight`) can no longer become a time scope. The fixed branch accepted it as number+letters, `timespan_widener` stripped the digits to `weight`, and `father_time` asked `time_span('weight')`, which dies - killing every pull right after its merge and before its confirm. The window now has to be a real time span, and a malformed `/scope` falls back to a month.
 - v0.1.721 - tunnels: closing a forwarded socket now waits for its queued write to drain. The peer's `close` frame follows the last binary payload, and a bare `close` discarded that payload - which truncated every large backup by its tail (the appended encryption-standard marker among it), so the cloud downloaded a container it could not read and every pull ended `merge did not finish`. The puller also checks the downloaded byte count against the export size and retries a short body instead of merging it.
 - v0.1.720 - sync: the export and `backup_serve` log whether the file carries the appended standard marker and its size, locating a lost marker to the writer or the transfer.
 - v0.1.719 - sync: a failed merge keeps its downloaded bytes at `~/.president/failed_merge_<time>.enc` before the temp file is shredded, so the actual container can be inspected on the failing machine.

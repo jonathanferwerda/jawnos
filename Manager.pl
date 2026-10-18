@@ -31009,7 +31009,16 @@ sub remote_machine_reconnector($c) {
 						$has_new = 1 if (defined $rj->{'pending'} && ($rj->{'pending'}->{'count'} || 0) > 0);
 						# A peer that told us its export was busy gets a short rest; asking
 						# every tick only makes both machines spend the export over and over.
-						if (($has_new || $deep) && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
+						# One pull at a time on this machine too. `remote_upgrade` guards
+						# itself, but the reconnector can fork several children before the first
+						# has written its marker; they then queue on the peer's single export
+						# lock and starve one another (and fill the job list with waiters).
+						my $own_up = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+						my ($own_flag, $own_pid) = split /:/, ($own_up->{'value'} || ''), 2;
+						$own_flag ||= '';
+						my $own_live = ($own_flag eq 'running' && $own_pid && $own_pid =~ /^\d+$/ && $own_pid > 1 && kill(0, $own_pid)) ? 1 : 0;
+						my $own_busy = ($own_live && int($own_up->{'server_time'} || 0) + 600000 > &subs::rightNow()) ? 1 : 0;
+						if (($has_new || $deep) && !$own_busy && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
 							my $whoami = `whoami`;
 							chomp $whoami;
 							my $hostname = `hostname`;
