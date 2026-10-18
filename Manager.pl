@@ -14965,6 +14965,12 @@ sub merge_database($c,$configuration) {
 	&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
 	my ($db,$database) = &subs::database_grabber();
 	my $disposition->{'status'} = 'fail';
+	# A table the cursor could not finish is not a merge. `remote_upgrade` writes
+	# the peer's picture into `sync_seen` after a successful merge, so reporting
+	# succeed after a short read made a partial pull look like a full
+	# reconciliation - the next tick then skipped the table and the rows stayed
+	# missing. Keep the disposition honest so the pull retries.
+	my $merge_short = 0;
 	my $path = $filename;
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
@@ -15348,6 +15354,7 @@ sub merge_database($c,$configuration) {
 								}
 							}
 							my $short = $rows_read < $results_size ? ' SHORT' : '';
+							$merge_short = 1 if $short;
 							my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
 							&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
 							if ($sync_job) {
@@ -15356,7 +15363,7 @@ sub merge_database($c,$configuration) {
 						}
 					}
 					$disposition->{'disposition'} = $database;
-					$disposition->{'status'} = 'succeed';
+					$disposition->{'status'} = $merge_short ? 'failed' : 'succeed';
 					my $known_backup = &subs::db_select('backups', undef, { uuid => $backups->[0]->{'uuid'} })->hashes;
 					if ($known_backup->[0]->{'reason'} =~ /remote/gi) {
 						my $defunct_backups = &subs::db_query('delete from backups where recipient=? and signatorial=? and destination=? and server_time < ? and uuid != ?',
@@ -30915,13 +30922,15 @@ sub remote_machine_reconnector($c) {
 							'remote_upgraded',$rj->{'signatorial'},$signatorial)->hashes->[0];
 						# The guarded plan: the digest says whether a table's picture differs,
 						# and `above` proves whether the difference is a strict forward delta.
-						# A plan is only *used* once a prior pull has recorded the peer's
-						# picture; before that the pull is the bounded first sync and the
-						# differing picture still starts it.
+						# The plan is handed over from the first pull too: `sync_plan` already
+						# skips a table whose picture meets ours and only asks for a full read
+						# when the divergence cannot be a forward delta, so a cold peer gets
+						# its one full reconciliation now instead of a bounded window that
+						# leaves old unique rows behind forever.
 						my $seen = &subs::sync_seen_get($rj->{'signatorial'});
 						my $plan = &subs::sync_plan($my_digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen);
 						my $plan_differs = (ref $plan eq 'HASH' && scalar keys %{$plan}) ? 1 : 0;
-						my $plan_pull = ($plan_differs && ref $seen eq 'HASH' && scalar keys %{$seen}) ? 1 : 0;
+						my $plan_pull = $plan_differs ? 1 : 0;
 						if ($rj->{'deletions'}) {
 							&deletion_performer($rj->{'deletions'});
 						}

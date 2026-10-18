@@ -5878,32 +5878,43 @@ sub sync_plan {
 		my ($as, $bs) = (($a->{'sum'} || 0) + 0, ($b->{'sum'} || 0) + 0);
 		my ($am, $bm) = (($a->{'max'} || 0) + 0, ($b->{'max'} || 0) + 0);
 		next if $ac == $bc && $as == $bs && $am == $bm;
+		# The picture we last reconciled with this peer. An unchanged picture is
+		# skipped outright; when it has moved, the *change* is measured against
+		# this baseline, not against our own table. Comparing with our table made
+		# a peer that holds fewer rows (the union already landed here) look
+		# divergent on every write forever: the count difference never matched
+		# the rows above our newest, so every appointment asked for the whole
+		# 110k-row table again.
+		my $s = $seen->{$t};
+		my $seen_count = (ref $s eq 'HASH') ? ($s->{'count'} || 0) : 0;
+		my $seen_sum = (ref $s eq 'HASH') ? ($s->{'sum'} || 0) : 0;
+		my $seen_max = (ref $s eq 'HASH') ? ($s->{'max'} || 0) : 0;
+		next if ref $s eq 'HASH'
+			&& $seen_count == $bc
+			&& $seen_sum == $bs
+			&& $seen_max == $bm;
 		my $sel = $above->{$t};
 		my $above_count = (ref $sel eq 'HASH') ? ($sel->{'count'} || 0) : -1;
 		my $above_sum = (ref $sel eq 'HASH') ? ($sel->{'sum'} || 0) : -1;
 		my $since;
-		# A strict forward delta is safe only when the peer's rows above our
-		# newest row account for the *whole* difference between the two tables:
-		# then we are missing exactly those rows and nothing older. Any other
+		# A strict forward delta is safe when the peer's change since the last
+		# picture we reconciled is exactly its rows above our newest row: then
+		# we are missing exactly those rows and nothing older. Any other
 		# divergence (an offline device with a row nobody else saw, a replaced
 		# row, a count that moved without the sum moving) needs the full table,
 		# because a time window cannot name the row that is missing.
+		my $delta_count = $bc - $seen_count;
+		my $delta_sum = $bs - $seen_sum;
 		if ($bm > $am && $above_count > 0
-			&& ($bc - $ac) == $above_count
-			&& ($bs - $as) == $above_sum) {
+			&& $delta_count == $above_count
+			&& $delta_sum == $above_sum) {
 			$since = $am;
 		}
 		else {
 			# A full table is the only safe way to find a row an offline peer
-			# made and nobody else saw. Do it once per distinct peer picture:
-			# `seen` is the digest recorded after the last successful pull, so
-			# an unchanged peer (often simply behind us) is not re-read every
-			# tick. When its rows change, the full read happens again.
-			my $s = $seen->{$t};
-			next if ref $s eq 'HASH'
-				&& ($s->{'count'} || 0) == $bc
-				&& ($s->{'sum'} || 0) == $bs
-				&& ($s->{'max'} || 0) == $bm;
+			# made and nobody else saw. It is read once: `seen` is recorded only
+			# after a pull that actually finished, so the next tick measures the
+			# peer's change against this baseline instead of re-reading all of it.
 			$since = 0;
 		}
 		my $key = ($t eq 'settings_durable') ? 'settings' : $t;
@@ -6237,30 +6248,60 @@ sub decrypter() {
 # openssl for every single note - tens of milliseconds each, which is why a page
 # of mail took seconds - this one costs microseconds.
 
-# The standards the Encryption Standard setting offers. The AES family runs
-# in-process; the rest through openssl. A standard not listed here can still be
-# read (any cipher the openssl binary knows), it just cannot be chosen.
+# The standards the Encryption Standard setting offers. Everything here is
+# filtered by what this machine can actually run (see note_standard_supported),
+# so the Configure list never offers a cipher that would write letters nobody can
+# read back. A standard not listed can still be read: the openssl fallback accepts
+# any cipher that binary knows.
 sub note_encryption_standards {
-	return [
+	my @offered = (
 		'aes-256-ctr', 'aes-192-ctr', 'aes-128-ctr',
 		'aes-256-cbc', 'aes-192-cbc', 'aes-128-cbc',
 		'camellia-256-ctr', 'camellia-192-ctr', 'camellia-128-ctr',
 		'camellia-256-cbc', 'camellia-192-cbc', 'camellia-128-cbc',
-		'chacha20', 'des-ede3-cbc', 'sm4-cbc', 'aria-256-cbc',
-	];
+		'des-ede3-cbc', 'sm4-cbc', 'twofish-cbc',
+		'chacha20', 'aria-256-cbc',
+	);
+	return [ grep { &note_standard_supported($_) } @offered ];
+}
+
+# Whether one standard can be sealed and opened again on this machine. The
+# in-process families answer from the table; the openssl-only ones are probed
+# once (a tiny round trip) and memoised for the life of the worker.
+our %note_standard_supported;
+sub note_standard_supported {
+	my ($standard) = @_;
+	return undef unless defined $standard && length $standard;
+	return 1 if &note_cipher_spec($standard);
+	return $note_standard_supported{$standard} if exists $note_standard_supported{$standard};
+	my $ok = eval {
+		my $probe = &note_seal_container('jawnos', 'jawnos', $standard);
+		return 0 unless defined $probe && length $probe;
+		my $plain = &note_open_container($probe, 'jawnos', $standard);
+		return (defined $plain && $plain eq 'jawnos') ? 1 : 0;
+	};
+	$note_standard_supported{$standard} = $ok ? 1 : 0;
+	return $note_standard_supported{$standard};
 }
 
 # The in-process cipher for a standard, or undef when only openssl can run it.
-# aes-NNN-ctr/cbc map onto AES with the key length the number names; CTR keeps a
-# big-endian, full-block counter, which is what openssl's EVP uses.
+# aes/camellia-NNN-ctr/cbc map onto the named cipher with the key length the
+# number names; CTR keeps a big-endian, full-block counter, which is what
+# openssl's EVP uses. des-ede3-cbc is 3DES (8-byte block); sm4 and twofish are
+# 16-byte-block ciphers. keylen is the key, ivlen is both the IV and the block.
+our %note_cipher_specs = (
+	'aes-128-ctr' => [ 'ctr', 'AES', 16, 16 ], 'aes-192-ctr' => [ 'ctr', 'AES', 24, 16 ], 'aes-256-ctr' => [ 'ctr', 'AES', 32, 16 ],
+	'aes-128-cbc' => [ 'cbc', 'AES', 16, 16 ], 'aes-192-cbc' => [ 'cbc', 'AES', 24, 16 ], 'aes-256-cbc' => [ 'cbc', 'AES', 32, 16 ],
+	'camellia-128-ctr' => [ 'ctr', 'Camellia', 16, 16 ], 'camellia-192-ctr' => [ 'ctr', 'Camellia', 24, 16 ], 'camellia-256-ctr' => [ 'ctr', 'Camellia', 32, 16 ],
+	'camellia-128-cbc' => [ 'cbc', 'Camellia', 16, 16 ], 'camellia-192-cbc' => [ 'cbc', 'Camellia', 24, 16 ], 'camellia-256-cbc' => [ 'cbc', 'Camellia', 32, 16 ],
+	'des-ede3-cbc' => [ 'cbc', 'DES_EDE', 24, 8 ],
+	'sm4-cbc' => [ 'cbc', 'SM4', 16, 16 ],
+	'twofish-cbc' => [ 'cbc', 'Twofish', 32, 16 ],
+);
 sub note_cipher_spec {
 	my ($standard) = @_;
-	my %family = (
-		'aes-128-ctr' => [ 'ctr', 16 ], 'aes-192-ctr' => [ 'ctr', 24 ], 'aes-256-ctr' => [ 'ctr', 32 ],
-		'aes-128-cbc' => [ 'cbc', 16 ], 'aes-192-cbc' => [ 'cbc', 24 ], 'aes-256-cbc' => [ 'cbc', 32 ],
-	);
-	my $f = $family{$standard} or return undef;
-	return { family => $f->[0], cipher => 'AES', keylen => $f->[1] };
+	my $f = $note_cipher_specs{$standard} or return undef;
+	return { family => $f->[0], cipher => $f->[1], keylen => $f->[2], ivlen => $f->[3] };
 }
 
 # The standard to seal a new note with: the setting when it names a cipher this
@@ -6282,8 +6323,28 @@ sub note_kdf {
 	return Crypt::KeyDerivation::pbkdf2($secret, $salt, 10000, 'SHA256', $len);
 }
 
-sub note_ctr_mode { require Crypt::Mode::CTR; return Crypt::Mode::CTR->new('AES', 1, 16); }
-sub note_cbc_mode { my ($nopad) = @_; require Crypt::Mode::CBC; return Crypt::Mode::CBC->new('AES', $nopad ? 0 : 1); }
+sub note_ctr_mode { my ($spec) = @_; require Crypt::Mode::CTR; return Crypt::Mode::CTR->new($spec->{'cipher'}, 1, $spec->{'ivlen'}); }
+sub note_cbc_mode { my ($spec, $nopad) = @_; require Crypt::Mode::CBC; return Crypt::Mode::CBC->new($spec->{'cipher'}, $nopad ? 0 : 1); }
+
+# Key and IV for one container, memoised per process. PBKDF2 costs about 6 ms and
+# a file is opened again and again (a thumbnail, a video range, a gallery reload),
+# so the same secret and salt must not pay for it twice. Bounded and never
+# written anywhere: a cache is a convenience, not storage.
+our %note_key_material;
+sub note_key_material {
+	my ($secret, $salt, $spec) = @_;
+	return undef unless defined $secret && defined $salt;
+	my $memo_key = join "\x1f", $spec->{'cipher'}, $spec->{'keylen'}, $spec->{'ivlen'}, &md5_sum($secret), $salt;
+	return $note_key_material{$memo_key} if $note_key_material{$memo_key};
+	my $len = $spec->{'keylen'} + $spec->{'ivlen'};
+	my $kiv = eval { &note_kdf($secret, $salt, $len) };
+	return undef unless defined $kiv && length $kiv == $len;
+	my $key = substr($kiv, 0, $spec->{'keylen'});
+	my $iv = substr($kiv, $spec->{'keylen'}, $spec->{'ivlen'});
+	%note_key_material = () if scalar(keys %note_key_material) >= 512;
+	$note_key_material{$memo_key} = { key => $key, iv => $iv };
+	return $note_key_material{$memo_key};
+}
 
 sub note_random_salt {
 	return Crypt::PRNG::random_bytes(8) if eval { require Crypt::PRNG; 1 };
@@ -6299,26 +6360,27 @@ sub note_seal_container {
 	if ($spec) {
 		my $salt = &note_random_salt();
 		return undef unless defined $salt && length $salt == 8;
-		my $kiv = eval { &note_kdf($secret, $salt, $spec->{'keylen'} + 16) };
-		return undef unless defined $kiv && length $kiv == $spec->{'keylen'} + 16;
-		my ($key, $iv) = (substr($kiv, 0, $spec->{'keylen'}), substr($kiv, $spec->{'keylen'}, 16));
+		my $klen = $spec->{'keylen'} + $spec->{'ivlen'};
+		my $kiv = eval { &note_kdf($secret, $salt, $klen) };
+		return undef unless defined $kiv && length $kiv == $klen;
+		my $key = substr($kiv, 0, $spec->{'keylen'});
+		my $iv = substr($kiv, $spec->{'keylen'}, $spec->{'ivlen'});
 		my $ct = eval {
-			$spec->{'family'} eq 'ctr' ? &note_ctr_mode()->encrypt($content, $key, $iv)
-			                           : &note_cbc_mode()->encrypt($content, $key, $iv)
+			$spec->{'family'} eq 'ctr' ? &note_ctr_mode($spec)->encrypt($content, $key, $iv)
+			                           : &note_cbc_mode($spec)->encrypt($content, $key, $iv)
 		};
 		return undef unless defined $ct;
 		return 'Salted__' . $salt . $ct;
 	}
-	# not a cipher we can run in-process: let openssl do it
+	# not a cipher we can run in-process: let openssl do it. The bytes cross the
+	# pipe raw - base64 here only bought a 33% copy on each side.
 	my ($out, $in);
-	my $pid = open2($out, $in, 'openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2', '-a', '-A');
+	my $pid = open2($out, $in, 'openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2');
 	return undef unless $pid;
 	binmode $in; binmode $out;
 	print $in $content; close $in;
-	my $b64 = do { local $/; <$out> }; close $out; waitpid($pid, 0);
+	my $container = do { local $/; <$out> }; close $out; waitpid($pid, 0);
 	return undef if $?;
-	$b64 =~ s/\s+//g;
-	my $container = decode_base64($b64);
 	return length $container ? $container : undef;
 }
 
@@ -6339,24 +6401,35 @@ sub note_encrypter() {
 
 # Open an openssl container with the inner cipher; undef when it will not open.
 # $nopad leaves the PKCS#7 padding on (the file path sniffs the plaintext by its
-# own nose, so it asks for the bytes untouched).
+# own nose, so it asks for the bytes untouched). $limit decrypts only that many
+# leading ciphertext bytes - enough to sniff a key without paying for the whole
+# file. A limit is only meaningful with $nopad: a note needs its last block to
+# strip PKCS#7, so a limited open returns the raw prefix instead.
 sub note_open_container {
-	my ($container, $secret, $standard, $nopad) = @_;
+	my ($container, $secret, $standard, $nopad, $limit) = @_;
 	my $spec = &note_cipher_spec($standard);
 	if ($spec) {
-		# The AES family runs in-process and there is deliberately no openssl
-		# fallback here: a wrong key then costs nothing but a failed padding check,
-		# instead of two forked openssl processes per attempt while the credential
-		# history is walked.
+		# The in-process families run with no openssl fallback: a wrong key then
+		# costs nothing but a failed padding check, instead of two forked openssl
+		# processes per attempt while the credential history is walked.
 		return undef unless substr($container, 0, 8) eq 'Salted__' && length($container) > 16;
 		my $salt = substr($container, 8, 8);
 		my $ct = substr($container, 16);
-		my $kiv = eval { &note_kdf($secret, $salt, $spec->{'keylen'} + 16) };
-		return undef unless defined $kiv && length $kiv == $spec->{'keylen'} + 16;
-		my ($key, $iv) = (substr($kiv, 0, $spec->{'keylen'}), substr($kiv, $spec->{'keylen'}, 16));
+		my $take = length $ct;
+		if (defined $limit) {
+			return undef unless $nopad;
+			$take = $limit if $limit < $take;
+			if ($spec->{'family'} eq 'cbc') {
+				$take = int($take / $spec->{'ivlen'}) * $spec->{'ivlen'};
+				$take = $spec->{'ivlen'} if $take == 0 && length($ct) >= $spec->{'ivlen'};
+			}
+		}
+		my $chunk = $take == length($ct) ? $ct : substr($ct, 0, $take);
+		my $material = &note_key_material($secret, $salt, $spec);
+		return undef unless $material;
 		return eval {
-			$spec->{'family'} eq 'ctr' ? &note_ctr_mode()->decrypt($ct, $key, $iv)
-			                           : &note_cbc_mode($nopad)->decrypt($ct, $key, $iv)
+			$spec->{'family'} eq 'ctr' ? &note_ctr_mode($spec)->decrypt($chunk, $material->{'key'}, $material->{'iv'})
+			                           : &note_cbc_mode($spec, $nopad)->decrypt($chunk, $material->{'key'}, $material->{'iv'})
 		};
 	}
 	# a cipher we cannot run in-process: openssl, and a second try through the
@@ -6368,14 +6441,14 @@ sub note_open_container {
 
 sub note_openssl_open {
 	my ($container, $secret, $standard, $legacy, $nopad) = @_;
-	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2', '-a', '-A');
+	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2');
 	push @args, '-provider', 'default', '-provider', 'legacy' if $legacy;
 	push @args, '-nopad' if $nopad;
 	my ($out, $in);
 	my $pid = open2($out, $in, @args);
 	return undef unless $pid;
 	binmode $in; binmode $out;
-	print $in encode_base64($container, ''); close $in;
+	print $in $container; close $in;
 	my $plain = do { local $/; <$out> }; close $out; waitpid($pid, 0);
 	return undef if $?;
 	return $plain;
@@ -6400,6 +6473,157 @@ sub open_file {
 	my $container = eval { &read_file($in_path) };
 	return undef unless defined $container && length $container;
 	return &note_open_bytes($container, $secret, $standard, $nopad);
+}
+
+# ---- fast sealed-file opens --------------------------------------------------
+#
+# Rock and roll used to read the whole file, derive a key and decrypt every byte
+# once per credential in the rotation history. Two facts make that unnecessary:
+# a key can be tested on a short prefix (File::Type never looks past byte 5122),
+# and a file that opened once will open with the same secret and standard next
+# time. The helpers below read the container once, test keys on 16 KB, and remember
+# the winner for as long as the file is unchanged. Nothing here changes the
+# container: the bytes on disk stay exactly what openssl writes.
+
+our $SEALED_PROBE_BYTES = 16384;
+
+# The identity of a sealed file: any change to it (a reseal) makes a different
+# key. inode covers a replace, size and mtime cover an in-place rewrite.
+sub sealed_file_identity {
+	my ($path) = @_;
+	my @st = stat($path);
+	return undef unless @st;
+	return join "\x1f", $path, $st[1], $st[7], $st[9];
+}
+
+# Try candidate secrets and standards in order, decrypting only the prefix for
+# each. $inspect receives the prefix and returns a true value (the verdict) when
+# it looks like the file wanted. Returns the winner without the body bytes.
+sub sealed_file_probe {
+	my ($container, $secrets, $standards, $inspect) = @_;
+	foreach my $secret (@{$secrets || []}) {
+		next unless defined $secret && length $secret;
+		foreach my $standard (@{$standards || []}) {
+			next unless defined $standard && length $standard;
+			my $probe = &note_open_container($container, $secret, $standard, 1, $SEALED_PROBE_BYTES);
+			next unless defined $probe && length $probe;
+			my $verdict = $inspect ? eval { $inspect->($probe) } : 1;
+			next unless $verdict;
+			return { secret => $secret, standard => $standard, verdict => $verdict };
+		}
+	}
+	return undef;
+}
+
+# Advance a CTR IV by whole blocks (big-endian, which is what openssl's EVP
+# counter is), so a range can start anywhere without decrypting what precedes it.
+sub note_iv_advance {
+	my ($iv, $blocks) = @_;
+	return $iv unless $blocks;
+	my $out = $iv;
+	my $carry = $blocks;
+	for (my $i = length($out) - 1; $i >= 0 && $carry; $i--) {
+		my $v = ord(substr($out, $i, 1)) + $carry;
+		substr($out, $i, 1) = chr($v & 0xff);
+		$carry = int($v / 256);
+	}
+	return $out;
+}
+
+# Decrypt one byte range of a container. CTR is seekable by advancing the IV;
+# CBC starts at the requested block using the previous ciphertext block as its IV.
+# The caller passes nopad-style files (no padding block to strip from the tail),
+# which is exactly the stream rock_and_roll serves today.
+sub note_open_slice {
+	my ($container, $secret, $standard, $start, $len) = @_;
+	my $spec = &note_cipher_spec($standard) or return undef;
+	return undef unless substr($container, 0, 8) eq 'Salted__' && length($container) > 16;
+	my $salt = substr($container, 8, 8);
+	my $ct = substr($container, 16);
+	my $total = length $ct;
+	$start = 0 if !defined $start || $start < 0;
+	return undef if $start > $total;
+	$len = $total - $start if !defined $len || $start + $len > $total;
+	$len = 0 if $len < 0;
+	return '' if $len == 0;
+	my $block = $spec->{'ivlen'};
+	my $first = int($start / $block);
+	my $skip = $start - $first * $block;
+	my $take = $skip + $len;
+	if ($spec->{'family'} eq 'cbc') {
+		$take = int(($take + $block - 1) / $block) * $block;
+	}
+	my $avail = $total - $first * $block;
+	$take = $avail if $take > $avail;
+	return undef if $take <= 0;
+	my $ct_slice = substr($ct, $first * $block, $take);
+	my $material = &note_key_material($secret, $salt, $spec);
+	return undef unless $material;
+	my $iv = $material->{'iv'};
+	if ($spec->{'family'} eq 'ctr') {
+		$iv = &note_iv_advance($iv, $first);
+	} elsif ($first > 0) {
+		$iv = substr($ct, ($first - 1) * $block, $block);
+	}
+	my $plain = eval {
+		$spec->{'family'} eq 'ctr' ? &note_ctr_mode($spec)->decrypt($ct_slice, $material->{'key'}, $iv)
+		                           : &note_cbc_mode($spec, 1)->decrypt($ct_slice, $material->{'key'}, $iv)
+	};
+	return undef unless defined $plain;
+	return substr($plain, $skip, $len);
+}
+
+# Open a sealed file, remembering the secret/standard that opened it. $range is
+# an optional [ start, length ] (length undef means to the end). Returns a hash:
+# data, secret, standard, verdict, total, start, length; or { unsatisfiable }.
+our %sealed_file_memo;
+sub sealed_file_open {
+	my ($in_path, $secrets, $standards, $nopad, $inspect, $range) = @_;
+	my $container = eval { &read_file($in_path) };
+	return undef unless defined $container && length $container;
+	my $id = &sealed_file_identity($in_path);
+	my $cand;
+	if ($id && (my $memo = $sealed_file_memo{$id})) {
+		$cand = &sealed_file_probe($container, [ $memo->{'secret'} ], [ $memo->{'standard'} ], $inspect);
+		delete $sealed_file_memo{$id} unless $cand;
+	}
+	$cand ||= &sealed_file_probe($container, $secrets, $standards, $inspect);
+	return undef unless $cand;
+	if ($id) {
+		%sealed_file_memo = () if scalar(keys %sealed_file_memo) >= 256;
+		$sealed_file_memo{$id} = { secret => $cand->{'secret'}, standard => $cand->{'standard'} };
+	}
+	my $spec = &note_cipher_spec($cand->{'standard'});
+	my $result = { secret => $cand->{'secret'}, standard => $cand->{'standard'}, verdict => $cand->{'verdict'} };
+	if ($range && $spec && $nopad) {
+		my $total = length($container) - 16;
+		my ($start, $len) = @{$range};
+		$start = 0 if !defined $start || $start < 0;
+		return { unsatisfiable => 1, total => $total } if $start >= $total && $total > 0;
+		$len = $total - $start if !defined $len || $start + $len > $total;
+		my $slice = &note_open_slice($container, $cand->{'secret'}, $cand->{'standard'}, $start, $len);
+		return undef unless defined $slice;
+		$result->{'data'} = $slice;
+		$result->{'total'} = $total;
+		$result->{'start'} = $start;
+		$result->{'length'} = $len;
+		return $result;
+	}
+	my $data = &note_open_container($container, $cand->{'secret'}, $cand->{'standard'}, $nopad);
+	return undef unless defined $data && length $data;
+	my $total = length $data;
+	if ($range) {
+		my ($start, $len) = @{$range};
+		$start = 0 if !defined $start || $start < 0;
+		return { unsatisfiable => 1, total => $total } if $start >= $total && $total > 0;
+		$len = $total - $start if !defined $len || $start + $len > $total;
+		$data = substr($data, $start, $len);
+		$result->{'start'} = $start;
+		$result->{'length'} = $len;
+	}
+	$result->{'data'} = $data;
+	$result->{'total'} = $total;
+	return $result;
 }
 
 # The security credentials a note of a given moment could have been sealed under,
