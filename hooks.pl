@@ -271,6 +271,8 @@ hook before_dispatch => sub {
 		$path eq '/manager/configure/backup_status' ||
 		$path eq '/manager/backup_serve' ||
 		$path eq '/manager/backup/confirm' ||
+		# the v3 row stream: the same signed rail, with no snapshot to build
+		$path eq '/manager/sync_rows' ||
 		# a peer holding the accurate copy of a session closes this machine's
 		# stale open row over the same bare signed rail; the route peer_verifies
 		# the caller against the roster and only repairs a row that is here

@@ -7270,6 +7270,248 @@ get '/manager/voice_download' => sub($c) {
 	sub DESTROY { shift->release }
 }
 
+# One encrypted batch of a table's rows: the wire unit of the v3 sync rail. The
+# cursor is the last rowid the caller already has, so a dropped tunnel costs the
+# batch, not the pull; the total is sent with the first batch for progress.
+sub sync_rows_batch {
+	my ($remote, $signatorial, $secret, $table, $cut, $after) = @_;
+	my $url = $remote->{'manager'} . '/manager/sync_rows?signatorial=' . $signatorial
+		. '&table=' . Mojo::Util::url_escape($table)
+		. '&cut=' . int($cut) . '&limit=500';
+	$url .= '&after=' . Mojo::Util::url_escape($after) if defined $after && $after ne '';
+	my $res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+	return (undef, 'the peer did not answer') unless $res;
+	return (undef, 'HTTP ' . $res->code) unless $res->is_success;
+	my $type = $res->headers->content_type || '';
+	if ($type !~ m{octet-stream}) {
+		# An unsealed reply is the producer refusing the request (auth, an unknown
+		# table, or a local failure). A table this side knows and the peer does not
+		# is a schema-skew skip, not a failed pull.
+		my $err = eval { decode_json($res->body) } || {};
+		my $why = $err->{'error'} || 'the peer refused the batch';
+		return (undef, $why, ($why eq 'unknown table' ? 1 : 0));
+	}
+	my $plain = eval { &subs::decrypter($secret, $res->body) };
+	return (undef, 'the batch would not decrypt') unless defined $plain && length $plain;
+	my $batch = eval { decode_sereal($plain) };
+	return (undef, 'the batch would not decode') unless ref $batch eq 'HASH';
+	return (undef, $batch->{'error'} || 'the peer refused the batch') unless $batch->{'ok'};
+	return ($batch, undef);
+}
+
+# Pull a peer's rows as encrypted batches and merge them with the same per-row
+# rules the snapshot path uses. Only the local watermark and `sync_seen` move, and
+# only after every table finished: a short batch leaves the next tick to retry.
+sub sync_rows_pull {
+	my ($c, $params, $sync, $job, $remote_machine, $auuid) = @_;
+	# A peer on newer code may carry a table this database has not been migrated for
+	# yet; the snapshot path got this through merge_database. Run it here too, then
+	# drop the cached table list so the new table is actually requested.
+	&update_database($c);
+	$subs::sync_table_cache = undef;
+	my $remote = $remote_machine || &remote_useragent_maker({ signatorial => $params->{'remote_signatorial'} });
+	my $remote_signatorial = $params->{'remote_signatorial'} || $remote->{'signatorial'};
+	my $signatorial = &subs::signatorial_designer();
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
+	my $security = &subs::db_select('security', ['credential'], { level => 1 })->hash || {};
+	my $secret = &subs::decrypter($suds, $security->{'credential'} || '');
+	unless (defined $secret && length $secret) {
+		$sync->done('failed', 'no shared credential for the row stream');
+		return 'failed';
+	}
+	my $colour = $remote->{'data'}->{'manager_colour'};
+	my $deletions = eval { return decode_json($remote->{'deletions'} || '[]') } || [];
+	my $rdel = &subs::db_select('remote_machines', ['deletions'], {})->hashes;
+	foreach my $rd (@{$rdel}) {
+		my $all = eval { return decode_json($rd->{'deletions'} || '[]') } || [];
+		push @{$deletions}, @{$all};
+	}
+	my $configuration = {
+		signatorial => $remote_signatorial,
+		remote => $remote,
+		sync_job => $job,
+		colour => $colour,
+	};
+	my @updateables;
+	my @cache_bucket_updateables;
+	my $ctx = {
+		configuration => $configuration,
+		misc_settings => &misc_setting_list(),
+		device => &subs::device_setter(),
+		deletions => $deletions,
+		universal_settings => {},
+		updateables => \@updateables,
+		cache_bucket_updateables => \@cache_bucket_updateables,
+		sync_job => $job,
+		auuid => $auuid,
+		colour => $colour,
+	};
+	my $plan = (ref $params->{'plan'} eq 'HASH') ? $params->{'plan'} : {};
+	my $default_cut = (defined $params->{'default_cut'} && $params->{'default_cut'} =~ /^[0-9]+$/) ? $params->{'default_cut'} : 0;
+	my @tables = @{ &subs::sync_table_list() };
+	# With a plan (the digest says what differs), fetch only the tables that moved
+	# plus the carry-only streams. Without one, this is a first/cold pull: every
+	# table from the window, as the snapshot path did. The carry-only tables have
+	# no digest trigger by design (continent is a location stream), so they must
+	# always ride along or a device's travel map stops learning where the others are.
+	my $have_plan = (ref $params->{'plan'} eq 'HASH' && scalar keys %{$params->{'plan'}}) ? 1 : 0;
+	my %carry = map { $_ => 1 } qw(continent ai_budget ai_jobs ai_house notifications);
+	my $table_total = scalar @tables;
+	my $count = 0;
+	my $watermark = 0;
+	my $failed;
+	foreach my $table (@tables) {
+		next if $have_plan && !exists $plan->{$table} && !$carry{$table};
+		my $cut = (exists $plan->{$table} && defined $plan->{$table}) ? $plan->{$table} : $default_cut;
+		$cut = 0 unless defined $cut && $cut =~ /^[0-9]+$/;
+		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, '');
+		next if $skip;
+		unless ($first) {
+			$failed = $table . ': ' . ($err || 'no answer');
+			last;
+		}
+		$watermark = $first->{'server_time'} || $watermark if !$watermark;
+		my $total = $first->{'total'} || 0;
+		next unless $total;
+		$count++;
+		my @queue = @{ $first->{'rows'} || [] };
+		my $cursor = $first->{'next'} || '';
+		my $done = $first->{'done'} ? 1 : 0;
+		my $fetched = scalar @queue;
+		my $fetch_error;
+		&subs::sync_job_step($job, 'merge:' . $table, { label => 'merge ' . $table, state => 'running', current => $fetched, total => $total });
+		my $next_row = sub {
+			while (!scalar @queue) {
+				return undef if $done || $fetch_error || $cursor eq '';
+				my ($batch, $why) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, $cursor);
+				unless ($batch) { $fetch_error = $why || 'a batch failed'; return undef; }
+				@queue = @{ $batch->{'rows'} || [] };
+				$cursor = $batch->{'next'} || '';
+				$done = $batch->{'done'} ? 1 : 0;
+				$fetched += scalar @queue;
+				&subs::sync_job_step($job, 'merge:' . $table, { current => $fetched, total => $total });
+			}
+			my $row = shift @queue;
+			delete $row->{'__sync_rowid'} if ref $row eq 'HASH';
+			$watermark = $row->{'server_time'} if ref $row eq 'HASH' && defined $row->{'server_time'} && $row->{'server_time'} > $watermark;
+			return $row;
+		};
+		my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total);
+		if ($short || $fetch_error) {
+			$failed = $table . ': ' . ($fetch_error || 'short read');
+			last;
+		}
+	}
+	&merge_finish($ctx);
+	if ($failed) {
+		&subs::sync_job_step($job, 'merge', { state => 'failed', note => $failed });
+		$sync->done('failed', $failed);
+		return 'failed';
+	}
+	# The puller's own watermark: what the reconnector hands the peer as `since`
+	# next tick. Written only after every table finished, so a short pull retries.
+	if (!$params->{'gimme'} && $watermark) {
+		&subs::db_query('delete from backups where ost < ? and recipient = ? and signatorial = ? and reason = ?', $watermark, $signatorial, $remote_signatorial, 'remote_upgraded');
+		&subs::db_update('backups', { server_time => $watermark, reason => 'remote_upgraded', size => 0 }, {
+			recipient => $signatorial,
+			signatorial => $remote_signatorial,
+		});
+		my $seen = &subs::db_query('select count(*) as c from backups where reason = ? and recipient = ? and signatorial = ?', 'remote_upgraded', $signatorial, $remote_signatorial)->hashes->[0] || {};
+		unless ($seen->{'c'}) {
+			&subs::db_insert('backups', {
+				timestamp => &subs::rightNow(),
+				server_time => $watermark,
+				reason => 'remote_upgraded',
+				recipient => $signatorial,
+				signatorial => $remote_signatorial,
+				destination => $params->{'database'},
+				warranty => &subs::ago_calc('-20m', &subs::rightNow()),
+				uuid => &subs::random_string_creator(25)
+			});
+		}
+		if (ref $params->{'remote_digest'} eq 'HASH') {
+			my $prior = &subs::sync_seen_get($remote_signatorial) || {};
+			my %seen_map;
+			foreach my $t ( keys %{$params->{'remote_digest'}} ) {
+				my $d = $params->{'remote_digest'}->{$t};
+				next unless ref $d eq 'HASH';
+				my $pk = ($t eq 'settings_durable') ? 'settings' : $t;
+				my $cut = $plan->{$pk};
+				my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
+				$seen_map{$t} = { %{$d}, full => $full };
+			}
+			&subs::sync_seen_set($remote_signatorial, \%seen_map);
+		}
+		&subs::sync_backoff_clear($remote_signatorial);
+	}
+	&subs::sync_job_step($job, 'merge', { state => 'done', current => 1, total => 1 });
+	$sync->done('done', 'rows merged');
+	return 'done';
+}
+
+# v3 producer: one table's rows in a bounded, encrypted batch. Deliberately no
+# temp SQLite: the caller's cursor is a rowid, and the response is Sereal+zstd
+# sealed with the same shared security credential the snapshot container uses.
+# The route peer_verifies the caller (or accepts an approved session), exactly
+# like the rest of the sync rail.
+get '/manager/sync_rows' => sub ($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
+	my $security = &subs::db_select('security', ['credential'], { level => 1 })->hash || {};
+	my $secret = &subs::decrypter($suds, $security->{'credential'} || '');
+	unless (defined $secret && length $secret) {
+		$c->render(json => { ok => 0, error => 'no shared credential' });
+		return;
+	}
+	my $table = $c->param('table') || '';
+	my %allowed = map { $_ => 1 } @{ &subs::sync_table_list() };
+	unless ($allowed{$table}) {
+		$c->render(json => { ok => 0, error => 'unknown table' });
+		return;
+	}
+	my $cut = $c->param('cut');
+	$cut = 0 unless defined $cut && $cut =~ /^[0-9]+$/;
+	my $limit = $c->param('limit');
+	$limit = 500 unless defined $limit && $limit =~ /^\d+$/ && $limit > 0 && $limit <= 2000;
+	my $after = $c->param('after');
+	$after = '' unless defined $after && $after =~ /^\d+$/;
+	my $where = ' where server_time >= ?';
+	my @args = ($cut);
+	my @after_args;
+	if ($after ne '') {
+		$where .= ' and rowid > ?';
+		@after_args = ($after);
+	}
+	if ($table eq 'appointments') { $where .= " and (status is null or status != 'deleting')"; }
+	elsif ($table eq 'settings') { $where .= " and (setting is null or setting not in ('open_tabs','scrollTop','jopen','dimensions'))"; }
+	my $total = 0;
+	if ($after eq '') {
+		$total = &subs::db_query('select count(*) as c from ' . $table . $where, @args)->hashes->[0]->{'c'} || 0;
+	}
+	my $rows = &subs::db_query('select rowid as __sync_rowid, * from ' . $table . $where . ' order by rowid limit ?', @args, @after_args, $limit + 1)->hashes || [];
+	my $more = scalar(@{$rows}) > $limit ? 1 : 0;
+	splice @{$rows}, $limit if $more;
+	my $next = '';
+	$next = $rows->[-1]->{'__sync_rowid'} if $more && scalar @{$rows};
+	my $plain = eval { encode_sereal({ ok => 1, table => $table, rows => $rows, total => $total, next => $next, done => ($more ? 0 : 1), server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3 }) };
+	unless (defined $plain) {
+		$c->render(json => { ok => 0, error => 'could not encode the batch' });
+		return;
+	}
+	my $sealed = eval { &subs::encrypter($secret, $plain) };
+	unless (defined $sealed) {
+		$c->render(json => { ok => 0, error => 'could not seal the batch' });
+		return;
+	}
+	$c->res->headers->content_type('application/octet-stream');
+	$c->render(data => $sealed);
+};
+
 	sub remote_upgrade($c,$params) {
 	# The marker carries the worker's pid. A restart or a crash is the common case
 	# here, and a bare 'running' left behind by a dead worker used to block every
@@ -7333,6 +7575,14 @@ get '/manager/voice_download' => sub($c) {
 
 	$remote_machine = &remote_useragent_maker({ signatorial => $remote_signatorial });
 	my $auuid = &subs::random_string_creator(10);
+	# v3: a normal delta pull is a sequence of encrypted row batches, not a temp
+	# SQLite snapshot. A full migration and a windowed deep pull keep the snapshot
+	# path, which is what those two were designed for.
+	if (($params->{'sync_version'} || 0) >= 3 && !$full && !$gimme) {
+		my $status = &sync_rows_pull($c, $params, $sync, $job, $remote_machine, $auuid);
+		&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => ($status eq 'done' ? 'done' : 'failed'), progress => 100 });
+		return $status;
+	}
 	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
@@ -15546,7 +15796,7 @@ sub merge_table_rows {
 		ROW: for my $once (1) {
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
-							$percentage = sprintf("%.2f", $n / $results_size * 100);
+							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
 								&subs::sync_job_step($sync_job, 'merge:' . $q, { current => $n, total => $results_size });
 								$job_alert = &subs::rightNow();
@@ -15794,20 +16044,66 @@ sub merge_table_rows {
 							}
 		}
 	};
-	for (my $n = 0; $n < $results_size; $n++) {
+	for (my $n = 0; !$results_size || $n < $results_size; $n++) {
 		my $r = $next_row->();
 		last unless $r;
 		$rows_read++;
 		$merge_one->($r, $n);
 	}
-						my $short = $rows_read < $results_size ? ' SHORT' : '';
+						my $short = ($results_size && $rows_read < $results_size) ? ' SHORT' : '';
 						$merge_short = 1 if $short;
 						my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
 						&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
 						if ($sync_job) {
-							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => $results_size, total => $results_size, note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
+							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => ($results_size || $rows_read), total => ($results_size || $rows_read), note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
 						}
 	return $merge_short;
+}
+
+# The post-merge work shared by the snapshot path and the row-stream path: refresh
+# the header/budget for appointments that moved, apply the deletions that came with
+# the pull, and drop the relational caches an app's settings invalidate.
+sub merge_finish {
+	my ($ctx) = @_;
+	my $configuration = $ctx->{'configuration'} || {};
+	my $updateables = $ctx->{'updateables'} || [];
+	my $cache_bucket_updateables = $ctx->{'cache_bucket_updateables'} || [];
+	my $auuid = $ctx->{'auuid'};
+	my $colour = $ctx->{'colour'};
+	my $percentage = 0;
+	my $last_percent = 0;
+	my $last_alert = &subs::rightNow();
+	my $start_time = $last_alert;
+	my $results_size = scalar @{$updateables};
+	for (my $n = 0; $n < $results_size; $n++) {
+		my $u = $updateables->[$n];
+		next unless ref $u eq 'HASH' && $u->{'app'};
+		&budget_runner($u->{'app'});
+		&subs::appt_header_printer({ app => $u->{'app'}, timestamp => &subs::rightNow() });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $u->{'app'} . '\',\'' . $u->{'uuid'} .'\');' });
+		$percentage = sprintf("%.2f", $n / $results_size * 100);
+		$percentage = .0000001 if $percentage == 0;
+		if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
+			my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
+			my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
+			my $html = '<b style="font-size:20px">' . $n . ' / ' . $results_size . ' ' . &subs::format_name('informations') . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
+				'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
+			$last_percent = $percentage;
+			$last_alert = &subs::rightNow();
+			&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+		}
+	}
+	&deletion_performer($configuration->{'remote'}->{'deletions'}) if $configuration->{'remote'};
+	if ( scalar @{$cache_bucket_updateables} > 0 ) {
+		my $buc = &subs::cache_get({ app => 'relational', context => 'buckets' });
+		my $bub = &subs::cache_get({ app => 'relational', context => 'bubbles' });
+		foreach my $cbd ( @{$cache_bucket_updateables} ) {
+			delete $buc->{$cbd};
+			delete $bub->{$cbd};
+		}
+		&subs::cache_set({ app => 'relational', context => 'buckets' }, $buc);
+		&subs::cache_set({ app => 'relational', context => 'bubbles' }, $bub);
+	}
 }
 
 sub merge_database($c,$configuration) {
@@ -15855,6 +16151,7 @@ sub merge_database($c,$configuration) {
 	my @updateables;
 	my @cache_bucket_updateables;
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
+	my $merge_ctx;
 	foreach my $cred ( @{$creds} ) {
 		my $crud = &subs::decrypter($suds,$cred->{'credential'});
 		my $html = '<h3>Testing Keys</h3>';
@@ -15907,7 +16204,7 @@ sub merge_database($c,$configuration) {
 				my $universal_settings = {};
 				my $sync_job = $configuration->{'sync_job'};
 				&subs::sync_job_update($sync_job, { phase => 'merge', current => 0, total => scalar @u }) if $sync_job;
-				my $merge_ctx = {
+				$merge_ctx = {
 					configuration => $configuration,
 					misc_settings => $misc_settings,
 					device => $device,
@@ -15964,48 +16261,7 @@ sub merge_database($c,$configuration) {
 			}
 		}
 	}
-	my $percentage = 0;
-	my $last_percent = 0;
-	my $last_alert = &subs::rightNow();
-	my $start_time = $last_alert;
-	my $results_size = scalar @updateables;
-	for (my $n = 0; $n <= scalar @updateables; $n++) {
-		my $u = $updateables[$n];
-		if ($u->{'app'}) {
-			&budget_runner($u->{'app'});
-			&subs::appt_header_printer({ app => $u->{'app'}, timestamp => &subs::rightNow() });
-			&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $u->{'app'} . '\',\'' . $u->{'uuid'} .'\');' });
-			$percentage = sprintf("%.2f", $n / $results_size * 100);
-			if ($percentage == 0) { $percentage = .0000001; }
-			if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
-				my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
-				my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
-				my $html = '<b style="font-size:20px">' . $n . ' / ' . scalar @updateables . ' ' . &subs::format_name('informations') . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
-					'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
-				$last_percent = $percentage;
-				$last_alert = &subs::rightNow();
-				&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-			}
-
-		}
-	}
-	&deletion_performer($configuration->{'remote'}->{'deletions'});
-	if ( scalar @cache_bucket_updateables > 0 ) {
-		my $buc = &subs::cache_get({ app => 'relational', context => 'buckets' });
-		my $bub = &subs::cache_get({ app => 'relational', context => 'bubbles' });
-
-		foreach my $cbd ( @cache_bucket_updateables ) {
-			delete $buc->{$cbd};
-			delete $bub->{$cbd};
-		}
-
-		&subs::cache_set({ app => 'relational', context => 'buckets' }, $buc);
-		&subs::cache_set({ app => 'relational', context => 'bubbles' }, $bub);
-
-
-	}
-
-
+	&merge_finish($merge_ctx) if $merge_ctx;
 	&Websocket::send('tab', { yellow => 'close', 'close' => 'yes', uuid => $auuid, colour => $colour });
 	&subs::say_it('fail') unless $disposition->{'status'} eq 'succeed';
 	`shred -u $temporary_file` if -e $temporary_file;
@@ -31290,7 +31546,7 @@ get '/manager/remote_auth_test' => sub($c) {
 					tombstones => $tombstones,
 					sync_cursor => &subs::tombstone_max(),
 					pending => $pending,
-					sync_version => 2,
+					sync_version => 3,
 					digest => &subs::sync_digest_map(),
 					above => \%above,
 				};
@@ -31659,6 +31915,8 @@ sub remote_machine_reconnector($c) {
 								remote_device => $rm->{'data'}->{'device'},
 								peer => ($rm->{'ip'} || $rm->{'hostname'} || $rj->{'fqdn'} || ''),
 								gimme => $gimme,
+								sync_version => ($rj->{'sync_version'} || 0),
+								default_cut => ($peer_watermark->{'server_time'} || (&subs::rightNow() - (24 * 60 * 60 * 1000))),
 								plan => ($plan_pull ? $plan : undef),
 								# Remembered after a confirmed, non-windowed pull so the next
 								# handshake can skip this exact peer picture.
