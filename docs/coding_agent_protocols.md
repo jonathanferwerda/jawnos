@@ -29,6 +29,17 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   on it for freshness.
 
 
+## Crash-resilient agent work
+
+Zed's agent panel can grow the editor process to several GB in minutes and die mid-task; the JawnOS Coding agent can also lose a turn. Protect the work, not the chat:
+
+- **Checkpoint before and after each step** in `.shots/AGENT-CHECKPOINT.md` (gitignored): the goal, what is done (with paths), the exact next action, and the last commit.
+- **Commit each coherent step** (`git add -p`, `v<version> - <summary>`) so a crash cannot lose it. Never leave a day's work only in a buffer.
+- **After a crash, start a *fresh* thread** (a new Zed thread or a new Coding-agent conversation) and tell it to read `.shots/AGENT-CHECKPOINT.md` first. Resuming a multi-MB thread makes the next request larger and is a common cause of the next balloon.
+- Keep tool output small: use `grep`/`sed -n` and targeted `read_file` ranges, not whole 1 MB files; the agent panel retains every byte it is shown.
+- Delete the checkpoint when the task is complete.
+
+
 ## Rules
 
 - **Test fixtures only:** `email_test`, `email_tester`, `testing`, `testings`, `testingser`, plus the one

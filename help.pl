@@ -196,6 +196,7 @@ our %topic = (
 	'web' => {
 		title => 'Web', category => 'apps', app => 'web',
 		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
+		verified => '2026-10-18',
 		summary => 'A browser in a window, with measures.',
 		body => [
 			'Web is a browser window, useful for pulling a page up beside your work without leaving the desktop.',
@@ -610,7 +611,7 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
-		verified => '2026-10-16',
+		verified => '2026-10-18',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
 			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
