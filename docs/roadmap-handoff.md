@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.534** (2026-10-16). Done work is marked so it is
+The remaining plan, as of **v0.1.749** (2026-10-18). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -307,6 +307,170 @@ Still to do:
   written but never time-tested.
 - **Native receipt capture** — the JawnScan bridge sends a barcode today; give it
   a photo path so a receipt can be captured on the phone as well as loaded.
+
+## Platforms & multi-user — findings (2026-10-18)
+
+Two different questions are hiding in "ports":
+
+- a **house** runs the Perl tree and SQLite and owns the data;
+- a **client** is a browser or WebView that opens a ticket URL.
+
+A platform can be either. The client half travels almost for free (the UI is
+web); the house half is the port problem. The same distinction decides
+multi-user: a shared house is a roles/ACL problem, not a sync problem.
+
+### Port readiness
+
+| Platform | Client today | House today | Real gaps |
+| --- | --- | --- | --- |
+| **Linux** | yes | yes — reference target | none; `desktop/` is the native shell |
+| **Android** | yes (WebView) | yes, via the Termux fork | Play Store policy (sideload only); the native replacement of termux APIs is already roadmap work |
+| **macOS** | yes | likely, untested | `/proc` reads, `shred`, `timeout`, `xclip`, `ip`, `systemd`; Homebrew for `ffmpeg`/`magick`/`tesseract`/`qrencode`/`nmap`/`sox`; GTK desktop shell is Linux-only |
+| **Windows** | yes | no | `fork`/PTY, AF_UNIX IPC, POSIX shell, `/proc`, signals. WSL2 sidesteps all of it; native needs a process/IPC layer |
+| **iOS** | yes (WebView/PWA) | **not viable** | no Perl runtime, no long-lived background listener; App Store rules; call/SMS recording is not available to third-party apps |
+
+The seams are measurable, not speculative. `jawn` supervises the tree through
+`Mojo::IOLoop::ReadWriteFork` with a `bash -i` PTY (`jawn` 614-701). The core
+has roughly 60 fork/PTY references, ~350 shell-command lines, 12 `/proc` reads,
+and AF_UNIX sockets for internal IPC (`Manager.pl`, `subroutines.pl`,
+`Websocket.pl`, `Alarm.pl`). The shell surface is concrete: `shred` 54, `mkdir`
+38, `hostname` 30, `echo` 19, `sqlite3` 17, `timeout` 15, `touch` 14, `magick`
+12, `ls` 11, `pkill` 5, `openssl` 5, `ffmpeg` 4, plus `xclip`, `tesseract`,
+`qrencode`, `ip`, `ps`, `df`, `whoami`, `uname`, and the `termux-*` bridges.
+
+Practical order:
+
+1. **macOS house** — keep Perl; replace the `/proc` reads with `ps`/`sysctl`,
+   `shred` with `rm -P`, `timeout` with a Perl alarm or `gtimeout`, `xclip` with
+   `pbcopy`; package the Homebrew dependencies. Rough: 1-3 weeks with tests.
+2. **Windows house via WSL2** — days, no code change; document it as the
+   supported Windows house path. A native house is a separate 2-4 month job
+   (process/session layer, IPC, PTY, path/home handling, service wrapper).
+3. **iOS client** — a Swift WebView shell that opens a ticket to a house on the
+   LAN/cloud. Rough: 2-4 weeks. Do not plan an iOS house.
+4. **Native shells** — Windows/macOS desktop supervisors are separate from the
+   house. `desktop/README.md` already names the Windows work (`core_win`,
+   WinRT BLE); macOS would need its own shell (PyGObject/GTK via brew is not a
+   good answer).
+
+### Multi-user readiness
+
+**The vocabulary exists; the boundary does not.**
+
+What is already in the tree:
+
+- `$gb::social_constructs` (`gb.pl` 217) defines six dimensions — communities,
+  teams, clubs, projects, accounts, people — each with a singular name, a
+  default, and a picker order.
+- `mailbox` carries all six as columns (`database/schema.sql` 69); `appointments`
+  carries only project/club/account (line 22); `warehouse` carries
+  project/account. So **only mail is fully construct-keyed today**.
+- `$gb::master_plan` (`gb.pl` 938) is a code-resident containment tree
+  (team → clubs → communities → projects). It is read by one template, the
+  ticket-request team dropdown (`templates/store/ticket_request_privilege.html.ep`);
+  it is not stored, editable, or linked to any row.
+- `$gb::chairs` (`gb.pl` 111) is the only role hash: guest/resident/citizen/
+  blacklisted with ranks 0-3. Routes enforce it ad hoc with
+  `if $c->session('privilege') eq 'citizen'`.
+- `tickets` are session grants; `paired_devices` and `device_requests` are
+  device identities with challenge/response login. A paired device is minted
+  `citizen` (`device_store_pubkey`) and gets the same `me` settings as everyone
+  else. `tickets.name` is a display label, not a principal.
+- Mail **public channels** (`/manager/mail/public_channel`, `mail_channel_key`)
+  are the one existing sharing primitive: a citizen advertises one construct
+  tuple to guests. It is mail-only and guest-only.
+- One key: `house_key`/`suds_grabber`/`session_suds` give every session and
+  every peer the same data key. Per-note encryption already takes a secret
+  (`note_encrypter($secret, ...)`), which is the seam a per-construct key needs.
+- Peer sync replicates every table with a `server_time` except a small forbidden
+  list (`sync_table_list`). Every peer is fully trusted and holds the key.
+
+What is missing for the team/community model:
+
+- **A person principal.** No `users` table; every session is the same citizen.
+  Add `person_uuid` to tickets and paired devices, carry it in the session, and
+  read `me` settings per person (or per person+device).
+- **A persisted construct registry.** `master_plan` must become rows
+  (`uuid, kind, name, parent_uuid`) so a team can be renamed, moved, or created
+  without a code change. Backfill from the current hash.
+- **Membership and roles.** A `construct_members` table
+  (`construct_uuid, person_uuid, role`) with explicit verbs (owner/manager/
+  member/viewer/guest). This is the `$gb::roles` that does not exist yet.
+- **One authorization gate.** A single `can($principal, $verb, $row)` helper that
+  every route calls. The current spread of ad-hoc privilege checks is the main
+  correctness risk; adding a scope column without one gate will leak.
+- **Construct scope on data.** Appointments and warehouse need a narrowest-scope
+  column (or the missing construct columns), with ancestor resolution for reads.
+  Keep the existing columns for the mail picker during migration.
+- **A key decision.** Either the server enforces ACLs while one house key
+  decrypts everything (simple; trusts the server and anyone holding the key), or
+  each construct gets a data key wrapped to its members (more work; survives an
+  untrusted peer or a stolen DB). The second is the only one that matches
+  "teams share data" if houses are not all one person's.
+- **Scoped sync.** Full-table replication is correct for one person's devices and
+  wrong for shared constructs across houses. Construct-scoped sync is a later,
+  separate project.
+- **UX**: a share gesture, a team view, a role admin panel, and a visible "who am
+  I" (today the UI has one `me`).
+
+Naming note: there is no `$gb::roles` in the tree today. If that name is meant to
+hold the per-construct role matrix, create it as such; do not overload
+`$gb::chairs`, which is only a rank.
+
+Rough readiness: construct vocabulary ~60%; identity, authorization, keying and
+sharing ~15%. This is a design-and-implementation project, not a configuration
+change.
+
+### Recommended minimum shape (one house, several people)
+
+1. **Person = principal.** Merge the `people` construct with login identity; a
+   ticket or paired device names one `person_uuid`.
+2. **Constructs are rows**, not a hash: one table for the hierarchy, one for
+   membership, roles as verbs.
+3. **One gate**: every read/write resolves a row's narrowest construct upward and
+   asks `can(...)`. No route compares `privilege` directly.
+4. **Scope data by the narrowest construct**; a team view is a query, not a
+   separate database.
+5. **Decide keying before sharing leaves one machine.** Server-side ACL first is
+   acceptable only if every house is trusted; per-construct keys if not.
+6. **Notifications target a construct + role**, not the global `citizen` role
+   (`notification_sender` already takes a `role` key).
+
+Do **not** fork a Perl tree or a SQLite database per team: cross-team views,
+shared people, and the audit/recovery tools all assume one database. Scope rows,
+not processes.
+
+### Phases (rough, one developer)
+
+- **P0 — identity spine (1-2 weeks).** `person_uuid` on tickets/devices; session
+  carries it; `manager_file_maker` and `me` settings become per person; keep the
+  single key. No visible sharing yet.
+- **P1 — registry + roles (2-3 weeks).** `constructs` + `construct_members`,
+  admin UI, migrate `master_plan`; define owner/manager/member/viewer/guest
+  verbs; write `can()` with tests.
+- **P2 — scoped data + share UX (4-6 weeks).** Appointments and warehouse scope;
+  route-by-route adoption of `can()`; team views; share control; construct
+  notifications; audit entries. This is the bulk of the work and the main risk.
+- **P3 — keys + federation (months).** Per-construct keys and rotation; scoped
+  sync between houses; membership changes that revoke access.
+
+### Decisions needed before code
+
+1. **Topology**: is a community one shared house with teams inside, or many
+   personal houses federating? The current mesh is one person's machines; the
+   team model implies a shared house (or scoped federation).
+2. **Hierarchy**: `$social_constructs` treats the six as orthogonal tags;
+   `$master_plan` treats team ⊃ club ⊃ community ⊃ project. Pick one. The
+   orderings already disagree (communities first in the picker, outermost in the
+   plan).
+3. **Person vs record**: is a `person` a login principal, or only a contact? If a
+   principal, contacts and accounts need a merge/identity story.
+4. **Trust**: may a peer or a stolen DB read everything? If no, per-construct
+   keys are required from P2, not P3.
+5. **iOS**: client-only (recommended) or a native reimplementation of the apps?
+6. **Windows**: is WSL2 an acceptable house, or must it be native?
+7. **Default visibility**: private to person, shared to the narrowest construct,
+   or community-wide? Teams need a default and a deliberate share gesture.
 
 ## Cross-cutting
 
