@@ -9609,6 +9609,25 @@ sub original_timestamp() {
 	return $ts->[0]->{'timestamp'} ;
 }
 
+# Build the account/project pickers' marker lists (__accounts/__projects) from
+# the pos/mab settings. A header-only log_reader skips this work; the centre
+# view that follows builds it once before rendering the wrapper.
+sub appts_marker_builder {
+	my $appts = shift;
+	return $appts unless ref $appts eq 'HASH';
+	my $settings = &subs::db_raw('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
+	foreach my $s ( @{$settings} ) {
+		next unless $s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab';
+		my $bucket = $s->{'value'} eq 'account' ? '__accounts'
+			: $s->{'value'} eq 'project' ? '__projects' : '';
+		next unless $bucket;
+		push @{$appts->{$bucket}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'} }
+			unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{$bucket} || []};
+	}
+	$appts->{'__specs'}->{'markers'} = 'yes' if ref $appts->{'__specs'} eq 'HASH';
+	return $appts;
+}
+
 sub log_reader {
 	my $disallowable = [];
 
@@ -9925,22 +9944,13 @@ sub log_reader {
 	}
 
 	# The pos/mab markers are the app's place in the world (idea, product, ...).
-	# This view reads them only to build __accounts/__projects, and the windows
-	# that consume those (account, project, transfer) are rendered server-side
-	# from their own fetch - the JSON viewer hands them to no one. The centre view
-	# polls once a second, so ~1600 rows were being materialized and formatted to
-	# be ignored. The other views keep them bit for bit.
+	# They build __accounts/__projects, which only the details/wrapper windows
+	# draw: the JSON viewer never uses them, and a header-only fetch does not
+	# either. Skip the ~1600-row read for those, and let the centre view build
+	# them once before it renders the wrapper.
 	my $settings = [];
-	unless (($data->{'view'} || '') eq 'appointment_viewer') {
-		$settings = &subs::db_raw('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
-		foreach my $s (@{$settings}) {
-			if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'account') {
-				push @{$appts->{'__accounts'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__accounts'}};
-			}
-			if (($s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab') && $s->{'value'} eq 'project') {
-				push @{$appts->{'__projects'}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}} unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{'__projects'}};
-			}
-		}
+	unless (($data->{'view'} || '') eq 'appointment_viewer' || $data->{'header'}) {
+		&appts_marker_builder($appts);
 	}
 	my @app_names = ( &subs::device_setter() );
 	my %seen_app = ( $app_names[0] => 1 );
@@ -11412,7 +11422,7 @@ sub manager_reset($c) {
 	if ($locking_status eq 'on') {
 		$c->param('duration', $usual_duration)
 	}
-	my $appt_header;
+	my ($appt_header, $header_appts);
 	unless (grep { $type eq $_ } qw/resume/) {
 		&subs::subprocessor(sub {
 		  Mojo::IOLoop->reset;
@@ -11535,7 +11545,7 @@ sub manager_reset($c) {
 			stop_timestamp => $stop_timestamp,
 			browser_tab_id => $browser_tab_id
 		});
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
@@ -11670,7 +11680,7 @@ sub manager_reset($c) {
 					uuid => $o->{'uuid'}
 				});
 			}
-			$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 			&subs::intelligent_automation_toggle({ appt_uuid => $o->{'uuid'}, app => $app, 'state' => 'off', timestamp => $timestamp });
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $o->{'uuid'} })->hashes;
 			my $options = eval { return decode_json $o->{'options'} } || [];
@@ -11723,7 +11733,7 @@ sub manager_reset($c) {
 			app => $app,
 			uuid => $uuid,
 		});
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 		my %so_seen;
@@ -11779,7 +11789,7 @@ sub manager_reset($c) {
 			seen => $seen,
 			browser_tab_id => $browser_tab_id
 		});
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 
 
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
@@ -11886,7 +11896,7 @@ sub manager_reset($c) {
 			app => $app,
 			uuid => $uuid
 		});
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 		my %so_seen;
@@ -11959,7 +11969,7 @@ sub manager_reset($c) {
 				uuid => $old->[0]->{'uuid'}
 			}
 		);
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 		my %so_seen;
@@ -12022,7 +12032,7 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		};
 		&subs::db_insert('appointments', $data);
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		if ($seen eq 'yes') {
 			my ($file,$ocr) = &take_picture($c,{ timestamp => $timestamp, camera => $camera, uuid => $uuid });
 		}
@@ -12054,7 +12064,7 @@ sub manager_reset($c) {
 			seen => $seen,
 			browser_tab_id => $browser_tab_id
 		});
-		$appt_header = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		if ($seen eq 'yes') {
 			my $file = &scan($c, $scandata);
 		}
@@ -12152,7 +12162,7 @@ sub manager_reset($c) {
 #	$commander = &subs::run_command($appts->{$app}->{'setting'}->{'command'}) if $appts->{$app}->{'setting'}->{'command'} && $type =~ /command/;
 #	&subs::cache_delete({ app => $app, context => 'template' });
 
-	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, cached => 'no' });
+	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, appts => $header_appts, cached => 'no' });
 	&budget_runner($app);
 	&padlock_time_extender($c);
 	$returner->{'cv'} = $cv;
@@ -17812,6 +17822,10 @@ sub centre_view_grabber($data) {
 			);
 			$app = 'Denied';
 		} else {
+			# a header-only log_reader skipped the pos/mab markers; the wrapper's
+			# details form needs them, so build them once here
+			my $markers = (ref $appts->{'__specs'} eq 'HASH') ? ($appts->{'__specs'}->{'markers'} || '') : '';
+			&appts_marker_builder($appts) if $markers ne 'yes';
 			$appts->{$app}->{'setting'}->{'app_measures'} = eval { return decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
 			my $header = $data->{'header'};
 			unless ($header || $data->{'resetting'} eq 'yes' || $data->{'cached'} eq 'no') {

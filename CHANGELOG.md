@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.689 - appointment header: log_reader gains a header-only mode that skips the pos/mab marker read, and manager_reset hands the header's fetch to centre_view_grabber so the same rows are not fetched twice; the wrapper builds the account/project markers once when it needs them.
 - v0.1.688 - appointment header: the centre-view fetch keeps the (app,timestamp) index for modern stamps instead of casting every row, so start/stop/usual no longer sort the app's whole history on every header render; the numeric cast is used only when the newest candidate is pre-1970.
 - v0.1.687 - CHANGELOG: backfill 2026-10-13 through 2026-10-16, so every versioned commit since v0.1.167 is recorded.
 - v0.1.686 - CHANGELOG: record v0.1.620 through v0.1.685, filling the entries the day's commits skipped.

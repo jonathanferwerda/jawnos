@@ -567,7 +567,10 @@ sub appt_header_printer() {
 	my $data = shift;
 	my $app = $data->{'app'};
 
-	my $appts = $data->{'appts'} || &Manager::log_reader({ app => $app, view => 'centre_view'  });
+	# The header draws only the app's newest/oldest rows; the wrapper's details
+	# form is the thing that needs __accounts/__projects. Skip the marker read
+	# here and let the centre view build them when it renders the wrapper.
+	my $appts = $data->{'appts'} || &Manager::log_reader({ app => $app, view => 'centre_view', header => 1 });
 	&appt_toggle_checker($app);
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
@@ -588,7 +591,9 @@ sub appt_header_printer() {
 		}
 	}, { name => 'header worker' });
 
-	return $header;
+	# the caller that also renders the centre view can reuse this fetch instead
+	# of asking log_reader for the same rows again
+	return wantarray ? ($header, $appts) : $header;
 }
 
 sub controller_builder() {
