@@ -5961,15 +5961,15 @@ sub sync_plan {
 			&& $seen_count == $bc
 			&& $seen_sum == $bs
 			&& $seen_max == $bm;
-		my $sel = $above->{$t};
-		my $above_count = (ref $sel eq 'HASH') ? ($sel->{'count'} || 0) : -1;
 		my $since;
 		# A small divergence is not worth copying a whole table: the watermark
 		# catches new rows, and a migration (full=1) or the nightly pass can
 		# reconcile the few old ones later. 1000 rows is a guard, not a rule.
 		my $small = 1000;
-		# Watermark first: rows above our newest are always a forward delta.
-		if ($bm > $am && $above_count > 0) {
+		# Watermark first: anything newer than our newest row is a forward delta,
+		# whatever the handshake's above-count says. The count is advisory and can
+		# be zero while the peer plainly holds a newer row.
+		if ($bm > $am) {
 			$since = $am;
 		}
 		# The peer is behind or level and holds no more rows than we do: there
