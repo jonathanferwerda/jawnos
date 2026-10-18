@@ -622,6 +622,7 @@
 				vidOn(<%= $miss %>WheelEvent, '#<%= $miss %>_jog_wheel', function(e) {
 					var j = $('#<%= $miss %>_jog_wheel');
 					var mvmt = numeral(e.originalEvent.wheelDelta).value();
+					if (!mvmt || isNaN(mvmt)) { mvmt = (e.originalEvent.deltaY || 0) * -1.2; }
 
 					var diff = numeral(mvmt / 30).value() ;
 					<%= $miss %>_jw_deg = (<%= $miss %>_jw_deg + diff);
@@ -737,9 +738,9 @@
 				if (e.preventDefault) { e.preventDefault(); }
 				var root = $(this);
 				if (<%= $miss %>Touch.axis == 'x') {
-					var width = root.width() || $(window).width();
-					if (!width || !v.duration || isNaN(v.duration)) { return; }
-					<%= $miss %>SeekTo(<%= $miss %>Touch.time + (dx / width) * v.duration);
+					// a finger moves the track at a steady rate: half a second a pixel,
+					// so a small movement is a small nudge, as a notch of the wheel is
+					<%= $miss %>SeekTo(<%= $miss %>Touch.time + dx * 0.5);
 				}
 				else {
 					var height = root.height() || $(window).height();
