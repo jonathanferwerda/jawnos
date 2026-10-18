@@ -140,6 +140,7 @@ jawnosctl status              # is jawn up? is the BLE bridge up?
 jawnosctl start               # start jawn (and the bridge, if tied)
 jawnosctl stop                # take the whole tree down
 jawnosctl restart             # restart jawn
+jawnosctl watch               # restart when the running version is not the disk version
 jawnosctl open                # open the JawnOS UI in a browser
 jawnosctl log -n 200 -f       # tail ~/manager.log
 jawnosctl dir ~/jawnos        # point at a different jawn tree
@@ -151,6 +152,14 @@ folder setting, and the autostart / "BLE bridge with jawn" checkboxes. The
 window opens at two-thirds of the screen, in the screen's own orientation (a
 wide monitor gets a wide window); if you leave it fullscreen, it reopens
 fullscreen next time.
+
+`watch` keeps a host on the code that is actually on disk: every minute it
+compares the running version (`/manager/health`) with `VERSION`, and restarts
+the tree when they differ — a code sync (git or a peer tar) replaces the files
+without touching the process, which is how a server could sit on old code while
+its `VERSION` already said the new one. The dashboard runs the same check on its
+own tick and also applies a newer `desktop/` tree and restarts itself, so a
+pushed version lands without pressing **Update app**.
 
 Add `--tray` for a status-tray icon: it carries jawn's state as a coloured dot
 in the corner of the icon — green running, amber starting/restarting, red

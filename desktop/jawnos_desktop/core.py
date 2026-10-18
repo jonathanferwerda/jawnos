@@ -340,6 +340,53 @@ def ble_up():
     return port_open(BRIDGE_PORT)
 
 
+def running_version(jawn_dir):
+    """The version the live tree reports, or None when it cannot say."""
+    health = jawn_health(jawn_dir)
+    if not health:
+        return None
+    version = str(health.get("version") or "").strip()
+    return version or None
+
+
+def version_mismatch(jawn_dir):
+    """(running, on_disk) when the live tree is not running the tree on disk.
+
+    The running version is frozen at boot, while a code sync (git or a peer
+    tar) can replace the files and VERSION without restarting the tree - that
+    is how a host sat on old code with a current VERSION file. Any difference
+    is a reason to restart, not only a newer disk: a rollback needs the same
+    treatment. None means the tree is down, or the two versions agree.
+    """
+    if not jawn_up(jawn_dir):
+        return None
+    disk = jawn_version(jawn_dir)
+    running = running_version(jawn_dir)
+    if not disk or not running or disk == running:
+        return None
+    return (running, disk)
+
+
+def restart_if_stale(jawn_dir, with_ble=True):
+    """Restart the tree when its running version is not the on-disk version.
+
+    Returns (action, message): ``current``, ``down``, ``restarted`` or
+    ``failed``. The caller owns the cadence (see ``jawnosctl watch`` and the
+    dashboard tick); a restart is a full stop-and-start, as the Restart button
+    is, so no half-boot window is left behind.
+    """
+    mismatch = version_mismatch(jawn_dir)
+    if not mismatch:
+        if not jawn_up(jawn_dir):
+            return "down", "jawn is not running"
+        return "current", "running the on-disk version"
+    running, disk = mismatch
+    ok, message = restart_all(jawn_dir, with_ble=with_ble)
+    if ok:
+        return "restarted", "restarted %s -> %s" % (running, disk)
+    return "failed", "restart failed (%s); running %s, disk %s" % (message, running, disk)
+
+
 def pid_alive(pid):
     if not pid:
         return False

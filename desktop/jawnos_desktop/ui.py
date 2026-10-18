@@ -13,6 +13,7 @@ process.
 import os
 import sys
 import threading
+import time
 
 import gi
 
@@ -103,6 +104,12 @@ class Dashboard(Gtk.Window):
         self._web_panel = None
         self._web_failed = False
         self._quitting = False
+        self._guard_lock = threading.Lock()
+        self._version_check_at = 0.0
+        self._version_restart_at = 0.0
+        self._update_pending = None
+        self._update_pending_at = 0.0
+        self._updating = False
         self.set_default_size(*_initial_size())
         # The CSS is scoped to this class so it cannot leak into GTK's popup
         # menus (which live in their own internal toplevel window).
@@ -440,6 +447,26 @@ class Dashboard(Gtk.Window):
         # code (the window closes and reopens on the fresh copy).
         GLib.timeout_add(400, self._restart_self)
 
+    def _auto_update(self, newer):
+        """Apply a newer desktop tree and restart onto it (no button press).
+
+        The check runs on the tick thread and calls this through the GTK loop;
+        `_updating` stops a second apply while the first is copying, and the
+        installed stamp `apply_update` writes means the next tick sees nothing
+        new, so this runs once per version.
+        """
+        if self._updating:
+            return False
+        self._updating = True
+        ok, name, code = core.apply_update(self.settings)
+        if not ok:
+            self._updating = False
+            self._say("app update could not be applied")
+            return False
+        self._say("updated to v%s - restarting..." % (name or (newer[0] if newer else "?")))
+        GLib.timeout_add(400, self._restart_self)
+        return False
+
     def _restart_self(self):
         try:
             os.execv(sys.executable, [sys.executable, os.path.realpath(sys.argv[0])] + sys.argv[1:])
@@ -554,6 +581,38 @@ class Dashboard(Gtk.Window):
             settings = self.settings
             jawn = core.jawn_up(settings["jawn_dir"])
             ble = core.ble_up()
+            now = time.monotonic()
+            if now - self._version_check_at >= 60 and self._guard_lock.acquire(blocking=False):
+                try:
+                    self._version_check_at = now
+                    # The tree on disk can move without the process noticing (a
+                    # git update or a peer code sync). Restart it onto the new
+                    # files; the cooldown keeps a tree that is still booting
+                    # from being killed by an old health answer.
+                    if jawn and now - self._version_restart_at >= 300:
+                        stale = core.version_mismatch(settings["jawn_dir"])
+                        if stale:
+                            running, disk = stale
+                            self._version_restart_at = now
+                            ok, message = core.restart_all(
+                                settings["jawn_dir"], settings.get("ble_with_jawn", True))
+                            GLib.idle_add(self._say, ("restarted %s -> %s" % (running, disk))
+                                          if ok else ("restart failed: %s" % message))
+                            jawn = core.jawn_up(settings["jawn_dir"])
+                    # The dashboard's own copy follows the repo's desktop tree.
+                    # Apply only after the same result on two checks, so a sync
+                    # caught mid-write is not copied over a good install.
+                    newer = core.update_available(settings)
+                    if newer:
+                        if self._update_pending == newer and now - self._update_pending_at >= 55:
+                            GLib.idle_add(self._auto_update, newer)
+                        else:
+                            self._update_pending = newer
+                            self._update_pending_at = now
+                    else:
+                        self._update_pending = None
+                finally:
+                    self._guard_lock.release()
             GLib.idle_add(self._render, jawn, ble)
         threading.Thread(target=probe, daemon=True).start()
         return True

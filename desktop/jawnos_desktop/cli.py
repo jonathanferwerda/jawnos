@@ -53,6 +53,9 @@ def cmd_status(args):
             health.get("version", "?"),
             _human_uptime(health.get("uptime")),
             len(peers), "" if len(peers) == 1 else "s"))
+        disk = core.jawn_version(info["jawn_dir"])
+        if disk and health.get("version") and disk != health.get("version"):
+            print("  disk:     %s   (restart pending)" % disk)
     elif info["jawn_up"]:
         print("  version:  (health did not answer)")
     print("BLE bridge: %s   (127.0.0.1:%d)" % (_tick(info["ble_up"]), core.BRIDGE_PORT))
@@ -79,6 +82,40 @@ def cmd_restart(args):
     ok, message = core.restart_all(settings["jawn_dir"], settings.get("ble_with_jawn", True))
     print(message)
     return 0 if ok else 1
+
+
+def cmd_watch(args):
+    """Keep the running tree on the on-disk version.
+
+    A code sync writes new files (and VERSION) without touching the process,
+    so a supervisor that only starts the tree once can sit on old code. The
+    dashboard runs this same check on its own tick; this loop is for a
+    headless host or a container where no dashboard is running.
+    """
+    settings = core.load_settings()
+    jawn_dir = settings["jawn_dir"]
+    with_ble = settings.get("ble_with_jawn", True)
+    interval = max(10, int(args.interval))
+    print("watching %s every %ds (Ctrl+C to stop)" % (jawn_dir, interval), flush=True)
+    last_action = None
+    last_restart = 0.0
+    try:
+        while True:
+            # a restart takes tens of seconds; do not chase a health answer from
+            # the tree that is still coming down or booting
+            if time.time() - last_restart >= 180:
+                action, message = core.restart_if_stale(jawn_dir, with_ble=with_ble)
+                if action == "restarted":
+                    last_restart = time.time()
+            else:
+                action, message = "waiting", "restart settling"
+            if action != last_action and action in ("restarted", "failed", "down"):
+                print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), flush=True)
+            last_action = action
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("stopped", flush=True)
+        return 0
 
 
 def cmd_open(args):
@@ -241,6 +278,9 @@ def build_parser():
     sub.add_parser("start", help="start jawn (and the BLE bridge)").set_defaults(func=cmd_start)
     sub.add_parser("stop", help="stop the whole jawn tree").set_defaults(func=cmd_stop)
     sub.add_parser("restart", help="restart jawn").set_defaults(func=cmd_restart)
+    p = sub.add_parser("watch", help="restart jawn when the running version is not the on-disk one")
+    p.add_argument("--interval", type=int, default=60, help="seconds between checks (minimum 10)")
+    p.set_defaults(func=cmd_watch)
     sub.add_parser("open", help="open the JawnOS UI in a browser").set_defaults(func=cmd_open)
 
     p = sub.add_parser("log", help="show jawn's log")
