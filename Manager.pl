@@ -8579,7 +8579,16 @@ sub remote_useragent_maker($data) {
 				$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode(\%cuts));
 			}
 			$url .= '&tombstone_cursor=' . int($data->{'tombstone_cursor'} || 0) if $auth_test eq 'yes';
+			# The handshake is a cheap route that must answer quickly. The UA's other
+			# timeout (3000s) exists so a snapshot pull can wait on a peer building a
+			# large export; inheriting it here meant one stuck peer froze the whole
+			# reconnector for fifty minutes, and every later peer in the roster waited
+			# behind it. Bound this one request and put the long timeout back for the
+			# requests that need it.
+			my $long_timeout = $rm->{'ua'}->inactivity_timeout;
+			$rm->{'ua'}->inactivity_timeout(15);
 			my $res = eval { return $rm->{'ua'}->insecure(1)->get($url => {Accept => '*/*'} => 'Content!')->result };
+			$rm->{'ua'}->inactivity_timeout($long_timeout);
 			if (eval { $res->is_success }) {
 				$rm->{'res'} = $res;
 			} else {
