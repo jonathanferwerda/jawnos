@@ -332,7 +332,13 @@ sub peer_session {
       });
 
       $hb = Mojo::IOLoop->recurring(15 => sub {
-        my $stale = (time() - $last_pong > 40) ? 1 : 0;
+        # A backup can keep this link busy for minutes. Pongs queue behind the
+        # payload, so a 40s silence was a false death and cut every large
+        # download mid-stream (the server then saw a short body, which is why
+        # its merges kept finding no standard marker). A genuinely dead link is
+        # still caught by the hub's own 60s silence watchdog and by the TCP
+        # error; this is only the backstop for a zombie socket.
+        my $stale = (time() - $last_pong > 300) ? 1 : 0;
         unless ($stale) {
           $stale = 1 unless eval { _txt($tx, { op => 'ping' }); 1 };
         }
