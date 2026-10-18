@@ -15491,114 +15491,25 @@ post '/manager/configure/merge_database' => sub($c) {
 	$c->render(json => $disposition);
 };
 
-sub merge_database($c,$configuration) {
-	&update_database($c);
-	my $filename = $configuration->{'file'};
-	my $remote_misc_settings = $configuration->{'misc_settings'};
-	my $misc_settings = &misc_setting_list();
-	my $device = &subs::device_setter();
-	my $deletions = eval { return decode_json $configuration->{'remote'}->{'deletions'} } || [];
-
-	my $rdel = &subs::db_select('remote_machines', [ 'deletions' ], {})->hashes;
-	foreach my $rd ( @{$rdel} ) {
-		my $all_deletions = eval { return decode_json $rd->{'deletions'} } || [];
-		push @{$deletions}, @{$all_deletions};
-	}
-
-
-	my $port = $config->{'ssh_port'};
-	my $auuid = &subs::random_string_creator(10);
-	my $colour = $configuration->{'colour'};
-	my $html = '<h3>Starting Merge ' . $filename . '</h3>';
-	&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-	my ($db,$database) = &subs::database_grabber();
-	my $disposition->{'status'} = 'fail';
-	# A table the cursor could not finish is not a merge. `remote_upgrade` writes
-	# the peer's picture into `sync_seen` after a successful merge, so reporting
-	# succeed after a short read made a partial pull look like a full
-	# reconciliation - the next tick then skipped the table and the rows stayed
-	# missing. Keep the disposition honest so the pull retries.
+# Merge one table's rows into the live database. The row source is a closure so the
+# encrypted-snapshot path (rowid batches from a temp SQLite) and the row-stream path
+# share every table-specific rule: uuid upsert, protected settings, utility
+# controller keys, window state, continent temporary rows, file mirrors, deletions.
+# The body keeps its original `next` statements: a one-pass ROW label makes a row's
+# `next` leave just that row, while a `next` inside a nested loop still binds to it.
+sub merge_table_rows {
+	my ($ctx, $q, $next_row, $results_size, $count, $table_total) = @_;
+	my $configuration = $ctx->{'configuration'};
+	my $misc_settings = $ctx->{'misc_settings'};
+	my $device = $ctx->{'device'};
+	my $deletions = $ctx->{'deletions'};
+	my $universal_settings = $ctx->{'universal_settings'};
+	my $updateables = $ctx->{'updateables'};
+	my $cache_bucket_updateables = $ctx->{'cache_bucket_updateables'};
+	my $sync_job = $ctx->{'sync_job'};
+	my $auuid = $ctx->{'auuid'};
+	my $colour = $ctx->{'colour'};
 	my $merge_short = 0;
-	my $path = $filename;
-	my $download_location = &subs::home('~/.president');
-	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
-	`mkdir -p $temp_folder` unless -e "$temp_folder";
-	my $temporary_file = $temp_folder . '/tmpman.db';
-	my $credentials = &subs::db_query('select level,credential from security where level != ? order by server_time DESC', 'padlock');
-	my $creds = $credentials->hashes;
-	my $signatorial = &subs::signatorial_designer();
-	my $last_update_time = &subs::db_select('backups', undef, { recipient => $signatorial, signatorial => $configuration->{'signatorial'} })->hashes->[-1];
-	$last_update_time = $last_update_time->{'server_time'} || 0;
-	$last_update_time = $configuration->{'gimme'} if $configuration->{'gimme'};
-	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
-	@{$creds} = reverse @{$creds};
-	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
-	my @updateables;
-	my @cache_bucket_updateables;
-	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
-	foreach my $cred ( @{$creds} ) {
-		my $crud = &subs::decrypter($suds,$cred->{'credential'});
-		my $html = '<h3>Testing Keys</h3>';
-
-		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-		if ($path =~ /enc$/gi) {
-			my $data = `tail $path`;
-
-			my @split_data = split $universal_splitter, $data;
-
-			unless ($data =~ /\Q$universal_splitter/gi) {
-				# The marker is appended after the ciphertext. If it is not in the tail,
-				# the file we downloaded is not the finished container (truncated, or
-				# not the archive at all) - say so instead of silently skipping the key.
-				$log->error('merge container: standard marker missing; tail=' . length($data) . ' bytes') if $log;
-				next;
-			}
-
-			$encryption_standard = &subs::decrypter($crud, $split_data[1]);
-			&subs::openssl_file_crypt('d', $encryption_standard, $crud, $path, $temporary_file, 1, 1);
-
-			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
-			my $decrypted_size = (-s $temporary_file) || 0;
-			my $snapshot_db = eval { $tsql->db ? 1 : 0 };
-			my $snapshot_ok = ($decrypted_size > 5000 && $snapshot_db && $tsql->dsn !~ /:$/) ? 1 : 0;
-			# A merged table leaves a "merge <table>" line; a pull that never gets
-			# there has failed at the container itself, and used to leave only "merge
-			# did not finish" with no reason. Say which credential opened what.
-			$log->error('merge snapshot: level=' . ($cred->{'level'} || '?') . ' archive=' . ((-s $path) || 0)
-				. ' decrypted=' . $decrypted_size . ' db=' . ($snapshot_db ? 1 : 0) . ' dsn=' . $tsql->dsn) if $log && !$snapshot_ok;
-			if ($snapshot_ok) {
-				my $tdb = $tsql->db;
-
-				my $backups = &subs::db_query('select * from backups order by server_time DESC' )->hashes;
-
-				my $start_server_time = 0;
-				if ( scalar @{$backups} > 1 ) {
-					$start_server_time = $backups->[1]->{'server_time'};
-				}
-
-				my $html = '<h3>Now merging</h3>';
-				&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-				$disposition->{'temporary_file'} = $temporary_file;
-				my $stats = [];
-				my $tables = `sqlite3 $temporary_file .tables`;
-
-				my @u = sort split ' ', $tables;
-
-				my $count = 0;
-				my $universal_settings = {};
-				my $sync_job = $configuration->{'sync_job'};
-				&subs::sync_job_update($sync_job, { phase => 'merge', current => 0, total => scalar @u }) if $sync_job;
-				foreach my $q ( @u ) {
-					next if grep { $q eq $_ } @{$gb::forbidden->{'tables'}};
-					# Count first, then read the snapshot's rows in bounded batches. A
-					# full convergence carries a whole table (110k appointments), so
-					# ->hashes on everything would hold it all in memory on top of the
-					# merge; the batch reader below keeps one page at a time.
-					my $results_size = ($tdb->query('select count(*) as c from ' . $q)->hash->{'c'} || 0) + 0;
-					if ($results_size > 0) {
-						$count++;
-						&subs::sync_job_update($sync_job, { current => $count }) if $sync_job;
-						my @resulters;
 						if ($sync_job) {
 							&subs::sync_job_step($sync_job, 'merge:' . $q, {
 								label => 'merge ' . $q, state => 'running', current => 0, total => $results_size,
@@ -15606,10 +15517,10 @@ sub merge_database($c,$configuration) {
 							});
 						}
 						#&subs::say_it('Now merging ' . $results . ' ' .$q);
-						my $progress = $count / scalar @u * 100;
+						my $progress = $count / $table_total * 100;
 						my $html = '<h3>Now merging ' . $results_size . ' ' . $q . '</h3><br>';
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour,
-							progress => int($count / ((scalar @u) || 1) * 100), state => 'running' });
+							progress => int($count / (($table_total) || 1) * 100), state => 'running' });
 						my $percentage = 0;
 						my $last_percent = 0;
 						my $last_alert = &subs::rightNow();
@@ -15630,29 +15541,9 @@ sub merge_database($c,$configuration) {
 						# - which is what the log showed: every table read exactly one row,
 						# the rest silently lost - a materialised batch is immune. It also
 						# keeps a whole table's rows out of memory.
-						my @merge_batch;
-						my $merge_rowid = 0;
-						my $merge_all;
-						my $next_row = sub {
-							unless (scalar @merge_batch) {
-								return undef if $merge_all;
-								my $rows = eval { $tdb->query('select rowid as __merge_rowid, * from ' . $q . ' where rowid > ? order by rowid limit 500', $merge_rowid)->hashes };
-								if (!$rows) {
-									# a table without a rowid (a view) is read whole, once
-									$merge_all = 1;
-									$rows = $tdb->query('select * from ' . $q)->hashes;
-								}
-								@merge_batch = @{$rows || []};
-								return undef unless scalar @merge_batch;
-							}
-							my $row = shift @merge_batch;
-							$merge_rowid = delete $row->{'__merge_rowid'} if exists $row->{'__merge_rowid'};
-							return $row;
-						};
-						for (my $n = 0; $n < $results_size; $n++ ) {
-							my $r = $next_row->();
-							last unless $r;
-							$rows_read++;
+	my $merge_one = sub {
+		my ($r, $n) = @_;
+		ROW: for my $once (1) {
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							$percentage = sprintf("%.2f", $n / $results_size * 100);
@@ -15737,7 +15628,7 @@ sub merge_database($c,$configuration) {
 									}
 									#next if $protected == 1;
 									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || $protected == 1) {
-										push @cache_bucket_updateables, $r->{'app'} unless grep { $_ eq $r->{'app'} } @cache_bucket_updateables;
+										push @{$cache_bucket_updateables}, $r->{'app'} unless grep { $_ eq $r->{'app'} } @{$cache_bucket_updateables};
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of
@@ -15897,11 +15788,18 @@ sub merge_database($c,$configuration) {
 										eval { &subs::db_update($q,$r, { uuid => $r->{'uuid'} } ) } unless $h->{'server_time'} >= $r->{'server_time'};
 									}
 									if ($q eq 'appointments' && (!$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
-										push @updateables, { app => $r->{'app'}, uuid => $r->{'uuid'} } unless grep { $_->{'app'} eq $r->{'app'} } @updateables;
+										push @{$updateables}, { app => $r->{'app'}, uuid => $r->{'uuid'} } unless grep { $_->{'app'} eq $r->{'app'} } @{$updateables};
 									}
 								}
 							}
-						}
+		}
+	};
+	for (my $n = 0; $n < $results_size; $n++) {
+		my $r = $next_row->();
+		last unless $r;
+		$rows_read++;
+		$merge_one->($r, $n);
+	}
 						my $short = $rows_read < $results_size ? ' SHORT' : '';
 						$merge_short = 1 if $short;
 						my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
@@ -15909,6 +15807,149 @@ sub merge_database($c,$configuration) {
 						if ($sync_job) {
 							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => $results_size, total => $results_size, note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
 						}
+	return $merge_short;
+}
+
+sub merge_database($c,$configuration) {
+	&update_database($c);
+	my $filename = $configuration->{'file'};
+	my $remote_misc_settings = $configuration->{'misc_settings'};
+	my $misc_settings = &misc_setting_list();
+	my $device = &subs::device_setter();
+	my $deletions = eval { return decode_json $configuration->{'remote'}->{'deletions'} } || [];
+
+	my $rdel = &subs::db_select('remote_machines', [ 'deletions' ], {})->hashes;
+	foreach my $rd ( @{$rdel} ) {
+		my $all_deletions = eval { return decode_json $rd->{'deletions'} } || [];
+		push @{$deletions}, @{$all_deletions};
+	}
+
+
+	my $port = $config->{'ssh_port'};
+	my $auuid = &subs::random_string_creator(10);
+	my $colour = $configuration->{'colour'};
+	my $html = '<h3>Starting Merge ' . $filename . '</h3>';
+	&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+	my ($db,$database) = &subs::database_grabber();
+	my $disposition->{'status'} = 'fail';
+	# A table the cursor could not finish is not a merge. `remote_upgrade` writes
+	# the peer's picture into `sync_seen` after a successful merge, so reporting
+	# succeed after a short read made a partial pull look like a full
+	# reconciliation - the next tick then skipped the table and the rows stayed
+	# missing. Keep the disposition honest so the pull retries.
+	my $merge_short = 0;
+	my $path = $filename;
+	my $download_location = &subs::home('~/.president');
+	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
+	`mkdir -p $temp_folder` unless -e "$temp_folder";
+	my $temporary_file = $temp_folder . '/tmpman.db';
+	my $credentials = &subs::db_query('select level,credential from security where level != ? order by server_time DESC', 'padlock');
+	my $creds = $credentials->hashes;
+	my $signatorial = &subs::signatorial_designer();
+	my $last_update_time = &subs::db_select('backups', undef, { recipient => $signatorial, signatorial => $configuration->{'signatorial'} })->hashes->[-1];
+	$last_update_time = $last_update_time->{'server_time'} || 0;
+	$last_update_time = $configuration->{'gimme'} if $configuration->{'gimme'};
+	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
+	@{$creds} = reverse @{$creds};
+	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
+	my @updateables;
+	my @cache_bucket_updateables;
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
+	foreach my $cred ( @{$creds} ) {
+		my $crud = &subs::decrypter($suds,$cred->{'credential'});
+		my $html = '<h3>Testing Keys</h3>';
+
+		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+		if ($path =~ /enc$/gi) {
+			my $data = `tail $path`;
+
+			my @split_data = split $universal_splitter, $data;
+
+			unless ($data =~ /\Q$universal_splitter/gi) {
+				# The marker is appended after the ciphertext. If it is not in the tail,
+				# the file we downloaded is not the finished container (truncated, or
+				# not the archive at all) - say so instead of silently skipping the key.
+				$log->error('merge container: standard marker missing; tail=' . length($data) . ' bytes') if $log;
+				next;
+			}
+
+			$encryption_standard = &subs::decrypter($crud, $split_data[1]);
+			&subs::openssl_file_crypt('d', $encryption_standard, $crud, $path, $temporary_file, 1, 1);
+
+			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
+			my $decrypted_size = (-s $temporary_file) || 0;
+			my $snapshot_db = eval { $tsql->db ? 1 : 0 };
+			my $snapshot_ok = ($decrypted_size > 5000 && $snapshot_db && $tsql->dsn !~ /:$/) ? 1 : 0;
+			# A merged table leaves a "merge <table>" line; a pull that never gets
+			# there has failed at the container itself, and used to leave only "merge
+			# did not finish" with no reason. Say which credential opened what.
+			$log->error('merge snapshot: level=' . ($cred->{'level'} || '?') . ' archive=' . ((-s $path) || 0)
+				. ' decrypted=' . $decrypted_size . ' db=' . ($snapshot_db ? 1 : 0) . ' dsn=' . $tsql->dsn) if $log && !$snapshot_ok;
+			if ($snapshot_ok) {
+				my $tdb = $tsql->db;
+
+				my $backups = &subs::db_query('select * from backups order by server_time DESC' )->hashes;
+
+				my $start_server_time = 0;
+				if ( scalar @{$backups} > 1 ) {
+					$start_server_time = $backups->[1]->{'server_time'};
+				}
+
+				my $html = '<h3>Now merging</h3>';
+				&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+				$disposition->{'temporary_file'} = $temporary_file;
+				my $stats = [];
+				my $tables = `sqlite3 $temporary_file .tables`;
+
+				my @u = sort split ' ', $tables;
+
+				my $count = 0;
+				my $universal_settings = {};
+				my $sync_job = $configuration->{'sync_job'};
+				&subs::sync_job_update($sync_job, { phase => 'merge', current => 0, total => scalar @u }) if $sync_job;
+				my $merge_ctx = {
+					configuration => $configuration,
+					misc_settings => $misc_settings,
+					device => $device,
+					deletions => $deletions,
+					universal_settings => $universal_settings,
+					updateables => \@updateables,
+					cache_bucket_updateables => \@cache_bucket_updateables,
+					sync_job => $sync_job,
+					auuid => $auuid,
+					colour => $colour,
+				};
+				foreach my $q ( @u ) {
+					next if grep { $q eq $_ } @{$gb::forbidden->{'tables'}};
+					# Count first, then read the snapshot's rows in bounded batches. A
+					# full convergence carries a whole table (110k appointments), so
+					# ->hashes on everything would hold it all in memory on top of the
+					# merge; the batch reader below keeps one page at a time.
+					my $results_size = ($tdb->query('select count(*) as c from ' . $q)->hash->{'c'} || 0) + 0;
+					if ($results_size > 0) {
+						$count++;
+						&subs::sync_job_update($sync_job, { current => $count }) if $sync_job;
+						my @merge_batch;
+						my $merge_rowid = 0;
+						my $merge_all;
+						my $next_row = sub {
+							unless (scalar @merge_batch) {
+								return undef if $merge_all;
+								my $rows = eval { $tdb->query('select rowid as __merge_rowid, * from ' . $q . ' where rowid > ? order by rowid limit 500', $merge_rowid)->hashes };
+								if (!$rows) {
+									# a table without a rowid (a view) is read whole, once
+									$merge_all = 1;
+									$rows = $tdb->query('select * from ' . $q)->hashes;
+								}
+								@merge_batch = @{$rows || []};
+								return undef unless scalar @merge_batch;
+							}
+							my $row = shift @merge_batch;
+							$merge_rowid = delete $row->{'__merge_rowid'} if exists $row->{'__merge_rowid'};
+							return $row;
+						};
+						my $short = &merge_table_rows($merge_ctx, $q, $next_row, $results_size, $count, scalar @u);
+						$merge_short = 1 if $short;
 					}
 					$disposition->{'disposition'} = $database;
 					$disposition->{'status'} = $merge_short ? 'failed' : 'succeed';
