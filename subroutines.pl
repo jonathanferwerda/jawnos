@@ -1635,6 +1635,8 @@ sub say_voices() {
 		{ value => 'piper-ljspeech', label => 'LJSpeech - US female', engine => 'piper', model => 'en_US-ljspeech-medium'   },
 		{ value => 'piper-libritts', label => 'LibriTTS-R - US',     engine => 'piper', model => 'en_US-libritts_r-medium'  },
 		{ value => 'piper-alba',     label => 'Alba - UK female',    engine => 'piper', model => 'en_GB-alba-medium'        },
+		# John is public domain (LibriVox), like LJSpeech.
+		{ value => 'piper-john',     label => 'John - US male',      engine => 'piper', model => 'en_US-john-medium'        },
 		{ value => 'espeak-us',      label => 'eSpeak - US',         engine => 'espeak', voice => 'en-us'                    },
 		{ value => 'espeak-gb',      label => 'eSpeak - UK',         engine => 'espeak', voice => 'en-gb'                    },
 		{ value => 'espeak-nyc',     label => 'eSpeak - NYC',        engine => 'espeak', voice => 'gmw/en-US-nyc'            },
