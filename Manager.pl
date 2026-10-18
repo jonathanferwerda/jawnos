@@ -15870,13 +15870,13 @@ sub merge_database($c,$configuration) {
 									}
 								}
 							}
-							my $short = $rows_read < $results_size ? ' SHORT' : '';
-							$merge_short = 1 if $short;
-							my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
-							&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
-							if ($sync_job) {
-								&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => $results_size, total => $results_size, note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
-							}
+						}
+						my $short = $rows_read < $results_size ? ' SHORT' : '';
+						$merge_short = 1 if $short;
+						my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
+						&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
+						if ($sync_job) {
+							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => $results_size, total => $results_size, note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
 						}
 					}
 					$disposition->{'disposition'} = $database;
