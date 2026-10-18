@@ -7033,6 +7033,13 @@ sub remote_upgrade($c,$params) {
 							sync_job => $job,
 							colour => $remote_machine->{'data'}->{'manager_colour'}
 						});
+						# Keep the exact bytes we failed to merge, before the temp file is
+						# shredded, so the container can be inspected on the failing machine.
+						if (($disposition->{'status'} || '') ne 'succeed') {
+							my $keep = &subs::home('~/.president/failed_merge_' . time() . '.enc');
+							`cp $temporary_file "$keep" 2>/dev/null`;
+							$log->error('merge failed; kept ' . $keep . ' (' . ((-s $temporary_file) || 0) . ' bytes)') if $log;
+						}
 						`shred -u $temporary_file`;
 						`rm -R $temp_folder`;
 						if (($disposition->{'status'} || '') ne 'succeed') {
