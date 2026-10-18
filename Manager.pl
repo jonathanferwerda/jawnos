@@ -12033,6 +12033,12 @@ sub manager_reset($c) {
 	my $digits = $c->param('digits');
 	my $mirror = $c->param('mirror');
 	my $file = $c->param('file');
+	# A press that reopens or re-times an existing session (resume, pause,
+	# delay) writes that row in place, and the browser sends no `file` with it.
+	# Carrying the absent parameter into the update set the column to NULL and
+	# dropped the files already attached to the session, so only a caller that
+	# really sends a file list may replace it.
+	my $file_update = (defined $file && $file ne '') ? { file => $file } : {};
 	my $mute = $c->param('mute');
 	my $words = $c->param('words');
 
@@ -12463,7 +12469,7 @@ sub manager_reset($c) {
 			timestamp => $timestamp,
 			notes => $notes,
 			server_time => $server_time,
-			file => $file,
+			%{$file_update},
 			duration => $duration,
 			'pos' => $pos,
 			warranty => $warranty,
@@ -12503,7 +12509,7 @@ sub manager_reset($c) {
 			timestamp => $timestamp,
 			end_notes => $notes,
 			server_time => $server_time,
-			file => $file,
+			%{$file_update},
 			warranty => $warranty,
 			source => $source,
 			seen => $seen
@@ -12534,7 +12540,7 @@ sub manager_reset($c) {
 				unit => $unit,
 				project => $project,
 				server_time => $server_time,
-				file => $file,
+				%{$file_update},
 				'pos' => $pos,
 				warranty => $warranty,
 				source => $source,
