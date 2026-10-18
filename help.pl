@@ -149,14 +149,15 @@ our %topic = (
 	},
 	'video' => {
 		title => 'Video', category => 'apps', app => 'video',
-		verified => '2026-10-14',
+		verified => '2026-10-18',
 		summary => 'Play video from your media folders.',
 		body => [
 			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
 		],
 		steps => [
 			'Open Video and pick a file from your media folders.',
-			'Play, pause and scrub with the controls; go fullscreen from the player.'
+			'Play, pause and scrub with the controls; go fullscreen from the player.',
+			'A wheel over the picture scrubs it; on a touchscreen, drag sideways to scrub and up or down to set the volume.'
 		],
 		related => [ 'gallery', 'folders' ]
 	},
