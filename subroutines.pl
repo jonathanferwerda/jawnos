@@ -5964,19 +5964,26 @@ sub sync_plan {
 		my $sel = $above->{$t};
 		my $above_count = (ref $sel eq 'HASH') ? ($sel->{'count'} || 0) : -1;
 		my $since;
+		# A small divergence is not worth copying a whole table: the watermark
+		# catches new rows, and a migration (full=1) or the nightly pass can
+		# reconcile the few old ones later. 1000 rows is a guard, not a rule.
+		my $small = 1000;
 		# Watermark first: rows above our newest are always a forward delta.
 		if ($bm > $am && $above_count > 0) {
 			$since = $am;
 		}
-		# A table we have already read in full, on a peer that is behind or level,
-		# has nothing new for us. An update to a row we hold is not a reason to
-		# copy 110k rows again.
-		elsif ($seen_full && $bc <= $ac && $bm <= $am) {
+		# The peer is behind or level and holds no more rows than we do: there
+		# is nothing the watermark can name. Do not rebuild the table for it.
+		elsif ($bm <= $am && $bc <= $ac) {
 			next;
 		}
-		# No full reconciliation yet (first contact, or a delta that left old rows
-		# behind): read the table once. The flag then makes the cheap paths above
-		# the rule.
+		# The peer holds a few more rows, but the gap is small. A full copy of
+		# 110k rows to find a handful is what ran the CPU hot every few minutes.
+		elsif ($bm <= $am && ($bc - $ac) <= $small) {
+			next;
+		}
+		# A real gap we have never read whole: read it once. The flag then
+		# makes the cheap paths above the rule.
 		elsif (!$seen_full) {
 			$since = 0;
 		}
