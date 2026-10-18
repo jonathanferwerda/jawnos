@@ -18,7 +18,7 @@ set -u
 REAL_ZED=/usr/bin/zed.real
 HIGH=${ZED_MEMORY_HIGH:-10G}
 MAX=${ZED_MEMORY_MAX:-10G}
-SWAP=${ZED_MEMORY_SWAP_MAX:-4G}
+SWAP=${ZED_MEMORY_SWAP_MAX:-6G}
 
 export ZED_UPDATE_EXPLANATION='Updates are handled by your package manager'
 
