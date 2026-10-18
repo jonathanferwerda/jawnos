@@ -586,11 +586,20 @@ sub terminal_pty_runner() {
   $fork->on(read => sub () {
 		my ($fork, $bytes) = @_;
 
+		# A listener rebind can lose to a sibling process and log this without the
+		# tree being dead: the tunnel hub binds a port per peer on whichever worker
+		# accepted the websocket, and a redial can land in another worker while the
+		# sibling still holds it. Treating the text as a death made the whole tree
+		# restart every couple of minutes, which cut every sync at its confirm step.
+		# A tree that truly cannot bind its web port is caught by the liveness
+		# watchdog (two 30s probes) and arm_boot_watch (90s), so this stays a note.
 		if ($bytes =~ /Address already in use/) {
-			print "already in use!!!! AAAAAAAAAH!\n";
-			$status = 'frozen';
+			print "listener already bound (not a tree death)\n";
 		}
-		elsif ($bytes =~ /they dead/ || $bytes =~ /President Died/ || $bytes =~ /core dumped/) {
+		# President prints "They dead" from its END block even on a restart this
+		# master asked for; jawn_deliberate marks that case, so it cannot re-freeze
+		# the fresh tree whose output arrives on the same pty.
+		elsif (!$fork->{'jawn_deliberate'} && ($bytes =~ /they dead/ || $bytes =~ /President Died/ || $bytes =~ /core dumped/)) {
 			print "See it's dead\n";
 			$status = 'frozen';
 		}

@@ -3,6 +3,10 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-18
+
+- v0.1.697 - sync: a peer's tunnel redial could land on a different main-server prefork worker than the one still holding its listening ports, so the hub logged `Address already in use` and `./jawn` read that line as a dead tree and restarted the whole server every ~100 seconds - which cut every pull at its `backup/confirm` step (`Premature connection close`) so no watermark advanced. The tunnel data plane now dials the hub's websocket port (one worker), where a redial retires and rebinds in the same process, and `hub_session` probes a port before binding so a sibling's listener is left alone; the master no longer treats that text as a death (the liveness and boot watchdogs still catch a tree that truly cannot serve), and a deliberate restart's own "They dead" output cannot re-freeze the fresh tree.
+
 ## 2026-10-17
 
 - v0.1.693 - nfc: a tap relays to the other machines again. The reading machine sends the action it chose (its type and, for a stop, the session it names) with the relay, and each copy writes that action under one shared uuid, so peers apply the same start/stop instead of recomputing one from unsynced state or turning it into duplicate rows; a stop with no named session is not relayed.

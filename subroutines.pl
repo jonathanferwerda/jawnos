@@ -12786,7 +12786,7 @@ sub remote_relay_queue_run {
 # guessing from its own domain. config tunnel_hub overrides; the last resort is
 # this machine's domain. The peer names itself with its own signatorial.
 sub tunnel_hub_url() {
-	my ($manager) = @_;
+	my ($manager, $ws_port) = @_;
 	my $sig = &subs::signatorial_designer();
 	my $hub;
 	if ($config->{'tunnel_hub'}) {
@@ -12800,10 +12800,20 @@ sub tunnel_hub_url() {
 		# trailing /manager if one is present and always point at the ws route.
 		$hub =~ s{/manager/?$}{};
 		$hub =~ s{/+$}{};
-		$hub .= '/manager/tunnel/ws';
+		# Bind the tunnel listeners on the hub's websocket server, not its main
+		# server. The main server runs several prefork workers, and the hub's
+		# listener table is per process: a redial could land in a worker that does
+		# not know the peer's existing listeners and try to bind ports still held
+		# by a sibling (EADDRINUSE). The websocket server runs a single worker, so
+		# every session for a peer is retired and rebound in the same process.
+		if (defined $ws_port && $ws_port =~ /^[0-9]+$/) {
+			if (!($hub =~ s{:([0-9]+)$}{:$ws_port})) {
+				$hub .= ':' . $ws_port;
+			}
+		}
 	}
 	else {
-		$hub = 'wss://' . $config->{'domain'} . '/manager/tunnel/ws';
+		$hub = 'wss://' . $config->{'domain'} . ($ws_port && $ws_port =~ /^[0-9]+$/ ? ':' . $ws_port : '') . '/manager/tunnel/ws';
 	}
 	return $hub . (index($hub, '?') >= 0 ? '&' : '?') . 'signatorial=' . Mojo::Util::url_escape($sig);
 }
@@ -12811,9 +12821,9 @@ sub tunnel_hub_url() {
 # Run the peer half of the wss tunnel: dial the hub's manager and serve its
 # `open` frames. $manager is the hub's manager URL from the handshake.
 sub tunnel_wss_peer() {
-	my ($manager) = @_;
+	my ($manager, $ws_port) = @_;
 	my $sig = &subs::signatorial_designer();
-	&Tunnel::peer_session(&subs::tunnel_hub_url($manager), { signatorial => $sig, sign => \&subs::peer_sign_request });
+	&Tunnel::peer_session(&subs::tunnel_hub_url($manager, $ws_port), { signatorial => $sig, sign => &subs::peer_sign_request });
 	# peer_session is async and reconnects itself, so the loop has to run HERE or
 	# the forked tunnel holder returns at once and the tunnel dies with it.
 	Mojo::IOLoop->start;
@@ -12896,7 +12906,7 @@ sub tunnel_starter() {
 			&subs::subprocessor(sub {
 				$pid = $$;
 				&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
-				&subs::tunnel_wss_peer($rm->{'manager'});
+				&subs::tunnel_wss_peer($rm->{'manager'}, $rm->{'ws_port'});
 			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
 
 

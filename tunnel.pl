@@ -33,6 +33,7 @@ use Mojo::IOLoop;
 use Mojo::UserAgent;
 use Mojo::Server::Daemon;
 use Mojo::JSON qw(decode_json encode_json);
+use IO::Socket::INET;
 
 our $VERSION = '0.1';
 our $HUB_LISTEN = {};   # used by the CLI hub app below
@@ -138,6 +139,22 @@ sub hub_session {
 
   foreach my $name (sort keys %{$listen}) {
     my $r  = $listen->{$name};
+    # A redial can arrive on a different worker while the worker that served
+    # the previous session still holds this peer's listening ports. Binding
+    # again would log EADDRINUSE into the tree's pty - which ./jawn reads as a
+    # dead tree and answers with a whole-server restart. Probe first (same
+    # ReuseAddr Mojo uses) and leave a held port to its holder; the peer's own
+    # redial retires it. New peers dial the ws port, whose server has one
+    # worker, so the retire-and-rebind below always runs in the right process.
+    my $free = IO::Socket::INET->new(
+      LocalAddr => '127.0.0.1', LocalPort => $r->{'source'},
+      Proto => 'tcp', Listen => 5, ReuseAddr => 1
+    );
+    unless ($free) {
+      _log('hub port %s for %s is held by another worker; leaving it alone', $r->{'source'}, $name);
+      next;
+    }
+    close $free;
     my $id = Mojo::IOLoop->server({ address => '127.0.0.1', port => $r->{'source'} } => sub {
       my ($loop, $stream) = @_;
       my $ch = $session->{'channel_next'}++;
