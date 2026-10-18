@@ -7075,7 +7075,15 @@ sub remote_upgrade($c,$params) {
 						backup_confirm => encode_json $body
 					};
 					#	&subs::tunnel_stopper({ signatorial => $signatorial });
-					my $res = $remote_machine->{'ua'}->post($url => form => $form_data)->result;
+					# A close here used to die out of the subprocessor with only "Premature
+					# connection close" and no URL to say where it was aimed. Keep the
+					# pull's failed state, but record what happened and where.
+					my $res = eval { $remote_machine->{'ua'}->post($url => form => $form_data)->result };
+					unless ($res) {
+						my $why = $@ || 'no response';
+						$why =~ s/\s+/ /g;
+						&subs::log_writer('remote confirm failed: ' . $why . ' url=' . $url . ' bytes=' . length($form_data->{'backup_confirm'} || ''));
+					}
 					if ($res && $res->is_success) {
 						# A gimme/deep pull is a repair window, not a watermark: deleting
 						# the old watermark or moving it to the window's end would claim

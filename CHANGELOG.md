@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-18
 
+- v0.1.703 - sync: the pull's confirm POST records its URL, payload size and error when the peer closes the connection, instead of dying out of the subprocessor with only "Premature connection close"; the pull still ends as failed rather than as an unanswered die.
 - v0.1.699 - sync: restore the signing callback dropped from the tunnel peer by v0.1.697 (`&subs::peer_sign_request` ran the signer instead of passing it), so a tunnel holder no longer dies with "Can't locate object method \"method\" via package <url>".
 - v0.1.697 - sync: a peer's tunnel redial could land on a different main-server prefork worker than the one still holding its listening ports, so the hub logged `Address already in use` and `./jawn` read that line as a dead tree and restarted the whole server every ~100 seconds - which cut every pull at its `backup/confirm` step (`Premature connection close`) so no watermark advanced. The tunnel data plane now dials the hub's websocket port (one worker), where a redial retires and rebinds in the same process, and `hub_session` probes a port before binding so a sibling's listener is left alone; the master no longer treats that text as a death (the liveness and boot watchdogs still catch a tree that truly cannot serve), and a deliberate restart's own "They dead" output cannot re-freeze the fresh tree.
 
