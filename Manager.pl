@@ -15797,6 +15797,13 @@ sub merge_table_rows {
 	my $auuid = $ctx->{'auuid'};
 	my $colour = $ctx->{'colour'};
 	my $merge_short = 0;
+	# A peer on newer code can carry a column this database has not been migrated for.
+	# The insert then fails ("table X has no column named Y") and the same batch is
+	# pulled again on every tick - the column equivalent of the unknown-table skip in
+	# sync_rows_pull. Drop the columns this table does not have; `uuid` always stays
+	# because it names the row.
+	my %local_columns = map { $_->{'name'} => 1 } @{ &subs::db_query('select name from pragma_table_info(?)', $q)->hashes || [] };
+	my %skewed_columns;
 						if ($sync_job) {
 							my %step = (label => 'merge ' . $q, state => 'running', current => 0);
 							$step{'total'} = $results_size if $results_size;
@@ -15831,6 +15838,13 @@ sub merge_table_rows {
 	my $merge_one = sub {
 		my ($r, $n) = @_;
 		ROW: for my $once (1) {
+			if (%local_columns && ref $r eq 'HASH') {
+				my @unknown = grep { $_ ne 'uuid' && !$local_columns{$_} } keys %{$r};
+				if (@unknown) {
+					delete @{$r}{@unknown};
+					$skewed_columns{$_} = 1 for @unknown;
+				}
+			}
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
@@ -16088,11 +16102,17 @@ sub merge_table_rows {
 		$merge_one->($r, $n);
 	}
 						my $short = ($results_size && $rows_read < $results_size) ? ' SHORT' : '';
-						$merge_short = 1 if $short;
-						my $errors = scalar @insert_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
-						&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors);
+						# An insert that failed is not a merged table, for the same reason a
+						# short read is not: claiming success stores the peer's picture in
+						# `sync_seen` and the missing rows are never asked for again. Report
+						# both, and let the pull retry.
+						my $merge_errors = scalar @insert_errors;
+						$merge_short = 1 if $short || $merge_errors;
+						my $errors = $merge_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
+						my $skew = scalar keys %skewed_columns ? ' skipped-columns=' . join(',', sort keys %skewed_columns) : '';
+						&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors . $skew);
 						if ($sync_job) {
-							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => $short ? 'failed' : 'done', current => ($results_size || $rows_read), total => ($results_size || $rows_read), note => $short ? 'read ' . $rows_read . ' of ' . $results_size : '' });
+							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => ($short || $merge_errors) ? 'failed' : 'done', current => ($results_size || $rows_read), total => ($results_size || $rows_read), note => $short ? 'read ' . $rows_read . ' of ' . $results_size : ($merge_errors ? $merge_errors . ' row errors' : '') });
 						}
 	return $merge_short;
 }
@@ -30355,6 +30375,12 @@ sub update_database($data) {
 		'alter table appointments add column subtype VARCHAR(255)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
+		# schema.sql has carried these two for a while, but the migration list
+		# never added them to an older database. A peer sent the columns anyway and
+		# every mailbox batch failed with "table mailbox has no column named file",
+		# so the same 827 rows were pulled again on every tick.
+		'alter table mailbox add column from_email VARCHAR(255)',
+		'alter table mailbox add column file LONGTEXT',
 		# a composed letter can carry carbon copies now: cc is shown and answered
 		# (reply-all), bcc travels to the smtp transport only and is never sent to
 		# anyone who can see the headers. seen is the read/unread flag the list uses.
