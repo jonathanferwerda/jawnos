@@ -171,6 +171,9 @@
 														<% } %>
 														<button class="delete_neighbour_device" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
 														<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>
+														<% if ($n->{'signatorial'}) { %>
+															<button class="remote_migrate" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>" hostname="<%= $n->{'name'} || '' %>" hint="Pull the whole house from here onto that device">Migrate</button>
+														<% } %>
 													</div>
 												</td>
 											</tr>

@@ -5547,7 +5547,14 @@ sub backup_now() {
 		# while one that was up to date looked behind.
 		my $last_updated = &subs::db_query('select * from backups where reason=? and recipient = ? and signatorial = ? order by cast(server_time as integer) DESC limit 1', 'remote_upgraded',$c->param('signatorial'), $signatorial)->hashes->[0];
 		my $last_update = 10;
-		if ($c->param('gimme') =~ /[0-9]/gi) {
+		if (($c->param('full') || '') eq '1') {
+			# A migration: read the whole table, not a window. Unlike a gimme this
+			# is a real reconciliation, so the caller confirms and advances the
+			# watermark (remote_upgrade keeps gimme false for full).
+			$last_update = 0;
+			$ld_server_time = 0;
+		}
+		elsif ($c->param('gimme') =~ /[0-9]/gi) {
 			$last_update = $c->param('gimme');
 			$ld_server_time = $last_update;
 		}
@@ -6329,9 +6336,14 @@ our %note_standard_supported;
 sub note_standard_supported {
 	my ($standard) = @_;
 	return undef unless defined $standard && length $standard;
-	return 1 if &note_cipher_spec($standard);
 	return $note_standard_supported{$standard} if exists $note_standard_supported{$standard};
+	my $spec = &note_cipher_spec($standard);
 	my $ok = eval {
+		if ($spec) {
+			# the cipher is in-process: prove this build can construct it
+			$spec->{'family'} eq 'ctr' ? &note_ctr_mode($spec) : &note_cbc_mode($spec);
+			return 1;
+		}
 		my $probe = &note_seal_container('jawnos', 'jawnos', $standard);
 		return 0 unless defined $probe && length $probe;
 		my $plain = &note_open_container($probe, 'jawnos', $standard);
@@ -6636,9 +6648,9 @@ sub note_open_slice {
 our %sealed_file_memo;
 sub sealed_file_open {
 	my ($in_path, $secrets, $standards, $nopad, $inspect, $range) = @_;
+	my $id = &sealed_file_identity($in_path);
 	my $container = eval { &read_file($in_path) };
 	return undef unless defined $container && length $container;
-	my $id = &sealed_file_identity($in_path);
 	my $cand;
 	if ($id && (my $memo = $sealed_file_memo{$id})) {
 		$cand = &sealed_file_probe($container, [ $memo->{'secret'} ], [ $memo->{'standard'} ], $inspect);

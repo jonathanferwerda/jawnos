@@ -1017,34 +1017,54 @@ get '/file_open' => sub($c) {
 };
 
 
-# Answer an unchanged file with a 304 before any bytes are read. The tag is the
-# path, inode, size and mtime, so a reseal (which changes the ciphertext) makes a
-# new tag and a plain re-request makes none of the decryption work. Only called
-# after authentication, so it cannot tell a stranger whether a path exists.
-sub file_response_cache_headers($c, $file, $cache_control) {
+# The tag for a file response: path, inode, size and mtime. A reseal changes the
+# ciphertext (and the tag); an unchanged file revalidates without any decryption.
+sub file_cache_tag($file) {
 	my @st = stat($file);
-	return 0 unless @st;
-	my $etag = '"' . &subs::md5_sum(join(':', $file, $st[1], $st[7], $st[9])) . '"';
-	$c->res->headers->etag($etag);
+	return undef unless @st;
+	return {
+		etag => '"' . &subs::md5_sum(join(':', $file, $st[1], $st[7], $st[9])) . '"',
+		mtime => $st[9],
+	};
+}
+
+# Stamp an existing tag on a response that is about to carry the file.
+sub file_response_headers($c, $file, $cache_control) {
+	my $tag = &file_cache_tag($file);
+	return 0 unless $tag;
+	$c->res->headers->etag($tag->{'etag'});
 	eval {
 		require Mojo::Date;
-		$c->res->headers->last_modified(Mojo::Date->new($st[9])->to_string);
+		$c->res->headers->last_modified(Mojo::Date->new($tag->{'mtime'})->to_string);
 	};
 	$c->res->headers->cache_control($cache_control) if defined $cache_control && length $cache_control;
+	return 1;
+}
+
+# Answer an unchanged file with a 304 before any bytes are read. Only called
+# after authentication, so it cannot tell a stranger whether a path exists.
+# Nothing is stamped unless the request really is a match, so a failed render is
+# never given a tag a later request could revalidate against.
+sub file_response_cache_headers($c, $file, $cache_control) {
+	my $tag = &file_cache_tag($file);
+	return 0 unless $tag;
+	my $match = 0;
 	my $inm = $c->req->headers->if_none_match;
 	if (defined $inm && length $inm) {
-		return 1 if $inm eq '*' || $inm =~ /\Q$etag\E/;
-		return 0;
+		$match = 1 if $inm eq '*' || $inm =~ /\Q$tag->{'etag'}\E/;
 	}
-	my $ims = $c->req->headers->if_modified_since;
-	if (defined $ims && length $ims) {
-		my $since = eval {
-			require Mojo::Date;
-			Mojo::Date->new($ims)->epoch;
-		};
-		return 1 if defined $since && $st[9] <= $since;
+	else {
+		my $ims = $c->req->headers->if_modified_since;
+		if (defined $ims && length $ims) {
+			my $since = eval {
+				require Mojo::Date;
+				Mojo::Date->new($ims)->epoch;
+			};
+			$match = 1 if defined $since && $tag->{'mtime'} <= $since;
+		}
 	}
-	return 0;
+	return 0 unless $match;
+	return &file_response_headers($c, $file, $cache_control);
 }
 
 sub rock_and_roll($c) {
@@ -1154,7 +1174,7 @@ sub rock_and_roll($c) {
 		# A conditional request for an unchanged file stops here: no key walk, no
 		# decryption, no body. The duty path is an internal collection (mail, file
 		# information) and always wants the bytes, so it skips the revalidation.
-		if (!$c->param('duty') && $file && -e $file) {
+		if (!$c->param('duty') && $file && -e $file && (!$wants_thumb || ($file_data->{'thumb'} && -e $file_data->{'thumb'}))) {
 			my $cc = $wants_thumb ? 'private, max-age=3600' : 'private, no-cache';
 			if (&file_response_cache_headers($c, $file, $cc)) {
 				$c->res->code(304);
@@ -1170,17 +1190,20 @@ sub rock_and_roll($c) {
 
 				$appt_q = &subs::db_query('select * from appointments where app = ? and file is not null and file like ?',$app,'%' . $file_splitter[-1] . '%' );
 				my $apptser = $appt_q->hashes;
-				my $appt_server_time = $apptser->[0]->{'server_time'};
+				# no `my` here: the timestamp found below belongs to the outer scope
+				# and is what the credential history is filtered by.
+				$appt_server_time = $apptser->[0]->{'server_time'};
 				foreach my $at ( @{$apptser} ) {
-					if ( $at->{'encryption_standard'} ne $encryption_standard ) {
-						push @encryption_standards, $at->{'encryption_standard'};
+					my $at_standard = $at->{'encryption_standard'};
+					if (defined $at_standard && length $at_standard && !grep { $_ eq $at_standard } @encryption_standards) {
+						push @encryption_standards, $at_standard;
 					}
 					my $atf = eval { return decode_json $at->{'file'} } || [];
 					foreach my $af ( @{$atf} ) {
-						if ($file eq $af->{'file'}) {
+						if ($file eq ($af->{'file'} // $af->{'f'} // '')) {
 							$appt_server_time = $af->{'server_time'};
 							$file_data = $af;
-							if ($af->{'thumb'} && $c->param('thumb') && $thumbnail_size ne 'none') {
+							if ($af->{'thumb'} && $wants_thumb && $thumbnail_size ne 'none') {
 								if (-e $af->{'thumb'} && (-s $af->{'thumb'}) > 100) {
 									$file = $af->{'thumb'};
 									$c->param('thumb' => undef);
@@ -1199,21 +1222,47 @@ sub rock_and_roll($c) {
 			}
 			my $suds = &subs::suds_grabber();
 			my $passwords = &subs::db_query('select * from security where level != ? and level != ? and timestamp <= ? order by timestamp DESC','padlock','door',$appt_server_time);
-			my $pwords = $passwords->hashes;
-			foreach my $p ( @{$pwords} ) {
+			# Decrypt each stored credential once, then let sealed_file_open try them
+			# against a 16 KB prefix instead of the whole file.
+			my @secrets;
+			foreach my $p ( @{ $passwords->hashes } ) {
 				my $secret = &subs::decrypter($suds, $p->{'credential'}, $appt_server_time);
+				push @secrets, $secret if defined $secret && length $secret;
+			}
+			# One Range is enough: read only the part the client asked for. A
+			# thumbnail needs the whole file for ffmpeg/magick, and a PDF is handed
+			# to the viewer whole, so those keep the full open.
+			my $range;
+			my $range_header = $c->req->headers->range;
+			if (!$c->param('duty') && !$wants_thumb && $file !~ /\.pdf\.enc$/i && defined $range_header && length $range_header) {
+				if ($range_header =~ m/^bytes=(\d+)-(\d*)/) {
+					my ($start, $end) = ($1, $2);
+					if (!defined $end || !length $end) { $range = [ $start, undef ] }
+					elsif ($end >= $start) { $range = [ $start, $end - $start + 1 ] }
+				}
+			}
+			my $ft = File::Type->new();
+			my $inspect = sub {
+				my $fd = $ft->checktype_contents($_[0]);
+				return ($fd ne 'application/octet-stream' || ($file =~ /webm/i)) ? $fd : undef;
+			};
+			my $opened = &subs::sealed_file_open($file, \@secrets, \@encryption_standards, 1, $inspect, $range);
+			if ($opened && $opened->{'unsatisfiable'}) {
+				$c->res->code(416);
+				$c->res->headers->content_range('bytes */' . $opened->{'total'});
+				$c->res->headers->accept_ranges('bytes');
+				$c->res->body('');
+				return;
+			}
+			if ($opened) {
+				my $data = $opened->{'data'};
+				my $fd = $opened->{'verdict'};
+				my $secret = $opened->{'secret'};
 				my $filename = $file;
-				$filename =~ s/\.enc$//gi;
-				foreach my $es ( @encryption_standards ) {
-					my $data = &subs::open_file($file, $secret, $encryption_standard, 1);
-					next unless defined $data && length $data;
-					my $ft = File::Type->new();
-					my $fd = $ft->checktype_contents($data);
-
-					if ($fd ne 'application/octet-stream' || ($file =~ /webm/)) {
-						my @ext = split /\./, $file;
-						my $ext = $ext[-2];
-						if ($c->param('duty')) {
+				$filename =~ s/\.enc$//i;
+				my @ext = split /\./, $file;
+				my $ext = $ext[-2];
+				if ($c->param('duty')) {
 							return {
 								data => $data,
 								image => 'data:' . $fd . ';base64,' . encode_base64($data,''),
@@ -1223,6 +1272,7 @@ sub rock_and_roll($c) {
 							};
 						}
 						elsif ($fd =~ /pdf/) {
+							&file_response_headers($c, $file, 'private, no-cache');
 							$data ? $c->render(format => 'pdf', data => $data) : $c->render(text => 'none');
 							return;
 						}
@@ -1234,9 +1284,10 @@ sub rock_and_roll($c) {
 								my $ext = $filename[-2];
 								unless (-e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100) {
 									my $filename = $tdir . '/' .&subs::random_string_creator(20) . '.' . $ext;
-									if ($file =~ /webm/) { $fd = 'video/webm'; }
-									my $thumb_bytes = &subs::open_file($file, $secret, $encryption_standard, 1);
-									write_file($filename, $thumb_bytes) if defined $thumb_bytes && length $thumb_bytes;
+									if ($file =~ /webm/i) { $fd = 'video/webm'; }
+									# The plaintext is already in hand - a second open_file() here
+									# decrypted the whole file again just to write the same bytes.
+									write_file($filename, $full_data) if defined $full_data && length $full_data;
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm/ ) {
 										my $command2 = 'ffmpeg -ss 00:00:00.010 -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
@@ -1297,13 +1348,22 @@ sub rock_and_roll($c) {
 								}
 							}
 							$data = $full_data unless (defined $data && length $data);
-							$data ? $c->render_file(data => $data) : $c->render(text => 'none');
+							$c->res->headers->accept_ranges('bytes');
+							&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
+							if (defined $opened->{'total'} && defined $opened->{'start'}) {
+								# The slice is already decrypted. Drop the request's Range so the
+								# render helper does not slice it a second time, and send 206.
+								my $last_byte = $opened->{'start'} + $opened->{'length'} - 1;
+								$c->res->headers->content_range('bytes ' . $opened->{'start'} . '-' . $last_byte . '/' . $opened->{'total'});
+								$c->req->headers->remove('Range');
+								$data ? $c->render_file(data => $data, status => 206) : $c->render(text => 'none');
+							}
+							else {
+								$data ? $c->render_file(data => $data) : $c->render(text => 'none');
+							}
 							return;
 						}
 					}
-					last;
-				}
-			}
 		}
 		elsif ($c->param('duty')) {
 			my $data = read_file($file);
@@ -1326,6 +1386,7 @@ sub rock_and_roll($c) {
 		}
 		elsif ($device eq 'mobile') {
 			if (-e $file) {
+				&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
 				if ($c->param('subtitle')) {
 					my $sub_file = $file . '.vtt';
 					if (-e $sub_file) {
@@ -1374,14 +1435,16 @@ sub rock_and_roll($c) {
 					$c->render_file(data => $data);
 				}
 				else {
-					my $sdata = read_file($file);
-					$sdata ? $c->render_file('data' => $sdata) : $c->render(text => 'none');
+					# filepath streams the file and supports Range; reading it into a
+					# scalar copied the whole thing and then copied it again into the asset.
+					$file ? $c->render_file('filepath' => $file) : $c->render(text => 'none');
 					return;
 				}
 			}
 		}
 		else {
 			if (-e $file) {
+				&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
 				if ($c->param('subtitle')) {
 					my $sub_file = $file . '.vtt';
 					if (-e $sub_file) {
@@ -6740,6 +6803,7 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 	my $database = $c->param('database');
 	my $direction = $c->param('direction');
 	my $gimme = $c->param('gimme');
+	my $full = $c->param('full');
 	my $remote_signatorial = $c->param('signatorial');
 	my $remote_device = $c->param('device');
 	my $params = {
@@ -6749,6 +6813,7 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		hostname => $hostname,
 		database => $database,
 		gimme => $gimme,
+		full => $full,
 		remote_signatorial => $remote_signatorial,
 		remote_device => $remote_device
 	};
@@ -6757,6 +6822,95 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		&remote_upgrade($c,$params);
 	}, { name => 'remote upgrade', fork => 1 });
 	$c->render('text' => 'ok');
+};
+
+# Dev's migration action: this machine (the donor) asks a linked new device to
+# pull the whole house from here. The device keeps its own session and key; the
+# request rides the signed pull-now lever, so a lapsed cookie cannot wedge it.
+# The key itself is given by Connect (house key seeds the vault) or a ticket; a
+# device that already has it takes this pull straight away.
+post '/manager/configure/migrate' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	my $device_sig = $c->param('signatorial') || '';
+	my $rm = ($device_sig && &subs::db_select('remote_machines', undef, { signatorial => $device_sig })->hashes->[0]);
+	unless ($rm) {
+		$c->render(json => { ok => 0, error => 'device is not linked to this machine yet' });
+		return;
+	}
+	my ($db,$database) = &subs::database_grabber();
+	my $donor_sig = &subs::signatorial_designer();
+	my $now = &subs::rightNow();
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my $donor_ip = $config->{'domain'} || '127.0.0.1';
+	my $ua = &remote_useragent_maker({ signatorial => $device_sig });
+	my $res;
+	if ($ua->{'manager'}) {
+		my $url = $ua->{'manager'} . '/manager/configure/remote_upgrade';
+		$res = eval { $ua->{'ua'}->inactivity_timeout(30)->request_timeout(60)->post($url => form => {
+			signatorial => $donor_sig,
+			ip => $donor_ip,
+			ssh_port => $config->{'ssh_port'},
+			hostname => $hostname,
+			database => $database,
+			device => &subs::device_setter(),
+			full => 1,
+			timestamp => $now,
+		})->result };
+	}
+	my $why = $@ ? $@ : ($res ? '' : 'the device did not answer');
+	$why =~ s/\s+/ /g if $why;
+	if ($res && !$res->is_success) {
+		$why = 'the device answered ' . $res->code . ': ' . substr(($res->body // ''), 0, 160);
+	}
+	my $started = ($res && $res->is_success) ? 1 : 0;
+	my $migration = &subs::random_string_creator(24);
+	&subs::db_insert('migrations', {
+		uuid => $migration,
+		device_signatorial => $device_sig,
+		device_name => $rm->{'hostname'},
+		donor_signatorial => $donor_sig,
+		state => ($started ? 'started' : 'failed'),
+		note => ($started ? substr(($res->body // ''), 0, 200) : substr($why, 0, 200)),
+		started => $now,
+		updated => $now,
+		server_time => $now,
+	});
+	$c->render(json => {
+		ok => ($started ? 1 : 0),
+		migration => $migration,
+		($started ? () : (error => $why)),
+	});
+};
+
+get '/manager/configure/migrate/status' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $m = &subs::db_select('migrations', undef, { uuid => $c->param('uuid') || '' })->hashes->[0];
+	unless ($m) { $c->render(json => { ok => 0, error => 'no such migration' }); return; }
+	my $snap = &subs::db_query('select * from sync_snapshots where caller = ? order by cast(updated as integer) desc limit 1', $m->{'device_signatorial'})->hashes->[0] || {};
+	my $steps = [];
+	if ($snap->{'job'}) {
+		my $sj = &subs::db_select('sync_jobs', undef, { uuid => $snap->{'job'} })->hashes->[0];
+		$steps = eval { decode_json($sj->{'steps'} || '[]') } || [] if $sj;
+	}
+	my $state = $m->{'state'} || 'started';
+	$state = 'done' if (($snap->{'state'} || '') eq 'done');
+	$state = 'failed' if (($snap->{'state'} || '') eq 'failed');
+	if ($state ne ($m->{'state'} || '')) {
+		&subs::db_update('migrations', { state => $state, updated => &subs::rightNow() }, { uuid => $m->{'uuid'} });
+		$m->{'state'} = $state;
+	}
+	$c->render(json => {
+		ok => 1,
+		migration => { uuid => $m->{'uuid'}, state => $state, device => $m->{'device_name'}, note => $m->{'note'} },
+		snapshot => { state => ($snap->{'state'} || ''), size => $snap->{'size'}, steps => $steps },
+	});
 };
 
 
@@ -7034,6 +7188,9 @@ sub remote_upgrade($c,$params) {
 	my $hostname = $params->{'hostname'};
 	my $database = $params->{'database'};
 	my $gimme = $params->{'gimme'};
+	# A migration is a full-table pull that *does* advance the watermark: the
+	# window is the whole history, but the merge is a real reconciliation.
+	my $full = $params->{'full'} ? 1 : 0;
 	my $remote_signatorial = $params->{'remote_signatorial'};
 	my $remote_device = $params->{'remote_device'};
 	my $remote_machine = $params->{'remote_machine'};
@@ -7063,7 +7220,11 @@ sub remote_upgrade($c,$params) {
 		if (ref $params->{'plan'} eq 'HASH' && scalar keys %{$params->{'plan'}}) {
 			$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode($params->{'plan'}));
 		}
-		if ($gimme =~ /[A-Za-z0-9]/gi) {
+		if ($full) {
+			$gimme = undef;
+			$url .= '&full=1';
+		}
+		if ($gimme && $gimme =~ /[A-Za-z0-9]/gi) {
 			$gimme = &subs::ago_calc($gimme, &subs::rightNow());
 			$url .= '&gimme=' . $gimme;
 		}
@@ -7415,7 +7576,10 @@ post '/manager/backup/confirm' => sub($c) {
 		my $f = $backup_data->{'enc_file'};
 		`shred -u $f`;
 	}
-
+	# The puller's confirmation is what makes a migration done: mark the
+	# snapshot row it was waiting on, so Dev's status follows the real finish
+	# rather than the build's ready.
+	&subs::db_update('sync_snapshots', { state => 'done', updated => &subs::rightNow() }, { archive_path => $backup_data->{'enc_file'} }) if $backup_data->{'enc_file'};
 	$c->render(json => $returner);
 };
 
@@ -10969,16 +11133,25 @@ sub sealed_file_bytes {
 	my ($suds, $file) = @_;
 	return read_file($file) unless $file =~ /\.enc$/i;
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+	my @secrets;
 	my $pwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC', 'padlock', 'door')->hashes;
 	foreach my $p ( @{$pwords} ) {
 		my $secret = &subs::decrypter($suds, $p->{'credential'});
-		next unless $secret;
-		my $data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$file" 2>/dev/null`;
-		next unless $data && length $data;
-		my $ft = File::Type->new();
-		return $data if $ft->checktype_contents($data) ne 'application/octet-stream';
+		push @secrets, $secret if defined $secret && length $secret;
 	}
-	return undef;
+	# The configured standard is the likely one; the rest are only probed if it
+	# does not open the file. This used to fork openssl once per credential.
+	my @standards = ( $standard );
+	foreach my $s ( @{ &subs::note_encryption_standards() } ) {
+		push @standards, $s unless grep { $_ eq $s } @standards;
+	}
+	my $ft = File::Type->new();
+	my $inspect = sub {
+		my $fd = $ft->checktype_contents($_[0]);
+		return $fd ne 'application/octet-stream' ? $fd : undef;
+	};
+	my $opened = &subs::sealed_file_open($file, \@secrets, \@standards, 0, $inspect);
+	return $opened ? $opened->{'data'} : undef;
 }
 
 sub travel_map_record {
@@ -29846,6 +30019,22 @@ sub update_database($data) {
 		# created the table (the guard skips the alter once the column is there).
 		'alter table sync_snapshots add column ost VARCHAR(25)',
 		'create index if not exists idx1_sync_snapshots on sync_snapshots (state, updated)',
+		# One row per Dev migration: this machine (the donor) asked a linked new
+		# device to pull the whole house from here. Machine-local - it names this
+		# donor's roster and its own serve job - so it is in gb's forbidden list.
+		'create table if not exists migrations (
+			uuid VARCHAR(255) PRIMARY KEY,
+			device_signatorial VARCHAR(500),
+			device_name VARCHAR(255),
+			donor_signatorial VARCHAR(500),
+			state VARCHAR(25),
+			note LONGTEXT,
+			started VARCHAR(25),
+			updated VARCHAR(25),
+			server_time VARCHAR(25),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_migrations on migrations (state, updated)',
 		# The error watch's catch: an error seen in the running logs, and the fix
 		# the Coding agent proposed for it, staged until a person applies it.
 		# Machine-local (the rows name this repo's files), so the table sits in

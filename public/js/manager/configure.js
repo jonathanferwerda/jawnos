@@ -1073,6 +1073,43 @@ $(document).on('click', '.remote_upgrade', function() {
 	});
 });
 
+// Dev's migration action: ask a linked device to pull the whole house from
+// this machine. The server sends the signed pull-now lever; this only starts
+// it and follows the donor's own progress.
+$(document).on('click', '.remote_migrate', function() {
+	var b = $(this);
+	var actions = b.closest('.device_actions');
+	var sig = b.attr('signatorial');
+	b.prop('disabled', true).text('Migrating…');
+	$('.migration_status').remove();
+	$.post('/manager/configure/migrate', { signatorial: sig, timestamp: Date.now() }, function(res) {
+		if (!res || !res.ok) {
+			b.prop('disabled', false).text('Migrate');
+			actions.append($('<span class="migration_status"></span>').text(' ' + ((res && res.error) || 'failed')));
+			return;
+		}
+		var span = $('<span class="migration_status"></span>').text(' migrating…');
+		actions.append(span);
+		var poll = function() {
+			$.get('/manager/configure/migrate/status', { uuid: res.migration }, function(s) {
+				if (!s || !s.ok) { span.text(' migration lost'); b.prop('disabled', false).text('Migrate'); return; }
+				var snap = s.snapshot || {};
+				var size = snap.size ? ' ' + Math.round(snap.size / 1048576) + 'MB' : '';
+				span.text(' ' + (s.migration.state || '') + ' ' + (snap.state || '') + size);
+				if (snap.state === 'done' || snap.state === 'failed' || s.migration.state === 'done') {
+					b.prop('disabled', false).text('Migrate');
+					return;
+				}
+				setTimeout(poll, 2000);
+			}, 'json');
+		};
+		setTimeout(poll, 2000);
+	}, 'json').fail(function() {
+		b.prop('disabled', false).text('Migrate');
+		actions.append($('<span class="migration_status"> failed</span>'));
+	});
+});
+
 $(document).on('change', '.remote_machine_input', function() {
 	var input = $(this);
 	var timestamp = Date.now();
