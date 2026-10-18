@@ -5722,7 +5722,7 @@ sub backup_now() {
 	&subs::backup_registry_prune();
 
 	my $archive_path = $path . '_' . $timestamp;
-	my $encrypt = `openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $temporary_path -out $archive_path.enc`;
+	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $temporary_path, $archive_path . '.enc', 0, 1);
 	my $stat_path = `stat $temporary_path`;
 	`echo "$appendage" >> $archive_path.enc`;
 
@@ -6443,15 +6443,23 @@ sub note_random_salt {
 # both sides wait forever. (This only bit the openssl fallback; AES and the other
 # in-process ciphers never spawn a process.)
 sub note_openssl_run {
-	my ($args, $input) = @_;
+	my ($args, $input, $secret) = @_;
+	return undef unless defined $secret && length $secret;
 	require File::Temp;
 	require File::Spec;
+	# The passphrase goes in a 0600 temp file, never in argv: a `-k` leaves the
+	# house key visible in `ps` for the life of the child.
+	my ($pfh, $ppath) = eval { File::Temp::tempfile('jawnos-pass-XXXXXX', DIR => File::Spec->tmpdir, UNLINK => 0) };
+	return undef unless $pfh && defined $ppath;
+	binmode $pfh;
+	print $pfh $secret;
+	close $pfh;
 	my ($fh, $path) = eval { File::Temp::tempfile('jawnos-enc-XXXXXX', DIR => File::Spec->tmpdir, UNLINK => 0) };
-	return undef unless $fh && defined $path;
+	if (!$fh || !defined $path) { unlink $ppath; return undef }
 	binmode $fh;
 	print $fh $input;
 	close $fh;
-	my @cmd = (@{$args}, '-in', $path);
+	my @cmd = (@{$args}, '-pass', 'file:' . $ppath, '-in', $path);
 	my $result;
 	if (open(my $out, '-|', @cmd)) {
 		binmode $out;
@@ -6459,9 +6467,64 @@ sub note_openssl_run {
 		close $out;
 	}
 	my $ok = $? == 0;
-	unlink $path;
+	unlink $path, $ppath;
 	return undef unless $ok;
 	return $result;
+}
+
+# openssl enc over files, with the passphrase in a 0600 temp file. Returns 1 on
+# success and 0 on failure. $quiet keeps a wrong-password "bad decrypt" out of
+# the log when a caller is walking a credential history.
+sub openssl_file_crypt {
+	my ($mode, $standard, $secret, $in_path, $out_path, $nopad, $quiet) = @_;
+	return 0 unless defined $secret && length $secret && defined $in_path && defined $out_path;
+	require File::Temp;
+	require File::Spec;
+	my ($pfh, $ppath) = eval { File::Temp::tempfile('jawnos-pass-XXXXXX', DIR => File::Spec->tmpdir, UNLINK => 0) };
+	return 0 unless $pfh && defined $ppath;
+	binmode $pfh;
+	print $pfh $secret;
+	close $pfh;
+	my @args = ('openssl', 'enc', $mode eq 'd' ? '-d' : '-e', '-pass', 'file:' . $ppath, '-' . $standard, '-pbkdf2');
+	push @args, '-nopad' if $nopad;
+	push @args, '-in', $in_path, '-out', $out_path;
+	my $rc = $quiet ? &system_quiet(@args) : system(@args);
+	unlink $ppath;
+	return $rc == 0 ? 1 : 0;
+}
+
+# The same, but returning the plaintext instead of writing it to a path.
+sub openssl_file_read {
+	my ($standard, $secret, $in_path, $nopad, $quiet) = @_;
+	return undef unless defined $secret && length $secret && defined $in_path;
+	require File::Temp;
+	require File::Spec;
+	my ($pfh, $ppath) = eval { File::Temp::tempfile('jawnos-pass-XXXXXX', DIR => File::Spec->tmpdir, UNLINK => 0) };
+	return undef unless $pfh && defined $ppath;
+	binmode $pfh;
+	print $pfh $secret;
+	close $pfh;
+	my @args = ('openssl', 'enc', '-d', '-pass', 'file:' . $ppath, '-' . $standard, '-pbkdf2');
+	push @args, '-nopad' if $nopad;
+	push @args, '-in', $in_path;
+	my $data;
+	my $saved;
+	if ($quiet) {
+		open($saved, '>&', \*STDERR) or do { unlink $ppath; return undef };
+		open(STDERR, '>', '/dev/null') or do { close $saved; unlink $ppath; return undef };
+	}
+	if (open(my $out, '-|', @args)) {
+		binmode $out;
+		$data = do { local $/; <$out> };
+		close $out;
+		$data = undef if $?;
+	}
+	if ($saved) {
+		open(STDERR, '>&', $saved);
+		close $saved;
+	}
+	unlink $ppath;
+	return $data;
 }
 
 # Seal $content with the inner cipher, returning the openssl container (or undef).
@@ -6485,7 +6548,7 @@ sub note_seal_container {
 	}
 	# not a cipher we can run in-process: let openssl do it. The bytes are raw -
 	# base64 here only bought a 33% copy on each side.
-	my $container = &note_openssl_run(['openssl', 'enc', '-e', '-k', $secret, '-' . $standard, '-pbkdf2'], $content);
+	my $container = &note_openssl_run(['openssl', 'enc', '-e', '-' . $standard, '-pbkdf2'], $content, $secret);
 	return undef unless defined $container && length $container;
 	return $container;
 }
@@ -6547,10 +6610,10 @@ sub note_open_container {
 
 sub note_openssl_open {
 	my ($container, $secret, $standard, $legacy, $nopad) = @_;
-	my @args = ('openssl', 'enc', '-d', '-k', $secret, '-' . $standard, '-pbkdf2');
+	my @args = ('openssl', 'enc', '-d', '-' . $standard, '-pbkdf2');
 	push @args, '-provider', 'default', '-provider', 'legacy' if $legacy;
 	push @args, '-nopad' if $nopad;
-	return &note_openssl_run(\@args, $container);
+	return &note_openssl_run(\@args, $container, $secret);
 }
 
 # The file sealing is the very same container, read from and written to a path.
@@ -19154,7 +19217,7 @@ sub backfills() {
 				write_file($raw, $img);
 				my $secret = &subs::suds_grabber();
 				my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-				`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$location/mugshot.$dev.png.enc"`;
+				&openssl_file_crypt('e', $standard, $secret, $raw, "$location/mugshot.$dev.png.enc", 0, 1);
 				`shred -u "$raw"`;
 				&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => "mugshot.$dev.png.enc" });
 			}
@@ -19186,7 +19249,7 @@ sub backfills() {
 				my $raw = $location . '/guess_' . $map->{'uuid'} . '.png';
 				my $sealed = $location . '/guess_' . $map->{'uuid'} . '.png.enc';
 				write_file($raw, $bytes);
-				`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$sealed"`;
+				&openssl_file_crypt('e', $standard, $secret, $raw, $sealed, 0, 1);
 				unless (-e $sealed && -s $sealed) { unlink $raw; $failed++; next; }
 				`shred -u "$raw"`;
 				push @converted, [ $map->{'uuid'}, $map->{'f'}, $sealed ];
@@ -20547,7 +20610,7 @@ sub records_backup_now {
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 	my $out = "$dir/jawnos_" . &rightNow() . '.enc';
 	`sqlite3 "$database" ".backup '$tmp'"`;
-	`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$tmp" -out "$out"`;
+	&openssl_file_crypt('e', $standard, $secret, $tmp, $out, 0, 1);
 	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
 	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
 	unlink $tmp;
@@ -20588,7 +20651,7 @@ sub records_backup_decrypt {
 	my ($fh, $tmp) = File::Temp::tempfile('jawnos_old_XXXXXX', SUFFIX => '.db', DIR => File::Spec->tmpdir, UNLINK => 0);
 	return undef unless $fh && $tmp;
 	close $fh;
-	`openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$path" -out "$tmp" -nopad 2>/dev/null`;
+	&openssl_file_crypt('d', $standard, $secret, $path, $tmp, 1, 1);
 	return undef unless -e $tmp && -s $tmp > 5000;
 	return $tmp;
 }

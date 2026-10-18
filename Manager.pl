@@ -1118,6 +1118,26 @@ sub stream_sealed_file($c, $job, $file, $cache_control) {
 	return 1;
 }
 
+# Decrypt just the head of a sealed video for ffmpeg. The first frame needs the
+# header and opening clusters, not the whole file; the caller falls back to a
+# full decrypt when the prefix yields nothing (an mp4 whose moov atom is last).
+sub sealed_thumb_prefix($filename, $job, $bytes) {
+	my $spec = $job->{'spec'} or return 0;
+	my $container = $job->{'container'};
+	my $total = length($container) - 16;
+	my $take = $bytes < $total ? $bytes : $total;
+	my $block = $spec->{'ivlen'};
+	$take = int($take / $block) * $block if $spec->{'family'} eq 'cbc';
+	$take = $total if $take > $total;
+	return 0 unless $take > 0;
+	my $ct = substr($container, 16, $take);
+	my $mode = $spec->{'family'} eq 'ctr' ? &subs::note_ctr_mode($spec) : &subs::note_cbc_mode($spec, 1);
+	my $plain = eval { $mode->decrypt($ct, $job->{'key'}, $job->{'iv'}) };
+	return 0 unless defined $plain && length $plain;
+	write_file($filename, $plain);
+	return 1;
+}
+
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
@@ -1239,6 +1259,9 @@ sub rock_and_roll($c) {
 			if (!$appter->[0]->{'uuid'}) {
 				my @file_splitter = split /\//, $file;
 
+				# app=? is served by idx2_appts, so this leading-wildcard LIKE only
+				# walks this app's rows; the first query above already uses a multi-index
+				# OR on (app,server_time)/(app,timestamp). No table scan.
 				$appt_q = &subs::db_query('select * from appointments where app = ? and file is not null and file like ?',$app,'%' . $file_splitter[-1] . '%' );
 				my $apptser = $appt_q->hashes;
 				# no `my` here: the timestamp found below belongs to the outer scope
@@ -1299,9 +1322,12 @@ sub rock_and_roll($c) {
 			};
 			# A whole-file request for a big sealed file streams: the key is known
 			# after the prefix probe, so the body can start before it is all decrypted.
-			my $want_stream = (!$range && !$c->param('duty') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i && (-s $file || 0) >= 2 * 1024 * 1024) ? 1 : 0;
+			# A video thumbnail asks for the same pieces, but only to decrypt the head
+			# of the file for ffmpeg rather than the whole thing.
+			my $video_thumb = ($wants_thumb && $file =~ /\.(?:mp4|webm|mpg|mpeg|mov|mkv|avi)\.enc$/i) ? 1 : 0;
+			my $want_stream = (!$range && ($video_thumb || (!$c->param('duty') && !$wants_thumb)) && $file !~ /\.pdf(?:\.enc)?$/i && (-s $file || 0) >= 2 * 1024 * 1024) ? 1 : 0;
 			my $opened = &subs::sealed_file_open($file, \@secrets, \@encryption_standards, 1, $inspect, $range, $want_stream);
-			if ($opened && $opened->{'stream'}) {
+			if ($opened && $opened->{'stream'} && !$video_thumb) {
 				if (&stream_sealed_file($c, $opened, $file, 'private, no-cache')) { return }
 				# the stream could not start: fall back to the buffered body
 				my $data = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
@@ -1324,9 +1350,16 @@ sub rock_and_roll($c) {
 				my @ext = split /\./, $file;
 				my $ext = $ext[-2];
 				if ($c->param('duty')) {
+							# The data URI is only read for images (the adopt list and the
+							# file information card); building it for a video or PDF copied
+							# the whole file for nothing.
+							my $image;
+							if (defined $fd && ($fd =~ m{^image/} || $file =~ /\.(?:jpe?g|png|bmp|gif|webp|tiff?)\.enc$/i)) {
+								$image = 'data:' . $fd . ';base64,' . encode_base64($data,'');
+							}
 							return {
 								data => $data,
-								image => 'data:' . $fd . ';base64,' . encode_base64($data,''),
+								image => $image,
 								fd => $fd,
 								timestamp => $appt_server_time,
 								ext => $ext
@@ -1346,16 +1379,33 @@ sub rock_and_roll($c) {
 								unless (-e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100) {
 									my $filename = $tdir . '/' .&subs::random_string_creator(20) . '.' . $ext;
 									if ($file =~ /webm/i) { $fd = 'video/webm'; }
-									# The plaintext is already in hand - a second open_file() here
-									# decrypted the whole file again just to write the same bytes.
-									write_file($filename, $full_data) if defined $full_data && length $full_data;
+									# The plaintext is already in hand for an image; for a sealed video
+									# only the head is decrypted, and a prefix that yields no frame
+									# falls back to the whole file below.
+									if ($opened->{'stream'}) {
+										&sealed_thumb_prefix($filename, $opened, 8 * 1024 * 1024);
+									}
+									else {
+										write_file($filename, $full_data) if defined $full_data && length $full_data;
+									}
 
-									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm/ ) {
+									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
 										my $command2 = 'ffmpeg -ss 00:00:00.010 -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
 										$data = `$command2`;
+										if ($opened->{'stream'} && (!defined $data || !length $data)) {
+											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
+											if (defined $whole && length $whole) {
+												write_file($filename, $whole);
+												$data = `$command2`;
+											}
+										}
 									}
 									elsif ($file_data->{'type'} eq 'image' || grep { $_ eq $ext } qw/bmp tiff jpg png/) {
+										if ($opened->{'stream'}) {
+											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
+											write_file($filename, $whole) if defined $whole && length $whole;
+										}
 										my $command2 = 'magick ' . $filename . ' -resize ' . $thumbnail_size . ' -';
 										$file_data->{'type'} = 'image';
 										$data = `$command2`;
@@ -5798,7 +5848,7 @@ post '/sesh_check' => sub ($c) {
 			my $data = `tail $backup`;
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($secret, $split_data[1]);
-			`openssl enc -d -k "$secret" -$encryption_standard -pbkdf2 -in $backup -out $database`;
+			&subs::openssl_file_crypt('d', $encryption_standard, $secret, $backup, $database, 0, 1);
 
 		}
 		if (-e $database && -s $database > 5000) {
@@ -6198,7 +6248,7 @@ post '/manager/configure/mugshot_upload' => sub($c) {
 			my $secret = &subs::suds_grabber();
 			my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 			my $sealed = "mugshot.$dev.png.enc";
-			`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$location/$sealed"`;
+			&subs::openssl_file_crypt('e', $standard, $secret, $raw, "$location/$sealed", 0, 1);
 			`shred -u "$raw"`;
 			&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => $sealed });
 			$image = &Manager::mugshot_source($dev);
@@ -6231,7 +6281,7 @@ get '/mugshot' => sub($c) {
 	if ($file =~ /\.enc$/) {
 		my $secret = &subs::suds_grabber();
 		my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-		$data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$file" 2>/dev/null`;
+		$data = &subs::openssl_file_read($standard, $secret, $file, 0, 1);
 	} else {
 		$data = eval { read_file($file) };
 	}
@@ -10842,7 +10892,7 @@ get '/manager/download_file' => sub ($c) {
 
 			foreach my $p ( @{$pwords} ) {
 				my $secret = &subs::decrypter($suds, $p->{'credential'});
-				my $process_data = `openssl enc -d -k "$secret" -$encryption_standard -pbkdf2 -in $file`;
+				my $process_data = &subs::openssl_file_read($encryption_standard, $secret, $file, 0, 1);
 				my $ft = File::Type->new();
 				my $type_from_data = $ft->checktype_contents($process_data);
 				if ($type_from_data ne 'application/octet-stream' || ($data =~ /webm/)) {
@@ -15131,7 +15181,7 @@ post '/manager/configure/new_database' => sub($c) {
 
 	my $backup = `sqlite3 $database ".backup '$database.1.db'"`;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
-	my $encrypt =	`openssl enc -e -k "$secret" -$encryption_standard -pbkdf2 -in $database.1.db -out $enc_file`;
+	my $encrypt = &subs::openssl_file_crypt('e', $encryption_standard, $secret, $database . '.1.db', $enc_file, 0, 1);
 	my $appendage = $universal_splitter . &subs::encrypter($secret,$encryption_standard);
 	`echo "$appendage" >> $enc_file`;
 #	my $devices = &subs::device_lister($timestamp);
@@ -15170,7 +15220,7 @@ post '/manager/configure/restore_now' => sub($c) {
 			my $data = `tail $path`;
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($cr, $split_data[1]);
-			my $scrypt = `openssl enc -d -k "$cr" -$encryption_standard -pbkdf2 -in $path -out $t_database`;
+			my $scrypt = &subs::openssl_file_crypt('d', $encryption_standard, $cr, $path, $t_database, 0, 1);
 			if (-s $t_database > 5000) {
 				&subs::backup_now($c);
 				`shred -u $database`;
@@ -15474,7 +15524,7 @@ sub merge_database($c,$configuration) {
 			}
 
 			$encryption_standard = &subs::decrypter($crud, $split_data[1]);
-			`openssl enc -d -k "$crud" -$encryption_standard -pbkdf2 -in $path -out $temporary_file -nopad`;
+			&subs::openssl_file_crypt('d', $encryption_standard, $crud, $path, $temporary_file, 1, 1);
 
 			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
 			my $decrypted_size = (-s $temporary_file) || 0;
@@ -23454,7 +23504,7 @@ post '/manager/travel/guess_gap' => sub($c) {
 	my $secret = &subs::suds_grabber();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 	my $file_path = $folder . '/guess_' . $guess_uuid . '.png.enc';
-	`openssl enc -e -k "$secret" -$standard -pbkdf2 -in "$raw" -out "$file_path"`;
+	&subs::openssl_file_crypt('e', $standard, $secret, $raw, $file_path, 0, 1);
 	unless (-e $file_path && -s $file_path) {
 		unlink $raw;
 		$c->render(json => { error => 'the guess could not be sealed' });
@@ -23525,7 +23575,7 @@ get '/manager/travel/guess_image' => sub($c) {
 	if ($map->{'f'} =~ /\.enc$/) {
 		my $secret = &subs::suds_grabber();
 		my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-		$data = `openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$map->{'f'}" 2>/dev/null`;
+		$data = &subs::openssl_file_read($standard, $secret, $map->{'f'}, 0, 1);
 	}
 	else {
 		$data = eval { read_file($map->{'f'}) };
@@ -26414,7 +26464,7 @@ sub attachment_plain_path($att) {
 	my $plain = $dir . '/' . &subs::random_string_creator(8) . '-' . $name;
 	$standard ||= &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 	my $secret = &subs::suds_grabber();
-	`openssl enc -d -k "$secret" -$standard -pbkdf2 -in "$f" -out "$plain" 2>/dev/null`;
+	&subs::openssl_file_crypt('d', $standard, $secret, $f, $plain, 0, 1);
 	return (-e $plain) ? $plain : undef;
 }
 
@@ -26882,7 +26932,6 @@ get '/manager/configure/adopt_app' => sub($c) {
 						elsif ($file =~ /\.mpg|\.webm|\.mp4/) {
 							$c->param('file' => $full_file);
 							my $job = &rock_and_roll($c);
-							my $image = $job->{'image'};
 							$html .= '<video controls loop class="gigantic_thumb adopt_file" type="video" app="' . $app . '" timestamp="' . $job->{'timestamp'} . '" file="' . $full_file . '" src="/file_open?timestamp=' . $job->{'timestamp'} . '&file=' . $full_file . '"></video>';
 						}
 					}
