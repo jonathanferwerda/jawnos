@@ -265,6 +265,9 @@
 		   browser's subtitle overlay - drawn at the element's foot - lands at the
 		   window's foot instead of hanging below it */
 		#<%= $miss %>_container { height: 100%; }
+		/* the picture owns a finger's sideways and downward travel: the scrub and
+		   volume gestures above, not the page's own panning */
+		#<%= $id %>, #<%= $miss %>_visual_media { touch-action: none; }
 	</style>
 
 	<div id="<%= $miss %>_container" class="<%= $id %>_container" style="width:100%;background-color:black;display:block;">
@@ -613,7 +616,7 @@
 				vidOn('mouseout touchend mouseup', '#<%= $miss %>_jog_wheel,#<%= $id %>', function() {
 					<%= $miss %>_last = 'out';
 				});
-				vidOn('mousewheel', '#<%= $miss %>_jog_wheel,#<%= $id %>', function(e) {
+				vidOn('mousewheel', '#<%= $miss %>_jog_wheel', function(e) {
 					var j = $('#<%= $miss %>_jog_wheel');
 					var mvmt = numeral(e.originalEvent.wheelDelta).value();
 
@@ -625,9 +628,12 @@
 					var v = document.getElementById('<%= $id %>');
 					var currentTime = v.currentTime + diff / 10 * $(this).closest('.wind').find('.speed').val();
 					v.currentTime = currentTime;
-					$('<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
+					$('#<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
 				});
 				vidOn('click', '#<%= $miss %>_jog_wheel, #<%= $id %><% if ($source eq 'music') { %>, #<%= $miss %>_visual_media<% } %>', function() {
+					// a finger that just scrubbed or set the volume must not also toggle
+					// playback on the click the browser ends the touch with
+					if (<%= $miss %>Touch.moved) { <%= $miss %>Touch.moved = false; return; }
 					var v = document.getElementById('<%= $id %>');
 					if (v.state == 0) {
 						<% if ($source eq 'music') { %>if (typeof musicVolumeApply == 'function') { musicVolumeApply(); }<% } %>
@@ -642,6 +648,99 @@
 					}
 				});
 			}
+			// The player's own gestures, wherever the picture is: a wheel scrubs it,
+			// and so does a horizontal finger drag; a vertical finger drag sets the
+			// volume. Bound to the player root rather than the element, so they keep
+			// working over the interface that rides along into fullscreen.
+			var <%= $miss %>GestureRoot = <% if ($source eq 'music') { %>'#music'<% } else { %>'#<%= $miss %>_container'<% } %>;
+			var <%= $miss %>Touch = { active: false, moved: false, x: 0, y: 0, time: 0, volume: 1, axis: '' };
+			function <%= $miss %>GestureAllowed(target, mode) {
+				var t = $(target);
+				if (t.closest('#music_library, #search_results, input, select, textarea, button, .jog_wheel').length) { return false; }
+				// a finger on the transport belongs to its slider or button, not to a
+				// scrub; a wheel over the bars has nothing else to do, so it still scrubs
+				if (mode == 'touch' && t.closest('#<%= $miss %>_controls, #interface').length) { return false; }
+				return true;
+			}
+			function <%= $miss %>SeekTo(seconds) {
+				var v = document.getElementById('<%= $id %>');
+				if (!v) { return; }
+				if (v.duration && !isNaN(v.duration)) {
+					seconds = Math.max(0, Math.min(v.duration, seconds));
+				}
+				else {
+					seconds = Math.max(0, seconds);
+				}
+				v.currentTime = seconds;
+				$('#<%= $miss %>_time_display').text(numeral(v.currentTime).format('00:00:00.0000'));
+			}
+			function <%= $miss %>VolumeTo(level) {
+				var v = document.getElementById('<%= $id %>');
+				if (!v) { return; }
+				v.volume = Math.max(0, Math.min(1, level));
+				if (v.volume > 0) { v.muted = false; }
+			}
+			vidOn('mousewheel', <%= $miss %>GestureRoot, function(e) {
+				if (!<%= $miss %>GestureAllowed(e.target, 'wheel')) { return; }
+				var v = document.getElementById('<%= $id %>');
+				if (!v) { return; }
+				var ev = e.originalEvent || e;
+				// the wheel's own pixels: wheelDelta on the legacy event, deltaY on a
+				// plain wheel (the same ~120 a notch)
+				var mvmt = (ev.wheelDelta != undefined && ev.wheelDelta != 0) ? ev.wheelDelta : (-ev.deltaY * 1.2);
+				if (!mvmt || isNaN(mvmt)) { return; }
+				var speed = numeral($('#<%= $miss %>_speed').val()).value() || 1;
+				<%= $miss %>SeekTo(v.currentTime + (mvmt / 300) * speed);
+			});
+			vidOn('touchstart', <%= $miss %>GestureRoot, function(e) {
+				if (!<%= $miss %>GestureAllowed(e.target, 'touch')) { <%= $miss %>Touch.active = false; return; }
+				var t = (e.originalEvent || e).touches;
+				var v = document.getElementById('<%= $id %>');
+				if (!t || t.length != 1 || !v) { <%= $miss %>Touch.active = false; return; }
+				<%= $miss %>Touch.active = true;
+				<%= $miss %>Touch.x = t[0].clientX;
+				<%= $miss %>Touch.y = t[0].clientY;
+				<%= $miss %>Touch.time = v.currentTime || 0;
+				<%= $miss %>Touch.volume = v.muted ? 0 : (isNaN(v.volume) ? 1 : v.volume);
+				<%= $miss %>Touch.axis = '';
+				<%= $miss %>Touch.moved = false;
+			});
+			vidOn('touchmove', <%= $miss %>GestureRoot, function(e) {
+				if (!<%= $miss %>Touch.active) { return; }
+				var t = (e.originalEvent || e).touches;
+				var v = document.getElementById('<%= $id %>');
+				if (!t || t.length != 1 || !v) { <%= $miss %>Touch.active = false; return; }
+				var dx = t[0].clientX - <%= $miss %>Touch.x;
+				var dy = t[0].clientY - <%= $miss %>Touch.y;
+				if (!<%= $miss %>Touch.axis) {
+					// a few pixels decide the gesture once, so a scrub does not turn
+					// into a volume change halfway across the picture
+					if (Math.abs(dx) < 6 && Math.abs(dy) < 6) { return; }
+					<%= $miss %>Touch.axis = (Math.abs(dx) >= Math.abs(dy)) ? 'x' : 'y';
+					<%= $miss %>Touch.moved = true;
+				}
+				if (e.preventDefault) { e.preventDefault(); }
+				var root = $(this);
+				if (<%= $miss %>Touch.axis == 'x') {
+					var width = root.width() || $(window).width();
+					if (!width || !v.duration || isNaN(v.duration)) { return; }
+					<%= $miss %>SeekTo(<%= $miss %>Touch.time + (dx / width) * v.duration);
+				}
+				else {
+					var height = root.height() || $(window).height();
+					if (!height) { return; }
+					<%= $miss %>VolumeTo(<%= $miss %>Touch.volume - (dy / height));
+				}
+			});
+			vidOn('touchend touchcancel', <%= $miss %>GestureRoot, function() {
+				<%= $miss %>Touch.active = false;
+				<%= $miss %>Touch.axis = '';
+				// the click that ends a touch lands just after it; let that one be
+				// swallowed, then forget the gesture
+				if (<%= $miss %>Touch.moved) {
+					setTimeout(function() { <%= $miss %>Touch.moved = false; }, 400);
+				}
+			});
 			vidOn('dblclick', '#<%= $id %><% if ($source eq 'music') { %>, #music_album_cover, #<%= $miss %>_visual_media<% } %>', function() {
 				<%= $miss %>Fullscreen();
 			});
