@@ -7582,11 +7582,13 @@ get '/manager/sync_rows' => sub ($c) {
 	my $remote_signatorial = $params->{'remote_signatorial'};
 	my $remote_device = $params->{'remote_device'};
 	my $remote_machine = $params->{'remote_machine'};
-	my @database = split '/', $database;
-	my @extender = split /\./, $database[-1];
-	$extender[-1] = 'enc';
-	$database[-1] = join '.', @extender;
-	$database = join '/', @database;
+	my @database = split '/', ($database || '');
+	my @extender = split /\./, ($database[-1] // '');
+	if (@extender) {
+		$extender[-1] = 'enc';
+		$database[-1] = join '.', @extender;
+		$database = join '/', @database;
+	}
 
 	my $folder = '~/';
 	my $connector;
@@ -31686,6 +31688,41 @@ sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_ta
 	return &remote_device_connect($rdc);
 }
 
+# A hub is healthy enough to collapse a spoke's pass to hub-and-spoke when its
+# last handshake is recent and, if we reach it through a tunnel, that tunnel still
+# has a fresh pong (the same freshness the tunnel checker reads).
+sub sync_hub_status {
+	my ($hub) = @_;
+	return 0 unless $hub && $hub->{'signatorial'};
+	return 0 if (&subs::rightNow() - int($hub->{'server_time'} || 0)) > 6 * 60 * 1000;
+	if (($hub->{'tunnel'} || '') eq 'yes') {
+		my $age = eval { &Tunnel::alive_age($hub->{'manager'}) };
+		my $ports = eval { &Tunnel::alive_ports($hub->{'manager'}) };
+		return 0 unless defined $age && $age < 45000 && (!defined $ports || $ports >= 1);
+	}
+	return 1;
+}
+
+# Pick the hub once per pass and persist it, so roster churn cannot silently move
+# the mesh's centre. A server is its own hub; a spoke learns its server's
+# signatorial from the roster and keeps the saved one while its row is recent.
+sub sync_hub_pick {
+	my ($machines, $is_hub) = @_;
+	return &subs::signatorial_designer() if $is_hub;
+	my $saved = &subs::setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
+	my @servers = grep { ($_->{'device'} || '') eq 'server' && ($_->{'signatorial'} || '') } @{ $machines || [] };
+	return $saved unless scalar @servers;
+	my ($best) = sort { int($b->{'server_time'} || 0) <=> int($a->{'server_time'} || 0) } @servers;
+	return $saved unless $best;
+	my ($saved_row) = grep { ($_->{'signatorial'} || '') eq $saved } @{ $machines || [] };
+	my $saved_fresh = $saved_row && (&subs::rightNow() - int($saved_row->{'server_time'} || 0)) < 30 * 60 * 1000;
+	return $saved if $saved && $saved_fresh;
+	if (($best->{'signatorial'} || '') ne $saved) {
+		&subs::setting_setter({ app => '__president', setting => 'sync_hub', value => $best->{'signatorial'} });
+	}
+	return $best->{'signatorial'} || '';
+}
+
 sub remote_machine_reconnector($c) {
 
 
@@ -31697,6 +31734,15 @@ sub remote_machine_reconnector($c) {
 	my $signatorial = &subs::signatorial_designer();
 	eval {
 		my $remote_machines = &subs::remote_machine_lister({ });
+		# Hub-and-spoke while the server is live: a spoke stops dialling peers it
+		# can only reach through the hub, and falls back to the full mesh when the
+		# hub's handshake or its tunnel goes stale. The hub itself always walks the
+		# whole roster (it is the union), and a peer on our own LAN is still direct.
+		my $topology = &subs::setting_grabber({ app => '__president', setting => 'sync_topology' }) || 'auto';
+		my $hub_sig = &sync_hub_pick($remote_machines, ($device eq 'server') ? 1 : 0);
+		my ($hub_row) = $hub_sig ? grep { ($_->{'signatorial'} || '') eq $hub_sig } @{$remote_machines} : ();
+		my $hub_ok = ($device eq 'server') ? 1 : &sync_hub_status($hub_row);
+		my $hub_mode = ($device ne 'server' && $hub_sig && ($topology eq 'hub' || ($topology eq 'auto' && $hub_ok))) ? 1 : 0;
 
 		# A peer's stored session cookie lapses unnoticed: the handshake below is
 		# signed and gate-exempt, so it keeps answering JSON while every relayed
@@ -31713,6 +31759,14 @@ sub remote_machine_reconnector($c) {
 			# giant data blob) before a real peer is reached.
 			next if ($rm->{'signatorial'} || '') eq $signatorial;
 			next if grep { $_ eq $rm->{'signatorial'} } @accomplished;
+			if ($hub_mode) {
+				# The hub, and anything we can reach on our own LAN, stay in the pass;
+				# a peer whose only path is the hub is left to the hub to pull.
+				my $direct = (($rm->{'signatorial'} || '') eq $hub_sig) ? 1 : 0;
+				$direct ||= (($rm->{'lan'} || '') eq 'yes') ? 1 : 0;
+				$direct ||= &subs::peer_lan_address($rm) ? 1 : 0;
+				next unless $direct;
+			}
 			eval {
 
 				my $ip = $rm->{'ip'};
