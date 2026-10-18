@@ -7631,6 +7631,7 @@ get '/manager/sync_rows' => sub ($c) {
 		print $why_fh &subs::rightNow() . " remote upgrade: snapshot path $why_snapshot\n";
 		close $why_fh;
 	}
+	$log->info('remote upgrade: snapshot path ' . $why_snapshot);
 	&subs::log_writer('remote upgrade: snapshot path ' . $why_snapshot);
 	if ($remote_machine->{'signatorial'}) {
 		my $html = '<h2>Running Remote Backup</h2>';
@@ -32077,6 +32078,10 @@ sub remote_machine_reconnector($c) {
 								my $up_marker = 'running:' . $$;
 								&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => $up_marker });
 								$params->{'marker'} = $up_marker;
+								# Name the decision: a pull that falls back to the snapshot path is
+								# the expensive one, and the job note alone does not say which of
+								# sync_version/full/gimme sent it there.
+								$log->info('sync pull ' . ($rj->{'signatorial'} || '?') . ' version=' . ($rj->{'version'} || '?') . ' sync_version=' . ($rj->{'sync_version'} || 0) . ' deep=' . (defined $deep && length $deep ? $deep : '-') . ' plan=' . (ref $plan eq 'HASH' ? scalar(keys %{$plan}) : 0));
 								# A pull/merge over a big table can outlive the prefork
 								# heartbeat. Fork it, as the on-demand route does, so this
 								# worker keeps answering (and syncing appointments) while
