@@ -7072,7 +7072,16 @@ sub remote_upgrade($c,$params) {
 						# everything before the window, so it must not advance the peer's
 						# watermark past that point.
 						gimme => ($gimme ? 1 : 0),
-						backup_confirm => encode_json $body
+						# The server's confirm reads only these two fields. It used to be
+						# handed the whole backup_now reply, which carries misc_settings
+						# (every setting on the machine) and update_commands and grew past
+						# the point a POST survives the trip: the body stalled on the wire
+						# and the peer closed the connection before responding. A few KB
+						# is all the other side ever reads, so send that.
+						backup_confirm => encode_json({
+							backup_data => $body->{'backup_data'},
+							ld_server_time => $body->{'ld_server_time'},
+						})
 					};
 					#	&subs::tunnel_stopper({ signatorial => $signatorial });
 					# A close here used to die out of the subprocessor with only "Premature

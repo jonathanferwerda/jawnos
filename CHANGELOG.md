@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-18
 
+- v0.1.709 - sync: the confirm POST carries only `backup_data` and `ld_server_time`, the two fields the server reads. It used to echo the whole `backup_now` reply, which includes `misc_settings` (every setting on the machine) and `update_commands`; that body had grown to ~800 KB, and a POST above roughly 200 KB stalls on the wire, so the peer never answered and every pull ended at "the peer did not confirm the merge" (wrapped as "Premature connection close") without advancing the watermark.
 - v0.1.705 - sync: the confirm diagnostic records the peer's HTTP status and the start of its body too (not just "no response"), so a refused confirm says whether it was a 403 gate/key refusal or a 500 rather than only "the peer did not confirm the merge".
 - v0.1.703 - sync: the pull's confirm POST records its URL, payload size and error when the peer closes the connection, instead of dying out of the subprocessor with only "Premature connection close"; the pull still ends as failed rather than as an unanswered die.
 - v0.1.699 - sync: restore the signing callback dropped from the tunnel peer by v0.1.697 (`&subs::peer_sign_request` ran the signer instead of passing it), so a tunnel holder no longer dies with "Can't locate object method \"method\" via package <url>".
