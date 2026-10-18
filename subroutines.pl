@@ -5996,6 +5996,14 @@ sub sync_plan {
 		elsif ($bm >= $am - 600000) {
 			$since = $am - 600000;
 		}
+		elsif ($t eq 'settings_durable') {
+			# The settings table carries a row per device class, and the merge stores
+			# a peer's values under the local class, so the durable count can differ
+			# permanently. Never turn that into a whole-table read on every tick: a
+			# window covers recent settings, and the nightly/deep pull reconciles an
+			# old row.
+			$since = $am - 600000;
+		}
 		else {
 			$since = 0;
 		}
