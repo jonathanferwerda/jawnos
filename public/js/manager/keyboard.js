@@ -416,14 +416,24 @@ function keyboardDragBarMaker(k) {
 				pseudonyms[panel.attr('id')] = Date.now();
 				keyboardIntervals = Date.now();
 			},
-			drag: function(p) {
+			drag: function(p, ui) {
 				keyboardIntervals = Date.now();
+				// a floating panel stops at the clothesline, like a window does
+				if ($(this).css('position') == 'fixed') {
+					ui.position.top = Math.max(panelTopLimit(), ui.position.top);
+				}
 			},
 			stop: function(p) {
 				// the computed style is the only record of where the panel sits
 				// once it has been moved, so keep the lot (minus the claim border)
 				var panel = $(this);
 				var id = panel.attr('id');
+				if (panel.css('position') == 'fixed') {
+					var top = parseFloat(panel.css('top'));
+					if (!isNaN(top) && top < panelTopLimit()) {
+						panel.css({ 'top': panelTopLimit() + 'px' });
+					}
+				}
 				var css = {};
 				var style = panel[0].style;
 				$.each(style, function(i,v) {

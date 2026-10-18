@@ -248,12 +248,15 @@ function codingChatDraggable(panel) {
 			// the Guide associate's window follows)
 			var p = $(this);
 			var w = p.outerWidth(), h = p.outerHeight();
-			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
 			ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
-			ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+			ui.position.top = Math.max(panelTopLimit(), Math.min(ui.position.top, $(window).height() - h - bar));
 		},
 		stop: function () {
 			var p = $(this);
+			// the clothesline holds the top back on every device
+			var top = parseFloat(p.css('top'));
+			if (!isNaN(top) && top < panelTopLimit()) { p.css({ 'top': panelTopLimit() + 'px' }); }
 			jawnosPanelPosSave('coding:' + (p.attr('conversation') || p.attr('mount')), p);
 		}
 	});

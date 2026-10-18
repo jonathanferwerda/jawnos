@@ -350,6 +350,13 @@ function windowTopLimit() {
 	return limit;
 }
 
+// The same ceiling for the panels that float over the desk instead of riding in
+// a window - a keyboard, the Guide's associate, a Coding agent - so a drag above
+// the clothesline lands them just under it, as a window would.
+function panelTopLimit() {
+	return (typeof windowTopLimit == 'function') ? Math.max(0, windowTopLimit()) : 0;
+}
+
 // The foot of the screen a window in a half or maximized state leaves free: a
 // bottom taskbar first, then the strip a bottom dock keeps on screen while it is
 // tucked (its search, or the sliver the pointer rests on to call it back).

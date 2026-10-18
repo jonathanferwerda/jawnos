@@ -806,10 +806,14 @@ function assistantInitializer() {
 				var w = $(this).outerWidth(), h = $(this).outerHeight();
 				var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 				ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
-				ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h - bar));
+				ui.position.top = Math.max(panelTopLimit(), Math.min(ui.position.top, $(window).height() - h - bar));
 			},
 			stop: function () {
-				jawnosPanelPosSave('guide:' + ($(this).attr('conversation') || 'assistant'), $(this));
+				// the clothesline holds the top back on every device
+				var p = $(this);
+				var top = parseFloat(p.css('top'));
+				if (!isNaN(top) && top < panelTopLimit()) { p.css({ 'top': panelTopLimit() + 'px' }); }
+				jawnosPanelPosSave('guide:' + (p.attr('conversation') || 'assistant'), p);
 			}
 		});
 	});
