@@ -11994,6 +11994,18 @@ sub manager_reset($c) {
 	my $target_uuid = $c->param('uuid') || '';
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(40);
 	$c->param('uuid' => $uuid);
+	# A resume reopens the row its last stop/cancel left. Resolve that row now,
+	# before the relay, the way a stop names the session it closes: every machine
+	# then reopens one and the same row instead of each reading "the newest
+	# stop" from its own - possibly different - copy of the database.
+	if ($type eq 'resume' && !$target_uuid) {
+		my $last = &subs::db_query('select uuid from appointments where app = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, 'stop','cancel')->hashes->[0];
+		if ($last && $last->{'uuid'}) {
+			$target_uuid = $last->{'uuid'};
+			$uuid = $target_uuid;
+			$c->param('uuid' => $uuid);
+		}
+	}
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
 	my $source = $c->param('source');
 	my $measure_is_open = $c->param('measure_is_open');
@@ -12002,12 +12014,10 @@ sub manager_reset($c) {
 		$c->param('duration', $usual_duration)
 	}
 	my ($appt_header, $header_appts);
-	unless (grep { $type eq $_ } qw/resume/) {
-		&subs::subprocessor(sub {
-		  Mojo::IOLoop->reset;
-			&remote_relay_request($c, { dissemination => 'yes' });
-		}, { name => 'reset remote relay' });
-	}
+	&subs::subprocessor(sub {
+	  Mojo::IOLoop->reset;
+		&remote_relay_request($c, { dissemination => 'yes' });
+	}, { name => 'reset remote relay' });
 	my $duration = &subs::time_abbrev_translator($c->param('duration'));
 
 	$duration = &subs::time_abbrev_translator($usual_duration) unless $c->param('duration') =~ /[a-z0-9A-Z]/;
@@ -12039,6 +12049,10 @@ sub manager_reset($c) {
 	# dropped the files already attached to the session, so only a caller that
 	# really sends a file list may replace it.
 	my $file_update = (defined $file && $file ne '') ? { file => $file } : {};
+	# The same rule for the text: an empty editor on a resume/pause/delay press
+	# carries no note, so the row keeps the one it already has.
+	my $notes_update = (defined $notes && $notes ne '') ? { notes => $notes } : {};
+	my $end_notes_update = (defined $notes && $notes ne '') ? { end_notes => $notes } : {};
 	my $mute = $c->param('mute');
 	my $words = $c->param('words');
 
@@ -12467,7 +12481,7 @@ sub manager_reset($c) {
 			type => 'start',
 			status => 'start',
 			timestamp => $timestamp,
-			notes => $notes,
+			%{$notes_update},
 			server_time => $server_time,
 			%{$file_update},
 			duration => $duration,
@@ -12507,7 +12521,7 @@ sub manager_reset($c) {
 			status => 'paused',
 			duration => $duration,
 			timestamp => $timestamp,
-			end_notes => $notes,
+			%{$end_notes_update},
 			server_time => $server_time,
 			%{$file_update},
 			warranty => $warranty,
@@ -12528,44 +12542,55 @@ sub manager_reset($c) {
 		}
 	}
 	elsif ($type eq 'resume') {
+		# The row is named by the pre-relay resolution above. A resume that names
+		# none (an older caller) still reopens the newest stop/cancel.
+		my $old = [];
+		if ($target_uuid) {
+			$old = &subs::db_query('select * from appointments where app = ? and uuid = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, $target_uuid, 'stop','cancel')->hashes;
+		}
+		else {
+			$old = &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, 'stop','cancel')->hashes;
+		}
+		# A named row this machine has not synced yet is left alone: the row's
+		# own newer copy will arrive by sync. Guessing "the newest" here could
+		# reopen a different session.
+		if ($old->[0]) {
+			$duration = $c->param('duration') =~ /0-9a-zA-Z/ ? (abs $c->param('duration') * -1) : $timestamp - $old->[0]->{'timestamp'};
+			$uuid = $old->[0]->{'uuid'};
+			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $old->[0]->{'app'}, 'state' => 'on', timestamp => $old->[0]->{'timestamp'} });
+			&subs::db_update('appointments', {
+					type => 'start',
+					status => 'start',
+					%{$notes_update},
+					unit => $unit,
+					project => $project,
+					server_time => $server_time,
+					%{$file_update},
+					'pos' => $pos,
+					warranty => $warranty,
+					source => $source,
+					seen => $seen,
+					duration => ((abs $duration) * -1),
+					stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $old->[0]->{'timestamp'} - ((abs &subs::time_abbrev_translator($c->param('duration'))) * -1) : undef,
+					stop_seen => undef
+				}, {
+					app => $app,
+					uuid => $old->[0]->{'uuid'}
+				}
+			);
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
-		my $old = &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, 'stop','cancel')->hashes;
-		$duration = $c->param('duration') =~ /0-9a-zA-Z/ ? (abs $c->param('duration') * -1) : $timestamp - $old->[0]->{'timestamp'};
-		$uuid = $old->[0]->{'uuid'};
-		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $old->[0]->{'app'}, 'state' => 'on', timestamp => $old->[0]->{'timestamp'} });
-		&subs::db_update('appointments', {
-				type => 'start',
-				status => 'start',
-				notes => $notes,
-				unit => $unit,
-				project => $project,
-				server_time => $server_time,
-				%{$file_update},
-				'pos' => $pos,
-				warranty => $warranty,
-				source => $source,
-				seen => $seen,
-				server_time => $server_time,
-				duration => ((abs $duration) * -1),
-				stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $old->[0]->{'timestamp'} - ((abs &subs::time_abbrev_translator($c->param('duration'))) * -1) : undef,
-				stop_seen => undef
-			}, {
-				app => $app,
-				uuid => $old->[0]->{'uuid'}
-			}
-		);
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
-		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
-
-		my %so_seen;
-		foreach my $so ( @{$sources} ) {
-			next if $so_seen{ $so->{'uuid'} }++;
-			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
-			if ( $so->{'type'} eq 'stop' || $so->{'type'} eq 'cancel' ) {
-				&subs::db_update('appointments', { type => 'start', server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
-				&budget_runner($so->{'app'});
-				&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $so->{'timestamp'} });
-				&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+			my %so_seen;
+			foreach my $so ( @{$sources} ) {
+				next if $so_seen{ $so->{'uuid'} }++;
+				push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
+				if ( $so->{'type'} eq 'stop' || $so->{'type'} eq 'cancel' ) {
+					&subs::db_update('appointments', { type => 'start', server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
+					&budget_runner($so->{'app'});
+					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $so->{'timestamp'} });
+					&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+				}
 			}
 		}
 	}
