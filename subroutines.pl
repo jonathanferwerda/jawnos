@@ -13160,9 +13160,20 @@ sub tunnel_checker() {
 
 						if ($tun->{'direction'} eq 'in') {
 							my $ps = $tun->{'process_id'};
-							my $ps_check = `ps -e | grep $ps`;
+							my $ps_check = ($ps && $ps =~ /^[0-9]+$/) ? `ps -p $ps -o cmd= 2>/dev/null` : '';
+							my $holder_alive = ($ps_check =~ /President\.pl|Manager\.pl/) ? 1 : 0;
 							next if grep { $tun->{'signatorial'} eq $_ || $tun->{'batch_uuid'} eq $_  } @{$batches};
 							push @{$batches}, $tun->{'signatorial'};
+							# A tree restart kills the holder but leaves its rows saying active.
+							# Without this the checker waits three hollow-session failures (six
+							# minutes) before re-requesting, so the tunnels look like they never
+							# stick. Re-request on the first pass when the owner is gone.
+							if (!$holder_alive) {
+								&subs::tunnel_stopper($tun);
+								&subs::tunnel_starter($tun);
+								push @{$batches}, $tun->{'batch_uuid'};
+								next;
+							}
 							my $signatorial = $tun->{'signatorial'};
 							my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
 							my $url = $rm->{'manager'} . '/manager/tunnel/alive';
