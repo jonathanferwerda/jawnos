@@ -7,12 +7,16 @@
 # still resumes its threads after the cap kills it; the checkpoint in
 # .shots/AGENT-CHECKPOINT.md is what makes that cheap.
 #
+# MemoryHigh is kept equal to MemoryMax on purpose. A lower soft cap makes the
+# kernel throttle every allocation above it, which surfaces as a frozen editor
+# (the 4G/6G/1G default did exactly that) instead of a fast, contained OOM kill.
+#
 # Limits can be overridden per launch:
-#   ZED_MEMORY_HIGH=7G ZED_MEMORY_MAX=9G ZED_MEMORY_SWAP_MAX=2G zed
+#   ZED_MEMORY_HIGH=6G ZED_MEMORY_MAX=10G ZED_MEMORY_SWAP_MAX=2G zed
 set -u
 
 REAL_ZED=/usr/bin/zed.real
-HIGH=${ZED_MEMORY_HIGH:-6G}
+HIGH=${ZED_MEMORY_HIGH:-8G}
 MAX=${ZED_MEMORY_MAX:-8G}
 SWAP=${ZED_MEMORY_SWAP_MAX:-4G}
 
