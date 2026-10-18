@@ -142,7 +142,7 @@ our %topic = (
 			'Click a track to play it; the transport along the top controls playback.',
 			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
 			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests.',
-			'A wheel over the picture moves through the track; on a touchscreen, drag sideways to move through it, and drag up or down to set the volume. The same gestures work in fullscreen, over the interface.',
+			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.'
 		],
 		related => [ 'studio', 'synth' ]
@@ -157,7 +157,7 @@ our %topic = (
 		steps => [
 			'Open Video and pick a file from your media folders.',
 			'Play, pause and scrub with the controls; go fullscreen from the player.',
-			'A wheel over the picture scrubs it; on a touchscreen, drag sideways to scrub and up or down to set the volume.'
+			'A wheel over the picture scrubs it; on a trackpad, a sideways swipe scrubs and up/down sets the volume. On a touchscreen, drag sideways to scrub and up or down to set the volume. The fullscreen button leaves fullscreen too.'
 		],
 		related => [ 'gallery', 'folders' ]
 	},
