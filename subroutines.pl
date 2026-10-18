@@ -5390,6 +5390,58 @@ sub backup_now() {
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid });
 	}
 	return unless $reason ne 'unknown';
+	# A puller that can wait for a slow build asks for it asynchronously (async=1).
+	# The request returns as soon as the snapshot row exists, and the puller polls
+	# backup_status while the build runs. Older pullers never send the flag and
+	# keep the synchronous reply, so a mixed house still syncs.
+	my $async = ($reason eq 'remote_update' && ($c->param('async') || '') eq '1') ? 1 : 0;
+	my $async_child = $gb::backup_async_child ? 1 : 0;
+	if ($async && !$async_child) {
+		my $snapshot = &subs::random_string_creator(24);
+		my $now = &subs::rightNow();
+		&subs::db_query('delete from sync_snapshots where cast(updated as integer) < ?', $now - (6 * 60 * 60 * 1000));
+		&subs::db_insert('sync_snapshots', {
+			uuid => $snapshot,
+			caller => ($c->param('signatorial') || ''),
+			state => 'building',
+			timestamp => $now,
+			server_time => $now,
+			updated => $now
+		});
+		&subs::subprocessor(sub {
+			$gb::backup_async_child = 1;
+			$gb::backup_async_snapshot = $snapshot;
+			my $result = eval { &subs::backup_now($c) };
+			my $err = $@;
+			if ($err) {
+				$err =~ s/\s+/ /g;
+				eval { &subs::db_update('sync_snapshots', { state => 'failed', error => substr($err, 0, 500), updated => &subs::rightNow() }, { uuid => $snapshot }) };
+				return;
+			}
+			if (ref $result eq 'HASH' && ($result->{'status'} || '') eq 'busy') {
+				eval { &subs::db_update('sync_snapshots', { state => 'busy', error => 'peer was already exporting', updated => &subs::rightNow() }, { uuid => $snapshot }) };
+				return;
+			}
+			if (ref $result eq 'HASH' && $result->{'archive_path'}) {
+				# The puller fetches the file, so the inline copy is not needed - and
+				# binary bytes through JSON do not survive the trip.
+				delete $result->{'raw_data'};
+				my $sha = eval { require Digest::SHA; Digest::SHA->new(256)->addfile($result->{'archive_path'})->hexdigest };
+				eval { &subs::db_update('sync_snapshots', {
+					state => 'ready',
+					job => ($result->{'sync_job'} || ''),
+					archive_path => $result->{'archive_path'},
+					size => $result->{'size'},
+					sha256 => $sha,
+					result => encode_json($result),
+					updated => &subs::rightNow()
+				}, { uuid => $snapshot }) };
+				return;
+			}
+			eval { &subs::db_update('sync_snapshots', { state => 'failed', error => 'no snapshot', updated => &subs::rightNow() }, { uuid => $snapshot }) };
+		}, { name => 'remote snapshot', fork => 1 });
+		return { status => 'building', job => $snapshot, signatorial => ($c->param('signatorial') || '') };
+	}
 	# A nightly reconciliation makes every peer ask this machine for its last few
 	# days at the same moment; each request builds a windowed copy of every table
 	# in memory and vacuums it, so a phone gets several of those at once and the
@@ -5595,6 +5647,10 @@ sub backup_now() {
 					# at exactly 2000 rows no matter how many were left.
 					if ($job && ($copied % 2000) == 0) {
 						eval { $db->query('update sync_jobs set updated = ? where uuid = ?', &subs::rightNow(), $job) };
+						# Keep the export lease young too: a very large table on a slow
+						# machine can outlive the ten-minute stale bound, and the lock
+						# must not be re-claimed while this worker is still copying.
+						eval { $db->query('update settings set server_time = ? where app = ? and setting = ? and value = ?', &subs::rightNow(), '__president', 'remote_backup_lock', $backup_lock) } if $backup_lock;
 					}
 				}
 				$cursor->finish if $cursor && $cursor->can('finish');
@@ -5704,7 +5760,7 @@ sub backup_now() {
 	# under ~/.president is already redundant: sweep it here rather than leave it
 	# for the next boot's ~/.president wipe. A large one is pulled over http, and
 	# backup_serve deletes it once it has been served.
-	if ($reason eq 'remote_update' && defined $raw_data && $archive_path =~ m{/\.president/}) {
+	if ($reason eq 'remote_update' && defined $raw_data && $archive_path =~ m{/\.president/} && !$gb::backup_async_child) {
 		my $sweep = $archive_path . '.enc';
 		`shred -u "$sweep"`;
 	}
@@ -5726,7 +5782,8 @@ sub backup_now() {
 		uuid => $uuid,
 		size => $size,
 		ld_server_time => $ld_server_time,
-		raw_data => $raw_data
+		raw_data => $raw_data,
+		sync_job => ($job || ''),
 	};
 	if ($reason eq 'remote_update') {
 		$returner->{'update_commands'} = &Manager::update_database({ duty => 'list' });

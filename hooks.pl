@@ -267,6 +267,8 @@ hook before_dispatch => sub {
 		# decode failed and the pull did nothing), which is how a machine fell
 		# behind. The routes take a session OR a peer signature (see Manager.pl).
 		$path eq '/manager/configure/backup_now' ||
+		# the same rail carries the build's progress and its ready reply
+		$path eq '/manager/configure/backup_status' ||
 		$path eq '/manager/backup_serve' ||
 		$path eq '/manager/backup/confirm' ||
 		# a peer holding the accurate copy of a session closes this machine's

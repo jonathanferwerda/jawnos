@@ -6395,12 +6395,85 @@ get '/manager/backup_serve' => sub($c) {
 	# this pull; delete it once the body is on the wire rather than leave it for
 	# the next boot's ~/.president wipe. Durable backups live beside the database
 	# and are never touched here.
+	# A puller that has been through the async build fetches the archive in
+	# ranges, so a dropped tunnel resumes at the byte it reached instead of
+	# starting the whole snapshot again. Only the full (non-range) reply deletes
+	# the one-shot temp; a ranged reply leaves it for the confirm or the boot
+	# wipe.
+	my $size = -s $path;
+	$c->res->headers->accept_ranges('bytes');
+	my $range = $c->req->headers->range || '';
+	if ($range && $range =~ /^bytes=(\d*)-(\d*)$/) {
+		my ($start, $end) = ($1, $2);
+		$start = 0 if $start eq '';
+		$end = $size - 1 if $end eq '';
+		if ($start > $end || $start >= $size || $end >= $size) {
+			$c->res->headers->content_range("bytes */$size");
+			$c->rendered(416);
+			return;
+		}
+		my $len = $end - $start + 1;
+		my $buf = '';
+		if (open my $fh, '<:raw', $path) {
+			sysseek($fh, $start, 0);
+			sysread($fh, $buf, $len);
+			close $fh;
+		}
+		$c->res->headers->content_type('application/octet-stream');
+		$c->res->headers->content_range("bytes $start-$end/$size");
+		$c->res->headers->content_length(length $buf);
+		$c->res->body($buf);
+		$c->rendered(206);
+		return;
+	}
 	if ($path =~ m{/\.president/}) {
 		$c->on(finish => sub { unlink $path; });
 	}
 	$c->res->headers->content_type('application/octet-stream');
+	$c->res->headers->content_length($size);
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 	$c->rendered(200);
+};
+
+# The puller's window into an asynchronous export: the build's state, its
+# per-table row counts, and - once ready - the same reply backup_now used to
+# return synchronously. The caller is the peer that asked for the snapshot, so
+# the job is scoped to its signatorial and cannot be read by anyone else.
+get '/manager/configure/backup_status' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
+	my $job = $c->param('job') || '';
+	my $snap = ($job && &subs::db_select('sync_snapshots', undef, { uuid => $job, caller => $signatorial })->hashes->[0]);
+	unless ($snap) {
+		$c->render(json => { status => 'unknown', job => $job });
+		return;
+	}
+	# A worker the kernel killed leaves the row 'building' forever; age it out
+	# rather than let the puller poll a dead snapshot until its own bound.
+	if (($snap->{'state'} || '') eq 'building' && int($snap->{'updated'} || 0) + 1800000 < &subs::rightNow()) {
+		&subs::db_update('sync_snapshots', { state => 'failed', error => 'stale build', updated => &subs::rightNow() }, { uuid => $job });
+		$snap->{'state'} = 'failed';
+		$snap->{'error'} = 'stale build';
+	}
+	my $steps = [];
+	if ($snap->{'job'}) {
+		my $sj = &subs::db_select('sync_jobs', undef, { uuid => $snap->{'job'} })->hashes->[0];
+		$steps = eval { decode_json($sj->{'steps'} || '[]') } || [] if $sj;
+	}
+	my $result = eval { decode_json($snap->{'result'} || '') } || undef;
+	$c->render(json => {
+		status => ($snap->{'state'} || 'unknown'),
+		job => $job,
+		steps => $steps,
+		size => $snap->{'size'},
+		sha256 => $snap->{'sha256'},
+		error => $snap->{'error'},
+		($result ? (result => $result) : ()),
+	});
 };
 
 # A teletype (the deck) pulls the house's running database, sealed, onto its own
@@ -6941,7 +7014,7 @@ sub remote_upgrade($c,$params) {
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
 
 
-		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
+		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&async=1&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
 		# The per-table plan: each table is exported only above the point the
 		# caller already holds. A table the plan omits still rides the legacy
 		# window, so a peer on this code and one on older code behave alike.
@@ -6962,6 +7035,67 @@ sub remote_upgrade($c,$params) {
 		if ($res) {
 
 			my $body = eval { return decode_json $res->body } || {};
+
+			# A snapshot can take minutes to build on a slow machine. The peer
+			# answers 'building' at once and the work goes on there; wait on its
+			# status rather than holding this request open past the inactivity
+			# timeout that used to abandon the pull. An older peer ignores async=1
+			# and still replies with the finished snapshot.
+			if (($body->{'status'} || '') eq 'building') {
+				my $snapshot_job = $body->{'job'} || '';
+				my $status_url = $remote_machine->{'manager'} . '/manager/configure/backup_status?signatorial=' . $signatorial . '&job=' . Mojo::Util::url_escape($snapshot_job);
+				my $waited = 0;
+				my $state = 'building';
+				my $sbody = {};
+				while ($snapshot_job && $waited < 1800) {
+					sleep 2;
+					$waited += 2;
+					# Keep this pull's own lease young: a snapshot can take longer
+					# than the ten-minute marker bound, and a second child must not
+					# start pulling the same peer under it.
+					if (($waited % 60) == 0) {
+						&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:' . $$ });
+					}
+					my $sres = eval { $ua->inactivity_timeout(20)->request_timeout(30)->get($status_url)->result };
+					$sbody = eval { return decode_json $sres->body } || {};
+					$state = $sbody->{'status'} || 'unknown';
+					if ($state eq 'ready' && ref $sbody->{'result'} eq 'HASH') {
+						$body = $sbody->{'result'};
+						$body->{'sha256'} = $sbody->{'sha256'} if $sbody->{'sha256'};
+						last;
+					}
+					if ($state eq 'busy' || $state eq 'failed' || $state eq 'unknown') {
+						last;
+					}
+					# Mirror the peer's per-table rows so the receiving screen shows
+					# real progress instead of a spinner.
+					my ($rc, $rt, $note) = (0, 0, 'peer is building a snapshot');
+					foreach my $s ( @{ $sbody->{'steps'} || [] } ) {
+						next unless ref $s eq 'HASH' && ($s->{'key'} || '') =~ /^export:/;
+						$rc += ($s->{'current'} || 0);
+						$rt += ($s->{'total'} || 0);
+						if (($s->{'state'} || '') eq 'running') {
+							(my $t = $s->{'key'}) =~ s/^export://;
+							$note = $t . ' ' . ($s->{'current'} || 0) . '/' . ($s->{'total'} || 0);
+						}
+					}
+					&subs::sync_job_step($job, 'export', { current => $rc, total => $rt, note => $note });
+				}
+				if ($state eq 'busy') {
+					&subs::sync_job_step($job, 'export', { state => 'skipped', note => 'peer was already exporting' });
+					$sync->done('skipped', 'peer was already exporting');
+					&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+					return 'busy';
+				}
+				if ($state ne 'ready') {
+					my $why = ($state eq 'failed') ? ($sbody->{'error'} || 'the peer failed to build the snapshot') : 'the peer did not finish the snapshot';
+					&subs::sync_job_step($job, 'export', { state => 'failed', note => $why });
+					$sync->done('failed', $why);
+					&Websocket::send('tab', { yellow => '<h2>Export failed</h2>', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => 'failed', progress => 100 });
+					&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+					return 'failed';
+				}
+			}
 
 			if (($body->{'status'} || '') eq 'busy') {
 				# A peer already exporting to someone else is not a failure: it is
@@ -6998,39 +7132,69 @@ sub remote_upgrade($c,$params) {
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => 2, state => 'running'  });
 						my $dl_total = $body->{'size'} || 0;
 						&subs::sync_job_step($job, 'download', { label => 'download', state => 'running', current => 0, total => $dl_total });
-						my $progress_tick = 0;
-						$remote_machine->{'ua'}->on(progress => sub {
-							my ($this_ua, $tx) = @_;
-							return unless $tx && $tx->req && $tx->req->url;
-							return unless ($tx->req->url->path || '') eq '/manager/backup_serve';
-							my $now = time();
-							return if $now == $progress_tick;
-							$progress_tick = $now;
-							eval {
-								my $got = $tx->res->content->progress;
-								my $len = $dl_total || $tx->res->headers->content_length || 0;
-								&subs::sync_job_step($job, 'download', { current => $got, total => $len });
-							};
-						});
-
 						# pull the encrypted archive over http - no ssh, no stored
 						# password. The peer serves it through the same tunnel and
-						# session as every other manager-to-manager request.
+						# session as every other manager-to-manager request. Ask for
+						# ranges so a dropped tunnel resumes at the byte it reached
+						# instead of starting the whole snapshot over.
 						my $turl = $remote_machine->{'manager'} . '/manager/backup_serve?signatorial=' . $signatorial . '&file=' . Mojo::Util::url_escape($body->{'archive_path'});
-						my $tres = eval { $remote_machine->{'ua'}->inactivity_timeout(300)->request_timeout(600)->get($turl)->result };
+						my $part = $temporary_file . '.part';
+						my $want_sha = $body->{'sha256'} || '';
+						my $chunk = 4 * 1024 * 1024;
+						my $offset = 0;
+						$offset = -s $part if (-e $part && (!$dl_total || (-s $part) <= $dl_total));
 						my $short_download = 0;
-						if ($tres && $tres->is_success && length $tres->body) {
-							write_file($temporary_file, $tres->body);
-							# A tunnel can close before the last queued bytes are delivered; a
-							# short body is not a snapshot, and merging it only produced "merge
-							# did not finish" with no container. Drop it and retry next tick.
-							if ($dl_total && length($tres->body) != $dl_total) {
-								$short_download = 1;
-								$log->error('remote download short: got=' . length($tres->body) . ' expected=' . $dl_total . ' url=' . $turl) if $log;
-								unlink $temporary_file;
+						if (open my $fh, ($offset ? '>>:raw' : '>:raw'), $part) {
+							my $fails = 0;
+							while (!$dl_total || $offset < $dl_total) {
+								my $end = $dl_total ? ($offset + $chunk - 1) : '';
+								$end = $dl_total - 1 if $dl_total && $end >= $dl_total;
+								my $header = $dl_total ? { Range => "bytes=$offset-$end" } : {};
+								my $tx = eval { $remote_machine->{'ua'}->inactivity_timeout(120)->request_timeout(180)->get($turl => $header) };
+								my $tres = $tx ? $tx->result : undef;
+								if (!$tres || !$tres->is_success) {
+									$fails++;
+									last if $fails >= 6;
+									sleep 1;
+									next;
+								}
+								$fails = 0;
+								my $bytes = $tres->body;
+								if ($tres->code == 200) {
+									# The peer ignored Range: its body is the whole file.
+									close $fh;
+									write_file($part, $bytes);
+									open $fh, '>>:raw', $part;
+									$offset = length($bytes);
+									last;
+								}
+								else {
+									print $fh $bytes;
+									$offset += length($bytes);
+								}
+								last unless length($bytes);
+								&subs::sync_job_step($job, 'download', { current => $offset, total => ($dl_total || $offset) });
+								last unless $dl_total;
+							}
+							close $fh;
+						}
+						if ((!$dl_total || $offset == $dl_total) && -s $part) {
+							rename $part, $temporary_file;
+							if ($want_sha) {
+								my $got = eval { require Digest::SHA; Digest::SHA->new(256)->addfile($temporary_file)->hexdigest };
+								if ($got && $got ne $want_sha) {
+									$short_download = 1;
+									$log->error('remote download sha mismatch: got=' . $got . ' expected=' . $want_sha) if $log;
+									unlink $temporary_file;
+								}
 							}
 						}
-						&subs::sync_job_step($job, 'download', { state => ($short_download ? 'failed' : 'done'), current => ($dl_total || 1), total => ($dl_total || 1), note => ($short_download ? 'short download' : '') });
+						else {
+							$short_download = 1;
+							$log->error('remote download short: got=' . ($offset || 0) . ' expected=' . $dl_total) if $log;
+							unlink $temporary_file if -e $temporary_file;
+						}
+						&subs::sync_job_step($job, 'download', { state => ($short_download ? 'failed' : 'done'), current => ($dl_total || $offset || 1), total => ($dl_total || $offset || 1), note => ($short_download ? 'short download' : '') });
 					}
 					if (-e $temporary_file) {
 						my $disposition = &merge_database($c,{
@@ -29615,6 +29779,26 @@ sub update_database($data) {
 			updated VARCHAR(25)
 		)',
 		'create index if not exists idx1_sync_jobs on sync_jobs (state, updated)',
+		# One row per remote snapshot this machine is building for a peer, so the
+		# puller can ask how the build is going instead of holding the request
+		# open for every minute of it. The result is the same reply backup_now
+		# used to return synchronously. Machine-local (it names a temp file on
+		# this disk and belongs to one caller), so it is in gb's forbidden list.
+		'create table if not exists sync_snapshots (
+			uuid VARCHAR(255) PRIMARY KEY,
+			job VARCHAR(255),
+			caller VARCHAR(500),
+			state VARCHAR(25),
+			archive_path VARCHAR(1000),
+			result LONGTEXT,
+			size VARCHAR(25),
+			sha256 VARCHAR(100),
+			error LONGTEXT,
+			timestamp VARCHAR(25),
+			server_time VARCHAR(25),
+			updated VARCHAR(25)
+		)',
+		'create index if not exists idx1_sync_snapshots on sync_snapshots (state, updated)',
 		# The error watch's catch: an error seen in the running logs, and the fix
 		# the Coding agent proposed for it, staged until a person applies it.
 		# Machine-local (the rows name this repo's files), so the table sits in
