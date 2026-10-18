@@ -7022,10 +7022,19 @@ sub remote_upgrade($c,$params) {
 						# session as every other manager-to-manager request.
 						my $turl = $remote_machine->{'manager'} . '/manager/backup_serve?signatorial=' . $signatorial . '&file=' . Mojo::Util::url_escape($body->{'archive_path'});
 						my $tres = eval { $remote_machine->{'ua'}->inactivity_timeout(300)->request_timeout(600)->get($turl)->result };
+						my $short_download = 0;
 						if ($tres && $tres->is_success && length $tres->body) {
 							write_file($temporary_file, $tres->body);
+							# A tunnel can close before the last queued bytes are delivered; a
+							# short body is not a snapshot, and merging it only produced "merge
+							# did not finish" with no container. Drop it and retry next tick.
+							if ($dl_total && length($tres->body) != $dl_total) {
+								$short_download = 1;
+								$log->error('remote download short: got=' . length($tres->body) . ' expected=' . $dl_total . ' url=' . $turl) if $log;
+								unlink $temporary_file;
+							}
 						}
-						&subs::sync_job_step($job, 'download', { state => 'done', current => ($dl_total || 1), total => ($dl_total || 1) });
+						&subs::sync_job_step($job, 'download', { state => ($short_download ? 'failed' : 'done'), current => ($dl_total || 1), total => ($dl_total || 1), note => ($short_download ? 'short download' : '') });
 					}
 					if (-e $temporary_file) {
 						my $disposition = &merge_database($c,{

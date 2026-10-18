@@ -189,7 +189,12 @@ sub hub_session {
     }
     elsif ($op eq 'close' && $m->{'channel'}) {
       if (my $c = $session->{'channels'}{$m->{'channel'}}) {
-        $c->{'tcp'}->close;
+        # The peer's close frame follows the last binary payload. A bare close
+        # discards whatever write is still queued - which cut the tail off every
+        # large backup served over the tunnel (including the appended
+        # encryption-standard marker, so the merge saw a container it could not
+        # read). Let the queued bytes drain, then close.
+        $c->{'tcp'}->close_gracefully;
         delete $session->{'channels'}{$m->{'channel'}};
       }
     }
@@ -293,7 +298,7 @@ sub peer_session {
           });
         }
         elsif ($op eq 'close' && $m->{'channel'}) {
-          if (my $s = $channels{$m->{'channel'}}) { $s->close; delete $channels{$m->{'channel'}}; }
+          if (my $s = $channels{$m->{'channel'}}) { $s->close_gracefully; delete $channels{$m->{'channel'}}; }
         }
       });
 
