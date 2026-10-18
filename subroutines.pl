@@ -2232,8 +2232,18 @@ sub edt_button_presser() {
 	return $returner;
 }
 
+our ($network_report_memo, $network_report_memo_at);
+
 sub network_interface_reporter() {
 	my $c = shift;
+	# Reading the interfaces shells out to ifconfig/arp for every NIC (about
+	# 100ms). Callers ask several times in one pass - a BLE device walk asks once
+	# per chip - and nothing changes second to second, so keep the report for a
+	# few seconds. Return a copy: callers add ports and other per-call fields.
+	my $now = &rightNow();
+	if ($network_report_memo && $now - ($network_report_memo_at || 0) < 5000) {
+		return { map { $_ => { %{$network_report_memo->{$_}} } } keys %{$network_report_memo} };
+	}
 	my $device = &subs::device_setter();
 	my $tmp_file = $gb::tmp_dir . '/ifconfig';
 	my $ifc = $device eq 'server' ? '/usr/sbin/ifconfig' : 'ifconfig 2>&1 | grep -v "Permission denied"';
@@ -2284,6 +2294,8 @@ sub network_interface_reporter() {
 		}
 	}
 
+	$network_report_memo = $address;
+	$network_report_memo_at = $now;
 	return $address;
 }
 
@@ -4230,28 +4242,34 @@ sub watch_toggle_pusher() {
 	# lights its button up right away; a watch that slept through it asks for
 	# the whole picture on its next state_request.
 	my $data = shift;
-	return unless &subs::ble_bridge_capable();
+	# the capability probe connects to the bridge's loopback; leave it to the
+	# worker with the rest of the discovery
 	return unless &subs::ble_bridge_enabled();
 	my $app = $data->{'app'} || return;
 	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';
-	# A toggle change reaches every embedded device that draws an app button: the
-	# watch/deck light their button, and a board applies the app's new state to
-	# the relays/LEDs wired to it. The bridge can carry several links now, so
-	# this used to stop at the first device; keep one target per (edt, chip).
-	my @targets;
-	my %seen;
-	foreach my $edt ( qw/watch teletype microcontroller/ ) {
-		my $devices = &subs::device_lister(&subs::rightNow(), $edt, undef, 'all');
-		next unless ref $devices eq 'ARRAY';
-		foreach my $w ( @{$devices} ) {
-			next unless ref $w eq 'HASH' && $w->{'chip_id'};
-			next if $seen{ $edt . '|' . $w->{'chip_id'} }++;
-			push @targets, { chip_id => $w->{'chip_id'}, edt => $edt };
-		}
-	}
-	return unless scalar @targets;
+	# The device walk is the expensive half (it reads every sighting and, for a
+	# BLE-only device, asks for this machine's address), so it belongs in the
+	# worker: the request that changed the toggle must not wait on the bridge.
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
+		return unless &subs::ble_bridge_capable();
+		# A toggle change reaches every embedded device that draws an app button:
+		# the watch/deck light their button, and a board applies the app's new
+		# state to the relays/LEDs wired to it. The bridge can carry several links
+		# now, so this used to stop at the first device; keep one target per
+		# (edt, chip).
+		my @targets;
+		my %seen;
+		foreach my $edt ( qw/watch teletype microcontroller/ ) {
+			my $devices = &subs::device_lister(&subs::rightNow(), $edt, undef, 'all');
+			next unless ref $devices eq 'ARRAY';
+			foreach my $w ( @{$devices} ) {
+				next unless ref $w eq 'HASH' && $w->{'chip_id'};
+				next if $seen{ $edt . '|' . $w->{'chip_id'} }++;
+				push @targets, { chip_id => $w->{'chip_id'}, edt => $edt };
+			}
+		}
+		return unless scalar @targets;
 		foreach my $t ( @targets ) {
 			&subs::bluetooth_sender({
 				intent => 'com.jawn.president.bt.connect',

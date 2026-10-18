@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-17
 
+- v0.1.690 - start/stop no longer wait on the Bluetooth bridge: the toggle push's device walk runs in its worker (it was ~350-430 ms inline, including the bridge capability probe), the embedded output send runs in a worker too (a jawn-bt connect can wait 30 s for the link), and network_interface_reporter is memoised for five seconds so its ifconfig/arp calls are paid once instead of once per BLE chip.
 - v0.1.689 - appointment header: log_reader gains a header-only mode that skips the pos/mab marker read, and manager_reset hands the header's fetch to centre_view_grabber so the same rows are not fetched twice; the wrapper builds the account/project markers once when it needs them.
 - v0.1.688 - appointment header: the centre-view fetch keeps the (app,timestamp) index for modern stamps instead of casting every row, so start/stop/usual no longer sort the app's whole history on every header render; the numeric cast is used only when the newest candidate is pre-1970.
 - v0.1.687 - CHANGELOG: backfill 2026-10-13 through 2026-10-16, so every versioned commit since v0.1.167 is recorded.

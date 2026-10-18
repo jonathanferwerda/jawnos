@@ -27787,26 +27787,46 @@ sub embedded_toggle($data) {
 	# directly and answers with a `state` ack. This is what lets a crashed board
 	# resume its relays before it has rejoined WiFi.
 	if ($chip_id && ($component eq 'led' || $component eq 'relay' || $component eq 'servo')) {
-		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
-		if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
-			my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
-			my $sent = &subs::bluetooth_sender({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip_id,
-				edt => $edt,
-				message => { type => 'set', data => {
-					component => $component, pin => $pin, state => $state,
-					when => $when, uuid => $uuid, appt_uuid => $appt_uuid,
-					timestamp => $timestamp, measure => $measure, app => $app
-				} }
-			});
-			if ($sent) {
-				return { state => $number_state, formatted_state => $state };
+		my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
+		# A bridge connect waits for the link (the client gives it 30 seconds), so
+		# the send must never run in the request. The worker picks the road: the
+		# bridge when the device is BLE or has no LAN address, the HTTP send when
+		# it has one and the bridge did not answer.
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
+			if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
+				my $sent = eval {
+					&subs::bluetooth_sender({
+						intent => 'com.jawn.president.bt.connect',
+						chip_id => $chip_id,
+						edt => $edt,
+						message => { type => 'set', data => {
+							component => $component, pin => $pin, state => $state,
+							when => $when, uuid => $uuid, appt_uuid => $appt_uuid,
+							timestamp => $timestamp, measure => $measure, app => $app
+						} }
+					});
+				};
+				return if $sent || !$watch_ip;
 			}
-			# No link and no address: the command cannot be delivered. Say so
-			# with the state we stored rather than fetching http://:/...
-			return { state => $number_state, formatted_state => $state, pushed => 0 } unless $watch->{'ip'};
-		}
+			return unless $watch_ip;
+			eval {
+				my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
+				my $ua = Mojo::UserAgent->new();
+
+				my $res = $ua->insecure(1)->get($watch_home)->result;
+				if (eval { $res->result->body }) {
+					if (eval { decode_json $res->result->body }) {
+						my $rb = decode_json $res->result->body;
+						$state = $rb->{'state'};
+						$pin = $rb->{'pin'};
+					}
+				}
+			};
+		}, { name => 'embedded toggle sender' });
+		return { state => $number_state, formatted_state => $state };
 	}
 
   &subs::subprocessor(sub {
