@@ -16191,7 +16191,16 @@ sub budget_calculator($data) {
 		my $fixed = scalar(@bud) == 1 ? 1 : 0;
 		$returner->{'fixed'} = $fixed;
 		if ($fixed) {
-			my $window = ($scope && $scope =~ /^[0-9]*[a-zA-Z]+$/ && &subs::time_abbrev_translator($scope, $server_time)) ? $scope : 'month';
+			# A fixed entry ("180weight") has no "/scope"; the only scope it can
+			# honour is the caller's, and only when it names a time span. The old
+			# test accepted any number+letters, so `180weight` became the window
+			# `weight`; timespan_widener then stripped the digits and father_time
+			# asked time_span for 'weight', which dies and killed every pull after
+			# its merge.
+			my $window = 'month';
+			if ($scope && $scope =~ /^[0-9]*[a-zA-Z]+$/ && &subs::time_span_length($scope)) {
+				$window = $scope;
+			}
 			$window = 1 . $window unless $window =~ /^[0-9]/;
 			$returner->{'scope_name'} = &subs::timespan_widener($window);
 			$returner->{'duration'} = &subs::time_abbrev_translator($window, $server_time);
@@ -16199,6 +16208,8 @@ sub budget_calculator($data) {
 		}
 		else {
 			$bud[-1] = 1 . $bud[-1] unless $bud[-1] =~ /[0-9]/;
+			# A malformed scope after the slash must not reach time_span either.
+			$bud[-1] = '1month' unless &subs::time_span_length($bud[-1]);
 			$returner->{'scope_name'} = &subs::timespan_widener($bud[-1]);
 			$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1],&subs::rightNow());
 			unless ($scope) {
