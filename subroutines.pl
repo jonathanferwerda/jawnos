@@ -5822,7 +5822,16 @@ sub sync_table_digest {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
+our $sync_digest_cache;
 sub sync_digest_map {
+	my ($force) = @_;
+	# The digest is a count/sum/max scan per table, and the reconnector asks for
+	# it every tick. A short process cache keeps that from becoming a full scan
+	# of appointments on every handshake; 30s is well inside one sync window, so
+	# a change still starts a pull on the next tick after it lands.
+	my $now = &rightNow();
+	return $sync_digest_cache->{'map'}
+		if (!$force && $sync_digest_cache && ($now - $sync_digest_cache->{'at'}) < 30000);
 	# Not every column of every table is a reason to sync. `backups` is the sync's
 	# own bookkeeping (a pull writes a row on both sides, so including it would
 	# trigger the next pull forever), the AI ledger is internal churn, and the
@@ -5836,6 +5845,7 @@ sub sync_digest_map {
 		$map{$t} = &sync_table_digest($t);
 	}
 	$map{'settings_durable'} = &sync_table_digest('settings_durable');
+	$sync_digest_cache = { at => $now, map => \%map };
 	return \%map;
 }
 

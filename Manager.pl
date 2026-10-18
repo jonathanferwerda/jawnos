@@ -7129,6 +7129,13 @@ sub remote_upgrade($c,$params) {
 						}
 						&subs::sync_job_step($job, 'confirm', { state => 'done', current => 1, total => 1 });
 						$sync->done('done', 'snapshot merged');
+						# The peer's picture is reconciled: remember it, so the planner can
+						# skip this exact picture instead of full-reading a peer that is
+						# merely behind. A windowed gimme/deep pull is not the whole picture,
+						# so it records nothing.
+						if (!$gimme && ref $params->{'remote_digest'} eq 'HASH') {
+							&subs::sync_seen_set($remote_machine->{'signatorial'}, $params->{'remote_digest'});
+						}
 						&subs::sync_backoff_clear($remote_machine->{'signatorial'});
 					}
 					else {
@@ -30872,6 +30879,15 @@ sub remote_machine_reconnector($c) {
 						$ping_test = 'ok';
 						my $backup = &subs::db_query('select * from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1',
 							'remote_upgraded',$rj->{'signatorial'},$signatorial)->hashes->[0];
+						# The guarded plan: the digest says whether a table's picture differs,
+						# and `above` proves whether the difference is a strict forward delta.
+						# A plan is only *used* once a prior pull has recorded the peer's
+						# picture; before that the pull is the bounded first sync and the
+						# differing picture still starts it.
+						my $seen = &subs::sync_seen_get($rj->{'signatorial'});
+						my $plan = &subs::sync_plan($my_digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen);
+						my $plan_differs = (ref $plan eq 'HASH' && scalar keys %{$plan}) ? 1 : 0;
+						my $plan_pull = ($plan_differs && ref $seen eq 'HASH' && scalar keys %{$seen}) ? 1 : 0;
 						if ($rj->{'deletions'}) {
 							&deletion_performer($rj->{'deletions'});
 						}
@@ -30935,6 +30951,11 @@ sub remote_machine_reconnector($c) {
 						# sync still runs - it reconciles a gap the watermark cannot see.
 						my $deep = $c->session('gimme') || $c->param('gimme');
 						my $has_new = $rj->{'server_time'} > $backup->{'server_time'};
+						# A table picture that differs from the one we last reconciled is a
+						# reason to pull even when no appointment moved (settings, a website,
+						# an offline row). The plan itself is handed over only once the peer's
+						# picture has a baseline; the first pull runs the legacy window.
+						$has_new = 1 if $plan_differs;
 						# pending can only ADD a pull: a peer on older code computes it with a
 						# NULL-unsafe status filter (appointments_since) and can answer zero
 						# while plainly holding newer appointments, so its zero must not
@@ -30956,7 +30977,11 @@ sub remote_machine_reconnector($c) {
 								remote_signatorial => $rj->{'signatorial'},
 								remote_device => $rm->{'data'}->{'device'},
 								peer => ($rm->{'ip'} || $rm->{'hostname'} || $rj->{'fqdn'} || ''),
-								gimme => $gimme
+								gimme => $gimme,
+								plan => ($plan_pull ? $plan : undef),
+								# Remembered after a confirmed, non-windowed pull so the next
+								# handshake can skip this exact peer picture.
+								remote_digest => (ref $rj->{'digest'} eq 'HASH' ? $rj->{'digest'} : undef)
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
 								# A pull/merge over a big table can outlive the prefork
