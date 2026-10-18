@@ -7076,13 +7076,15 @@ sub remote_upgrade($c,$params) {
 					};
 					#	&subs::tunnel_stopper({ signatorial => $signatorial });
 					# A close here used to die out of the subprocessor with only "Premature
-					# connection close" and no URL to say where it was aimed. Keep the
-					# pull's failed state, but record what happened and where.
+					# connection close" and no URL or status to say where it was aimed.
+					# Keep the pull's failed state, and say what the peer answered.
 					my $res = eval { $remote_machine->{'ua'}->post($url => form => $form_data)->result };
-					unless ($res) {
-						my $why = $@ || 'no response';
+					if (!$res || !$res->is_success) {
+						my $why = $@ || '';
 						$why =~ s/\s+/ /g;
-						&subs::log_writer('remote confirm failed: ' . $why . ' url=' . $url . ' bytes=' . length($form_data->{'backup_confirm'} || ''));
+						my $rbody = ($res && $res->body) ? substr($res->body, 0, 300) : '';
+						$rbody =~ s/\s+/ /g;
+						eval { $log->error('remote confirm failed: status=' . (($res && $res->code) || 0) . ' err=' . $why . ' url=' . $url . ' bytes=' . length($form_data->{'backup_confirm'} || '') . ' body=' . $rbody) };
 					}
 					if ($res && $res->is_success) {
 						# A gimme/deep pull is a repair window, not a watermark: deleting
