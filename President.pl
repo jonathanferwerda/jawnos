@@ -1090,7 +1090,21 @@ sub utility_functions() {
 						# simultaneous export is what the phone ran out of memory on).
 						my $min = int($lt->strftime("%M"));
 						my $slot = (unpack('%32C*', &subs::signatorial_designer()) % 5) * 12;
-						$gimme = '3d' if abs($min - $slot) <= 1;
+						if (abs($min - $slot) <= 1) {
+							# The window is several minutes wide and this job ticks inside
+							# it, so without a marker the deep pull started again on every
+							# tick - and again after every restart of this machine. Record
+							# the night before asking, so a restart during the sync cannot
+							# start a second one. The signatorial in the setting name keeps
+							# another machine's merged copy from standing for this one.
+							my $night = $lt->strftime("%Y-%m-%d");
+							my $key = 'remote_gimme_night_' . &subs::signatorial_designer();
+							my $done = &subs::setting_grabber({ app => '__president', setting => $key });
+							if (($done || '') ne $night) {
+								&subs::setting_setter({ app => '__president', setting => $key, value => $night });
+								$gimme = '3d';
+							}
+						}
 					}
 					&subs::remote_machine_negotiator({ gimme => $gimme });
 					$gb::syncing = 0;
