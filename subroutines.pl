@@ -5964,8 +5964,8 @@ sub sync_plan {
 		my $since;
 		# A small divergence is not worth copying a whole table: the watermark
 		# catches new rows, and a migration (full=1) or the nightly pass can
-		# reconcile the few old ones later. 1000 rows is a guard, not a rule.
-		my $small = 1000;
+		# reconcile the few old ones later. 500 rows is a guard, not a rule.
+		my $small = 500;
 		# Watermark first: anything newer than our newest row is a forward delta,
 		# whatever the handshake's above-count says. The count is advisory and can
 		# be zero while the peer plainly holds a newer row.

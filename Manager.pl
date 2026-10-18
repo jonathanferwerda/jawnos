@@ -31558,6 +31558,12 @@ sub remote_machine_reconnector($c) {
 									if (($status || '') eq 'busy') {
 										&subs::sync_backoff_set($rj->{'signatorial'}, 120);
 									}
+									elsif (($status || '') eq 'failed') {
+										# A peer whose snapshot will not merge must not hold the one
+										# pull slot every tick: give it a rest so a healthy peer (the
+										# phone that is ahead) gets its turn.
+										&subs::sync_backoff_set($rj->{'signatorial'}, 300);
+									}
 								}, { name => 'remote upgrade', fork => 1 });
 							}
 						}
