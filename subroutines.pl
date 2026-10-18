@@ -5554,7 +5554,11 @@ sub backup_now() {
 			$last_update = 0;
 			$ld_server_time = 0;
 		}
-		elsif ($c->param('gimme') =~ /[0-9]/gi) {
+		elsif (($c->param('gimme') || '') =~ /^\d{10,}$/) {
+			# gimme is a millisecond stamp by the time remote_upgrade sends it
+			# (ago_calc on this side). A duration string here is a caller bug, and
+			# treating it as a timestamp exported the whole table once; ignore it
+			# and let the watermark/cold branch decide.
 			$last_update = $c->param('gimme');
 			$ld_server_time = $last_update;
 		}
