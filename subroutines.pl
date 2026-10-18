@@ -12813,8 +12813,15 @@ sub tunnel_hub_url() {
 		}
 	}
 	else {
-		$hub = 'wss://' . $config->{'domain'} . ($ws_port && $ws_port =~ /^[0-9]+$/ ? ':' . $ws_port : '') . '/manager/tunnel/ws';
+		$hub = 'wss://' . $config->{'domain'} . ($ws_port && $ws_port =~ /^[0-9]+$/ ? ':' . $ws_port : '');
 	}
+	# The data plane lives at a path, not at the bare host: a wss://host:port
+	# dial with no path asks for `/`, where no websocket route exists, and the
+	# holder just retries forever (the tunnels never stick). Normalise the path
+	# last, so a config tunnel_hub that already names it is not doubled.
+	$hub =~ s{/manager/tunnel/ws$}{};
+	$hub =~ s{/+$}{};
+	$hub .= '/manager/tunnel/ws';
 	return $hub . (index($hub, '?') >= 0 ? '&' : '?') . 'signatorial=' . Mojo::Util::url_escape($sig);
 }
 
