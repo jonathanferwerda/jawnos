@@ -6608,7 +6608,11 @@ sub sealed_file_probe {
 			next unless defined $probe && length $probe;
 			my $verdict = $inspect ? eval { $inspect->($probe) } : 1;
 			next unless $verdict;
-			return { secret => $secret, standard => $standard, verdict => $verdict };
+			# An openssl-only standard has no prefix mode, so the "probe" above
+			# already decrypted the whole stream. Hand it back rather than making
+			# the caller decrypt it a second time.
+			my $full = &note_cipher_spec($standard) ? undef : $probe;
+			return { secret => $secret, standard => $standard, verdict => $verdict, full => $full };
 		}
 	}
 	return undef;
@@ -6708,7 +6712,13 @@ sub sealed_file_open {
 		$result->{'length'} = $len;
 		return $result;
 	}
-	my $data = &note_open_container($container, $cand->{'secret'}, $cand->{'standard'}, $nopad);
+	my $data;
+	if ($nopad && defined $cand->{'full'}) {
+		$data = $cand->{'full'};
+	}
+	else {
+		$data = &note_open_container($container, $cand->{'secret'}, $cand->{'standard'}, $nopad);
+	}
 	return undef unless defined $data && length $data;
 	my $total = length $data;
 	if ($range) {
@@ -7697,13 +7707,26 @@ sub file_decrypter() {
 	my $success = 0;
 	my $file_join;
 	my $server_time = &subs::rightNow();
+	# One credential list and one sniffer for the whole job, not a DB query and a
+	# fresh File::Type per file.
+	my @secrets;
+	my $passwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC','padlock','door');
+	foreach my $p ( @{ $passwords->hashes } ) {
+		my $secret = &subs::decrypter($suds, $p->{'credential'});
+		push @secrets, $secret if defined $secret && length $secret;
+	}
+	my $ft = File::Type->new();
+	my $inspect = sub {
+		my $fd = $ft->checktype_contents($_[0]);
+		return ($fd ne 'application/octet-stream' || ($_[0] =~ /webm/)) ? $fd : undef;
+	};
 	foreach my $filing ( @{$filings} ) {
 		my $files = eval { return decode_json $filing->{'file'} } || [];
 		foreach my $fi ( @{$files} ) {
 			foreach my $file_type ( qw/f thumb/ ) {
 				my $f = $fi->{$file_type};
 				if (-e $f && $f =~ /\.enc/gi) {
-					my $encryption_standard = $filing->{'encryption_standard'};
+					my $encryption_standard = $filing->{'encryption_standard'} || &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 					my $enc_path = &subs::terminal_name($f);
 
 
@@ -7715,25 +7738,12 @@ sub file_decrypter() {
 						$path = join '/', @f;
 					}
 					$path =~ s/\.enc$//gi;
-					my $passwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC','padlock','door');
-					my $pwords = $passwords->hashes;
-
-					foreach my $p ( @{$pwords} ) {
-						my $secret = &subs::decrypter($suds, $p->{'credential'});
-
-						my $data = &open_file($enc_path, $secret, $encryption_standard);
-						next unless defined $data && length $data;
-						my $ft = File::Type->new();
-						my $type_from_data = $ft->mime_type($data);
-
-						if ($type_from_data ne 'application/octet-stream' || ($data =~ /webm/)) {
-
-							&write_file($path, $data);
-							$f = $path;
-							`shred -u $enc_path`;
-							$success = 1;
-							last;
-						}
+					my $opened = &sealed_file_open($enc_path, \@secrets, [ $encryption_standard ], 0, $inspect);
+					if ($opened) {
+						&write_file($path, $opened->{'data'});
+						$f = $path;
+						`shred -u $enc_path`;
+						$success = 1;
 					}
 
 

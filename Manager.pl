@@ -1235,7 +1235,7 @@ sub rock_and_roll($c) {
 			# to the viewer whole, so those keep the full open.
 			my $range;
 			my $range_header = $c->req->headers->range;
-			if (!$c->param('duty') && !$wants_thumb && $file !~ /\.pdf\.enc$/i && defined $range_header && length $range_header) {
+			if (!$c->param('duty') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i && defined $range_header && length $range_header) {
 				if ($range_header =~ m/^bytes=(\d+)-(\d*)/) {
 					my ($start, $end) = ($1, $2);
 					if (!defined $end || !length $end) { $range = [ $start, undef ] }
