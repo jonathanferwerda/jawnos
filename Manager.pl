@@ -15761,10 +15761,10 @@ sub merge_table_rows {
 	my $colour = $ctx->{'colour'};
 	my $merge_short = 0;
 						if ($sync_job) {
-							&subs::sync_job_step($sync_job, 'merge:' . $q, {
-								label => 'merge ' . $q, state => 'running', current => 0, total => $results_size,
-								note => $results_size . ' row' . ($results_size == 1 ? '' : 's')
-							});
+							my %step = (label => 'merge ' . $q, state => 'running', current => 0);
+							$step{'total'} = $results_size if $results_size;
+							$step{'note'} = $results_size . ' row' . ($results_size == 1 ? '' : 's') if $results_size;
+							&subs::sync_job_step($sync_job, 'merge:' . $q, \%step);
 						}
 						#&subs::say_it('Now merging ' . $results . ' ' .$q);
 						my $progress = $count / $table_total * 100;
