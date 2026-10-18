@@ -7943,13 +7943,18 @@ post '/manager/nfc/read' => sub($c) {
 					my $type = $n->{'control'};
 
 					my $tog = &subs::appt_toggle_checker($app);
-					my $already = 0;
 					if ($type eq 'start' || $type eq 'record') {
-						# An explicit start/record tag is not a toggle: if the session is
-						# already open, the tap has nothing to do. Turning it into a stop
-						# (which a synced stale open row used to cause) stopped office and
-						# dragged programming along with it. Use a `command` tag to toggle.
-						$already = 1 if $tog eq 'on';
+						# The house keeps one tag per app, and the same tag is the stop:
+						# a tap while the app's session is open closes it (the stop names
+						# that session below, so it never sweeps another app's rows).
+						# With nothing open the tap starts as usual.
+						if ($tog eq 'on') {
+							$type = 'stop';
+							$tog = 'off';
+						}
+						else {
+							$tog = 'on';
+						}
 					}
 					elsif ($type eq 'command') {
 						if ($tog eq 'on') {
@@ -7968,8 +7973,8 @@ post '/manager/nfc/read' => sub($c) {
 					}
 
 
-					$response->{'status'} = $nfcs->{'app'} . ' ' . ($already ? 'already running' : $type);
-					if ($benign ne 'on' && !$already) {
+					$response->{'status'} = $nfcs->{'app'} . ' ' . $type;
+					if ($benign ne 'on') {
 						$n->{'taps'} += 1;
 						# A stop names the session the header shows (the newest open row),
 						# never the tag/message uuid, which matched no session and made
