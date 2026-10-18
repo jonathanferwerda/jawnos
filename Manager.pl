@@ -14984,7 +14984,13 @@ sub merge_database($c,$configuration) {
 
 			my @split_data = split $universal_splitter, $data;
 
-			next unless $data =~ /\Q$universal_splitter/gi;
+			unless ($data =~ /\Q$universal_splitter/gi) {
+				# The marker is appended after the ciphertext. If it is not in the tail,
+				# the file we downloaded is not the finished container (truncated, or
+				# not the archive at all) - say so instead of silently skipping the key.
+				$log->error('merge container: standard marker missing; tail=' . length($data) . ' bytes') if $log;
+				next;
+			}
 
 			$encryption_standard = &subs::decrypter($crud, $split_data[1]);
 			`openssl enc -d -k "$crud" -$encryption_standard -pbkdf2 -in $path -out $temporary_file -nopad`;
