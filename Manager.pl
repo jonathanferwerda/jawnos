@@ -14957,6 +14957,7 @@ sub merge_database($c,$configuration) {
 	my ($db,$database) = &subs::database_grabber();
 	my $disposition->{'status'} = 'fail';
 	my $path = $filename;
+	$log->error('merge archive: ' . ((-s $path) || 0) . ' bytes') if $log;
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
 	`mkdir -p $temp_folder` unless -e "$temp_folder";
@@ -14989,7 +14990,15 @@ sub merge_database($c,$configuration) {
 			`openssl enc -d -k "$crud" -$encryption_standard -pbkdf2 -in $path -out $temporary_file -nopad`;
 
 			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
-			if (-s $temporary_file > 5000 &&  eval { $tsql->db } && $tsql->dsn !~ /:$/) {
+			my $decrypted_size = (-s $temporary_file) || 0;
+			my $snapshot_db = eval { $tsql->db ? 1 : 0 };
+			my $snapshot_ok = ($decrypted_size > 5000 && $snapshot_db && $tsql->dsn !~ /:$/) ? 1 : 0;
+			# A merged table leaves a "merge <table>" line; a pull that never gets
+			# there has failed at the container itself, and used to leave only "merge
+			# did not finish" with no reason. Say which credential opened what.
+			$log->error('merge snapshot: level=' . ($cred->{'level'} || '?') . ' archive=' . ((-s $path) || 0)
+				. ' decrypted=' . $decrypted_size . ' db=' . ($snapshot_db ? 1 : 0) . ' dsn=' . $tsql->dsn) if $log && !$snapshot_ok;
+			if ($snapshot_ok) {
 				my $tdb = $tsql->db;
 
 				my $backups = &subs::db_query('select * from backups order by server_time DESC' )->hashes;
