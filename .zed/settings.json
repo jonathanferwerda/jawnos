@@ -1,0 +1,33 @@
+{
+  "file_scan_exclusions": [
+    "**/.pio",
+    "**/build",
+    "**/database/backups",
+    "**/database/*.db",
+    "**/database/*.db-shm",
+    "**/database/*.db-wal",
+    "**/voices",
+    "**/releases",
+    "**/node_modules",
+    "..."
+  ],
+  "languages": {
+    "Perl": {
+      "language_servers": ["perlnavigator-server"]
+    },
+    "JavaScript": {
+      "language_servers": ["!eslint", "!tailwindcss-language-server", "..."]
+    }
+  },
+  "lsp": {
+    "perlnavigator-server": {
+      "settings": {
+        "perlnavigator": {
+          "perlcriticEnabled": false,
+          "perltidyEnabled": false,
+          "logging": false
+        }
+      }
+    }
+  }
+}
