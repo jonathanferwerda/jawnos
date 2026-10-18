@@ -31696,6 +31696,16 @@ sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_ta
 	return &remote_device_connect($rdc);
 }
 
+# The sync topology is a house setting (`sync/topology`, so the settings merge
+# carries it to every machine). `__president/sync_topology` is read as a local
+# fallback for an older override; a blank or unknown value means auto.
+sub sync_topology_get {
+	my $v = &subs::setting_grabber({ app => 'sync', setting => 'topology' });
+	$v = &subs::setting_grabber({ app => '__president', setting => 'sync_topology' }) unless defined $v && length $v;
+	$v = 'auto' unless defined $v && $v =~ /^(?:auto|mesh|hub)$/;
+	return $v;
+}
+
 # A hub is healthy enough to collapse a spoke's pass to hub-and-spoke when its
 # last handshake is recent and, if we reach it through a tunnel, that tunnel still
 # has a fresh pong (the same freshness the tunnel checker reads).
@@ -31746,7 +31756,7 @@ sub remote_machine_reconnector($c) {
 		# can only reach through the hub, and falls back to the full mesh when the
 		# hub's handshake or its tunnel goes stale. The hub itself always walks the
 		# whole roster (it is the union), and a peer on our own LAN is still direct.
-		my $topology = &subs::setting_grabber({ app => '__president', setting => 'sync_topology' }) || 'auto';
+		my $topology = &sync_topology_get();
 		my $hub_sig = &sync_hub_pick($remote_machines, ($device eq 'server') ? 1 : 0);
 		my ($hub_row) = $hub_sig ? grep { ($_->{'signatorial'} || '') eq $hub_sig } @{$remote_machines} : ();
 		my $hub_ok = ($device eq 'server') ? 1 : &sync_hub_status($hub_row);

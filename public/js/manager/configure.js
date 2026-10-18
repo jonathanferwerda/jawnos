@@ -285,6 +285,23 @@ $(document).on('change', '.configure_input', function(e) {
 	});
 });
 
+// The sync topology is a house setting, not a per-window preference: the Dev
+// panel's select writes the `sync/topology` row, the settings merge carries it to
+// the other machines, and the reconnector reads it on each pass. It posts to the
+// JSON setter rather than /manager/configure, which would answer with an
+// appointment display for an app that has none.
+$(document).on('change', '.sync_topology_select', function() {
+	var status = $('#sync_topology_status');
+	status.text('saving…');
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'sync', setting: 'topology', value: $(this).val(), timestamp: Date.now() },
+		success: function() { status.text('house-wide — saved'); },
+		error: function() { status.text('could not save'); }
+	});
+});
+
 // A custom notification sound: the file is uploaded to the house, which files it
 // beside the shipped ones, and every sound select is re-drawn so the new one can
 // be picked (here and on any other app's Notifications panel)

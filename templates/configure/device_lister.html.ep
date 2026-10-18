@@ -1,5 +1,6 @@
 <% no warnings 'uninitialized'; %>
 <% my $signatorial = &subs::signatorial_designer(); %>
+<% my $topology = &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
 <%# the lister as networks: a toolbar, the machines (each named and removable
     once), then one section per network the house is on - the subnet, the
     interfaces that reach it, and a neighbour table of the devices found there.
@@ -58,6 +59,24 @@
 		<span id="ping_results" style="opacity:.85;"></span>
 	</div>
 	<div id="device_listings">
+		<%# The mesh's own switch. It lives here because the Dev panel is where the
+		    machines are, and the value is a house setting: every machine's next
+		    settings pull carries it, and the reconnector reads it each pass. %>
+		<div class="device_card" id="sync_topology_card">
+			<div class="device_head">
+				<span class="network_cidr">Sync topology</span>
+				<span class="device_when">house-wide · each machine applies it on its next tick</span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="sync_topology_select">Peers</label>
+				<select id="sync_topology_select" class="sync_topology_select" setting="topology">
+					<option value="auto" <% if ($topology eq 'auto') { %>selected<% } %>>Auto — hub while the server is live</option>
+					<option value="mesh" <% if ($topology eq 'mesh') { %>selected<% } %>>Mesh — every peer directly</option>
+					<option value="hub" <% if ($topology eq 'hub') { %>selected<% } %>>Hub only — spokes dial the server</option>
+				</select>
+				<span id="sync_topology_status" class="device_when"></span>
+			</div>
+		</div>
 		<% if (scalar @{$devices || []}) { %>
 			<%# the machines: one row each, so a machine's name and its removal are asked once, not once per network it appears on %>
 			<div class="device_machines">
