@@ -27330,10 +27330,13 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 		$log->info('padlock: signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 		return $c->render(json => { ok => 0 });
 	}
-	# the phone, not the locked screen: a local signature would let the machine
-	# open its own door. Checked after the signature so a valid local attempt is
-	# what the log calls a local refusal.
-	if (&padlock_request_is_local($c)) {
+	# the phone, not the locked screen: a local signature would let a desktop
+	# open its own door. A *handheld* is the exception - its own screen is the
+	# one being opened, and the key is the paired device key in its own browser
+	# (the desktop cannot reach it). Without this the phone's own "Open the
+	# unlock page on this phone" answered error=local while the person was
+	# holding the phone, which read as "open it on your phone" from the phone.
+	if (&padlock_request_is_local($c) && &subs::device_setter() ne 'mobile') {
 		$log->info('padlock: local signature refused from ' . $ip);
 		return $c->render(json => { ok => 0, error => 'local' });
 	}
