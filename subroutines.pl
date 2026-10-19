@@ -10670,12 +10670,14 @@ sub backups_dir {
 # emergency door, so a house that has one gets the padlock row, General as its
 # context, and Enforce as the mode the first time this runs, then the marker
 # makes it a default rather than a policy: Turn the gate off stays off across
-# restarts. A fresh house with no recovery code is left alone, because turning
-# its gate on before there is a way in would lock it out.
+# restarts. A fresh house with no way in is left alone, because turning its
+# gate on before there is a way in would lock it out - a paper recovery code or
+# an already-paired phone is that way in.
 sub padlock_seed_default {
 	return if (&subs::setting_grabber({ app => '__president', setting => 'padlock_gate_initialized' }) || '') eq 'yes';
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
-	return unless $recovery;
+	my $paired = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes->[0];
+	return unless $recovery || $paired;
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	unless ($padlock) {
 		my $now = &subs::rightNow();
