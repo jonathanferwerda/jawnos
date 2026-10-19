@@ -562,6 +562,12 @@ function wsMessageHandler(event) {
 			$('#controller').scrollTop(scrollT);
 			$('#controller').scrollLeft(scrollL);
 		}
+		if (typeof data['padlock_gate'] !== 'undefined') {
+			// the gate was turned on/off somewhere: the padlock in the taskbar is
+			// server-rendered, so every screen gets the change here instead of
+			// waiting for a refresh to show or hide the lock button
+			$('#lock_session').toggle(!!data['padlock_gate']);
+		}
 		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
 			jawnPadlockKeyShow(data['mode'], data['target'], data['show']);
 		}

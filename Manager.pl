@@ -26577,6 +26577,15 @@ post '/manager/device/pair' => sub($c) {
 		$c->render(json => { ok => 0, error => 'citizen session required' });
 		return;
 	}
+	# A locked screen must not mint a fresh identity: padlock_device_until is
+	# keyed by device uuid, so pairing again would hand the page a uuid with no
+	# lock row and let it walk straight past a single-screen lock (the exact
+	# "I locked it and still have full access" escape). The recovery route is
+	# the door for a screen with no usable key.
+	if (&padlock_locked_now($c)) {
+		$c->render(json => { ok => 0, error => 'locked' });
+		return;
+	}
 	my $name = substr($c->param('name') || 'Device', 0, 60);
 	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
 	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
@@ -26596,6 +26605,13 @@ post '/manager/device/challenge' => sub($c) {
 };
 
 post '/manager/device/login' => sub($c) {
+	# A locked screen does not renew itself by logging in a device: that path
+	# would switch the session to any paired uuid (including a fresh one) and
+	# leave the lock behind. Unlocking is padlock_unlock / biometric_unlock.
+	if (&padlock_locked_now($c)) {
+		$c->render(json => { ok => 0, error => 'locked' });
+		return;
+	}
 	my $device_uuid = $c->param('device_uuid') || '';
 	my $nonce = $c->param('nonce') || '';
 	my $signature = $c->param('signature') || '';
@@ -26881,7 +26897,8 @@ post '/manager/security/gate/enable' => sub ($c) {
 	# boot-time default only fills a house that has never made one
 	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
 	my $sec = &security_initializer($c);
-	$c->render(json => { ok => 1, html => $sec->{'html'} });
+	&Websocket::send('server', { padlock_gate => 1, timestamp => &subs::rightNow() });
+	$c->render(json => { ok => 1, html => $sec->{'html'}, has_padlock => 1 });
 };
 
 post '/manager/security/gate/disable' => sub ($c) {
@@ -26895,8 +26912,9 @@ post '/manager/security/gate/disable' => sub ($c) {
 	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
 	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
 	&Websocket::send('server', { padlock_open => 1, mode => 'locker', target => '', timestamp => &subs::rightNow() });
+	&Websocket::send('server', { padlock_gate => 0, timestamp => &subs::rightNow() });
 	my $sec = &security_initializer($c);
-	$c->render(json => { ok => 1, html => $sec->{'html'} });
+	$c->render(json => { ok => 1, html => $sec->{'html'}, has_padlock => 0 });
 };
 
 post '/manager/security/padlock_pull' => sub($c) {

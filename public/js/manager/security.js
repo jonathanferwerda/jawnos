@@ -34,6 +34,12 @@ $(document).on('click', '#padlock_gate_enable, #padlock_gate_disable', function(
 			}
 			$('#security').html(response.html);
 			appointment_chron();
+			// the taskbar padlock is rendered with the layout, so enabling the
+			// gate used to leave it hidden until a refresh; the reply carries
+			// the new state and the same broadcast reaches other screens
+			if (typeof response.has_padlock !== 'undefined') {
+				$('#lock_session').toggle(!!response.has_padlock);
+			}
 		},
 		error: function() {
 			button.prop('disabled', false);
