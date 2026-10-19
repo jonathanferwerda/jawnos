@@ -9071,7 +9071,11 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	# request's setting memo may be older than that unlock) and leave it be.
 	unless ($explicit) {
 		my $fresh_row = &subs::db_query("select value from settings where app = ? and setting = ? order by server_time desc limit 1", '__president', 'pl_time')->hashes->[0];
-		my $fresh = $fresh_row ? (&padlock_time_value($suds, $fresh_row->{'value'}) || 0) : 0;
+		# No stamp at all means this machine has never been locked since the gate
+		# was set. That is open, not an expired window: starting a lock here is
+		# what made a peer with a fresh database show the whole house locked.
+		return unless $fresh_row;
+		my $fresh = &padlock_time_value($suds, $fresh_row->{'value'}) || 0;
 		return if $fresh > $now;
 	}
 
@@ -26828,6 +26832,14 @@ post '/manager/security/gate/enable' => sub ($c) {
 	unless (scalar @{$contexts}) {
 		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => '["general"]' });
 	}
+	# A fresh gate gets a full inactivity window, so the timer has a baseline
+	# and turning it on does not read as an expired lock on the next request.
+	my $pl = &subs::db_query('select server_time from settings where app = ? and setting = ? limit 1', '__president', 'pl_time')->hashes->[0];
+	unless ($pl) {
+		my $window = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
+		$window = abs &subs::time_abbrev_translator($window);
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::rightNow() + $window });
+	}
 	# an explicit Turn the gate on/off is the house's choice from now on; the
 	# boot-time default only fills a house that has never made one
 	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
@@ -26915,6 +26927,7 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_phone_show';
 	return 1 if $path eq '/manager/security/padlock_challenge';
 	return 1 if $path eq '/manager/security/padlock_unlock';
+	return 1 if $path eq '/manager/security/padlock_open_peer';
 	return 1 if $path eq '/manager/security/padlock_state';
 	return 1 if $path eq '/manager/security/padlock_key';
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
@@ -26977,7 +26990,12 @@ sub padlock_global_locked {
 	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
-	my $pl = $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
+	# No stamp means this machine has never been locked since the gate was set;
+	# it is not an expired lock. A lock always writes the stamp, so absence is
+	# open. (A peer that has not pulled the row yet must not claim the house is
+	# locked and hide the phone's Unlock button.)
+	return 0 unless $row;
+	my $pl = &padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0;
 	return (&subs::rightNow() > $pl) ? 1 : 0;
 }
 
@@ -27178,12 +27196,47 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
 	my $locked = $target ? &padlock_target_locked($target, $c) : &padlock_locked_now($c);
+	# A phone often talks to its own jawn, while the lock is authoritative on the
+	# machine that made it. Clearing it here alone leaves that screen locked (the
+	# device row never syncs as a deletion). The signature is verified above, so
+	# hand the open to the peers over the signed rail; the machine that holds the
+	# lock is the one that clears it.
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&remote_relay_request($c, {
+			override => 'manual',
+			url => '/manager/security/padlock_open_peer',
+			type => 'get',
+			dissemination => 'yes',
+			params => { signatorial => &subs::signatorial_designer(), target => $target, mode => $mode },
+		});
+	}, { name => 'padlock unlock relay' });
 	unless ($locked) {
-		return $c->render(json => { ok => 1, unlocked => 1, already => 1, name => $device->{'name'} });
+		return $c->render(json => { ok => 1, unlocked => 1, already => 1, relayed => ($target ? 1 : 0), name => $device->{'name'} });
 	}
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
 	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode . ($target ? ' target=' . $target : ''));
 	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $target });
+};
+
+# The peer half of an unlock. A phone signs the challenge on whichever jawn it
+# is talking to; that machine verifies the paired key and relays the open here,
+# so the machine that actually holds the lock clears it. The relay is a signed
+# peer request (peer_verify), so the target cannot be altered on the way.
+get '/manager/security/padlock_open_peer' => sub ($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+		$log->info('padlock: peer unlock refused from ' . ($signatorial || '?') . ' at ' . ($c->tx->remote_address || '?'));
+		return $c->rendered(403);
+	}
+	my $target = $c->param('target') || '';
+	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	my $opened = &padlock_mark_unlocked($c, $mode, $target);
+	$log->info('padlock: peer unlock from ' . ($rm->{'hostname'} || $signatorial) . ' mode=' . $mode . ($target ? ' target=' . $target : ' house'));
+	$c->render(json => { ok => ($opened ? 1 : 0), target => $target });
 };
 
 get '/manager/security/padlock_state' => sub ($c) {

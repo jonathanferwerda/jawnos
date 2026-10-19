@@ -238,6 +238,9 @@ hook before_dispatch => sub {
 		# session has lapsed while the screen sat asleep
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
+		# the same verified open, relayed to the machine that holds the lock;
+		# the route authenticates the caller by its pinned peer signature
+		$path eq '/manager/security/padlock_open_peer' ||
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||

@@ -81,6 +81,10 @@
 <script>
 	var padlockKeyMode = 'locker';
 	var padlockKeyTarget = '';
+	// show=1 is an explicit ask (the locked screen's Send, or a late-join push),
+	// so the page offers Unlock even when this machine has not pulled the lock
+	// row yet - its state would otherwise say "no screen is locked".
+	var padlockKeyForced = /[?&]show=1/.test(location.search);
 	try {
 		var pk = (location.search || '').match(/[?&]mode=([^&]+)/);
 		if (pk) {
@@ -161,6 +165,12 @@
 	}
 	function padlockKeyLook() {
 		if (padlockKeyBusy || padlockKeyDone || padlockKeyTarget) { return; }
+		if (padlockKeyForced) {
+			$('#padlock_key_note').text('The screen is locked.');
+			$('#padlock_key_unlock').show();
+			$('#padlock_key_targets').hide();
+			return;
+		}
 		$.getJSON('/manager/security/padlock_state', function (s) {
 			if (!s || !s.ok) { return; }
 			if (s.targets && s.targets.length == 1) {

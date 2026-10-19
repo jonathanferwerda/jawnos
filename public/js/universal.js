@@ -529,6 +529,9 @@ function jawnPadlockKeyShow(mode, target, show) {
 	var q = [];
 	if (mode) { q.push('mode=' + encodeURIComponent(mode)); }
 	if (target) { q.push('target=' + encodeURIComponent(target)); }
+	// an explicit ask (the locked screen's Send, or the lock's own push) may
+	// offer Unlock even when this machine has not pulled the lock row yet
+	if (show) { q.push('show=1'); }
 	if (q.length) { url += '?' + q.join('&'); }
 	location.href = url;
 }
@@ -723,7 +726,14 @@ function jawnosApplyInk() {
 	style.setProperty('--line', line);
 	style.setProperty('--ink', ink);
 	style.setProperty('--ink-muted', ink_muted);
-	document.body.classList.toggle('dark_theme', lum < 0.5);
+	// the icon sets ship a light and a dark cut: when the desktop crosses the
+	// light/dark line the buttons on screen have to be asked for again
+	var was_dark = document.body.classList.contains('dark_theme');
+	var is_dark = lum < 0.5;
+	document.body.classList.toggle('dark_theme', is_dark);
+	if (was_dark !== is_dark && !window.jawnos_theme_suppress_icon_reload && typeof jawnosReloadIcons === 'function') {
+		setTimeout(jawnosReloadIcons, 80);
+	}
 }
 // Paint the manager for a new theme. `appt` marks that a running appointment's
 // theme (not the Misc system theme) is in charge, so a later Misc change does
@@ -774,7 +784,7 @@ function jawnosReloadIcons() {
 			$.ajax({
 				url: '/manager/icons',
 				type: 'GET',
-				data: { paths: JSON.stringify(paths) },
+				data: { paths: JSON.stringify(paths), refresh: 1 },
 				success: function (response) {
 					nodes.each(function () {
 						var p = $(this).attr('jawnos_icon');

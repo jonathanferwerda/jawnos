@@ -10678,10 +10678,18 @@ sub padlock_seed_default {
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $paired = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes->[0];
 	return unless $recovery || $paired;
+	my $now = &subs::rightNow();
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	unless ($padlock) {
-		my $now = &subs::rightNow();
 		&subs::db_insert('security', { level => 'padlock', credential => '', timestamp => $now, server_time => $now, uuid => &subs::random_string_creator(30) });
+	}
+	# A fresh gate gets a full inactivity window: the timer needs a baseline, and
+	# without one a request would read as an expired lock and shut the house.
+	my $pl = &subs::db_query('select server_time from settings where app = ? and setting = ? limit 1', '__president', 'pl_time')->hashes->[0];
+	unless ($pl) {
+		my $window = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
+		$window = abs &subs::time_abbrev_translator($window);
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now + $window });
 	}
 	my $contexts = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	unless (scalar @{$contexts}) {
