@@ -229,7 +229,12 @@ $(document).on('click', '.background', function (e) {
 			// but only its compact dot-and-words item should grow)
 			if (typeof jawnosClickMagnify == 'function') {
 				var magnify_rect = (o.length > 5 && o[5]) ? o[5] : o;
-				jawnosClickMagnify(document.getElementById(printer), magnify_rect, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0);
+				// the press outline follows a garment's pill shape; the other canvas
+				// items keep their gently rounded corners
+				var magnify_radius = (o[4] && o[4]['type'] == 'clothes')
+					? Math.min(magnify_rect[2] - magnify_rect[0], magnify_rect[3] - magnify_rect[1]) / 2
+					: 10;
+				jawnosClickMagnify(document.getElementById(printer), magnify_rect, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0, magnify_radius);
 			}
 			appointmentGrabber(o[4]['name'],timestamp);
 			return false;

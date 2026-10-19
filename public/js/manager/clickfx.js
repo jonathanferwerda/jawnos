@@ -10,7 +10,7 @@
 // items around it keep their size, and the item settles exactly as it was.
 // `thickness` draws a border of that width while it grows (the clothesline's
 // thicker edge).
-function jawnosClickMagnify(canvas, rect, seconds, thickness) {
+function jawnosClickMagnify(canvas, rect, seconds, thickness, radius) {
 	if (!canvas || !rect) { return; }
 	var ctx = canvas.getContext('2d');
 	if (!ctx) { return; }
@@ -56,7 +56,7 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness) {
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = thickness;
 			ctx.beginPath();
-			roundRectPath(ctx, dx, dy, dw, dh, 10);
+			roundRectPath(ctx, dx, dy, dw, dh, radius || 10);
 			ctx.stroke();
 			ctx.restore();
 		}

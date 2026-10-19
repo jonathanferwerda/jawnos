@@ -102,8 +102,10 @@ function clotheslineHanger(clothes) {
 		ctx.lineWidth = clothesLinePos['bordersize'];
 		ctx.font = "400 20px Times New Roman";
 
-		// each garment is its own rounded tile: no rail strung above and below it
-		// any more, so the clothesline reads as a row of buttons rather than a line
+		// each garment is its own pill: the ends are fully round, a soft shadow
+		// lifts it off the page, and a glossy top over a shaded base gives the
+		// fill a little body, so the clothesline reads as a row of bubbles rather
+		// than a line
 		var gap = 4;
 		var pad = 3;
 		// air between the top edge - or the taskbar when it takes the top edge - and
@@ -129,11 +131,39 @@ function clotheslineHanger(clothes) {
 			var bh = clothesLineHeight - (pad * 2) - topGap;
 
 			var tile_colour = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v.colour) || 'yellow';
+			var radius = bh / 2;
 			ctx.save();
 			ctx.beginPath();
-			roundRectPath(ctx, bx, by, bw, bh, 10);
+			roundRectPath(ctx, bx, by, bw, bh, radius);
+			ctx.shadowColor = 'rgba(0,0,0,0.35)';
+			ctx.shadowBlur = 5;
+			ctx.shadowOffsetY = 2;
 			ctx.fillStyle = tile_colour;
 			ctx.fill();
+			// the shadow belongs to the tile itself; the gloss and the edge must
+			// not cast one of their own
+			ctx.shadowColor = 'transparent';
+			ctx.shadowBlur = 0;
+			ctx.shadowOffsetY = 0;
+			var gloss = ctx.createLinearGradient(0, by, 0, by + bh);
+			gloss.addColorStop(0, 'rgba(255,255,255,0.42)');
+			gloss.addColorStop(0.45, 'rgba(255,255,255,0.08)');
+			gloss.addColorStop(0.5, 'rgba(255,255,255,0)');
+			gloss.addColorStop(1, 'rgba(0,0,0,0.16)');
+			ctx.fillStyle = gloss;
+			ctx.fill();
+			// a small highlight across the shoulder catches the light
+			ctx.save();
+			ctx.translate(bx + (bw / 2), by + (bh * 0.26));
+			ctx.scale(bw * 0.3, bh * 0.12);
+			ctx.beginPath();
+			ctx.arc(0, 0, 1, 0, Math.PI * 2);
+			ctx.fillStyle = 'rgba(255,255,255,0.28)';
+			ctx.fill();
+			ctx.restore();
+			// the edge is drawn last so the gloss never softens it
+			ctx.beginPath();
+			roundRectPath(ctx, bx, by, bw, bh, radius);
 			ctx.lineWidth = 3;
 			ctx.strokeStyle = ink;
 			ctx.stroke();
