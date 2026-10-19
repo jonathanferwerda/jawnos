@@ -238,6 +238,10 @@ hook before_dispatch => sub {
 		# session has lapsed while the screen sat asleep
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
+		# the phone's own biometric key verifies the same way: the signature
+		# comes from the Keystore-bound EC key, so it needs no session cookie
+		$path eq '/manager/security/biometric_challenge' ||
+		$path eq '/manager/security/biometric_unlock' ||
 		# the same verified open, relayed to the machine that holds the lock;
 		# the route authenticates the caller by its pinned peer signature
 		$path eq '/manager/security/padlock_open_peer' ||
