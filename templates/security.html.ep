@@ -19,6 +19,8 @@
 			<% } %>
 		</select>
 		<span id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>"></span>
+		<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
+			style="position:absolute;right:0px;bottom:150px;font-size:15px;">Phone key</a>
 		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" id="padlock_delete" 
 			style="position:absolute;right:0px;bottom:0px;<% unless ($padlock) { %>display:none;<% } %>">
 	</div>

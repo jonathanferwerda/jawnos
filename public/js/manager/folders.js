@@ -20,8 +20,10 @@ $(document).on('click', '#folders_toggle', function() {
 $(document).on('click', '.folders_lock', function () {
 	$('#folders_mainview').hide();
 	$('#folders_padlock').show();
+	if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('folders'); }
 });
 $(document).on('click', '.folders_cancel_padlock', function () {
+	if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
 	$('#folders_padlock').hide();
 	$('#folders_mainview').show();
 });

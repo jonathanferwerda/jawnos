@@ -725,6 +725,7 @@ function padlockPull(j) {
 			data: { timestamp: timestamp, digits: digits, mode: mode },
 			success: function(response) {
 				if (response.status == 'success') {
+					if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
 					$('.padlock_unlock').show();
 					$('.padlock_lock').hide();
 					$('.padlock_light.yellow').show();
@@ -741,6 +742,70 @@ function padlockPull(j) {
 
 $(document).on('mouseout touchend mouseup', '.padlock_jog_wheel', function() {
 	padlock_last = 'out';
+});
+
+// ---- the phone key: let the computer's camera read the roller ---------------
+// When a padlock is on screen, this machine's webcam watches for the code the
+// phone draws. The server starts zbar, reads the code and opens the lock; all
+// this half has to do is ask, poll briefly, and give the camera back.
+var padlockVisual = { active: false, until: 0, poll: null, stop_timer: null, mode: 'locker' };
+
+function padlockVisualStatus(text) {
+	$('.padlock_visual_status').text(text || '');
+	if (text) { $('.padlock_visual_status').show(); } else { $('.padlock_visual_status').hide(); }
+}
+
+function padlockVisualClear() {
+	if (padlockVisual.poll) { clearInterval(padlockVisual.poll); padlockVisual.poll = null; }
+	if (padlockVisual.stop_timer) { clearTimeout(padlockVisual.stop_timer); padlockVisual.stop_timer = null; }
+}
+
+function padlockVisualStop(note) {
+	padlockVisualClear();
+	if (padlockVisual.active) {
+		$.post('/manager/security/padlock_watch', { action: 'stop' });
+	}
+	padlockVisual.active = false;
+	padlockVisualStatus(note || '');
+}
+
+function padlockVisualWatch(mode) {
+	if (padlockVisual.active) { return; }
+	mode = mode || $('.padlock_frame:visible').last().attr('mode') || 'locker';
+	if (mode == 'security') { return; }
+	padlockVisual.mode = mode;
+	padlockVisual.active = true;
+	$.post('/manager/security/padlock_watch', { action: 'start', mode: mode }, function(start) {
+		if (!start || !start.camera) {
+			padlockVisual.active = false;
+			return;
+		}
+		var seconds = start.seconds || 40;
+		padlockVisual.until = Date.now() + (seconds * 1000);
+		padlockVisualStatus('Watching for your phone\u2019s code\u2026');
+		padlockVisual.poll = setInterval(function() {
+			if (Date.now() > padlockVisual.until) {
+				padlockVisualStop('Camera off \u2014 tap to watch again.');
+				return;
+			}
+			$.post('/manager/security/padlock_watch', { action: 'poll', mode: mode }, function(r) {
+				if (r && r.unlocked) {
+					padlockVisualClear();
+					padlockVisual.active = false;
+					padlockVisualStatus('');
+				}
+			});
+		}, 900);
+		padlockVisual.stop_timer = setTimeout(function() {
+			padlockVisualStop('Camera off \u2014 tap to watch again.');
+		}, seconds * 1000);
+	}).fail(function() {
+		padlockVisual.active = false;
+	});
+}
+
+$(document).on('click', '.padlock_visual_status', function() {
+	padlockVisualWatch(padlockVisual.mode);
 });
 
 $(document).on('mousewheel', '.padlock_jog_wheel', function(e) {

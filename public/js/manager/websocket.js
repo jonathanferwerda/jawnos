@@ -586,6 +586,7 @@ function wsMessageHandler(event) {
 				$('#padlock_taunts').text(data['taunts']).css({ 'position':'fixed','max-width': width + 'px', 'width':'100%', 'height': '40%', 'left': '0px', 'top': '1%', 'text-align': 'centre', 'width': '120%'});
 			}
 			$('#everything').hide();
+			if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('locker'); }
 
 		//	websocketStop();
 		}

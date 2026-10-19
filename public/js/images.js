@@ -516,6 +516,7 @@ $(document).on('click', '.gallery_lock', function() {
 	if (!$('#gallery').attr('unlock')) {
 
 		imageViewer({ 'view':'padlock' });
+		if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('gallery'); }
 	}
 	else {
 		settingSetter({ 'app': 'gallery', 'setting': 'combo_unlock', value: '' });
@@ -524,6 +525,7 @@ $(document).on('click', '.gallery_lock', function() {
 });
 
 $(document).on('click', '#gallery_cancel_padlock', function() {
+	if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
 	imageViewer({ 'view': 'home' });
 });
 

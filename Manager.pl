@@ -9044,8 +9044,15 @@ sub lock_session($c) {
 
 	my $padlock = &subs::db_query('select * from security where level = ?', 'padlock')->hashes;
 
+	# The watcher and the phone key talk to the server while the padlock is up.
+	# Those calls are not a fresh lock: sending the screen again every five
+	# seconds would replace the dial (and its progress) under the person's hand.
+	my $path = $c->req->url->path;
+	my $quiet_lock = ($path eq '/manager/security/padlock_watch' ||
+		$path eq '/manager/security/padlock_key' ||
+		$path eq '/manager/security/padlock_key/frame');
 
-	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
+	if (!$quiet_lock && scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
 		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker');
 		my $colour = &subs::random_colour_grabber();
@@ -16926,13 +16933,22 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		});
 	}
 
-	my $ov = sprintf("%.5f", $autocalc->{$budget->{'scope_name'}}->{'result'} - $budget->{'budgeted'});
+	# Both comparisons are read for the same share of the period, so an hour or a
+	# day only part done is not held against the whole of its budget and its whole
+	# typical. A completed (or rolling) window has share 1 and reads as before.
+	my $share = (defined $budget->{'elapsed'} && $budget->{'elapsed'} >= 0 && $budget->{'elapsed'} < 1) ? $budget->{'elapsed'} : 1;
+	my $typical = $autocalc->{$budget->{'scope_name'}}->{'result'} || 0;
+	my $budget_share = ($budget->{'budgeted'} || 0) * $share;
+	my $typical_share = $typical * $share;
+	my $value = $budget->{'value'} || 0;
+	my $ov = sprintf("%.5f", $typical_share - $budget_share);
 	my $improvement = {
-		difference => $budget->{'value'} - $budget->{'budgeted'},
+		share => $share,
+		difference => $value - $budget_share,
 		overall => &budget_value_formatter($circumstance, $ov),
-		formatted_difference => &budget_value_formatter($circumstance, $budget->{'value'} - $budget->{'budgeted'}),
-		percentage => eval { return &subs::percent_formatter(($budget->{'value'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'}) } || 0,
-		overall_percentage => eval { return &subs::percent_formatter(($autocalc->{$budget->{'scope_name'}}->{'result'} - $budget->{'budgeted'}) / $autocalc->{$budget->{'scope_name'}}->{'result'})} || 0
+		formatted_difference => &budget_value_formatter($circumstance, $value - $budget_share),
+		percentage => eval { return &subs::percent_formatter(($value - $budget_share) / $typical_share) } || 0,
+		overall_percentage => eval { return &subs::percent_formatter(($typical_share - $budget_share) / $typical_share) } || 0
 	};
 	my $goal = &goal_reading($app, $circumstance);
 	my $c = &subs::controller_builder();
@@ -26697,16 +26713,17 @@ post '/manager/security/padlock_pull' => sub($c) {
 			&Websocket::send('server', { console => 'leave()' });
 	}
 	if (my $combination = eval { return decode_json $combo }) {
-		my $success = 0;
-		for (my $n = 0; $n <= 2; $n++) {
-			if ($digits->[$n] == $combination->[$n]) {
-				$success = 1;
-			}
-			if ($success == 0) {
-				last;
+		# every digit has to match. This used to leave `success` at 1 once any
+		# digit matched, so a right first number opened the lock whatever the
+		# other two were.
+		my $success = (ref $digits eq 'ARRAY' && ref $combination eq 'ARRAY' && scalar @{$digits} >= 3 && scalar @{$combination} >= 3) ? 1 : 0;
+		for (my $n = 0; $success && $n <= 2; $n++) {
+			unless (defined $digits->[$n] && defined $combination->[$n] && $digits->[$n] == $combination->[$n]) {
+				$success = 0;
 			}
 		}
 		if ($success == 1) {
+			&padlock_camera_stop();
 			# a hidden thing's padlock may only be turned at home
 			if ($mode =~ /^(?:gallery|music|folders)$/ && !help_at_home()) {
 				$c->render(json => { status => 'fail' });
@@ -26769,6 +26786,229 @@ post '/manager/security/padlock_pull' => sub($c) {
 
 	$attempts = &subs::note_encrypter(&subs::session_suds($c),$attempts);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => $attempts });
+};
+
+# --- the phone key: a rolling code the computer's camera can read ----------
+# The dial is fussy with a mouse. A phone holding the key up to this machine's
+# webcam is not: the phone draws a QR code with the house logo at its centre,
+# the code turns every ten seconds, and zbar here reads it. The code is an HMAC
+# of the step under the house key, so only this house can mint or check one and
+# a photograph of an old code stops working when the step turns.
+sub padlock_camera_dir { return '/tmp/jawn_padlock_camera'; }
+sub padlock_visual_seconds { return 40; }
+sub padlock_visual_step_seconds { return 10; }
+
+sub padlock_visual_step {
+	return int(time / &padlock_visual_step_seconds());
+}
+
+sub padlock_visual_code {
+	my ($step) = @_;
+	require Digest::SHA;
+	return substr(Digest::SHA::hmac_sha256_hex('jawnos-padlock-visual|' . $step, &subs::house_key()), 0, 12);
+}
+
+sub padlock_visual_payload {
+	my ($step) = @_;
+	return 'JPL1:' . $step . ':' . &padlock_visual_code($step);
+}
+
+sub padlock_visual_valid {
+	my ($payload) = @_;
+	return 0 unless defined $payload && $payload =~ /^JPL1:(\d{1,12}):([0-9a-f]{12})$/;
+	my ($step, $code) = ($1, $2);
+	my $now = &padlock_visual_step();
+	# one step either side: a code read just as the clock turns is still its own
+	return 0 if $step < $now - 1 || $step > $now + 1;
+	return secure_compare($code, &padlock_visual_code($step)) ? 1 : 0;
+}
+
+sub padlock_camera_available {
+	return 0 unless &subs::device_setter() eq 'computer';
+	return 0 unless grep { $_ eq 'webcam' } @{ $gb::capabilities->{'computer'}->{'camera'} || [] };
+	return 0 unless -e '/dev/video0';
+	my $which = `command -v zbarcam 2>/dev/null`;
+	return ($which =~ /\S/) ? 1 : 0;
+}
+
+sub padlock_camera_is_reader {
+	my ($pid) = @_;
+	open my $cf, '<', "/proc/$pid/cmdline" or return 0;
+	local $/;
+	my $cmd = <$cf>;
+	close $cf;
+	return ($cmd && $cmd =~ /zbarcam/) ? 1 : 0;
+}
+
+sub padlock_camera_alive {
+	my $pidfile = &padlock_camera_dir() . '/pid';
+	return 0 unless -e $pidfile;
+	open my $pf, '<', $pidfile or return 0;
+	my $pid = <$pf>;
+	close $pf;
+	return ($pid && $pid =~ /^([0-9]+)/ && &padlock_camera_is_reader($1) && kill(0, $1)) ? 1 : 0;
+}
+
+sub padlock_camera_stop {
+	my $pidfile = &padlock_camera_dir() . '/pid';
+	return 0 unless -e $pidfile;
+	open my $pf, '<', $pidfile or return 0;
+	my $pid = <$pf>;
+	close $pf;
+	unlink $pidfile;
+	return 0 unless $pid && $pid =~ /^([0-9]+)/;
+	$pid = $1;
+	return 0 unless &padlock_camera_is_reader($pid);
+	# the child starts its own session, so the pid is also the process group;
+	# signalling the group takes `timeout` and the reader behind it together
+	kill('TERM', -$pid);
+	kill('TERM', $pid);
+	return 1;
+}
+
+# One reader for the whole machine. `timeout` gives the camera back even if
+# nobody ever polls, so a lock that is walked away from cannot watch forever.
+sub padlock_camera_start {
+	my $dir = &padlock_camera_dir();
+	my $started = -e "$dir/started" ? (stat("$dir/started"))[9] : 0;
+	if (&padlock_camera_alive() && $started && time - $started < &padlock_visual_seconds()) {
+		return 1;  # a lock opened a moment ago already has the camera
+	}
+	&padlock_camera_stop();
+	`mkdir -p $dir` unless -d $dir;
+	return 0 unless -d $dir;
+	open my $codes, '>', "$dir/codes"; close $codes;
+	open my $log, '>', "$dir/log"; close $log;
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid == 0) {
+		eval { POSIX::setsid(); };
+		$^F = 2;  # do not leak the manager's sockets into the reader
+		open STDOUT, '>>', "$dir/codes";
+		open STDERR, '>>', "$dir/log";
+		exec('timeout', &padlock_visual_seconds() . 's', 'zbarcam', '--raw', '--nodisplay', '/dev/video0');
+		exit 0;
+	}
+	open my $pf, '>', "$dir/pid"; print $pf $pid; close $pf;
+	open my $sf, '>', "$dir/started"; print $sf time; close $sf;
+	return 1;
+}
+
+sub padlock_camera_codes {
+	my $file = &padlock_camera_dir() . '/codes';
+	return () unless -e $file;
+	open my $fh, '<', $file or return ();
+	my @codes;
+	while (my $line = <$fh>) {
+		chomp $line;
+		$line =~ s/^\s+|\s+$//g;
+		push @codes, $line if length $line;
+	}
+	close $fh;
+	return @codes;
+}
+
+# A code the camera read opens the same things a turned dial opens.
+sub padlock_visual_unlock {
+	my ($c, $mode) = @_;
+	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
+	&padlock_camera_stop();
+	my $suds = &subs::session_suds($c);
+	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
+	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
+	my $new_timeout = &subs::rightNow() + $activity_timeout;
+	$c->session('pl_time' => $new_timeout);
+	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $new_timeout) });
+	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
+	if ($mode eq 'gallery') {
+		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
+		&subs::setting_setter({ app => 'gallery', setting => 'combo_unlock', value => $combo_unlock });
+		&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('server', { console => 'imageViewer({ "view":"home" })', browser_tab_id => $c->param('browser_tab_id') });
+	}
+	if ($mode eq 'music') {
+		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
+		&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
+		&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('server', { console => 'searchMusic()', browser_tab_id => $c->param('browser_tab_id') });
+	}
+	if ($mode eq 'folders') {
+		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
+		&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
+		&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
+	}
+	else {
+		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();'});
+	}
+	return 1;
+}
+
+post '/manager/security/padlock_watch' => sub ($c) {
+	my $action = $c->param('action') || 'poll';
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { ok => 0, error => 'not signed in' });
+	}
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	unless ($padlock) {
+		&padlock_camera_stop();
+		return $c->render(json => { ok => 1, unlocked => 1 });
+	}
+	if ($action eq 'stop') {
+		&padlock_camera_stop();
+		return $c->render(json => { ok => 1 });
+	}
+	if ($action eq 'start') {
+		return $c->render(json => { ok => 1, camera => 0 })
+			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
+		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
+		my $watching = &padlock_camera_start();
+		return $c->render(json => { ok => 1, camera => ($watching ? 1 : 0), seconds => &padlock_visual_seconds() });
+	}
+	if (&padlock_camera_alive()) {
+		foreach my $code ( &padlock_camera_codes() ) {
+			if (&padlock_visual_valid($code) && &padlock_visual_unlock($c, $mode)) {
+				return $c->render(json => { ok => 1, unlocked => 1 });
+			}
+		}
+		return $c->render(json => { ok => 1, unlocked => 0 });
+	}
+	$c->render(json => { ok => 1, camera => 0, unlocked => 0 });
+};
+
+get '/manager/security/padlock_key' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(template => 'guest_layouts/denial', message => 'Sign in before showing the phone key.');
+	}
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	$c->render(template => 'padlock_key', layout => 'padlock_key', has_padlock => ($padlock ? 1 : 0));
+};
+
+get '/manager/security/padlock_key/frame' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { error => 'not signed in' });
+	}
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	unless ($padlock) {
+		return $c->render(json => { error => 'no padlock' });
+	}
+	my $step = &padlock_visual_step();
+	my $payload = &padlock_visual_payload($step);
+	my $qr = `qrencode -l H -s 16 -m 4 -o - '$payload' 2>/dev/null`;
+	unless (length $qr) {
+		return $c->render(json => { error => 'could not draw the code' });
+	}
+	my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })
+		|| &subs::misc_setting('start_menu_icon')
+		|| '/images/jbuttons/logo1.png';
+	$c->render(json => {
+		step => $step,
+		qr => 'data:image/png;base64,' . encode_base64($qr, ''),
+		logo => $logo,
+		wait => &padlock_visual_step_seconds() - (time % &padlock_visual_step_seconds()),
+	});
 };
 
 sub padlock_time_extender($c) {

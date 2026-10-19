@@ -1,0 +1,146 @@
+% title 'Phone key';
+<div id="padlock_key_wrap">
+	<div id="padlock_key_spin">
+		<canvas id="padlock_key_canvas" width="720" height="720"></canvas>
+	</div>
+	<div id="padlock_key_note">
+		<% if ($has_padlock) { %>
+			Hold this up to the computer's camera.<br>Turn the screen's brightness up.
+		<% } else { %>
+			No padlock is set on this house.
+		<% } %>
+	</div>
+</div>
+
+<style>
+	#padlock_key_wrap {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
+	}
+	#padlock_key_spin {
+		width: 100vmin;
+		height: 100vmin;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+	}
+	#padlock_key_canvas {
+		width: 70vmin;
+		height: 70vmin;
+		background-color: #ffffff;
+		transition: transform 300ms ease-in-out;
+	}
+	#padlock_key_note {
+		position: fixed;
+		left: 0;
+		right: 0;
+		bottom: 3%;
+		text-align: center;
+		font-size: 17px;
+		line-height: 1.35;
+		padding: 0 8px;
+	}
+</style>
+
+<script>
+	var padlockKey = {
+		angle: 0,
+		timer: null,
+		fetching: false,
+		logo: null,
+		logo_url: ''
+	};
+
+	function padlockKeyRoundRect(ctx, x, y, w, h, r) {
+		ctx.beginPath();
+		ctx.moveTo(x + r, y);
+		ctx.lineTo(x + w - r, y);
+		ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+		ctx.lineTo(x + w, y + h - r);
+		ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+		ctx.lineTo(x + r, y + h);
+		ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+		ctx.lineTo(x, y + r);
+		ctx.quadraticCurveTo(x, y, x + r, y);
+		ctx.closePath();
+		ctx.fill();
+	}
+
+	function padlockKeyDraw(frame) {
+		if (!frame || !frame.qr) {
+			if (!padlockKey.fetching) {
+				$('#padlock_key_note').html(frame && frame.error ? 'The key is not available.' : $('#padlock_key_note').html());
+			}
+			return;
+		}
+		var canvas = document.getElementById('padlock_key_canvas');
+		var ctx = canvas.getContext('2d');
+		var qr = new Image();
+		qr.onload = function () {
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			ctx.drawImage(qr, 0, 0, canvas.width, canvas.height);
+			if (!frame.logo) { return; }
+			var paint = function (logo) {
+				// a white patch behind the mark keeps the modules next to it
+				// readable; the code is drawn with the strongest error correction,
+				// so a mark this size costs it nothing
+				var box = canvas.width * 0.24;
+				var x = (canvas.width - box) / 2;
+				padlockKeyRoundRect(ctx, x, x, box, box, box * 0.16);
+				var max = box * 0.78;
+				var scale = Math.min(max / logo.width, max / logo.height);
+				var w = logo.width * scale;
+				var h = logo.height * scale;
+				ctx.drawImage(logo, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+			};
+			if (padlockKey.logo && padlockKey.logo_url === frame.logo && padlockKey.logo.complete) {
+				paint(padlockKey.logo);
+				return;
+			}
+			var logo = new Image();
+			logo.onload = function () {
+				padlockKey.logo = logo;
+				padlockKey.logo_url = frame.logo;
+				paint(logo);
+			};
+			logo.src = frame.logo;
+		};
+		qr.src = frame.qr;
+	}
+
+	function padlockKeyFrame() {
+		padlockKey.fetching = true;
+		$.ajax({
+			url: '/manager/security/padlock_key/frame',
+			type: 'GET',
+			dataType: 'json',
+			cache: false,
+			success: function (frame) {
+				padlockKey.fetching = false;
+				padlockKeyDraw(frame);
+				var wait = (frame && frame.wait) ? frame.wait : 5;
+				setTimeout(padlockKeyFrame, Math.max(1000, wait * 1000 + 250));
+			},
+			error: function () {
+				padlockKey.fetching = false;
+				setTimeout(padlockKeyFrame, 2000);
+			}
+		});
+	}
+
+	$(function () {
+		if (!document.getElementById('padlock_key_canvas')) { return; }
+		padlockKeyFrame();
+		// turn in steps, not continuously: the camera needs a still frame to read
+		padlockKey.timer = setInterval(function () {
+			padlockKey.angle = (padlockKey.angle + 45) % 360;
+			document.getElementById('padlock_key_canvas').style.transform = 'rotate(' + padlockKey.angle + 'deg)';
+		}, 1600);
+	});
+</script>

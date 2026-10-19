@@ -380,7 +380,7 @@ our %topic = (
 		body => [
 			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, and a daily sheet.',
 			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account. The window and its scope (hour, day, week, month, year) come from the app\'s own settings, so a view you set up is the view you come back to.',
-			'Each app that keeps a budget has a budget light in its header. Opening it shows the period against its budget, the pace it is on, and — when what is counted is over the budget — a Recommended button. Pressing it sets the budget to the app\'s own typical period, keeping the budget\'s scope, measure and floor or ceiling, and fills the matching row on the app\'s card in Configure. The light also lists the budget and the app\'s typical amount at the budget\'s own scope and the next two larger ones — a per-hour budget reads as an hour, a day and a week, with no meaningless per-minute figure.'
+			'Each app that keeps a budget has a budget light in its header. Opening it shows the period against its budget, the pace it is on, and — when what is counted is over the budget — a Recommended button. Pressing it sets the budget to the app\'s own typical period, keeping the budget\'s scope, measure and floor or ceiling, and fills the matching row on the app\'s card in Configure. The light also lists the budget and the app\'s typical amount at the budget\'s own scope and the next two larger ones — a per-hour budget reads as an hour, a day and a week, with no meaningless per-minute figure. While a scope is still running, the budget-vs-typical and this-vs-budget rows are read against the share of the scope that has elapsed, so an early morning is not read as a fall.'
 		],
 		steps => [
 			'Open Budget; it lands on the statement for the current scope.',
@@ -605,11 +605,12 @@ our %topic = (
 	},
 	'security' => {
 		title => 'Security', category => 'apps', app => 'security',
-		templates => [ 'templates/security.html.ep', 'public/js/manager/security.js' ],
-		verified => '2026-10-14',
+		templates => [ 'templates/security.html.ep', 'templates/padlock.html.ep', 'templates/padlock_key.html.ep', 'templates/layouts/padlock_key.html.ep', 'public/js/manager/security.js' ],
+		verified => '2026-10-18',
 		summary => 'Passwords, pseudonyms, QR codes, screen lock and secrets.',
 		body => [
 			'Security gathers the safety tools: password and pseudonym generation, QR codes, encryption helpers, screen locking and a keyring-style secret store.',
+			'The padlock can also be turned by phone. Open Phone key in the Padlock view on the phone, and hold the screen up to this computer\'s camera: the page draws a QR code with the house logo at its centre and turns it a quarter-turn at a time, and the camera watches for it for forty seconds after the padlock appears. The code rolls every ten seconds, so a photograph of the screen stops working almost at once. The dial still works exactly as before; the phone is simply the easier way from a mouse or a trackpad. Tap the camera line on the lock screen to watch for another forty seconds.',
 			'It also shows the neighbour links — which machines are trusted, and with what privilege.',
 			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again. A new device can also ask to pair from the gate: its request waits at the top of this view with a short code, and Approve lets it in — but only when that code matches the one on the new device\'s screen.',
 			'The Recovery view holds the paper code that gets you back in when every ticket is lost and no paired device is at hand: make one and write it down. It is shown once and keeps working through password changes — only rotating the house key replaces it; enter it under Recovery Code at the gate and that device is paired on the spot. The house key itself works too: typed at the gate it opens the house in any vault state - a machine whose vault is gone heals it on the spot - so one long string written down is a complete backup.',
