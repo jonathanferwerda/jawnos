@@ -159,9 +159,11 @@
 		logo.src = <%== &subs::json_chars($logo) %>;
 		var timer = null, raf = null, active = false, started = 0, last = 0;
 		var blobs = [];
+		var logoEvent = null, nextLogoAt = 0;
+
 		function resize() {
-			canvas.width = window.innerWidth;
-			canvas.height = window.innerHeight;
+			canvas.width = Math.max(1, window.innerWidth);
+			canvas.height = Math.max(1, window.innerHeight);
 		}
 		function newArt() {
 			var palette = [];
@@ -179,8 +181,53 @@
 				});
 			}
 		}
+		// One logo at a time, at a fresh spot, easing in and out. The pause and
+		// the run length are both random so it never settles into a rhythm.
+		function startLogo(now) {
+			if (!logo.complete || !logo.naturalWidth) { return; }
+			var w = canvas.width, h = canvas.height;
+			var size = Math.min(w, h) * (0.10 + Math.random() * 0.16);
+			var scale = Math.min(size / logo.naturalWidth, size / logo.naturalHeight);
+			var lw = logo.naturalWidth * scale, lh = logo.naturalHeight * scale;
+			var margin = Math.min(w, h) * 0.08;
+			var roomX = Math.max(1, w - lw - margin * 2);
+			var roomY = Math.max(1, h - lh - margin * 2);
+			logoEvent = {
+				start: now,
+				duration: 4200 + Math.random() * 4200,
+				x: margin + Math.random() * roomX + lw / 2,
+				y: margin + Math.random() * roomY + lh / 2,
+				w: lw, h: lh,
+				rot: (Math.random() - 0.5) * 0.35
+			};
+		}
+		function drawLogo(now) {
+			if (!logo.complete || !logo.naturalWidth) { return; }
+			if (!logoEvent) {
+				if (!nextLogoAt) { nextLogoAt = now + 1000 + Math.random() * 2600; }
+				if (now < nextLogoAt) { return; }
+				startLogo(now);
+				if (!logoEvent) { return; }
+			}
+			var p = (now - logoEvent.start) / logoEvent.duration;
+			if (p >= 1) {
+				logoEvent = null;
+				nextLogoAt = now + 1800 + Math.random() * 6500;
+				return;
+			}
+			var alpha = 0.9 * (p < 0.25 ? p / 0.25 : (p > 0.75 ? (1 - p) / 0.25 : 1));
+			ctx.save();
+			ctx.globalAlpha = alpha;
+			ctx.shadowColor = 'rgba(255,255,255,0.55)';
+			ctx.shadowBlur = 26;
+			ctx.translate(logoEvent.x, logoEvent.y);
+			ctx.rotate(logoEvent.rot);
+			ctx.drawImage(logo, -logoEvent.w / 2, -logoEvent.h / 2, logoEvent.w, logoEvent.h);
+			ctx.restore();
+		}
 		function draw(now) {
 			if (!active) { return; }
+			if (!document.body.contains(frame)) { active = false; return; }
 			raf = requestAnimationFrame(draw);
 			if (now - last < 33) { return; }
 			last = now;
@@ -211,24 +258,25 @@
 				ctx.arc(w * (0.2 + k * 0.2), h * 0.5, Math.min(w, h) * (0.2 + 0.1 * Math.sin(t * 0.1 + k)), 0, Math.PI * 2);
 				ctx.stroke();
 			}
-			var phase = t % 22;
-			if (phase < 4.5 && logo.complete && logo.naturalWidth) {
-				var size = Math.min(w, h) * 0.22;
-				var scale = Math.min(size / logo.naturalWidth, size / logo.naturalHeight);
-				var lw = logo.naturalWidth * scale, lh = logo.naturalHeight * scale;
-				ctx.globalAlpha = 0.90;
-				ctx.shadowColor = 'rgba(255,255,255,0.65)';
-				ctx.shadowBlur = 26;
-				ctx.drawImage(logo, (w - lw) / 2, (h - lh) / 2, lw, lh);
-				ctx.shadowBlur = 0;
-				ctx.globalAlpha = 1;
-			}
+			drawLogo(now);
 		}
 		function show() {
 			if (active) { return; }
+			if (!document.body.contains(frame)) { return; }
 			active = true;
+			// The layer is inside .padlock_frame, which is transformed; a fixed
+			// child of a transformed box is sized to that box, not the window.
+			// Move it to the body so it covers the whole screen, and drop any
+			// layer left behind by an earlier overlay.
+			var oldLayers = document.querySelectorAll('body > .padlock_screensaver');
+			for (var oi = 0; oi < oldLayers.length; oi++) {
+				if (oldLayers[oi] !== layer) { oldLayers[oi].parentNode.removeChild(oldLayers[oi]); }
+			}
+			if (layer.parentNode !== document.body) { document.body.appendChild(layer); }
 			newArt();
 			resize();
+			logoEvent = null;
+			nextLogoAt = 0;
 			layer.style.display = 'block';
 			started = performance.now();
 			last = 0;

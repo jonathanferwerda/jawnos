@@ -639,6 +639,11 @@ function jawnPadlockPromptText(text, value) {
 function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	if (!document.getElementById('taskbar') && !document.getElementById('locked_screen')) { return; }
+	// A screen that is locked is not an approval terminal. It may show its own
+	// fingerprint button and its own unlock request, but it must not be asked to
+	// confirm for another screen; an unlocked device will pick the request up.
+	var lockLayer = document.getElementById('locked_screen');
+	if (lockLayer && (lockLayer.offsetWidth || lockLayer.offsetHeight || lockLayer.getClientRects().length)) { return; }
 	var mine = jawnDeviceUuid();
 	if (!mine) { return; }
 	// the locked screen is not asked to sign itself open, and the screen that

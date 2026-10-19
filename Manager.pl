@@ -27529,8 +27529,12 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 		sub {
 			my ($loop, $err, $rc) = @_;
 			unlink $lockfile;
-			my $ok = (!defined $err && defined $rc && $rc == 0) ? 1 : 0;
-			my $error = $ok ? '' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted');
+			# The subprocess carries the child's $@ as $err. It is an EMPTY
+			# string on a clean run, not undef; treating defined-but-empty as
+			# a failure is what reported a matching print (rc=0) as refused.
+			my $child_error = (defined $err && $err ne '') ? $err : '';
+			my $ok = (!$child_error && defined $rc && $rc == 0) ? 1 : 0;
+			my $error = $ok ? '' : ($child_error ? 'reader error' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted'));
 			&subs::db_query('update cache set data = ?, server_time = ? where context = ? and uuid = ?',
 				encode_json({ pending => 0, ok => $ok, error => $error, device => $device, ip => $ip }),
 				&subs::rightNow(), 'padlock_fingerprint', $token);

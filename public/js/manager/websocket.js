@@ -597,6 +597,7 @@ function wsMessageHandler(event) {
 				return;
 			}
 			if (window.jawnLockedPoller) { clearInterval(window.jawnLockedPoller); window.jawnLockedPoller = null; }
+			$('body > .padlock_screensaver').remove();
 			$('#padlock_frame').html('').hide();
 			$('#everything').show();
 			if (!document.getElementById('everything')) { window.location.reload(); }
