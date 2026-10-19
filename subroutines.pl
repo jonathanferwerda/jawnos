@@ -6221,17 +6221,25 @@ sub sync_job_step {
 # the plainly abandoned ones. The 30-minute bound matches the remote_upgrade
 # lock, so a genuinely long pull is not cut short if its owner somehow survived.
 sub sync_jobs_reap {
-	my ($age_ms) = @_;
+	my ($age_ms, $direction, $note) = @_;
 	$age_ms = 30 * 60 * 1000 unless defined $age_ms && $age_ms =~ /^\d+$/;
+	$note = 'interrupted by restart' unless defined $note && $note ne '';
 	my $now = &rightNow();
 	my $cut = $now - $age_ms;
-	my $row = &db_query('select count(*) as c from sync_jobs where state = ? and cast(updated as integer) < ?', 'running', $cut)->hashes->[0] || {};
+	my @where = ('state = ?', 'cast(updated as integer) < ?');
+	my @args = ('running', $cut);
+	if (defined $direction && $direction ne '') {
+		push @where, 'direction = ?';
+		push @args, $direction;
+	}
+	my $scope = join ' and ', @where;
+	my $row = &db_query("select count(*) as c from sync_jobs where $scope", @args)->hashes->[0] || {};
 	my $n = $row->{'c'} || 0;
 	return 0 unless $n;
 	# Leave `updated` alone: it is when the job last actually ran, and moving it to
 	# now made a reaped job look like the newest activity in the panel.
-	&db_query('update sync_jobs set state = ?, note = ? where state = ? and cast(updated as integer) < ?',
-		'failed', 'interrupted by restart', 'running', $cut);
+	&db_query("update sync_jobs set state = ?, note = ? where $scope",
+		'failed', $note, @args);
 	return $n;
 }
 sub sync_job_finish {
@@ -13299,7 +13307,18 @@ sub remote_machine_negotiator() {
 		if ($owner_dead || !$lock->{'server_time'} || $lock->{'server_time'} + $bound < &subs::rightNow()) {
 			&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 			$remote_upgrade = '';
+			$up_flag = '';
 		}
+	}
+	# A pull job row can outlive the marker that owned it: a forked pull that dies
+	# after clearing its marker (or before writing one) leaves a 'running' row that
+	# nothing will ever finish, and the sync panel then reads as if a pull were
+	# still in flight. When no pull owns the marker, no worker is pulling, so any
+	# pull row still running is orphaned. Ten minutes keeps a pull that was just
+	# started - and has not written its marker yet - from being cut short.
+	if ($up_flag ne 'running') {
+		my $reaped = &subs::sync_jobs_reap(600000, 'pull', 'no pull owned it');
+		$log->info('sync jobs reaped: ' . $reaped . ' pull job(s) with no owner') if $reaped;
 	}
 	if (($remote_upgrade || '') ne 'running' && $remote_connect_timer + 10000 < &subs::rightNow()) {
 		&Manager::remote_machine_reconnector($c);

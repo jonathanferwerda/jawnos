@@ -218,7 +218,7 @@ sub manager_starter() {
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 	# Job rows left 'running' by the tree that just died are not live: no worker
 	# from it can own one now. Age them out so the sync counters read true.
-	my $reaped_jobs = &subs::sync_jobs_reap();
+	my $reaped_jobs = &subs::sync_jobs_reap(0);
 	$log->info('sync jobs reaped: ' . $reaped_jobs) if $reaped_jobs;
 	# Data backfills run at boot, so a code sync followed by the restart the
 	# sync itself triggers heals the data without waiting for a login. Ones whose
