@@ -5393,19 +5393,36 @@ sub voice_silence_hallucination() {
 	return $stock{$bare} ? 1 : 0;
 }
 
-sub whisper_transcribe() {
-	# Speech -> text. A cloud transcription model (Configure -> Plat) answers
-	# first, so the phone's slow whisper.cpp is the fallback rather than the
-	# whole path. Raw audio bytes in (any container ffmpeg reads), the transcript
-	# out. '' on any failure, so a caller only has to check for text.
+# The warm whisper.cpp server's loopback port. It is an accelerator for this
+# machine, never a service offered to the network.
+sub whisper_server_port { return 8178; }
+
+# A warm server keeps the model loaded, so a clip skips the model load the
+# one-shot CLI pays on every call. '' when it is not running or did not answer.
+sub whisper_server_transcribe() {
+	my ($raw) = @_;
+	return '' unless defined $raw && length $raw;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 30, request_timeout => 45);
+	my $tx = eval {
+		$ua->post('http://127.0.0.1:' . &whisper_server_port() . '/inference' => form => {
+			file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
+			response_format => 'json'
+		});
+	};
+	return '' unless $tx && !$tx->error && $tx->res->is_success;
+	my $d = eval { $tx->res->json } || {};
+	my $text = $d->{'text'} || '';
+	$text =~ s/\r//g;
+	$text =~ s/^\s+|\s+$//g;
+	$text =~ s/\n+/ /g;
+	return $text;
+}
+
+# The one-shot CLI path. It is also the local path on a machine whose warm
+# server is not up yet.
+sub whisper_cli_transcribe() {
 	my ($raw) = @_;
 	return '' unless $raw;
-	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
-	foreach my $m ( grep { $_ } ($primary, $fallback) ) {
-		my $text = &ai_transcribe_cloud($m, $raw);
-		next if $text && &subs::voice_silence_hallucination($text);
-		return $text if $text;
-	}
 	require IPC::Open3;
 	require Symbol;
 	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
@@ -5435,11 +5452,41 @@ sub whisper_transcribe() {
 	$text =~ s/\r//g;
 	$text =~ s/^\s+|\s+$//g;
 	$text =~ s/\n+/ /g;
-	if (&subs::voice_silence_hallucination($text)) {
-		$log->info('voice: dropping a stock silence transcript ("' . $text . '")');
-		return '';
-	}
 	return $text;
+}
+
+sub whisper_transcribe() {
+	# Speech -> text. When the transcription role names whisper.cpp on this
+	# machine, the warm server (or the CLI) answers first and the chosen cloud
+	# model is only the fallback; with a cloud model chosen, the order is
+	# unchanged and the local path is the last resort. Raw audio bytes in (any
+	# container ffmpeg reads), the transcript out. '' on any failure or on a
+	# stock silence line, so a caller only has to check for text.
+	my ($raw) = @_;
+	return '' unless $raw;
+	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
+	my $local_chosen = scalar( grep { ($_ // '') eq 'local:whisper.cpp' } ($primary, $fallback) );
+	my $local_text = sub {
+		my $text = &whisper_server_transcribe($raw);
+		$text = &whisper_cli_transcribe($raw) unless length $text;
+		return '' unless length $text;
+		if (&subs::voice_silence_hallucination($text)) {
+			$log->info('voice: dropping a stock silence transcript ("' . $text . '")') if $log;
+			return '';
+		}
+		return $text;
+	};
+	if ($local_chosen) {
+		my $text = $local_text->();
+		return $text if length $text;
+	}
+	foreach my $m ( grep { $_ && $_ ne 'local:whisper.cpp' } ($primary, $fallback) ) {
+		my $text = &ai_transcribe_cloud($m, $raw);
+		next if $text && &subs::voice_silence_hallucination($text);
+		return $text if $text;
+	}
+	return $local_text->() unless $local_chosen;
+	return '';
 }
 
 sub voice_command_parse() {

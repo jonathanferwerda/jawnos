@@ -375,6 +375,48 @@ sub manager_starter() {
 		eval { &subs::voice_sync(); };
 	}, { name => 'voice sync' });
 
+	# A warm whisper.cpp server on loopback keeps the speech model loaded, so a
+	# clip skips the per-call model load the one-shot CLI pays. A machine without
+	# the binary or a model simply checks again later; whisper_transcribe falls
+	# back to the CLI or the cloud when the port is quiet. The server logs to its
+	# own file so a long-running tree's manager.log does not grow with every clip.
+	&subs::subprocessor(sub {
+		sleep 30;
+		while (1) {
+			my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-server');
+			my $model = &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
+			$model = &subs::home('~/whisper.cpp/models/ggml-base.bin') unless -e $model;
+			if (-x $bin && -e $model) {
+				my $port = &subs::whisper_server_port();
+				# A server already listening there (started by hand, or this loop's
+				# own previous run not yet gone) is left alone.
+				require IO::Socket::INET;
+				my $probe = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
+				if ($probe) {
+					close $probe;
+					sleep 60;
+					next;
+				}
+				my $log = &subs::home('~/whisper-server.log');
+				my $log_fh;
+				open($log_fh, '>>', $log);
+				my $pid = fork();
+				if (!$pid) {
+					open(STDOUT, '>&', $log_fh) if $log_fh;
+					open(STDERR, '>&', $log_fh) if $log_fh;
+					exec($bin, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert');
+					exit 1;
+				}
+				waitpid($pid, 0) if $pid > 0;
+				close($log_fh) if $log_fh;
+				sleep 15;
+			}
+			else {
+				sleep 300;
+			}
+		}
+	}, { name => 'whisper server' });
+
 	# The provider balances shown in Configure -> Sys. Only OpenRouter and DeepSeek
 	# publish an account balance, so this reads what it can and caches it for the
 	# page to show; a page load never waits on a provider. First pass soon after

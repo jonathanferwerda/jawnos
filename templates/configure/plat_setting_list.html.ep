@@ -94,6 +94,12 @@
 					push @role_models, { %{$m}, group => $provider->{'label'} };
 				}
 			}
+			# whisper.cpp on this machine is a transcription choice like any other:
+			# it answers locally (warm when the server is running) and costs nothing,
+			# so it belongs in both the model and fallback lists.
+			if ($setting eq 'transcription_assistant' && -x &subs::home('~/whisper.cpp/build/bin/whisper-cli')) {
+				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0, group => 'This machine', caps => ['audio'] };
+			}
 		%>
 			<div class="ai_role" setting="<%= $setting %>">
 				<div class="cfg-row">
@@ -114,6 +120,11 @@
 								%>
 									<option value="<%= $m->{'value'} %>" data-thinks="<%= ($thinking_cap && $thinks_of->($m->{'value'})) ? 1 : 0 %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
 								<% } %>
+							</optgroup>
+						<% } %>
+						<% if ($setting eq 'transcription_assistant' && -x &subs::home('~/whisper.cpp/build/bin/whisper-cli')) { %>
+							<optgroup label="This machine">
+								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · this machine · free</option>
 							</optgroup>
 						<% } %>
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>
