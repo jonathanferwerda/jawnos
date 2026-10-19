@@ -31,7 +31,8 @@
 		z-index: 60002;
 	}
 	#locked_send_phone,
-	#locked_fingerprint {
+	#locked_fingerprint,
+	#locked_biometric {
 		margin-top: 6px;
 		font-size: 15px;
 		padding: 6px 12px;
@@ -40,7 +41,8 @@
 		background-color: #222;
 		color: #f4f4f4;
 	}
-	#locked_fingerprint {
+	#locked_fingerprint,
+	#locked_biometric {
 		background-color: #2b6;
 		border-color: #2b6;
 		color: #08110a;
@@ -96,7 +98,7 @@
 <div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
 <div id="locked_padlock">
-	<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0 %>
+	<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0, biometric_button => 0 %>
 </div>
 
 <div id="locked_help">
@@ -104,6 +106,9 @@
 	<button id="locked_send_phone" type="button">Send the unlock page to my phone</button>
 	<% if ($fingerprint) { %>
 		<button id="locked_fingerprint" type="button">Use this computer's fingerprint</button>
+	<% } %>
+	<% if (&subs::device_setter() eq 'mobile') { %>
+		<button id="locked_biometric" type="button">Use this phone's fingerprint</button>
 	<% } %>
 	<div id="locked_phone_status"></div>
 </div>

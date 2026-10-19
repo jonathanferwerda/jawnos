@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 	uuid VARCHAR(255) unique,
 	name VARCHAR(255),
 	pubkey LONGTEXT,
+	bio_pubkey LONGTEXT,
 	privilege VARCHAR(25),
 	status VARCHAR(25),
 	timestamp VARCHAR(25),

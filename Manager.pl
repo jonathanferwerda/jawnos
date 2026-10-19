@@ -9064,6 +9064,8 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_state' ||
 		$path eq '/manager/security/fingerprint_unlock' ||
+		$path eq '/manager/security/biometric_challenge' ||
+		$path eq '/manager/security/biometric_unlock' ||
 		$path eq '/manager/security/padlock_key');
 
 	# A request that started while the lock screen was up can reach here after
@@ -26955,6 +26957,8 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_state';
 	return 1 if $path eq '/manager/security/padlock_key';
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
+	return 1 if $path eq '/manager/security/biometric_challenge';
+	return 1 if $path eq '/manager/security/biometric_unlock';
 	return 0;
 }
 
@@ -27157,6 +27161,108 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	my $device = $c->session('device_uuid') || '';
 	my $opened = &padlock_mark_unlocked($c, 'locker', $device);
 	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
+};
+
+# --- local biometric unlock ------------------------------------------------
+# The phone's Android app keeps an EC P-256 key in the Android Keystore with
+# setUserAuthenticationRequired: the OS will not use it until the person passes
+# the fingerprint prompt. The house verifies the key's signature, so this is a
+# real factor - unlike the JS confirmation the phone-as-key page uses - and it
+# is the one signature a local request may present. It opens only the screen it
+# is on, never another device and never the whole house.
+sub biometric_nonce_take {
+	my ($purpose, $device_uuid, $nonce) = @_;
+	return 0 unless defined $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
+	my $stamp = $purpose . ':' . $device_uuid . ':' . $nonce;
+	my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'padlock_bio_nonce', $stamp)->hashes->[0];
+	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - 60000;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_bio_nonce', $stamp);
+	return 1;
+}
+
+post '/manager/security/biometric_challenge' => sub ($c) {
+	my $purpose = $c->param('purpose') || 'unlock';
+	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock)$/;
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $fails = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'padlock_bio_fail', $ip . ':%', $now - 300000)->hash->{'n'} || 0;
+	if ($fails >= 5) { return $c->render(json => { ok => 0, error => 'too many' }); }
+	my $recent = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'padlock_bio_challenge', $ip . ':%', $now - 60000)->hash->{'n'} || 0;
+	if ($recent >= 20) { return $c->render(json => { ok => 0, error => 'too many' }); }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_challenge', app => '__president', server_time => $now, timestamp => $now });
+	my $nonce = &subs::random_string_creator(40);
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_bio_nonce', $now - 120000);
+	&subs::db_insert('cache', { uuid => $purpose . ':' . $device_uuid . ':' . $nonce, context => 'padlock_bio_nonce', app => '__president', server_time => $now, timestamp => $now });
+	$c->render(json => { ok => 1, nonce => $nonce, seconds => 60 });
+};
+
+# Enrollment is bound to the device's existing Ed25519 key: the page signs the
+# new public key with the key it was paired with. The EC key itself is made by
+# the Android app only after its own biometric prompt.
+post '/manager/security/biometric_enroll' => sub ($c) {
+	return $c->render(json => { ok => 0, error => 'locked' }) if &padlock_locked_now($c);
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
+	my $nonce = $c->param('nonce') || '';
+	my $device_sig = $c->param('device_signature') || '';
+	my $pubkey = $c->param('pubkey') || '';
+	return $c->render(json => { ok => 0, error => 'bad key' }) unless &subs::ecdsa_public_key_ok($pubkey);
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $fresh = &biometric_nonce_take('enroll', $device_uuid, $nonce);
+	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
+	my $msg = join("\n", 'padlock-bio-enroll', $device_uuid, $nonce, &subs::sha256_hex($pubkey));
+	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $device_sig)) {
+		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
+		$log->info('padlock: biometric enrollment refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	&subs::db_update('paired_devices', { bio_pubkey => $pubkey }, { uuid => $device_uuid });
+	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_bio_fail', $ip . ':%');
+	$log->info('padlock: biometric key enrolled for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+	$c->render(json => { ok => 1, device_uuid => $device_uuid });
+};
+
+post '/manager/security/biometric_unlock' => sub ($c) {
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
+	return $c->render(json => { ok => 0, error => 'no biometric key' }) unless $device->{'bio_pubkey'};
+	my $nonce = $c->param('nonce') || '';
+	my $signature = $c->param('signature') || '';
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $fresh = &biometric_nonce_take('unlock', $device_uuid, $nonce);
+	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
+	my $msg = join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
+	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)) {
+		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
+		$log->info('padlock: biometric signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_bio_fail', $ip . ':%');
+	# only the screen this key belongs to; a whole-house lock keeps the other
+	# screens locked on the house-wide stamp
+	my $opened = &padlock_mark_unlocked($c, 'locker', $device_uuid);
+	# the authoritative lock may live on another peer: hand the open over the
+	# signed rail, the same way a phone-as-key unlock does
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&remote_relay_request($c, {
+			override => 'manual',
+			url => '/manager/security/padlock_open_peer',
+			type => 'get',
+			dissemination => 'yes',
+			params => { signatorial => &subs::signatorial_designer(), target => $device_uuid, mode => 'locker' },
+		});
+	}, { name => 'padlock biometric relay' });
+	$log->info('padlock: biometric open by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $device_uuid });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
@@ -31321,7 +31427,10 @@ sub update_database($data) {
 		# carries the public key (schema.sql has it for a fresh database).
 		'alter table remote_machines add column pubkey LONGTEXT',
 		# paired devices: the browsers and phones a citizen has signed in once
-		'create table if not exists paired_devices (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, privilege VARCHAR(25), status VARCHAR(25), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25), last_seen VARCHAR(25), agent VARCHAR(500))',
+		'create table if not exists paired_devices (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, bio_pubkey LONGTEXT, privilege VARCHAR(25), status VARCHAR(25), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25), last_seen VARCHAR(25), agent VARCHAR(500))',
+		# a phone that has enrolled its biometric key: an EC P-256 key in the
+		# Android Keystore that the OS releases only after the person authenticates
+		'alter table paired_devices add column bio_pubkey LONGTEXT',
 		# device approvals: an ask that waits for a citizen, with the short code
 		# shown on both screens (merges like the roster it becomes)
 		'create table if not exists device_requests (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, agent VARCHAR(500), code VARCHAR(25), status VARCHAR(25), device_uuid VARCHAR(255), remote_address VARCHAR(255), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25))',

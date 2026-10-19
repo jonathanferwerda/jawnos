@@ -52,6 +52,27 @@ $(document).on('change', '#padlock_gate', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_gate', 'value': $(this).val() });
 });
 
+// The phone's own biometric unlock: the Android app makes a Keystore key that
+// the OS releases only after the fingerprint prompt, and registers its public
+// half here. The locked page can also enroll on the spot.
+$(document).on('click', '#padlock_biometric_enroll_button', function() {
+	var button = $(this);
+	var status = $('#padlock_biometric_status');
+	if (typeof jawnosBiometricEnroll !== 'function') {
+		status.text('Fingerprint unlock is not available in this app.');
+		return;
+	}
+	button.prop('disabled', true);
+	status.text('Waiting for your fingerprint...');
+	jawnosBiometricEnroll(function (text) { status.text(text); }).then(function() {
+		button.prop('disabled', false);
+		status.text('Enrolled. This phone can unlock its own screen with your fingerprint.');
+	}).catch(function(err) {
+		button.prop('disabled', false);
+		status.text((typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : 'Fingerprint enrollment failed.');
+	});
+});
+
 
 $(document).on('click', '.security_view_select', function() {
 	var view = $(this).attr('view');

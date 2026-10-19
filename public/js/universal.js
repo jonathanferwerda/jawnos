@@ -816,6 +816,142 @@ function jawnosReloadIcons() {
 	} catch (e) {}
 }
 
+// ---- local biometric unlock ---------------------------------------------------
+// The Android app holds an EC P-256 key in Android Keystore that the OS releases
+// only after a fingerprint prompt (window.JawnBiometricKey). The house verifies
+// the signature, so this is a real factor and the one local signature the
+// padlock accepts: it opens only the screen the key belongs to.
+function jawnosB64(buf) {
+	var bytes = new Uint8Array(buf);
+	var s = '';
+	for (var i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
+	return btoa(s);
+}
+function jawnosSha256Hex(text) {
+	return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(function (buf) {
+		return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+			return ('0' + b.toString(16)).slice(-2);
+		}).join('');
+	});
+}
+function jawnosDeviceKeyGet() {
+	return new Promise(function (res, rej) {
+		var r = indexedDB.open('jawn_device', 1);
+		r.onupgradeneeded = function () { r.result.createObjectStore('keys'); };
+		r.onsuccess = function () {
+			var db = r.result;
+			var tx = db.transaction('keys', 'readonly');
+			var q = tx.objectStore('keys').get('device_key');
+			q.onsuccess = function () { res(q.result); };
+			q.onerror = function () { rej(q.error); };
+		};
+		r.onerror = function () { rej(r.error); };
+	});
+}
+function jawnosBiometricKeyCall(method, args) {
+	return new Promise(function (resolve, reject) {
+		if (!window.JawnBiometricKey) { reject({ error: 'unavailable' }); return; }
+		var done = false;
+		window.jawnosBiometricKeyResult = function (res) {
+			if (done) { return; }
+			done = true;
+			window.jawnosBiometricKeyResult = null;
+			resolve(res || { ok: false, error: 'failed' });
+		};
+		try {
+			if (method === 'enroll') { window.JawnBiometricKey.enroll(args[0] || 'Set up fingerprint unlock'); }
+			else if (method === 'sign') { window.JawnBiometricKey.sign(args[0], args[1] || 'Unlock the house'); }
+			else if (method === 'hasKey') { window.JawnBiometricKey.hasKey(); }
+			else { done = true; reject({ error: 'unavailable' }); }
+		}
+		catch (e) { done = true; window.jawnosBiometricKeyResult = null; reject({ error: 'unavailable' }); }
+	});
+}
+// Make (or rotate) the phone's biometric key and register its public half with
+// the house. The enrollment message is signed by the device's existing pairing
+// key, so a page that merely knows a UUID cannot register a key.
+function jawnosBiometricEnroll(status) {
+	status = status || function () {};
+	var uuid = localStorage.getItem('device_uuid') || '';
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
+	status('Waiting for your fingerprint...');
+	return jawnosDeviceKeyGet().then(function (key) {
+		if (!key) { throw { error: 'not paired' }; }
+		return jawnosBiometricKeyCall('enroll', ['Set up fingerprint unlock']);
+	}).then(function (res) {
+		if (!res || !res.ok || !res.pubkey) { throw { error: (res && res.error) || 'unavailable' }; }
+		var pubkey = res.pubkey;
+		return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'enroll' }).then(function (ch) {
+			if (!ch || !ch.ok || !ch.nonce) { throw { error: 'challenge' }; }
+			return jawnosSha256Hex(pubkey).then(function (hash) {
+				var msg = 'padlock-bio-enroll\n' + uuid + '\n' + ch.nonce + '\n' + hash;
+				return jawnosDeviceKeyGet().then(function (key) {
+					return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg));
+				}).then(function (sig) {
+					return $.post('/manager/security/biometric_enroll', {
+						device_uuid: uuid, nonce: ch.nonce, device_signature: jawnosB64(sig), pubkey: pubkey
+					});
+				});
+			});
+		});
+	}).then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		return res;
+	});
+}
+function jawnosBiometricUnlock(mode, target, status) {
+	status = status || function () {};
+	mode = mode || 'locker';
+	var uuid = localStorage.getItem('device_uuid') || '';
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
+	function once() {
+		return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'unlock' }).then(function (ch) {
+			if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'challenge' }; }
+			var msg = 'padlock-bio-unlock\n' + uuid + '\n' + ch.nonce;
+			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Unlock the house']).then(function (res) {
+				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+				return $.post('/manager/security/biometric_unlock', {
+					device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, target: target || uuid
+				});
+			});
+		});
+	}
+	status('Touch the fingerprint reader...');
+	return once().then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		return res;
+	});
+}
+function jawnosBiometricError(err) {
+	var e = (err && err.error) || '';
+	if (e === 'unavailable') { return 'Fingerprint unlock is not available in this app.'; }
+	if (e === 'not paired') { return 'This phone is not paired to the house.'; }
+	if (e === 'no biometric key') { return 'No fingerprint is enrolled. Set it up under Security before locking.'; }
+	if (e === 'no key') { return 'No fingerprint is enrolled. Set it up under Security before locking.'; }
+	if (e === 'invalidated') { return 'The fingerprint key was reset. Use the recovery code, then enroll it again.'; }
+	if (e === 'too many' || e === 'locked') { return 'Too many attempts. Try again later.'; }
+	if (e === 'no challenge') { return 'The unlock challenge expired. Try again.'; }
+	return 'Fingerprint not accepted.';
+}
+$(document).on('click', '.padlock_biometric, #locked_biometric', function () {
+	var button = $(this);
+	var frame = button.closest('.padlock_frame');
+	var note = frame.length ? frame.find('.padlock_fingerprint_status') : $('#locked_phone_status');
+	button.prop('disabled', true);
+	if (note.length) { note.text('Touch the fingerprint reader...'); }
+	jawnosBiometricUnlock('locker', localStorage.getItem('device_uuid') || '', function (t) {
+		if (note.length) { note.text(t); }
+	}).then(function () {
+		if (note.length) { note.text('Unlocked. Loading...'); }
+		window.location.reload();
+	}).catch(function (err) {
+		button.prop('disabled', false);
+		if (note.length) { note.text(jawnosBiometricError(err)); }
+	});
+});
+
 // ---- icon hints: hover label on desktop, long-press label on touch ------------
 // Any element with a `hint="..."` attribute shows a small floating label when
 // hovered (pointer devices) or long-pressed (touch). Draggable elements are

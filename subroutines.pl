@@ -16,6 +16,8 @@ use Time::Piece;
 use Time::Local;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use Crypt::Simple;
+use Crypt::PK::ECC;
+use Digest::SHA qw(sha256_hex);
 use File::Slurp;
 use File::Find;
 use File::Copy;
@@ -15904,6 +15906,35 @@ sub signature_verify {
 	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
 	unlink $msg_file, $sig_file, $key_file;
 	return $ok ? 1 : 0;
+}
+
+# Verify an ECDSA P-256 signature (base64 DER) over a message against an SPKI
+# DER public key (base64). The phone's biometric key is an Android Keystore EC
+# key: the OS releases it only after the person authenticates, so a valid
+# signature is a real factor rather than a client-side confirmation.
+sub ecdsa_verify {
+	my ($pubkey_b64, $msg, $sig_b64) = @_;
+	return 0 unless defined $pubkey_b64 && length $pubkey_b64;
+	my $der = eval { decode_base64($pubkey_b64) } || '';
+	my $sig = eval { decode_base64($sig_b64) } || '';
+	return 0 unless length $der && length $sig;
+	my $pk = eval { Crypt::PK::ECC->new(\$der, 'DER') };
+	return 0 unless $pk;
+	my $ok = eval { $pk->verify_message($sig, $msg, 'SHA256') };
+	return $ok ? 1 : 0;
+}
+
+# The public half is accepted only if it is an EC key on P-256, the curve the
+# Android Keystore key is made on.
+sub ecdsa_public_key_ok {
+	my ($pubkey_b64) = @_;
+	return 0 unless defined $pubkey_b64 && length $pubkey_b64;
+	my $der = eval { decode_base64($pubkey_b64) } || '';
+	return 0 unless length $der;
+	my $pk = eval { Crypt::PK::ECC->new(\$der, 'DER') };
+	return 0 unless $pk;
+	my $jwk = eval { decode_json($pk->export_key_jwk('public')) } || {};
+	return (($jwk->{'kty'} // '') eq 'EC' && ($jwk->{'crv'} // '') eq 'P-256') ? 1 : 0;
 }
 
 # --- the recovery code --------------------------------------------------------

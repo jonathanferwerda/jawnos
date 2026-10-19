@@ -28,6 +28,12 @@
 			<br>
 			<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
 				style="display:inline-block;margin-top:10px;font-size:15px;">Phone unlock page</a>
+			<% if (&subs::device_setter() eq 'mobile') { %>
+				<div id="padlock_biometric_enroll" style="margin-top:14px;">
+					<button id="padlock_biometric_enroll_button" type="button">Enroll this phone's fingerprint</button>
+					<div id="padlock_biometric_status" style="font-size:14px;margin-top:6px;"></div>
+				</div>
+			<% } %>
 		</div>
 		<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
 		<select id="padlock_contexts" multiple title="General is the whole house; the others are per-app." value="<%= join ',', @{$selected_contexts} %>" style="position:absolute;right:0px;bottom:40px;height:100px;">

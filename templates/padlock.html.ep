@@ -5,6 +5,7 @@
 <% my $frame_target = $c->stash('target') || ''; %>
 <% my $show_phone = defined $c->stash('phone_button') ? $c->stash('phone_button') : 1; %>
 <% my $show_fingerprint = ($c->stash('fingerprint') && (defined $c->stash('fingerprint_button') ? $c->stash('fingerprint_button') : 1)) ? 1 : 0; %>
+<% my $show_biometric = (&subs::device_setter() eq 'mobile' && (defined $c->stash('biometric_button') ? $c->stash('biometric_button') : 1)) ? 1 : 0; %>
 <% my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' }) || '/images/jbuttons/logo1.png'; %>
 <div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
@@ -16,6 +17,10 @@
 	<% } %>
 	<% if ($show_fingerprint) { %>
 		<button type="button" class="padlock_fingerprint">Use this computer's fingerprint</button>
+		<div class="padlock_fingerprint_status"></div>
+	<% } %>
+	<% if ($show_biometric) { %>
+		<button type="button" class="padlock_biometric">Use this phone's fingerprint</button>
 		<div class="padlock_fingerprint_status"></div>
 	<% } %>
 	<% if ($frame_mode ne 'security') { %>
@@ -46,7 +51,8 @@
 			margin: 8px 0;
 		}
 		.padlock_ask_phone,
-		.padlock_fingerprint {
+		.padlock_fingerprint,
+		.padlock_biometric {
 			display: block;
 			margin: 10px auto 0 auto;
 			font-size: 16px;
@@ -57,7 +63,8 @@
 			color: #000;
 			cursor: pointer;
 		}
-		.padlock_fingerprint {
+		.padlock_fingerprint,
+		.padlock_biometric {
 			background-color: #2b6;
 			border-color: #2b6;
 			color: #08110a;
@@ -81,8 +88,7 @@
 		}
 		@media screen and (max-width:900px) {
 			.padlock_ask_phone,
-			.padlock_fingerprint,
-			.padlock_fingerprint_status { display: none; }
+			.padlock_fingerprint { display: none; }
 			.padlock_phone_key { display: block; }
 		}
 		.padlock_screensaver {
