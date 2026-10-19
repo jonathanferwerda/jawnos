@@ -375,6 +375,7 @@ our %topic = (
 	},
 	'budget' => {
 		title => 'Budget', category => 'apps', app => 'budget',
+		verified => '2026-10-18',
 		summary => 'Statement, budgets, a document ledger and a daily sheet.',
 		body => [
 			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, and a daily sheet.',
