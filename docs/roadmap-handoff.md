@@ -139,8 +139,9 @@ Still to do:
   without the loading animation when a session is already held (target <1s).
 - Gate polish: **Admin Panel** button on the gate, the logo at the top, and the
   logo-with-glow splash while the webapp loads (pairs with the app item above).
-- **The padlock is not a gate yet** — it is a client overlay; every route still
-  answers behind it. See *JawnOS as the OS / session* below for the real plan.
+- **The padlock is a server-side gate now (P0, v0.1.802+).** Shadow logs what
+  it would refuse; Enforce answers `423` and the locked page. The session-level
+  work (P1/P2) below is what remains.
 
 ## JawnOS as the OS / session — the real gate
 
@@ -223,7 +224,9 @@ before any compositor work, and it is small.
   user out of a running machine.
 - Already done and kept: auto-show on the phone (v0.1.792), rejoin after sleep
   (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793). The dial and
-  the camera watch (v0.1.792) were removed in v0.1.804.
+  the camera watch (v0.1.792) were removed in v0.1.804. A mobile tab that
+  connects while the house is locked reads `padlock_state` and opens the unlock
+  page (v0.1.808), so a phone that slept through the lock still gets there.
 - **Landed in v0.1.802.** Shadow logged real requests and still served;
   Enforce answered a document with `423` and the locked page; the dial (since
   removed) unlocked; the websocket drops data pushes while locked; a throwaway
