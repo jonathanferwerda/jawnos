@@ -535,7 +535,12 @@ html, body {
 	border-color: var(--line);
 	padding-top:-25px;
 	z-index:6000;
+	/* the box wears the taskbar clock's face and ink, so the two read as one
+	   family instead of the generic input's darker --panel-2 */
+	background-color: var(--panel);
+	color: var(--ink);
 }
+#search::placeholder { color: var(--ink); opacity: 1; }
 #top_right_buttons {
 	height: 46px;
 	width: 320px;
