@@ -60,12 +60,12 @@
 	<div style="border-top:1px solid rgba(128,128,128,.35);margin:6px 0;"></div>
 	<table style="border-collapse:collapse;width:100%;opacity:.9;">
 		<tr>
-			<td style="white-space:nowrap;padding-right:8px;">Budget vs typical</td>
+			<td style="white-space:nowrap;padding-right:8px;">Budget vs typical<%= ($improvement->{'share'} // 1) < 1 ? ' so far' : '' %></td>
 			<td style="text-align:right;font-weight:600;white-space:nowrap;"><%= $improvement->{'overall'} %></td>
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'overall_percentage'}) %></td>
 		</tr>
 		<tr>
-			<td style="white-space:nowrap;padding-right:8px;">This <%= $scope %> vs budget</td>
+			<td style="white-space:nowrap;padding-right:8px;">This <%= $scope %> vs budget<%= ($improvement->{'share'} // 1) < 1 ? ' so far' : '' %></td>
 			<td style="text-align:right;font-weight:600;white-space:nowrap;"><%= $diff %></td>
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'percentage'}) %></td>
 		</tr>
