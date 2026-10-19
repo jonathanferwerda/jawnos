@@ -9014,6 +9014,9 @@ post '/manager/lock_session' => sub($c) {
 sub lock_session($c, $explicit = 0) {
 	my $now = &subs::rightNow();
 	my $device_uuid = $c->session('device_uuid') || '';
+	# pl_time is a house-wide stamp, so it is sealed under the house key, not a
+	# session's copy: a fresh tab must be able to read the same timer.
+	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	my ($db) = &subs::database_grabber();
 
 	# The phone key talks to the server while the padlock is up. Those calls are
@@ -9032,7 +9035,7 @@ sub lock_session($c, $explicit = 0) {
 	# request's setting memo may be older than that unlock) and leave it be.
 	unless ($explicit) {
 		my $fresh_row = &subs::db_query("select value from settings where app = ? and setting = ? order by server_time desc limit 1", '__president', 'pl_time')->hashes->[0];
-		my $fresh = $fresh_row ? (&subs::decrypter(&subs::session_suds($c), $fresh_row->{'value'}) || 0) : 0;
+		my $fresh = $fresh_row ? (&subs::decrypter($suds, $fresh_row->{'value'}) || 0) : 0;
 		return if $fresh > $now;
 	}
 
@@ -9043,14 +9046,14 @@ sub lock_session($c, $explicit = 0) {
 	if ($explicit && $device_uuid) {
 		my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 		$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
-		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now + $activity_timeout) });
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $now + $activity_timeout) });
 		&subs::db_delete('security', { level => 'padlock_device', uuid => $device_uuid });
 		&subs::db_insert('security', { level => 'padlock_device', credential => '', timestamp => $now, server_time => $now, uuid => $device_uuid });
 		delete $padlock_device_memo{$device_uuid};
 		$target = $device_uuid;
 	}
 	else {
-		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now ) });
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $now ) });
 	}
 	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
 		&subs::setting_deleter({ app => 'gallery', setting => 'combo_unlock' });
@@ -26851,7 +26854,7 @@ sub padlock_global_locked {
 	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
-	my $pl = $row ? (&subs::decrypter(&subs::session_suds($c), $row->{'value'}) || 0) : 0;
+	my $pl = $row ? (&subs::decrypter(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
 	return (&subs::rightNow() > $pl) ? 1 : 0;
 }
 
@@ -26898,7 +26901,7 @@ sub padlock_mark_unlocked {
 	$mode ||= 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
-	my $suds = &subs::session_suds($c) || $gb::suds;
+	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
@@ -27068,10 +27071,10 @@ sub padlock_time_extender($c) {
 			if ($attempts < 5) {
 				my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 				$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
-				my $padlock_time = &subs::decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
+				my $padlock_time = &subs::decrypter(&subs::suds_grabber(), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
 				if ($padlock_time > $server_time) {
 					my $new_time = $server_time + $activity_timeout;
-					&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $new_time) });
+					&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::suds_grabber(), $new_time) });
 					$c->session('pl_time' => $new_time);
 				}
 			}
@@ -28390,26 +28393,28 @@ sub authentication_passer($c) {
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
 
-			$padlock_time = &subs::decrypter(&subs::session_suds($c), $pres_settings->{'pl_time'} ) || 0;
+			$padlock_time = &subs::decrypter(&subs::suds_grabber(), $pres_settings->{'pl_time'} ) || 0;
 
 			$c->stash('pl_time' => $padlock_time);
 		}
 
-		if ($c->session('authentication') eq 'approved' && $server_time > $padlock_time && scalar @{$padlock} > 0) {
-			&lock_session($c);
-			# lock_session re-reads the stored time: another screen may have
-			# turned the lock between this request's snapshot and the lock. Only a
-			# lock that still stands is answered from here.
-			my $gate_path = $c->req->url->path->to_string;
-			if (&padlock_locked_now($c) && !&padlock_gate_allows($gate_path)) {
-				if (&padlock_gate_mode() eq 'enforce') {
-					&padlock_gate_answer($c);
-					return;
+		my $locked_now = 0;
+		if ($c->session('authentication') eq 'approved' && scalar @{$padlock} > 0) {
+			# the house-wide inactivity timer: only when the global stamp expired
+			&lock_session($c) if $server_time > $padlock_time;
+			$locked_now = &padlock_locked_now($c);
+			if ($locked_now) {
+				my $gate_path = $c->req->url->path->to_string;
+				if (!&padlock_gate_allows($gate_path)) {
+					if (&padlock_gate_mode() eq 'enforce') {
+						&padlock_gate_answer($c);
+						return;
+					}
+					&padlock_gate_shadow($c);
 				}
-				&padlock_gate_shadow($c);
 			}
 		}
-		elsif ($c->session('source') eq 'ticket' && $c->session('authentication') eq 'approved') {
+		if (!$locked_now && $c->session('source') eq 'ticket' && $c->session('authentication') eq 'approved') {
 			my $tick = &subs::db_query('select * from tickets where uuid=?', $c->session('ticket_uuid') );
 			my $ticket = $tick->hashes->[0];
 			$c->stash('debriefer' => $ticket->{'debriefer'});
