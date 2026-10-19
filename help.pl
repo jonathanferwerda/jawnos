@@ -576,7 +576,7 @@ our %topic = (
 		verified => '2026-10-19',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
-			'Configure is where the desktop is made yours. Appearance (colour schemes, texture, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
+			'Configure is where the desktop is made yours. Appearance (colour schemes, font, texture, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
 			'The Dev panel lists the devices by the network they are on: a section per network, named by its subnet, with the machines and interfaces that reach it and a table of the devices found there. Scan sweeps the local network first, so a device nobody has talked to yet - a printer, a fresh appliance - still appears and can be given its purpose.',
 			'The Dev panel carries the mesh switch too. Sync topology sets how this house talks to itself: Auto keeps the hub in charge while the server is live and falls back to a full mesh when it is not, Mesh makes every peer dial every other peer, and Hub only makes the spokes dial the server. The choice is a house setting - every machine picks it up on its next sync - and Auto still lets machines on the same network talk directly.',
 			'A device that is off its network but bridged over Bluetooth is listed too, in a Bluetooth card below the machines: its name, purpose, radio address and when the bridge last heard it, so the fleet\'s radios are visible even when they are on no network of yours. The card\'s Scan now button asks the bridge to look for a JawnOS radio immediately; adoption otherwise happens on its own every 30 seconds. A machine with no screen of its own - a headless server - lists the devices it can see the same way, with no browser involved.',
@@ -777,7 +777,7 @@ our %topic = (
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
 			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
-			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), sandglass, glass, paper, fabric, wood or metal — sized to its own name so the whole name fits, with the name printed in black or white (tinted with the app\'s colour) so it reads on the pane.'
+			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.'
 		],
 		related => [ 'appointments', 'tasks' ]
 	},

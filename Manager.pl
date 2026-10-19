@@ -12462,6 +12462,10 @@ sub manager_reset($c) {
 	my $server_time = $c->param('server_time') || &subs::rightNow() || $timestamp;
 	$c->param('server_time' => $server_time);
 	my $type = $c->param('type');
+	# the type the request named, before the branches below rewrite $type: a
+	# start/stop moves which appointment owns the desktop theme, and the push at
+	# the foot of this sub repaints every open manager at once
+	my $theme_movement = $type || '';
 #	($app,undef,$type) = &subs::typesetter($app);
 	$type = $type || $c->param('type');
 	my $init = &subs::setting_initializer($app,$timestamp);
@@ -13262,6 +13266,7 @@ sub manager_reset($c) {
 	#	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });
 	}
 	&subs::file_encrypter({ app => $app, suds => &subs::session_suds($c) });
+	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
 	return $returner;
 }
 
@@ -13298,6 +13303,8 @@ post '/manager/configure/stop_all_appointments' => sub($c) {
 			uuid => $a->{'uuid'}
 		});
 	}
+	# stopping every running start/record changes which theme owns the desktop
+	&subs::appointment_theme_push();
 
 	$c->render(text => 'ok');
 };

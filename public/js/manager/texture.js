@@ -347,7 +347,11 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	ctx.shadowColor = 'transparent';
 	ctx.shadowBlur = 0;
 	ctx.shadowOffsetY = 0;
-	ctx.globalAlpha = kind === 'paper' ? 0.08 : 0.12;
+	// the app colour is the garment, as it is on the title bar: the material is
+	// the 20% left over, and its grain and sheen carry the rest of the texture.
+	// The old 0.12 let the neutral pane swallow the colour, so every glass or
+	// paper pill looked the same grey.
+	ctx.globalAlpha = 0.8;
 	ctx.fillStyle = colour;
 	ctx.fill();
 	ctx.globalAlpha = 1;

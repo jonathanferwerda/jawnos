@@ -42,6 +42,10 @@ sub alarm_clock() {
 	if ( $dber ) {
 		my $timestamp = &subs::rightNow();
 		$last_moment = &subs::rightNow();
+		# set when this pass starts or stops something: a running start/record can
+		# change which appointment owns the desktop theme, so the manager is told
+		# once, after every row in the pass has been written
+		my $theme_movement = 0;
 		my $next_moment = $last_moment + (2 * 1000);
 		my $query = &subs::db_query('select * from appointments where (timestamp <= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp <= ? and stop_seen is null ) order by timestamp',
 			$next_moment, 'start','record','video','audio','screen',$next_moment);
@@ -105,6 +109,7 @@ sub alarm_clock() {
 				my $type = $a->{'type'};
 
 				if ($a->{'stop_timestamp'} && $a->{'stop_timestamp'} <= $timestamp && grep { $a->{'type'} eq $_ } qw/start video audio screen record/) {
+					$theme_movement = 1;
 
 					if ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') {
 						if ($a->{'type'} eq 'record') {
@@ -153,6 +158,7 @@ sub alarm_clock() {
 
 				}
 				elsif ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') {
+					$theme_movement = 1;
 					&subs::intelligent_automation_toggle({ app => $a->{'app'}, 'state' => 'on', timestamp => $a->{'timestamp'} });
 
 					my $sources = &subs::db_select('appointments', undef, { source_uuid => $a->{'uuid'} })->hashes;
@@ -188,7 +194,8 @@ sub alarm_clock() {
 
 				}
 				elsif ($a->{'type'} eq 'stop' || $a->{'type'} eq 'cancel') {
-					&subs::intelligent_automation_toggle({ app => $a->{'app'}, 'state' => 'off', timestamp => $timestamp });		
+					$theme_movement = 1;
+					&subs::intelligent_automation_toggle({ app => $a->{'app'}, 'state' => 'off', timestamp => $timestamp });
 				}
 				elsif ($a->{'type'} eq 'image') {
 					my $data = decode_json $a->{'data'};
@@ -242,6 +249,7 @@ sub alarm_clock() {
 				}
 				&subs::appt_toggle_checker($app);
 			}
+			&subs::appointment_theme_push() if $theme_movement;
 		}
 
 		my $next_data = &subs::next_appointment_time({ now => $last_moment });
