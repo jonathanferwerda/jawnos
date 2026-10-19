@@ -122,7 +122,7 @@
 					<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
 					<% } else { %><span class="level_pct level_mains">&mdash;</span><% } %>
 				</div>
-				<div class="level_sub"><%= &subs::format_name($d->{'purpose'} || '') %><% if ($d->{'host'}) { %> &middot; via <%= $d->{'host'} %><% } %><% if (!$d->{'online'}) { %><% if ($d->{'seen'}) { %> &middot; last seen <%= $when->($d->{'seen'}) %><% } else { %> &middot; not answering<% } %><% } %></div>
+				<div class="level_sub"><%= &subs::format_name($d->{'purpose'} || '') %><% if ($d->{'host'}) { %> &middot; via <%= $d->{'host'} %><% } %><% if (($d->{'link'} || '') ne '') { %> &middot; <%= $d->{'link'} eq 'bluetooth' ? 'Bluetooth' : 'Wi-Fi' %><% } %><% if (!$d->{'online'}) { %><% if ($d->{'seen'}) { %> &middot; last seen <%= $when->($d->{'seen'}) %><% } else { %> &middot; not answering<% } %><% } %></div>
 				<% if (defined $pct) { %>
 					<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
 				<% } %>

@@ -2247,11 +2247,76 @@ sub embedded_levels_cached {
 sub embedded_levels_scan {
 	# One entry per chip, not per neighbour copy: the deck showed three times
 	# (two NICs and lo) when it was listed straight from the neighbour tables.
+	# A chip can also be known only to the Bluetooth bridge (chip_ids) - a watch
+	# off its WiFi - so both sightings feed the same list.
 	my $previous = &embedded_levels_cached();
 	my %old = map { ($_->{'chip_id'} || '') => $_ } grep { $_->{'chip_id'} } @{$previous};
+	my $ble = &cache_get({ app => '__president', context => 'levels', subcontext => 'ble' });
+	$ble = {} unless ref $ble eq 'HASH';
+	my $now = &rightNow();
 	my %seen;
 	my @found;
 	my $default_port = $ENV{'PORT_DOCK'} || 3000;
+
+	# One reading every five minutes, kept for three hours: enough for the same
+	# least-squares slope the machines use, without a row that grows with the
+	# cache's warranty. Both the HTTP and the Bluetooth paths land here.
+	my $entry = sub {
+		my ($d) = @_;
+		my $chip = $d->{'chip_id'};
+		my $old_row = $old{$chip} || {};
+		my @history = @{ (ref $old_row->{'history'} eq 'ARRAY') ? $old_row->{'history'} : [] };
+		if ($d->{'online'} && defined $d->{'battery'}) {
+			push @history, { t => $now, p => $d->{'battery'} + 0, s => ($d->{'status'} || '') };
+			splice @history, 0, scalar(@history) - 36 if scalar @history > 36;
+		}
+		my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 3600000 } @history ];
+		my ($pph, $charge_pph, $pph_window, $pph_points, $charge_window, $charge_points);
+		my $status_now = lc($d->{'status'} || '');
+		if ($status_now eq 'discharging' || $status_now eq 'charging') {
+			my @p = grep { ($_->{'s'} || '') eq $status_now } @{$recent};
+			my ($slope, $span, $count) = &battery_slope(\@p);
+			if (defined $slope) {
+				if ($status_now eq 'discharging' && -$slope > 0) {
+					$pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count;
+				}
+				elsif ($status_now eq 'charging' && $slope > 0) {
+					$charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count;
+				}
+			}
+		}
+		else {
+			# Older firmware sends no state; the sign of the slope still says
+			# which way the pack is going.
+			my ($slope, $span, $count) = &battery_slope($recent);
+			if (defined $slope) {
+				if ($slope < -0.01) { $pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count; }
+				elsif ($slope > 0.01) { $charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count; }
+			}
+		}
+		return {
+			chip_id => $chip,
+			name => $d->{'name'} || $d->{'model'} || $d->{'purpose'},
+			model => $d->{'model'} || '',
+			purpose => $d->{'purpose'},
+			ip => $d->{'ip'} || '',
+			bt => $d->{'bt'} || '',
+			battery => $d->{'battery'},
+			battery_mv => $d->{'mv'},
+			status => $d->{'status'},
+			link => $d->{'link'} || '',
+			history => \@history,
+			pph => $pph,
+			pph_window => $pph_window,
+			pph_points => $pph_points,
+			charge_pph => $charge_pph,
+			charge_window => $charge_window,
+			charge_points => $charge_points,
+			online => $d->{'online'} ? 1 : 0,
+			seen => $d->{'seen'} || 0,
+		};
+	};
+
 	foreach my $row ( @{ &db_select('devices')->hashes || [] } ) {
 		my $address = eval { decode_json($row->{'address'} || '{}') } || {};
 		foreach my $nic ( keys %{$address} ) {
@@ -2262,17 +2327,29 @@ sub embedded_levels_scan {
 				next unless $chip;
 				next if $seen{$chip}++;
 				my $ip = $n->{'ip'} || '';
-				next unless $ip =~ /^\d+\.\d+\.\d+\.\d+$/;
-				my $port = $n->{'PORT_DOCK'} || $default_port;
-				my ($battery, $mv, $online, $status) = (undef, undef, 0, undef);
-				my $ua = Mojo::UserAgent->new;
-				my $res = eval { $ua->connect_timeout(2)->inactivity_timeout(3)->get("http://$ip:$port/device_query")->result };
-				if ($res && $res->is_success) {
-					my $j = eval { decode_json $res->body } || {};
-					$battery = $j->{'battery'} if defined $j->{'battery'};
-					$mv = $j->{'battery_mv'} if defined $j->{'battery_mv'};
-					$status = lc($j->{'battery_status'} || '') if defined $j->{'battery_status'};
-					$online = 1;
+				$ip = '' unless $ip =~ /^\d+\.\d+\.\d+\.\d+$/;
+				my $bt = $n->{'mac_addresses'}->{'bluetooth'} || $n->{'mac'} || '';
+				my ($battery, $mv, $status, $online, $seen_at, $link) = (undef, undef, undef, 0, 0, '');
+				if ($ip) {
+					my $port = $n->{'PORT_DOCK'} || $default_port;
+					my $ua = Mojo::UserAgent->new;
+					my $res = eval { $ua->connect_timeout(2)->inactivity_timeout(3)->get("http://$ip:$port/device_query")->result };
+					if ($res && $res->is_success) {
+						my $j = eval { decode_json $res->body } || {};
+						$battery = $j->{'battery'} if defined $j->{'battery'};
+						$mv = $j->{'battery_mv'} if defined $j->{'battery_mv'};
+						$status = lc($j->{'battery_status'} || '') if defined $j->{'battery_status'};
+						$online = 1; $seen_at = $now; $link = 'wifi';
+					}
+				}
+				# The bridge's reading wins when it is newer (a board whose WiFi
+				# is asleep still answers on the link it is already holding).
+				my $b = $ble->{$chip} || {};
+				if ($b->{'seen'} && $now - $b->{'seen'} < 900000 && $b->{'seen'} >= $seen_at) {
+					$battery = $b->{'battery'} if defined $b->{'battery'};
+					$mv = $b->{'battery_mv'} if defined $b->{'battery_mv'};
+					$status = $b->{'status'} if defined $b->{'status'} && $b->{'status'} ne '';
+					$online = 1; $seen_at = $b->{'seen'}; $link = 'bluetooth';
 				}
 				my $old_row = $old{$chip} || {};
 				# An offline board keeps its last reading: a watch asleep on the
@@ -2280,59 +2357,55 @@ sub embedded_levels_scan {
 				$battery = $old_row->{'battery'} unless defined $battery;
 				$mv = $old_row->{'battery_mv'} unless defined $mv;
 				$status = $old_row->{'status'} unless defined $status;
-				# One reading every five minutes, kept for three hours: enough for
-				# the same least-squares slope the machines use, without a row that
-				# grows with the cache's warranty.
-				my $now = &rightNow();
-				my @history = @{ (ref $old_row->{'history'} eq 'ARRAY') ? $old_row->{'history'} : [] };
-				if ($online && defined $battery) {
-					push @history, { t => $now, p => $battery + 0, s => ($status || '') };
-					splice @history, 0, scalar(@history) - 36 if scalar @history > 36;
-				}
-				my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 3600000 } @history ];
-				my ($pph, $charge_pph, $pph_window, $pph_points, $charge_window, $charge_points);
-				my $status_now = lc($status || '');
-				if ($status_now eq 'discharging' || $status_now eq 'charging') {
-					my @p = grep { ($_->{'s'} || '') eq $status_now } @{$recent};
-					my ($slope, $span, $count) = &battery_slope(\@p);
-					if (defined $slope) {
-						if ($status_now eq 'discharging' && -$slope > 0) {
-							$pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count;
-						}
-						elsif ($status_now eq 'charging' && $slope > 0) {
-							$charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count;
-						}
-					}
-				}
-				else {
-					# Older firmware sends no state; the sign of the slope still
-					# says which way the pack is going.
-					my ($slope, $span, $count) = &battery_slope($recent);
-					if (defined $slope) {
-						if ($slope < -0.01) { $pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count; }
-						elsif ($slope > 0.01) { $charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count; }
-					}
-				}
-				push @found, {
+				$seen_at ||= $old_row->{'seen'} || 0;
+				push @found, $entry->({
 					chip_id => $chip,
 					name => $n->{'name'} || $n->{'model'} || $purpose,
 					model => $n->{'model'} || '',
 					purpose => $purpose,
 					ip => $ip,
+					bt => $bt,
 					battery => $battery,
-					battery_mv => $mv,
+					mv => $mv,
 					status => $status,
-					history => \@history,
-					pph => $pph,
-					pph_window => $pph_window,
-					pph_points => $pph_points,
-					charge_pph => $charge_pph,
-					charge_window => $charge_window,
-					charge_points => $charge_points,
 					online => $online,
-					seen => $online ? &rightNow() : ($old_row->{'seen'} || 0),
-				};
+					seen => $seen_at,
+					link => $link,
+				});
 			}
+		}
+		# Bridge-only sightings: the watch off its access point has no neighbour
+		# row of its own, only the chip the radio named.
+		foreach my $c ( @{ (eval { decode_json($row->{'chip_ids'} || '[]') } || []) } ) {
+			my $chip = $c->{'id'} || '';
+			next unless $chip && !$seen{$chip};
+			my $purpose = $c->{'purpose'} || '';
+			next unless $purpose =~ /^(?:watch|teletype|microcontroller)$/;
+			my $b = $ble->{$chip} || {};
+			my $b_fresh = $b->{'seen'} && $now - $b->{'seen'} < 900000;
+			my $old_row = $old{$chip} || {};
+			next unless $b_fresh || $b->{'seen'} || ($c->{'ble_seen'} && $now - $c->{'ble_seen'} < 900000) || $old_row->{'battery'};
+			$seen{$chip} = 1;
+			my $battery = $b->{'battery'};
+			my $mv = $b->{'battery_mv'};
+			my $status = $b->{'status'};
+			$battery = $old_row->{'battery'} unless defined $battery;
+			$mv = $old_row->{'battery_mv'} unless defined $mv;
+			$status = $old_row->{'status'} unless defined $status;
+			push @found, $entry->({
+				chip_id => $chip,
+				name => $c->{'name'} || $old_row->{'name'} || $purpose,
+				model => $old_row->{'model'} || '',
+				purpose => $purpose,
+				ip => '',
+				bt => $c->{'bluetooth'} || '',
+				battery => $battery,
+				mv => $mv,
+				status => $status,
+				online => $b_fresh ? 1 : 0,
+				seen => $b_fresh ? $b->{'seen'} : ($b->{'seen'} || $c->{'ble_seen'} || $old_row->{'seen'} || 0),
+				link => $b_fresh ? 'bluetooth' : '',
+			});
 		}
 	}
 	&cache_set({ app => '__president', context => 'levels', subcontext => 'embedded', warranty => '-1d' },
@@ -4452,6 +4525,68 @@ sub ble_device_record() {
 	return $found;
 }
 
+# --- BLE battery -------------------------------------------------------------
+# The bridge can ask a linked board for its pack; the board answers on the same
+# NUS link. The reply is cached per chip, and the levels scan merges it with the
+# HTTP reading, so a board whose WiFi is asleep still appears. A board linked to
+# a phone is relayed by that phone's levels response, the same as any embedded
+# board it can see.
+
+sub ble_battery_note {
+	my $data = shift || {};
+	my $chip = $data->{'chip_id'} || '';
+	return unless $chip;
+	my $cache = &cache_get({ app => '__president', context => 'levels', subcontext => 'ble' });
+	$cache = {} unless ref $cache eq 'HASH';
+	$cache->{$chip} = {
+		chip_id => $chip,
+		edt => $data->{'edt'} || 'watch',
+		battery => (defined $data->{'battery'} ? $data->{'battery'} + 0 : undef),
+		battery_mv => (defined $data->{'battery_mv'} ? $data->{'battery_mv'} + 0 : undef),
+		status => lc($data->{'battery_status'} || ''),
+		mac => $data->{'mac'} || '',
+		seen => &rightNow(),
+	};
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'ble', warranty => '-1d' }, $cache);
+}
+
+sub ble_battery_poll {
+	return unless &ble_bridge_capable() && &ble_bridge_enabled();
+	my $links = &ble_links();
+	return unless %{$links};
+	# Both shapes a sighting can take: the bridge's chip_ids blob, and a
+	# neighbour entry that carries the radio address beside its IP.
+	my %want;
+	foreach my $row ( @{ &db_select('devices')->hashes || [] } ) {
+		foreach my $c ( @{ (eval { decode_json($row->{'chip_ids'} || '[]') } || []) } ) {
+			next unless $c->{'id'} && $c->{'bluetooth'};
+			$want{$c->{'id'}} ||= { id => $c->{'id'}, edt => $c->{'purpose'} || 'watch', mac => $c->{'bluetooth'} };
+		}
+		my $address = eval { decode_json($row->{'address'} || '{}') } || {};
+		foreach my $nic ( keys %{$address} ) {
+			foreach my $n ( @{ $address->{$nic}->{'neigh'} || [] } ) {
+				my $chip = $n->{'chip_id'} || '';
+				my $bt = $n->{'mac_addresses'}->{'bluetooth'} || '';
+				next unless $chip && $bt;
+				$want{$chip} ||= { id => $chip, edt => $n->{'purpose'} || 'watch', mac => $bt };
+			}
+		}
+	}
+	foreach my $w ( values %want ) {
+		# Only an already-live link: a poll must never wake or connect a board
+		# just to read its battery (or steal it from its homebase).
+		my $link = $links->{ &ble_link_key($w->{'mac'}) };
+		next unless $link && $link->{'connected'};
+		next unless &ble_may_serve($w->{'edt'}, $w->{'id'});
+		&bluetooth_sender({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $w->{'id'},
+			edt => $w->{'edt'},
+			message => { type => 'battery', chip_id => $w->{'id'}, edt => $w->{'edt'} },
+		});
+	}
+}
+
 sub ble_device_from_chip() {
 	# Build the device row device_lister hands its callers, from a chip the
 	# bridge saw. It carries what the Embedded panel and a Now Me need: the
@@ -5310,6 +5445,20 @@ sub ble_message_processor() {
 			mac => $mac || $gb::ble_primary_mac
 		});
 	}
+	# A battery reply to ble_battery_poll: cache it for the levels scan. The
+	# device may be linked to this machine alone, so this reply is what the
+	# house will see when it asks this machine's /manager/health.
+	if ($type && $type eq 'battery') {
+		&subs::ble_battery_note({
+			chip_id => $msg->{'chip_id'} || $seen_chip,
+			edt => $msg->{'edt'} || $seen_edt || 'watch',
+			battery => $msg->{'battery'},
+			battery_mv => $msg->{'battery_mv'},
+			battery_status => $msg->{'battery_status'},
+			mac => $mac || $gb::ble_primary_mac,
+		});
+		return;
+	}
 	# the newer bridge messages are dispatches, not url fetches
 	if ($type && $type eq 'relay') {
 		# A device addressing another device through the house. Route it by chip
@@ -5638,6 +5787,13 @@ sub ble_listener_start() {
 	unless ($gb::ble_enforce_timer) {
 		$gb::ble_enforce_timer = 1;
 		Mojo::IOLoop->recurring(60 => sub { eval { &ble_enforce_hosts(); }; });
+	}
+	# Ask every already-linked board for its battery on the same rhythm as
+	# the levels pass; the reply lands in ble_message_processor.
+	unless ($gb::ble_battery_timer) {
+		$gb::ble_battery_timer = 1;
+		Mojo::IOLoop->timer(8 => sub { eval { &ble_battery_poll(); }; });
+		Mojo::IOLoop->recurring(120 => sub { eval { &ble_battery_poll(); }; });
 	}
 	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;

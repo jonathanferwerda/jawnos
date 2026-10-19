@@ -749,7 +749,7 @@ our %topic = (
 		summary => 'Recently used apps, a category rail and a search.',
 		body => [
 			'The start menu opens on the apps you used most recently, with a category rail (accessories, business, games, media, system) for the whole catalogue.',
-			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see, each with charge, state, temperature, voltage and PPH, and an estimate of the time left on it (or the time to full while it is charging). A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
+			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see (over Wi-Fi, or the Bluetooth link a machine is already holding), each with charge, state, temperature, voltage and PPH, and an estimate of the time left on it (or the time to full while it is charging). A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
 		],
 		steps => [
 			'Press the start button to open the menu.',

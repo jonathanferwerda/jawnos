@@ -2186,6 +2186,22 @@ void loop2(void * pvParameters) {
             }
             Serial.printf("[bt] hello: %s\n", ble_peer_name);
           }
+          if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "battery") {
+            // The house asked for the pack over the link it is already holding.
+            // The same reading /device_query answers with, so a watch whose WiFi
+            // is asleep still appears in the levels view.
+            int bp = (int)watch.getBatteryPercent();
+            int bmv = (int)(watch.getBattVoltage() * 1000);
+            JSONVar reply;
+            reply["type"] = "battery";
+            reply["chip_id"] = chip_id_maker();
+            reply["edt"] = "watch";
+            reply["battery"] = bp;
+            reply["battery_mv"] = bmv;
+            reply["battery_status"] = watch.isCharging() ? (bp >= 100 ? "full" : "charging") : "discharging";
+            ble_send(reply);
+            Serial.printf("[bt] battery %d%% (%d mV)\n", bp, bmv);
+          }
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "now_me") {
             // the phone pushes the whole picture over BLE: the homebase, the
             // authorization (freshly rotated), the clock offset and the room

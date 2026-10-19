@@ -2172,6 +2172,22 @@ void loop() {
           }
           deckLog("[bt] hello: %s", ble_peer_name);
         }
+        else if (mtype == "battery") {
+          // The house asked for the pack over the link it is already holding.
+          // The same reading /device_query answers with, so a deck whose WiFi
+          // is asleep still appears in the levels view.
+          int bp = deck_battery_percent();
+          int bmv = (int)deck_battery_voltage();
+          JSONVar reply;
+          reply["type"] = "battery";
+          reply["chip_id"] = chip_id_maker();
+          reply["edt"] = "teletype";
+          reply["battery"] = bp;
+          reply["battery_mv"] = bmv;
+          reply["battery_status"] = (bmv > 4300) ? (bp >= 100 ? "full" : "charging") : "discharging";
+          ble_send(reply);
+          deckLog("[bt] battery %d%% (%d mV)", bp, bmv);
+        }
         else if (mtype == "now_me") {
           // the phone pushes the whole picture over BLE: the homebase, the
           // authorization (freshly rotated), the clock offset and the room
