@@ -247,8 +247,10 @@ def _app_private_key():
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        # Another window won the race; read the key it wrote.
-        return _app_private_key()
+        # Another window won the race (or a left-over file is unreadable). Do
+        # not recurse: read that file once, and fail loudly if it is not a key.
+        with open(path, "rb") as fh:
+            return serialization.load_pem_private_key(fh.read(), password=None)
     with os.fdopen(fd, "wb") as fh:
         fh.write(data)
     return key
@@ -567,14 +569,16 @@ class WebViewPanel(Gtk.Box):
         if host not in (self._manager_host, "127.0.0.1", "localhost", "::1"):
             return False
         msg_id = message.get("id") or ""
-        if action == "app_pubkey":
-            reply = {"ok": True, "pubkey": _app_public_pem(), "kind": "ed25519"}
-        else:
-            args = message.get("args") or {}
-            try:
+        try:
+            if action == "app_pubkey":
+                reply = {"ok": True, "pubkey": _app_public_pem(), "kind": "ed25519"}
+            else:
+                args = message.get("args") or {}
                 reply = {"ok": True, "signature": _app_sign_b64(args.get("message"))}
-            except Exception:
-                reply = {"ok": False, "error": "sign failed"}
+        except Exception:
+            # No cryptography on this machine, or an unreadable key file. The
+            # page then falls back to the open-in-the-app explanation.
+            reply = {"ok": False, "error": "unavailable"}
         try:
             self.view.evaluate_javascript(
                 "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
