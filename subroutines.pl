@@ -11154,11 +11154,16 @@ sub theme_panel_css {
 		}
 	}
 	unless (defined $r) {
-		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;--line:#c9c9c9;';
+		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;--window:#f0f0f0;--line:#c9c9c9;';
 	}
 	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
 	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
 	my $tint = $s < 0.18 ? $s : 0.18;
+	# the curated window surface for a named scheme, or a shade of its own for a
+	# hand-picked manager colour (lighter than the desktop on a dark theme,
+	# lighter than the panel on a light one)
+	my $window = &colour_scheme_window_colour(&colour_scheme_for_manager_colour($bg));
+	$window ||= &_hsl_to_hex($h, $tint, $lum < 0.5 ? 0.24 : 0.96);
 	# --line is the chrome border colour, kept a shade off --panel so frames and
 	# seams read as an edge rather than a bright white outline. --ink is the text;
 	# it was #f2f2f2 (near white) which glares on a dark panel, and it used to be
@@ -11168,12 +11173,12 @@ sub theme_panel_css {
 		my $panel = &_hsl_to_hex($h, $tint, 0.16);
 		my $panel2 = &_hsl_to_hex($h, $tint, 0.23);
 		my $line = &_hsl_to_hex($h, $tint, 0.32);
-		return "--ink:#d4d4d4;--ink-muted:#8f8f8f;--panel:$panel;--panel-2:$panel2;--line:$line;";
+		return "--ink:#d4d4d4;--ink-muted:#8f8f8f;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;";
 	}
 	my $panel = &_hsl_to_hex($h, $tint, 0.88);
 	my $panel2 = &_hsl_to_hex($h, $tint, 0.80);
 	my $line = &_hsl_to_hex($h, $tint, 0.66);
-	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;--line:$line;";
+	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;";
 }
 
 # The named colour schemes the configure panel offers. One table, shared by the
@@ -11207,9 +11212,34 @@ our %colour_schemes = (
 	'Rose Dark'     => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
 );
 
-# The surface a scheme gives the manager. The palette is applied across
-# @gb::misc_settings by index, so this is the same colour the Misc panel writes
-# into manager_background_colour when the scheme is picked.
+# A scheme's manager surface and its window surface. The palette is applied
+# across @gb::misc_settings by index, so the manager is the same colour the Misc
+# panel writes into manager_background_colour when the scheme is picked; the
+# window is the next step of the same ramp, which keeps every theme's windows
+# distinct from its desktop while staying in its motif.
+sub colour_scheme_window_colour {
+	my ($name) = @_;
+	return undef unless defined $name && length $name;
+	my $palette = $colour_schemes{$name};
+	return undef unless ref $palette eq 'ARRAY' && scalar @{$palette} > 3;
+	return $palette->[3];
+}
+
+# The scheme a manager colour came from, so a server-rendered desktop can pick
+# its curated window colour. A hand-picked colour finds no scheme and gets a
+# derived shade instead (theme_panel_css).
+sub colour_scheme_for_manager_colour {
+	my ($bg) = @_;
+	return '' unless defined $bg && length $bg;
+	my $target = lc $bg;
+	$target = '#' . $target unless $target =~ /^#/;
+	foreach my $name ( @colour_scheme_order ) {
+		my $manager = $colour_schemes{$name}->[2];
+		return $name if defined $manager && lc($manager) eq $target;
+	}
+	return '';
+}
+
 sub colour_scheme_manager_colour {
 	my ($name) = @_;
 	return undef unless defined $name && length $name;

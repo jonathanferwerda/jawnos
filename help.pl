@@ -800,7 +800,7 @@ our %topic = (
 		summary => 'Named palettes, each in a light and a dark cut.',
 		body => [
 			'JawnOS ships a set of named colour schemes — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum and Rose — and each has a light and a dark cut, so the chrome can range from near-white to near-black.',
-			'They live under Configure, and the whole desktop changes as you pick one. The dark cuts change the window surfaces most, because the chrome is derived from the manager surface; inputs and dropdowns follow the same surface, so their text stays readable.',
+			'They live under Configure, and the whole desktop changes as you pick one. The dark cuts change the window surfaces most, because the chrome is derived from the manager surface; inputs and dropdowns follow the same surface, so their text stays readable. Each scheme also gives windows and appointments their own surface, one step along the same ramp, so an app does not dissolve into the desktop behind it.',
 			'An app can also carry its own Theme: while one of that app\'s start appointments is running the desktop wears it, the most recently started running app wins when more than one has a theme, and with none running the Misc scheme comes back.'
 		],
 		related => [ 'icon_sets', 'zoom', 'configure' ]

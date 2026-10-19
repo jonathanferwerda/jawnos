@@ -20,7 +20,7 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --line: #c9c9c9; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; }
 body { background-color: var(--panel); color: var(--ink); }
 body.dark_theme { --ink: #d4d4d4; --ink-muted: #8f8f8f; --panel: #1e1e1e; --panel-2: #262626; --line: #525252; }
 body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
@@ -50,9 +50,19 @@ option { background-color: var(--panel-2, var(--panel)); color: var(--ink); }
    page used to pin a white background while the ink followed the theme (near
    white on white); the same goes for any class that still names a light face.
    The higher specificity is deliberate: it is the dark-theme repair. */
-body.dark_theme input:not([type=color]):not([type=checkbox]):not([type=radio]):not([type=range]),
+body.dark_theme input,
 body.dark_theme select,
 body.dark_theme textarea { background-color: var(--panel-2); color: var(--ink); }
+/* the native faces (swatch, check, radio, slider) draw themselves; a
+   transparent face lets the dark surface behind them show instead of white */
+body.dark_theme input[type=color],
+body.dark_theme input[type=checkbox],
+body.dark_theme input[type=radio],
+body.dark_theme input[type=range] { background-color: transparent; }
+/* WebKit paints its own pale face over an autofilled field */
+body.dark_theme input:-webkit-autofill,
+body.dark_theme input:-webkit-autofill:hover,
+body.dark_theme input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset; -webkit-text-fill-color: var(--ink); }
 body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 .text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
 .text_editor:hover { cursor: text; }

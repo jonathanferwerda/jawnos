@@ -1,11 +1,16 @@
 % use Mojo::JSON qw/encode_json decode_json/;
-% my $site_type = $appts->{$a}->{'setting'}->{'site_type'};
+% my $site_type = $appts->{$a}->{'setting'}->{'site_type'} // '';
 % my $navigation_information = &subs::navigation_information({ signatorial => &subs::signatorial_designer(), cache => 'yes' });
 % if ($navigation_information->{&subs::signatorial_designer()}->{'site_rating'} <= 1) {
 	<div>
 		Site:
 		<select class="place_site_type configure_input" app="<%= $a %>" setting="site_type">
-			<% foreach my $site ( sort { $gb::site_types->{$a}->{'rating'} <=> $gb::site_types->{$b}->{'rating'} } keys %{$gb::site_types} ) { %>
+			<%# a place with no choice yet opens blank, not on the first (or, with
+			    Perl's unordered keys, an arbitrary) type: dangerous must never be
+			    what someone sees before they have picked anything %>
+			<option value="" <% if ($site_type eq '') { %>selected="selected"<% } %>></option>
+			<% my @sites; foreach my $rating ( 1 .. 3 ) { push @sites, grep { ($gb::site_types->{$_}->{'rating'} || 0) == $rating } keys %{$gb::site_types}; } %>
+			<% foreach my $site ( @sites ) { %>
 				<option value="<%= $site %>" <% if ( $site_type eq $site) { %>selected<% } %>><%= &subs::format_name($site) %></option>
 			<% } %>
 		</select>

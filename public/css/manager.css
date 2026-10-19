@@ -640,7 +640,13 @@ canvas { overflow: scroll; z-index: 99; }
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
    through where the panel curves away. */
-.wind { border-radius: var(--window_radius, 8px); }
+.wind { border-radius: var(--window_radius, 8px); background-color: var(--window, var(--panel)); }
+/* Inside a window every surface that asked for the panel surface gets the
+   window's own colour instead, so an app or an appointment does not dissolve
+   into the desktop behind it. --panel-2 and --line keep the theme's contrast
+   steps. */
+.window_contents,
+.window_drawer_contents { --panel: var(--window, #f7f7f7); }
 /* Every window wears the same frame. It is an inset ring painted over the
    window (pointer-events: none, so nothing under it stops being clickable)
    rather than a real border on .wind: a border would be counted in the box and

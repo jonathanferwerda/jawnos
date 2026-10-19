@@ -649,6 +649,13 @@ function jawnosRgbToHsl(r, g, b) {
 	}
 	return [h, s, l];
 }
+function jawnosRgbToHex(r, g, b) {
+	var part = function (v) {
+		var p = Math.max(0, Math.min(255, Math.round(v))).toString(16);
+		return p.length < 2 ? '0' + p : p;
+	};
+	return '#' + part(r) + part(g) + part(b);
+}
 function jawnosHslToHex(h, s, l) {
 	h = ((h % 360) + 360) % 360;
 	var c = (1 - Math.abs(2 * l - 1)) * s;
@@ -697,9 +704,22 @@ function jawnosApplyInk() {
 		line = jawnosHslToHex(hsl[0], tint, 0.66);
 		ink = '#000000'; ink_muted = '#333333';
 	}
+	// The window surface is its own shade in every scheme: the curated next
+	// step of the palette's ramp when the manager colour names a scheme (the
+	// manager layout hands that map in), otherwise derived the same way the
+	// server's theme_panel_css derives it.
+	var bg_hex = jawnosRgbToHex(r, g, b).toLowerCase();
+	var window_hex = '';
+	if (typeof jawnos_colour_windows != 'undefined' && jawnos_colour_windows) {
+		window_hex = jawnos_colour_windows[bg_hex] || '';
+	}
+	if (!window_hex) {
+		window_hex = jawnosHslToHex(hsl[0], tint, lum < 0.5 ? 0.24 : 0.96);
+	}
 	var style = document.body.style;
 	style.setProperty('--panel', panel);
 	style.setProperty('--panel-2', panel2);
+	style.setProperty('--window', window_hex);
 	style.setProperty('--line', line);
 	style.setProperty('--ink', ink);
 	style.setProperty('--ink-muted', ink_muted);

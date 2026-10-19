@@ -104,6 +104,10 @@
 			// the built-in apps, from the server's own list (gb::known_appts), so the
 			// client keeps no copy of its own that can drift
 			var jawnos_builtin_apps = <%== encode_json({ map { $_ => 1 } sort keys %{$gb::known_appts} }) %>;
+			// each scheme's window surface, keyed by its manager colour: jawnosApplyInk
+			// reads this so a live scheme change picks the same curated window shade
+			// the server rendered
+			var jawnos_colour_windows = <%== encode_json({ map { lc($subs::colour_schemes{$_}->[2]) => $subs::colour_schemes{$_}->[3] } @subs::colour_scheme_order }) %>;
 		</script>
 		<!-- the manager's scripts load at the foot of the body, so the desktop can
 		     paint before the parser waits on them; see the bundle there -->

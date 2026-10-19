@@ -19632,7 +19632,7 @@ sub window_maker($type,$timestamp) {
 	}
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--panel);
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'. ($settings->{'colour'} || '#ffec1f') .
@@ -19659,8 +19659,8 @@ sub window_maker($type,$timestamp) {
 			</div>
 			<div id="window_drawer_' . $timestamp . '" class="window_drawer" style="position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . ($settings->{'colour'} || '#ffec1f') . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
 			<img src="/images/make believe/space.png" style="position:absolute;left:30%;height:24px;width:30%;" class="window_drawer_closer hover">
-			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--panel);">' . $drawer . '</div></div>
-			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--panel);height:calc(100% - var(--navbar_h, 36px) + 2px);">' . $contents . '</div>
+			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--window, var(--panel));">' . $drawer . '</div></div>
+			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--window, var(--panel));height:calc(100% - var(--navbar_h, 36px) + 2px);">' . $contents . '</div>
 
 		<script id="window_script_' . $timestamp .'">
 			jopen = \'' . $settings->{'jopen'} . '\';
