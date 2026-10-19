@@ -1965,3 +1965,44 @@ body.dark_theme #ide {
 	background-color: #7542ff; color: #ffffff; outline: 2px solid #7542ff;
 }
 .wind[app="email"] .email_folder_button.email_drop_hover .email_folder_count { background-color: #ffffff; color: #7542ff; }
+
+/* Security app. The tabs used to float over the view and the Padlock panel was
+   pinned to the window's bottom edge, so its copy, the gate select and the
+   app list all landed on top of each other. The app is a column now: a tab row
+   in the flow, then one scrolling view beneath it. */
+#security { display: flex; flex-direction: column; overflow: hidden; }
+#security .security_tabs {
+	flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end;
+	gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line);
+}
+#security .security_tabs button { flex: 0 0 auto; }
+#security .security_view {
+	flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px;
+	box-sizing: border-box;
+}
+#security .security_view[view="padlock"] {
+	display: flex; flex-direction: column; padding: 0;
+}
+#security .padlock_intro {
+	max-width: 640px; margin: 0 auto; padding: 20px 16px 8px; text-align: center;
+}
+#security .padlock_footer {
+	margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between;
+	align-items: flex-end; gap: 12px; padding: 10px 12px 12px;
+}
+#security .security_view[view="signatorial"] {
+	display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start;
+	justify-content: center;
+}
+#security .security_view[view="signatorial"] img { max-width: 100%; }
+
+/* Tables hold six columns in a narrow window: smaller type, real rows and a
+   rule under each one. The thumbnails are capped so a row is not 80px tall. */
+#security table { width: 100%; border-collapse: collapse; text-align: center; font-size: 15px; }
+#security table th,
+#security table td { padding: 6px 8px; vertical-align: middle; border-bottom: 1px solid var(--line); }
+#security table th { font-weight: bold; }
+#security table td.time { white-space: nowrap; }
+#security table img.medium_thumb { height: 40px; max-width: 40px; }
+#security table img.little_thumb { height: 28px; width: 28px; max-width: 28px; }
+#security table img.large_thumb { height: 56px; max-width: 56px; }

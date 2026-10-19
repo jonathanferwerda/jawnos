@@ -32,7 +32,7 @@ $(document).on('click', '#padlock_gate_enable, #padlock_gate_disable', function(
 				$('#padlock_set_status').text(response && response.error ? response.error : 'The gate did not change.');
 				return;
 			}
-			$('#security').html(response.html);
+			$('#security').replaceWith(response.html);
 			appointment_chron();
 			// the taskbar padlock is rendered with the layout, so enabling the
 			// gate used to leave it hidden until a refresh; the reply carries
@@ -101,7 +101,7 @@ $(document).on('click', '.security_view_select', function() {
 		type: 'GET',
 		data: { timestamp: timestamp, security_view: view },
 		success: function(response) {
-			$('#security').html(response.html);
+			$('#security').replaceWith(response.html);
 			appointment_chron();
 		}, error: function (response) { 
 		}
@@ -180,7 +180,7 @@ $(document).on('click', '.device_revoke', function() {
 		type: 'POST',
 		data: { uuid: uuid },
 		success: function(response) {
-			$('#security').html(response.html);
+			$('#security').replaceWith(response.html);
 			appointment_chron();
 		}
 	});
