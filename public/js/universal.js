@@ -544,12 +544,10 @@ function jawnPadlockTargetMatches(target) {
 
 function jawnPadlockKeyShow(mode, target, show) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	// An explicit ask (older senders use show=1 without the prompt flag) is a
-	// request to confirm, not an order to navigate. Never move the page: the
-	// prompt names the screen and signs it open in place.
-	if (show && typeof jawnPadlockPrompt === 'function') {
-		jawnPadlockPrompt(mode, target, '', '', '');
-	}
+	// A legacy announcement (an older peer saying "this screen locked") is
+	// ignored. Only an explicit request carries prompt=1 and is handled in
+	// place by websocket.js; a lock must never raise an unsolicited prompt or
+	// move the page.
 }
 
 // A device that was asleep, or that joined after the button was pressed, gets
