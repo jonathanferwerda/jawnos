@@ -286,9 +286,9 @@ $(document).on('change', '.configure_input', function(e) {
 });
 
 // The sync topology is a house setting, not a per-window preference: the Dev
-// panel's select writes the `sync/topology` row, the settings merge carries it to
-// the other machines, and the reconnector reads it on each pass. It posts to the
-// JSON setter rather than /manager/configure, which would answer with an
+// panel's select writes the shared `device: 'all'` row, the settings merge carries
+// it to the other machines, and the reconnector reads it on each pass. It posts
+// to the JSON setter rather than /manager/configure, which would answer with an
 // appointment display for an app that has none.
 $(document).on('change', '.sync_topology_select', function() {
 	var status = $('#sync_topology_status');
@@ -296,7 +296,7 @@ $(document).on('change', '.sync_topology_select', function() {
 	$.ajax({
 		url: '/manager/setting_setter',
 		type: 'POST',
-		data: { app: 'sync', setting: 'topology', value: $(this).val(), timestamp: Date.now() },
+		data: { app: 'sync', setting: 'topology', value: $(this).val(), device: 'all', timestamp: Date.now() },
 		success: function() { status.text('house-wide — saved'); },
 		error: function() { status.text('could not save'); }
 	});

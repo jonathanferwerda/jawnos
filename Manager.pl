@@ -31791,10 +31791,13 @@ sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_ta
 }
 
 # The sync topology is a house setting (`sync/topology`, so the settings merge
-# carries it to every machine). `__president/sync_topology` is read as a local
-# fallback for an older override; a blank or unknown value means auto.
+# carries it to every machine). The Dev panel writes one shared `device => 'all'`
+# row; an older override can still sit on a machine's own device row or in
+# `__president/sync_topology`, so read those as fallbacks. A blank or unknown
+# value means auto.
 sub sync_topology_get {
-	my $v = &subs::setting_grabber({ app => 'sync', setting => 'topology' });
+	my $v = &subs::setting_grabber({ app => 'sync', setting => 'topology', device => 'all' });
+	$v = &subs::setting_grabber({ app => 'sync', setting => 'topology' }) unless defined $v && length $v;
 	$v = &subs::setting_grabber({ app => '__president', setting => 'sync_topology' }) unless defined $v && length $v;
 	$v = 'auto' unless defined $v && $v =~ /^(?:auto|mesh|hub)$/;
 	return $v;

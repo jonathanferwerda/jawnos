@@ -1,6 +1,7 @@
 <% no warnings 'uninitialized'; %>
 <% my $signatorial = &subs::signatorial_designer(); %>
-<% my $topology = &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
+<% my $topology = &subs::setting_grabber({ app => 'sync', setting => 'topology', device => 'all' })
+	|| &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
 <%# the lister as networks: a toolbar, the machines (each named and removable
     once), then one section per network the house is on - the subnet, the
     interfaces that reach it, and a neighbour table of the devices found there.
