@@ -2367,15 +2367,13 @@ sub house_levels_sync {
 		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
 		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
 		my ($ua, $p) = &peer_useragent($rm);
-		# A Termux host often calls itself "localhost"; the manager URL still
-		# names the machine (tablet.jonathanferwerda.com), so use that label.
-		my $pname = $rm->{'hostname'} || '';
-		if ($pname eq '' || $pname =~ /^(?:localhost|127\.0\.0\.1)$/i) {
-			my $host = $p->{'manager'} || $rm->{'manager'} || '';
-			($pname) = $host =~ m{^https?://([^/:]+)};
-			$pname ||= $rm->{'fqdn'} || $rm->{'ip'} || $rsig;
-			$pname =~ s/\..*$//;
-		}
+		# The manager URL is the name the house knows the machine by
+		# (phone.jonathanferwerda.com); the OS hostname is often a bare "Fe" or
+		# "localhost". Prefer the URL label, and fall back to the hostname.
+		my ($pname) = (($rm->{'manager'} || ($p->{'manager'} || '')) =~ m{^https?://([^/:]+)});
+		$pname =~ s/\..*$// if defined $pname;
+		$pname = $rm->{'hostname'} || $rsig
+			if !defined $pname || $pname eq '' || $pname =~ /^(?:localhost|127\.0\.0\.1)$/i;
 		unless ($ua) {
 			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
 			next;
