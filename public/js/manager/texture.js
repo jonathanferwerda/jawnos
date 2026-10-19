@@ -363,24 +363,23 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 
 // ---- the clothesline label's type sizes -----------------------------------
 // The clothesline measures its names with the same font and spacing the label
-// printer uses, so a tile can be exactly as wide as its name needs. The
-// materials print at Plain's size (the original tile's 20px); round keeps its
-// smaller solid-label face.
+// printer uses, so a tile can be exactly as wide as its name needs. Every
+// texture prints at one size, and the family is the Misc → Font choice (canvas
+// cannot inherit it, so jawnosFont() reads it back off the root).
 function jawnosTextureFont(kind) {
-	kind = kind || jawnosTextureCurrent;
-	if (kind === 'classic') { return '400 20px Times New Roman'; }
-	if (kind === 'round') { return '600 15px Arial, Helvetica, sans-serif'; }
-	return '500 20px Arial, Helvetica, sans-serif';
+	var family = (typeof jawnosFont == 'function') ? jawnosFont() : 'system-ui, sans-serif';
+	if (kind === 'classic') { return '400 16px ' + family; }
+	if (kind === 'round') { return '600 16px ' + family; }
+	return '500 16px ' + family;
 }
 function jawnosTextureSpacing(kind) {
 	kind = kind || jawnosTextureCurrent;
 	if (kind === 'round') { return '0.2px'; }
 	if (kind === 'classic') { return '0px'; }
-	return '0.6px';
+	return '0.3px';
 }
 function jawnosTextureLabelText(text, kind) {
-	kind = kind || jawnosTextureCurrent;
-	return (kind === 'classic' || kind === 'round') ? ('' + text) : ('' + text).toUpperCase();
+	return '' + text;
 }
 function jawnosTextureMeasure(ctx, text, kind) {
 	kind = kind || jawnosTextureCurrent;
@@ -432,7 +431,7 @@ function jawnosTextureLabel(ctx, text, x, y, w, h, dark, colour) {
 		if (dark && classicInk === '#ffffff' && typeof jawnosInk == 'function') { classicInk = jawnosInk(); }
 		var classicMeasure = ctx.measureText(text).width;
 		ctx.fillStyle = classicInk;
-		ctx.fillText(text, ((w - classicMeasure) / 2) + x, y + (h / 2) + 7);
+		ctx.fillText(text, ((w - classicMeasure) / 2) + x, y + (h / 2) + 6);
 		ctx.restore();
 		return;
 	}
@@ -462,10 +461,10 @@ function jawnosTextureLabel(ctx, text, x, y, w, h, dark, colour) {
 	var measure = ctx.measureText(label).width;
 	var lx = ((w - measure) / 2) + x;
 	var ly = y + (h / 2) + 0.5;
-	// the etched material label is larger now (Plain's 20px) and wears the
-	// appointment's colour, so it reads as that app rather than as neutral
-	// engraving. A hair of the pane's opposite tone under it keeps the grain from
-	// swallowing the letters.
+	// every material label is the same size now and wears the appointment's
+	// colour, so it reads as that app rather than as neutral engraving. A hair of
+	// the pane's opposite tone under it keeps the grain from swallowing the
+	// letters.
 	var ink = jawnosTextureTint(dark ? '#ffffff' : '#000000', colour, 0.30);
 	ctx.fillStyle = dark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.85)';
 	ctx.fillText(label, lx, ly + (dark ? -1 : 1));

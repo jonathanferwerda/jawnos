@@ -1421,7 +1421,14 @@ $(document).on('change','.misc_setting', function() {
 					$('#configure').css({'background-color': v.value});
 				}
 				if (v.setting == 'title_font' && dev == v.device) {
+					// the shell reads the family off the root, so one property updates
+					// every surface and control; the canvas clothesline is repainted by
+					// hand because it cannot inherit a CSS face
+					document.documentElement.style.setProperty('--jawnos-font', v.value);
 					$('.title_font').css({'font-family': v.value});
+					if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe && wardrobe.length) {
+						clotheslineHanger(wardrobe);
+					}
 				}
 				if ($('#' + object)) {
 					$('#' + object).css({'background-color': value});

@@ -12886,7 +12886,7 @@ sub hang_to_dry() {
 		my $time = localtime($server_time / 1000);
 		my $app = &unformat_name($clr->{'app'});
 		my $settings = &settings_grabber({ app => $app });
-		my $app_data = { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
+		my $app_data = { name => $app, app => $app, formatted_name => &format_name($app), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
 		my $time_plinko = $cl->{'time_plinko'} || {};
 		my @schedule = split ',', $cl->{'schedule'};
 		foreach my $schedule ( @schedule ) {
@@ -12991,7 +12991,7 @@ sub hang_to_dry() {
 			next unless $routine->{'hour'} == $cur_hour;
 			my $aset = &settings_grabber({ app => $app });
 			next unless (($aset->{'visible'} || '') eq 'checked');
-			push @{$returner}, { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+			push @{$returner}, { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
 	}
 	# left to right, the order the day happens in; apps with no time of their own

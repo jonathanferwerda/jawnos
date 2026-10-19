@@ -129,7 +129,13 @@
   <body<% if ($theme_dark) { %> class="dark_theme"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
   <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
-    .title_font { font-family: <%= $title_font %>; }
+    :root { --jawnos-font: <%= $title_font %>; }
+    /* the Misc → Font choice is the program's face, not just a few titles:
+       the shell and the controls inherit it, while surfaces that declare their
+       own family (the terminal, the IDE, mailed text) keep it. */
+    body, button, input, select, textarea,
+    .ui-widget, .ui-widget input, .ui-widget select, .ui-widget textarea, .ui-widget button,
+    .title_font { font-family: var(--jawnos-font); }
   </style>
 		<div id="everything">
 			<%= content %>

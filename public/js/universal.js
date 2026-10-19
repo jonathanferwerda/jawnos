@@ -580,6 +580,14 @@ function jawnosInk() {
 	try { c = getComputedStyle(document.body).getPropertyValue('--ink'); } catch (e) { c = ''; }
 	return (c && c.trim()) || '#000000';
 }
+// The Misc → Font choice. The layout writes it onto the root as --jawnos-font,
+// so the whole shell inherits it; canvas art has no CSS inheritance, so the
+// printers read the same value back through here.
+function jawnosFont() {
+	var f = '';
+	try { f = getComputedStyle(document.documentElement).getPropertyValue('--jawnos-font'); } catch (e) { f = ''; }
+	return (f && f.trim()) || 'system-ui, sans-serif';
+}
 // A colour that contrasts with the ink. Canvas art that is drawn over a user's
 // background picture cannot trust the themed ink alone (a dark scheme gives
 // near-white ink, which vanishes on a light photo), so it gets outlined with

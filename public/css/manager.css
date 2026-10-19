@@ -859,9 +859,25 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	max-width: 54px;
 }
 
+/* Every app tile in the menu wears the same frame, so the desk's material has
+   a defined edge on each: the grid's bare .jonathan icons, the category rail,
+   the sorted rows, and main_icon_maker's own window_icon pictures (a custom
+   main image included). Gallery used to be the only one carrying a border. The
+   edge colour is the material's own, so a texture reads on every tile. */
+#start_menu .jonathan,
+#start_menu .start_menu_main_display img,
+#start_menu .start_menu_categories img,
+#start_menu .start_menu_item img,
+#start_menu .window_icon {
+	box-sizing: border-box;
+	border: 3px solid var(--jawnos-texture-edge, var(--line));
+	border-radius: 8px;
+}
+
 /* Mail the server accepted rings the envelope until the mailbox is opened: the
    icon wears a red border that pulses, so the ring needs no extra markup and
    survives the menu being fetched anew. */
+#start_menu img[waiting="yes"],
 #mailbox_toggle[waiting="yes"], #ticketmaker[waiting="yes"] {
 	border-color: red;
 	animation: mail_dot_pulse 1.2s ease-in-out infinite;
