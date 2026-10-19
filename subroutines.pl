@@ -2305,8 +2305,17 @@ sub house_levels_sync {
 		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
 		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
 		my ($ua, $p) = &peer_useragent($rm);
+		# A Termux host often calls itself "localhost"; the manager URL still
+		# names the machine (tablet.jonathanferwerda.com), so use that label.
+		my $pname = $rm->{'hostname'} || '';
+		if ($pname eq '' || $pname =~ /^(?:localhost|127\.0\.0\.1)$/i) {
+			my $host = $p->{'manager'} || $rm->{'manager'} || '';
+			($pname) = $host =~ m{^https?://([^/:]+)};
+			$pname ||= $rm->{'fqdn'} || $rm->{'ip'} || $rsig;
+			$pname =~ s/\..*$//;
+		}
 		unless ($ua) {
-			push @machines, { %{ $previous_machine{$rsig} }, stale => 1 } if $previous_machine{$rsig};
+			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
 			next;
 		}
 		my $res = eval { $ua->connect_timeout(6)->inactivity_timeout(10)
@@ -2315,15 +2324,15 @@ sub house_levels_sync {
 		unless (ref $h eq 'HASH') {
 			$failed++;
 			my $err = $@ ? do { my $e = $@; $e =~ s/\s+/ /g; substr($e, 0, 120) } : '';
-			$log->info('house levels: ' . ($rm->{'hostname'} || $rsig) . ' '
+			$log->info('house levels: ' . $pname . ' '
 				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : ''));
-			push @machines, { %{ $previous_machine{$rsig} }, stale => 1 } if $previous_machine{$rsig};
+			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
 			next;
 		}
 		$peers++;
 		push @machines, {
 			signatorial => $rsig,
-			hostname => $rm->{'hostname'} || $h->{'hostname'} || $rm->{'ip'} || $rsig,
+			hostname => $pname,
 			device => $h->{'device'} || $rm->{'device'} || '',
 			version => $h->{'version'} || $rm->{'version'} || '',
 			battery => (ref $h->{'battery'} eq 'HASH') ? $h->{'battery'} : {},

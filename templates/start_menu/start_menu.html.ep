@@ -34,7 +34,7 @@
 			-->
 			<%= include 'start_menu/htop', cache => &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }), levels => &subs::levels_snapshot() %>
 
-			<div id="parking_lot" style="position:absolute;width:100%;bottom:0px;">
+			<div id="parking_lot" style="width:100%;margin-top:10px;">
 				<% foreach my $pl ( sort keys %{$parking_lot} ) { %>
 					<span class="past_life hover" direction="load" start_menu="yes" timestamp="<%= $parking_lot->{$pl}->{'timestamp'} %>"><h4><%= &subs::format_name($pl) %></h4></span>
 				<% } %>

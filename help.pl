@@ -749,12 +749,12 @@ our %topic = (
 		summary => 'Recently used apps, a category rail and a search.',
 		body => [
 			'The start menu opens on the apps you used most recently, with a category rail (accessories, business, games, media, system) for the whole catalogue.',
-			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
+			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see, each with charge, state, temperature, voltage and PPH. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
 		],
 		steps => [
 			'Press the start button to open the menu.',
 			'Use the category rail to narrow the catalogue, or the search box to find an app by name.',
-			'The menu\'s other pages show running, upcoming, expiring and system.',
+			'The menu\'s other pages show running, upcoming, expiring and the house\'s system levels.',
 			'Help sits at the foot of the menu if you want to read about an app before opening it.'
 		],
 		related => [ 'search', 'taskbar', 'hints' ]

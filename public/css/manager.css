@@ -916,11 +916,8 @@ html.jawnos_webview #admin_console_toggle {
 #htop_viewer {
 	color: inherit;
 	font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
-	padding: 2px 6px 8px;
+	padding: 2px 6px 10px;
 	box-sizing: border-box;
-	/* the parking-lot strip is absolutely placed at the menu's foot; leave the
-	   last tile room to scroll above it */
-	padding-bottom: 46px;
 }
 #htop_viewer .levels_head {
 	display: flex;
