@@ -504,13 +504,23 @@ document.addEventListener('visibilitychange', function() {
 // phone/tablet signing a one-time challenge; the paper recovery code is the
 // emergency. A locked screen cannot open its own door, so pressing Unlock asks
 // the house to put a fingerprint prompt in front of the other devices.
+// The page's identity, with the server-rendered value as a fallback. A fresh
+// browser that reached the locked page through a ticket has no localStorage
+// entry yet, but the server still knows which paired device it is.
+function jawnDeviceUuid() {
+	var uuid = '';
+	try { uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { uuid = ''; }
+	if (!uuid && window.jawnLockedDevice) { uuid = window.jawnLockedDevice; }
+	return uuid;
+}
+
 function padlockAskPhone(mode, target) {
 	mode = mode || 'locker';
-	if (typeof target === 'undefined') { target = localStorage.getItem('device_uuid') || ''; }
+	if (typeof target === 'undefined') { target = jawnDeviceUuid(); }
 	$.post('/manager/security/padlock_phone_show', {
 		mode: mode,
 		target: target,
-		device_uuid: localStorage.getItem('device_uuid') || ''
+		device_uuid: jawnDeviceUuid()
 	});
 }
 // The app locks (gallery, music, folders) still carry the padlock partial's own
@@ -539,7 +549,7 @@ function jawnMobileHere() {
 // one device that was locked from its own taskbar.
 function jawnPadlockTargetMatches(target) {
 	if (!target) { return true; }
-	return (localStorage.getItem('device_uuid') || '') === target;
+	return jawnDeviceUuid() === target;
 }
 
 function jawnPadlockKeyShow(mode, target, show) {
@@ -563,8 +573,15 @@ function jawnPadlockKeyCheck(force) {
 	var now = Date.now();
 	if (!force && now - jawnPadlockCheckedAt < 5000) { return; }
 	jawnPadlockCheckedAt = now;
-	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
+	$.getJSON('/manager/security/padlock_state', { device_uuid: jawnDeviceUuid() }, function(s) {
 		if (!s || !s.ok) { return; }
+		// The server can identify this page even when its localStorage lost the
+		// uuid (a webview wake, or a ticket that signed in without one). Keep the
+		// two in step so every later sign/open request names the same device.
+		if (s.device && /^[A-Za-z0-9]{8,64}$/.test(s.device)) {
+			try { localStorage.setItem('device_uuid', s.device); } catch (e) {}
+			window.jawnLockedDevice = s.device;
+		}
 		// the lock overlay may be shared HTML; this device's own enrollment is
 		// what decides whether its fingerprint button belongs on it
 		var bio = document.getElementById('locked_biometric');
@@ -575,6 +592,19 @@ function jawnPadlockKeyCheck(force) {
 			}
 			else {
 				bio.style.display = 'none';
+			}
+		}
+		// A manager page that the server says is locked must not keep its live
+		// DOM under an overlay: a browser Back could restore it without asking.
+		// Reload once, so the gate answers with the standalone locked page (no
+		// unlocked windows behind it, and no history entry to step back into).
+		if (s.locked && document.getElementById('taskbar')) {
+			var last = 0;
+			try { last = parseInt(sessionStorage.getItem('jawn_padlock_reload') || '0', 10) || 0; } catch (e) { last = 0; }
+			if (!last || Date.now() - last > 8000) {
+				try { sessionStorage.setItem('jawn_padlock_reload', String(Date.now())); } catch (e) {}
+				location.reload();
+				return;
 			}
 		}
 		var r = s.request;
@@ -609,7 +639,7 @@ function jawnPadlockPromptText(text, value) {
 function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	if (!document.getElementById('taskbar') && !document.getElementById('locked_screen')) { return; }
-	var mine = localStorage.getItem('device_uuid') || '';
+	var mine = jawnDeviceUuid();
 	if (!mine) { return; }
 	// the locked screen is not asked to sign itself open, and the screen that
 	// pressed Unlock is not asked to confirm its own request
@@ -653,11 +683,30 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 		go.disabled = true;
 		no.disabled = true;
 		note.textContent = jawnPadlockPromptText('Touch the fingerprint reader...');
-		jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
-			if (!ok) { throw { error: 'cancelled' }; }
-			note.textContent = jawnPadlockPromptText('Unlocking...');
-			return jawnPadlockSignOpen(mode, target, note);
-		}).then(function (res) {
+		// On the Android app the Keystore key is a real factor: the OS prompt is
+		// what releases it, and its signature opens the target screen. A browser
+		// (or an app with no enrolled key) falls back to the local confirm and
+		// the device's pairing signature.
+		var opened;
+		if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
+			opened = jawnosBiometricUnlock(mode, target, function (t) { note.textContent = t; }, box).catch(function (err) {
+				var e = (err && err.error) || '';
+				if (e !== 'unavailable' && e !== 'no key' && e !== 'invalidated') { throw err; }
+				return jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+					if (!ok) { throw { error: 'cancelled' }; }
+					note.textContent = jawnPadlockPromptText('Unlocking...');
+					return jawnPadlockSignOpen(mode, target, note);
+				});
+			});
+		}
+		else {
+			opened = jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+				if (!ok) { throw { error: 'cancelled' }; }
+				note.textContent = jawnPadlockPromptText('Unlocking...');
+				return jawnPadlockSignOpen(mode, target, note);
+			});
+		}
+		opened.then(function (res) {
 			// an "already" answer with relayed=1 means this machine did not hold
 			// the row; the peer that does was just told to open it
 			note.textContent = (res && res.already && !res.relayed) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.');
@@ -735,7 +784,7 @@ function jawnPadlockConfirm(text) {
 // to open the target screen (or the whole house when target is empty).
 function jawnPadlockSignOpen(mode, target, status) {
 	mode = mode || 'locker';
-	var uuid = localStorage.getItem('device_uuid') || '';
+	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
 	return jawnosDeviceKeyGet().then(function (key) {
@@ -757,20 +806,30 @@ function jawnPadlockSignOpen(mode, target, status) {
 
 // A phone that wakes should find a request that arrived while it slept, but it
 // must never be sent to another page on the way.
+function jawnPadlockTick() {
+	if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
+}
+
 document.addEventListener('visibilitychange', function () {
 	if (document.hidden) { return; }
-	setTimeout(function () {
-		if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
-	}, 1200);
+	jawnPadlockTick();
+	setTimeout(jawnPadlockTick, 1200);
 });
+// A socket that reconnects after a sleep or a network change has missed
+// whatever the house sent while it was gone. Ask for the pending request on
+// every way a page can come back, not only visibilitychange.
+window.addEventListener('pageshow', jawnPadlockTick);
+window.addEventListener('focus', jawnPadlockTick);
 
-// The standalone locked page has no manager websocket. It polls the same state
-// so a request made after it was already showing still reaches it.
-if (document.getElementById('locked_screen')) {
-	setInterval(function () {
-		if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
-	}, 5000);
-}
+// The standalone locked page has no manager websocket. Its own template starts
+// the 2.5s poll (locked_screen.html.ep), which also checks pending requests;
+// this file is in the head, where the body does not exist yet.
+
+// A manager page has no lock poll of its own. One slow tick catches a request
+// that arrived while the socket was down (the phone wake), and lets a page
+// whose session lost its device identity find out that this screen is locked.
+setTimeout(jawnPadlockTick, 800);
+setInterval(jawnPadlockTick, 15000);
 
 // Back must not restore a manager page from before the lock. The browser's
 // bfcache keeps that DOM (and its clickable windows) without asking the server;
@@ -784,7 +843,7 @@ window.addEventListener('pageshow', function (e) {
 // device is locked, the stale page is replaced with the server's lock page.
 window.addEventListener('popstate', function () {
 	if (!document.getElementById('taskbar')) { return; }
-	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function (s) {
+	$.getJSON('/manager/security/padlock_state', { device_uuid: jawnDeviceUuid() }, function (s) {
 		if (s && s.ok && s.locked) { location.reload(); }
 	});
 });
@@ -1222,19 +1281,22 @@ function jawnosBiometricVerify(status) {
 function jawnosBiometricUnlock(mode, target, status, context) {
 	status = status || function () {};
 	mode = mode || 'locker';
-	var uuid = localStorage.getItem('device_uuid') || '';
+	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
+	// The target is bound into the signed message: a fingerprint confirmation
+	// made for one screen cannot be replayed to open another.
+	var signedTarget = target || '';
 	function once() {
 		return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'unlock' }).then(function (ch) {
 			if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'challenge' }; }
-			var msg = 'padlock-bio-unlock\n' + uuid + '\n' + ch.nonce;
+			var msg = 'padlock-bio-unlock\n' + uuid + '\n' + (signedTarget ? signedTarget + '\n' : '') + ch.nonce;
 			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Unlock the house']).then(function (res) {
 				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
 				// the thumb passed; the shackle opens while the house verifies the signature
 				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(context); }
 				return $.post('/manager/security/biometric_unlock', {
-					device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, target: target || uuid
+					device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, target: signedTarget
 				});
 			});
 		});
@@ -1305,9 +1367,22 @@ $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 	button.prop('disabled', true);
 	jawnPadlockArtLocked(false, button);
 	if (note.length) { note.text('Touch the fingerprint reader...'); }
-	jawnosBiometricUnlock('locker', localStorage.getItem('device_uuid') || '', function (t) {
+	var mine = jawnDeviceUuid();
+	jawnosBiometricUnlock('locker', mine, function (t) {
 		if (note.length) { note.text(t); }
-	}, button).then(function () {
+	}, button).catch(function (err) {
+		var e = (err && err.error) || '';
+		// A browser without the Android bridge can still ask the platform
+		// authenticator (WebAuthn) and then sign with the pairing key.
+		if (e === 'unavailable' || e === 'no key' || e === 'invalidated') {
+			return jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+				if (!ok) { throw { error: 'cancelled' }; }
+				if (note.length) { note.text('Unlocking...'); }
+				return jawnPadlockSignOpen('locker', mine, note);
+			});
+		}
+		throw err;
+	}).then(function () {
 		if (note.length) { note.text('Unlocked. Loading...'); }
 		setTimeout(function () { window.location.reload(); }, 700);
 	}).catch(function (err) {

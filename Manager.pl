@@ -9130,6 +9130,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		$path eq '/manager/security/padlock_key_show_peer' ||
 		$path eq '/manager/security/padlock_state' ||
 		$path eq '/manager/security/fingerprint_unlock' ||
+		$path eq '/manager/security/fingerprint_unlock_status' ||
 		$path eq '/manager/security/biometric_challenge' ||
 		$path eq '/manager/security/biometric_unlock' ||
 		$path eq '/manager/security/padlock_key');
@@ -9215,7 +9216,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || $overlay_target));
+		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($overlay_target || $c->session('device_uuid')));
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
@@ -27266,6 +27267,7 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_key_show_peer';
 	return 1 if $path eq '/manager/security/padlock_state';
 	return 1 if $path eq '/manager/security/padlock_key';
+	return 1 if $path eq '/manager/security/fingerprint_unlock_status';
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
 	return 1 if $path eq '/manager/security/biometric_challenge';
 	return 1 if $path eq '/manager/security/biometric_unlock';
@@ -27377,7 +27379,7 @@ sub padlock_gate_answer {
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	$c->res->code(423);
 	$c->res->headers->cache_control('no-store, max-age=0');
-	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || ''), signatorial => &subs::signatorial_designer());
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), locked_device => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || ''), signatorial => &subs::signatorial_designer());
 	return;
 }
 
@@ -27483,6 +27485,10 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 # A local fingerprint is an alternative to the phone for the screen it is on.
 # The request must come from this machine and the session must be approved;
 # fprintd prompts the reader, and only the current screen is opened.
+#
+# fprintd-verify waits for a finger (up to 20 seconds), so it runs in a child
+# process: a blocking system() in the request froze the whole manager worker,
+# which is what made the UI go quiet while the reader waited.
 post '/manager/security/fingerprint_unlock' => sub ($c) {
 	my $ip = $c->tx->remote_address || '?';
 	unless (&padlock_request_is_local($c)) {
@@ -27506,12 +27512,56 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	close $fh;
 	my $user = $ENV{USER} || getpwuid($<) || 'jawn';
 	$user =~ s/[^\w.-]//g;
-	my $rc = system('timeout', '20', 'fprintd-verify', $user);
-	unlink $lockfile;
-	$log->info('padlock: local fingerprint ' . ($rc == 0 ? 'accepted' : 'refused') . ' from ' . $ip . ' rc=' . $rc);
-	return $c->render(json => { ok => 0, error => 'not accepted' }) if $rc != 0;
 	my $device = $c->session('device_uuid') || '';
+	my $token = &subs::random_string_creator(24);
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_fingerprint', $now - 300000);
+	&subs::db_insert('cache', {
+		uuid => $token, context => 'padlock_fingerprint', app => '__president',
+		data => encode_json({ pending => 1, device => $device, ip => $ip }),
+		server_time => $now, timestamp => $now,
+	});
+	Mojo::IOLoop->subprocess(
+		sub {
+			my $rc = system('timeout', '20', 'fprintd-verify', $user);
+			return (defined $rc ? $rc : -1);
+		},
+		sub {
+			my ($loop, $err, $rc) = @_;
+			unlink $lockfile;
+			my $ok = (!defined $err && defined $rc && $rc == 0) ? 1 : 0;
+			my $error = $ok ? '' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted');
+			&subs::db_query('update cache set data = ?, server_time = ? where context = ? and uuid = ?',
+				encode_json({ pending => 0, ok => $ok, error => $error, device => $device, ip => $ip }),
+				&subs::rightNow(), 'padlock_fingerprint', $token);
+			eval { $log->info('padlock: local fingerprint ' . ($ok ? 'accepted' : 'refused') . ' from ' . $ip . ' rc=' . (defined $rc ? $rc : '?')) };
+		}
+	);
+	$c->render(json => { ok => 0, pending => 1, token => $token });
+};
+
+# The reader is still waiting. The locked page polls this until the child above
+# records a result; only an accepted print opens the session's own screen.
+get '/manager/security/fingerprint_unlock_status' => sub ($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
+	my $token = $c->param('token') || '';
+	return $c->render(json => { ok => 0, error => 'no challenge' }) unless $token =~ /^[A-Za-z0-9]{8,64}$/;
+	my $row = &subs::db_query('select data, server_time from cache where context = ? and uuid = ? limit 1', 'padlock_fingerprint', $token)->hashes->[0];
+	unless ($row) { return $c->render(json => { ok => 0, error => 'no result' }); }
+	my $d = eval { decode_json $row->{'data'} } || {};
+	if ($d->{'pending'}) {
+		if (($row->{'server_time'} || 0) < &subs::rightNow() - 30000) {
+			&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_fingerprint', $token);
+			return $c->render(json => { ok => 0, error => 'timeout' });
+		}
+		return $c->render(json => { ok => 0, pending => 1 });
+	}
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_fingerprint', $token);
+	unless ($d->{'ok'}) { return $c->render(json => { ok => 0, error => ($d->{'error'} || 'not accepted') }); }
+	# the print was accepted: open the screen this session belongs to
+	my $device = $c->session('device_uuid') || $d->{'device'} || '';
 	my $opened = &padlock_mark_unlocked($c, 'locker', $device);
+	$log->info('padlock: local fingerprint opened ' . ($device || 'this screen'));
 	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
 };
 
@@ -27605,20 +27655,37 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	return $c->render(json => { ok => 0, error => 'no biometric key' }) unless $device->{'bio_pubkey'};
 	my $nonce = $c->param('nonce') || '';
 	my $signature = $c->param('signature') || '';
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	# The phone may confirm an unlock for ANOTHER screen (the person presses
+	# Unlock on the laptop, then touches the phone). The target is bound into the
+	# signed message, so a signature made for one screen cannot be replayed for
+	# another. An empty target is the phone's own screen.
+	my $target = $c->param('target') || '';
+	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	if ($target && !&subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0]) {
+		return $c->render(json => { ok => 0, error => 'not paired' });
+	}
 	my $ip = $c->tx->remote_address || '?';
 	my $now = &subs::rightNow();
 	my $fresh = &biometric_nonce_take('unlock', $device_uuid, $nonce);
 	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
-	my $msg = join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
-	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)) {
+	my $msg = $target
+		? join("\n", 'padlock-bio-unlock', $device_uuid, $target, $nonce)
+		: join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
+	# Older pages signed without the target. Accept that form too, for the one
+	# build in flight; the nonce is single-use and the key is still the phone's.
+	my $msg_legacy = join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
+	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)
+		|| ($target && &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg_legacy, $signature))) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
 		$log->info('padlock: biometric signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 		return $c->render(json => { ok => 0, error => 'not accepted' });
 	}
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_bio_fail', $ip . ':%');
-	# only the screen this key belongs to; a whole-house lock keeps the other
-	# screens locked on the house-wide stamp
-	my $opened = &padlock_mark_unlocked($c, 'locker', $device_uuid);
+	my $open_target = $target || $device_uuid;
+	# A whole-house lock keeps the other screens locked on the house-wide stamp.
+	my $opened = &padlock_mark_unlocked($c, $mode, $open_target);
 	# the authoritative lock may live on another peer: hand the open over the
 	# signed rail, the same way a phone-as-key unlock does
 	&subs::subprocessor(sub {
@@ -27628,11 +27695,11 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 			url => '/manager/security/padlock_open_peer',
 			type => 'get',
 			dissemination => 'yes',
-			params => { signatorial => &subs::signatorial_designer(), target => $device_uuid, mode => 'locker' },
+			params => { signatorial => &subs::signatorial_designer(), target => $open_target, mode => $mode },
 		});
 	}, { name => 'padlock biometric relay' });
-	$log->info('padlock: biometric open by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
-	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $device_uuid });
+	$log->info('padlock: biometric open by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' target=' . ($target || 'self'));
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $open_target });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
@@ -27821,14 +27888,37 @@ get '/manager/security/padlock_state' => sub ($c) {
 		push @targets, { uuid => $lock->{'uuid'}, name => ($d ? $d->{'name'} : 'Unknown device') };
 	}
 	# A page may carry its device in localStorage even when the session cookie
-	# has lost device_uuid (a cookieless webview wake). Accept it only for a
-	# paired, active device, so this answers for the screen that is asking.
-	my $du = $c->param('device_uuid') || $c->session('device_uuid') || '';
-	if ($du && $du =~ /^[A-Za-z0-9]{8,64}$/) {
-		my $paired = &subs::db_select('paired_devices', undef, { uuid => $du, status => 'active' })->hashes->[0];
-		$du = '' unless $paired;
+	# has lost device_uuid (a cookieless webview wake, or a ticket that signed in
+	# without one). Accept a parameter only for a paired, active device, and bind
+	# it to the session: the gate and every lock route read the session, so the
+	# next page load can no longer look like an unidentified screen (which the
+	# gate treated as an open house).
+	my $session_du = $c->session('device_uuid') || '';
+	my $param_du = $c->param('device_uuid') || '';
+	my $du = '';
+	if ($session_du && $session_du =~ /^[A-Za-z0-9]{8,64}$/
+		&& &subs::db_select('paired_devices', undef, { uuid => $session_du, status => 'active' })->hashes->[0]) {
+		# An established session keeps its own device: a locked screen must not
+		# be able to name an unlocked device and step out of its own lock.
+		$du = $session_du;
 	}
-	else { $du = ''; }
+	elsif ($param_du && $param_du =~ /^[A-Za-z0-9]{8,64}$/
+		&& &subs::db_select('paired_devices', undef, { uuid => $param_du, status => 'active' })->hashes->[0]) {
+		# A session that lost its device (a cookieless webview wake, or a ticket
+		# signed in without one) adopts the page's paired device once.
+		$du = $param_du;
+		$c->session('device_uuid' => $du);
+	}
+	# A newer tab may know that the page's own device is the locked one while
+	# the session still carries an older, unlocked uuid (the re-pair case).
+	# Adopting the locked device can only add restriction, never remove it.
+	if ($param_du && $param_du ne $du && $param_du =~ /^[A-Za-z0-9]{8,64}$/
+		&& &subs::db_select('paired_devices', undef, { uuid => $param_du, status => 'active' })->hashes->[0]
+		&& &padlock_device_locked($param_du)
+		&& (!$du || !&padlock_device_locked($du))) {
+		$du = $param_du;
+		$c->session('device_uuid' => $du);
+	}
 	my $request = &padlock_request_get();
 	$c->render(json => {
 		ok => 1,

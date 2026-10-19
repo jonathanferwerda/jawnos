@@ -154,7 +154,9 @@
 		var canvas = layer.querySelector('canvas');
 		var ctx = canvas.getContext('2d');
 		var logo = new Image();
-		logo.src = '<%= $logo %>';
+		// a stored logo is a data URI and can carry line breaks; a JSON string
+		// keeps them escaped instead of ending the JS string at the first one
+		logo.src = <%== &subs::json_chars($logo) %>;
 		var timer = null, raf = null, active = false, started = 0, last = 0;
 		var blobs = [];
 		function resize() {

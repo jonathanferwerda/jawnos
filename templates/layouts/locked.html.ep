@@ -19,6 +19,9 @@
 				localStorage.setItem('browser_tab', '<%= $browser_tab %>');
 			}
 			var signatorial = "<%= $c->stash('signatorial') || '' %>";
+			// the paired device this locked page belongs to, even when the
+			// browser has no localStorage entry of its own yet
+			window.jawnLockedDevice = "<%= $c->stash('locked_device') || '' %>";
 		</script>
 		<script src="/js/jquery.js"></script>
 		<script src="/js/numeral.min.js"></script>

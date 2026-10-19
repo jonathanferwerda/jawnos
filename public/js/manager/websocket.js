@@ -218,6 +218,12 @@ function wsOpener(event,app,origin) {
 	heartbeatStart(app);
 	// beat once now so a rebuilt socket catches up on the spot, not in two seconds
 	heartbeatSend(app);
+	// A socket that just came back may have missed a padlock request (the phone
+	// wakes, the Wi-Fi changes, the worker restarts). The request is also kept
+	// server-side for exactly this case; ask for it as soon as the link is up.
+	if (app == 'server' && typeof jawnPadlockKeyCheck === 'function') {
+		jawnPadlockKeyCheck(true);
+	}
 }
 
 // (Re)start the liveness heartbeat for one socket. Called when a socket opens
@@ -620,6 +626,10 @@ function wsMessageHandler(event) {
 				$('#padlock_taunts').text(data['taunts']).css({ 'position':'fixed','max-width': width + 'px', 'width':'100%', 'height': '40%', 'left': '0px', 'top': '1%', 'text-align': 'centre', 'width': '120%'});
 			}
 			$('#everything').hide();
+			// The overlay HTML is rendered by whichever screen locked. Its
+			// fingerprint button (and whether this device has an enrolled one) is
+			// this device's own fact, so correct it from padlock_state now.
+			if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
 
 		//	websocketStop();
 		}

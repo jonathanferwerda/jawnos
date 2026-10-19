@@ -1,5 +1,13 @@
 <% my $target = defined $target ? $target : ''; %>
 <% my $bio_enrolled = defined $c->stash('biometric') ? $c->stash('biometric') : 0; %>
+<script>
+	// The page's own device, for a browser that reached the lock through a
+	// ticket and has no localStorage entry yet. universal.js prefers
+	// localStorage and falls back to this.
+	if (!window.jawnLockedDevice && '<%= $target %>') {
+		window.jawnLockedDevice = '<%= $target %>';
+	}
+</script>
 <div id="locked_screen">
 	<div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
@@ -11,7 +19,7 @@
 		<%= &subs::ui('Press Unlock to ask your phone or laptop, or use the recovery code.') %>
 		<div id="locked_actions">
 			<button id="locked_unlock_request" type="button" hint="Unlock on my phone or laptop" aria-label="<%= &subs::ui('Unlock on my phone or laptop') %>"><%= &subs::ui('Unlock') %></button>
-			<% if ($fingerprint) { %>
+			<% if ($fingerprint && &subs::device_setter() ne 'mobile') { %>
 				<button id="locked_fingerprint" type="button" hint="Use this computer's fingerprint" aria-label="Use this computer's fingerprint"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
 			<% } %>
 			<button id="locked_biometric" type="button" data-enrolled="<%= $bio_enrolled ? 1 : 0 %>" hint="Use this phone's fingerprint" aria-label="Use this phone's fingerprint" style="display:none;"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
@@ -186,7 +194,14 @@
 	// page is a plain browser without the app's bridge)
 	if (bio && (window.JawnBiometricKey || bio.getAttribute('data-enrolled') === '1')) { bio.style.display = ''; }
 	var localfp = document.getElementById('locked_fingerprint');
-	if (localfp && typeof jawnMobileHere === 'function' && jawnMobileHere()) { localfp.style.display = 'none'; }
+	// the reader belongs to the machine it is attached to; hide it on a phone
+	// even when the shared lock HTML was rendered by a computer
+	function hideLocalFingerprint() {
+		if (localfp && typeof jawnMobileHere === 'function' && jawnMobileHere()) { localfp.style.display = 'none'; }
+	}
+	hideLocalFingerprint();
+	document.addEventListener('DOMContentLoaded', hideLocalFingerprint);
+	setTimeout(hideLocalFingerprint, 0);
 	var go = document.getElementById('locked_recovery_go');
 	if (go) {
 		go.addEventListener('click', function () {
@@ -223,49 +238,71 @@
 		sendPhone.addEventListener('click', function () {
 			var note = document.getElementById('locked_phone_status');
 			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker', lockedTarget); }
-			if (note) { note.textContent = <%= &subs::json_chars(&subs::ui('Sent. Confirm the fingerprint on your phone or laptop.')) %>; }
+			if (note) { note.textContent = <%== &subs::json_chars(&subs::ui('Sent. Confirm the fingerprint on your phone or laptop.')) %>; }
 		});
 	}
 	var fp = document.getElementById('locked_fingerprint');
 	if (fp) {
+		var note = document.getElementById('locked_phone_status');
+		var t = function (text) {
+			return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+		};
+		var finish = function (res) {
+			if (res && res.ok) {
+				// the print was accepted: the shackle opens, then the page follows
+				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(fp); }
+				if (note) { note.textContent = t('Unlocked. Loading...'); }
+				setTimeout(function () { window.location.reload(); }, 700);
+				return;
+			}
+			fp.disabled = false;
+			if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, fp); }
+			if (note) {
+				var e = (res && res.error) || '';
+				note.textContent = (e === 'busy') ? t('A fingerprint is already being read.')
+					: (e === 'timeout') ? t('No fingerprint was read. Try again.')
+					: (e === 'local only') ? t('This reader only works on the computer it is attached to.')
+					: (e === 'no fingerprint') ? t('No fingerprint is enrolled on this computer.')
+					: (e === 'not signed in') ? t('Sign in again, then use the fingerprint.')
+					: t('Fingerprint not accepted.');
+			}
+		};
+		var poll = function (token, tries) {
+			tries = tries || 0;
+			fetch('/manager/security/fingerprint_unlock_status?token=' + encodeURIComponent(token), { cache: 'no-store' })
+				.then(function (r) { return r.json(); })
+				.then(function (res) {
+					if (res && res.pending) {
+						if (tries > 30) { finish({ ok: 0, error: 'timeout' }); return; }
+						setTimeout(function () { poll(token, tries + 1); }, 700);
+						return;
+					}
+					finish(res);
+				})
+				.catch(function () { finish({ ok: 0, error: 'unavailable' }); });
+		};
 		fp.addEventListener('click', function () {
-			var note = document.getElementById('locked_phone_status');
 			fp.disabled = true;
 			if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(false, fp); }
-			if (note) { note.textContent = 'Touch the fingerprint reader...'; }
+			if (note) { note.textContent = t('Touch the fingerprint reader now...'); }
 			fetch('/manager/security/fingerprint_unlock', {
 				method: 'POST',
 				headers: { 'X-Requested-With': 'XMLHttpRequest' }
 			}).then(function (r) { return r.json(); }).then(function (res) {
-				if (res && res.ok) {
-					// the print was accepted: the shackle opens, then the page follows
-					if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(fp); }
-					if (note) { note.textContent = 'Unlocked. Loading...'; }
-					setTimeout(function () { window.location.reload(); }, 700);
-					return;
-				}
-				fp.disabled = false;
-				if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, fp); }
-				if (note) {
-					var e = (res && res.error) || '';
-					note.textContent = (e === 'busy') ? 'A fingerprint is already being read.'
-						: (e === 'local only') ? 'This reader only works on the computer it is attached to.'
-						: (e === 'no fingerprint') ? 'No fingerprint is enrolled on this computer.'
-						: (e === 'not signed in') ? 'Sign in again, then use the fingerprint.'
-						: 'Fingerprint not accepted.';
-				}
-			}).catch(function () {
-				fp.disabled = false;
-				if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, fp); }
-				if (note) { note.textContent = 'Fingerprint not available.'; }
-			});
+				if (res && res.pending && res.token) { poll(res.token, 0); return; }
+				finish(res);
+			}).catch(function () { finish({ ok: 0, error: 'unavailable' }); });
 		});
 	}
 	// the phone signs this machine open in the background; this page follows it.
 	// The websocket padlock_open stops this loop when it arrives first; the loop
 	// is the fallback when a handheld's worker is not listening.
+	if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
 	if (!window.jawnLockedPoller) {
 		window.jawnLockedPoller = setInterval(function () {
+			// a request for another screen arrives while this one is showing its
+			// own lock; the locked page has no websocket, so this is its poll
+			if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
 			fetch('/manager/security/padlock_state', { cache: 'no-store' }).then(function (r) {
 				return r.json();
 			}).then(function (s) {
