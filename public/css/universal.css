@@ -611,3 +611,89 @@ body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data
 body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[onclick]:not([class*="thumb"]) {
 	border-radius: 6px;
 }
+
+/* ---- the material on every other surface -----------------------------------
+
+   The rules above dress the desk's furniture one piece at a time. Everything
+   else that has a face of its own wears the same material: the desktop itself,
+   every window and its contents, the configured theme surfaces (the start menu,
+   Configure, the keyboard, the app panels), menus and dialogs, form controls,
+   tables and the common card and row surfaces. Only the texture layers go on -
+   each surface keeps the fill, border and shadow it already had, so an active
+   green or a destroy red still reads underneath. Plain and round are bare and
+   are left out by the prefix. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) :where(
+	#everything,
+	.wind,
+	.window_contents,
+	.window_drawer,
+	.window_drawer_contents,
+	.little_window,
+	.theme_surface,
+	.theme_surface_soft,
+	#alert,
+	#app_switcher,
+	#start_menu,
+	#start_menu .start_menu_item,
+	.dot_info,
+	.assistant_view,
+	.assistant_config_menu,
+	.assistant_input_row,
+	.assistant_staged_panel,
+	.ui-dialog,
+	.ui-menu,
+	.ui-datepicker,
+	.ui-tooltip,
+	.cfg-card,
+	.cfg-grid,
+	.cfg-row,
+	.app_setting,
+	table,
+	.window_contents > div,
+	.window_contents > section,
+	.window_contents > main,
+	#main_window,
+	#main_header,
+	#category_view,
+	#items_view,
+	.item
+) {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
+/* Form controls are surfaces too, but the native faces (swatch, check, radio,
+   slider, file and image buttons) draw themselves and keep their own look. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) :where(
+	input:not([type=color]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=image]):not([type=submit]):not([type=button]):not([type=reset]),
+	select,
+	textarea,
+	.text_editor
+) {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
+/* A dark desk still darkens a configured theme surface before the material goes
+   on, the same wash universal.css lays on every theme surface. The tint rides
+   above the material, so the desk's grain shows through the darkened face. */
+body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) :where(.theme_surface) {
+	background-image: linear-gradient(rgba(14,15,18,0.58), rgba(14,15,18,0.58)), var(--jawnos-texture);
+	background-size: 100% 100%, var(--jawnos-texture-size, auto);
+	background-repeat: no-repeat, var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: normal, var(--jawnos-texture-blend, normal);
+}
+body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) :where(.theme_surface_soft) {
+	background-image: linear-gradient(rgba(14,15,18,0.28), rgba(14,15,18,0.28)), var(--jawnos-texture);
+	background-size: 100% 100%, var(--jawnos-texture-size, auto);
+	background-repeat: no-repeat, var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: normal, var(--jawnos-texture-blend, normal);
+}
