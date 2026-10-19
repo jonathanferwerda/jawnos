@@ -9049,7 +9049,18 @@ post '/manager/lock_session' => sub($c) {
 	# a single-screen lock stays on that screen; only an explicit whole-house
 	# lock is handed to the peers
 	&remote_relay_request($c) if $scope eq 'all';
-	$c->render('text' => 'locked');
+	# The screen that pressed the lock shows its own overlay from this reply.
+	# The websocket push is the cross-screen path, but on a handheld its unix
+	# socket can be owned by another worker, so the send silently went nowhere
+	# and the screen that locked stayed open until a reload ("it didn't lock").
+	my $target = $scope eq 'all' ? '' : ($c->session('device_uuid') || $posted || '');
+	my $html = $c->render_to_string(
+		template => 'padlock',
+		mode => 'locker',
+		target => $target,
+		fingerprint => &fingerprint_available()
+	);
+	$c->render(json => { ok => 1, target => $target, html => $html });
 };
 sub lock_session($c, $explicit = 0, $scope = '') {
 	$scope ||= '';

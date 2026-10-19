@@ -4465,18 +4465,32 @@ function leave() {
 }
 
 var lockSessionTap = null;
+function jawnLockScreen(scope) {
+	$.post('/manager/lock_session', {
+		scope: scope || '',
+		device_uuid: localStorage.getItem('device_uuid') || ''
+	}, function(res) {
+		// the reply carries the overlay: the screen that pressed the lock must
+		// cover itself now, not wait for a websocket push that a handheld's
+		// worker may not be listening for
+		if (!res || !res.ok || !res.html) { return; }
+		var pf = $('#padlock_frame');
+		pf.html(res.html).css({ position: 'fixed', 'z-index': 60000 }).show();
+		$('#everything').hide();
+	}, 'json');
+}
 $(document).on('click', '#lock_session', function() {
 	if (lockSessionTap) {
 		clearTimeout(lockSessionTap);
 		lockSessionTap = null;
 		// double tap: lock the whole house
-		$.post('/manager/lock_session', { scope: 'all', device_uuid: localStorage.getItem('device_uuid') || '' });
+		jawnLockScreen('all');
 		return;
 	}
 	lockSessionTap = setTimeout(function() {
 		lockSessionTap = null;
 		// single tap: lock this screen
-		$.post('/manager/lock_session', { device_uuid: localStorage.getItem('device_uuid') || '' });
+		jawnLockScreen('');
 	}, 300);
 });
 
