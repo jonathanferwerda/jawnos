@@ -1367,6 +1367,28 @@ $(document).on('click', '.say_voice_test', function() {
 	});
 });
 
+// The on-demand translation engine, from Configure -> Misc. It translates the
+// visible window through the Guide's model and caches the result.
+$(document).on('click', '#translate_window', function () {
+	var to = $('#translate_target').val();
+	var status = $('#translate_status');
+	if (typeof jawnosTranslatePage !== 'function') {
+		status.text('The translator is not loaded. Refresh and try again.');
+		return;
+	}
+	status.text('Translating…');
+	jawnosTranslatePage(to, function (r) {
+		status.text('Translated ' + ((r.translated || 0) + (r.cached || 0)) + ' strings into ' + (r.to.native || r.to.name) + '.');
+	}, function (r) {
+		status.text((r && r.error) || 'Could not translate this window.');
+	});
+});
+
+$(document).on('click', '#translate_clear', function () {
+	try { localStorage.removeItem('jawnos_translation_target'); } catch (e) {}
+	location.reload();
+});
+
 $(document).on('change','.misc_setting', function() {
 	var timestamp = Date.now();
 	var set = $(this);

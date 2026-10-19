@@ -146,6 +146,8 @@ hook before_dispatch => sub {
 			$path ne '/payment' && 
 			$path ne '/play' && 
 			$path ne '/box_office/ticket_request' &&
+			$path !~ m{^/i18n/} &&
+			$path ne '/js/translate.js' &&
 			$path ne '/privacy') {
 		$c->stash('no' => 1);
 	}
@@ -333,6 +335,10 @@ hook before_dispatch => sub {
 		# the privacy notice is linked from the public homepage and the store, and
 		# a visitor must be able to read it before asking for a ticket
 		$path eq '/privacy' ||
+		# the generated UI/help catalogs and the dependency-free DOM translator are
+		# static assets on the public pages too
+		$path =~ m{^/i18n/} ||
+		$path eq '/js/translate.js' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();

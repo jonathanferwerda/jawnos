@@ -430,6 +430,36 @@ function helpDoAction(a, cb) {
 		}).fail(function () { cb('I could not measure that.'); });
 		return;
 	}
+	if (a.action === 'translate') {
+		if (!a.text) { cb('I did not catch what to translate.'); return; }
+		$.post('/manager/translate', { to: a.to || '', from: a.from || '', text: a.text, model: a.model || '' }, function (r) {
+			if (!r || !r.ok) { cb((r && r.error) || 'I could not translate that.'); return; }
+			var t = r.translation || '';
+			cb('Translated into ' + (r.to.native || r.to.name) + ': ' + t, t);
+		}).fail(function () { cb('I could not translate that.'); });
+		return;
+	}
+	if (a.action === 'translate_page') {
+		if (typeof jawnosTranslatePage !== 'function') { cb('The translator is not loaded in this window.'); return; }
+		cb('Translating this window into ' + (a.to || 'the chosen language') + '…');
+		var root = document.querySelector('.wind[app="help"]') || document.body;
+		jawnosTranslatePage(a.to || '', function (r) {
+			if (!r || !r.ok) { cb((r && r.error) || 'I could not translate this window.'); return; }
+			var n = (r.translated || 0) + (r.cached || 0);
+			cb('Translated the visible interface into ' + (r.to.native || r.to.name) + ' (' + n + ' strings).', 'Done - this window is in ' + (r.to.native || r.to.name) + '.');
+		}, function (r) {
+			cb((r && r.error) || 'I could not translate this window.');
+		}, root, a.model || '');
+		return;
+	}
+	if (a.action === 'translate_languages') {
+		$.get('/manager/translate/languages', function (r) {
+			if (!r || !r.languages) { cb('I could not read the language list.'); return; }
+			var names = r.languages.map(function (l) { return l.native + ' (' + l.name + ')'; }).join(', ');
+			cb('The translation engine offers ' + r.languages.length + ' languages: ' + names + '.', 'I can translate into ' + r.languages.length + ' languages; ask for one by name.');
+		}).fail(function () { cb('I could not read the language list.'); });
+		return;
+	}
 	if (a.action === 'play_music') {
 		helpPlayMusic(a.query || '', cb, a.shuffle);
 		return;

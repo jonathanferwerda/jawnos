@@ -1,13 +1,3 @@
-// Translated label from the catalog the layout inlined. {0}, {1}, ... are
-// replaced with the arguments; a key missing from the catalog reads as itself.
-function jawnosT(key) {
-	var s = (window.jawnos_lang && window.jawnos_lang[key] !== undefined) ? window.jawnos_lang[key] : key;
-	for (var i = 1; i < arguments.length; i++) {
-		s = s.split('{' + (i - 1) + '}').join(arguments[i]);
-	}
-	return s;
-}
-
 var tree = {};
 var appointment_chronicler;
 var appointment_windows = {};

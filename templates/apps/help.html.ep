@@ -73,9 +73,9 @@
 						</div>
 					<% } %>
 					<% if ($shown->{'app'}) { %>
-						<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="Open <%= $shown->{'title'} %>"
+						<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="<%= &subs::ui('Open') %> <%= $shown->{'title'} %>"
 							style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
-							Open <%= $shown->{'title'} %>
+							<%= &subs::ui('Open') %> <%= $shown->{'title'} %>
 						</span>
 					<% } %>
 					<% if (@{ $shown->{'related'} || [] }) { %>

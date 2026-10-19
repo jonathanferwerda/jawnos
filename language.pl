@@ -17,6 +17,10 @@ package language;
 use strict;
 use warnings;
 use utf8;
+use File::Basename qw(dirname);
+use JSON::PP ();
+
+our $ROOT = dirname(__FILE__);
 
 our $DEFAULT = 'en';
 
@@ -1670,6 +1674,198 @@ sub for_javascript {
 		$out{$key} = $catalog{$code}{$key};
 	}
 	return \%out;
+}
+
+# The generated UI/help catalog (i18n/ui-<code>.json). It is loaded once per
+# process and only when a server-side surface asks for a string; the browser
+# gets the same file through /i18n/ui-<code>.js.
+our %ui_catalog_cache;
+sub ui_catalog {
+	my ($code) = @_;
+	$code = &valid($code);
+	return {} if $code eq $DEFAULT;
+	return $ui_catalog_cache{$code} if $ui_catalog_cache{$code};
+	my $file = "$ROOT/i18n/ui-$code.json";
+	unless ( -e $file ) {
+		$ui_catalog_cache{$code} = {};
+		return $ui_catalog_cache{$code};
+	}
+	my $raw = do {
+		local $/;
+		open my $fh, '<:raw', $file or return {};
+		<$fh>;
+	};
+	my $d = eval { JSON::PP->new->utf8->decode($raw) };
+	$ui_catalog_cache{$code} = ref $d eq 'HASH' ? $d : {};
+	return $ui_catalog_cache{$code};
+}
+
+sub ui_translate {
+	my ( $code, $string ) = @_;
+	return $string unless defined $string && length $string;
+	my $c = &ui_catalog($code);
+	return $c->{$string} if defined $c->{$string} && length $c->{$string};
+	return $string;
+}
+
+# ---------------------------------------------------------------------------
+# On-demand translation languages
+# ---------------------------------------------------------------------------
+# The interface languages above are the ones with hand-written core labels.
+# The Guide's translation engine can also translate into the languages below on
+# request; the list is what the engine offers, not a promise that every model is
+# equally good at every one. DeepSeek, Gemini, Claude and the other configured
+# models are broadly multilingual; the model named in Configure -> Plat is the
+# one that runs the translation.
+our $translation_languages_cache;
+sub translation_languages {
+	return $translation_languages_cache if $translation_languages_cache;
+	my @out = map {
+		{ code => $_->{'code'}, native => $_->{'native'}, name => $_->{'name'}, interface => 1 }
+	} @languages;
+	my %seen = map { $_->{'code'} => 1 } @out;
+	my $extra = <<'LIST';
+zh-TW|繁體中文|Traditional Chinese
+af|Afrikaans|Afrikaans
+sq|Shqip|Albanian
+am|አማርኛ|Amharic
+hy|Հայերեն|Armenian
+az|Azərbaycanca|Azerbaijani
+eu|Euskara|Basque
+be|Беларуская|Belarusian
+bs|Bosanski|Bosnian
+bg|Български|Bulgarian
+ca|Català|Catalan
+ceb|Cebuano|Cebuano
+ny|Chichewa|Chichewa
+co|Corsu|Corsican
+hr|Hrvatski|Croatian
+cs|Čeština|Czech
+da|Dansk|Danish
+nl|Nederlands|Dutch
+eo|Esperanto|Esperanto
+et|Eesti|Estonian
+tl|Filipino|Filipino
+fi|Suomi|Finnish
+fy|Frysk|Frisian
+gl|Galego|Galician
+ka|ქართული|Georgian
+el|Ελληνικά|Greek
+gu|ગુજરાતી|Gujarati
+ht|Kreyòl ayisyen|Haitian Creole
+ha|Hausa|Hausa
+haw|ʻŌlelo Hawaiʻi|Hawaiian
+he|עברית|Hebrew
+hmn|Hmoob|Hmong
+hu|Magyar|Hungarian
+is|Íslenska|Icelandic
+ig|Igbo|Igbo
+ga|Gaeilge|Irish
+jv|Basa Jawa|Javanese
+kn|ಕನ್ನಡ|Kannada
+kk|Қазақша|Kazakh
+km|ខ្មែរ|Khmer
+rw|Ikinyarwanda|Kinyarwanda
+ky|Кыргызча|Kyrgyz
+lo|ລາວ|Lao
+la|Latina|Latin
+lv|Latviešu|Latvian
+lt|Lietuvių|Lithuanian
+lb|Lëtzebuergesch|Luxembourgish
+mk|Македонски|Macedonian
+mg|Malagasy|Malagasy
+ms|Bahasa Melayu|Malay
+ml|മലയാളം|Malayalam
+mt|Malti|Maltese
+mi|Te Reo Māori|Māori
+mr|मराठी|Marathi
+mn|Монгол|Mongolian
+my|မြန်မာ|Burmese
+ne|नेपाली|Nepali
+no|Norsk|Norwegian
+or|ଓଡ଼ିଆ|Odia
+ps|پښتو|Pashto
+fa|فارسی|Persian
+pl|Polski|Polish
+ro|Română|Romanian
+sm|Gagana Samoa|Samoan
+gd|Gàidhlig|Scottish Gaelic
+sr|Српски|Serbian
+st|Sesotho|Sesotho
+sn|ChiShona|Shona
+sd|سنڌي|Sindhi
+si|සිංහල|Sinhala
+sk|Slovenčina|Slovak
+sl|Slovenščina|Slovenian
+so|Soomaali|Somali
+su|Basa Sunda|Sundanese
+sw|Kiswahili|Swahili
+sv|Svenska|Swedish
+tg|Тоҷикӣ|Tajik
+ta|தமிழ்|Tamil
+tt|Татарча|Tatar
+te|తెలుగు|Telugu
+th|ไทย|Thai
+tk|Türkmençe|Turkmen
+uk|Українська|Ukrainian
+ur|اردو|Urdu
+ug|ئۇيغۇرچە|Uyghur
+uz|Oʻzbekcha|Uzbek
+cy|Cymraeg|Welsh
+xh|isiXhosa|Xhosa
+yi|ייִדיש|Yiddish
+yo|Yorùbá|Yoruba
+zu|isiZulu|Zulu
+LIST
+	foreach my $line ( split /\n/, $extra ) {
+		next unless $line =~ /\S/;
+		my ( $code, $native, $name ) = split /\|/, $line, 3;
+		next unless defined $code && length $code && !$seen{$code}++;
+		push @out, { code => $code, native => $native, name => $name, interface => 0 };
+	}
+	$translation_languages_cache = \@out;
+	return $translation_languages_cache;
+}
+
+our %translation_alias = (
+	chinese => 'zh', mandarin => 'zh', cantonese => 'zh-TW', 'traditional chinese' => 'zh-TW',
+	castilian => 'es', farsi => 'fa', persian => 'fa', 'brazilian portuguese' => 'pt',
+	'brazilian' => 'pt', 'pt-br' => 'pt', 'pt_br' => 'pt', 'zh-cn' => 'zh', 'zh-hans' => 'zh',
+	'zh-tw' => 'zh-TW', 'zh-hant' => 'zh-TW', 'simplified chinese' => 'zh',
+	'flemish' => 'nl', 'tagalog' => 'tl', 'burmese' => 'my', 'myanmar' => 'my',
+	'norwegian bokmal' => 'no', 'norwegian bokmål' => 'no', 'scots gaelic' => 'gd',
+	'gaelic' => 'gd', 'haitian' => 'ht', 'kreyol' => 'ht', 'moldovan' => 'ro',
+	'serbo-croatian' => 'sr', 'hindi' => 'hi', 'bengali' => 'bn', 'bangla' => 'bn',
+);
+
+# Resolve a language named by code, native name, English name or alias. The
+# Guide hands over the person's own words, so this is deliberately forgiving.
+sub translation_language {
+	my ($value) = @_;
+	return undef unless defined $value;
+	my $want = $value;
+	$want =~ s/^\s+|\s+$//g;
+	return undef unless length $want;
+	my $lc = lc $want;
+	my $list = &translation_languages();
+	foreach my $l ( @{$list} ) {
+		return $l if lc( $l->{'code'} ) eq $lc;
+	}
+	foreach my $l ( @{$list} ) {
+		return $l if lc( $l->{'native'} ) eq $lc || lc( $l->{'name'} ) eq $lc;
+	}
+	$lc =~ s/[_-]+/ /g;
+	my $raw_lc = lc $want;
+	foreach my $l ( @{$list} ) {
+		my $n = lc $l->{'name'};
+		$n =~ s/[_-]+/ /g;
+		return $l if $n eq $lc;
+	}
+	my $alias = $translation_alias{$raw_lc} || $translation_alias{$lc};
+	if ($alias) {
+		foreach my $l ( @{$list} ) { return $l if $l->{'code'} eq $alias; }
+	}
+	return undef;
 }
 
 1;

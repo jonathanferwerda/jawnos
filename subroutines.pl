@@ -6,9 +6,10 @@ use warnings;
 use utf8;
 
 use Unicode::Normalize qw(NFC);
+use Encode qw(encode_utf8);
 use Mojolicious::Lite;
 use List::Util qw(shuffle);
-use Mojo::Util qw/md5_sum html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
+use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use Text::Unidecode;
 
 use MIME::Base64;
@@ -26,6 +27,7 @@ use File::Copy;
 use File::Path;
 use File::Type;
 use Mojo::JSON qw(decode_json encode_json);
+use JSON::PP ();
 use Mojo::IOLoop::ReadWriteFork;
 use Mojo::SQLite;
 use Minion;
@@ -99,23 +101,18 @@ sub models_by_name {
 sub unformat_name() {
 	my $name = shift;
 	$name = '' unless defined $name;
-	# A stored name is both a database key and, for files, a folder name. Keep
-	# every letter of every script, combining marks, digits, apostrophes (both
-	# the straight and the typographic one) and a generous set of safe
-	# punctuation. Drop only what cannot safely be a key or a path segment:
-	# separators, control characters and the shell/Windows-reserved set.
+	# Every printable character is allowed in a name. Only invisible control
+	# characters are dropped; spaces and runs of underscores become one
+	# underscore so the key has a stable shape. The key is stored exactly this
+	# way, and subs::path_name() makes a filesystem-safe component from it.
 	$name = NFC($name);
 	$name =~ s/[\x00-\x1f\x7f]+//g;
-	$name =~ s{[\\/]+}{ }g;
-	$name =~ s/[^\p{L}\p{M}\p{N} '’._&+#@!(),-]+/ /g;
-	$name =~ s/\.{2,}/./g;
-	$name =~ s/^[.\s]+//;
-	$name =~ s/[.\s]+$//;
-	# A straight apostrophe is the one character in our safe set that would also
-	# terminate a JavaScript string or a SQL literal in the hundreds of hand-built
-	# snippets that name an app. Keep the mark but use the typographic form: it
-	# looks the same, is safe everywhere, and still sorts and matches as itself.
+	# A straight apostrophe is the one character that would also terminate a
+	# JavaScript string or a SQL literal in the hundreds of hand-built snippets
+	# that name an app. Keep the mark but use the typographic form: it looks the
+	# same, is safe everywhere, and still sorts and matches as itself.
 	$name =~ s/'/’/g;
+	$name =~ s/"/”/g;
 	my $fname = lc $name;
 	my $double_start = 0;
 	if ($fname =~ /^__/) {
@@ -128,11 +125,43 @@ sub unformat_name() {
 	return $fname;
 }
 
-	# The interface language: the house-wide row first, then the person's own
-	# ("Me") row, then any device row, then the language chosen at install, then
-	# English. setting_grabber's request-scoped memo makes the repeated asks in
-	# one page cheap; reading it per call also means a change made in one worker
-	# is seen by every other worker on the next request, not after a restart.
+# The filesystem form of a name. App names are keys first: they may contain
+# slashes, colons, semicolons, quotes and anything else a person can type. A
+# file or folder cannot take all of those safely, and a shell command must not
+# see them either, so this percent-encodes every byte that is not a letter,
+# mark, number or one of . _ -. Letters of any script stay as themselves, so an
+# existing café/中文 folder keeps its name. The encoding is injective, so two
+# distinct keys never share a folder.
+sub path_name() {
+	my $name = shift;
+	$name = '' unless defined $name;
+	$name = NFC($name);
+	my $out = $name;
+	$out =~ s/([^A-Za-z0-9\p{L}\p{M}\p{N}._-])/
+		join('', map { sprintf('%%%02X', $_) } unpack('C*', encode_utf8($1)))
+	/gex;
+	$out = '%2E' if $out eq '.';
+	$out = '%2E%2E' if $out eq '..';
+	$out = '%2D' . substr($out, 1) if $out =~ /^-/;
+	if ( length( encode_utf8($out) ) > 200 ) {
+		# Cap by bytes, not characters: a long name in Chinese or Arabic stays
+		# under the filesystem's component limit, and never ends mid-way through
+		# a percent-encoded byte.
+		my $prefix = '';
+		foreach my $ch ( split //, $out ) {
+			last if length( encode_utf8( $prefix . $ch ) ) > 179;
+			$prefix .= $ch;
+		}
+		$out = $prefix . '-' . substr( md5_sum( encode_utf8($name) ), 0, 16 );
+	}
+	return $out;
+}
+
+# The interface language: the house-wide row first, then the person's own
+# ("Me") row, then any device row, then the language chosen at install, then
+# English. setting_grabber's request-scoped memo makes the repeated asks in
+# one page cheap; reading it per call also means a change made in one worker
+# is seen by every other worker on the next request, not after a restart.
 sub language() {
 	my $value = eval { &setting_grabber({ app => 'misc', setting => 'language', device => 'all' }) };
 	my $signatorial;
@@ -180,6 +209,203 @@ sub lang_js() {
 	# decode it here the same way json_chars does or every non-ASCII label is
 	# double-encoded on the page.
 	return &json_chars(&language::for_javascript(&language()));
+}
+
+# Translate a full UI or help string through the generated catalog. This is the
+# server-side counterpart of jawnosT(): it is for printed documents, mail and a
+# template that needs the text before the browser can translate the DOM.
+sub ui() {
+	my $string = shift;
+	return &language::ui_translate(&language(), $string);
+}
+
+sub translation_languages() {
+	return &language::translation_languages();
+}
+
+sub translation_language() {
+	return &language::translation_language(@_);
+}
+
+# Translate text or a batch of UI strings through the configured Guide model.
+# Results are cached in the cache table, so the same label is paid for once.
+#
+#   &translate_engine({ to => 'French', text => 'Save' })
+#   &translate_engine({ to => 'fr', strings => [ 'Save', 'Cancel' ] })
+#
+# Returns { ok => 1, to => {...}, translations => {...}, cached => N,
+# translated => N, model => ... } or { ok => 0, error => '...' }.
+sub translate_engine() {
+	my ($params) = @_;
+	$params ||= {};
+	my $target = &translation_language( $params->{'to'} );
+	unless ($target) {
+		return { ok => 0, error => 'Unknown language: ' . ( $params->{'to'} // '' ) . '. Ask for the language list.' };
+	}
+	my $from = $params->{'from'} ? &translation_language( $params->{'from'} ) : undef;
+	my $model = $params->{'model'};
+	my $fallback = &setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
+	unless (defined $model && length $model) {
+		$model = &setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	}
+	unless (defined $model && length $model) {
+		return { ok => 0, error => 'No translation model is set. Choose a model under Configure -> Plat (the Guide model).' };
+	}
+
+	my @raw;
+	push @raw, $params->{'text'} if defined $params->{'text'} && length $params->{'text'};
+	if ( ref $params->{'strings'} eq 'ARRAY' ) {
+		push @raw, @{ $params->{'strings'} };
+	}
+	my ( %seen, @items );
+	foreach my $s (@raw) {
+		next unless defined $s;
+		$s = "$s";
+		$s =~ s/^\s+|\s+$//g;
+		next unless length $s;
+		next if $seen{$s}++;
+		push @items, $s;
+	}
+	return { ok => 0, error => 'nothing to translate' } unless @items;
+	my $chars = 0;
+	$chars += length($_) for @items;
+	return { ok => 0, error => 'that is too much to translate at once' } if $chars > 40000 || @items > 400;
+
+	# English is the source language; translating it into itself is a no-op.
+	if ( $target->{'code'} eq 'en' || ( $from && $from->{'code'} eq $target->{'code'} ) ) {
+		my %same = map { $_ => $_ } @items;
+		my $res = {
+			ok => 1, to => $target, from => ( $from || $target ), model => $model,
+			translations => \%same, cached => scalar(@items), translated => 0,
+		};
+		$res->{'translation'} = $same{ $params->{'text'} } if defined $params->{'text'} && length $params->{'text'};
+		return $res;
+	}
+
+	my ( %out, @missing );
+	my $cached = 0;
+	foreach my $s (@items) {
+		my $hash = &translation_cache_hash( $target->{'code'}, $model, $s );
+		my $row = eval { &db_query('select data from cache where app = ? and context = ? and subcontext = ? order by server_time desc limit 1', 'translation', $target->{'code'}, $hash)->hash };
+		my $hit = ( $row && $row->{'data'} ) ? eval { decode_sereal( $row->{'data'} ) } : undef;
+		if ( defined $hit && length $hit ) {
+			$out{$s} = $hit;
+			$cached++;
+		}
+		else {
+			push @missing, [ $s, $hash ];
+		}
+	}
+
+	my $translated = 0;
+	my @queue = @missing;
+	while (@queue) {
+		my ( @batch, $batch_chars );
+		$batch_chars = 0;
+		while (@queue) {
+			my $it = $queue[0];
+			last if @batch && ( @batch >= 35 || $batch_chars + length( $it->[0] ) > 6000 );
+			push @batch, shift @queue;
+			$batch_chars += length( $it->[0] );
+			last if $batch_chars >= 6000;
+		}
+		my @texts = map { $_->[0] } @batch;
+		my $got = &translation_model_batch( $model, $fallback, $target, $from, \@texts );
+		my @missed;
+		foreach my $it (@batch) {
+			my ( $s, $hash ) = @{$it};
+			my $t = $got->{$s};
+			if ( !defined $t || !length $t ) {
+				# tolerate a key the model normalized (whitespace, a curly quote)
+				my $nk = $s;
+				$nk =~ s/\s+/ /g;
+				$nk =~ s/^\s+|\s+$//g;
+				foreach my $k ( keys %{$got} ) {
+					my $kk = $k;
+					$kk =~ s/\s+/ /g;
+					$kk =~ s/^\s+|\s+$//g;
+					if ( $kk eq $nk && defined $got->{$k} && length $got->{$k} ) { $t = $got->{$k}; last; }
+				}
+			}
+			if ( defined $t && length $t ) {
+				$out{$s} = $t;
+				$translated++;
+				&cache_set({ app => 'translation', context => $target->{'code'}, subcontext => $hash, warranty => '-1y' }, $t);
+			}
+			else {
+				push @missed, $it;
+			}
+		}
+		if ( @missed && scalar(@batch) > 1 ) {
+			my $mid = int( @missed / 2 );
+			my @halves = ( [ @missed[ 0 .. $mid - 1 ] ], [ @missed[ $mid .. $#missed ] ] );
+			foreach my $half (@halves) {
+				next unless @{$half};
+				my @ht = map { $_->[0] } @{$half};
+				my $more = &translation_model_batch( $model, $fallback, $target, $from, \@ht );
+				foreach my $it ( @{$half} ) {
+					my ( $s, $hash ) = @{$it};
+					my $t = $more->{$s};
+					next unless defined $t && length $t;
+					$out{$s} = $t;
+					$translated++;
+					&cache_set({ app => 'translation', context => $target->{'code'}, subcontext => $hash, warranty => '-1y' }, $t);
+				}
+			}
+			@missed = grep { !defined $out{ $_->[0] } } @missed;
+		}
+		if (@missed) {
+			foreach my $it (@missed) {
+				my ( $s, $hash ) = @{$it};
+				my $one = &translation_model_batch( $model, $fallback, $target, $from, [$s] );
+				my $t = $one->{$s};
+				next unless defined $t && length $t;
+				$out{$s} = $t;
+				$translated++;
+				&cache_set({ app => 'translation', context => $target->{'code'}, subcontext => $hash, warranty => '-1y' }, $t);
+			}
+		}
+	}
+
+	my $result = {
+		ok => 1,
+		to => $target,
+		from => ( $from || { code => 'auto', native => 'Auto-detect', name => 'Auto-detect' } ),
+		model => $model,
+		translations => \%out,
+		cached => $cached,
+		translated => $translated,
+	};
+	$result->{'translation'} = $out{ $params->{'text'} } if defined $params->{'text'} && length $params->{'text'};
+	return $result;
+}
+
+sub translation_cache_hash {
+	my ( $code, $model, $text ) = @_;
+	return substr( sha256_hex( 'v1' . "\x1f" . $code . "\x1f" . ( $model // '' ) . "\x1f" . $text ), 0, 20 );
+}
+
+# One model turn over a list of strings. Returns a hash of source => translation.
+sub translation_model_batch {
+	my ( $model, $fallback, $target, $from, $texts ) = @_;
+	my $source = $from ? ( $from->{'native'} . ' (' . $from->{'code'} . ')' ) : 'the source language (detect it)';
+	my $system = 'You are the JawnOS translation engine. Translate every string into '
+		. $target->{'native'} . ' (' . $target->{'code'} . ') from ' . $source . ".\n"
+		. "Return ONLY a JSON object whose keys are the exact input strings and whose values are the translations.\n"
+		. "Do not add, omit, merge or split keys. Preserve placeholders such as {0} and {1}, HTML tags and entities, punctuation, file paths, code identifiers, and product names (JawnOS, Jawn, Ollama, Piper, Linux, Windows, Android) exactly.\n"
+		. "These are interface labels and help text: translate naturally, keep help text complete, and do not summarize.\n"
+		. 'If a string is only a product name or code token, keep it unchanged.';
+	my $user = "Input JSON array:\n" . JSON::PP->new->utf8(0)->encode($texts);
+	my ( $out, $err ) = &evaluation_model_call_with_fallback( $model, $fallback, $system, $user, &ai_role_thinking('help_assistant') );
+	return {} if $err || !defined $out || !length $out;
+	my $parsed = &json_from_model($out);
+	return {} unless ref $parsed eq 'HASH';
+	my %got;
+	foreach my $s ( @{$texts} ) {
+		my $t = $parsed->{$s};
+		$got{$s} = $t if defined $t && length $t;
+	}
+	return \%got;
 }
 
 sub apostrophe_escape() {
@@ -269,11 +495,25 @@ sub html_name() {
 	my $name = shift || "";
 	# DOM ids and class names still have to be ASCII tokens, but a name in
 	# Chinese, Arabic or French must not collapse to an empty string. Transliterate
-	# what Latin letters it can and fall back to a stable digest when it cannot.
-	my $ascii = Text::Unidecode::unidecode($name);
-	$ascii =~ s/[^a-zA-Z0-9\?]+//g;
-	$ascii = 'app' . substr(md5_sum($name), 0, 8) unless length $ascii;
+	# what Latin letters it can, keep the plain punctuation a CSS identifier can
+	# take, and add a stable digest whenever the name had to change at all, so two
+	# distinct app names never share a window class.
+	my $original = NFC($name);
+	my $ascii = Text::Unidecode::unidecode($original);
+	$ascii =~ s/[^a-zA-Z0-9_-]+//g;
+	if ( !length $ascii || $ascii ne $original ) {
+		$ascii = ( length $ascii ? $ascii : 'app' ) . '-' . substr( md5_sum( encode_utf8($original) ), 0, 8 );
+	}
 	return $ascii;
+}
+
+# A name printed inside HTML text or an attribute. The stored key keeps every
+# printable character, so the renderer must encode the markup characters rather
+# than rely on the key being safe.
+sub html_text() {
+	my $string = shift;
+	return '' unless defined $string;
+	return xml_escape($string);
 }
 
 sub http_name() {
@@ -8658,7 +8898,7 @@ sub setting_setter() {
 			}
 		}
 		unless ($sync) {
-			&Websocket::send('server', { console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
+			&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
 			&Websocket::send('server', { console => 'appointmentGrabber(\'' . $value . '\',\'' . $timestamp .'\',\'ws\');'});
 		}
 		$app = $value;
@@ -9149,7 +9389,7 @@ sub window_closer() {
 	my $browser_tab_id = shift;
 	my $timestamp = &subs::rightNow();
 
-	&Websocket::send('server', { browser_tab_id => $browser_tab_id, not_me => 1, console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
+	&Websocket::send('server', { browser_tab_id => $browser_tab_id, not_me => 1, console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
 	undef $gb::ws->{$app}->{$browser_tab_id};
 }
 
@@ -9277,6 +9517,7 @@ sub file_device_renamer() {
 	my $data = shift;
 	my $file = $data->{'file'};
 	my $app = $data->{'app'};
+	my $app_path = &subs::path_name($app);
 	my $is_thumb = $data->{'is_thumb'} || 0;
 	undef $data->{'is_thumb'};
 	my $misc_settings = $data->{'misc_settings'};
@@ -9316,7 +9557,7 @@ sub file_device_renamer() {
 			$type = 'music';
 		}
 		if (my $location = &subs::setting_grabber({ app => 'misc', setting => $type . '_location', device => $device})) {
-			$destination = &subs::home($location . '/' . $app . '/');
+			$destination = &subs::home($location . '/' . $app_path . '/');
 		}
 	}
 
@@ -9324,23 +9565,23 @@ sub file_device_renamer() {
 	unless ($destination) {
 		$misc_settings = &Manager::misc_setting_list() unless $misc_settings;
 		if ($assetual =~ /\.mp3$|\.m4a$|\.flac$|\.aiff$|\.weba$|\.wav$/gi) {
-			$destination = &subs::home($misc_settings->{$device}->{'music_location'} . '/' . $app . '/');
+			$destination = &subs::home($misc_settings->{$device}->{'music_location'} . '/' . $app_path . '/');
 			$type = 'audio';
 		}
 		elsif ($assetual =~ /\.jpg$|\.xcf$|\.png$|\.bmp$/gi) {
-			$destination = &subs::home($misc_settings->{$device}->{'photo_location'} . '/' . $app . '/');
+			$destination = &subs::home($misc_settings->{$device}->{'photo_location'} . '/' . $app_path . '/');
 			$type = 'image';
 		}
 		elsif ($assetual =~ /\.mov$|\.avi|\.webm$|\.mp4$|\.mkv$/gi) {
-			$destination = &subs::home($misc_settings->{$device}->{'video_location'} . '/' . $app . '/');
+			$destination = &subs::home($misc_settings->{$device}->{'video_location'} . '/' . $app_path . '/');
 			$type = 'video';
 		}
 		elsif ($assetual =~ /\.pdf$/gi) {
-			$destination = &subs::home($misc_settings->{$device}->{'document_location'} . '/' . $app . '/');
+			$destination = &subs::home($misc_settings->{$device}->{'document_location'} . '/' . $app_path . '/');
 			$type = 'document';
 		}
 		else {
-			$destination = &subs::home($misc_settings->{$device}->{'download_location'} . '/' . $app . '/');
+			$destination = &subs::home($misc_settings->{$device}->{'download_location'} . '/' . $app_path . '/');
 			$type = 'software';
 		}
 	}
@@ -9449,7 +9690,7 @@ sub vacuum() {
 	my $app_q = &db_query('select * from appointments where app=?',$app);
 	my $appts = $app_q->hashes;
 	if (scalar @{$appts} == 0 && &setting_grabber({ app => $app, setting => 'permanent' }) ne 'checked') {
-		&Websocket::send('server', { console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
+		&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
 
 		foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
 			&db_query('delete from ' . $t . ' where app=?',$app);
@@ -9472,7 +9713,7 @@ sub vacuum_app() {
 			}
 		}
 	}
-	&Websocket::send('server', { console => '$(".' . $app . '_close_button").trigger("click");', timestamp => $timestamp });
+	&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
 	sleep 1;
 	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
 		&db_query('delete from ' . $t . ' where app=?',$app);
@@ -20270,7 +20511,7 @@ sub generate_ai_media {
 	my $filename = $kind . '_' . &subs::rightNow() . ($kind eq 'image' ? '.png' : $kind eq 'audio' ? '.mp3' : '.mp4');
 	my $setting = ($kind eq 'image' ? 'photo_location' : $kind eq 'audio' ? 'music_location' : 'video_location');
 	my $folder = &subs::setting_grabber({ app => 'misc', setting => $setting, device => $device });
-	my $location = $folder ? (&subs::home($folder) . '/' . $app) : '';
+	my $location = $folder ? (&subs::home($folder) . '/' . &subs::path_name($app)) : '';
 	my $public_dir = $location || &subs::home('~/Public/generated_' . $kind);
 	`mkdir $public_dir` unless -d $public_dir;
 

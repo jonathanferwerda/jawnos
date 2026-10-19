@@ -29,6 +29,34 @@
 		</select>
 	</div>
 	<p class="cfg-note"><%= &subs::lang('configure.language_note') %></p>
+	<% my @tl = @{ $translation_languages || [] }; %>
+	<% my $default_tr = &subs::language() ne 'en' ? &subs::language() : 'fr'; %>
+	<details class="cfg-details">
+		<summary>Translate this window</summary>
+		<div class="cfg-row">
+			<label><b>Target language</b></label>
+			<select id="translate_target">
+				<% foreach my $l ( @tl ) { %>
+					<option value="<%= $l->{'code'} %>" <% if ($l->{'code'} eq $default_tr) { %>selected="selected"<% } %>><%= $l->{'native'} %> — <%= $l->{'name'} %></option>
+				<% } %>
+			</select>
+		</div>
+		<div class="cfg-actions">
+			<button type="button" id="translate_window">Translate this window</button>
+			<button type="button" id="translate_clear">Show original language</button>
+			<span id="translate_status" style="font-size:13px;"></span>
+		</div>
+		<p class="cfg-note">Uses the Guide's model<% if ($translation_model) { %> (<b><%= $translation_model %></b><% if ($translation_model_fallback) { %>; fallback <b><%= $translation_model_fallback %></b><% } %>)<% } else { %> (no model is set under Plat)<% } %>. The visible labels, buttons and help text are translated on demand and cached; the saved interface language above is not changed.</p>
+	</details>
+	<details class="cfg-details">
+		<summary>Languages the Guide can translate (<%= scalar @tl %>)</summary>
+		<p class="cfg-note">The engine offers these; the model above does the translating, so quality varies by language.</p>
+		<div style="columns:2;column-gap:18px;font-size:13px;">
+			<% foreach my $l ( @tl ) { %>
+				<div><%= $l->{'native'} %> <span style="opacity:.65;">— <%= $l->{'name'} %></span></div>
+			<% } %>
+		</div>
+	</details>
 </div>
 <% my @fonts = (
 	'system-ui, sans-serif',

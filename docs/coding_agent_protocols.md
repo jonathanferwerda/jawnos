@@ -49,6 +49,11 @@ Zed's agent panel can grow the editor process to several GB in minutes and die m
 - **Never open an appointment or centre view just to look** — it fans out to every tab and pops windows
   on the user's screen. Verify UI behaviour by asking, not by curling a route.
 - **Writes go through the app's routes**; standalone writes to `appointments` can be overwritten — re-read.
+- **Names accept every printable character**; use `subs::path_name()` for a filesystem component and
+  `subs::html_name()`/`http_name()` for a DOM id/class or URL. See Languages and translation above.
+- **Translate help and UI text when you write it** — `subs::lang`/`subs::ui`/`jawnosT`, all sixteen core
+  languages for labels, and the Guide engine for the rest. A feature that adds untranslatable text is not
+  finished.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with

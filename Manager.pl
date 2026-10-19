@@ -108,13 +108,14 @@ if ($device eq 'mobile' && `ps -e | grep sshd` eq '') {
 sub record_video($data) {
 	return if $device eq 'mobile';
 	my $app = $data->{'app'};
+	my $app_path = &subs::path_name($app);
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
 
-	my $filename = $folder . '/' . $app;
+	my $filename = $folder . '/' . $app_path;
 	`mkdir -p $filename` unless -e $filename;
-	$filename = $filename . '/' . $app . '_' . $timestamp . '.webm';
+	$filename = $filename . '/' . $app_path . '_' . $timestamp . '.webm';
 
 	&subs::subprocessor(sub {
 		`ffmpeg -i /dev/video0 $filename`;
@@ -125,16 +126,17 @@ sub record_video($data) {
 
 sub record_audio($data) {
 	my $app = $data->{'app'};
+	my $app_path = &subs::path_name($app);
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } ));
-	my $filename = $folder . '/' . $app;
+	my $filename = $folder . '/' . $app_path;
 	`mkdir -p $filename` unless -e $filename;
 	if ($device eq 'mobile') {
-		$filename = $filename . '/' . $app . '_' . $timestamp . '.mp3';
+		$filename = $filename . '/' . $app_path . '_' . $timestamp . '.mp3';
 	}
 	else {
-		$filename = $filename . '/' . $app . '_' . $timestamp . '.wav';
+		$filename = $filename . '/' . $app_path . '_' . $timestamp . '.wav';
 	}
 
 	if ($device eq 'mobile') {
@@ -153,13 +155,14 @@ sub record_audio($data) {
 sub record_video_stop($data) {
 	return if $device eq 'mobile';
 	my $app = $data->{'app'};
+	my $app_path = &subs::path_name($app);
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
 
 
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
 
-	my $filename = $folder . '/' . $app;
+	my $filename = $folder . '/' . $app_path;
 	`mkdir -p $filename` unless -e $filename;
 
 	`pkill ffmpeg`;
@@ -167,7 +170,7 @@ sub record_video_stop($data) {
 	if ($stopped->{'uuid'} && $stopped->{'type'} eq 'record') {
 
 		my $files = eval { return decode_json $stopped->{'file'} } || [];
-		$filename = $filename . '/' . $app . '_' . $timestamp . '.webm';
+		$filename = $filename . '/' . $app_path . '_' . $timestamp . '.webm';
 		my $duration = $timestamp - $stopped->{'timestamp'};
 		my $data = { server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(16), type => 'video' };
 		$data = &thumbnail_creator($data);
@@ -197,6 +200,7 @@ sub record_video_stop($data) {
 sub record_audio_stop($data) {
 	my $c = $data->{'c'};
 	my $app = $data->{'app'};
+	my $app_path = &subs::path_name($app);
 	my $timestamp = $data->{'timestamp'};
 	my $uuid = $data->{'uuid'};
 	my $filename;
@@ -211,13 +215,13 @@ sub record_audio_stop($data) {
 	my ($db) = &subs::database_grabber();
 	my $stopped = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
 	if ($stopped->{'uuid'} && $stopped->{'type'} eq 'record') {
-		$filename = $folder . '/' . $app;
+		$filename = $folder . '/' . $app_path;
 		`mkdir -p $filename` unless -e $filename;
 		if ($device eq 'mobile') {
-			$filename = $filename . '/' . $app . '_' . $timestamp . '.mp3';
+			$filename = $filename . '/' . $app_path . '_' . $timestamp . '.mp3';
 		}
 		else {
-			$filename = $filename . '/' . $app . '_' . $timestamp . '.wav';
+			$filename = $filename . '/' . $app_path . '_' . $timestamp . '.wav';
 		}
 		my $duration = $timestamp - $stopped->{'timestamp'};
 
@@ -732,6 +736,7 @@ sub take_picture($c,$data) {
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $app = &subs::unformat_name($data->{'app'} || $c->param('app'));
+	my $app_path = &subs::path_name($app);
 	unless (&subs::session_suds($c)) {
 		$c->stash('app' => $app);
 		$c->stash('uuid' => $uuid);
@@ -747,15 +752,15 @@ sub take_picture($c,$data) {
 	my ($filename,$ocr);
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } ));
-	$filename = $folder . '/' . $app;
+	$filename = $folder . '/' . $app_path;
 
 
 	my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
 	`mkdir -p $filename` unless -e $filename;
 	my $thumb = $filename . '/thumbs/';
 	`mkdir -p $thumb` unless -e $thumb;
-	$thumb = $thumb . $app . '_' . $timestamp . '.jpg';
-	$filename = $filename . '/' . $app . '_' . $timestamp;
+	$thumb = $thumb . $app_path . '_' . $timestamp . '.jpg';
+	$filename = $filename . '/' . $app_path . '_' . $timestamp;
 
 	my $text_file = $filename;
 	$filename = $filename . '.jpg';
@@ -889,6 +894,7 @@ sub scan($c,$scandata) {
 	my $suds = &subs::session_suds($c);
 	my $source = $scandata->{'source'};
 	my $app = $scandata->{'app'} || $c->param('app');
+	my $app_path = &subs::path_name($app);
 	if (!grep { $_ eq $scandata->{'feed'} } @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] }) {
 		&remote_relay_request($c);
 		return 'denial';
@@ -897,13 +903,13 @@ sub scan($c,$scandata) {
 
 	my $start_time = &subs::rightNow();
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'scan_location', device => $device } ));
-	my $filename = $folder . '/' . $app;
+	my $filename = $folder . '/' . $app_path;
 	$filename = &subs::home($filename);
 	`mkdir -p $filename` unless -e $filename;
 	my $thumb_folder = $filename . '/thumbs';
 	`mkdir -p $thumb_folder` unless -e $thumb_folder;
-	my $thumb = $thumb_folder . '/' . $app . '_' . $timestamp . '.jpg';
-	my $file = $filename . '/' . $app . '_' . $timestamp;
+	my $thumb = $thumb_folder . '/' . $app_path . '_' . $timestamp . '.jpg';
+	my $file = $filename . '/' . $app_path . '_' . $timestamp;
 	my $image_file = $file . '.jpg';
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
@@ -1956,6 +1962,15 @@ post '/manager/appointment/writer' => sub ($c) {
 
 
 
+
+get '/i18n/ui-:code.js' => sub ($c) {
+	my $code = &language::valid( $c->param('code') );
+	$c->res->headers->content_type('application/javascript; charset=UTF-8');
+	$c->res->headers->cache_control('no-cache');
+	my $file = 'i18n/ui-' . $code . '.json';
+	my $json = $code eq 'en' || !-e $file ? '{}' : read_file($file);
+	$c->render(text => 'window.jawnos_ui_lang = ' . $json . ';');
+};
 
 get '/privacy' => sub ($c) {
 	# A public page: the homepage and the store both link here, and a visitor
@@ -5135,37 +5150,38 @@ post '/manager/configure/attribute_upload' => sub($c) {
 		$app = &subs::unformat_name($app);
 		my $init = &subs::setting_initializer($app,$timestamp);
 		$app = $init->{'app'};
+		my $app_path = &subs::path_name($app);
 		push @uploaded_files, $upload;
 		my ($folder,$location);
 
 		if ($upload->{'type'} =~ /audio/gi) {
 			$upload_type = 'audio';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /video/gi) {
 			$upload_type = 'video';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /pdf/gi) {
 			$upload_type = 'scan';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'document_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /application/gi) {
 			$upload_type = 'software';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /image/gi) {
 			$upload_type = 'image';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		else {
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		`mkdir -p $location` unless -e $location;
 		my $filename = $location . '/' . $upload->{'filename'};
@@ -6452,6 +6468,9 @@ get '/manager/configure/misc_setting_list' => sub($c) {
 		photo_sizes => $gb::photo_sizes,
 		thumbnail_sizes => $gb::thumbnail_sizes,
 		folders => $config->{'folders'},
+		translation_languages => [ &subs::translation_languages() ],
+		translation_model => &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }),
+		translation_model_fallback => &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }),
 		config => &subs::config_reader()
 	);
 };
@@ -11502,41 +11521,42 @@ post '/manager/upload_file' => sub ($c) {
 		$app = &subs::unformat_name($app);
 		my $init = &subs::setting_initializer($app,$timestamp);
 		$app = $init->{'app'};
+		my $app_path = &subs::path_name($app);
 
 		my ($folder,$location,$thumb);
 
 		if ($upload->{'type'} =~ /audio/gi) {
 			$upload_type = 'audio';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /video/gi || lc $ext eq 'webm' || lc $ext eq 'avi' || lc $ext eq 'mp4' || lc $ext eq 'mov' || lc $ext eq 'mkv') {
 			$upload_type = 'video';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 			$thumb = $location . '/thumbs';
 
 		}
 		elsif ($upload->{'type'} =~ /image/gi || lc $ext eq 'jpg' || lc $ext eq 'png') {
 			$upload_type = 'image';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 			$thumb = $location . '/thumbs';
 		}
 		elsif ($upload->{'type'} =~ /pdf/gi) {
 			$upload_type = 'scan';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'document_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /application/gi) {
 			$upload_type = 'software';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 
 		else {
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
-			$location = &subs::home($folder) . '/' . $app;
+			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		`mkdir -p $location` unless -e $location;
 		my $filename = $location . '/' . $upload->{'filename'};
@@ -19693,6 +19713,8 @@ sub window_maker($type,$timestamp) {
 	my $formatted_name = &subs::format_name($type->{'app'});
 	my $unformatted_name = &subs::unformat_name($type->{'app'});
 	my $html_name = &subs::html_name($type->{'app'});
+	my $app_attr = &subs::html_text($unformatted_name);
+	my $app_text = &subs::html_text($formatted_name);
 	my $http_name = &subs::http_name($type->{'app'});
 	my $apostrophe_escape = &subs::apostrophe_escape($type->{'app'});
 
@@ -19747,25 +19769,25 @@ sub window_maker($type,$timestamp) {
 
 	my $display =
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--window, var(--panel));
-			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
+			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
-			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
-				';" app="' . $unformatted_name .'">
+			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
+				';" app="' . $app_attr .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
 				<span class="appointment_name">
 					<span class="appointment_name_marks">
-						<img class="medium_thumb unlock droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/make believe/lock.png">
-						<img class="medium_thumb jack droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/studio/jack.png">
+						<img class="medium_thumb unlock droppable" app="' . $app_attr . '" style="display:none;" src="/images/make believe/lock.png">
+						<img class="medium_thumb jack droppable" app="' . $app_attr . '" style="display:none;" src="/images/studio/jack.png">
 					</span>
 
-					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="\'' . $unformatted_name . '\'">' . $formatted_name . '</span>
+					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="' . $app_attr . '">' . $app_text . '</span>
 				</span>
 				<span class="navbar_buttons">
-					<button id="window_' . $timestamp . '_help" class="' . $unformatted_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '" hint="Help">' . $window_control->('help', '?') . '</button>
-					<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
-					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
-					<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
-					<button id="window_' . $timestamp . '_close" class="' . $unformatted_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('close', 'X') . '</button>
+					<button id="window_' . $timestamp . '_help" class="' . $html_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="Help">' . $window_control->('help', '?') . '</button>
+					<button id="window_' . $timestamp . '_minify" class="' . $html_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $app_attr . '">' . $window_control->('minimize', '_') . '</button>
+					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $html_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('restore', '#') . '</button>
+					<button id="window_' . $timestamp . '_maximize" class="' . $html_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
+					<button id="window_' . $timestamp . '_close" class="' . $html_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('close', 'X') . '</button>
 				</span>
 			</div>
 			<div id="window_drawer_' . $timestamp . '" class="window_drawer" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . $window_colour . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
@@ -20501,6 +20523,7 @@ get '/manager/studio/plug/select' => sub($c) {
 
 post '/manager/studio/save' => sub ($c) {
 	my $app = &subs::unformat_name($c->param('app')) || 'studio';
+	my $app_path = &subs::path_name($app);
 	my $timestamp = $c->param('timestamp');
 	my $name = $c->param('name');
 	my $init = &subs::setting_initializer($app,$timestamp);
@@ -20512,7 +20535,7 @@ post '/manager/studio/save' => sub ($c) {
 	my @files;
 	foreach my $u ( @{$c->req->uploads} ) {
 		my $folder = &subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } );
-		my $location = &subs::home($folder) . '/' . $app;
+		my $location = &subs::home($folder) . '/' . $app_path;
 		my $take_uuid = &subs::random_string_creator(17);
 		my @filename = split '_', (split /\./, $u->filename)[0];
 		my $channel = $filename[-2];
@@ -24635,11 +24658,56 @@ post '/manager/help/act' => sub($c) {
 	# runtime (learned) verbs, so the guide may pick either
 	my $allowed = &help::live_verb_names();
 	if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
+		# translation tools run through the same model the Guide is using this turn
+		$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
 		$c->render(json => { action => $action, raw => $text });
 	}
 	else {
 		$c->render(json => { action => { action => 'say', text => $text } });
 	}
+};
+
+# The translation engine: text or a batch of interface strings, through the
+# Guide's model, cached in the cache table. The Guide calls this for
+# "translate this" and for translating the visible window.
+post '/manager/translate' => sub($c) {
+	my $to = $c->param('to') // '';
+	my $text = $c->param('text');
+	my $from = $c->param('from') // '';
+	my $model = $c->param('model') // '';
+	my $strings;
+	my $raw = $c->param('strings');
+	if (defined $raw && length $raw) {
+		$raw = "$raw";
+		utf8::encode($raw) if utf8::is_utf8($raw);
+		$strings = eval { decode_json($raw) };
+		return $c->render(json => { ok => 0, error => 'strings must be a JSON array' }) unless ref $strings eq 'ARRAY';
+	}
+	my $res = &subs::translate_engine({
+		to => $to,
+		from => $from,
+		text => $text,
+		strings => $strings,
+		model => $model,
+	});
+	$c->render(json => $res);
+};
+
+get '/manager/translate/languages' => sub($c) {
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) || '';
+	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }) || '';
+	my $list = &subs::translation_languages();
+	my @out = map {
+		{ code => $_->{'code'}, native => $_->{'native'}, name => $_->{'name'}, interface => ($_->{'interface'} ? 1 : 0) }
+	} @{$list};
+	$c->render(json => {
+		ok => 1,
+		model => $model,
+		fallback => $fallback,
+		count => scalar(@out),
+		languages => \@out,
+		interface => [ map { $_->{'code'} } grep { $_->{'interface'} } @{$list} ],
+	});
 };
 
 # What the guide's find action sees: appointments whose app, file or notes match,
@@ -28253,7 +28321,7 @@ get '/manager/configure/adopt_app' => sub($c) {
 		if ($ms =~ /_location$/) {
 			my $folder_name = $ms;
 			$folder_name =~ s/_location$//gi;
-			my $folder = &subs::home($misc_settings->{$device}->{$ms} . '/' . $app);
+			my $folder = &subs::home($misc_settings->{$device}->{$ms} . '/' . &subs::path_name($app));
 
 			my @files = split /\n/, `ls $folder`;
 
@@ -30925,13 +30993,14 @@ get '/manager/marker' => sub ($c) {
 post '/manager/snapshot_save' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
+	my $app_path = &subs::path_name($app);
 	my $snapshot = $c->param('snapshot');
 	my @snapshot = split ',', $snapshot;
 	shift @snapshot;
 	$snapshot = join ',', @snapshot;
 	$snapshot = decode_base64($snapshot);
 	my $folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-	my $location = &subs::home($folder) . '/' . $app;
+	my $location = &subs::home($folder) . '/' . $app_path;
 	my $filename = $location . '/' . $timestamp . '.png';
 	write_file($filename,$snapshot);
 	my $jfile = encode_json [{ server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(8), type => 'image' }];
@@ -30955,6 +31024,7 @@ post '/manager/marker/save' => sub ($c) {
 	my $image = $c->param('img');
 	my $paper = $c->param('paper');
 	my $app = &subs::unformat_name($c->param('app'));
+	my $app_path = &subs::path_name($app);
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my ($db,$database,$sql) = &subs::database_grabber();
 
@@ -30963,7 +31033,7 @@ post '/manager/marker/save' => sub ($c) {
 	$image = join ',', @image;
 	$image = decode_base64($image);
 	my $folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
-	my $location = &subs::home($folder) . '/' . $app;
+	my $location = &subs::home($folder) . '/' . $app_path;
 	my $filename = $location . '/' . $timestamp . '.png';
 	write_file($filename,$image);
 	my $uuid = &subs::random_string_creator(20);
@@ -33667,9 +33737,9 @@ websocket '/manager/ws' => sub ($c) {
 				input => $data->{'input'},
 				remote => $remote_machines
 			};
-			if (-e './templates/websockets/' . $app . '.html.ep') {
+			if (-e './templates/websockets/' . &subs::path_name($app) . '.html.ep') {
 				$return_data->{'template'} = $c->render_to_string(
-					template => 'websockets/' . $app,
+					template => 'websockets/' . &subs::path_name($app),
 					ws => $return_data
 				);
 				if ($app eq 'server') { delete $return_data->{'remote'}; }
@@ -33915,7 +33985,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			$app = $app;
 			my $folder = $gb::tmp_dir . '/ws';
 			`mkdir -p $folder` unless -e $folder;
-			my $file = $folder . '/' . $app;
+			my $file = $folder . '/' . &subs::path_name($app);
 			unlink $file if -e $file;
 
 			my $server = Mojo::IOLoop->server({ path => $file } => sub ($loop,$stream,$id) {
@@ -34024,7 +34094,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			if (scalar keys %{$gb::ws->{$app}} == 0) {
 				Mojo::IOLoop->remove($ws_server->{$app});
 				my $folder = $gb::tmp_dir . '/ws';
-				my $file = $folder . '/' . $app;
+				my $file = $folder . '/' . &subs::path_name($app);
 				`rm -R $file` if -e $file;
 				delete $ws_server->{$app};
 			}

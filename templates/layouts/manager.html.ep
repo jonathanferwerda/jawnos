@@ -160,6 +160,10 @@
 		     /js/manager/bundle.js concatenates the manager's own files in this order
 		     (the list lives in Manager.pl: manager_bundle_files). -->
 		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<% if (&subs::language() ne 'en') { %>
+			<script src="/i18n/ui-<%= &subs::language() %>.js?string=<%= $string %>"></script>
+		<% } %>
+		<script src="/js/translate.js?string=<%= $string %>"></script>
 		<script src="/js/manager/clickfx.js?string=<%= $string %>"></script>
 		<script src="/js/jquery-ui.js"></script>
 		<script src="/js/jquery.ui.touch-punch.min.js"></script>
