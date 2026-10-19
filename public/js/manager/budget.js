@@ -510,6 +510,15 @@ $(document).on('click', '.budget_light', function() {
 
 });
 
+// The app's ci setting says whether its budget light was left open, and the
+// server renders it on the panel. Reopening a closed window brings the light
+// back just as it was left; closing it cleared ci, so a closed light stays shut.
+function budgetLightRestore(app) {
+	var blci = $('.budget_current_information[app="' + app + '"]');
+	var circumstance = blci.attr('circumstance') || '';
+	if (circumstance) { budgetLight(app, circumstance, 'open'); }
+}
+
 function budgetLight(app,circumstance,status) {
 	var blci = $('.budget_current_information[app="' + app + '"]');
 	var wind = blci.closest('.wind');

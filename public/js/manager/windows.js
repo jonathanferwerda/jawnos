@@ -251,6 +251,9 @@ function windowMaker(response) {
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
 			websocketStart(app);
+			// a window closed with its budget light open comes back with the light
+			// open: the server rendered the app's ci setting onto the panel
+			if (typeof budgetLightRestore === 'function') { budgetLightRestore(app); }
 			carry_on = 1;
 			if ($('#' + window_id).attr('pre_dimensioned') != 1) {
 				windowReorganizer(window_id);
@@ -833,7 +836,10 @@ function appWindowOpener(i,timestamp,v) {
 					windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });
 				}
 				if (v.current_information) {
-					budgetLight(v.app,v['current_information'],'open');
+					budgetLight(i,v['current_information'],'open');
+				}
+				else if (typeof budgetLightRestore === 'function') {
+					budgetLightRestore(i);
 				}
 				if (v.visible != 'yes') {
 					window.hide();
