@@ -47,6 +47,10 @@ $(document).on('change', '#padlock_contexts', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_contexts', 'value': contexts });
 });
 
+$(document).on('change', '#padlock_gate', function() {
+	settingSetter({ 'app': '__president', 'setting': 'padlock_gate', 'value': $(this).val() });
+});
+
 
 $(document).on('click', '.padlock_jog_wheel',function(e) {
 	var timestamp = Date.now();

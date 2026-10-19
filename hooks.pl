@@ -233,6 +233,11 @@ hook before_dispatch => sub {
 		# does it must load on the gate (the routes check the roster themselves)
 		$path =~ '^/manager/device' ||
 		$path eq '/js/device.js' ||
+		# the padlock's device door authenticates itself: the phone signs a
+		# single-use nonce with its paired key, so it works even when the phone's
+		# session has lapsed while the screen sat asleep
+		$path eq '/manager/security/padlock_challenge' ||
+		$path eq '/manager/security/padlock_unlock' ||
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||

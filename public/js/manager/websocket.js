@@ -565,6 +565,14 @@ function wsMessageHandler(event) {
 		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
 			jawnPadlockKeyShow(data['mode']);
 		}
+		if (data['padlock_open']) {
+			// the phone (or the paper code) turned it: give the camera back and
+			// drop the overlay without waiting for the page to be reloaded
+			if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
+			$('#padlock_frame').html('').hide();
+			$('#everything').show();
+			if (!document.getElementById('everything')) { window.location.reload(); }
+		}
 		if ( data['padlock'] ) {
 			var height = numeral($(window).height()).format('0.00');
 			var width = numeral($(window).width()).format('0.00');

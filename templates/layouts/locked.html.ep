@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title><%= title %></title>
+		<link rel='icon' href="/images/make believe/Pillow.png"/>
+		<script src="/js/jquery.js"></script>
+		<script src="/js/numeral.min.js"></script>
+		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+	</head>
+	<body><%= content %></body>
+
+	<script>
+		var bti = sessionStorage.getItem('browser_tab_id');
+		if (bti == null) {
+			bti = '<%= $browser_tab_id %>';
+			sessionStorage.setItem('browser_tab_id', '<%= $browser_tab_id %>');
+		}
+		var bt = localStorage.getItem('browser_tab');
+		if (!bt) {
+			localStorage.setItem('browser_tab', '<%= $browser_tab %>');
+		}
+	</script>
+</html>

@@ -1,0 +1,138 @@
+% title 'Locked';
+<style>
+	html, body {
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		padding: 0;
+		background-color: #101010;
+		color: #f4f4f4;
+		font-family: sans-serif;
+		overflow: hidden;
+	}
+	#locked_heading {
+		position: fixed;
+		top: 2%;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 20px;
+		z-index: 60002;
+	}
+	#locked_help {
+		position: fixed;
+		bottom: 1%;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 15px;
+		line-height: 1.35;
+		padding: 0 8px;
+		z-index: 60002;
+	}
+	#locked_padlock {
+		position: fixed;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		width: 300px;
+		height: 340px;
+	}
+	#locked_recovery {
+		position: fixed;
+		right: 1%;
+		top: 1%;
+		width: 290px;
+		z-index: 60003;
+		background-color: rgba(28, 28, 34, 0.95);
+		border-radius: 8px;
+		padding: 10px;
+		font-size: 14px;
+	}
+	#locked_recovery input {
+		width: 100%;
+		font-size: 16px;
+		padding: 6px;
+		box-sizing: border-box;
+	}
+	#locked_recovery button {
+		font-size: 16px;
+		padding: 6px 12px;
+		margin-top: 6px;
+	}
+	#locked_status {
+		margin-top: 6px;
+		color: #ffd;
+	}
+</style>
+
+<div id="locked_heading">The house is locked.</div>
+
+<div id="locked_padlock">
+	<%= include 'padlock', mode => 'locker' %>
+</div>
+
+<div id="locked_help">
+	Tap the padlock to use this screen's camera for forty seconds,
+	or open the phone key on a paired phone or tablet.
+</div>
+
+<details id="locked_recovery">
+	<summary>Recovery code</summary>
+	<input id="locked_recovery_code" autocomplete="off" spellcheck="false" placeholder="paper code">
+	<button id="locked_recovery_go">Unlock</button>
+	<div id="locked_status"></div>
+</details>
+
+<script>
+(function () {
+	function b64(buf) {
+		var bytes = new Uint8Array(buf);
+		var s = '';
+		for (var i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
+		return btoa(s);
+	}
+	function status(text) {
+		var el = document.getElementById('locked_status');
+		if (el) { el.textContent = text || ''; }
+	}
+	var go = document.getElementById('locked_recovery_go');
+	if (go) {
+		go.addEventListener('click', function () {
+			var code = (document.getElementById('locked_recovery_code').value || '').trim();
+			if (!code) { status('Type the code first.'); return; }
+			if (!(window.crypto && crypto.subtle && crypto.subtle.generateKey)) {
+				status('This browser cannot hold a device key.');
+				return;
+			}
+			status('Checking...');
+			crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+					var body = new URLSearchParams({ code: code, pubkey: b64(spki), name: 'Recovered Device' });
+					return fetch('/manager/device/recover', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: body
+					});
+				}).then(function (r) { return r.json(); }).then(function (res) {
+					if (res && res.ok) {
+						status('Unlocked. Loading...');
+						window.location.reload();
+					}
+					else {
+						status(res && res.error === 'too many' ? 'Too many tries. Wait a while.' : 'That code was not accepted.');
+					}
+				});
+			}).catch(function () { status('That code was not accepted.'); });
+		});
+	}
+	// the phone signs this machine open in the background; this page follows
+	setInterval(function () {
+		fetch('/manager/security/padlock_state', { cache: 'no-store' }).then(function (r) {
+			return r.json();
+		}).then(function (s) {
+			if (s && s.ok && !s.locked) { window.location.reload(); }
+		}).catch(function () {});
+	}, 2500);
+})();
+</script>

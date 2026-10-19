@@ -1664,7 +1664,9 @@ sub rock_and_roll($c) {
 		}
 	}
 	else {
-		$c->render('text' => 'no');
+		# the gate may already have answered (a locked request for a file is
+		# denied by the lock page); do not replace that answer with 'no'
+		$c->render('text' => 'no') unless $c->res->code && $c->res->code == 423;
 		return;
 	}
 }
@@ -9006,7 +9008,7 @@ post '/manager/lock_session' => sub($c) {
 	&remote_relay_request($c);
 	$c->render('text' => 'locked');
 };
-sub lock_session($c, $explicit) {
+sub lock_session($c, $explicit = 0) {
 	my $now = &subs::rightNow();
 	my ($db) = &subs::database_grabber();
 
@@ -9016,6 +9018,9 @@ sub lock_session($c, $explicit) {
 	# session a screen that just turned it had already opened.
 	my $path = $c->req->url->path;
 	return if ($path eq '/manager/security/padlock_watch' ||
+		$path eq '/manager/security/padlock_challenge' ||
+		$path eq '/manager/security/padlock_unlock' ||
+		$path eq '/manager/security/padlock_state' ||
 		$path =~ m{^/manager/security/padlock_key(?:/|$)});
 
 	# A request that started while the lock screen was up can reach here after
@@ -26554,6 +26559,11 @@ post '/manager/device/recover' => sub($c) {
 	# is minted from it), and the duty stamp nudges the other workers to re-read
 	# the vault instead of their memoized copy
 	$gb::suds = $suds;
+	# the paper code is also the way past a padlock: the same recovery that
+	# unwraps the house key opens the lock, so a forgotten phone is not a lockout
+	if (&subs::db_select('security', undef, { level => 'padlock' })->hashes->[0]) {
+		&padlock_mark_unlocked($c, 'locker');
+	}
 	&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => &subs::rightNow() });
 	my $name = substr($c->param('name') || 'Recovered Device', 0, 60);
 	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
@@ -26739,6 +26749,8 @@ post '/manager/security/padlock_pull' => sub($c) {
 				return;
 			}
 			$attempts = 0;
+			$log->info('padlock: opened by dial mode=' . ($mode || 'locker'));
+			$log->info('padlock: opened by dial mode=' . ($mode || 'locker'));
 
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
@@ -26914,26 +26926,100 @@ sub padlock_camera_mode {
 	return ($mode =~ /^(?:locker|gallery|music|folders)$/) ? $mode : 'locker';
 }
 
-sub padlock_camera_codes {
-	my $file = &padlock_camera_dir() . '/codes';
-	return () unless -e $file;
-	open my $fh, '<', $file or return ();
-	my @codes;
-	while (my $line = <$fh>) {
-		chomp $line;
-		$line =~ s/^\s+|\s+$//g;
-		push @codes, $line if length $line;
-	}
-	close $fh;
-	return @codes;
+# --- the lock gate ---------------------------------------------------------
+# The padlock used to be a client overlay: every route still answered behind
+# it. The gate is the server-side half. 'shadow' writes what it would refuse
+# and still answers (so the list can be checked on a live machine); 'enforce'
+# refuses everything except the ways in.
+sub padlock_gate_mode {
+	my $mode = &subs::setting_grabber({ app => '__president', setting => 'padlock_gate' });
+	return (defined $mode && $mode eq 'enforce') ? 'enforce' : 'shadow';
 }
 
-# A code the camera read opens the same things a turned dial opens.
-sub padlock_visual_unlock {
+# A request that came from this machine itself. The phone/tablet is remote, so
+# its signature opens the lock; the locked screen's own key may not.
+sub padlock_request_is_local {
+	my ($c) = @_;
+	my $local = $c->tx->local_address || '';
+	my $remote = $c->tx->remote_address || '';
+	return 1 if $local eq $remote;
+	return 1 if $remote =~ /^(?:127\.|::1$|::ffff:127\.)/;
+	# a browser reaching this machine by its LAN name (or through a hairpin)
+	# still counts as this machine: the phone is never one of our own addresses
+	our $padlock_mine_at = 0;
+	our @padlock_mine;
+	if (!$padlock_mine_at || time - $padlock_mine_at > 60) {
+		@padlock_mine = split /\s+/, `hostname -I 2>/dev/null`;
+		$padlock_mine_at = time;
+	}
+	return 1 if grep { $_ eq $remote } @padlock_mine;
+	return 0;
+}
+
+sub padlock_gate_allows {
+	my ($path) = @_;
+	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public)/};
+	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt)$};
+	return 1 if $path eq '/manager/ws' || $path eq '/manager/health';
+	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
+	# the device rail authenticates itself and must reach the gate's recovery
+	return 1 if $path =~ m{^/manager/device(?:/|$)};
+	return 1 if $path eq '/manager/security/padlock_watch';
+	return 1 if $path eq '/manager/security/padlock_pull';
+	return 1 if $path eq '/manager/security/padlock_challenge';
+	return 1 if $path eq '/manager/security/padlock_unlock';
+	return 1 if $path eq '/manager/security/padlock_state';
+	return 1 if $path =~ m{^/manager/security/padlock_key(?:/|$)};
+	return 0;
+}
+
+sub padlock_locked_now {
+	my ($c) = @_;
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	return 0 unless $padlock;
+	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	return 0 unless grep { $_ eq 'general' } @{$contexts};
+	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
+	my $pl = $row ? (&subs::decrypter(&subs::session_suds($c), $row->{'value'}) || 0) : 0;
+	return (&subs::rightNow() > $pl) ? 1 : 0;
+}
+
+sub padlock_gate_shadow {
+	my ($c) = @_;
+	my $path = $c->req->url->path->to_string;
+	my $method = $c->req->method || 'GET';
+	my $remote = $c->tx->remote_address || '?';
+	$log->info("padlock shadow: would deny $method $path from $remote");
+}
+
+sub padlock_gate_answer {
+	my ($c) = @_;
+	my $path = $c->req->url->path->to_string;
+	my $xhr = (($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i);
+	my $json = (($c->req->headers->accept // '') =~ m{application/json}i);
+	if ($xhr || $json || $path =~ /\.json$/) {
+		$c->res->code(423);
+		$c->render(json => { error => 'locked', locked => 1, gate => &padlock_gate_mode() });
+		return;
+	}
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	$c->res->code(423);
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0));
+	return;
+}
+
+# One way to open: the dial, a code the camera read, a paired device's
+# signature and the paper recovery code all land here. It moves pl_time past
+# now (the future stamp the dial writes), resets the attempt count, gives the
+# camera back and tells every tab.
+sub padlock_mark_unlocked {
 	my ($c, $mode) = @_;
+	$mode ||= 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 	&padlock_camera_stop();
-	my $suds = &subs::session_suds($c);
+	my $suds = &subs::session_suds($c) || $gb::suds;
+	return 0 unless $suds;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
 	my $new_timeout = &subs::rightNow() + $activity_timeout;
@@ -26959,9 +27045,30 @@ sub padlock_visual_unlock {
 		&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
 	}
 	else {
-		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();'});
+		&Websocket::send('server', { padlock_open => 1, mode => $mode, timestamp => &subs::rightNow() });
+		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();' });
 	}
 	return 1;
+}
+
+sub padlock_camera_codes {
+	my $file = &padlock_camera_dir() . '/codes';
+	return () unless -e $file;
+	open my $fh, '<', $file or return ();
+	my @codes;
+	while (my $line = <$fh>) {
+		chomp $line;
+		$line =~ s/^\s+|\s+$//g;
+		push @codes, $line if length $line;
+	}
+	close $fh;
+	return @codes;
+}
+
+# A code the camera read opens the same things a turned dial opens.
+sub padlock_visual_unlock {
+	my ($c, $mode) = @_;
+	return &padlock_mark_unlocked($c, $mode);
 }
 
 post '/manager/security/padlock_watch' => sub ($c) {
@@ -26983,7 +27090,7 @@ post '/manager/security/padlock_watch' => sub ($c) {
 	if ($action eq 'start') {
 		# only a screen on this machine may wake its camera
 		return $c->render(json => { ok => 1, camera => 0 })
-			unless ($c->tx->local_address || '') eq ($c->tx->remote_address || '');
+			unless &padlock_request_is_local($c);
 		return $c->render(json => { ok => 1, camera => 0 })
 			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
@@ -27017,6 +27124,80 @@ post '/manager/security/padlock_watch' => sub ($c) {
 		return $c->render(json => { ok => 1, unlocked => 0 });
 	}
 	$c->render(json => { ok => 1, camera => 0, unlocked => 0 });
+};
+
+# --- opening the lock with a paired device's signature ---------------------
+# The phone/tablet asks for a short-lived nonce, signs
+# "padlock-unlock\n<uuid>\n<nonce>" with the key it was paired with, and the
+# house verifies it. The nonce is single-use; a request from this machine
+# itself is refused, so the locked screen cannot open its own door.
+post '/manager/security/padlock_challenge' => sub ($c) {
+	my $device_uuid = $c->param('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	unless ($device) { return $c->render(json => { ok => 0 }); }
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $fails = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'padlock_fail', $ip . ':%', $now - 300000)->hash->{'n'} || 0;
+	if ($fails >= 5) { return $c->render(json => { ok => 0, error => 'too many' }); }
+	# A challenge from someone else must not knock the phone's nonce out of the
+	# cache, so expired ones are pruned instead of every nonce for the device;
+	# the per-address count keeps the cache from being filled.
+	my $recent = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'padlock_challenge', $ip . ':%', $now - 60000)->hash->{'n'} || 0;
+	if ($recent >= 20) { return $c->render(json => { ok => 0, error => 'too many' }); }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_challenge', app => '__president', server_time => $now, timestamp => $now });
+	my $nonce = &subs::random_string_creator(40);
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_nonce', $now - 120000);
+	&subs::db_insert('cache', { uuid => $device_uuid . ':' . $nonce, context => 'padlock_nonce', app => '__president', server_time => $now, timestamp => $now });
+	$c->render(json => { ok => 1, nonce => $nonce, seconds => 60 });
+};
+
+post '/manager/security/padlock_unlock' => sub ($c) {
+	my $device_uuid = $c->param('device_uuid') || '';
+	my $nonce = $c->param('nonce') || '';
+	my $signature = $c->param('signature') || '';
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	unless ($device && $nonce =~ /^[A-Za-z0-9]{8,64}$/) { return $c->render(json => { ok => 0 }); }
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $stamp = $device_uuid . ':' . $nonce;
+	my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'padlock_nonce', $stamp)->hashes->[0];
+	unless ($seen && $seen->{'server_time'} && $seen->{'server_time'} > $now - 60000) {
+		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
+		return $c->render(json => { ok => 0 });
+	}
+	my $msg = join "\n", ('padlock-unlock', $device_uuid, $nonce);
+	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $signature)) {
+		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
+		$log->info('padlock: signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+		return $c->render(json => { ok => 0 });
+	}
+	# the phone, not the locked screen: a local signature would let the machine
+	# open its own door. Checked after the signature so a valid local attempt is
+	# what the log calls a local refusal.
+	if (&padlock_request_is_local($c)) {
+		$log->info('padlock: local signature refused from ' . $ip);
+		return $c->render(json => { ok => 0, error => 'local' });
+	}
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
+	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
+	unless (&padlock_locked_now($c)) {
+		return $c->render(json => { ok => 1, unlocked => 1, already => 1, name => $device->{'name'} });
+	}
+	my $opened = &padlock_mark_unlocked($c, $mode);
+	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode);
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'} });
+};
+
+get '/manager/security/padlock_state' => sub ($c) {
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	$c->render(json => {
+		ok => 1,
+		has_padlock => ($padlock ? 1 : 0),
+		locked => (&padlock_locked_now($c) ? 1 : 0),
+		gate => &padlock_gate_mode()
+	});
 };
 
 get '/manager/security/padlock_key' => sub ($c) {
@@ -28404,6 +28585,17 @@ sub authentication_passer($c) {
 
 		if ($c->session('authentication') eq 'approved' && $server_time > $padlock_time && scalar @{$padlock} > 0) {
 			&lock_session($c);
+			# lock_session re-reads the stored time: another screen may have
+			# turned the lock between this request's snapshot and the lock. Only a
+			# lock that still stands is answered from here.
+			my $gate_path = $c->req->url->path->to_string;
+			if (&padlock_locked_now($c) && !&padlock_gate_allows($gate_path)) {
+				if (&padlock_gate_mode() eq 'enforce') {
+					&padlock_gate_answer($c);
+					return;
+				}
+				&padlock_gate_shadow($c);
+			}
 		}
 		elsif ($c->session('source') eq 'ticket' && $c->session('authentication') eq 'approved') {
 			my $tick = &subs::db_query('select * from tickets where uuid=?', $c->session('ticket_uuid') );

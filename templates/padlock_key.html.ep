@@ -86,6 +86,60 @@
 		}
 	} catch (e) { }
 
+	// The phone is already paired, so the easy path is not the QR at all: ask
+	// for a nonce, sign it with the key in IndexedDB, and the house opens. The
+	// QR stays as the fallback for a phone with no key (or a borrowed tablet).
+	function padlockKeyB64(buf) {
+		var bytes = new Uint8Array(buf);
+		var s = '';
+		for (var i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
+		return btoa(s);
+	}
+	function padlockKeyIdbGet(key) {
+		return new Promise(function (res, rej) {
+			var r = indexedDB.open('jawn_device', 1);
+			r.onupgradeneeded = function () { r.result.createObjectStore('keys'); };
+			r.onsuccess = function () {
+				var db = r.result;
+				var tx = db.transaction('keys', 'readonly');
+				var q = tx.objectStore('keys').get(key);
+				q.onsuccess = function () { res(q.result); };
+				q.onerror = function () { rej(q.error); };
+			};
+			r.onerror = function () { rej(r.error); };
+		});
+	}
+	function padlockKeyDeviceUnlock() {
+		if (!(window.crypto && crypto.subtle && crypto.subtle.importKey)) { return; }
+		var uuid = localStorage.getItem('device_uuid');
+		if (!uuid) { return; }
+		padlockKeyIdbGet('device_key').then(function (key) {
+			if (!key) { return; }
+			return fetch('/manager/security/padlock_challenge', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({ device_uuid: uuid })
+			}).then(function (r) { return r.json(); }).then(function (ch) {
+				if (!ch || !ch.ok || !ch.nonce) { return; }
+				var msg = 'padlock-unlock\n' + uuid + '\n' + ch.nonce;
+				return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+					return fetch('/manager/security/padlock_unlock', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: new URLSearchParams({ device_uuid: uuid, nonce: ch.nonce, signature: padlockKeyB64(sig), mode: padlockKeyMode })
+					});
+				}).then(function (r) { return r.json(); }).then(function (res) {
+					if (res && res.ok) {
+						padlockKey.done = true;
+						if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
+						if (padlockKey.timer) { clearInterval(padlockKey.timer); padlockKey.timer = null; }
+						$('#padlock_key_note').html('Unlocked.');
+					}
+				});
+			});
+		}).catch(function () { });
+	}
+
 	function padlockKeyRoundRect(ctx, x, y, w, h, r) {
 		ctx.beginPath();
 		ctx.moveTo(x + r, y);
@@ -168,6 +222,7 @@
 
 	$(function () {
 		if (!document.getElementById('padlock_key_canvas')) { return; }
+		padlockKeyDeviceUnlock();
 		padlockKeyFrame();
 		// The key page also reads for itself: whichever tab opened it can be the
 		// one that turns the lock, so a phone alone in the house still works.
