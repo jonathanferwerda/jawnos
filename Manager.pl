@@ -17428,10 +17428,15 @@ sub budget_calculator($data) {
 		if (($returner->{'direction'} || 'floor') eq 'ceiling') {
 			my $target = $returner->{'budgeted'} || 0;
 			my $value = $returner->{'value'} || 0;
-			$returner->{'on_track'} = ($value <= $target) ? 'yes' : 'no';
+			# a hair of float noise either side of the target is still the target
+			my $epsilon = $target * .0000000001;
+			$returner->{'on_track'} = ($value <= $target + $epsilon) ? 'yes' : 'no';
 			my $ceiling = 'budgeted';
 			if ($target > 0 && $value > $target * 1.2) { $ceiling = 'overkill'; }
-			elsif ($target > 0 && $value > $target) { $ceiling = 'burnt_out'; }
+			elsif ($target > 0 && $value > $target + $epsilon) { $ceiling = 'burnt_out'; }
+			# landing exactly on the target spends the whole allowance without
+			# passing it - an accomplishment, not merely within budget
+			elsif ($target > 0 && $value >= $target - $epsilon) { $ceiling = 'accomplished'; }
 			$returner = &{$gb::budget_statuses->{$ceiling}->{'notifier'}}($returner);
 		}
 	}
