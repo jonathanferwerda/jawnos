@@ -1,4 +1,3 @@
-<% use Mojo::JSON qw/encode_json/; %>
 <% my $frame_target = defined $target ? $target : ''; %>
 <% my $show_phone = defined $phone_button ? $phone_button : 1; %>
 <% my $show_fingerprint = ($fingerprint && (defined $fingerprint_button ? $fingerprint_button : 1)) ? 1 : 0; %>
@@ -106,7 +105,7 @@
 		var canvas = layer.querySelector('canvas');
 		var ctx = canvas.getContext('2d');
 		var logo = new Image();
-		logo.src = <%- encode_json($logo) %>;
+		logo.src = '<%= $logo %>';
 		var timer = null, raf = null, active = false, started = 0, last = 0;
 		var blobs = [];
 		function resize() {
