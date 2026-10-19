@@ -1213,7 +1213,7 @@ $(document).on('change', '.remote_machine_input', function() {
 		success: function(response) {
 			input.css({ 'background-color': 'lightgreen' });
 			setTimeout(function() {
-				input.css({ 'background-color': 'white' });
+				input.css({ 'background-color': '' });
 			},2000);
 		}
 	});
@@ -1287,7 +1287,7 @@ $(document).on('click', '.neighbour_filepicker', function() {
 					sw.css({'background-color': update['colour'] });
 				}
 				setTimeout(function() {
-					sw.css({'background-color': 'white' });
+					sw.css({'background-color': '' });
 				},500);
 			}
 		},

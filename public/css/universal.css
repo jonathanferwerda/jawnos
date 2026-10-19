@@ -20,9 +20,14 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; color-scheme: light; }
 body { background-color: var(--panel); color: var(--ink); }
-body.dark_theme { --ink: #d4d4d4; --ink-muted: #8f8f8f; --panel: #1e1e1e; --panel-2: #262626; --line: #525252; }
+/* color-scheme is the part an author's background-color cannot reach: the
+   browser draws the dropdown's list, the spin/calendar/file faces and the
+   autofill wash itself. Without it a dark desktop still opened a white
+   <select> menu and pale native fields, whatever the control's own surface
+   said. The variables below are the same surfaces the rules further down use. */
+body.dark_theme { --ink: #d4d4d4; --ink-muted: #8f8f8f; --panel: #1e1e1e; --panel-2: #262626; --line: #525252; --time-fixed: #1f3a2a; color-scheme: dark; }
 body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
 body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .huge_thumb,
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {

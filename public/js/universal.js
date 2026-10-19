@@ -79,10 +79,10 @@ function appointment_chron() {
 					header.attr('formatted_time', fixedTimeString(numeral(timestamp).value()));
 				}
 				if (header.is('input') && !header.hasClass('editing')) {
-					header.val(header.attr('formatted_time')).css({'background-color': '#ddffee'});
+					header.val(header.attr('formatted_time')).css({'background-color': 'var(--time-fixed)'});
 				}
 				else if (header.hasClass('editing')) {
-					header.css({'background-color': '#ddffee'})
+					header.css({'background-color': 'var(--time-fixed)'})
 				}
 				else {
 					header.text(header.attr('formatted_time'));
@@ -94,10 +94,10 @@ function appointment_chron() {
 				// every second -- the DOM is only touched when the text really changed.
 				if (header.is('input') && !header.hasClass('editing')) {
 					var value = quality_inventory(timestamp);
-					if (header.val() != value) { header.val(value).css({'background-color': '#ffffff'}); }
+					if (header.val() != value) { header.val(value).css({'background-color': ''}); }
 				}
 				else if (header.hasClass('editing')) {
-					header.css({'background-color': '#ffffff'});
+					header.css({'background-color': ''});
 					header.attr('mode', 'dynamic');
 					// while typing, keep repainting so it settles as soon as they stop
 					return;

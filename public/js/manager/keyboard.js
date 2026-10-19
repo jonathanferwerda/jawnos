@@ -1212,7 +1212,7 @@ $(document).on('click', '.keyboard_button', function() {
 	}
 	if (b.attr('key') == 'shift' || b.attr('key') == 'ctrl' || b.attr('key') == 'fn') {
 		if (b.attr('enabled') == 'yes') {
-			b.css({ 'background-color': 'white' });
+			b.css({ 'background-color': '' });
 			b.attr('enabled', 'no');
 		}
 		else {

@@ -2550,7 +2550,7 @@ $(document).on('keyup', '.timed_input', function(e) {
 					i.css({ "background-color": "yellow" });
 					clearTimeout(backy_color);
 					backy_color = setTimeout(function() {
-						i.css({ "background-color": "white" });
+						i.css({ "background-color": "" });
 					},950);
 				}
 			});
@@ -2873,7 +2873,7 @@ $(document).on('keyup', '.notes, .ago, .duration', function() {
 		i.css({ "background-color": "yellow" });
 		clearTimeout(backy_color);
 		backy_color = setTimeout(function() {
-			i.css({ "background-color": "white" });
+			i.css({ "background-color": "" });
 		},750);
 	},200);
 });

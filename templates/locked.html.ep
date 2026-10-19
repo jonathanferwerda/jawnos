@@ -82,6 +82,12 @@
 		font-size: 16px;
 		padding: 6px;
 		box-sizing: border-box;
+		/* this page has no universal.css and is always dark, so the field
+		   follows its own surface instead of the browser's white default */
+		background-color: #222;
+		color: #f4f4f4;
+		border: 1px solid #666;
+		border-radius: 6px;
 	}
 	#locked_recovery button {
 		font-size: 16px;
