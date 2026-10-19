@@ -857,6 +857,7 @@ function wsMessageHandler(event) {
 		}
 
 		if ( data['type'] == 'connect' ) {
+			if (data['app'] == 'server' && typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(); }
 		//	appointmentDetailsUpdater(app);
 		}
 		else if (data['window']) {

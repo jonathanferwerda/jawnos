@@ -518,6 +518,17 @@ function jawnPadlockKeyShow(mode) {
 	location.href = url;
 }
 
+// A phone that was asleep, or that joined after the house locked, gets the
+// unlock page on its next socket connect: the state says the house is locked,
+// so a mobile tab goes to the page that signs the challenge.
+function jawnPadlockKeyCheck() {
+	if (!jawnMobileHere()) { return; }
+	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	$.getJSON('/manager/security/padlock_state', function(s) {
+		if (s && s.ok && s.locked) { jawnPadlockKeyShow('locker'); }
+	});
+}
+
 
 
 $(document).on('click', '#download_program', function() {
