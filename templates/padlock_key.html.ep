@@ -5,7 +5,7 @@
 	</div>
 	<div id="padlock_key_note">
 		<% if ($has_padlock) { %>
-			Hold this up to the computer's camera.<br>Turn the screen's brightness up.
+			Hold this up to the computer's camera.<br>Turn the screen's brightness up.<br>Back cancels.
 		<% } else { %>
 			No padlock is set on this house.
 		<% } %>
@@ -48,13 +48,40 @@
 </style>
 
 <script>
+	// The back button is the cancel: give the camera back as the page goes.
+	window.addEventListener('pagehide', function () {
+		if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
+		try {
+			var body = 'action=stop';
+			if (navigator.sendBeacon) {
+				navigator.sendBeacon('/manager/security/padlock_watch', new Blob([body], { type: 'application/x-www-form-urlencoded' }));
+			}
+			else {
+				var x = new XMLHttpRequest();
+				x.open('POST', '/manager/security/padlock_watch', false);
+				x.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+				x.send(body);
+			}
+		} catch (e) { }
+	});
+
 	var padlockKey = {
 		angle: 0,
 		timer: null,
 		fetching: false,
 		logo: null,
-		logo_url: ''
+		logo_url: '',
+		done: false
 	};
+	var padlockKeyPoll = null;
+	var padlockKeyMode = 'locker';
+	try {
+		var pk = (location.search || '').match(/[?&]mode=([^&]+)/);
+		if (pk) {
+			var pm = decodeURIComponent(pk[1]);
+			if (/^(locker|gallery|music|folders)$/.test(pm)) { padlockKeyMode = pm; }
+		}
+	} catch (e) { }
 
 	function padlockKeyRoundRect(ctx, x, y, w, h, r) {
 		ctx.beginPath();
@@ -124,11 +151,13 @@
 			success: function (frame) {
 				padlockKey.fetching = false;
 				padlockKeyDraw(frame);
+				if (padlockKey.done) { return; }
 				var wait = (frame && frame.wait) ? frame.wait : 5;
 				setTimeout(padlockKeyFrame, Math.max(1000, wait * 1000 + 250));
 			},
 			error: function () {
 				padlockKey.fetching = false;
+				if (padlockKey.done) { return; }
 				setTimeout(padlockKeyFrame, 2000);
 			}
 		});
@@ -137,6 +166,17 @@
 	$(function () {
 		if (!document.getElementById('padlock_key_canvas')) { return; }
 		padlockKeyFrame();
+		// The key page also reads for itself: whichever tab opened it can be the
+		// one that turns the lock, so a phone alone in the house still works.
+		padlockKeyPoll = setInterval(function () {
+			$.post('/manager/security/padlock_watch', { action: 'poll', mode: padlockKeyMode }, function (r) {
+				if (r && r.unlocked) {
+					if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
+					padlockKey.done = true;
+					$('#padlock_key_note').html('Unlocked.');
+				}
+			});
+		}, 1300);
 		// turn in steps, not continuously: the camera needs a still frame to read
 		padlockKey.timer = setInterval(function () {
 			padlockKey.angle = (padlockKey.angle + 45) % 360;

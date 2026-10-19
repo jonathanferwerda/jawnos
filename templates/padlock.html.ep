@@ -2,7 +2,7 @@
 	<% if ($mode ne 'security') { %>
 		<h1 id="padlock_taunts"></h1>
 		<div class="padlock_visual_status"></div>
-		<a href="/manager/security/padlock_key" class="padlock_phone_key">Show the phone key</a>
+		<a href="/manager/security/padlock_key?mode=<%= $mode %>" class="padlock_phone_key">Show the phone key</a>
 	<% } %>
 	<img class="padlock padlock_lock" src="/images/jbuttons/padlock lock.png" hint="Lock">
 	<img class="padlock padlock_unlock" src="/images/jbuttons/padlock unlock.png" hint="Unlock">

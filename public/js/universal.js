@@ -808,6 +808,32 @@ $(document).on('click', '.padlock_visual_status', function() {
 	padlockVisualWatch(padlockVisual.mode);
 });
 
+// A tap on the dial after the camera has given up starts the watch again, and
+// tells the phone/tablet to show the key again. While the watch is running a
+// tap is part of turning the dial, so it is left alone.
+$(document).on('click', '.padlock_jog_wheel, .padlock_jog_wheel_centre', function() {
+	if (padlockVisual.active) { return; }
+	if (!$('.padlock_frame:visible').length) { return; }
+	var mode = $(this).closest('.padlock_frame').attr('mode') || padlockVisual.mode;
+	padlockVisualWatch(mode);
+});
+
+// ---- show the key on a phone or tablet, without a tap -----------------------
+// The computer starts the camera; the server then tells every manager tab in
+// the house. A desktop ignores that, a phone or tablet opens the key page. The
+// page's own back button is the cancel (see padlock_key).
+function jawnMobileHere() {
+	return !!(window.JawnPhone || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || ''));
+}
+
+function jawnPadlockKeyShow(mode) {
+	if (!jawnMobileHere()) { return; }
+	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	var url = '/manager/security/padlock_key';
+	if (mode) { url += '?mode=' + encodeURIComponent(mode); }
+	location.href = url;
+}
+
 $(document).on('mousewheel', '.padlock_jog_wheel', function(e) {
 	var j = $(this);
 	var mvmt = numeral(e.originalEvent.wheelDelta).value();

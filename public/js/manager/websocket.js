@@ -562,6 +562,9 @@ function wsMessageHandler(event) {
 			$('#controller').scrollTop(scrollT);
 			$('#controller').scrollLeft(scrollL);
 		}
+		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
+			jawnPadlockKeyShow(data['mode']);
+		}
 		if ( data['padlock'] ) {
 			var height = numeral($(window).height()).format('0.00');
 			var width = numeral($(window).width()).format('0.00');

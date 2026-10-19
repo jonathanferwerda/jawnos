@@ -9002,13 +9002,22 @@ sub leave($c) {
 }
 
 post '/manager/lock_session' => sub($c) {
-	&lock_session($c);
+	&lock_session($c, 1);
 	&remote_relay_request($c);
 	$c->render('text' => 'locked');
 };
-sub lock_session($c) {
+sub lock_session($c, $explicit) {
 	my $now = &subs::rightNow();
 	my ($db) = &subs::database_grabber();
+
+	# A request that started while the lock screen was up can reach here after
+	# another screen has already turned the lock. Re-read the stored time (the
+	# request's setting memo may be older than that unlock) and leave it be.
+	unless ($explicit) {
+		my $fresh_row = &subs::db_query("select value from settings where app = ? and setting = ? order by server_time desc limit 1", '__president', 'pl_time')->hashes->[0];
+		my $fresh = $fresh_row ? (&subs::decrypter(&subs::session_suds($c), $fresh_row->{'value'}) || 0) : 0;
+		return if $fresh > $now;
+	}
 
 	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now ) });
 	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
@@ -26968,7 +26977,25 @@ post '/manager/security/padlock_watch' => sub ($c) {
 			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
 		my $watching = &padlock_camera_start();
+		if ($watching) {
+			# the phone/tablet in the house shows the key by itself; every mobile
+			# tab that hears this goes to the key page (desktops ignore it)
+			&Websocket::send('server', {
+				padlock_key_show => 1,
+				mode => $mode,
+				timestamp => &subs::rightNow()
+			});
+		}
 		return $c->render(json => { ok => 1, camera => ($watching ? 1 : 0), seconds => &padlock_visual_seconds() });
+	}
+	if ($action eq 'poll') {
+		# another screen in the house may have turned it already; then this one
+		# is done too, and any camera still held is given back
+		my $already = &subs::decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'pl_time' })) || 0;
+		if ($already > &subs::rightNow()) {
+			&padlock_camera_stop();
+			return $c->render(json => { ok => 1, unlocked => 1 });
+		}
 	}
 	if (&padlock_camera_alive()) {
 		foreach my $code ( &padlock_camera_codes() ) {
