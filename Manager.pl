@@ -27459,7 +27459,8 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
-	my $locked = $target ? &padlock_target_locked($target, $c) : &padlock_locked_now($c);
+	my $locked = $target ? &padlock_target_locked($target, $c)
+		: (&padlock_locked_now($c) || &padlock_global_locked($c));
 	# A phone often talks to its own jawn, while the lock is authoritative on the
 	# machine that made it. Clearing it here alone leaves that screen locked (the
 	# device row never syncs as a deletion). The signature is verified above, so

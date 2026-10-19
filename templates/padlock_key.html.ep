@@ -241,9 +241,17 @@
 	function padlockKeyLook() {
 		if (padlockKeyBusy || padlockKeyDone || padlockKeyTarget) { return; }
 		if (padlockKeyForced) {
-			$('#padlock_key_note').text('The screen is locked.');
-			$('#padlock_key_unlock').show();
-			$('#padlock_key_targets').hide();
+			// offer Unlock before the lock row has synced, but never hold a page
+			// the state says is open: a stale broadcast must not trap the phone
+			$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
+				if (s && s.ok && !s.locked && !s.global_locked && !(s.targets && s.targets.length)) {
+					window.location.replace('/manager');
+					return;
+				}
+				$('#padlock_key_note').text('The screen is locked.');
+				$('#padlock_key_unlock').show();
+				$('#padlock_key_targets').hide();
+			});
 			return;
 		}
 		$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function (s) {
