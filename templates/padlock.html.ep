@@ -10,7 +10,7 @@
 	<h1 id="padlock_taunts"></h1>
 	<% my $scope = $frame_target ? 'This screen is locked.' : 'The house is locked.'; %>
 	<div class="padlock_message"><%= $scope %><br>Unlock on your phone or with the recovery code.</div>
-	<%= include 'denial' %>
+	<%= include 'denial_image' %>
 	<% if ($frame_mode ne 'security' && $show_phone) { %>
 		<button type="button" class="padlock_ask_phone">Send the unlock page to my phone</button>
 	<% } %>
