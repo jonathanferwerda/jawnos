@@ -63,21 +63,35 @@ function clotheslineHanger(clothes) {
 		// nothing else on the canvas gets printed either
 		if (!clothes) { clothes = []; }
 		wardrobe = clothes;
-		var maxWidth = 140;
-		var totalWidth = maxWidth * clothes.length;
 		var layout = localStorage.getItem('layout');
 		var canvas = layout ? document.getElementById(layout) : undefined;
 		if (!canvas) { hangingClothes = 0; return; }
 		ctx = canvas.getContext('2d');
+		// each garment is as wide as its own name, so the full name always fits.
+		// The label is measured in the material's own font (the same one the
+		// label printer uses) and the tile keeps a minimum width for short names.
+		var gap = 4;
+		var itemPad = 20;
+		var minItemWidth = 96;
+		var widths = [];
+		var offsets = [];
+		var totalWidth = 0;
+		$.each(clothes, function(i,v) {
+			var label = (v && v['formatted_name'] != null) ? ('' + v['formatted_name']) : '';
+			var labelWidth = (typeof jawnosTextureMeasure == 'function') ? jawnosTextureMeasure(ctx, label) : (label.length * 8);
+			var itemWidth = Math.max(minItemWidth, Math.ceil(labelWidth) + (itemPad * 2) + (gap * 2));
+			offsets.push(totalWidth);
+			widths.push(itemWidth);
+			totalWidth += itemWidth;
+		});
 		// Keep at least one garment on screen: however far a drag or a glide pushes
 		// the line, the row can never be scrolled off into empty space. The first
 		// tile is pinned so its left edge stays inside the right of the canvas, and
 		// the last so its right edge stays inside the left; between those bounds an
 		// item always fills the view.
 		if (clothes.length > 0 && canvas.width) {
-			var lastRight = (maxWidth * clothes.length);
-			var minX = -(lastRight - maxWidth);
-			var maxX = canvas.width - maxWidth;
+			var minX = -(totalWidth - widths[widths.length - 1]);
+			var maxX = canvas.width - widths[0];
 			if (maxX < minX) { maxX = minX; }
 			if (clothesLinePos['x'] > maxX) { clothesLinePos['x'] = maxX; }
 			if (clothesLinePos['x'] < minX) { clothesLinePos['x'] = minX; }
@@ -101,11 +115,20 @@ function clotheslineHanger(clothes) {
 		ctx.strokeStyle = ink;
 		ctx.lineWidth = clothesLinePos['bordersize'];
 
+		// draw nothing outside the band that clearRect just emptied. The material
+		// panes carry a drop shadow, and the blur below the last row used to fall
+		// into the timeline; each scroll painted it again, so it piled up into the
+		// black line under the rail until a full-redraw (the next calculator())
+		// wiped the canvas.
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(0, minHeight, canvas.width, clothesLineHeight);
+		ctx.clip();
+
 		// each garment takes the desk's material (the Misc Texture setting):
 		// plain is the original flat tile, round is a solid rounded pill, and the
 		// rest are panes of glass, paper, fabric, wood or metal with the app's
 		// colour breathing through them
-		var gap = 4;
 		var pad = 3;
 		// air between the top edge - or the taskbar when it takes the top edge - and
 		// the garments, so a top bar never tucks the rail under itself
@@ -122,11 +145,11 @@ function clotheslineHanger(clothes) {
 			$.each(clothingDrive.reverse(), function(ie,ve) {
 				appPosition.splice(ve,1);
 			});
-			var startW = (i * maxWidth) + clothesLinePos['x'];
-			var endW = startW + maxWidth;
+			var startW = offsets[i] + clothesLinePos['x'];
+			var endW = startW + widths[i];
 			var bx = startW + gap;
 			var by = minHeight + pad + topGap;
-			var bw = maxWidth - (gap * 2);
+			var bw = widths[i] - (gap * 2);
 			var bh = clothesLineHeight - (pad * 2) - topGap;
 
 			var tile_colour = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v.colour) || 'yellow';
@@ -152,6 +175,7 @@ function clotheslineHanger(clothes) {
 
 			appPosition.push([bx , by , bx + bw, by + bh, v]);
 		});
+		ctx.restore();
 		hangingClothes = 0;
 	}
 }

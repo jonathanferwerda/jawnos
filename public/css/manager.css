@@ -682,40 +682,38 @@ canvas.background {
 	pointer-events: none;
 	z-index: var(--frame_z, 2147483000);
 }
-/* the window title bar is a thin strip: the icon, the name and the window
-   controls all answer to the one figure, so the bar closes up around them
-   instead of standing 45 deep, and the extras the line-height would add above
-   and below are dropped. That figure is the misc navbar height (--navbar_h),
-   which scales the bar and everything inside it together.
+/* the title bar is one row: the icon, the name and the window controls share
+   a centre line, so nothing sits high or low against the others. Flex also
+   lets the name take the room the buttons leave and ellipsize a long title
+   rather than running under them.
    The bar is width:100% with a border (set inline in window_maker) as thick as
    the window frame, so it has to be border-box: content-box would add the two
    side edges on top of the full width and push the bar past the window's right
    edge, out of line with .window_contents. The border is the same width on all
    four sides, so the bar reads evenly - and its top corners land exactly on the
    frame ring, which carries the same width. */
-.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, 8px) var(--window_radius, 8px) 0 0; }
-/* the icon sits in a bare tile with a 2px collar of the bar's colour around
-   it: the holder pads the top, left and bottom, and rides the foot of the bar.
-   The corners of the tile are rounded */
-.top_navbar .window_icon_holder { display: inline-block; vertical-align: bottom; padding: 2px 0 2px 2px; }
-.top_navbar .window_icon_holder .window_icon { display: inline-block; height: calc(var(--navbar_h, 36px) - 10px); line-height: calc(var(--navbar_h, 36px) - 10px); font-size: calc(var(--navbar_h, 36px) * 0.44); vertical-align: bottom; border: none; border-radius: 6px; }
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, 8px) var(--window_radius, 8px) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; }
+/* the icon sits in a bare tile with a collar of the bar's colour around it;
+   the holder and the tile both centre on the bar's line. */
+.top_navbar .window_icon_holder { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; padding: 2px; }
+.top_navbar .window_icon_holder .window_icon { display: block; height: calc(var(--navbar_h, 36px) - 10px); width: auto; line-height: 1; font-size: calc(var(--navbar_h, 36px) * 0.44); border: none; border-radius: 6px; }
 /* the name rides straight on the bar's own colour: the panel chip it sat in
    answered to the theme while the ink answered to the app's colour, so one of
    the two always clashed - the ink contrast_ink picks reads on the bar in
    either theme */
-.top_navbar .appointment_name { vertical-align: middle; background: none; border: none; }
-.top_navbar .appointment_name .name_text { line-height: calc(var(--navbar_h, 36px) - 12px); vertical-align: middle; }
+.top_navbar .appointment_name { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; background: none; border: none; }
+.top_navbar .appointment_name_marks { display: flex; align-items: center; flex: 0 0 auto; }
+.top_navbar .appointment_name .name_text { min-width: 0; max-width: 100%; padding: 0 6px; line-height: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* on a dark desk the bar's ink is the theme's own near-white, not the pure
    #ffffff contrast_ink picks for a dark tint: the title and the window glyphs
    still read, without every bar glaring white at the top of the window */
 body.dark_theme .top_navbar,
 body.dark_theme .top_navbar .appointment_name,
 body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
-/* the window controls ride the foot of the bar as well. They used to sit in a
-   right-hand float, which pins to the top of the line box and left a gap under
-   them; anchoring them to the bar's own foot keeps them on the bottom edge. */
-.top_navbar .navbar_buttons { position: absolute; bottom: 0; right: 0; display: inline-flex; align-items: flex-end; }
-.top_navbar .navbar_buttons .window_action { width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
+/* the window controls share the row's centre line with the icon and the name,
+   and sit hard against the right edge. */
+.top_navbar .navbar_buttons { margin-left: auto; display: flex; align-items: center; flex: 0 0 auto; height: 100%; }
+.top_navbar .navbar_buttons .window_action { flex: 0 0 auto; width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
 .keyboard { z-index: 9100; border:solid;border-radius:10px;border-width:3px; }

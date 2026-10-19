@@ -772,11 +772,12 @@ our %topic = (
 	},
 	'clothesline' => {
 		title => 'The clothesline', category => 'features',
+		verified => '2026-10-19',
 		summary => 'A rail that hangs the routines belonging to this hour.',
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
 			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
-			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), sandglass, glass, paper, fabric, wood or metal — with a bead of its app\'s colour and its name etched into the pane (or printed solid on round).'
+			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), sandglass, glass, paper, fabric, wood or metal — sized to its own name so the whole name fits, with the name printed in black or white (tinted with the app\'s colour) so it reads on the pane.'
 		],
 		related => [ 'appointments', 'tasks' ]
 	},

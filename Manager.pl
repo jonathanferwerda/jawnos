@@ -19696,22 +19696,19 @@ sub window_maker($type,$timestamp) {
 				';" app="' . $unformatted_name .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
 				<span class="appointment_name">
-					<span>
+					<span class="appointment_name_marks">
 						<img class="medium_thumb unlock droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/make believe/lock.png">
 						<img class="medium_thumb jack droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/studio/jack.png">
 					</span>
 
-					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
-					<span style="float:right;">
-
-						<span class="navbar_buttons">
-							<button id="window_' . $timestamp . '_help" class="' . $unformatted_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '" hint="Help">' . $window_control->('help', '?') . '</button>
-							<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
-							<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
-							<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
-							<button id="window_' . $timestamp . '_close" class="' . $unformatted_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('close', 'X') . '</button>
-						</span>
-					</span>
+					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="\'' . $unformatted_name . '\'">' . $formatted_name . '</span>
+				</span>
+				<span class="navbar_buttons">
+					<button id="window_' . $timestamp . '_help" class="' . $unformatted_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '" hint="Help">' . $window_control->('help', '?') . '</button>
+					<button id="window_' . $timestamp . '_minify" class="' . $unformatted_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('minimize', '_') . '</button>
+					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $unformatted_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('restore', '#') . '</button>
+					<button id="window_' . $timestamp . '_maximize" class="' . $unformatted_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
+					<button id="window_' . $timestamp . '_close" class="' . $unformatted_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $apostrophe_escape . '">' . $window_control->('close', 'X') . '</button>
 				</span>
 			</div>
 			<div id="window_drawer_' . $timestamp . '" class="window_drawer" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . $window_colour . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">

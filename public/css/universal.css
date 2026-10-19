@@ -563,6 +563,44 @@ body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data
 	background-repeat: var(--jawnos-texture-repeat, repeat);
 	background-blend-mode: var(--jawnos-texture-blend, normal);
 }
+/* a material has no painted frame around it: the slab itself is the edge. The
+   bar drops the inline window border it is made with, and the window drops the
+   ring it draws over its whole frame, so the surface simply stops at the
+   material's own rim instead of being boxed in. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar {
+	border: none !important;
+}
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .wind::after {
+	border-width: 0 !important;
+}
+/* the window controls are their own buttons and the general button rule above
+   skips them (their icon is the face). Their icons are opaque chrome tiles, so
+   the material is laid over the tile as well as behind it: the button wears the
+   same slab, and a transparent overlay carries the grain and sheen across the
+   icon itself, so help, minimise, maximise and close read as material too. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar .navbar_buttons .window_action {
+	position: relative;
+	overflow: hidden;
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+	background-color: transparent;
+	border: 1px solid var(--jawnos-texture-edge, transparent);
+	border-radius: 6px;
+	box-shadow: var(--jawnos-texture-shadow, none);
+}
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar .navbar_buttons .window_action::after {
+	content: '';
+	position: absolute;
+	top: 0; right: 0; bottom: 0; left: 0;
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+	border-radius: inherit;
+	pointer-events: none;
+}
 /* the two bars are slabs of the same desk, so they wear the material too: the
    taskbar, the dock, and the tiles the taskbar keeps its windows in (those are
    spans, so the button rule above never reaches them). Only the layers go on
