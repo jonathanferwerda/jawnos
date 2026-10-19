@@ -41,7 +41,7 @@
 	}
 </style>
 
-<img id="welcome_logo" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="JawnOS" >
+<img id="welcome_logo" src="<%= &subs::icon_for('/icons/logos/WelcomeLogo.png') %>" hint="Welcome" >
 
 <br>
 <button id="admin_panel_button" style="display:none;" onClick="if (window.JawnAdmin && window.JawnAdmin.open) { window.JawnAdmin.open(); }">Admin Panel</button>
