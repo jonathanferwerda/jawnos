@@ -228,10 +228,14 @@ before any compositor work, and it is small.
   Enforce answered a document with `423` and the locked page; the dial (since
   removed) unlocked; the websocket drops data pushes while locked; a throwaway
   paired device completed challenge/sign/login and its valid padlock signature
-  was refused as local. The default is **Shadow**. The last end-to-end check is
-  the user's phone (the remote signature); flip the security panel's Gate select
-  to **Enforce** after it passes. The paper-code success path stays unexercised
-  because the existing recovery code was left untouched.
+  was refused as local.
+- **Remote signature proven live in v0.1.804.** A throwaway key generated on the
+  phone and paired from the laptop completed challenge/sign/unlock from
+  `192.168.2.4`; the log recorded `padlock: opened by Phone Probe`, and the probe
+  device was then revoked. The default is now **Enforce**, seeded at boot for a
+  house that has a paper recovery code (so a fresh house cannot lock itself out).
+  The paper-code success path stays unexercised because the existing recovery
+  code was left untouched.
 
 **P1 — greetd greeter.** Boot to **greetd** (no autologin) with a JawnOS greeter
 that calls the same verifier over the service socket, then starts the session.
@@ -321,8 +325,9 @@ auto-unlock.
 The strict model was confirmed: **server-side gate + paired-device signature as
 the primary + paper code and FDE for emergencies.** P0 is built. The dial and
 the camera/QR key were removed in v0.1.804; the signature is the only remote
-unlock. The gate ships in **Shadow** until the user's phone has opened it
-remotely.
+unlock, and it opened the live house from the phone in the same release. The
+gate now defaults to **Enforce** for a house that has a paper recovery code;
+Shadow remains available to check the deny list first.
 
 ## Data / records
 

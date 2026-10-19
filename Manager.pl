@@ -26736,6 +26736,9 @@ post '/manager/security/gate/enable' => sub ($c) {
 	unless (scalar @{$contexts}) {
 		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => '["general"]' });
 	}
+	# an explicit Turn the gate on/off is the house's choice from now on; the
+	# boot-time default only fills a house that has never made one
+	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
 	my $sec = &security_initializer($c);
 	$c->render(json => { ok => 1, html => $sec->{'html'} });
 };
@@ -26747,6 +26750,7 @@ post '/manager/security/gate/disable' => sub ($c) {
 	&subs::db_delete('security', { level => 'padlock' });
 	&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
+	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
 	&Websocket::send('server', { padlock_open => 1, mode => 'locker', timestamp => &subs::rightNow() });
 	my $sec = &security_initializer($c);
 	$c->render(json => { ok => 1, html => $sec->{'html'} });
@@ -26862,7 +26866,7 @@ post '/manager/security/padlock_pull' => sub($c) {
 # refuses everything except the ways in.
 sub padlock_gate_mode {
 	my $mode = &subs::setting_grabber({ app => '__president', setting => 'padlock_gate' });
-	return (defined $mode && $mode eq 'enforce') ? 'enforce' : 'shadow';
+	return (defined $mode && $mode eq 'shadow') ? 'shadow' : 'enforce';
 }
 
 # A request that came from this machine itself. The phone/tablet is remote, so

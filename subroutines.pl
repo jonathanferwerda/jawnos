@@ -10666,6 +10666,32 @@ sub backups_dir {
 	return $dir;
 }
 
+# A house with a way back in starts gated. The paper recovery code is the
+# emergency door, so a house that has one gets the padlock row, General as its
+# context, and Enforce as the mode the first time this runs, then the marker
+# makes it a default rather than a policy: Turn the gate off stays off across
+# restarts. A fresh house with no recovery code is left alone, because turning
+# its gate on before there is a way in would lock it out.
+sub padlock_seed_default {
+	return if (&subs::setting_grabber({ app => '__president', setting => 'padlock_gate_initialized' }) || '') eq 'yes';
+	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
+	return unless $recovery;
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	unless ($padlock) {
+		my $now = &subs::rightNow();
+		&subs::db_insert('security', { level => 'padlock', credential => '', timestamp => $now, server_time => $now, uuid => &subs::random_string_creator(30) });
+	}
+	my $contexts = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	unless (scalar @{$contexts}) {
+		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => '["general"]' });
+	}
+	my $mode = &subs::setting_grabber({ app => '__president', setting => 'padlock_gate' });
+	unless (defined $mode && length $mode) {
+		&subs::setting_setter({ app => '__president', setting => 'padlock_gate', value => 'enforce' });
+	}
+	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
+}
+
 # One machine, one database: anything else under database/ is an older
 # database's leftover (server.enc, laptop_*.enc, a stray .db) and is discarded.
 # The working set is the jawnos database and its sidecars, the factory seed, the

@@ -36,8 +36,8 @@
 		<span style="position:absolute;left:0px;bottom:0px;font-size:14px;" title="Shadow writes what the lock would refuse to the log; Enforce refuses it.">
 			Gate
 			<select id="padlock_gate">
-				<option value="shadow" <% if (($president->{'padlock_gate'} || 'shadow') eq 'shadow') { %>selected<% } %>>Shadow (log only)</option>
-				<option value="enforce" <% if (($president->{'padlock_gate'} || '') eq 'enforce') { %>selected<% } %>>Enforce</option>
+				<option value="shadow" <% if (($president->{'padlock_gate'} || 'enforce') eq 'shadow') { %>selected<% } %>>Shadow (log only)</option>
+				<option value="enforce" <% if (($president->{'padlock_gate'} || 'enforce') eq 'enforce') { %>selected<% } %>>Enforce</option>
 			</select>
 		</span>
 	</div>

@@ -1,11 +1,5 @@
-<% use MIME::Base64; use File::Slurp; %>
-
-
-%# always the drawn picture: build.js renders a generated tile in at the old
-%# public path, the hand-drawn original is kept under icons/original
-<% my $denial = 'data:png;base64,' . encode_base64(read_file('./public/icons/original/images/jbuttons/ne pas.png'),''); %>
 <div id="denial_window" >
-	<img src="<%= $denial %>" style="max-height:100%;vertical-align:center;">
+	<%= include 'denial_image' %>
 </div>
 <style>
 #denial_window {

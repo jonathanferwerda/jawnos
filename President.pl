@@ -224,6 +224,9 @@ sub manager_starter() {
 	# sync itself triggers heals the data without waiting for a login. Ones whose
 	# prerequisites are not ready yet are left for the login / merge pass.
 	&subs::run_backfills();
+	# A house that has a paper recovery code starts gated (padlock row, General,
+	# Enforce). The marker makes it a default: Turn the gate off stays off.
+	&subs::padlock_seed_default();
 	# Freeze the code revision here, at boot, so /manager/version reports what this
 	# process is actually running. The forked servers inherit this memo, so an
 	# on-disk change does not move the answer until the next restart.
