@@ -15217,6 +15217,13 @@ sub lan_presence_listen {
 	require Socket;
 	require IO::Socket::INET;
 	while (1) {
+		# A cloud server whose only address is public has no LAN to listen on;
+		# do not open the port to the internet.
+		my @lan_nics = @{ &lan_presence_network() };
+		unless (@lan_nics) {
+			sleep 60;
+			next;
+		}
 		my $sock = IO::Socket::INET->new(
 			LocalAddr => '0.0.0.0',
 			LocalPort => &lan_presence_port(),
