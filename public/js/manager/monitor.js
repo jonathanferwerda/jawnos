@@ -78,6 +78,13 @@ function monitorPoll() {
 			// ---- CPU series: per core when /proc/stat is readable (desktop),
 			//      otherwise one aggregate line from the visible processes ----
 			var haveCores = d.cpus && d.cpus.length > 0;
+			// A desktop sees every process, so JawnOS's share of the CPU is a fair
+			// attribution for the battery rate. Android hides other apps, so the
+			// strip falls back to the device rate and says so in its title.
+			var jawnRe = /(?:^|\/)(?:jawn|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|pen\.pl)\b/;
+			var jawnCpu = 0;
+			rows.forEach(function(r) { if (jawnRe.test(r.name)) { jawnCpu += Math.max(0, r.cpu); } });
+			var jawnShare = (haveCores && processCpuSum > 0) ? Math.min(1, jawnCpu / processCpuSum) : null;
 			var mode = haveCores ? 'cores' : 'aggregate';
 			var series;
 			if (haveCores) {
@@ -119,7 +126,7 @@ function monitorPoll() {
 			$('#monitor_mem_pct').text(memPct.toFixed(0) + '% (' + ((d.mem_total - d.mem_avail) / gb).toFixed(1) + '/' + (d.mem_total / gb).toFixed(1) + ' GB)');
 
 			monitorPrev = { at: d.at, map: cur, cpus: d.cpus };
-			monitorRenderHealth(d.health || {});
+			monitorRenderHealth(d.health || {}, jawnShare);
 			monitorRender();
 		}
 	});
@@ -130,7 +137,7 @@ function monitorHealthLabel(value) {
 	return String(value).replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 }
 
-function monitorRenderHealth(h) {
+function monitorRenderHealth(h, jawnShare) {
 	h = h || {};
 	var b = h.battery || {};
 	function put(key, value) {
@@ -147,6 +154,20 @@ function monitorRenderHealth(h) {
 	put('voltage', number(b.voltage, 3, ' V'));
 	put('current', number(b.current, 0, ' mA'));
 	put('health', monitorHealthLabel(b.health));
+	var pph = (b.pph === undefined || b.pph === null || isNaN(b.pph)) ? null : Number(b.pph);
+	var rateWindow = (b.pph_window ? ' over ' + Math.round(b.pph_window * 60) + ' min' : '');
+	if (pph === null) {
+		put('pph', '—');
+		$('#monitor_health [data-h="pph"]').attr('title', 'needs a discharging window of at least 5 minutes');
+	}
+	else if (typeof jawnShare === 'number' && isFinite(jawnShare)) {
+		put('pph', (pph * jawnShare).toFixed(2) + ' %/h');
+		$('#monitor_health [data-h="pph"]').attr('title', 'device ' + pph.toFixed(2) + ' %/h × jawn ' + Math.round(jawnShare * 100) + '% of CPU' + rateWindow);
+	}
+	else {
+		put('pph', pph.toFixed(2) + ' %/h');
+		$('#monitor_health [data-h="pph"]').attr('title', 'device battery' + rateWindow + ' (other apps hidden)');
+	}
 	put('load', h.load || '—');
 	put('uptime', (h.uptime === undefined || h.uptime === null) ? '—' : monitorFormatAge(h.uptime));
 	put('sync', (h.running_jobs === undefined) ? '—' : h.running_jobs + ' running');

@@ -6,24 +6,25 @@
 		<button class="president_restart_trigger" style="">Restart</button>
 		<button class="president_restart_trigger" restart="yes" style="">ReRestart</button>
 	</h4>
-	<%# the CPU rows that used to live here measured the utility worker's own
-	    time, not the machine's, so they were removed; the battery readout stays %>
-	<% if ($cache->{'current'}->{'battery'}) { %>
+	<%# The CPU rows that used to live here measured the utility worker's own
+	    time, not the machine's, so they were removed. PPS and PPM divided one
+	    sample by one interval; PPH is the only rate worth showing, and it is a
+	    least-squares slope over the discharging samples in the last hour. %>
+	<% my $battery = $cache->{'current'}->{'battery'} || {}; %>
+	<% if ($battery->{'percentage'}) { %>
 		<h4 style="float:left;">Battery</h4>
 		<table style="width:100%;">
-			<thead><th>Scope</th><th>%</th><th>Power</th><th>Temp</th><th>PPS</th><th>PPM</th><th>PPH</th></thead>
+			<thead><th>%</th><th>State</th><th>Health</th><th>Temp</th><th>Voltage</th><th>Current</th><th title="percentage points per hour while discharging">PPH</th></thead>
 			<tbody>
-				<% foreach my $scope ( qw/current average/ ) { %>
-					<tr>
-						<td><%= &subs::format_name($scope) %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'percentage'} %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'power'} %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'temperature'} %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'pps'} %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'ppm'} %></td>
-						<td><%= $cache->{$scope}->{'battery'}->{'pph'} %></td>
-					</tr>
-				<% } %>
+				<tr>
+					<td><%= $battery->{'percentage'} %>%</td>
+					<td><%= &subs::format_name($battery->{'status'} || '') %></td>
+					<td><%= &subs::format_name($battery->{'health'} || '') %></td>
+					<td><%= defined $battery->{'temperature'} ? sprintf('%.1f', $battery->{'temperature'}) : '&mdash;' %><%= ($battery->{'temperature_source'} || '') eq 'cpu' ? ' (cpu)' : '' %></td>
+					<td><%= defined $battery->{'voltage'} ? sprintf('%.3f V', $battery->{'voltage'}) : '&mdash;' %></td>
+					<td><%= defined $battery->{'current'} ? sprintf('%.0f mA', $battery->{'current'}) : '&mdash;' %></td>
+					<td title="<%= defined $battery->{'pph_window'} ? sprintf('over %.0f min from %d samples', $battery->{'pph_window'} * 60, $battery->{'pph_points'} || 0) : 'needs a discharging window of at least 5 minutes' %>"><%= defined $battery->{'pph'} ? sprintf('%.2f %%/h', $battery->{'pph'}) : '&mdash;' %></td>
+				</tr>
 			</tbody>
 		</table>
 	<% } %>

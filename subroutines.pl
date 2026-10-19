@@ -2089,7 +2089,9 @@ sub battery_sample {
 		if $battery_sample_memo && $now - ($battery_sample_memo->{'sampled'} || 0) < 10000;
 	my $cached = &cache_get({ app => '__president', context => 'battery', subcontext => 'current' });
 	if (ref $cached eq 'HASH' && $cached->{'sampled'} && $now - $cached->{'sampled'} < 10000) {
-		return $battery_sample_memo = $cached;
+		my %fresh = %{$cached};
+		delete $fresh{'history'};
+		return $battery_sample_memo = \%fresh;
 	}
 	my $b = { sampled => $now, source => 'none' };
 	my $mobile = &device_setter() eq 'mobile' || -x '/data/data/com.termux/files/usr/bin/termux-battery-status';
@@ -2154,10 +2156,56 @@ sub battery_sample {
 		my $pow = $read->("$base/power_now");
 		$b->{'power'} = $pow =~ /^\d+$/ ? $pow / 1_000_000 : undef;
 	}
+	# PPH: one number, the battery's percent-per-hour draw while discharging.
+	# The old view divided one drop by one interval and had a `percenttage` typo
+	# that made every value zero; this is a least-squares slope over the
+	# discharging samples in the last hour, so integer percentage steps and a
+	# missed sample do not decide the answer. A sample is kept every 30s (the
+	# reading itself may refresh every 10s) and 360 of them give a three-hour
+	# window without growing the cache row.
+	my $history = (ref $cached eq 'HASH' && ref $cached->{'history'} eq 'ARRAY') ? $cached->{'history'} : [];
+	if (defined $b->{'percentage'}) {
+		my $last_at = $history->[-1]->{'t'} || 0;
+		if ($now - $last_at >= 30000) {
+			push @{$history}, { t => $now, p => $b->{'percentage'} + 0, s => lc($b->{'status'} || '') };
+			splice @{$history}, 0, scalar(@{$history}) - 360 if scalar @{$history} > 360;
+		}
+	}
+	if (lc($b->{'status'} || '') eq 'discharging') {
+		my @points = grep {
+			defined $_->{'p'} && defined $_->{'t'} && ($_->{'s'} || '') eq 'discharging'
+				&& $now - $_->{'t'} <= 3600000
+		} @{$history};
+		my $span = (scalar @points >= 2) ? ($points[-1]->{'t'} - $points[0]->{'t'}) : 0;
+		if (scalar @points >= 3 && $span >= 300000) {
+			my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+			my $start = $points[0]->{'t'};
+			foreach my $point ( @points ) {
+				my $x = ($point->{'t'} - $start) / 3600000;   # hours
+				my $y = $point->{'p'};                    # percentage points
+				$n++;
+				$sx += $x;
+				$sy += $y;
+				$sxx += $x * $x;
+				$sxy += $x * $y;
+			}
+			my $den = $n * $sxx - $sx * $sx;
+			if ($den > 0) {
+				my $slope = ($n * $sxy - $sx * $sy) / $den;   # percentage points/hour
+				my $rate = -$slope;
+				$b->{'pph'} = $rate > 0 ? $rate : 0;
+				$b->{'pph_window'} = $span / 3600000;
+				$b->{'pph_points'} = $n;
+			}
+		}
+	}
 	# a machine with no battery has nothing worth caching; the Monitor can stat
 	# it every poll without a write
-	&cache_set({ app => '__president', context => 'battery', subcontext => 'current', warranty => '-1d' }, $b)
-		if $b->{'source'} ne 'none';
+	if ($b->{'source'} ne 'none') {
+		my %store = %{$b};
+		$store{'history'} = $history;
+		&cache_set({ app => '__president', context => 'battery', subcontext => 'current', warranty => '-1d' }, \%store);
+	}
 	return $battery_sample_memo = $b;
 }
 

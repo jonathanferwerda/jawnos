@@ -1130,67 +1130,16 @@ sub utility_functions() {
 		$gb::timeouts->{'htop'}->{'subroutine'} = sub {
 			eval {
 				my $device = &subs::device_setter();
-				my $cpu = { timestamp => &subs::rightNow() };
 				# only sample when there is a battery to report
 				my $cache_change = ($device eq 'mobile' || -e '/sys/class/power_supply/BAT0/capacity') ? 1 : 0;
 				if ($cache_change == 1) {
 					my ($db,$database) = &subs::database_grabber();
 					if ($db) {
-						my $cache_data = &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }) || {};
-						$cache_data->{'history'} = [] unless $cache_data->{'history'};
+						# PPH and the battery history live in the shared sampler; this
+						# view only carries the latest reading for the System card.
 						my $sample = &subs::battery_sample();
-						if ($sample->{'percentage'}) {
-							# one shape for this view and the Monitor: V and mA, with the
-							# health/plugged fields the phone reports
-							$cpu->{'battery'} = {
-								percentage => $sample->{'percentage'},
-								temperature => $sample->{'temperature'},
-								status => $sample->{'status'},
-								power => $sample->{'current'},
-								voltage => $sample->{'voltage'},
-								health => $sample->{'health'},
-								plugged => $sample->{'plugged'},
-							};
-						}
-						my (@battery_average,$battery_sum);
-						if ($cpu->{'battery'} && $cpu->{'battery'}->{'status'} eq 'discharging') {
-							my $last = $cpu;
-							@{$cache_data->{'history'}} = grep { $_->{'battery'}->{'percentage'} >= $cpu->{'battery'}->{'percentage'} } @{$cache_data->{'history'}};
-							foreach my $h (reverse @{$cache_data->{'history'}}) {
-								my $hb = $h->{'battery'};
-								my $lhb = $last->{'battery'};
-								if ($hb->{'status'} ne 'discharging') {
-									last;
-								}
-								elsif ($lhb->{'percentage'} < $hb->{'percentage'}) {
-									my $time_diff = ($last->{'timestamp'} - $h->{'timestamp'}) / 1000;
-									my $p_diff = $lhb->{'percentage'} - $hb->{'percenttage'};
-									my $p_per_t = $p_diff / $time_diff;
-
-
-									my $p_drop = $p_per_t;
-									my $pm_drop = $p_drop * 60;
-									my $ph_drop = $p_drop * 60 * 60;
-									$cpu->{'battery'}->{'pps'} = sprintf("%.3f", $p_drop) if scalar @battery_average > 0;
-									$cpu->{'battery'}->{'ppm'} = sprintf("%.3f", $pm_drop) if scalar @battery_average > 0;
-									$cpu->{'battery'}->{'pph'} = sprintf("%.3f", $ph_drop) if scalar @battery_average > 0;
-									push @battery_average, $p_per_t;
-									$battery_sum += $p_per_t;
-								}
-							}
-							$cache_data->{'average'}->{'battery'}, {
-								pps => sprintf("%.3f", $battery_sum / scalar @battery_average),
-								ppm => sprintf("%.3f", $battery_sum / scalar @battery_average / 60),
-								pph => sprintf("%.3f", $battery_sum / scalar @battery_average / 60 / 60) 
-							} if scalar @battery_average > 0;
-						}
-
-
-						$cache_data->{'current'} = $cpu;
-						push @{$cache_data->{'history'}}, $cpu;
-
-						splice @{$cache_data->{'history'}}, 10;
-						&subs::cache_set({ app => '__president', context => 'htop', subcontext => 'current', warranty => '-1d' }, $cache_data);
+						my $cpu = { timestamp => &subs::rightNow(), battery => $sample };
+						&subs::cache_set({ app => '__president', context => 'htop', subcontext => 'current', warranty => '-1d' }, { current => $cpu });
 						&Websocket::send('server', { console => 'htopViewer();' });
 					}
 				}

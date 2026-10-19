@@ -29,6 +29,7 @@
 		<span class="monitor_health_item"><b>voltage</b><span data-h="voltage">&mdash;</span></span>
 		<span class="monitor_health_item"><b>current</b><span data-h="current">&mdash;</span></span>
 		<span class="monitor_health_item"><b>health</b><span data-h="health">&mdash;</span></span>
+		<span class="monitor_health_item"><b>PPH</b><span data-h="pph">&mdash;</span></span>
 		<span class="monitor_health_item"><b>load</b><span data-h="load">&mdash;</span></span>
 		<span class="monitor_health_item"><b>uptime</b><span data-h="uptime">&mdash;</span></span>
 		<span class="monitor_health_item"><b>sync</b><span data-h="sync">&mdash;</span></span>
