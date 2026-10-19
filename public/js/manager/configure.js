@@ -373,6 +373,18 @@ function budgetGoalsDurationValue(value) {
 	if (!value || /[a-zA-Z]\s*$/.test(value)) { return value; }
 	return value + 'm';
 }
+// one entry as the house reads it: "amount measure/scope", with a leading "<="
+// on a ceiling
+function budgetGoalsEntry(amount, measure, scope, direction) {
+	var value = $.trim(amount || '');
+	var entry;
+	if (measure === '$') { entry = '$' + value; }
+	else if (measure === 'duration') { entry = budgetGoalsDurationValue(value); }
+	else { entry = value + (measure || ''); }
+	if (scope) { entry += '/' + scope; }
+	if (direction === 'ceiling') { entry = '<=' + entry; }
+	return entry;
+}
 function budgetGoalsValue(container) {
 	var parts = [];
 	container.find('.budget_goals_row').each(function() {
@@ -385,15 +397,43 @@ function budgetGoalsValue(container) {
 		var unit = row.find('.budget_goals_unit').val() || '';
 		if (value === '') { return; }
 		var scope = unit ? (count || '1') + unit : '';
-		var entry;
-		if (measure === '$') { entry = '$' + value; }
-		else if (measure === 'duration') { entry = budgetGoalsDurationValue(value); }
-		else { entry = value + measure; }
-		if (scope) { entry += '/' + scope; }
-		if (dir === 'ceiling') { entry = '<=' + entry; }
-		parts.push(entry);
+		parts.push(budgetGoalsEntry(value, measure, scope, dir));
 	});
 	return parts.join(',');
+}
+function budgetGoalsAddRow(container) {
+	var row = container.find('.budget_goals_template').first().find('.budget_goals_row').first().clone();
+	container.find('.budget_goals_adder').before(row);
+	return row;
+}
+// set the row a recommendation belongs to (its measure names the circumstance),
+// adding one when the app had no entry for that measure yet
+function budgetGoalsRowSet(container, measure, amount, scope, direction) {
+	var row = null;
+	container.find('.budget_goals_row').each(function() {
+		if ($(this).closest('.budget_goals_template').length) { return; }
+		if (($(this).find('.budget_goals_measure').val() || '') === (measure || '')) {
+			row = $(this);
+			return false;
+		}
+	});
+	if (!row) { row = budgetGoalsAddRow(container); }
+	var select = row.find('.budget_goals_measure');
+	if (measure && select.find('option[value="' + measure + '"]').length === 0) {
+		$('<option>').attr('value', measure).text(measure).appendTo(select);
+	}
+	select.val(measure || '');
+	row.find('.budget_goals_direction').val(direction === 'ceiling' ? 'ceiling' : 'floor');
+	row.find('.budget_goals_value').val(amount || '');
+	var m = /^([0-9]*)([a-zA-Z]+)$/.exec(scope || '');
+	// an autocalc entry's scope may be a symbol ("d") where the row names the
+	// unit in full ("day")
+	var units = { m: 'minute', h: 'hour', d: 'day', w: 'week', M: 'month', y: 'year' };
+	var unit = (m && m[2]) ? m[2] : '';
+	if (units[unit]) { unit = units[unit]; }
+	row.find('.budget_goals_count').val(m && m[1] ? m[1] : '');
+	row.find('.budget_goals_unit').val(unit);
+	return row;
 }
 function budgetGoalsSave(container) {
 	var setting = container.attr('setting');
@@ -417,9 +457,7 @@ $(document).on('change', '.budget_goals_row .budget_goals_value, .budget_goals_r
 	budgetGoalsSave($(this).closest('.budget_goals'));
 });
 $(document).on('click', '.budget_goals_adder', function() {
-	var container = $(this).closest('.budget_goals');
-	var row = container.find('.budget_goals_template').first().find('.budget_goals_row').first().clone();
-	$(this).before(row);
+	budgetGoalsAddRow($(this).closest('.budget_goals'));
 });
 $(document).on('click', '.budget_goals_remover', function() {
 	var container = $(this).closest('.budget_goals');

@@ -378,12 +378,13 @@ our %topic = (
 		summary => 'Statement, budgets, a document ledger and a daily sheet.',
 		body => [
 			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, and a daily sheet.',
-			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account. The window and its scope (hour, day, week, month, year) come from the app\'s own settings, so a view you set up is the view you come back to.'
+			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account. The window and its scope (hour, day, week, month, year) come from the app\'s own settings, so a view you set up is the view you come back to.',
+			'Each app that keeps a budget has a budget light in its header. Opening it shows the period against its budget, the pace it is on, and — when what is counted is over the budget — a Recommended button. Pressing it sets the budget to the app\'s own typical period, keeping the budget\'s scope, measure and floor or ceiling, and fills the matching row on the app\'s card in Configure.'
 		],
 		steps => [
 			'Open Budget; it lands on the statement for the current scope.',
 			'Change the scope along the top to widen or narrow the window — hour, day, week, month, year.',
-			'Add or edit budgets so the statement has something to hold the movement against.',
+			'Add or edit budgets so the statement has something to hold the movement against; a budget that is over its typical amount offers a Recommended value in its budget light.',
 			'Switch the display to the document ledger to see invoices and quotes with their balances, or to the daily sheet for a day at a glance.',
 			'The display and scope are remembered, so the view you settle on is there next time.'
 		],

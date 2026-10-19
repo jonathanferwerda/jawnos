@@ -410,22 +410,73 @@ $(document).on('click', '.budget_autocalc', function() {
 	});
 });
 
-$(document).on('click', '.budget_autocalc_accept', function() {
-	var app = $(this).attr('app');
-	var circumstance = $(this).attr('circumstance');
-	var result = $(this).attr('result');
-	var b = $('.budget_edit_input[app="' + app + '"][circumstance="' + circumstance + '"]');
-	b.val(result);
-	b.trigger('focusout');
-	$('#alert').hide();
-	if ($('.wind[app="' + app + '"]').is(':visible')) {
-		inventoryDetails(app);
+// the autocalc popover's older buttons carry only the whole entry; read it back
+// into the parts the row editor wants
+function budgetSuggestionParts(circumstance, entry) {
+	entry = $.trim(entry || '');
+	var direction = 'floor';
+	if (entry.indexOf('<=') === 0) { direction = 'ceiling'; entry = entry.slice(2); }
+	else if (entry.indexOf('>=') === 0) { entry = entry.slice(2); }
+	var scope = '';
+	var slash = entry.lastIndexOf('/');
+	if (slash > -1) { scope = entry.slice(slash + 1); entry = entry.slice(0, slash); }
+	// the autocalc names a total's scope by its symbol; the budget wants the unit
+	var units = { s: 'second', m: 'minute', h: 'hour', d: 'day', w: 'week', M: 'month', y: 'year' };
+	if (units[scope]) { scope = units[scope]; }
+	var measure = (circumstance === 'occurences') ? '' : ((circumstance === 'total') ? '$' : circumstance);
+	var amount = entry;
+	if (measure === '$') { amount = amount.replace(/^\$/, ''); }
+	else if (measure !== '' && measure !== 'duration' && amount.slice(-measure.length) === measure) {
+		amount = amount.slice(0, -measure.length);
 	}
+	return { amount: amount, measure: measure, scope: scope, direction: direction };
+}
+
+// Set the budget the panel recommends: the entry keeps its scope and direction,
+// the entry it replaces is named exactly, and the forms on screen (the Budget
+// app's table and Configure's row editor) show the new value.
+$(document).on('click', '.budget_autocalc_accept', function() {
+	var button = $(this);
+	var app = button.attr('app');
+	var circumstance = button.attr('circumstance');
+	var b = $('.budget_edit_input[app="' + app + '"][circumstance="' + circumstance + '"]');
+	var amount, measure, scope, direction, previous, result;
+	if (typeof button.attr('amount') === 'undefined') {
+		var parts = budgetSuggestionParts(circumstance, button.attr('result'));
+		amount = parts.amount;
+		measure = parts.measure;
+		scope = parts.scope;
+		direction = parts.direction;
+		previous = b.length ? (b.attr('value') || '') : '';
+		result = budgetGoalsEntry(amount, measure, scope, direction);
+	}
+	else {
+		amount = button.attr('amount');
+		measure = button.attr('measure') || '';
+		scope = button.attr('scope') || '';
+		direction = button.attr('direction') || 'floor';
+		previous = button.attr('previous') || '';
+		result = budgetGoalsEntry(amount, measure, scope, direction);
+	}
+	b.val(result);
+	b.attr('value', result);
+	var form = $('.budget_goals[app="' + app + '"][setting="budget"]');
+	if (form.length) {
+		budgetGoalsRowSet(form, measure, amount, scope, direction);
+		var label = $('.app_configure_toggle[setting="budget"][app="' + app + '"]');
+		if (label.length) {
+			label.find('.ability_label').html('<b>' + label.attr('formatted_setting') + ':</b> ' + budgetGoalsValue(form).slice(0, 20));
+		}
+	}
+	$('#alert').hide();
 	$.ajax({
 		url: '/manager/budget/edit',
 		type: 'POST',
-		data: { app: app, value: result, circumstance: circumstance },
+		data: { app: app, value: result, previous: previous, circumstance: circumstance },
 		success: function(response) {
+			if ($('.wind[app="' + app + '"]').is(':visible')) {
+				inventoryDetails(app);
+			}
 		}
 	});
 });
@@ -437,11 +488,15 @@ $(document).on('change, focusout', '.budget_edit_input', function() {
 	var app = input.attr('app');
 	var value = input.val();
 	var circumstance = input.attr('circumstance');
+	var previous = input.attr('value') || '';
+	// change and focusout both fire on a blur; only one of them is a real edit
+	if (value === previous) { return; }
+	input.attr('value', value);
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/budget/edit',
 		type: 'POST',
-		data: { app: app, value: value, circumstance: circumstance },
+		data: { app: app, value: value, previous: previous, circumstance: circumstance },
 		success: function(response) {
 		}
 	});

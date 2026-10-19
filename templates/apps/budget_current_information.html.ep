@@ -22,17 +22,25 @@
 		<%# the autocalc's own reading for this scope is the budget it would suggest.
 		    Shown only when the set budget is the thing out of step with the actual
 		    (over budget), and clickable - the value is the budget it would set. The
-		    autocalc string is "<value>/<scope>"; the part before the last slash is
-		    what the budget edit wants, for every mode: a count, a duration, money, or
-		    a measure like 12.345weight. %>
+		    autocalc string is "<value>/<scope>"; the button carries the amount, the
+		    measure, the scope and the direction apart, so the row editor and the
+		    stored entry agree, and names the entry it replaces exactly. A fixed level
+		    stays fixed - a weight is not a rate. %>
 		<% my $over_budget = defined $budget->{'budgeted'} && $budget->{'budgeted'} > 0 && defined $budget->{'value'} && $budget->{'value'} > $budget->{'budgeted'}; %>
 		<% my $suggested = $autocalc->{($budget->{'scope_name'} // '')}->{'formatted_result'}; %>
 		<% if ($over_budget && defined $suggested) { %>
 		<% $suggested =~ s{/[^/]*$}{}; %>
+		<%# the row editor wants the amount and the measure apart, the entry it writes
+		    wants them together - so the button carries both. The scope and the
+		    direction ride along, or a recommended entry would save as a fixed level. %>
+		<% my $form_measure = ($circumstance eq 'occurences') ? '' : (($circumstance eq 'total') ? '$' : $circumstance); %>
+		<% my $form_amount = $suggested; %>
+		<% if ($form_measure eq '$') { $form_amount =~ s/^\$//; } elsif ($form_measure ne '' && $form_measure ne 'duration') { $form_amount =~ s/\Q$form_measure\E$//; } %>
+		<% my $form_scope = $budget->{'fixed'} ? '' : ($budget->{'scope_name'} // ''); %>
 		<tr>
 			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">Recommended</td>
 			<td style="text-align:right;white-space:nowrap;">
-				<button class="budget_autocalc_accept" app="<%= $autocalc->{'data'}->{'app'} %>" circumstance="<%= $circumstance %>" result="<%= $suggested %>" title="Set this budget" style="font:inherit;font-weight:700;color:#b8860b;background:rgba(184,134,11,.12);border:1px solid rgba(184,134,11,.5);border-radius:6px;padding:1px 8px;cursor:pointer;white-space:nowrap;"><%= $suggested %></button>
+				<button class="budget_autocalc_accept" app="<%= $autocalc->{'data'}->{'app'} %>" circumstance="<%= $circumstance %>" amount="<%= $form_amount %>" measure="<%= $form_measure %>" scope="<%= $form_scope %>" direction="<%= $budget->{'direction'} || 'floor' %>" previous="<%= $budget->{'budget'} %>" title="Set this budget" style="font:inherit;font-weight:700;color:#b8860b;background:rgba(184,134,11,.12);border:1px solid rgba(184,134,11,.5);border-radius:6px;padding:1px 8px;cursor:pointer;white-space:nowrap;"><%= $suggested %></button>
 			</td>
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">your typical <%= lc $scope %></td>
 		</tr>

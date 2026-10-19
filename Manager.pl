@@ -9303,9 +9303,14 @@ sub parking_lot_grabber($c) {
 
 get '/manager/start_menu/htop_viewer' => sub($c) {
 	my $cache = &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' });
+	# The card is a house-wide levels view: this machine, every peer that
+	# answered the last levels pass, and the embedded boards any of them can
+	# see. It reads the cached snapshot so a sleeping board cannot hold the menu.
+	my $levels = &subs::levels_snapshot();
 	my $html = $c->render_to_string(
 		template => 'start_menu/htop',
-		cache => $cache
+		cache => $cache,
+		levels => $levels
 	);
 	$c->render(json => { html => $html });
 };
@@ -16798,26 +16803,39 @@ post '/manager/budget/edit' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $circumstance = $c->param('circumstance');
 	my $value = $c->param('value');
-	my $existing_budgets = $value;
+	my $previous = $c->param('previous');
+	my $existing_budgets;
 	&subs::cache_delete({ app => $app, context => 'autocalc' });
-	foreach my $br ( keys %{$gb::budget_modes} ) {
-		my $budget = &budget_calculator({
-			app => $app,
-			circumstance => $br,
-			value => 1,
-			scope => 'hour',
-			budget => &subs::setting_grabber({ app => $app, setting => 'budget' })
-		});
+	if (defined $previous && length $previous) {
+		# The entry this edit replaces is named exactly, so the app's other entries
+		# are left alone and a recommendation keeps its own scope and measure. An
+		# empty value removes it.
+		my @entries = grep { length } split ',', (&subs::setting_grabber({ app => $app, setting => 'budget' }) || '');
+		@entries = grep { $_ ne $previous } @entries;
+		push @entries, $value if defined $value && length $value;
+		$existing_budgets = join ',', @entries;
+	}
+	else {
+		$existing_budgets = $value;
+		foreach my $br ( keys %{$gb::budget_modes} ) {
+			my $budget = &budget_calculator({
+				app => $app,
+				circumstance => $br,
+				value => 1,
+				scope => 'hour',
+				budget => &subs::setting_grabber({ app => $app, setting => 'budget' })
+			});
 
-		if ($budget->{'circumstance'} && $budget->{'circumstance'} ne $circumstance) {
-			if ($existing_budgets) {
-				$existing_budgets = $existing_budgets . ',' . $budget->{'budget'};
+			if ($budget->{'circumstance'} && $budget->{'circumstance'} ne $circumstance) {
+				if ($existing_budgets) {
+					$existing_budgets = $existing_budgets . ',' . $budget->{'budget'};
+				}
+				else {
+					$existing_budgets = $budget->{'budget'};
+				}
 			}
-			else {
-				$existing_budgets = $budget->{'budget'};
-			}
+
 		}
-
 	}
 	# A letter-bearing budget (a measure like "8681.139steps/d", or a quantity like
 	# "3.4quantity/week") is claimed by more than one mode as they are all re-read -
@@ -30313,6 +30331,9 @@ sub health_report {
 		uptime         => $uptime,
 		schema_version => &subs::setting_grabber({ app => '__president', setting => 'schema_version' }),
 		processes      => &health_process_count(),
+		battery        => &subs::battery_sample(),
+		embedded       => &subs::embedded_levels_cached(),
+		signatorial    => &subs::signatorial_designer(),
 		database       => { bytes => $db_bytes, wal_bytes => $wal_bytes },
 		peers          => \@peers
 	};
