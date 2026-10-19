@@ -4464,16 +4464,20 @@ function leave() {
 	});
 }
 
+var lockSessionTap = null;
 $(document).on('click', '#lock_session', function() {
-	$.ajax({
-		url: '/manager/lock_session',
-		type: 'POST',
-		data: { },
-		success: function() {
-
-		}
-
-	});
+	if (lockSessionTap) {
+		clearTimeout(lockSessionTap);
+		lockSessionTap = null;
+		// double tap: lock the whole house
+		$.post('/manager/lock_session', { scope: 'all', device_uuid: localStorage.getItem('device_uuid') || '' });
+		return;
+	}
+	lockSessionTap = setTimeout(function() {
+		lockSessionTap = null;
+		// single tap: lock this screen
+		$.post('/manager/lock_session', { device_uuid: localStorage.getItem('device_uuid') || '' });
+	}, 300);
 });
 
 $(document).on('click', '#alert_cancel', function() {

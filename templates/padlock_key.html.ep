@@ -139,15 +139,16 @@
 		padlockKeyBusy = true;
 		$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		$('#padlock_key_spinner').show().removeClass('done');
-		padlockKeySay('Unlocking...', false);
-		padlockKeyDeviceUnlock();
+		var bio = padlockKeyBioUsable();
+		padlockKeySay(bio ? 'Confirm with your fingerprint...' : 'Unlocking...', false);
+		padlockKeyBioConfirm().then(function (ok) {
+			if (!ok) { padlockKeyFail('Unlock cancelled.'); return; }
+			padlockKeySay('Unlocking...', false);
+			padlockKeyDeviceUnlock();
+		});
 	}
-	function padlockKeyTargets(targets, global_locked) {
+	function padlockKeyTargets(targets) {
 		var box = $('#padlock_key_targets').empty();
-		if (global_locked) {
-			$('<button type="button"></button>').text('The whole house')
-				.on('click', function () { padlockKeyStart(''); }).appendTo(box);
-		}
 		$.each(targets || [], function (i, t) {
 			$('<button type="button"></button>').text(t.name || 'Locked screen')
 				.on('click', function () { padlockKeyStart(t.uuid || ''); }).appendTo(box);
@@ -158,26 +159,89 @@
 		}
 	}
 	function padlockKeyLook() {
-		if (padlockKeyTarget || padlockKeyDone) { return; }
+		if (padlockKeyBusy || padlockKeyDone || padlockKeyTarget) { return; }
 		$.getJSON('/manager/security/padlock_state', function (s) {
 			if (!s || !s.ok) { return; }
-			if (s.global_locked) {
-				$('#padlock_key_note').text('The house is locked.');
-				padlockKeyTargets(s.targets, 1);
-				return;
-			}
 			if (s.targets && s.targets.length == 1) {
 				padlockKeyTarget = s.targets[0].uuid || '';
 				$('#padlock_key_note').text('The screen is locked.');
+				$('#padlock_key_unlock').show();
+				$('#padlock_key_targets').hide();
+				return;
 			}
-			else if (s.targets && s.targets.length > 1) {
+			if (s.targets && s.targets.length > 1) {
 				$('#padlock_key_note').text('Which screen do you want to unlock?');
-				padlockKeyTargets(s.targets, 0);
+				padlockKeyTargets(s.targets);
+				return;
 			}
-			else {
-				$('#padlock_key_note').text('No screen is locked.');
+			if (s.global_locked) {
+				$('#padlock_key_note').text('The whole house is locked. Open the screen you are at and press Send the unlock page to my phone.');
 				$('#padlock_key_unlock').hide();
+				$('#padlock_key_targets').hide();
+				return;
 			}
+			if (s.locked && s.device) {
+				padlockKeyTarget = s.device;
+				$('#padlock_key_note').text('This screen is locked.');
+				$('#padlock_key_unlock').show();
+				$('#padlock_key_targets').hide();
+				return;
+			}
+			$('#padlock_key_note').text('No screen is locked.');
+			$('#padlock_key_unlock').hide();
+		});
+	}
+
+	// A local biometric confirmation. The phone's key still signs the nonce on
+	// the server; this only makes the phone ask for the person before it does.
+	// Over an IP address WebAuthn has no RP ID, so the tap is the confirmation.
+	function padlockKeyBioUsable() {
+		var h = location.hostname || '';
+		return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext && !/^\d{1,3}(\.\d{1,3}){3}$/.test(h));
+	}
+	function padlockKeyBioId() { return localStorage.getItem('jawn_padlock_cred') || ''; }
+	function padlockKeyRandom(n) {
+		var a = new Uint8Array(n);
+		crypto.getRandomValues(a);
+		return a;
+	}
+	function padlockKeyBufFromB64(b64) {
+		var s = atob(b64);
+		var a = new Uint8Array(s.length);
+		for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+		return a;
+	}
+	function padlockKeyBioEnroll() {
+		if (!padlockKeyBioUsable()) { return Promise.resolve(true); }
+		return navigator.credentials.create({ publicKey: {
+			challenge: padlockKeyRandom(32),
+			rp: { name: 'JawnOS', id: location.hostname },
+			user: { id: padlockKeyRandom(16), name: 'jawnos-unlock', displayName: 'JawnOS unlock' },
+			pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+			authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+			timeout: 60000,
+			attestation: 'none'
+		} }).then(function (cred) {
+			if (!cred || !cred.rawId) { return true; }
+			localStorage.setItem('jawn_padlock_cred', padlockKeyB64(cred.rawId));
+			return true;
+		}).catch(function (e) {
+			if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) { return false; }
+			return true;
+		});
+	}
+	function padlockKeyBioConfirm() {
+		if (!padlockKeyBioUsable()) { return Promise.resolve(true); }
+		var id = padlockKeyBioId();
+		if (!id) { return padlockKeyBioEnroll(); }
+		return navigator.credentials.get({ publicKey: {
+			challenge: padlockKeyRandom(32),
+			allowCredentials: [{ type: 'public-key', id: padlockKeyBufFromB64(id) }],
+			userVerification: 'required',
+			timeout: 60000
+		} }).then(function (a) { return !!a; }).catch(function (e) {
+			if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) { return false; }
+			return true;
 		});
 	}
 
@@ -236,6 +300,6 @@
 	$(function () {
 		$('#padlock_key_unlock').on('click', function () { padlockKeyStart(); });
 		$('#padlock_key_retry').on('click', function () { padlockKeyStart(); });
-		<% if ($has_padlock) { %>padlockKeyLook();<% } %>
+		<% if ($has_padlock) { %>padlockKeyLook(); setInterval(padlockKeyLook, 3000);<% } %>
 	});
 </script>

@@ -579,6 +579,10 @@ function wsMessageHandler(event) {
 			if (typeof jawnPadlockTargetMatches === 'function' && !jawnPadlockTargetMatches(data['target'])) {
 				return;
 			}
+			var myDevice = localStorage.getItem('device_uuid') || '';
+			if (data['unlocked'] && myDevice && data['unlocked'].indexOf(myDevice) >= 0) {
+				return;
+			}
 			var height = numeral($(window).height()).format('0.00');
 			var width = numeral($(window).width()).format('0.00');
 			if ($('#everything').is(':visible')) {
