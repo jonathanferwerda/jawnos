@@ -550,6 +550,54 @@ void lowPowerEnergyHandler();
 #include "TouchLib.h"
 #include "utilities.h"
 
+// Battery: the T-Deck puts the pack voltage on BOARD_BAT_ADC through a 1:1
+// divider. Seven samples, median, doubled - the read LilyGoLib's deck support
+// uses - then the same curve to percent, so the deck's number agrees with the
+// library's. Cached for ten seconds: the clock redraws every second.
+static int deck_battery_percent_cached = -1;
+static uint32_t deck_battery_read_at = 0;
+
+static float deck_battery_voltage() {
+  const int n = 7;
+  uint32_t s[n];
+  for (int i = 0; i < n; i++) {
+    s[i] = analogReadMilliVolts(BOARD_BAT_ADC);
+    delayMicroseconds(200);
+  }
+  for (int i = 1; i < n; i++) {
+    uint32_t v = s[i];
+    int j = i - 1;
+    while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+    s[j + 1] = v;
+  }
+  return (float)s[n / 2] * 2.0f;
+}
+
+static int deck_battery_percent() {
+  uint32_t now = millis();
+  if (deck_battery_percent_cached >= 0 && now - deck_battery_read_at < 10000) {
+    return deck_battery_percent_cached;
+  }
+  deck_battery_read_at = now;
+  static const int mv[] = {3300, 3500, 3600, 3700, 3750, 3800, 3850, 3900, 3950, 4000, 4100, 4200};
+  static const int pc[] = {0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+  float v = deck_battery_voltage();
+  int pct = 100;
+  if (v <= mv[0]) {
+    pct = 0;
+  }
+  else {
+    for (int i = 1; i < 12; i++) {
+      if (v <= mv[i]) {
+        pct = pc[i - 1] + (int)((v - mv[i - 1]) * (pc[i] - pc[i - 1]) / (mv[i] - mv[i - 1]));
+        break;
+      }
+    }
+  }
+  deck_battery_percent_cached = pct;
+  return pct;
+}
+
 
 #if TFT_DC !=  BOARD_TFT_DC || TFT_CS !=  BOARD_TFT_CS || TFT_MOSI !=  BOARD_SPI_MOSI || TFT_SCLK !=  BOARD_SPI_SCK
 #error "Not using the already configured T-Deck file, please remove <Arduino/libraries/TFT_eSPI> and replace with <lib/TFT_eSPI>, please do not click the upgrade library button when opening sketches in ArduinoIDE versions 2.0 and above, otherwise the original configuration file will be replaced !!!"
@@ -1012,6 +1060,7 @@ void setup() {
   deckLog("[deck] backlight + touch pins");
   pinMode(BOARD_BL_PIN, OUTPUT);
   pinMode(BOARD_TOUCH_INT, INPUT);
+  pinMode(BOARD_BAT_ADC, INPUT);
   digitalWrite(BOARD_TOUCH_INT, HIGH);
 
   delay(20);
@@ -1244,6 +1293,8 @@ void setup() {
     g["CHARACTERISTIC_UUID_TX"] = CHARACTERISTIC_UUID_TX;
     g["uptime"] = millis();
     g["wigi"] = wigi;
+    g["battery"] = deck_battery_percent();
+    g["battery_mv"] = (int)deck_battery_voltage();
     JSONVar jonfig = g;
     jonfig["ssid"] = undefined;
     jonfig["password"] = undefined;
@@ -2864,8 +2915,14 @@ void time_writer(char * situation) {
     size_t written_sec = strftime(bufsec, 64, "%S", &timeinfo);
     tft.setTextFont(2);
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    // Battery in the top-left corner, the way the watch wears it. The date
+    // moves right to make room; the clock below stays where it was.
+    int batt = deck_battery_percent();
+    tft.setTextColor(batt < 20 ? TFT_RED : (batt < 40 ? TFT_YELLOW : TFT_GREEN), TFT_BLACK);
+    tft.drawString(String(batt) + "%", 10, 10);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     if (written_date != 0) {
-      tft.drawString(bufdate, 10, 10);
+      tft.drawString(bufdate, 52, 10);
     }
     if (written_time != 0) {
       tft.setTextFont(6);
