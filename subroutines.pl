@@ -15983,6 +15983,16 @@ sub ecdsa_public_key_ok {
 	return 0 unless defined $pubkey_b64 && length $pubkey_b64;
 	my $der = eval { decode_base64($pubkey_b64) } || '';
 	return 0 unless length $der;
+	# Android Keystore and WebCrypto both export an uncompressed P-256
+	# SubjectPublicKeyInfo. Check that shape directly: CryptX on the phone is
+	# built without its JSON module, so export_key_jwk() dies there with
+	# "FATAL: cannot find JSON module" and every real key was refused as
+	# "bad key" - the thumb was blamed for a backend gap.
+	my $p256_prefix = pack('H*', '3059301306072a8648ce3d020106082a8648ce3d030107034200');
+	return 1 if length($der) == 91
+		&& substr($der, 0, 26) eq $p256_prefix
+		&& substr($der, 26, 1) eq "\x04";
+	# fall back to the JWK check for an encoding whose parameters are explicit
 	my $pk = eval { Crypt::PK::ECC->new(\$der, 'DER') };
 	return 0 unless $pk;
 	my $jwk = eval { decode_json($pk->export_key_jwk('public')) } || {};
