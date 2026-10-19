@@ -22,25 +22,6 @@ var clothesLinePos = {
 var wardrobe = [];
 var hangingClothes = 0;
 
-// A tiny gray-noise tile, repeated inside each garment: the fine grain of
-// sand-blasted glass, kept faint enough to read as texture rather than noise.
-var clotheslineFrostTile;
-function clotheslineFrost(ctx) {
-	if (!clotheslineFrostTile) {
-		clotheslineFrostTile = document.createElement('canvas');
-		clotheslineFrostTile.width = clotheslineFrostTile.height = 48;
-		var fctx = clotheslineFrostTile.getContext('2d');
-		var img = fctx.createImageData(48, 48);
-		for (var i = 0; i < img.data.length; i += 4) {
-			var v = 150 + Math.floor(Math.random() * 70) - 35;
-			img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-			img.data[i + 3] = 14;
-		}
-		fctx.putImageData(img, 0, 0);
-	}
-	return ctx.createPattern(clotheslineFrostTile, 'repeat');
-}
-
 // The timeline is at rest when nothing has moved it for a settle and no grab is
 // in hand. The settle is short on purpose: the poll's corrections only need the
 // gesture to be over before they land, and a shorter one lets the view answer
@@ -120,10 +101,9 @@ function clotheslineHanger(clothes) {
 		ctx.strokeStyle = ink;
 		ctx.lineWidth = clothesLinePos['bordersize'];
 
-		// each garment is a frosted-glass pill: the app's colour only tints the
-		// pane so the desk shows through, a thin lit rim and a soft shadow give it
-		// depth, and the label is etched into the glass rather than printed on a
-		// button
+		// each garment takes the desk's material (the Misc Texture setting):
+		// plain is a solid coloured pill, the rest are panes of glass, paper,
+		// fabric, wood or metal with the app's colour breathing through them
 		var gap = 4;
 		var pad = 3;
 		// air between the top edge - or the taskbar when it takes the top edge - and
@@ -149,94 +129,25 @@ function clotheslineHanger(clothes) {
 			var bh = clothesLineHeight - (pad * 2) - topGap;
 
 			var tile_colour = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v.colour) || 'yellow';
-			var radius = bh / 2;
 			var darkTheme = (typeof jawnosContrastInk == 'function' && jawnosContrastInk(ink) === '#000000');
-			ctx.save();
-			ctx.beginPath();
-			roundRectPath(ctx, bx, by, bw, bh, radius);
-			ctx.shadowColor = 'rgba(0,0,0,0.38)';
-			ctx.shadowBlur = 9;
-			ctx.shadowOffsetY = 3;
-			// a smoky pane: almost colourless, so the rail reads as sandblasted
-			// glass laid over the desk rather than as coloured buttons
-			ctx.fillStyle = darkTheme ? 'rgba(48,54,62,0.50)' : 'rgba(255,255,255,0.55)';
-			ctx.fill();
-			ctx.shadowColor = 'transparent';
-			ctx.shadowBlur = 0;
-			ctx.shadowOffsetY = 0;
-			// the app's colour only breathes through the glass
-			ctx.globalAlpha = darkTheme ? 0.12 : 0.08;
-			ctx.fillStyle = tile_colour;
-			ctx.fill();
-			ctx.globalAlpha = 1;
-			// the sand-blasted grain of the glass
-			ctx.fillStyle = clotheslineFrost(ctx);
-			ctx.fill();
-			// frosted sheen: light gathers along the top edge, depth below
-			var sheen = ctx.createLinearGradient(0, by, 0, by + bh);
-			sheen.addColorStop(0, darkTheme ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.65)');
-			sheen.addColorStop(0.48, 'rgba(255,255,255,0.03)');
-			sheen.addColorStop(0.55, 'rgba(255,255,255,0)');
-			sheen.addColorStop(1, darkTheme ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.05)');
-			ctx.fillStyle = sheen;
-			ctx.fill();
-			// the rim is lit from above and falls away down the sides; one hairline
-			// reads as the edge of the glass where the old thick ink border read as
-			// a button
-			var rim = ctx.createLinearGradient(0, by, 0, by + bh);
-			if (darkTheme) {
-				rim.addColorStop(0, 'rgba(255,255,255,0.46)');
-				rim.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-				rim.addColorStop(1, 'rgba(255,255,255,0.18)');
+			if (typeof jawnosTexturePill == 'function') {
+				jawnosTexturePill(ctx, bx, by, bw, bh, tile_colour, darkTheme);
+				jawnosTextureLabel(ctx, v.formatted_name, bx, by, bw, bh, darkTheme, tile_colour);
 			}
 			else {
-				rim.addColorStop(0, 'rgba(0,0,0,0.24)');
-				rim.addColorStop(0.5, 'rgba(0,0,0,0.07)');
-				rim.addColorStop(1, 'rgba(0,0,0,0.14)');
+				// an older bundle without texture.js: keep the rail alive
+				ctx.save();
+				ctx.beginPath();
+				roundRectPath(ctx, bx, by, bw, bh, bh / 2);
+				ctx.fillStyle = tile_colour;
+				ctx.fill();
+				ctx.lineWidth = 1;
+				ctx.strokeStyle = ink;
+				ctx.stroke();
+				ctx.fillStyle = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(tile_colour) : ink;
+				ctx.fillText(v.formatted_name, bx + 10, by + (bh / 2) + 7);
+				ctx.restore();
 			}
-			ctx.beginPath();
-			roundRectPath(ctx, bx, by, bw, bh, radius);
-			ctx.lineWidth = 1;
-			ctx.strokeStyle = rim;
-			ctx.stroke();
-			// a small bead of the app's colour, set into the glass at the left
-			ctx.beginPath();
-			ctx.arc(bx + 14, by + (bh / 2), 2.4, 0, Math.PI * 2);
-			ctx.fillStyle = tile_colour;
-			ctx.shadowColor = tile_colour;
-			ctx.shadowBlur = 6;
-			ctx.fill();
-			ctx.restore();
-
-			// The label is etched, not stamped: small uppercase strokes with a
-			// little tracking, a dark recess above and a catch-light below, so it
-			// seems cut into the glass.
-			ctx.save();
-			ctx.font = "500 12px Arial, Helvetica, sans-serif";
-			try { ctx.letterSpacing = '0.9px'; } catch (e) {}
-			ctx.textBaseline = 'middle';
-			var label = ('' + v.formatted_name).toUpperCase();
-			var textMeasure = ctx.measureText(label).width;
-			var textPos = ((bw - textMeasure) / 2) + bx;
-			var textY = by + (bh / 2) + 0.5;
-			// the recess: a dark hairline just above the stroke
-			ctx.fillStyle = darkTheme ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.85)';
-			ctx.fillText(label, textPos, textY + (darkTheme ? -1 : 1));
-			// the stroke itself, lit from above so it seems carved into the glass
-			var etched = ctx.createLinearGradient(0, textY - 6, 0, textY + 6);
-			if (darkTheme) {
-				etched.addColorStop(0, 'rgba(255,255,255,0.90)');
-				etched.addColorStop(0.55, 'rgba(232,238,244,0.70)');
-				etched.addColorStop(1, 'rgba(255,255,255,0.52)');
-			}
-			else {
-				etched.addColorStop(0, 'rgba(0,0,0,0.88)');
-				etched.addColorStop(0.55, 'rgba(28,32,36,0.72)');
-				etched.addColorStop(1, 'rgba(0,0,0,0.56)');
-			}
-			ctx.fillStyle = etched;
-			ctx.fillText(label, textPos, textY);
-			ctx.restore();
 
 			appPosition.push([bx , by , bx + bw, by + bh, v]);
 		});

@@ -5642,6 +5642,7 @@ my @manager_bundle_files = qw(
 	/js/manager/stored.js
 	/js/manager/keyboard.js
 	/js/manager/text_editor_variables.js
+	/js/manager/texture.js
 	/js/manager/clothesline.js
 	/js/manager/manager.js
 	/js/manager/mapengine.js

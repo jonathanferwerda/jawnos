@@ -84,6 +84,15 @@
 		</select>
 	</div>
 	<div class="cfg-row">
+		<label><b>Texture</b></label>
+		<% my $current_texture = &subs::misc_setting('texture') || 'sandglass'; %>
+		<select class="misc_setting" setting="texture" device="<%= $dev %>">
+			<% foreach my $t ( qw/plain sandglass glass paper fabric wood metal/ ) { %>
+				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= &subs::format_name($t) %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
 		<label><b>Colour Scheme</b></label>
 		<select id="colour_scheme">
 			<option value="">&mdash; choose &mdash;</option>

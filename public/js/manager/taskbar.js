@@ -499,6 +499,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
 	else if (setting == 'window_border') { jawnosWindowBorderApply($(this).val()); }
 	else if (setting == 'window_border_colour') { jawnosWindowBorderColourApply($(this).val()); return; }
+	else if (setting == 'texture') { if (typeof jawnosTextureApply == 'function') { jawnosTextureApply($(this).val()); } return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set
