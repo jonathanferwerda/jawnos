@@ -775,7 +775,7 @@ our %topic = (
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
 			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
-			'Each routine hangs as its own rounded pill, coloured for its app, so the hour reads at a glance.'
+			'Each routine hangs as its own frosted-glass pill, with a bead of its app\'s colour and its name etched into the glass.'
 		],
 		related => [ 'appointments', 'tasks' ]
 	},
