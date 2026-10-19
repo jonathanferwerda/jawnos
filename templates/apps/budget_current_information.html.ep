@@ -70,6 +70,47 @@
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;"><%= $trim->($improvement->{'percentage'}) %></td>
 		</tr>
 	</table>
+	<%# The scopes around the budget's own, never the smaller ones: a per-hour
+	    budget reads as a day and a week, not as a per-minute figure. The budget
+	    converted to each scope sits beside the app's own typical amount there. %>
+	<% my @scope_order = qw/minute hour day week month year/; %>
+	<% my %scope_at; @scope_at{@scope_order} = (0 .. $#scope_order); %>
+	<% my @near_scopes = (); %>
+	<% my $scope_amount = sub {
+		my ($value) = @_;
+		return '-' unless defined $value;
+		return &subs::duration_sayer($value / 1000) if $circumstance eq 'duration';
+		return &subs::price_formatter($value) if $circumstance eq 'total';
+		return sprintf("%.3f", $value) if $circumstance eq 'occurences';
+		return sprintf("%.3f", $value) . $circumstance;
+	}; %>
+	<% my $scope_start = $scope_at{$budget->{'scope_name'} // ''}; %>
+	<% if (!$budget->{'fixed'} && defined $scope_start && $budget->{'duration'} && $budget->{'budgeted'}) { %>
+		<% my $last = $scope_start + 2; $last = $#scope_order if $last > $#scope_order; %>
+		<% my $rate = defined $budget->{'full_expected'} ? $budget->{'full_expected'} : ($budget->{'budgeted'} / $budget->{'duration'}); %>
+		<% foreach my $ts ( @scope_order[$scope_start .. $last] ) { %>
+			<% my $ac = $autocalc->{$ts}; next unless $ac; %>
+			<% my $width = $ac->{'duration'} || &subs::time_abbrev_translator(1 . $ts, &subs::rightNow()); %>
+			<% push @near_scopes, { scope => $ts, budget => $rate * $width, typical => $ac->{'result'} }; %>
+		<% } %>
+	<% } %>
+	<% if (scalar @near_scopes) { %>
+		<div style="border-top:1px solid rgba(128,128,128,.35);margin:6px 0;"></div>
+		<table style="border-collapse:collapse;width:100%;opacity:.9;">
+			<tr style="opacity:.6;font-size:90%;">
+				<td style="white-space:nowrap;padding-right:8px;">Scopes</td>
+				<td style="text-align:right;white-space:nowrap;">budget</td>
+				<td style="text-align:right;white-space:nowrap;padding-left:8px;">typical</td>
+			</tr>
+			<% foreach my $ns ( @near_scopes ) { %>
+				<tr>
+					<td style="white-space:nowrap;padding-right:8px;"><%= &subs::format_name($ns->{'scope'}) %></td>
+					<td style="text-align:right;font-weight:600;white-space:nowrap;"><%= $scope_amount->($ns->{'budget'}) %></td>
+					<td style="text-align:right;white-space:nowrap;padding-left:8px;opacity:.8;"><%= $scope_amount->($ns->{'typical'}) %></td>
+				</tr>
+			<% } %>
+		</table>
+	<% } %>
 	<%# a goal is the long target, and for a fixed level it is the only thing
 	    that can give a pace: read the measure's own trend and name the day the
 	    current pace carries it to the goal. The autocalc needs the value known,
