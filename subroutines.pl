@@ -7928,7 +7928,7 @@ sub name_change_pairs {
 	# window and view state, not a choice: the uuid names the app, scrollTop and
 	# jopen are where its window was left, dimensions is how big it was - nobody
 	# merging two records wants to choose between two scroll positions.
-	my %transient = map { $_ => 1 } qw/uuid scrollTop jopen dimensions/;
+	my %transient = map { $_ => 1 } qw/uuid scrollTop jopen dimensions s_scroll ci/;
 	# who a person is, rather than how their app is set up: a contact either side
 	# holds joins the record, so it is always on the panel - a number filed under
 	# the number itself, renamed to a real person, must not quietly vanish.
@@ -8099,6 +8099,436 @@ sub name_change_apply {
 				if defined $merged && length $merged;
 		}
 	}
+}
+
+# --- appointment history: what a rename into a known name would merge --------
+# The settings merge above answers "which value keeps the name". This answers
+# the other half: what happens to the app's events. The panel shows a compact
+# per-side summary and a few policies, and the chosen policy's rows are
+# tombstoned after the rename (under the unified name, so every peer agrees).
+
+sub name_change_history_duration {
+	my ($app) = @_;
+	my $value = &subs::setting_grabber({ app => $app, setting => 'duration' });
+	return undef unless defined $value && $value =~ /[0-9]/;
+	my $ms = eval { &subs::time_abbrev_translator($value) };
+	return defined $ms ? abs($ms) : undef;
+}
+
+sub name_change_history_sessions {
+	my ($app) = @_;
+	return [] unless defined $app && length $app;
+	my $rows = &subs::db_query(
+		'select rowid, uuid, type, timestamp, stop_timestamp, duration, stop_seen, server_time, device,'
+		. ' case when notes is not null and length(notes) > 0 then 1 else 0 end has_notes'
+		. ' from appointments where app = ? and lower(type) in (?,?,?,?)'
+		. ' order by cast(timestamp as integer) asc',
+		$app, 'stop', 'start', 'record', 'usual'
+	)->hashes || [];
+	my @sessions;
+	foreach my $r ( @{$rows} ) {
+		next unless defined $r->{'timestamp'} && $r->{'timestamp'} =~ /^-?\d+$/;
+		my $start = 0 + $r->{'timestamp'};
+		my $stop = (defined $r->{'stop_timestamp'} && $r->{'stop_timestamp'} =~ /^-?\d+$/ && $r->{'stop_timestamp'} > 0)
+			? 0 + $r->{'stop_timestamp'} : undef;
+		my $duration = (defined $r->{'duration'} && $r->{'duration'} =~ /^-?\d+(?:\.\d+)?$/)
+			? 0 + $r->{'duration'} : undef;
+		# Older stop rows carry a duration but no stop_timestamp; the duration is
+		# the session length (negative on stop rows, positive on usual rows), so
+		# the end is start + abs(duration) even though no press recorded it.
+		my $end = $stop;
+		my $end_implied = 0;
+		if (!defined $end && defined $duration && abs($duration) > 0) {
+			$end = $start + abs($duration);
+			$end_implied = 1;
+		}
+		my $span = defined $end ? ($end - $start) : 0;
+		$span = abs($span) if $span < 0 && !defined $stop;
+		push @sessions, {
+			rowid => 0 + $r->{'rowid'},
+			uuid => $r->{'uuid'} || '',
+			app => $app,
+			type => lc($r->{'type'} || ''),
+			start => $start,
+			stop => $stop,
+			end => $end,
+			end_implied => $end_implied,
+			duration => $duration,
+			span => $span,
+			server_time => $r->{'server_time'},
+			device => $r->{'device'} || '',
+			has_notes => (0 + ($r->{'has_notes'} || 0)) ? 1 : 0,
+			malformed => (defined $stop && $stop < $start) ? 1 : 0,
+		};
+	}
+	return \@sessions;
+}
+
+sub name_change_history_months {
+	my ($counts) = @_;
+	my @now = localtime(time);
+	my ($year, $mon) = ($now[5] + 1900, $now[4] + 1);
+	my @months;
+	for (my $i = 11; $i >= 0; $i--) {
+		my ($y, $m) = ($year, $mon - $i);
+		while ($m < 1) { $m += 12; $y--; }
+		my $key = sprintf('%04d-%02d', $y, $m);
+		push @months, { month => $key, count => ($counts->{$key} || 0) };
+	}
+	return \@months;
+}
+
+sub name_change_history_summary {
+	my ($app, $sessions) = @_;
+	$sessions = &subs::name_change_history_sessions($app) unless ref $sessions eq 'ARRAY';
+	my (%by_type, %days, %period, %month);
+	my @spans;
+	my ($first, $last);
+	my ($open, $missing_stop, $malformed) = (0, 0, 0);
+	foreach my $s ( @{$sessions} ) {
+		$by_type{ $s->{'type'} }++;
+		my @t = localtime($s->{'start'} / 1000);
+		$days{ sprintf('%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3]) } = 1;
+		$period{ $t[2] < 6 ? 'night' : $t[2] < 12 ? 'morning' : $t[2] < 18 ? 'afternoon' : 'evening' }++;
+		$month{ sprintf('%04d-%02d', $t[5] + 1900, $t[4] + 1) }++;
+		push @spans, $s->{'span'} if $s->{'span'} > 0;
+		$first = $s->{'start'} if !defined $first || $s->{'start'} < $first;
+		$last = $s->{'start'} if !defined $last || $s->{'start'} > $last;
+		$open++ unless defined $s->{'end'};
+		$missing_stop++ if $s->{'type'} eq 'stop' && !defined $s->{'stop'};
+		$malformed++ if $s->{'malformed'};
+	}
+	my @sorted = sort { $a <=> $b } @spans;
+	my $pct = sub {
+		my ($p) = @_;
+		return undef unless scalar @sorted;
+		my $i = int((scalar @sorted - 1) * $p / 100 + 0.5);
+		$i = 0 if $i < 0;
+		$i = $#sorted if $i > $#sorted;
+		return $sorted[$i];
+	};
+	my %exact;
+	foreach my $s ( @{$sessions} ) {
+		my $key = $s->{'start'} . '|' . (defined $s->{'end'} ? $s->{'end'} : '');
+		$exact{$key}++;
+	}
+	my ($exact_groups, $exact_spare) = (0, 0);
+	foreach my $n ( values %exact ) {
+		next unless $n > 1;
+		$exact_groups++;
+		$exact_spare += $n - 1;
+	}
+	my %stops;
+	$stops{ $_->{'stop'} }++ for grep { defined $_->{'stop'} } @{$sessions};
+	my ($shared_groups, $shared_spare) = (0, 0);
+	foreach my $n ( values %stops ) {
+		next unless $n > 1;
+		$shared_groups++;
+		$shared_spare += $n - 1;
+	}
+	my $all = &subs::db_query('select count(*) c from appointments where app = ?', $app);
+	my $rows = $all ? (0 + ($all->hash->{'c'} || 0)) : scalar @{$sessions};
+	my $exp = &subs::db_query('select count(*) c from appointments where app = ? and cast(warranty as integer) > 0 and cast(warranty as integer) < ?', $app, &subs::rightNow());
+	my $expired = $exp ? (0 + ($exp->hash->{'c'} || 0)) : 0;
+	my $configured = &subs::name_change_history_duration($app);
+	return {
+		app => $app,
+		label => &subs::format_name($app),
+		rows => $rows,
+		sessions => scalar @{$sessions},
+		by_type => \%by_type,
+		first => $first,
+		last => $last,
+		first_label => (defined $first ? &subs::iso_local($first) : ''),
+		last_label => (defined $last ? &subs::iso_local($last) : ''),
+		days => scalar keys %days,
+		per_day => (scalar @{$sessions} && scalar keys %days) ? sprintf('%.2f', scalar @{$sessions} / scalar keys %days) : '0.00',
+		median_ms => $pct->(50),
+		p10_ms => $pct->(10),
+		p90_ms => $pct->(90),
+		open => $open,
+		missing_stop => $missing_stop,
+		malformed => $malformed,
+		exact_groups => $exact_groups,
+		exact_spare => $exact_spare,
+		shared_groups => $shared_groups,
+		shared_spare => $shared_spare,
+		period => \%period,
+		months => &subs::name_change_history_months(\%month),
+		configured_ms => $configured,
+		warranty => (&subs::setting_grabber({ app => $app, setting => 'warranty' }) || ''),
+		expired => $expired,
+	};
+}
+
+sub name_change_history_lower_bound {
+	my ($rows, $value) = @_;
+	my ($lo, $hi) = (0, scalar @{$rows});
+	while ($lo < $hi) {
+		my $mid = int(($lo + $hi) / 2);
+		if ($rows->[$mid]->{'start'} < $value) { $lo = $mid + 1; }
+		else { $hi = $mid; }
+	}
+	return $lo;
+}
+
+# 'full' when start and end both agree, 'open' when one side has no end.
+sub name_change_history_match_kind {
+	my ($ra, $rb, $tol) = @_;
+	return undef unless abs($ra->{'start'} - $rb->{'start'}) <= $tol;
+	my ($ea, $eb) = ($ra->{'end'}, $rb->{'end'});
+	if (defined $ea && defined $eb) {
+		return abs($ea - $eb) <= $tol ? 'full' : undef;
+	}
+	return 'full' unless defined $ea || defined $eb;
+	return 'open';
+}
+
+sub name_change_history_pairs {
+	my ($rows_a, $rows_b, $tol) = @_;
+	my @pairs;
+	foreach my $ra ( @{$rows_a} ) {
+		my $lo = &subs::name_change_history_lower_bound($rows_b, $ra->{'start'} - $tol);
+		for (my $i = $lo; $i < scalar @{$rows_b}; $i++) {
+			my $rb = $rows_b->[$i];
+			last if $rb->{'start'} > $ra->{'start'} + $tol;
+			my $kind = &subs::name_change_history_match_kind($ra, $rb, $tol);
+			next unless $kind;
+			my $dstart = abs($ra->{'start'} - $rb->{'start'});
+			my $dend = (defined $ra->{'end'} && defined $rb->{'end'}) ? abs($ra->{'end'} - $rb->{'end'}) : undef;
+			my $score = $dstart + (defined $dend ? $dend : $tol / 2);
+			my $category = ((defined $dend && $dend <= 1000 && $dstart <= 1000) || (!defined $dend && $dstart <= 1000)) ? 'exact' : 'near';
+			push @pairs, {
+				a => $ra, b => $rb, kind => $kind,
+				dstart => $dstart, dend => $dend, score => $score,
+				category => $category,
+			};
+		}
+	}
+	return \@pairs;
+}
+
+sub name_change_history_greedy {
+	my ($rows_a, $rows_b, $tol) = @_;
+	my $candidates = &subs::name_change_history_pairs($rows_a, $rows_b, $tol);
+	my @sorted = sort { $a->{'score'} <=> $b->{'score'} } @{$candidates};
+	my (%used_a, %used_b);
+	my @pairs;
+	foreach my $pair ( @sorted ) {
+		next if $used_a{ $pair->{'a'}->{'rowid'} } || $used_b{ $pair->{'b'}->{'rowid'} };
+		$used_a{ $pair->{'a'}->{'rowid'} } = 1;
+		$used_b{ $pair->{'b'}->{'rowid'} } = 1;
+		push @pairs, $pair;
+	}
+	return { pairs => \@pairs, used_a => \%used_a, used_b => \%used_b };
+}
+
+sub name_change_history_cross_shared {
+	my ($rows_a, $rows_b, $start_tol) = @_;
+	my @b_stop = sort { $a->{'stop'} <=> $b->{'stop'} } grep { defined $_->{'stop'} } @{$rows_b};
+	my @out;
+	foreach my $ra ( grep { defined $_->{'stop'} } @{$rows_a} ) {
+		my ($lo, $hi) = (0, scalar @b_stop);
+		while ($lo < $hi) {
+			my $mid = int(($lo + $hi) / 2);
+			if ($b_stop[$mid]->{'stop'} < $ra->{'stop'} - 1000) { $lo = $mid + 1; }
+			else { $hi = $mid; }
+		}
+		for (my $i = $lo; $i < scalar @b_stop; $i++) {
+			my $rb = $b_stop[$i];
+			last if $rb->{'stop'} > $ra->{'stop'} + 1000;
+			next if abs($ra->{'start'} - $rb->{'start'}) <= $start_tol;
+			push @out, {
+				a => $ra, b => $rb,
+				dstart => abs($ra->{'start'} - $rb->{'start'}),
+				dstop => abs($ra->{'stop'} - $rb->{'stop'}),
+			};
+		}
+	}
+	return \@out;
+}
+
+sub name_change_history_start_only {
+	my ($rows_a, $rows_b, $tol) = @_;
+	my @out;
+	foreach my $ra ( @{$rows_a} ) {
+		my $lo = &subs::name_change_history_lower_bound($rows_b, $ra->{'start'} - $tol);
+		for (my $i = $lo; $i < scalar @{$rows_b}; $i++) {
+			my $rb = $rows_b->[$i];
+			last if $rb->{'start'} > $ra->{'start'} + $tol;
+			next if &subs::name_change_history_match_kind($ra, $rb, $tol);
+			push @out, {
+				a => $ra, b => $rb,
+				dstart => abs($ra->{'start'} - $rb->{'start'}),
+				dend => (defined $ra->{'end'} && defined $rb->{'end'}) ? abs($ra->{'end'} - $rb->{'end'}) : undef,
+			};
+		}
+	}
+	return \@out;
+}
+
+# Which of two matched rows survives: the explicit end, then notes, then the
+# length closest to that side's configured duration, then the newer write. A
+# true tie keeps the existing record (the target) rather than the renamed one.
+sub name_change_history_prefer {
+	my ($ra, $rb, $a_duration, $b_duration) = @_;
+	my $a_explicit = defined $ra->{'stop'} ? 1 : 0;
+	my $b_explicit = defined $rb->{'stop'} ? 1 : 0;
+	return ($ra, $rb) if $a_explicit && !$b_explicit;
+	return ($rb, $ra) if $b_explicit && !$a_explicit;
+	return ($ra, $rb) if $ra->{'has_notes'} && !$rb->{'has_notes'};
+	return ($rb, $ra) if $rb->{'has_notes'} && !$ra->{'has_notes'};
+	if (defined $a_duration || defined $b_duration) {
+		my $ad = defined $a_duration ? abs($ra->{'span'} - $a_duration) : 1e18;
+		my $bd = defined $b_duration ? abs($rb->{'span'} - $b_duration) : 1e18;
+		return ($ra, $rb) if $ad < $bd;
+		return ($rb, $ra) if $bd < $ad;
+	}
+	my $at = 0 + ($ra->{'server_time'} || 0);
+	my $bt = 0 + ($rb->{'server_time'} || 0);
+	return ($ra, $rb) if $at > $bt;
+	return ($rb, $ra) if $bt > $at;
+	return ($rb, $ra);
+}
+
+sub name_change_history_row {
+	my ($r) = @_;
+	return undef unless $r;
+	return {
+		app => $r->{'app'}, rowid => $r->{'rowid'}, uuid => $r->{'uuid'}, type => $r->{'type'},
+		start => $r->{'start'}, end => $r->{'end'}, span => $r->{'span'},
+		start_label => &subs::iso_local($r->{'start'}),
+		end_label => (defined $r->{'end'} ? &subs::iso_local($r->{'end'}) : 'open'),
+	};
+}
+
+sub name_change_history {
+	my ($app, $new_app) = @_;
+	my $old_sessions = &subs::name_change_history_sessions($app);
+	my $new_sessions = &subs::name_change_history_sessions($new_app);
+	my $old = &subs::name_change_history_summary($app, $old_sessions);
+	my $new = &subs::name_change_history_summary($new_app, $new_sessions);
+	my $tol = 120000;   # two minutes: the same event recorded on two machines
+	my $matches = &subs::name_change_history_greedy($old_sessions, $new_sessions, $tol);
+	my @exact = grep { $_->{'category'} eq 'exact' } @{ $matches->{'pairs'} };
+	my @near = grep { $_->{'category'} eq 'near' } @{ $matches->{'pairs'} };
+	my $shared = &subs::name_change_history_cross_shared($old_sessions, $new_sessions, $tol);
+	my $start_only = &subs::name_change_history_start_only($old_sessions, $new_sessions, $tol);
+	my $total = $old->{'sessions'} + $new->{'sessions'};
+	my $exact_n = scalar @exact;
+	my $near_n = scalar @near;
+	my $shared_n = scalar @{$shared};
+	my $start_only_n = scalar @{$start_only};
+	my $default = 'keep_all';
+	$default = 'dedupe_exact' if $exact_n && !$near_n && !$shared_n && !$start_only_n;
+	$default = 'flag' if $near_n || $shared_n || $start_only_n;
+	my @options = (
+		{ policy => 'keep_all', label => 'Keep both', sessions => $total, dropped => 0, flagged => $near_n + $shared_n + $start_only_n,
+		  note => 'Nothing is removed; every row from both names survives under the new name.' },
+		{ policy => 'dedupe_exact', label => 'Keep both, remove exact duplicates', sessions => $total - $exact_n, dropped => $exact_n, flagged => $near_n + $shared_n + $start_only_n,
+		  note => 'Rows with the same start and end (within 1s) are removed; near matches are left for review.' },
+		{ policy => 'intelligent', label => 'Merge duplicates (keep all unique)', sessions => $total - $exact_n - $near_n, dropped => $exact_n + $near_n, flagged => $shared_n + $start_only_n,
+		  note => 'Exact and near duplicates are collapsed; shared-stop and start-only pairs are flagged, never dropped.' },
+		{ policy => 'flag', label => 'Keep both, flag duplicates', sessions => $total, dropped => 0, flagged => $near_n + $shared_n + $start_only_n,
+		  note => 'Nothing is removed; the panel lists the candidates for you to review later.' },
+		{ policy => 'keep_old', label => 'Keep only ' . &subs::format_name($app), sessions => $old->{'sessions'}, dropped => $new->{'rows'}, flagged => 0, destructive => 1,
+		  note => 'Keep the history of the app being renamed; drop the existing name\'s history. Settings still merge normally.' },
+		{ policy => 'keep_new', label => 'Keep only ' . &subs::format_name($new_app), sessions => $new->{'sessions'}, dropped => $old->{'rows'}, flagged => 0, destructive => 1,
+		  note => 'Keep the existing name\'s history; drop the renamed app\'s history. Settings still merge normally.' },
+	);
+	my @proposed;
+	my $max = 30;
+	my $add = sub {
+		my ($kind, $keep, $drop, $other, $reason, $dstart, $dend) = @_;
+		return if scalar @proposed >= $max;
+		my $item = {
+			kind => $kind, reason => $reason,
+			keep => &subs::name_change_history_row($keep),
+			drop => &subs::name_change_history_row($drop),
+			other => &subs::name_change_history_row($other),
+			dstart => $dstart, dend => $dend,
+		};
+		push @proposed, $item;
+	};
+	foreach my $pair ( @exact, @near ) {
+		my ($keep, $drop) = &subs::name_change_history_prefer($pair->{'a'}, $pair->{'b'}, $old->{'configured_ms'}, $new->{'configured_ms'});
+		$add->($pair->{'category'}, $keep, $drop, undef,
+			($pair->{'category'} eq 'exact' ? 'same start and end' : 'start and end within 2m'),
+			$pair->{'dstart'}, $pair->{'dend'});
+	}
+	foreach my $pair ( @{$shared} ) {
+		$add->('shared-stop', $pair->{'a'}, undef, $pair->{'b'}, 'one stop closed both sessions; review', $pair->{'dstart'}, $pair->{'dstop'});
+	}
+	foreach my $pair ( @{$start_only} ) {
+		$add->('start-only', $pair->{'a'}, undef, $pair->{'b'}, 'starts agree, ends do not; review', $pair->{'dstart'}, $pair->{'dend'});
+	}
+	return {
+		old => $old,
+		new => $new,
+		options => \@options,
+		default_policy => $default,
+		pairs => { exact => $exact_n, near => $near_n, shared => $shared_n, start_only => $start_only_n },
+		proposed => \@proposed,
+		proposed_total => $exact_n + $near_n + $shared_n + $start_only_n,
+	};
+}
+
+# Plan the rows a policy would drop, BEFORE the rename. The uuids are applied
+# after the rename, under the unified name, so a peer that held the row under
+# either old name receives a tombstone it can match.
+sub name_change_history_plan {
+	my ($app, $new_app, $policy) = @_;
+	return { policy => $policy, drops => [], count => 0 } unless $policy && $policy ne 'keep_all' && $policy ne 'flag';
+	my @drops;
+	if ($policy eq 'keep_old' || $policy eq 'keep_new') {
+		my $loser = $policy eq 'keep_old' ? $new_app : $app;
+		my $rows = &subs::db_query('select rowid, uuid, type, timestamp, server_time from appointments where app = ?', $loser)->hashes || [];
+		foreach my $r ( @{$rows} ) {
+			next unless $r->{'uuid'};
+			push @drops, { uuid => $r->{'uuid'}, server_time => $r->{'server_time'}, reason => 'keep one side' };
+		}
+	}
+	elsif ($policy eq 'dedupe_exact' || $policy eq 'intelligent') {
+		my $old_sessions = &subs::name_change_history_sessions($app);
+		my $new_sessions = &subs::name_change_history_sessions($new_app);
+		# both policies read the same 2m match set the summary used, so the count
+		# the panel shows and the rows the plan drops always agree
+		my $matches = &subs::name_change_history_greedy($old_sessions, $new_sessions, 120000);
+		my $old_dur = &subs::name_change_history_duration($app);
+		my $new_dur = &subs::name_change_history_duration($new_app);
+		foreach my $pair ( @{ $matches->{'pairs'} } ) {
+			next if $policy eq 'dedupe_exact' && $pair->{'category'} ne 'exact';
+			my ($keep, $drop) = &subs::name_change_history_prefer($pair->{'a'}, $pair->{'b'}, $old_dur, $new_dur);
+			next unless $drop && $drop->{'uuid'};
+			push @drops, { uuid => $drop->{'uuid'}, server_time => $drop->{'server_time'}, reason => $pair->{'category'} };
+		}
+	}
+	return { policy => $policy, drops => \@drops, count => scalar @drops };
+}
+
+sub name_change_history_apply_plan {
+	my ($new_app, $plan) = @_;
+	return 0 unless $new_app && $plan && $plan->{'drops'} && scalar @{ $plan->{'drops'} };
+	my $dropped = 0;
+	foreach my $row ( @{ $plan->{'drops'} } ) {
+		next unless $row->{'uuid'};
+		my $full = &subs::db_query('select file, source_uuid, server_time from appointments where app = ? and uuid = ?', $new_app, $row->{'uuid'})->hash;
+		next unless $full;
+		if (($full->{'file'} && length $full->{'file'}) || ($full->{'source_uuid'} && length $full->{'source_uuid'})) {
+			if (defined &Manager::delete_app) {
+				&Manager::delete_app($new_app, $row->{'uuid'}, ($full->{'server_time'} || $row->{'server_time'}), 'name merge');
+			}
+			else {
+				&subs::records_tombstone($new_app, $row->{'uuid'});
+			}
+		}
+		else {
+			&subs::records_tombstone($new_app, $row->{'uuid'});
+		}
+		$dropped++;
+	}
+	&subs::log_writer('name merge ' . $new_app . ': policy=' . ($plan->{'policy'} || '') . ' dropped=' . $dropped) if $dropped;
+	return $dropped;
 }
 
 sub setting_setter() {

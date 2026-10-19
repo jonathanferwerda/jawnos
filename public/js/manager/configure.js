@@ -2581,8 +2581,8 @@ $(document).on('click', '.ai_avail_clear', function() {
 function nameConflictPanel(response) {
 	$('#name_conflict_panel').remove();
 	var panel = $('<div id="name_conflict_panel" style="position:fixed;left:15%;top:10%;width:70%;max-height:78%;overflow:auto;z-index:994200;background:var(--panel);border:3px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 6px 30px rgba(0,0,0,.5);">');
-	panel.append('<h3 style="margin-top:0;">Rename into ' + response.new + '</h3>');
-	panel.append('<p>"' + response.new + '" is already a name the house knows. For each shared setting, choose which value keeps the name. A value marked <i>(house default)</i> is one nobody ever chose, so the other side is picked for you. A contact either side holds - a phone number, an email, a typed entry - is carried over unless you drop it.</p>');
+	panel.append('<h3 style="margin-top:0;">Rename into ' + nameConflictEscape(response.new) + '</h3>');
+	panel.append('<p>"' + nameConflictEscape(response.new) + '" is already a name the house knows. For each shared setting, choose which value keeps the name. A value marked <i>(house default)</i> is one nobody ever chose, so the other side is picked for you. A contact either side holds - a phone number, an email, a typed entry - is carried over unless you drop it.</p>');
 	var pairs = response.pairs || [];
 	if (!pairs.length) { panel.append('<p>No shared settings - the records will simply join.</p>'); }
 	$.each(pairs, function (i, p) {
@@ -2596,18 +2596,63 @@ function nameConflictPanel(response) {
 		}
 		else if (p.only === 'new') {
 			// only the existing record holds it: it stays unless dropped
-			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> keep ' + response.new + '\'s: <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span></label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> keep ' + nameConflictEscape(response.new) + '\'s: <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span></label>');
 			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> drop it</label>');
 		}
 		else {
 			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="new"' + (prefer === 'new' ? ' checked' : '') + '> this app: <span style="opacity:.85;">' + shortSettingValue(p.old_value) + '</span>' + (p.old_default ? ' <i>(house default)</i>' : '') + '</label>');
-			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> ' + response.new + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span>' + (p.new_default ? ' <i>(house default)</i>' : '') + '</label>');
+			row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="old"' + (prefer === 'old' ? ' checked' : '') + '> ' + nameConflictEscape(response.new) + ': <span style="opacity:.85;">' + shortSettingValue(p.new_value) + '</span>' + (p.new_default ? ' <i>(house default)</i>' : '') + '</label>');
 			if (p.natural) {
 				row.append('<label style="display:block;margin:2px 0;"><input type="radio" name="nc_' + p.setting + '" value="merge"' + (prefer === 'merge' ? ' checked' : '') + '> merge (keep both)</label>');
 			}
 		}
 		panel.append(row);
 	});
+
+	var appts = response.appointments;
+	var oldRows = (appts && appts.old) ? Number(appts.old.rows != null ? appts.old.rows : (appts.old.sessions || 0)) : 0;
+	var newRows = (appts && appts['new']) ? Number(appts['new'].rows != null ? appts['new'].rows : (appts['new'].sessions || 0)) : 0;
+	if (appts && appts.old && appts['new'] && (oldRows || newRows)) {
+		panel.append('<h4 style="margin-bottom:4px;">What is in each</h4>');
+		panel.append(nameConflictSummary('This app: ' + (appts.old.label || response.app), appts.old));
+		panel.append(nameConflictSummary('Existing: ' + (appts['new'].label || response.new), appts['new']));
+		panel.append('<p style="opacity:.8;">The settings choices above decide which value keeps the name. The history policy below decides what happens to the appointment rows; settings still merge normally.</p>');
+		var opts = appts.options || [];
+		var defaultPolicy = appts.default_policy || 'keep_all';
+		$.each(opts, function (i, o) {
+			var bits = [Number(o.sessions || 0) + ' session(s)'];
+			if (o.dropped) { bits.push('drop ' + Number(o.dropped) + ' row(s)'); }
+			if (o.flagged) { bits.push('flag ' + Number(o.flagged)); }
+			var row = $('<label style="display:block;margin:4px 0;' + (o.destructive ? 'border-left:3px solid var(--line);padding-left:7px;' : '') + '">');
+			row.append('<input type="radio" name="appt_policy" value="' + nameConflictEscape(o.policy) + '"' + (o.policy === defaultPolicy ? ' checked' : '') + '> ');
+			row.append('<b>' + nameConflictEscape(o.label) + '</b> <span style="opacity:.75;">(' + nameConflictEscape(bits.join(', ')) + ')</span>');
+			if (o.note) { row.append('<br><span style="opacity:.65;font-size:12px;">' + nameConflictEscape(o.note) + '</span>'); }
+			panel.append(row);
+		});
+		if (appts.proposed_total) {
+			var details = $('<details style="margin:8px 0;"><summary>Review ' + Number(appts.proposed_total) + ' candidate(s)</summary></details>');
+			$.each(appts.proposed || [], function (i, p) {
+				var line = '<div style="border-top:1px solid var(--line);padding:5px 0;">';
+				line += '<b>' + nameConflictEscape(p.kind) + '</b> - ' + nameConflictEscape(p.reason) + '<br>';
+				if (p.keep) {
+					line += 'keep ' + nameConflictEscape(p.keep.app + ' ' + p.keep.start_label + ' -> ' + p.keep.end_label + ' (row ' + p.keep.rowid + ')');
+				}
+				if (p.drop) {
+					line += '<br>drop ' + nameConflictEscape(p.drop.app + ' ' + p.drop.start_label + ' -> ' + p.drop.end_label + ' (row ' + p.drop.rowid + ')');
+				}
+				if (p.other) {
+					line += '<br>other ' + nameConflictEscape(p.other.app + ' ' + p.other.start_label + ' -> ' + p.other.end_label + ' (row ' + p.other.rowid + ')');
+				}
+				line += '</div>';
+				details.append(line);
+			});
+			if (Number(appts.proposed_total) > (appts.proposed || []).length) {
+				details.append('<p style="opacity:.7;">... ' + (Number(appts.proposed_total) - (appts.proposed || []).length) + ' more; the apply step uses the full set.</p>');
+			}
+			panel.append(details);
+		}
+	}
+
 	panel.append('<br><button id="name_conflict_go" style="margin-right:8px;">Rename &amp; merge</button><button id="name_conflict_cancel">Cancel</button>');
 	// on the body, not inside the Configure panel: mounted in the app list it could
 	// land inside a scrolled or hidden ancestor and never be seen - which is what
@@ -2616,19 +2661,104 @@ function nameConflictPanel(response) {
 	$('#name_conflict_go').on('click', function () {
 		var choices = {};
 		panel.find('input[type=radio]:checked').each(function () {
-			choices[$(this).attr('name').replace('nc_', '')] = $(this).val();
+			var name = $(this).attr('name') || '';
+			if (name.indexOf('nc_') === 0) { choices[name.replace('nc_', '')] = $(this).val(); }
 		});
+		var policy = panel.find('input[name=appt_policy]:checked').val() || 'keep_all';
+		var selected = null;
+		$.each((response.appointments && response.appointments.options) || [], function (i, o) {
+			if (o.policy === policy) { selected = o; }
+		});
+		if (selected && Number(selected.dropped) > 0 && policy !== 'keep_all' && policy !== 'flag') {
+			var who = '';
+			if (policy === 'keep_old') { who = ' from ' + response.new; }
+			else if (policy === 'keep_new') { who = ' from ' + response.app; }
+			if (!window.confirm('This will drop ' + Number(selected.dropped) + ' appointment row(s)' + who + '. Continue?')) { return; }
+		}
+		var button = $(this);
+		button.prop('disabled', true).text('Merging...');
 		$.ajax({
 			url: '/manager/configure',
 			type: 'POST',
-			data: { app: response.app, setting: 'name_change', value: response.new, choices: JSON.stringify(choices), timestamp: Date.now() },
-			success: function () {
+			data: { app: response.app, setting: 'name_change', value: response.new, choices: JSON.stringify(choices), appt_policy: policy, timestamp: Date.now() },
+			success: function (resp) {
+				if (resp && typeof resp === 'object' && resp.conflict) { nameConflictPanel(resp); return; }
+				if (resp && typeof resp === 'object' && resp.error) {
+					window.alert(resp.error);
+					button.prop('disabled', false).text('Rename & merge');
+					return;
+				}
 				panel.remove();
 				if (typeof appointment_chron === 'function') { appointment_chron(); }
+			},
+			error: function () {
+				button.prop('disabled', false).text('Rename & merge');
+				window.alert('The merge request failed; nothing was changed on this screen.');
 			}
 		});
 	});
 	$('#name_conflict_cancel').on('click', function () { panel.remove(); });
+}
+
+function nameConflictEscape(v) {
+	return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+		return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+	});
+}
+
+function nameConflictMinutes(ms) {
+	if (ms == null || isNaN(Number(ms))) { return '-'; }
+	return (Math.round(Number(ms) / 600) / 100) + 'm';
+}
+
+function nameConflictMonths(months) {
+	if (!months || !months.length) { return ''; }
+	var max = 1;
+	$.each(months, function (i, m) { max = Math.max(max, Number(m.count || 0)); });
+	var out = ['<div style="display:flex;align-items:flex-end;gap:2px;height:28px;margin:6px 0;">'];
+	$.each(months, function (i, m) {
+		var h = Math.max(2, Math.round((Number(m.count || 0) / max) * 26));
+		var op = Number(m.count || 0) ? '1' : '.2';
+		out.push('<span title="' + nameConflictEscape(m.month + ': ' + (m.count || 0)) + '" style="display:inline-block;width:7px;height:' + h + 'px;background:var(--line);border-radius:1px;opacity:' + op + ';"></span>');
+	});
+	out.push('</div>');
+	return out.join('');
+}
+
+function nameConflictSummary(title, s) {
+	if (!s) { return ''; }
+	var out = [];
+	out.push('<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;">');
+	out.push('<b>' + nameConflictEscape(title) + '</b>');
+	var vol = Number(s.sessions || 0) + ' session(s)';
+	if (s.rows != null && Number(s.rows) !== Number(s.sessions || 0)) { vol += ' - ' + Number(s.rows) + ' row(s)'; }
+	out.push(' - ' + vol);
+	if (s.first_label) { out.push('<br>' + nameConflictEscape(s.first_label) + ' -> ' + nameConflictEscape(s.last_label)); }
+	if (s.days) { out.push(' - ' + Number(s.days) + ' day(s), ' + nameConflictEscape(s.per_day) + '/day'); }
+	if (s.median_ms != null) {
+		out.push('<br>median ' + nameConflictMinutes(s.median_ms) + ' - p10 ' + nameConflictMinutes(s.p10_ms) + ' - p90 ' + nameConflictMinutes(s.p90_ms));
+	}
+	if (s.configured_ms != null) { out.push(' - configured ' + nameConflictMinutes(s.configured_ms)); }
+	var types = [];
+	$.each(s.by_type || {}, function (k, v) { types.push(k + ' ' + v); });
+	if (types.length) { out.push('<br>' + nameConflictEscape(types.join(', '))); }
+	var periods = [];
+	$.each(s.period || {}, function (k, v) { if (v) { periods.push(k + ' ' + v); } });
+	if (periods.length) { out.push(' - ' + nameConflictEscape(periods.join(', '))); }
+	out.push(nameConflictMonths(s.months));
+	var flags = [];
+	if (s.open) { flags.push(s.open + ' open'); }
+	if (s.missing_stop) { flags.push(s.missing_stop + ' implied end(s)'); }
+	if (s.exact_spare) { flags.push(s.exact_spare + ' exact dupe(s)'); }
+	if (s.shared_spare) { flags.push(s.shared_spare + ' shared-stop spare(s)'); }
+	if (s.malformed) { flags.push(s.malformed + ' malformed'); }
+	if (s.expired) { flags.push(s.expired + ' expired'); }
+	out.push('<br><span style="opacity:.75;">' + nameConflictEscape(flags.length ? flags.join(' - ') : 'no data-quality flags') + '</span>');
+	if (s.warranty) {
+		out.push('<br><span style="opacity:.65;">warranty ' + nameConflictEscape(s.warranty) + ' - ' + Number(s.expired || 0) + ' past it</span>');
+	}
+	out.push('</div>');
+	return out.join('');
 }
 
 function settingLabel(s) {

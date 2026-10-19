@@ -15360,6 +15360,10 @@ post '/manager/configure' => sub ($c) {
 	my $value = $c->param('value');
 	my $timestamp = $c->param('timestamp');
 	my $source = $c->param('source');
+	# a destructive rename plans its history drops before the rows are relabelled,
+	# then tombstones them under the unified name once the rename has run
+	my $history_plan;
+	my $renamed_to;
 	if ($setting eq 'measures') {
 		$setting = 'app_measures';
 		my $measures = eval { decode_json &subs::setting_grabber({ app => $app, setting => 'app_measures' }) } || {};
@@ -15391,13 +15395,27 @@ post '/manager/configure' => sub ($c) {
 	# re-asking forever - a rename that visibly did nothing at all.
 	if ($setting eq 'name_change') {
 		my $new_app = &subs::unformat_name($value);
+		$renamed_to = $new_app;
 		my $choices = eval { return decode_json $c->param('choices') } || {};
+		my $appt_policy = $c->param('appt_policy') || '';
 		my $target = &subs::db_query('select 1 from settings where app = ? limit 1', $new_app)->hashes->[0];
 		my $target_appts = &subs::db_query('select 1 from appointments where app = ? limit 1', $new_app)->hashes->[0];
 		my $pairs = &subs::name_change_pairs($app, $new_app);
-		if (($target || $target_appts) && !scalar keys %{$choices} && scalar @{$pairs}) {
-			$c->render(json => { conflict => 1, app => $app, new => $new_app, pairs => $pairs });
+		# the panel is also worth showing when only the history overlaps: it is
+		# where the per-side summary and the history policy live
+		if (($target || $target_appts) && !scalar keys %{$choices} && !$appt_policy && (scalar @{$pairs} || $target_appts)) {
+			my $history = &subs::name_change_history($app, $new_app);
+			$c->render(json => { conflict => 1, app => $app, new => $new_app, pairs => $pairs, appointments => $history });
 			return;
+		}
+		if ($appt_policy && $appt_policy ne 'keep_all' && $appt_policy ne 'flag') {
+			$history_plan = &subs::name_change_history_plan($app, $new_app, $appt_policy);
+			if ($history_plan && $history_plan->{'count'}) {
+				# a destructive history policy is the one write worth a fresh snapshot
+				my $fresh = eval { &subs::records_backup_ensure_fresh(600000) };
+				&subs::log_writer('name merge backup ' . (($fresh && $fresh->{'fresh'}) ? ($fresh->{'path'} || 'fresh') : 'FAILED')
+					. ' before ' . $app . ' -> ' . $new_app . ' policy=' . $appt_policy);
+			}
 		}
 		&subs::name_change_apply($app, $new_app, $choices) if scalar keys %{$choices};
 	}
@@ -15406,6 +15424,9 @@ post '/manager/configure' => sub ($c) {
 	# that happened to pick it: keep it on the house-wide row
 	$setting_data->{'device'} = 'all' if $setting eq 'theme';
 	&subs::setting_setter($setting_data);
+	# the rename has relabelled the surviving rows, so a planned drop can now be
+	# tombstoned under the name every peer will be using
+	&subs::name_change_history_apply_plan($renamed_to, $history_plan) if $history_plan && $renamed_to;
 	# changing the theme of an app that is running re-paints the desktop now
 	&subs::appointment_theme_push() if $setting eq 'theme';
 	undef @appointments;

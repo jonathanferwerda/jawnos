@@ -572,7 +572,7 @@ our %topic = (
 	},
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
-		verified => '2026-10-18',
+		verified => '2026-10-19',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, icon set, zoom, bar heights and the window border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
@@ -588,6 +588,7 @@ our %topic = (
 			'On an app card, Budget and Goals are lists of rows: an amount, a measure - occurrences (a count), money, quantity, duration or one of the app\'s own measures - a scope (none holds a fixed level, otherwise per hour, day, week, month or year) and whether it is a floor to reach or a ceiling to stay under. An amount carrying a time unit (11h, 90m, 2d) turns the measure to duration by itself, and a duration with no unit (90) is read as minutes.',
 			'A person can keep more than one number or address: Phone and Email each hold the one line calls and mail route on, and the Phones and Emails tiles beside them list any others, each with a type — Mobile, Home, Work, or a Custom label. A call, a text or a letter from any of them still names the person, and contact sync fills the list rather than overwriting the line.',
 			'Renaming an app into a name the house already knows opens the merge panel: for each setting the two records share, pick which value keeps the name, and a value nobody chose (marked <i>house default</i>) loses. Contacts either side holds are carried over unless you drop them, and window state — where the window was left, how big it was — is never asked about. Phone and email, like nfc and measures, keep both sides.',
+			'Renaming into a known name also shows a compact history summary for both sides — sessions, date range, typical length, timing, data-quality flags and any expired warranty — and asks what to do with the appointments: keep both, remove exact duplicates, merge duplicates (with the proposed drops listed), flag the candidates, or keep only one side. The history choice is separate from the settings choice; a policy that drops rows takes a backup first and tombstones them under the new name, so every machine agrees.',
 			'Notifications, on a card, sets what an app says and sounds like: a sound and a line of text for the default, for a start, for a stop and for a budget. The sounds are the ones in the house (Ring, Chime, Sonar, Pulse, Crystal, Ding, Rattle), and (default) leaves the choice to the house. Add your own sound takes an audio file from your device and files it with the rest, so it appears in every app\'s list from then on.'
 		],
 		steps => [
