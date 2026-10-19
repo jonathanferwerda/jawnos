@@ -2265,7 +2265,14 @@ sub embedded_levels_scan {
 	foreach my $row ( @{$device_rows} ) {
 		foreach my $c ( @{ (eval { decode_json($row->{'chip_ids'} || '[]') } || []) } ) {
 			next unless $c->{'id'};
-			$ble_meta{$c->{'id'}} = $c;
+			my $cur = $ble_meta{$c->{'id'}} || {};
+			# A chip can have two sightings in the blob (a bridge record and an
+			# older neighbour-derived one); keep the one with the bridge's
+			# last-seen/address, not whichever the array happened to end on.
+			my $take = !%{$cur}
+				|| (($c->{'ble_seen'} || 0) > ($cur->{'ble_seen'} || 0))
+				|| (!$cur->{'bluetooth'} && $c->{'bluetooth'});
+			$ble_meta{$c->{'id'}} = { %{$cur}, %{$c} } if $take;
 		}
 	}
 
