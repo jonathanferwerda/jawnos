@@ -9278,6 +9278,8 @@ sub start_menu_maker($c) {
 	}
 	$fingerprint = 1;
 	if ($fingerprint == 1) {
+		# Opening the System view is what asks the levels loop for quick passes.
+		&subs::levels_fast_request() if ($menu || '') eq 'view';
 		my $html = $c->render_to_string(
 			template => 'start_menu/start_menu',
 			parking_lot => &parking_lot_grabber($c),
@@ -9325,6 +9327,8 @@ sub parking_lot_grabber($c) {
 }
 
 get '/manager/start_menu/htop_viewer' => sub($c) {
+	# The card is on screen: keep the house levels loop on its quick cadence.
+	&subs::levels_fast_request();
 	my $cache = &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' });
 	# The card is a house-wide levels view: this machine, every peer that
 	# answered the last levels pass, and the embedded boards any of them can

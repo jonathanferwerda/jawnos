@@ -2387,19 +2387,44 @@ function startMenuCloser(wait) {
 	},wait);
 }
 
+// The System card is live while it is on screen: a phone plugged in a moment
+// ago must show its new state without waiting for the next utility push. Poll
+// it on a short timer - the server's levels loop takes the same cue and runs
+// quick passes - and skip the swap when the markup has not changed, so the
+// card does not flicker every few seconds.
+var htopViewerTimer = null;
+var htopViewerBusy = false;
 function htopViewer() {
-	if ($('#htop_viewer').is(':visible')) {
-		$.ajax({
-			url: '/manager/start_menu/htop_viewer',
-			type: 'GET',
-			success: function(response) {
-				$('#htop_viewer').replaceWith(response.html);
-				appointment_chron();
-
-			}
-		});
+	var card = $('#htop_viewer');
+	if (document.hidden || !card.length || !card.is(':visible') || !$('#start_menu').is(':visible')) {
+		htopViewerSchedule();
+		return;
 	}
+	if (htopViewerBusy) { return; }
+	htopViewerBusy = true;
+	$.ajax({
+		url: '/manager/start_menu/htop_viewer',
+		type: 'GET',
+		success: function(response) {
+			var live = $('#htop_viewer');
+			if (live.length && response && response.html && live[0].outerHTML !== response.html) {
+				live.replaceWith(response.html);
+				appointment_chron();
+			}
+		},
+		complete: function() {
+			htopViewerBusy = false;
+			htopViewerSchedule();
+		}
+	});
 }
+
+function htopViewerSchedule() {
+	clearTimeout(htopViewerTimer);
+	htopViewerTimer = setTimeout(function() { htopViewer(); }, 8000);
+}
+
+$(function() { htopViewerSchedule(); });
 
 $(document).on('click', '#browser_toggle', function() {
 	var bt = $(this);

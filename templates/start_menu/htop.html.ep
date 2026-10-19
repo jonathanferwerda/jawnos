@@ -45,12 +45,20 @@
 	my $status = lc($b->{'status'} || '');
 	return 'full' if $status eq 'full' || $pct >= 100;
 	if ($status eq 'charging') {
+		# The gauge's own energy/current reading answers at once; the slope is
+		# the fallback for a pack that does not report one.
+		if (defined $b->{'charge_eta'} && $b->{'charge_eta'} > 0 && $pct < 100) {
+			return '~' . $duration->($b->{'charge_eta'}) . ' to full';
+		}
 		if (defined $b->{'charge_pph'} && $b->{'charge_pph'} > 0 && $pct < 100) {
 			return '~' . $duration->((100 - $pct) / $b->{'charge_pph'}) . ' to full';
 		}
 		return 'charging';
 	}
-	if ($status eq 'discharging' || ($status eq '' && defined $b->{'pph'})) {
+	if ($status eq 'discharging' || ($status eq '' && (defined $b->{'pph'} || defined $b->{'discharge_eta'}))) {
+		if (defined $b->{'discharge_eta'} && $b->{'discharge_eta'} > 0 && $pct > 0) {
+			return '~' . $duration->($b->{'discharge_eta'}) . ' left';
+		}
 		if (defined $b->{'pph'} && $b->{'pph'} > 0 && $pct > 0) {
 			return '~' . $duration->($pct / $b->{'pph'}) . ' left';
 		}
@@ -129,7 +137,7 @@
 				<% if (defined $d->{'battery_mv'}) { %>
 					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; not answering<% } %></div>
 				<% } %>
-				<% my $dev_b = { percentage => $pct, status => $d->{'status'}, pph => $d->{'pph'}, charge_pph => $d->{'charge_pph'} }; %>
+				<% my $dev_b = { percentage => $pct, status => $d->{'status'}, pph => $d->{'pph'}, charge_pph => $d->{'charge_pph'}, charge_eta => $d->{'charge_eta'}, discharge_eta => $d->{'discharge_eta'} }; %>
 				<% my $eta = $eta_text->($dev_b); %>
 				<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 			</div>

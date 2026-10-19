@@ -2088,11 +2088,13 @@ our $battery_sample_memo;
 # Points are { t => epoch_ms, p => percent }; a slope needs three samples across
 # at least five minutes, or one integer percentage step decides the answer.
 sub battery_slope {
-	my ($points) = @_;
+	my ($points, $min_points, $min_span) = @_;
+	$min_points ||= 3;
+	$min_span ||= 300000;
 	my @p = grep { ref $_ eq 'HASH' && defined $_->{'p'} && defined $_->{'t'} } @{ $points || [] };
-	return unless scalar @p >= 3;
+	return unless scalar @p >= $min_points;
 	my $span = $p[-1]->{'t'} - $p[0]->{'t'};
-	return unless $span >= 300000;
+	return unless $span >= $min_span;
 	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
 	my $start = $p[0]->{'t'};
 	foreach my $point ( @p ) {
@@ -2108,6 +2110,36 @@ sub battery_slope {
 	return unless $den > 0;
 	return (($n * $sxy - $sx * $sy) / $den, $span, $n);   # points/hour, span_ms, samples
 }
+# Fill in a finish-time estimate from a pack's own gauge, where the fields are
+# there to do it: Android's charge counter plus the percentage gives the pack's
+# capacity, and the averaged current then gives the hours to full (or flat).
+# Called by the sampler and, for a peer still on older code, by the levels
+# pass that receives its raw reading.
+sub battery_gauge_eta {
+	my ($b) = @_;
+	return $b unless ref $b eq 'HASH';
+	return $b if defined $b->{'charge_eta'} || defined $b->{'discharge_eta'};
+	my $status = lc($b->{'status'} || '');
+	return $b unless $status eq 'charging' || $status eq 'discharging';
+	my $scale = $b->{'scale'} || 100;
+	my $pct = $b->{'percentage'};
+	my $counter = $b->{'charge_counter'};
+	return $b unless defined $counter && $counter > 0 && defined $pct && $pct > 0 && $scale > 0;
+	my $capacity = ($counter / 1000) / ($pct / $scale);
+	return $b unless $capacity > 0;
+	my $amps = $b->{'current_average'};
+	$amps = $b->{'current'} if !defined $amps || $amps == 0;
+	return $b unless defined $amps && $amps != 0;
+	$amps = abs($amps);
+	my $eta = $status eq 'charging' ? 'charge_eta' : 'discharge_eta';
+	my $hours = $status eq 'charging'
+		? ($capacity * ($scale - $pct) / $scale) / $amps
+		: ($capacity * $pct / $scale) / $amps;
+	$b->{'capacity_mah'} = $capacity;
+	$b->{$eta} = $hours if $hours > 0.01 && $hours < 48;
+	return $b;
+}
+
 sub battery_sample {
 	my $now = &rightNow();
 	return $battery_sample_memo
@@ -2140,6 +2172,11 @@ sub battery_sample {
 			$b->{'charge_counter'} = $j->{'charge_counter'};
 			$b->{'scale'} = $j->{'scale'};
 			$b->{'temperature_source'} = 'battery' if defined $b->{'temperature'};
+			# The Android gauge reports the charge left in microamp-hours, so
+			# the pack's own capacity follows from the percentage reading. With
+			# that and the (averaged) current, the finish time is known the
+			# moment the cable goes in - no five-minute slope needed.
+			&battery_gauge_eta($b);
 		}
 	}
 	elsif (-e '/sys/class/power_supply/BAT0/capacity') {
@@ -2180,6 +2217,47 @@ sub battery_sample {
 		$b->{'current'} = $cur =~ /^-?\d+$/ ? $cur / 1000 : undef;
 		my $pow = $read->("$base/power_now");
 		$b->{'power'} = $pow =~ /^\d+$/ ? $pow / 1_000_000 : undef;
+		# The pack's own gauge gives the finish time outright: the energy still
+		# to take over the power going in (energy_now/power_now), or the charge
+		# still to take over the current. Both are read in the gauge's units so
+		# no conversion can drift.
+		my $energy_now = $read->("$base/energy_now");
+		my $energy_full = $read->("$base/energy_full");
+		my $charge_now = $read->("$base/charge_now");
+		my $charge_full = $read->("$base/charge_full");
+		# A laptop's power_now is a short-term average that swings with the
+		# load, so a finish time taken from one reading jumps every few seconds.
+		# A slow EMA (about three samples) keeps it steady without hiding a real
+		# change in the charge rate.
+		my $rate_w = defined $b->{'power'} ? abs($b->{'power'}) : undef;
+		$rate_w = abs($b->{'current'}) * $b->{'voltage'}
+			if (!defined $rate_w || $rate_w == 0) && defined $b->{'current'} && defined $b->{'voltage'};
+		if (defined $rate_w && $rate_w > 0) {
+			my $prev = (ref $cached eq 'HASH') ? $cached->{'rate_w'} : undef;
+			$b->{'rate_w'} = (defined $prev && $prev > 0) ? ($prev * 0.7 + $rate_w * 0.3) : $rate_w;
+			$rate_w = $b->{'rate_w'};
+		}
+		my ($now_u, $full_u, $rate_u);
+		if ($energy_now =~ /^\d+$/ && $energy_full =~ /^\d+$/ && $energy_full > 0) {
+			($now_u, $full_u) = ($energy_now, $energy_full);
+			$rate_u = defined $rate_w ? $rate_w * 1_000_000 : undef;
+		}
+		elsif ($charge_now =~ /^\d+$/ && $charge_full =~ /^\d+$/ && $charge_full > 0) {
+			($now_u, $full_u) = ($charge_now, $charge_full);
+			$rate_u = (defined $rate_w && $b->{'voltage'})
+				? $rate_w * 1_000_000 / $b->{'voltage'}
+				: (defined $b->{'current'} ? abs($b->{'current'}) * 1000 : undef);
+			$b->{'capacity_mah'} = $charge_full / 1000;
+		}
+		my $status_now = lc($b->{'status'} || '');
+		if (defined $rate_u && $rate_u > 0 && defined $now_u) {
+			if ($status_now eq 'charging' && $full_u > $now_u) {
+				$b->{'charge_eta'} = ($full_u - $now_u) / $rate_u;
+			}
+			elsif ($status_now eq 'discharging' && $now_u > 0) {
+				$b->{'discharge_eta'} = $now_u / $rate_u;
+			}
+		}
 	}
 	# PPH: one number, the battery's percent-per-hour draw while discharging.
 	# The old view divided one drop by one interval and had a `percenttage` typo
@@ -2217,6 +2295,26 @@ sub battery_sample {
 				$b->{'charge_points'} = $n;
 			}
 		}
+		elsif ($want eq 'charging') {
+			# A pack with no usable gauge still needs five minutes for the
+			# regular slope, but integer percentages hide a fast charge for a
+			# long time: two readings a minute apart that actually differ are
+			# enough to say "about an hour". The gauge estimate above, where
+			# the pack reports one, stays the better answer.
+			my ($quick, $qspan, $qn) = &battery_slope(\@points, 2, 60000);
+			if (defined $quick && $quick > 0) {
+				$b->{'charge_pph'} = $quick;
+				$b->{'charge_window'} = $qspan / 3600000;
+				$b->{'charge_points'} = $qn;
+				$b->{'charge_quick'} = 1;
+			}
+		}
+	}
+	# A gauge can divide by a near-empty reading and return a wild number; keep
+	# only a plausible finish time (roughly a minute to two days).
+	foreach my $eta ( qw/charge_eta discharge_eta/ ) {
+		next unless defined $b->{$eta};
+		$b->{$eta} = undef unless $b->{$eta} > 0.01 && $b->{$eta} < 48;
 	}
 	# a machine with no battery has nothing worth caching; the Monitor can stat
 	# it every poll without a write
@@ -2434,7 +2532,22 @@ sub embedded_levels_scan {
 	return \@found;
 }
 
+# The System card asks for quick passes while it is on screen. Rendering the
+# card sets this stamp; the levels loop sees it and shortens its interval, so a
+# phone plugged in a moment ago shows its new state instead of waiting out the
+# two-minute house pass. Rewritten at most every 30s so an open card does not
+# write the cache on every refresh.
+sub levels_fast_request {
+	my $now = &rightNow();
+	my $seen = &cache_get({ app => '__president', context => 'levels', subcontext => 'fast' });
+	return $seen if $seen && $now - $seen < 30000;
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'fast', warranty => '-1d' }, $now);
+	return $now;
+}
+
 sub house_levels_sync {
+	my $opts = shift || {};
+	my ($connect_timeout, $inactivity_timeout) = $opts->{'fast'} ? (2, 3) : (6, 10);
 	my $me = &signatorial_designer();
 	my $hostname = `hostname`; chomp $hostname;
 	my $embedded_cache = &embedded_levels_cache();
@@ -2472,7 +2585,7 @@ sub house_levels_sync {
 			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
 			next;
 		}
-		my $res = eval { $ua->connect_timeout(6)->inactivity_timeout(10)
+		my $res = eval { $ua->connect_timeout($connect_timeout)->inactivity_timeout($inactivity_timeout)
 			->get($p->{'manager'} . '/manager/health?signatorial=' . $me)->result };
 		my $h = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
 		unless (ref $h eq 'HASH') {
@@ -2489,7 +2602,7 @@ sub house_levels_sync {
 			hostname => $pname,
 			device => $h->{'device'} || $rm->{'device'} || '',
 			version => $h->{'version'} || $rm->{'version'} || '',
-			battery => (ref $h->{'battery'} eq 'HASH') ? $h->{'battery'} : {},
+			battery => (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {},
 			embedded => (ref $h->{'embedded'} eq 'ARRAY') ? $h->{'embedded'} : [],
 			seen => &rightNow(),
 		};

@@ -257,8 +257,20 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 20;
 		while (1) {
-			eval { &subs::house_levels_sync(); };
-			sleep 120;
+			# Two minutes is the house pace, but a System card on screen asks for
+			# quick passes (levels_fast_request): sleep in slices and answer it
+			# within seconds, so a phone plugged in a moment ago updates.
+			my $fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
+			my $wanted = ($fast && &subs::rightNow() - $fast < 90000) ? 1 : 0;
+			eval { &subs::house_levels_sync({ fast => $wanted }); };
+			my $synced = &subs::rightNow();
+			while (1) {
+				sleep 2;
+				my $now = &subs::rightNow();
+				last if $now - $synced >= 120000;
+				$fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
+				last if $fast && $now - $fast < 90000 && $now - $synced >= 8000;
+			}
 		}
 	}, { name => 'house levels' });
 
