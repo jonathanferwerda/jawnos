@@ -11155,7 +11155,11 @@ sub headless_navigation() {
 		}
 	}
 
-	if ($now - $gb::timeouts->{'navigation'}->{'lasted_run'} >= $gb::timeouts->{'navigation'}->{'interval'} * 1000) {
+	# utility_runner is the navigation schedule; this second gate only guards a
+	# call from elsewhere. The runner's tick of slack keeps a call landing a few
+	# milliseconds before the interval from skipping a whole slot (the stamp is
+	# taken at the slot, so a strict comparison can be just short).
+	if ($now - $gb::timeouts->{'navigation'}->{'lasted_run'} >= ($gb::timeouts->{'navigation'}->{'interval'} * 1000) - 5000) {
 		$gb::timeouts->{'navigation'}->{'lasted_run'} = $now;
 		my $returner = {
 			uuid => &subs::random_string_creator(103),

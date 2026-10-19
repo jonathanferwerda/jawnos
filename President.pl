@@ -714,23 +714,43 @@ sub utility_stopper() {
 # timer per utility and gated it on an in-memory "lasted_run": on a machine whose
 # servers restart every few minutes that either never fired (a long interval's
 # timer was re-armed before it ever elapsed) or fired at once (lasted_run reset
-# to undef on every boot). This runs each enabled utility when its own persisted
-# last_run says it is due, and throttles a failing one to its interval instead of
-# retrying it every tick. State lives in memory, so Ctrl+C or a restart-status
-# teardown (both kill this process) still stops every utility with it.
+# to undef on every boot). This runs each enabled utility on its own fixed slot
+# grid (see below), rebuilding the slot from its persisted last_run on a restart,
+# and throttles a failing one to its interval instead of retrying it every tick.
+# State lives in memory, so Ctrl+C or a restart-status teardown (both kill this
+# process) still stops every utility with it.
+our %utility_slots;
 sub utility_runner() {
 	return if $gb::utility_functions_watcher == 0;
-	my $now = &subs::rightNow();
-	foreach my $t ( keys %{$gb::timeouts} ) {
+	# A job's next slot only ever moves by its interval. The old check measured
+	# the interval from the last completion, so every run started its interval
+	# late by its own duration plus the tick: a five-minute job slipped about
+	# three seconds a cycle (twelve minutes a day), and the ten-minute web fetch
+	# beneath it carried that slip to every weather pull. Slots are aligned to
+	# the epoch, so an hourly job keeps the same minute of the hour and a daily
+	# one the same time of day; a restart rebuilds the same slot from last_run.
+	foreach my $t ( sort keys %{$gb::timeouts} ) {
 		my $u = $gb::timeouts->{$t};
 		next unless $u->{'subroutine'} && $u->{'toggle'} eq 'on';
 		my $interval = $u->{'interval'} || 0;
 		next if $interval <= 0;
-		# last_run advances only on success, so a persisted attempt stamp also
-		# holds a failing utility to its interval instead of retrying every tick
-		my $since = $u->{'last_run'} || 0;
-		$since = $u->{'last_attempt'} if ($u->{'last_attempt'} || 0) > $since;
-		next if $since && ($now - $since < $interval * 1000);
+		# read per job: another job in this same pass may have run for minutes
+		my $now = &subs::rightNow();
+		my $period = $interval * 1000;
+		my $slot = $utility_slots{$t};
+		if (!$slot || $slot->{'interval'} != $interval) {
+			# last_run advances only on success, so a persisted attempt stamp also
+			# holds a failing utility to its interval instead of retrying every tick
+			my $anchor = $u->{'last_run'} || 0;
+			$anchor = $u->{'last_attempt'} if ($u->{'last_attempt'} || 0) > $anchor;
+			$slot = $utility_slots{$t} = {
+				interval => $interval,
+				due => $anchor ? (int($anchor / $period) + 1) * $period : $now,
+			};
+		}
+		# a clock stepped backwards must not park a job longer than its interval
+		$slot->{'due'} = $now if $slot->{'due'} > $now + $period;
+		next if $now < $slot->{'due'};
 
 		$u->{'last_attempt'} = $now;
 		local $SIG{ALRM} = sub { die "TIMEOUT_EXCEEDED\n" };
@@ -762,6 +782,12 @@ sub utility_runner() {
 				$log->info("utility $t: $effect");
 			}
 		}
+		# The next slot is on the grid, not "one interval from when this one
+		# finished": a slow run or a busy tick delays this run only, never every
+		# run after it. A run that overruns its whole interval skips the slot it
+		# missed rather than firing twice.
+		my $done = &subs::rightNow();
+		$slot->{'due'} = (int($done / $period) + 1) * $period;
 	}
 }
 
@@ -1055,7 +1081,10 @@ sub utility_functions() {
 		$gb::timeouts->{'tunnels'}->{'subroutine'} = sub {
 			eval {
 				my $now = &subs::rightNow();
-				if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} >= $gb::timeouts->{'tunnels'}->{'interval'} * 1000) {
+				# utility_runner is the schedule; this second gate only guards a call
+				# from elsewhere. Allow the runner's tick of slack, or a call landing a
+				# few milliseconds before the interval looked elapsed and skipped a slot.
+				if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} >= ($gb::timeouts->{'tunnels'}->{'interval'} * 1000) - 5000) {
 					my $duty;
 					if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} > ($gb::timeouts->{'tunnels'}->{'interval'} * 1000 * 12)) {
 						$duty = 'restart';
@@ -1079,7 +1108,9 @@ sub utility_functions() {
 		};
 		$gb::timeouts->{'remote_machine_sync'}->{'subroutine'} = sub {
 			my $now = &subs::rightNow();
-			if ($now - $gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} >= $gb::timeouts->{'remote_machine_sync'}->{'interval'} * 1000) {
+			# utility_runner already holds this to its interval; the tolerance keeps
+			# a call that lands a few milliseconds early from skipping a whole slot.
+			if ($now - $gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} >= ($gb::timeouts->{'remote_machine_sync'}->{'interval'} * 1000) - 5000) {
 				$gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} = $now;
 				eval {
 					$gb::syncing = 1;
