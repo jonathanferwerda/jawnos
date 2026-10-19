@@ -41,10 +41,10 @@ function calendarPrinter(appts,sort) {
 			if (d.getFullYear() != year || d.getMonth() != month) { return true; }
 			var day = d.getDate();
 			if (!spots[day]) { spots[day] = []; }
-			var colour = (v['setting'] && v['setting']['colour']) || ink;
+			var colour = jawnosApptColour(v['setting']) || ink;
 			if (spots[day].indexOf(colour) == -1) { spots[day].push(colour); }
 		});
-		var ghost_colour = (v['setting'] && v['setting']['colour']) || ink;
+		var ghost_colour = jawnosApptColour(v['setting']) || ink;
 		$.each(v['ghosts'] || [], function(n,gh) {
 			var t = numeral(gh['timestamp']).value();
 			if (!isFinite(t) || t <= 0) { return true; }

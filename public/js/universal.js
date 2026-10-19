@@ -600,6 +600,46 @@ function jawnosContrastInk(bg) {
 	}
 	return lum < 0.179 ? '#ffffff' : '#000000';
 }
+// The colour an appointment paints with right now: its own colour on a light
+// desktop, and the dark-theme counterpart (settings.dark_colour) while the body
+// wears dark_theme. The stored colour is never changed - this only chooses the
+// face. Canvas printers call it per draw, so a theme change takes effect on the
+// next redraw.
+function jawnosApptColour(setting) {
+	if (!setting) { return undefined; }
+	if (document.body.classList.contains('dark_theme') && setting['dark_colour']) {
+		return setting['dark_colour'];
+	}
+	return setting['colour'];
+}
+// Repaint the live appointment markup for a changed colour. The server writes
+// the two values into the elements as custom properties, so updating them here
+// keeps a panel change and a dark-theme switch in step.
+function jawnosApptColourSet(app, colour, dark) {
+	if (!app) { return; }
+	var ink = jawnosContrastInk(colour);
+	var dark_ink = dark ? jawnosContrastInk(dark) : undefined;
+	$('[data-appt-tint][app="' + app + '"]').each(function () {
+		if (dark) {
+			this.style.setProperty('--appt-dark', dark);
+			this.style.setProperty('--appt-dark-ink', dark_ink);
+		}
+		this.style.backgroundColor = colour;
+		this.style.color = ink;
+	});
+	$('[data-appt-ink][app="' + app + '"]').each(function () {
+		if (dark) { this.style.setProperty('--appt-dark-ink', dark_ink); }
+		this.style.color = ink;
+	});
+}
+function jawnosApptDarkColourSet(app, dark) {
+	if (!app || !dark) { return; }
+	var dark_ink = jawnosContrastInk(dark);
+	$('[data-appt-tint][app="' + app + '"], [data-appt-ink][app="' + app + '"]').each(function () {
+		this.style.setProperty('--appt-dark', dark);
+		this.style.setProperty('--appt-dark-ink', dark_ink);
+	});
+}
 // Ink for a surface whose colour the caller paints (the sync dot's panel):
 // below the same WCAG tie it takes the theme's light ink, otherwise black. On
 // a light theme the themed ink is black already, so both branches agree.

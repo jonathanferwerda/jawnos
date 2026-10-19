@@ -134,6 +134,10 @@
 							<label>Colour</label>
 							<input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>">
 						</span>
+						<span class="colour_field">
+							<label>Dark Colour</label>
+							<input type="color" setting="dark_colour" class="colour timed_input configure_input" app="<%= $a %>" hint="Dark theme colour" value="<%= $appts->{$a}->{'setting'}->{'dark_colour'} || &subs::dark_colour_for($appts->{$a}->{'setting'}->{'colour'}) %>">
+						</span>
 						<span class="theme_field">
 							<label>Theme</label>
 							<%# the desktop wears this while a start appointment for the app runs;

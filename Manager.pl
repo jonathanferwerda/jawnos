@@ -11130,6 +11130,11 @@ sub log_reader {
 			}
 
 		}
+		# an app born before dark_colour existed has no row for it: give the viewers
+		# the same counterpart the settings getter would hand them
+		if (!$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'}) {
+			$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'} = &subs::dark_colour_for($appts->{$a->{'app'}}->{'setting'}->{'colour'});
+		}
 		if ($appts->{$a->{'app'}}->{'setting'}->{'visible'} eq 'unchecked' && $navigation_information->{$signatorial}->{'site_rating'} >= 2) {
 			push @{$disallowable}, $a->{'app'};
 		}
@@ -19580,7 +19585,7 @@ sub window_maker($type,$timestamp) {
 	$timestamp = &subs::rightNow() unless $timestamp;
 	my $window = "Window";
 	my $app = $type->{'app'};
-	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
+	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'colour', 'dark_colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
 	my $settings = $type->{'settings'} || &subs::settings_grabber({ app => $app, settings => $window_settings });
 	my $temp_s = {};
 	foreach my $win_s ( @{$window_settings} ) {
@@ -19660,12 +19665,16 @@ sub window_maker($type,$timestamp) {
 		$settings->{'colour'} = '#' . &subs::random_colour_grabber();
 		&subs::setting_setter({ app => $app, setting => 'colour', value => $settings->{'colour'} });
 	}
+	my $window_colour = $settings->{'colour'} || '#ffec1f';
+	my $window_dark = $settings->{'dark_colour'} || &subs::dark_colour_for($window_colour);
+	my $window_ink = &subs::contrast_ink($window_colour);
+	my $window_dark_ink = &subs::contrast_ink($window_dark);
 
 	my $display =
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $unformatted_name .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
-			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . ($settings->{'colour'} || '#ffec1f') . '" style="height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'. ($settings->{'colour'} || '#ffec1f') .
+			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $unformatted_name . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
 				';" app="' . $unformatted_name .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
 				<span class="appointment_name">
@@ -19674,7 +19683,7 @@ sub window_maker($type,$timestamp) {
 						<img class="medium_thumb jack droppable" app="' . $unformatted_name . '" style="display:none;" src="/images/studio/jack.png">
 					</span>
 
-					<span class="name_text" style="color:' . &subs::contrast_ink($settings->{'colour'}) . ';"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
+					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="\'' . $unformatted_name .'\'">' . $formatted_name . '</span>
 					<span style="float:right;">
 
 						<span class="navbar_buttons">
@@ -19687,7 +19696,7 @@ sub window_maker($type,$timestamp) {
 					</span>
 				</span>
 			</div>
-			<div id="window_drawer_' . $timestamp . '" class="window_drawer" style="position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . ($settings->{'colour'} || '#ffec1f') . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
+			<div id="window_drawer_' . $timestamp . '" class="window_drawer" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . $window_colour . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
 			<img src="/images/make believe/space.png" style="position:absolute;left:30%;height:24px;width:30%;" class="window_drawer_closer hover">
 			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--window, var(--panel));">' . $drawer . '</div></div>
 			<div id="window_contents_' . $timestamp .'" class="window_contents" style="display:flex;background-color:var(--window, var(--panel));height:calc(100% - var(--navbar_h, 36px) + 2px);">' . $contents . '</div>

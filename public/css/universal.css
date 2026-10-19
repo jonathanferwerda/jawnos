@@ -41,6 +41,21 @@ body.dark_theme .theme_surface {
 body.dark_theme .theme_surface_soft {
 	background-image: linear-gradient(rgba(14,15,18,0.28), rgba(14,15,18,0.28));
 }
+/* ---- an appointment colour has a dark-theme counterpart --------------------
+   The colour itself is never changed: dark_colour is the counterpart chosen for
+   a dark desktop (the same step of its scheme's dark ramp, or a matching tone).
+   An element carries both values as custom properties, so crossing the
+   light/dark line (jawnosApplyInk) repaints it with no re-render, and dropping
+   dark_theme brings the original straight back. [data-appt-tint] paints a fill
+   and its ink; [data-appt-ink] repaints only text that sits on a fill someone
+   else owns. */
+body.dark_theme [data-appt-tint] {
+	background-color: var(--appt-dark) !important;
+	color: var(--appt-dark-ink) !important;
+}
+body.dark_theme [data-appt-ink] {
+	color: var(--appt-dark-ink) !important;
+}
 /* A control grows to fit its own text instead of a fixed height clipping it the
    moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
    left an input's content box 12px for an 18px line, so the text's lower half was

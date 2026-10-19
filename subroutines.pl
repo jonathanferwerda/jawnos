@@ -8685,9 +8685,24 @@ sub setting_setter() {
 		subsetting => $subsetting
 	});
 	if ($setting eq 'colour') {
+		# the dark-theme face follows the colour it belongs to; a peer replay keeps
+		# whatever dark_colour row arrives with its own snapshot instead
+		my $dark_colour = &dark_colour_for($value);
+		if (!$sync && defined $dark_colour && length $dark_colour) {
+			my $old_dark = &setting_grabber({ app => $app, setting => 'dark_colour', device => $dev });
+			unless (defined $old_dark && lc($dark_colour) eq lc($old_dark)) {
+				&setting_setter({ app => $app, setting => 'dark_colour', value => $dark_colour, device => $dev, silent => 'yes', sync => $sync });
+			}
+		}
 		unless ($settings->{'silent'} eq 'yes') {
-			&Websocket::send('server', { console => '$(\'.top_navbar[app="' . $app . '"]\').css({\'background-color\':\'' . $value . '\'});' }) unless $sync;
+			&Websocket::send('server', { console => 'jawnosApptColourSet(' . encode_json($app) . ',' . encode_json($value) . ',' . encode_json($dark_colour) . ');' }) unless $sync;
 			# refresh the stored clothesline so the manager view picks up the new colour
+			&hang_to_dry();
+		}
+	}
+	elsif ($setting eq 'dark_colour') {
+		unless ($settings->{'silent'} eq 'yes') {
+			&Websocket::send('server', { console => 'jawnosApptDarkColourSet(' . encode_json($app) . ',' . encode_json($value) . ');' }) unless $sync;
 			&hang_to_dry();
 		}
 	}
@@ -8855,6 +8870,11 @@ sub settings_grabber() {
 		# a blank colour gets one; an existing colour is left alone so a theme
 		# change does not repaint the appointments behind the user's back
 		$returner->{'colour'} = &theme_colour_for_app($app, $returner->{'colour'}, $settings->{'device'}) unless (length $returner->{'colour'});
+	}
+	if (!$settings->{'benign'} && length($returner->{'colour'} || '') && !length($returner->{'dark_colour'} || '')) {
+		# the dark-theme face is a setting of its own; an app born before it
+		# existed (or one whose row was never written) still gets one to paint
+		$returner->{'dark_colour'} = &dark_colour_for($returner->{'colour'});
 	}
 	return $returner;
 }
@@ -11705,6 +11725,37 @@ sub colour_scheme_manager_colour {
 	return $palette->[ $index % scalar @{$palette} ];
 }
 
+# The dark-theme counterpart of an appointment's colour. The named schemes ship
+# a light and a dark cut with the same ramp, so a colour from a light scheme maps
+# straight to the same step of its dark pair - the face the app would have been
+# given had it been born on a dark desktop. A colour no scheme knows keeps its
+# hue and its place on the lightness ramp, pulled into the dark desktop's range:
+# the ramp's steps stay distinct instead of collapsing onto one tone.
+sub dark_colour_for {
+	my ($colour) = @_;
+	return $colour unless defined $colour && $colour =~ /^\#?([0-9a-fA-F]{6})$/;
+	my $hex = lc('#' . $1);
+	foreach my $name ( @colour_scheme_order ) {
+		next if $name =~ / Dark$/;
+		my $palette = $colour_schemes{$name};
+		next unless ref $palette eq 'ARRAY';
+		my $index = 0;
+		foreach my $step ( @{$palette} ) {
+			if (lc($step) eq $hex) {
+				my $dark = $colour_schemes{$name . ' Dark'};
+				return $dark->[$index] if ref $dark eq 'ARRAY' && defined $dark->[$index];
+				last;
+			}
+			$index++;
+		}
+	}
+	my ($r, $g, $b) = map { hex } ($hex =~ /(..)(..)(..)/);
+	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
+	$s = 0.62 if $s > 0.62;
+	my $target = 0.18 + (0.34 * $l);
+	return lc &_hsl_to_hex($h, $s, $target);
+}
+
 # Every app's chosen theme in one read, for the appointment list (one query
 # rather than one per app block). A house-wide row wins, then this device's,
 # then the person's.
@@ -12126,11 +12177,12 @@ sub setting_initializer() {
 	}
 	my $me_settings = &subs::settings_grabber({ app => 'me' });
 
-	my $colour = &random_colour_grabber();
+	my $colour = '#' . &random_colour_grabber();
 
 	$returner->{'app'} = $app;
 	my $settings = {
-		'colour' => ('#' . $colour || 'white'),
+		'colour' => $colour,
+		'dark_colour' => &dark_colour_for($colour),
 		'worth' => $me_settings->{'worth'},
 		'visible' => 'checked',
 		'permanent' => 'checked',
@@ -12823,7 +12875,7 @@ sub hang_to_dry() {
 		my $time = localtime($server_time / 1000);
 		my $app = &unformat_name($clr->{'app'});
 		my $settings = &settings_grabber({ app => $app });
-		my $app_data = { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $settings->{'colour'} };
+		my $app_data = { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
 		my $time_plinko = $cl->{'time_plinko'} || {};
 		my @schedule = split ',', $cl->{'schedule'};
 		foreach my $schedule ( @schedule ) {
@@ -12928,7 +12980,7 @@ sub hang_to_dry() {
 			next unless $routine->{'hour'} == $cur_hour;
 			my $aset = &settings_grabber({ app => $app });
 			next unless (($aset->{'visible'} || '') eq 'checked');
-			push @{$returner}, { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $aset->{'colour'} };
+			push @{$returner}, { name => $app, app => $app, formatted_name => &shorthand_name(&format_name($app),10), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
 	}
 	# left to right, the order the day happens in; apps with no time of their own

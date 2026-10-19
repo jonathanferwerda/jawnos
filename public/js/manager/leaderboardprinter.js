@@ -115,7 +115,7 @@ function leaderboardPrinter(appts) {
 
 	$.each(appt_store, function(i,v) {
 		var rowY = top + (i * lineHeight);
-		var colour = v.setting.colour || ink;
+		var colour = jawnosApptColour(v.setting) || ink;
 		var status = v.setting.status;
 		var rowTop = rowY - (lineHeight * 0.55);
 		var rowHeight = lineHeight * 1.1;

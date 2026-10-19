@@ -128,10 +128,11 @@ function clotheslineHanger(clothes) {
 			var bw = maxWidth - (gap * 2);
 			var bh = clothesLineHeight - (pad * 2) - topGap;
 
+			var tile_colour = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v.colour) || 'yellow';
 			ctx.save();
 			ctx.beginPath();
 			roundRectPath(ctx, bx, by, bw, bh, 10);
-			ctx.fillStyle = v.colour || 'yellow';
+			ctx.fillStyle = tile_colour;
 			ctx.fill();
 			ctx.lineWidth = 3;
 			ctx.strokeStyle = ink;
@@ -141,7 +142,7 @@ function clotheslineHanger(clothes) {
 			// the label reads on the garment's own colour, not the page's: a dark
 			// theme's near-white ink vanished on a pale garment. (Guard the helper:
 			// a browser holding an older universal.js must not lose the rail.)
-			var labelInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(v.colour || 'yellow') : ink;
+			var labelInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(tile_colour) : ink;
 			var textMeasure = ctx.measureText(v.formatted_name).width;
 			var textPos = ((bw - textMeasure) / 2) + bx;
 			var textY = by + (bh / 2) + 7;

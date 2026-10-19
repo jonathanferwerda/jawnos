@@ -21,7 +21,7 @@ function appointmentEventMaker(appts,sort) {
 						'timestamp': value['timestamp'],
 						'value': value,
 						'size': (v[val] || []).length,
-						'colour': v['setting'] ? v['setting']['colour'] : undefined,
+						'colour': v['setting'] ? jawnosApptColour(v['setting']) : undefined,
 						'name': v['name'] || v['formatted_name'],
 						'formatted_name': v['formatted_name']
 					});
@@ -173,7 +173,7 @@ function clockfacePrinter(appts) {
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
 		if ( !v['ghosts'] || !v['ghosts'].length ) { return true; }
-		var colour = (v['setting'] && v['setting']['colour']) || ink;
+		var colour = jawnosApptColour(v['setting']) || ink;
 		$.each(v['ghosts'], function(gi,gh) {
 			if ( !gh || !isFinite(gh['timestamp']) ) { return true; }
 			var pct = parseFloat(gh[scope + '_percent']);

@@ -104,7 +104,7 @@ function narratorPrinter(appts) {
 	// the paragraphs
 	$.each(lines, function(i,v) {
 		var appt = appts[v['app']];
-		var colour = (appt && appt['setting'] && appt['setting']['colour']) || ink;
+		var colour = (appt && jawnosApptColour(appt['setting'])) || ink;
 		// a ghost's paragraph is the only thing that identifies it - there is no
 		// label, amount or count riding on a line - so it is written the same way,
 		// faded, and pushed nowhere: it answers no press

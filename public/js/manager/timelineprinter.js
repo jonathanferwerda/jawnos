@@ -76,7 +76,7 @@ function timelinePrinter(appts,sort,offset) {
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
 		if ( !v.setting || !v.list || v.list.length == 0 ) { return true; }
-		var colour = v.setting.colour || ink;
+		var colour = jawnosApptColour(v.setting) || ink;
 		var rowY;
 		if (v['placement_number']) {
 			rowY = v['placement_number'];
