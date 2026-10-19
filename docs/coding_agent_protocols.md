@@ -18,7 +18,8 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 - **Entry:** `./jawn` (master) → `President.pl` in a PTY → workers keyed by `$ENV{PURPOSE}`
   (`manager`, `websocket`, …) running `Manager.pl`, `Websocket.pl`.
-- **Log:** `~/manager.log`. **DB:** `/home/jawn/initial.db` (SQLite, WAL).
+- **Log:** `~/manager.log`. **DB:** `./database/jawnos.db` (SQLite, WAL). The old
+  `/home/jawn/initial.db` is a zero-byte decoy — never query it; the live house DB is the one under `database/`.
 - **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every 2 s, writes `good` back,
   and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
 - Status values: `good` / `restart` / `frozen`.

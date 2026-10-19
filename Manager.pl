@@ -9109,6 +9109,9 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
 	if ($whole_house) {
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now });
+		# a house-wide lock supersedes every screen's own row; a stale row
+		# outlives the house stamp and keeps that screen locked forever
+		&subs::db_delete('security', { level => 'padlock_device' });
 		if ($scope eq 'all') {
 			&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
 		}
@@ -27188,6 +27191,10 @@ sub padlock_mark_unlocked {
 		}
 	}
 	else {
+		# a whole-house open clears every screen's own lock too: a leftover
+		# padlock_device row keeps that screen behind the gate even though the
+		# house stamp says open (the "unlock, see the manager, lock again" loop)
+		&subs::db_delete('security', { level => 'padlock_device' });
 		&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $new_timeout });
 	}
