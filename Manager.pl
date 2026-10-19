@@ -9060,7 +9060,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	# person's hand and re-expire the session a screen that just turned it had
 	# already opened.
 	my $path = $c->req->url->path;
-	return if ($path eq '/manager/security/padlock_phone_show' ||
+	return 0 if ($path eq '/manager/security/padlock_phone_show' ||
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_state' ||
@@ -9077,9 +9077,9 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		# No stamp at all means this machine has never been locked since the gate
 		# was set. That is open, not an expired window: starting a lock here is
 		# what made a peer with a fresh database show the whole house locked.
-		return unless $fresh_row;
+		return 0 unless $fresh_row;
 		my $fresh = &padlock_time_value($suds, $fresh_row->{'value'}) || 0;
-		return if $fresh > $now;
+		return 0 if $fresh > $now;
 	}
 
 	# A single tap locks this device only. A double tap (scope=all) or the
@@ -9162,6 +9162,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		$c->session('last_padlock' => $now );
 	}
 
+	return 1;
 }
 
 
@@ -27042,12 +27043,12 @@ sub padlock_global_locked {
 }
 
 sub padlock_locked_now {
-	my ($c) = @_;
+	my ($c, $device) = @_;
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	return 0 unless $padlock;
 	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
-	my $device = $c->session('device_uuid') || '';
+	$device = $c->session('device_uuid') || '' unless defined $device;
 	if ($device) {
 		return 1 if &padlock_device_locked($device);
 		my $until = &padlock_device_until($device);
@@ -27230,7 +27231,8 @@ post '/manager/security/biometric_enroll' => sub ($c) {
 	my $now = &subs::rightNow();
 	my $fresh = &biometric_nonce_take('enroll', $device_uuid, $nonce);
 	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
-	my $msg = join("\n", 'padlock-bio-enroll', $device_uuid, $nonce, &subs::sha256_hex($pubkey));
+	require Digest::SHA;
+	my $msg = join("\n", 'padlock-bio-enroll', $device_uuid, $nonce, Digest::SHA::sha256_hex($pubkey));
 	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $device_sig)) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
 		$log->info('padlock: biometric enrollment refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
@@ -27394,14 +27396,23 @@ get '/manager/security/padlock_state' => sub ($c) {
 		my $d = &subs::db_select('paired_devices', undef, { uuid => $lock->{'uuid'} })->hashes->[0];
 		push @targets, { uuid => $lock->{'uuid'}, name => ($d ? $d->{'name'} : 'Unknown device') };
 	}
+	# A page may carry its device in localStorage even when the session cookie
+	# has lost device_uuid (a cookieless webview wake). Accept it only for a
+	# paired, active device, so this answers for the screen that is asking.
+	my $du = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	if ($du && $du =~ /^[A-Za-z0-9]{8,64}$/) {
+		my $paired = &subs::db_select('paired_devices', undef, { uuid => $du, status => 'active' })->hashes->[0];
+		$du = '' unless $paired;
+	}
+	else { $du = ''; }
 	$c->render(json => {
 		ok => 1,
 		has_padlock => ($padlock ? 1 : 0),
-		locked => (&padlock_locked_now($c) ? 1 : 0),
+		locked => (&padlock_locked_now($c, $du) ? 1 : 0),
 		global_locked => (&padlock_global_locked($c) ? 1 : 0),
 		gate => &padlock_gate_mode(),
-		device => ($c->session('device_uuid') || ''),
-		device_until => (&padlock_device_until($c->session('device_uuid') || '') || 0),
+		device => $du,
+		device_until => (&padlock_device_until($du) || 0),
 		targets => \@targets
 	});
 };
@@ -28762,7 +28773,14 @@ sub authentication_passer($c) {
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
 
-			$padlock_time = &padlock_time_value(&subs::suds_grabber(), $pres_settings->{'pl_time'} ) || 0;
+			# A missing stamp means this machine has never been locked since the
+			# gate was set - open, not an expired lock (the same rule
+			# padlock_global_locked applies). Treating undef as 0 made every
+			# request look expired and started a lock out of nothing.
+			my $pl_raw = $pres_settings->{'pl_time'};
+			$padlock_time = (defined $pl_raw && length $pl_raw)
+				? (&padlock_time_value(&subs::suds_grabber(), $pl_raw) || 0)
+				: $server_time;
 
 			$c->stash('pl_time' => $padlock_time);
 		}
@@ -28771,12 +28789,17 @@ sub authentication_passer($c) {
 		if ($c->session('authentication') eq 'approved' && scalar @{$padlock} > 0) {
 			# the house-wide inactivity timer: only when the global stamp expired,
 			# and not for a screen that was opened after a whole-house lock
+			my $did_lock = 0;
 			if ($server_time > $padlock_time) {
 				my $dev = $c->session('device_uuid') || '';
 				my $until = $dev ? &padlock_device_until($dev) : 0;
-				&lock_session($c) unless ($until && $until > $server_time);
+				$did_lock = &lock_session($c) unless ($until && $until > $server_time);
 			}
-			$locked_now = &padlock_locked_now($c);
+			# The request that meets the expired timer is the one that locked:
+			# gate it now. lock_session stamps pl_time = now, so re-checking the
+			# clock a moment later could still read it as open and render the
+			# page, with the lock overlay arriving after it had painted.
+			$locked_now = $did_lock ? 1 : &padlock_locked_now($c);
 			if ($locked_now) {
 				my $gate_path = $c->req->url->path->to_string;
 				if (!&padlock_gate_allows($gate_path)) {

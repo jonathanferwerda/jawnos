@@ -542,11 +542,17 @@ function jawnPadlockKeyShow(mode, target, show) {
 function jawnPadlockKeyCheck() {
 	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	$.getJSON('/manager/security/padlock_state', function(s) {
+	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
 		if (!s || !s.ok) { return; }
-		if (s.global_locked) { jawnPadlockKeyShow('locker', '', 1); return; }
+		// s.locked is this screen's own answer, and it is false when the device
+		// has its own open stamp even while the rest of the house is locked.
+		// Testing global_locked first sent a phone that was already open to the
+		// unlock page a moment after its desktop had rendered normally - the
+		// server had authorised the page, so the redirect was pure churn.
+		if (!s.locked) { return; }
 		if (s.targets && s.targets.length == 1) { jawnPadlockKeyShow('locker', s.targets[0].uuid, 1); }
 		else if (s.targets && s.targets.length > 1) { jawnPadlockKeyShow('locker', '', 1); }
+		else { jawnPadlockKeyShow('locker', '', 1); }
 	});
 }
 
@@ -984,6 +990,12 @@ function jawnosBiometricError(err) {
 	if (e === 'invalidated') { return 'The fingerprint key was reset. Use the recovery code, then enroll it again.'; }
 	if (e === 'too many' || e === 'locked') { return 'Too many attempts. Try again later.'; }
 	if (e === 'no challenge') { return 'The unlock challenge expired. Try again.'; }
+	if (e === 'bad key') { return "The phone's key could not be registered. Try again."; }
+	if (e === 'not signed in') { return 'Sign in, then enroll the fingerprint.'; }
+	// a failed request (a 500, or a dropped connection) has a status rather than
+	// an error word; saying "fingerprint not accepted" blamed the thumb for a
+	// server fault, which is exactly how a missing helper stayed hidden
+	if (!e && err && err.status) { return 'The house did not register the key (HTTP ' + err.status + ').'; }
 	return 'Fingerprint not accepted.';
 }
 $(document).on('click', '.padlock_biometric, #locked_biometric', function () {

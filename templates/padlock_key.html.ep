@@ -171,12 +171,15 @@
 			$('#padlock_key_targets').hide();
 			return;
 		}
-		$.getJSON('/manager/security/padlock_state', function (s) {
+		$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function (s) {
 			if (!s || !s.ok) { return; }
-			if (s.targets && s.targets.length == 1) {
-				padlockKeyTarget = s.targets[0].uuid || '';
-				$('#padlock_key_note').text('The screen is locked.');
-				$('#padlock_key_unlock').show();
+			// s.locked is this screen's own answer: false when this device has
+			// its own open stamp, even while the rest of the house is locked.
+			// Checking global_locked first left an already-open phone on a page
+			// that said the whole house was locked and hid Unlock.
+			if (!s.locked) {
+				$('#padlock_key_note').text('No screen is locked.');
+				$('#padlock_key_unlock').hide();
 				$('#padlock_key_targets').hide();
 				return;
 			}
@@ -185,21 +188,23 @@
 				padlockKeyTargets(s.targets);
 				return;
 			}
-			if (s.global_locked) {
-				$('#padlock_key_note').text('The whole house is locked. Open the screen you are at and press Send the unlock page to my phone.');
-				$('#padlock_key_unlock').hide();
+			if (s.targets && s.targets.length == 1) {
+				padlockKeyTarget = s.targets[0].uuid || '';
+				$('#padlock_key_note').text('The screen is locked.');
+				$('#padlock_key_unlock').show();
 				$('#padlock_key_targets').hide();
 				return;
 			}
-			if (s.locked && s.device) {
+			if (s.device) {
 				padlockKeyTarget = s.device;
 				$('#padlock_key_note').text('This screen is locked.');
 				$('#padlock_key_unlock').show();
 				$('#padlock_key_targets').hide();
 				return;
 			}
-			$('#padlock_key_note').text('No screen is locked.');
+			$('#padlock_key_note').text('The whole house is locked. Open the screen you are at and press Send the unlock page to my phone.');
 			$('#padlock_key_unlock').hide();
+			$('#padlock_key_targets').hide();
 		});
 	}
 
