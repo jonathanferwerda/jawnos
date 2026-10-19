@@ -65,6 +65,16 @@ using fs::File;
 // the unqualified websockets types must already be visible this early.
 using namespace websockets;
 
+// Bulk files (recordings, voice clips, chimes, the speaker tone) go to the SD
+// card when one is mounted and to FFat otherwise. Config and the boot report
+// always stay on FFat: they must be readable before the SD is mounted.
+static bool sdReady = false;
+static fs::FS *store = &FFat;
+// FatFS and SDFS expose freeBytes() themselves, not through the FS base class.
+static uint32_t store_free_bytes() {
+  return sdReady ? (uint32_t)(SD.totalBytes() - SD.usedBytes()) : FFat.freeBytes();
+}
+
 // The file helpers at the bottom of this sketch; PlatformIO's .ino preprocessor
 // does not inject prototypes for them, the Arduino IDE does.
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -636,14 +646,20 @@ class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient 
   InsecureDeckTcpClient() {
     client.setInsecure();
     // A dead House machine must not hold the UI: the default TLS handshake
-    // timeout is tens of seconds and tauth_connect() runs on the loop.
+    // timeout is tens of seconds and tauth_connect() runs on the loop. The TCP
+    // connect has its own 30 s default, which is what made a boot with an
+    // absent homebase take half a minute; cap both.
     client.setHandshakeTimeout(3);
+    client.setConnectionTimeout(2000);
   }
 };
 WebsocketsClient wsclient(std::make_shared<InsecureDeckTcpClient>());
 WiFiClientSecure *connexion = new WiFiClientSecure;
 HTTPClient https;
 bool ws_connected = 0;
+// configRestore() asks for the control socket; loop() makes the dial once the
+// screen is up, so a slow or dead homebase never delays the boot.
+static bool tauth_connect_pending = false;
 void wsMessageCallback(WebsocketsMessage message) {
   //    Serial.print("Got Message: ");
   //    Serial.println(message.data());
@@ -1142,16 +1158,9 @@ void setup() {
   // old code ran SPI.begin() right after this, which re-attached MISO and hid
   // the whole thing.
   deckLog("[deck] sd/radio spi shared");
-  // one short attempt at boot; if the module is quiet we carry on booting and
-  // let loop() retry, rather than holding the whole deck hostage to a GPS
-  gpsReady = gpsBringUp(1200, 300, 1, 300);
-  if (gpsReady) {
-    deckLog("[gps] module ready");
-  } else {
-    deckLog("[gps] no answer yet, booting on and retrying in the background");
-    gpsRetryAt = millis() + 15000;
-  }
-  deckLog("[deck] gps stage done, scanning i2c");
+  // The GPS is tried once the deck is idle (see loop()); its module is optional
+  // and a two-second bring-up must not hold the room off the screen at boot.
+  gpsRetryAt = millis() + 15000;
 
   // Serial.println(USER_SETUP_ID);
   // Two touch screens, the difference between them is the device address,
@@ -1563,16 +1572,9 @@ void setup() {
   // defaults the missing pieces and always draws a usable screen
   configRestore();
   deckLog("[deck] config restore done");
-  // Join the network when the config carries credentials. Without it the server
-  // never sees the deck - no /device_query for its macs, no mDNS to name it - and
-  // its Bluetooth link can never be bridged, so a recorded clip has nowhere to
-  // go. wifi_server() starts mDNS itself once the link is up.
-  if (WiFi.status() != WL_CONNECTED && ssid.length() && password.length()) {
-    deckLog("[deck] joining wifi %s", ssid.c_str());
-    wifi_enabled = true;
-    wifi_server();
-    deckLog("[deck] wifi %s", WiFi.status() == WL_CONNECTED ? "up" : "NOT up");
-  }
+  // The station join is started by configRestore() without waiting for it;
+  // loop() brings the server and mDNS up when association completes. Nothing
+  // here should hold the room off the screen for a network round trip.
   wsclient.onMessage(wsMessageCallback);
   wsclient.onEvent(wsEventCallback);
   // set output power to 10 dBm (accepted range is -17 - 22 dBm)
@@ -1630,19 +1632,23 @@ void setup() {
     FFat.begin(true);
     if (rebuilt || FFat.freeBytes() > FFat.totalBytes() / 2) {
       deckLog("[fs] filesystem rebuilt, %u bytes free", (unsigned)FFat.freeBytes());
-      createDir(FFat, "/recordings");
+      createDir(FFat, "/jawn");
+      createDir(FFat, "/jawn/recordings");
       writeFile(FFat, "/bootreport.txt", "rebuilt");
     }
     else {
       deckLog("[fs] filesystem rebuild failed, %u bytes free", (unsigned)FFat.freeBytes());
     }
   }
+  // The SD card, when one is there, takes the bulk audio: recordings, voice
+  // clips and the generated chimes. Mount it before the prune so that prune is
+  // looking at the filesystem that will actually hold them.
+  deckLog("[deck] sd test");
+  sd_tester();
   // Reclaim room before anything needs to write: config, the tone file and a
   // new recording all come out as 0-byte files on a full filesystem.
   pruneRecordings(12);
-  deckLog("[fs] free after prune: %u bytes", (unsigned)FFat.freeBytes());
-  deckLog("[deck] sd test");
-  sd_tester();
+  deckLog("[fs] free after prune: %u bytes", (unsigned)store_free_bytes());
   audio.setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
   audio.setVolume(10);
 //  audio.connecttoFS(SD, "ding.mp3");
@@ -1973,12 +1979,12 @@ void notification_display(String title, String notification) {
   pmuIrq = false;
  
 
-  bool findMp3 = audio.connecttoFS(FFat, "ding.mp3");
+  bool findMp3 = audio.connecttoFS(*store, "/jawn/ding.mp3");
   if (findMp3 == false && homebaseIP) {
     String request = "https://" + homebaseIP + "/watch/asset?filename=/sounds/notifications/ding.mp3";
     Serial.println(request);
-    https_download(FFat, request, audioFile);
-    findMp3 = audio.connecttoFS(FFat, "ding.mp3");
+    https_download(*store, request, "/jawn/ding.mp3");
+    findMp3 = audio.connecttoFS(*store, "/jawn/ding.mp3");
   }
 }
 
@@ -2079,6 +2085,30 @@ void wifi_server() {
       // Serial.print(".");
     }
   }
+}
+
+// Start (or resume) the station link without waiting for it. setup() and
+// configRestore() used to call wifi_server(), whose join loop holds the room off
+// the screen for up to ~4 s; loop() starts the web server and mDNS when the link
+// comes up, the same path a wake from Sleep mode uses.
+static void wifi_start_async() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!webserver_enabled) {
+      server.begin();
+      webserver_enabled = true;
+    }
+    jawnos_mdns_start();
+    return;
+  }
+  if (ssid.length() == 0 || password.length() == 0) {
+    wifi_enabled = false;
+    return;
+  }
+  wifi_enabled = true;
+  WiFi.mode(wifi_ap_enabled ? WIFI_AP_STA : WIFI_STA);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  wifi_restore_pending = true;
+  deckLog("[wifi] joining %s in the background", ssid.c_str());
 }
 
 
@@ -2213,7 +2243,11 @@ void loop() {
   {
     static uint32_t ws_retry_at = 0;
     if (tauth_remote_enabled == "on" && ws_connected == 0 && authorization != ""
-        && twshomebaseIP.length() && millis() - ws_retry_at > 10000) {
+        && twshomebaseIP.length() && WiFi.status() == WL_CONNECTED
+        && (tauth_connect_pending || millis() - ws_retry_at > 30000)) {
+      // One dial per half minute, not every ten seconds: each failed dial still
+      // blocks for up to the 2 s connect timeout, and that is a visible stutter.
+      tauth_connect_pending = false;
       ws_retry_at = millis();
       tauth_connect();
     }
@@ -2571,7 +2605,7 @@ void loop() {
     sayWifiReady = false;
     sayWifiPlaying = true;
     audio.setVolume(volumeLevel);
-    bool ok = audio.connecttoFS(FFat, "/reply.wav");
+    bool ok = audio.connecttoFS(*store, "/jawn/reply.wav");
     audio.setVolume(volumeLevel);
     deckLog("[voice] answer pulled over WiFi (%d)", (int)ok);
     if (!ok) {
@@ -2589,7 +2623,7 @@ void loop() {
     deckLog("[mic] playback finished (or gave up)");
     if (sayWifiPlaying) {
       sayWifiPlaying = false;
-      FFat.remove("/reply.wav");
+      store->remove("/jawn/reply.wav");
     }
     // the Guide's answer has been said: the screen may time out again from now
     if (voiceAwaitingReply) {
@@ -2773,9 +2807,11 @@ void loop() {
   server.handleClient();
   readRadio();
   uint32_t tAfterRadio = millis();
-    // the GPS bring-up retries in the background: bounded, and it stops trying
-    // after a few goes so a missing module costs nothing after that
-    if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt) {
+    // The GPS bring-up retries in the background: bounded, and it stops trying
+    // after a few goes so a missing module costs nothing after that. Only while
+    // the panel is asleep: the probe blocks for up to a couple of seconds and
+    // must not stall a room the person is using.
+    if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt && screenAsleep) {
       gpsAttempts++;
       gpsRetryAt = millis() + GPS_RETRY_INTERVAL;
       deckLog("[gps] retry %u of %u", (unsigned)gpsAttempts, (unsigned)GPS_MAX_ATTEMPTS);
@@ -2910,12 +2946,10 @@ void loop() {
     tempBrightness = lastBrightness;
     configSave();
 
-    for (int i = brightnessLevel; i >= 0; --i) {
-      setBrightness(i);
-      lv_task_handler();
-      delay(30);
-    }
-    
+    // instant: the old 16-step fade cost ~0.5 s of the sleep transition and
+    // nobody is reading the screen at that point
+    setBrightness(0);
+
       //If you need other peripherals to maintain power, please set the IO port to hold
 
     tft.writecommand(0x10);      //set display enter sleep mode
@@ -2934,15 +2968,15 @@ void loop() {
     }
   }
   else if (screenAsleep && millis() - buttonMillis < DEFAULT_SCREEN_TIMEOUT) {
-    // Serial.println("not sleepy " + lastBrightness);
+    // Wake the panel out of its own sleep command; a full tft.begin() here was
+    // a ~half-second re-init of a display that was never reset.
     screenAsleep = false;
-    tft.begin();
+    tft.writecommand(0x11);      // sleep out
+    delay(120);
+    tft.writecommand(0x29);      // display on
     uint8_t target = brightnessLevel > 0 ? (uint8_t)brightnessLevel : (uint8_t)7;
-    for (int i = 0; i <= target; ++i) {
-      setBrightness(i);
-      lv_task_handler();
-      delay(30);
-    }
+    setBrightness(target);
+    lv_task_handler();
   }
   uint32_t tAfterSleep = millis();
 
@@ -5552,6 +5586,13 @@ void tauth_cancel() {
 
 
 void tauth_connect() {
+  // The control socket is a network socket: dialing before the station link is
+  // up only spends the connect timeout in the loop.
+  if (WiFi.status() != WL_CONNECTED) {
+    ws_connected = 0;
+    tauth_remote_enabled = "on";
+    return;
+  }
   if (ws_connected == 0 && authorization != "") {
     // twshomebaseIP is "host:port" (now_me's twshomebase). The socket is wss:
     // wsclient was built over InsecureDeckTcpClient above. The Now Me pair is
@@ -5983,13 +6024,17 @@ bool sd_tester() {
   digitalWrite(RADIO_CS_PIN, HIGH);
   digitalWrite(BOARD_TFT_CS, HIGH);
 
-  bool sdMounted = SD.begin(BOARD_SDCARD_CS, spi, 800000U);
+  // 800 kHz was the card's first, timorous clock; 20 MHz is still well inside
+  // what the shared SPI bus and a modern card handle, and the TFT's transactions
+  // restore their own clock (SUPPORT_TRANSACTIONS).
+  bool sdMounted = SD.begin(BOARD_SDCARD_CS, spi, 20000000U);
+  if (!sdMounted) { sdMounted = SD.begin(BOARD_SDCARD_CS, spi, 800000U); }
   deckLog("[deck] sd mount %s", sdMounted ? "ok" : "failed");
   if (sdMounted) {
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
       Serial.println("No SD_MMC card attached");
-      return false;
+      sdMounted = false;
     } else {
       Serial.print("SD_MMC Card Type: ");
       if (cardType == CARD_MMC) {
@@ -6007,12 +6052,14 @@ bool sd_tester() {
       Serial.printf("SD Card Size: %lu MB\n", cardSize);
       Serial.printf("Total space: %lu MB\n",  cardTotal);
       Serial.printf("Used space: %lu MB\n",   cardUsed);
-      return true;
     }
   }
-  listDir(SD, "/", 7);
-
-  return false;
+  sdReady = sdMounted;
+  store = sdReady ? (fs::FS *)&SD : (fs::FS *)&FFat;
+  deckLog("[fs] bulk store: %s", sdReady ? "sd" : "ffat");
+  if (!store->exists("/jawn")) { store->mkdir("/jawn"); }
+  if (!store->exists("/jawn/recordings")) { store->mkdir("/jawn/recordings"); }
+  return sdReady;
 }
 
 static void clear_typewriter(lv_event_t *e) {
@@ -6724,7 +6771,7 @@ void configRestore() {
     else {
       lightSleep = false;
     }
-    wifi_server();
+    wifi_start_async();
     String lcb = (const char *)conf["loraChatBroadcaster"];
     if (lcb == "on") {
       loraChatBroadcaster = true;
@@ -6743,17 +6790,19 @@ void configRestore() {
     lorawan_enabled = (lwe == "on");
     String lwb = (const char *)conf["lorawan_band"];
     if (lwb.length()) { lorawan_band = lwb; }
-    int lws = conf["lorawan_subband"];
-    lorawan_subband = (lws >= 1 && lws <= 8) ? (uint8_t)lws : 1;
+	    int lws = conf["lorawan_subband"];
+	    lorawan_subband = (lws >= 1 && lws <= 8) ? (uint8_t)lws : 1;
     lorawan_join_eui = (const char *)conf["lorawan_join_eui"];
     lorawan_dev_eui = (const char *)conf["lorawan_dev_eui"];
     lorawan_app_key = (const char *)conf["lorawan_app_key"];
-    int lwf = conf["lorawan_fport"];
-    lorawan_fport = (lwf >= 1 && lwf <= 223) ? (uint8_t)lwf : 1;
+	    int lwf = conf["lorawan_fport"];
+	    lorawan_fport = (lwf >= 1 && lwf <= 223) ? (uint8_t)lwf : 1;
     lorawan_confirmed = (String((const char *)conf["lorawan_confirmed"]) == "on");
     tauth_remote_enabled = (const char *)conf["tauth_remote_enabled"];
     if (tauth_remote_enabled == "on") {
-      tauth_connect();
+      // Not here: the dial blocks on the connect timeout, and this is setup().
+      // loop() makes it once the room is on screen.
+      tauth_connect_pending = true;
     }
     else {
       tauth_cancel();
@@ -6917,7 +6966,12 @@ static void serialDumpFile(String name) {
     Serial.println("JAWNDUMP bad name");
     return;
   }
-  File f = FFat.open(name.c_str());
+  File f = store->open(name.c_str());
+  if (!f) {
+    // config and the boot report still live on FFat; a developer's dump of one
+    // should not depend on which filesystem the bulk files chose
+    f = FFat.open(name.c_str());
+  }
   if (!f || f.isDirectory()) {
     Serial.println("JAWNDUMP no file");
     return;
@@ -7004,7 +7058,7 @@ void setupMicrophoneI2S(i2s_port_t  i2s_ch)
 // is the hardware - the deck's microphone is an ES7210 wired for TDM with four
 // slots, so every frame in the I2S buffer is four 16 bit samples and MIC1 (the
 // first of them) becomes the mono track.
-String WAV_FILE_PATH = "/rec.wav";
+String WAV_FILE_PATH = "/jawn/rec.wav";
 // the voice path: the clip's own epoch (seconds) and the file it was written to,
 // so the shipping task knows what to send
 static volatile long deck_voice_ts = 0;
@@ -7075,7 +7129,7 @@ bool es7210Begin()
 
 // 44 byte RIFF/WAVE header with zeroes where the sizes go
 bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_rate, uint16_t bits_per_sample, uint16_t channels) {
-  File new_audio_file = FFat.open(song_name, FILE_WRITE);
+  File new_audio_file = store->open(song_name, FILE_WRITE);
   if (!new_audio_file) {
     deckLog("[mic] cannot create %s", song_name);
     return false;
@@ -7104,7 +7158,7 @@ bool create_wav_header_on_flash(const char *song_name, const uint32_t sampling_r
 
 // rewrites header placeholders with the exact byte sizes after recording stops
 void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint16_t channels) {
-  File audio_file = FFat.open(song_name, "r+");
+  File audio_file = store->open(song_name, "r+");
   if (!audio_file) {
     return;
   }
@@ -7146,7 +7200,7 @@ static void deck_wr32(uint8_t *p, uint32_t v) { p[0] = v & 0xff; p[1] = (v >> 8)
 // Fold the 16 kHz mono clip to 8 kHz and IMA-encode it under the same 60-byte
 // header the watch writes, so the server's whisper reads an identical file.
 static bool deck_voice_compress(const String &in_path, const String &out_path) {
-  File in = FFat.open(in_path.c_str(), FILE_READ);
+  File in = store->open(in_path.c_str(), FILE_READ);
   if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
   uint32_t pcm_bytes = in.size() - 44;
   uint32_t in_samples = pcm_bytes / 2;
@@ -7207,7 +7261,7 @@ static bool deck_voice_compress(const String &in_path, const String &out_path) {
     if (count < DECK_ADPCM_SPB) { break; }
   }
   in.close();
-  File out = FFat.open(out_path.c_str(), FILE_WRITE);
+  File out = store->open(out_path.c_str(), FILE_WRITE);
   if (!out) { free(buf); return false; }
   size_t wrote = out.write(buf, o);
   out.close();
@@ -7246,7 +7300,7 @@ static void deck_b64_append(String &out, const uint8_t *p, unsigned len) {
 // (which cuts it to the link's MTU, whatever that is).
 static bool deck_voice_ble_send(const String &path, long ts, const char *mode) {
   if (!ble_link_ready()) { return false; }
-  File f = FFat.open(path.c_str(), FILE_READ);
+  File f = store->open(path.c_str(), FILE_READ);
   if (!f) { return false; }
   size_t size = f.size();
   if (size == 0) { f.close(); return false; }
@@ -7284,7 +7338,7 @@ static bool deck_voice_post_clip(const String &path, long ts, const char *mode) 
     deckLog("%s", "[voice] homebase marked down; BLE now");
     return false;
   }
-  File f = FFat.open(path.c_str(), FILE_READ);
+  File f = store->open(path.c_str(), FILE_READ);
   if (!f) { return false; }
   WiFiClientSecure client;
   client.setInsecure();
@@ -7336,7 +7390,7 @@ static void deckVoiceShipTask(void *pv) {
   (void)pv;
   long ts = deck_voice_ts;
   String cls = deck_voice_wav;
-  if (deck_voice_compress(deck_voice_wav, "/voice.adpcm")) { cls = "/voice.adpcm"; }
+  if (deck_voice_compress(deck_voice_wav, "/jawn/voice.adpcm")) { cls = "/jawn/voice.adpcm"; }
   bool ok = deck_voice_ship(cls, ts, "vad");
   deckLog("[voice] clip ts=%ld %s", ts, ok ? "shipped" : "NOT shipped");
   vTaskDelete(NULL);
@@ -7364,7 +7418,7 @@ static void deckVoiceShipTask(void *pv) {
 #define VOICE_COMMAND_MS 900         // a burst this long is the phrase and the command run together, not the phrase alone
 #define VOICE_GAP_MS 200             // a burst after this much quiet is the command, not the tail of the phrase
 #define VOICE_LEAD_MS 2000           // a wake capture with no command at all gives up after this much quiet
-#define VOICE_CAPTURE_PATH "/voice.wav"
+#define VOICE_CAPTURE_PATH "/jawn/voice.wav"
 
 // The frame RMS a wake capture holds above once the voice stops: the room's own
 // level - measured by voice_ambient_rms while nothing was being captured - plus a
@@ -7418,8 +7472,8 @@ static void voice_dc_block(int16_t *s, int n) {
 // (E6 then A5); the opening one is the same pair reversed (A5 then E6), played
 // as soon as the wake phrase commits. The files are written once and reused, the
 // way speakerSelfTest's tone is.
-#define VOICE_ACK_PATH "/chime_hi_lo.wav"
-#define VOICE_ACK_WAKE_PATH "/chime_lo_hi.wav"
+#define VOICE_ACK_PATH "/jawn/chime_hi_lo.wav"
+#define VOICE_ACK_WAKE_PATH "/jawn/chime_lo_hi.wav"
 #define VOICE_ACK_FREQ1 1319      // E6
 #define VOICE_ACK_FREQ2 880       // A5
 #define VOICE_ACK_TONE1_MS 65
@@ -7429,17 +7483,17 @@ static void voice_dc_block(int16_t *s, int n) {
 
 static bool voice_ack_file(bool wake) {
   const char *path = wake ? VOICE_ACK_WAKE_PATH : VOICE_ACK_PATH;
-  File check = FFat.open(path);
+  File check = store->open(path);
   if (check) {
     uint32_t have = check.size();
     check.close();
     if (have >= 44 + 1000) { return true; }
-    FFat.remove(path);   // a dud from a full filesystem
+    store->remove(path);   // a dud from a full filesystem
   }
   if (!create_wav_header_on_flash(path, MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
     return false;
   }
-  File f = FFat.open(path, FILE_APPEND);
+  File f = store->open(path, FILE_APPEND);
   if (!f) { return false; }
   // the wake chime swaps the notes but keeps each note's own length
   const uint32_t tone1_ms = wake ? VOICE_ACK_TONE2_MS : VOICE_ACK_TONE1_MS;
@@ -7498,7 +7552,7 @@ static void voice_ack(bool wake) {
   }
   voiceAckUntil = millis() + 2000;
   audio.setVolume(volumeLevel);
-  audio.connecttoFS(FFat, wake ? VOICE_ACK_WAKE_PATH : VOICE_ACK_PATH);
+  audio.connecttoFS(*store, wake ? VOICE_ACK_WAKE_PATH : VOICE_ACK_PATH);
   audio.setVolume(volumeLevel);
   deckLog("%s", wake ? "[voice] wake chime" : "[voice] ack chime");
 }
@@ -7601,7 +7655,7 @@ static size_t say_b64_decode(const char *s, size_t n, uint8_t *out, size_t cap) 
 // One WAV with the stream's own rate: finalize_wav_sizes() is fixed at the mic's
 // 16 kHz, which would mistune a spoken answer.
 static bool say_wav_write(const char *path, const uint8_t *pcm, size_t bytes, uint32_t rate) {
-  File f = FFat.open(path, FILE_WRITE);
+  File f = store->open(path, FILE_WRITE);
   if (!f) { return false; }
   uint8_t h[44] = { 0 };
   memcpy(h, "RIFF", 4); deck_wr32(h + 4, (uint32_t)(bytes + 36)); memcpy(h + 8, "WAVE", 4);
@@ -7637,9 +7691,9 @@ static void say_audio_add(JSONVar d) {
   }
   if (!last) { return; }
   if (say_pcm && say_pcm_len > 8 && !isRecording && !audio.isRunning()) {
-    if (say_wav_write("/say.wav", say_pcm, say_pcm_len, say_pcm_rate)) {
+    if (say_wav_write("/jawn/say.wav", say_pcm, say_pcm_len, say_pcm_rate)) {
       audio.setVolume(volumeLevel);
-      bool ok = audio.connecttoFS(FFat, "/say.wav");
+      bool ok = audio.connecttoFS(*store, "/jawn/say.wav");
       audio.setVolume(volumeLevel);
       deckLog("[voice] answer spoken (%u bytes @ %u Hz): %d",
               (unsigned)say_pcm_len, (unsigned)say_pcm_rate, (int)ok);
@@ -7667,8 +7721,8 @@ static void sayFetchWorker(void *pv) {
     delete req;
     if (url.length()) {
       sayWifiReady = false;
-      https_download(FFat, url, "/reply.wav");
-      File f = FFat.open("/reply.wav");
+      https_download(*store, url, "/jawn/reply.wav");
+      File f = store->open("/jawn/reply.wav");
       if (f && f.size() > 44) { sayWifiReady = true; }
       if (f) { f.close(); }
       deckLog("[voice] WiFi audio %s", sayWifiReady ? "ready" : "fetch failed");
@@ -7889,7 +7943,7 @@ static void deckVoiceListenTask(void *pv) {
     }
     if (!voiceListening) { aborted = true; }
     if (recording && !aborted && !gave_up && pcm_bytes > 0) {
-      File f = FFat.open(VOICE_CAPTURE_PATH, FILE_APPEND);
+      File f = store->open(VOICE_CAPTURE_PATH, FILE_APPEND);
       if (f) {
         uint8_t *p = (uint8_t *)stage;
         uint32_t remaining = pcm_bytes;
@@ -7907,7 +7961,7 @@ static void deckVoiceListenTask(void *pv) {
         // Compact it first: ffmpeg reads IMA ADPCM WAV natively, so the link
         // carries a quarter of the bytes and the server reads an identical file.
         String ship_path = VOICE_CAPTURE_PATH;
-        if (deck_voice_compress(VOICE_CAPTURE_PATH, "/voice.adpcm")) { ship_path = "/voice.adpcm"; }
+        if (deck_voice_compress(VOICE_CAPTURE_PATH, "/jawn/voice.adpcm")) { ship_path = "/jawn/voice.adpcm"; }
         if (!deck_voice_ship(ship_path, deck_voice_ts, voice_mode_name)) {
           deckLog("%s", "[voice] clip NOT shipped (no radio?)");
         }
@@ -8078,7 +8132,7 @@ static void micCaptureTask(void *pvParameters) {
   uint32_t written = 0;
   int out_ch = (mic_channels == MIC_TDM_SLOTS) ? MIC_TDM_SLOTS : 1;
   if (create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, out_ch)) {
-    File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
+    File audio_file = store->open(WAV_FILE_PATH.c_str(), FILE_APPEND);
     if (audio_file) {
       uint8_t *p = (uint8_t *)stage;
       uint32_t remaining = staged * 2;
@@ -8099,7 +8153,7 @@ static void micCaptureTask(void *pvParameters) {
   // ask the file again now that it is closed
   uint32_t file_size = 0;
   {
-    File check = FFat.open(WAV_FILE_PATH.c_str());
+    File check = store->open(WAV_FILE_PATH.c_str());
     if (check) {
       file_size = check.size();
       check.close();
@@ -8115,7 +8169,7 @@ static void micCaptureTask(void *pvParameters) {
   uint32_t gap_max = 0;
   uint32_t sample_idx = 0;
   {
-    File scan_file = FFat.open(WAV_FILE_PATH.c_str());
+    File scan_file = store->open(WAV_FILE_PATH.c_str());
     if (scan_file) {
       scan_file.seek(44);
       static int16_t scan[2048];
@@ -8184,17 +8238,17 @@ static void micRecordToggle(lv_event_t *e) {
   if (audio.isRunning()) {
     return;
   }
-  // Same naming as the watch: /recordings/<epoch>.wav, so the manager - and
+  // Same naming as the watch: /jawn/recordings/<epoch>.wav, so the manager - and
   // whisper.cpp behind it - can tell when something was said.
-  if (!FFat.exists("/recordings")) {
-    createDir(FFat, "/recordings");
+  if (!store->exists("/jawn/recordings")) {
+    createDir(*store, "/jawn/recordings");
   }
   // keep the newest dozen recordings and say how much room is left: a full
   // filesystem turns every recording into an empty header
   pruneRecordings(12);
-  deckLog("[mic] flash free %u bytes before recording", (unsigned)FFat.freeBytes());
+  deckLog("[mic] store free %u bytes before recording", (unsigned)store_free_bytes());
   deck_voice_ts = rightNow();
-  WAV_FILE_PATH = "/recordings/" + String(deck_voice_ts) + ".wav";
+  WAV_FILE_PATH = "/jawn/recordings/" + String(deck_voice_ts) + ".wav";
   deckLog("[mic] recording %s", WAV_FILE_PATH.c_str());
   record_end_ms = 0;
   isRecording = true;
@@ -8216,17 +8270,17 @@ static void serialRecordStart(uint32_t seconds) {
   if (seconds > 120) {
     seconds = 120;
   }
-  if (!FFat.exists("/recordings")) {
-    createDir(FFat, "/recordings");
+  if (!store->exists("/jawn/recordings")) {
+    createDir(*store, "/jawn/recordings");
   }
   pruneRecordings(12);
   deck_voice_ts = rightNow();
-  WAV_FILE_PATH = "/recordings/" + String(deck_voice_ts) + ".wav";
+  WAV_FILE_PATH = "/jawn/recordings/" + String(deck_voice_ts) + ".wav";
   record_end_ms = millis() + seconds * 1000;
   isRecording = true;
   xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 6144, NULL, 4, NULL, 1);
   Serial.printf("JAWNREC %s for %u s, free %u\n", WAV_FILE_PATH.c_str(),
-                (unsigned)seconds, (unsigned)FFat.freeBytes());
+                (unsigned)seconds, (unsigned)store_free_bytes());
 }
 
 // "JAWNREG <reg> <value>", both hex: write one codec register from the host, so
@@ -8264,7 +8318,7 @@ static void recordingPlay(lv_event_t *e) {
   if (isRecording) {
     return;
   }
-  if (!FFat.exists(WAV_FILE_PATH.c_str())) {
+  if (!store->exists(WAV_FILE_PATH.c_str())) {
     deckLog("[mic] nothing recorded yet (%s)", WAV_FILE_PATH.c_str());
     return;
   }
@@ -8276,7 +8330,7 @@ static void recordingPlay(lv_event_t *e) {
     return;
   }
   audio.setVolume(volumeLevel);
-  bool connected = audio.connecttoFS(FFat, WAV_FILE_PATH.c_str());
+  bool connected = audio.connecttoFS(*store, WAV_FILE_PATH.c_str());
   deckLog("[mic] play %s: connect=%d running=%d volume=%d", WAV_FILE_PATH.c_str(),
           (int)connected, (int)audio.isRunning(), (int)volumeLevel);
   // set it again once the stream exists: this makes the slider take effect
@@ -8293,7 +8347,7 @@ static void pruneRecordings(int keep) {
   // The listing array is capped, so a filesystem holding hundreds of small
   // recordings needs several passes before it has room again.
   for (int round = 0; round < 20; round++) {
-    File dir = FFat.open("/recordings");
+    File dir = store->open("/jawn/recordings");
     if (!dir) {
       return;
     }
@@ -8330,25 +8384,25 @@ static void pruneRecordings(int keep) {
     }
     // a write needs room for the whole recording, not just its header, and a
     // nearly full filesystem starts failing before it is actually full
-    while (doomed < count && FFat.freeBytes() < 512 * 1024) {
+    while (doomed < count && store_free_bytes() < 512 * 1024) {
       doomed++;
     }
     if (doomed <= 0) {
       return;
     }
     for (int i = 0; i < doomed && i < count; i++) {
-      String path = "/recordings/" + names[i];
-      File df = FFat.open(path.c_str());
+      String path = "/jawn/recordings/" + names[i];
+      File df = store->open(path.c_str());
       uint32_t dsz = df ? (uint32_t)df.size() : 0;
       if (df) {
         df.close();
       }
       deckLog("[mic] deleting old recording %s (%u bytes)", path.c_str(), (unsigned)dsz);
-      FFat.remove(path.c_str());
+      store->remove(path.c_str());
     }
     deckLog("[fs] prune round %d deleted %d of %d, free now %u",
-            round, doomed < count ? doomed : count, count, (unsigned)FFat.freeBytes());
-    if (FFat.freeBytes() >= 512 * 1024 || count == 0) {
+            round, doomed < count ? doomed : count, count, (unsigned)store_free_bytes());
+    if (store_free_bytes() >= 512 * 1024 || count == 0) {
       return;
     }
   }
@@ -8393,8 +8447,8 @@ static uint32_t flashReport() {
 // "is the playback clean?" can be answered with no microphone involved. The
 // file is left behind, so only the first boot after a flash plays it.
 static void speakerSelfTest() {
-  if (FFat.exists("/tone.wav")) {
-    File check = FFat.open("/tone.wav");
+  if (store->exists("/jawn/tone.wav")) {
+    File check = store->open("/jawn/tone.wav");
     uint32_t have = 0;
     if (check) {
       have = check.size();
@@ -8406,13 +8460,13 @@ static void speakerSelfTest() {
     }
     // a dud from a boot with a full filesystem: drop it and try again
     deckLog("[mic] stale %u byte tone file, rewriting it", (unsigned)have);
-    FFat.remove("/tone.wav");
+    store->remove("/jawn/tone.wav");
   }
   const uint32_t frames = MIC_I2S_SAMPLE_RATE * 3 / 2;
-  if (!create_wav_header_on_flash("/tone.wav", MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
+  if (!create_wav_header_on_flash("/jawn/tone.wav", MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE, 1)) {
     return;
   }
-  File f = FFat.open("/tone.wav", FILE_APPEND);
+  File f = store->open("/jawn/tone.wav", FILE_APPEND);
   if (!f) {
     return;
   }
@@ -8431,12 +8485,12 @@ static void speakerSelfTest() {
     done += n;
   }
   f.close();
-  finalize_wav_sizes("/tone.wav", written, 1);
+  finalize_wav_sizes("/jawn/tone.wav", written, 1);
   // a zero byte tone means the write failed (a full filesystem); drop the file
   // so the test runs again on the next boot
   uint32_t actual = 0;
   {
-    File check = FFat.open("/tone.wav");
+    File check = store->open("/jawn/tone.wav");
     if (check) {
       actual = check.size();
       check.close();
@@ -8444,12 +8498,12 @@ static void speakerSelfTest() {
   }
   if (actual < 44 + 10000) {
     deckLog("[mic] tone file came out %u bytes, removing it", (unsigned)actual);
-    FFat.remove("/tone.wav");
+    store->remove("/jawn/tone.wav");
     return;
   }
   deckLog("[mic] speaker test tone written (%u bytes), playing it once", (unsigned)actual);
   audio.setVolume(volumeLevel);
-  if (audio.connecttoFS(FFat, "/tone.wav")) {
+  if (audio.connecttoFS(*store, "/jawn/tone.wav")) {
     deckLog("[mic] tone playing");
   }
 }
