@@ -26968,6 +26968,10 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
 	return 1 if $path eq '/manager/security/biometric_challenge';
 	return 1 if $path eq '/manager/security/biometric_unlock';
+	# the Android dashboard's Update app asks the local jawn to pull the newest
+	# APK; it needs no house data and is session-gated inside the route, so a
+	# locked screen can still take its own update
+	return 1 if $path eq '/manager/app_release_sync';
 	return 0;
 }
 

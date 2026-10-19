@@ -98,7 +98,7 @@
 <div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
 <div id="locked_padlock">
-	<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0, biometric_button => 0 %>
+	<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0, biometric_button => 0, phone_key => 0 %>
 </div>
 
 <div id="locked_help">

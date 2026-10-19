@@ -5,6 +5,7 @@
 <% my $frame_target = $c->stash('target') || ''; %>
 <% my $show_phone = defined $c->stash('phone_button') ? $c->stash('phone_button') : 1; %>
 <% my $show_fingerprint = ($c->stash('fingerprint') && (defined $c->stash('fingerprint_button') ? $c->stash('fingerprint_button') : 1)) ? 1 : 0; %>
+<% my $show_phone_key = defined $c->stash('phone_key') ? $c->stash('phone_key') : 1; %>
 <% my $show_biometric = (&subs::device_setter() eq 'mobile' && (defined $c->stash('biometric_button') ? $c->stash('biometric_button') : 1)) ? 1 : 0; %>
 <% my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' }) || '/images/jbuttons/logo1.png'; %>
 <div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
@@ -23,7 +24,7 @@
 		<button type="button" class="padlock_biometric">Use this phone's fingerprint</button>
 		<div class="padlock_fingerprint_status"></div>
 	<% } %>
-	<% if ($frame_mode ne 'security') { %>
+	<% if ($frame_mode ne 'security' && $show_phone_key) { %>
 		<a href="/manager/security/padlock_key?mode=<%= $frame_mode %>" class="padlock_phone_key">Open the unlock page on this phone</a>
 	<% } %>
 
@@ -78,7 +79,7 @@
 		}
 		.padlock_phone_key {
 			display: none;
-			margin: 10px auto 0 auto;
+			margin: 18px auto 10px auto;
 			font-size: 16px;
 			padding: 8px 14px;
 			border-radius: 8px;
