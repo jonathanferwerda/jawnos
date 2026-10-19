@@ -27909,15 +27909,19 @@ get '/manager/security/padlock_state' => sub ($c) {
 		$du = $param_du;
 		$c->session('device_uuid' => $du);
 	}
-	# A newer tab may know that the page's own device is the locked one while
-	# the session still carries an older, unlocked uuid (the re-pair case).
-	# Adopting the locked device can only add restriction, never remove it.
+	# The page's own device is the one that carries the fingerprint (a re-pair,
+	# or an app session made before pairing). Adopt it unless doing so would
+	# open a locked screen by naming a device that is already open: a locked
+	# session may adopt a device that is also locked (adding restriction), but
+	# never one with its own open timer.
 	if ($param_du && $param_du ne $du && $param_du =~ /^[A-Za-z0-9]{8,64}$/
-		&& &subs::db_select('paired_devices', undef, { uuid => $param_du, status => 'active' })->hashes->[0]
-		&& &padlock_device_locked($param_du)
-		&& (!$du || !&padlock_device_locked($du))) {
-		$du = $param_du;
-		$c->session('device_uuid' => $du);
+		&& &subs::db_select('paired_devices', undef, { uuid => $param_du, status => 'active' })->hashes->[0]) {
+		my $session_locked = $du ? (&padlock_locked_now($c, $du) ? 1 : 0) : (&padlock_global_locked($c) ? 1 : 0);
+		my $param_locked = &padlock_locked_now($c, $param_du) ? 1 : 0;
+		if ($param_locked || !$session_locked) {
+			$du = $param_du;
+			$c->session('device_uuid' => $du);
+		}
 	}
 	my $request = &padlock_request_get();
 	$c->render(json => {
