@@ -299,6 +299,13 @@ hook before_dispatch => sub {
 		# can sync without the gate's cookie.
 		$path eq '/manager/rsync_pack' ||
 		$path eq '/manager/rsync_unpack' ||
+		# the APK rail: app_release lists what this machine holds and app_download
+		# serves the blob, both to a peer that has no session. Their routes check
+		# the caller's signatorial against the roster themselves; without this the
+		# peer got the Gate page and the sync logged "did not answer with JSON",
+		# falling back to GitHub at the phone's ~24 KB/s (a 25-minute download).
+		$path eq '/manager/app_release' ||
+		$path eq '/manager/app_download' ||
 		# the ticket desk rides the same bare signed rail: a linked machine reads
 		# the desk from, or answers a request held on, a neighbour's database, so
 		# its routes take a session OR a peer signature. Each checks the roster and
