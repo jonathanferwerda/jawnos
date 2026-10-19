@@ -16,6 +16,9 @@ function timelinePrinter(appts,sort,offset) {
 	canvas.width = $('#background').width();
 
 	var rowHeight = 34;
+	// the span's band is tall enough for the appointment's own name (20px type)
+	// to sit inside it, rather than the name overflowing a thin line
+	var bandHeight = 28;
 	var dotRadius = 14;
 	var dotRing = 4;   // the coloured ring around the disc
 	var dotHalo = 7;   // the theme's halo behind it, when the theme has one
@@ -132,19 +135,19 @@ function timelinePrinter(appts,sort,offset) {
 			if ( isFinite(startPct) ) {
 				startPct = Math.min(Math.max(startPct, 0), 2);
 				startX = dotEdge + (column * startPct / 2);
-				// the band is a 16-wide stroke with round caps, so it reaches 8 past each
-				// of its ends - back from the dot for an ordinary row, and ahead of it to
-				// the rail for one that is still running
-				rowLeft = Math.min(rowLeft, Math.min(startX, x) - 8);
-				rowRight = Math.max(rowRight, Math.max(startX, x) + 8);
+				// the band is a bandHeight-wide stroke with round caps, so it reaches
+				// half that past each of its ends - back from the dot for an ordinary
+				// row, and ahead of it to the rail for one that is still running
+				rowLeft = Math.min(rowLeft, Math.min(startX, x) - (bandHeight / 2));
+				rowRight = Math.max(rowRight, Math.max(startX, x) + (bandHeight / 2));
 				ctx.save();
 				ctx.globalAlpha = 0.3;
 				ctx.lineCap = 'round';
 				ctx.beginPath();
 				ctx.moveTo(startX, rowY);
 				ctx.lineTo(x, rowY);
-				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 16); }
-				else { ctx.lineWidth = 16; ctx.strokeStyle = colour; ctx.stroke(); }
+				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, bandHeight); }
+				else { ctx.lineWidth = bandHeight; ctx.strokeStyle = colour; ctx.stroke(); }
 				ctx.restore();
 			}
 
@@ -217,8 +220,8 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.beginPath();
 				ctx.moveTo(gStartX, rowY);
 				ctx.lineTo(gx, rowY);
-				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 16); }
-				else { ctx.lineWidth = 16; ctx.strokeStyle = colour; ctx.stroke(); }
+				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, bandHeight); }
+				else { ctx.lineWidth = bandHeight; ctx.strokeStyle = colour; ctx.stroke(); }
 			}
 			if (halo) {
 				ctx.strokeStyle = halo;

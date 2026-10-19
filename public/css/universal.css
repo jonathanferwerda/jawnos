@@ -649,6 +649,43 @@ body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data
 body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[onclick]:not([class*="thumb"]) {
 	border-radius: 6px;
 }
+/* a material goes down when it is pressed. The raised slab's outer shadow and
+   lit top edge are replaced by an inset shadow and the face sinks a hair - the
+   glass, paper, wood and metal panes then read pressed-in instead of sticking
+   up. The same applies to the window controls, whose material rides on a
+   transparent overlay, and to the taskbar's window tiles. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button:not(.window_action):active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=button]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=submit]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=reset]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .ui-button:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img.hover:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[hint]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[onclick]:active {
+	-webkit-transform: translateY(1px) scale(0.98);
+	transform: translateY(1px) scale(0.98);
+	filter: brightness(.9);
+	box-shadow: inset 0 2px 5px rgba(0,0,0,.42), inset 0 -1px 0 rgba(255,255,255,.16) !important;
+	transition: transform .06s ease, box-shadow .06s ease, filter .06s ease;
+}
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar .navbar_buttons .window_action:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar .window_toggle:active {
+	-webkit-transform: translateY(1px);
+	transform: translateY(1px);
+	filter: brightness(.9);
+	box-shadow: inset 0 2px 5px rgba(0,0,0,.42), inset 0 -1px 0 rgba(255,255,255,.16);
+}
+/* a picture inside a pressed button is the button's face, not a second key:
+   only the button sinks */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img.hover:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[hint]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[onclick]:active,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar .window_toggle img:active {
+	-webkit-transform: none;
+	transform: none;
+	filter: none;
+	box-shadow: none;
+}
 
 /* ---- the material on every other surface -----------------------------------
 

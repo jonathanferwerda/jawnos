@@ -66,6 +66,64 @@ function jawnosClickMagnify(canvas, rect, seconds, thickness, radius) {
 	requestAnimationFrame(frame);
 }
 
+// A pressed-in answer for a textured canvas item. The item's pixels are restored
+// every frame, and an inset shade rolls down from its top rim while a faint
+// light gathers at the bottom - the way a glass key looks while it is held
+// down, rather than the raised sheen it wears at rest. It settles back exactly
+// as it was, so the item's neighbours are never touched.
+function jawnosClickPress(canvas, rect, seconds, radius) {
+	if (!canvas || !rect) { return; }
+	var ctx = canvas.getContext('2d');
+	if (!ctx) { return; }
+	var l = Math.min(rect[0], rect[2]), r = Math.max(rect[0], rect[2]);
+	var t = Math.min(rect[1], rect[3]), b = Math.max(rect[1], rect[3]);
+	var w0 = r - l, h0 = b - t;
+	if (w0 <= 0 || h0 <= 0) { return; }
+	var pad = Math.ceil(Math.max(4, w0 * 0.05));
+	var x = Math.max(0, Math.floor(l - pad));
+	var y = Math.max(0, Math.floor(t - pad));
+	var w = Math.min(canvas.width - x, Math.ceil(w0 + pad * 2));
+	var h = Math.min(canvas.height - y, Math.ceil(h0 + pad * 2));
+	if (w <= 2 || h <= 2) { return; }
+	var shot;
+	try { shot = ctx.getImageData(x, y, w, h); }
+	catch (e) { return; }
+	seconds = seconds || 0.35;
+	var start = performance.now();
+	var ms = Math.max(120, seconds * 1000);
+	function frame(now) {
+		var p = Math.min(1, (now - start) / ms);
+		// pressed at once, then released: full depth by a fifth of the way in
+		var depth = (p < 0.2) ? (p / 0.2) : (1 - ((p - 0.2) / 0.8));
+		depth = Math.max(0, Math.min(1, depth));
+		ctx.putImageData(shot, x, y);
+		if (depth > 0) {
+			ctx.save();
+			ctx.beginPath();
+			roundRectPath(ctx, l, t, w0, h0, radius || 10);
+			ctx.clip();
+			var shade = ctx.createLinearGradient(0, t, 0, b);
+			shade.addColorStop(0, 'rgba(0,0,0,' + (0.48 * depth) + ')');
+			shade.addColorStop(0.42, 'rgba(0,0,0,' + (0.10 * depth) + ')');
+			shade.addColorStop(0.78, 'rgba(255,255,255,0)');
+			shade.addColorStop(1, 'rgba(255,255,255,' + (0.16 * depth) + ')');
+			ctx.fillStyle = shade;
+			ctx.fillRect(l, t, w0, h0);
+			ctx.strokeStyle = 'rgba(0,0,0,' + (0.30 * depth) + ')';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			var cap = Math.min(w0 / 2, 14);
+			ctx.moveTo(l + cap, t + 1);
+			ctx.lineTo(r - cap, t + 1);
+			ctx.stroke();
+			ctx.restore();
+		}
+		if (p < 1) { requestAnimationFrame(frame); }
+		else { ctx.putImageData(shot, x, y); }
+	}
+	requestAnimationFrame(frame);
+}
+
 // A rounded-rectangle path (older browsers have no ctx.roundRect).
 function roundRectPath(ctx, x, y, w, h, r) {
 	r = Math.min(r, w / 2, h / 2);

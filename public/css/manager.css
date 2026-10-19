@@ -371,9 +371,10 @@ html, body {
 }
 /* the search, when the taskbar is its home: it rides on the right of the
    window list but takes a fifth of the bar at most, so the windows keep the
-   room; the input and its toggle share that fifth on one line */
+   room; the input and its toggle share that fifth on one line, at the same
+   height, so the box and the button read as one control */
 #taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; margin-left: 6px; }
-#taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; height: calc(var(--taskbar_h, 44px) - 9px); }
+#taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; height: calc(var(--taskbar_h, 44px) - 12px); }
 #taskbar #search_toggle { flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 12px); height: calc(var(--taskbar_h, 44px) - 12px); max-width: none; object-fit: contain; }
 
 /* A pinned app or keyboard launcher: the same bare tile the bar's own buttons

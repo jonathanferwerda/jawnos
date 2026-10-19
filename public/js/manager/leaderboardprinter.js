@@ -220,18 +220,29 @@ $(document).on('click', '.background', function (e) {
 					o[1] < y && o[3] > y) {
 			app_clicked = 1;
 			var timestamp = Date.now();
-			// the press grows the thing it landed on - the dot and its words, the
-			// clockface dot and label, or the garment, which also wears a thicker
-			// edge - for half a second. An entry may carry its own magnify box as a
-			// sixth element (the timeline's rows do: the whole row answers the click,
-			// but only its compact dot-and-words item should grow)
-			if (typeof jawnosClickMagnify == 'function') {
-				var magnify_rect = (o.length > 5 && o[5]) ? o[5] : o;
-				// the press outline follows a garment's pill shape; the other canvas
-				// items keep their gently rounded corners
-				var magnify_radius = (o[4] && o[4]['type'] == 'clothes')
-					? Math.min(magnify_rect[2] - magnify_rect[0], magnify_rect[3] - magnify_rect[1]) / 2
-					: 10;
+			// the press answers on the thing it landed on - the dot and its words, or
+			// the clockface dot and label, grow for half a second; a garment wearing
+			// a material goes down instead, while plain, round and classic garment
+			// tiles still grow and wear a thicker edge. An entry may carry its own
+			// magnify box as a sixth element (the timeline's rows do: the whole row
+			// answers the click, but only its compact dot-and-words item should grow)
+			var magnify_rect = (o.length > 5 && o[5]) ? o[5] : o;
+			// the press outline follows a garment's pill shape; the other canvas
+			// items keep their gently rounded corners
+			var magnify_radius = (o[4] && o[4]['type'] == 'clothes')
+				? Math.min(magnify_rect[2] - magnify_rect[0], magnify_rect[3] - magnify_rect[1]) / 2
+				: 10;
+			// a garment wearing a material goes down like a key: its raised sheen
+			// becomes an inset shade while it is pressed. Plain, round and classic
+			// keep the original grow-on-press.
+			var textured_clothes = (o[4] && o[4]['type'] == 'clothes')
+				&& typeof jawnosTextureBare == 'function'
+				&& typeof jawnosTextureCurrent != 'undefined'
+				&& !jawnosTextureBare(jawnosTextureCurrent);
+			if (textured_clothes && typeof jawnosClickPress == 'function') {
+				jawnosClickPress(document.getElementById(printer), magnify_rect, 0.35, magnify_radius);
+			}
+			else if (typeof jawnosClickMagnify == 'function') {
 				jawnosClickMagnify(document.getElementById(printer), magnify_rect, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0, magnify_radius);
 			}
 			appointmentGrabber(o[4]['name'],timestamp);
