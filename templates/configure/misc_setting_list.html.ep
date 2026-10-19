@@ -354,6 +354,7 @@
 			if (!palette) { return; }
 			var device = currentDevice();
 			if (!device) { return; }
+			var dark_before = $('body').hasClass('dark_theme');
 			// One batch, not one change event per swatch: the old loop posted ~23
 			// requests and repainted the desktop on each response, which held the
 			// WebKitGTK process at full tilt for tens of seconds.
@@ -385,6 +386,12 @@
 				type: 'POST',
 				data: { device: device, timestamp: Date.now(), settings: JSON.stringify(changes) },
 				error: function () { $('#colour_scheme').val(detectScheme(device)); }
+			}).done(function () {
+				// the icon sets ship a dark cut; once the scheme is stored, ask for the
+				// paths again so the buttons cross the light/dark line with it
+				if (dark_before !== $('body').hasClass('dark_theme') && typeof jawnosReloadIcons === 'function') {
+					jawnosReloadIcons();
+				}
 			});
 		});
 
@@ -427,7 +434,9 @@
 			urls = jawnos_handdrawn_preview;
 		}
 		else if (set) {
-			$.each(jawnos_icon_preview, function (i, n) { urls.push('/icons/sets/' + set + '/' + n + '.svg'); });
+			// on a dark desktop the buttons wear the set's dark cut
+			var dark = $('body').hasClass('dark_theme') && set != 'handdrawn';
+			$.each(jawnos_icon_preview, function (i, n) { urls.push('/icons/sets/' + set + (dark ? '_dark' : '') + '/' + n + '.svg'); });
 		}
 		else {
 			box.html('<i>Using the default icons.</i>');

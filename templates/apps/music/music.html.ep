@@ -15,11 +15,11 @@
     navbar-relative tops answer to the navbar height setting, the same way the
     window's own contents do. %>
 <% my $phone_layout = (($device // '') eq 'mobile') ? 1 : 0; %>
-<div id="music" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
+<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
 	<%# left empty on purpose: the player is restored from the live cache, not a
 	    snapshot frozen into this cached window (see musicContentCache in music.js) %>
 	<div id="music_player_data" style="display:none;"></div>
-	<div id="interface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
+	<div id="interface" class="theme_surface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">
 			<input id="music_search" value="<%= $search %>" placeholder="Search">

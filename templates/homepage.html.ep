@@ -1,5 +1,5 @@
 <% no warnings 'uninitialized'; %>
-<div id="homepage" style="background-color:<%= $config->{$device}->{'homepage'}->{'background_colour'} %>;text-align:center;height:100%;width:100%;overflow:scroll;">
+<div id="homepage" class="theme_surface" style="background-color:<%= $config->{$device}->{'homepage'}->{'background_colour'} %>;text-align:center;height:100%;width:100%;overflow:scroll;">
 	<span id="category_selected" class="hover" category="<%= $c->param('category') || 'promo' %>"></span>
 	<div id="navigation" style="font-size:20px;height:36px;max-width:100%">
 		<span class="homepage_category" category="promo">Promo</span>
@@ -10,7 +10,7 @@
 		<% } %>
 	</div>
 
-	<div id="homepage_content" style="background-color:<%= $config->{$device}->{'homepage_content'}->{'background_colour'} %>;">
+	<div id="homepage_content" class="theme_surface" style="background-color:<%= $config->{$device}->{'homepage_content'}->{'background_colour'} %>;">
 		<% if ($title) { %><h1><%= $title %></h1><% } %>
 		<% if (my $mugshot = &Manager::mugshot_source($device)) { %><img style="background-color:grey;height:20%;width:20%;border-radius:50%;border:solid;border-width:5px;" src="<%= $mugshot %>"><% } %>
 		<% if ($config->{'email'}) { %><br><a href="mailto:<%= $config->{'email'} %>"><%= $config->{'email'} %><br></a><% } %>

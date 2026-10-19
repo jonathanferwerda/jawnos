@@ -10,7 +10,7 @@
 
 <span id="header"></span>
 <% my $taskbar_position = &subs::misc_setting('taskbar_position') || 'bottom'; %>
-<div id="taskbar" position="<%= $taskbar_position %>">
+<div id="taskbar" class="theme_surface_soft" position="<%= $taskbar_position %>">
 	<span id="taskbar_windows"></span>
 	<span id="taskbar_icons"></span>
 	<span id="taskbar_clock"></span>

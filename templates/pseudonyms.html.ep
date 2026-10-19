@@ -1,5 +1,5 @@
 <% my $dock_position = &subs::misc_setting('dock_position') || 'bottom'; %>
-<div id="pseudonym_home" position="<%= $dock_position %>" style="background-color:<%= $config->{$device}->{'pseudonym_home'}->{'background_colour'} %>">
+<div id="pseudonym_home" class="theme_surface" position="<%= $dock_position %>" style="background-color:<%= $config->{$device}->{'pseudonym_home'}->{'background_colour'} %>">
 	<div id="search_entanglement">
 		<div id="search_results" class="search_results" style="height:200px;font-size:22px;position:fixed;display:none;bottom:55px;right:173px;background-color:var(--panel);border:solid;border-width:2px;border-radius:3px;"></div>
 		<input id="search"  style="vertical-align:top;min-width:200px;" entry="text" autocomplete="off" class="add_something timed_input search" id="search" placeholder="anything?" >
@@ -15,7 +15,7 @@
 	<span id="pseudonym_bar">
 		<% foreach my $p ( grep { $_->{'status'} eq 'on' } @{$pseudonyms} ) { %>
 			<div class="draggable_icon" style="">
-				<img name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" class="ps bar pseudonym keyboard hover" style="background-color:<%= $p->{'colour'} || $config->{$device}->{'pseudonym'}->{'background_colour'} %>;<%= $p->{'style'} %>" toggle="<%= $p->{'name'} %>" id="<%= $p->{'name'} %>_toggle" src="<%= $p->{'icon'} %>"></img>
+				<img name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" jawnos_icon="<%= $p->{'icon'} %>" class="ps bar pseudonym keyboard hover theme_surface" style="background-color:<%= $p->{'colour'} || $config->{$device}->{'pseudonym'}->{'background_colour'} %>;<%= $p->{'style'} %>" toggle="<%= $p->{'name'} %>" id="<%= $p->{'name'} %>_toggle" src="<%= $p->{'icon'} %>"></img>
 			</div>
 		<% } %>
 	</span>

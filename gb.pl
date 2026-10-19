@@ -138,7 +138,9 @@ our @protected = qw/me misc __president music_folder_toggle __DEBRIEFING__ telet
 
 our @misc_settings = qw/homepage homepage_content manager start_menu gate configure store store_header soundroom_sidebar_container mail_sidebar_container ide_sidebar_container pseudonym pseudonym_home box_office notifications console keyboard calculator walkboy delorean controller remote_control /;
 
-# selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg
+# selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg.
+# Every generated set also ships a <key>_dark cut (build.js writes both), which
+# icon_set() selects by itself while the active theme is dark.
 # 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
 our @icon_sets = qw/handdrawn windows mac gnome cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
 our %icon_set_labels = (

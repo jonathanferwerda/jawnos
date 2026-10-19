@@ -121,7 +121,8 @@
 <%# a running start/record appointment with a theme owns the desktop; otherwise
     the Misc manager colour is the system theme %>
 <% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background(); %>
-  <body style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
+<% my $theme_dark = &subs::theme_is_dark(); %>
+  <body<% if ($theme_dark) { %> class="dark_theme"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
   <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
     .title_font { font-family: <%= $title_font %>; }

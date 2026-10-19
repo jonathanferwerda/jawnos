@@ -3,9 +3,11 @@
 //
 //   node public/icons/sets/build.js
 //
-// Writes public/icons/sets/<style>/<icon>.svg for every pseudonym button icon.
-// Each set is the same glyph library rendered in a different visual style, so
-// the whole button row can be reskinned from the configure screen.
+// Writes public/icons/sets/<style>/<icon>.svg for every pseudonym button icon,
+// and the matching <style>_dark/ cut. Each set is the same glyph library
+// rendered in a different visual style, so the whole button row can be reskinned
+// from the configure screen; the dark cut is the same style on a face that does
+// not glare, chosen automatically while a dark theme is in force.
 //
 // Glyph convention (all on a 24x24 grid, scaled into a 512 master):
 //   {G} -> the glyph colour for the style
@@ -49,6 +51,12 @@ const GLYPHS = {
 	renew: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M20 3.5v5h-5z" fill="{G}"/>',
 	x: '<circle cx="12" cy="12" r="9" fill="{G}"/><path d="M8.5 8.5 15.5 15.5M15.5 8.5 8.5 15.5" fill="none" stroke="{D}" stroke-width="2.2" stroke-linecap="round"/>',
 	telephone: '<path d="M7.5 3.5 10 8l-2 2c1 2.2 2.8 4 5 5l2-2 4.5 2.5-1.2 3A2.4 2.4 0 0 1 15.9 20 16 16 0 0 1 4 8.1a2.4 2.4 0 0 1 1.5-2.4z" fill="{G}"/>',
+	// the phone app's own handset: the same receiver a call wears, with the
+	// signal arcs that say this one places calls
+	phone: '<path d="M7.5 3.5 10 8l-2 2c1 2.2 2.8 4 5 5l2-2 4.5 2.5-1.2 3A2.4 2.4 0 0 1 15.9 20 16 16 0 0 1 4 8.1a2.4 2.4 0 0 1 1.5-2.4z" fill="{G}"/><path d="M15.6 4.4a5.2 5.2 0 0 1 4 4M15.8 1.9a8 8 0 0 1 5.9 6" fill="none" stroke="{D}" stroke-width="1.5" stroke-linecap="round"/>',
+	question: '<circle cx="12" cy="12" r="9" fill="{G}"/><path d="M9.4 9.2a2.7 2.7 0 0 1 5.2 1c0 1.6-2.2 2-2.2 3.5" fill="none" stroke="{D}" stroke-width="2" stroke-linecap="round"/><circle cx="12.2" cy="17.1" r="1.25" fill="{D}"/>',
+	paperclip: '<path d="M8.4 12.2 15.9 4.7a3.5 3.5 0 0 1 4.9 4.9l-8.5 8.5a5.6 5.6 0 0 1-7.9-7.9l7.8-7.8" fill="none" stroke="{G}" stroke-width="2.1" stroke-linecap="round"/>',
+	speaker: '<path d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z" fill="{G}"/><g fill="none" stroke="{D}" stroke-width="1.8" stroke-linecap="round"><path d="M15.2 9.2a4 4 0 0 1 0 5.6"/><path d="M17.6 6.8a7.4 7.4 0 0 1 0 10.4"/></g>',
 	hourglass: '<path d="M6 2.5h12v4l-4 5.5 4 5.5v4H6v-4l4-5.5-4-5.5z" fill="{G}"/>',
 	receipt: '<path d="M3 22l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2l-1.5 1.5L18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2z" fill="{G}"/><g stroke="{D}" stroke-width="1.3" stroke-linecap="round"><path d="M6.5 8h11M6.5 11.5h11M6.5 15h7"/></g>',
 	cake: '<path d="M4 20.5v-5.5h16v5.5z" fill="{G}"/><path d="M4 15c0-1.5 1.2-2.6 2.7-2.6 1 0 1.9.6 2.4 1.5.5-.9 1.4-1.5 2.4-1.5s1.9.6 2.4 1.5c.5-.9 1.4-1.5 2.4-1.5C19.8 12.4 21 13.5 21 15" fill="none" stroke="{G}" stroke-width="1.8" stroke-linejoin="round"/><rect x="11.3" y="5.5" width="1.5" height="5.5" rx="0.7" fill="{G}"/><circle cx="12" cy="5" r="1.3" fill="{D}"/>',
@@ -266,6 +274,14 @@ const ICONS = {
 	'wiki': 'book',
 	'camera_back': 'photo_camera',
 	'camera_front': 'photo_camera_front',
+	// the same pictures reached through their hand-drawn file names, so
+	// icon_for() finds the set's face for the start menu and the phone app too
+	'camera back': 'photo_camera',
+	'camera front': 'photo_camera_front',
+	'phone': 'phone',
+	'question mark': 'question',
+	'paperclip': 'paperclip',
+	'speaker': 'speaker',
 	'public': 'globe',
 	'enc_button': 'lock',
 	'on': 'toggle_on',
@@ -491,50 +507,51 @@ const STYLES = {
 	// bright, thick black outline, sticker-ish
 	cartoon: {
 		label: 'Cartoon',
-		render: (h, inner) => svgWrap(frame(hsl(h, 0.85, 0.63), { inset: 34, rx: 112, stroke: '#1b1b1b', sw: 16 }) + wrap(sub(inner, '#ffffff', 'rgba(0,0,0,0.35)'))),
+		render: (h, inner, state, is_dark) => svgWrap(frame(is_dark ? hsl(h, 0.68, 0.24) : hsl(h, 0.85, 0.63), { inset: 34, rx: 112, stroke: is_dark ? hsl(h, 0.5, 0.42) : '#1b1b1b', sw: 16 }) + wrap(sub(inner, is_dark ? hsl(h, 0.3, 0.95) : '#ffffff', is_dark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.35)'))),
 	},
 	// near-black gradient, soft light glyph
 	dark: {
 		label: 'Dark',
-		render: (h, inner) => {
-			const g = hsl(h, 0.22, 0.24), b = hsl(h, 0.2, 0.14);
+		render: (h, inner, state, is_dark) => {
+			const g = hsl(h, 0.22, is_dark ? 0.18 : 0.24), b = hsl(h, 0.2, is_dark ? 0.1 : 0.14);
 			const svg = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + g + '"/><stop offset="1" stop-color="' + b + '"/></linearGradient></defs>'
-				+ frame('url(#bg)', { stroke: hsl(h, 0.25, 0.38), sw: 5, rx: 96 });
+				+ frame('url(#bg)', { stroke: hsl(h, 0.25, is_dark ? 0.32 : 0.38), sw: 5, rx: 96 });
 			return svgWrap(svg + wrap(sub(inner, hsl(h, 0.25, 0.9), hsl(h, 0.3, 0.42))));
 		},
 	},
-	// pale background with a thin border, dark glyph
+	// pale background with a thin border, dark glyph (dark cut: a deep plate,
+	// light glyph)
 	light: {
 		label: 'Light',
-		render: (h, inner) => svgWrap(frame(hsl(h, 0.5, 0.96), { stroke: hsl(h, 0.4, 0.74), sw: 6, rx: 96 }) + wrap(sub(inner, hsl(h, 0.45, 0.3), '#ffffff'))),
+		render: (h, inner, state, is_dark) => svgWrap(frame(is_dark ? hsl(h, 0.38, 0.22) : hsl(h, 0.5, 0.96), { stroke: is_dark ? hsl(h, 0.4, 0.42) : hsl(h, 0.4, 0.74), sw: 6, rx: 96 }) + wrap(sub(inner, is_dark ? hsl(h, 0.45, 0.9) : hsl(h, 0.45, 0.3), is_dark ? hsl(h, 0.4, 0.26) : '#ffffff'))),
 	},
-	// no background at all, just a coloured glyph
+	// no background at all, just a coloured glyph (dark cut: a lighter glyph)
 	outline: {
 		label: 'Outline',
-		render: (h, inner) => svgWrap(wrap(sub(inner, hsl(h, 0.6, 0.45), hsl(h, 0.7, 0.72)))),
+		render: (h, inner, state, is_dark) => svgWrap(wrap(sub(inner, hsl(h, 0.6, is_dark ? 0.78 : 0.45), hsl(h, 0.7, is_dark ? 0.54 : 0.72)))),
 	},
 	// --- the desktop looks: the shapes Windows, macOS and GNOME users know ---
 	// Windows 11 Fluent: a flat rounded square with a soft vertical lift, a light
 	// rim and a white glyph. Squared corners, calm, no gloss.
 	windows: {
 		label: 'Windows',
-		render: (h, inner) => {
-			const top = hsl(h, 0.66, 0.58), bot = hsl(h, 0.68, 0.42);
+		render: (h, inner, state, is_dark) => {
+			const top = hsl(h, 0.66, is_dark ? 0.32 : 0.58), bot = hsl(h, 0.68, is_dark ? 0.18 : 0.42);
 			const defs = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>';
 			return svgWrap(defs
-				+ frame('url(#bg)', { inset: 26, rx: 80, stroke: 'rgba(255,255,255,0.35)', sw: 3 })
-				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.14)', 'rgba(0,0,0,0.22)', 0, 5));
+				+ frame('url(#bg)', { inset: 26, rx: 80, stroke: is_dark ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.35)', sw: 3 })
+				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.14)', is_dark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.22)', 0, 5));
 		},
 	},
 	// macOS Big Sur: a glossy squircle - a strong vertical gradient, a diagonal
 	// sheen over the top half and a bright rim, with a white glyph.
 	mac: {
 		label: 'macOS',
-		render: (h, inner) => {
-			const top = hsl(h, 0.78, 0.68), bot = hsl(h, 0.82, 0.46);
+		render: (h, inner, state, is_dark) => {
+			const top = hsl(h, 0.78, is_dark ? 0.36 : 0.68), bot = hsl(h, 0.82, is_dark ? 0.2 : 0.46);
 			const defs = '<defs>'
 				+ '<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient>'
-				+ '<linearGradient id="sheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,0.55)"/><stop offset="0.55" stop-color="rgba(255,255,255,0.06)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient>'
+				+ '<linearGradient id="sheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,' + (is_dark ? '0.24' : '0.55') + ')"/><stop offset="0.55" stop-color="rgba(255,255,255,' + (is_dark ? '0.05' : '0.06') + ')"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient>'
 				+ '<clipPath id="plate"><rect x="22" y="22" width="468" height="468" rx="118"/></clipPath>'
 				+ '</defs>';
 			return svgWrap(defs
@@ -542,105 +559,110 @@ const STYLES = {
 				+ frame('url(#bg)', { inset: 22, rx: 118 })
 				+ '<rect x="22" y="22" width="468" height="250" fill="url(#sheen)"/>'
 				+ '</g>'
-				+ frame('none', { inset: 22, rx: 118, stroke: 'rgba(255,255,255,0.5)', sw: 3 })
-				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.18)', 'rgba(0,0,0,0.22)', 3, 6));
+				+ frame('none', { inset: 22, rx: 118, stroke: 'rgba(255,255,255,' + (is_dark ? 0.32 : 0.5) + ')', sw: 3 })
+				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.18)', is_dark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.22)', 3, 6));
 		},
 	},
 	// GNOME Adwaita: a flat, muted tile with a gentle top-to-bottom lift and a
 	// dark symbolic glyph. Quiet, no gloss - the calm one of the three.
 	gnome: {
 		label: 'GNOME',
-		render: (h, inner) => {
-			const top = hsl(h, 0.34, 0.93), bot = hsl(h, 0.40, 0.80);
+		render: (h, inner, state, is_dark) => {
+			const top = hsl(h, 0.34, is_dark ? 0.28 : 0.93), bot = hsl(h, 0.40, is_dark ? 0.18 : 0.80);
 			const defs = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>';
 			return svgWrap(defs
-				+ frame('url(#bg)', { inset: 30, rx: 90, stroke: 'rgba(0,0,0,0.12)', sw: 3 })
-				+ wrap(sub(inner, hsl(h, 0.6, 0.36), hsl(h, 0.45, 0.58))));
+				+ frame('url(#bg)', { inset: 30, rx: 90, stroke: is_dark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)', sw: 3 })
+				+ wrap(sub(inner, is_dark ? hsl(h, 0.5, 0.86) : hsl(h, 0.6, 0.36), is_dark ? hsl(h, 0.42, 0.52) : hsl(h, 0.45, 0.58))));
 		},
 	},
 	// dark panel with a glowing neon glyph
 	neon: {
 		label: 'Neon',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			const defs = '<defs><filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
-			const bg = frame('#0c0f14', { stroke: hsl(h, 1, 0.6), sw: 4, rx: 92 });
-			const glyph = '<g filter="url(#glow)">' + wrap(sub(inner, hsl(h, 1, 0.62), hsl(h, 1, 0.34))) + '</g>';
+			const bg = frame(is_dark ? '#07090d' : '#0c0f14', { stroke: hsl(h, 1, is_dark ? 0.5 : 0.6), sw: 4, rx: 92 });
+			const glyph = '<g filter="url(#glow)">' + wrap(sub(inner, hsl(h, 1, is_dark ? 0.56 : 0.62), hsl(h, 1, 0.34))) + '</g>';
 			return svgWrap(defs + bg + glyph);
 		},
 	},
-	// soft pastel background, dark glyph
+	// soft pastel background, dark glyph (dark cut: a muted plate, light glyph)
 	pastel: {
 		label: 'Pastel',
-		render: (h, inner) => svgWrap(frame(hsl(h, 0.6, 0.85), { rx: 104 }) + wrap(sub(inner, hsl(h, 0.35, 0.34), '#ffffff'))),
+		render: (h, inner, state, is_dark) => svgWrap(frame(is_dark ? hsl(h, 0.32, 0.24) : hsl(h, 0.6, 0.85), { rx: 104 }) + wrap(sub(inner, is_dark ? hsl(h, 0.4, 0.9) : hsl(h, 0.35, 0.34), is_dark ? hsl(h, 0.32, 0.3) : '#ffffff'))),
 	},
 	// high-contrast black & white. The time machine's pair still answers the
 	// state in colour - the third argument marks a state tile - or the state
-	// light would be the one button no set ever obeys.
+	// light would be the one button no set ever obeys. The dark cut inverts the
+	// plate and the glyph, so a monochrome theme stays legible either way.
 	mono: {
 		label: 'Mono',
-		render: (h, inner, state) => svgWrap(frame(state ? hsl(h, 0.9, 0.56) : '#ffffff', { inset: 40, rx: 70, stroke: '#111111', sw: 14 }) + wrap(sub(inner, '#111111', '#ffffff'))),
+		render: (h, inner, state, is_dark) => {
+			const plate = state ? (is_dark ? hsl(h, 0.8, 0.4) : hsl(h, 0.9, 0.56)) : (is_dark ? '#111111' : '#ffffff');
+			const stroke = is_dark ? '#e8e8e8' : '#111111';
+			return svgWrap(frame(plate, { inset: 40, rx: 70, stroke: stroke, sw: 14 }) + wrap(sub(inner, is_dark ? '#ffffff' : '#111111', is_dark ? '#111111' : '#ffffff')));
+		},
 	},
 	// --- the loud ones: full-bleed plates with oversized glyphs ---
 	// vintage badge: a sunburst of rays behind a big white glyph
 	sunburst: {
 		label: 'Sunburst',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			const defs = '<defs>'
 				+ '<path id="ray" d="M256 256 L' + polar(480, -7.5) + ' L' + polar(480, 7.5) + ' Z"/>'
 				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
 				+ '<radialGradient id="glow" cx="0.5" cy="0.4" r="0.8">'
-				+ '<stop offset="0" stop-color="' + hsl(h, 0.95, 0.6) + '"/>'
-				+ '<stop offset="1" stop-color="' + hsl(h + 24, 0.9, 0.44) + '"/>'
+				+ '<stop offset="0" stop-color="' + hsl(h, 0.95, is_dark ? 0.32 : 0.6) + '"/>'
+				+ '<stop offset="1" stop-color="' + hsl(h + 24, 0.9, is_dark ? 0.2 : 0.44) + '"/>'
 				+ '</radialGradient></defs>';
 			let rays = '';
 			for (let i = 0; i < 18; i++) {
-				rays += '<use href="#ray" transform="rotate(' + (i * 20) + ' 256 256)" fill="rgba(255,255,255,0.22)"/>';
+				rays += '<use href="#ray" transform="rotate(' + (i * 20) + ' 256 256)" fill="rgba(255,255,255,' + (is_dark ? 0.1 : 0.22) + ')"/>';
 			}
 			return svgWrap(defs
 				+ '<g clip-path="url(#plate)">' + frame('url(#glow)', { inset: 10, rx: 128 }) + rays + '</g>'
-				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.22)', sw: 8 })
-				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.32)', 'rgba(0,0,0,0.28)', 7, 9));
+				+ frame('none', { inset: 10, rx: 128, stroke: is_dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.22)', sw: 8 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.32)', is_dark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.28)', 7, 9));
 		},
 	},
 	// iridescent foil sweeping through the wheel, with a glossy diagonal sheen
 	holographic: {
 		label: 'Holographic',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			const offs = [0, 0.22, 0.45, 0.68, 1];
 			let stops = '';
 			for (let i = 0; i < offs.length; i++) {
-				stops += '<stop offset="' + offs[i] + '" stop-color="' + hsl(h - 50 + i * 64, 0.95, i % 2 ? 0.72 : 0.56) + '"/>';
+				stops += '<stop offset="' + offs[i] + '" stop-color="' + hsl(h - 50 + i * 64, 0.95, is_dark ? (i % 2 ? 0.44 : 0.3) : (i % 2 ? 0.72 : 0.56)) + '"/>';
 			}
 			const defs = '<defs>'
 				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
 				+ '<linearGradient id="foil" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
 				+ '</defs>';
-			const sheen = '<path d="M-60 560 L240 -60 L340 -60 L40 560 Z" fill="rgba(255,255,255,0.30)"/>'
-				+ '<path d="M150 560 L420 -60 L455 -60 L185 560 Z" fill="rgba(255,255,255,0.16)"/>';
+			const sheen = '<path d="M-60 560 L240 -60 L340 -60 L40 560 Z" fill="rgba(255,255,255,' + (is_dark ? '0.16' : '0.30') + ')"/>'
+				+ '<path d="M150 560 L420 -60 L455 -60 L185 560 Z" fill="rgba(255,255,255,' + (is_dark ? '0.08' : '0.16') + ')"/>';
 			return svgWrap(defs
 				+ '<g clip-path="url(#plate)">' + frame('url(#foil)', { inset: 10, rx: 128 }) + sheen + '</g>'
-				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(255,255,255,0.55)', sw: 6 })
-				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(30,0,50,0.4)', 'rgba(30,0,50,0.4)', 6, 8));
+				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(255,255,255,' + (is_dark ? '0.34' : '0.55') + ')', sw: 6 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(30,0,50,0.4)', is_dark ? 'rgba(0,0,0,0.45)' : 'rgba(30,0,50,0.4)', 6, 8));
 		},
 	},
 	// die-cut sticker: white border, saturated core, tossed onto the tile
 	sticker: {
 		label: 'Sticker',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			const tilt = 'rotate(-3 256 256)';
 			const plate = '<g transform="' + tilt + '">'
 				+ '<g transform="translate(7,9)">' + frame('rgba(0,0,0,0.20)', { inset: 20, rx: 128 }) + '</g>'
 				+ frame('#ffffff', { inset: 20, rx: 128 })
-				+ frame(hsl(h, 0.95, 0.58), { inset: 58, rx: 98 })
+				+ frame(hsl(h, 0.95, is_dark ? 0.38 : 0.58), { inset: 58, rx: 98 })
 				+ '</g>';
 			return svgWrap(plate
-				+ '<g transform="' + tilt + '">' + glyphWithShadow(inner, 14, '#ffffff', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.3)', 4, 6) + '</g>');
+				+ '<g transform="' + tilt + '">' + glyphWithShadow(inner, 14, '#ffffff', 'rgba(0,0,0,0.3)', is_dark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.3)', 4, 6) + '</g>');
 		},
 	},
 	// hypnotic tie-dye: wobbling concentric bands, dark glyph riding on top
 	psychedelic: {
 		label: 'Psychedelic',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			// one wavy ring on a 100px radius, reused scaled and rotated per band
 			let ring = '';
 			for (let s = 0; s <= 60; s++) {
@@ -656,33 +678,33 @@ const STYLES = {
 			let bands = '';
 			for (let i = 0; i < 9; i++) {
 				const R = 470 - i * 52;
-				bands += '<use href="#ring" transform="translate(256,256) scale(' + (R / 100).toFixed(3) + ') rotate(' + (i * 17) + ')" fill="' + hsl(h + hues[i % hues.length], 0.92, i % 2 ? 0.62 : 0.46) + '"/>';
+				bands += '<use href="#ring" transform="translate(256,256) scale(' + (R / 100).toFixed(3) + ') rotate(' + (i * 17) + ')" fill="' + hsl(h + hues[i % hues.length], 0.92, is_dark ? (i % 2 ? 0.32 : 0.22) : (i % 2 ? 0.62 : 0.46)) + '"/>';
 			}
 			return svgWrap(defs
 				+ '<g clip-path="url(#plate)">' + bands + '</g>'
-				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.18)', sw: 6 })
-				+ glyphWithShadow(inner, 14, hsl(h + 200, 0.5, 0.16), hsl(h + 200, 0.45, 0.34), 'rgba(255,255,255,0.55)', 3, 4));
+				+ frame('none', { inset: 10, rx: 128, stroke: is_dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)', sw: 6 })
+				+ glyphWithShadow(inner, 14, is_dark ? hsl(h + 200, 0.6, 0.86) : hsl(h + 200, 0.5, 0.16), is_dark ? hsl(h + 200, 0.5, 0.55) : hsl(h + 200, 0.45, 0.34), is_dark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.55)', 3, 4));
 		},
 	},
 	// stained glass: twelve bright facets with lead lines and a big white glyph
 	kaleidoscope: {
 		label: 'Kaleidoscope',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
 			const defs = '<defs>'
 				+ '<path id="wedge" d="M256 256 L' + polar(520, -0.7) + ' L' + polar(520, 30.7) + ' Z"/>'
 				+ '<path id="lead" d="M256 256 L' + polar(520, 0) + '"/>'
 				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="128"/></clipPath>'
-				+ '<radialGradient id="shine" cx="0.32" cy="0.26" r="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient>'
+				+ '<radialGradient id="shine" cx="0.32" cy="0.26" r="1"><stop offset="0" stop-color="#ffffff" stop-opacity="' + (is_dark ? 0.26 : 0.55) + '"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient>'
 				+ '</defs>';
 			let facets = '';
 			for (let i = 0; i < 12; i++) {
-				facets += '<use href="#wedge" transform="rotate(' + (i * 30) + ' 256 256)" fill="' + hsl(h + i * 14, 0.92, i % 2 ? 0.48 : 0.64) + '"/>'
-					+ '<use href="#lead" transform="rotate(' + (i * 30) + ' 256 256)" stroke="rgba(255,255,255,0.4)" stroke-width="5"/>';
+				facets += '<use href="#wedge" transform="rotate(' + (i * 30) + ' 256 256)" fill="' + hsl(h + i * 14, 0.92, is_dark ? (i % 2 ? 0.34 : 0.22) : (i % 2 ? 0.48 : 0.64)) + '"/>'
+					+ '<use href="#lead" transform="rotate(' + (i * 30) + ' 256 256)" stroke="rgba(255,255,255,' + (is_dark ? 0.24 : 0.4) + ')" stroke-width="5"/>';
 			}
 			return svgWrap(defs
 				+ '<g clip-path="url(#plate)">' + facets + frame('url(#shine)', { inset: 10, rx: 128 }) + '</g>'
-				+ frame('none', { inset: 10, rx: 128, stroke: 'rgba(0,0,0,0.2)', sw: 6 })
-				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.3)', 6, 8));
+				+ frame('none', { inset: 10, rx: 128, stroke: is_dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.2)', sw: 6 })
+				+ glyphWithShadow(inner, 15, '#ffffff', 'rgba(0,0,0,0.3)', is_dark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)', 6, 8));
 		},
 	},
 	// the dare, at full tilt: clashing rainbow slabs whose bands rotate their
@@ -693,7 +715,10 @@ const STYLES = {
 	// to do.
 	clown: {
 		label: 'Clown Barf',
-		render: (h, inner) => {
+		render: (h, inner, state, is_dark) => {
+			// the dark cut dims the slabs and stripes but keeps every clash; a
+			// dark desktop should not be lit up like a fairground
+			const dim = l => is_dark ? Math.max(0.16, l * 0.55) : l;
 			// per-icon clocks, seeded off the hue, so no two icons in the set share
 			// a phase and nothing ever lines up
 			const phase = (h % 11) / 10;
@@ -709,7 +734,7 @@ const STYLES = {
 			for (let i = 0; i < clash.length; i++) {
 				const cycle = [];
 				for (let k = 0; k <= clash.length; k++) {
-					cycle.push(hsl(h + clash[(i + k) % clash.length], 1, i % 2 ? 0.55 : 0.67));
+					cycle.push(hsl(h + clash[(i + k) % clash.length], 1, dim(i % 2 ? 0.55 : 0.67)));
 				}
 				stops += '<stop offset="' + Math.round(i / (clash.length - 1) * 100) + '%" stop-color="' + cycle[0] + '">'
 					+ '<animate attributeName="stop-color" values="' + cycle.join(';') + '" dur="' + (drift + i * 1.3).toFixed(1) + 's" repeatCount="indefinite"/>'
@@ -719,16 +744,16 @@ const STYLES = {
 				+ '<clipPath id="plate"><rect x="10" y="10" width="492" height="492" rx="120"/></clipPath>'
 				+ '<linearGradient id="slab" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
 				+ '<pattern id="hazard" width="76" height="76" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
-				+ '<rect width="38" height="76" fill="' + hsl(h + 130, 1, 0.52) + '"><animate attributeName="fill" values="' + [hsl(h + 130, 1, 0.52), hsl(h + 250, 1, 0.52), hsl(h + 10, 1, 0.52), hsl(h + 130, 1, 0.52)].join(';') + '" dur="' + (drift + 2).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
-				+ '<rect x="38" width="38" height="76" fill="' + hsl(h + 310, 1, 0.6) + '"><animate attributeName="fill" values="' + [hsl(h + 310, 1, 0.6), hsl(h + 70, 1, 0.6), hsl(h + 190, 1, 0.6), hsl(h + 310, 1, 0.6)].join(';') + '" dur="' + (drift + 3).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
+				+ '<rect width="38" height="76" fill="' + hsl(h + 130, 1, dim(0.52)) + '"><animate attributeName="fill" values="' + [hsl(h + 130, 1, dim(0.52)), hsl(h + 250, 1, dim(0.52)), hsl(h + 10, 1, dim(0.52)), hsl(h + 130, 1, dim(0.52))].join(';') + '" dur="' + (drift + 2).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
+				+ '<rect x="38" width="38" height="76" fill="' + hsl(h + 310, 1, dim(0.6)) + '"><animate attributeName="fill" values="' + [hsl(h + 310, 1, dim(0.6)), hsl(h + 70, 1, dim(0.6)), hsl(h + 190, 1, dim(0.6)), hsl(h + 310, 1, dim(0.6))].join(';') + '" dur="' + (drift + 3).toFixed(1) + 's" repeatCount="indefinite"/></rect>'
 				+ '</pattern>'
 				+ '<pattern id="dots" width="88" height="88" patternUnits="userSpaceOnUse">'
-				+ '<circle cx="22" cy="22" r="13" fill="' + hsl(h + 200, 1, 0.64) + '"/>'
-				+ '<circle cx="66" cy="66" r="13" fill="' + hsl(h + 24, 1, 0.7) + '"/>'
+				+ '<circle cx="22" cy="22" r="13" fill="' + hsl(h + 200, 1, dim(0.64)) + '"/>'
+				+ '<circle cx="66" cy="66" r="13" fill="' + hsl(h + 24, 1, dim(0.7)) + '"/>'
 				+ '</pattern>'
 				+ '<linearGradient id="glyph" x1="0" y1="0" x2="1" y2="1">'
-				+ '<stop offset="0" stop-color="' + hsl(h + 70, 1, 0.78) + '"/>'
-				+ '<stop offset="1" stop-color="' + hsl(h + 250, 1, 0.42) + '"/>'
+				+ '<stop offset="0" stop-color="' + hsl(h + 70, 1, dim(0.78)) + '"/>'
+				+ '<stop offset="1" stop-color="' + hsl(h + 250, 1, dim(0.42)) + '"/>'
 				+ '</linearGradient>'
 				+ '</defs>';
 			// the stars twinkle on independent clocks, so the set never settles:
@@ -745,16 +770,16 @@ const STYLES = {
 			};
 			const twinkles = [
 				[ 100, 96, 36, '#ffffff', 2.6, '0;0.15;0.35;1', '0;1;0.85;0', '0;1;0.9;0' ],
-				[ 424, 128, 26, hsl(h + 150, 1, 0.72), 3.1, '0;0.45;0.55;1', '0;0;1.05;0', '0;0;1;0' ],
-				[ 126, 424, 26, hsl(h + 320, 1, 0.74), 3.6, '0;0.75;0.85;1', '0;0;1;0', '0;0;1;0' ],
-				[ 416, 412, 38, hsl(h + 50, 1, 0.68), 4.1, '0;0.3;0.45;1', '0;1;0.8;0', '0;1;0.8;0' ],
+				[ 424, 128, 26, hsl(h + 150, 1, dim(0.72)), 3.1, '0;0.45;0.55;1', '0;0;1.05;0', '0;0;1;0' ],
+				[ 126, 424, 26, hsl(h + 320, 1, dim(0.74)), 3.6, '0;0.75;0.85;1', '0;0;1;0', '0;0;1;0' ],
+				[ 416, 412, 38, hsl(h + 50, 1, dim(0.68)), 4.1, '0;0.3;0.45;1', '0;1;0.8;0', '0;1;0.8;0' ],
 				[ 256, 74, 19, '#ffffff', 4.7, '0;0.62;0.68;1', '0;0;1.2;0', '0;0;1;0' ],
-				[ 74, 258, 19, hsl(h + 100, 1, 0.76), 5.3, '0;0.2;0.28;1', '0;1;0;0', '0;1;0;0' ],
+				[ 74, 258, 19, hsl(h + 100, 1, dim(0.76)), 5.3, '0;0.2;0.28;1', '0;1;0;0', '0;1;0;0' ],
 			];
 			const plate = '<g clip-path="url(#plate)">'
 				+ frame('url(#slab)', { inset: 10, rx: 120 })
-				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + wob + ' 256 256" to="' + (wob + 360) + ' 256 256" dur="' + spin + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#hazard)" opacity="0.6"/></g>'
-				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + (-wob) + ' 256 256" to="' + (-wob - 360) + ' 256 256" dur="' + (spin + 4) + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#dots)" opacity="0.55"/></g>'
+				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + wob + ' 256 256" to="' + (wob + 360) + ' 256 256" dur="' + spin + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#hazard)" opacity="' + (is_dark ? 0.38 : 0.6) + '"/></g>'
+				+ '<g><animateTransform attributeName="transform" type="rotate" from="' + (-wob) + ' 256 256" to="' + (-wob - 360) + ' 256 256" dur="' + (spin + 4) + 's" repeatCount="indefinite"/><rect x="-160" y="-160" width="832" height="832" fill="url(#dots)" opacity="' + (is_dark ? 0.34 : 0.55) + '"/></g>'
 				+ twinkles.map(t => sparkle(...t)).join('')
 				+ '</g>';
 			const glyph = '<g>'
@@ -763,7 +788,7 @@ const STYLES = {
 				+ '<g transform="translate(5,7)">' + wrapAt(sub(inner, '#ffffff', '#ffffff'), 15) + '</g>'
 				+ wrapAt(sub(inner, 'url(#glyph)', 'rgba(0,0,0,0.85)'), 15)
 				+ '</g>';
-			const border = '<rect x="10" y="10" width="492" height="492" rx="120" fill="none" stroke="#000000" stroke-width="18">'
+			const border = '<rect x="10" y="10" width="492" height="492" rx="120" fill="none" stroke="' + (is_dark ? '#f2f2f2' : '#000000') + '" stroke-width="18">'
 				+ '<animate attributeName="stroke-width" values="18;10;18" dur="' + pulse.toFixed(1) + 's" repeatCount="indefinite"/>'
 				+ '</rect>';
 			const ring = '<g><animate attributeName="opacity" values="0.9;0.3;0.9" dur="' + (pulse + 1.1).toFixed(1) + 's" repeatCount="indefinite"/>'
@@ -832,17 +857,26 @@ const hueFor = name => (HUE_OVERRIDES[name] != null ? HUE_OVERRIDES[name] : hash
 
 const styleKeys = Object.keys(STYLES);
 const iconNames = Object.keys(ICONS);
+// Every set ships in a light and a dark cut. The dark cut is what the desktop
+// asks for when the active colour scheme is dark; it is written beside the light
+// one as <style>_dark, so the same glyph library serves either face.
+const CUTS = [
+	{ suffix: '', dark: false },
+	{ suffix: '_dark', dark: true },
+];
 let written = 0;
 
 for (const style of styleKeys) {
-	const dir = path.join(DIR, style);
-	fs.mkdirSync(dir, { recursive: true });
-	for (const name of iconNames) {
-		const glyph = GLYPHS[ICONS[name]];
-		if (!glyph) { throw new Error('Missing glyph for ' + name); }
-		const svg = STYLES[style].render(hueFor(name), glyph);
-		fs.writeFileSync(path.join(dir, name + '.svg'), svg);
-		written++;
+	for (const cut of CUTS) {
+		const dir = path.join(DIR, style + cut.suffix);
+		fs.mkdirSync(dir, { recursive: true });
+		for (const name of iconNames) {
+			const glyph = GLYPHS[ICONS[name]];
+			if (!glyph) { throw new Error('Missing glyph for ' + name); }
+			const svg = STYLES[style].render(hueFor(name), glyph, 0, cut.dark);
+			fs.writeFileSync(path.join(dir, name + '.svg'), svg);
+			written++;
+		}
 	}
 }
 
@@ -854,11 +888,13 @@ for (const style of styleKeys) {
 // button among them).
 const NOW_STATES = { 'now here': 60, 'now time machine': 240 };
 for (const style of styleKeys) {
-	for (const name in NOW_STATES) {
-		const svg = STYLES[style].render(NOW_STATES[name], GLYPHS[ICONS['now']], 1);
-		fs.writeFileSync(path.join(DIR, style, name + '.svg'), svg);
-		written++;
+	for (const cut of CUTS) {
+		for (const name in NOW_STATES) {
+			const svg = STYLES[style].render(NOW_STATES[name], GLYPHS[ICONS['now']], 1, cut.dark);
+			fs.writeFileSync(path.join(DIR, style + cut.suffix, name + '.svg'), svg);
+			written++;
+		}
 	}
 }
 
-console.log('Wrote ' + written + ' icons across ' + styleKeys.length + ' sets (' + styleKeys.join(', ') + ')');
+console.log('Wrote ' + written + ' icons across ' + styleKeys.length + ' sets x 2 cuts (' + styleKeys.join(', ') + ')');

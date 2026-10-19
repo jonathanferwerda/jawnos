@@ -15204,7 +15204,10 @@ sub father_time($data) {
 get '/manager/icons' => sub($c) {
 	# the desktop's own buttons are rendered with whichever icon set was active at
 	# the time, so when the set changes the browser asks what the new one calls
-	# each of the paths it is already showing
+	# each of the paths it is already showing. A live theme change passes refresh,
+	# because the worker handling this request may still hold the other cut in
+	# its short memo.
+	&subs::icon_set_forget() if $c->param('refresh');
 	my $paths = eval { decode_json $c->param('paths') } || [];
 	my %icons;
 	foreach my $p ( @{$paths} ) {

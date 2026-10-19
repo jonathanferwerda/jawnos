@@ -102,7 +102,7 @@
 	}
 </style>
 
-<div id="ide" style="background-color:<%= $background_colour || 'var(--panel)' %>;">
+<div id="ide" class="theme_surface" style="background-color:<%= $background_colour || 'var(--panel)' %>;">
 	<div id="ide_navbar">
 		<span class="ide_tools">
 			<img id="ide_hamburger" class="ide_icon hover" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu">

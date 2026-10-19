@@ -19,7 +19,7 @@
 	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
 	<% my $privilege = $c->session('privilege'); %>
 	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
-		<div id="mail_sidebar" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
+		<div id="mail_sidebar" class="theme_surface" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
 			<% if ($privilege eq 'citizen') { %>
 				<%= include 'mail/pen_sections', settings => $settings, chatbot_models => $chatbot_models %>
 			<% } else { %>

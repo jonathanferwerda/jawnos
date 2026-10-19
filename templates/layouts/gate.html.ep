@@ -13,7 +13,7 @@
 		<script src="/js/gate.js?string=<%= &subs::jawn_version() %>"></script>
 
   </head>
-  <body><%= content %></body>
+  <body<% if (&subs::theme_is_dark()) { %> class="dark_theme"<% } %>><%= content %></body>
 
 	<script>
 		var bti = sessionStorage.getItem('browser_tab_id'); 

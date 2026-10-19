@@ -3,12 +3,12 @@
 
 	<% if ($toggle eq 'keyboard') { %>
 		<br>
-		<span class="keyboard bc" id="keyboard" style="background-color:<%= $config->{$device}->{'keyboard'}->{'background_colour'} %>;">
+		<span class="keyboard bc theme_surface" id="keyboard" style="background-color:<%= $config->{$device}->{'keyboard'}->{'background_colour'} %>;">
 			<canvas id="keyboard_screen" style="height:70px;width:350px;background-color:#bbd47b;"></canvas><br>
 			<div id="calculator_walkman" style="overflow-x:scroll;width:400px;height:70px">
 				<% foreach my $p (@{$pseudonyms}) { %>
 					<button class="medium_thumb" style="width:60px">
-						<img class="return_key special keyboard_button little_thumb hover" hint="<%= &subs::format_name($p->{'name'}) %>" style="vertical-align:bottom;width:50px;background-color:<%= $config->{$device}->{'pseudonym'}->{'background_colour'} %>;" src="<%= $p->{'icon'} %>" key="<%= $p->{'name'} %>" type="<%= $p->{'type'} %>">
+						<img class="return_key special keyboard_button little_thumb hover theme_surface" hint="<%= &subs::format_name($p->{'name'}) %>" style="vertical-align:bottom;width:50px;background-color:<%= $config->{$device}->{'pseudonym'}->{'background_colour'} %>;" src="<%= $p->{'icon'} %>" key="<%= $p->{'name'} %>" type="<%= $p->{'type'} %>">
 					</button>
 				<% } %>
 			</div>
@@ -55,7 +55,7 @@
 		</span>
 	<% } %>
 	<% if ($toggle eq 'calculator') { %>
-		<span class="keyboard bc" id="calculator" style="background-color:<%= $config->{$device}->{'calculator'}->{'background_colour'} %>;">
+		<span class="keyboard bc theme_surface" id="calculator" style="background-color:<%= $config->{$device}->{'calculator'}->{'background_colour'} %>;">
 			<canvas id="calculator_screen" style="width:370px;height:70px;background-color:#bbd47b;"></canvas><br>
 			<img class="magic_wand tiny_thumb" src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Magic wand">
 			<span class="magic_wands keyboard_cauldron">
@@ -113,7 +113,7 @@
 		</span>
 	<% } %>
 	<% if ($toggle eq 'remote_control') { %>
-		<span class="keyboard bc" id="remote_control" style="background-color:<%= $config->{$device}->{'remote_control'}->{'background_colour'} %>">
+		<span class="keyboard bc theme_surface" id="remote_control" style="background-color:<%= $config->{$device}->{'remote_control'}->{'background_colour'} %>">
 			<% $remote_control = $remote_control || &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
 			<% $remote_machines = $remote_machines ? decode_json $remote_machines : &subs::remote_machine_lister(); %>
 
@@ -151,8 +151,8 @@
 
 	<% } %>
 	<% if ($toggle eq 'controller') { %>
-		<span class="keyboard bc" id="controller" style="height:400px;width:550px;max-width:100%;overflow:scroll;background-color:<%= $config->{$device}->{'controller'}->{'background_colour'} %>">
-			<table style="background-color:yellow;border:solid 3px;" id="websocket_list">
+		<span class="keyboard bc theme_surface" id="controller" style="height:400px;width:550px;max-width:100%;overflow:scroll;background-color:<%= $config->{$device}->{'controller'}->{'background_colour'} %>">
+			<table class="theme_surface" style="background-color:yellow;border:solid 3px;" id="websocket_list">
 				<thead>
 					<th>App</th><th>Neighbours</th><th>Close</th>
 
@@ -186,7 +186,7 @@
 	<% } %>
 	<% if ($toggle eq 'delorean') { %>
 
-		<span class="keyboard bc" id="delorean" style="width: 250px;background-color:<%= $config->{$device}->{'delorean'}->{'background_colour'} %>">
+		<span class="keyboard bc theme_surface" id="delorean" style="width: 250px;background-color:<%= $config->{$device}->{'delorean'}->{'background_colour'} %>">
 			<button id="i" class="now">now</button>
 			<button id="calculate_it">M</button>
 			<button id="appt_view_toggle">V</button>
@@ -297,7 +297,7 @@
 	<% } %>
 	<% if ($toggle eq 'walkboy') { %>
 		<span class="keyboard bc" id="walkboy">
-			<table style="background-color:<%= $config->{$device}->{'walkboy'}->{'background_colour'} %>;" id="websocket_list">
+			<table class="theme_surface" style="background-color:<%= $config->{$device}->{'walkboy'}->{'background_colour'} %>;" id="websocket_list">
 				<thead>
 					<th></th><th>A.V.</th>
 				</thead>
@@ -325,7 +325,7 @@
 		</script>
 	<% } %>
 	<% if ($toggle eq 'sessions') { %>
-		<span class="keyboard" id="sessions" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
+		<span class="keyboard theme_surface" id="sessions" style="display:none;align:left;border: solid 3px black;background-color:<%= $config->{$device}->{'console'}->{'background_colour'} %>;">
 			<span class="room">
 
 				<img class="past_life medium_thumb" direction="rew" src="<%= &subs::icon_for('/icons/prev.jpg') %>" hint="Previous"></img>
@@ -347,7 +347,7 @@
 		</span>
 	<% } %>
 	<% if ($toggle eq 'notifications') { %>
-		<span class="keyboard bc" id="notifications" style="overflow:scroll; height: 50%; width: 50%; max-width: 100%; border:solid 4px; background-color:<%= $config->{$device}->{'notifications'}->{'background_colour'} %>;">
+		<span class="keyboard bc theme_surface" id="notifications" style="overflow:scroll; height: 50%; width: 50%; max-width: 100%; border:solid 4px; background-color:<%= $config->{$device}->{'notifications'}->{'background_colour'} %>;">
 			<input id="notification_search" value="<%= $notifications->{'settings'}->{'search'} %>" style="width:40%">
 			<select id="notification_app_select" value="<%= $notifications->{'settings'}->{'filter'} %>" style="width:40%;">
 				<option value="all" <% if ($notifications->{'settings'}->{'filter'} eq 'all' || $notifications->{'settings'}->{'filter'} eq '') { %>selected <% } %>>All</option>

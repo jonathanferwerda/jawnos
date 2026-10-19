@@ -8268,6 +8268,14 @@ sub setting_setter() {
 		&cache_delete({ context => 'header' });
 		&Websocket::send('server', { console => 'jawnosReloadIcons();' }) unless $sync;
 	}
+	elsif ($setting eq 'manager_background_colour') {
+		# the desktop's dark/light line moved, and with it which cut of the icon
+		# set every render should ask for
+		&icon_set_forget();
+		&cache_delete({ app => '__president', context => 'config' });
+		&cache_delete({ context => 'template' });
+		&cache_delete({ context => 'header' });
+	}
 	elsif ($setting eq 'ci') {
 		# The panel's open circumstance is rendered into the centre view. The
 		# template cache kept the closed panel (an empty ci) for its ten-day
@@ -11422,19 +11430,97 @@ sub theme_colour_for_app() {
 # each miss costs a config read (a DB query plus Sereal decode).
 my $icon_set_memo;
 my $icon_set_memo_time = 0;
+
+# Whether the active desktop theme is dark, and the scheme name driving it (blank
+# when the Misc manager colour is in charge). Memoised on the same short TTL as
+# icon_set() because a render asks it once per icon and once per surface.
+my ($theme_state_memo, $theme_state_time);
+sub theme_state() {
+	my $now = &rightNow();
+	return @{$theme_state_memo} if $theme_state_memo && $now - $theme_state_time < 1;
+	my ($bg, $theme) = &active_manager_background();
+	my $dark = 0;
+	if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
+		my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+		# keep in step with theme_panel_css(): the same 0.5 luminance line
+		# decides whether the chrome is a light or a dark face
+		$dark = ((0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255) < 0.5 ? 1 : 0;
+	}
+	$theme_state_memo = [ $dark, defined $theme ? $theme : '' ];
+	$theme_state_time = $now;
+	return @{$theme_state_memo};
+}
+sub theme_is_dark() {
+	my ($dark) = &theme_state();
+	return $dark;
+}
+
+# A misc surface's background for the theme that is in charge. A running
+# appointment theme paints its own ramp across every surface - the same ramp the
+# scheme picker would write - and the Misc theme keeps each surface's configured
+# colour, darkened when the desktop is dark and that colour is a light face.
+sub theme_surface_colour() {
+	my ($key, $device) = @_;
+	return undef unless defined $key && length $key;
+	my ($dark, $theme) = &theme_state();
+	if (defined $theme && length $theme && $colour_schemes{$theme}) {
+		my $index = 0;
+		foreach my $k ( @gb::misc_settings ) {
+			last if $k eq $key;
+			$index++;
+		}
+		my $ramp = $colour_schemes{$theme};
+		return $ramp->[ $index % scalar @{$ramp} ];
+	}
+	my $config = &config_reader();
+	$device = &device_setter() unless defined $device && length $device;
+	my $colour = $config->{$device}->{$key}->{'background_colour'};
+	return $colour unless defined $colour && length $colour;
+	return $colour unless $dark;
+	return &dark_surface_colour($colour);
+}
+
+# Turn a light face into a dark one of the same hue. A colour already dark is
+# left alone, so a dark scheme's curated ramp survives untouched.
+sub dark_surface_colour() {
+	my ($colour) = @_;
+	return $colour unless defined $colour && length $colour;
+	my $hex = $colour;
+	$hex =~ s/^\s+//;
+	$hex =~ s/\s+$//;
+	$hex =~ s/^\#//;
+	return $colour unless $hex =~ /^[0-9a-fA-F]{6}$/;
+	my ($r, $g, $b) = map { hex } ($hex =~ /(..)(..)(..)/);
+	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
+	return $colour if $l < 0.5;
+	my $tint = $s > 0.32 ? 0.32 : $s;
+	return &_hsl_to_hex($h, $tint, 0.22);
+}
+
 sub icon_set() {
 	my $now = &rightNow();
 	return $icon_set_memo if defined $icon_set_memo && $now - $icon_set_memo_time < 1000;
 	my $config = &config_reader();
-	$icon_set_memo = $config->{'icon_set'} || '';
+	my $set = $config->{'icon_set'} || '';
+	# a dark desktop asks for the set's dark cut: the same glyphs on a plate
+	# that does not glare. The light cut stays the fallback for a hand-drawn
+	# set (which has no generated cut) and for any set without one.
+	if ($set && $set ne 'handdrawn' && $set !~ /_dark$/ && &theme_is_dark()) {
+		my $dark_set = $set . '_dark';
+		$set = $dark_set if -d "public/icons/sets/$dark_set";
+	}
+	$icon_set_memo = $set;
 	$icon_set_memo_time = $now;
 	return $icon_set_memo;
 }
 # Called when the icon set is changed, so the very next render already uses it
-# instead of waiting out the memo above.
+# instead of waiting out the memo above. The theme memo goes with it: a scheme
+# change can flip which cut of the set is wanted.
 sub icon_set_forget {
 	$icon_set_memo = undef;
 	$icon_set_memo_time = 0;
+	$theme_state_memo = undef;
+	$theme_state_time = 0;
 }
 
 # When the hand-drawn set is active, swap a public icon path for its original

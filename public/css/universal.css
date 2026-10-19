@@ -28,6 +28,19 @@ body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .hu
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
 	background-color: var(--panel-2);
 }
+/* ---- dark themes darken the misc surfaces by themselves --------------------
+   A misc surface (the dock, Configure, the keyboard, the bars ...) carries its
+   configured colour as an inline background-color, which is a face picked for a
+   light desktop. On a dark one that face glares, so a translucent dark wash is
+   laid over it as a background layer: the surface keeps the hue the person
+   chose, the text and icons on top are untouched (the wash is behind them), and
+   dropping dark_theme from the body brings the light face straight back. */
+body.dark_theme .theme_surface {
+	background-image: linear-gradient(rgba(14,15,18,0.58), rgba(14,15,18,0.58));
+}
+body.dark_theme .theme_surface_soft {
+	background-image: linear-gradient(rgba(14,15,18,0.28), rgba(14,15,18,0.28));
+}
 /* A control grows to fit its own text instead of a fixed height clipping it the
    moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
    left an input's content box 12px for an 18px line, so the text's lower half was
