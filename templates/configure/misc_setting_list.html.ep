@@ -85,10 +85,10 @@
 	</div>
 	<div class="cfg-row">
 		<label><b>Texture</b></label>
-		<% my $current_texture = &subs::misc_setting('texture') || 'sandglass'; %>
+		<% my $current_texture = &subs::texture_name(); %>
 		<select class="misc_setting" setting="texture" device="<%= $dev %>">
-			<% foreach my $t ( qw/plain sandglass glass paper fabric wood metal/ ) { %>
-				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= &subs::format_name($t) %></option>
+			<% foreach my $t ( qw/classic round sandglass glass paper fabric wood metal/ ) { %>
+				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= $t eq 'classic' ? 'Plain' : &subs::format_name($t) %></option>
 			<% } %>
 		</select>
 	</div>

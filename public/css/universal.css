@@ -432,9 +432,12 @@ select {
    Misc -> Texture writes <body data-texture>. Each material is a stack of
    translucent layers laid over whatever background-color a control already
    carries, so an active green or a destroy red keeps its meaning underneath.
-   Plain adds nothing at all; the rest dress both <button> and the hinted
-   images the program treats as buttons. */
-body[data-texture="plain"] {
+   Plain and round add nothing at all; the rest dress both <button> and the
+   hinted images the program treats as buttons. Plain is the desk exactly as it
+   looked before the materials existed, and round is the solid rounded pill. */
+body[data-texture="plain"],
+body[data-texture="round"],
+body[data-texture="classic"] {
 	--jawnos-texture: none;
 	--jawnos-texture-size: auto;
 	--jawnos-texture-repeat: no-repeat;
@@ -536,14 +539,14 @@ body[data-texture="metal"]:not(.dark_theme) {
 	--jawnos-texture-edge: rgba(60,70,80,.32);
 	--jawnos-texture-shadow: 0 2px 5px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.75), inset 0 -1px 0 rgba(0,0,0,.14);
 }
-body[data-texture]:not([data-texture="plain"]) button:not(.window_action),
-body[data-texture]:not([data-texture="plain"]) input[type=button],
-body[data-texture]:not([data-texture="plain"]) input[type=submit],
-body[data-texture]:not([data-texture="plain"]) input[type=reset],
-body[data-texture]:not([data-texture="plain"]) .ui-button,
-body[data-texture]:not([data-texture="plain"]) img.hover,
-body[data-texture]:not([data-texture="plain"]) img[hint],
-body[data-texture]:not([data-texture="plain"]) img[onclick] {
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button:not(.window_action),
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=button],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=submit],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) input[type=reset],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .ui-button,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img.hover,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[hint],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[onclick] {
 	background-image: var(--jawnos-texture);
 	background-size: var(--jawnos-texture-size, auto);
 	background-repeat: var(--jawnos-texture-repeat, repeat);
@@ -554,7 +557,7 @@ body[data-texture]:not([data-texture="plain"]) img[onclick] {
 /* the title bar wears the desk's material too. Only the layers go on: the
    bar's border already lines up with the window frame, and a button's outer
    drop shadow would fall across the window contents under the bar. */
-body[data-texture]:not([data-texture="plain"]) .top_navbar {
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar {
 	background-image: var(--jawnos-texture);
 	background-size: var(--jawnos-texture-size, auto);
 	background-repeat: var(--jawnos-texture-repeat, repeat);
@@ -562,15 +565,15 @@ body[data-texture]:not([data-texture="plain"]) .top_navbar {
 }
 /* a picture already sitting in a button wears the button's material, not a
    second one of its own */
-body[data-texture]:not([data-texture="plain"]) button img.hover,
-body[data-texture]:not([data-texture="plain"]) button img[hint],
-body[data-texture]:not([data-texture="plain"]) button img[onclick] {
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img.hover,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[hint],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[onclick] {
 	background-image: none;
 	box-shadow: none;
 	border-color: inherit;
 }
-body[data-texture]:not([data-texture="plain"]) img.hover:not([class*="thumb"]),
-body[data-texture]:not([data-texture="plain"]) img[hint]:not([class*="thumb"]),
-body[data-texture]:not([data-texture="plain"]) img[onclick]:not([class*="thumb"]) {
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img.hover:not([class*="thumb"]),
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[hint]:not([class*="thumb"]),
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) img[onclick]:not([class*="thumb"]) {
 	border-radius: 6px;
 }

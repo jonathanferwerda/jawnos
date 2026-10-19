@@ -4,13 +4,23 @@
 // same materials on the canvas clothesline, which CSS cannot reach.
 //
 // A material only ever layers over a control's own colour, so an active green
-// or a destroy red keeps its meaning underneath. Plain is no material at all.
+// or a destroy red keeps its meaning underneath. Plain is the desk exactly as
+// it looked before the materials existed (the clothesline's original frosted
+// pill); round is the solid rounded pill that used to be called plain.
 
-var jawnosTextureNames = [ 'plain', 'sandglass', 'glass', 'paper', 'fabric', 'wood', 'metal' ];
+var jawnosTextureNames = [ 'classic', 'round', 'sandglass', 'glass', 'paper', 'fabric', 'wood', 'metal' ];
+// 'plain' was the solid rounded pill's old internal name: read it as round so a
+// desk that had chosen it keeps the same look now that Plain means the original.
+function jawnosTextureName(value) {
+	if (value === 'plain') { return 'round'; }
+	return value;
+}
 var jawnosTextureCurrent = (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings && jawnos_bar_settings.texture) || 'sandglass';
+jawnosTextureCurrent = jawnosTextureName(jawnosTextureCurrent);
 if (jawnosTextureNames.indexOf(jawnosTextureCurrent) < 0) { jawnosTextureCurrent = 'sandglass'; }
 
 function jawnosTextureApply(value) {
+	value = jawnosTextureName(value);
 	if (!value || jawnosTextureNames.indexOf(value) < 0) { value = 'sandglass'; }
 	jawnosTextureCurrent = value;
 	if (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings) { jawnos_bar_settings.texture = value; }
@@ -171,16 +181,22 @@ function jawnosTexturePattern(ctx, kind, dark) {
 function jawnosTextureFill(ctx, colour, dark) {
 	ctx.fillStyle = colour;
 	ctx.fill();
-	if (jawnosTextureCurrent === 'plain') { return; }
+	if (jawnosTextureBare(jawnosTextureCurrent)) { return; }
 	var pattern = jawnosTexturePattern(ctx, jawnosTextureCurrent, dark);
 	if (pattern) { ctx.fillStyle = pattern; ctx.fill(); }
+}
+
+// Plain and round wear no material on the canvas either: the printers draw
+// exactly what they drew before the materials, with no overlay.
+function jawnosTextureBare(kind) {
+	return kind === 'plain' || kind === 'round' || kind === 'classic';
 }
 
 function jawnosTextureStroke(ctx, colour, dark, width) {
 	ctx.lineWidth = width;
 	ctx.strokeStyle = colour;
 	ctx.stroke();
-	if (jawnosTextureCurrent === 'plain') { return; }
+	if (jawnosTextureBare(jawnosTextureCurrent)) { return; }
 	var pattern = jawnosTexturePattern(ctx, jawnosTextureCurrent, dark);
 	if (pattern) { ctx.strokeStyle = pattern; ctx.stroke(); }
 }
@@ -277,7 +293,57 @@ function jawnosTextureRim(kind, dark) {
 function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	var kind = jawnosTextureCurrent;
 	var radius = h / 2;
-	if (kind === 'plain') {
+	if (kind === 'classic') {
+		// the clothesline exactly as it was drawn before the materials: a pane of
+		// frosted glass, the app colour breathed through it, grain, sheen and a
+		// lit rim, with a bead of the colour set in at the left
+		ctx.save();
+		ctx.beginPath();
+		roundRectPath(ctx, x, y, w, h, radius);
+		ctx.shadowColor = 'rgba(0,0,0,0.38)';
+		ctx.shadowBlur = 9;
+		ctx.shadowOffsetY = 3;
+		ctx.fillStyle = dark ? 'rgba(48,54,62,0.50)' : 'rgba(255,255,255,0.55)';
+		ctx.fill();
+		ctx.shadowColor = 'transparent';
+		ctx.shadowBlur = 0;
+		ctx.shadowOffsetY = 0;
+		ctx.globalAlpha = dark ? 0.12 : 0.08;
+		ctx.fillStyle = colour;
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		// the old frosted pane's fine gray grain is the sandglass tile
+		jawnosTextureGrain(ctx, 'sandglass', dark);
+		jawnosTextureSheen(ctx, 'classic', dark, x, y, w, h);
+		var oldRim = ctx.createLinearGradient(0, y, 0, y + h);
+		if (dark) {
+			oldRim.addColorStop(0, 'rgba(255,255,255,0.46)');
+			oldRim.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+			oldRim.addColorStop(1, 'rgba(255,255,255,0.18)');
+		}
+		else {
+			oldRim.addColorStop(0, 'rgba(0,0,0,0.24)');
+			oldRim.addColorStop(0.5, 'rgba(0,0,0,0.07)');
+			oldRim.addColorStop(1, 'rgba(0,0,0,0.14)');
+		}
+		ctx.beginPath();
+		roundRectPath(ctx, x, y, w, h, radius);
+		ctx.lineWidth = 1;
+		ctx.strokeStyle = oldRim;
+		ctx.stroke();
+		ctx.restore();
+
+		ctx.save();
+		ctx.beginPath();
+		ctx.arc(x + 14, y + (h / 2), 2.4, 0, Math.PI * 2);
+		ctx.fillStyle = colour;
+		ctx.shadowColor = colour;
+		ctx.shadowBlur = 6;
+		ctx.fill();
+		ctx.restore();
+		return;
+	}
+	if (kind === 'round') {
 		ctx.save();
 		ctx.beginPath();
 		roundRectPath(ctx, x, y, w, h, radius);
@@ -339,29 +405,30 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	ctx.restore();
 }
 
-// The label: solid and quiet on plain; small uppercase strokes with a recess
-// and a catch-light on every material, so it reads as etched rather than paint.
+// The label: solid and quiet on round; small uppercase strokes with a recess
+// and a catch-light on plain and every material, so it reads as etched rather
+// than paint.
 function jawnosTextureLabel(ctx, text, x, y, w, h, dark, colour) {
 	var kind = jawnosTextureCurrent;
 	ctx.save();
 	ctx.textBaseline = 'middle';
-	if (kind === 'plain') {
+	if (kind === 'round') {
 		ctx.font = '600 15px Arial, Helvetica, sans-serif';
 		try { ctx.letterSpacing = '0.2px'; } catch (e) {}
-		var plainMeasure = ctx.measureText(text).width;
-		var plainX = ((w - plainMeasure) / 2) + x;
-		var plainY = y + (h / 2) + 0.5;
-		// plain is a solid tile, so the label wears the ink that reads on that
+		var roundMeasure = ctx.measureText(text).width;
+		var roundX = ((w - roundMeasure) / 2) + x;
+		var roundY = y + (h / 2) + 0.5;
+		// round is a solid tile, so the label wears the ink that reads on that
 		// colour; the textured panes are neutral and use the theme's ink
-		var plainInk = (typeof jawnosContrastInk == 'function' && colour) ? jawnosContrastInk(colour) : (dark ? '#f0f4f8' : '#161a1e');
+		var roundInk = (typeof jawnosContrastInk == 'function' && colour) ? jawnosContrastInk(colour) : (dark ? '#f0f4f8' : '#161a1e');
 		// a dark desk's ink is a softened grey, not pure white: a white label on
 		// a solid garment was the one place the theme's own grey did not reach
-		if (dark && plainInk === '#ffffff' && typeof jawnosInk == 'function') { plainInk = jawnosInk(); }
-		var lightInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(plainInk) === '#000000' : dark;
+		if (dark && roundInk === '#ffffff' && typeof jawnosInk == 'function') { roundInk = jawnosInk(); }
+		var lightInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(roundInk) === '#000000' : dark;
 		ctx.fillStyle = lightInk ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.75)';
-		ctx.fillText(text, plainX, plainY + (lightInk ? -1 : 1));
-		ctx.fillStyle = plainInk;
-		ctx.fillText(text, plainX, plainY);
+		ctx.fillText(text, roundX, roundY + (lightInk ? -1 : 1));
+		ctx.fillStyle = roundInk;
+		ctx.fillText(text, roundX, roundY);
 		ctx.restore();
 		return;
 	}

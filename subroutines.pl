@@ -8812,6 +8812,17 @@ sub misc_setting() {
 	return $value;
 }
 
+# The desk's material as the layout and universal.css name it. 'plain' was the
+# solid rounded pill's old internal value; it reads as 'round' now that Plain
+# means the clothesline as it looked before the materials (internal 'classic').
+sub texture_name() {
+	my $value = shift;
+	$value = &misc_setting('texture') unless defined $value;
+	$value = 'round' if defined $value && $value eq 'plain';
+	$value = 'sandglass' unless defined $value && length $value;
+	return $value;
+}
+
 sub settings_grabber() {
 	my $settings = shift;
 #	return {};

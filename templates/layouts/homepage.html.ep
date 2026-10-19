@@ -39,7 +39,7 @@
 			<script src="/js/paperboy.js?string=<%= $string %>"></script>
 		<% } %>
   </head>
-  <body<% if (&subs::theme_is_dark()) { %> class="dark_theme"<% } %> data-texture="<%= &subs::misc_setting('texture') || 'sandglass' %>" style="<%= &subs::theme_panel_css(&subs::theme_surface_colour('homepage', $device) || $config->{$device}->{'homepage'}->{'background_colour'}) %>">
+  <body<% if (&subs::theme_is_dark()) { %> class="dark_theme"<% } %> data-texture="<%= &subs::texture_name() %>" style="<%= &subs::theme_panel_css(&subs::theme_surface_colour('homepage', $device) || $config->{$device}->{'homepage'}->{'background_colour'}) %>">
 		<%= content %>
 		<div id="red_dot" class="circular_thumb dot">
 			<span class="dot_info"><span>
