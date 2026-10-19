@@ -23218,6 +23218,10 @@ sub mail_checker($c) {
 	my $picker = eval { return decode_json $c->param('picker') } || {};
 	my $settings = &subs::settings_grabber({ app => 'mail' });
 	my $privilege = $c->session('privilege');
+	# Chat's LoRa mode: the non-secret settings plus the webhook address a
+	# network server (TTN, ChirpStack, Helium) posts uplinks to. Kept out of the
+	# Mailbox umbrella; only the Chat app renders the panel.
+	my $lorawan = ($scope && $scope eq 'chat') ? &lorawan_public_settings($c) : undef;
 	my $dialled = &mailws_picker_dialled($picker);
 	my $channel_key = $dialled ? &mail_channel_key(&mailws_constructs($picker)) : '';
 	my $channel_public = $dialled ? &mail_public_channel_allows($picker) : 0;
@@ -23347,6 +23351,10 @@ sub mail_checker($c) {
 		&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
 		$main_title = 'Pen';
 	}
+	elsif ($settings->{'subsection'} eq 'lora') {
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, 'lora');
+		$main_title = 'LoRa';
+	}
 	elsif ($phone) {
 		$phone =~ s/\D+//gi;
 		$phone =~ s/^1//;
@@ -23473,6 +23481,7 @@ sub mail_checker($c) {
 		me => $me,
 		incoming_data => $incoming_data,
 		main_title => $main_title,
+		lorawan => $lorawan,
 		chatbot_models => $chatbot_models
 	};
 
@@ -27921,6 +27930,261 @@ sub sms_mms_relay($digits, $subject, $attachments) {
 	return { ok => 0, error => 'no phone reached' };
 };
 
+# ---------------------------------------------------------------------------
+# LoRaWAN: the Chat app's radio mode.
+#
+# The T-Deck carries an SX1262 and RadioLib's LoRaWANNode; JawnOS keeps the
+# network credentials, pushes them to the deck that is on the LAN, and offers a
+# webhook a network server (TTN, ChirpStack, Helium) can post uplinks to. The
+# message itself is filed on the `lora` contact, the same way sms is filed on a
+# number and a ticket on its uuid, so the conversation survives a restart.
+# ---------------------------------------------------------------------------
+
+sub lorawan_settings {
+	my %s;
+	foreach my $k (qw/enabled band subband join_eui dev_eui app_key fport confirmed webhook_token/) {
+		my $v = &subs::setting_grabber({ app => 'mail', setting => 'lorawan_' . $k, device => 'all' });
+		$s{$k} = defined $v ? $v : '';
+	}
+	$s{'band'} = 'EU433' unless length $s{'band'};
+	$s{'subband'} = 1 unless $s{'subband'} =~ /^\d+$/ && $s{'subband'} >= 1 && $s{'subband'} <= 8;
+	$s{'fport'} = 1 unless $s{'fport'} =~ /^\d+$/ && $s{'fport'} >= 1 && $s{'fport'} <= 223;
+	$s{'enabled'} = 'off' unless $s{'enabled'} eq 'on';
+	$s{'confirmed'} = 'off' unless $s{'confirmed'} eq 'on';
+	unless (length $s{'webhook_token'}) {
+		$s{'webhook_token'} = &subs::random_string_creator(40);
+		&subs::setting_setter({ app => 'mail', setting => 'lorawan_webhook_token', value => $s{'webhook_token'}, device => 'all' });
+	}
+	return \%s;
+}
+
+sub lorawan_public_settings($c) {
+	my $s = &lorawan_settings();
+	my $webhook = '';
+	if ($c) {
+		$webhook = eval { $c->url_for('/watch/lorawan')->query(token => $s->{'webhook_token'})->to_abs->to_string } || '';
+	}
+	return {
+		enabled => $s->{'enabled'},
+		band => $s->{'band'},
+		subband => $s->{'subband'},
+		join_eui => $s->{'join_eui'},
+		dev_eui => $s->{'dev_eui'},
+		fport => $s->{'fport'},
+		confirmed => $s->{'confirmed'},
+		has_app_key => (length $s->{'app_key'} ? 1 : 0),
+		webhook_url => $webhook,
+	};
+}
+
+# The T-Deck's HTTP server uses the same port the embedded fleet already knows.
+sub lorawan_devices {
+	my $list = &subs::device_lister(&subs::rightNow(), 'teletype', undef, 'all');
+	my @rows = eval { @{$list} };
+	my ( @out, %seen );
+	foreach my $d (@rows) {
+		next unless ref $d eq 'HASH' && $d->{'ip'} && !$seen{ $d->{'ip'} }++;
+		my $caps = $d->{'capabilities'} || $d->{'caps'} || '';
+		$caps = encode_json($caps) if ref $caps;
+		next unless (($d->{'purpose'} || '') eq 'teletype' || $caps =~ /lora/i);
+		push @out, {
+			name => $d->{'name'} || $d->{'computer_name'} || $d->{'chip_id'} || $d->{'ip'},
+			ip => $d->{'ip'},
+			chip_id => $d->{'chip_id'},
+		};
+	}
+	return \@out;
+}
+
+sub lorawan_secret($c) {
+	my $od = &subs::setting_grabber({ app => 'watch', setting => 'operator_door' });
+	my $op = eval { decode_json $od } || {};
+	my $patience = $op->{'__shutup'}->{'patience'};
+	my $suds = eval { &subs::session_suds($c) };
+	return 'manager' unless $patience && $suds;
+	my $secret = &subs::note_encrypter($patience, $suds);
+	$secret =~ s/\s+//g;
+	return MIME::Base64::encode_base64($secret, '');
+}
+
+sub lorawan_deck_call($path, $form) {
+	my $decks = &lorawan_devices();
+	return { ok => 0, error => 'No LoRa-capable T-Deck is online.' } unless scalar @{$decks};
+	my @results;
+	foreach my $d ( @{$decks} ) {
+		my $url = 'http://' . $d->{'ip'} . ':' . ($config->{'port'} || 80) . $path;
+		my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 60, request_timeout => 65);
+		my $tx = eval { $ua->post($url => form => $form) };
+		my $res = ( $tx && !$tx->error ) ? eval { decode_json($tx->res->body) } : undef;
+		if ( $tx && !$tx->error && $tx->res->is_success && ref $res eq 'HASH' ) {
+			push @results, { device => $d->{'name'}, ip => $d->{'ip'}, ok => 1, result => $res };
+		}
+		else {
+			my $why = ( $tx && $tx->error ) ? ( $tx->error->{'message'} || 'no answer' ) : 'no answer';
+			push @results, { device => $d->{'name'}, ip => $d->{'ip'}, ok => 0, error => $why };
+		}
+	}
+	my ($good) = grep { $_->{'ok'} } @results;
+	return $good if $good;
+	return { ok => 0, error => 'No T-Deck answered.', devices => \@results };
+}
+
+sub lorawan_push_config($c) {
+	my $s = &lorawan_settings();
+	return &lorawan_deck_call('/lorawan_config', {
+		s => &lorawan_secret($c),
+		enabled => $s->{'enabled'},
+		band => $s->{'band'},
+		subband => $s->{'subband'},
+		join_eui => $s->{'join_eui'},
+		dev_eui => $s->{'dev_eui'},
+		app_key => $s->{'app_key'},
+		fport => $s->{'fport'},
+		confirmed => $s->{'confirmed'},
+	});
+}
+
+sub lorawan_send_text($text) {
+	my $s = &lorawan_settings();
+	return { ok => 0, error => 'LoRaWAN is not enabled.' } unless $s->{'enabled'} eq 'on';
+	return { ok => 0, error => 'There is nothing to send.' } unless defined $text && length $text;
+	return &lorawan_deck_call('/lorawan_send', {
+		s => 'manager',
+		message => $text,
+		confirmed => $s->{'confirmed'},
+	});
+}
+
+sub lorawan_webhook_text($body) {
+	my $text = '';
+	if ( ref $body->{'uplink_message'} eq 'HASH' ) {
+		my $up = $body->{'uplink_message'};
+		if ( ref $up->{'decoded_payload'} eq 'HASH' ) {
+			$text = $up->{'decoded_payload'}->{'text'} || $up->{'decoded_payload'}->{'message'} || $up->{'decoded_payload'}->{'msg'} || '';
+		}
+		if ( !length $text && $up->{'frm_payload'} ) {
+			my $bytes = eval { decode_base64($up->{'frm_payload'}) };
+			if ( defined $bytes && length $bytes ) {
+				my $decoded = eval { decode_json($bytes) };
+				if ( ref $decoded eq 'HASH' ) {
+					$text = $decoded->{'text'} || $decoded->{'message'} || $decoded->{'msg'} || '';
+				}
+				else {
+					$text = $bytes;
+				}
+			}
+		}
+	}
+	$text ||= $body->{'text'} || $body->{'message'} || $body->{'msg'} || $body->{'payload'} || '';
+	if ( ref $text ) {
+		$text = $text->{'text'} || $text->{'message'} || '' if ref $text eq 'HASH';
+	}
+	$text = "$text";
+	$text =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
+	$text =~ s/^\s+|\s+$//g;
+	return $text;
+}
+
+get '/manager/lorawan/settings' => sub($c) {
+	my $s = &lorawan_public_settings($c);
+	$s->{'devices'} = &lorawan_devices();
+	$c->render(json => { ok => 1, %{$s} });
+};
+
+post '/manager/lorawan/settings' => sub($c) {
+	my %allowed = map { $_ => 1 } qw/EU433 EU868 US915 AU915 AS923 AS923_2 AS923_3 AS923_4 KR920 IN865 CN470/;
+	my $band = $c->param('band') // 'EU433';
+	return $c->render(json => { ok => 0, error => 'unknown LoRaWAN band' }) unless $allowed{$band};
+	my $hex = sub {
+		my ($v, $len) = @_;
+		$v = defined $v ? uc $v : '';
+		$v =~ s/[^0-9A-F]//g;
+		return ( length($v) == $len ) ? $v : undef;
+	};
+	my $join = $hex->($c->param('join_eui'), 16);
+	my $dev = $hex->($c->param('dev_eui'), 16);
+	return $c->render(json => { ok => 0, error => 'Join EUI must be 16 hex characters' }) unless $join;
+	return $c->render(json => { ok => 0, error => 'Dev EUI must be 16 hex characters' }) unless $dev;
+	my $key = $c->param('app_key') // '';
+	if ( length $key ) {
+		$key = $hex->($key, 32);
+		return $c->render(json => { ok => 0, error => 'App key must be 32 hex characters' }) unless $key;
+	}
+	my $subband = int($c->param('subband') // 1);
+	$subband = 1 if $subband < 1 || $subband > 8;
+	my $fport = int($c->param('fport') // 1);
+	$fport = 1 if $fport < 1 || $fport > 223;
+	my %set = (
+		enabled => ($c->param('enabled') ? 'on' : 'off'),
+		band => $band,
+		subband => $subband,
+		join_eui => $join,
+		dev_eui => $dev,
+		fport => $fport,
+		confirmed => ($c->param('confirmed') ? 'on' : 'off'),
+	);
+	$set{'app_key'} = $key if length $key;
+	foreach my $k ( keys %set ) {
+		&subs::setting_setter({ app => 'mail', setting => 'lorawan_' . $k, value => $set{$k}, device => 'all' });
+	}
+	my $push = &lorawan_push_config($c);
+	$c->render(json => { ok => 1, push => $push, settings => &lorawan_public_settings($c) });
+};
+
+post '/manager/lorawan/join' => sub($c) {
+	my $res = &lorawan_deck_call('/lorawan_join', { s => &lorawan_secret($c) });
+	$c->render(json => $res);
+};
+
+post '/manager/lorawan/send' => sub($c) {
+	my $text = $c->param('message') // '';
+	$c->render(json => &lorawan_send_text($text));
+};
+
+get '/manager/lorawan/status' => sub($c) {
+	my $res = &lorawan_deck_call('/lorawan_status', { s => 'manager' });
+	$c->render(json => $res);
+};
+
+# The network server's uplink webhook. It has no browser session, so the task
+# token in the query is the gate; hooks.pl lets this one path through for that
+# reason. TTN v3 (uplink_message.decoded_payload), TTN v2 (payload_fields) and a
+# plain JSON {text:...} body are all accepted.
+any '/watch/lorawan' => sub($c) {
+	my $s = &lorawan_settings();
+	my $token = $c->param('token') // '';
+	unless ( length($s->{'webhook_token'}) && &secure_compare($token, $s->{'webhook_token'}) ) {
+		return $c->render(status => 403, json => { ok => 0, error => 'bad token' });
+	}
+	my $body = eval { $c->req->json } || {};
+	$body = {} unless ref $body eq 'HASH';
+	foreach my $k (qw/text message msg payload/) {
+		$body->{$k} = $c->param($k) if !defined $body->{$k} && defined $c->param($k);
+	}
+	my $text = &lorawan_webhook_text($body);
+	return $c->render(json => { ok => 0, error => 'nothing to file' }) unless length $text;
+	my $from = 'LoRa';
+	if ( ref $body->{'end_device_ids'} eq 'HASH' && $body->{'end_device_ids'}->{'device_id'} ) {
+		$from = $body->{'end_device_ids'}->{'device_id'};
+	}
+	elsif ( $body->{'dev_id'} ) { $from = $body->{'dev_id'}; }
+	elsif ( $body->{'device'} && !ref $body->{'device'} ) { $from = $body->{'device'}; }
+	$from = 'LoRa' if ref $from;
+	my $uuid = &subs::random_string_creator(25);
+	my $row = {
+		uuid => $uuid,
+		timestamp => &subs::rightNow(),
+		server_time => &subs::rightNow(),
+		body => $text,
+		manager_file => $from,
+		status => 'public',
+		contact => 'lora',
+	};
+	&subs::db_insert('mailbox', $row);
+	&subs::mail_arrival({ c => $c, %{$row} });
+	$c->render(json => { ok => 1, uuid => $uuid });
+};
+
 post '/manager/sms/message' => sub($c) {
 	my $digits = $c->param('digits');
 	my $message = $c->param('message');
@@ -32263,6 +32527,19 @@ websocket '/mail/ws' => sub ($c) {
 				if (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0) {
 					my $mms = &sms_mms_relay($m->{'phone'}, $sms_msg, $m->{'attachments'});
 					$log->info('mms relay: ' . ($mms->{'via'} || $mms->{'error'} || '?'));
+				}
+			}
+			elsif ($trusted && ($m->{'transport'} // '') eq 'lora') {
+				# the LoRaWAN uplink can take a few seconds (join, duty cycle, the
+				# receive windows), so it leaves the socket's turn to a worker
+				my $lora_msg = $m->{'body'} || $m->{'msg'} || '';
+				$lora_msg =~ s/\n+$//;
+				if (length $lora_msg) {
+					&subs::subprocessor(sub {
+						Mojo::IOLoop->reset;
+						my $res = &lorawan_send_text($lora_msg);
+						$log->info('lorawan send: ' . encode_json($res));
+					}, { name => 'lorawan send' });
 				}
 			}
 			if ($m->{'mail_contact'} && $m->{'mail_contact'} eq 'pen') {

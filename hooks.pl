@@ -335,6 +335,9 @@ hook before_dispatch => sub {
 		# the privacy notice is linked from the public homepage and the store, and
 		# a visitor must be able to read it before asking for a ticket
 		$path eq '/privacy' ||
+		# the LoRaWAN network server's uplink webhook: no browser session, and the
+		# route checks its own task token against the saved one
+		$path eq '/watch/lorawan' ||
 		# the generated UI/help catalogs and the dependency-free DOM translator are
 		# static assets on the public pages too
 		$path =~ m{^/i18n/} ||

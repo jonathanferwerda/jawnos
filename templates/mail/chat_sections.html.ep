@@ -86,4 +86,42 @@
 			</tbody>
 		</table>
 	</div>
+<% } elsif ($settings->{'subsection'} eq 'lora') { %>
+	<% my $lw = $lorawan || {}; %>
+	<% my @bands = qw/EU433 EU868 US915 AU915 AS923 AS923_2 AS923_3 AS923_4 KR920 IN865 CN470/; %>
+	<div id="chat_lora_panel" class="chat_lora_panel">
+		<div class="chat_lora_head">
+			<b>LoRa mode</b>
+			<span id="chat_lora_state" class="chat_lora_state" data-state="unknown">checking</span>
+		</div>
+		<p class="chat_lora_hint"><%= &subs::ui('Send and receive through a LoRaWAN network using the T-Deck SX1262 radio. A network server must forward uplinks to the webhook below.') %></p>
+		<details class="chat_lora_settings">
+			<summary><%= &subs::ui('Network and credentials') %></summary>
+			<label><input type="checkbox" id="lorawan_enabled" <% if (($lw->{'enabled'} // '') eq 'on') { %>checked<% } %>> <%= &subs::ui('Enable LoRaWAN') %></label>
+			<label><%= &subs::ui('Band') %>
+				<select id="lorawan_band">
+					<% foreach my $b ( @bands ) { %>
+						<option value="<%= $b %>" <% if (($lw->{'band'} || 'EU433') eq $b) { %>selected<% } %>><%= $b %></option>
+					<% } %>
+				</select>
+			</label>
+			<label><%= &subs::ui('Sub-band') %> <input id="lorawan_subband" type="number" min="1" max="8" value="<%= $lw->{'subband'} || 1 %>"></label>
+			<label><%= &subs::ui('Join EUI') %> <input id="lorawan_join_eui" value="<%= $lw->{'join_eui'} || '' %>" placeholder="16 hex"></label>
+			<label><%= &subs::ui('Dev EUI') %> <input id="lorawan_dev_eui" value="<%= $lw->{'dev_eui'} || '' %>" placeholder="16 hex"></label>
+			<label><%= &subs::ui('App key') %> <input id="lorawan_app_key" type="password" value="" placeholder="<%= $lw->{'has_app_key'} ? 'saved - leave blank to keep' : '32 hex' %>"></label>
+			<label><%= &subs::ui('Port') %> <input id="lorawan_fport" type="number" min="1" max="223" value="<%= $lw->{'fport'} || 1 %>"></label>
+			<label><input type="checkbox" id="lorawan_confirmed" <% if (($lw->{'confirmed'} // '') eq 'on') { %>checked<% } %>> <%= &subs::ui('Confirmed uplinks') %></label>
+			<div class="chat_lora_buttons">
+				<button type="button" id="lorawan_save"><%= &subs::ui('Save and configure') %></button>
+				<button type="button" id="lorawan_join"><%= &subs::ui('Join network') %></button>
+				<button type="button" id="lorawan_test"><%= &subs::ui('Send test') %></button>
+			</div>
+			<span id="lorawan_status"></span>
+		</details>
+		<div class="chat_lora_webhook">
+			<label><%= &subs::ui('Network server webhook') %></label>
+			<input id="lorawan_webhook" readonly value="<%= $lw->{'webhook_url'} || '' %>">
+			<button type="button" id="lorawan_copy_webhook"><%= &subs::ui('Copy') %></button>
+		</div>
+	</div>
 <% } %>

@@ -30,15 +30,28 @@ function chatBackRestore() {
 // is the road until another is picked.
 function chatTransportOptions() {
 	var sel = $('#mail_transport');
-	var onPerson = $('.mail_subsection.active').attr('section') == 'tickets' || $('.mail_subsection.active').attr('section') == 'sms';
+	var section = $('.mail_subsection.active').attr('section') || '';
+	var onPerson = section == 'tickets' || section == 'sms';
+	var onLora = section == 'lora';
 	var hasPhone = (localStorage.getItem('mail_phone') || '') != '';
-	sel.toggle(!!onPerson);
+	// LoRa is a road only on the LoRa section; a person's thread offers chat and
+	// their phone lines, so a text never quietly becomes a radio broadcast.
+	sel.find('option[value="lora"]').toggle(onLora);
+	sel.toggle(onPerson || onLora);
+	if (onLora) {
+		sel.val('lora');
+	}
+	else if (sel.val() == 'lora') {
+		sel.val('chat');
+	}
 	if (sel.val() == 'sms') {
 		var first = sel.find('option[value="sms"]').first();
 		if (first.length) { sel.find('option').prop('selected', false); first.prop('selected', true); }
 	}
 	sel.find('option[value="sms"]').prop('disabled', !hasPhone);
 	if (!hasPhone && sel.val() == 'sms') { sel.val('chat'); }
+	updateChatSmsCount();
+	if (onLora) { setTimeout(chatLoraRefresh, 200); }
 }
 $(document).on('click', '.mail_subsection', function () { setTimeout(chatTransportOptions, 50); });
 
@@ -65,6 +78,7 @@ $(document).on('click', '#chat_friends .chat_friend', function () {
 		data: data,
 		success: function (response) {
 			windowMaker(response);
+			chatDressMessages();
 			// no ticket: the next message must travel by sms, or it would file on
 			// a name that has no ticket thread to read it back from
 			if (!uuid) { $('#mail_transport').val('sms'); }
@@ -143,4 +157,196 @@ $(document).on('click', '.chat_back_to_appointment', function () {
 			appointment_chron();
 		}
 	});
+});
+
+// ---- SMS character counter ------------------------------------------------
+// SmsManager.divideMessage() already splits a unicode body correctly; the
+// counter just tells the person which alphabet it will use. Unicode bodies
+// (emoji, CJK, accented text) are 70 UTF-16 units per segment on most networks,
+// GSM-7 bodies 160.
+function updateChatSmsCount() {
+	var box = $('#chat_sms_count');
+	if (!box.length) { return; }
+	var msg = $('#message').val() || '';
+	var section = $('.mail_subsection.active').attr('section') || '';
+	var transport = ($('#mail_transport').length && $('#mail_transport').is(':visible')) ? $('#mail_transport').val() : '';
+	if (!msg.length || (transport != 'sms' && section != 'sms')) { box.text(''); return; }
+	var unicode = /[^\x00-\x7F]/.test(msg);
+	var units = unicode ? msg.length : Array.from(msg).length;
+	var per = unicode ? 70 : 160;
+	var segments = Math.max(1, Math.ceil(units / per));
+	box.text((unicode ? 'Unicode' : 'GSM') + ' · ' + units + '/' + (per * segments) + ' · ' + segments + ' SMS');
+}
+
+// ---- emoji -----------------------------------------------------------------
+function chatInsertEmoji(emoji) {
+	var ta = document.getElementById('message');
+	if (!ta) { return; }
+	var start = ta.selectionStart || 0;
+	var end = ta.selectionEnd || 0;
+	ta.value = ta.value.slice(0, start) + emoji + ta.value.slice(end);
+	ta.selectionStart = ta.selectionEnd = start + emoji.length;
+	ta.focus();
+	updateChatSmsCount();
+}
+
+$(document).on('click', '#mail_emoji_toggle', function (e) {
+	e.preventDefault();
+	var panel = $('#chat_emoji_panel');
+	panel.prop('hidden', !panel.prop('hidden'));
+});
+
+$(document).on('click', '.chat_emoji', function (e) {
+	e.preventDefault();
+	chatInsertEmoji($(this).attr('data-emoji') || '');
+});
+
+$(document).on('input keyup', '#message', updateChatSmsCount);
+$(document).on('change', '#mail_transport', updateChatSmsCount);
+
+// ---- LoRaWAN ---------------------------------------------------------------
+var chatLoraLoaded = false;
+function chatLoraSetStatus(label, state) {
+	$('#chat_lora_state').text(label || 'checking').attr('data-state', state || 'unknown');
+}
+
+function chatLoraFill(s) {
+	if (!s || typeof s !== 'object') { return; }
+	$('#lorawan_enabled').prop('checked', s.enabled == 'on');
+	$('#lorawan_band').val(s.band || 'EU433');
+	$('#lorawan_subband').val(s.subband || 1);
+	$('#lorawan_join_eui').val(s.join_eui || '');
+	$('#lorawan_dev_eui').val(s.dev_eui || '');
+	$('#lorawan_fport').val(s.fport || 1);
+	$('#lorawan_confirmed').prop('checked', s.confirmed == 'on');
+	if (s.webhook_url) { $('#lorawan_webhook').val(s.webhook_url); }
+	$('#lorawan_app_key').attr('placeholder', s.has_app_key ? 'saved - leave blank to keep' : '32 hex');
+	chatLoraLoaded = true;
+}
+
+function chatLoraRefresh() {
+	if (!$('#chat_lora_panel').length) { return; }
+	if (!chatLoraLoaded) {
+		$.get('/manager/lorawan/settings', function (r) {
+			if (r && r.ok) { chatLoraFill(r); }
+		});
+	}
+	$.get('/manager/lorawan/status', function (r) {
+		if (!r) { chatLoraSetStatus('no deck', 'off'); return; }
+		var res = r.result || (r.devices && r.devices[0] && r.devices[0].result) || null;
+		if (!res) {
+			chatLoraSetStatus('no deck', 'off');
+			$('#lorawan_status').text(r.error || 'No LoRa-capable T-Deck is online.');
+			return;
+		}
+		var joined = res.joined == 'yes';
+		var enabled = res.enabled == 'on';
+		chatLoraSetStatus(joined ? 'joined' : (enabled ? 'not joined' : 'off'), joined ? 'on' : (enabled ? 'unknown' : 'off'));
+		var bits = [];
+		if (res.band) { bits.push(res.band); }
+		if (res.max_payload) { bits.push('max ' + res.max_payload + ' bytes'); }
+		if (res.error) { bits.push(res.error); }
+		if (res.rssi) { bits.push('RSSI ' + res.rssi + ' dBm'); }
+		$('#lorawan_status').text(bits.join(' · '));
+	});
+}
+
+$(document).on('click', '#lorawan_save', function () {
+	chatLoraSetStatus('saving', 'unknown');
+	var data = {
+		enabled: $('#lorawan_enabled').is(':checked') ? 'on' : '',
+		band: $('#lorawan_band').val() || 'EU433',
+		subband: $('#lorawan_subband').val() || 1,
+		join_eui: $('#lorawan_join_eui').val() || '',
+		dev_eui: $('#lorawan_dev_eui').val() || '',
+		app_key: $('#lorawan_app_key').val() || '',
+		fport: $('#lorawan_fport').val() || 1,
+		confirmed: $('#lorawan_confirmed').is(':checked') ? 'on' : ''
+	};
+	$.post('/manager/lorawan/settings', data, function (r) {
+		if (!r || !r.ok) {
+			$('#lorawan_status').text((r && r.error) || 'Could not save the LoRaWAN settings.');
+			chatLoraSetStatus('error', 'off');
+			return;
+		}
+		chatLoraFill(r.settings || {});
+		$('#lorawan_app_key').val('');
+		if (r.push && !r.push.ok) {
+			$('#lorawan_status').text((r.push.error || 'No T-Deck answered.') + ' The settings are saved here.');
+		}
+		else {
+			$('#lorawan_status').text('Saved and sent to the deck.');
+		}
+		chatLoraRefresh();
+	}).fail(function () {
+		$('#lorawan_status').text('Could not reach the manager.');
+		chatLoraSetStatus('error', 'off');
+	});
+});
+
+$(document).on('click', '#lorawan_join', function () {
+	chatLoraSetStatus('joining', 'unknown');
+	$('#lorawan_status').text('Joining the network…');
+	$.post('/manager/lorawan/join', {}, function (r) {
+		if (!r || !r.ok) {
+			$('#lorawan_status').text((r && r.error) || 'The deck could not join.');
+			chatLoraSetStatus('not joined', 'off');
+			return;
+		}
+		$('#lorawan_status').text('Joined.');
+		chatLoraRefresh();
+	});
+});
+
+$(document).on('click', '#lorawan_test', function () {
+	$('#lorawan_status').text('Sending a test uplink…');
+	$.post('/manager/lorawan/send', { message: 'JawnOS LoRa test' }, function (r) {
+		if (!r || !r.ok) {
+			$('#lorawan_status').text((r && r.error) || 'The deck could not send.');
+			return;
+		}
+		$('#lorawan_status').text('Test sent.');
+	});
+});
+
+$(document).on('click', '#lorawan_copy_webhook', function () {
+	var text = $('#lorawan_webhook').val() || '';
+	if (!text) { return; }
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text);
+	}
+	else {
+		$('#lorawan_webhook').trigger('select');
+		document.execCommand('copy');
+	}
+});
+
+// Live envelopes are rendered by the shared server template, which does not
+// know a window is Chat. Dress any old-style message that lands in the chat
+// shell: strip the mailbox floats and give it the same bubble classes the
+// initial render already wears.
+function chatDressMessages(root) {
+	var scope = $(root || '.chat_shell');
+	scope.find('.mailbox_message').each(function () {
+		var b = $(this);
+		if (b.hasClass('chat_bubble')) { return; }
+		var inner = b.children('span').first();
+		if (!inner.length) { return; }
+		var outgoing = ((inner.attr('style') || '').indexOf('float:right') >= 0);
+		b.addClass('chat_bubble ' + (outgoing ? 'chat_out' : 'chat_in')).removeAttr('style');
+		inner.removeAttr('style').addClass('chat_bubble_inner');
+		inner.find('.time').addClass('chat_time');
+		inner.find('b').addClass('chat_sender');
+		inner.find('.mailbox_message_contents').addClass('chat_text');
+	});
+}
+
+$(function () {
+	if ($('.chat_shell').length) {
+		chatDressMessages();
+		if (localStorage.getItem('mail_sidebar') == 'off') {
+			$('#mail_sidebar').hide();
+			$('#conversation').show();
+		}
+	}
 });

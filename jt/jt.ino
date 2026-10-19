@@ -12,6 +12,9 @@
 #include "FFat.h"
 // TFT_eSPI defines FS_NO_GLOBALS before FS.h, so the global FS alias is gone
 using fs::FS;
+// fsAccount() and the SD/FFat store helpers name File directly, and TFT_eSPI
+// has already suppressed FS.h's globals.
+using fs::File;
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
@@ -776,6 +779,24 @@ static bool getTouch(int16_t &x, int16_t &y);
 // is what stopped the deck dead right after the third boot dot).
 extern SPIClass spi;
 SX1262 radio = new Module(RADIO_CS_PIN, RADIO_DIO1_PIN, RADIO_RST_PIN, RADIO_BUSY_PIN, spi);
+
+// ---- LoRaWAN ---------------------------------------------------------------
+// The same SX1262 that carries the point-to-point chat can be a LoRaWAN node.
+// The credentials live in config.json (pushed by the Chat app) and RadioLib
+// owns the join, the frame counters and the duty cycle. LoRaWAN and the old
+// raw-LoRa chat are alternatives: when LoRaWAN is on, readRadio() and
+// loraChatBroadcast() stand down so the radio is not left in two modes.
+LoRaWANNode *lorawanNode = nullptr;
+bool     lorawan_enabled = false;
+String   lorawan_band = "EU433";
+uint8_t  lorawan_subband = 1;
+String   lorawan_join_eui = "";
+String   lorawan_dev_eui = "";
+String   lorawan_app_key = "";
+uint8_t  lorawan_fport = 1;
+bool     lorawan_confirmed = false;
+String   lorawan_last_error = "";
+int16_t  lorawan_last_rssi = 0;
 volatile bool operationDone = false;
 void setFlag(void) {
   // we sent or received a packet, set the flag
@@ -1276,7 +1297,7 @@ void setup() {
     m["app"] = server.arg("app");
     String jsm = JSON.stringify(m);
     //  Serial.println("Sending msg: " + jsm);
-    if (hasRadio) {
+    if (hasRadio && !lorawan_enabled) {
       radio.startTransmit(jsm);
       delay(2000);
       radio.startReceive();
@@ -1294,6 +1315,72 @@ void setup() {
     else {
       server.send(200, "text/plain", "unknown");
     }
+  });
+  // LoRaWAN: the Chat app's radio mode. The manager pushes the credentials and
+  // asks for a join or an uplink; the deck reports what RadioLib says. The same
+  // `s` hand-over token the chat bridge carries is required.
+  server.on("/lorawan_config", []() {
+    if (server.arg("s").length() == 0) {
+      server.send(403, "application/json", "{\"ok\":false,\"error\":\"no token\"}");
+      return;
+    }
+    if (server.hasArg("enabled")) { lorawan_enabled = server.arg("enabled") == "on"; }
+    if (server.hasArg("band")) { lorawan_band = server.arg("band"); }
+    if (server.hasArg("subband")) {
+      int s = server.arg("subband").toInt();
+      lorawan_subband = (s >= 1 && s <= 8) ? (uint8_t)s : 1;
+    }
+    if (server.hasArg("join_eui")) { lorawan_join_eui = server.arg("join_eui"); }
+    if (server.hasArg("dev_eui")) { lorawan_dev_eui = server.arg("dev_eui"); }
+    if (server.hasArg("app_key") && server.arg("app_key").length()) { lorawan_app_key = server.arg("app_key"); }
+    if (server.hasArg("fport")) {
+      int p = server.arg("fport").toInt();
+      lorawan_fport = (p >= 1 && p <= 223) ? (uint8_t)p : 1;
+    }
+    if (server.hasArg("confirmed")) { lorawan_confirmed = server.arg("confirmed") == "on"; }
+    configSave();
+    lorawanBegin();
+    server.send(200, "application/json", lorawanStatusJson());
+  });
+  server.on("/lorawan_join", []() {
+    if (server.arg("s").length() == 0) {
+      server.send(403, "application/json", "{\"ok\":false,\"error\":\"no token\"}");
+      return;
+    }
+    int16_t state = lorawanJoin();
+    JSONVar r;
+    r["ok"] = (state == RADIOLIB_ERR_NONE);
+    r["status"] = state;
+    r["error"] = lorawan_last_error;
+    r["joined"] = (lorawanNode != nullptr && lorawanNode->isActivated()) ? "yes" : "no";
+    server.send(200, "application/json", JSON.stringify(r));
+  });
+  server.on("/lorawan_send", []() {
+    if (server.arg("s").length() == 0) {
+      server.send(403, "application/json", "{\"ok\":false,\"error\":\"no token\"}");
+      return;
+    }
+    String message = server.arg("message");
+    if (message.length() == 0) {
+      server.send(200, "application/json", "{\"ok\":false,\"error\":\"nothing to send\"}");
+      return;
+    }
+    if (server.hasArg("confirmed")) { lorawan_confirmed = server.arg("confirmed") == "on"; }
+    int16_t state = lorawanSend(message, lorawan_confirmed);
+    JSONVar r;
+    r["ok"] = (state == RADIOLIB_ERR_NONE);
+    r["status"] = state;
+    r["error"] = lorawan_last_error;
+    r["joined"] = (lorawanNode != nullptr && lorawanNode->isActivated()) ? "yes" : "no";
+    r["max_payload"] = (lorawanNode != nullptr && lorawanNode->isActivated()) ? lorawanNode->getMaxPayloadLen() : 0;
+    server.send(200, "application/json", JSON.stringify(r));
+  });
+  server.on("/lorawan_status", []() {
+    if (server.arg("s").length() == 0) {
+      server.send(403, "application/json", "{\"ok\":false,\"error\":\"no token\"}");
+      return;
+    }
+    server.send(200, "application/json", lorawanStatusJson());
   });
   server.on("/device_query", []() {
     JSONVar g;
@@ -1504,8 +1591,15 @@ void setup() {
   int state = radio.begin(433.0);
   if (state == RADIOLIB_ERR_NONE) {
     radio.setDio1Action(setFlag);
-    radio.startReceive();
     hasRadio = true;
+    // LoRaWAN owns the radio when it is on; the point-to-point chat stays an
+    // alternative mode and must not also sit in raw receive waiting for a packet.
+    if (lorawan_enabled) {
+      lorawanBegin();
+    }
+    else {
+      radio.startReceive();
+    }
     deckLog("[radio] up");
   } else {
     deckLog("[radio] init failed (%d); continuing without it", state);
@@ -2873,7 +2967,7 @@ void loop() {
 }
 
 void readRadio() {
-  if (loraChatReceiver && hasRadio) {
+  if (loraChatReceiver && hasRadio && !lorawan_enabled) {
     if (operationDone) {
       operationDone = false;
       String str;
@@ -3343,7 +3437,7 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
   // The old test here was `if (loraBroadcastToggle)`, which is the *event
   // callback* sitting next to this function, so it was always true; the flag the
   // button actually sets is loraChatBroadcaster. And no radio, no transmit.
-  if (hasRadio && loraChatBroadcaster) {
+  if (hasRadio && loraChatBroadcaster && !lorawan_enabled) {
     JSONVar msg;
     msg["u"] = computer_name;
     msg["m"] = body;
@@ -3356,6 +3450,164 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
     //   radio.startReceive();
     Serial.println("back to listening");
   }
+}
+
+// ---- LoRaWAN ---------------------------------------------------------------
+
+String lorawanCleanHex(String value) {
+  String out = "";
+  for (size_t i = 0; i < value.length(); i++) {
+    char c = value[i];
+    if (c >= '0' && c <= '9') { out += c; }
+    else if (c >= 'a' && c <= 'f') { out += (char)(c - 32); }
+    else if (c >= 'A' && c <= 'F') { out += c; }
+  }
+  return out;
+}
+
+int lorawanNibble(char c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  return 0;
+}
+
+uint64_t lorawanEui(const String& hex) {
+  uint64_t value = 0;
+  for (int i = 0; i < 16 && i < (int)hex.length(); i++) {
+    value = (value << 4) | (uint64_t)lorawanNibble(hex[i]);
+  }
+  return value;
+}
+
+bool lorawanKey(const String& hex, uint8_t *out) {
+  if (hex.length() != 32 || out == NULL) { return false; }
+  for (int i = 0; i < 16; i++) {
+    out[i] = (uint8_t)((lorawanNibble(hex[i * 2]) << 4) | lorawanNibble(hex[i * 2 + 1]));
+  }
+  return true;
+}
+
+const LoRaWANBand_t* lorawanBandFor(const String& band) {
+  if (band == "EU868") { return &EU868; }
+  if (band == "US915") { return &US915; }
+  if (band == "AU915") { return &AU915; }
+  if (band == "AS923") { return &AS923; }
+  if (band == "AS923_2") { return &AS923_2; }
+  if (band == "AS923_3") { return &AS923_3; }
+  if (band == "AS923_4") { return &AS923_4; }
+  if (band == "KR920") { return &KR920; }
+  if (band == "IN865") { return &IN865; }
+  if (band == "CN470") { return &CN470; }
+  return &EU433;
+}
+
+void lorawanBegin() {
+  lorawan_last_error = "";
+  if (!lorawan_enabled) { return; }
+  if (!hasRadio) { lorawan_last_error = "no radio"; return; }
+  String join = lorawanCleanHex(lorawan_join_eui);
+  String dev = lorawanCleanHex(lorawan_dev_eui);
+  String key = lorawanCleanHex(lorawan_app_key);
+  if (join.length() != 16 || dev.length() != 16 || key.length() != 32) {
+    lorawan_last_error = "credentials incomplete";
+    return;
+  }
+  uint8_t appKey[16];
+  if (!lorawanKey(key, appKey)) {
+    lorawan_last_error = "bad app key";
+    return;
+  }
+  if (lorawanNode != nullptr) {
+    delete lorawanNode;
+    lorawanNode = nullptr;
+  }
+  lorawanNode = new LoRaWANNode(&radio, lorawanBandFor(lorawan_band), lorawan_subband ? lorawan_subband : 1);
+  // NULL nwkKey selects LoRaWAN 1.0.x, where the AppKey derives both keys.
+  int16_t state = lorawanNode->beginOTAA(lorawanEui(join), lorawanEui(dev), NULL, appKey);
+  if (state != RADIOLIB_ERR_NONE) {
+    lorawan_last_error = "begin failed " + String(state);
+    delete lorawanNode;
+    lorawanNode = nullptr;
+    return;
+  }
+  lorawanNode->setDutyCycle(true);
+  lorawanNode->setADR(true);
+  deckLog("[lorawan] ready band=%s sub=%u", lorawan_band.c_str(), (unsigned)lorawan_subband);
+}
+
+int16_t lorawanJoin() {
+  if (!lorawan_enabled) {
+    lorawan_last_error = "LoRaWAN is off";
+    return RADIOLIB_ERR_NETWORK_NOT_JOINED;
+  }
+  if (lorawanNode == nullptr) { lorawanBegin(); }
+  if (lorawanNode == nullptr) { return RADIOLIB_ERR_NETWORK_NOT_JOINED; }
+  int16_t state = lorawanNode->activateOTAA();
+  if (state == RADIOLIB_ERR_NONE || state == RADIOLIB_LORAWAN_SESSION_RESTORED) {
+    lorawan_last_error = "";
+    deckLog("[lorawan] joined");
+    return RADIOLIB_ERR_NONE;
+  }
+  lorawan_last_error = "join failed " + String(state);
+  deckLog("[lorawan] %s", lorawan_last_error.c_str());
+  return state;
+}
+
+int16_t lorawanSend(const String& text, bool confirmed) {
+  int16_t state = lorawanJoin();
+  if (state != RADIOLIB_ERR_NONE) { return state; }
+  if (lorawanNode == nullptr) { return RADIOLIB_ERR_NETWORK_NOT_JOINED; }
+  uint8_t maxLen = lorawanNode->getMaxPayloadLen();
+  if (maxLen < 8) { maxLen = 8; }
+  int total = (int)text.length();
+  int offset = 0;
+  while (offset < total) {
+    int cut = offset + (int)maxLen;
+    if (cut > total) { cut = total; }
+    // do not split a UTF-8 character across two uplinks
+    while (cut > offset && cut < total && (((uint8_t)text[cut]) & 0xC0) == 0x80) { cut--; }
+    if (cut <= offset) { cut = offset + (int)maxLen; if (cut > total) { cut = total; } }
+    String chunk = text.substring(offset, cut);
+    String down = "";
+    LoRaWANEvent_t eventDown;
+    state = lorawanNode->sendReceive(chunk, lorawan_fport ? lorawan_fport : 1, down, confirmed, NULL, &eventDown);
+    if (state < RADIOLIB_ERR_NONE) {
+      lorawan_last_error = "send failed " + String(state);
+      deckLog("[lorawan] %s", lorawan_last_error.c_str());
+      return state;
+    }
+    if (state > 0 && down.length()) {
+      lorawan_last_rssi = eventDown.power;
+      if (authorization != "") {
+        String request = "https://" + homebaseIP + "/watch/chat_received?message=" + urlEncode(down)
+                         + "&username=" + urlEncode(computer_name)
+                         + "&transport=lorawan&contact=lora";
+        https_request(request);
+      }
+    }
+    offset = cut;
+  }
+  lorawan_last_error = "";
+  return RADIOLIB_ERR_NONE;
+}
+
+String lorawanStatusJson() {
+  JSONVar st;
+  st["enabled"] = lorawan_enabled ? "on" : "off";
+  st["band"] = lorawan_band;
+  st["subband"] = lorawan_subband;
+  st["fport"] = lorawan_fport;
+  st["confirmed"] = lorawan_confirmed ? "on" : "off";
+  st["has_key"] = lorawan_app_key.length() ? "yes" : "no";
+  st["joined"] = (lorawanNode != nullptr && lorawanNode->isActivated()) ? "yes" : "no";
+  st["error"] = lorawan_last_error;
+  st["rssi"] = lorawan_last_rssi;
+  st["max_payload"] = 0;
+  if (lorawanNode != nullptr && lorawanNode->isActivated()) {
+    st["max_payload"] = lorawanNode->getMaxPayloadLen();
+  }
+  return JSON.stringify(st);
 }
 
 // The input half of the chat and pen rooms: a scrolling log on top and a one
@@ -6202,6 +6454,14 @@ void configSave() {
   else {
     conf["loraChatReceiver"] = "off";
   }
+  conf["lorawan_enabled"] = lorawan_enabled ? "on" : "off";
+  conf["lorawan_band"] = lorawan_band;
+  conf["lorawan_subband"] = lorawan_subband;
+  conf["lorawan_join_eui"] = lorawan_join_eui;
+  conf["lorawan_dev_eui"] = lorawan_dev_eui;
+  conf["lorawan_app_key"] = lorawan_app_key;
+  conf["lorawan_fport"] = lorawan_fport;
+  conf["lorawan_confirmed"] = lorawan_confirmed ? "on" : "off";
   if (buttoned_before == true) {
     conf["buttoned_before"] = "on";
   }
@@ -6321,8 +6581,17 @@ void configDefaults() {
   wifi_enabled = false;
   bt_enabled = true;      // the preference: the radio is wanted
   lightSleep = false;
-  loraChatBroadcaster = false;
-  loraChatReceiver = false;
+	  loraChatBroadcaster = false;
+	  loraChatReceiver = false;
+	  lorawan_enabled = false;
+	  lorawan_band = "EU433";
+	  lorawan_subband = 1;
+	  lorawan_join_eui = "";
+	  lorawan_dev_eui = "";
+	  lorawan_app_key = "";
+	  lorawan_fport = 1;
+	  lorawan_confirmed = false;
+	  lorawan_last_error = "";
   tauth_remote_enabled = "off";
   voice_trigger = "off";
   voice_floor = "auto";
@@ -6470,6 +6739,18 @@ void configRestore() {
     else {
       loraChatReceiver = false;
     }
+    String lwe = (const char *)conf["lorawan_enabled"];
+    lorawan_enabled = (lwe == "on");
+    String lwb = (const char *)conf["lorawan_band"];
+    if (lwb.length()) { lorawan_band = lwb; }
+    int lws = conf["lorawan_subband"];
+    lorawan_subband = (lws >= 1 && lws <= 8) ? (uint8_t)lws : 1;
+    lorawan_join_eui = (const char *)conf["lorawan_join_eui"];
+    lorawan_dev_eui = (const char *)conf["lorawan_dev_eui"];
+    lorawan_app_key = (const char *)conf["lorawan_app_key"];
+    int lwf = conf["lorawan_fport"];
+    lorawan_fport = (lwf >= 1 && lwf <= 223) ? (uint8_t)lwf : 1;
+    lorawan_confirmed = (String((const char *)conf["lorawan_confirmed"]) == "on");
     tauth_remote_enabled = (const char *)conf["tauth_remote_enabled"];
     if (tauth_remote_enabled == "on") {
       tauth_connect();

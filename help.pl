@@ -468,8 +468,8 @@ our %topic = (
 	},
 	'chat' => {
 		title => 'Chat', category => 'apps', app => 'chat',
-		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/chat.js' ],
-		verified => '2026-10-16',
+		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'templates/mail/chat_sections.html.ep', 'public/js/manager/chat.js', 'public/css/chat.css' ],
+		verified => '2026-10-19',
 		summary => 'The house\'s conversations: sms, the dial, ticket threads and lora.',
 		body => [
 			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the six groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
@@ -477,13 +477,16 @@ our %topic = (
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down - except on the guest\'s own ticket thread, the one conversation the house opened for them.',
 			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
 			'Advertise opens the tuned set to guests, who may then tune the same channel from the public page. Room bubbles that are not kept are dashed to say so.',
+			'The conversation is drawn as a modern chat: a conversation rail on the left, bubbles for each road on the right, a rounded composer with an emoji picker, and a live SMS counter. The counter knows the difference between GSM-7 and Unicode: an emoji, an accent or a CJK character switches the body to the 70-unit Unicode alphabet, which the phone splits correctly through SmsManager.divideMessage. Incoming emoji are stored and shown as themselves.',
+			'LoRa mode is its own section and its own road. Configure the network in the LoRa panel: band, sub-band, Join EUI, Dev EUI, App key, port and whether uplinks are confirmed. Save and configure pushes the credentials to the T-Deck on the LAN; Join network asks its SX1262 to join; Send test sends one uplink. A message written in the LoRa section travels through the LoRaWAN node and is filed on the LoRa thread, and a network server forwards downlinks to the webhook URL shown in the panel. LoRaWAN and the old raw-LoRa mesh are alternatives: while LoRaWAN is on, the deck\'s point-to-point broadcast and receive stand down.',
 			'An appointment\'s Connect group carries a Chat button: it opens that person\'s one conversation right in the window - the ticket thread when they hold a ticket, the phone otherwise - and the window keeps their name and colour on the way. A back button beside the menu puts the appointment back, and closing the window closes the chat.'
 		],
 		steps => [
 			'Open Chat from the start menu.',
 			'Pick a section from the sidebar - sms, dial, list, tickets or lora.',
 			'Friends: tap a person to open their one conversation, and the transport dropdown picks how the next message travels (a person with several lines gets one sms option each).',
-			'Sms: tap a number, then write in the box below the conversation.',
+			'Sms: tap a number, then write in the box below the conversation. The emoji button opens the picker, and the counter above the box names the alphabet and the segments.',
+			'LoRa: open the LoRa section, fill in the network credentials, press Save and configure, then Join network. Write in the composer as usual; the transport pill is already on LoRaWAN.',
 			'Dial: pick a set, then press Advertise to open it to guests.',
 			'List: add and configure the sets the dial picks from.',
 			'From an appointment, press Connect then Chat to open that person\'s conversation in the window.'

@@ -1,51 +1,70 @@
 <%# The Chat app's panel: the house's conversations - sms, the dial, the list,
-    ticket threads and lora - as an app of its own. Same wrapper id and inner ids
+    ticket threads and LoRa - as an app of its own. Same wrapper id and inner ids
     (#mail, #mail_sidebar, #mailbox, #message, #send_it) so public/js/mailbox.js
     keeps working untouched; the sidebar lists only the five sections chat owns,
     and their panels are the shared partial. The conversation half is the shared
     partial, the same one Mailbox and Email include. %>
 <% no warnings 'uninitialized'; %>
-<style>
-	.mailbox_message[ephemeral="yes"] > span { border-style: dashed; }
-</style>
-<div id="mail" style="width:100%;background-color:pink;">
-	<img src="<%= &subs::icon_for('/images/make believe/burger.png') %>" hint="Menu" class="little_thumb hover" id="mail_hamburger">
-	<%# back to the appointment this window came from: the in-window chat hides
-	    the regular window contents, and this puts them back (chat.js shows it
-	    only on a window that swapped in from an appointment) %>
-	<img src="<%= &subs::icon_path('back', '/images/jbuttons/appts.png') %>" hint="Back to the appointment" class="little_thumb hover chat_back_to_appointment" style="display:none;">
-	<span style="font-size:20px;"><%= $main_title %></span>
-	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 1, sms_lines => $sms_lines %>
-	<% my $privilege = $c->session('privilege'); %>
-	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
-		<div id="mail_sidebar" class="theme_surface" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;">
-			<% if (@{$friends}) { %>
-				<div id="chat_friends" style="max-height:150px;overflow:auto;border:solid;border-radius:8px;margin:0 2px 8px 2px;padding:4px;text-align:center;font-size:20px;">
-					<b>Friends</b>
-					<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
-						<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
-							<%= &subs::format_name($f->{'contact_name'}) %><% if ($f->{'phone'}) { %><span style="opacity:.65;font-size:12px;"> · sms</span><% } %>
-							<% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %>
-							<% if (scalar @extra) { %>
-								<div style="opacity:.6;font-size:11px;"><%= join(' · ', map { &subs::contact_line_label($_) } @extra) %></div>
-							<% } %>
-						</div>
-					<% } %>
-				</div>
-			<% } %>
-			<% if ($privilege eq 'citizen') { %>
-				<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
-					<button class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
-				<% } %>
-				<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="Telephone" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
-			<% } else { %>
-				<button class="mail_subsection active" section="dial" disabled>Dial</button>
-			<% } %>
-			<br><br><br>
-
-			<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege %>
+<% my $active = $settings->{'subsection'} || 'sms'; %>
+<% my $chat_sidebar = defined $incoming_data->{'sidebar'} ? $incoming_data->{'sidebar'} : 1; %>
+<% my $avatar = substr($main_title || 'Chat', 0, 1); %>
+<div id="mail" class="chat_shell">
+	<div class="chat_head">
+		<button type="button" id="mail_hamburger" class="chat_icon_button" hint="Chats" aria-label="<%= &subs::ui('Chats') %>">&#9776;</button>
+		<%# back to the appointment this window came from: the in-window chat hides
+		    the regular window contents, and this puts them back (chat.js shows it
+		    only on a window that swapped in from an appointment) %>
+		<button type="button" class="chat_icon_button chat_back_to_appointment" hint="Back to the appointment" aria-label="<%= &subs::ui('Back to the appointment') %>" style="display:none;">&#8592;</button>
+		<div class="chat_identity">
+			<div class="chat_avatar"><%= $avatar %></div>
+			<div class="chat_identity_text">
+				<div class="chat_title"><%= $main_title || &subs::ui('Chat') %></div>
+				<div class="chat_subtitle"><%= &subs::format_name($active) %><% if (($settings->{'lora_toggle'} // '') eq 'on') { %> &middot; LoRa mesh<% } %></div>
+			</div>
 		</div>
-	<% } %>
+		<div class="chat_head_actions">
+			<span class="chat_connection" id="chat_connection" title="<%= &subs::ui('Connected') %>">&#9679;</span>
+		</div>
+	</div>
+	<div class="chat_body">
+		<% my $privilege = $c->session('privilege'); %>
+		<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
+			<div id="mail_sidebar" class="chat_rail theme_surface"<% if ($chat_sidebar != 1) { %> style="display:none;"<% } %>>
+				<div class="chat_rail_head">
+					<span><%= &subs::ui('Chats') %></span>
+					<span class="chat_rail_count"><%= scalar @{$friends || []} %></span>
+				</div>
+				<% if (@{$friends || []}) { %>
+					<div id="chat_friends">
+						<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
+							<% my $fname = &subs::format_name($f->{'contact_name'}); %>
+							<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
+								<span class="chat_friend_avatar"><%= substr($fname, 0, 1) %></span>
+								<span class="chat_friend_text">
+									<span class="chat_friend_name"><%= $fname %></span>
+									<span class="chat_friend_meta"><% if ($f->{'phone'}) { %>sms<% } else { %>chat<% } %><% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %><% if (scalar @extra) { %> &middot; <%= join(' &middot; ', map { &subs::contact_line_label($_) } @extra) %><% } %></span>
+								</span>
+							</div>
+						<% } %>
+					</div>
+				<% } %>
+				<% if ($privilege eq 'citizen') { %>
+					<div class="chat_nav">
+						<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
+							<button type="button" class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+						<% } %>
+						<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="LoRa mesh broadcast" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+					</div>
+				<% } else { %>
+					<button type="button" class="mail_subsection active" section="dial" disabled>Dial</button>
+				<% } %>
+				<br><br><br>
+
+				<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege, lorawan => $lorawan %>
+			</div>
+		<% } %>
+		<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 1, sms_lines => $sms_lines %>
+	</div>
 </div>
 <script>
 	last_mail_message = Date.now();

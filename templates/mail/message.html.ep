@@ -14,20 +14,29 @@
 			</span>
 		<% } %>
 <% } else { %>
-	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" <% if ($m->{'ephemeral'}) { %>ephemeral="yes" title="A visitor's words are heard live; they are not kept"<% } %> uuid="<%= $m->{'uuid'} %>" class="mailbox_message" style="font-size:20px;width:60%;" timestamp="<%= $m->{'timestamp'} %>">
-		<% if ($me ne $m->{'manager_file'}) { %>
-			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b><br>
-				<span style="float:left;padding-left:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>
+	<% my $chat = $c->stash('chat_ui') ? 1 : 0; %>
+	<% my $incoming = $me ne $m->{'manager_file'}; %>
+	<% my $body_text = $m->{'decrypted'} eq 'yes' ? ($m->{'body'} || '') : ''; %>
+	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" <% if ($m->{'ephemeral'}) { %>ephemeral="yes" title="A visitor's words are heard live; they are not kept"<% } %> uuid="<%= $m->{'uuid'} %>" class="mailbox_message<% if ($chat) { %> chat_bubble <%= $incoming ? 'chat_in' : 'chat_out' %><% } %>"<% if (!$chat) { %> style="font-size:20px;width:60%;"<% } %> timestamp="<%= $m->{'timestamp'} %>">
+		<% if ($chat) { %>
+			<span class="chat_bubble_inner">
+				<span class="time chat_time" timestamp="<%= $m->{'timestamp'} %>"></span>
+				<% if ($incoming) { %><b class="chat_sender"><%= $m->{'manager_file'} %></b><% } %>
+				<span class="mailbox_message_contents chat_text" uuid="<%= $m->{'uuid'} %>"><%= $body_text %></span>
+			</span>
+		<% } elsif ($incoming) { %>
+			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%= $m->{'manager_file'} %></b><br>
+				<span style="float:left;padding-left:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%= $body_text %></span>
 			</span>
 		<% } else { %>
 			<span style="float:right;border:solid;border-radius:5px;background-color:lightgreen;width:80%;overflow-wrap:break-word;">
-				<span style="float:right;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%== $m->{'manager_file'} %></b></span><br>
-				<span style="float:right;padding-right:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%== $m->{'decrypted'} eq 'yes' ? $m->{'body'} : '' %></span>
+				<span style="float:right;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%= $m->{'manager_file'} %></b></span><br>
+				<span style="float:right;padding-right:5px;" class="mailbox_message_contents" uuid="<%= $m->{'uuid'} %>"><%= $body_text %></span>
 			</span>
 		<% } %>
 		<%# the paperclip's files ride the message, whichever road it took %>
 		<% my $chat_atts = eval { return decode_json $m->{'attachments'} } || []; %>
 		<% if (scalar @{$chat_atts} > 0) { %><span class="mail_message_attachments" style="display:block;clear:both;"><% foreach my $att (@{$chat_atts}) { %><img class="little_thumb" src="<%= ($att->{'thumb'} ? '/file_open?thumb=1&file=' . $att->{'thumb'} : ($att->{'src'} || '/images/decipherable/file.png')) %>" hint="<%= $att->{'name'} || 'Attachment' %>"><% } %></span><% } %>
-		<br>
+		<% if (!$chat) { %><br><% } %>
 	</span>
 <% } %>

@@ -4,10 +4,12 @@
     as they move out), so it lives here once. Expects:
       $mail          - the rows to render, oldest first
       $incoming_data - the panel's data (sidebar, scroll) as sent by the client
+      $chat_ui       - the Chat app's designed surface (bubbles, emoji, counter)
       $sms_lines     - (Chat only) the person's phone lines, so the sms road can
                        be offered once per number; absent means a single sms %>
 <% no warnings 'uninitialized'; %>
-<div id="conversation" style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>">
+<% my $chat = $chat_ui ? 1 : 0; %>
+<div id="conversation"<% if ($chat) { %> class="chat_thread"<% } else { %> style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>"<% } %>>
 	<div id="mailbox_realtime_controls" style="display:none;">
 		<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
 		<img id="mailbox_video" src="<%= &subs::icon_for('/images/make believe/camera.png') %>" hint="Camera" class="little_thumb">
@@ -18,39 +20,62 @@
 		</div>
 	</div>
 
-	<div id="mailbox" style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:var(--panel);border:solid;border-color:black;border-radius:20px;">
-
+	<div id="mailbox"<% if ($chat) { %> class="chat_messages"<% } else { %> style="position:relative;max-height:100%;overflow:scroll;height:87%;width:98%;background-color:var(--panel);border:solid;border-color:black;border-radius:20px;"<% } %>>
+		<% if ($chat && !@{ $mail || [] }) { %>
+			<div class="chat_empty"><%= &subs::ui('No messages yet. Say hello.') %></div>
+		<% } %>
 		<% foreach my $m ( sort { $a->{'timestamp'} cmp $b->{'timestamp'} } @{$mail} ) { %>
-			<%= include 'mail/message', m => $m %>
+			<%= include 'mail/message', m => $m, chat_ui => $chat %>
 		<% } %>
 
 	</div>
-	<div id="just_hit_send" style="text-align:center;">
-		<% if ($c->stash('chat_ui')) { %>
-			<%# how the next message travels: the conversation is the person's, the
-			    transport is just the road (chat rides the ticket thread, sms the
-			    phone, lora the radio - webrtc joins them later). A person may keep
-			    more than one line, so sms is offered once per number and the chosen
-			    one is the number the next text goes to. %>
-			<% my @lines = @{ $sms_lines || [] }; %>
-			<select id="mail_transport" hint="How this message travels">
-				<option value="chat">chat</option>
-				<% if (scalar @lines > 1) { %>
-					<% foreach my $l ( @lines ) { %>
-						<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
+	<% if ($chat) { %>
+		<div id="just_hit_send" class="chat_composer">
+			<div class="chat_composer_tools">
+				<%# how the next message travels: the conversation is the person's, the
+				    transport is just the road (chat rides the ticket thread, sms the
+				    phone, lora the LoRaWAN network - webrtc joins them later). A person
+				    may keep more than one line, so sms is offered once per number and
+				    the chosen one is the number the next text goes to. %>
+				<% my @lines = @{ $sms_lines || [] }; %>
+				<select id="mail_transport" hint="How this message travels">
+					<option value="chat">chat</option>
+					<% if (scalar @lines > 1) { %>
+						<% foreach my $l ( @lines ) { %>
+							<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
+						<% } %>
+					<% } else { %>
+						<option value="sms">sms</option>
 					<% } %>
-				<% } else { %>
-					<option value="sms">sms</option>
+					<option value="lora">LoRaWAN</option>
+				</select>
+				<span id="chat_sms_count" class="chat_sms_count"></span>
+			</div>
+			<div id="chat_emoji_panel" class="chat_emoji_panel" hidden>
+				<% foreach my $e ( ('😀','😄','😊','😍','🥰','😎','🤔','😅','😂','🥲','😢','😭','😡','🤯','😴','🤗','👍','👎','🙏','👏','💪','🤝','❤️','🧡','💛','💚','💙','💜','🖤','✨','🔥','🎉','✅','❌','⚠️','📌','📎','📷','🎵','☕','🍕','🌱','🌙','☀️','🚀','⭐','💡','🙌') ) { %>
+					<button type="button" class="chat_emoji" data-emoji="<%= $e %>"><%= $e %></button>
 				<% } %>
-				<option value="lora">lora</option>
-			</select>
-		<% } %>
-		<%# the paperclip: files ride the message (an attachment on the sms road
-		    goes as an MMS through the phone's bridge) %>
-		<img id="mail_paperclip" src="<%= &subs::icon_path('paperclip', '/images/decipherable/file.png') %>" hint="Attach a file" class="little_thumb hover">
-		<input type="file" id="mail_attachment_input" multiple style="display:none;">
-		<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
-		<button id="send_it" style="width:12%;vertical-align:top;">></button>
-	</div>
-	<div id="mail_attachments" style="text-align:center;"></div>
+			</div>
+			<div class="chat_composer_bar">
+				<button type="button" id="mail_emoji_toggle" class="chat_tool_button" hint="Emoji" aria-label="<%= &subs::ui('Emoji') %>">🙂</button>
+				<%# the paperclip: files ride the message (an attachment on the sms road
+				    goes as an MMS through the phone's bridge) %>
+				<img id="mail_paperclip" src="<%= &subs::icon_path('paperclip', '/images/decipherable/file.png') %>" hint="Attach a file" class="little_thumb hover">
+				<input type="file" id="mail_attachment_input" multiple style="display:none;">
+				<textarea id="message" rows="1" placeholder="<%= &subs::ui('Type a message') %>"></textarea>
+				<button type="button" id="send_it" class="chat_send" hint="Send" aria-label="<%= &subs::ui('Send') %>">&#10148;</button>
+			</div>
+			<div id="mail_attachments" class="chat_attachments"></div>
+		</div>
+	<% } else { %>
+		<div id="just_hit_send" style="text-align:center;">
+			<%# the paperclip: files ride the message (an attachment on the sms road
+			    goes as an MMS through the phone's bridge) %>
+			<img id="mail_paperclip" src="<%= &subs::icon_path('paperclip', '/images/decipherable/file.png') %>" hint="Attach a file" class="little_thumb hover">
+			<input type="file" id="mail_attachment_input" multiple style="display:none;">
+			<textarea id="message" style="width:70%; height:30px; vertical-align:top; border-radius:10px;"></textarea>
+			<button id="send_it" style="width:12%;vertical-align:top;">></button>
+		</div>
+		<div id="mail_attachments" style="text-align:center;"></div>
+	<% } %>
 </div>

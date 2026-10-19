@@ -86,6 +86,12 @@ function mailMaker(incomingData, app) {
 				mailWebSocketStart();
 				mailScrollBottom('load');
 				mailDotClear();
+				// Chat's designed surface: the rail, the transport pill and the
+				// emoji/SMS counter are rebuilt with the window, so let its own
+				// file catch up after the insert.
+				if (typeof chatDressMessages === 'function') { chatDressMessages(); }
+				if (typeof chatTransportOptions === 'function') { chatTransportOptions(); }
+				if (typeof updateChatSmsCount === 'function') { updateChatSmsCount(); }
 			}
 			else {
 				var mb = $(response.contents).find('#mailbox');
@@ -108,6 +114,22 @@ $(document).on('click', '#mail_hamburger', function() {
 	var ml = $('#mail_sidebar');
 	var c = $('#conversation');
 	var status = 'on';
+
+	if ($('#mail').hasClass('chat_shell')) {
+		// Chat is a two-pane app on a wide screen: the hamburger opens and
+		// closes the conversation rail, but never hides the thread itself.
+		if (ml.is(':visible')) {
+			ml.hide();
+			status = 'off';
+		}
+		else {
+			ml.show();
+		}
+		c.show();
+		localStorage.setItem('mail_sidebar', status);
+		mailScrollBottom('load');
+		return;
+	}
 
 	if (ml.is(':visible')) {
 		ml.hide();
@@ -754,6 +776,7 @@ function sendIt() {
 	var msg = $('#message').val();
 	var project = $('#mail_project_picker').val() || 'general';
 	var picked = JSON.stringify(mail_picker());
+	var section = $('.mail_subsection.active').attr('section') || '';
 
 	localStorage.getItem('mail_name');
 	var mail_contact;
@@ -793,8 +816,17 @@ function sendIt() {
 			phone = $('#mail_transport option[value="sms"]:selected').attr('data-line') || localStorage.getItem('mail_phone') || '';
 		}
 	}
+	// LoRa is a road of its own: the message is filed on the `lora` contact and
+	// the server sends it through the T-Deck's LoRaWAN node, not to a phone.
+	if (section == 'lora' || transport == 'lora') {
+		transport = 'lora';
+		mail_contact = 'lora';
+		phone = '';
+		email = '';
+		picked = {};
+	}
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
-	var m = JSON.stringify({ 
+	var m = JSON.stringify({
 		msg: msg,
 		mail_contact: mail_contact,
 		phone: phone,
@@ -802,6 +834,7 @@ function sendIt() {
 		browser_tab_id: browser_tab_id,
 		timestamp:timestamp,
 		type: 'message',
+		transport: transport,
 		picker: picked,
 		conversation_uuid: conversation_uuid,
 		// the paperclip's files ride the message; on the sms road they go as an MMS
@@ -928,6 +961,12 @@ function mailAddressGrabber() {
 	else if (section == 'tickets') {
 		address.mail_contact = localStorage.getItem('mail_contact') || '';
 	}
+	else if (section == 'lora') {
+		// the lora thread is a contact of its own, so the socket hears its
+		// messages the same way a ticket thread does
+		address.section = 'tickets';
+		address.mail_contact = 'lora';
+	}
 	// Chat's transport dropdown: the socket watches the person's thread whatever
 	// the transport, so a reply on any road arrives on the one conversation.
 	var transport = ($('#mail_transport').length && $('#mail_transport').is(':visible')) ? $('#mail_transport').val() : '';
@@ -935,6 +974,10 @@ function mailAddressGrabber() {
 		address.section = 'tickets';
 		address.mail_contact = localStorage.getItem('mail_contact') || '';
 		address.phone = (transport == 'sms') ? (localStorage.getItem('mail_phone') || '') : '';
+		if (section == 'lora' || transport == 'lora') {
+			address.mail_contact = 'lora';
+			address.phone = '';
+		}
 	}
 	return address;
 }
@@ -1004,6 +1047,7 @@ function mailWebSocketStart() {
 					$('#mailbox').append(data.envelope);
 				}
 			}
+			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			mailScrollBottom();
 			last_mail_message = Date.now();
 			appointment_chron();
@@ -1017,6 +1061,7 @@ function mailWebSocketStart() {
 				}
 				last_mail_message = Date.now();
 			});
+			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			mailScrollBottom();
 			appointment_chron();
 		}

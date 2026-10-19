@@ -360,11 +360,13 @@ any '/watch/chat_received' => sub ($c) {
 	my $account = $c->param('account');
 	my $person = $c->param('person');
 	my $authorization = $c->param('authorization');
+	my $transport = $c->param('transport') // '';
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
 		my ($db,$database,$sql) = &subs::database_grabber();
 		my $ticket = &subs::db_query('select uuid from tickets where name = ?', $contact);
 		my $contact_uuid = $ticket->hashes->[0]->{'uuid'};
 		my $muuid = &subs::random_string_creator(25);
+		my $lo_radio = ($transport eq 'lorawan' || ($contact // '') eq 'lora') ? 1 : 0;
 		my $mailbox_row = {
 			uuid => $muuid,
 			timestamp => &subs::rightNow(),
@@ -378,7 +380,7 @@ any '/watch/chat_received' => sub ($c) {
 			club => $club || $gb::social_constructs->{'clubs'}->{'def'},
 			team => $team || $gb::social_constructs->{'teams'}->{'def'},
 			person => $person || $gb::social_constructs->{'people'}->{'def'},
-			contact => $contact_uuid || $watch_settings->{'__specs'}->{'computer'}
+			contact => ($lo_radio ? 'lora' : ($contact_uuid || $watch_settings->{'__specs'}->{'computer'}))
 		};
 		&subs::db_insert('mailbox', $mailbox_row);
 		# the watch handed a message over: the browsers hear about it
