@@ -1115,8 +1115,11 @@ our %topic = (
 		summary => 'A handheld terminal with a keyboard and GPS.',
 		body => [
 			'The T-Deck is the handheld: a keyboard, a touch screen and GPS in a device small enough to carry. It acts as a handheld terminal — a "teletype" — for the machine it is talking to, and it can report where it is.',
-			'It can also listen for a voice command: its Voice setting on the Embedded row - Voice: Off, Voice: Any speech (VAD), or Voice: Hey Jawn - starts a clip when it hears speech and sends it to JawnOS to transcribe. See Voice and wake words.'
+			'It can also listen for a voice command: its Voice setting on the Embedded row - Voice: Off, Voice: Any speech (VAD), or Voice: Hey Jawn - starts a clip when it hears speech and sends it to JawnOS to transcribe. See Voice and wake words.',
+			'Its Set room is grouped into Screen, Radio and System tabs. Screen carries brightness, volume and the typewriter font, Radio carries the LoRa broadcast and receive toggles and the AP and WiFi credential sends, and System carries Sleep, Save, Restore, Clear Text and Delete.',
+			'Sleep is the battery saver. The button is a toggle: when it is lit, the deck turns off WiFi, Bluetooth, LoRa receive and the microphone after the screen has gone dark, and spends the idle time in light sleep. A touch, a key or a move of the trackball wakes it and the screen comes back. A deck on USB keeps its radios up, since the cable is supplying the power.',
 		],
+		verified => '2026-10-19',
 		related => [ 'watch', 'pico', 'ble_bridge', 'voice' ]
 	},
 	'pico' => {

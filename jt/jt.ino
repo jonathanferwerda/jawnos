@@ -20,6 +20,9 @@ using fs::FS;
 #include <esp_memory_utils.h>
 #include <mbedtls/platform.h>
 #include <esp_mac.h>
+// Light sleep (the Set room's Sleep mode): GPIO wake sources and the sleep call.
+#include <driver/gpio.h>
+#include <esp_sleep.h>
 // the ESP32 ROM's miniz: inflate a compressed bridge payload (see ble_inflate_if_zlib)
 #include "miniz.h"
 // On-device voice models (the watch's stack): the microfrontend front-end is
@@ -517,8 +520,18 @@ String contact_room;
 bool loraChatBroadcaster = true;
 bool loraChatReceiver = true;
 String mouse_move_relative = "off";
-// Flag used to indicate whether to use light sleep, currently unavailable
+// Sleep mode (Set room -> System -> Sleep): once the panel's idle timeout has
+// passed, stop the radios and the CPU instead of only darkening the screen. It
+// wakes on a touch, a key or a move of the trackball. The preference is saved
+// with the rest of the config.
 static bool lightSleep = false;
+// Input caught by the sleep poll and handed back to LVGL's own readers: the
+// physical key/tap is usually over by the time the screen is back up.
+static char deck_pending_key = 0;
+static bool deck_wake_touch_pending = false;
+static int16_t deck_wake_touch_x = 0;
+static int16_t deck_wake_touch_y = 0;
+static bool wifi_restore_pending = false;
 // Flag used for acceleration interrupt status
 static bool sportsIrq = false;
 // Flag used to indicate whether recording is enabled
@@ -655,6 +668,9 @@ static void registerKeyboard();
 // configRestore() call them
 void start_ble_transfer();
 void stop_ble_transfer();
+// Sleep mode: defined with the Set room's helpers; loop() runs it after the
+// panel has gone dark.
+static void deck_low_power_sleep();
 // voice notes: record to flash with the ES7210 mic array, play it back through
 // the speaker (buttons live next to the text box in the chat and pen rooms)
 static void micRecordToggle(lv_event_t *e);
@@ -2115,6 +2131,16 @@ void loop() {
     btStartPending = false;
     start_ble_transfer();
   }
+  // Sleep mode restores the station link without the blocking wifi_server()
+  // join: the server and mDNS come up here once association completes.
+  if (wifi_restore_pending && WiFi.status() == WL_CONNECTED) {
+    wifi_restore_pending = false;
+    if (!wifi_ap_enabled) {
+      server.begin();
+      webserver_enabled = true;
+    }
+    jawnos_mdns_start();
+  }
 
   // messages written to the NUS RX characteristic are queued by the stack's
   // task; the JSON is handled here, on the same thread as everything else
@@ -2800,6 +2826,18 @@ void loop() {
 
     tft.writecommand(0x10);      //set display enter sleep mode
     screenAsleep = true;
+    // Sleep mode stops more than the panel: the radios and the CPU go down too,
+    // and the first touch, key or trackball move brings them back. A clip being
+    // recorded or played (or an answer still on its way) keeps the deck awake -
+    // light sleep would stall the microphone and the network fetch.
+    if (lightSleep) {
+      bool busy = isRecording || audio.isRunning() || sayFetchRunning ||
+                  voiceRecording || voiceAwaitingReply;
+      if (!busy) {
+        deck_low_power_sleep();
+        buttonMillis = millis();
+      }
+    }
   }
   else if (screenAsleep && millis() - buttonMillis < DEFAULT_SCREEN_TIMEOUT) {
     // Serial.println("not sleepy " + lastBrightness);
@@ -3051,7 +3089,11 @@ static void keypad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
 {
   static uint32_t last_key = 0;
   char keyValue;
-  keyValue = keypad_get_key();
+  // the key that woke the deck was polled by the sleep path; read it from there
+  // instead of asking a keyboard that has already seen the key released
+  keyValue = deck_pending_key;
+  deck_pending_key = 0;
+  if (!keyValue) { keyValue = keypad_get_key(); }
   if (keyValue != 0) {
     data->state = LV_INDEV_STATE_PR;
     buttonMillis = millis();
@@ -3806,6 +3848,15 @@ static void mouse_read(lv_indev_t *indev, lv_indev_data_t *data)
 /*Read the touchpad*/
 static void touchpad_read( lv_indev_t *indev_driver, lv_indev_data_t *data )
 {
+  // A tap that woke the deck was read by the sleep poll (getTouch also syncs the
+  // controller); hand that one to LVGL so the waking tap is not swallowed.
+  if (deck_wake_touch_pending) {
+    deck_wake_touch_pending = false;
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = deck_wake_touch_x;
+    data->point.y = deck_wake_touch_y;
+    return;
+  }
   // Touch drives LVGL in every room. The room-specific handling that reads the
   // panel directly (the typewriter's websocket mouse, the room's button replay)
   // stays where it is in loop().
@@ -4733,170 +4784,137 @@ void clock_writer() {
 }
 
 
+void setting_room();   // the tab callback rebuilds the room
+
 static void touch_button3(lv_event_t *e) {
   setting_room();
 }
+// The Set room used to be one wall of 40x40 buttons labelled cS/cR/cD/LAP/LWI.
+// It is grouped now the way the watch's is: a tab row picks a page and each
+// page holds only its own controls, with labels that say what they do.
+
+static int configure_page = 0;
+
+static void configure_page_select(lv_event_t *e) {
+  int page = (int)(intptr_t)lv_event_get_user_data(e);
+  if (page == configure_page) {
+    return;
+  }
+  configure_page = page;
+  setting_room();
+}
+
+// a labelled button in the Set room's content area
+static lv_obj_t *configure_button(const char *text, void (*cb)(lv_event_t *),
+                                  int x, int y, int w, int h, lv_color_t colour) {
+  lv_obj_t *b = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_set_pos(b, x, y);
+  lv_obj_set_size(b, w, h);
+  lv_obj_set_style_bg_color(b, colour, LV_PART_MAIN);
+  lv_obj_t *l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(0, 0, 0), LV_PART_MAIN);
+  lv_obj_center(l);
+  return b;
+}
+
+// a labelled slider: the name sits above a full-width track (easy to drag)
+static lv_obj_t *configure_slider(const char *text, int x, int y, int w,
+                                  int min, int max, int value,
+                                  void (*cb)(lv_event_t *)) {
+  lv_obj_t *l = lv_label_create(lv_scr_act());
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  lv_obj_set_pos(l, x, y);
+  lv_obj_t *s = lv_slider_create(lv_scr_act());
+  lv_obj_set_pos(s, x, y + 18);
+  lv_obj_set_width(s, w);
+  lv_slider_set_range(s, min, max);
+  lv_slider_set_value(s, value, LV_ANIM_OFF);
+  lv_obj_add_event_cb(s, cb, LV_EVENT_VALUE_CHANGED, NULL);
+  return s;
+}
+
+// one tab in the top row; the active page's tab is blue
+static void configure_tab(const char *text, int index, int x) {
+  lv_obj_t *b = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(b, configure_page_select, LV_EVENT_CLICKED, (void *)(intptr_t)index);
+  lv_obj_set_pos(b, x, 1);
+  lv_obj_set_size(b, 100, 38);
+  lv_obj_set_style_bg_color(b, lv_color_hex(index == configure_page ? 0x61b3ff : 0x333333), LV_PART_MAIN);
+  lv_obj_t *l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  lv_obj_center(l);
+}
+
+static void lightSleep_toggle(lv_event_t *e) {
+  lv_obj_t *sleep_button = lv_event_get_target_obj(e);
+  lightSleep = !lightSleep;
+  lv_obj_set_style_bg_color(sleep_button,
+                            lv_color_hex(lightSleep ? 0x5afcdd : 0xb0b0b0), LV_PART_MAIN);
+  configSave();
+  deckLog("[sleep] mode %s", lightSleep ? "on" : "off");
+}
+
 void setting_room() {
   display_exit();
   jw_room = "configure";
+  configure_tab("Screen", 0, 2);
+  configure_tab("Radio", 1, 110);
+  configure_tab("System", 2, 218);
 
-  lv_obj_t *slider = lv_slider_create(lv_scr_act());
-  lv_slider_set_value(slider, brightnessLevel, LV_ANIM_ON);
-  lv_slider_set_range(slider, 1, 16);
-  lv_obj_set_width(slider, 150);
-  lv_obj_set_pos(slider, 10, 20);
-  lv_obj_add_event_cb(slider, brightness_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_t *slider2 = lv_slider_create(lv_scr_act());
-  lv_obj_set_width(slider2, 150);
-  lv_obj_set_pos(slider2, 10, 60);
-  lv_slider_set_value(slider2, volumeLevel, LV_ANIM_ON);
-  lv_slider_set_range(slider2, 0, 21);
-  lv_obj_add_event_cb(slider2, volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-  lv_obj_t * btn10 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn10, configSaveButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn10, 110, 110 );
-  lv_obj_set_size(btn10, 40, 40 );
-  lv_obj_set_style_bg_color(btn10, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_task_handler();
-  lv_obj_t *l10;
-  lv_color_t t10;
-  t10 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn10, t10, LV_PART_MAIN);
-  l10 = lv_label_create(btn10);
-  lv_label_set_text(l10, "cS");
-  lv_obj_center(l10);
-
-  lv_obj_t * btn20 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn20, configRestoreButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn20, 160, 110 );
-  lv_obj_set_size(btn20, 40, 40 );
-  lv_obj_set_style_bg_color(btn20, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_t *l20;
-  lv_color_t t20;
-  t20 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn20, t20, LV_PART_MAIN);
-  l20 = lv_label_create(btn20);
-  lv_label_set_text(l20, "cR");
-  lv_obj_center(l20);
-
-  lv_obj_t * btn201 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn201, configDeleteButton, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn201, 210, 110 );
-  lv_obj_set_size(btn201, 40, 40 );
-  lv_obj_set_style_bg_color(btn201, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_t *l201;
-  lv_color_t t201;
-  t201 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn201, t201, LV_PART_MAIN);
-  l201 = lv_label_create(btn201);
-  lv_label_set_text(l201, "cD");
-  lv_obj_center(l201);
-
-  lv_obj_t * btn1 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn1, ap_lora_send, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn1, 260, 10 );
-  lv_obj_set_size(btn1, 40, 40 );
-  lv_obj_set_style_bg_color(btn1, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_task_handler();
-  lv_obj_t *l1;
-  lv_color_t t1;
-  t1 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn1, t1, LV_PART_MAIN);
-  l1 = lv_label_create(btn1);
-  lv_label_set_text(l1, "LAP");
-  lv_obj_center(l1);
-
-  lv_obj_t * btn2 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn2, wifi_lora_send, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn2, 260, 60 );
-  lv_obj_set_size(btn2, 40, 40 );
-  lv_obj_set_style_bg_color(btn2, lv_color_hex(0xdafc5d), LV_PART_MAIN);
-  lv_obj_t *l2;
-  lv_color_t t2;
-  t2 = lv_color_make(0, 0, 0);
-
-  lv_obj_set_style_text_color(btn2, t2, LV_PART_MAIN);
-  l2 = lv_label_create(btn2);
-  lv_label_set_text(l2, "LWI");
-  lv_obj_center(l2);
-
-  lv_obj_t * btn4 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn4, clear_typewriter, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn4, 260, 110 );
-  lv_obj_set_size(btn4, 40, 40 );
-  lv_obj_set_style_bg_color(btn4, lv_color_hex(0xd63a9b), LV_PART_MAIN);
-  lv_obj_t *l4;
-  lv_color_t t4;
-  t4 = lv_color_make(0, 0, 0);
-  lv_obj_set_style_text_color(btn4, t4, LV_PART_MAIN);
-  l4 = lv_label_create(btn4);
-  lv_label_set_text(l4, "Clr");
-  lv_obj_center(l4);
-
-
-  lv_obj_t * btn5 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn5, loraBroadcastToggle, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn5, 210, 10 );
-  lv_obj_set_size(btn5, 40, 40 );
-  if (loraChatBroadcaster == false) {
-    lv_obj_set_style_bg_color(btn5, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+  switch (configure_page) {
+    case 0:
+      // what the deck feels like: the two level sliders and the typewriter font
+      configure_slider("Bright", 10, 46, 300, 1, 16, brightnessLevel,
+                       brightness_event_cb);
+      configure_slider("Volume", 10, 90, 300, 0, 21, volumeLevel,
+                       volume_event_cb);
+      {
+        lv_obj_t *l = lv_label_create(lv_scr_act());
+        lv_label_set_text(l, "Font");
+        lv_obj_set_style_text_color(l, lv_color_make(255, 255, 255), LV_PART_MAIN);
+        lv_obj_set_pos(l, 10, 134);
+        lv_obj_t *fontdd = lv_dropdown_create(lv_scr_act());
+        lv_dropdown_set_options(fontdd,
+                                "Basic\n"
+                                "Noto Small\n"
+                                "Noto Large\n"
+                                "Final Frontier\n"
+                                "Latin\n"
+                                "Unicode\n"
+                               );
+        lv_dropdown_set_text(fontdd, fontSelect.c_str());
+        lv_obj_add_event_cb(fontdd, fontPicker, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_set_pos(fontdd, 10, 152);
+        lv_obj_set_size(fontdd, 150, 38);
+        lv_obj_set_style_bg_color(fontdd, lv_color_hex(0xda5dc4), LV_PART_MAIN);
+      }
+      configure_slider("Size", 172, 134, 138, 1, 6, fontSize, fontSizeChanger);
+      break;
+    case 1:
+      // the LoRa radio: broadcast/receive, and blasting the AP or wifi creds
+      configure_button("LoRa Tx", loraBroadcastToggle, 10, 46, 145, 56,
+                       lv_color_hex(loraChatBroadcaster ? 0x53ff24 : 0xb0b0b0));
+      configure_button("LoRa Rx", loraReceiveToggle, 165, 46, 145, 56,
+                       lv_color_hex(loraChatReceiver ? 0x53ff24 : 0xb0b0b0));
+      configure_button("AP Send", ap_lora_send, 10, 112, 145, 56, lv_color_hex(0xdafc5d));
+      configure_button("WiFi Send", wifi_lora_send, 165, 112, 145, 56, lv_color_hex(0xdafc5d));
+      break;
+    default:
+      // power, the config file, and clearing the typewriter. Two columns over
+      // two short rows, then Delete full width, all above the Rom/Clk/Set/Net
+      // row that button_writer() draws along the bottom of every room (y=200).
+      configure_button("Sleep", lightSleep_toggle, 10, 46, 145, 42,
+                       lv_color_hex(lightSleep ? 0x5afcdd : 0xb0b0b0));
+      configure_button("Save", configSaveButton, 165, 46, 145, 42, lv_color_hex(0x61b3ff));
+      configure_button("Restore", configRestoreButton, 10, 92, 145, 42, lv_color_hex(0xffca38));
+      configure_button("Clear Text", clear_typewriter, 165, 92, 145, 42, lv_color_hex(0xd63a9b));
+      configure_button("Delete", configDeleteButton, 10, 138, 300, 42, lv_color_hex(0xde2716));
+      break;
   }
-  else {
-    lv_obj_set_style_bg_color(btn5, lv_color_hex(0x53ff24), LV_PART_MAIN);
-  }
-  lv_obj_t *l5;
-  lv_obj_set_style_text_color(btn5, t4, LV_PART_MAIN);
-  l5 = lv_label_create(btn5);
-  lv_label_set_text(l5, "LB");
-  lv_obj_center(l5);
-
-
-  lv_obj_t * btn6 = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(btn6, loraReceiveToggle, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(btn6, 210, 60 );
-  lv_obj_set_size(btn6, 40, 40 );
-  if (loraChatReceiver == true) {
-    lv_obj_set_style_bg_color(btn6, lv_color_hex(0x53ff24), LV_PART_MAIN);
-  }
-  else {
-    lv_obj_set_style_bg_color(btn6, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
-  }
-  lv_obj_t *l6;
-  lv_obj_set_style_text_color(btn6, t4, LV_PART_MAIN);
-  l6 = lv_label_create(btn6);
-  lv_label_set_text(l6, "LR");
-  lv_obj_center(l6);
-
-
-  lv_obj_t *slider3 = lv_slider_create(lv_scr_act());
-  lv_slider_set_value(slider3, fontSize, LV_ANIM_ON);
-  lv_slider_set_range(slider3, 1, 6);
-  lv_obj_set_width(slider3, 110);
-  lv_obj_set_pos(slider3, 180, 170);
-  lv_obj_add_event_cb(slider3, fontSizeChanger, LV_EVENT_VALUE_CHANGED, NULL);
-
-  lv_obj_t * fontdd = lv_dropdown_create(lv_scr_act());
-  lv_dropdown_set_options(fontdd,
-                          "Basic\n"
-                          "Noto Small\n"
-                          "Noto Large\n"
-                          "Final Frontier\n"
-                          "Latin\n"
-                          "Unicode\n"
-                         );
-  lv_dropdown_set_text(fontdd, fontSelect.c_str());
-  lv_obj_add_event_cb(fontdd, fontPicker, LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_pos(fontdd, 10, 160 );
-  lv_obj_set_size(fontdd, 160, 40 );
-  lv_obj_set_style_bg_color(fontdd, lv_color_hex(0xda5dc4), LV_PART_MAIN);
-  lv_obj_set_style_text_color(fontdd, t1, LV_PART_MAIN);
-
-
   lv_task_handler();
 }
 
@@ -5847,6 +5865,223 @@ void accesspoint_stop() {
   }
 }
 
+// ---- Sleep mode ---------------------------------------------------------
+//
+// The panel has already been darkened and put into its own sleep command when
+// this runs. The rest of the deck is still a 240 MHz CPU with WiFi, Bluetooth,
+// LoRa receive and the microphone DMA all live, which is why the battery went
+// so quickly. Here the radios and the microphone are stopped and the chip spends
+// the idle time in ESP light sleep, waking on a touch, a key, a move of the
+// trackball, or a short timer so the keyboard and touch can be polled.
+//
+// A deck on USB keeps its radios (battery is not the concern there) and only
+// drops its clock; light sleep would also be refused by the USB peripheral.
+#define DECK_SLEEP_POLL_MS 250
+
+// The same five lines the trackball loop reads: the four directions and the
+// press. They idle high, so a low level is a move or a press.
+static const uint8_t deck_sleep_wake_pins[] = {
+  BOARD_TBOX_G04, BOARD_TBOX_G02, BOARD_TBOX_G01, BOARD_TBOX_G03, BOARD_BOOT_PIN
+};
+// The panel and keyboard interrupt lines are armed only when they read high at
+// entry: a line the board leaves low would bounce the nap straight back up.
+static const uint8_t deck_sleep_irq_pins[] = {BOARD_TOUCH_INT, BOARD_KEYBOARD_INT};
+
+static void deck_sleep_arm_wake() {
+  for (uint8_t i = 0; i < sizeof(deck_sleep_wake_pins); ++i) {
+    gpio_wakeup_enable((gpio_num_t)deck_sleep_wake_pins[i], GPIO_INTR_LOW_LEVEL);
+  }
+  for (uint8_t i = 0; i < sizeof(deck_sleep_irq_pins); ++i) {
+    if (digitalRead(deck_sleep_irq_pins[i])) {
+      gpio_wakeup_enable((gpio_num_t)deck_sleep_irq_pins[i], GPIO_INTR_LOW_LEVEL);
+    }
+  }
+  esp_sleep_enable_gpio_wakeup();
+}
+
+static void deck_sleep_disarm_wake() {
+  for (uint8_t i = 0; i < sizeof(deck_sleep_wake_pins); ++i) {
+    gpio_wakeup_disable((gpio_num_t)deck_sleep_wake_pins[i]);
+  }
+  for (uint8_t i = 0; i < sizeof(deck_sleep_irq_pins); ++i) {
+    gpio_wakeup_disable((gpio_num_t)deck_sleep_irq_pins[i]);
+  }
+}
+
+// True when something changed since the sleep began. The panel and keyboard
+// have no usable level line here (the touch controller is polled, not
+// interrupt-driven), so both are read over I2C at each wake.
+static bool deck_sleep_input_seen(const uint8_t *pin_state) {
+  for (uint8_t i = 0; i < sizeof(deck_sleep_wake_pins); ++i) {
+    if (digitalRead(deck_sleep_wake_pins[i]) != pin_state[i]) {
+      return true;
+    }
+  }
+  if (touchDected) {
+    int16_t x = 0, y = 0;
+    if (getTouch(x, y)) {
+      // the waking tap is over before LVGL reads the panel; keep it for
+      // touchpad_read() rather than swallowing it here
+      deck_wake_touch_x = x;
+      deck_wake_touch_y = y;
+      deck_wake_touch_pending = true;
+      return true;
+    }
+  }
+  if (kbDected) {
+    char k = keypad_get_key();
+    if (k) {
+      deck_pending_key = k;
+      return true;
+    }
+  }
+  return false;
+}
+
+static void deck_low_power_sleep() {
+  bool ble_up = ble_radio_up;
+  bool wifi_on = (wifi_enabled && WiFi.status() == WL_CONNECTED);
+  bool ap_on = wifi_ap_enabled;
+  bool lora_rx = loraChatReceiver;
+  // The pack sits above a full cell's rest voltage on USB (the same read the
+  // battery report uses); light sleep is refused there anyway.
+  bool deep = deck_battery_voltage() <= 4300.0f;
+  bool ble_down = false, wifi_down = false, radio_down = false, mic_down = false;
+  uint8_t pin_state[sizeof(deck_sleep_wake_pins)];
+  for (uint8_t i = 0; i < sizeof(deck_sleep_wake_pins); ++i) {
+    pin_state[i] = digitalRead(deck_sleep_wake_pins[i]);
+  }
+
+  // The failover worker may be in the middle of a TLS request; stopping WiFi
+  // underneath it would strand it. Give it a moment to go quiet, and doze with
+  // the radios up if it does not.
+  if (deep && house_task_handle != NULL) {
+    uint32_t t0 = millis();
+    while (house_task_handle != NULL && millis() - t0 < 1500) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (house_task_handle != NULL) {
+      deep = false;
+      deckLog("%s", "[sleep] house worker busy; dozing with radios up");
+    }
+  }
+
+  if (deep) {
+    // A listener owns the microphone DMA; stop it before the channel goes down
+    // (loop() re-arms it after the wake when the Voice setting is still on).
+    if (voiceTaskAlive) {
+      voiceListening = false;
+      uint32_t t0 = millis();
+      while (voiceTaskAlive && millis() - t0 < 1000) { vTaskDelay(pdMS_TO_TICKS(20)); }
+    }
+    if (!voiceTaskAlive && mic_rx_handle) {
+      // A listener still winding down owns the DMA; leave the channel alone and
+      // let it exit rather than disabling it underneath a live read.
+      i2s_channel_disable(mic_rx_handle);
+      mic_down = true;
+    }
+    if (hasRadio) {
+      radio.sleep();
+      radio_down = true;
+    }
+    if (ble_up && pServer) {
+      // Stop the link and advertising but keep the Bluedroid stack: a
+      // deinit/init on every wake was what made the watch reboot, and the
+      // controller initialised-but-idle is the safer nap (see AGENTS notes).
+      for (int tries = 0; pServer->getConnectedCount() > 0 && tries < 20; tries++) {
+        pServer->disconnect(pServer->getConnId());
+        delay(20);
+      }
+      pServer->getAdvertising()->stop();
+      ble_down = true;
+    }
+    if (wifi_on || ap_on) {
+      if (ws_connected) { wsclient.close(); ws_connected = 0; }
+      server.stop();
+      webserver_enabled = false;
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      if (jawnos_mdns_up) { MDNS.end(); jawnos_mdns_up = false; }
+      wifi_down = true;
+    }
+    deckLog("[sleep] light sleep; touch, key or trackball wakes it");
+  }
+  else {
+    deckLog("%s", "[sleep] on USB: radios stay up, clock at 80 MHz");
+  }
+
+  if (deep || !voiceTaskAlive) {
+    // A voice listener cannot keep up at 80 MHz; on USB it is left at 240.
+    setCpuFrequencyMhz(80);
+  }
+  if (deep) { deck_sleep_arm_wake(); }
+
+  uint8_t no_nap = 0;
+  while (!deck_sleep_input_seen(pin_state)) {
+    if (deep) {
+      esp_sleep_enable_timer_wakeup((uint64_t)DECK_SLEEP_POLL_MS * 1000ULL);
+      uint32_t nap_start = millis();
+      esp_light_sleep_start();
+      esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+      uint32_t slept = millis() - nap_start;
+      // A refused nap returns at once with no cause (an attached USB serial
+      // does this). After a few, poll at 80 MHz instead of spinning here.
+      if (cause == ESP_SLEEP_WAKEUP_UNDEFINED || slept < 50) {
+        if (++no_nap >= 5) {
+          deckLog("%s", "[sleep] light sleep refused; polling at 80 MHz");
+          deep = false;
+          deck_sleep_disarm_wake();
+        }
+      }
+      else {
+        no_nap = 0;
+      }
+    }
+    else {
+      // On USB the panel and the housekeeping keep running (the screen is
+      // simply dark): the deck still answers its web routes and the radio.
+      if (webserver_enabled) { server.handleClient(); }
+      if (ws_connected == 1) { wsclient.poll(); }
+      readRadio();
+      // Unplugged while dozing: wake once so the normal timeout can put the
+      // deck into the real light sleep next time.
+      static uint32_t voltage_check = 0;
+      if (millis() - voltage_check > 5000) {
+        voltage_check = millis();
+        if (deck_battery_voltage() <= 4300.0f) { break; }
+      }
+      delay(50);
+    }
+  }
+
+  if (deep) { deck_sleep_disarm_wake(); }
+  setCpuFrequencyMhz(240);
+  if (mic_down) { i2s_channel_enable(mic_rx_handle); }
+  if (radio_down) {
+    operationDone = false;
+    if (lora_rx) { radio.startReceive(); }
+    else { radio.standby(); }
+  }
+  // The bridge comes back after the panel: advertising off during the nap, on
+  // again now, with the stack never torn down.
+  if (ble_down && pServer) {
+    pServer->getAdvertising()->start();
+  }
+  if (wifi_down) {
+    if (ap_on) {
+      WiFi.mode(wifi_on ? WIFI_AP_STA : WIFI_AP);
+      accesspoint_start();
+    }
+    if (wifi_on) {
+      if (!ap_on) { WiFi.mode(WIFI_STA); }
+      WiFi.begin(ssid.c_str(), password.c_str());
+      wifi_restore_pending = true;
+    }
+  }
+  // tft.begin() in loop()'s wake branch resets the panel: repaint the room
+  lv_obj_invalidate(lv_scr_act());
+  deckLog("%s", "[sleep] awake");
+}
 
 static void wifi_control(lv_event_t *e) {
   lv_obj_t * wifi_button = lv_event_get_target_obj(e);
@@ -5948,6 +6183,12 @@ void configSave() {
   }
   else {
     conf["bt_enabled"] = "off";
+  }
+  if (lightSleep == true) {
+    conf["lightsleep"] = "on";
+  }
+  else {
+    conf["lightsleep"] = "off";
   }
   if (loraChatBroadcaster == true) {
     conf["loraChatBroadcaster"] = "on";
@@ -6079,6 +6320,7 @@ void configDefaults() {
   wifi_ap_enabled = false;
   wifi_enabled = false;
   bt_enabled = true;      // the preference: the radio is wanted
+  lightSleep = false;
   loraChatBroadcaster = false;
   loraChatReceiver = false;
   tauth_remote_enabled = "off";
@@ -6205,6 +6447,13 @@ void configRestore() {
     else {
       bt_enabled = false;
       stop_ble_transfer();
+    }
+    String ls = (const char *)conf["lightsleep"];
+    if (ls == "on") {
+      lightSleep = true;
+    }
+    else {
+      lightSleep = false;
     }
     wifi_server();
     String lcb = (const char *)conf["loraChatBroadcaster"];
