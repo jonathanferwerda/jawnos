@@ -91,12 +91,6 @@ our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
-# per-device padlock rows are read per websocket recipient; a one-second memo
-# keeps a burst of pushes from hitting the database for every tab
-our %padlock_device_memo;
-# a screen that was opened after a whole-house lock keeps its own timer, so the
-# other screens stay locked; the memo keeps the burst of requests cheap
-our %padlock_device_time_memo;
 my $environment = $config->{'environment'};
 our $random_caching_string = &subs::jawn_version();
 my $duty_file = &subs::home('~/.president/on_duty');
@@ -9063,7 +9057,6 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now });
 		if ($scope eq 'all') {
 			&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
-			%padlock_device_time_memo = ();
 		}
 		else {
 			my $open_rows = &subs::db_select('settings', undef, { app => '__president', setting => 'padlock_device_time' })->hashes || [];
@@ -9079,7 +9072,6 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now + $activity_timeout });
 		&subs::db_delete('security', { level => 'padlock_device', uuid => $device_uuid });
 		&subs::db_insert('security', { level => 'padlock_device', credential => '', timestamp => $now, server_time => $now, uuid => $device_uuid });
-		delete $padlock_device_memo{$device_uuid};
 		&padlock_device_clear_time($device_uuid);
 		$overlay_target = $device_uuid;
 	}
@@ -26872,13 +26864,7 @@ sub padlock_gate_allows {
 sub padlock_device_locked {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
-	my $now = &subs::rightNow();
-	if ($padlock_device_memo{$device_uuid} && $now - $padlock_device_memo{$device_uuid}->{'at'} < 1000) {
-		return $padlock_device_memo{$device_uuid}->{'locked'};
-	}
-	my $locked = &subs::db_select('security', undef, { level => 'padlock_device', uuid => $device_uuid })->hashes->[0] ? 1 : 0;
-	$padlock_device_memo{$device_uuid} = { locked => $locked, at => $now };
-	return $locked;
+	return &subs::db_select('security', undef, { level => 'padlock_device', uuid => $device_uuid })->hashes->[0] ? 1 : 0;
 }
 
 # The screen's own unlock stamp, used only when the whole house is locked: it
@@ -26886,14 +26872,8 @@ sub padlock_device_locked {
 sub padlock_device_until {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
-	my $now = &subs::rightNow();
-	if ($padlock_device_time_memo{$device_uuid} && $now - $padlock_device_time_memo{$device_uuid}->{'at'} < 1000) {
-		return $padlock_device_time_memo{$device_uuid}->{'until'};
-	}
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'padlock_device_time', $device_uuid)->hashes->[0];
-	my $until = $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
-	$padlock_device_time_memo{$device_uuid} = { until => $until, at => $now };
-	return $until;
+	return $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
 }
 
 sub padlock_device_set_time {
@@ -26902,14 +26882,12 @@ sub padlock_device_set_time {
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $device_uuid);
 	my $now = &subs::rightNow();
 	&subs::db_insert('settings', { app => '__president', setting => 'padlock_device_time', device => $device_uuid, value => $until, server_time => $now, timestamp => $now, uuid => &subs::random_string_creator(25) });
-	$padlock_device_time_memo{$device_uuid} = { until => $until, at => $now };
 }
 
 sub padlock_device_clear_time {
 	my ($device_uuid) = @_;
 	return unless $device_uuid;
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $device_uuid);
-	delete $padlock_device_time_memo{$device_uuid};
 }
 
 # What a target's unlock request is asking about: a manual row always locks;
@@ -26999,7 +26977,6 @@ sub padlock_mark_unlocked {
 	$target = $c->session('device_uuid') || '' unless defined $target;
 	if ($target) {
 		&subs::db_delete('security', { level => 'padlock_device', uuid => $target });
-		delete $padlock_device_memo{$target};
 		# a screen opened while the whole house is locked keeps a timer of its
 		# own; the other screens stay locked on the house-wide stamp
 		if (&padlock_global_locked($c)) {
@@ -27011,7 +26988,6 @@ sub padlock_mark_unlocked {
 	}
 	else {
 		&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
-		%padlock_device_time_memo = ();
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $new_timeout });
 	}
 	$c->session('pl_time' => $new_timeout);
