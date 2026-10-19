@@ -245,6 +245,9 @@ hook before_dispatch => sub {
 		# the same verified open, relayed to the machine that holds the lock;
 		# the route authenticates the caller by its pinned peer signature
 		$path eq '/manager/security/padlock_open_peer' ||
+		# the same signed rail carries "send the unlock page" to the other
+		# machines in the house, where it is broadcast to their screens
+		$path eq '/manager/security/padlock_key_show_peer' ||
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||

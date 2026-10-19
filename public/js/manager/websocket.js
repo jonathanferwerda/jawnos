@@ -577,6 +577,7 @@ function wsMessageHandler(event) {
 			if (typeof jawnPadlockTargetMatches === 'function' && !jawnPadlockTargetMatches(data['target'])) {
 				return;
 			}
+			if (window.jawnLockedPoller) { clearInterval(window.jawnLockedPoller); window.jawnLockedPoller = null; }
 			$('#padlock_frame').html('').hide();
 			$('#everything').show();
 			if (!document.getElementById('everything')) { window.location.reload(); }

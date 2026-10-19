@@ -509,11 +509,23 @@ function padlockAskPhone(mode, target) {
 	if (typeof target === 'undefined') { target = localStorage.getItem('device_uuid') || ''; }
 	$.post('/manager/security/padlock_phone_show', { mode: mode, target: target });
 }
+// The app locks (gallery, music, folders) still carry the padlock partial's own
+// Send button; it asks the house for the unlock page the same way.
+$(document).on('click', '.padlock_ask_phone', function () {
+	var button = $(this);
+	var frame = button.closest('.padlock_frame');
+	var mode = frame.attr('mode') || 'locker';
+	var target = frame.attr('target') || localStorage.getItem('device_uuid') || '';
+	padlockAskPhone(mode, target);
+	button.text('Sent.');
+});
 
-// ---- show the unlock page on a phone or tablet ------------------------------
-// The house broadcasts padlock_key_show when a screen locks (or when an app
-// asks). A desktop ignores that; a phone or tablet opens the page, which waits
-// for the person to press Unlock.
+// ---- show the unlock page on any device in the house -------------------------
+// The house broadcasts padlock_key_show when a screen locks (or an app asks).
+// Any other device opens the page, which waits for the person to press Unlock.
+// A locked desktop stays on its own lock screen: its local signature is refused
+// (the server is the house it is sitting at), so the page could not open it. A
+// locked phone may open the page to use its own enrolled fingerprint.
 function jawnMobileHere() {
 	return !!(window.JawnPhone || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || ''));
 }
@@ -526,11 +538,13 @@ function jawnPadlockTargetMatches(target) {
 }
 
 function jawnPadlockKeyShow(mode, target, show) {
-	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	// another screen's manual lock is not this phone's problem unless the person
-	// pressed Send, which asks for the page explicitly
-	if (!show && target && !jawnPadlockTargetMatches(target)) { return; }
+	var mobile = jawnMobileHere();
+	var mine = target ? jawnPadlockTargetMatches(target) : false;
+	if (mine && !mobile) { return; }
+	// a whole-house lock has no target; only a phone can sign that one, so a
+	// desktop keeps its lock screen
+	if (!target && !mobile) { return; }
 	var url = '/manager/security/padlock_key';
 	var q = [];
 	if (mode) { q.push('mode=' + encodeURIComponent(mode)); }
@@ -542,23 +556,24 @@ function jawnPadlockKeyShow(mode, target, show) {
 	location.href = url;
 }
 
-// A phone that was asleep, or that joined after a screen locked, gets the
+// A device that was asleep, or that joined after a screen locked, gets the
 // unlock page on its next socket connect: the state lists the locked screens,
-// so a mobile tab goes to the page that signs the challenge.
+// so every other device goes to the page that signs the challenge.
 function jawnPadlockKeyCheck() {
-	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
 		if (!s || !s.ok) { return; }
-		// s.locked is this screen's own answer, and it is false when the device
-		// has its own open stamp even while the rest of the house is locked.
-		// Testing global_locked first sent a phone that was already open to the
-		// unlock page a moment after its desktop had rendered normally - the
-		// server had authorised the page, so the redirect was pure churn.
-		if (!s.locked) { return; }
-		if (s.targets && s.targets.length == 1) { jawnPadlockKeyShow('locker', s.targets[0].uuid, 1); }
-		else if (s.targets && s.targets.length > 1) { jawnPadlockKeyShow('locker', '', 1); }
-		else { jawnPadlockKeyShow('locker', '', 1); }
+		var mobile = jawnMobileHere();
+		var targets = s.targets || [];
+		var mine = '';
+		for (var i = 0; i < targets.length; i++) {
+			if (s.device && targets[i].uuid === s.device) { mine = targets[i].uuid; }
+		}
+		// a locked desktop cannot sign its own screen open; every other device
+		// is offered the unlock page for the screen that is locked
+		if (mine && !mobile) { return; }
+		if (targets.length) { jawnPadlockKeyShow('locker', mine || targets[0].uuid, 0); return; }
+		if (s.locked && mobile) { jawnPadlockKeyShow('locker', '', 0); }
 	});
 }
 
@@ -992,7 +1007,7 @@ function jawnosBiometricVerify(status) {
 		});
 	});
 }
-function jawnosBiometricUnlock(mode, target, status) {
+function jawnosBiometricUnlock(mode, target, status, context) {
 	status = status || function () {};
 	mode = mode || 'locker';
 	var uuid = localStorage.getItem('device_uuid') || '';
@@ -1004,6 +1019,8 @@ function jawnosBiometricUnlock(mode, target, status) {
 			var msg = 'padlock-bio-unlock\n' + uuid + '\n' + ch.nonce;
 			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Unlock the house']).then(function (res) {
 				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+				// the thumb passed; the shackle opens while the house verifies the signature
+				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(context); }
 				return $.post('/manager/security/biometric_unlock', {
 					device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, target: target || uuid
 				});
@@ -1036,11 +1053,20 @@ function jawnosBiometricError(err) {
 }
 // The lock screens show the denial picture at rest. While a fingerprint is being
 // read the hand-drawn padlock replaces it: the shackle lifts into the open
-// drawing, and a failed read snaps it shut again.
-function jawnPadlockArtLocked(snap) {
-	var box = $('.padlock_lock_art').first();
+// drawing, and a failed read snaps it shut again. The button names the frame it
+// belongs to, so an app lock's hidden padlock is never the one animated.
+function jawnPadlockArtScope(el) {
+	var s = el ? $(el).closest('#locked_screen, .padlock_frame') : null;
+	if (s && s.length) { return s; }
+	var visible = $('#locked_screen').filter(':visible').first();
+	if (visible.length) { return visible; }
+	return $(document);
+}
+function jawnPadlockArtLocked(snap, el) {
+	var scope = jawnPadlockArtScope(el);
+	var box = scope.find('.padlock_lock_art').first();
 	if (!box.length) { return; }
-	$('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
+	scope.find('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
 	box.show();
 	if (snap) {
 		box.addClass('snap').removeClass('unlocking');
@@ -1051,10 +1077,11 @@ function jawnPadlockArtLocked(snap) {
 		box.removeClass('unlocking');
 	}
 }
-function jawnPadlockArtUnlocking() {
-	var box = $('.padlock_lock_art').first();
+function jawnPadlockArtUnlocking(el) {
+	var scope = jawnPadlockArtScope(el);
+	var box = scope.find('.padlock_lock_art').first();
 	if (!box.length) { return; }
-	$('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
+	scope.find('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
 	box.show().removeClass('snap').removeClass('unlocking');
 	void box[0].offsetWidth;
 	box.addClass('unlocking');
@@ -1064,16 +1091,15 @@ $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 	var frame = button.closest('.padlock_frame');
 	var note = frame.length ? frame.find('.padlock_fingerprint_status') : $('#locked_phone_status');
 	button.prop('disabled', true);
-	jawnPadlockArtLocked(false);
+	jawnPadlockArtLocked(false, button);
 	if (note.length) { note.text('Touch the fingerprint reader...'); }
-	jawnPadlockArtUnlocking();
 	jawnosBiometricUnlock('locker', localStorage.getItem('device_uuid') || '', function (t) {
 		if (note.length) { note.text(t); }
-	}).then(function () {
+	}, button).then(function () {
 		if (note.length) { note.text('Unlocked. Loading...'); }
-		window.location.reload();
+		setTimeout(function () { window.location.reload(); }, 700);
 	}).catch(function (err) {
-		jawnPadlockArtLocked(true);
+		jawnPadlockArtLocked(true, button);
 		button.prop('disabled', false);
 		if (note.length) { note.text(jawnosBiometricError(err)); }
 	});

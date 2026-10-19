@@ -22,6 +22,18 @@
 		<script src="/js/jquery.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+		<style>
+			html, body {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				background-color: #101010;
+				color: #f4f4f4;
+				font-family: sans-serif;
+				overflow: hidden;
+			}
+		</style>
 	</head>
 	<body><%= content %></body>
 </html>

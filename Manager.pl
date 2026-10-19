@@ -9055,8 +9055,7 @@ post '/manager/lock_session' => sub($c) {
 	# and the screen that locked stayed open until a reload ("it didn't lock").
 	my $target = $scope eq 'all' ? '' : ($c->session('device_uuid') || $posted || '');
 	my $html = $c->render_to_string(
-		template => 'padlock',
-		mode => 'locker',
+		template => 'locked_screen',
 		target => $target,
 		fingerprint => &fingerprint_available()
 	);
@@ -9079,6 +9078,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	return 0 if ($path eq '/manager/security/padlock_phone_show' ||
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
+		$path eq '/manager/security/padlock_key_show_peer' ||
 		$path eq '/manager/security/padlock_state' ||
 		$path eq '/manager/security/fingerprint_unlock' ||
 		$path eq '/manager/security/biometric_challenge' ||
@@ -9164,7 +9164,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker', target => $overlay_target, fingerprint => &fingerprint_available());
+		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available());
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
@@ -9172,6 +9172,10 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		# the phone opens the unlock page; a single-device lock carries that
 		# screen's target, a whole-house lock carries the screen that asked
 		&Websocket::send('server', { padlock_key_show => 1, mode => 'locker', target => $key_target, show => ($whole_house ? 1 : 0), timestamp => &subs::rightNow() });
+		# the same message reaches screens served by another machine in the house
+		unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
+			&padlock_key_show_relay($c, 'locker', $key_target, ($whole_house ? 1 : 0));
+		}
 	#	$c->render(template => 'padlock', mode => 'locker');
 	#	my $path = $c->req->url->path;
 	#	unless $path eq '/manager/security/padlock_pull'
@@ -26961,6 +26965,37 @@ sub padlock_gate_mode {
 	return (defined $mode && $mode eq 'shadow') ? 'shadow' : 'enforce';
 }
 
+# A lock is local to the machine that saw it, but the unlock page must reach
+# every screen in the house. This hands the same padlock_key_show to the peers
+# over the signed rail; each one broadcasts to its own websockets and carries
+# the message on, and relay_id stops a loop.
+sub padlock_key_show_relay {
+	my ($c, $mode, $target, $show) = @_;
+	return unless $c;
+	my $signatorial = &subs::signatorial_designer();
+	my $relay_id = &subs::random_string_creator(30);
+	&subs::relay_fresh($relay_id);
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&remote_relay_request($c, {
+			override => 'manual',
+			url => '/manager/security/padlock_key_show_peer',
+			type => 'post',
+			dissemination => 'yes',
+			params => {
+				signatorial => $signatorial,
+				mode => $mode,
+				target => $target,
+				show => ($show ? 1 : 0),
+				dissemination => 'yes',
+				source_signatorial => $signatorial,
+				relay_from => $signatorial,
+				relay_id => $relay_id,
+			},
+		});
+	}, { name => 'padlock key show relay' });
+}
+
 # A request that came from this machine itself. The phone/tablet is remote, so
 # its signature opens the lock; the locked screen's own key may not.
 sub padlock_request_is_local {
@@ -27009,6 +27044,7 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_challenge';
 	return 1 if $path eq '/manager/security/padlock_unlock';
 	return 1 if $path eq '/manager/security/padlock_open_peer';
+	return 1 if $path eq '/manager/security/padlock_key_show_peer';
 	return 1 if $path eq '/manager/security/padlock_state';
 	return 1 if $path eq '/manager/security/padlock_key';
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
@@ -27199,6 +27235,10 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
+	# another machine's screens are part of the house too
+	unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
+		&padlock_key_show_relay($c, $mode, $target, 1);
+	}
 	$c->render(json => { ok => 1, mode => $mode, target => $target });
 };
 
@@ -27399,9 +27439,16 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	# (the desktop cannot reach it). Without this the phone's own "Open the
 	# unlock page on this phone" answered error=local while the person was
 	# holding the phone, which read as "open it on your phone" from the phone.
+	# A local screen may still sign for ANOTHER screen (the unlock page is sent
+	# to any device in the house); only its own screen and the whole-house lock
+	# are refused.
 	if (&padlock_request_is_local($c) && &subs::device_setter() ne 'mobile') {
-		$log->info('padlock: local signature refused from ' . $ip);
-		return $c->render(json => { ok => 0, error => 'local' });
+		my $for_other = ($target && $target ne $device_uuid
+			&& &subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0]) ? 1 : 0;
+		unless ($for_other) {
+			$log->info('padlock: local signature refused from ' . $ip);
+			return $c->render(json => { ok => 0, error => 'local' });
+		}
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
@@ -27447,6 +27494,49 @@ get '/manager/security/padlock_open_peer' => sub ($c) {
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
 	$log->info('padlock: peer unlock from ' . ($rm->{'hostname'} || $signatorial) . ' mode=' . $mode . ($target ? ' target=' . $target : ' house'));
 	$c->render(json => { ok => ($opened ? 1 : 0), target => $target });
+};
+
+# The peer half of "send the unlock page": the machine that holds the lock hands
+# the message to every peer, and each one broadcasts it to its own screens. The
+# caller is authenticated by its pinned peer signature, and relay_id lets the
+# message walk a multi-hop mesh without looping.
+post '/manager/security/padlock_key_show_peer' => sub ($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+		$log->info('padlock: key show refused from ' . ($signatorial || '?') . ' at ' . ($c->tx->remote_address || '?'));
+		return $c->rendered(403);
+	}
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	my $target = $c->param('target') || '';
+	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	my $show = $c->param('show') ? 1 : 0;
+	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
+	my $relay_id = $c->param('relay_id') || '';
+	if ($relay_id) {
+		my $self = &subs::signatorial_designer();
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&remote_relay_request($c, {
+				override => 'manual',
+				url => '/manager/security/padlock_key_show_peer',
+				type => 'post',
+				dissemination => 'yes',
+				params => {
+					signatorial => $self,
+					mode => $mode,
+					target => $target,
+					show => $show,
+					dissemination => 'yes',
+					source_signatorial => $self,
+					relay_from => $self,
+					relay_id => $relay_id,
+				},
+			});
+		}, { name => 'padlock key show relay onward' });
+	}
+	$c->render(json => { ok => 1 });
 };
 
 get '/manager/security/padlock_state' => sub ($c) {

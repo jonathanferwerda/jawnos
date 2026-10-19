@@ -219,11 +219,11 @@
 		var native = padlockKeyNativeBio();
 		var bio = native || padlockKeyBioUsable();
 		padlockKeySay(bio ? 'Confirm with your fingerprint...' : 'Unlocking...', false);
-		// the shackle lifts while the fingerprint is being read
-		padlockKeyEmblemUnlocking();
 		(native || padlockKeyBioConfirm()).then(function (ok) {
 			if (!ok) { padlockKeyFail('Unlock cancelled.'); return; }
 			padlockKeySay('Unlocking...', false);
+			// the thumb passed; the shackle opens while the house verifies it
+			padlockKeyEmblemUnlocking();
 			padlockKeyDeviceUnlock();
 		});
 	}
@@ -249,10 +249,9 @@
 		$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function (s) {
 			if (!s || !s.ok) { return; }
 			// s.locked is this screen's own answer: false when this device has
-			// its own open stamp, even while the rest of the house is locked.
-			// Checking global_locked first left an already-open phone on a page
-			// that said the whole house was locked and hid Unlock.
-			if (!s.locked) {
+			// its own open stamp, or when only another screen carries the lock.
+			// Targets are what this device can still sign for.
+			if (!s.locked && !(s.targets && s.targets.length)) {
 				$('#padlock_key_note').text('No screen is locked.');
 				$('#padlock_key_unlock').hide();
 				$('#padlock_key_targets').hide();
