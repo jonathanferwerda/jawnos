@@ -28754,7 +28754,12 @@ sub authentication_passer($c) {
 		$c->rendered;
 		return;
 	}
-	elsif ($authentication eq 'approved' && $c->session('server_time') > $server_time - 5100) {
+	elsif ($authentication eq 'approved' && $c->session('server_time') > $server_time - 5100
+		&& !&subs::db_select('security', undef, { level => 'padlock' })->hashes->[0]) {
+		# The fast path may skip the full auth pass, but never the padlock:
+		# every request refreshes session server_time, so a locked screen that
+		# kept a request in flight every few seconds returned here forever and
+		# was never gated ("I locked it and still have full access").
 		$c->session('server_time' => $server_time);
 		return $authentication;
 	}
