@@ -499,18 +499,22 @@ document.addEventListener('visibilitychange', function() {
 });
 
 
-// ---- asking a paired phone to show the unlock page --------------------------
+// ---- asking a paired phone or laptop to confirm an unlock --------------------
 // The dial and the camera key are gone. The only remote key is a paired
 // phone/tablet signing a one-time challenge; the paper recovery code is the
-// emergency. A locked screen cannot open its own door, so it asks the house to
-// send the unlock page to a phone instead.
+// emergency. A locked screen cannot open its own door, so pressing Unlock asks
+// the house to put a fingerprint prompt in front of the other devices.
 function padlockAskPhone(mode, target) {
 	mode = mode || 'locker';
 	if (typeof target === 'undefined') { target = localStorage.getItem('device_uuid') || ''; }
-	$.post('/manager/security/padlock_phone_show', { mode: mode, target: target });
+	$.post('/manager/security/padlock_phone_show', {
+		mode: mode,
+		target: target,
+		device_uuid: localStorage.getItem('device_uuid') || ''
+	});
 }
 // The app locks (gallery, music, folders) still carry the padlock partial's own
-// Send button; it asks the house for the unlock page the same way.
+// Unlock button; it asks the house for the same in-place prompt.
 $(document).on('click', '.padlock_ask_phone', function () {
 	var button = $(this);
 	var frame = button.closest('.padlock_frame');
@@ -520,12 +524,13 @@ $(document).on('click', '.padlock_ask_phone', function () {
 	button.text('Sent.');
 });
 
-// ---- show the unlock page on any device in the house -------------------------
-// The house broadcasts padlock_key_show when a screen locks (or an app asks).
-// Any other device opens the page, which waits for the person to press Unlock.
-// A locked desktop stays on its own lock screen: its local signature is refused
-// (the server is the house it is sitting at), so the page could not open it. A
-// locked phone may open the page to use its own enrolled fingerprint.
+// ---- asking a paired device to confirm an unlock -----------------------------
+// A screen locking no longer pulls every phone and laptop onto the unlock page.
+// That navigation added a history entry and left images stale when a phone
+// woke. The person presses Unlock on the locked screen; the house sends an
+// explicit request. A device that is already open shows a fingerprint prompt
+// in place, signs the target screen open, and goes back to what it was doing.
+// The unlock page is still available by hand.
 function jawnMobileHere() {
 	return !!(window.JawnPhone || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || ''));
 }
@@ -539,43 +544,212 @@ function jawnPadlockTargetMatches(target) {
 
 function jawnPadlockKeyShow(mode, target, show) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	var mobile = jawnMobileHere();
-	var mine = target ? jawnPadlockTargetMatches(target) : false;
-	if (mine && !mobile) { return; }
-	// a whole-house lock has no target; only a phone can sign that one, so a
-	// desktop keeps its lock screen
-	if (!target && !mobile) { return; }
-	var url = '/manager/security/padlock_key';
-	var q = [];
-	if (mode) { q.push('mode=' + encodeURIComponent(mode)); }
-	if (target) { q.push('target=' + encodeURIComponent(target)); }
-	// an explicit ask (the locked screen's Send, or the lock's own push) may
-	// offer Unlock even when this machine has not pulled the lock row yet
-	if (show) { q.push('show=1'); }
-	if (q.length) { url += '?' + q.join('&'); }
-	location.href = url;
+	// An explicit ask (older senders use show=1 without the prompt flag) is a
+	// request to confirm, not an order to navigate. Never move the page: the
+	// prompt names the screen and signs it open in place.
+	if (show && typeof jawnPadlockPrompt === 'function') {
+		jawnPadlockPrompt(mode, target, '', '', '');
+	}
 }
 
-// A device that was asleep, or that joined after a screen locked, gets the
-// unlock page on its next socket connect: the state lists the locked screens,
-// so every other device goes to the page that signs the challenge.
-function jawnPadlockKeyCheck() {
+// A device that was asleep, or that joined after the button was pressed, gets
+// the pending request on its next socket connect (or when it wakes). It is
+// shown in place, never by opening the unlock page.
+var jawnPadlockCheckedAt = 0;
+function jawnPadlockKeyCheck(force) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	if (!document.getElementById('taskbar')) { return; }
+	var now = Date.now();
+	if (!force && now - jawnPadlockCheckedAt < 5000) { return; }
+	jawnPadlockCheckedAt = now;
 	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
 		if (!s || !s.ok) { return; }
-		var mobile = jawnMobileHere();
-		var targets = s.targets || [];
-		var mine = '';
-		for (var i = 0; i < targets.length; i++) {
-			if (s.device && targets[i].uuid === s.device) { mine = targets[i].uuid; }
+		var r = s.request;
+		if (r && r.id && typeof jawnPadlockPrompt === 'function') {
+			jawnPadlockPrompt(r.mode || 'locker', r.target || '', r.id, r.device_name || '', r.source_device || '');
 		}
-		// a locked desktop cannot sign its own screen open; every other device
-		// is offered the unlock page for the screen that is locked
-		if (mine && !mobile) { return; }
-		if (targets.length) { jawnPadlockKeyShow('locker', mine || targets[0].uuid, 0); return; }
-		if (s.locked && mobile) { jawnPadlockKeyShow('locker', '', 0); }
 	});
 }
+
+// The in-place confirmation. It is deliberately a small overlay: the device
+// keeps its page, its scroll position and its history entry. A success opens
+// the screen named in the request; this device is unchanged.
+var jawnPadlockPromptOpen = false;
+var jawnPadlockPromptTarget = '';
+var jawnPadlockPromptSeen = {};
+
+function jawnPadlockPromptDismiss(target) {
+	if (typeof target !== 'undefined' && target !== '' && target !== jawnPadlockPromptTarget) { return; }
+	var box = document.getElementById('jawn_padlock_prompt');
+	if (box && box.parentNode) { box.parentNode.removeChild(box); }
+	jawnPadlockPromptOpen = false;
+	jawnPadlockPromptTarget = '';
+}
+
+function jawnPadlockPromptText(text, value) {
+	if (typeof jawnosT === 'function') {
+		return (typeof value === 'undefined') ? jawnosT(text) : jawnosT(text, value);
+	}
+	return (typeof value === 'undefined') ? text : text.replace('{0}', value);
+}
+
+function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
+	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	if (!document.getElementById('taskbar')) { return; }
+	var mine = localStorage.getItem('device_uuid') || '';
+	if (!mine) { return; }
+	// the locked screen is not asked to sign itself open, and the screen that
+	// pressed Unlock is not asked to confirm its own request
+	if (target && target === mine) { return; }
+	if (sourceDevice && sourceDevice === mine) { return; }
+	if (jawnPadlockPromptOpen) { return; }
+	var key = requestId || ('request:' + (mode || 'locker') + ':' + (target || 'house'));
+	if (jawnPadlockPromptSeen[key]) { return; }
+	jawnPadlockPromptSeen[key] = 1;
+	jawnPadlockPromptOpen = true;
+	jawnPadlockPromptTarget = target || '';
+	mode = mode || 'locker';
+
+	var box = document.createElement('div');
+	box.id = 'jawn_padlock_prompt';
+	box.setAttribute('role', 'dialog');
+	box.setAttribute('aria-modal', 'true');
+	box.style.cssText = 'position:fixed;z-index:71000;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,360px);background:#161616;color:#f4f4f4;border:1px solid #444;border-radius:14px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-family:sans-serif;text-align:center;';
+	var title = document.createElement('div');
+	title.style.cssText = 'font-size:19px;line-height:1.35;margin-bottom:6px;';
+	title.textContent = deviceName ? jawnPadlockPromptText('Unlock {0}?', deviceName) : jawnPadlockPromptText('Unlock the locked screen?');
+	var note = document.createElement('div');
+	note.style.cssText = 'font-size:14px;color:#bbb;margin-bottom:14px;min-height:18px;';
+	note.textContent = jawnPadlockPromptText('Somebody pressed Unlock on the locked screen. Confirm with your fingerprint to open it.');
+	var go = document.createElement('button');
+	go.type = 'button';
+	go.textContent = jawnPadlockPromptText('Unlock with fingerprint');
+	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
+	var no = document.createElement('button');
+	no.type = 'button';
+	no.textContent = jawnPadlockPromptText('Not now');
+	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	box.appendChild(title);
+	box.appendChild(note);
+	box.appendChild(go);
+	box.appendChild(no);
+	document.body.appendChild(box);
+
+	no.onclick = function () { jawnPadlockPromptDismiss(); };
+	go.onclick = function () {
+		go.disabled = true;
+		no.disabled = true;
+		note.textContent = jawnPadlockPromptText('Touch the fingerprint reader...');
+		jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+			if (!ok) { throw { error: 'cancelled' }; }
+			note.textContent = jawnPadlockPromptText('Unlocking...');
+			return jawnPadlockSignOpen(mode, target, note);
+		}).then(function (res) {
+			note.textContent = (res && res.already) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.');
+			setTimeout(function () { jawnPadlockPromptDismiss(); }, 1200);
+		}).catch(function (err) {
+			if (err && err.error === 'cancelled') { jawnPadlockPromptDismiss(); return; }
+			note.textContent = (typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : jawnPadlockPromptText('That did not work. Try again.');
+			go.disabled = false;
+			no.disabled = false;
+		});
+	};
+}
+
+function jawnosRandom(n) {
+	var a = new Uint8Array(n);
+	crypto.getRandomValues(a);
+	return a;
+}
+function jawnosB64Bytes(b64) {
+	var s = atob(b64);
+	var a = new Uint8Array(s.length);
+	for (var i = 0; i < s.length; i++) { a[i] = s.charCodeAt(i); }
+	return a;
+}
+
+// A local confirmation before the paired key signs. The Android app has a
+// native prompt (window.JawnBiometric); a browser on a hostname uses WebAuthn;
+// over a bare LAN address there is no RP ID, so the button press is the
+// go-ahead - the same rule the unlock page uses.
+function jawnPadlockConfirm(text) {
+	if (window.JawnBiometric && typeof window.JawnBiometric.confirm === 'function') {
+		return new Promise(function (resolve) {
+			window.jawnBiometricResult = function (ok) {
+				window.jawnBiometricResult = null;
+				resolve(ok === 'unavailable' ? true : !!ok);
+			};
+			try { window.JawnBiometric.confirm(text || 'Unlock the house'); }
+			catch (e) { window.jawnBiometricResult = null; resolve(true); }
+		});
+	}
+	var h = location.hostname || '';
+	if (window.PublicKeyCredential && navigator.credentials && window.isSecureContext && !/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+		var id = localStorage.getItem('jawn_padlock_cred') || '';
+		if (!id) {
+			return navigator.credentials.create({ publicKey: {
+				challenge: jawnosRandom(32),
+				rp: { name: 'JawnOS', id: h },
+				user: { id: jawnosRandom(16), name: 'jawnos-unlock', displayName: 'JawnOS unlock' },
+				pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+				authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+				timeout: 60000,
+				attestation: 'none'
+			} }).then(function (cred) {
+				if (cred && cred.rawId) { localStorage.setItem('jawn_padlock_cred', jawnosB64(cred.rawId)); }
+				return true;
+			}).catch(function (e) {
+				if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) { return false; }
+				return true;
+			});
+		}
+		return navigator.credentials.get({ publicKey: {
+			challenge: jawnosRandom(32),
+			allowCredentials: [{ type: 'public-key', id: jawnosB64Bytes(id) }],
+			userVerification: 'required',
+			timeout: 60000
+		} }).then(function (a) { return !!a; }).catch(function (e) {
+			if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) { return false; }
+			return true;
+		});
+	}
+	return Promise.resolve(true);
+}
+
+// Sign the one-time challenge with this device's pairing key and ask the house
+// to open the target screen (or the whole house when target is empty).
+function jawnPadlockSignOpen(mode, target, status) {
+	mode = mode || 'locker';
+	var uuid = localStorage.getItem('device_uuid') || '';
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
+	return jawnosDeviceKeyGet().then(function (key) {
+		if (!key) { throw { error: 'not paired' }; }
+		return $.post('/manager/security/padlock_challenge', { device_uuid: uuid });
+	}).then(function (ch) {
+		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
+		var msg = 'padlock-unlock\n' + uuid + '\n' + (target ? target + '\n' : '') + ch.nonce;
+		return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+			var body = { device_uuid: uuid, nonce: ch.nonce, signature: jawnosB64(sig), mode: mode };
+			if (target) { body.target = target; }
+			return $.post('/manager/security/padlock_unlock', body);
+		});
+	}).then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		return res;
+	});
+}
+
+// A phone that wakes should find a request that arrived while it slept, but it
+// must never be sent to another page on the way.
+document.addEventListener('visibilitychange', function () {
+	if (document.hidden) { return; }
+	setTimeout(function () {
+		if (typeof jawnPadlockKeyCheck === 'function' && document.getElementById('taskbar')) {
+			jawnPadlockKeyCheck(true);
+		}
+	}, 1200);
+});
 
 
 

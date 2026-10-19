@@ -180,10 +180,15 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
 - Only a **remote** device may sign: a request from this machine itself is
   refused (`padlock_request_is_local`), so the locked screen cannot open its own
   door with the key it holds. The paper code is the lost-phone path.
-- The house broadcasts `padlock_key_show` when a screen locks, and a mobile tab
-  jumps to the unlock page by itself (v0.1.792). The page waits there: the person
-  presses **Unlock**, confirms with a fingerprint where WebAuthn is available
-  (v0.1.816), and it signs the nonce (v0.1.810). The taskbar padlock locks
+- A screen locking shows its own lock screen and no longer broadcasts the
+  unlock page to every device (that auto-navigation added history entries and
+  left images stale when a phone woke). The person presses **Unlock** on the
+  locked screen; the house writes a short-lived request and prompts paired
+  phones/laptops **in place**. The device that confirms keeps its page and
+  history: it confirms with the app's native fingerprint prompt or WebAuthn
+  where available (v0.1.816) and signs the nonce (v0.1.810) for the named
+  screen. A phone that was asleep finds the request in `padlock_state` on its
+  next connection and is never sent to another page. The taskbar padlock locks
   **this screen** with one tap and the **whole house** with a double tap
   (v0.1.816). A single-screen lock is a per-device row; a whole-house lock is
   the house stamp. Unlocking a screen after a whole-house lock gives that
@@ -192,8 +197,8 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
 - **The dial and the camera/QR key were removed in v0.1.804.** The dial's
   handler, the QR canvas, the rotation timer, the camera watch/poll and its
   `/frame` and `/active` routes are gone (the routes answer "disabled").
-  `padlock_phone_show` only sends `padlock_key_show`; it cannot unlock. The
-  recovery code stays as the only other way in.
+  `padlock_phone_show` only sends the request (and stores it for a waking
+  device); it cannot unlock. The recovery code stays as the only other way in.
 
 ### Emergency: paper code **and** FDE (both)
 

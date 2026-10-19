@@ -20,7 +20,7 @@
 		</div>
 	</div>
 	<% if ($frame_mode ne 'security' && $show_phone) { %>
-		<button type="button" class="padlock_ask_phone">Send the unlock page to my phone</button>
+		<button type="button" class="padlock_ask_phone"><%= &subs::ui('Unlock on my phone or laptop') %></button>
 	<% } %>
 	<% if ($show_fingerprint) { %>
 		<button type="button" class="padlock_fingerprint">Use this computer's fingerprint</button>

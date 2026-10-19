@@ -9151,7 +9151,6 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	# whole-house lock carries its own timer, so the overlay skips it.
 	my $whole_house = (!$explicit || $scope eq 'all' || !$device_uuid) ? 1 : 0;
 	my $overlay_target = '';
-	my $key_target = $device_uuid;
 	my @unlocked;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
@@ -9220,13 +9219,12 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
 		&Websocket::send('server', { padlock => $pl, taunts => $taunts, attempts => $attempts, colour => $colour, target => $overlay_target, unlocked => \@unlocked });
-		# the phone opens the unlock page; a single-device lock carries that
-		# screen's target, a whole-house lock carries the screen that asked
-		&Websocket::send('server', { padlock_key_show => 1, mode => 'locker', target => $key_target, show => ($whole_house ? 1 : 0), timestamp => &subs::rightNow() });
-		# the same message reaches screens served by another machine in the house
-		unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
-			&padlock_key_show_relay($c, 'locker', $key_target, ($whole_house ? 1 : 0));
-		}
+		# A lock shows itself on the screen that locked. It deliberately does NOT
+		# broadcast the unlock page to every other device: doing that on every
+		# lock (once per five seconds while a locked screen kept talking) pulled
+		# phones and laptops onto a black page, added a history entry, and left
+		# their images stale. Another device is asked only when the person presses
+		# Unlock on the locked screen, which calls padlock_phone_show.
 	#	$c->render(template => 'padlock', mode => 'locker');
 	#	my $path = $c->req->url->path;
 	#	unless $path eq '/manager/security/padlock_pull'
@@ -27090,12 +27088,14 @@ sub padlock_gate_mode {
 	return (defined $mode && $mode eq 'shadow') ? 'shadow' : 'enforce';
 }
 
-# A lock is local to the machine that saw it, but the unlock page must reach
-# every screen in the house. This hands the same padlock_key_show to the peers
-# over the signed rail; each one broadcasts to its own websockets and carries
-# the message on, and relay_id stops a loop.
+# A lock is local to the machine that saw it, but an explicit unlock request
+# must reach every screen in the house. This hands the same padlock_key_show to
+# the peers over the signed rail; each one broadcasts to its own websockets and
+# carries the message on, and relay_id stops a loop. `prompt` marks a request
+# the person made on the locked screen (not a lock being announced), so only
+# that kind may put a confirmation in front of another device.
 sub padlock_key_show_relay {
-	my ($c, $mode, $target, $show) = @_;
+	my ($c, $mode, $target, $show, $prompt, $request_id, $device_name, $source_device) = @_;
 	return unless $c;
 	my $signatorial = &subs::signatorial_designer();
 	my $relay_id = &subs::random_string_creator(30);
@@ -27112,6 +27112,10 @@ sub padlock_key_show_relay {
 				mode => $mode,
 				target => $target,
 				show => ($show ? 1 : 0),
+				prompt => ($prompt ? 1 : 0),
+				request_id => ($request_id || ''),
+				device_name => ($device_name || ''),
+				source_device => ($source_device || ''),
 				dissemination => 'yes',
 				source_signatorial => $signatorial,
 				relay_from => $signatorial,
@@ -27119,6 +27123,71 @@ sub padlock_key_show_relay {
 			},
 		});
 	}, { name => 'padlock key show relay' });
+}
+
+# ---- explicit unlock requests --------------------------------------------
+# A locked screen no longer pulls every phone and laptop onto the unlock page.
+# The person presses Unlock on the locked screen; that writes a short-lived
+# request (local cache, never synced) and broadcasts it. A device that is
+# already open shows a fingerprint prompt in place, signs the target screen
+# open, and goes back to what it was doing. The request is also readable from
+# padlock_state, so a phone that was asleep when the button was pressed finds
+# it on its next connection.
+sub padlock_request_store {
+	my ($target, $mode, $source, $id, $device_name, $source_device) = @_;
+	my $now = &subs::rightNow();
+	$id ||= &subs::random_string_creator(24);
+	my $data = encode_json({
+		id => $id,
+		target => $target || '',
+		mode => $mode || 'locker',
+		source => $source || '',
+		device_name => $device_name || '',
+		source_device => $source_device || '',
+		time => $now,
+	});
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_request', $now - 600000);
+	my $existing = &subs::db_select('cache', undef, { context => 'padlock_request', uuid => $id })->hashes->[0];
+	if ($existing) {
+		&subs::db_update('cache', { data => $data, server_time => $now, timestamp => $now }, { context => 'padlock_request', uuid => $id });
+	}
+	else {
+		&subs::db_insert('cache', {
+			uuid => $id,
+			context => 'padlock_request',
+			app => '__president',
+			data => $data,
+			timestamp => $now,
+			server_time => $now,
+		});
+	}
+	return $id;
+}
+
+sub padlock_request_get {
+	my $now = &subs::rightNow();
+	my $row = &subs::db_query('select uuid, data, server_time from cache where context = ? and server_time > ? order by server_time desc limit 1', 'padlock_request', $now - 300000)->hashes->[0];
+	return {} unless $row;
+	my $d = eval { decode_json $row->{'data'} } || {};
+	$d->{'id'} ||= $row->{'uuid'};
+	$d->{'time'} ||= $row->{'server_time'};
+	return $d;
+}
+
+# One screen opening does not answer a request for another screen, and a
+# whole-house open answers every request.
+sub padlock_request_clear {
+	my ($target) = @_;
+	return unless defined $target;
+	if ($target eq '') {
+		&subs::db_query('delete from cache where context = ?', 'padlock_request');
+		return;
+	}
+	my $rows = &subs::db_query('select uuid, data from cache where context = ?', 'padlock_request')->hashes || [];
+	foreach my $r ( @{$rows} ) {
+		my $d = eval { decode_json $r->{'data'} } || {};
+		&subs::db_query('delete from cache where uuid = ?', $r->{'uuid'}) if (($d->{'target'} || '') eq $target);
+	}
 }
 
 # A request that came from this machine itself. The phone/tablet is remote, so
@@ -27346,6 +27415,9 @@ sub padlock_mark_unlocked {
 		# would run on every tab, so it is only used for a whole-house open
 		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();' }) unless $target;
 	}
+	# this request has been answered; a device that wakes later must not ask
+	# the person to confirm an unlock that already happened
+	&padlock_request_clear($target);
 	return 1;
 }
 
@@ -27355,20 +27427,30 @@ post '/manager/security/padlock_watch' => sub ($c) {
 	$c->render(json => { ok => 0, error => 'the camera key is disabled' });
 };
 
-# An app that locks (gallery, music, folders) asks the house to show the
-# unlock page on a paired phone/tablet. The phone signs there; this route only
-# sends the message, so it cannot unlock anything by itself.
+# The person pressed Unlock on a locked screen. This writes a short-lived
+# request and asks every paired phone/tablet to confirm it with a fingerprint.
+# The route only sends the request; it cannot unlock anything by itself, and a
+# device that is already open is never sent away from the page it is on.
 post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
-	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
+	my $device_name = '';
+	if ($target) {
+		my $device = &subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0];
+		$device_name = $device->{'name'} || '' if $device;
+	}
+	# the screen that pressed the button is not asked to confirm its own request
+	my $source_device = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
+	my $request_id = &padlock_request_store($target, $mode, &subs::signatorial_designer(), undef, $device_name, $source_device);
+	&Websocket::send('server', { padlock_key_show => 1, prompt => 1, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	# another machine's screens are part of the house too
 	unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
-		&padlock_key_show_relay($c, $mode, $target, 1);
+		&padlock_key_show_relay($c, $mode, $target, 1, 1, $request_id, $device_name, $source_device);
 	}
-	$c->render(json => { ok => 1, mode => $mode, target => $target });
+	$c->render(json => { ok => 1, mode => $mode, target => $target, request_id => $request_id });
 };
 
 # A local fingerprint is an alternative to the phone for the screen it is on.
@@ -27599,6 +27681,7 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 		});
 	}, { name => 'padlock unlock relay' });
 	unless ($locked) {
+		&padlock_request_clear($target);
 		return $c->render(json => { ok => 1, unlocked => 1, already => 1, relayed => ($target ? 1 : 0), name => $device->{'name'} });
 	}
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
@@ -27642,7 +27725,18 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $show = $c->param('show') ? 1 : 0;
-	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
+	my $prompt = $c->param('prompt') ? 1 : 0;
+	my $request_id = $c->param('request_id') || '';
+	$request_id = '' unless $request_id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $device_name = $c->param('device_name') || '';
+	$device_name =~ s/[\r\n\t]//g;
+	$device_name = substr($device_name, 0, 120);
+	my $source_device = $c->param('source_device') || '';
+	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
+	# keep the request readable on this machine too: a phone that is asleep
+	# when the button is pressed finds it in padlock_state on its next wake
+	if ($prompt) { $request_id = &padlock_request_store($target, $mode, $signatorial, $request_id || undef, $device_name, $source_device); }
+	&Websocket::send('server', { padlock_key_show => 1, prompt => $prompt, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
 	my $relay_id = $c->param('relay_id') || '';
 	if ($relay_id) {
 		my $self = &subs::signatorial_designer();
@@ -27658,6 +27752,10 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 					mode => $mode,
 					target => $target,
 					show => $show,
+					prompt => $prompt,
+					request_id => $request_id,
+					device_name => $device_name,
+					source_device => $source_device,
 					dissemination => 'yes',
 					source_signatorial => $self,
 					relay_from => $self,
@@ -27686,6 +27784,7 @@ get '/manager/security/padlock_state' => sub ($c) {
 		$du = '' unless $paired;
 	}
 	else { $du = ''; }
+	my $request = &padlock_request_get();
 	$c->render(json => {
 		ok => 1,
 		has_padlock => ($padlock ? 1 : 0),
@@ -27694,7 +27793,8 @@ get '/manager/security/padlock_state' => sub ($c) {
 		gate => &padlock_gate_mode(),
 		device => $du,
 		device_until => (&padlock_device_until($du) || 0),
-		targets => \@targets
+		targets => \@targets,
+		request => $request
 	});
 };
 

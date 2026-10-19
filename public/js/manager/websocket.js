@@ -568,10 +568,23 @@ function wsMessageHandler(event) {
 			// waiting for a refresh to show or hide the lock button
 			$('#lock_session').toggle(!!data['padlock_gate']);
 		}
-		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
-			jawnPadlockKeyShow(data['mode'], data['target'], data['show']);
+		if (data['padlock_key_show']) {
+			// An explicit request gets a fingerprint prompt in place; it never
+			// moves this page. Anything else is a legacy announcement and is
+			// ignored, so a lock cannot black out a phone that is in use.
+			if (data['prompt'] && typeof jawnPadlockPrompt === 'function') {
+				jawnPadlockPrompt(data['mode'], data['target'], data['request_id'], data['device_name'], data['source_device']);
+			}
+			else if (typeof jawnPadlockKeyShow === 'function') {
+				jawnPadlockKeyShow(data['mode'], data['target'], data['show']);
+			}
 		}
 		if (data['padlock_open']) {
+			// another device may have answered an in-place prompt; dismiss it
+			// before the target check below, which is about this device's own lock
+			if (typeof jawnPadlockPromptDismiss === 'function') {
+				jawnPadlockPromptDismiss(data['target']);
+			}
 			// the phone (or the paper code) turned it: drop the overlay without
 			// waiting for the page to be reloaded, on the device it was meant for
 			if (typeof jawnPadlockTargetMatches === 'function' && !jawnPadlockTargetMatches(data['target'])) {
