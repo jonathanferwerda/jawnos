@@ -180,13 +180,15 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
 - Only a **remote** device may sign: a request from this machine itself is
   refused (`padlock_request_is_local`), so the locked screen cannot open its own
   door with the key it holds. The paper code is the lost-phone path.
-- The house broadcasts `padlock_key_show` when it locks, and a mobile tab jumps
-  to the unlock page by itself (v0.1.792). The page waits there: the person
-  presses **Unlock** and it signs the nonce (v0.1.810), so the house cannot open
-  itself again while the phone is in use. The taskbar padlock locks **this
-  screen only** (v0.1.811): the unlock message names that device, so another
-  screen or the phone stays usable. The inactivity timeout is still the
-  house-wide lock.
+- The house broadcasts `padlock_key_show` when a screen locks, and a mobile tab
+  jumps to the unlock page by itself (v0.1.792). The page waits there: the person
+  presses **Unlock**, confirms with a fingerprint where WebAuthn is available
+  (v0.1.816), and it signs the nonce (v0.1.810). The taskbar padlock locks
+  **this screen** with one tap and the **whole house** with a double tap
+  (v0.1.816). A single-screen lock is a per-device row; a whole-house lock is
+  the house stamp. Unlocking a screen after a whole-house lock gives that
+  screen its own timer and leaves the others locked (v0.1.816). The inactivity
+  timeout is the other whole-house lock.
 - **The dial and the camera/QR key were removed in v0.1.804.** The dial's
   handler, the QR canvas, the rotation timer, the camera watch/poll and its
   `/frame` and `/active` routes are gone (the routes answer "disabled").
@@ -234,8 +236,10 @@ before any compositor work, and it is small.
   page waits for the person to press **Unlock** (v0.1.810), so the house does
   not open itself while the phone is in use. A manual lock is a row per device
   (`security.level = padlock_device`) and the signature names the target
-  (v0.1.811), so only that screen opens. `pl_time` is sealed under the house
-  key, so a fresh tab reads the same timer (v0.1.812).
+  (v0.1.811), so only that screen opens. Timers are stored as plain
+  milliseconds, readable by every worker, with a decrypt fallback for old rows
+  (v0.1.817); the gate reads them directly, with no one-second cache
+  (v0.1.818).
 - **Landed in v0.1.802.** Shadow logged real requests and still served;
   Enforce answered a document with `423` and the locked page; the dial (since
   removed) unlocked; the websocket drops data pushes while locked; a throwaway

@@ -14,10 +14,11 @@
 		<div style="max-width:640px;margin:0 auto 120px auto;text-align:center;">
 			<h2>The gate</h2>
 			<p style="line-height:1.4;">
-				A paired phone or tablet is the key. Press the padlock on the taskbar to lock
-				this screen only; other screens and the phone stay usable. The phone opens the
-				unlock page and waits for you to tap Unlock. The inactivity timeout locks the
-				whole house. The paper recovery code is the emergency way in.
+				A paired phone or tablet is the key. Tap the padlock on the taskbar to lock
+				this screen; double-tap it to lock the whole house. The phone opens the unlock
+				page, waits for your tap and fingerprint, and opens only the screen you pick.
+				The inactivity timeout is also a whole-house lock. The paper recovery code is
+				the emergency way in.
 			</p>
 			<p id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>">
 				<b><%= $padlock ? 'The gate is on.' : 'The gate is off.' %></b>
