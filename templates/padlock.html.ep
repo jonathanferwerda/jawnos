@@ -1,6 +1,7 @@
 <div class="padlock_frame" mode="<%= $mode %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
-	<div class="padlock_message">The house is locked.<br>Unlock on your phone or with the recovery code.</div>
+	<% my $scope = (defined $target && $target) ? 'This screen is locked.' : 'The house is locked.'; %>
+	<div class="padlock_message"><%= $scope %><br>Unlock on your phone or with the recovery code.</div>
 	<%= include 'denial_image' %>
 	<% if ($mode ne 'security') { %>
 		<a href="/manager/security/padlock_key?mode=<%= $mode %>" class="padlock_phone_key">Open the unlock page on this phone</a>

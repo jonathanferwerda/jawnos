@@ -563,16 +563,22 @@ function wsMessageHandler(event) {
 			$('#controller').scrollLeft(scrollL);
 		}
 		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
-			jawnPadlockKeyShow(data['mode']);
+			jawnPadlockKeyShow(data['mode'], data['target']);
 		}
 		if (data['padlock_open']) {
 			// the phone (or the paper code) turned it: drop the overlay without
-			// waiting for the page to be reloaded
+			// waiting for the page to be reloaded, on the device it was meant for
+			if (typeof jawnPadlockTargetMatches === 'function' && !jawnPadlockTargetMatches(data['target'])) {
+				return;
+			}
 			$('#padlock_frame').html('').hide();
 			$('#everything').show();
 			if (!document.getElementById('everything')) { window.location.reload(); }
 		}
 		if ( data['padlock'] ) {
+			if (typeof jawnPadlockTargetMatches === 'function' && !jawnPadlockTargetMatches(data['target'])) {
+				return;
+			}
 			var height = numeral($(window).height()).format('0.00');
 			var width = numeral($(window).width()).format('0.00');
 			if ($('#everything').is(':visible')) {

@@ -79,10 +79,11 @@
 	}
 </style>
 
-<div id="locked_heading">The house is locked.</div>
+<% my $target = defined $target ? $target : ''; %>
+<div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
 <div id="locked_padlock">
-	<%= include 'padlock', mode => 'locker' %>
+	<%= include 'padlock', mode => 'locker', target => $target %>
 </div>
 
 <div id="locked_help">
@@ -141,10 +142,11 @@
 		});
 	}
 	var sendPhone = document.getElementById('locked_send_phone');
+	var lockedTarget = '<%= $target %>';
 	if (sendPhone) {
 		sendPhone.addEventListener('click', function () {
 			var note = document.getElementById('locked_phone_status');
-			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker'); }
+			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker', lockedTarget); }
 			if (note) { note.textContent = 'Sent. Open the unlock page on your phone.'; }
 		});
 	}

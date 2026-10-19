@@ -3,11 +3,12 @@
 	<div id="padlock_key_spinner" style="display:none;"></div>
 	<div id="padlock_key_note">
 		<% if ($has_padlock) { %>
-			The house is locked.
+			The screen is locked.
 		<% } else { %>
 			No padlock is set on this house.
 		<% } %>
 	</div>
+	<div id="padlock_key_targets" style="display:none;"></div>
 	<button id="padlock_key_unlock" type="button"<% unless ($has_padlock) { %> style="display:none;"<% } %>>Unlock</button>
 	<button id="padlock_key_retry" type="button" style="display:none;">Try again</button>
 </div>
@@ -40,9 +41,17 @@
 		line-height: 1.35;
 		padding: 0 18px;
 	}
+	#padlock_key_targets {
+		margin-top: 18px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		width: 80%;
+		max-width: 320px;
+	}
+	#padlock_key_targets button,
 	#padlock_key_unlock,
 	#padlock_key_retry {
-		margin-top: 22px;
 		font-size: 18px;
 		padding: 12px 28px;
 		border-radius: 10px;
@@ -51,11 +60,18 @@
 		color: #f4f4f4;
 		cursor: pointer;
 	}
+	#padlock_key_targets button {
+		width: 100%;
+	}
 	#padlock_key_unlock {
+		margin-top: 22px;
 		background-color: #2b6;
 		border-color: #2b6;
 		color: #08110a;
 		font-weight: bold;
+	}
+	#padlock_key_retry {
+		margin-top: 22px;
 	}
 	@keyframes padlock_key_turn {
 		to { transform: rotate(360deg); }
@@ -64,12 +80,15 @@
 
 <script>
 	var padlockKeyMode = 'locker';
+	var padlockKeyTarget = '';
 	try {
 		var pk = (location.search || '').match(/[?&]mode=([^&]+)/);
 		if (pk) {
 			var pm = decodeURIComponent(pk[1]);
 			if (/^(locker|gallery|music|folders|general)$/.test(pm)) { padlockKeyMode = pm; }
 		}
+		var pt = (location.search || '').match(/[?&]target=([^&]+)/);
+		if (pt) { padlockKeyTarget = decodeURIComponent(pt[1]); }
 	} catch (e) { }
 
 	function padlockKeyB64(buf) {
@@ -93,9 +112,9 @@
 		});
 	}
 
-	// The page opens when the house locks, but it does not sign by itself: the
-	// person presses Unlock when they are ready. That keeps the house locked
-	// while the phone is in use.
+	// The page opens when a screen locks, but it does not sign by itself: the
+	// person presses Unlock when they are ready. A target names one screen; no
+	// target is the house-wide timeout lock.
 	var padlockKeyBusy = false;
 	var padlockKeyDone = false;
 
@@ -105,7 +124,7 @@
 			padlockKeyDone = true;
 			padlockKeyBusy = false;
 			$('#padlock_key_spinner').addClass('done');
-			$('#padlock_key_unlock, #padlock_key_retry').hide();
+			$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		}
 	}
 	function padlockKeyFail(text) {
@@ -114,13 +133,52 @@
 		padlockKeySay(text, false);
 		$('#padlock_key_retry').show();
 	}
-	function padlockKeyStart() {
+	function padlockKeyStart(target) {
 		if (padlockKeyBusy || padlockKeyDone) { return; }
+		if (typeof target === 'string') { padlockKeyTarget = target; }
 		padlockKeyBusy = true;
-		$('#padlock_key_unlock, #padlock_key_retry').hide();
+		$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		$('#padlock_key_spinner').show().removeClass('done');
 		padlockKeySay('Unlocking...', false);
 		padlockKeyDeviceUnlock();
+	}
+	function padlockKeyTargets(targets, global_locked) {
+		var box = $('#padlock_key_targets').empty();
+		if (global_locked) {
+			$('<button type="button"></button>').text('The whole house')
+				.on('click', function () { padlockKeyStart(''); }).appendTo(box);
+		}
+		$.each(targets || [], function (i, t) {
+			$('<button type="button"></button>').text(t.name || 'Locked screen')
+				.on('click', function () { padlockKeyStart(t.uuid || ''); }).appendTo(box);
+		});
+		if (box.children().length) {
+			$('#padlock_key_unlock').hide();
+			box.show();
+		}
+	}
+	function padlockKeyLook() {
+		if (padlockKeyTarget || padlockKeyDone) { return; }
+		$.getJSON('/manager/security/padlock_state', function (s) {
+			if (!s || !s.ok) { return; }
+			if (s.global_locked) {
+				$('#padlock_key_note').text('The house is locked.');
+				padlockKeyTargets(s.targets, 1);
+				return;
+			}
+			if (s.targets && s.targets.length == 1) {
+				padlockKeyTarget = s.targets[0].uuid || '';
+				$('#padlock_key_note').text('The screen is locked.');
+			}
+			else if (s.targets && s.targets.length > 1) {
+				$('#padlock_key_note').text('Which screen do you want to unlock?');
+				padlockKeyTargets(s.targets, 0);
+			}
+			else {
+				$('#padlock_key_note').text('No screen is locked.');
+				$('#padlock_key_unlock').hide();
+			}
+		});
 	}
 
 	function padlockKeyDeviceUnlock() {
@@ -147,16 +205,20 @@
 					padlockKeyFail('This phone is not paired.');
 					return;
 				}
-				var msg = 'padlock-unlock\n' + uuid + '\n' + ch.nonce;
+				var msg = 'padlock-unlock\n' + uuid + '\n';
+				if (padlockKeyTarget) { msg += padlockKeyTarget + '\n'; }
+				msg += ch.nonce;
 				return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+					var body = new URLSearchParams({ device_uuid: uuid, nonce: ch.nonce, signature: padlockKeyB64(sig), mode: padlockKeyMode });
+					if (padlockKeyTarget) { body.set('target', padlockKeyTarget); }
 					return fetch('/manager/security/padlock_unlock', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-						body: new URLSearchParams({ device_uuid: uuid, nonce: ch.nonce, signature: padlockKeyB64(sig), mode: padlockKeyMode })
+						body: body
 					});
 				}).then(function (r) { return r.json(); }).then(function (res) {
 					if (res && res.ok) {
-						padlockKeySay(res.already ? 'The house is already open.' : 'Unlocked.', true);
+						padlockKeySay(res.already ? 'That screen was already open.' : 'Unlocked.', true);
 					}
 					else if (res && res.error === 'local') {
 						padlockKeyFail('Open this page on your phone, not on the locked computer.');
@@ -172,7 +234,8 @@
 	}
 
 	$(function () {
-		$('#padlock_key_unlock').on('click', padlockKeyStart);
-		$('#padlock_key_retry').on('click', padlockKeyStart);
+		$('#padlock_key_unlock').on('click', function () { padlockKeyStart(); });
+		$('#padlock_key_retry').on('click', function () { padlockKeyStart(); });
+		<% if ($has_padlock) { %>padlockKeyLook();<% } %>
 	});
 </script>

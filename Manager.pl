@@ -91,6 +91,9 @@ our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+# per-device padlock rows are read per websocket recipient; a one-second memo
+# keeps a burst of pushes from hitting the database for every tab
+our %padlock_device_memo;
 my $environment = $config->{'environment'};
 our $random_caching_string = &subs::jawn_version();
 my $duty_file = &subs::home('~/.president/on_duty');
@@ -9010,6 +9013,7 @@ post '/manager/lock_session' => sub($c) {
 };
 sub lock_session($c, $explicit = 0) {
 	my $now = &subs::rightNow();
+	my $device_uuid = $c->session('device_uuid') || '';
 	my ($db) = &subs::database_grabber();
 
 	# The phone key talks to the server while the padlock is up. Those calls are
@@ -9032,7 +9036,22 @@ sub lock_session($c, $explicit = 0) {
 		return if $fresh > $now;
 	}
 
-	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now ) });
+	# A manual gate locks this device only. The global timer stays in the
+	# future, so the house-wide inactivity lock does not take the phone with it.
+	# The timeout path below is the house-wide lock: it stamps pl_time = now.
+	my $target = '';
+	if ($explicit && $device_uuid) {
+		my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
+		$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now + $activity_timeout) });
+		&subs::db_delete('security', { level => 'padlock_device', uuid => $device_uuid });
+		&subs::db_insert('security', { level => 'padlock_device', credential => '', timestamp => $now, server_time => $now, uuid => $device_uuid });
+		delete $padlock_device_memo{$device_uuid};
+		$target = $device_uuid;
+	}
+	else {
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $now ) });
+	}
 	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
 		&subs::setting_deleter({ app => 'gallery', setting => 'combo_unlock' });
 		&subs::window_closer('gallery');
@@ -9068,13 +9087,13 @@ sub lock_session($c, $explicit = 0) {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker');
+		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker', target => $target);
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
-		&Websocket::send('server', { padlock => $pl, taunts => $taunts, attempts => $attempts, colour => $colour  });
-		# the phone opens its unlock page by itself; the page signs the nonce
-		&Websocket::send('server', { padlock_key_show => 1, mode => 'locker', timestamp => &subs::rightNow() });
+		&Websocket::send('server', { padlock => $pl, taunts => $taunts, attempts => $attempts, colour => $colour, target => $target });
+		# the phone opens its unlock page by itself; the page waits for a tap
+		&Websocket::send('server', { padlock_key_show => 1, mode => 'locker', target => $target, timestamp => &subs::rightNow() });
 	#	$c->render(template => 'padlock', mode => 'locker');
 	#	my $path = $c->req->url->path;
 	#	unless $path eq '/manager/security/padlock_pull'
@@ -26344,6 +26363,7 @@ sub security_initializer($c) {
 	);
 	my $padlocker = &subs::db_select('security', undef, { level => 'padlock' })->hashes || [];
 	if (scalar @{$padlocker} == 0) {
+		&subs::db_delete('security', { level => 'padlock_device' });
 		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
 	}
@@ -26713,9 +26733,10 @@ post '/manager/security/padlock' => sub($c) {
 
 post '/manager/security/padlock/delete' => sub ($c) {
 	&subs::db_delete('security', { level => 'padlock' });
+	&subs::db_delete('security', { level => 'padlock_device' });
 	&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
-	&Websocket::send('server', { padlock_open => 1, mode => 'locker', timestamp => &subs::rightNow() });
+	&Websocket::send('server', { padlock_open => 1, mode => 'locker', target => '', timestamp => &subs::rightNow() });
 	$c->render(text => 'ok');
 };
 
@@ -26748,10 +26769,11 @@ post '/manager/security/gate/disable' => sub ($c) {
 		return $c->render(json => { ok => 0, error => 'citizen only' });
 	}
 	&subs::db_delete('security', { level => 'padlock' });
+	&subs::db_delete('security', { level => 'padlock_device' });
 	&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
 	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
-	&Websocket::send('server', { padlock_open => 1, mode => 'locker', timestamp => &subs::rightNow() });
+	&Websocket::send('server', { padlock_open => 1, mode => 'locker', target => '', timestamp => &subs::rightNow() });
 	my $sec = &security_initializer($c);
 	$c->render(json => { ok => 1, html => $sec->{'html'} });
 };
@@ -26810,7 +26832,19 @@ sub padlock_gate_allows {
 	return 0;
 }
 
-sub padlock_locked_now {
+sub padlock_device_locked {
+	my ($device_uuid) = @_;
+	return 0 unless $device_uuid;
+	my $now = &subs::rightNow();
+	if ($padlock_device_memo{$device_uuid} && $now - $padlock_device_memo{$device_uuid}->{'at'} < 1000) {
+		return $padlock_device_memo{$device_uuid}->{'locked'};
+	}
+	my $locked = &subs::db_select('security', undef, { level => 'padlock_device', uuid => $device_uuid })->hashes->[0] ? 1 : 0;
+	$padlock_device_memo{$device_uuid} = { locked => $locked, at => $now };
+	return $locked;
+}
+
+sub padlock_global_locked {
 	my ($c) = @_;
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	return 0 unless $padlock;
@@ -26819,6 +26853,16 @@ sub padlock_locked_now {
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
 	my $pl = $row ? (&subs::decrypter(&subs::session_suds($c), $row->{'value'}) || 0) : 0;
 	return (&subs::rightNow() > $pl) ? 1 : 0;
+}
+
+sub padlock_locked_now {
+	my ($c) = @_;
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	return 0 unless $padlock;
+	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	return 0 unless grep { $_ eq 'general' } @{$contexts};
+	return 1 if &padlock_device_locked($c->session('device_uuid') || '');
+	return &padlock_global_locked($c);
 }
 
 sub padlock_gate_shadow {
@@ -26841,16 +26885,16 @@ sub padlock_gate_answer {
 	}
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	$c->res->code(423);
-	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0));
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''));
 	return;
 }
 
-# One way to open: the dial, a code the camera read, a paired device's
-# signature and the paper recovery code all land here. It moves pl_time past
-# now (the future stamp the dial writes), resets the attempt count, gives the
-# camera back and tells every tab.
+# One way to open: a paired device's signature, the paper recovery code, and
+# the emergency paths all land here. A manual gate locks one device; a target
+# names it, an empty target is the house-wide timeout lock. The global timer is
+# moved past now either way, so the unlocked screen is not re-locked at once.
 sub padlock_mark_unlocked {
-	my ($c, $mode) = @_;
+	my ($c, $mode, $target) = @_;
 	$mode ||= 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
@@ -26859,6 +26903,11 @@ sub padlock_mark_unlocked {
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
 	my $new_timeout = &subs::rightNow() + $activity_timeout;
+	$target = $c->session('device_uuid') || '' unless defined $target;
+	if ($target) {
+		&subs::db_delete('security', { level => 'padlock_device', uuid => $target });
+		delete $padlock_device_memo{$target};
+	}
 	$c->session('pl_time' => $new_timeout);
 	&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $new_timeout) });
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
@@ -26881,7 +26930,7 @@ sub padlock_mark_unlocked {
 		&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
 	}
 	else {
-		&Websocket::send('server', { padlock_open => 1, mode => $mode, timestamp => &subs::rightNow() });
+		&Websocket::send('server', { padlock_open => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });
 		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();' });
 	}
 	return 1;
@@ -26899,8 +26948,10 @@ post '/manager/security/padlock_watch' => sub ($c) {
 post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
-	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, timestamp => &subs::rightNow() });
-	$c->render(json => { ok => 1, mode => $mode });
+	my $target = $c->param('target') || '';
+	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });
+	$c->render(json => { ok => 1, mode => $mode, target => $target });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
@@ -26934,6 +26985,8 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	my $signature = $c->param('signature') || '';
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	my $target = $c->param('target') || '';
+	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
 	unless ($device && $nonce =~ /^[A-Za-z0-9]{8,64}$/) { return $c->render(json => { ok => 0 }); }
 	my $ip = $c->tx->remote_address || '?';
@@ -26944,7 +26997,9 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
 		return $c->render(json => { ok => 0 });
 	}
-	my $msg = join "\n", ('padlock-unlock', $device_uuid, $nonce);
+	my $msg = $target
+		? join("\n", ('padlock-unlock', $device_uuid, $target, $nonce))
+		: join("\n", ('padlock-unlock', $device_uuid, $nonce));
 	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $signature)) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
 		$log->info('padlock: signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
@@ -26959,21 +27014,31 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
-	unless (&padlock_locked_now($c)) {
+	my $locked = $target ? &padlock_device_locked($target) : &padlock_locked_now($c);
+	unless ($locked) {
 		return $c->render(json => { ok => 1, unlocked => 1, already => 1, name => $device->{'name'} });
 	}
-	my $opened = &padlock_mark_unlocked($c, $mode);
-	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode);
-	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'} });
+	my $opened = &padlock_mark_unlocked($c, $mode, $target);
+	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode . ($target ? ' target=' . $target : ''));
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $target });
 };
 
 get '/manager/security/padlock_state' => sub ($c) {
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	my $locks = &subs::db_select('security', undef, { level => 'padlock_device' })->hashes || [];
+	my @targets;
+	foreach my $lock ( @{$locks} ) {
+		my $d = &subs::db_select('paired_devices', undef, { uuid => $lock->{'uuid'} })->hashes->[0];
+		push @targets, { uuid => $lock->{'uuid'}, name => ($d ? $d->{'name'} : 'Unknown device') };
+	}
 	$c->render(json => {
 		ok => 1,
 		has_padlock => ($padlock ? 1 : 0),
 		locked => (&padlock_locked_now($c) ? 1 : 0),
-		gate => &padlock_gate_mode()
+		global_locked => (&padlock_global_locked($c) ? 1 : 0),
+		gate => &padlock_gate_mode(),
+		device => ($c->session('device_uuid') || ''),
+		targets => \@targets
 	});
 };
 
@@ -32764,6 +32829,7 @@ websocket '/manager/ws' => sub ($c) {
 	}
 	$gb::ws->{$app}->{$browser_tab_id} = $c->tx;
 	$gb::ws->{$app}->{$browser_tab_id}->{'privilege'} = $c->session('privilege');
+	$gb::ws->{$app}->{$browser_tab_id}->{'device_uuid'} = $c->session('device_uuid') || '';
 	my $tab_check = &subs::db_query('select * from websockets where browser_tab_id = ? and remote_address = ? and app = ?',$browser_tab_id, $remote_address, $app );
 	my $existing_websockets = $tab_check->hashes;
 
@@ -33376,6 +33442,18 @@ sub websocket_sender($wsm) {
 		my $app = $wsm->{'app'};
 		my $server_time = $wsm->{'server_time'};
 		my $timestamp = $wsm->{'timestamp'};
+		# the overlay/open/key/console pushes are how a locked device is driven
+		# and how the phone hears about the lock; everything else that a server
+		# pushes to a tab is dropped for a device with a manual padlock row
+		my $locked_ok = $original_msg->{'padlock'} || $original_msg->{'padlock_open'} || $original_msg->{'padlock_key_show'} || $original_msg->{'console'};
+		my $server_push = ($app eq 'server' && !$locked_ok) ? 1 : 0;
+		my $recipient_locked = sub {
+			my ($conn) = @_;
+			return 0 unless $server_push && $conn;
+			my $dev = $conn->{'device_uuid'} || '';
+			return 0 unless $dev;
+			return &padlock_device_locked($dev);
+		};
 		my $count = 0;
 
 		foreach my $ws ( $gb::ws, $gb::remote_ws ) {
@@ -33392,8 +33470,8 @@ sub websocket_sender($wsm) {
 				}
 			}
 			if ( $original_msg->{'destination'}) {
-				if ($ws->{$app}->{$wsm->{'destination'}}) {
-					$ws->{$app}->{$wsm->{'destination'}}->send($wsm->{'message'});
+				if (my $conn = $ws->{$app}->{$wsm->{'destination'}}) {
+					$conn->send($wsm->{'message'}) unless $recipient_locked->($conn);
 				}
 				elsif ($wsm->{'server_time'} > &subs::rightNow() - 10000) {
 					push @{$return_msg->{'save'}}, $wsm;
@@ -33401,25 +33479,28 @@ sub websocket_sender($wsm) {
 			}
 			elsif ($original_msg->{'not_me'}) {
 				foreach my $w ( keys %{$ws->{$app}} ) {
-					if ($ws->{$app}->{$w} && $w ne $original_msg->{'browser_tab_id'}) {
+					if (my $conn = $ws->{$app}->{$w}) {
+						next if $w eq $original_msg->{'browser_tab_id'};
+						next if $recipient_locked->($conn);
 						if ($msg->{'role'} && $msg->{'role'} ne 'all') {
-							if ($msg->{'role'} ne $ws->{$app}->{$w}->{'privilege'}) {
+							if ($msg->{'role'} ne $conn->{'privilege'}) {
 								next;
 							}
 						}
-						$returner = $ws->{$app}->{$w}->send($wsm->{'message'});
+						$returner = $conn->send($wsm->{'message'});
 					}
 				}
 			}
 			else {
 				foreach my $w ( keys %{$ws->{$app}}) {
-					if ($ws->{$app}->{$w}) {
+					if (my $conn = $ws->{$app}->{$w}) {
+						next if $recipient_locked->($conn);
 						if ($msg->{'role'} && $msg->{'role'} ne 'all') {
-							if ($msg->{'role'} ne $ws->{$app}->{$w}->{'privilege'}) {
+							if ($msg->{'role'} ne $conn->{'privilege'}) {
 								next;
 							}
 						}
-						$returner = $ws->{$app}->{$w}->send($wsm->{'message'});
+						$returner = $conn->send($wsm->{'message'});
 					}
 				}
 			}

@@ -498,34 +498,49 @@ document.addEventListener('visibilitychange', function() {
 // phone/tablet signing a one-time challenge; the paper recovery code is the
 // emergency. A locked screen cannot open its own door, so it asks the house to
 // send the unlock page to a phone instead.
-function padlockAskPhone(mode) {
+function padlockAskPhone(mode, target) {
 	mode = mode || 'locker';
-	$.post('/manager/security/padlock_phone_show', { mode: mode });
+	if (typeof target === 'undefined') { target = localStorage.getItem('device_uuid') || ''; }
+	$.post('/manager/security/padlock_phone_show', { mode: mode, target: target });
 }
 
 // ---- show the unlock page on a phone or tablet ------------------------------
-// The house broadcasts padlock_key_show when it locks (or when an app asks).
-// A desktop ignores that; a phone or tablet opens the page, which signs at once.
+// The house broadcasts padlock_key_show when a screen locks (or when an app
+// asks). A desktop ignores that; a phone or tablet opens the page, which waits
+// for the person to press Unlock.
 function jawnMobileHere() {
 	return !!(window.JawnPhone || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || ''));
 }
 
-function jawnPadlockKeyShow(mode) {
+// A message with no target is the house-wide timeout lock; a target names the
+// one device that was locked from its own taskbar.
+function jawnPadlockTargetMatches(target) {
+	if (!target) { return true; }
+	return (localStorage.getItem('device_uuid') || '') === target;
+}
+
+function jawnPadlockKeyShow(mode, target) {
 	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	var url = '/manager/security/padlock_key';
-	if (mode) { url += '?mode=' + encodeURIComponent(mode); }
+	var q = [];
+	if (mode) { q.push('mode=' + encodeURIComponent(mode)); }
+	if (target) { q.push('target=' + encodeURIComponent(target)); }
+	if (q.length) { url += '?' + q.join('&'); }
 	location.href = url;
 }
 
-// A phone that was asleep, or that joined after the house locked, gets the
-// unlock page on its next socket connect: the state says the house is locked,
+// A phone that was asleep, or that joined after a screen locked, gets the
+// unlock page on its next socket connect: the state lists the locked screens,
 // so a mobile tab goes to the page that signs the challenge.
 function jawnPadlockKeyCheck() {
 	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	$.getJSON('/manager/security/padlock_state', function(s) {
-		if (s && s.ok && s.locked) { jawnPadlockKeyShow('locker'); }
+		if (!s || !s.ok) { return; }
+		if (s.global_locked) { jawnPadlockKeyShow('locker', ''); return; }
+		if (s.targets && s.targets.length == 1) { jawnPadlockKeyShow('locker', s.targets[0].uuid); }
+		else if (s.targets && s.targets.length > 1) { jawnPadlockKeyShow('locker', ''); }
 	});
 }
 
