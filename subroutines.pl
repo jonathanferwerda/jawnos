@@ -2257,6 +2257,17 @@ sub embedded_levels_scan {
 	my %seen;
 	my @found;
 	my $default_port = $ENV{'PORT_DOCK'} || 3000;
+	my $device_rows = &db_select('devices')->hashes || [];
+	# The bridge's own sighting is the freshest thing we have for a board off
+	# its WiFi; keep it beside the neighbour rows so a phone that holds the
+	# watch gets the credit (and the newest sighting wins the host merge).
+	my %ble_meta;
+	foreach my $row ( @{$device_rows} ) {
+		foreach my $c ( @{ (eval { decode_json($row->{'chip_ids'} || '[]') } || []) } ) {
+			next unless $c->{'id'};
+			$ble_meta{$c->{'id'}} = $c;
+		}
+	}
 
 	# One reading every five minutes, kept for three hours: enough for the same
 	# least-squares slope the machines use, without a row that grows with the
@@ -2317,7 +2328,7 @@ sub embedded_levels_scan {
 		};
 	};
 
-	foreach my $row ( @{ &db_select('devices')->hashes || [] } ) {
+	foreach my $row ( @{$device_rows} ) {
 		my $address = eval { decode_json($row->{'address'} || '{}') } || {};
 		foreach my $nic ( keys %{$address} ) {
 			foreach my $n ( @{ $address->{$nic}->{'neigh'} || [] } ) {
@@ -2352,6 +2363,9 @@ sub embedded_levels_scan {
 					$online = 1; $seen_at = $b->{'seen'}; $link = 'bluetooth';
 				}
 				my $old_row = $old{$chip} || {};
+				my $meta = $ble_meta{$chip} || {};
+				$bt ||= $meta->{'bluetooth'} || '';
+				$seen_at ||= $meta->{'ble_seen'} || 0;
 				# An offline board keeps its last reading: a watch asleep on the
 				# charger is still the watch, and a dash would read as "lost".
 				$battery = $old_row->{'battery'} unless defined $battery;
