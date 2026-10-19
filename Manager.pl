@@ -9046,7 +9046,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	# request's setting memo may be older than that unlock) and leave it be.
 	unless ($explicit) {
 		my $fresh_row = &subs::db_query("select value from settings where app = ? and setting = ? order by server_time desc limit 1", '__president', 'pl_time')->hashes->[0];
-		my $fresh = $fresh_row ? (&subs::decrypter($suds, $fresh_row->{'value'}) || 0) : 0;
+		my $fresh = $fresh_row ? (&padlock_time_value($suds, $fresh_row->{'value'}) || 0) : 0;
 		return if $fresh > $now;
 	}
 
@@ -9060,7 +9060,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
 	if ($whole_house) {
-		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $now ) });
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now });
 		if ($scope eq 'all') {
 			&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
 			%padlock_device_time_memo = ();
@@ -9070,13 +9070,13 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 			foreach my $r ( @{$open_rows} ) {
 				my $d = $r->{'device'} || '';
 				next unless $d;
-				my $until = eval { &subs::decrypter($suds, $r->{'value'}) } || 0;
+				my $until = eval { &padlock_time_value($suds, $r->{'value'}) } || 0;
 				push @unlocked, $d if $until && $until > $now;
 			}
 		}
 	}
 	else {
-		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $now + $activity_timeout) });
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now + $activity_timeout });
 		&subs::db_delete('security', { level => 'padlock_device', uuid => $device_uuid });
 		&subs::db_insert('security', { level => 'padlock_device', credential => '', timestamp => $now, server_time => $now, uuid => $device_uuid });
 		delete $padlock_device_memo{$device_uuid};
@@ -26891,7 +26891,7 @@ sub padlock_device_until {
 		return $padlock_device_time_memo{$device_uuid}->{'until'};
 	}
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'padlock_device_time', $device_uuid)->hashes->[0];
-	my $until = $row ? (&subs::decrypter(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
+	my $until = $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
 	$padlock_device_time_memo{$device_uuid} = { until => $until, at => $now };
 	return $until;
 }
@@ -26901,7 +26901,7 @@ sub padlock_device_set_time {
 	return unless $device_uuid && $until;
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $device_uuid);
 	my $now = &subs::rightNow();
-	&subs::db_insert('settings', { app => '__president', setting => 'padlock_device_time', device => $device_uuid, value => &subs::encrypter(&subs::suds_grabber(), $until), server_time => $now, timestamp => $now, uuid => &subs::random_string_creator(25) });
+	&subs::db_insert('settings', { app => '__president', setting => 'padlock_device_time', device => $device_uuid, value => $until, server_time => $now, timestamp => $now, uuid => &subs::random_string_creator(25) });
 	$padlock_device_time_memo{$device_uuid} = { until => $until, at => $now };
 }
 
@@ -26923,6 +26923,15 @@ sub padlock_target_locked {
 	return &padlock_global_locked($c);
 }
 
+# The lock timers are milliseconds, not secrets: a plain number is readable by
+# every worker, and an older sealed value still decrypts.
+sub padlock_time_value {
+	my ($suds, $raw) = @_;
+	return 0 unless defined $raw && length $raw;
+	return $raw if $raw =~ /^\d{10,}$/;
+	return &subs::decrypter($suds || &subs::suds_grabber(), $raw) || 0;
+}
+
 sub padlock_global_locked {
 	my ($c) = @_;
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
@@ -26930,7 +26939,7 @@ sub padlock_global_locked {
 	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
-	my $pl = $row ? (&subs::decrypter(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
+	my $pl = $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
 	return (&subs::rightNow() > $pl) ? 1 : 0;
 }
 
@@ -27003,7 +27012,7 @@ sub padlock_mark_unlocked {
 	else {
 		&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'padlock_device_time');
 		%padlock_device_time_memo = ();
-		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter($suds, $new_timeout) });
+		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $new_timeout });
 	}
 	$c->session('pl_time' => $new_timeout);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
@@ -27175,9 +27184,9 @@ sub padlock_time_extender($c) {
 					$c->session('pl_time' => $new_time);
 				}
 				else {
-					my $padlock_time = &subs::decrypter(&subs::suds_grabber(), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
+					my $padlock_time = &padlock_time_value(&subs::suds_grabber(), &subs::setting_grabber({ app => '__president', setting => 'pl_time' }) );
 					if ($padlock_time > $server_time) {
-						&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::suds_grabber(), $new_time) });
+						&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $new_time });
 						$c->session('pl_time' => $new_time);
 					}
 				}
@@ -28497,7 +28506,7 @@ sub authentication_passer($c) {
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
 
-			$padlock_time = &subs::decrypter(&subs::suds_grabber(), $pres_settings->{'pl_time'} ) || 0;
+			$padlock_time = &padlock_time_value(&subs::suds_grabber(), $pres_settings->{'pl_time'} ) || 0;
 
 			$c->stash('pl_time' => $padlock_time);
 		}
