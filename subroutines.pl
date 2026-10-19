@@ -3505,9 +3505,51 @@ sub device_mdns_sync() {
 	return unless $row && $row->{'address'};
 	my $address = eval { decode_json $row->{'address'} } || {};
 	return unless ref $address eq 'HASH' && %{$address};
-	return unless &mdns_merge_address($address);
+	# This machine's own interfaces move with it. Refresh the NIC addresses from
+	# the live report before folding mDNS in, so the Dev panel's network cards and
+	# its neighbour placement follow a new network without a manual Scan. A blank
+	# report is a failed read, not a machine with no interfaces: never wipe the row
+	# for it.
+	my $current = &network_interface_reporter();
+	return unless ref $current eq 'HASH' && %{$current};
+	my $net_changed = 0;
+	foreach my $nic ( keys %{$current} ) {
+		my $old = $address->{$nic} || {};
+		my $old_ip = $old->{'ip'} // '';
+		my $new_ip = $current->{$nic}->{'ip'} // '';
+		foreach my $k ( keys %{$current->{$nic}} ) {
+			next if (($old->{$k} // '') eq ($current->{$nic}->{$k} // ''));
+			$old->{$k} = $current->{$nic}->{$k};
+			$net_changed = 1;
+		}
+		$address->{$nic} = $old;
+		if ($old_ip && $new_ip && $old_ip ne $new_ip && ref $old->{'neigh'} eq 'ARRAY') {
+			# A NIC that moved networks cannot still have neighbours on the old
+			# subnet; leaving them made the Dev panel show a device at its old
+			# address beside the current one.
+			my @keep = grep {
+				ref $_ eq 'HASH'
+				&& ($_->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/
+				&& &same_net_test($new_ip, $_->{'ip'}) eq 'yes'
+			} @{$old->{'neigh'}};
+			if (scalar @keep != scalar @{$old->{'neigh'}}) {
+				$old->{'neigh'} = \@keep;
+				$net_changed = 1;
+			}
+		}
+	}
+	foreach my $nic ( keys %{$address} ) {
+		next if $nic eq 'public_address' || $current->{$nic};
+		delete $address->{$nic};
+		$net_changed = 1;
+	}
+	my $mdns_changed = &mdns_merge_address($address);
+	return unless $mdns_changed || $net_changed;
 	my $now = &rightNow();
 	&subs::db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, { hostname => $hostname });
+	# A machine that just joined a network repaints an open Dev panel at once; the
+	# peer beacons handle their own rows in lan_presence_accept.
+	eval { &Websocket::send('server', { console => 'deviceLister()' }) } if $net_changed;
 }
 
 # An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->
@@ -15090,6 +15132,8 @@ sub lan_presence_accept {
 	$changed = 1 if (($rm->{'ip'} // '') ne $peer_ip);
 	$changed = 1 if (($rm->{'connection'} // '') ne 'active');
 	$changed = 1 if (($rm->{'status'} // '') ne 'connected');
+	my $version = $msg->{'version'} // '';
+	$changed = 1 if ($version && ($rm->{'version'} // '') ne $version);
 	$net->{'lan'} = {
 		%{$old_lan},
 		nic       => 'lan',
@@ -15109,6 +15153,11 @@ sub lan_presence_accept {
 	my $buttons = $rm->{'buttons'} // '';
 	my $old_ip = $rm->{'ip'} // '';
 	$buttons =~ s/\bip="\Q$old_ip\E"/ip="$peer_ip"/g if $old_ip && $old_ip ne $peer_ip;
+	# The Dev panel's version beside the peer comes from this stored button block;
+	# refresh it whenever the beacon reports a different build.
+	if ($version) {
+		$buttons =~ s/(class="neighbour_version"[^>]*>)v[^<]*(<\/span>)/$1v$version$2/;
+	}
 	my $update = {
 		ip          => $peer_ip,
 		network     => encode_json $net,
@@ -15116,13 +15165,77 @@ sub lan_presence_accept {
 		status      => 'connected',
 		connection  => 'active',
 	};
+	$update->{'version'} = $version if $version;
 	$update->{'buttons'} = $buttons if $buttons ne ($rm->{'buttons'} // '');
 	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
+	# The Dev panel's neighbour table is this machine's devices row, not the
+	# remote_machines row; put the new address and version there too and refresh
+	# an open panel in place.
+	my $dev_changed = &lan_presence_note_device($msg, $peer_ip, $mac, $port);
+	eval { &Websocket::send('server', { console => 'deviceLister()' }) } if $changed || $dev_changed;
 	# A unicast reply teaches the sender our address too. Android/Termux filters
 	# broadcast reception on Wi-Fi, so the sender's sweep may be the only thing we
 	# heard; the reply is the other half that lets both ends learn each other.
 	&lan_presence_reply($peer_ip) if $changed;
 	&lan_presence_wake() if $changed;
+}
+
+# Fold a peer's presence into this machine's own devices row, so the Dev panel's
+# network cards show the peer at the address it is on now, with its purpose and
+# the machine's own name. The entry is the same shape a scan writes, so the
+# existing row actions and the tunnel/restore display keep working.
+sub lan_presence_note_device {
+	my ($msg, $peer_ip, $mac, $port) = @_;
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my $me = &db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+	return 0 unless $me && $me->{'address'};
+	my $address = eval { decode_json $me->{'address'} } || {};
+	return 0 unless ref $address eq 'HASH' && %{$address};
+	my $nic;
+	foreach my $n ( sort keys %{$address} ) {
+		next if $n eq 'public_address' || !$address->{$n}->{'ip'};
+		next unless &same_net_test($address->{$n}->{'ip'}, $peer_ip) eq 'yes';
+		$nic = $n;
+		last;
+	}
+	return 0 unless $nic;
+	my $neigh = $address->{$nic}->{'neigh'};
+	$neigh = [] unless ref $neigh eq 'ARRAY';
+	my $entry;
+	foreach my $n ( @{$neigh} ) {
+		next unless ref $n eq 'HASH';
+		next unless (($n->{'signatorial'} // '') eq ($msg->{'signatorial'} // '')) || (($n->{'ip'} // '') eq $peer_ip);
+		$entry = $n;
+		last;
+	}
+	my $is_new = 0;
+	unless ($entry) {
+		$entry = {};
+		push @{$neigh}, $entry;
+		$is_new = 1;
+	}
+	my $changed = $is_new;
+	my %set = (
+		ip          => $peer_ip,
+		purpose     => ($msg->{'device'} // ''),
+		signatorial => ($msg->{'signatorial'} // ''),
+		name        => ($msg->{'name'} || $msg->{'hostname'} || ''),
+		tunnel      => 'no',
+		manager     => 'https://' . $peer_ip . ':' . $port . '/manager',
+	);
+	$set{'mac'} = $mac if $mac;
+	foreach my $k ( sort keys %set ) {
+		next if (($entry->{$k} // '') eq ($set{$k} // ''));
+		$entry->{$k} = $set{$k};
+		$changed = 1;
+	}
+	return 0 unless $changed;
+	$address->{$nic}->{'neigh'} = $neigh;
+	my $now = &rightNow();
+	my $where = $me->{'uuid'} ? { uuid => $me->{'uuid'} } : { hostname => $hostname };
+	&db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, $where);
+	return 1;
 }
 
 # The mesh wake is a cache row so the listener never forks; President's wake

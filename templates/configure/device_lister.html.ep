@@ -148,7 +148,7 @@
 									<tbody>
 									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
 										<% my $rm = &subs::db_query('select uuid,buttons from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
-										<% if ($n->{'mac'}) { %>
+										<% if ($n->{'mac'} || $n->{'signatorial'}) { %>
 											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
 												<td>
 													<% if ($n->{'name'}) { %><b><%= $n->{'name'} %></b><br><% } %>
@@ -163,6 +163,9 @@
 													<% if ( $n->{'restore_list'} ) { %>
 														<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>"><%= $n->{'restore_list'} %></span>
 														<br>
+														<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+													<% } elsif ($rm->{'buttons'}) { %>
+														<%# a presence beacon does not know the backup list, but the machine is here and its buttons (with the live version) are still the right face for the row %>
 														<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
 													<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
 														<span style="opacity:.7;">Lost</span>
