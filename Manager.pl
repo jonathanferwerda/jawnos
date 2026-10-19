@@ -26758,101 +26758,6 @@ post '/manager/security/gate/disable' => sub ($c) {
 
 post '/manager/security/padlock_pull' => sub($c) {
 	$c->render(json => { status => 'fail', error => 'the dial is disabled' });
-	return;
-	my $timestamp = $c->param('timestamp');
-	my $mode = $c->param('mode');
-	my $digits = eval { return decode_json $c->param('digits') } || [];
-	my $salt = join '', @{$digits};
-
-	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
-	unless ($padlock->{'credential'}) {
-		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
-		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
-	}
-
-	my $combo = &subs::note_decrypter($salt . &subs::session_suds($c) . $salt, $padlock->{'credential'});
-	my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' })) || 0;
-	$attempts += 1;
-
-	if ($attempts > 5) {
-			&Websocket::send('server', { console => 'leave()' });
-	}
-	if (my $combination = eval { return decode_json $combo }) {
-		# every digit has to match. This used to leave `success` at 1 once any
-		# digit matched, so a right first number opened the lock whatever the
-		# other two were.
-		my $success = (ref $digits eq 'ARRAY' && ref $combination eq 'ARRAY' && scalar @{$digits} >= 3 && scalar @{$combination} >= 3) ? 1 : 0;
-		for (my $n = 0; $success && $n <= 2; $n++) {
-			unless (defined $digits->[$n] && defined $combination->[$n] && $digits->[$n] == $combination->[$n]) {
-				$success = 0;
-			}
-		}
-		if ($success == 1) {
-			&padlock_camera_stop();
-			# a hidden thing's padlock may only be turned at home
-			if ($mode =~ /^(?:gallery|music|folders)$/ && !help_at_home()) {
-				$c->render(json => { status => 'fail' });
-				return;
-			}
-			$attempts = 0;
-			$log->info('padlock: opened by dial mode=' . ($mode || 'locker'));
-			$log->info('padlock: opened by dial mode=' . ($mode || 'locker'));
-
-			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
-			$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
-			my $new_timeout = &subs::rightNow() + $activity_timeout;
-			$c->session('pl_time' => $new_timeout);
-			if ($mode eq 'gallery') {
-				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
-				&subs::setting_setter({ app => 'gallery', setting => 'combo_unlock', value => $combo_unlock });
-				&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-				&Websocket::send('server', { console => 'imageViewer({ "view":"home" })', browser_tab_id => $c->param('browser_tab_id') });
-			}
-			if ($mode eq 'music') {
-				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
-				&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
-				&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-				&Websocket::send('server', { console => 'searchMusic()', browser_tab_id => $c->param('browser_tab_id') });
-			}
-			if ($mode eq 'folders') {
-				my $combo_unlock = &subs::note_encrypter(&subs::session_suds($c), &subs::random_string_creator(255));
-				&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
-				&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-				&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
-			}
-			else {
-				&Websocket::send('server', { console => '$(\'#padlock_frame\').html(\'\'); $(\'#padlock_frame\').hide();$(\'#everything\').show();'});
-				&subs::setting_setter({ app => '__president', setting => 'pl_time', value => &subs::encrypter(&subs::session_suds($c), $new_timeout) });
-			}
-
-			$c->render(json => { status => 'success', pulled => $combo });
- 			&remote_relay_request($c);
-		}
-	}
-	else {
-		if ($device eq 'mobile') {
-			$c->stash('app' => 'customs');
-			&take_picture($c, {
-				app => 'customs',
-				camera => 1
-			});
-			&take_picture($c, {
-				app => 'customs',
-				camera => 0
-			});
-		}
-		else {
-			&take_picture($c, {
-				app => 'customs',
-				camera => 'webcam'
-			});
-		}
-		$c->session('app' => undef);
-		$c->render(json => { status => 'fail' });
-	}
-
-	$attempts = &subs::note_encrypter(&subs::session_suds($c),$attempts);
-	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => $attempts });
 };
 
 # The dial and the camera key were removed in v0.1.804: the signed challenge
@@ -27082,42 +26987,10 @@ get '/manager/security/padlock_key' => sub ($c) {
 
 get '/manager/security/padlock_key/frame' => sub ($c) {
 	return $c->render(json => { error => 'the camera key is disabled' });
-	unless ($c->session('authentication') eq 'approved') {
-		return $c->render(json => { error => 'not signed in' });
-	}
-	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
-	unless ($padlock) {
-		return $c->render(json => { error => 'no padlock' });
-	}
-	my $step = &padlock_visual_step();
-	my $payload = &padlock_visual_payload($step);
-	my $qr = `qrencode -l H -s 16 -m 4 -o - '$payload' 2>/dev/null`;
-	unless (length $qr) {
-		return $c->render(json => { error => 'could not draw the code' });
-	}
-	my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })
-		|| &subs::misc_setting('start_menu_icon')
-		|| '/images/jbuttons/logo1.png';
-	$c->render(json => {
-		step => $step,
-		qr => 'data:image/png;base64,' . encode_base64($qr, ''),
-		logo => $logo,
-		wait => &padlock_visual_step_seconds() - (time % &padlock_visual_step_seconds()),
-	});
 };
 
 get '/manager/security/padlock_key/active' => sub ($c) {
 	return $c->render(json => { watching => 0, disabled => 1 });
-	unless ($c->session('authentication') eq 'approved') {
-		return $c->render(json => { watching => 0 });
-	}
-	my $dir = &padlock_camera_dir();
-	my $started = -e "$dir/started" ? (stat("$dir/started"))[9] : 0;
-	my $watching = (&padlock_camera_alive() && $started && time - $started < &padlock_visual_seconds()) ? 1 : 0;
-	$c->render(json => {
-		watching => $watching,
-		mode => ($watching ? &padlock_camera_mode() : ''),
-	});
 };
 
 sub padlock_time_extender($c) {
