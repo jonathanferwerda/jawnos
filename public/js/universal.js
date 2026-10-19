@@ -519,9 +519,12 @@ function jawnPadlockTargetMatches(target) {
 	return (localStorage.getItem('device_uuid') || '') === target;
 }
 
-function jawnPadlockKeyShow(mode, target) {
+function jawnPadlockKeyShow(mode, target, show) {
 	if (!jawnMobileHere()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	// another screen's manual lock is not this phone's problem unless the person
+	// pressed Send, which asks for the page explicitly
+	if (!show && target && !jawnPadlockTargetMatches(target)) { return; }
 	var url = '/manager/security/padlock_key';
 	var q = [];
 	if (mode) { q.push('mode=' + encodeURIComponent(mode)); }
@@ -538,9 +541,9 @@ function jawnPadlockKeyCheck() {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	$.getJSON('/manager/security/padlock_state', function(s) {
 		if (!s || !s.ok) { return; }
-		if (s.global_locked) { jawnPadlockKeyShow('locker', ''); return; }
-		if (s.targets && s.targets.length == 1) { jawnPadlockKeyShow('locker', s.targets[0].uuid); }
-		else if (s.targets && s.targets.length > 1) { jawnPadlockKeyShow('locker', ''); }
+		if (s.global_locked) { jawnPadlockKeyShow('locker', '', 1); return; }
+		if (s.targets && s.targets.length == 1) { jawnPadlockKeyShow('locker', s.targets[0].uuid, 1); }
+		else if (s.targets && s.targets.length > 1) { jawnPadlockKeyShow('locker', '', 1); }
 	});
 }
 

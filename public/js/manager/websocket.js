@@ -563,7 +563,7 @@ function wsMessageHandler(event) {
 			$('#controller').scrollLeft(scrollL);
 		}
 		if (data['padlock_key_show'] && typeof jawnPadlockKeyShow === 'function') {
-			jawnPadlockKeyShow(data['mode'], data['target']);
+			jawnPadlockKeyShow(data['mode'], data['target'], data['show']);
 		}
 		if (data['padlock_open']) {
 			// the phone (or the paper code) turned it: drop the overlay without

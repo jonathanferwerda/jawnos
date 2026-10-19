@@ -26954,7 +26954,7 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
-	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });
+	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	$c->render(json => { ok => 1, mode => $mode, target => $target });
 };
 
