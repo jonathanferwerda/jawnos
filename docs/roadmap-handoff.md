@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.761** (2026-10-18). Done work is marked so it is
+The remaining plan, as of **v0.1.796** (2026-10-18). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -139,6 +139,135 @@ Still to do:
   without the loading animation when a session is already held (target <1s).
 - Gate polish: **Admin Panel** button on the gate, the logo at the top, and the
   logo-with-glow splash while the webapp loads (pairs with the app item above).
+- **The padlock is not a gate yet** — it is a client overlay; every route still
+  answers behind it. See *JawnOS as the OS / session* below for the real plan.
+
+## JawnOS as the OS / session — the real gate
+
+The padlock is the **only** thing between a person sitting at an otherwise wide
+open desktop and every house record, so it cannot stay a browser overlay. Today
+it is one: `authentication_passer` notices that `pl_time` has expired and calls
+`lock_session`, but the request still returns its data underneath. Anything that
+can reach `/manager/...` or hold the websocket reads the house while the dial is
+on screen. The dial is 1,728 combinations and awkward with a mouse (it commits
+only once the pointer passes the digit, which is the "turn it past the number"
+complaint), and the phone QR is a bearer token on a screen — a photo of it works
+for 10–20 s. None of that is a gate.
+
+Decision: **the session is the gate**. JawnOS boots to a greeter, then a
+**Treeland (Wayland) session** whose lock screen is `ext-session-lock-v1`; jawn
+runs as a **service under its own user**, and the UI talks to it over a socket
+with peer-credential checks. A locked session **denies data**; it does not
+decorate it. The camera/phone-image path the user likes stays as an **opt-in
+fallback**, never as the only way in.
+
+### Unlock: device signature first, camera and dial as fallbacks
+
+The primary unlock is the phone already in the person's hand: a paired device
+signs a nonce with the Ed25519 key it already has, and the server verifies it
+against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
+
+- Reuse `public/js/device.js` (non-extractable WebCrypto Ed25519 key in
+  IndexedDB `jawn_device` / `device_key`) and `subs::signature_verify`.
+- New message: `padlock-unlock\n<uuid>\n<nonce>`. Nonce from
+  `POST /manager/security/padlock_challenge`, **single use**, **60 s**, bound to
+  the device uuid and the requesting address; `POST /manager/security/padlock_unlock`
+  verifies it, clears `pl_time`, and broadcasts `padlock_open` to every tab.
+- Only a **paired, active** device may sign. Failures are logged, counted in
+  `padlock_pulls`, and rate-limited (1 s, then 5 s) so the nonce endpoint is not
+  a free oracle.
+- The machine's own screen may also sign (same browser key), so a lost phone is
+  not the only path. The recovery code below is the last resort.
+- The phone does not need to be touched beyond unlocking it: an unlock attempt
+  already broadcasts `padlock_key_show`, and a mobile tab jumps to the key page
+  by itself (v0.1.792). The signature path replaces the QR on that page; the QR
+  becomes the opt-in camera fallback.
+
+### Emergency: paper code **and** FDE (both)
+
+- **FDE = full-disk encryption.** LUKS2 on the system disk: the disk is
+  ciphertext without the key, so pulling the drive or booting a USB stick does
+  not read the house. It does **not** protect a machine that is already unlocked
+  and running — that is exactly the session gate's job — and it does not help
+  against someone who knows the passphrase. Enrol the TPM2 for normal boots
+  (`systemd-cryptenroll --tpm2-device=auto`) **plus** a passphrase for recovery.
+- **Paper recovery code** is the app-level reset: one long random code, printed
+  and kept offline, stored only as a salted hash, compared in constant time, and
+  accepted only at the gate with a strict rate limit. It clears the padlock; it
+  does not decrypt the disk.
+
+### Phases
+
+**P0 — make the lock real (server-side).** This is the piece that matters even
+before any compositor work, and it is small.
+- Deny by default in `authentication_passer` / `hooks.pl` while `pl_time` is
+  expired. Allow only: the lock page, the unlock endpoints, static assets
+  (`/css`, `/js`, `/images`, `/icons`, `/sounds`, `/favicon`), `/manager/ws`,
+  `/box_office`, `/manager/health`. JSON/XHR gets `423 Locked`; a document gets
+  the minimal lock page. `/manager` itself renders the lock, not the app.
+- Stop the **websocket** leaking while locked: no data fan-out to a locked tab
+  (or drop the socket); the unlock broadcast is the first thing it sees.
+- Device-signature unlock as above; keep `lock_session`'s early-return list for
+  the watcher/key routes, and add every new polling route to it.
+- Recovery code, and **test that path first** — deploy the gate only after a
+  deliberate "lock it, unlock it with paper" rehearsal, so a bug cannot lock the
+  user out of a running machine.
+- Already done and kept: auto-show on the phone (v0.1.792), tap the padlock to
+  restart the 40 s watch (v0.1.792), back cancels (v0.1.792), rejoin after sleep
+  (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793).
+
+**P1 — greetd greeter.** Boot to **greetd** (no autologin) with a JawnOS greeter
+that calls the same verifier over the service socket, then starts the session.
+The greeter is one verifier with a second front end, not a second auth system.
+- jawn becomes a **system service** in its own user; it owns `initial.db` and
+  `~/.house.key`. The kiosk user cannot read them (`0700` home, `0600` key, DB
+  directory not traversable by that user).
+- Socket `/run/jawn/gate.sock`, mode `0660`, group `jawn-gate`; every request
+  checks `SO_PEERCRED` (uid/gid) before answering.
+- No TTY/VT escape to the data: other VTs either get no login or `nologin`, and
+the service refuses a peer that is not in the gate group, so a shell on the
+kiosk VT cannot read the house.
+
+**P2 — Treeland session lock.** Use Treeland's own lock screen, or a small
+client built on `ext-session-lock-v1`; idle timeout and an explicit lock, both
+routed to the phone signature. On lock, signal jawn to expire the session and
+invalidate web sessions, so the browser behind the compositor is denied too.
+`treeland-debug` (`windows`, `screenshot`) is the test harness. If Treeland's
+lock API turns out to be awkward, Sway/wlroots is the fallback — the verifier
+and the service socket do not change.
+
+**P3 — custody and at rest.** Service-owned key + peer checks (P1), LUKS/TPM
+(above), camera becomes opt-in fallback only, and the dial is not accepted in
+strict mode. Fix the dial UX while it is still a fallback: commit on the digit
+under the pointer (or replace the three dials with a keypad) instead of
+committing when the pointer passes it.
+
+**P4 — the image.** An archiso overlay built from `desktop/wayland/`: greetd +
+Treeland + the jawn service + greeter/lock client, with FDE, the paper code, a
+recovery USB, and signed updates. The desktop app then follows the code sync as
+today.
+
+**P5 — multi-user, only if needed.** The signature would have to name a *person*,
+not just a device; that needs the canonical person id and per-person containers
+from *Platforms & multi-user* below. Do not build it before P0–P2 are honest.
+
+### Treeland findings (2026-10-18)
+
+- `extra/treeland 0.9.1-1` in Arch; wlroots 0.20 + QtQuick.
+- Ships a **lock screen** (`src/lockscreen/`, `src/plugins/lockscreen/`,
+  `treeland-screensaver-v2`), a **greeter** (`src/greeter/`), and **ddm** as the
+  display manager (recommended runtime dependency).
+- Implements **`ext-session-lock-v1`** (headers under `/usr/include` in the
+  Wayland/wlr/protocol set), so the standard lock client contract exists.
+- `treeland-debug` can inspect windows, inject input, and screenshot — enough to
+  drive the lock/unlock path in tests.
+
+### Open decision before P0
+
+Confirm the strict model: **server-side gate + paired-device signature as the
+primary + dial not accepted in strict mode + camera opt-in + paper code and FDE
+for emergencies.** Once confirmed, build P0 and rehearse the paper path before
+the first lock in anger.
 
 ## Data / records
 
