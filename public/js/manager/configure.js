@@ -362,6 +362,17 @@ $(document).on('click', '#guide_verbs_save', function () {
 // fixed level), and which way it runs. The rows are composed back into the one
 // string everything downstream reads: "amount measure/scope", comma separated,
 // with a leading "<=" on a ceiling.
+// A duration amount carries its own time unit ("11h", "90m", "1h30m"); a
+// duration selected with no unit at all is read as minutes.
+function budgetGoalsIsTime(value) {
+	value = $.trim(value || '');
+	return /^[0-9]+(?:\.[0-9]+)?\s*[hmsdwMy](?:\s*[0-9]+(?:\.[0-9]+)?\s*[hmsdwMy])*$/.test(value);
+}
+function budgetGoalsDurationValue(value) {
+	value = $.trim(value || '');
+	if (!value || /[a-zA-Z]\s*$/.test(value)) { return value; }
+	return value + 'm';
+}
 function budgetGoalsValue(container) {
 	var parts = [];
 	container.find('.budget_goals_row').each(function() {
@@ -374,7 +385,10 @@ function budgetGoalsValue(container) {
 		var unit = row.find('.budget_goals_unit').val() || '';
 		if (value === '') { return; }
 		var scope = unit ? (count || '1') + unit : '';
-		var entry = (measure === '$') ? ('$' + value) : (value + measure);
+		var entry;
+		if (measure === '$') { entry = '$' + value; }
+		else if (measure === 'duration') { entry = budgetGoalsDurationValue(value); }
+		else { entry = value + measure; }
 		if (scope) { entry += '/' + scope; }
 		if (dir === 'ceiling') { entry = '<=' + entry; }
 		parts.push(entry);
@@ -391,6 +405,14 @@ function budgetGoalsSave(container) {
 		button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0, 20));
 	}
 }
+// typing a time ("11h") into the amount turns the measure to duration on its own
+$(document).on('input', '.budget_goals_row .budget_goals_value', function() {
+	var row = $(this).closest('.budget_goals_row');
+	var select = row.find('.budget_goals_measure');
+	if (select.val() !== 'duration' && budgetGoalsIsTime($(this).val())) {
+		select.val('duration');
+	}
+});
 $(document).on('change', '.budget_goals_row .budget_goals_value, .budget_goals_row .budget_goals_direction, .budget_goals_row .budget_goals_measure, .budget_goals_row .budget_goals_count, .budget_goals_row .budget_goals_unit', function() {
 	budgetGoalsSave($(this).closest('.budget_goals'));
 });

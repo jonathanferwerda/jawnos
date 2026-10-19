@@ -29,11 +29,11 @@
 		$measure = '' unless defined $measure;
 		$scount = '' unless defined $scount;
 		$sunit = '' unless defined $sunit;
-		# keep every measure the appointment carries, plus money and the plain
-		# quantity it holds (a stream of amounts), in the list; a measure the picker
-		# does not know (a time amount in a duration budget) still gets an option of
-		# its own so a round trip never drops it
-		my @known = ('', '$', 'quantity', @measure_names);
+		# keep every measure the appointment carries, plus money, the plain quantity
+		# it holds (a stream of amounts) and duration, in the list; a measure the
+		# picker does not know still gets an option of its own so a round trip never
+		# drops it
+		my @known = ('', '$', 'quantity', 'duration', @measure_names);
 		my @extra = (length($measure) && !grep { $_ eq $measure } @known) ? ($measure) : ();
 		my $o = '<div class="budget_goals_row">';
 		$o .= '<select class="budget_goals_direction">';
@@ -45,6 +45,7 @@
 		$o .= '<option value=""' . ($measure eq '' ? ' selected' : '') . '>occurrences (count)</option>';
 		$o .= '<option value="$"' . ($measure eq '$' ? ' selected' : '') . '>total (money)</option>';
 		$o .= '<option value="quantity"' . ($measure eq 'quantity' ? ' selected' : '') . '>quantity</option>';
+		$o .= '<option value="duration"' . ($measure eq 'duration' ? ' selected' : '') . '>duration (time)</option>';
 		# a base mode's name may also be an app's own measure (beer carries a
 		# 'quantity' measure), so the mode is offered once here and skipped below
 		foreach my $m ( grep { $_ ne 'quantity' } @measure_names ) {
@@ -75,12 +76,13 @@
 .budget_goals .budget_goals_value { flex:0 1 110px; }
 .budget_goals .budget_goals_count { flex:0 1 72px; }
 </style>
-<p class="cfg-note">Each line is one rule: an amount of a measure, held at a floor to reach or a ceiling to stay under - optionally per hour, day, week, month or year.</p>
+<p class="cfg-note">Each line is one rule: an amount of a measure or a length of time, held at a floor to reach or a ceiling to stay under - optionally per hour, day, week, month or year. A time amount may carry its own unit (11h, 90m); with none it is read as minutes.</p>
 <div class="budget_goals" app="<%= $a %>" setting="<%= $setting %>">
 	<% foreach my $e ( grep { length } split ',', ($settings->{$setting} || '') ) { %>
 		<% my $dir = 'floor'; my $body = $e; $dir = 'ceiling' if $body =~ s/^<=//; $body =~ s/^>=//; %>
 		<% my ($valpart, $scope) = split '/', $body, 2; %>
-		<% my ($value, $measure); if ($valpart =~ /^\$(.*)$/) { $measure = '$'; $value = $1; } else { ($value, $measure) = $valpart =~ /^([0-9.\-]+)([a-zA-Z_]*)$/; $value = $valpart unless defined $value; $measure = '' unless defined $measure; } %>
+		<% my $is_time = $valpart =~ /^[0-9]+(?:\.[0-9]+)?\s*[hmsdwMy](?:\s*[0-9]+(?:\.[0-9]+)?\s*[hmsdwMy])*$/ ? 1 : 0; %>
+		<% my ($value, $measure); if ($valpart =~ /^\$(.*)$/) { $measure = '$'; $value = $1; } elsif ($is_time) { $measure = 'duration'; $value = $valpart; } else { ($value, $measure) = $valpart =~ /^([0-9.\-]+)([a-zA-Z_]*)$/; $value = $valpart unless defined $value; $measure = '' unless defined $measure; } %>
 		<% my ($scount, $sunit) = ('', ''); if (defined $scope && $scope =~ /^([0-9]*)([a-zA-Z]+)$/) { $scount = $1; $sunit = $2; } %>
 		<%== $row->($dir, $value, $measure, $scount, $sunit) %>
 	<% } %>
