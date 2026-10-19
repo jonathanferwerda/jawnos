@@ -11,6 +11,10 @@
 		<script src="/js/numeral.min.js"></script>
 		<% if ($window_maker ne 'yes') { %>
 			<script src="/js/manager.js?string=<%= $string %>"></script>
+			<%# the shared control/panel rules: without universal.css this standalone
+			    page left every input and select on the browser's white face while
+			    the theme ink was light %>
+			<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
 			<link rel="stylesheet" href="/css/manager.css?string=<%= $string %>" />
 			<link rel="stylesheet" href="/css/music.css?string=<%= $string %>" />
 

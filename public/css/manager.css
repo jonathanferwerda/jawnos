@@ -628,8 +628,9 @@ input[type="checkbox"]:hover {
 	cursor: pointer;
 }
 .app_notes { overflow: scroll; }
-/* the notes are a page to write on, whatever colour the theme's panels are */
-.notes { width:100%; background-color:#ffffff; }
+/* the notes follow the theme's panel: a pinned white page made a dark
+   theme's near-white ink unreadable */
+.notes { width:100%; background-color:var(--panel-2, #ffffff); color:var(--ink); }
 canvas { overflow: scroll; z-index: 99; }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}

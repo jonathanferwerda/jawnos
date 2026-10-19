@@ -46,6 +46,14 @@ select, textarea { background-color: var(--panel-2, var(--panel)); color: var(--
 /* the dropdown's list is drawn by the browser on some engines, so give it the
    same surface and ink as the closed control */
 option { background-color: var(--panel-2, var(--panel)); color: var(--ink); }
+/* A dark scheme wins over an older light-surface rule of its own. The notes
+   page used to pin a white background while the ink followed the theme (near
+   white on white); the same goes for any class that still names a light face.
+   The higher specificity is deliberate: it is the dark-theme repair. */
+body.dark_theme input:not([type=color]):not([type=checkbox]):not([type=radio]):not([type=range]),
+body.dark_theme select,
+body.dark_theme textarea { background-color: var(--panel-2); color: var(--ink); }
+body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 .text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {

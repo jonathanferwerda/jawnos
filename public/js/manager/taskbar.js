@@ -359,6 +359,9 @@ function jawnosBarsApply() {
 	// clock and the start button are slots the edit mode drags around, and a
 	// pinned app or keyboard rides among them
 	jawnosTaskbarOrderApply();
+	// the slot has moved, so the padlock picks which side of the start button
+	// it belongs on now
+	jawnosTopIconsSideApply();
 
 	// the top dock rests tucked away - its icons above the visible edge, its
 	// search strip on screen - so a fresh layout settles it there; every other
@@ -406,6 +409,7 @@ function jawnosStartMenuPlace() {
 
 $(window).on('resize', function () {
 	jawnosStartMenuPlace();
+	jawnosTopIconsSideApply();
 });
 
 // The icons the top-right corner used to wear alone: while the taskbar stands
@@ -420,6 +424,28 @@ function jawnosTopIconsApply() {
 	else {
 		icons.appendTo('#taskbar_icons');
 	}
+	jawnosTopIconsSideApply();
+}
+
+// The padlock sits on the inward side of the start button. In the right-hand
+// corner that means the lock first and the start button at the edge; when the
+// start button has been dragged to the left half of the bar, the start goes
+// first and the lock follows it, so the lock is never the outside button on
+// the left. Run after the slot order has been applied, since that is what puts
+// #taskbar_icons at its final place on the bar.
+function jawnosTopIconsSideApply() {
+	var lock = $('#lock_session');
+	var start = $('#start_menu_toggle');
+	if (!lock.length || !start.length) { return; }
+	var parent = start.parent();
+	if (!parent.length) { return; }
+	var left_side = false;
+	if (parent.is('#taskbar_icons')) {
+		var r = parent[0].getBoundingClientRect();
+		left_side = (r.left + (r.width / 2)) < ($(window).width() / 2);
+	}
+	if (left_side) { start.after(lock); }
+	else { lock.after(start); }
 }
 
 // The start button (and the lock beside it) is now just one of the bar's slots:
