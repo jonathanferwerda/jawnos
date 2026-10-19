@@ -1309,8 +1309,10 @@ void setup() {
     g["steps"] = stepped;
     // The face already reads these every loop; reporting them here lets the
     // house's levels view show the watch beside the machines, not just on it.
-    g["battery"] = (int)watch.getBatteryPercent();
+    int bp = (int)watch.getBatteryPercent();
+    g["battery"] = bp;
     g["battery_mv"] = (int)(watch.getBattVoltage() * 1000);
+    g["battery_status"] = watch.isCharging() ? (bp >= 100 ? "full" : "charging") : "discharging";
     JSONVar fileList = JSON.parse("[]");
     listJsonDir(FFat,"/", fileList);
     g["files"] = fileList;

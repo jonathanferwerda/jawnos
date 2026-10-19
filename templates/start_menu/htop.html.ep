@@ -31,6 +31,34 @@
 	push @bits, sprintf('%.2f %%/h', $b->{'pph'}) if defined $b->{'pph'};
 	return join(' &middot; ', @bits);
 }; %>
+<% my $duration = sub {
+	my $h = shift;
+	return '—' unless defined $h && $h > 0;
+	my $m = int($h * 60 + 0.5);
+	return $m . 'm' if $m < 60;
+	return int($m / 60) . 'h ' . ($m % 60) . 'm';
+}; %>
+<% my $eta_text = sub {
+	my ($b) = @_;
+	my $pct = $b->{'percentage'};
+	return '' unless defined $pct;
+	my $status = lc($b->{'status'} || '');
+	return 'full' if $status eq 'full' || $pct >= 100;
+	if ($status eq 'charging') {
+		if (defined $b->{'charge_pph'} && $b->{'charge_pph'} > 0 && $pct < 100) {
+			return '~' . $duration->((100 - $pct) / $b->{'charge_pph'}) . ' to full';
+		}
+		return 'charging';
+	}
+	if ($status eq 'discharging' || ($status eq '' && defined $b->{'pph'})) {
+		if (defined $b->{'pph'} && $b->{'pph'} > 0 && $pct > 0) {
+			return '~' . $duration->($pct / $b->{'pph'}) . ' left';
+		}
+		return 'estimating';
+	}
+	return 'plugged in' if $status =~ /not[ _]charging/;
+	return '';
+}; %>
 <% my @machines = @{ $levels->{'machines'} || [] }; %>
 <% my @local = grep { $_->{'local'} } @machines; %>
 <% my @peers = sort { ($a->{'hostname'} || '') cmp ($b->{'hostname'} || '') } grep { !$_->{'local'} } @machines; %>
@@ -56,6 +84,8 @@
 			<% } else { %>
 				<div class="level_meta"><%= &subs::format_name($b->{'status'} || 'no battery') %></div>
 			<% } %>
+			<% my $eta = $eta_text->($b); %>
+			<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 		</div>
 	<% } %>
 	<div class="levels_caption">House</div>
@@ -78,6 +108,8 @@
 			<% } else { %>
 				<div class="level_meta"><%== $battery_meta->($b) || 'on mains' %></div>
 			<% } %>
+			<% my $eta = $eta_text->($b); %>
+			<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 		</div>
 	<% } %>
 	<% if (@devices) { %>
@@ -97,6 +129,9 @@
 				<% if (defined $d->{'battery_mv'}) { %>
 					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; not answering<% } %></div>
 				<% } %>
+				<% my $dev_b = { percentage => $pct, status => $d->{'status'}, pph => $d->{'pph'}, charge_pph => $d->{'charge_pph'} }; %>
+				<% my $eta = $eta_text->($dev_b); %>
+				<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 			</div>
 		<% } %>
 	<% } %>

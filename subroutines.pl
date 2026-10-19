@@ -2083,6 +2083,31 @@ sub device_setter() {
 # Monitor's two-second poll from spawning one per tick; Android denies the
 # power_supply sysfs to apps, while a desktop reads BAT0 directly.
 our $battery_sample_memo;
+
+# The least-squares slope of a battery history, in percentage points per hour.
+# Points are { t => epoch_ms, p => percent }; a slope needs three samples across
+# at least five minutes, or one integer percentage step decides the answer.
+sub battery_slope {
+	my ($points) = @_;
+	my @p = grep { ref $_ eq 'HASH' && defined $_->{'p'} && defined $_->{'t'} } @{ $points || [] };
+	return unless scalar @p >= 3;
+	my $span = $p[-1]->{'t'} - $p[0]->{'t'};
+	return unless $span >= 300000;
+	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+	my $start = $p[0]->{'t'};
+	foreach my $point ( @p ) {
+		my $x = ($point->{'t'} - $start) / 3600000;   # hours
+		my $y = $point->{'p'};                    # percentage points
+		$n++;
+		$sx += $x;
+		$sy += $y;
+		$sxx += $x * $x;
+		$sxy += $x * $y;
+	}
+	my $den = $n * $sxx - $sx * $sx;
+	return unless $den > 0;
+	return (($n * $sxy - $sx * $sy) / $den, $span, $n);   # points/hour, span_ms, samples
+}
 sub battery_sample {
 	my $now = &rightNow();
 	return $battery_sample_memo
@@ -2171,31 +2196,25 @@ sub battery_sample {
 			splice @{$history}, 0, scalar(@{$history}) - 360 if scalar @{$history} > 360;
 		}
 	}
-	if (lc($b->{'status'} || '') eq 'discharging') {
+	if (lc($b->{'status'} || '') eq 'discharging' || lc($b->{'status'} || '') eq 'charging') {
+		my $want = lc($b->{'status'} || '');
 		my @points = grep {
-			defined $_->{'p'} && defined $_->{'t'} && ($_->{'s'} || '') eq 'discharging'
+			defined $_->{'p'} && defined $_->{'t'} && ($_->{'s'} || '') eq $want
 				&& $now - $_->{'t'} <= 3600000
 		} @{$history};
-		my $span = (scalar @points >= 2) ? ($points[-1]->{'t'} - $points[0]->{'t'}) : 0;
-		if (scalar @points >= 3 && $span >= 300000) {
-			my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
-			my $start = $points[0]->{'t'};
-			foreach my $point ( @points ) {
-				my $x = ($point->{'t'} - $start) / 3600000;   # hours
-				my $y = $point->{'p'};                    # percentage points
-				$n++;
-				$sx += $x;
-				$sy += $y;
-				$sxx += $x * $x;
-				$sxy += $x * $y;
-			}
-			my $den = $n * $sxx - $sx * $sx;
-			if ($den > 0) {
-				my $slope = ($n * $sxy - $sx * $sy) / $den;   # percentage points/hour
+		my ($slope, $span, $n) = &battery_slope(\@points);
+		if (defined $slope) {
+			if ($want eq 'discharging') {
 				my $rate = -$slope;
 				$b->{'pph'} = $rate > 0 ? $rate : 0;
 				$b->{'pph_window'} = $span / 3600000;
 				$b->{'pph_points'} = $n;
+			}
+			elsif ($slope > 0) {
+				# the same slope the other way: how fast the pack is filling
+				$b->{'charge_pph'} = $slope;
+				$b->{'charge_window'} = $span / 3600000;
+				$b->{'charge_points'} = $n;
 			}
 		}
 	}
@@ -2245,13 +2264,14 @@ sub embedded_levels_scan {
 				my $ip = $n->{'ip'} || '';
 				next unless $ip =~ /^\d+\.\d+\.\d+\.\d+$/;
 				my $port = $n->{'PORT_DOCK'} || $default_port;
-				my ($battery, $mv, $online) = (undef, undef, 0);
+				my ($battery, $mv, $online, $status) = (undef, undef, 0, undef);
 				my $ua = Mojo::UserAgent->new;
 				my $res = eval { $ua->connect_timeout(2)->inactivity_timeout(3)->get("http://$ip:$port/device_query")->result };
 				if ($res && $res->is_success) {
 					my $j = eval { decode_json $res->body } || {};
 					$battery = $j->{'battery'} if defined $j->{'battery'};
 					$mv = $j->{'battery_mv'} if defined $j->{'battery_mv'};
+					$status = lc($j->{'battery_status'} || '') if defined $j->{'battery_status'};
 					$online = 1;
 				}
 				my $old_row = $old{$chip} || {};
@@ -2259,6 +2279,40 @@ sub embedded_levels_scan {
 				# charger is still the watch, and a dash would read as "lost".
 				$battery = $old_row->{'battery'} unless defined $battery;
 				$mv = $old_row->{'battery_mv'} unless defined $mv;
+				$status = $old_row->{'status'} unless defined $status;
+				# One reading every five minutes, kept for three hours: enough for
+				# the same least-squares slope the machines use, without a row that
+				# grows with the cache's warranty.
+				my $now = &rightNow();
+				my @history = @{ (ref $old_row->{'history'} eq 'ARRAY') ? $old_row->{'history'} : [] };
+				if ($online && defined $battery) {
+					push @history, { t => $now, p => $battery + 0, s => ($status || '') };
+					splice @history, 0, scalar(@history) - 36 if scalar @history > 36;
+				}
+				my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 3600000 } @history ];
+				my ($pph, $charge_pph, $pph_window, $pph_points, $charge_window, $charge_points);
+				my $status_now = lc($status || '');
+				if ($status_now eq 'discharging' || $status_now eq 'charging') {
+					my @p = grep { ($_->{'s'} || '') eq $status_now } @{$recent};
+					my ($slope, $span, $count) = &battery_slope(\@p);
+					if (defined $slope) {
+						if ($status_now eq 'discharging' && -$slope > 0) {
+							$pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count;
+						}
+						elsif ($status_now eq 'charging' && $slope > 0) {
+							$charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count;
+						}
+					}
+				}
+				else {
+					# Older firmware sends no state; the sign of the slope still
+					# says which way the pack is going.
+					my ($slope, $span, $count) = &battery_slope($recent);
+					if (defined $slope) {
+						if ($slope < -0.01) { $pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count; }
+						elsif ($slope > 0.01) { $charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count; }
+					}
+				}
 				push @found, {
 					chip_id => $chip,
 					name => $n->{'name'} || $n->{'model'} || $purpose,
@@ -2267,6 +2321,14 @@ sub embedded_levels_scan {
 					ip => $ip,
 					battery => $battery,
 					battery_mv => $mv,
+					status => $status,
+					history => \@history,
+					pph => $pph,
+					pph_window => $pph_window,
+					pph_points => $pph_points,
+					charge_pph => $charge_pph,
+					charge_window => $charge_window,
+					charge_points => $charge_points,
 					online => $online,
 					seen => $online ? &rightNow() : ($old_row->{'seen'} || 0),
 				};

@@ -1293,8 +1293,14 @@ void setup() {
     g["CHARACTERISTIC_UUID_TX"] = CHARACTERISTIC_UUID_TX;
     g["uptime"] = millis();
     g["wigi"] = wigi;
-    g["battery"] = deck_battery_percent();
-    g["battery_mv"] = (int)deck_battery_voltage();
+    int bp = deck_battery_percent();
+    int bmv = (int)deck_battery_voltage();
+    g["battery"] = bp;
+    g["battery_mv"] = bmv;
+    // The deck has no fuel gauge or charger interrupt: USB is detected by the
+    // pack sitting above a full cell's rest voltage. That is the same read
+    // LilyGoLib uses, and it keeps a deck on USB from counting down.
+    g["battery_status"] = (bmv > 4300) ? (bp >= 100 ? "full" : "charging") : "discharging";
     JSONVar jonfig = g;
     jonfig["ssid"] = undefined;
     jonfig["password"] = undefined;
