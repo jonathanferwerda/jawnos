@@ -56,9 +56,18 @@ sub padlock_gate_locked {
 			my $contexts = $ctx_row ? (eval { decode_json $ctx_row->{'value'} } || []) : [];
 			if (grep { $_ eq 'general' } @{$contexts}) {
 				my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
-				my $suds = eval { &subs::suds_grabber() };
-				if ($row && $suds) {
-					my $pl = &subs::decrypter($suds, $row->{'value'}) || 0;
+				if ($row) {
+					# the timers are plain milliseconds now; an older value is
+					# still sealed, so decrypt only what is not a plain stamp.
+					# Decrypting a plain number reads 0 and would call every
+					# push locked while the house is actually open.
+					my $raw = $row->{'value'};
+					my $pl = 0;
+					if (defined $raw && $raw =~ /^\d{10,}$/) { $pl = $raw; }
+					else {
+						my $suds = eval { &subs::suds_grabber() };
+						$pl = $suds ? (&subs::decrypter($suds, $raw) || 0) : 0;
+					}
 					$locked = ($now > $pl) ? 1 : 0;
 				}
 			}
