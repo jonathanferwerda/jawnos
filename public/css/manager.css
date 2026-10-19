@@ -705,6 +705,12 @@ canvas.background {
    either theme */
 .top_navbar .appointment_name { vertical-align: middle; background: none; border: none; }
 .top_navbar .appointment_name .name_text { line-height: calc(var(--navbar_h, 36px) - 12px); vertical-align: middle; }
+/* on a dark desk the bar's ink is the theme's own near-white, not the pure
+   #ffffff contrast_ink picks for a dark tint: the title and the window glyphs
+   still read, without every bar glaring white at the top of the window */
+body.dark_theme .top_navbar,
+body.dark_theme .top_navbar .appointment_name,
+body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 /* the window controls ride the foot of the bar as well. They used to sit in a
    right-hand float, which pins to the top of the line box and left a gap under
    them; anchoring them to the bar's own foot keeps them on the bottom edge. */

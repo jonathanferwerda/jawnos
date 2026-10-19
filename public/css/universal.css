@@ -551,6 +551,15 @@ body[data-texture]:not([data-texture="plain"]) img[onclick] {
 	box-shadow: var(--jawnos-texture-shadow, none);
 	border-color: var(--jawnos-texture-edge, var(--line));
 }
+/* the title bar wears the desk's material too. Only the layers go on: the
+   bar's border already lines up with the window frame, and a button's outer
+   drop shadow would fall across the window contents under the bar. */
+body[data-texture]:not([data-texture="plain"]) .top_navbar {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
 /* a picture already sitting in a button wears the button's material, not a
    second one of its own */
 body[data-texture]:not([data-texture="plain"]) button img.hover,
