@@ -303,7 +303,7 @@
 												<% } %>
 												<option value="<%= $signatorial %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $signatorial) { %>selected<% } %>>Me</option>
 												<% foreach my $rc ( @{&subs::remote_machine_lister()} ) { %>
-													<option value="<%= $rc->{'signatorial'} %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $rc->{'signatorial'}) { %>selected<% } %>><%= $rc->{'ip'} %></option>
+													<option value="<%= $rc->{'signatorial'} %>" <% if ($appts->{$a}->{'setting'}->{'web_headless_device'} eq $rc->{'signatorial'}) { %>selected<% } %>><%= $rc->{'lan_ip'} || $rc->{'ip'} %></option>
 												<% } %>
 											</select>
 										</div>

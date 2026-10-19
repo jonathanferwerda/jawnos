@@ -28173,7 +28173,7 @@ sub deletion_registration($data) {
 		my $deletions = eval { return decode_json $rm->{'deletions'} } || [];
 		push @{$deletions}, { table => $table, app => $app, uuid => $uuid, scope => $scope, initialization => &subs::rightNow(), server_time => $server_time, additional => $additional };
 		my $del = encode_json $deletions;
-		&subs::db_update('remote_machines', { deletions => $del }, { uuid => $rm->{'uuid'}, ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'} });
+		&subs::db_update('remote_machines', { deletions => $del }, { uuid => $rm->{'uuid'}, signatorial => $rm->{'signatorial'} });
 	}
 }
 
@@ -33177,7 +33177,7 @@ sub remote_machine_reconnector($c) {
 				}
 				my $tuns = &subs::device_setter() eq 'server' ? &subs::tunnel_port_mapper({ ip => $rm->{'ip'} }) : {};
 
-				&subs::db_update('remote_machines', { ws_auth => $ws_auth, network => $rm->{'network'}, ws_port => ($tuns->{'POST_MSG'} || $rm->{'ws_port'}), port => ($tuns->{'PORT_AHOY'} || $rm->{'port'}), connection => $rm->{'connection'} }, { ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'} });
+				&subs::db_update('remote_machines', { ws_auth => $ws_auth, network => $rm->{'network'}, ws_port => ($tuns->{'POST_MSG'} || $rm->{'ws_port'}), port => ($tuns->{'PORT_AHOY'} || $rm->{'port'}), connection => $rm->{'connection'} }, { signatorial => $rm->{'signatorial'} });
 			}
 		}
 	}
@@ -33232,8 +33232,16 @@ sub remote_machine_online($data) {
 	my $remote_signatorial = $data->{'signatorial'} =~ /[0-9a-zA-Z]/ ? $data->{'signatorial'} : $rm->{'signatorial'};
 	my $success = 0;
 	if ($ip && $port && $remote_signatorial) {
-		my $ping = `timeout 1 ping -c 1 $ip`;
-		if ($ping && $ping =~ /ttl/) {
+		# Try the stored address first, then the peer's fqdn. The stored address is
+		# refreshed to the LAN address while the peer is on our network; when it
+		# leaves, the fqdn/tunnel is still there to reach it.
+		my @candidates = ($ip);
+		my $fqdn = $rm->{'fqdn'} || '';
+		push @candidates, $fqdn if $fqdn && $fqdn ne $ip;
+		foreach my $candidate (@candidates) {
+			next unless defined $candidate && length $candidate;
+			my $ping = `timeout 1 ping -c 1 $candidate`;
+			next unless $ping && $ping =~ /ttl/;
 			my $ua = Mojo::UserAgent->new();
 			$ua->inactivity_timeout(15);
 			my $rs = &subs::encrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($remote_signatorial, 5), $remote_signatorial);
@@ -33242,18 +33250,20 @@ sub remote_machine_online($data) {
 			# fqdn, which resolves back to us on a machine whose hosts/dnsmasq maps
 			# the peer's name to loopback - the ping answers but the call lands on
 			# ourselves, so the peer never answers with its own signatorial and the
-			# two machines never meet on the new network.
-			my $manager = ($ip =~ /^\d+\.\d+\.\d+\.\d+$/) ? 'https://' . $ip . ':' . $port : $rm->{'manager'};
+			# two machines never meet on the new network. A candidate that is not a
+			# literal address uses the stored manager, which is also the tunnel on
+			# the hub.
+			my $manager = ($candidate =~ /^\d+\.\d+\.\d+\.\d+$/) ? 'https://' . $candidate . ':' . $port : $rm->{'manager'};
 			$manager .= '/?signatorial=' . url_escape $rs;
 			my $user_agent = $remote_signatorial;
 			my $res = $ua->insecure(1)->get($manager => {user_agent => $user_agent});
 			if ( $res->result->is_success ) {
 				if ($res->result->body eq $remote_signatorial) {
 					$success = 1;
+					last;
 				}
 			}
 		}
-
 	}
 	if ($success == 0 && $rm->{'tunnel'} eq 'yes') {
 

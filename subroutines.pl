@@ -3170,6 +3170,15 @@ sub network_interface_reporter() {
 		my $nic = (split ' ', $ifconfig_list[0])[0];
 		$nic =~ s/://;
 		$address->{$nic}->{'nic'} = $nic;
+		# The radio/NIC address is what makes an mDNS or beacon sighting a row a
+		# device can be recognised by; ifconfig prints it as `ether` on Linux and
+		# `HWaddr` on the older spelling.
+		foreach my $line (@ifconfig_list) {
+			if ($line =~ /(?:ether|HWaddr)\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})/) {
+				$address->{$nic}->{'mac'} = lc $1;
+				last;
+			}
+		}
 		my $gw = '$(ip route show 0.0.0.0/0 dev ' . $address->{$nic}->{'nic'} . ' | cut -d\  -f3)';
 		$address->{$nic}->{'gw'} = `echo $gw`;
 		chomp $address->{$nic}->{'gw'};
@@ -4433,6 +4442,9 @@ sub house_advertise_command() {
 		'version=1',
 		'mesh=' . $mesh,
 	);
+	# The stable identity, so an mDNS browser can match this advertisement to the
+	# peer's remote_machines row instead of guessing from a hostname.
+	push @txt, 'signatorial=' . &subs::signatorial_designer();
 	push @txt, 'arm=' . $ENV{PORT_ARM} if $ENV{PORT_ARM};
 	push @txt, 'coms=' . $ENV{PORT_COMS} if $ENV{PORT_COMS};
 	push @txt, 'bestow=' . $ENV{PORT_BESTOW} if $ENV{PORT_BESTOW};
@@ -14842,6 +14854,15 @@ sub remote_machine_lister() {
 		}
 		$rm->{'vip'} = $rm->{'ip'};
 		$rm = &subs::remote_machine_tunnel_processor($rm);
+		# The LAN address while the peer shares our network: a display value and
+		# the flag hub mode uses to keep a same-wifi peer in the pass. The stored
+		# row may already carry it in ip; this also finds it from network when the
+		# manager is a tunnel or fqdn.
+		my $lan = &subs::peer_lan_address($rm, 1);
+		if ($lan) {
+			$rm->{'lan_ip'} = $lan->{'ip'};
+			$rm->{'lan'} = 'yes';
+		}
 	}
 	unless ( $data->{'self'} eq 'no' ) {
 		unshift @{$remote_machines}, { hostname => 'me', signatorial => &subs::signatorial_designer(), ip => '127.0.0.1', uuid => &subs::random_string_creator(25) };
@@ -14955,6 +14976,213 @@ sub peer_lan_address() {
 		}
 	}
 	return undef;
+}
+
+# ---- LAN presence: a peer on whatever network we have just joined ----------
+# Every House machine broadcasts a small signed UDP datagram on its LANs. mDNS
+# is the other advertisement, and the embedded devices use it, but Termux has no
+# avahi - so a broadcast is the one discovery path the phone and tablet share
+# with the computers. A beacon can only refresh a peer that is already in
+# remote_machines (matched by signatorial); it never introduces a stranger, and
+# the signed peer rail still authenticates every real request. The payload is
+# signed once and rebroadcast, so the phone is not running openssl every five
+# seconds.
+sub lan_presence_port { return 45552; }
+
+sub lan_presence_canonical {
+	my ($msg) = @_;
+	return 'JAWNOS-LAN' . "\n" . join("\n",
+		map { $_ . '=' . (defined $msg->{$_} ? $msg->{$_} : '') }
+		grep { $_ ne 'sig' } sort keys %{$msg});
+}
+
+# The interfaces a beacon is sent on, or matched against: a real IPv4 LAN, not
+# loopback and not the public address.
+sub lan_presence_network {
+	my $net = &network_interface_reporter();
+	my @nics;
+	foreach my $nic ( sort keys %{$net} ) {
+		next if $nic eq 'lo';
+		my $a = $net->{$nic} || {};
+		next unless ($a->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		next if $a->{'ip'} =~ /^127\./;
+		next unless &ip_is_private($a->{'ip'});
+		push @nics, { %{$a}, nic => $nic };
+	}
+	return \@nics;
+}
+
+sub lan_presence_payload {
+	my $config = &config_reader();
+	my $hostname = `hostname`;
+	chomp $hostname;
+	my @nics = @{ &lan_presence_network() };
+	my $msg = {
+		type         => 'jawnos-lan',
+		signatorial  => &signatorial_designer(),
+		hostname     => $hostname,
+		name         => ($config->{'name'} || ''),
+		device       => &device_setter(),
+		version      => &jawn_version(),
+		manager_file => (eval { &Manager::manager_file_maker() } || ''),
+		port         => ($ENV{PORT_AHOY} || $config->{'working_port'} || 45545),
+		ws_port      => ($ENV{PORT_MSG} || ''),
+		dock_port    => ($ENV{PORT_DOCK} || 3000),
+		alarm_port   => ($ENV{PORT_BELL} || ''),
+		nics         => join(';', map { join('|', $_->{'nic'}, $_->{'ip'}, ($_->{'mac'} // '')) } @nics),
+		ts           => int(time()),
+		nonce        => &random_string_creator(16),
+	};
+	my $pub = &peer_pubkey();
+	$msg->{'pubkey'} = $pub if $pub;
+	my $sig = &peer_sign_blob(&lan_presence_canonical($msg));
+	$msg->{'sig'} = $sig if $sig;
+	return $msg;
+}
+
+sub lan_presence_verify {
+	my ($rm, $msg) = @_;
+	my $sig = $msg->{'sig'} // '';
+	my $stored = $rm->{'pubkey'} // '';
+	# Unsigned is the same first-contact rule the peer rail uses: fine only while
+	# this peer has no key on file yet.
+	return 1 unless $stored || $sig;
+	my $pub = $stored || ($msg->{'pubkey'} // '');
+	return 0 unless $pub && $sig && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $ok = &signature_verify($pub, &lan_presence_canonical($msg), $sig);
+	return 0 unless $ok;
+	&db_update('remote_machines', { pubkey => $pub }, { uuid => $rm->{'uuid'} }) if !$stored;
+	return 1;
+}
+
+# A beacon arrived from $peer_ip. Refresh the row only when it is one of ours and
+# the address is on a network we are on, then wake the mesh so the sync starts
+# now rather than on its next timer.
+sub lan_presence_accept {
+	my ($msg, $peer_ip) = @_;
+	return unless ref $msg eq 'HASH';
+	return unless ($msg->{'type'} // '') eq 'jawnos-lan';
+	my $sig = $msg->{'signatorial'} // '';
+	return unless $sig && $sig ne &signatorial_designer();
+	my $ts = $msg->{'ts'} // 0;
+	return unless $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
+	return unless ($peer_ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $same = grep { &same_net_test($_->{'ip'}, $peer_ip) eq 'yes' } @{ &lan_presence_network() };
+	return unless $same;
+	my $rm = &db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
+	return unless $rm;
+	return unless &lan_presence_verify($rm, $msg);
+	my $now = &rightNow();
+	my $net = eval { decode_json $rm->{'network'} } || {};
+	$net = {} unless ref $net eq 'HASH';
+	my $port = $msg->{'port'} || $rm->{'port'} || 45545;
+	my $mac = '';
+	foreach my $nic ( split /;/, ($msg->{'nics'} // '') ) {
+		my ($n, $ip, $m) = split /\|/, $nic, 3;
+		next unless $ip && $ip eq $peer_ip;
+		$mac = $m if $m;
+	}
+	my $old_lan = $net->{'lan'} || {};
+	my $changed = 0;
+	$changed = 1 if (($old_lan->{'ip'} // '') ne $peer_ip);
+	$changed = 1 if (($old_lan->{'port'} // '') ne $port);
+	$changed = 1 if (($old_lan->{'mac'} // '') ne $mac);
+	$changed = 1 if (($rm->{'ip'} // '') ne $peer_ip);
+	$changed = 1 if (($rm->{'connection'} // '') ne 'active');
+	$changed = 1 if (($rm->{'status'} // '') ne 'connected');
+	$net->{'lan'} = {
+		%{$old_lan},
+		nic       => 'lan',
+		ip        => $peer_ip,
+		port      => $port,
+		manager   => 'https://' . $peer_ip . ':' . $port,
+		mac       => $mac,
+		hostname  => ($msg->{'hostname'} // ''),
+		device    => ($msg->{'device'} // ''),
+		version   => ($msg->{'version'} // ''),
+		timestamp => $now,
+	};
+	# The row shows the LAN address while the peer is here; peer_lan_address and
+	# remote_machine_tunnel_processor still hold the fqdn/tunnel for when it
+	# leaves, and remote_machine_online tries that fqdn when the LAN address has
+	# gone quiet.
+	my $buttons = $rm->{'buttons'} // '';
+	my $old_ip = $rm->{'ip'} // '';
+	$buttons =~ s/\bip="\Q$old_ip\E"/ip="$peer_ip"/g if $old_ip && $old_ip ne $peer_ip;
+	my $update = {
+		ip          => $peer_ip,
+		network     => encode_json $net,
+		server_time => $now,
+		status      => 'connected',
+		connection  => 'active',
+	};
+	$update->{'buttons'} = $buttons if $buttons ne ($rm->{'buttons'} // '');
+	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
+	&lan_presence_wake() if $changed;
+}
+
+# The mesh wake is a cache row so the listener never forks; President's wake
+# loop picks it up within a couple of seconds and runs the reconnector.
+sub lan_presence_wake {
+	my $now = &rightNow();
+	my $last = &cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
+	return if $last && ref $last eq 'HASH' && ($last->{'at'} || 0) > $now - 10000;
+	&cache_set({ app => '__president', context => 'lan', subcontext => 'wake', warranty => '+2m' }, { at => $now });
+}
+
+our $lan_beacon;
+
+sub lan_presence_send {
+	my @nics = @{ &lan_presence_network() };
+	return unless @nics;
+	my $now = time();
+	my $fingerprint = join '|', map { ($_->{'nic'} // '') . '=' . ($_->{'ip'} // '') . '=' . ($_->{'mac'} // '') } @nics;
+	if (!$lan_beacon || ($lan_beacon->{'fingerprint'} // '') ne $fingerprint || $now - ($lan_beacon->{'at'} || 0) > 60) {
+		$lan_beacon = { at => $now, fingerprint => $fingerprint, json => encode_json(&lan_presence_payload()) };
+	}
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp', Broadcast => 1);
+	return unless $sock;
+	foreach my $nic (@nics) {
+		my $b = $nic->{'broadcast'} || '';
+		$b = '255.255.255.255' unless $b =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($b));
+		$sock->send($lan_beacon->{'json'}, 0, $addr);
+	}
+	close $sock;
+}
+
+sub lan_presence_listen {
+	require Socket;
+	require IO::Socket::INET;
+	while (1) {
+		my $sock = IO::Socket::INET->new(
+			LocalAddr => '0.0.0.0',
+			LocalPort => &lan_presence_port(),
+			Proto => 'udp',
+			ReuseAddr => 1,
+			Broadcast => 1,
+		);
+		unless ($sock) {
+			sleep 10;
+			next;
+		}
+		while (1) {
+			my $data = '';
+			my $peer = recv($sock, $data, 4096, 0);
+			last unless defined $peer;
+			next unless length $data;
+			my ($port, $iaddr) = Socket::sockaddr_in($peer);
+			my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
+			next unless $ip;
+			my $msg = eval { decode_json($data) };
+			next unless ref $msg eq 'HASH';
+			eval { &lan_presence_accept($msg, $ip) };
+		}
+		close $sock;
+		sleep 2;
+	}
 }
 
 sub remote_machine_negotiator() {
@@ -16276,6 +16504,22 @@ sub peer_sign_request {
 	}
 	unlink $msg_file, $sig_file;
 	return 1;
+}
+
+# Sign an arbitrary blob with this machine's peer key. The LAN presence beacon
+# uses it: a datagram cannot carry HTTP headers, and an unsigned discovery could
+# redirect a known peer's address.
+sub peer_sign_blob {
+	my ($msg) = @_;
+	my ($key) = &peer_key_paths();
+	return '' unless -e $key && -s $key > 0;
+	my $msg_file = &peer_temp_file('blob_msg');
+	my $sig_file = &peer_temp_file('blob_sig');
+	write_file($msg_file, $msg);
+	`openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg_file" -out "$sig_file" 2>/dev/null`;
+	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
+	unlink $msg_file, $sig_file;
+	return $sig ? encode_base64($sig, '') : '';
 }
 
 # The server half: is this request really from the peer it claims, and has it

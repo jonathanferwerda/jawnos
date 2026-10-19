@@ -303,6 +303,41 @@ sub manager_starter() {
 		}
 	}, { name => 'house advertise' });
 
+	# A peer joining a network - the house wifi, a friend's, a hotspot - says so
+	# with a small signed broadcast on that LAN. The listener refreshes the peer's
+	# address on every machine that hears it and wakes the reconnector, so the
+	# mesh resumes within seconds instead of waiting for the next tunnel check.
+	# This is the path the phone and tablet use: Termux has no avahi, so mDNS
+	# alone never reaches them.
+	&subs::subprocessor(sub {
+		sleep 6;
+		while (1) {
+			eval { &subs::lan_presence_send(); };
+			sleep 5;
+		}
+	}, { name => 'lan presence beacon' });
+
+	&subs::subprocessor(sub {
+		sleep 3;
+		while (1) {
+			eval { &subs::lan_presence_listen(); };
+			sleep 5;
+		}
+	}, { name => 'lan presence listener' });
+
+	# The listener only leaves a cache stamp; this loop runs the mesh sync in its
+	# own process so the listener is never blocked behind a pull.
+	&subs::subprocessor(sub {
+		sleep 7;
+		while (1) {
+			sleep 2;
+			my $wake = &subs::cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
+			next unless $wake;
+			&subs::cache_delete({ app => '__president', context => 'lan', subcontext => 'wake' });
+			eval { &subs::remote_machine_negotiator({}); };
+		}
+	}, { name => 'lan mesh wake' });
+
 	# A device that has never been on WiFi cannot be named by mDNS, and the tree
 	# holds no address for it, so nothing ever connects and it stays invisible while
 	# it sits on the desk. Every JawnOS board advertises the Nordic UART service, so
