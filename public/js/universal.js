@@ -556,12 +556,27 @@ function jawnPadlockKeyShow(mode, target, show) {
 var jawnPadlockCheckedAt = 0;
 function jawnPadlockKeyCheck(force) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	if (!document.getElementById('taskbar')) { return; }
+	// the manager and the standalone locked page both carry a paired device:
+	// the locked page has no websocket, so polling is its only way to hear a
+	// request that arrived while it was asleep
+	if (!document.getElementById('taskbar') && !document.getElementById('locked_screen')) { return; }
 	var now = Date.now();
 	if (!force && now - jawnPadlockCheckedAt < 5000) { return; }
 	jawnPadlockCheckedAt = now;
 	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function(s) {
 		if (!s || !s.ok) { return; }
+		// the lock overlay may be shared HTML; this device's own enrollment is
+		// what decides whether its fingerprint button belongs on it
+		var bio = document.getElementById('locked_biometric');
+		if (bio && typeof s.biometric_enrolled !== 'undefined') {
+			if (s.biometric_enrolled) {
+				bio.setAttribute('data-enrolled', '1');
+				bio.style.display = '';
+			}
+			else {
+				bio.style.display = 'none';
+			}
+		}
 		var r = s.request;
 		if (r && r.id && typeof jawnPadlockPrompt === 'function') {
 			jawnPadlockPrompt(r.mode || 'locker', r.target || '', r.id, r.device_name || '', r.source_device || '');
@@ -593,7 +608,7 @@ function jawnPadlockPromptText(text, value) {
 
 function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
-	if (!document.getElementById('taskbar')) { return; }
+	if (!document.getElementById('taskbar') && !document.getElementById('locked_screen')) { return; }
 	var mine = localStorage.getItem('device_uuid') || '';
 	if (!mine) { return; }
 	// the locked screen is not asked to sign itself open, and the screen that
@@ -643,7 +658,9 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 			note.textContent = jawnPadlockPromptText('Unlocking...');
 			return jawnPadlockSignOpen(mode, target, note);
 		}).then(function (res) {
-			note.textContent = (res && res.already) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.');
+			// an "already" answer with relayed=1 means this machine did not hold
+			// the row; the peer that does was just told to open it
+			note.textContent = (res && res.already && !res.relayed) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.');
 			setTimeout(function () { jawnPadlockPromptDismiss(); }, 1200);
 		}).catch(function (err) {
 			if (err && err.error === 'cancelled') { jawnPadlockPromptDismiss(); return; }
@@ -743,10 +760,33 @@ function jawnPadlockSignOpen(mode, target, status) {
 document.addEventListener('visibilitychange', function () {
 	if (document.hidden) { return; }
 	setTimeout(function () {
-		if (typeof jawnPadlockKeyCheck === 'function' && document.getElementById('taskbar')) {
-			jawnPadlockKeyCheck(true);
-		}
+		if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
 	}, 1200);
+});
+
+// The standalone locked page has no manager websocket. It polls the same state
+// so a request made after it was already showing still reaches it.
+if (document.getElementById('locked_screen')) {
+	setInterval(function () {
+		if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
+	}, 5000);
+}
+
+// Back must not restore a manager page from before the lock. The browser's
+// bfcache keeps that DOM (and its clickable windows) without asking the server;
+// a persisted pageshow reloads it, so the gate answers with the lock again.
+window.addEventListener('pageshow', function (e) {
+	if (e.persisted && (document.getElementById('taskbar') || document.getElementById('locked_screen'))) {
+		location.reload();
+	}
+});
+// A history move that did not come from the bfcache still gets checked: if this
+// device is locked, the stale page is replaced with the server's lock page.
+window.addEventListener('popstate', function () {
+	if (!document.getElementById('taskbar')) { return; }
+	$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, function (s) {
+		if (s && s.ok && s.locked) { location.reload(); }
+	});
 });
 
 

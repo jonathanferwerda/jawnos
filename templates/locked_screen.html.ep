@@ -1,4 +1,5 @@
 <% my $target = defined $target ? $target : ''; %>
+<% my $bio_enrolled = defined $c->stash('biometric') ? $c->stash('biometric') : 0; %>
 <div id="locked_screen">
 	<div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
@@ -13,7 +14,7 @@
 			<% if ($fingerprint) { %>
 				<button id="locked_fingerprint" type="button" hint="Use this computer's fingerprint" aria-label="Use this computer's fingerprint"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
 			<% } %>
-			<button id="locked_biometric" type="button" hint="Use this phone's fingerprint" aria-label="Use this phone's fingerprint" style="display:none;"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
+			<button id="locked_biometric" type="button" data-enrolled="<%= $bio_enrolled ? 1 : 0 %>" hint="Use this phone's fingerprint" aria-label="Use this phone's fingerprint" style="display:none;"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
 		</div>
 		<div id="locked_phone_status"></div>
 	</div>
@@ -180,7 +181,10 @@
 	// the phone's fingerprint button belongs to the Android app; the computer's
 	// belongs to the machine with the reader
 	var bio = document.getElementById('locked_biometric');
-	if (bio && window.JawnBiometricKey) { bio.style.display = ''; }
+	// show it when the native Keystore bridge is here, or when the house says
+	// this phone has an enrolled fingerprint (the click then explains if the
+	// page is a plain browser without the app's bridge)
+	if (bio && (window.JawnBiometricKey || bio.getAttribute('data-enrolled') === '1')) { bio.style.display = ''; }
 	var localfp = document.getElementById('locked_fingerprint');
 	if (localfp && typeof jawnMobileHere === 'function' && jawnMobileHere()) { localfp.style.display = 'none'; }
 	var go = document.getElementById('locked_recovery_go');
@@ -243,7 +247,12 @@
 				fp.disabled = false;
 				if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, fp); }
 				if (note) {
-					note.textContent = (res && res.error === 'busy') ? 'A fingerprint is already being read.' : 'Fingerprint not accepted.';
+					var e = (res && res.error) || '';
+					note.textContent = (e === 'busy') ? 'A fingerprint is already being read.'
+						: (e === 'local only') ? 'This reader only works on the computer it is attached to.'
+						: (e === 'no fingerprint') ? 'No fingerprint is enrolled on this computer.'
+						: (e === 'not signed in') ? 'Sign in again, then use the fingerprint.'
+						: 'Fingerprint not accepted.';
 				}
 			}).catch(function () {
 				fp.disabled = false;

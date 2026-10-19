@@ -1,2 +1,2 @@
 % title 'Locked';
-<%= include 'locked_screen', target => $target, fingerprint => $fingerprint %>
+<%= include 'locked_screen', target => $target, fingerprint => $fingerprint, biometric => ($c->stash('biometric') || 0) %>

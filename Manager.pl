@@ -9105,7 +9105,8 @@ post '/manager/lock_session' => sub($c) {
 	my $html = $c->render_to_string(
 		template => 'locked_screen',
 		target => $target,
-		fingerprint => &fingerprint_available()
+		fingerprint => &fingerprint_available(),
+		biometric => &biometric_enrolled_for($c->session('device_uuid') || $target)
 	);
 	$c->render(json => { ok => 1, target => $target, html => $html });
 };
@@ -9214,7 +9215,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available());
+		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || $overlay_target));
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
@@ -9299,6 +9300,9 @@ get '/manager' => sub ($c) {
 	my $paperboy_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/observer/ws';
 	my $padlock = &subs::db_select('security', ['level'], { level => 'padlock' })->hashes;
 	my $parking_lot = &parking_lot_grabber($c);
+	# a manager page is never a page to keep: Back must ask the house, not a
+	# browser cache, whether the screen is still open
+	$c->res->headers->cache_control('no-store, max-age=0');
 
 	$c->render(
 		pseudonyms => $pseudonyms,
@@ -27204,6 +27208,17 @@ sub padlock_request_is_local {
 	our @padlock_mine;
 	if (!$padlock_mine_at || time - $padlock_mine_at > 60) {
 		@padlock_mine = split /\s+/, `hostname -I 2>/dev/null`;
+		# `hostname -I` is not on every distro (this laptop's hostname rejects
+		# it), and an empty list made its own browser look remote: the local
+		# fingerprint was refused and the host would not refuse its own
+		# signature. Read the addresses from ip(8) instead, then hostname -i.
+		unless (@padlock_mine) {
+			my $ipout = `ip -4 -o addr show 2>/dev/null`;
+			while ($ipout =~ /inet\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/g) { push @padlock_mine, $1; }
+		}
+		unless (@padlock_mine) {
+			@padlock_mine = split /\s+/, `hostname -i 2>/dev/null`;
+		}
 		$padlock_mine_at = time;
 	}
 	return 1 if grep { $_ eq $remote } @padlock_mine;
@@ -27213,6 +27228,16 @@ sub padlock_request_is_local {
 # The server machine's own fingerprint reader, if it has an enrolled finger.
 # Checked at most once a minute: fprintd-list talks to D-Bus.
 our ($fingerprint_checked_at, $fingerprint_ok);
+# A phone that enrolled its Keystore fingerprint: the lock screen should offer
+# that fingerprint even when the page itself cannot see the native bridge (the
+# button then explains that the app is needed rather than hiding silently).
+sub biometric_enrolled_for {
+	my ($device_uuid) = @_;
+	return 0 unless $device_uuid;
+	my $d = &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0];
+	return ($d && $d->{'bio_pubkey'}) ? 1 : 0;
+}
+
 sub fingerprint_available {
 	return 0 unless -x '/usr/bin/fprintd-verify';
 	my $now = time;
@@ -27351,7 +27376,8 @@ sub padlock_gate_answer {
 	}
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	$c->res->code(423);
-	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available());
+	$c->res->headers->cache_control('no-store, max-age=0');
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || ''), signatorial => &subs::signatorial_designer());
 	return;
 }
 
@@ -27445,6 +27471,7 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $source_device = $c->param('device_uuid') || $c->session('device_uuid') || '';
 	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
 	my $request_id = &padlock_request_store($target, $mode, &subs::signatorial_designer(), undef, $device_name, $source_device);
+	$log->info('padlock: prompt asked for ' . ($target || 'house') . ($device_name ? ' (' . $device_name . ')' : '') . ' by ' . ($source_device || '?') . ' id=' . $request_id);
 	&Websocket::send('server', { padlock_key_show => 1, prompt => 1, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	# another machine's screens are part of the house too
 	unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
@@ -27457,16 +27484,31 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 # The request must come from this machine and the session must be approved;
 # fprintd prompts the reader, and only the current screen is opened.
 post '/manager/security/fingerprint_unlock' => sub ($c) {
-	return $c->render(json => { ok => 0, error => 'local only' }) unless &padlock_request_is_local($c);
+	my $ip = $c->tx->remote_address || '?';
+	unless (&padlock_request_is_local($c)) {
+		$log->info('padlock: local fingerprint refused from ' . $ip . ' (not a local address)');
+		return $c->render(json => { ok => 0, error => 'local only' });
+	}
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
 	return $c->render(json => { ok => 0, error => 'no fingerprint' }) unless &fingerprint_available();
 	my $lockfile = '/tmp/jawnos_fingerprint.lock';
-	sysopen(my $fh, $lockfile, O_CREAT|O_EXCL|O_WRONLY) or return $c->render(json => { ok => 0, error => 'busy' });
+	# a worker that died mid-read left the latch behind; it is not a reader that
+	# is still busy, and without this the button answered busy forever
+	if (-e $lockfile && time - (stat($lockfile))[9] > 30) {
+		unlink $lockfile;
+		$log->info('padlock: removed a stale fingerprint lock');
+	}
+	my $fh;
+	unless (sysopen($fh, $lockfile, O_CREAT|O_EXCL|O_WRONLY)) {
+		$log->info('padlock: local fingerprint busy from ' . $ip);
+		return $c->render(json => { ok => 0, error => 'busy' });
+	}
 	close $fh;
 	my $user = $ENV{USER} || getpwuid($<) || 'jawn';
 	$user =~ s/[^\w.-]//g;
 	my $rc = system('timeout', '20', 'fprintd-verify', $user);
 	unlink $lockfile;
+	$log->info('padlock: local fingerprint ' . ($rc == 0 ? 'accepted' : 'refused') . ' from ' . $ip . ' rc=' . $rc);
 	return $c->render(json => { ok => 0, error => 'not accepted' }) if $rc != 0;
 	my $device = $c->session('device_uuid') || '';
 	my $opened = &padlock_mark_unlocked($c, 'locker', $device);
@@ -27735,7 +27777,10 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
 	# keep the request readable on this machine too: a phone that is asleep
 	# when the button is pressed finds it in padlock_state on its next wake
-	if ($prompt) { $request_id = &padlock_request_store($target, $mode, $signatorial, $request_id || undef, $device_name, $source_device); }
+	if ($prompt) {
+		$request_id = &padlock_request_store($target, $mode, $signatorial, $request_id || undef, $device_name, $source_device);
+		$log->info('padlock: prompt received from ' . ($rm->{'hostname'} || $signatorial) . ' for ' . ($target || 'house') . ' id=' . $request_id);
+	}
 	&Websocket::send('server', { padlock_key_show => 1, prompt => $prompt, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
 	my $relay_id = $c->param('relay_id') || '';
 	if ($relay_id) {
@@ -27793,6 +27838,7 @@ get '/manager/security/padlock_state' => sub ($c) {
 		gate => &padlock_gate_mode(),
 		device => $du,
 		device_until => (&padlock_device_until($du) || 0),
+		biometric_enrolled => (&biometric_enrolled_for($du) ? 1 : 0),
 		targets => \@targets,
 		request => $request
 	});
