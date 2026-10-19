@@ -909,6 +909,108 @@ html.jawnos_webview #admin_console_toggle {
 #start_menu.search_home .start_menu_body > .start_menu_view_content { padding-top: 50px; }
 .start_menu_view_content { display: block; }
 
+/* The System card is a house-wide levels list: this machine, every peer that
+   answered the last pass, and the embedded boards the house can see. It is
+   drawn for the menu's ~82% body width, so the rows are compact and never a
+   wide table. Translucent black keeps it readable on the theme's menu colour. */
+#htop_viewer {
+	color: inherit;
+	font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+	padding: 2px 6px 8px;
+	box-sizing: border-box;
+	/* the parking-lot strip is absolutely placed at the menu's foot; leave the
+	   last tile room to scroll above it */
+	padding-bottom: 46px;
+}
+#htop_viewer .levels_head {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	font-size: 10px;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	opacity: .65;
+	margin: 2px 2px 7px;
+}
+#htop_viewer .levels_caption {
+	font-size: 10px;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	opacity: .6;
+	margin: 10px 2px 5px;
+}
+#htop_viewer .level_tile {
+	background: rgba(0,0,0,.09);
+	border-radius: 8px;
+	padding: 6px 9px 5px;
+	margin-bottom: 5px;
+	box-sizing: border-box;
+}
+#htop_viewer .level_you {
+	background: rgba(0,0,0,.14);
+	box-shadow: inset 3px 0 0 #1f9d63;
+}
+#htop_viewer .level_stale { opacity: .6; }
+#htop_viewer .level_top {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+}
+#htop_viewer .level_name {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+#htop_viewer .level_pct {
+	font-variant-numeric: tabular-nums;
+	font-weight: 700;
+	white-space: nowrap;
+}
+#htop_viewer .level_pct.level_low { color: #b33939; }
+#htop_viewer .level_pct.level_mid { color: #8a5d00; }
+#htop_viewer .level_mains { font-weight: 500; opacity: .7; }
+#htop_viewer .level_sub {
+	font-size: 11px;
+	opacity: .7;
+	margin-top: 1px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+#htop_viewer .level_bar {
+	height: 6px;
+	border-radius: 3px;
+	background: rgba(0,0,0,.15);
+	overflow: hidden;
+	margin: 6px 0 4px;
+}
+#htop_viewer .level_bar i {
+	display: block;
+	height: 100%;
+	border-radius: 3px;
+	background: #1f9d63;
+}
+#htop_viewer .level_bar i.level_mid { background: #b07800; }
+#htop_viewer .level_bar i.level_low { background: #b33939; }
+#htop_viewer .level_meta {
+	font-size: 11px;
+	opacity: .75;
+	min-height: 14px;
+}
+#htop_viewer .level_empty {
+	font-size: 11px;
+	opacity: .55;
+	padding: 2px 2px 0;
+}
+#htop_viewer .levels_foot {
+	font-size: 10px;
+	opacity: .55;
+	margin-top: 10px;
+	text-align: right;
+}
+
 /* The app menu is a list: one icon and its name per row, instead of rows of icons
    broken up with <br>. startMenuListify() in manager.js builds and orders the rows,
    so these rules only shape them: icon on the left, name beside it. */

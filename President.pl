@@ -251,6 +251,17 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# The start menu's System card: every peer's battery and the embedded boards
+	# the house can see. The peers answer /manager/health; the boards answer
+	# /device_query. Both are cached, so the card never waits on a sleeping board.
+	&subs::subprocessor(sub {
+		sleep 20;
+		while (1) {
+			eval { &subs::house_levels_sync(); };
+			sleep 120;
+		}
+	}, { name => 'house levels' });
+
 	# mDNS is how a device names itself the moment it joins: fold what the local
 	# network advertises (_jawnos._tcp, plus a printer on _ipp._tcp) into this
 	# machine's device row on a short tick, so a plugged-in watch, deck or pico

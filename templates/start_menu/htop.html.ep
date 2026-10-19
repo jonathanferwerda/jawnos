@@ -1,32 +1,104 @@
+<% my $when = sub {
+	my $at = shift || 0;
+	return 'not yet' unless $at;
+	my $age = int((&subs::rightNow() - $at) / 1000);
+	return 'just now' if $age < 60;
+	return int($age / 60) . 'm ago' if $age < 3600;
+	return int($age / 3600) . 'h ago';
+}; %>
+<% my $level_class = sub {
+	my $p = shift;
+	return 'level_ok' unless defined $p;
+	return 'level_low' if $p < 20;
+	return 'level_mid' if $p < 50;
+	return 'level_ok';
+}; %>
+<% my $bar_width = sub {
+	my $p = shift;
+	$p = 0 unless defined $p && $p =~ /^-?\d+(?:\.\d+)?$/;
+	$p = 0 if $p < 0;
+	$p = 100 if $p > 100;
+	return sprintf('%.0f', $p);
+}; %>
+<% my $battery_meta = sub {
+	my ($b) = @_;
+	my @bits;
+	my $state = &subs::format_name($b->{'status'} || '');
+	push @bits, $state if $state ne '';
+	push @bits, sprintf('%.1f&deg;', $b->{'temperature'}) if defined $b->{'temperature'};
+	push @bits, sprintf('%.2f V', $b->{'voltage'}) if defined $b->{'voltage'};
+	push @bits, sprintf('%.0f mA', $b->{'current'}) if defined $b->{'current'};
+	push @bits, sprintf('%.2f %%/h', $b->{'pph'}) if defined $b->{'pph'};
+	return join(' &middot; ', @bits);
+}; %>
+<% my @machines = @{ $levels->{'machines'} || [] }; %>
+<% my @local = grep { $_->{'local'} } @machines; %>
+<% my @peers = sort { ($a->{'hostname'} || '') cmp ($b->{'hostname'} || '') } grep { !$_->{'local'} } @machines; %>
+<% my @devices = @{ $levels->{'devices'} || [] }; %>
 <div id="htop_viewer">
-
-	<h4 style="float:left;">System <span class="htop_view time" view="timestamp" timestamp="<%= $cache->{'current'}->{'timestamp'} %>"></span>
-		<span class="jawn_version" style="margin-left:8px;opacity:0.6;font-weight:normal;">v<%= &subs::jawn_version() %></span>
-
-		<button class="president_restart_trigger" style="">Restart</button>
-		<button class="president_restart_trigger" restart="yes" style="">ReRestart</button>
-	</h4>
-	<%# The CPU rows that used to live here measured the utility worker's own
-	    time, not the machine's, so they were removed. PPS and PPM divided one
-	    sample by one interval; PPH is the only rate worth showing, and it is a
-	    least-squares slope over the discharging samples in the last hour. %>
-	<% my $battery = $cache->{'current'}->{'battery'} || {}; %>
-	<% if ($battery->{'percentage'}) { %>
-		<h4 style="float:left;">Battery</h4>
-		<table style="width:100%;">
-			<thead><th>%</th><th>State</th><th>Health</th><th>Temp</th><th>Voltage</th><th>Current</th><th title="percentage points per hour while discharging">PPH</th></thead>
-			<tbody>
-				<tr>
-					<td><%= $battery->{'percentage'} %>%</td>
-					<td><%= &subs::format_name($battery->{'status'} || '') %></td>
-					<td><%= &subs::format_name($battery->{'health'} || '') %></td>
-					<td><%= defined $battery->{'temperature'} ? sprintf('%.1f', $battery->{'temperature'}) : '&mdash;' %><%= ($battery->{'temperature_source'} || '') eq 'cpu' ? ' (cpu)' : '' %></td>
-					<td><%= defined $battery->{'voltage'} ? sprintf('%.3f V', $battery->{'voltage'}) : '&mdash;' %></td>
-					<td><%= defined $battery->{'current'} ? sprintf('%.0f mA', $battery->{'current'}) : '&mdash;' %></td>
-					<td title="<%= defined $battery->{'pph_window'} ? sprintf('over %.0f min from %d samples', $battery->{'pph_window'} * 60, $battery->{'pph_points'} || 0) : 'needs a discharging window of at least 5 minutes' %>"><%= defined $battery->{'pph'} ? sprintf('%.2f %%/h', $battery->{'pph'}) : '&mdash;' %></td>
-				</tr>
-			</tbody>
-		</table>
+	<div class="levels_head">
+		<span>Levels</span>
+		<span><%= $when->($levels->{'at'}) %></span>
+	</div>
+	<% foreach my $m ( @local ) { %>
+		<% my $b = $m->{'battery'} || {}; %>
+		<% my $pct = $b->{'percentage'}; %>
+		<div class="level_tile level_you">
+			<div class="level_top">
+				<span class="level_name"><%= $m->{'hostname'} || 'this machine' %></span>
+				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
+				<% } else { %><span class="level_pct level_mains">mains</span><% } %>
+			</div>
+			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %> &middot; this machine &middot; v<%= $m->{'version'} || &subs::jawn_version() %></div>
+			<% if (defined $pct) { %>
+				<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
+				<div class="level_meta"><%== $battery_meta->($b) %></div>
+			<% } else { %>
+				<div class="level_meta"><%= &subs::format_name($b->{'status'} || 'no battery') %></div>
+			<% } %>
+		</div>
 	<% } %>
-
+	<div class="levels_caption">House</div>
+	<% if (!@peers) { %>
+		<div class="level_empty">No other machines reporting yet.</div>
+	<% } %>
+	<% foreach my $m ( @peers ) { %>
+		<% my $b = $m->{'battery'} || {}; %>
+		<% my $pct = $b->{'percentage'}; %>
+		<div class="level_tile<% if ($m->{'stale'}) { %> level_stale<% } %>">
+			<div class="level_top">
+				<span class="level_name"><%= $m->{'hostname'} || 'machine' %></span>
+				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
+				<% } else { %><span class="level_pct level_mains">mains</span><% } %>
+			</div>
+			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %><% if ($m->{'stale'}) { %> &middot; last seen <%= $when->($m->{'seen'}) %><% } else { %> &middot; v<%= $m->{'version'} || '?' %><% } %></div>
+			<% if (defined $pct) { %>
+				<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
+				<div class="level_meta"><%== $battery_meta->($b) %></div>
+			<% } else { %>
+				<div class="level_meta"><%== $battery_meta->($b) || 'on mains' %></div>
+			<% } %>
+		</div>
+	<% } %>
+	<% if (@devices) { %>
+		<div class="levels_caption">Devices</div>
+		<% foreach my $d ( @devices ) { %>
+			<% my $pct = $d->{'battery'}; %>
+			<div class="level_tile level_device<% if (!$d->{'online'}) { %> level_stale<% } %>">
+				<div class="level_top">
+					<span class="level_name"><%= $d->{'name'} || &subs::format_name($d->{'purpose'} || 'device') %></span>
+					<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
+					<% } else { %><span class="level_pct level_mains">&mdash;</span><% } %>
+				</div>
+				<div class="level_sub"><%= &subs::format_name($d->{'purpose'} || '') %><% if ($d->{'host'}) { %> &middot; via <%= $d->{'host'} %><% } %><% if (!$d->{'online'}) { %><% if ($d->{'seen'}) { %> &middot; last seen <%= $when->($d->{'seen'}) %><% } else { %> &middot; not answering<% } %><% } %></div>
+				<% if (defined $pct) { %>
+					<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
+				<% } %>
+				<% if (defined $d->{'battery_mv'}) { %>
+					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; not answering<% } %></div>
+				<% } %>
+			</div>
+		<% } %>
+	<% } %>
+	<div class="levels_foot">v<%= &subs::jawn_version() %><% if (($levels->{'peers'} || 0) > 0) { %> &middot; <%= $levels->{'peers'} %> peers<% } %><% if (($levels->{'failed'} || 0) > 0) { %> &middot; <%= $levels->{'failed'} %> unreached<% } %></div>
 </div>

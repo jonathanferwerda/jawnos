@@ -2209,6 +2209,180 @@ sub battery_sample {
 	return $battery_sample_memo = $b;
 }
 
+# --- House levels -----------------------------------------------------------
+# The System card shows one battery line per House machine and per embedded
+# board. A machine's own reading is cheap; a peer's is one signed
+# /manager/health call, and a board's is its /device_query. Both kinds of I/O
+# happen in the levels loop, never in a request: the card renders the cached
+# snapshot, so a sleeping watch or a dead peer cannot hold the menu open.
+
+sub embedded_levels_cache {
+	my $c = &cache_get({ app => '__president', context => 'levels', subcontext => 'embedded' });
+	return (ref $c eq 'HASH' && ref $c->{'devices'} eq 'ARRAY') ? $c : { at => 0, devices => [] };
+}
+
+sub embedded_levels_cached {
+	return &embedded_levels_cache()->{'devices'} || [];
+}
+
+sub embedded_levels_scan {
+	# One entry per chip, not per neighbour copy: the deck showed three times
+	# (two NICs and lo) when it was listed straight from the neighbour tables.
+	my $previous = &embedded_levels_cached();
+	my %old = map { ($_->{'chip_id'} || '') => $_ } grep { $_->{'chip_id'} } @{$previous};
+	my %seen;
+	my @found;
+	my $default_port = $ENV{'PORT_DOCK'} || 3000;
+	foreach my $row ( @{ &db_select('devices')->hashes || [] } ) {
+		my $address = eval { decode_json($row->{'address'} || '{}') } || {};
+		foreach my $nic ( keys %{$address} ) {
+			foreach my $n ( @{ $address->{$nic}->{'neigh'} || [] } ) {
+				my $purpose = $n->{'purpose'} || '';
+				next unless $purpose =~ /^(?:watch|teletype|microcontroller)$/;
+				my $chip = $n->{'chip_id'} || '';
+				next unless $chip;
+				next if $seen{$chip}++;
+				my $ip = $n->{'ip'} || '';
+				next unless $ip =~ /^\d+\.\d+\.\d+\.\d+$/;
+				my $port = $n->{'PORT_DOCK'} || $default_port;
+				my ($battery, $mv, $online) = (undef, undef, 0);
+				my $ua = Mojo::UserAgent->new;
+				my $res = eval { $ua->connect_timeout(2)->inactivity_timeout(3)->get("http://$ip:$port/device_query")->result };
+				if ($res && $res->is_success) {
+					my $j = eval { decode_json $res->body } || {};
+					$battery = $j->{'battery'} if defined $j->{'battery'};
+					$mv = $j->{'battery_mv'} if defined $j->{'battery_mv'};
+					$online = 1;
+				}
+				my $old_row = $old{$chip} || {};
+				# An offline board keeps its last reading: a watch asleep on the
+				# charger is still the watch, and a dash would read as "lost".
+				$battery = $old_row->{'battery'} unless defined $battery;
+				$mv = $old_row->{'battery_mv'} unless defined $mv;
+				push @found, {
+					chip_id => $chip,
+					name => $n->{'name'} || $n->{'model'} || $purpose,
+					model => $n->{'model'} || '',
+					purpose => $purpose,
+					ip => $ip,
+					battery => $battery,
+					battery_mv => $mv,
+					online => $online,
+					seen => $online ? &rightNow() : ($old_row->{'seen'} || 0),
+				};
+			}
+		}
+	}
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'embedded', warranty => '-1d' },
+		{ at => &rightNow(), devices => \@found });
+	return \@found;
+}
+
+sub house_levels_sync {
+	my $me = &signatorial_designer();
+	my $hostname = `hostname`; chomp $hostname;
+	my $embedded_cache = &embedded_levels_cache();
+	my $devices = (($embedded_cache->{'at'} || 0) + 300000 > &rightNow())
+		? $embedded_cache->{'devices'}
+		: &embedded_levels_scan();
+	my $previous = &cache_get({ app => '__president', context => 'levels', subcontext => 'current' });
+	my %previous_machine = map { ($_->{'signatorial'} || '') => $_ }
+		grep { $_->{'signatorial'} } @{ (ref $previous eq 'HASH' ? $previous->{'machines'} : []) || [] };
+	my @machines = ({
+		signatorial => $me,
+		hostname => $hostname,
+		device => &device_setter(),
+		version => &jawn_version(),
+		battery => &battery_sample(),
+		embedded => $devices,
+		local => 1,
+		seen => &rightNow(),
+	});
+	my ($peers, $failed) = (0, 0);
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		my $rsig = $rm->{'signatorial'} || '';
+		next unless $rsig && $rsig ne $me;
+		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
+		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
+		my ($ua, $p) = &peer_useragent($rm);
+		unless ($ua) {
+			push @machines, { %{ $previous_machine{$rsig} }, stale => 1 } if $previous_machine{$rsig};
+			next;
+		}
+		my $res = eval { $ua->connect_timeout(6)->inactivity_timeout(10)
+			->get($p->{'manager'} . '/manager/health?signatorial=' . $me)->result };
+		my $h = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
+		unless (ref $h eq 'HASH') {
+			$failed++;
+			my $err = $@ ? do { my $e = $@; $e =~ s/\s+/ /g; substr($e, 0, 120) } : '';
+			$log->info('house levels: ' . ($rm->{'hostname'} || $rsig) . ' '
+				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : ''));
+			push @machines, { %{ $previous_machine{$rsig} }, stale => 1 } if $previous_machine{$rsig};
+			next;
+		}
+		$peers++;
+		push @machines, {
+			signatorial => $rsig,
+			hostname => $rm->{'hostname'} || $h->{'hostname'} || $rm->{'ip'} || $rsig,
+			device => $h->{'device'} || $rm->{'device'} || '',
+			version => $h->{'version'} || $rm->{'version'} || '',
+			battery => (ref $h->{'battery'} eq 'HASH') ? $h->{'battery'} : {},
+			embedded => (ref $h->{'embedded'} eq 'ARRAY') ? $h->{'embedded'} : [],
+			seen => &rightNow(),
+		};
+	}
+	# One board can be in several machines' neighbour tables. Keep the copy with
+	# a reading and the newest sighting, and name the machine that sees it.
+	my %device;
+	foreach my $m ( @machines ) {
+		foreach my $d ( @{ $m->{'embedded'} || [] } ) {
+			my $chip = $d->{'chip_id'} || $d->{'name'} || '';
+			next unless $chip;
+			my $cur = $device{$chip};
+			my $better = !$cur
+				|| (defined $d->{'battery'} && !defined $cur->{'battery'})
+				|| (($d->{'seen'} || 0) > ($cur->{'seen'} || 0));
+			$device{$chip} = { %$d, host => $m->{'hostname'}, host_signatorial => $m->{'signatorial'} } if $better;
+		}
+	}
+	my @devices = sort { ($a->{'host'} || '') cmp ($b->{'host'} || '') || ($a->{'name'} || '') cmp ($b->{'name'} || '') } values %device;
+	my $snapshot = {
+		at => &rightNow(),
+		machines => \@machines,
+		devices => \@devices,
+		peers => $peers,
+		failed => $failed,
+	};
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snapshot);
+	return $snapshot;
+}
+
+# The card's read: the cached snapshot with this machine's reading refreshed.
+# The local battery is cheap and should not wait for the next two-minute pass.
+sub levels_snapshot {
+	my $snap = &cache_get({ app => '__president', context => 'levels', subcontext => 'current' });
+	$snap = { at => 0, machines => [], devices => [] } unless ref $snap eq 'HASH';
+	$snap->{'machines'} = [] unless ref $snap->{'machines'} eq 'ARRAY';
+	$snap->{'devices'} = [] unless ref $snap->{'devices'} eq 'ARRAY';
+	my $me = &signatorial_designer();
+	my $local;
+	foreach my $m ( @{ $snap->{'machines'} } ) {
+		next unless ($m->{'signatorial'} || '') eq $me;
+		$local = $m;
+		last;
+	}
+	unless ($local) {
+		my $hostname = `hostname`; chomp $hostname;
+		$local = { signatorial => $me, hostname => $hostname, device => &device_setter(), version => &jawn_version() };
+		unshift @{ $snap->{'machines'} }, $local;
+	}
+	$local->{'battery'} = &battery_sample();
+	$local->{'seen'} = &rightNow();
+	$local->{'local'} = 1;
+	delete $local->{'stale'};
+	return $snap;
+}
+
 sub restore_list() {
 	my $returner = [];
 	my @backups;

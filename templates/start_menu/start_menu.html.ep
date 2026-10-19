@@ -32,7 +32,7 @@
 			<!--
 			<img src="<%= &subs::icon_for('/images/make believe/eye.png') %>" hint="Webcam" id="browser_toggle" style="border-color: yellow" class="little_thumb jonathan"></img>
 			-->
-			<%= include 'start_menu/htop', cache => &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }) %>
+			<%= include 'start_menu/htop', cache => &subs::cache_get({ app => '__president', context => 'htop', subcontext => 'current' }), levels => &subs::levels_snapshot() %>
 
 			<div id="parking_lot" style="position:absolute;width:100%;bottom:0px;">
 				<% foreach my $pl ( sort keys %{$parking_lot} ) { %>
