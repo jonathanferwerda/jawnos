@@ -8,6 +8,12 @@ var errorInfo = [];
 	if (typeof signatorial === 'undefined' || !signatorial) {
 		globalThis.signatorial = 'unknown';
 	}
+	// bti and bt are read by the ajaxSetup below. A layout that loads this file
+	// before its own tab stamps (the locked page did) must not abort the whole
+	// script here: a ReferenceError would leave every later handler unbound,
+	// including the padlock's fingerprint button.
+	if (typeof bti === 'undefined') { globalThis.bti = ''; }
+	if (typeof bt === 'undefined') { globalThis.bt = ''; }
 
 // The repaint work (the appointment chrons, the calculators, the little
 // animations) only matters while the page is really being looked at. A hidden
