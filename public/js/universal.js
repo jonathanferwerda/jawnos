@@ -614,12 +614,23 @@ function jawnosApptColour(setting) {
 }
 // Repaint the live appointment markup for a changed colour. The server writes
 // the two values into the elements as custom properties, so updating them here
-// keeps a panel change and a dark-theme switch in step.
+// keeps a panel change and a dark-theme switch in step. A window's name span
+// carries its app as "'name'" (a legacy quoting quirk), so the app attribute is
+// normalised before it is compared.
+function jawnosApptNodes(app) {
+	var found = $();
+	$('[data-appt-tint], [data-appt-ink]').each(function () {
+		var a = ('' + ($(this).attr('app') || '')).replace(/^'+|'+$/g, '');
+		if (a === app) { found = found.add(this); }
+	});
+	return found;
+}
 function jawnosApptColourSet(app, colour, dark) {
 	if (!app) { return; }
 	var ink = jawnosContrastInk(colour);
 	var dark_ink = dark ? jawnosContrastInk(dark) : undefined;
-	$('[data-appt-tint][app="' + app + '"]').each(function () {
+	var nodes = jawnosApptNodes(app);
+	nodes.filter('[data-appt-tint]').each(function () {
 		if (dark) {
 			this.style.setProperty('--appt-dark', dark);
 			this.style.setProperty('--appt-dark-ink', dark_ink);
@@ -627,7 +638,7 @@ function jawnosApptColourSet(app, colour, dark) {
 		this.style.backgroundColor = colour;
 		this.style.color = ink;
 	});
-	$('[data-appt-ink][app="' + app + '"]').each(function () {
+	nodes.filter('[data-appt-ink]').each(function () {
 		if (dark) { this.style.setProperty('--appt-dark-ink', dark_ink); }
 		this.style.color = ink;
 	});
@@ -635,7 +646,7 @@ function jawnosApptColourSet(app, colour, dark) {
 function jawnosApptDarkColourSet(app, dark) {
 	if (!app || !dark) { return; }
 	var dark_ink = jawnosContrastInk(dark);
-	$('[data-appt-tint][app="' + app + '"], [data-appt-ink][app="' + app + '"]').each(function () {
+	jawnosApptNodes(app).each(function () {
 		this.style.setProperty('--appt-dark', dark);
 		this.style.setProperty('--appt-dark-ink', dark_ink);
 	});
