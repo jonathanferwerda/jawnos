@@ -173,11 +173,13 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
   `POST /manager/security/padlock_challenge`, **single use**, **60 s**, bound to
   the device uuid and the requesting address; `POST /manager/security/padlock_unlock`
   verifies it, clears `pl_time`, and broadcasts `padlock_open` to every tab.
-- Only a **paired, active** device may sign. Failures are logged, counted in
-  `padlock_pulls`, and rate-limited (1 s, then 5 s) so the nonce endpoint is not
-  a free oracle.
-- The machine's own screen may also sign (same browser key), so a lost phone is
-  not the only path. The recovery code below is the last resort.
+- Only a **paired, active** device may sign. Failures are logged and
+  rate-limited (five per address per five minutes) so the nonce endpoint is not
+  a free oracle; the dial's `padlock_pulls` stays separate.
+- Only a **remote** device may sign: a request from this machine itself is
+  refused (`padlock_request_is_local`), so the locked screen cannot open its own
+  door with the key it holds. The dial and the paper code are the lost-phone
+  paths.
 - The phone does not need to be touched beyond unlocking it: an unlock attempt
   already broadcasts `padlock_key_show`, and a mobile tab jumps to the key page
   by itself (v0.1.792). The signature path replaces the QR on that page; the QR
@@ -192,9 +194,9 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
   against someone who knows the passphrase. Enrol the TPM2 for normal boots
   (`systemd-cryptenroll --tpm2-device=auto`) **plus** a passphrase for recovery.
 - **Paper recovery code** is the app-level reset: one long random code, printed
-  and kept offline, stored only as a salted hash, compared in constant time, and
-  accepted only at the gate with a strict rate limit. It clears the padlock; it
-  does not decrypt the disk.
+  and kept offline, stored as a sealed verifier (it must unwrap the house key,
+  so it cannot be a one-way hash), and accepted only at the gate with a
+  per-address throttle. It clears the padlock; it does not decrypt the disk.
 
 ### Phases
 
@@ -219,6 +221,14 @@ before any compositor work, and it is small.
 - Already done and kept: auto-show on the phone (v0.1.792), tap the padlock to
   restart the 40 s watch (v0.1.792), back cancels (v0.1.792), rejoin after sleep
   (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793).
+- **Landed in v0.1.802.** Shadow logged real requests and still served;
+  Enforce answered a document with `423` and the locked page; the dial unlocked;
+  the websocket drops data pushes while locked; a throwaway paired device
+  completed challenge/sign/login and its valid padlock signature was refused as
+  local. The default is **Shadow**. The last end-to-end check is the user's
+  phone (the remote signature); flip the security panel's Gate select to
+  **Enforce** after it passes. The paper-code success path stays unexercised
+  because the existing recovery code was left untouched.
 
 **P1 — greetd greeter.** Boot to **greetd** (no autologin) with a JawnOS greeter
 that calls the same verifier over the service socket, then starts the session.
@@ -304,12 +314,12 @@ The dev laptop is already LUKS-encrypted (`cryptdevice=` in `/proc/cmdline`);
 the ProDesk runbook (`docs/appliance-provisioning.md`) enables TPM 2.0 for
 auto-unlock.
 
-### Open decision before P0
+### Decision (settled, 2026-10-18)
 
-Confirm the strict model: **server-side gate + paired-device signature as the
-primary + dial not accepted in strict mode + camera opt-in + paper code and FDE
-for emergencies.** Once confirmed, build P0 and rehearse the paper path before
-the first lock in anger.
+The strict model was confirmed: **server-side gate + paired-device signature as
+the primary + paper code and FDE for emergencies.** P0 is built and kept the
+dial and camera as fallbacks; refusing the dial in strict mode is P3. The gate
+ships in **Shadow** until the user's phone has opened it remotely.
 
 ## Data / records
 
