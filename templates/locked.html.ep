@@ -30,7 +30,8 @@
 		padding: 0 8px;
 		z-index: 60002;
 	}
-	#locked_send_phone {
+	#locked_send_phone,
+	#locked_fingerprint {
 		margin-top: 6px;
 		font-size: 15px;
 		padding: 6px 12px;
@@ -38,6 +39,12 @@
 		border: 1px solid #666;
 		background-color: #222;
 		color: #f4f4f4;
+	}
+	#locked_fingerprint {
+		background-color: #2b6;
+		border-color: #2b6;
+		color: #08110a;
+		font-weight: bold;
 	}
 	#locked_phone_status {
 		margin-top: 4px;
@@ -49,7 +56,13 @@
 		top: 50%;
 		transform: translate(-50%, -50%);
 		width: 300px;
-		height: 340px;
+	}
+	#locked_padlock .padlock_frame {
+		position: relative;
+		left: auto;
+		top: auto;
+		transform: none;
+		width: 100%;
 	}
 	#locked_recovery {
 		position: fixed;
@@ -83,12 +96,15 @@
 <div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
 
 <div id="locked_padlock">
-	<%= include 'padlock', mode => 'locker', target => $target %>
+	<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0 %>
 </div>
 
 <div id="locked_help">
 	Unlock on your phone, or use the recovery code.
 	<button id="locked_send_phone" type="button">Send the unlock page to my phone</button>
+	<% if ($fingerprint) { %>
+		<button id="locked_fingerprint" type="button">Use this computer's fingerprint</button>
+	<% } %>
 	<div id="locked_phone_status"></div>
 </div>
 
@@ -148,6 +164,31 @@
 			var note = document.getElementById('locked_phone_status');
 			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker', lockedTarget); }
 			if (note) { note.textContent = 'Sent. Open the unlock page on your phone.'; }
+		});
+	}
+	var fp = document.getElementById('locked_fingerprint');
+	if (fp) {
+		fp.addEventListener('click', function () {
+			var note = document.getElementById('locked_phone_status');
+			fp.disabled = true;
+			if (note) { note.textContent = 'Touch the fingerprint reader...'; }
+			fetch('/manager/security/fingerprint_unlock', {
+				method: 'POST',
+				headers: { 'X-Requested-With': 'XMLHttpRequest' }
+			}).then(function (r) { return r.json(); }).then(function (res) {
+				if (res && res.ok) {
+					if (note) { note.textContent = 'Unlocked. Loading...'; }
+					window.location.reload();
+					return;
+				}
+				fp.disabled = false;
+				if (note) {
+					note.textContent = (res && res.error === 'busy') ? 'A fingerprint is already being read.' : 'Fingerprint not accepted.';
+				}
+			}).catch(function () {
+				fp.disabled = false;
+				if (note) { note.textContent = 'Fingerprint not available.'; }
+			});
 		});
 	}
 	// the phone signs this machine open in the background; this page follows

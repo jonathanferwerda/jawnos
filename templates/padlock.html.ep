@@ -1,18 +1,36 @@
-<div class="padlock_frame" mode="<%= $mode %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
+<% use Mojo::JSON qw/encode_json/; %>
+<% my $frame_target = defined $target ? $target : ''; %>
+<% my $show_phone = defined $phone_button ? $phone_button : 1; %>
+<% my $show_fingerprint = ($fingerprint && (defined $fingerprint_button ? $fingerprint_button : 1)) ? 1 : 0; %>
+<% my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' }) || '/images/jbuttons/logo1.png'; %>
+<div class="padlock_frame" mode="<%= $mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
-	<% my $scope = (defined $target && $target) ? 'This screen is locked.' : 'The house is locked.'; %>
+	<% my $scope = $frame_target ? 'This screen is locked.' : 'The house is locked.'; %>
 	<div class="padlock_message"><%= $scope %><br>Unlock on your phone or with the recovery code.</div>
 	<%= include 'denial_image' %>
+	<% if ($mode ne 'security' && $show_phone) { %>
+		<button type="button" class="padlock_ask_phone">Send the unlock page to my phone</button>
+	<% } %>
+	<% if ($show_fingerprint) { %>
+		<button type="button" class="padlock_fingerprint">Use this computer's fingerprint</button>
+		<div class="padlock_fingerprint_status"></div>
+	<% } %>
 	<% if ($mode ne 'security') { %>
 		<a href="/manager/security/padlock_key?mode=<%= $mode %>" class="padlock_phone_key">Open the unlock page on this phone</a>
 	<% } %>
 
+	<div class="padlock_screensaver">
+		<canvas class="padlock_screensaver_canvas"></canvas>
+	</div>
+
 	<style>
 		.padlock_frame {
+			position: absolute;
+			left: 50%;
+			top: 50%;
+			transform: translate(-50%, -50%);
 			width: 300px;
-			bottom: 20%;
-			position:absolute;
-			text-align:center;
+			text-align: center;
 		}
 		.padlock_frame .denial_image {
 			width: 100%;
@@ -24,8 +42,32 @@
 			color: #111;
 			margin: 8px 0;
 		}
+		.padlock_ask_phone,
+		.padlock_fingerprint {
+			display: block;
+			margin: 10px auto 0 auto;
+			font-size: 16px;
+			padding: 8px 14px;
+			border-radius: 8px;
+			border: 1px solid #333;
+			background-color: rgba(255,255,255,0.9);
+			color: #000;
+			cursor: pointer;
+		}
+		.padlock_fingerprint {
+			background-color: #2b6;
+			border-color: #2b6;
+			color: #08110a;
+			font-weight: bold;
+		}
+		.padlock_fingerprint_status {
+			min-height: 18px;
+			margin-top: 4px;
+			font-size: 14px;
+			color: #111;
+		}
 		.padlock_phone_key {
-			display:none;
+			display: none;
 			margin: 10px auto 0 auto;
 			font-size: 16px;
 			padding: 8px 14px;
@@ -35,8 +77,133 @@
 			text-decoration: none;
 		}
 		@media screen and (max-width:900px) {
-			.padlock_phone_key { display:block; }
+			.padlock_ask_phone,
+			.padlock_fingerprint,
+			.padlock_fingerprint_status { display: none; }
+			.padlock_phone_key { display: block; }
+		}
+		.padlock_screensaver {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 70000;
+			background-color: #08080d;
+		}
+		.padlock_screensaver_canvas {
+			width: 100%;
+			height: 100%;
+			display: block;
 		}
 	</style>
+
+	<script>
+	(function () {
+		var frame = document.currentScript ? document.currentScript.closest('.padlock_frame') : null;
+		if (!frame) { frame = document.querySelector('.padlock_frame'); }
+		if (!frame) { return; }
+		var layer = frame.querySelector('.padlock_screensaver');
+		if (!layer) { return; }
+		var canvas = layer.querySelector('canvas');
+		var ctx = canvas.getContext('2d');
+		var logo = new Image();
+		logo.src = <%- encode_json($logo) %>;
+		var timer = null, raf = null, active = false, started = 0, last = 0;
+		var blobs = [];
+		function resize() {
+			canvas.width = window.innerWidth;
+			canvas.height = window.innerHeight;
+		}
+		function newArt() {
+			var palette = [];
+			for (var i = 0; i < 7; i++) {
+				palette.push('hsl(' + Math.floor(Math.random() * 360) + ',' + (45 + Math.floor(Math.random() * 40)) + '%,' + (45 + Math.floor(Math.random() * 20)) + '%)');
+			}
+			blobs = [];
+			for (var j = 0; j < 10; j++) {
+				blobs.push({
+					x: Math.random(), y: Math.random(),
+					r: 0.05 + Math.random() * 0.22,
+					dx: (Math.random() - 0.5) * 0.02,
+					dy: (Math.random() - 0.5) * 0.02,
+					c: palette[j % palette.length]
+				});
+			}
+		}
+		function draw(now) {
+			if (!active) { return; }
+			raf = requestAnimationFrame(draw);
+			if (now - last < 33) { return; }
+			last = now;
+			var t = (now - started) / 1000;
+			var w = canvas.width, h = canvas.height;
+			ctx.globalCompositeOperation = 'source-over';
+			ctx.fillStyle = '#08080d';
+			ctx.fillRect(0, 0, w, h);
+			ctx.globalCompositeOperation = 'lighter';
+			for (var i = 0; i < blobs.length; i++) {
+				var b = blobs[i];
+				var x = (b.x + Math.sin(t * 0.08 + i) * 0.06 + b.dx * t) % 1;
+				var y = (b.y + Math.cos(t * 0.07 + i) * 0.06 + b.dy * t) % 1;
+				if (x < 0) { x += 1; }
+				if (y < 0) { y += 1; }
+				var r = b.r * Math.min(w, h);
+				var g = ctx.createRadialGradient(x * w, y * h, 0, x * w, y * h, r);
+				g.addColorStop(0, b.c);
+				g.addColorStop(1, 'rgba(0,0,0,0)');
+				ctx.fillStyle = g;
+				ctx.fillRect(0, 0, w, h);
+			}
+			ctx.globalCompositeOperation = 'source-over';
+			ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+			ctx.lineWidth = 1;
+			for (var k = 0; k < 4; k++) {
+				ctx.beginPath();
+				ctx.arc(w * (0.2 + k * 0.2), h * 0.5, Math.min(w, h) * (0.2 + 0.1 * Math.sin(t * 0.1 + k)), 0, Math.PI * 2);
+				ctx.stroke();
+			}
+			var phase = t % 22;
+			if (phase < 4.5 && logo.complete && logo.naturalWidth) {
+				var size = Math.min(w, h) * 0.22;
+				var scale = Math.min(size / logo.naturalWidth, size / logo.naturalHeight);
+				var lw = logo.naturalWidth * scale, lh = logo.naturalHeight * scale;
+				ctx.globalAlpha = 0.90;
+				ctx.shadowColor = 'rgba(255,255,255,0.65)';
+				ctx.shadowBlur = 26;
+				ctx.drawImage(logo, (w - lw) / 2, (h - lh) / 2, lw, lh);
+				ctx.shadowBlur = 0;
+				ctx.globalAlpha = 1;
+			}
+		}
+		function show() {
+			if (active) { return; }
+			active = true;
+			newArt();
+			resize();
+			layer.style.display = 'block';
+			started = performance.now();
+			last = 0;
+			if (raf) { cancelAnimationFrame(raf); }
+			raf = requestAnimationFrame(draw);
+		}
+		function hide() {
+			active = false;
+			layer.style.display = 'none';
+			if (raf) { cancelAnimationFrame(raf); raf = null; }
+			restart();
+		}
+		function restart() {
+			if (timer) { clearTimeout(timer); }
+			timer = setTimeout(show, 15000);
+		}
+		['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
+			document.addEventListener(ev, function () {
+				if (active) { hide(); }
+				else { restart(); }
+			}, { passive: true });
+		});
+		window.addEventListener('resize', function () { if (active) { resize(); } });
+		restart();
+	})();
+	</script>
 
 </div>

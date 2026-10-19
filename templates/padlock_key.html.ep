@@ -139,9 +139,10 @@
 		padlockKeyBusy = true;
 		$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		$('#padlock_key_spinner').show().removeClass('done');
-		var bio = padlockKeyBioUsable();
+		var native = padlockKeyNativeBio();
+		var bio = native || padlockKeyBioUsable();
 		padlockKeySay(bio ? 'Confirm with your fingerprint...' : 'Unlocking...', false);
-		padlockKeyBioConfirm().then(function (ok) {
+		(native || padlockKeyBioConfirm()).then(function (ok) {
 			if (!ok) { padlockKeyFail('Unlock cancelled.'); return; }
 			padlockKeySay('Unlocking...', false);
 			padlockKeyDeviceUnlock();
@@ -195,6 +196,17 @@
 	// A local biometric confirmation. The phone's key still signs the nonce on
 	// the server; this only makes the phone ask for the person before it does.
 	// Over an IP address WebAuthn has no RP ID, so the tap is the confirmation.
+	function padlockKeyNativeBio() {
+		if (!window.JawnBiometric || typeof window.JawnBiometric.confirm !== 'function') { return null; }
+		return new Promise(function (resolve) {
+			window.jawnBiometricResult = function (ok) {
+				window.jawnBiometricResult = null;
+				resolve(ok === 'unavailable' ? true : !!ok);
+			};
+			try { window.JawnBiometric.confirm('Unlock the house'); }
+			catch (e) { window.jawnBiometricResult = null; resolve(true); }
+		});
+	}
 	function padlockKeyBioUsable() {
 		var h = location.hostname || '';
 		return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext && !/^\d{1,3}(\.\d{1,3}){3}$/.test(h));
@@ -212,7 +224,6 @@
 		return a;
 	}
 	function padlockKeyBioEnroll() {
-		if (!padlockKeyBioUsable()) { return Promise.resolve(true); }
 		return navigator.credentials.create({ publicKey: {
 			challenge: padlockKeyRandom(32),
 			rp: { name: 'JawnOS', id: location.hostname },

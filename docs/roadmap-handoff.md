@@ -240,6 +240,11 @@ before any compositor work, and it is small.
   milliseconds, readable by every worker, with a decrypt fallback for old rows
   (v0.1.817); the gate reads them directly, with no one-second cache
   (v0.1.818).
+  - Lock-screen polish (v0.1.821): the denial image is centred, a fifteen-second
+    generated-art screensaver (with the house logo every twenty-two seconds)
+    yields to any mouse or key, the locked page offers a local `fprintd`
+    fingerprint, and the Android app carries a native `BiometricPrompt` bridge
+    (app v0.118.49 / versionCode 1048).
 - **Landed in v0.1.802.** Shadow logged real requests and still served;
   Enforce answered a document with `423` and the locked page; the dial (since
   removed) unlocked; the websocket drops data pushes while locked; a throwaway

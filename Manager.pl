@@ -32,7 +32,7 @@ use File::Slurp;
 use File::Type;
 use File::Copy;
 use POSIX ();
-use Fcntl qw(:flock);
+use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
@@ -9063,6 +9063,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_state' ||
+		$path eq '/manager/security/fingerprint_unlock' ||
 		$path eq '/manager/security/padlock_key');
 
 	# A request that started while the lock screen was up can reach here after
@@ -9140,7 +9141,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker', target => $overlay_target);
+		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker', target => $overlay_target, fingerprint => &fingerprint_available());
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
@@ -26887,6 +26888,22 @@ sub padlock_request_is_local {
 	return 0;
 }
 
+# The server machine's own fingerprint reader, if it has an enrolled finger.
+# Checked at most once a minute: fprintd-list talks to D-Bus.
+our ($fingerprint_checked_at, $fingerprint_ok);
+sub fingerprint_available {
+	return 0 unless -x '/usr/bin/fprintd-verify';
+	my $now = time;
+	if (!$fingerprint_checked_at || $now - $fingerprint_checked_at > 60) {
+		my $user = $ENV{USER} || getpwuid($<) || 'jawn';
+		$user =~ s/[^\w.-]//g;
+		my $out = `fprintd-list $user 2>/dev/null`;
+		$fingerprint_ok = ($out =~ /Fingerprints for user/i && $out !~ /no finger/i) ? 1 : 0;
+		$fingerprint_checked_at = $now;
+	}
+	return $fingerprint_ok || 0;
+}
+
 sub padlock_gate_allows {
 	my ($path) = @_;
 	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public)/};
@@ -26900,6 +26917,7 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_unlock';
 	return 1 if $path eq '/manager/security/padlock_state';
 	return 1 if $path eq '/manager/security/padlock_key';
+	return 1 if $path eq '/manager/security/fingerprint_unlock';
 	return 0;
 }
 
@@ -26998,7 +27016,7 @@ sub padlock_gate_answer {
 	}
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	$c->res->code(423);
-	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''));
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available());
 	return;
 }
 
@@ -27077,6 +27095,26 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	$c->render(json => { ok => 1, mode => $mode, target => $target });
+};
+
+# A local fingerprint is an alternative to the phone for the screen it is on.
+# The request must come from this machine and the session must be approved;
+# fprintd prompts the reader, and only the current screen is opened.
+post '/manager/security/fingerprint_unlock' => sub ($c) {
+	return $c->render(json => { ok => 0, error => 'local only' }) unless &padlock_request_is_local($c);
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
+	return $c->render(json => { ok => 0, error => 'no fingerprint' }) unless &fingerprint_available();
+	my $lockfile = '/tmp/jawnos_fingerprint.lock';
+	sysopen(my $fh, $lockfile, O_CREAT|O_EXCL|O_WRONLY) or return $c->render(json => { ok => 0, error => 'busy' });
+	close $fh;
+	my $user = $ENV{USER} || getpwuid($<) || 'jawn';
+	$user =~ s/[^\w.-]//g;
+	my $rc = system('timeout', '20', 'fprintd-verify', $user);
+	unlink $lockfile;
+	return $c->render(json => { ok => 0, error => 'not accepted' }) if $rc != 0;
+	my $device = $c->session('device_uuid') || '';
+	my $opened = &padlock_mark_unlocked($c, 'locker', $device);
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
