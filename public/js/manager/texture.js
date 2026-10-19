@@ -5,8 +5,8 @@
 //
 // A material only ever layers over a control's own colour, so an active green
 // or a destroy red keeps its meaning underneath. Plain is the desk exactly as
-// it looked before the materials existed (the clothesline's original frosted
-// pill); round is the solid rounded pill that used to be called plain.
+// it looked before the pills and materials (the clothesline's original solid
+// rounded tile); round is the solid rounded pill that used to be called plain.
 
 var jawnosTextureNames = [ 'classic', 'round', 'sandglass', 'glass', 'paper', 'fabric', 'wood', 'metal' ];
 // 'plain' was the solid rounded pill's old internal name: read it as round so a
@@ -294,52 +294,17 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	var kind = jawnosTextureCurrent;
 	var radius = h / 2;
 	if (kind === 'classic') {
-		// the clothesline exactly as it was drawn before the materials: a pane of
-		// frosted glass, the app colour breathed through it, grain, sheen and a
-		// lit rim, with a bead of the colour set in at the left
+		// the clothesline exactly as it was drawn before the pills and materials:
+		// a solid rounded rectangle, a thick themed ink border, and the name
+		// printed plainly in the ink that reads on the tile
 		ctx.save();
 		ctx.beginPath();
-		roundRectPath(ctx, x, y, w, h, radius);
-		ctx.shadowColor = 'rgba(0,0,0,0.38)';
-		ctx.shadowBlur = 9;
-		ctx.shadowOffsetY = 3;
-		ctx.fillStyle = dark ? 'rgba(48,54,62,0.50)' : 'rgba(255,255,255,0.55)';
-		ctx.fill();
-		ctx.shadowColor = 'transparent';
-		ctx.shadowBlur = 0;
-		ctx.shadowOffsetY = 0;
-		ctx.globalAlpha = dark ? 0.12 : 0.08;
+		roundRectPath(ctx, x, y, w, h, 10);
 		ctx.fillStyle = colour;
 		ctx.fill();
-		ctx.globalAlpha = 1;
-		// the old frosted pane's fine gray grain is the sandglass tile
-		jawnosTextureGrain(ctx, 'sandglass', dark);
-		jawnosTextureSheen(ctx, 'classic', dark, x, y, w, h);
-		var oldRim = ctx.createLinearGradient(0, y, 0, y + h);
-		if (dark) {
-			oldRim.addColorStop(0, 'rgba(255,255,255,0.46)');
-			oldRim.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-			oldRim.addColorStop(1, 'rgba(255,255,255,0.18)');
-		}
-		else {
-			oldRim.addColorStop(0, 'rgba(0,0,0,0.24)');
-			oldRim.addColorStop(0.5, 'rgba(0,0,0,0.07)');
-			oldRim.addColorStop(1, 'rgba(0,0,0,0.14)');
-		}
-		ctx.beginPath();
-		roundRectPath(ctx, x, y, w, h, radius);
-		ctx.lineWidth = 1;
-		ctx.strokeStyle = oldRim;
+		ctx.lineWidth = 3;
+		ctx.strokeStyle = (typeof jawnosInk == 'function') ? jawnosInk() : (dark ? '#f0f4f8' : '#161a1e');
 		ctx.stroke();
-		ctx.restore();
-
-		ctx.save();
-		ctx.beginPath();
-		ctx.arc(x + 14, y + (h / 2), 2.4, 0, Math.PI * 2);
-		ctx.fillStyle = colour;
-		ctx.shadowColor = colour;
-		ctx.shadowBlur = 6;
-		ctx.fill();
 		ctx.restore();
 		return;
 	}
@@ -405,13 +370,26 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	ctx.restore();
 }
 
-// The label: solid and quiet on round; small uppercase strokes with a recess
-// and a catch-light on plain and every material, so it reads as etched rather
-// than paint.
+// The label: a plain printed name on Plain; solid and quiet on round; small
+// uppercase strokes with a recess and a catch-light on every material, so it
+// reads as etched rather than paint.
 function jawnosTextureLabel(ctx, text, x, y, w, h, dark, colour) {
 	var kind = jawnosTextureCurrent;
 	ctx.save();
 	ctx.textBaseline = 'middle';
+	if (kind === 'classic') {
+		// the old label: the name as typed, in the tile's own contrasting ink
+		ctx.font = '400 20px Times New Roman';
+		ctx.textBaseline = 'alphabetic';
+		var classicInk = (typeof jawnosContrastInk == 'function' && colour) ? jawnosContrastInk(colour) : (dark ? '#f0f4f8' : '#161a1e');
+		// a dark desk's ink is a softened grey, not pure white
+		if (dark && classicInk === '#ffffff' && typeof jawnosInk == 'function') { classicInk = jawnosInk(); }
+		var classicMeasure = ctx.measureText(text).width;
+		ctx.fillStyle = classicInk;
+		ctx.fillText(text, ((w - classicMeasure) / 2) + x, y + (h / 2) + 7);
+		ctx.restore();
+		return;
+	}
 	if (kind === 'round') {
 		ctx.font = '600 15px Arial, Helvetica, sans-serif';
 		try { ctx.letterSpacing = '0.2px'; } catch (e) {}

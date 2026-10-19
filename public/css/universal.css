@@ -434,7 +434,7 @@ select {
    carries, so an active green or a destroy red keeps its meaning underneath.
    Plain and round add nothing at all; the rest dress both <button> and the
    hinted images the program treats as buttons. Plain is the desk exactly as it
-   looked before the materials existed, and round is the solid rounded pill. */
+   looked before the pills and materials, and round is the solid rounded pill. */
 body[data-texture="plain"],
 body[data-texture="round"],
 body[data-texture="classic"] {

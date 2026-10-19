@@ -102,8 +102,8 @@ function clotheslineHanger(clothes) {
 		ctx.lineWidth = clothesLinePos['bordersize'];
 
 		// each garment takes the desk's material (the Misc Texture setting):
-		// plain is the original frosted pill, round is a solid coloured pill, and
-		// the rest are panes of glass, paper, fabric, wood or metal with the app's
+		// plain is the original flat tile, round is a solid rounded pill, and the
+		// rest are panes of glass, paper, fabric, wood or metal with the app's
 		// colour breathing through them
 		var gap = 4;
 		var pad = 3;
