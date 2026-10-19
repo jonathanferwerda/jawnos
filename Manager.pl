@@ -1963,8 +1963,10 @@ post '/manager/appointment/writer' => sub ($c) {
 
 
 
-get '/i18n/ui-:code.js' => sub ($c) {
-	my $code = &language::valid( $c->param('code') );
+get '/i18n/ui-*code' => sub ($c) {
+	my $code = $c->param('code') // '';
+	$code =~ s/\.js\z//;
+	$code = &language::valid($code);
 	$c->res->headers->content_type('application/javascript; charset=UTF-8');
 	$c->res->headers->cache_control('no-cache');
 	my $file = 'i18n/ui-' . $code . '.json';
