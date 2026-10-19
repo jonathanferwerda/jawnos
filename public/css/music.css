@@ -526,6 +526,31 @@ body.dark_theme #music {
 	background-color: lightgreen;
 }
 
+/* ---- the desk's material on the music surfaces ------------------------------
+
+   The top interface bar, every track, and the player bar at the foot wear the
+   material from Misc -> Texture. Only the layers go on: each surface keeps its
+   own fill, border and shadow underneath. Plain and round are bare, so they
+   are left out entirely - the interface also keeps its dark-theme wash. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music #interface,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music #files tr.track_item,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music #files .music_track,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music #files table.hover,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music .music_player_bar {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
+/* a dark desk darkens the top bar's configured colour before the material goes
+   on, the same wash universal.css lays on every theme surface */
+body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #music #interface {
+	background-image: var(--jawnos-texture), linear-gradient(rgba(14,15,18,0.58), rgba(14,15,18,0.58));
+	background-size: var(--jawnos-texture-size, auto), 100% 100%;
+	background-repeat: repeat;
+	background-blend-mode: var(--jawnos-texture-blend, normal), normal;
+}
+
 /* ---- the search's loading hint --------------------------------------------
 
    A search swaps the track list in place, so there is nothing to flash - but
