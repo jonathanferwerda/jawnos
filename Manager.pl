@@ -26515,6 +26515,7 @@ post '/manager/security/device_revoke' => sub($c) {
 	}
 	my $uuid = $c->param('uuid');
 	&subs::db_delete('paired_devices', { uuid => $uuid }) if $uuid;
+	&subs::db_delete('security', { level => 'padlock_device', uuid => $uuid }) if $uuid;
 	$c->render(json => &security_initializer($c));
 };
 
