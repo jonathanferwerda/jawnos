@@ -563,11 +563,45 @@ body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data
 	background-repeat: var(--jawnos-texture-repeat, repeat);
 	background-blend-mode: var(--jawnos-texture-blend, normal);
 }
+/* the two bars are slabs of the same desk, so they wear the material too: the
+   taskbar, the dock, and the tiles the taskbar keeps its windows in (those are
+   spans, so the button rule above never reaches them). Only the layers go on
+   the bars: their borders already mark the screen edge, and the window tiles
+   keep the shadows their open/active states paint. */
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar,
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #pseudonym_home {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
+/* a dark desk darkens the bars as it does every other surface, at the shade the
+   bar's own .theme_surface / .theme_surface_soft lays over it: the tint rides
+   above the material instead of replacing it. */
+body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar {
+	background-image: linear-gradient(rgba(14,15,18,0.28), rgba(14,15,18,0.28)), var(--jawnos-texture);
+	background-size: 100% 100%, var(--jawnos-texture-size, auto);
+	background-repeat: no-repeat, var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: normal, var(--jawnos-texture-blend, normal);
+}
+body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #pseudonym_home {
+	background-image: linear-gradient(rgba(14,15,18,0.58), rgba(14,15,18,0.58)), var(--jawnos-texture);
+	background-size: 100% 100%, var(--jawnos-texture-size, auto);
+	background-repeat: no-repeat, var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: normal, var(--jawnos-texture-blend, normal);
+}
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar .window_toggle {
+	background-image: var(--jawnos-texture);
+	background-size: var(--jawnos-texture-size, auto);
+	background-repeat: var(--jawnos-texture-repeat, repeat);
+	background-blend-mode: var(--jawnos-texture-blend, normal);
+}
 /* a picture already sitting in a button wears the button's material, not a
    second one of its own */
 body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img.hover,
 body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[hint],
-body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[onclick] {
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) button img[onclick],
+body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) #taskbar .window_toggle img {
 	background-image: none;
 	box-shadow: none;
 	border-color: inherit;
