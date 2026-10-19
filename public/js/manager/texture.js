@@ -48,6 +48,21 @@ function jawnosTextureTile(kind, dark) {
 		}
 		x.putImageData(img, 0, 0);
 	}
+	else if (kind === 'glass') {
+		// a repeating specular band: the printers have no single bounding box to
+		// build a shape-wide gloss from, so a small lit tile carries the shine onto
+		// dots, bands and rings
+		c.width = c.height = 32;
+		x = c.getContext('2d');
+		var glass = x.createLinearGradient(0, 0, 0, 32);
+		glass.addColorStop(0, 'rgba(255,255,255,0.24)');
+		glass.addColorStop(0.18, 'rgba(255,255,255,0.07)');
+		glass.addColorStop(0.5, 'rgba(255,255,255,0)');
+		glass.addColorStop(0.72, 'rgba(255,255,255,0.10)');
+		glass.addColorStop(1, 'rgba(0,0,0,0.16)');
+		x.fillStyle = glass;
+		x.fillRect(0, 0, 32, 32);
+	}
 	else if (kind === 'paper') {
 		c.width = 64; c.height = 32;
 		x = c.getContext('2d');
@@ -138,10 +153,52 @@ function jawnosTextureTile(kind, dark) {
 }
 
 function jawnosTextureGrain(ctx, kind, dark) {
+	// the pill's own sheen already carries the gloss
+	if (kind === 'glass') { return; }
 	var tile = jawnosTextureTile(kind, dark);
 	if (!tile) { return; }
 	var pattern = ctx.createPattern(tile, 'repeat');
 	if (pattern) { ctx.fillStyle = pattern; ctx.fill(); }
+}
+
+// The printers paint arbitrary paths, not the clothesline's pills: these
+// helpers lay the same material over the app colour that path already wears.
+function jawnosTexturePattern(ctx, kind, dark) {
+	var tile = jawnosTextureTile(kind, dark);
+	return tile ? ctx.createPattern(tile, 'repeat') : null;
+}
+
+function jawnosTextureFill(ctx, colour, dark) {
+	ctx.fillStyle = colour;
+	ctx.fill();
+	if (jawnosTextureCurrent === 'plain') { return; }
+	var pattern = jawnosTexturePattern(ctx, jawnosTextureCurrent, dark);
+	if (pattern) { ctx.fillStyle = pattern; ctx.fill(); }
+}
+
+function jawnosTextureStroke(ctx, colour, dark, width) {
+	ctx.lineWidth = width;
+	ctx.strokeStyle = colour;
+	ctx.stroke();
+	if (jawnosTextureCurrent === 'plain') { return; }
+	var pattern = jawnosTexturePattern(ctx, jawnosTextureCurrent, dark);
+	if (pattern) { ctx.strokeStyle = pattern; ctx.stroke(); }
+}
+
+function jawnosTextureFillRect(ctx, x, y, w, h, colour, dark) {
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(x, y, w, h);
+	jawnosTextureFill(ctx, colour, dark);
+	ctx.restore();
+}
+
+function jawnosTextureFillCircle(ctx, x, y, r, colour, dark) {
+	ctx.save();
+	ctx.beginPath();
+	ctx.arc(x, y, r, 0, Math.PI * 2);
+	jawnosTextureFill(ctx, colour, dark);
+	ctx.restore();
 }
 
 function jawnosTextureBase(kind, dark) {
@@ -297,7 +354,10 @@ function jawnosTextureLabel(ctx, text, x, y, w, h, dark, colour) {
 		// plain is a solid tile, so the label wears the ink that reads on that
 		// colour; the textured panes are neutral and use the theme's ink
 		var plainInk = (typeof jawnosContrastInk == 'function' && colour) ? jawnosContrastInk(colour) : (dark ? '#f0f4f8' : '#161a1e');
-		var lightInk = (plainInk === '#ffffff');
+		// a dark desk's ink is a softened grey, not pure white: a white label on
+		// a solid garment was the one place the theme's own grey did not reach
+		if (dark && plainInk === '#ffffff' && typeof jawnosInk == 'function') { plainInk = jawnosInk(); }
+		var lightInk = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(plainInk) === '#000000' : dark;
 		ctx.fillStyle = lightInk ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.75)';
 		ctx.fillText(text, plainX, plainY + (lightInk ? -1 : 1));
 		ctx.fillStyle = plainInk;

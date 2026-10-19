@@ -167,6 +167,7 @@ function continentPlot(appts, sort) {
 	headerPrinter(ctx,appts,'Continent');
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var places = appts['__continent'] || [];
 	var palette = ['#2f6f9f', '#a0503f', '#3f8f5f', '#8f6f2f', '#6f4f9f', '#9f5f7f'];
@@ -234,10 +235,8 @@ function continentPlot(appts, sort) {
 			ctx.arc(p[0], p[1], 7, 0, (Math.PI * 2));
 			ctx.stroke();
 		}
-		ctx.fillStyle = colour;
-		ctx.beginPath();
-		ctx.arc(p[0], p[1], 7, 0, (Math.PI * 2));
-		ctx.fill();
+		if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, p[0], p[1], 7, colour, darkTheme); }
+		else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(p[0], p[1], 7, 0, (Math.PI * 2)); ctx.fill(); }
 		ctx.strokeStyle = ink;
 		ctx.lineWidth = 2;
 		ctx.beginPath();

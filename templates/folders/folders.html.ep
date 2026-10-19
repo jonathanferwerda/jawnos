@@ -15,7 +15,7 @@
 		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archive queue" class="little_thumb hover" id="folders_archive_toggle">
 		<% my $fpl = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 		<% if (grep { $_ eq 'folders' } @{$fpl}) { %>
-			<img src="/images/jbuttons/padlock unlock.png" hint="Lock" class="little_thumb hover folders_lock" style="<% if (($settings->{'combo_unlock'} || '') =~ /[a-zA-Z0-9]/) { %>background-color:red;<% } %>">
+			<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="little_thumb hover folders_lock" style="<% if (($settings->{'combo_unlock'} || '') =~ /[a-zA-Z0-9]/) { %>background-color:red;<% } %>">
 		<% } %>
 	</div>
 	<%# the folders worth getting back to on the machine being browsed - which,

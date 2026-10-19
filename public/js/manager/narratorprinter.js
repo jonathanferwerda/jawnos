@@ -12,6 +12,7 @@ function narratorPrinter(appts) {
 	canvas.width = $('#background').width();
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var pageWidth = canvas.width - indent - 24;
 
@@ -112,8 +113,8 @@ function narratorPrinter(appts) {
 			ctx.save();
 			ctx.globalAlpha = 0.3;
 			if (v['first']) {
-				ctx.fillStyle = colour;
-				ctx.fillRect(indent - 14, v['y'] - 10, 4, 20);
+				if (typeof jawnosTextureFillRect == 'function') { jawnosTextureFillRect(ctx, indent - 14, v['y'] - 10, 4, 20, colour, darkTheme); }
+				else { ctx.fillStyle = colour; ctx.fillRect(indent - 14, v['y'] - 10, 4, 20); }
 			}
 			jawnosPrinterText(ctx, v['text'], indent, v['y'], { font: font, colour: ink, halo: halo });
 			ctx.restore();
@@ -122,8 +123,8 @@ function narratorPrinter(appts) {
 		if (v['first']) {
 			pseudoGenerator(appts, v['type'], 8, v['y'] - 11, 22);
 			ctx.save();
-			ctx.fillStyle = colour;
-			ctx.fillRect(indent - 14, v['y'] - 10, 4, 20);
+			if (typeof jawnosTextureFillRect == 'function') { jawnosTextureFillRect(ctx, indent - 14, v['y'] - 10, 4, 20, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.fillRect(indent - 14, v['y'] - 10, 4, 20); }
 			ctx.restore();
 		}
 		jawnosPrinterText(ctx, v['text'], indent, v['y'], { font: font, colour: ink, halo: halo });

@@ -6,6 +6,11 @@
     chosen the icons layout keeps that layout's grid. %>
 <% my $phone_layout = $phone ? 1 : 0; %>
 <% my $compact_list = ($phone_layout && ($crate->{'settings'}->{'layout'} // '') ne 'icons') ? 1 : 0; %>
+<% my $dark = &subs::theme_is_dark(); %>
+<%# a track card's colour on a dark desk is the manager colour's dark
+    counterpart, the same swap the windows make, so a light manager colour does
+    not glare behind the list %>
+<% my $file_colour = sub { my $f = shift; return ($dark && $f->{'dark_colour'}) ? $f->{'dark_colour'} : $f->{'colour'}; }; %>
 <div id="files" style="<% if ($compact_list) { %>overflow:visible; background-color:var(--panel); width:100%; max-width:100%; text-align:left; border:none; border-radius:0;<% } else { %>overflow: scroll; background-color:var(--panel); width:100%; text-align:center; max-width:100%;<% } %>" >
 	<% my $n = 0; %>
 	<% if ($compact_list) { %>
@@ -19,8 +24,8 @@
 			<% foreach my $f (@{$crate->{'songs'}}) { %>
 				<% next unless $f->{'filename'}; %>
 				<% $n = $n + 1; %>
-				<div class="music_file music_track track_item link hover <% if (($f->{'playing'} // '') eq 'yes') { %>playing<% } %>" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'uuid'} %>" number="<%= $n %>" style="background-color:<%= $f->{'colour'} %>">
-					<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+				<div class="music_file music_track track_item link hover <% if (($f->{'playing'} // '') eq 'yes') { %>playing<% } %>" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'uuid'} %>" number="<%= $n %>" style="background-color:<%= $file_colour->($f) %>">
+					<div style="display:none;" colour="<%= $file_colour->($f) %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 					<div style="display:none;" class="file_json" file="<%= $f->{'file'} %>" file_uuid="<%= $f->{'file_uuid'} %>"><%= &subs::json_chars($f->{'info'}) %></div>
 					<% if ($f->{'type'} eq 'audio') { %>
 						<% if (scalar @{$f->{'thumbs'}} > 0) { %>
@@ -64,7 +69,7 @@
 				<% foreach my $f (@{$crate->{'songs'}}) { %>
 					<% next unless $f->{'filename'}; %>
 					<% $n = $n + 1; %>
-					<table class=" hover" style="min-width:200px;max-width:290px;max-height:900px;display:inline-block;background-color:<%= $f->{'colour'} %>">
+					<table class=" hover" style="min-width:200px;max-width:290px;max-height:900px;display:inline-block;background-color:<%= $file_colour->($f) %>">
 						<thead>
 							<th>
 								<span class="full_title title_font" style="float:left;text-align:left;background-color:purple;font-size:22px;"><%= &subs::shorthand_name($f->{'formatted_name'} || $f->{'full_title'},45) %></span>
@@ -74,7 +79,7 @@
 						<tbody>
 							<tr>
 								<td file="<%= $f->{'filename'} %>" class="music_file music_thumb track_item link hover <% if ($f->{'playing'} eq 'yes') { %>playing holla<% } %>" number="<%= $n %>" colspan="2" style="float:left;height:100%;">
-									<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" song="<%= $f->{'song'} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+									<div style="display:none;" colour="<%= $file_colour->($f) %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" song="<%= $f->{'song'} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 									<% if ($f->{'remote_uuid'}) { %>
 										<img class="music_file_fetch_home little_thumb hover" src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" file="<%= $f->{'filename'} %>" remote_uuid="<%= $f->{'remote_uuid'} %>">
 									<% } %>
@@ -110,7 +115,7 @@
 					<% foreach my $f (@{$crate->{'songs'}}) { %>
 						<% next unless $f->{'filename'}; %>
 						<% $n = $n + 1; %>
-						<tr class="track_item link hover" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'uuid'} %>" number="<%= $n %>" style="min-height:70px;background-color:<%= $f->{'colour'} %>">
+						<tr class="track_item link hover" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'uuid'} %>" number="<%= $n %>" style="min-height:70px;background-color:<%= $file_colour->($f) %>">
 							<td class="music_thumb" style="float:left;height:100%;">
 								<% if ($f->{'type'} eq 'audio') { %>
 									<% if (scalar @{$f->{'thumbs'}} > 0) { %>
@@ -129,7 +134,7 @@
 								<% } %>
 							</td>
 							<td file="<%= $f->{'filename'} %>" class="music_file <% if (($f->{'playing'} // '') eq 'yes') { %>playing<% } %>" number="<%= $n %>" style="text-align:center;font-size:20px;bold">
-								<div style="display:none;" colour="<%= $f->{'colour'} %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
+								<div style="display:none;" colour="<%= $file_colour->($f) %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'song'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'artist'} %>" album="<%= $f->{'album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
 								<div style="display:none;" class="file_json" file_uuid="<%= $f->{'file_uuid'} %>"><%= &subs::json_chars($f->{'info'}) %></div>
 								<img class="music_information_toggle little_thumb" src="<%= &subs::icon_for('/images/decipherable/information.png') %>"  file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>" style="float:left;">
 								<% if ($f->{'remote_uuid'}) { %>

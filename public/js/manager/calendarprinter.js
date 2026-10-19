@@ -11,6 +11,7 @@ function calendarPrinter(appts,sort) {
 	headerPrinter(ctx,appts,'Calendar');
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var ts = numeral(appts['__specs'] ? appts['__specs']['timestamp'] : undefined).value();
 	if (!isFinite(ts) || ts <= 0) { ts = Date.now(); }
@@ -126,10 +127,8 @@ function calendarPrinter(appts,sort) {
 		var dy = cy + rowHeight - 10;
 		$.each(colours.slice(0, 8), function(i2,colour) {
 			ctx.save();
-			ctx.fillStyle = colour;
-			ctx.beginPath();
-			ctx.arc(dx, dy, 4, 0, (Math.PI * 2));
-			ctx.fill();
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, dx, dy, 4, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(dx, dy, 4, 0, (Math.PI * 2)); ctx.fill(); }
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = 1;
 			ctx.stroke();
@@ -143,10 +142,8 @@ function calendarPrinter(appts,sort) {
 		$.each((ghost_spots[day] || []).slice(0, 8), function(i3,colour) {
 			ctx.save();
 			ctx.globalAlpha = 0.3;
-			ctx.fillStyle = colour;
-			ctx.beginPath();
-			ctx.arc(dx, dy, 4, 0, (Math.PI * 2));
-			ctx.fill();
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, dx, dy, 4, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(dx, dy, 4, 0, (Math.PI * 2)); ctx.fill(); }
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = 1;
 			ctx.stroke();

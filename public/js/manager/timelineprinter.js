@@ -43,6 +43,7 @@ function timelinePrinter(appts,sort,offset) {
 	headerPrinter(ctx,appts,'Timeline');
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 
 	// the yellow rail the rows are hung from
@@ -138,13 +139,12 @@ function timelinePrinter(appts,sort,offset) {
 				rowRight = Math.max(rowRight, Math.max(startX, x) + 8);
 				ctx.save();
 				ctx.globalAlpha = 0.3;
-				ctx.strokeStyle = colour;
-				ctx.lineWidth = 16;
 				ctx.lineCap = 'round';
 				ctx.beginPath();
 				ctx.moveTo(startX, rowY);
 				ctx.lineTo(x, rowY);
-				ctx.stroke();
+				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 16); }
+				else { ctx.lineWidth = 16; ctx.strokeStyle = colour; ctx.stroke(); }
 				ctx.restore();
 			}
 
@@ -162,16 +162,15 @@ function timelinePrinter(appts,sort,offset) {
 			ctx.beginPath();
 			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.fill();
-			ctx.strokeStyle = colour;
-			ctx.lineWidth = dotRing;
 			ctx.beginPath();
 			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
-			ctx.stroke();
+			if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, dotRing); }
+			else { ctx.strokeStyle = colour; ctx.lineWidth = dotRing; ctx.stroke(); }
 			if (startX != undefined) {
-				ctx.lineWidth = 3;
 				ctx.beginPath();
 				ctx.arc(startX, rowY, 5, 0, (Math.PI * 2));
-				ctx.stroke();
+				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 3); }
+				else { ctx.lineWidth = 3; ctx.stroke(); }
 			}
 			ctx.restore();
 
@@ -214,13 +213,12 @@ function timelinePrinter(appts,sort,offset) {
 			if ( isFinite(gStartPct) ) {
 				gStartPct = Math.min(Math.max(gStartPct, 0), 2);
 				var gStartX = dotEdge + (column * gStartPct / 2);
-				ctx.strokeStyle = colour;
-				ctx.lineWidth = 16;
 				ctx.lineCap = 'round';
 				ctx.beginPath();
 				ctx.moveTo(gStartX, rowY);
 				ctx.lineTo(gx, rowY);
-				ctx.stroke();
+				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 16); }
+				else { ctx.lineWidth = 16; ctx.strokeStyle = colour; ctx.stroke(); }
 			}
 			if (halo) {
 				ctx.strokeStyle = halo;
@@ -234,10 +232,10 @@ function timelinePrinter(appts,sort,offset) {
 			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
 			ctx.fill();
 			ctx.strokeStyle = colour;
-			ctx.lineWidth = dotRing;
 			ctx.beginPath();
 			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
-			ctx.stroke();
+			if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, dotRing); }
+			else { ctx.lineWidth = dotRing; ctx.stroke(); }
 			ctx.restore();
 		});
 		// a row with nothing drawn has nothing to answer for

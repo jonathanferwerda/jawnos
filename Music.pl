@@ -464,6 +464,9 @@ sub song_maker($data) {
 	my $archive = $data->{'archive'} || {};
 	my @local_files;
 	my $background_colour = &subs::config_reader()->{'manager'}->{'background_colour'} || &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour'});
+	# the track cards wear the manager's colour; on a dark desk they wear its
+	# dark counterpart, so a light manager colour does not glare through the music
+	my $dark_background_colour = &subs::dark_colour_for($background_colour);
 	my $computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
 	my $file_informations = {};
 	my ($cache_artists,$cache_albums);
@@ -571,7 +574,8 @@ sub song_maker($data) {
 			file_uuid => &subs::random_string_creator(21),
 			description => $tree->{lc $t},
 			computer_name => $computer_name,
-			colour => $background_colour
+			colour => $background_colour,
+			dark_colour => $dark_background_colour
 		};
 
 		if ($archive_row) {

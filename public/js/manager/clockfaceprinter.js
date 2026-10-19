@@ -47,6 +47,7 @@ function clockfacePrinter(appts) {
 	headerPrinter(ctx,appts,'Clockface');
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var appointment_events = appointmentEventMaker(appts,'size');
 	// the scope in view owns the only window the payload gives a percent against
@@ -126,10 +127,8 @@ function clockfacePrinter(appts) {
 				ctx.arc(dx, dy, 6, 0, (Math.PI * 2));
 				ctx.stroke();
 			}
-			ctx.fillStyle = e['colour'] || ink;
-			ctx.beginPath();
-			ctx.arc(dx, dy, 6, 0, (Math.PI * 2));
-			ctx.fill();
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, dx, dy, 6, e['colour'] || ink, darkTheme); }
+			else { ctx.fillStyle = e['colour'] || ink; ctx.beginPath(); ctx.arc(dx, dy, 6, 0, (Math.PI * 2)); ctx.fill(); }
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = 1.5;
 			ctx.beginPath();
@@ -196,10 +195,8 @@ function clockfacePrinter(appts) {
 				ctx.arc(gx, gy, 6, 0, (Math.PI * 2));
 				ctx.stroke();
 			}
-			ctx.fillStyle = colour;
-			ctx.beginPath();
-			ctx.arc(gx, gy, 6, 0, (Math.PI * 2));
-			ctx.fill();
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, gx, gy, 6, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(gx, gy, 6, 0, (Math.PI * 2)); ctx.fill(); }
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = 1.5;
 			ctx.beginPath();

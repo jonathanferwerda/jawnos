@@ -65,6 +65,7 @@ function leaderboardPrinter(appts) {
 	headerPrinter(ctx,appts,'Leaderboard');
 
 	var ink = jawnosInk();
+	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 	var font = '600 20px Arial';
 	ctx.font = font;
@@ -124,13 +125,13 @@ function leaderboardPrinter(appts) {
 		ctx.save();
 		if (status == 'record' || status == 'start') {
 			ctx.globalAlpha = 0.85;
-			ctx.fillStyle = colour;
-			ctx.fillRect(6, rowTop, rightLimit - 6, rowHeight);
+			if (typeof jawnosTextureFillRect == 'function') { jawnosTextureFillRect(ctx, 6, rowTop, rightLimit - 6, rowHeight, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.fillRect(6, rowTop, rightLimit - 6, rowHeight); }
 		}
 		else if (status == 'pause') {
 			ctx.globalAlpha = 0.3;
-			ctx.fillStyle = colour;
-			ctx.fillRect(40, rowTop, rightLimit - 46, rowHeight);
+			if (typeof jawnosTextureFillRect == 'function') { jawnosTextureFillRect(ctx, 40, rowTop, rightLimit - 46, rowHeight, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.fillRect(40, rowTop, rightLimit - 46, rowHeight); }
 		}
 		else {
 			ctx.globalAlpha = 0.05;
@@ -138,8 +139,8 @@ function leaderboardPrinter(appts) {
 			ctx.fillRect(6, rowTop, rightLimit - 6, rowHeight);
 		}
 		ctx.globalAlpha = 0.9;
-		ctx.fillStyle = colour;
-		ctx.fillRect(6, rowTop, 4, rowHeight);
+		if (typeof jawnosTextureFillRect == 'function') { jawnosTextureFillRect(ctx, 6, rowTop, 4, rowHeight, colour, darkTheme); }
+		else { ctx.fillStyle = colour; ctx.fillRect(6, rowTop, 4, rowHeight); }
 		ctx.restore();
 
 		// the left columns
@@ -166,10 +167,8 @@ function leaderboardPrinter(appts) {
 				if ( !gh || !isFinite(gh['timestamp']) ) { return true; }
 				ctx.save();
 				ctx.globalAlpha = 0.3;
-				ctx.fillStyle = colour;
-				ctx.beginPath();
-				ctx.arc(pipX, rowY, 4, 0, (Math.PI * 2));
-				ctx.fill();
+				if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, pipX, rowY, 4, colour, darkTheme); }
+				else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(pipX, rowY, 4, 0, (Math.PI * 2)); ctx.fill(); }
 				ctx.strokeStyle = ink;
 				ctx.lineWidth = 1;
 				ctx.stroke();
@@ -182,11 +181,10 @@ function leaderboardPrinter(appts) {
 		if (!nowWatch && v['timestamp'] && v['timestamp'] < presently) {
 			nowWatch = 1;
 			ctx.save();
-			ctx.strokeStyle = colour;
-			ctx.lineWidth = 3;
 			ctx.beginPath();
 			ctx.arc(canvas.width - 26, rowY, 10, 0, (Math.PI * 2));
-			ctx.stroke();
+			if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 3); }
+			else { ctx.strokeStyle = colour; ctx.lineWidth = 3; ctx.stroke(); }
 			ctx.strokeStyle = ink;
 			ctx.lineWidth = 1.5;
 			ctx.beginPath();
