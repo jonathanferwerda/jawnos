@@ -7918,6 +7918,13 @@ sub setting_setter() {
 		&cache_delete({ context => 'header' });
 		&Websocket::send('server', { console => 'jawnosReloadIcons();' }) unless $sync;
 	}
+	elsif ($setting eq 'ci') {
+		# The panel's open circumstance is rendered into the centre view. The
+		# template cache kept the closed panel (an empty ci) for its ten-day
+		# warranty, so reopening a window never saw that the light was left open.
+		&cache_delete({ app => $app, context => 'template' });
+		&cache_delete({ app => $app, context => 'header' });
+	}
 	elsif ($setting eq 'tasks' && !$sync) {
 		&subs::task_checker($app);
 	}

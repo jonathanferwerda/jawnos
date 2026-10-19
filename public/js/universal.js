@@ -811,7 +811,7 @@ $(document).on('click', '.padlock_visual_status', function() {
 // A tap on the dial after the camera has given up starts the watch again, and
 // tells the phone/tablet to show the key again. While the watch is running a
 // tap is part of turning the dial, so it is left alone.
-$(document).on('click', '.padlock_jog_wheel, .padlock_jog_wheel_centre', function() {
+$(document).on('click', '.padlock_jog_wheel, .padlock_jog_wheel_centre, .padlock_lock, .padlock_unlock', function() {
 	if (padlockVisual.active) { return; }
 	if (!$('.padlock_frame:visible').length) { return; }
 	var mode = $(this).closest('.padlock_frame').attr('mode') || padlockVisual.mode;

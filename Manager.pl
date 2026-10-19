@@ -9010,6 +9010,15 @@ sub lock_session($c, $explicit) {
 	my $now = &subs::rightNow();
 	my ($db) = &subs::database_grabber();
 
+	# The watcher and the phone key talk to the server while the padlock is up.
+	# Those calls are not a fresh lock: running the lock again would replace the
+	# screen (and the dial's progress) under the person's hand, and re-expire the
+	# session a screen that just turned it had already opened.
+	my $path = $c->req->url->path;
+	return if ($path eq '/manager/security/padlock_watch' ||
+		$path eq '/manager/security/padlock_key' ||
+		$path eq '/manager/security/padlock_key/frame');
+
 	# A request that started while the lock screen was up can reach here after
 	# another screen has already turned the lock. Re-read the stored time (the
 	# request's setting memo may be older than that unlock) and leave it be.
@@ -9053,15 +9062,7 @@ sub lock_session($c, $explicit) {
 
 	my $padlock = &subs::db_query('select * from security where level = ?', 'padlock')->hashes;
 
-	# The watcher and the phone key talk to the server while the padlock is up.
-	# Those calls are not a fresh lock: sending the screen again every five
-	# seconds would replace the dial (and its progress) under the person's hand.
-	my $path = $c->req->url->path;
-	my $quiet_lock = ($path eq '/manager/security/padlock_watch' ||
-		$path eq '/manager/security/padlock_key' ||
-		$path eq '/manager/security/padlock_key/frame');
-
-	if (!$quiet_lock && scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
+	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
 		my $pl = $c->render_to_string(template => 'padlock', mode => 'locker');
 		my $colour = &subs::random_colour_grabber();
