@@ -22949,36 +22949,6 @@ sub app_release_sync {
 		next unless $product;
 		$local{$product} = $vc if !$local{$product} || $vc > $local{$product};
 	}
-	# GitHub first: a public source that needs no peer, so a device with no
-	# reachable peer (or a stale peer cookie) still updates. Each product has
-	# its own manifest beside its APK; the app manifest keeps its historical
-	# name, the api one is new. Failing that, the peer loop below still catches it.
-	foreach my $manifest_file (qw(app_release.json api_release.json)) {
-		my $gh = &github_release_manifest(
-			$config->{'github_repo'} || 'jonathanferwerda/jawnos',
-			$config->{'github_release_tag'} || 'releases',
-			$manifest_file);
-		next unless $gh && $gh->{'product'} && ($gh->{'versionCode'} || 0) > 0;
-		my $gp = $gh->{'product'};
-		my $gv = $gh->{'versionCode'} + 0;
-		my $gf = $gh->{'filename'};
-		next unless (!$local{$gp} || $gv > $local{$gp})
-			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/;
-		my $blob = &github_fetch($gh->{'base'} . '/' . $gf, 600);
-		unless (defined $blob && length $blob) {
-			&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; falling back to peers');
-		}
-		my $sha = (defined $blob && length $blob) ? eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) } : undef;
-		if (defined $blob && length $blob && (!$gh->{'sha256'} || ($sha && $sha eq $gh->{'sha256'}))) {
-			my $dest = "$dir/$gf";
-			write_file("$dest.tmp", $blob);
-			unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$gp-*.apk");
-			if (rename("$dest.tmp", $dest)) {
-				$local{$gp} = $gv;
-				&app_release_log('pulled ' . $gp . ' v' . $gv . ' (' . length($blob) . ' bytes) from github');
-			}
-		}
-	}
 	my $rms = &subs::db_select('remote_machines')->hashes || [];
 	foreach my $rm ( @{$rms} ) {
 		my $rsig = $rm->{'signatorial'};
@@ -23016,6 +22986,41 @@ sub app_release_sync {
 		unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$product-*.apk");
 		rename("$dest.tmp", $dest) or next;
 		&app_release_log('pulled ' . $product . ' v' . $b->{'versionCode'} . ' (' . length($blob) . ' bytes) from ' . $b->{'host'});
+	}
+	# GitHub last: a public source that needs no peer, so a device with no
+	# reachable peer (or a stale peer cookie) still updates. It is deliberately
+	# *after* the peer rail - a reachable peer on the LAN answers and serves in
+	# seconds, while the phone's path to the asset CDN can crawl at 24 KB/s, so
+	# a 37 MB APK takes ~25 minutes and held the peer fallback up behind it.
+	# Each product has its own manifest beside its APK; the app manifest keeps
+	# its historical name, the api one is new. A product a peer already supplied
+	# is skipped here ($local moved with it), and a peer that advertised a build
+	# it could not deliver still leaves $local behind for this pass to catch.
+	foreach my $manifest_file (qw(app_release.json api_release.json)) {
+		my $gh = &github_release_manifest(
+			$config->{'github_repo'} || 'jonathanferwerda/jawnos',
+			$config->{'github_release_tag'} || 'releases',
+			$manifest_file);
+		next unless $gh && $gh->{'product'} && ($gh->{'versionCode'} || 0) > 0;
+		my $gp = $gh->{'product'};
+		my $gv = $gh->{'versionCode'} + 0;
+		my $gf = $gh->{'filename'};
+		next unless (!$local{$gp} || $gv > $local{$gp})
+			&& $gf && $gf =~ /^jawnos-\Q$gp\E-\d+-[^\/]+\.apk$/;
+		my $blob = &github_fetch($gh->{'base'} . '/' . $gf, 600);
+		unless (defined $blob && length $blob) {
+			&app_release_log('github ' . $gp . ' v' . $gv . ' did not download; no peer supplied it either');
+		}
+		my $sha = (defined $blob && length $blob) ? eval { require Digest::SHA; Digest::SHA::sha256_hex($blob) } : undef;
+		if (defined $blob && length $blob && (!$gh->{'sha256'} || ($sha && $sha eq $gh->{'sha256'}))) {
+			my $dest = "$dir/$gf";
+			write_file("$dest.tmp", $blob);
+			unlink $_ for grep { $_ ne "$dest.tmp" } glob("$dir/jawnos-$gp-*.apk");
+			if (rename("$dest.tmp", $dest)) {
+				$local{$gp} = $gv;
+				&app_release_log('pulled ' . $gp . ' v' . $gv . ' (' . length($blob) . ' bytes) from github');
+			}
+		}
 	}
 }
 
