@@ -182,7 +182,9 @@
 		fp.addEventListener('click', function () {
 			var note = document.getElementById('locked_phone_status');
 			fp.disabled = true;
+			if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(false); }
 			if (note) { note.textContent = 'Touch the fingerprint reader...'; }
+			if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(); }
 			fetch('/manager/security/fingerprint_unlock', {
 				method: 'POST',
 				headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -193,11 +195,13 @@
 					return;
 				}
 				fp.disabled = false;
+				if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true); }
 				if (note) {
 					note.textContent = (res && res.error === 'busy') ? 'A fingerprint is already being read.' : 'Fingerprint not accepted.';
 				}
 			}).catch(function () {
 				fp.disabled = false;
+				if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true); }
 				if (note) { note.textContent = 'Fingerprint not available.'; }
 			});
 		});

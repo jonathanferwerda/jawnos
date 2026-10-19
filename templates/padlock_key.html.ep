@@ -1,5 +1,12 @@
 % title 'Unlock';
 <div id="padlock_key_wrap">
+	<div id="padlock_key_emblem">
+		<div id="padlock_key_denial"><%= include 'denial_image' %></div>
+		<div id="padlock_key_lock" style="display:none;">
+			<img class="padlock_key_locked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock lock.png') %>" alt="Locked">
+			<img class="padlock_key_unlocked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock unlock.png') %>" alt="Unlocked">
+		</div>
+	</div>
 	<div id="padlock_key_spinner" style="display:none;"></div>
 	<div id="padlock_key_note">
 		<% if ($has_padlock) { %>
@@ -21,6 +28,47 @@
 		justify-content: center;
 		width: 100%;
 		height: 100%;
+	}
+	#padlock_key_emblem {
+		height: 190px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	/* the locked page always wears the hand-drawn denial picture; the padlock
+	   replaces it while an unlock is being proved */
+	#padlock_key_denial .denial_image {
+		display: block;
+		height: 180px;
+		width: auto;
+		max-height: 180px;
+	}
+	#padlock_key_lock {
+		position: relative;
+		width: 115px;
+		height: 180px;
+	}
+	#padlock_key_lock img {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		transition: opacity 550ms ease, transform 550ms ease;
+	}
+	#padlock_key_lock .padlock_key_unlocked {
+		opacity: 0;
+		transform: translateY(-8px) rotate(-4deg);
+	}
+	#padlock_key_lock.unlocking .padlock_key_locked {
+		opacity: 0;
+	}
+	#padlock_key_lock.unlocking .padlock_key_unlocked {
+		opacity: 1;
+		transform: none;
+	}
+	#padlock_key_lock.snap img {
+		transition: none;
 	}
 	#padlock_key_spinner {
 		width: 64px;
@@ -131,8 +179,32 @@
 			$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		}
 	}
+	// The emblem: the denial picture at rest, the hand-drawn padlock while an
+	// unlock is being proved. The shackle opens during verification; a failure
+	// snaps it shut without a transition.
+	function padlockKeyEmblemLocked(snap) {
+		var box = $('#padlock_key_lock');
+		$('#padlock_key_denial').hide();
+		box.show();
+		if (snap) {
+			box.addClass('snap').removeClass('unlocking');
+			if (box.length) { void box[0].offsetWidth; }
+			setTimeout(function () { box.removeClass('snap'); }, 40);
+		}
+		else {
+			box.removeClass('unlocking');
+		}
+	}
+	function padlockKeyEmblemUnlocking() {
+		var box = $('#padlock_key_lock').show();
+		// restart from the closed shackle even after a previous attempt
+		box.removeClass('snap').removeClass('unlocking');
+		if (box.length) { void box[0].offsetWidth; }
+		box.addClass('unlocking');
+	}
 	function padlockKeyFail(text) {
 		padlockKeyBusy = false;
+		padlockKeyEmblemLocked(true);
 		$('#padlock_key_spinner').hide();
 		padlockKeySay(text, false);
 		$('#padlock_key_retry').show();
@@ -141,11 +213,14 @@
 		if (padlockKeyBusy || padlockKeyDone) { return; }
 		if (typeof target === 'string') { padlockKeyTarget = target; }
 		padlockKeyBusy = true;
+		padlockKeyEmblemLocked(false);
 		$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
 		$('#padlock_key_spinner').show().removeClass('done');
 		var native = padlockKeyNativeBio();
 		var bio = native || padlockKeyBioUsable();
 		padlockKeySay(bio ? 'Confirm with your fingerprint...' : 'Unlocking...', false);
+		// the shackle lifts while the fingerprint is being read
+		padlockKeyEmblemUnlocking();
 		(native || padlockKeyBioConfirm()).then(function (ok) {
 			if (!ok) { padlockKeyFail('Unlock cancelled.'); return; }
 			padlockKeySay('Unlocking...', false);

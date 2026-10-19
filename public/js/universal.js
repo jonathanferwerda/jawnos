@@ -1034,18 +1034,46 @@ function jawnosBiometricError(err) {
 	if (!e && err && err.status) { return 'The house did not register the key (HTTP ' + err.status + ').'; }
 	return 'Fingerprint not accepted.';
 }
+// The lock screens show the denial picture at rest. While a fingerprint is being
+// read the hand-drawn padlock replaces it: the shackle lifts into the open
+// drawing, and a failed read snaps it shut again.
+function jawnPadlockArtLocked(snap) {
+	var box = $('.padlock_lock_art').first();
+	if (!box.length) { return; }
+	$('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
+	box.show();
+	if (snap) {
+		box.addClass('snap').removeClass('unlocking');
+		void box[0].offsetWidth;
+		setTimeout(function () { box.removeClass('snap'); }, 40);
+	}
+	else {
+		box.removeClass('unlocking');
+	}
+}
+function jawnPadlockArtUnlocking() {
+	var box = $('.padlock_lock_art').first();
+	if (!box.length) { return; }
+	$('.padlock_emblem .denial_image').first().css('visibility', 'hidden');
+	box.show().removeClass('snap').removeClass('unlocking');
+	void box[0].offsetWidth;
+	box.addClass('unlocking');
+}
 $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 	var button = $(this);
 	var frame = button.closest('.padlock_frame');
 	var note = frame.length ? frame.find('.padlock_fingerprint_status') : $('#locked_phone_status');
 	button.prop('disabled', true);
+	jawnPadlockArtLocked(false);
 	if (note.length) { note.text('Touch the fingerprint reader...'); }
+	jawnPadlockArtUnlocking();
 	jawnosBiometricUnlock('locker', localStorage.getItem('device_uuid') || '', function (t) {
 		if (note.length) { note.text(t); }
 	}).then(function () {
 		if (note.length) { note.text('Unlocked. Loading...'); }
 		window.location.reload();
 	}).catch(function (err) {
+		jawnPadlockArtLocked(true);
 		button.prop('disabled', false);
 		if (note.length) { note.text(jawnosBiometricError(err)); }
 	});
