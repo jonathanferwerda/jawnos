@@ -42,31 +42,10 @@
     matter more than the light ones: the chrome (--panel/--ink) is derived from
     the *manager* surface, and theme_panel_css forces near-white panels (L 0.88)
     for any light manager colour - so only a dark manager gives dark windows. %>
-<% my %schemes = (
-	'Blue'         => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
-	'Blue Dark'    => [ '#1b1b1c', '#232324', '#2b2b2d', '#353538', '#2f5f86', '#3f83b5' ],
-	'Graphite'     => [ '#f5f5f7', '#e8e8ed', '#d2d2d7', '#aeaeb2', '#8e8e93', '#6e6e73' ],
-	'Graphite Dark'=> [ '#1c1c1e', '#242426', '#2c2c2e', '#38383a', '#48484a', '#6e6e73' ],
-	'Green'        => [ '#e8f7f1', '#c9ecdf', '#a2dec8', '#74ceac', '#45b98d', '#1e9e6f' ],
-	'Green Dark'   => [ '#16201c', '#1e2a24', '#26332c', '#30413a', '#2f6b52', '#3f9d76' ],
-	'Indigo'       => [ '#eaf1fc', '#d6e3f8', '#b5ccf2', '#8fade8', '#6690dd', '#3584e4' ],
-	'Indigo Dark'  => [ '#1b1e26', '#232734', '#2b3140', '#353c4d', '#37528f', '#4f78c2' ],
-	'Steel'        => [ '#edf1f5', '#dbe3ea', '#c4d0db', '#a6b7c6', '#7e95ab', '#4e7ba8' ],
-	'Steel Dark'   => [ '#1b2026', '#232a31', '#2b343c', '#354049', '#3a5d80', '#4f82ab' ],
-	'Amber'        => [ '#fdf3e7', '#f8e3c8', '#f0cfa4', '#e0ab68', '#e67e22', '#c35e0a' ],
-	'Amber Dark'   => [ '#201812', '#2a1f16', '#34271b', '#453325', '#c35e0a', '#e67e22' ],
-	'Teal'         => [ '#e9f7f6', '#cdecea', '#a8dcd9', '#78c6c2', '#2fa8a2', '#0e837e' ],
-	'Teal Dark'    => [ '#12201f', '#1a2c2a', '#223836', '#2e4a47', '#0e837e', '#2fa8a2' ],
-	'Plum'         => [ '#f4eefb', '#e5d8f5', '#d0bcec', '#b393df', '#8b5cf6', '#6d3bd4' ],
-	'Plum Dark'    => [ '#1c1626', '#241c31', '#2e2440', '#3c2f52', '#6d3bd4', '#8b5cf6' ],
-	'Rose'         => [ '#fdf0f3', '#f9dbe3', '#f2c2d0', '#e79cb3', '#d64570', '#b02853' ],
-	'Rose Dark'    => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
-); %>
-<% my @scheme_order = (
-	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
-	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
-	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark'
-); %>
+<%# the table itself lives in subroutines.pl so the appointment theme dropdown
+    and the Misc panel read the same schemes; see @subs::colour_scheme_order %>
+<% my %schemes = %subs::colour_schemes; %>
+<% my @scheme_order = @subs::colour_scheme_order; %>
 
 <style>
 	/* Device tabs and the two blocks the JS toggles. The grid extends the house
@@ -375,18 +354,38 @@
 			if (!palette) { return; }
 			var device = currentDevice();
 			if (!device) { return; }
-			// don't let the "Anchor" toggle copy the scheme to every device
-			var anchor = $('.anchor_all_settings[setting_type="misc"]');
-			var anchor_was = anchor.prop('checked');
-			anchor.prop('checked', false);
+			// One batch, not one change event per swatch: the old loop posted ~23
+			// requests and repainted the desktop on each response, which held the
+			// WebKitGTK process at full tilt for tens of seconds.
+			var changes = {};
 			applying_scheme = true;
 			$.each(jawnos_colour_keys, function (i, k) {
 				var colour = palette[i % palette.length];
-				$('.misc_setting[setting="' + k + '_background_colour"][device="' + device + '"]').val(colour).trigger('change');
+				$('.misc_setting[setting="' + k + '_background_colour"][device="' + device + '"]').val(colour);
+				changes[k + '_background_colour'] = colour;
 			});
 			applying_scheme = false;
-			anchor.prop('checked', anchor_was);
 			$('#colour_scheme').val(name);
+			// paint the swatches' own panels once, from the values just set
+			$.each(jawnos_colour_keys, function (i, k) {
+				var colour = changes[k + '_background_colour'];
+				if ($('#' + k).length) { $('#' + k).css('background-color', colour); }
+				if ($('.' + k).length) { $('.' + k).css('background-color', colour); }
+			});
+			// give the person the change before the request returns; an appointment
+			// theme that is running still owns the body
+			if (changes['manager_background_colour'] && $('body').attr('data-appt-theme') != 'yes' && typeof jawnosThemeApply == 'function') {
+				jawnosThemeApply(changes['manager_background_colour'], false);
+			}
+			if (changes['configure_background_colour']) {
+				$('#configure').css('background-color', changes['configure_background_colour']);
+			}
+			$.ajax({
+				url: '/manager/configure/misc_settings',
+				type: 'POST',
+				data: { device: device, timestamp: Date.now(), settings: JSON.stringify(changes) },
+				error: function () { $('#colour_scheme').val(detectScheme(device)); }
+			});
 		});
 
 		// Changing the scheme leaves the appointments alone now; this is how they are

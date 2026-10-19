@@ -1675,6 +1675,9 @@ sub rock_and_roll($c) {
 sub appointment_writer($c,$app) {
 	my ($appt_header,$db_written);
 	$c = &subs::controller_builder() unless $c;
+	# remembered before the stop/record branches rewrite type: only a start or a
+	# stop can change which appointment (if any) owns the desktop theme
+	my $theme_movement = $app->{'type'};
 #	&subs::cache_delete({ app => $app->{'app'}, context => 'template' });
 	$app->{'server_time'} = $app->{'server_time'} || $c->param('server_time') || &subs::rightNow();
 	$app->{'timestamp'} = $app->{'server_time'} unless $app->{'timestamp'};
@@ -1936,6 +1939,8 @@ sub appointment_writer($c,$app) {
 		#	&remote_relay_request($c, { dissemination => 'yes', url => $url, params => $app, type => 'post', override => 'manual' });
 		#});
 	}
+
+	&subs::appointment_theme_push() if (($theme_movement // '') =~ /^(?:start|stop|record)$/);
 
 	return $app;
 }
@@ -6450,6 +6455,31 @@ post '/manager/configure/misc_setting' => sub($c) {
 	push @{$returner}, $data;
 	&subs::setting_setter($data);
 	$c->render(json => $returner);
+};
+
+# A colour scheme changes every misc surface at once. Posting each swatch's own
+# change event meant ~23 requests and ~46 writes for one pick, and each response
+# repainted the desktop: on the WebKitGTK desktop that held the CPU for tens of
+# seconds. The scheme picker sends this one batch instead, so the server clears
+# the config cache once and the browser repaints once.
+post '/manager/configure/misc_settings' => sub($c) {
+	my $signatorial = &subs::signatorial_designer();
+	my $device = $c->param('device') || &subs::device_setter();
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	my $settings = eval { decode_json($c->param('settings') || '{}') } || {};
+	return $c->render(json => { error => 'no settings' }) unless ref $settings eq 'HASH' && scalar keys %{$settings};
+	&subs::cache_delete({ app => '__president', context => 'config' });
+	my @applied;
+	foreach my $setting ( keys %{$settings} ) {
+		my $value = $settings->{$setting};
+		if ($device eq &subs::device_setter()) {
+			&subs::setting_setter({ app => 'misc', setting => $setting, value => $value, device => $signatorial, timestamp => $timestamp });
+			push @applied, { setting => $setting, value => $value, device => $signatorial };
+		}
+		&subs::setting_setter({ app => 'misc', setting => $setting, value => $value, device => $device, timestamp => $timestamp });
+		push @applied, { setting => $setting, value => $value, device => $device };
+	}
+	$c->render(json => \@applied);
 };
 
 get '/manager/configure/ping' => sub($c) {
@@ -13769,6 +13799,11 @@ post '/manager/transaction/record' => sub($c) {
 	&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
 	$returner->{'cv'} = '';#&window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $content }, $timestamp);
 
+	# a press that starts, stops, records, resumes, pauses or delays can change
+	# which appointment owns the desktop theme; the request's own type is read
+	# here because the branches above rewrite the local $type
+	&subs::appointment_theme_push() if (($c->param('type') // '') =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
+
 	$c->render(json => $returner);
 };
 
@@ -15254,6 +15289,7 @@ get '/manager/configure/appointment_display' => sub($c) {
 		'pos' => $gb::pos,
 		'abilities' => $abilities,
 		config_window => $config_window,
+		app_themes => &subs::app_theme_map(),
 		timestamp => &subs::rightNow()
 	);
 };
@@ -15358,7 +15394,12 @@ post '/manager/configure' => sub ($c) {
 		&subs::name_change_apply($app, $new_app, $choices) if scalar keys %{$choices};
 	}
 	my $setting_data = { app => $app, setting => $setting, value => $value, timestamp => $timestamp, source => 'panel' };
+	# an appointment type's theme is a property of the type, not of the machine
+	# that happened to pick it: keep it on the house-wide row
+	$setting_data->{'device'} = 'all' if $setting eq 'theme';
 	&subs::setting_setter($setting_data);
+	# changing the theme of an app that is running re-paints the desktop now
+	&subs::appointment_theme_push() if $setting eq 'theme';
 	undef @appointments;
 	my $appts = &log_reader({ app => $c->param('app'), view => 'appointment_display' });
 	my $measures = eval { decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
@@ -15407,6 +15448,7 @@ post '/manager/configure' => sub ($c) {
 			template => 'configure/appointment_list',
 			appts => $preferred_appts,
 			abilities => $gb::abilities,
+			app_themes => &subs::app_theme_map(),
 			timestamp => &subs::rightNow()
 		);
 	}

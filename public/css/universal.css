@@ -37,6 +37,15 @@ button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; bord
 button.active { background-color: green; }
 input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
 textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
+/* Controls follow the theme's surface instead of the browser's white default.
+   A dark scheme's ink is near-white, so an unthemed input was white text on a
+   white box and its value could not be read. The swatches and the native check
+   /range faces keep their own appearance. */
+input:not([type=color]):not([type=checkbox]):not([type=radio]):not([type=range]),
+select, textarea { background-color: var(--panel-2, var(--panel)); color: var(--ink); }
+/* the dropdown's list is drawn by the browser on some engines, so give it the
+   same surface and ink as the closed control */
+option { background-color: var(--panel-2, var(--panel)); color: var(--ink); }
 .text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {

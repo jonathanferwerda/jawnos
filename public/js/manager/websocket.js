@@ -591,15 +591,6 @@ function wsMessageHandler(event) {
 
 
 				pf.css({'position': 'fixed','z-index': 60000, 'background-color': '#' + data['colour'] }).show();
-				var pff = pf.find('.padlock_frame');
-				pff.css({ 'height': '100%' });
-				var pwidth = numeral(pff.width()).format('0.00');
-				var pheight = numeral(pff.height()).format('0.00');
-				var left = width / 2 - pwidth / 2;
-				var bottom = height / 2 - pheight / 2;
-				left = left + 'px';
-				bottom = bottom + 'px';
-				pff.css({ 'left': left, bottom: '10%' });
 			}
 			else {
 				$('#padlock_frame').css({'background-color': '#' + data['colour'] }).show();
@@ -744,12 +735,13 @@ function wsMessageHandler(event) {
 		else if ( data['yellow'] ) {
 			clearTimeout(dotTimeout['yellow']);
 			var info = $('#yellow_dot').find('.dot_info');
-			if (data['colour']) {
-				info.css({'background-color': data['colour'] });
-			}
-			else {
-				info.css({'background-color': 'white' });
-			}
+			// The panel is painted with the syncing peer's colour, so its text
+			// cannot trust the theme ink (a dark theme's near-white ink vanished
+			// on a yellow or white panel). Below the contrast threshold it takes
+			// the theme's light ink; on a light surface it is black.
+			var panel_bg = data['colour'] || 'white';
+			var panel_ink = (typeof jawnosSurfaceInk == 'function') ? jawnosSurfaceInk(panel_bg) : '#000000';
+			info.css({ 'background-color': panel_bg, 'color': panel_ink });
 			// 'close' ends a sync; keep the last real message instead of
 			// painting the word "close" into the panel.
 			if (data['yellow'] !== 'close') {

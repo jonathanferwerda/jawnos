@@ -36,9 +36,12 @@
 	#configuration_container .app_block_name span { display:flex; }
 	#configuration_container .app_block_meta { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:8px 0; }
 	#configuration_container .app_block_meta .app_checks { margin:0; }
-	#configuration_container .app_block_meta .colour_field { display:inline-flex; align-items:center; gap:7px; font-size:13px; opacity:.9; }
-	#configuration_container .app_block_meta .colour_field label { min-width:0; }
+	#configuration_container .app_block_meta .colour_field,
+	#configuration_container .app_block_meta .theme_field { display:inline-flex; align-items:center; gap:7px; font-size:13px; opacity:.9; }
+	#configuration_container .app_block_meta .colour_field label,
+	#configuration_container .app_block_meta .theme_field label { min-width:0; }
 	#configuration_container .app_block_meta .colour_field input.colour { width:40px; height:28px; padding:1px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+	#configuration_container .app_block_meta .theme_field select { width:auto; max-width:190px; min-height:0; height:28px; padding:1px 6px; border:1px solid var(--line); border-radius:6px; background:var(--panel-2, var(--panel)); color:var(--ink); font-size:13px; }
 	#configuration_container .cfg-row > span { flex:1 1 220px; min-width:0; display:flex; }
 	#configuration_container .cfg-row > span > select,
 	#configuration_container .cfg-row > span > input { flex:1 1 auto; width:100%; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
@@ -101,6 +104,7 @@
 	</style>
 	<% &subs::manufacturer_grabber(); %>
 	<% my $signatorial = &subs::signatorial_designer(); %>
+	<% my $app_themes = $app_themes || {}; %>
 	<% foreach my $a (sort keys %{$appts}) { %>
 		<% if ($appts->{$a}->{'formatted_name'}) { %>
 			<div class="cfg-card app_block" app="<%= $a %>">
@@ -129,6 +133,17 @@
 						<span class="colour_field">
 							<label>Colour</label>
 							<input type="color" setting="colour" class="colour timed_input configure_input" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'colour'} %>">
+						</span>
+						<span class="theme_field">
+							<label>Theme</label>
+							<%# the desktop wears this while a start appointment for the app runs;
+							    blank follows the Misc manager colour %>
+							<select setting="theme" class="configure_input" app="<%= $a %>" hint="Theme while running">
+								<option value="" <% if (!length($app_themes->{$a} || '')) { %>selected="selected"<% } %>>Follow system</option>
+								<% foreach my $scheme ( @subs::colour_scheme_order ) { %>
+									<option value="<%= $scheme %>" <% if (($app_themes->{$a} || '') eq $scheme) { %>selected="selected"<% } %>><%= $scheme %></option>
+								<% } %>
+							</select>
 						</span>
 						<span class="app_checks">
 							<% foreach my $check_set ( qw/visible unique permanent/ ) { %>

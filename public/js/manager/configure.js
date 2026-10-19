@@ -279,8 +279,11 @@ $(document).on('change', '.configure_input', function(e) {
 			if (response && response.conflict) { nameConflictPanel(response); return; }
 			display.html(response);
 			localStorage.removeItem('manager_search_cache');
-			button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
-			configurationGrabber({ app: app, setting: [setting] });
+			// the theme select lives in the app's head, not in an ability panel
+			if (setting != 'theme') {
+				button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
+				configurationGrabber({ app: app, setting: [setting] });
+			}
 		}
 	});
 });
@@ -1408,8 +1411,11 @@ $(document).on('change','.misc_setting', function() {
 		success: function(response) {
 			$.each(response, function(i,v) {
 				if (v.setting == 'manager_background_colour' && dev == v.device) {
-					$('body').css({'background-color':v.value});
-					if (typeof jawnosApplyInk == 'function') { jawnosApplyInk(); }
+					// a running appointment theme owns the desktop until it stops
+					if ($('body').attr('data-appt-theme') != 'yes') {
+						$('body').css({'background-color':v.value});
+						if (typeof jawnosApplyInk == 'function') { jawnosApplyInk(); }
+					}
 				}
 				if (v.setting == 'configure_background_colour' && dev == v.device) {
 					$('#configure').css({'background-color': v.value});

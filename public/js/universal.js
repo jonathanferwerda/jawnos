@@ -597,6 +597,17 @@ function jawnosContrastInk(bg) {
 	}
 	return lum < 0.179 ? '#ffffff' : '#000000';
 }
+// Ink for a surface whose colour the caller paints (the sync dot's panel):
+// below the same WCAG tie it takes the theme's light ink, otherwise black. On
+// a light theme the themed ink is black already, so both branches agree.
+function jawnosSurfaceInk(bg) {
+	if (jawnosContrastInk(bg) !== '#ffffff') { return '#000000'; }
+	// A dark surface wants a light ink. The theme's ink is light only on a dark
+	// theme; a light theme's black would vanish here, so fall back to the dark
+	// theme's own near-white.
+	var ink = jawnosInk();
+	return jawnosContrastInk(ink) === '#ffffff' ? ink : '#d4d4d4';
+}
 // Canvas text for the manager printers. The themed ink alone can vanish over a
 // background picture, so when pictures are on the text gets a contrasting SOFT
 // SHADOW to sit on. It used to be stroked (ctx.strokeText) instead, which read
@@ -693,6 +704,17 @@ function jawnosApplyInk() {
 	style.setProperty('--ink', ink);
 	style.setProperty('--ink-muted', ink_muted);
 	document.body.classList.toggle('dark_theme', lum < 0.5);
+}
+// Paint the manager for a new theme. `appt` marks that a running appointment's
+// theme (not the Misc system theme) is in charge, so a later Misc change does
+// not paint over it. Deriving the panel/ink variables from the new background
+// is the same path a hand-picked manager colour already takes.
+function jawnosThemeApply(bg, appt) {
+	if (!bg) { return; }
+	if (appt) { document.body.setAttribute('data-appt-theme', 'yes'); }
+	else { document.body.removeAttribute('data-appt-theme'); }
+	document.body.style.backgroundColor = bg;
+	jawnosApplyInk();
 }
 $(function () { jawnosApplyInk(); });
 

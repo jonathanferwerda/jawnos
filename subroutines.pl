@@ -11176,6 +11176,121 @@ sub theme_panel_css {
 	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;--line:$line;";
 }
 
+# The named colour schemes the configure panel offers. One table, shared by the
+# Misc panel (which paints its swatches from it) and the appointment theme
+# dropdown (which stores a scheme name, not a colour), so the two can never
+# drift apart. Each palette is a ramp the misc surfaces cycle through, in
+# @gb::misc_settings order; the manager surface is therefore a fixed index.
+our @colour_scheme_order = (
+	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
+	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
+	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark'
+);
+our %colour_schemes = (
+	'Blue'          => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
+	'Blue Dark'     => [ '#1b1b1c', '#232324', '#2b2b2d', '#353538', '#2f5f86', '#3f83b5' ],
+	'Graphite'      => [ '#f5f5f7', '#e8e8ed', '#d2d2d7', '#aeaeb2', '#8e8e93', '#6e6e73' ],
+	'Graphite Dark' => [ '#1c1c1e', '#242426', '#2c2c2e', '#38383a', '#48484a', '#6e6e73' ],
+	'Green'         => [ '#e8f7f1', '#c9ecdf', '#a2dec8', '#74ceac', '#45b98d', '#1e9e6f' ],
+	'Green Dark'    => [ '#16201c', '#1e2a24', '#26332c', '#30413a', '#2f6b52', '#3f9d76' ],
+	'Indigo'        => [ '#eaf1fc', '#d6e3f8', '#b5ccf2', '#8fade8', '#6690dd', '#3584e4' ],
+	'Indigo Dark'   => [ '#1b1e26', '#232734', '#2b3140', '#353c4d', '#37528f', '#4f78c2' ],
+	'Steel'         => [ '#edf1f5', '#dbe3ea', '#c4d0db', '#a6b7c6', '#7e95ab', '#4e7ba8' ],
+	'Steel Dark'    => [ '#1b2026', '#232a31', '#2b343c', '#354049', '#3a5d80', '#4f82ab' ],
+	'Amber'         => [ '#fdf3e7', '#f8e3c8', '#f0cfa4', '#e0ab68', '#e67e22', '#c35e0a' ],
+	'Amber Dark'    => [ '#201812', '#2a1f16', '#34271b', '#453325', '#c35e0a', '#e67e22' ],
+	'Teal'          => [ '#e9f7f6', '#cdecea', '#a8dcd9', '#78c6c2', '#2fa8a2', '#0e837e' ],
+	'Teal Dark'     => [ '#12201f', '#1a2c2a', '#223836', '#2e4a47', '#0e837e', '#2fa8a2' ],
+	'Plum'          => [ '#f4eefb', '#e5d8f5', '#d0bcec', '#b393df', '#8b5cf6', '#6d3bd4' ],
+	'Plum Dark'     => [ '#1c1626', '#241c31', '#2e2440', '#3c2f52', '#6d3bd4', '#8b5cf6' ],
+	'Rose'          => [ '#fdf0f3', '#f9dbe3', '#f2c2d0', '#e79cb3', '#d64570', '#b02853' ],
+	'Rose Dark'     => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
+);
+
+# The surface a scheme gives the manager. The palette is applied across
+# @gb::misc_settings by index, so this is the same colour the Misc panel writes
+# into manager_background_colour when the scheme is picked.
+sub colour_scheme_manager_colour {
+	my ($name) = @_;
+	return undef unless defined $name && length $name;
+	my $palette = $colour_schemes{$name};
+	return undef unless ref $palette eq 'ARRAY' && scalar @{$palette};
+	my $index = 0;
+	my $found = 0;
+	foreach my $key ( @gb::misc_settings ) {
+		if ($key eq 'manager') { $found = 1; last; }
+		$index++;
+	}
+	return undef unless $found;
+	return $palette->[ $index % scalar @{$palette} ];
+}
+
+# Every app's chosen theme in one read, for the appointment list (one query
+# rather than one per app block). A house-wide row wins, then this device's,
+# then the person's.
+sub app_theme_map {
+	my %rank = ( 'all' => 3, &device_setter() => 2, &signatorial_designer() => 1 );
+	my %map;
+	my %best;
+	my $rows = eval { &db_query("select app, device, value from settings where setting = ? and value is not null and value != ''", 'theme')->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		my $rank = $rank{ $row->{'device'} // '' } || 0;
+		next unless $app && $rank;
+		next if defined $best{$app} && $best{$app} >= $rank;
+		$best{$app} = $rank;
+		$map{$app} = $row->{'value'};
+	}
+	return \%map;
+}
+
+# The theme an actively running start/record appointment asks for: the most
+# recently started one that has a theme. One join rather than a settings read
+# per open row - a stale run must not cost the desktop a query per appointment.
+# Blank when none is running.
+sub running_appointment_theme {
+	my $now = &rightNow();
+	my $device = &device_setter();
+	my $signatorial = &signatorial_designer();
+	my $rows = eval {
+		&db_query(
+			"select a.app as app, a.timestamp as timestamp, s.value as theme, s.device as theme_device "
+			. "from appointments a join settings s on s.app = a.app and s.setting = ? "
+			. "where (a.type = ? or a.type = ?) and a.stop_seen is null and a.timestamp is not null and a.timestamp <= ? "
+			. "and s.value is not null and s.value != '' and s.device in (?, ?, ?) "
+			. "order by a.timestamp desc, "
+			. "(case s.device when 'all' then 3 when ? then 2 when ? then 1 else 0 end) desc "
+			. "limit 200",
+			'theme', 'start', 'record', $now, 'all', $device, $signatorial, $device, $signatorial
+		)->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $theme = $row->{'theme'};
+		return $theme if defined $theme && length $theme && $colour_schemes{$theme};
+	}
+	return '';
+}
+
+# The manager background the desktop should paint now, plus the appointment
+# theme driving it (blank when the Misc system theme is in charge).
+sub active_manager_background {
+	my $theme = &running_appointment_theme();
+	if (defined $theme && length $theme) {
+		my $bg = &colour_scheme_manager_colour($theme);
+		return ($bg, $theme) if defined $bg && length $bg;
+	}
+	my $config = &config_reader();
+	my $bg = $config->{ &signatorial_designer() }->{'manager'}->{'background_colour'};
+	return ($bg, '');
+}
+
+# Tell every open manager to re-paint its body for the current active theme.
+sub appointment_theme_push {
+	my ($bg, $theme) = &active_manager_background();
+	return unless defined $bg && length $bg;
+	&Websocket::send('server', { console => 'jawnosThemeApply(' . encode_json($bg) . ',' . (defined $theme && length $theme ? 1 : 0) . ');' });
+}
+
 # The colours the current theme is built from: the distinct *_background_colour
 # swatches for a device (falling back through the other devices if unset).
 sub theme_palette() {
