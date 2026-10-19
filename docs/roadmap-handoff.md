@@ -180,9 +180,11 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
 - Only a **remote** device may sign: a request from this machine itself is
   refused (`padlock_request_is_local`), so the locked screen cannot open its own
   door with the key it holds. The paper code is the lost-phone path.
-- The phone does not need to be touched beyond unlocking it: the house
-  broadcasts `padlock_key_show` when it locks, and a mobile tab jumps to the
-  unlock page by itself (v0.1.792) and signs the nonce at once.
+- The house broadcasts `padlock_key_show` when it locks, and a mobile tab jumps
+  to the unlock page by itself (v0.1.792). The page waits there: the person
+  presses **Unlock** and it signs the nonce (v0.1.810), so the house cannot open
+  itself again while the phone is in use. The taskbar padlock locks the house
+  on demand.
 - **The dial and the camera/QR key were removed in v0.1.804.** The dial's
   handler, the QR canvas, the rotation timer, the camera watch/poll and its
   `/frame` and `/active` routes are gone (the routes answer "disabled").
@@ -226,7 +228,9 @@ before any compositor work, and it is small.
   (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793). The dial and
   the camera watch (v0.1.792) were removed in v0.1.804. A mobile tab that
   connects while the house is locked reads `padlock_state` and opens the unlock
-  page (v0.1.808), so a phone that slept through the lock still gets there.
+  page (v0.1.808), so a phone that slept through the lock still gets there. The
+  page waits for the person to press **Unlock** (v0.1.810), so the house does
+  not open itself while the phone is in use.
 - **Landed in v0.1.802.** Shadow logged real requests and still served;
   Enforce answered a document with `423` and the locked page; the dial (since
   removed) unlocked; the websocket drops data pushes while locked; a throwaway

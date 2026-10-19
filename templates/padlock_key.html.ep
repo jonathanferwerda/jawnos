@@ -1,13 +1,14 @@
 % title 'Unlock';
 <div id="padlock_key_wrap">
-	<div id="padlock_key_spinner"></div>
+	<div id="padlock_key_spinner" style="display:none;"></div>
 	<div id="padlock_key_note">
 		<% if ($has_padlock) { %>
-			Unlocking...
+			The house is locked.
 		<% } else { %>
 			No padlock is set on this house.
 		<% } %>
 	</div>
+	<button id="padlock_key_unlock" type="button"<% unless ($has_padlock) { %> style="display:none;"<% } %>>Unlock</button>
 	<button id="padlock_key_retry" type="button" style="display:none;">Try again</button>
 </div>
 
@@ -39,14 +40,22 @@
 		line-height: 1.35;
 		padding: 0 18px;
 	}
+	#padlock_key_unlock,
 	#padlock_key_retry {
 		margin-top: 22px;
-		font-size: 17px;
-		padding: 10px 18px;
-		border-radius: 8px;
+		font-size: 18px;
+		padding: 12px 28px;
+		border-radius: 10px;
 		border: 1px solid #666;
 		background-color: #222;
 		color: #f4f4f4;
+		cursor: pointer;
+	}
+	#padlock_key_unlock {
+		background-color: #2b6;
+		border-color: #2b6;
+		color: #08110a;
+		font-weight: bold;
 	}
 	@keyframes padlock_key_turn {
 		to { transform: rotate(360deg); }
@@ -84,38 +93,49 @@
 		});
 	}
 
+	// The page opens when the house locks, but it does not sign by itself: the
+	// person presses Unlock when they are ready. That keeps the house locked
+	// while the phone is in use.
+	var padlockKeyBusy = false;
 	var padlockKeyDone = false;
+
 	function padlockKeySay(text, done) {
 		$('#padlock_key_note').text(text);
 		if (done) {
 			padlockKeyDone = true;
+			padlockKeyBusy = false;
 			$('#padlock_key_spinner').addClass('done');
-			$('#padlock_key_retry').hide();
+			$('#padlock_key_unlock, #padlock_key_retry').hide();
 		}
 	}
-	function padlockKeyRetry() {
-		if (padlockKeyDone) { return; }
-		$('#padlock_key_retry').hide();
+	function padlockKeyFail(text) {
+		padlockKeyBusy = false;
+		$('#padlock_key_spinner').hide();
+		padlockKeySay(text, false);
+		$('#padlock_key_retry').show();
+	}
+	function padlockKeyStart() {
+		if (padlockKeyBusy || padlockKeyDone) { return; }
+		padlockKeyBusy = true;
+		$('#padlock_key_unlock, #padlock_key_retry').hide();
+		$('#padlock_key_spinner').show().removeClass('done');
 		padlockKeySay('Unlocking...', false);
 		padlockKeyDeviceUnlock();
 	}
 
 	function padlockKeyDeviceUnlock() {
-		if (padlockKeyDone) { return; }
 		if (!(window.crypto && crypto.subtle && crypto.subtle.importKey)) {
-			padlockKeySay('This browser cannot sign the unlock.', false);
+			padlockKeyFail('This browser cannot sign the unlock.');
 			return;
 		}
 		var uuid = localStorage.getItem('device_uuid');
 		if (!uuid) {
-			padlockKeySay('This phone is not paired.', false);
-			$('#padlock_key_retry').show();
+			padlockKeyFail('This phone is not paired.');
 			return;
 		}
 		padlockKeyIdbGet('device_key').then(function (key) {
 			if (!key) {
-				padlockKeySay('This phone is not paired.', false);
-				$('#padlock_key_retry').show();
+				padlockKeyFail('This phone is not paired.');
 				return;
 			}
 			return fetch('/manager/security/padlock_challenge', {
@@ -124,8 +144,7 @@
 				body: new URLSearchParams({ device_uuid: uuid })
 			}).then(function (r) { return r.json(); }).then(function (ch) {
 				if (!ch || !ch.ok || !ch.nonce) {
-					padlockKeySay('This phone is not paired.', false);
-					$('#padlock_key_retry').show();
+					padlockKeyFail('This phone is not paired.');
 					return;
 				}
 				var msg = 'padlock-unlock\n' + uuid + '\n' + ch.nonce;
@@ -137,22 +156,23 @@
 					});
 				}).then(function (r) { return r.json(); }).then(function (res) {
 					if (res && res.ok) {
-						padlockKeySay('Unlocked.', true);
+						padlockKeySay(res.already ? 'The house is already open.' : 'Unlocked.', true);
+					}
+					else if (res && res.error === 'local') {
+						padlockKeyFail('Open this page on your phone, not on the locked computer.');
 					}
 					else {
-						padlockKeySay('That key was not accepted.', false);
-						$('#padlock_key_retry').show();
+						padlockKeyFail('That key was not accepted.');
 					}
 				});
 			});
 		}).catch(function () {
-			padlockKeySay('Could not reach the house.', false);
-			$('#padlock_key_retry').show();
+			padlockKeyFail('Could not reach the house.');
 		});
 	}
 
 	$(function () {
-		$('#padlock_key_retry').on('click', padlockKeyRetry);
-		<% if ($has_padlock) { %>padlockKeyDeviceUnlock();<% } else { %>$('#padlock_key_spinner').addClass('done');<% } %>
+		$('#padlock_key_unlock').on('click', padlockKeyStart);
+		$('#padlock_key_retry').on('click', padlockKeyStart);
 	});
 </script>
