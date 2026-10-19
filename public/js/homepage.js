@@ -103,11 +103,19 @@ function ticketRequestCheck() {
 }
 
 $(document).on('click', '#ticket_request_submit', function() {
+	var consent = $('#ticket_request_consent');
+	if (consent.length && !consent.prop('checked')) {
+		if (!$('.ticket_request_error').length) {
+			consent.closest('p').after('<p class="ticket_request_error" style="color:#a00;font-weight:bold;"></p>');
+			$('.ticket_request_error').text(jawnosT('home.consent_required'));
+		}
+		return;
+	}
 	var form = [];
 	var timestamp = Date.now();
 	$('.ticket_request_input').each(function(i,v) {
 		var name = $(v).attr('name');
-		var value = $(v).val();
+		var value = $(v).is('[type=checkbox]') ? ($(v).prop('checked') ? 'on' : 'off') : $(v).val();
 		form[name] = value;
 	});
 

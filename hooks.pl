@@ -145,7 +145,8 @@ hook before_dispatch => sub {
 			$path ne '/images/make%20believe/cancel_button.png' && 
 			$path ne '/payment' && 
 			$path ne '/play' && 
-			$path ne '/box_office/ticket_request') {
+			$path ne '/box_office/ticket_request' &&
+			$path ne '/privacy') {
 		$c->stash('no' => 1);
 	}
 
@@ -329,6 +330,9 @@ hook before_dispatch => sub {
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
+		# the privacy notice is linked from the public homepage and the store, and
+		# a visitor must be able to read it before asking for a ticket
+		$path eq '/privacy' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();

@@ -5,14 +5,14 @@
 #   perl scripts/jawnos_setup.pl [--port 3210] [--no-browser]
 #   perl scripts/jawnos_setup.pl --seed [--name NAME] [--email EMAIL]
 #         [--domain DOMAIN] [--archive-dir PATH] [--device computer|server|mobile]
-#         [--code NNNN]
+#         [--language en|zh|fr|...] [--code NNNN]
 #
 # --seed does the same work with no browser and no prompts: it writes config.json
 # and builds the database from the factory seed, printing the unlock code. That is
 # what a container or an appliance calls on first boot. Answers come from the
 # options above or from JAWNOS_NAME, JAWNOS_EMAIL, JAWNOS_DOMAIN,
-# JAWNOS_ARCHIVE_DIR, JAWNOS_DEVICE and JAWNOS_UNLOCK_CODE; anything left out
-# takes the same default the wizard would.
+# JAWNOS_ARCHIVE_DIR, JAWNOS_DEVICE, JAWNOS_LANGUAGE and JAWNOS_UNLOCK_CODE;
+# anything left out takes the same default the wizard would.
 #
 # A small web app that walks a new user through:
 #   1. dependency status
@@ -40,6 +40,7 @@ use Cwd ();
 # run from the repo root (the parent of scripts/)
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!";
+require "./language.pl";
 
 my $port       = 3210;
 my $no_browser = 0;
@@ -58,6 +59,7 @@ GetOptions(
 	'domain=s'      => \$seed_opt{'domain'},
 	'archive-dir=s' => \$seed_opt{'archive_dir'},
 	'device=s'      => \$seed_opt{'device'},
+	'language=s'    => \$seed_opt{'language'},
 	'code=s'        => \$seed_opt{'code'},
 ) or die "bad options\n";
 
@@ -251,6 +253,20 @@ sub make_database {
 	my $this_device = $cfg->{'device'} || 'computer';
 	$db->query( 'delete from settings where device is not null and device <> ?', $this_device );
 
+	# the interface language chosen at install. It is a house-wide setting, so the
+	# row carries device 'all' and every machine and device tab reads it.
+	my $language = &language::valid( $cfg->{'language'} );
+	$db->query( 'delete from settings where app = ? and setting = ?', 'misc', 'language' );
+	$db->insert( 'settings', {
+		app         => 'misc',
+		setting     => 'language',
+		value       => $language,
+		timestamp   => $now,
+		server_time => $now,
+		device      => 'all',
+		uuid        => randstr(20),
+	} );
+
 	$db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 	undef $db;
 	undef $sql;
@@ -290,6 +306,7 @@ sub build_config {
 	my $cfg = {
 		%$existing,
 		name           => $in->{'name'} || 'Laptop',
+		language       => &language::valid( $in->{'language'} || $existing->{'language'} ),
 		birthday       => $in->{'birthday'} || 'Jan. 1 2000 12pm',
 		device         => $in->{'device'} || 'computer',
 		domain         => $in->{'domain'} || '127.0.0.1',
@@ -351,7 +368,12 @@ sub run_setup {
 # wizard HTML
 # ---------------------------------------------------------------------------
 sub WIZARD_HTML {
-	return <<'HTML';
+	no warnings 'once';
+	my $current_language = &language::valid( ( read_config() || {} )->{'language'} );
+	my $language_options = join '', map {
+		'<option value="' . $_->{'code'} . '"' . ( $_->{'code'} eq $current_language ? ' selected' : '' ) . '>' . $_->{'native'} . ' &mdash; ' . $_->{'name'} . '</option>'
+	} @language::languages;
+	my $html = <<'HTML';
 <!DOCTYPE html>
 <html>
 <head>
@@ -408,6 +430,11 @@ sub WIZARD_HTML {
 		<div class="row">
 			<div><label>Email</label><input id="cfg_email" value="me@email.com"></div>
 			<div><label>Domain / host</label><input id="cfg_domain" value="127.0.0.1"></div>
+		</div>
+		<div class="row">
+			<div><label>Language (you can change it later in Configure &rarr; Misc)</label>
+				<select id="cfg_language">__LANGUAGE_OPTIONS__</select>
+			</div>
 		</div>
 		<div class="row">
 			<div><label>HTTP port</label><input id="cfg_port" value="3000"></div>
@@ -507,6 +534,7 @@ async function post(url, data) {
 async function saveConfig() {
 	var data = {
 		name: val('cfg_name'), device: val('cfg_device'), email: val('cfg_email'),
+		language: val('cfg_language'),
 		domain: val('cfg_domain'), port: val('cfg_port'),
 		signatorial: val('cfg_signatorial'),
 		folders: val('cfg_folders').split('\n').map(function(s){return s.trim();}).filter(Boolean)
@@ -531,6 +559,8 @@ loadDeps();
 </body>
 </html>
 HTML
+	$html =~ s/__LANGUAGE_OPTIONS__/$language_options/;
+	return $html;
 }
 
 # ---------------------------------------------------------------------------
@@ -590,6 +620,7 @@ if ($seed) {
 		name        => $seed_opt{'name'}        || $ENV{'JAWNOS_NAME'},
 		email       => $seed_opt{'email'}       || $ENV{'JAWNOS_EMAIL'},
 		domain      => $seed_opt{'domain'}      || $ENV{'JAWNOS_DOMAIN'},
+		language    => $seed_opt{'language'}    || $ENV{'JAWNOS_LANGUAGE'},
 		archive_dir => $seed_opt{'archive_dir'} || $ENV{'JAWNOS_ARCHIVE_DIR'},
 		device      => $seed_opt{'device'}      || $ENV{'JAWNOS_DEVICE'},
 		code        => $seed_opt{'code'}        || $ENV{'JAWNOS_UNLOCK_CODE'},

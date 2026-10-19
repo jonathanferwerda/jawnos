@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="<%= &subs::language() %>" dir="<%= &subs::language_dir() %>">
   <head>
 		<% if (my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' })) { %>
 			<link rel='icon' type='image/png' href="<%= $logo %>">
@@ -19,6 +19,9 @@
 			}
 			var ws_url = '<%= $ws_url %>';
 			var advertise_watching = '<%= $advertise_watching %>';
+			window.jawnos_lang = <%== &subs::lang_js() %>;
+			window.jawnos_lang_code = '<%= &subs::language() %>';
+			window.jawnos_lang_dir = '<%= &subs::language_dir() %>';
 		</script>
     <title><%= title %></title>
 

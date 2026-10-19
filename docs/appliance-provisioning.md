@@ -115,6 +115,7 @@ JAWNOS_NAME="House" \
 JAWNOS_EMAIL="me@example.com" \
 JAWNOS_DOMAIN="jawn-house.local" \
 JAWNOS_DEVICE=server \
+JAWNOS_LANGUAGE=en \
 JAWNOS_ARCHIVE_DIR="$HOME/archive" \
 perl scripts/jawnos_setup.pl --seed --code 123456
 ```
@@ -122,7 +123,9 @@ perl scripts/jawnos_setup.pl --seed --code 123456
 Use a real unlock code, not the example. The script prints it; store it in the
 asset sheet and a password manager. `JAWNOS_DOMAIN` is what
 `scripts/app_ticket.pl` puts in the ticket URL — set it to the name clients
-will actually resolve. A bare `./jawn` on a box with no `config.json` would run
+will actually resolve. `JAWNOS_LANGUAGE` picks the interface language
+(`en`, `zh`, `fr`, `es`, `de`, `pt`, or one of the ten most widely spoken
+languages the catalog lists); it can be changed later under Configure -> Misc. A bare `./jawn` on a box with no `config.json` would run
 the same seed automatically, but provisioning it explicitly first keeps the
 systemd service from starting mid-setup.
 

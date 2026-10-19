@@ -14,6 +14,22 @@
 <%# the person's own row, which the device tabs inherit from (the manager reads
     a device's row first, then this one, then its own default) %>
 <% my $me_row = $settings->{$signatorial} || {}; %>
+<%# the interface language is one choice for the whole house, so it is stored on
+    the "all" row and every machine and device tab follows it; the install writes
+    the same value into config.json and the database. %>
+<% my $current_language = ($settings->{'all'} || {})->{'language'} || $me_row->{'language'} || ($settings->{$dev} || {})->{'language'} || $config->{'language'} || 'en'; %>
+<div class="misc_section cfg-card">
+	<h3><%= &subs::lang('configure.language') %></h3>
+	<div class="cfg-row">
+		<label><b><%= &subs::lang('configure.language') %></b></label>
+		<select id="language" class="misc_setting" setting="language" device="all">
+			<% foreach my $l ( &subs::language_list() ) { %>
+				<option value="<%= $l->{'code'} %>" <% if ($current_language eq $l->{'code'}) { %>selected="selected"<% } %>><%= $l->{'native'} %> — <%= $l->{'name'} %></option>
+			<% } %>
+		</select>
+	</div>
+	<p class="cfg-note"><%= &subs::lang('configure.language_note') %></p>
+</div>
 <% my @fonts = (
 	'system-ui, sans-serif',
 	'Arial, sans-serif',

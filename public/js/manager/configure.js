@@ -1410,6 +1410,12 @@ $(document).on('change','.misc_setting', function() {
 		},
 		success: function(response) {
 			$.each(response, function(i,v) {
+				if (v.setting == 'language') {
+					// the whole interface is server-rendered in the chosen
+					// language, so the new labels arrive with a fresh page
+					location.reload();
+					return false;
+				}
 				if (v.setting == 'manager_background_colour' && dev == v.device) {
 					// a running appointment theme owns the desktop until it stops
 					if ($('body').attr('data-appt-theme') != 'yes') {

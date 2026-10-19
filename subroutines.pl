@@ -3,7 +3,9 @@ package subs;
 
 use strict;
 use warnings;
+use utf8;
 
+use Unicode::Normalize qw(NFC);
 use Mojolicious::Lite;
 use List::Util qw(shuffle);
 use Mojo::Util qw/md5_sum html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
@@ -48,6 +50,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 require "./gb.pl";
 require "./Websocket.pl";
+require "./language.pl";
 
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
@@ -66,19 +69,22 @@ our %setting_memo;
 our $setting_memo_on = 0;
 sub format_name() {
 	my $name = shift || "";
+	# Work on characters, not bytes: a name in Chinese, Arabic or French must
+	# keep its letters. The DB and JSON layers hand us decoded strings; NFC makes
+	# a composed and a decomposed spelling read the same.
+	$name = NFC($name);
 	my $fname = lc $name;
 	# the one misspelling the code has carried since the start: the stored key is
 	# 'occurences', the name a person reads is spelled right
 	$fname = 'occurrences' if $fname eq 'occurences';
-	$fname =~ s/_/ /gi;
-	my @fname = split ' ',$fname;
+	$fname =~ s/_/ /g;
+	my @fname = grep { length } split /\s+/, $fname;
 	foreach my $f (@fname) {
-		my @f = split '',$f;
-		$f[0] = uc $f[0];
+		my @f = split //, $f;
+		$f[0] = uc $f[0] if scalar @f;
 		$f = join '', @f;
 	}
-	$fname = join ' ', @fname;
-	return $fname;
+	return join ' ', @fname;
 }
 
 # Model rows in the order a chooser should read them: alphabetical by the name the
@@ -91,24 +97,89 @@ sub models_by_name {
 }
 
 sub unformat_name() {
-	my $name = shift || "";
+	my $name = shift;
+	$name = '' unless defined $name;
+	# A stored name is both a database key and, for files, a folder name. Keep
+	# every letter of every script, combining marks, digits, apostrophes (both
+	# the straight and the typographic one) and a generous set of safe
+	# punctuation. Drop only what cannot safely be a key or a path segment:
+	# separators, control characters and the shell/Windows-reserved set.
+	$name = NFC($name);
+	$name =~ s/[\x00-\x1f\x7f]+//g;
+	$name =~ s{[\\/]+}{ }g;
+	$name =~ s/[^\p{L}\p{M}\p{N} '’._&+#@!(),-]+/ /g;
+	$name =~ s/\.{2,}/./g;
+	$name =~ s/^[.\s]+//;
+	$name =~ s/[.\s]+$//;
+	# A straight apostrophe is the one character in our safe set that would also
+	# terminate a JavaScript string or a SQL literal in the hundreds of hand-built
+	# snippets that name an app. Keep the mark but use the typographic form: it
+	# looks the same, is safe everywhere, and still sorts and matches as itself.
+	$name =~ s/'/’/g;
 	my $fname = lc $name;
 	my $double_start = 0;
 	if ($fname =~ /^__/) {
 		$double_start = 1;
 	}
-	$fname =~ s/\'//gi;
-	$fname =~ s/ /_/gi;
-	my @fname = split '_',$fname;
-	if ($fname[0] eq '') {
-		shift @fname;
+	$fname =~ s/\s+/_/g;
+	$fname =~ s/_+/_/g;
+	$fname =~ s/^_+|_+$//g;
+	$fname = '__' . $fname if $double_start;
+	return $fname;
+}
+
+	# The interface language: the house-wide row first, then the person's own
+	# ("Me") row, then any device row, then the language chosen at install, then
+	# English. setting_grabber's request-scoped memo makes the repeated asks in
+	# one page cheap; reading it per call also means a change made in one worker
+	# is seen by every other worker on the next request, not after a restart.
+sub language() {
+	my $value = eval { &setting_grabber({ app => 'misc', setting => 'language', device => 'all' }) };
+	my $signatorial;
+	unless (defined $value && length $value) {
+		$signatorial = eval { &signatorial_designer() };
+		if ($signatorial) {
+			$value = eval { &setting_grabber({ app => 'misc', setting => 'language', device => $signatorial }) };
+		}
 	}
-	if ($fname[-1] eq '') {
-		pop @fname;
+	unless (defined $value && length $value) {
+		$value = eval { &setting_grabber({ app => 'misc', setting => 'language' }) };
 	}
-	$fname = join '_', @fname;
-	$fname = '_' . $fname if $double_start == 1;
-	return lc $fname;
+	unless (defined $value && length $value) {
+		$value = eval { my $cfg = &config_reader(); $cfg->{'language'} };
+	}
+	return &language::valid($value);
+}
+
+sub language_reset() {
+	return;
+}
+
+sub language_dir() {
+	return &language::dir_for(&language());
+}
+
+sub language_list() {
+	return @language::languages;
+}
+
+sub language_label() {
+	my $code = shift || &language();
+	return &language::label($code);
+}
+
+# A translated label. Placeholders are {0}, {1}, ... so the same catalog can
+# feed Perl templates and JavaScript.
+sub lang() {
+	my $key = shift;
+	return &language::translate(&language(), $key, @_);
+}
+
+sub lang_js() {
+	# encode_json hands back UTF-8 bytes; a template is a character string, so
+	# decode it here the same way json_chars does or every non-ASCII label is
+	# double-encoded on the page.
+	return &json_chars(&language::for_javascript(&language()));
 }
 
 sub apostrophe_escape() {
@@ -196,19 +267,22 @@ sub json_chars() {
 
 sub html_name() {
 	my $name = shift || "";
-	$name =~ s/[^a-zA-Z0-9\?]+//g;
-	#$name = html_unescape $name;
-
-	return $name;
+	# DOM ids and class names still have to be ASCII tokens, but a name in
+	# Chinese, Arabic or French must not collapse to an empty string. Transliterate
+	# what Latin letters it can and fall back to a stable digest when it cannot.
+	my $ascii = Text::Unidecode::unidecode($name);
+	$ascii =~ s/[^a-zA-Z0-9\?]+//g;
+	$ascii = 'app' . substr(md5_sum($name), 0, 8) unless length $ascii;
+	return $ascii;
 }
 
 sub http_name() {
 	my $name = shift || "";
-	$name =~ s/ /_/gi;
-	$name =~ s/[^a-zA-_Z0-9]+//g;
-	$name = html_unescape $name;
-
-	return $name;
+	my $ascii = Text::Unidecode::unidecode($name);
+	$ascii =~ s/ /_/gi;
+	$ascii =~ s/[^a-zA-_Z0-9]+//g;
+	$ascii = html_unescape $ascii;
+	return $ascii;
 }
 
 sub wiki_name() {
@@ -245,6 +319,10 @@ sub percent_formatter() {
 sub numeric_formatter() {
 	my $number = shift;
 	$number = '' unless defined $number;
+	# A number typed in another script (Arabic-Indic, Devanagari, full-width)
+	# is still a number. Transliterate it to ASCII digits before the filter
+	# below, which would otherwise erase every digit of it.
+	$number = Text::Unidecode::unidecode($number) if $number =~ /[^\x00-\x7F]/;
 	# Strip currency symbols, spaces, thousands separators, etc. -- everything
 	# that isn't part of the number itself. The old pattern stripped the first
 	# *digit*, turning 70 into 0 and 4700 into 700.
@@ -6965,7 +7043,7 @@ my $returner = '';
 			next unless $app;
 			my $chats = &subs::db_select('mailbox', undef, { phone => $phone, timestamp => $time })->hashes;
 			if ( scalar @{$chats} == 0) {
-				$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
+				$l->{'body'} =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
 				my $message = &subs::note_encrypter($suds,$l->{'body'});
 				my $sender = &subs::format_name($app);
 				my $suuid = &subs::random_string_creator(44);
@@ -6992,7 +7070,7 @@ my $returner = '';
 			my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $app,'sms',$time);
 			my $qu = $q->hashes;
 			if ( scalar @{$qu} == 0 ) {
-				$l->{'body'} =~ s/[^\x00-\x7F]+//gi;
+				$l->{'body'} =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
 				$returner .= "Phone: " . $phone . " - " . $app . "\n";
 				&Manager::appointment_writer($c,{
 					app => &subs::unformat_name($app),
@@ -8536,6 +8614,8 @@ sub name_change_history_apply_plan {
 sub setting_setter() {
 	%setting_memo = ();
 	my $settings = shift;
+	# a language change must be seen by the next page in this same worker
+	&language_reset() if (($settings->{'setting'} // '') eq 'language');
 	my $app = $settings->{'app'};
 	my $original_app = $app;
 	my $setting = $settings->{'setting'};

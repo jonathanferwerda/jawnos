@@ -1,25 +1,33 @@
-<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" style="position:absolute;top:0px;right:0px;" class="little_thumb" id="ticket_request_cancel">
-<h1>Ticket Request</h1>
-<h3>Welcome to <%= &subs::setting_grabber({ app => 'me', setting => 'store_name' }) %>!</h3>
-<p>First off, cookies and localStorage are used to verify your identity and offer products and services.
-	No third party cookies are used, and we don't sell your information or share it with anyone except as required
-	by law in criminal investigation proceedings and whatnot, but we will probably talk about you
-	as a group amongst ourselves. You can request to have your data deleted at any time.
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" style="position:absolute;top:0px;right:0px;" class="little_thumb" id="ticket_request_cancel">
+<h1><%= &subs::lang('home.ticket_title') %></h1>
+<h3><%= &subs::lang('home.welcome', &subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></h3>
+<p><%= &subs::lang('home.ticket_notice') %></p>
+<%# GDPR: the person is told what is processed and why before the form is sent.
+    The acknowledgement is stored with the request, not assumed. %>
+<p class="ticket_privacy_note">
+	<label>
+		<input type="checkbox" class="ticket_request_input ticket_request_consent" id="ticket_request_consent" name="consent">
+		<%= &subs::lang('privacy.consent_label') %>
+	</label>
+	<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
 </p>
-Name: <input class="ticket_request_input" name="name"><br>
-Email: <input class="ticket_request_input" name="email" type="email"><br>
-Phone: <input class="ticket_request_input" name="phone" type="phone"><br>
-Describe yourself<br>
+<% if ($error) { %>
+	<p class="ticket_request_error" style="color:#a00;font-weight:bold;"><%= &subs::lang('home.consent_required') %></p>
+<% } %>
+<%= &subs::lang('common.name') %>: <input class="ticket_request_input" name="name"><br>
+<%= &subs::lang('common.email') %>: <input class="ticket_request_input" name="email" type="email"><br>
+<%= &subs::lang('home.phone') || 'Phone' %>: <input class="ticket_request_input" name="phone" type="phone"><br>
+<%= &subs::lang('home.describe') %><br>
 <textarea class="ticket_request_input" name="description"></textarea><br>
-Privilege:
+<%= &subs::lang('home.privilege') %>:
 	<select class="ticket_request_input ticket_request_allocater" id="ticket_request_privilege" name="privilege">
 		<% foreach my $p ( qw/guest resident citizen/ ) { %>
-			<option value="<%= $p %>"><%= &subs::format_name($p) %></option>
+			<option value="<%= $p %>"><%= &subs::lang('home.' . $p) %></option>
 		<% } %>
 	</select>
 
 <span id="ticket_request_role_container"></span>
 <br>
 <input type="hidden" name="approval_rating" value="<%= 1 %>">
-<button id="ticket_request_submit">Submit</button>
-<button id="ticket_request_clear">Clear</button>
+<button id="ticket_request_submit"><%= &subs::lang('home.submit') %></button>
+<button id="ticket_request_clear"><%= &subs::lang('home.clear') %></button>

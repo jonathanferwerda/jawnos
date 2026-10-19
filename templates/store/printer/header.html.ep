@@ -2,7 +2,7 @@
 <div class="paper">
 
 	<% if ($totals->{'balance'} <= 0 && ($type eq 'invoice' || $type eq 'receipt')) { %>
-		<div class="paper_paid">PAID</div>
+		<div class="paper_paid"><%= &subs::lang('store.paid') %></div>
 	<% } %>
 
 	<table class="paper_head"><tbody><tr>
@@ -37,14 +37,14 @@
 			<% } %>
 		</td>
 		<td class="paper_meta_right">
-			<div><span class="paper_label">Date</span> <%= $print_date %></div>
+			<div><span class="paper_label"><%= &subs::lang('store.date') %></span> <%= $print_date %></div>
 			<% if ($due_date) { %>
-				<div><span class="paper_label">Due</span> <%= $due_date %></div>
+				<div><span class="paper_label"><%= &subs::lang('store.due') %></span> <%= $due_date %></div>
 			<% } %>
 		</td>
 	</tr></tbody></table>
 
-	<h1 class="paper_title"><%= &subs::format_name($type) %></h1>
+	<h1 class="paper_title"><%= &subs::lang('common.' . $type) %></h1>
 
 	<% foreach my $reg ( @{$registers} ) { %>
 		<% my $data = $reg->{'data'}; %>
@@ -53,10 +53,10 @@
 			<thead>
 				<tr>
 					<th class="paper_item_col"><span class="paper_item_name"><%= &subs::format_name($data->{'item'}) %></span></th>
-					<th class="paper_num">Quantity</th>
-					<th class="paper_num">Price</th>
-					<th class="paper_num">Discount</th>
-					<th class="paper_num">Subtotal</th>
+					<th class="paper_num"><%= &subs::lang('common.quantity') %></th>
+					<th class="paper_num"><%= &subs::lang('common.price') %></th>
+					<th class="paper_num"><%= &subs::lang('store.discount') %></th>
+					<th class="paper_num"><%= &subs::lang('store.subtotal') %></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -92,10 +92,10 @@
 		</table>
 
 		<% if ($reg->{'data'}->{'payments'} && scalar @{$reg->{'data'}->{'payments'}} > 0) { %>
-			<h2 class="paper_subtitle">Payments</h2>
+			<h2 class="paper_subtitle"><%= &subs::lang('store.payments') %></h2>
 			<table class="paper_items">
 				<thead>
-					<tr><th class="paper_item_col">Date</th><th class="paper_num">Amount</th></tr>
+					<tr><th class="paper_item_col"><%= &subs::lang('store.date') %></th><th class="paper_num"><%= &subs::lang('store.amount') %></th></tr>
 				</thead>
 				<tbody>
 					<% foreach my $p ( @{$reg->{'data'}->{'payments'}}) { %>
@@ -121,18 +121,18 @@
 		<td class="paper_foot_right">
 			<table class="paper_totals"><tbody>
 				<% if ($totals->{'discount'}) { %>
-					<tr><td class="paper_label_cell">Discount</td><td class="paper_value"><%= &subs::price_formatter($totals->{'discount'}) %></td></tr>
+					<tr><td class="paper_label_cell"><%= &subs::lang('store.discount') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'discount'}) %></td></tr>
 				<% } %>
-				<tr><td class="paper_label_cell">Subtotal</td><td class="paper_value"><%= &subs::price_formatter($totals->{'subtotal'}) %></td></tr>
+				<tr><td class="paper_label_cell"><%= &subs::lang('store.subtotal') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'subtotal'}) %></td></tr>
 				<% if ($totals->{'tax'}) { %>
-					<tr><td class="paper_label_cell">Tax</td><td class="paper_value"><%= &subs::price_formatter($totals->{'tax'}) %></td></tr>
+					<tr><td class="paper_label_cell"><%= &subs::lang('common.tax') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'tax'}) %></td></tr>
 				<% } %>
 				<% if ($totals->{'aux'}) { %>
-					<tr><td class="paper_label_cell">Aux</td><td class="paper_value"><%= &subs::price_formatter($totals->{'aux'}) %></td></tr>
+					<tr><td class="paper_label_cell"><%= &subs::lang('store.aux') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'aux'}) %></td></tr>
 				<% } %>
-				<tr class="paper_total_row"><td class="paper_label_cell">Total</td><td class="paper_value"><%= &subs::price_formatter($totals->{'total'}) %></td></tr>
+				<tr class="paper_total_row"><td class="paper_label_cell"><%= &subs::lang('common.total') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'total'}) %></td></tr>
 				<% if ($type ne 'quote' && $type ne 'order') { %>
-					<tr><td class="paper_label_cell">Balance</td><td class="paper_value"><%= &subs::price_formatter($totals->{'balance'}) %></td></tr>
+					<tr><td class="paper_label_cell"><%= &subs::lang('store.balance') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'balance'}) %></td></tr>
 				<% } %>
 			</tbody></table>
 		</td>

@@ -46,6 +46,7 @@ sub randstr    { my $len = shift || 20; my @c = ( 'A'..'Z', 'a'..'z', 0..9 ); my
 # the same value on every kind of machine
 my %factory_common = (
 	encryption_standard       => 'aes-256-cbc',
+	language                  => 'en',
 	payment_background_colour => '#66b5ff',
 	photo_size                => '3840x2160',
 	scan_size                 => 'Raw',

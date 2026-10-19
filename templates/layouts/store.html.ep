@@ -1,4 +1,4 @@
-<html>
+<html lang="<%= &subs::language() %>" dir="<%= &subs::language_dir() %>">
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="initial-scale=1.0">
@@ -32,6 +32,9 @@
 			var advertise_watching = '<%= $advertise_watching %>';
 			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
 			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+			window.jawnos_lang = <%== &subs::lang_js() %>;
+			window.jawnos_lang_code = '<%= &subs::language() %>';
+			window.jawnos_lang_dir = '<%= &subs::language_dir() %>';
 		</script>
 		<script src="/js/universal.js?string=<%= $string %>"></script>
 		<script src="/js/mailbox.js?string=<%= $string %>"></script>
@@ -54,6 +57,7 @@
 	<body<% if ($theme_dark) { %> class="dark_theme"<% } %> data-texture="<%= &subs::texture_name() %>" style="background-color:<%= $store_bg %>;<%= &subs::theme_panel_css($store_bg) %>">
 	<div id="everything" style="background-color:<%= $store_bg %>">
 		<%= content %>
+		<%= include 'gdpr_consent' %>
 		<div id="red_dot" class="circular_thumb dot">
 			<span class="dot_info"><span>
 		</div>

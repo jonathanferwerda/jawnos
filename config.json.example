@@ -1,6 +1,7 @@
 {
 	"birthday": "Oct. 1 2022 5pm",
 	"device": "computer",
+	"language": "en",
 	"environment": "development",
 	"start_dir": "~/",
 	"archive_dir": "",

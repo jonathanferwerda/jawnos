@@ -1,6 +1,6 @@
-<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="main_viewer_cancel_button little_thumb hover" style="position:absolute;top:0px;right: 10px;height:30px;width:30px;">
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="main_viewer_cancel_button little_thumb hover" style="position:absolute;top:0px;right: 10px;height:30px;width:30px;">
 <span style="font-size:28px;"><b><%= &subs::format_name($customer->{'app'}) %></b></span> - 
-<span style="font-size:26px;"><%= &subs::format_name($type) %>s</span>
+<span style="font-size:26px;"><%= &subs::lang('common.' . $type) %></span>
 
 <div style="overflow:scroll;height:80%;">
 	<% foreach my $quote ( @{$list} ) { %>
@@ -10,24 +10,24 @@
 				<span class="quote_title hover" uuid="<%= $quote->{'uuid'} %>" style="font-size:28px;" colspan="6"><b><%= &subs::format_name($q->{'item'}) %></b></span>
 			</span>
 			<span style="float:right;">
-				<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="Print" class="medium_thumb print hover">
-				<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Email" class="medium_thumb email hover">
+				<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="<%= &subs::lang('common.print') %>" class="medium_thumb print hover">
+				<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="<%= &subs::lang('common.email') %>" class="medium_thumb email hover">
 				<% if ($type eq 'quote') { %>
-					<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/register.png') %>" hint="Invoice" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/register.png') %>" hint="<%= &subs::lang('common.invoice') %>" class="medium_thumb quote_move hover">
 				<% } %>
 				<% if ($type eq 'invoice') { %>
-					<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Quote" class="medium_thumb quote_move hover">
-					<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" hint="Sale" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="<%= &subs::lang('common.quote') %>" class="medium_thumb quote_move hover">
+					<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" hint="<%= &subs::lang('common.sale') %>" class="medium_thumb quote_move hover">
 				<% } %>
-				<img cx_uuid="<%= $customer->{'value'} %>" doc_type="<%= $type %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="medium_thumb delete_quote hover">
+				<img cx_uuid="<%= $customer->{'value'} %>" doc_type="<%= $type %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="<%= &subs::lang('common.delete') %>" class="medium_thumb delete_quote hover">
 			</span>
 			<table class="quote_table">
 				<thead>
-					<th>Item</th><th>Name</th><th>Quantity</th><th>Unit</th><th>Cost</th><th>Markup</th><th>Price</th><th>Tax</th><th>Total</th>
+					<th><%= &subs::lang('common.item') %></th><th><%= &subs::lang('common.name') %></th><th><%= &subs::lang('common.quantity') %></th><th><%= &subs::lang('common.unit') %></th><th><%= &subs::lang('common.cost') %></th><th><%= &subs::lang('common.markup') %></th><th><%= &subs::lang('common.price') %></th><th><%= &subs::lang('common.tax') %></th><th><%= &subs::lang('common.total') %></th>
 				</thead>
 				<tbody>
 					<tr>
-						<td>Model</td>
+						<td><%= &subs::lang('common.model') %></td>
 						<td><%= &subs::format_name($q->{'model'}->{'name'}) %></td>
 						<td><%= $q->{'model'}->{'quantity'} || 1 %></td>
 						<td><%= $q->{'model'}->{'unit'} %></td>
@@ -45,10 +45,10 @@
 						<% foreach my $oc ( keys %{$q->{'options'}} ) { %>
 							<% if (scalar @{$q->{'options'}->{$oc}} > 0) { %>
 								<thead><th style="font-size:22px;" colspan="6"><%= &subs::format_name($oc) %></th></thead>
-								<thead><th>Item</th><th>Name</th><th>Cost</th><th>Markup</th><th>Price</th><th>Tax</th><th>Total</th></thead>
+								<thead><th><%= &subs::lang('common.item') %></th><th><%= &subs::lang('common.name') %></th><th><%= &subs::lang('common.cost') %></th><th><%= &subs::lang('common.markup') %></th><th><%= &subs::lang('common.price') %></th><th><%= &subs::lang('common.tax') %></th><th><%= &subs::lang('common.total') %></th></thead>
 								<% foreach my $o ( @{$q->{'options'}->{$oc}} ) { %>
 									<tr>
-										<td>Option</td>
+										<td><%= &subs::lang('common.option') %></td>
 										<td><%= &subs::format_name($o->{'name'}) %></td>
 										<td><%= $o->{'quantity'} %></td>
 										<td><%= $o->{'unit'} %></td>
@@ -95,7 +95,7 @@
 				<% foreach my $number ( sort keys %{$totals} ) { %>
 					<td><%= sprintf("%.2f", $totals->{$number}) %></td>
 				<% } %>
-				<td><img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="all" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="Print" class="medium_thumb print hover"></td>
+				<td><img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="all" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="<%= &subs::lang('common.print') %>" class="medium_thumb print hover"></td>
 			</tr>
 		</tbody>
 	</table>

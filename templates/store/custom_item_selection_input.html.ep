@@ -3,16 +3,16 @@
 		<tr>
 			<td><b>Name</b></td>
 			<td>
-				<input class="custom_item_attribute" att="name" placeholder="Name">
+				<input class="custom_item_attribute" att="name" placeholder="<%= &subs::lang('common.name') %>">
 			</td>
 		</tr>
 		<tr>
 			<td><b>Cost</b></td>
-			<td><input class="custom_item_attribute" att="cost" placeholder="Cost"></td>
+			<td><input class="custom_item_attribute" att="cost" placeholder="<%= &subs::lang('common.cost') %>"></td>
 		</tr>
 		<tr>
 			<td><b>Price</b></td>
-			<td><input class="custom_item_attribute" att="price" placeholder="Price"></td>
+			<td><input class="custom_item_attribute" att="price" placeholder="<%= &subs::lang('common.price') %>"></td>
 		</tr>
 		<% if ($type eq 'option') { %>
 			<tr>
@@ -36,4 +36,4 @@
 			<td><input type="checkbox" class="custom_item_attribute" att="save_to_item"></td>
 	</tbody>
 </table>
-<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb hover custom_item_selection_save">
+<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('common.save') %>" class="little_thumb hover custom_item_selection_save">

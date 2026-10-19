@@ -981,7 +981,10 @@ sub ocr_reader($c,$filename) {
 	`tesseract $filename $text_file`;
 	$text_file = $text_file . '.txt';
 	my $ocr = read_file($text_file);
-	$ocr =~ s/[^\x00-\x7F]+//gi;
+	# Keep every printable character, including accented letters and CJK text.
+	# Only the control bytes that OCR engines emit are removed; the old ASCII
+	# filter silently erased whole languages from a scanned document.
+	$ocr =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
 	$ocr = &subs::note_encrypter(&subs::session_suds($c),$ocr);
 	`shred -u $text_file`;
 
@@ -1954,6 +1957,29 @@ post '/manager/appointment/writer' => sub ($c) {
 
 
 
+get '/privacy' => sub ($c) {
+	# A public page: the homepage and the store both link here, and a visitor
+	# has not been given a session yet. The controller and contact come from the
+	# house's own settings, so the notice names a real person and address.
+	my $cfg = eval { &subs::config_reader() } || {};
+	my $controller = &subs::setting_grabber({ app => 'me', setting => 'my_name' })
+		|| &subs::setting_grabber({ app => 'me', setting => 'name' })
+		|| $cfg->{'name'} || 'the house';
+	my $contact = $cfg->{'email'} || &subs::setting_grabber({ app => 'me', setting => 'email' }) || '';
+	my @now = localtime();
+	my $updated = sprintf('%04d-%02d-%02d', $now[5] + 1900, $now[4] + 1, $now[3]);
+	$c->render(
+		template => 'privacy',
+		layout => undef,
+		controller => $controller,
+		contact => $contact,
+		updated => $updated,
+		store_name => &subs::setting_grabber({ app => 'me', setting => 'store_name' }) || '',
+		device => &subs::device_setter(),
+		config => $cfg,
+	);
+};
+
 my (@appointments,@results);
 get '/' => sub ($c) {
 	my $homepage;
@@ -2538,8 +2564,7 @@ post '/manager/market/packaging_add' => sub($c) {
 	return $c->render(json => { error => 'name the packaging' }) unless $name =~ /\S/;
 	my $each = ($c->param('each') || '') =~ /[0-9]/ ? 0 + $c->param('each') : 1;
 	my $key = &subs::unformat_name($name);
-	$key =~ s/[^a-z0-9_]//g;
-	$key = 'pack' unless $key ne '';
+	$key = 'pack' unless length $key;
 	my $measures = &measures_all();
 	my $uuid;
 	my $exists = 0;
@@ -6355,7 +6380,7 @@ post '/manager/configure/logo_upload' => sub($c) {
 sub misc_setting_list() {
     my ($db, $database, $sql) = &subs::database_grabber();
 		my @locations = &subs::location_types();
-    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir say_voice/;
+    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir say_voice language/;
 		foreach my $l ( @locations ) {
 			push @settings, $l . '_location';
 			push @settings, $l . '_archive';
@@ -6364,8 +6389,10 @@ sub misc_setting_list() {
     my $signatorial = &subs::signatorial_designer();
     my $device = &subs::device_setter();
 
-    # 1. Collect all target devices into a single list
-    my @devices = ( @gb::device_types, $signatorial );
+    # 1. Collect all target devices into a single list. 'all' carries the
+    # house-wide choices (the interface language), which every machine and
+    # every device tab reads.
+    my @devices = ( 'all', @gb::device_types, $signatorial );
 
     # 2. Fetch ALL matching records in a single database call
     # This assumes db_select supports array references for IN clauses
@@ -9329,7 +9356,9 @@ sub start_menu_recent() {
 # cache value that the list renders back into the page, so the press and the
 # forget both cut it down to plain words first.
 sub start_menu_key_clean($key) {
-	$key =~ s/[^A-Za-z0-9 _\-]//g;
+	# Keep the letters of every script: the key names a button in the recent
+	# list, and an app called 中文 or Café must not become an empty string.
+	$key =~ s/[^\p{L}\p{M}\p{N} _\-]//g;
 	$key =~ s/^\s+//; $key =~ s/\s+$//;
 	return substr($key, 0, 60);
 }
@@ -9930,7 +9959,7 @@ sub ticket_request_allowed($c) {
 }
 
 sub ticket_request_pending_html() {
-	return '<h3>Request received</h3><p>Your request is with the house. If it is approved, this page will let itself in.</p>';
+	return '<h3>' . &subs::lang('home.request_received') . '</h3><p>' . &subs::lang('home.request_pending') . '</p>';
 }
 
 # What an approval mints: the box office's own mint, with the house's suds
@@ -10203,6 +10232,7 @@ any '/box_office/ticket_request' => sub($c) {
 	if ($call eq 'form') {
 		my $content = $c->render_to_string(
 			template => 'store/ticket_request',
+			error => 0
 		);
 		$c->render(json => { content => $content });
 	}
@@ -10218,12 +10248,25 @@ any '/box_office/ticket_request' => sub($c) {
 	}
 	elsif ($call eq 'submit') {
 		my $data = eval { return decode_json $c->param('data') } || {};
+		# GDPR: no request is stored until the person has acknowledged the
+		# privacy notice. The acknowledgement travels with the request so the
+		# house can show how and when it was given.
+		if (($data->{'consent'} // '') ne 'on') {
+			my $content = $c->render_to_string(
+				template => 'store/ticket_request',
+				error => 1
+			);
+			$c->render(json => { status => 'error', html => $content });
+			return;
+		}
 		my $info = {
 			name => &subs::unformat_name($data->{'name'} || ''),
 			email => &ticket_contact_clean('email', $data->{'email'}),
 			phone => &ticket_contact_clean('phone', $data->{'phone'}),
 			description => substr($data->{'description'} || '', 0, 1000),
 			privilege => 'guest',
+			consent => 1,
+			consent_at => &subs::rightNow(),
 			team => $data->{'team'},
 			club => $data->{'club'},
 			community => $data->{'community'}

@@ -6,15 +6,15 @@
 <div class="item" id="item" item="<%= $item->{'app'} %>" price="<%= $item->{'price'} %>" quote_id="<%= $item->{'quote'}->{'id'} %>" quote_uuid="<%= $item->{'quote'}->{'uuid'} || 'new' %>"
 	formatted_name="<%= &subs::format_name($item->{'app'}) %>" main_image="<%= $item->{'settings'}->{'main_image'} %>">
 	<span class="top_left_corner">
-		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="save_quote little_thumb hover" style="display:none;">
+		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('common.save') %>" class="save_quote little_thumb hover" style="display:none;">
 	</span>
 	<span class="top_right_corner">
 		<select class="store_movement" value="<%= $settings->{'store_movement'} %>" style="vertical-align:top;">
 			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
-				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::format_name($m) %></option>
+				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::lang('common.' . $m) %></option>
 			<% } %>
 		</select>
-		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="store_item_cancel_button little_thumb hover">
+		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="store_item_cancel_button little_thumb hover">
 	</span><br>
 	<span class="hover item_title" onclick="appointmentGrabber('<%= $item->{'app'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item->{'app'}) %></span><br>
 
@@ -29,7 +29,7 @@
 	<br>
 	<h2 class="display_price centered_display_price" item="<%= $item->{'app'} %>"><%= &subs::price_formatter($item->{'price'}) %></h2>
 	<% if ($item->{'settings'}->{'description'}) { %>
-		<button id="specs_toggle" style="display:none;">Specs</button>
+		<button id="specs_toggle" style="display:none;"><%= &subs::lang('common.specs') %></button>
 		<div id="specs_balloon" style="display:none;"><div id="specs"></div></div>
 		<br>
 	<% } %>
@@ -37,7 +37,7 @@
 	<% if (scalar @{$manufacturers} > 0) { %>
 		<br>
 		<select id="item_manufacturer_select">
-			<option value="">Any</option>
+			<option value=""><%= &subs::lang('common.any') %></option>
 			<% foreach my $man ( @{$manufacturers} ) { %>
 				<option value="<%= $man %>"><%= &subs::format_name($man) %></option>
 			<% } %>

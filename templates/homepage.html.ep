@@ -2,7 +2,7 @@
 <div id="homepage" class="theme_surface" style="background-color:<%= $config->{$device}->{'homepage'}->{'background_colour'} %>;text-align:center;height:100%;width:100%;overflow:scroll;">
 	<span id="category_selected" class="hover" category="<%= $c->param('category') || 'promo' %>"></span>
 	<div id="navigation" style="font-size:20px;height:36px;max-width:100%">
-		<span class="homepage_category" category="promo">Promo</span>
+		<span class="homepage_category" category="promo"><%= &subs::lang('home.promo') %></span>
 		<% foreach my $cat ( @{$magazine_categories} ) { %>
 			<% unless ($cat->{'app'} eq 'promo') { %>
 				<span class="hover homepage_category" category="<%= $cat->{'app'} %>"><%= &subs::format_name($cat->{'app'}) %></span>
@@ -34,7 +34,7 @@
 				<% } %>
 			</div>
 		<% } else { %>
-			<button id="ticket_request">Request Ticket</button>
+			<button id="ticket_request"><%= &subs::lang('home.request_ticket') %></button>
 			<div id="ticket_request_viewer"></div>
 			<div id="content_area" style="text-align:center;">
 				<% foreach my $art ( @{$articles} ) { %>
@@ -48,14 +48,16 @@
 		<% } %>
 	</div>
 	<div style="text-align:center;">
-		President is an entertainment, organization, and automation tool <br> <button id="download_program">Download</button>
-		<span>Last Update: <span class="time" timestamp="<%= &subs::newest_folder_checker() %>"></span></span>
+		<%= &subs::lang('home.tagline') %> <br> <button id="download_program"><%= &subs::lang('home.download') %></button>
+		<span><%= &subs::lang('home.last_update') %>: <span class="time" timestamp="<%= &subs::newest_folder_checker() %>"></span></span>
 		<br>
-		<b>DISCLAIMER:</b> You need to know how to use a computer to install and operate this program.
-		<br>You need to be an expert with Linux to be sure this software won't delete all your personal files.
-		<br>On the other hand, your life is probably lacking purpose and hope without my code.
-		<br>Regardless, I accept no liability whatsoever!
+		<b><%= &subs::lang('home.disclaimer') %>:</b> <%= &subs::lang('home.disclaimer_1') %>
+		<br><%= &subs::lang('home.disclaimer_2') %>
+		<br><%= &subs::lang('home.disclaimer_3') %>
+		<br><%= &subs::lang('home.disclaimer_4') %>
+		<br><a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
 	</div>
+	<%= include 'gdpr_consent' %>
 </div>
 
 <script>

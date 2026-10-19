@@ -16,18 +16,18 @@
 <%= include 'ribbons', settings => $settings %>
 <div id="main_window">
 	<div class="theme_surface" style="background-color:<%= $config->{$device}->{'store_header'}->{'background_colour'} %>">
-		<input type="text" id="store_search" placeholder="Search">
+		<input type="text" id="store_search" placeholder="<%= &subs::lang('common.search') %>">
 		<% foreach my $t ( @gb::store_types ) { %>
-			<button class="store_item_type" type="<%= $t %>"><%= &subs::format_name($t) %></button>
+			<button class="store_item_type" type="<%= $t %>"><%= &subs::lang('common.' . $t) %></button>
 		<% } %>
 		<select class="store_movement" value="<%= $settings->{'store_movement'} %>">
 			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
-				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::format_name($m) %></option>
+				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::lang('common.' . $m) %></option>
 			<% } %>
 		</select>
 	</div>
 	<span id="category_view" style="max-height:80%">
-		<b>Categories</b>
+		<b><%= &subs::lang('common.categories') %></b>
 		<% foreach my $p ( @{$categories} ) { %>
 			<span class="store_category hover" status="closed" category="<%= $p->{'app'} %>" style="border:solid 2px;border-radius:7px;background-color:<%= $p->{'settings'}->{'colour'} %>">
 				<span class="category_name"><h2><%= &subs::format_name($p->{'app'}) %></h2></span>
@@ -39,11 +39,14 @@
 		<% } %>
 	</span>
 	<span id="items_view" style="width:45%;height:80%;">
-		<b>Items</b>
+		<b><%= &subs::lang('common.items') %></b>
 	</span>
 	<span id="item_view" style=""></span>
 </div>
 
 <div id="image_viewer"></div>
 <div id="main_viewer"></div>
+<div id="store_privacy" style="text-align:center;font-size:12px;opacity:.75;padding:6px;">
+	<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
+</div>
 

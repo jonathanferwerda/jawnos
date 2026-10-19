@@ -1,6 +1,6 @@
 % use Mojo::JSON qw/decode_json encode_json/;
 <!DOCTYPE html>
-<html style="zoom: <%= &subs::misc_setting('ui_zoom') || 100 %>%;">
+<html lang="<%= &subs::language() %>" dir="<%= &subs::language_dir() %>" style="zoom: <%= &subs::misc_setting('ui_zoom') || 100 %>%;">
   <head>
     <title><%= $title %></title>
 		<link rel="manifest" type="application/json" href="/manifest.json">
@@ -44,6 +44,9 @@
 			var mail_ws_url = '<%= $mail_ws_url %>';
 			var my_name = '<%= $my_name %>';
 			var advertise_watching = '<%= $advertise_watching %>';
+			window.jawnos_lang = <%== &subs::lang_js() %>;
+			window.jawnos_lang_code = '<%= &subs::language() %>';
+			window.jawnos_lang_dir = '<%= &subs::language_dir() %>';
 			var volumeInterval;
 			<% if ($c->session('ticket_uuid')) { %>
 					$.ajax({
