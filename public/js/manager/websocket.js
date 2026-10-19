@@ -596,10 +596,13 @@ function wsMessageHandler(event) {
 				pf.html(data['padlock']);
 
 
-				pf.css({'position': 'fixed','z-index': 60000, 'background-color': '#' + data['colour'] }).show();
+				// the black backdrop the locked page uses, not a per-lock colour:
+				// a lock turned from the taskbar and one met on a refresh must look
+				// the same
+				pf.css({'position': 'fixed','z-index': 60000, 'background-color': '#101010' }).show();
 			}
 			else {
-				$('#padlock_frame').css({'background-color': '#' + data['colour'] }).show();
+				$('#padlock_frame').css({'background-color': '#101010' }).show();
 				$('#padlock_taunts').text(data['taunts']).css({ 'position':'fixed','max-width': width + 'px', 'width':'100%', 'height': '40%', 'left': '0px', 'top': '1%', 'text-align': 'centre', 'width': '120%'});
 			}
 			$('#everything').hide();

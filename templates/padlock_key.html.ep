@@ -309,6 +309,10 @@
 				}).then(function (r) { return r.json(); }).then(function (res) {
 					if (res && res.ok) {
 						padlockKeySay(res.already ? 'That screen was already open.' : 'Unlocked.', true);
+						// the unlock page was a detour: the phone opened it to sign the
+						// screen open, so return to the manager instead of sitting here.
+						// If this phone is still locked the gate shows its locked page.
+						setTimeout(function () { window.location.replace('/manager'); }, 900);
 					}
 					else if (res && res.error === 'local') {
 						padlockKeyFail('Open this page on your phone, not on the locked computer.');

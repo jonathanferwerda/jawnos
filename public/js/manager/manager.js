@@ -4475,7 +4475,10 @@ function jawnLockScreen(scope) {
 		// worker may not be listening for
 		if (!res || !res.ok || !res.html) { return; }
 		var pf = $('#padlock_frame');
-		pf.html(res.html).css({ position: 'fixed', 'z-index': 60000 }).show();
+		// the same black screen a refresh shows: without an opaque backdrop the
+		// hidden desktop's texture showed through and the lock looked different
+		// depending on which path had turned it
+		pf.html(res.html).css({ position: 'fixed', 'z-index': 60000, 'background-color': '#101010' }).show();
 		$('#everything').hide();
 	}, 'json');
 }
