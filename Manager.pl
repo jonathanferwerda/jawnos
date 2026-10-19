@@ -9037,7 +9037,12 @@ sub leave($c) {
 post '/manager/lock_session' => sub($c) {
 	my $scope = $c->param('scope') || '';
 	my $posted = $c->param('device_uuid') || '';
-	if ($posted && !$c->session('device_uuid') && &subs::db_select('paired_devices', undef, { uuid => $posted, status => 'active' })->hashes->[0]) {
+	# The page identifies with the uuid in its localStorage, which can be newer
+	# than the session's (a re-pair, or another tab's pairing). Locking the
+	# session's uuid then targeted a screen the page no longer claimed, and the
+	# overlay's target check ignored it - "I locked it and still have access".
+	# Adopt the posted, roster-validated device so the lock and the page agree.
+	if ($posted && &subs::db_select('paired_devices', undef, { uuid => $posted, status => 'active' })->hashes->[0]) {
 		$c->session('device_uuid' => $posted);
 	}
 	&lock_session($c, 1, $scope);
