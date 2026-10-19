@@ -15118,6 +15118,10 @@ sub lan_presence_accept {
 	};
 	$update->{'buttons'} = $buttons if $buttons ne ($rm->{'buttons'} // '');
 	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
+	# A unicast reply teaches the sender our address too. Android/Termux filters
+	# broadcast reception on Wi-Fi, so the sender's sweep may be the only thing we
+	# heard; the reply is the other half that lets both ends learn each other.
+	&lan_presence_reply($peer_ip) if $changed;
 	&lan_presence_wake() if $changed;
 }
 
@@ -15131,14 +15135,70 @@ sub lan_presence_wake {
 }
 
 our $lan_beacon;
+our $lan_reply_beacon;
+our %lan_reply_at;
+
+# One unicast beacon back to the peer that just told us where it is, so a machine
+# that cannot receive broadcast (Termux on Android) still learns the peers that
+# heard its sweep. Rate-limited per address.
+sub lan_presence_reply {
+	my ($ip) = @_;
+	return unless ($ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $now = time();
+	return if $lan_reply_at{$ip} && $now - $lan_reply_at{$ip} < 10;
+	$lan_reply_at{$ip} = $now;
+	if (!$lan_reply_beacon || $now - ($lan_reply_beacon->{'at'} || 0) > 60) {
+		$lan_reply_beacon = { at => $now, json => encode_json(&lan_presence_payload()) };
+	}
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp') or return;
+	$sock->send($lan_reply_beacon->{'json'}, 0, Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($ip)));
+	close $sock;
+}
+
+# A directed unicast sweep of the /24 around each private NIC. Broadcast is the
+# cheap path when it is delivered, but Android drops it for a Termux socket; a
+# sweep on boot and on a network change reaches the same peers one by one, and
+# their replies come back as unicast. Only a private /24 is swept, and only when
+# the address changed or five minutes have passed.
+sub lan_presence_sweep {
+	my ($json, $nics) = @_;
+	return unless $json && ref $nics eq 'ARRAY';
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp') or return;
+	foreach my $nic (@{$nics}) {
+		my $ip = $nic->{'ip'} || '';
+		next unless $ip =~ /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+		my ($a, $b, $c, $d) = ($1, $2, $3, $4);
+		foreach my $h ( 1 .. 254 ) {
+			next if $h == $d;
+			my $target = $a . '.' . $b . '.' . $c . '.' . $h;
+			$sock->send($json, 0, Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target)));
+			# A /24 burst over Wi-Fi saturates the kernel's unresolved-neighbour queue,
+			# and the host we want can be the one that is dropped. Twenty milliseconds
+			# between hosts lets ARP drain; a full /24 takes about five seconds, once
+			# at boot or when the machine joins a new network.
+			select(undef, undef, undef, 0.02);
+		}
+		select(undef, undef, undef, 0.05);
+	}
+	close $sock;
+}
 
 sub lan_presence_send {
 	my @nics = @{ &lan_presence_network() };
 	return unless @nics;
 	my $now = time();
 	my $fingerprint = join '|', map { ($_->{'nic'} // '') . '=' . ($_->{'ip'} // '') . '=' . ($_->{'mac'} // '') } @nics;
+	my $swept_at = ($lan_beacon && ($lan_beacon->{'fingerprint'} // '') eq $fingerprint) ? ($lan_beacon->{'swept_at'} || 0) : 0;
 	if (!$lan_beacon || ($lan_beacon->{'fingerprint'} // '') ne $fingerprint || $now - ($lan_beacon->{'at'} || 0) > 60) {
-		$lan_beacon = { at => $now, fingerprint => $fingerprint, json => encode_json(&lan_presence_payload()) };
+		$lan_beacon = { at => $now, fingerprint => $fingerprint, swept_at => $swept_at, json => encode_json(&lan_presence_payload()) };
+	}
+	if ($now - $swept_at > 600) {
+		&lan_presence_sweep($lan_beacon->{'json'}, \@nics);
+		$lan_beacon->{'swept_at'} = $now;
 	}
 	require Socket;
 	require IO::Socket::INET;
