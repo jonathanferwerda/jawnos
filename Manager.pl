@@ -26961,6 +26961,9 @@ post '/manager/security/padlock_watch' => sub ($c) {
 		return $c->render(json => { ok => 1 });
 	}
 	if ($action eq 'start') {
+		# only a screen on this machine may wake its camera
+		return $c->render(json => { ok => 1, camera => 0 })
+			unless ($c->tx->local_address || '') eq ($c->tx->remote_address || '');
 		return $c->render(json => { ok => 1, camera => 0 })
 			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
