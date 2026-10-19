@@ -2165,7 +2165,7 @@ sub battery_sample {
 	# window without growing the cache row.
 	my $history = (ref $cached eq 'HASH' && ref $cached->{'history'} eq 'ARRAY') ? $cached->{'history'} : [];
 	if (defined $b->{'percentage'}) {
-		my $last_at = $history->[-1]->{'t'} || 0;
+		my $last_at = scalar(@{$history}) ? ($history->[-1]->{'t'} || 0) : 0;
 		if ($now - $last_at >= 30000) {
 			push @{$history}, { t => $now, p => $b->{'percentage'} + 0, s => lc($b->{'status'} || '') };
 			splice @{$history}, 0, scalar(@{$history}) - 360 if scalar @{$history} > 360;
