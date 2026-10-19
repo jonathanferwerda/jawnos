@@ -73,7 +73,7 @@
 	</div>
 	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 	<% my $house_gate = (scalar @{$padlock} > 0 && grep { $_ eq 'general' } @{$padlock_sighting}) ? 1 : 0; %>
-			<img id="lock_session" hint="Lock the house" style="<% unless ($house_gate) { %>display:none;<% } %>" class="jonathan little_thumb" src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
+			<img id="lock_session" hint="Lock this screen" style="<% unless ($house_gate) { %>display:none;<% } %>" class="jonathan little_thumb" src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
 
 
 		<%# the start button's own face: a misc setting picks the picture out of the
