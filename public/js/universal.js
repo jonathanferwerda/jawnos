@@ -826,12 +826,31 @@ function jawnMobileHere() {
 	return !!(window.JawnPhone || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || ''));
 }
 
+function jawnPadlockKeyCancelled() {
+	try {
+		var at = parseInt(sessionStorage.getItem('jawn_padlock_key_cancelled') || '0', 10);
+		return !!(at && (Date.now() - at) < 5000);
+	} catch (e) { return false; }
+}
+
 function jawnPadlockKeyShow(mode) {
 	if (!jawnMobileHere()) { return; }
+	if (jawnPadlockKeyCancelled()) { return; }
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	var url = '/manager/security/padlock_key';
 	if (mode) { url += '?mode=' + encodeURIComponent(mode); }
 	location.href = url;
+}
+
+// A phone that was asleep, or that joined the house after the lock came up,
+// asks once on every socket connect whether a watch is still running.
+function jawnPadlockKeyCheck() {
+	if (!jawnMobileHere()) { return; }
+	if (jawnPadlockKeyCancelled()) { return; }
+	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
+	$.getJSON('/manager/security/padlock_key/active', function(r) {
+		if (r && r.watching) { jawnPadlockKeyShow(r.mode); }
+	});
 }
 
 $(document).on('mousewheel', '.padlock_jog_wheel', function(e) {

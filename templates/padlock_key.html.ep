@@ -48,9 +48,12 @@
 </style>
 
 <script>
-	// The back button is the cancel: give the camera back as the page goes.
+	try { sessionStorage.removeItem('jawn_padlock_key_cancelled'); } catch (e) { }
+	// The back button is the cancel: give the camera back as the page goes, and
+	// do not let the next socket connect bounce this tab straight back here.
 	window.addEventListener('pagehide', function () {
 		if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
+		try { sessionStorage.setItem('jawn_padlock_key_cancelled', String(Date.now())); } catch (e) { }
 		try {
 			var body = 'action=stop';
 			if (navigator.sendBeacon) {

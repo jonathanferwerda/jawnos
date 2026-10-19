@@ -9016,8 +9016,7 @@ sub lock_session($c, $explicit) {
 	# session a screen that just turned it had already opened.
 	my $path = $c->req->url->path;
 	return if ($path eq '/manager/security/padlock_watch' ||
-		$path eq '/manager/security/padlock_key' ||
-		$path eq '/manager/security/padlock_key/frame');
+		$path =~ m{^/manager/security/padlock_key(?:/|$)});
 
 	# A request that started while the lock screen was up can reach here after
 	# another screen has already turned the lock. Re-read the stored time (the
@@ -26879,14 +26878,17 @@ sub padlock_camera_stop {
 # One reader for the whole machine. `timeout` gives the camera back even if
 # nobody ever polls, so a lock that is walked away from cannot watch forever.
 sub padlock_camera_start {
+	my ($mode) = @_;
+	$mode = 'locker' unless defined $mode && $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $dir = &padlock_camera_dir();
+	`mkdir -p $dir` unless -d $dir;
+	return 0 unless -d $dir;
+	open my $mf, '>', "$dir/mode"; print $mf $mode; close $mf;
 	my $started = -e "$dir/started" ? (stat("$dir/started"))[9] : 0;
 	if (&padlock_camera_alive() && $started && time - $started < &padlock_visual_seconds()) {
 		return 1;  # a lock opened a moment ago already has the camera
 	}
 	&padlock_camera_stop();
-	`mkdir -p $dir` unless -d $dir;
-	return 0 unless -d $dir;
 	open my $codes, '>', "$dir/codes"; close $codes;
 	open my $log, '>', "$dir/log"; close $log;
 	my $pid = fork();
@@ -26902,6 +26904,14 @@ sub padlock_camera_start {
 	open my $pf, '>', "$dir/pid"; print $pf $pid; close $pf;
 	open my $sf, '>', "$dir/started"; print $sf time; close $sf;
 	return 1;
+}
+
+sub padlock_camera_mode {
+	my $file = &padlock_camera_dir() . '/mode';
+	return 'locker' unless -e $file;
+	my $mode = `cat $file 2>/dev/null`;
+	$mode =~ s/\s+//g;
+	return ($mode =~ /^(?:locker|gallery|music|folders)$/) ? $mode : 'locker';
 }
 
 sub padlock_camera_codes {
@@ -26977,7 +26987,7 @@ post '/manager/security/padlock_watch' => sub ($c) {
 		return $c->render(json => { ok => 1, camera => 0 })
 			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
-		my $watching = &padlock_camera_start();
+		my $watching = &padlock_camera_start($mode);
 		if ($watching) {
 			# the phone/tablet in the house shows the key by itself; every mobile
 			# tab that hears this goes to the key page (desktops ignore it)
@@ -27039,6 +27049,19 @@ get '/manager/security/padlock_key/frame' => sub ($c) {
 		qr => 'data:image/png;base64,' . encode_base64($qr, ''),
 		logo => $logo,
 		wait => &padlock_visual_step_seconds() - (time % &padlock_visual_step_seconds()),
+	});
+};
+
+get '/manager/security/padlock_key/active' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { watching => 0 });
+	}
+	my $dir = &padlock_camera_dir();
+	my $started = -e "$dir/started" ? (stat("$dir/started"))[9] : 0;
+	my $watching = (&padlock_camera_alive() && $started && time - $started < &padlock_visual_seconds()) ? 1 : 0;
+	$c->render(json => {
+		watching => $watching,
+		mode => ($watching ? &padlock_camera_mode() : ''),
 	});
 };
 
